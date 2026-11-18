@@ -40,6 +40,14 @@ for(const scope of ['legacy','report'])test(`real MCP ${scope} launch exposes on
   // Spec 050: the narrow recoveryAction shape is retired from the catalog; coordinators report coordinatorAction.
   assert.equal(reportProperties.recoveryAction,undefined);
   assert.ok(reportProperties.coordinatorAction);
+  for (const coordinatorAction of [
+   {verb:'move',to:'closeout',force:true,reason:'Observed merged'},
+   {verb:'retry_effect',effect:'owned_tool.run',force:true,reason:'Observed idle'},
+  ]) {
+   const report=await client.callTool({name:'nucleus_report',arguments:{runId:'other-run',status:'recovered',headline:'Recover',summary:'Recover',coordinatorAction}});
+   assert.equal(report.isError,true);
+   assert.match(JSON.stringify(report),/bound to run run-1/,'the force action reached the authenticated binding');
+  }
   assert.ok(reportProperties.headline,'the report catalog requires the one-line headline (task 538)');
   assert.ok(reportProperties.reviewedInputs,'the reviewer report catalog accepts the authenticated input-closure receipt');
   {
@@ -156,10 +164,14 @@ test('real MCP report forwards typed coordinator actions and reviewer responsibi
   assert.equal((await client.callTool({name:'nucleus_report',arguments:{runId:'run-typo',status:'recovered',headline:'Wrong run',summary:'Wrong run'}})).isError,true);
   assert.equal(bodies.length,0);
   assert.ok(!(await client.callTool({name:'nucleus_report',arguments:{status:'recovered',headline:'Routing the worker to a fresh profile',summary:'Route the worker',coordinatorAction}})).isError);
+  const forced=[{verb:'move',to:'closeout',force:true,reason:'Observed merged'}, {verb:'retry_effect',effect:'owned_tool.run',force:true,reason:'Observed idle'}];
+  for(const action of forced) assert.ok(!(await client.callTool({name:'nucleus_report',arguments:{status:'recovered',headline:'Settle the observed state',summary:'Settle',coordinatorAction:action}})).isError);
   assert.ok(!(await client.callTool({name:'nucleus_report',arguments:{status:'changes_required',headline:'Author defect in the parser',summary:'Author defect',reviewText:'Findings',reviewResponsibility:'author'}})).isError);
-  assert.deepEqual(bodies.map(item=>item.path),['/report','/report']);
+  assert.deepEqual(bodies.map(item=>item.path),['/report','/report','/report','/report']);
   assert.deepEqual(bodies[0].body.coordinatorAction,coordinatorAction);
-  assert.equal(bodies[1].body.reviewResponsibility,'author');
+  assert.deepEqual(bodies[1].body.coordinatorAction,forced[0]);
+  assert.deepEqual(bodies[2].body.coordinatorAction,forced[1]);
+  assert.equal(bodies[3].body.reviewResponsibility,'author');
   // Every forwarded body parses under the canonical report contract.
   for(const item of bodies)reportSchema.parse(item.body);
  }finally{await client.close();server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));rmSync(dir,{recursive:true,force:true});}

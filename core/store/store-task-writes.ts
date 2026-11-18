@@ -248,6 +248,10 @@ export class StoreTaskWrites {
     // The schema default restores a Queue allocation on read; only an external
     // workspace has to travel in the row (nucleus#1261).
     if (row.workspaceOwnership === "queue") delete (row as Partial<Task>).workspaceOwnership;
+    // nucleus#1313: the detach record is written only when it exists; the schema
+    // default restores null on read, so every other row stays the size it was.
+    if (row.presentationDetached === null) delete (row as Partial<Task>).presentationDetached;
+    if (row.presentationParent === null) delete (row as Partial<Task>).presentationParent;
     // Defaults are restored by the resolution schema on read; empty histories
     // need not consume space in every task row.
     for (const key of ["buildOutputCleanups", "runtimeRetirements", "externalWorkspaceArchives", "ownerAcceptances", "reviewSupersessions"] as const) {

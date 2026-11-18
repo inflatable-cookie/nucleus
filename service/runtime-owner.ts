@@ -2,6 +2,7 @@ import { recordQaServiceLifecycle } from "../core/qa/project-qa-diagnostics";
 import { initializeWorkRoot } from "../core/workspaces/work-root.mjs";
 import { registerServiceRollRequest } from "./install/roll-request";
 import { currentServiceBuildId } from "../shared/service/build";
+import { HostCatalogueSettings } from "./host-settings";
 import { RuntimeQuestions } from "../core/runtime/questions";
 import { RuntimeSettings } from "../core/runtime/settings";
 import { ParticipantTickets } from "../core/dispatch/participant-tickets";
@@ -49,7 +50,7 @@ import { Admission, admitAdapter, type AdmissionOptions } from "../core/host/adm
 import { HostRegistry, HOST_IDLE_GRACE_MS, type KnownHost } from "../core/host/host-registry";
 import type { IdentitySource } from "../shared/host-kind";
 import { T3HostConnection, type T3ConnectionConfig } from "./t3code-host";
-import { BbHostConnection, type BbHostRejectedInput, type BbHostReleasedInput, type BbHostVerifiedInput } from "./bb-host";
+import { BbHostConnection, recordBbPresentationParentChange, type BbHostRejectedInput, type BbHostReleasedInput, type BbHostVerifiedInput } from "./bb-host";
 import {
   HostConnections,
   wireEngineHosts,
@@ -270,6 +271,8 @@ export class QueueRuntime {
   private readonly lifecycle: RuntimeLifecycle;
   /** Presentation of this runtime's facts; owns what health does and does not know. */
   private readonly healthProjection: RuntimeHealthProjection;
+  /** Settings → Hosts (nucleus#1325): the catalogue read and the operator's removal. */
+  private readonly hostSettings: HostCatalogueSettings;
   private idleShutdownLatched = false;
   private readonly pluginLostGraceMs: number;
   private closeCallbacks: (() => Promise<void>) | undefined;
@@ -419,9 +422,16 @@ export class QueueRuntime {
       transaction: fn => this.store.transaction(fn),
       readDisconnectedAt: () => this.store.getMeta<number | null>("hostDisconnectedAt") ?? null,
       writeDisconnectedAt: at => this.store.setMeta("hostDisconnectedAt", at),
+      readLastSeen: () => this.store.getMeta<Record<string, string>>("hostLastSeen") ?? {},
+      writeLastSeen: seen => this.store.setMeta("hostLastSeen", seen),
     }, options.hostNow ?? Date.now, options.hostIdleGraceMs ?? HOST_IDLE_GRACE_MS);
     const createAdmission = () => new Admission({ ...options.admission, totalLimit: () => this.store.configuredPaseoCallLimit(), workspaceBudget: () => this.store.getMeta<number>("globalLimit") ?? DEFAULT_GLOBAL_LIMIT });
-    this.t3Host = this.settings.t3code ? new T3HostConnection(this.settings.t3code, this.dataDir, this.hostRegistry, createAdmission) : null;
+    // The ACP session surface is attached later in bootstrap (Spec 065), so the host
+    // reads it through this getter rather than capturing it: a T3 parent thread is
+    // minted from it and released through it (nucleus#1305).
+    this.t3Host = this.settings.t3code
+      ? new T3HostConnection(this.settings.t3code, this.dataDir, this.hostRegistry, createAdmission, undefined, () => this.engine.acp)
+      : null;
     this.bbHost = new BbHostConnection(this.store, this.hostRegistry, createAdmission, this.dataDir);
     const recordedHost = this.hostRegistry.primary()?.id;
     this.admission = recordedHost ? this.hostRegistry.resource(recordedHost, createAdmission) : createAdmission();
@@ -575,6 +585,15 @@ export class QueueRuntime {
       admissionRpcMetrics: () =>
         runtime.admissionEndpoint?.rpcMetrics() ?? null,
     });
+    this.hostSettings = new HostCatalogueSettings({
+      store: this.store,
+      hostRegistry: this.hostRegistry,
+      hostStates: () => runtime.healthProjection.hostStates(),
+      bb: () => runtime.bbHost.status(),
+      t3: () => runtime.t3Host?.status(),
+      defaultHostKind: () => runtime.capacityChanges.state().effective.operatorDefaultHostKind,
+      forgetBb: hostId => runtime.bbHost.forget(hostId),
+    });
     this.liveRunPresence = this.createLiveRunPresence();
     this.eventLoopDelay.start();
     if (options.timers !== false) {
@@ -686,6 +705,15 @@ export class QueueRuntime {
    */
   bbHostVerified(input: BbHostVerifiedInput) {
     return this.bbHost.verified(input);
+  }
+  /** Record BB's operator-authored presentation parent for one Nucleus thread. */
+  bbParentChanged(input: unknown): { ok: true; matched: boolean } {
+    const value = input as { hostId?: unknown; threadId?: unknown; parentThreadId?: unknown; at?: unknown };
+    if (typeof value?.hostId !== "string" || typeof value.threadId !== "string" || !(value.parentThreadId === null || typeof value.parentThreadId === "string") || typeof value.at !== "string") return { ok: true, matched: false };
+    const taskId = recordBbPresentationParentChange(this.store, value.hostId, value.threadId, value.parentThreadId as string | null, value.at);
+    if (!taskId) return { ok: true, matched: false };
+    void this.engine.wakeTask(taskId);
+    return { ok: true, matched: true };
   }
   /** A declaration or probe left the identity unproven: the host is offline for the named reason. */
   bbHostRejected(input: BbHostRejectedInput) {
@@ -1083,7 +1111,7 @@ export class QueueRuntime {
   async reviewEntryWorkspace(input:import('../shared/contracts').ReviewEntryWorkspaceInput){
     await this.started;
     if(!this.anyHostConnected())throw Error(this.startError||'All hosts are disconnected');
-    const hostId = this.engine.selectIngressHost(input.hostId);
+    const hostId = this.engine.selectIngressHost(input.hostId, input.repoPath);
     if (!hostId || !this.engine.withHost(hostId, () => this.engine.hostAvailable(hostId))) throw Error('Selected review-entry host is unavailable');
     return this.engine.withHost(hostId, async () => {
       const created=await prepareReviewEntryWorkspace(this.engine.adapter,input);
@@ -1094,7 +1122,7 @@ export class QueueRuntime {
   async reviewEntryPreview(input:ReviewEntryInput){
     await this.started;
     if(!this.anyHostConnected())throw Error(this.startError||'All hosts are disconnected');
-    const hostId = this.engine.selectIngressHost(input.submission.hostId);
+    const hostId = this.engine.selectIngressHost(input.submission.hostId, input.submission.repoPath);
     if (!hostId || !this.engine.withHost(hostId, () => this.engine.hostAvailable(hostId))) throw Error('Selected review-entry host is unavailable');
     return this.engine.withHost(hostId, async () => {
       const adapter = this.engine.adapter as Adapter & ReviewEntryAdapter;
@@ -1245,6 +1273,8 @@ export class QueueRuntime {
   async configureUsage(input: { level: UsageLevel; until?: string | null }) { return this.settingsOperations.configureUsage(input); }
   async configureDemandOffsets(input: DemandRoleOffsets) { return this.settingsOperations.configureDemandOffsets(input); }
   capacityAuthorityState() { return this.settingsOperations.capacityAuthorityState(); }
+  hostList() { this.markStoreAccess(); return this.hostSettings.hostList(); }
+  removeHost(input: { hostId: string }, _accepted?: unknown, context?: { via?: string | null }) { return this.hostSettings.removeHost(input, _accepted, context); }
   async configureCapacity(input: z.infer<typeof capacitySchema>, _accepted?: unknown, context?: { via?: string | null }) { return this.settingsOperations.configureCapacity(input, _accepted, context); }
   async configureProjectDispatchLimit(input: z.infer<typeof projectDispatchLimitSchema>) { return this.settingsOperations.configureProjectDispatchLimit(input); }
   upsertLane(input: import("../shared/contracts").LaneUpsertInput) { return this.planning.upsertLane(input); }
@@ -1370,47 +1400,35 @@ export class QueueRuntime {
    * The caller rides the CLI from its Nucleus ticket or host identity, never a typed name, and the
    * service binds the task to that thread's own live worktree. The Paseo
    * bridge path carries no reliable caller identity and is refused.
+   *
+   * Resolution order (every host kind): prove the thread on a live host, then the
+   * current run ticket for that identity, then a participant ticket, then the
+   * host-verified identity. A slow host answers "The host is slow; retry".
    */
   async resolveHostCaller(input: { hostKind: HostKind; nativeAgentId: string; hostScope?: string }) {
-    const hosts = this.hostRegistry.onlineIds().filter(id => hostKindOf(id) === input.hostKind);
-    let hostId: string;
-    if (input.hostKind === 't3code') {
-      const owners: string[] = [];
-      for (const candidate of hosts) {
-        try {
-          const observation = await this.engine.withHost(candidate, () => this.engine.host.observe(input.nativeAgentId));
-          if (observation?.id === input.nativeAgentId && observation.status !== 'gone') owners.push(candidate);
-        } catch { /* A host that cannot verify this thread is not an owner. */ }
-      }
-      if (owners.length !== 1) {
-        const online = hosts.length ? hosts.join(', ') : '(none)';
-        const reason = owners.length > 1 ? 'is ambiguous' : 'is not owned by any online host';
-        throw new Error(`T3Code thread ${input.nativeAgentId} ${reason}; online T3 hosts: ${online}`);
-      }
-      hostId = owners[0]!;
-    } else if (input.hostKind === 'bb') {
-      const owners: string[] = [];
-      for (const candidate of hosts) {
-        try {
-          const observation = await this.engine.withHost(candidate, () => this.engine.host.observe(input.nativeAgentId));
-          if (observation?.id === input.nativeAgentId && observation.status !== 'gone') owners.push(candidate);
-        } catch { /* A host that cannot verify this thread is not an owner. */ }
-      }
-      if (owners.length !== 1) {
-        const online = hosts.length ? hosts.join(', ') : '(none)';
-        const reason = owners.length > 1 ? 'is ambiguous' : 'is not owned by any online host';
-        throw new Error(`BB thread ${input.nativeAgentId} ${reason}; online BB hosts: ${online}`);
-      }
-      hostId = owners[0]!;
-    } else {
-      if (hosts.length !== 1) throw new Error(`Calling host identity is unavailable or ambiguous for ${input.hostKind}`);
-      hostId = hosts[0]!;
-    }
-    const caller = formatAgentId(hostId, input.nativeAgentId);
-    // This call is the planner thread's own proof of life, so its participant
-    // ticket travels in the response instead of a message into its thread.
-    const participantTicket = await this.plannerTickets.forCaller(caller);
-    return { caller, hostId, source: 'host' as const, ...(participantTicket ? { participantTicket } : {}) };
+    const { resolveHostCallerIdentity } = await import("../core/dispatch/caller-resolution");
+    const adapter = this.adapter as { helperPath?: string } | undefined;
+    return resolveHostCallerIdentity({
+      onlineIds: () => this.hostRegistry.onlineIds(),
+      observe: (hostId, nativeAgentId) => this.engine.withHost(hostId, () => this.engine.host.observe(nativeAgentId)),
+      unreleasedRuns: this.store ? (caller, hostId) => this.store.unreleasedRunsForAgent(caller, hostId) : undefined,
+      helperPath: adapter?.helperPath,
+      participantTicket: caller => this.plannerTickets.forCaller(caller),
+    }, input);
+  }
+
+  /** Catalogue tell for a host-verified thread that has no run or participant ticket. */
+  async tellFromHost(input: {
+    hostKind: HostKind; nativeAgentId: string; hostScope?: string;
+    eventId: string; to: import("../core/questions/agent-messages").AgentMessageRequest["to"];
+    role?: import("../core/questions/agent-messages").AgentMessageRequest["role"]; text: string;
+  }) {
+    await this.started;
+    const identity = await this.resolveHostCaller(input);
+    return this.engine.resolution.hostAgentMessage(
+      { caller: identity.caller, hostId: identity.hostId },
+      { eventId: input.eventId, to: input.to, role: input.role, text: input.text },
+    );
   }
 
   async registerTask(input: import('../shared/contracts').TaskRegistrationInput, _accepted: unknown, context?: { via?: string | null }) {

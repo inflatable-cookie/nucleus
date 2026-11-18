@@ -44,6 +44,15 @@ the change belongs upstream (Spec 062, decision 5f's exit path).
    action menus (dropdown and context): the fork's `NucleusProjectBoardMenuItem`,
    which renders a "Board" link to the Nucleus project's board when the batched
    read names the row's BB project, and nothing otherwise (Spec 062, decision 5d).
+   nucleus#1313 adds three things here. Where this row would render upstream's "No threads" and the
+   project's own threads are all nested under another project's planner, it renders the fork's
+   `NucleusNestedTaskPointers` instead — "1 task under <planner title>" on the planner's own route;
+   a project with no threads anywhere keeps upstream's empty state. A Nucleus container has no
+   action controls and reserves no slot for them (nucleus#1323), so its title and state line take the
+   row's width; detach is BB drag and drop or the `detach` owner control. Upstream's are gone too: no "New thread in environment" (it would add a participant Nucleus
+   does not know about), no Edit (it renames an environment the header no longer shows) and no
+   Archive (it would archive live role threads behind Nucleus's back). Every ordinary worktree group
+   keeps upstream's actions untouched.
 2. **`0002-expanded-task-groups-preference.patch` — `shared/preferences.ts`,
    `app/preferences/atoms.ts`.** One preference key, `expandedTaskGroups`
    (environment ids). Reason: a task group is collapsed by default and its expand
@@ -52,9 +61,13 @@ the change belongs upstream (Spec 062, decision 5f's exit path).
 3. **`0003-nucleus-task-groups.patch` — `app/list/nucleusTaskGroups.tsx` (new)
    and `app/list/nucleusTaskGroups.test.tsx` (new).** The batched read (`sidebarGroups`, one call for every group), its
    join by `environment.id`, the collapsed/expanded decision derived from (1) and
-   (2), the state-line component, and (phase 6) the project-row board link,
-   resolved from the same read's `projects` by BB project id. Reason: the fork's own logic belongs in one
-   file of the fork rather than smeared over upstream's components.
+   (2), the state-line component, (phase 6) the project-row board link,
+   resolved from the same read's `projects` by BB project id, and (nucleus#1313) the nested-elsewhere
+   pointer with its counting rule, the repository-led state line (folder icon plus the repository
+   label), the PR chip (the shared `shared/pull-request-badge.ts` mapping as an icon plus `#39` in the
+   state colour, with the state in the aria-label) and the task container's own action menu items.
+   Reason: the fork's own logic belongs in one file of the fork rather than smeared over upstream's
+   components.
 4. **`0004-export-thread-list.patch` — `app.tsx`, `app.test.tsx`,
    `sidebarRowRenders.test.tsx`.** `app.tsx` exports the list's component and its
    registration instead of defining a plugin, because Nucleus's own plugin entry

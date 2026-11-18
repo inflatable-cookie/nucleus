@@ -95,7 +95,7 @@ export function ownerRevisionFixture(){
   // merge commit the forge reports while merged; `onMerge`/`onObserve` let a
   // test mutate one fact inside an awaited proof.
   const state={loseAgentReply:false,prSha:oldHead,prAuthor:'external-author',busyReason:'',busyTransient:undefined as boolean|undefined,onPull:null as null|(()=>void),onRepo:null as null|(()=>void),
-    merged:false,mergeCommit:null as string|null,onMerge:null as null|(()=>void),onObserve:null as null|((id:string)=>void),
+    merged:false,mergeCommit:null as string|null,syncCommit:null as string|null,onMerge:null as null|(()=>void),onObserve:null as null|((id:string)=>void),
     // An admitted adapter's method overrides capture their delegate at
     // construction, so a test that needs the REAL proof swaps this hook rather
     // than the proxy's method (task 408 identity coverage).
@@ -157,7 +157,7 @@ export function ownerRevisionFixture(){
       createRun:async(_task,run,token)=>{tokens.set(run.id,token);const id=creates.length ? `review-agent-${run.id}` : 'review-agent';creates.push(run);states.set(id,{id,workspaceId:run.workspaceId,status:'running',active:true,permissions:false,error:'',model:reviewer.model});if(state.loseAgentReply){state.loseAgentReply=false;throw Error('lost agent reply');}return{id,workspaceId:run.workspaceId}},
       sendRun:async()=>{},findRunAgents:async run=>creates.filter(created=>created.id===run.id).map(created=>({id:creates.indexOf(created) ? `review-agent-${run.id}` : 'review-agent',workspaceId:run.workspaceId})),verifyReview:async()=>{},
       mergeGate:async()=>({head:workspaceHead(),base:planningCommit,wait:''}),merge:async()=>{},
-      merged:async()=>({merged:false,commit:null,head:workspaceHead(),base:'main'}),syncMain:async()=>planningCommit,
+      merged:async()=>({merged:false,commit:null,head:workspaceHead(),base:'main'}),syncMain:async()=>state.syncCommit??planningCommit,
       verifyCloseout:async()=>{},notify:async()=>{},
     };
     return adapter as Adapter&ReviewEntryAdapter;

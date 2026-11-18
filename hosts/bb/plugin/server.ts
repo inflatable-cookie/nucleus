@@ -25,12 +25,15 @@ import {
   createBoardBridge,
   forwardLifecycleHint,
   readBoardServiceState,
+  parentChangedListener,
+
   withTerminalCommand,
   type BbLifecycleEvent,
   type BoardBridgeSource,
   type CliRegistration,
   type TerminalCreateSdk,
 } from "./board-bridge";
+import { REPORT_RELAY_MAX_BYTES, REPORT_RELAY_PATH, relayRunReport, ReportRelayRefusal } from "./report-relay";
 
 /** The plugin SDK this build was written against. A diagnostic, never an allowlist. */
 export const BB_PLUGIN_SDK_VERSION = "0.6.132";
@@ -184,10 +187,38 @@ export default async function plugin(bb: BbPluginApi) {
     experimental_description:
       "The Nucleus board's catalogue call: forwards one service catalogue method over the plugin's retained connection.",
   });
+  // nucleus#1315: a sandboxed role thread cannot open the Nucleus callback socket
+  // (Claude's sandbox refuses every Unix socket), so the packaged helper hands its
+  // report to this backend over loopback instead. The route runs here, outside the
+  // provider sandbox, forwards only this data home's own ticket-bound callback
+  // routes, and answers with the service's own answer.
+  bb.http.route("POST", REPORT_RELAY_PATH, async context => {
+    const declared = Number(context.req.header("content-length") ?? "0");
+    if (Number.isFinite(declared) && declared > REPORT_RELAY_MAX_BYTES)
+      return context.json({ error: "The relay body is too large" }, 413);
+    let body: unknown;
+    try {
+      body = await context.req.json();
+    } catch {
+      return context.json({ error: "The relay body is not JSON" }, 400);
+    }
+    const { serviceDataDir } = await settings.get();
+    try {
+      const answer = await relayRunReport({ dataDir: serviceDataDir || null, body });
+      return new Response(answer.body, { status: answer.status, headers: { "content-type": "application/json" } });
+    } catch (error) {
+      const refusal = error instanceof ReportRelayRefusal ? error.message : "The report relay failed";
+      bb.log.warn(`report relay refused: ${refusal}`);
+      return context.json({ error: refusal }, 409);
+    }
+  }, { auth: "local" });
   // BB's thread events ride the existing bounded lifecycle hint, never a lifecycle write.
   for (const event of Object.keys(BB_LIFECYCLE_HINTS) as BbLifecycleEvent[]) {
     bb.events.on(event, payload => { void forwardLifecycleHint(() => channelClient, event, payload as { thread?: { id?: unknown } }); });
   }
+  // An operator drag is presentation intent; Nucleus's own reparent echoes are dropped (nucleus#1323).
+  const onParentChanged = parentChangedListener(() => channelClient, operations);
+  bb.events.on("experimental_thread.parentChanged", payload => { void onParentChanged(payload); });
 
   bb.agents.configure(context => {
     const meta = context.pluginMetadata.nucleus;

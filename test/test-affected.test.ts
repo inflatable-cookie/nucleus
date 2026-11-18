@@ -29,11 +29,34 @@ test('a direct importer of a changed file is selected, and an unrelated test is 
   assert.equal(result.tests.find(entry => entry.file === 'test/a.test.ts')?.reasons[0], 'test/a.test.ts → core/x.ts');
 });
 
-test('a transitive importer is selected with its import chain', () => {
+test('a test reaching the change only through a production module is not selected: that sweep is milestone QA', () => {
   const { files, sources } = tree(base);
   const result = selectAffected({ changed: ['core/x.ts'], files, sources });
-  assert.ok(selected(result).includes('test/b.test.ts'), 'test/b imports y, which imports x');
-  assert.equal(result.tests.find(entry => entry.file === 'test/b.test.ts')?.reasons[0], 'test/b.test.ts → core/y.ts → core/x.ts');
+  assert.ok(!selected(result).includes('test/b.test.ts'), 'test/b imports y, which imports x: a hub-style chain');
+  assert.deepEqual(result.deferred, []);
+});
+
+test('a hub module selects only its direct importers, not every test that reaches it', () => {
+  const hub: Record<string, string> = { 'core/hub.ts': 'export const hub = 1;' };
+  for (let i = 0; i < 30; i++) {
+    hub[`core/m${i}.ts`] = "import { hub } from './hub';\nexport const m = hub;";
+    hub[`test/m${i}.test.ts`] = `import { m } from '../core/m${i}';\n`;
+  }
+  hub['test/hub.test.ts'] = "import { hub } from '../core/hub';\n";
+  const { files, sources } = tree(hub);
+  assert.deepEqual(selected(selectAffected({ changed: ['core/hub.ts'], files, sources })), ['test/hub.test.ts']);
+});
+
+test('past the cap the nearest files run and the rest are deferred to milestone QA', () => {
+  const many: Record<string, string> = { 'core/x.ts': 'export const x = 1;', 'test/changed.test.ts': 'export {};' };
+  for (let i = 0; i < 5; i++) many[`test/i${i}.test.ts`] = "import { x } from '../core/x';\n";
+  for (let i = 0; i < 5; i++) many[`test/n${i}.test.ts`] = "const fixture = 'core/x.ts';\n";
+  const { files, sources } = tree(many);
+  const result = selectAffected({ changed: ['core/x.ts', 'test/changed.test.ts'], files, sources, max: 4 });
+  assert.equal(result.tests.length, 4);
+  assert.ok(selected(result).includes('test/changed.test.ts'), 'a changed test always comes first');
+  assert.ok(selected(result).every(file => !file.startsWith('test/n')), 'importers outrank path literals');
+  assert.equal(result.deferred.length, 7);
 });
 
 test('a test that names a changed file by path is selected without importing it', () => {
@@ -166,4 +189,32 @@ test('a serial oracle that a shard entry reaches through its required case file 
     'core/x.ts': 'export const x = 1;',
   });
   assert.deepEqual(selectAffected({ changed: ['core/x.ts'], files, sources }).serial, ['test/shard.test.ts']);
+});
+
+test('within the cap a direct importer outranks a chain through test helpers', () => {
+  const { files, sources } = tree({
+    'core/x.ts': 'export const x = 1;',
+    'test/support/uses-x.ts': "import { x } from '../../core/x';\nexport const h = x;",
+    'test/a-via-helper.test.ts': "import { h } from './support/uses-x';\n",
+    'test/z-direct.test.ts': "import { x } from '../core/x';\n",
+  });
+  const result = selectAffected({ changed: ['core/x.ts'], files, sources, max: 1 });
+  assert.deepEqual(selected(result), ['test/z-direct.test.ts']);
+  assert.deepEqual(result.deferred.map(entry => entry.file), ['test/a-via-helper.test.ts']);
+});
+
+test('a documentation change does not select tests that only walk docs/', () => {
+  const { files, sources } = tree({
+    'test/docs-walk.test.ts': "const root = join(here, 'docs');\n",
+    'test/names-doc.test.ts': "const vision = 'knowledge/vision.md';\n",
+  });
+  assert.deepEqual(selected(selectAffected({ changed: ['docs/knowledge/vision.md'], files, sources })), ['test/names-doc.test.ts']);
+});
+
+test('a changed test file does not select tests that only walk test/', () => {
+  const { files, sources } = tree({
+    'test/edited.test.ts': 'export {};',
+    'test/test-walk.test.ts': "const root = join(here, '..', 'test');\n",
+  });
+  assert.deepEqual(selected(selectAffected({ changed: ['test/edited.test.ts'], files, sources })), ['test/edited.test.ts']);
 });

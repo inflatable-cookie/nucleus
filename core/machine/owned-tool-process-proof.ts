@@ -19,6 +19,34 @@ function argvBase(arg: string | undefined): string | undefined {
   return arg?.split(/[\\/]/).pop();
 }
 
+/** The per-run report bridges Queue starts beside an agent session. */
+const REPORT_HELPER_SCRIPTS = ["mcp-report.mjs", "worker-report.mjs"];
+
+/** Whether a command runs one of those bridges, whatever its arguments. */
+function isReportHelperCommand(command: string): boolean {
+  const args = commandArgv(command);
+  return argvBase(args[0]) === "node" && REPORT_HELPER_SCRIPTS.includes(argvBase(args[1]) ?? "");
+}
+
+/**
+ * The pids of per-run report bridges whose provider is no longer in the table.
+ *
+ * A bridge is started by the agent host it reports for, so it lives exactly as
+ * long as that session; one still listed after its provider is gone has outlived
+ * the run and is a run-owned leftover, not standing infrastructure
+ * (nucleus#1329). The helper's own identity stays the same read as every other
+ * proof here — its pid and the table's start identity — never a pattern match.
+ */
+export function orphanedRunHelperPids(processes: readonly HostProcessFact[]): Set<number> {
+  const pids = new Set<number>();
+  for (const helper of processes) {
+    if (!isReportHelperCommand(helper.command)) continue;
+    if (processes.some(fact => fact.pid === helper.ppid)) continue;
+    pids.add(helper.pid);
+  }
+  return pids;
+}
+
 /** Match the Node bridge invocation, not provider config that merely names it. */
 function isRunMcpReportHelper(command: string, ticket: string): boolean {
   const args = commandArgv(command);
@@ -195,9 +223,12 @@ export function runProviderBindings(processes: readonly HostProcessFact[]): Arra
 /** Agent hosts, their standing runtimes and report helpers are infrastructure, never run cleanup targets. */
 export function runInfrastructurePids(processes: readonly HostProcessFact[]): Set<number> {
   const protectedPids = new Set<number>();
+  const orphaned = orphanedRunHelperPids(processes);
   for (const helper of processes) {
-    const args = commandArgv(helper.command);
-    if (argvBase(args[0]) !== "node" || !["mcp-report.mjs", "worker-report.mjs"].includes(argvBase(args[1]) ?? "")) continue;
+    if (!isReportHelperCommand(helper.command)) continue;
+    // A bridge whose provider has exited has no session left to serve: it is an
+    // orphan of a finished run, so the sweep's cleanup may reap it by identity.
+    if (orphaned.has(helper.pid)) continue;
     protectedPids.add(helper.pid);
     const provider = processes.find(fact => fact.pid === helper.ppid);
     if (!provider) continue;

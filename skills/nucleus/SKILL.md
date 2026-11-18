@@ -30,22 +30,9 @@ ticket or route to bypass it. All other helpers connect directly to Nucleus;
 
 ## Calling thread identity
 
-The CLI and submit, subscribe and reparent helpers identify the calling thread from its
-Nucleus-issued ticket first, then its host's identity. `NUCLEUS_TICKET` names the run
-or participant ticket; use the path delivered to this thread. An invalid or revoked
-ticket refuses. Without a ticket, T3Code uses `T3CODE_THREAD_ID` together with
-`T3CODE_DESKTOP_HOST_SCOPE`; Nucleus matches that scope to its registered online
-T3 host and verifies the thread through that host's adapter. Paseo uses
-`PASEO_AGENT_ID`. BB uses `BB_THREAD_ID`; Nucleus verifies the exact thread through
-one registered online BB host before recording the host-qualified caller. A BB
-environment or project context without its thread id refuses. If multiple host
-identities are present, T3Code takes precedence over BB, and BB over Paseo; an
-incomplete T3 or BB identity refuses instead of falling through. If no source
-exists, the refusal names the sources tried. These identities identify the caller
-only; they do not grant authority beyond a Nucleus ticket's existing scope. Online
-BB hosts can carry submission ingress, while dispatch still follows repository host
-settings or the operator default.
-Explicit operator and relayed-note paths keep their existing meaning.
+The CLI and helpers identify the calling thread in this order: an explicit Nucleus ticket (`NUCLEUS_TICKET`); the current run's ticket, located from the thread's own identity even when the shell environment is stale; then the host-verified thread identity. A slow host never times out silently: the caller hears "The host is slow; retry". An explicit ticket wins for every verb that records a caller (`decision.add`, `lead.submit`, `question.answer`, `tell`): Nucleus records the ticket's thread as asker and delivery target, never an MCP session or host scope from the environment. Any recognised caller can `tell` a project planner or task role, including a host-only identity and a task-planner ticket. `ask` still needs a run ticket.
+
+`NUCLEUS_TICKET` names the run or participant ticket; use the path delivered to this thread. An invalid or revoked ticket refuses. A named `NUCLEUS_TICKET` whose file is missing refuses when the host identity is an MCP session, rather than recording that session. Without a ticket, T3Code uses `T3CODE_THREAD_ID` together with `T3CODE_DESKTOP_HOST_SCOPE`; Nucleus matches that scope to its registered online T3 host and verifies the thread through that host's adapter. BB uses `BB_THREAD_ID`; Nucleus verifies the exact thread through one registered online BB host before recording the host-qualified caller. Paseo uses `PASEO_AGENT_ID`. If multiple host identities are present, T3Code takes precedence over BB, and BB over Paseo; an incomplete T3 or BB identity refuses instead of falling through. If no source exists, the refusal names the sources tried. These identities identify the caller only; they do not grant authority beyond a Nucleus ticket's existing scope. Online BB hosts can carry submission ingress, while dispatch still follows repository host settings or the operator default. Explicit operator and relayed-note paths keep their existing meaning. A decision answer is delivered to that recorded asker or queued with a visible wait (attempts > 0); an identity Nucleus cannot route is shown on the decision.
 
 Assigning a planner issues an owner-only participant ticket and hands its path over
 without messaging the thread: the planner that named itself takes it in that
@@ -100,7 +87,8 @@ thread ID. `ask` is a question that waits for an answer and escalates; `tell` is
   as `effigy#590` with `role` (worker, reviewer, planner or executor), `{"project": ...}` or
   `{"project": ..., "agent": ...}`.
 Nucleus delivers a `tell` labelled with your role and project. To a working T3 agent it steers into
-the running turn; to a working Paseo agent it waits until the agent is idle. Otherwise it queues for
+the running turn; to a working Paseo agent it waits until the agent is idle (papercut e629a20c,
+deprecated: Paseo cannot steer and is slated for retirement). Otherwise it queues for
 the recipient's next turn or the project inbox, or reports an uncertain delivery that must not be resent. A tell is
 recorded before delivery and returns after at most a short inline delivery window; its receipt names
 the status and `recordedAt` time, plus `deliveredAt` when delivery is confirmed. If delivery is still
@@ -852,12 +840,25 @@ reviewer checkpoint continuation, or re-creating an uncertain run) is recorded
 and delivered after unpause, or after the dispatch hold is released. If it no
 longer applies by then, it is refused once and never retried.
 
+Tom's 2026-11-17 ruling keeps one retained reviewer per task. If its report is
+missing, use `move to=review` or `restart role=reviewer` to ask the same idle
+reviewer to redeliver; an active reviewer keeps its turn. A released reportless
+round returns to the same reviewer with a recovery request. A fresh reviewer is
+for one proved gone or ruled out by model or independence, not a missing report.
+Unknown delivery remains held until observed.
+
+Owner verbs use current forge, checkout, integration and participant facts.
+Exact-head review or operator source acceptance, preservation of uncommitted
+work, one writer per branch and routing sign-off remain required. A recorded
+merge that matches the forge returns through integration synchronization before
+closeout. A stale phase or missing bookkeeping alone is not a reason to stop.
+
 **`move`** sends the task to another step: `action: "move"`, `to` (`work`,
 `review`, `merge` or `closeout`), a required `reason`, and an optional
 `instruction` for `work`. `work` returns the task to its author for a revision (a
 gone author is replaced on the worker route; a stopped or checkpointed reviewer
-lease is superseded first). `review` supersedes accepted credit and answered
-episodes and starts a fresh reviewer at the verified current head. `merge` needs a
+lease is superseded first). `review` preserves the retained reviewer at the
+verified current head and recovers a missing report from that reader. `merge` needs a
 `ready_to_merge` review at the exact current head, re-verified at the forge, and
 enters the ordinary verification turn — a clean integration-base advance is not
 drift. `closeout` needs the PR observed merged and never mints a review. For a
@@ -1161,6 +1162,14 @@ old thread owns. Holds the owner placed, pending owner notices and the creator's
 own completion nomination follow the new owner without further steps; third-party
 holds, settled notices and finished tasks stay as recorded. Repeating the request
 changes nothing.
+
+A task's presentation can be detached from its planner without changing the planner or the owner:
+`nucleus helper detach --task TASK_ID [--task TASK_ID ...] [--reason TEXT]` records that the task's group
+has no planner thread for presentation, so each host renders it standalone — used when a planner thread
+must be replaced or archived. It is host-general and changes nothing about planning questions; naming a
+new planner with `nucleus helper reparent` (or any route that changes the task's planner) clears the
+record and nests the group again. Any authenticated local caller may apply it (the caller is recorded on
+the control's audit line and on the record); it is presentation only, so it needs no owner authority.
 
 A project may name a fallback planner with `project.set-planner` (`key`, `agentId`
 or null; the calling thread is recorded as `setBy`, and an unregistered thread is

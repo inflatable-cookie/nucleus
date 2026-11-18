@@ -15,6 +15,8 @@ import { digest, now } from "../store/store";
 import { OPERATOR_WORKER_REMAP_REASON, PROFILE_CATALOG_LOADING_REFUSAL, isAcceptedReview } from "../recovery/task-reasons";
 import { decideWorkerReplacement, retainedWorkerFailureCause } from "../recovery/worker-replacement";
 import { proofOnlyReceiptAwaitingReview } from "../qa/proof-records";
+import { requireReviewerReplacement } from './reviewer-report';
+import { provenAbsentCreation } from '../recovery/absent-creation/decisions';
 
 /** Build the route's task patch from facts captured in the transaction. */
 export function routePatch(f: {
@@ -147,6 +149,9 @@ export class RouteControls {
       // The displacement a `now` route owes; a sign-off-pending route owes none
       // and is written like a route without `now`.
       const replaceLive = replaceNow && !signoffPendingNow;
+      if (replaceLive && role === 'reviewer' && task.resolution.reviewerAgentId
+        && task.resolution.reviewerProfile?.id === profileId)
+        await requireReviewerReplacement(this.engine, task, task.version);
 
       // A `route now` displaces that role's live run, so a worker replacement owes
       // the same unresolved delivery and effect proofs the retained-worker
@@ -181,7 +186,9 @@ export class RouteControls {
       const admittedCompletion = task.completion?.eventId ?? null;
       const admittedRunCompletion = live?.run?.completion?.eventId ?? null;
       let archivePending = false;
-      if (replaceLive && live) {
+      // A proven-absent reviewer creation has no thread to stop or archive: it is released in the transaction below.
+      const absentRun = replaceLive && role === 'reviewer' && live?.run && provenAbsentCreation(live.run) ? live.run : null;
+      if (replaceLive && live && !absentRun) {
         archivePending = await this.stopRouteRun(task, role, live.run, operationId);
         task = this.store.task(task.id);
         // Spec 050: a completed callback that wins the replacement race is
@@ -221,8 +228,12 @@ export class RouteControls {
       } };
 
       const updated = this.store.transaction(() => {
-        const current = this.store.task(task.id);
+        let current = this.store.task(task.id);
         this.engine.requireOwnerControlCurrent(current, task.version, "Task changed during route");
+        if (absentRun) {
+          this.resolution.releaseAbsentRun(current, absentRun.id, `route now ${role} to ${profileId}`);
+          current = this.store.task(task.id);
+        }
         const thinkingPatch = role === 'worker' && !unsignedRoute ? input.thinkingOptionId ?? honouredWorkerThinking(task, this.store.pool(), this.store.usageLevel()) : undefined;
         const currentRun = current.resolution.currentRunId ? this.store.run(current.resolution.currentRunId) : null;
         let continuation = '';
@@ -290,6 +301,10 @@ export class RouteControls {
    * replacement can start. An already-inactive turn needs no cancellation.
    */
   async stopRouteRun(task: Task, role: RouteRole, run: Run | null, operationId?: string): Promise<boolean> {
+    // Only a worker's retained thread may stand in for a run without an agent; a reviewer's
+    // uncertain creation must never take the worker's agent as its own.
+    if (run && !run.agentId && role !== 'worker')
+      throw Error(`route now cannot replace the ${role}'s creation until an exact lookup proves no agent exists; nothing was stopped or sent`);
     const agentId = run?.agentId ?? task.agentId;
     const workspaceId = run?.workspaceId ?? task.workspaceId;
     if (!agentId || !workspaceId) throw Error(`route now requires the ${role}'s retained agent and workspace`);

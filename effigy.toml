@@ -48,6 +48,10 @@ setup = "npm ci"
 # Spec 062 phase 7's trial: a plugin reload, a BB restart and a host outage mid-task
 # on the isolated BB server, each recovered by observation and never resent.
 "proof:bb:trial" = "node --import tsx scripts/acceptance/bb-trial-private.ts {args}"
+# nucleus#1315: two sandboxed Claude Code role threads (Accept Edits, the provider
+# sandbox on) deliver their reports through the loopback relay and read a sibling
+# checkout, on the isolated BB server.
+"proof:bb:sandbox" = "node --import tsx scripts/acceptance/bb-sandbox-private.ts {args}"
 check = [{ task = "check:types" }, { task = "check:plugin-types" }, { task = "check:publication" }]
 # Test files a change can affect, from the import graph; `--run` runs them. See scripts/test-affected.mjs.
 "test:affected" = "node scripts/test-affected.mjs {args}"
@@ -61,6 +65,8 @@ check = [{ task = "check:types" }, { task = "check:plugin-types" }, { task = "ch
 # Proves a move PR changed no moved code; see scripts/check-moves.ts.
 "check:moves" = "node --import tsx scripts/check-moves.ts {args}"
 fmt = "node scripts/format-changed-typescript.mjs"
+"fmt:check" = "node scripts/format-changed-typescript.mjs --check"
+"qa:retired-concepts" = "node scripts/check-retired-concepts.mjs"
 # Wall-clock oracles run alone after the parallel suite; see scripts/test-timing.mjs.
 "test:timing" = "npm run test:timing -- {args}"
 # Fast checks first: a type or docs failure surfaces in seconds, not after the unit stage.

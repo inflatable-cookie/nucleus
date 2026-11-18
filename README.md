@@ -62,8 +62,10 @@ BB, and nothing else in your BB is read or written.
    nucleus bb status
    ```
 
-   `nucleus bb install` runs BB's own install for the plugin with ID `nucleus`,
-   points the plugin at your Nucleus data home so it connects, and reloads it.
+   `nucleus bb install` copies the plugin to your Nucleus data home before BB
+   installs it, so BB builds cannot change the installed Nucleus version. It
+   points the plugin at that data home and reloads it; `nucleus bb uninstall`
+   removes the plugin and its managed copy.
    `nucleus bb status` reports the installed plugin's version and build against
    the running Nucleus service (`match`, or `behind` with the command to fix it),
    and says when the plugin is not configured to connect.
@@ -78,6 +80,9 @@ BB, and nothing else in your BB is read or written.
    is refused with a message naming both builds, and the board shows the BB host
    unavailable with that reason. Reinstall with `nucleus bb install`; Nucleus
    never writes into your BB on its own.
+   If Paseo detects a changed installed file, its bridge stays available, the
+   board reports the failed roll, and the notice recommends reinstalling that
+   version or rolling to a fresh build.
 4. **Remove it.** `nucleus bb uninstall` removes the plugin with ID `nucleus`.
    No other plugin, project or thread is touched; a plugin with ID `nucleus`
    that is not a Nucleus build is refused by name rather than overwritten or
@@ -131,13 +136,31 @@ T3Code owns subscription usage display through its own features and plugins;
 Nucleus adds no subscription usage gauge. Its usage level remains a Nucleus
 dispatch setting, separate from monitoring provider subscription windows.
 
-On T3Code, a task starts one thread per agent: the worker, its reviewer, recovery,
-coordinator and executor threads. Nucleus tags those support threads
-`nucleus-support` and links each one from the worker's conversation as a card, so
-the worker thread is the task's one row and its title names the step. The support
-threads still appear in the sidebar as their own rows until you turn T3's own hide
-setting on. That setting is optional: with it off, everything above works the same
-and the support threads simply stay visible.
+On T3Code a task is one thread on the Nucleus ACP provider, and its worker,
+reviewer, recovery, coordinator and executor threads are that thread's native
+subagent children: T3 draws them inside the parent's card, so one row per task is
+what you see with no setting to turn on. The parent has no model. It shows the
+task's lifecycle text and holds its turn while a role runs, so the row reads as
+working exactly when the task is.
+
+That needs the Nucleus ACP provider registered in T3 once. T3 keeps it in its own
+provider settings, so paste this into an agent on the machine that runs T3:
+
+> Register the installed `nucleus-acp` command (on `PATH`, or as
+> `~/.local/bin/nucleus-acp`) as a T3Code ACP provider named `nucleus`, keeping
+> every existing provider exactly as it is. Show me the settings diff before saving.
+
+Nucleus checks for that provider at connect and before every launch and reports
+the answer as `service.health`'s `t3code.nativeParenting` line. Without it, a task
+falls back to one top-level thread per agent, which is the next paragraph, and
+nothing stops working.
+
+In that fallback, Nucleus tags the worker's sibling threads `nucleus-support` and
+links each one from the worker's conversation as a card, so the worker thread is
+the task's one row and its title names the step. Those threads still appear in the
+sidebar as their own rows until you turn T3's own hide setting on. That setting is
+optional: with it off, everything above works the same and the support threads
+simply stay visible.
 
 The hide switch lives in T3's server settings and has no settings screen:
 `hideTaggedThreads: true` plus `nucleus-support` in `hiddenThreadTags`. A client

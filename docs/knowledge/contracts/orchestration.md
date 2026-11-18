@@ -231,7 +231,9 @@ periodic chores and one host's steps belong to their own owners: **SweepMaintena
 the owner/lane passes on their own cadence, and **HostPass**
 (`core/scheduling/host-pass.ts`) runs one host's settlement, row-surfacing,
 inventory, retired-worker, title and finished-thread steps, recording a step that
-throws as `hostPassError` instead of dropping it.
+throws as `hostPassError` instead of dropping it. A host transport failure while
+entering a host pass opens that host's ordinary `host_unavailable` wait for its
+tasks and the fleet pass continues; it never becomes `engineError`.
 
 **ControlContext** (`core/verbs/control-context.ts`). Holds the hidden parameters of
 every verb (`selfForceRunId`, `coordinatorActionRunId`, `replayingDeferredVerb`)
@@ -686,7 +688,8 @@ Resolution, including `retry` so instance overrides still fire.
 
 **AbsentRestarts** (`core/recovery/absent-creation/restarts.ts`). Recreates
 proven-absent runs: an absent worker in the retained workspace, an absent
-resolution run, an uncertain-run restart under the same run ID, and the
+resolution run (released for a fresh run from the current route, never recreated
+under the recorded payload or the same run ID), and the
 one-replacement creation budget, whose record shape and reader are
 `absent-creation/budget.ts`. Enforces
 [Orphan worktree after a timed-out create](#orphan-worktree-after-a-timed-out-create).
@@ -1504,8 +1507,13 @@ request identities and submitted handoffs are not rewritten.
   with OS start identity rechecked before each signal. Only an inherited run ticket,
   inherited scratch path or command naming that run's scratch proves ownership;
   a shared checkout or process group alone never does. Agent hosts, their standing
-  runtimes, reporting helpers and processes carrying a live run's identity are
-  protected. Host observation retains helper-proven provider and standing-runtime
+  runtimes and processes carrying a live run's identity are protected; a reporting
+  helper is protected only while the provider session that started it is in the
+  table, because a helper is session-scoped while those runtimes outlive every
+  turn. A helper left behind by an exited provider is the settled run's own
+  leftover: the ticket it still holds is that run's identity, so cleanup stops it
+  under the recorded PID and start identity even when no host identity was ever
+  retained. Host observation retains helper-proven provider and standing-runtime
   PID/start identities, so attached tools and orphans remain distinguishable after
   the helper exits; runtimes identified from a still-live saved provider are also
   retained before it can exit. Saved protection never follows a recycled PID. Without an
@@ -1537,13 +1545,24 @@ request identities and submitted handoffs are not rewritten.
   the same evidence and is treated the same way. One sweep takes one process-table
   snapshot and one ownership-environment read for every run it settles, bounded so
   a read that never answers cannot hold it, and a run whose cleanup proved itself
-  complete is never scanned again — hourly or per pass. Cleanup runs on its own
+  complete is never scanned again — hourly or per pass. Every liveness and
+  ownership check in that sweep reads the same snapshot, so a sweep spawns no
+  synchronous `ps` at all: the liveness frame that dominated the executor profile
+  is gone (nucleus#1329). Signalling still rests on the recorded birth identity at
+  the moment of the signal, from one bounded spawned identity read for exactly the
+  targets that run owns; a read that cannot be made leaves the snapshot's answer
+  standing rather than inventing one. A fact the kernel or the snapshot proves gone
+  is not an unread holder, so a process that died between the listing and its own
+  environment read cannot defer a cleanup the run no longer owes. Cleanup runs on its own
   host lane (`cleanup:<host>`), one queued sweep per host, so it never holds a
   task's exclusive lane and never starves an owner control behind it. That queued
   sweep is host-scoped, never task-scoped: a burst of tasks on one host coalesces
   onto the sweep already waiting and it owes every run of the host, so no task's
   cleanup is dropped because another task asked first. Nothing is queued while the
   host owes no cleanup, so a task quantum never reads a process table for nothing.
+  Terminal sweeps use the host adapter’s listing when available; a failed or
+  unreadable listing retains the sweep intent. On macOS one listing uses one
+  process-table read and one cwd read for the PIDs in that snapshot.
   Prompts name the current run's directory, direct agents to prefix commands
   with that directory in `TMPDIR`, `TMP` and `TEMP` (including retained agents
   whose launch environment is older), direct agents to put fixtures in a child
@@ -1604,9 +1623,9 @@ request identities and submitted handoffs are not rewritten.
 - Skip full `effigy qa`/`ci` and repeat passes; raw `npx`/`cargo`/`bun`
   validation has no exception. Formatting applies only to changed formatted
   source with a covering Effigy format selector; a missing selector is a
-  papercut, not a review blocker. The TypeScript formatter applies only
-  formatter hunks overlapping changed lines, reports other formatting drift,
-  and exits successfully when it has formatted the changed hunks. Full
+  papercut, not a review blocker. `effigy fmt` formats whole changed TypeScript
+  files against the merge base with `origin/main`; `effigy fmt:check` reports
+  drift without writing, including in a clean review checkout. Full
   milestone QA is `project.qa.run` on main.
 - Counts requiring a live Nucleus store read are planner evidence. Reviewers
   judge the worker's recorded counts and list any live-store verification as a
@@ -1766,6 +1785,33 @@ review or merge credit; live participants and unsettled effects remain fences.
   a scan failure may show temporarily until a successful scan restores it.
 - When a retained thread blocks dispatch, the reason names its pending
   permission or question, active turn or non-resumable status.
+
+### Uncertain creation and absence
+
+- A run or worker creation that errors, or whose host call passes its admission
+  deadline, is `uncertain` with no agent. Nothing resends it.
+- Observation runs an exact lookup on each pending agentless run. Zero matches
+  after the grace window is absence. The first absence gets one same-role
+  automatic replacement. A second absence, with the replacement budget spent,
+  settles the run as absent: it records `absentProvenAt`, observation never
+  looks it up again, and it stops being a blocking run-delivery effect, so
+  `next` does not offer `retry_effect` for it. The task waits with `route` and
+  `restart` suggested. No coordinator is engaged, because the coordinator's own
+  creation runs on the same host.
+- `route role=reviewer now` on a proven-absent run releases it without an archive
+  wait: its credential is revoked and its incident resolves. The reviewer then
+  launches one fresh run on the named profile. A creation not yet proven absent
+  is refused, and route never stops or replaces it.
+- `restart` on a proven-absent resolution run releases it and launches a fresh
+  run from the role's current route. Its profile and provider come from the live
+  catalog, never the recorded creation payload. The new run has a new run ID and
+  creation intent.
+- A stale worker creation intent (no agent, no PR, no accepted result) with a
+  route or restart armed is settled by exact lookup first. Zero matches releases
+  the intent, and the armed replacement launches from the current route. One
+  matching agent binds to the task. Anything else waits for the operator.
+- A host-unavailable transport wait is re-evaluated by the first pass that sees
+  the host back.
 
 ### Retained worker recovery
 
@@ -2092,10 +2138,10 @@ reports, grants or spends that history.
   the canonical project, or a project rooted at the checkout). Cleanliness is
   proved, then the task/run/workspace binding and the checkout's Git source
   are re-proved as the last awaited proof before send.
-- The continuation ends for good when the budget is spent or the reviewer's
-  agent is positively observed closed (`retainedAgentClosedAt`, nothing else
-  changed). `next` then offers `restart role=reviewer fresh` or `route
-  role=reviewer now`; `move to=review` refuses and names that exit.
+- A spent checkpoint allowance ends automatic checkpoint continuation. The
+  owner can ask the same idle reviewer to finish or redeliver its report after
+  the PR head and thread are observed. A positively closed reviewer may be
+  replaced; a missing report alone never authorizes replacement.
 - A reader whose creation delivery stayed uncertain is continuable on the exact
   authenticated checkpoint evidence that proves creation reached it.
 - Refusals before the adapter's send are definite failures. After the adapter
@@ -2110,13 +2156,12 @@ reports, grants or spends that history.
 
 ### Retained and replaced readers
 
-- By default, `move to=review` preserves what it can continue (Tom, 2026-10-27): a valid
-  retained reader at the exact current head is never replaced; an awaiting
-  checkpoint continues through the ordinary retained-restart path. With no
-  continuable reader at that head, it starts a fresh reviewer. Explicit
-  `fresh: true` deliberately displaces a reader whose binding is proven, even
-  when a checkpointed round already holds a result; its result and checkpoints
-  remain history. It still refuses a reader whose binding cannot be proven.
+- Tom's 2026-11-17 ruling keeps one retained reviewer per task. `move to=review`
+  preserves a live reader and asks an idle, unreported reader to resend its
+  result on the same run and credential. A released reportless round resumes
+  the same reviewer with a report-recovery instruction. Unknown delivery is
+  observed before any retry. A new reviewer is for a reader proved gone or
+  ruled out by its model or independence, not a missing report or a round count.
 - One identity derivation separates an absent reader (none, or another head), a
   valid one and a refused one (binding unprovable). A refused reader is never
   read as absent or displaced; the move refuses and names the deliberate
@@ -2673,6 +2718,21 @@ movement invalidates source approval and preserves the normal readiness gates.
 
 ### Verbs
 
+- The owner verbs and reconciliation act on current forge, checkout,
+  integration and participant observations. Exact-head review or operator
+  source acceptance, preservation of uncommitted work, exclusive writers,
+  callback authentication, unknown delivery and routing sign-off remain real
+  invariants. A stale phase or absent internal record is not itself an invariant.
+- A recorded merge is re-observed at its exact head and commit before returning
+  to the ordinary integration synchronization and closeout gates. An ambiguous
+  observation changes nothing. An absent terminal cleanup target is settled
+  only when storage and the host archive are observed; this claims no removal.
+- A settled escalation closes its refusal follow-up. Reviewer-side answers
+  stay with the reviewer, and a coordinator may report an offered forced move
+  or effect retry under its own authenticated recovery binding.
+- A required worker preference needing board sign-off enters the same routing
+  request and decision lifecycle as an explicit role request; unsigned requests
+  use automatic selection until the decision is answered.
 - Owner task controls are the verbs ([Spec 050](../specs/050-owner-task-controls.md)):
   `next` (read), `route`, `restart`, `move`, `stop`, `complete`, `retry_effect`
   and `proof`. Every verb derives its identities from the task, writes one
@@ -3340,22 +3400,29 @@ bundled shell imports to the same host hooks and native stand-ins.
   reads the committed head only: changed paths come from `git diff --no-renames`
   against the merge base, and the graph from one `git ls-tree` plus one
   `git cat-file --batch` read. Import edges reuse `importEdges` from
-  `scripts/check-folder-imports.mjs`. A test is selected when it transitively
-  imports a changed file (through `.js`/`.mjs` emitted specifiers, index files and
-  `.d.mts` declarations of their implementation), when it names a changed path or a
+  `scripts/check-folder-imports.mjs`. A test is selected when it imports a changed
+  file directly or through the `test/` tree's helpers and shard case files (through
+  `.js`/`.mjs` emitted specifiers, index files and `.d.mts` declarations of their
+  implementation); the walk never passes through a production module, because hub
+  modules reached ~92% of the suite (Tom, 2026-11-18). It is also selected when it names a changed path or a
   path suffix of two or more segments as a string literal in its own source or in
   the `test/` helpers it reaches, or when it quotes any ancestor directory of the
   changed file as a whole literal (directory walkers recurse, so `client/` covers
   `client/board/x.tsx`). A changed test file always
   runs. Paths outside the graph and the docs (`package.json`, `effigy.toml`,
   `tsconfig*.json`) are reported as unmapped, never expanded to a full suite.
+  At most 60 files are selected, nearest first: a changed test, then direct
+  importers before chains through test helpers, then the tests the most changed
+  files reach, then path literals, then directory walkers. The rest are printed as
+  deferred to milestone QA and are never a review finding.
 - Test races are fixed as a class (Tom, 2026-10-15): a milestone failure that
   passes alone is attributed to its race shape, and one task covers every test
   with that shape. A failed physical file is investigated alone before any
   correction.
 - Fixture Git mutation, disposal and server stop after `quiesce`/`wake`/`stop`
   are safe. A synthetic task workspace that can reach dispatch lives inside its
-  fixture's own root, never directly in the host temporary directory.
+  fixture's own root, never directly in the host temporary directory. A private
+  host-run fixture preserves its root when settlement or server stop is unknown.
 - The parallel unit runner orders files by the recorded per-file durations in
   `scripts/test-durations.json`, longest first; unmeasured files follow in
   alphabetical order. Explicit file selections retain their given order. Refresh

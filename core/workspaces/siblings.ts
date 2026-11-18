@@ -111,6 +111,53 @@ export async function createSiblingWorktrees(options: {
   return { pins, skipped };
 }
 
+export interface SharedSiblingCheckout {
+  name: string;
+  path: string;
+  outcome: "created" | "existing" | "skipped" | "failed";
+  detail: string;
+}
+
+/**
+ * One shared sibling checkout per repository in the task's worktree root
+ * (nucleus#1315; Paseo parity, Spec 028). A Paseo root holds these clones already,
+ * shared by every task of the repository, and a dependant's relative
+ * `../sibling` resolves against them. A BB role thread can create nothing beside
+ * its checkout, so the service makes the same shared checkout: one detached
+ * worktree per sibling member at the sibling's fetched `origin/<base>` when it is
+ * first created. An existing path is never replaced (the Spec 028 refresh owns
+ * freshness and another task may be reading it), and a member without a local
+ * checkout is skipped by name rather than fabricated.
+ */
+export async function ensureSharedSiblingCheckouts(options: {
+  root: string;
+  baseBranch: string;
+  members: { origin: string | null; path: string }[];
+  git?: GitFn;
+}): Promise<SharedSiblingCheckout[]> {
+  const git = options.git ?? defaultGit;
+  const outcomes: SharedSiblingCheckout[] = [];
+  const used = new Set<string>();
+  for (const member of options.members) {
+    let name = siblingNameFor(member);
+    for (let suffix = 2; used.has(name); suffix++) name = `${siblingNameFor(member)}-${suffix}`;
+    used.add(name);
+    const path = join(options.root, name);
+    const missing = missingSiblingCheckout(member);
+    if (missing) { outcomes.push({ name, path, outcome: "skipped", detail: `${name} skipped: ${missing}` }); continue; }
+    if (existsSync(path)) { outcomes.push({ name, path, outcome: "existing", detail: `${name} existing` }); continue; }
+    try {
+      const commit = await git(member.path, "rev-parse", `refs/remotes/origin/${options.baseBranch}`);
+      mkdirSync(options.root, { recursive: true, mode: 0o700 });
+      await git(member.path, "worktree", "add", "--detach", path, commit);
+      outcomes.push({ name, path, outcome: "created", detail: `${name} created at ${commit.slice(0, 12)}` });
+    } catch (error) {
+      outcomes.push({ name, path, outcome: "failed", detail: `${name} failed: ${error instanceof Error ? error.message : String(error)}` });
+    }
+  }
+  return outcomes;
+}
+
 /**
  * Reconcile an uncertain sibling creation by path and commit: a worktree path
  * that already exists at exactly the fetched base is reused, never recreated.

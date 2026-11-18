@@ -76,8 +76,10 @@ export const runSchema = z.object({
   reviewSourceView: reviewSourceViewSchema.optional(),
   ordinaryDetached: z.literal(true).optional(),
   priorRunId: z.string().optional(),
+  /** A retained reviewer's earlier same-head run whose report did not arrive. */
+  reviewReportRecovery: z.string().optional(),
   priorHead: z.string().regex(/^[a-f0-9]{40}$/).optional(),
-  retainedRounds: z.number().int().min(0).max(3).optional(),
+  retainedRounds: z.number().int().min(0).optional(),
   reviewDelta: z.string().optional(),
   /** Queue 524: bounded pointer to author evidence posted as PR issue comments (never bodies); rendered in the reviewer prompt. */
   authorEvidence: z.string().optional(),
@@ -153,6 +155,12 @@ export const runSchema = z.object({
   retainedAgentClosedAt: z.string().optional(),
   /** When an owner control replaced this reviewer with another; its verdict at the exact head may still finish the review. */
   replacedAt: z.string().optional(),
+  /**
+   * When an exact lookup proved this uncertain creation produced no agent. The
+   * run is never resent and stops blocking owner verbs; `route now` and
+   * `restart` release it and launch a fresh run from the current route.
+   */
+  absentProvenAt: z.string().optional(),
   // Retired legacy continuation: nothing writes these; old records still parse. An unsettled one fails closed on reviewer delivery.
   reviewContinuation: reviewContinuationIntentSchema.nullable().optional(),
   reviewContinuations: z.number().int().nonnegative().optional(),

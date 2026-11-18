@@ -6,7 +6,7 @@
 
 export const usageText = `Usage: nucleus [--via-paseo] <method> [- | payload.json] [--wait]
 
-Helpers: nucleus helper submit|reparent|review-entry|bulk-dispose|subscribe|report [arguments]
+Helpers: nucleus helper submit|reparent|detach|review-entry|bulk-dispose|subscribe|report [arguments]
 
 Calls one Nucleus service method with a JSON payload. Pass - to read it from stdin
 (the default route: no shared temporary files), a path to read a file, or nothing

@@ -64,7 +64,7 @@ function fixture(retirement?: RuntimeRetirementService) {
   };
   const adapter = {
     profiles: async () => [workerProfile, reviewerProfile],
-    observe: async (id: string) => observations.get(id) ?? { id, workspaceId: null, status: 'idle', active: false, permissions: false, error: '' },
+    observe: async (id: string) => observations.get(id) ?? { id, workspaceId: id === 'worker-agent' ? 'workspace' : null, status: 'idle', active: false, permissions: false, error: '' },
     agentTimelinePage: async () => toolTimelinePage(timelineEntries),
     originAgent: async (id: string) => ({ id, workspaceId: 'workspace', archived: true }),
     archiveAgent: async () => {}, notify: async () => {},
@@ -224,7 +224,7 @@ for (const fault of ['different PR', 'active worker', 'unobservable worker', 'ac
       unreleasedRecoveryRun(f, { ...recoveredCompletion, taskId: f.taskId });
       const observation = f.observations.get('worker-agent')!;
       if (fault === 'active worker') f.observations.set('worker-agent', { ...observation, active: true });
-      if (fault === 'unobservable worker') f.observations.delete('worker-agent');
+      if (fault === 'unobservable worker') f.observations.set('worker-agent', { ...observation, status: 'unknown' });
       if (fault === 'active turn') f.observations.set('worker-agent', { ...observation, activeTurnId: 'turn' });
       if (fault === 'permission') f.observations.set('worker-agent', { ...observation, permissions: true });
       if (fault === 'source') f.adapter.verifyInspectedRevisionHead = async () => { throw Error('Source head is unpublished or differs from PR'); };
@@ -279,7 +279,7 @@ test('move review settles a finished recovery run whose agent is idle (#3569)', 
   } finally { await f.close(); }
 });
 
-test('move review supersedes a stopped reviewer with a stale active flag and settles a stale external-merge record (#3569)', async () => {
+test('move review asks the retained reviewer for its missing report despite a stale active flag (#3569)', async () => {
   const f = fixture(); try {
     dispatched(f);
     // The stored `active` flag is stale: the agent is observed idle with no turn.
@@ -289,17 +289,12 @@ test('move review supersedes a stopped reviewer with a stale active flag and set
       externalMergePreAttention: { phase: 'reviewing', reason: 'Stale external-merge check snapshot' } } });
 
     const moved = await moveControl(f, 'A fresh review at the current head');
-    assert.equal(moved.phase, 'awaiting_review');
+    assert.equal(moved.phase, 'reviewing');
     const settled = f.store.run(run.id)!;
-    // Replaced is not released (planner ruling, 2026-11-09): the move marks the
-    // stopped reviewer replaced with its claim held, and still settles the stale
-    // external-merge record.
-    assert.equal(settled.released, false, 'the stopped reviewer is replaced, not released');
-    assert.equal(settled.status, 'superseded');
-    assert.notEqual(settled.replacedAt, undefined);
-    assert.equal(moved.resolution.externalMergePreAttention, null, 'the stale pre-attention record is settled');
-    assert.equal(moved.resolution.attention, false);
-    assert.equal(f.events('owner_control').length, 1);
+    assert.equal(settled.released, false);
+    assert.equal(settled.status, 'running');
+    assert.equal(moved.resolution.currentRunId, run.id);
+    assert.equal(f.events('reviewer_report_request_sent').length, 1);
   } finally { await f.close(); }
 });
 
@@ -704,7 +699,7 @@ test('move to work treats a recorded PR URL or head as a PR, never as a pre-PR r
     // refusal applies (it names restart), and nothing changes.
     const before = f.task();
     await assert.rejects(f.engine.performTaskControl(taskControlInputSchema.parse({ ...work.args, reason: 'Continue on the PR', instruction: 'Address the feedback on PR #7', caller: CALLER })),
-      /requires an unmerged task PR; use restart/);
+      /Task has no PR|requires an unmerged task PR; use restart/);
     assert.equal(f.task().version, before.version, 'a refused move changes nothing');
     assert.equal(f.task().resolution.prePrResumeInstruction ?? null, null);
   } finally { await f.close(); }
@@ -767,6 +762,86 @@ test('move closeout records the observed external merge and never mints a review
     assert.equal(f.events('owner_control').length, 1);
     const audit = JSON.parse(f.events('owner_control')[0].detail);
     assert.deepEqual(audit.identities.move, { to: 'closeout' });
+  } finally { await f.close(); }
+});
+
+test('move closeout re-observes a recorded merge after integration sync failed', async () => {
+  const f = fixture(); try {
+    const commit = 'd'.repeat(40);
+    dispatched(f, { phase: 'blocked', resolution: { ...f.task().resolution, mergeIntent: true, mergeHead: head,
+      mergedCommit: commit, syncedCommit: null, review: { taskId: f.taskId, runId: 'review-run', eventId: 'review-1',
+        status: 'ready_to_merge', summary: 'Approved', head, reviewId: 12 } } });
+    f.observations.set('worker-agent', { id: 'worker-agent', workspaceId: 'workspace', status: 'idle', active: false, permissions: false, error: '' });
+    f.remote.merged = { head, commit };
+    const moved = await f.engine.performTaskControl(taskControlInputSchema.parse({ action: 'move', to: 'closeout', taskId: f.taskId,
+      version: f.task().version, reason: 'Retry integration sync', caller: CALLER }));
+    assert.equal(moved.phase, 'syncing');
+    assert.equal(moved.resolution.mergedCommit, commit);
+    assert.equal(moved.resolution.syncedCommit, null);
+    assert.equal(f.events('owner_closeout_merge_observed').length, 1);
+  } finally { await f.close(); }
+});
+
+test('move closeout keeps an already completed merge terminal', async () => {
+  const f = fixture(); try {
+    dispatched(f, { phase: 'done', resolution: { ...f.task().resolution, mergeHead: head, mergedCommit: 'd'.repeat(40), syncedCommit: 'd'.repeat(40) } });
+    const before = f.task();
+    await assert.rejects(f.engine.performTaskControl(taskControlInputSchema.parse({ action: 'move', to: 'closeout', taskId: f.taskId,
+      version: before.version, reason: 'Confirm closeout', caller: CALLER })), /could not change the task/);
+    const after = f.task();
+    assert.equal(after.phase, 'done');
+    assert.equal(after.resolution.mergedCommit, before.resolution.mergedCommit);
+  } finally { await f.close(); }
+});
+
+test('move closeout refuses a recorded merge whose forge identity or review does not match', async () => {
+  for (const mismatch of ['head', 'commit', 'review'] as const) {
+    const f = fixture(); try {
+      const commit = 'd'.repeat(40);
+      dispatched(f, { phase: 'blocked', resolution: { ...f.task().resolution, mergeIntent: true, mergeHead: head, mergedCommit: commit,
+        review: { taskId: f.taskId, runId: 'review-run', eventId: 'review-1', status: 'ready_to_merge', summary: 'Approved',
+          head: mismatch === 'review' ? 'e'.repeat(40) : head, reviewId: 12 } } });
+      f.observations.set('worker-agent', { id: 'worker-agent', workspaceId: 'workspace', status: 'idle', active: false, permissions: false, error: '' });
+      f.remote.merged = { head: mismatch === 'head' ? 'e'.repeat(40) : head, commit: mismatch === 'commit' ? 'e'.repeat(40) : commit };
+      const before = f.task();
+      await assert.rejects(f.engine.performTaskControl(taskControlInputSchema.parse({ action: 'move', to: 'closeout', taskId: f.taskId,
+        version: before.version, reason: 'Retry integration sync', caller: CALLER })), /does not match|no recorded exact-head/);
+      assert.equal(f.task().version, before.version);
+    } finally { await f.close(); }
+  }
+});
+
+test('the merge reconciliation advances only an unambiguous recorded merge', async () => {
+  for (const matching of [true, false]) {
+    const f = fixture(); try {
+      const commit = 'd'.repeat(40);
+      dispatched(f, { phase: 'blocked', resolution: { ...f.task().resolution, mergeIntent: true, mergeHead: head,
+        mergedCommit: commit, syncedCommit: null, review: { taskId: f.taskId, runId: 'review-run', eventId: 'review-1',
+          status: 'ready_to_merge', summary: 'Approved', head, reviewId: 12 } } });
+      f.observations.set('worker-agent', { id: 'worker-agent', workspaceId: 'workspace', status: 'idle', active: false, permissions: false, error: '' });
+      f.remote.merged = { head: matching ? head : 'e'.repeat(40), commit };
+      assert.equal(await f.engine.resolution.recoverExternalMerge(f.task()), matching);
+      assert.equal(f.task().phase, matching ? 'syncing' : 'blocked');
+      assert.equal(f.events('recorded_merge_phase_reconciled').length, matching ? 1 : 0);
+    } finally { await f.close(); }
+  }
+});
+
+test('retry_effect settles an uncertain terminal cleanup after the workspace is gone', async () => {
+  const f = fixture(); try {
+    const directory = join(f.dir, 'archived-intake');
+    const declaration = authorDeclarationSchema.parse({ models: ['fixture/author'], githubAuthor: 'author', authoringSystem: 'fixture', attestedBy: 'operator', provenance: 'synthetic' });
+    const reviewEntry = reviewEntryRecordSchema.parse({ operationId: 'c'.repeat(64), prNumber: 7, repository: 'example/repo', branch: 'feature',
+      workspaceId: 'workspace', directory, verifiedHead: head, verifiedBase: base, planningCommit: base,
+      authority: 'operator', authorDeclaration: declaration, checkedAt: new Date().toISOString(), preserveWorkspace: false, workspaceMode: 'isolated' });
+    dispatched(f, { phase: 'done', directory, entrypoint: 'review', reviewEntry, resolution: { ...f.task().resolution, mergedCommit: head, syncedCommit: head, archivedWorkspaceIds: ['workspace'],
+      buildOutputCleanups: [{ workspaceId: 'workspace', directory, state: 'uncertain', detail: 'Storage admission refused', at: new Date().toISOString() }] } });
+    f.adapter.preflightWorkspaceStorage = async () => {};
+    f.adapter.taskWorkspaceArchived = async () => true;
+    const settled = await f.engine.performTaskControl(taskControlInputSchema.parse({ action: 'retry_effect', taskId: f.taskId,
+      version: f.task().version, effect: 'build_output_cleanup.workspace', reason: 'Observe the archived workspace', caller: CALLER }));
+    assert.equal(settled.resolution.buildOutputCleanups[0]?.state, 'complete');
+    assert.equal(settled.resolution.buildOutputCleanups[0]?.detail, 'directory absent; nothing to clean up');
   } finally { await f.close(); }
 });
 
@@ -1352,22 +1427,19 @@ test('a move whose task changed during its checks cancels nothing (review #533)'
   } finally { await f.close(); }
 });
 
-test('a stopped reviewer replaced by the move is replaced, not released (review #533; planner ruling 2026-11-09)', async () => {
+test('a stopped reviewer without a report is asked to redeliver on its existing run', async () => {
   const f = fixture(); try {
     dispatched(f);
     const run = reviewerRun(f);
-    // Idle with no saved coverage: the move is the explicit fresh review and the
-    // old lease is marked replaced. Under the 2026-11-09 ruling the replaced run
-    // keeps its credential until the review settles, so a late verdict whose
-    // first-verdict claim holds is readopted rather than refused.
+    // The current run keeps its credential so the same reviewer can redeliver.
     f.observations.set('review-agent', { id: 'review-agent', workspaceId: 'workspace', status: 'idle', active: false, permissions: false, error: '' });
     const moved = await moveControl(f, 'Fresh review');
     assert.deepEqual(f.stops, []);
     assert.equal(f.store.run(run.id)!.released, false);
-    assert.equal(f.store.run(run.id)!.status, 'superseded');
-    assert.notEqual(f.store.run(run.id)!.replacedAt, undefined);
-    assert.equal(moved.resolution.currentRunId, null);
-    assert.equal(f.events('owner_control').length, 1);
+    assert.equal(f.store.run(run.id)!.status, 'running');
+    assert.equal(f.store.run(run.id)!.replacedAt, undefined);
+    assert.equal(moved.resolution.currentRunId, run.id);
+    assert.equal(f.events('reviewer_report_request_sent').length, 1);
   } finally { await f.close(); }
 });
 

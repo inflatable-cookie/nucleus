@@ -8,7 +8,10 @@
  * - `session/new` and `session/load` resolve the Nucleus-minted binding for the
  *   thread's working directory and attach to the service;
  * - `session/prompt` holds the turn open until the service releases it, showing the
- *   lifecycle lines the service sends, and forwards anything a person typed;
+ *   lifecycle lines the service sends, and forwards anything a person typed. A host
+ *   that released a turn re-enters the thread with a prompt of its own: the binding's
+ *   `holdPattern` names it, so nothing is shown, nothing is forwarded, and the turn
+ *   holds — which is what gives the host's next child a live parent run;
  * - `session/cancel` ends the turn at once (the client sends it before it steers).
  *
  * The agent knows nothing about any host. Everything host- or task-specific — the
@@ -64,6 +67,12 @@ export interface AcpAgentOptions {
    * delegated-task wake, for one) is not a person speaking to the task.
    */
   ignore?(text: string, binding: AcpBinding): boolean;
+  /**
+   * A prompt this agent must hold without showing or forwarding: the host re-arming a
+   * thread whose turn it released, so the host can create the thread's next child
+   * under a live run. Same provenance as `ignore` — configuration, never parsed text.
+   */
+  hold?(text: string, binding: AcpBinding): boolean;
   /** One long-poll's wait; the tests use a short one. */
   turnWaitMs?: number;
   /** Delay before retrying a service call that failed for transport reasons. */
@@ -271,7 +280,11 @@ export class AcpAgent {
       // turn that message into an opening prompt.
       const opening = !session.prompted;
       session.prompted = true;
-      if (text === "" || this.options.ignore?.(text, session.binding)) {
+      // A host's own text is configuration, never parsed: `ignore` ends the turn and
+      // `hold` keeps it, and neither is shown or forwarded.
+      const ignored = text !== "" && (this.options.ignore?.(text, session.binding) ?? false);
+      const holding = !ignored && text !== "" && (this.options.hold?.(text, session.binding) ?? false);
+      if (text === "" || ignored) {
         // Not the operator speaking: nothing is shown and nothing is forwarded.
         this.result(send, id, { stopReason: "end_turn" });
         return;
@@ -279,7 +292,7 @@ export class AcpAgent {
       session.cancelled = false;
       session.controller = new AbortController();
       for (const line of session.pending.splice(0)) this.emit(send, sessionId, line);
-      if (!opening) {
+      if (!opening && !holding) {
         const forwarded = await this.forward(session, text, send);
         if (!forwarded) { this.result(send, id, { stopReason: "end_turn" }); return; }
       }

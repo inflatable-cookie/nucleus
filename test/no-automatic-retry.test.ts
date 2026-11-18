@@ -60,7 +60,7 @@ function lightFixture() {
   ]);
   const adapter = {
     profiles: async () => [lightWorker, lightReviewer],
-    observe: observeIdle(null),
+    observe: observeIdle('workspace'),
     agentTimelinePage: async () => ({ entries: [] }),
     findAgents: async () => [], findRunAgents: async () => [], verifyWorkspace: async () => {},
     findWorkspaces: async () => [],

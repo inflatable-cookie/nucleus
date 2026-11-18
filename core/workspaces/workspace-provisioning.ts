@@ -3,9 +3,9 @@ import { worktreeLinksSchema } from "../../shared/contracts";
 import { refreshCheckoutSiblings as inspectWorktreeRootSiblings, worktreeRootFor } from "./checkout-siblings";
 import type { Engine } from "../engine";
 import { siblingStoreRootFor } from "../store/sibling-store";
-import { createSiblingWorktrees, findingFor, inspectSiblingWorktrees, removeSiblingWorktrees, siblingMembers, siblingsEnabled } from "./siblings";
+import { createSiblingWorktrees, ensureSharedSiblingCheckouts, findingFor, inspectSiblingWorktrees, removeSiblingWorktrees, siblingMembers, siblingsEnabled } from "./siblings";
 import { now } from "../store/store";
-import { provisionWorktreeLinks, worktreeLinksDue, worktreeLinksSummary } from "./worktree-links";
+import { canonicalLinkRoot, provisionWorktreeLinks, worktreeLinksDue, worktreeLinksSummary } from "./worktree-links";
 
 /**
  * What a task's checkout gets beside it before its worker runs: sibling
@@ -140,6 +140,36 @@ export class WorkspaceProvisioning {
       try { this.store.event(current.id, "worktree_links_record_failed", recordFailure); } catch { /* not claimed as recorded */ }
       return { task: this.store.task(current.id), recordFailure };
     }
+  }
+  /**
+   * A repository's worktree root keeps one shared checkout per sibling repository
+   * (nucleus#1315; Paseo parity, Spec 028).
+   *
+   * A Paseo worktree root holds the sibling clones the repository's own link tasks
+   * placed there, shared by every task of that repository, and a dependant's
+   * relative `../sibling` resolves against them. A BB workspace is registered by
+   * Nucleus as an external directory, so a BB role thread cannot create anything
+   * beside its checkout. The service therefore makes the same shared checkout
+   * every BB task of the repository can read: one detached worktree per project
+   * sibling member under the canonical worktree root, at the sibling's fetched
+   * `origin/<base>` when it is first created. An existing path is never replaced
+   * (Spec 028's refresh owns freshness, and another task may be reading it), and
+   * an occupied path is recorded, not removed. Only a `bb:` host is touched.
+   */
+  async ensureSharedSiblingCheckouts(task: Task): Promise<Task> {
+    const current = this.store.task(task.id);
+    if (this.adapter.vocabulary?.kind !== "bb" || !current.directory || !this.siblingDataDir) return current;
+    const members = siblingMembers(current, this.store.projectFor(current.repoPath, current.repository));
+    if (!members.length) return current;
+    let detail: string;
+    try {
+      const root = await canonicalLinkRoot(this.siblingDataDir, current.repoPath, current.directory);
+      detail = (await ensureSharedSiblingCheckouts({ root, baseBranch: current.baseBranch, members })).map(outcome => outcome.detail).join("; ");
+    } catch (error) {
+      detail = `shared sibling checkouts failed: ${error instanceof Error ? error.message : String(error)}`;
+    }
+    try { this.store.event(current.id, "shared_sibling_checkouts", detail.slice(0, 2000)); } catch { /* placement is not less true for an unwritable event */ }
+    return current;
   }
   /** Best effort: an unreadable stash list only loses the readiness comparison. */
   async readStash(directory: string) {

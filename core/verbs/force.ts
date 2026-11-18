@@ -160,8 +160,9 @@ export class ForceVerbs {
       if (run.taskId !== task.id) return null;
       if (run.role === 'reviewer' && task.resolution.reviewerAgentId === run.agentId
         && (task.resolution.currentRunId === id || task.resolution.review?.runId === id)) return 'reviewer';
+      if (run.role === 'recovery' && !run.released && task.resolution.recovery?.runId === id
+        && (!run.completion || this.engine.coordinatorActionRunId.getStore() === id)) return 'recovery';
       if (run.released || run.completion) return null;
-      if (run.role === 'recovery' && task.resolution.recovery?.runId === id) return 'recovery';
       if (run.role === 'revision' && task.resolution.currentRunId === id) return 'worker';
       return null;
     }

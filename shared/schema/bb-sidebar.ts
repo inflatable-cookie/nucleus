@@ -21,6 +21,8 @@ export const bbSidebarGroupSchema = z.object({
   taskId: z.string().min(1).max(240),
   number: z.number().int().positive().nullable(),
   reference: z.string().nullable(),
+  /** The repository the task works on: the short name, or `owner/name` when ambiguous. */
+  repository: z.string().min(1).max(240),
   title: z.string().min(1),
   phase: z.string().min(1).max(60),
   /** The phase alone, without the hold or wait that may stand on it. */

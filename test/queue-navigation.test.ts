@@ -85,11 +85,14 @@ test('706: an open header menu stacks above the nav row and the outside-press la
   assert.match(ui, /zIndex: 40 \}\}/);
 });
 
-test('Settings is the native settings screen holding Dispatch limits, Profiles, Projects, Backups and Telemetry', () => {
-  // Projects replaces Repositories (lane nucleus-ui, task 946); Subscriptions folded into Profiles (nucleus#963).
-  assert.equal(settingsViews.length, 5);
-  assert.deepEqual(settingsViews.map(view => view.label), ['Dispatch limits', 'Profiles', 'Projects', 'Backups', 'Telemetry']);
-  assert.deepEqual(settingsViews.map(view => view.short), ['Limits', 'Profiles', 'Projects', 'Backups', 'Telemetry']);
+test('Settings is the native settings screen holding Dispatch limits, Hosts, Profiles, Projects, Backups and Telemetry', () => {
+  // Projects replaces Repositories (lane nucleus-ui, task 946); Subscriptions folded into Profiles (nucleus#963);
+  // Hosts holds the host catalogue and the default host picker (nucleus#1325).
+  assert.equal(settingsViews.length, 6);
+  assert.deepEqual(settingsViews.map(view => view.label), ['Dispatch limits', 'Hosts', 'Profiles', 'Projects', 'Backups', 'Telemetry']);
+  assert.deepEqual(settingsViews.map(view => view.short), ['Limits', 'Hosts', 'Profiles', 'Projects', 'Backups', 'Telemetry']);
+  // The tab row stays one line in Paseo's 640–700 point settings column (nucleus#963): short labels only.
+  assert.ok(settingsViews.reduce((sum, view) => sum + view.short.length, 0) <= 44, 'the six short labels fit one line');
   assert.match(settingsScreen, /settingsViews\.map\(view =>/);
   for (const view of settingsViews) assert.ok(settingsScreen.includes(`settingsTab === "${view.id}" &&`), `${view.label} panel missing`);
   // The four panels left the main surface; the header's Settings icon opens the native screen.

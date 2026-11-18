@@ -89,7 +89,7 @@ export class RunLaunchSource {
     // before the verification awaits; the reservation reserves nothing if
     // either changed. A task already changed since that decision waits.
     const progress = role === 'revision' && !repairingPrIdentity ? retainedProgressRun(this.store,t) : null;
-    const decided = role === 'revision' && !repairingPrIdentity && (evidenceOnlyPr(t) || progress) ? { version: t.version, runs: JSON.stringify(this.store.runs(t.id)) } : undefined;
+    const decided = role === 'revision' && !repairingPrIdentity ? { version: t.version, runs: JSON.stringify(this.store.runs(t.id)) } : undefined;
     if (decided && this.store.task(t.id).version !== decided.version) return;
     // A revision returns the author to its own worktree. Its uncommitted work is what the
     // revision continues, so it needs PR identity and the continuation proof, not the
@@ -135,23 +135,19 @@ export class RunLaunchSource {
     if (pr && pr.head !== t.prHead && !continuedPr) {
       if (role !== 'revision') throw new Error('PR head changed; a new worker report and review are required');
       const revisions = this.store.runs(t.id).filter(run => run.role === 'revision');
-      const latestResult = revisions.findLast(run => run.completion)?.completion;
-      const unresolved = revisions.some(run => !run.released || ['intent','uncertain'].includes(run.status))
-        || Boolean(latestResult && ['blocked','error'].includes(latestResult.status))
-        || Boolean(t.completion?.runId === t.runId && ['blocked','error'].includes(t.completion.status));
+      const unresolved = revisions.some(run => !run.released || ['intent','uncertain'].includes(run.status));
       if (unresolved)
         throw new Error('Retained progress cannot be bound without its authenticated released author report and source proof. Its pushed head is judged instead: move to=review reviews the current PR head, or move to=work returns the task to the worker with the new head');
       // Papercut b7a6fb99: a superseded run can leave a clean, pushed head behind.
       // When the forge and the task checkout both prove that exact head and no
       // work is unresolved, the head is observation rather than retained progress
       // needing a report; the stale record is refreshed instead of refusing.
-      const staleBookkeeping = Boolean(t.resumePrNumber && t.runId && (!t.completion || t.completion.runId !== t.runId) && !this.store.run(t.runId));
-      if (staleBookkeeping) {
-        const pushed = await this.pushedHeadProof(t, pr.head);
-        if (!pushed)
-          throw new Error('Retained progress cannot be bound without its authenticated released author report and source proof. Its pushed head is judged instead: move to=review reviews the current PR head, or move to=work returns the task to the worker with the new head');
-        this.store.event(t.id, 'pushed_head_adopted', `Recorded head ${t.prHead ?? 'none'} → ${pr.head}: the open PR and the clean task checkout both report the pushed head, so the superseded run's work is observed rather than re-reported`);
-      }
+      const pushed = await this.pushedHeadProof(t, pr.head);
+      if (!pushed)
+        throw new Error('The current PR head cannot be matched to the clean retained checkout; no continuation was sent');
+      if (!decided || this.store.task(t.id).version !== decided.version || JSON.stringify(this.store.runs(t.id)) !== decided.runs)
+        throw new Error('Task or runs changed while observing the pushed head; no continuation was sent');
+      this.store.event(t.id, 'pushed_head_adopted', `Recorded head ${t.prHead ?? 'none'} → ${pr.head}: the open PR and the clean task checkout both report the pushed head; no report or review is inferred`);
       t = this.store.update(t.id, { prHead: pr.head }, 'revision_head', pr.head);
     }
     // Task 405: the proof executor observes the exact published head after the

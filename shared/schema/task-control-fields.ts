@@ -39,6 +39,7 @@ export const taskControlFields = <T extends z.ZodType<number | undefined>>(versi
         "proof",
         "accept_receipt",
         "extend_budget",
+        "detach",
       ]),
       workerExclusion: z
         .object({

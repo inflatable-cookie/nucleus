@@ -226,6 +226,13 @@ refused claim on its retained connection like the Paseo bridge.
 The CLI and helpers resolve the calling thread from a Nucleus-issued run or
 participant ticket first, then a host-supplied identity; caller records are
 host-qualified and existing bare Paseo IDs retain their legacy interpretation.
+An explicit ticket is the asker and delivery target for every verb that records a
+caller (`decision.add`, `lead.submit`, `question.answer`, `tell`); Nucleus records
+the ticket's thread, never an MCP session or host scope from the environment. A
+named ticket whose file is missing refuses when the host identity is an MCP
+session, rather than recording that session. A
+decision answer is delivered to that recorded asker or queued with a visible wait
+(attempts > 0); an identity Nucleus cannot route is shown on the decision.
 Planner assignment issues an owner-only participant ticket that reaches the thread
 in the response to its own next authenticated call, or in the response to the
 assignment when the thread named itself. A ticket message is the last route: it goes
@@ -233,9 +240,10 @@ only to a thread observed live on a host that supplies no calling-thread identit
 its own, and never into an archived, gone or unreadable thread. A planner without a
 ticket is recorded ticket pending and the board's project entry says so. Startup
 reconciles that state and sends nothing. Reassignment or clearing revokes the ticket.
-For `nucleus ask` and `nucleus tell`, a host-supplied caller can proceed only when
-`caller.resolve` returns that thread's participant ticket; an unregistered host caller
-is refused before a verb is sent. A bare legacy project-planner ID binds to a matching
+For `nucleus tell`, a recognised caller proceeds from an explicit ticket, the current
+run ticket `caller.resolve` locates from the verified thread, a participant ticket, or
+the host-verified identity via `agent.tell`. `nucleus ask` still needs a run ticket.
+A slow host answers "The host is slow; retry" instead of hanging. A bare legacy project-planner ID binds to a matching
 native ID on Paseo regardless of the historical setter, and never to another host.
 The same ticket covers a task's own planner (task 1109): keyed per proven host and
 thread rather than per task, handed over by the same two routes, and valid only
@@ -388,10 +396,14 @@ The runtime build packages both bundles together.
   expires after 8 hours by default (5 minutes to 24 hours through `ttlMinutes`)
   and is held as a digest in memory. The page reads the fragment once, exchanges
   the token at `/api/pair`, then removes the fragment. The service sets an
-  HttpOnly, SameSite=Strict, Path=/ cookie (no Secure flag on loopback). It stores
-  only each cookie's SHA-256 digest and rolling expiry in
-  `<workRoot>/nucleus-web-sessions.json`, mode 0600. Sessions expire after 30 days
-  without use; use extends expiry. A service restart preserves paired sessions.
+  HttpOnly, SameSite=Strict, Path=/ cookie (no Secure flag on loopback) with
+  `Max-Age=2592000` (30 days). It stores only each cookie's SHA-256 digest and
+  rolling expiry in `<workRoot>/nucleus-web-sessions.json`, mode 0600. Sessions
+  expire after 30 days without use; use extends expiry and re-sends the cookie
+  with a fresh 30-day `Max-Age` at most about once a day. Event-stream keepalives
+  do not count as use. A refused request clears the cookie with `Max-Age=0`, but
+  the server remains authoritative for expired or revoked sessions. A service
+  restart preserves paired sessions.
   `nucleus ui --revoke` (`service.ui-link` with `action: "revoke"`) clears every
   paired session and outstanding link token and closes their live streams.
   The plugin can call `service.ui-link` later; its bridge does not forward it yet.
@@ -818,6 +830,17 @@ MCP and the standalone report helper share callback HTTP transport, error
 handling and bounded waits, with no automatic replay, and keep their routes and
 event-ID construction. Operator CLIs share the authenticated direct client. Run
 tokens never become operator credentials, and nothing writes SQLite directly.
+
+**One reporting route per host, chosen from the ticket (nucleus#1315).** A run
+ticket records the host it was issued for. A `bb:` host reports over the BB
+backend's loopback relay (`/api/v1/plugins/nucleus/http/report`), because a BB
+role thread runs inside its provider's OS sandbox and Claude Code's sandbox
+refuses every Unix socket; the backend forwards the exact payload to
+`<data home>/callback.sock` with that ticket's own token. The relay reads only
+tickets under its own data home, by run id, requires an owner-only regular file
+and the ticket's exact token, task and run, and forwards only the routes a
+helper uses. Every other host keeps the callback socket. See
+[Spec 062](../specs/062-bb-host-adapter.md#sandboxed-role-threads-nucleus1315).
 
 ## Responsiveness
 
@@ -1347,7 +1370,31 @@ reads that entry: the legacy unqualified `hostId`, the retired
 observation scope and the daemon-identity guard all read it, so a BB or T3 host
 that connects earlier still never displaces the host those records belong to.
 
-New task host routing is fixed when the task is accepted: explicit task host, an explicit repository `hostKind` override, the operator default host kind (seeded as `paseo`), then the proven submitting planner host. The operator default lives with Settings → Dispatch limits and is writable only through `queue.capacity`, so the CLI and other non-Settings routes refuse it just like other capacity fields. An offline operator default falls through to the planner host and records that reason; a task with no available host stays pinned to the host it wanted and waits visibly. A schema migration converts stored repository `paseo` defaults to inherit while preserving explicit T3Code and BB overrides. Existing task host identity never changes when either setting changes.
+New task host routing is fixed when the task is accepted: explicit task host, an explicit repository `hostKind` override, the operator default host kind (seeded as `paseo`), then the proven submitting planner host. The operator default lives in Settings → Hosts (nucleus#1325; it was under Dispatch limits) and is writable only through `queue.capacity`, so the CLI and other non-Settings routes refuse it just like other capacity fields. An offline operator default falls through to the planner host and records that reason; a task with no available host stays pinned to the host it wanted and waits visibly. A schema migration converts stored repository `paseo` defaults to inherit while preserving explicit T3Code and BB overrides. Existing task host identity never changes when either setting changes.
+
+**Removing a host** (Settings → Hosts, nucleus#1325; Tom, 2026-11-18). A disconnect
+never removes a host: it proves nothing about outstanding effects. The operator
+removes one instead. `host.list` reads the catalogue with each host's state and reason
+from the same projection as `service.health`'s `hosts`, its endpoint, connect or
+last-seen time (`hostLastSeen` meta), the versions it reported, BB's heartbeat, the
+host the operator default resolves to, and what depends on it. `host.remove` forgets
+one host and is Settings-only on the same transports as `queue.capacity`
+(`SETTINGS_ONLY_METHODS`); the CLI and every agent route refuse before the handler.
+
+- It refuses, naming every reason, while the host is online or anything is bound to
+  it: a live task, an unreleased run, or an unsettled effect (a pending, running or
+  needs-attention operation; a pending run-process cleanup; a finished task still
+  owing thread cleanup). The primary Paseo host also counts records with no
+  `hostId`. The check runs again inside the write's transaction. Repositories whose
+  `hostKind` routes to its kind are shown and never refuse: they route to a kind,
+  not to this host. Host runs (contract 010) carry no host identity, so they never
+  bind one.
+- It removes only the catalogue entry, its last-seen time and, for BB, the recorded
+  data-directory identity. Threads, workspaces, events, tasks and run records keep the
+  old host ID. Each removal is recorded in `hostRemovals` meta (time, host, endpoint,
+  surface; newest 50).
+- A removed host that connects again registers again as normal; a BB server with a
+  new data directory registers as a new host instead of refusing by `dataDir`.
 
 The [T3Code adapter contract](../specs/t3code-host-adapter.md) defines the second
 host's connection and operation boundary. Before registration or

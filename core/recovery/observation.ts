@@ -16,6 +16,7 @@ import { isTransportFailure } from '../../shared/transport';
 import { LoginSessionFaultError, isLoginSessionFault } from '../../shared/session-fault';
 import type { Resolution } from '../resolution';
 import { settlementHeld, startsNoRuns } from '../closeout/queue-drain';
+import { provenAbsentCreation } from './absent-creation/decisions';
 
 export type ObservationContext = Pick<Resolution, 'adapter' | 'attention' | 'environmentDeferred' | 'extendCallbackReminder' | 'graceMs' | 'heavyRunAlive' | 'host' | 'hostAvailable' | 'inventoryHostMatches' | 'launchingRuns' | 'onTaskHost' | 'orphanRuns' | 'paused' | 'reconcileAbsentCreation' | 'reconcileStalledTurnStop' | 'recoverRefusedReviewer' | 'remindStoppedRun' | 'resolveIncident' | 'resumeTransientProviderThread' | 'retainedProfileIssue' | 'stalls' | 'stopped' | 'store' | 'supersedeOrphans' | 'transportDeferred' | 'update' | 'waiting' | 'withHost'>;
 
@@ -82,6 +83,8 @@ export class Observation {
       try {
         if (!run.agentId) {
           if (settlementHeld(this.store, this.resolution.stopped()) || run.released) continue;
+          // Proven absent: settled, never looked up again or re-escalated.
+          if (provenAbsentCreation(run)) continue;
           const found = await this.adapter.findRunAgents!(run);
           if (dispatchBlocked(this.store.task(task.id))) continue;
           if (found.length === 1 && found[0].workspaceId === run.workspaceId) {

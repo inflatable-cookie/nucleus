@@ -218,7 +218,7 @@ test('a responsible task restarts a crashed reviewer by code, once per head, wit
   } finally { await f.close(); }
 });
 
-test('an undelivered reviewer dispatch skips the reminder and takes the ordinary restart', async () => {
+test('an undelivered reviewer dispatch recovers through the retained reviewer', async () => {
   const f = fixture({ responsible: true });
   try {
     await f.engine.wake(); assert.equal(f.run().role, 'reviewer');
@@ -227,7 +227,7 @@ test('an undelivered reviewer dispatch skips the reminder and takes the ordinary
     // identity-bound refusal read can never settle (papercut fe93582a), and the
     // complete page without it proves the dispatch was never delivered. The
     // missing-callback reminder only fires on a positively delivered dispatch,
-    // so the run skips it and takes the ordinary relaunch instead.
+    // so recovery asks the retained reviewer to report its actual state.
     f.idle(stopped.agentId!);
     f.store.putRun({ ...f.store.run(stopped.id)!, active: false, lastObservedAt: new Date().toISOString() });
     await f.settle(2);
@@ -241,9 +241,10 @@ test('an undelivered reviewer dispatch skips the reminder and takes the ordinary
     assert.notEqual(f.current().resolution.stop?.reason, 'provider_unavailable', 'no indefinite provider wait');
     await f.settle(6);
     assert.equal(f.events('callback_reminder').length, 0, 'the reminder never fires late either');
-    assert.equal(f.events('responsible_fault_restart').length, 1, 'the existing fresh-restart rule replaces the stopped reviewer');
-    assert.equal(f.reviewerRuns().length, 2);
-    assert.equal(f.current().resolution.currentRunId === stopped.id, false);
+    assert.equal(f.events('responsible_fault_restart').length, 1, 'recovery is attempted only once');
+    assert.equal(f.events('reviewer_report_request_sent').length, 1, 'the retained reviewer is asked to report');
+    assert.equal(f.reviewerRuns().length, 1);
+    assert.equal(f.current().resolution.currentRunId, stopped.id);
     assert.equal(f.store.run(stopped.id)!.completion, null, 'a stalled read is never a verdict');
     assert.equal(f.coordinatorRuns().length, 0, 'no coordinator is spent on a refusal check that cannot settle');
   } finally { await f.close(); }

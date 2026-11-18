@@ -312,6 +312,7 @@ const ATTACH_POLL_MS = 200;
 export interface HostOperations {
   execute(op: HostOperationName, input: unknown): Promise<{ operation: HostOperationName; at: string; calls: Record<string, number>; value: unknown }>;
   counters(): { counters: Record<string, number>; loadedAt: number };
+  consumeOwnParentChange(threadId: string, parentThreadId: string | null): boolean;
 }
 
 export function createHostOperations(options: HostOperationsOptions): HostOperations {
@@ -320,6 +321,9 @@ export function createHostOperations(options: HostOperationsOptions): HostOperat
   const loadedAt = now();
   const counters: Record<string, number> = {};
   let spawnCalls = 0;
+  const ownParentChanges = new Map<string, number>();
+  const parentChangeKey = (threadId: string, parentThreadId: string | null) => `${threadId}\0${parentThreadId ?? ""}`;
+  const expectOwnParentChange = (threadId: string, parentThreadId: string | null) => ownParentChanges.set(parentChangeKey(threadId, parentThreadId), now() + 10_000);
 
   async function call<T>(name: string, run: () => Promise<T>): Promise<T> {
     counters[name] = (counters[name] ?? 0) + 1;
@@ -672,11 +676,19 @@ export function createHostOperations(options: HostOperationsOptions): HostOperat
         return { threadId, delivery: sent.delivery, mode };
       }
       case "thread.reparent": {
-        const threadId = text(input.threadId, "threadId", 128), parentThreadId = text(input.parentThreadId, "parentThreadId", 128);
+        const threadId = text(input.threadId, "threadId", 128);
+        // nucleus#1313: null clears the parent link, which is how a group becomes
+        // standalone; a named parent re-nests it. Either way the write's
+        // postcondition is the parent link itself, read back.
+        const parentThreadId = input.parentThreadId === null ? null : text(input.parentThreadId, "parentThreadId", 128);
+        expectOwnParentChange(threadId, parentThreadId);
+        // Keep the echo marker through an ambiguous failure too: BB may have
+        // committed the parent update before the call lost its reply.
         await call("threads.update", () => sdk.threads.update!({ threadId, parentThreadId }));
         const row = await call("threads.get", () => sdk.threads.get({ threadId }));
-        // The write's postcondition is the parent link itself, read back.
-        return { threadId, parentThreadId: row.parentThreadId ?? null };
+        if ((row.parentThreadId ?? null) !== parentThreadId)
+          throw new HostOperationError("unavailable", "threads.update did not move the thread's parent link");
+        return { threadId, parentThreadId };
       }
       case "thread.interactions": {
         const threadId = text(input.threadId, "threadId", 128);
@@ -800,6 +812,14 @@ export function createHostOperations(options: HostOperationsOptions): HostOperat
   }
 
   return {
+    consumeOwnParentChange(threadId, parentThreadId) {
+      const key = parentChangeKey(threadId, parentThreadId);
+      const until = ownParentChanges.get(key);
+      if (until === undefined) return false;
+      if (until < now()) { ownParentChanges.delete(key); return false; }
+      ownParentChanges.delete(key);
+      return true;
+    },
     async execute(op, input) {
       if (!HOST_OPERATIONS.includes(op)) throw new HostOperationError("invalid_input", `Unknown host operation ${String(op)}`);
       const value = await execute(op, input);

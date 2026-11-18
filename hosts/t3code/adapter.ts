@@ -7,14 +7,30 @@ import { WIRE_LABEL_KEYS } from '../../shared/wire-labels';
 import { ArchiveNotDeliveredError, ProvenPreSendRefusalError } from '../../core/host';
 import { T3RpcClient, type T3ConnectionConfig } from './rpc';
 import { t3codeVocabulary } from './vocabulary';
-import { T3StateFile, canonical } from './state';
+import { T3StateFile, canonical, retiredRecord, restoredRecord } from './state';
 import { decode, config, optionDescriptor, T3CompatibilityError, runtimeModes, defaultRuntimeMode, type RuntimeMode } from './contracts';
 import { activeStatuses, T3Reads, type Projection, type ThreadReadKind } from './reads';
 import { identity, T3IntentLedger } from './intents';
 import { T3Presentation } from './presentation';
+import { T3Nesting } from './nesting';
 import { SUPPORT_THREADS_DOC, SUPPORT_THREAD_TAG, isSupportRole, supportThreadVisibility } from './one-row';
+import type { AcpSessionSurface } from '../../shared/acp/surface';
 
-export interface T3CodeConfig extends T3ConnectionConfig { statePath: string; probeThreadId?: string }
+export interface T3CodeConfig extends T3ConnectionConfig {
+  statePath: string;
+  probeThreadId?: string;
+  /**
+   * The service's ACP session surface, when this process serves one. It mints the
+   * binding a task's parent thread runs on and releases that thread's held turn; a
+   * host without it keeps top-level role threads (the fallback, nucleus#1305).
+   */
+  acp?: () => AcpSessionSurface | null;
+  /**
+   * How long one re-entry waits for the parent thread's run to appear. The default is
+   * the product bound; a test drives a short one (nucleus#1305).
+   */
+  reentryTimeoutMs?: number;
+}
 const unsupported = (capability: string): never => { throw new ProvenPreSendRefusalError(`T3Code does not support ${capability}`); };
 /**
  * The option descriptor a model's thinking level rides: the nightly marks a
@@ -79,6 +95,7 @@ export class T3CodeHost implements Host {
   readonly reads: T3Reads;
   readonly intents: T3IntentLedger;
   readonly presentation: T3Presentation;
+  readonly nesting: T3Nesting;
   hostId = '';
   version = '';
   private ready = false;
@@ -92,6 +109,7 @@ export class T3CodeHost implements Host {
       rpc: this.rpc, state: this.state,
       hostId: () => this.hostId,
       requireConnection: () => this.requireConnection(),
+      forgetRead: id => this.reads.forget(id),
     });
     this.presentation = new T3Presentation({
       state: this.state,
@@ -99,6 +117,18 @@ export class T3CodeHost implements Host {
       requireConnection: () => this.requireConnection(),
       reads: this.reads,
       intents: this.intents,
+      parentThreadOf: taskId => this.nesting.parentOf(taskId)?.threadId,
+      nestedChild: threadId => this.nesting.taskOfChild(threadId) !== undefined,
+    });
+    this.nesting = new T3Nesting({
+      rpc: this.rpc, state: this.state, reads: this.reads, intents: this.intents,
+      presentation: this.presentation,
+      hostId: () => this.hostId,
+      requireConnection: () => this.requireConnection(),
+      acp: options.acp ?? (() => null),
+      ...(options.reentryTimeoutMs === undefined ? {} : { reentryTimeoutMs: options.reentryTimeoutMs }),
+      modelSelectionOptions: (profile, model) => this.modelSelectionOptions(profile, model),
+      runtimeMode: (profile, supported) => this.launchRuntimeMode(profile, supported),
     });
   }
   get connected() { return this.ready && this.rpc.connected; }
@@ -118,10 +148,16 @@ export class T3CodeHost implements Host {
     if (state === 'tag_missing') return `support threads visible: ${SUPPORT_THREAD_TAG} is not in hiddenThreadTags (${SUPPORT_THREADS_DOC})`;
     return `support threads visible: hide setting not enabled (${SUPPORT_THREADS_DOC})`;
   }
+  /**
+   * Whether this host is parenting role threads on the Nucleus ACP provider, or why
+   * it is not, as `service.health`'s `t3code.nativeParenting` line (nucleus#1305).
+   */
+  get nativeParentingStatus(): string { return this.nesting.statusLine(); }
   capabilities() { return { reportingViaMcp: false, supportsCoordinatorRecovery: false, nativeDecisions: false, uiContributions: false, lifecycleDispatch: false, perThreadEnvironment: false }; }
   async connect(probeThreadId = this.probeThreadId): Promise<void> {
     this.ready = false;
     this.reads.resetShape();
+    this.reads.resetObservation();
     try {
       await this.rpc.connect();
       const observed = decode(config, await this.rpc.call('server.getConfig', {}), 'server.getConfig');
@@ -135,6 +171,9 @@ export class T3CodeHost implements Host {
       this.state.update(state => { state.hostId = hostId; state.lastPassedVersion = observed.environment.serverVersion;
         // Read-only: the client's own hide switch, never a settings write.
         state.supportThreads = supportThreadVisibility(observed.settings); });
+      // The nesting path needs the Nucleus ACP provider instance; record the answer
+      // from this same read-only probe so the host status says it up front.
+      try { this.nesting.recordProvider(observed); } catch { /* the status keeps whatever it had */ }
       this.hostId = hostId; this.version = observed.environment.serverVersion; this.ready = true;
     } catch (error) { this.close(); throw error; }
   }
@@ -145,7 +184,66 @@ export class T3CodeHost implements Host {
     if (this.state.read().hostId !== this.hostId) throw new T3CompatibilityError('durable host identity changed');
   }
   async profiles(): Promise<Profile[]> { return []; }
-  async observationInventory(ids: readonly string[]) { try { return new Map(await Promise.all(ids.map(async id => [id, await this.reads.observe(id)] as const))); } catch { return null; } }
+  /**
+   * One host pass opens (nucleus#1328): the tasks this host still works on decide
+   * which threads stay observed, and the pass's reads are shared across its
+   * consumers. A thread whose task is over, or that T3 reports archived or removed,
+   * leaves observation here: its live agent record moves to the retired index, which
+   * is what an exact settle or lookup still reads. Nothing in T3 is touched.
+   */
+  async beginHostPass(tasks: readonly Task[]): Promise<void> {
+    this.reads.beginPass(tasks);
+    await this.reconcileObservation();
+  }
+  /** The pass closes: the next one reads the thread list afresh. */
+  endHostPass() { this.reads.endPass(); }
+  /**
+   * Move the records of threads this host no longer observes out of the live map.
+   * Only the launch identity (workspace and labels) is kept, so an exact settle or
+   * lookup still answers; the ledger, the settle markers and every recorded intent
+   * stay exactly as recorded.
+   *
+   * The move is reversible: a thread T3 no longer reports archived (a person or a
+   * planner re-attached it) returns to observation on the next pass with the record it
+   * had. The retired record keeps every fact this host's own rows read from it — the
+   * launch identity, the recorded parent link a nested child's one-row rule needs, and
+   * the task's state title — so the round trip loses nothing (nucleus#1328 review).
+   */
+  async reconcileObservation(): Promise<void> {
+    const state = this.state.read();
+    const tracked = Object.keys(state.agents), retiredIds = Object.keys(state.retiredAgents ?? {});
+    if (!tracked.length && !retiredIds.length) return;
+    const retire: string[] = [], restore: string[] = [];
+    for (const id of tracked) if (!await this.reads.isObserved(id)) retire.push(id);
+    for (const id of retiredIds) {
+      if (state.retiredAgents?.[id]?.deletedAt) continue;
+      if (await this.reads.isObserved(id)) restore.push(id);
+    }
+    if (!retire.length && !restore.length) return;
+    this.state.update(next => {
+      next.retiredAgents ??= {};
+      for (const id of retire) {
+        const record = next.agents[id];
+        if (!record) continue;
+        next.retiredAgents[id] = retiredRecord(record);
+        delete next.agents[id];
+      }
+      for (const id of restore) {
+        const record = next.retiredAgents?.[id];
+        if (!record || next.agents[id]) continue;
+        next.agents[id] = restoredRecord(id, record);
+        delete next.retiredAgents[id];
+      }
+    });
+  }
+  async observationInventory(ids: readonly string[]) { try {
+    // A thread that left observation is not read: the pass's identity list never
+    // turns a finished thread back into a full snapshot (nucleus#1328). The whole
+    // list is walked either way, so a shorter map is still a complete answer.
+    const observed: string[] = [];
+    for (const id of ids) if (await this.reads.isObserved(id)) observed.push(id);
+    return new Map(await Promise.all(observed.map(async id => [id, await this.reads.observe(id)] as const)));
+  } catch { return null; } }
   async activeThreads() { return await this.reads.activeThreads(); }
   async findAgents(labels: Record<string, string>) { return await this.reads.findAgents(labels); }
   async listLiveAgents() { return await this.reads.listLiveAgents(); }
@@ -157,9 +255,12 @@ export class T3CodeHost implements Host {
     if (!found) { this.presentation.retireDeletedPresentationIntents(id); return null; }
     // A deleted thread may no longer have a readable projection. The complete
     // shell inventory's tombstone is already positive proof of the deletion.
-    if (found.deletedAt) {
-      this.presentation.retireDeletedPresentationIntents(id);
-      return { id, workspaceId: this.reads.workspaceFor(found) ?? `t3-project:${found.projectId}`, title: found.title, archived: !!found.archivedAt, deleted: true };
+    // An archived thread, or one whose task is over, has left observation: its
+    // list row and recorded identity answer this read with no snapshot at all.
+    if (found.deletedAt || found.archivedAt || !this.reads.observes(id)) {
+      if (found.deletedAt) this.presentation.retireDeletedPresentationIntents(id);
+      return { id, workspaceId: this.reads.workspaceFor(found) ?? (this.state.read().agents[id] ?? this.state.read().retiredAgents?.[id])?.workspaceId
+          ?? `t3-project:${found.projectId}`, title: found.title, archived: !!found.archivedAt, deleted: !!found.deletedAt };
     }
     const p = await this.reads.readProjection(id, 'observation');
     if (p.thread.deletedAt) this.presentation.retireDeletedPresentationIntents(id);
@@ -189,6 +290,8 @@ export class T3CodeHost implements Host {
     if (!this.connected) return;
     await this.presentation.reconcileSupportRows();
     await this.presentation.reconcileWorkerRows(tasks);
+    try { await this.nesting.reconcile(tasks); }
+    catch { /* one pass's nesting fault never blocks the sweep; the next pass retries */ }
   }
 
 
@@ -306,8 +409,18 @@ export class T3CodeHost implements Host {
       throw new ProvenPreSendRefusalError(`T3Code provider ${spec.profile.provider} does not report model ${spec.profile.model}`);
     const options = this.modelSelectionOptions(spec.profile, provider.models.find(m => m.slug === spec.profile.model)!);
     const runtimeMode = this.launchRuntimeMode(spec.profile, provider.supportedRuntimeModes);
+    const title = this.presentation.numberedThreadTitle(spec.taskNumber, attempt.labels[WIRE_LABEL_KEYS.role], spec.title);
+    // Native parenting (nucleus#1305): the role thread becomes a child of the task's
+    // parent thread on the Nucleus ACP provider. A null answer means nothing was sent
+    // and the ordinary top-level launch below is the fallback.
+    const nested = await this.nesting.create({ spec, attempt, profile: spec.profile, observed,
+      workspace: { id: spec.workspaceId, projectId: workspace.projectId, directory: workspace.directory }, title });
+    if (nested) {
+      if (this.reads.threadShapePending) await this.reads.readProjection(nested.id, 'observation').catch(() => undefined);
+      return nested;
+    }
     const id = identity('thread', attempt.requestId);
-    const payload = { commandId: attempt.requestId, threadId: id, projectId: workspace.projectId, title: this.presentation.numberedThreadTitle(spec.taskNumber, attempt.labels[WIRE_LABEL_KEYS.role], spec.title),
+    const payload = { commandId: attempt.requestId, threadId: id, projectId: workspace.projectId, title,
       modelSelection: { instanceId: spec.profile.provider, model: spec.profile.model, ...(options.length ? { options } : {}) }, runtimeMode, interactionMode: 'default',
       workspaceStrategy: { type: 'existing_worktree', worktreePath: workspace.directory },
       initialMessage: { messageId: identity('message', attempt.requestId), text: attempt.prompt, attachments: [] } };
@@ -316,6 +429,9 @@ export class T3CodeHost implements Host {
       if (old && canonical({ id: old.id, workspaceId: old.workspaceId, labels: old.labels }) !== canonical(record))
         throw new ProvenPreSendRefusalError('T3Code retained identity changed');
       state.agents[id] = { ...old, ...record };
+      // A thread this host launches again is observed again, whatever the retired
+      // index last said about it (nucleus#1328 review).
+      delete state.retiredAgents?.[id];
     });
     const result = await this.intents.effect(attempt.requestId, 'orchestration.launchThread', payload, () => {
       if (spec.guard && !spec.guard.stillAllowed()) throw new ProvenPreSendRefusalError('T3Code launch guard changed');
@@ -391,16 +507,28 @@ export class T3CodeHost implements Host {
     return options;
   }
 
-  async sendMessage(id: string, input: HostMessage) { await this.presentation.unsettleBeforeMessage(id, input.messageId); await this.intents.effect(input.messageId, 'orchestration.dispatchCommand', { type: 'message.dispatch', commandId: input.messageId, threadId: id, messageId: identity('message', input.messageId), text: input.text, attachments: [], createdBy: 'user', creationSource: 'server', dispatchMode: { type: 'queue_after_active' } }); }
+  async sendMessage(id: string, input: HostMessage) {
+    await this.presentation.unsettleBeforeMessage(id, input.messageId);
+    await this.intents.effect(input.messageId, 'orchestration.dispatchCommand', { type: 'message.dispatch', commandId: input.messageId, threadId: id, messageId: identity('message', input.messageId), text: input.text, attachments: [], createdBy: 'user', creationSource: 'server', dispatchMode: { type: 'queue_after_active' } });
+    // A follow-up to a nested child starts a new delegated task whose completion wake
+    // T3 does not dispose; the send already succeeded, so this never fails it.
+    await this.nesting.afterFollowUp(id, input.messageId).catch(() => undefined);
+  }
   async enqueueMessage(id: string, input: HostMessage): Promise<void> { await this.sendMessage(id, input); }
 
   async sendGuarded(id: string, input: HostGuardedMessage, guard: HostSendGuard) {
+    // A thread this host no longer observes refuses here, as a guarded send refuses:
+    // the retained-thread fence is a pre-send decision, never a thrown read
+    // (nucleus#1328 review).
+    if (!await this.reads.isObserved(id)) return { sent: false as const, reason: 'T3Code retained-thread guard refused' };
     const observed = await this.reads.observe(id);
     if (observed.workspaceId !== input.expectedWorkspaceId || observed.active || observed.permissions || observed.archived || observed.status === 'gone' || !await guard.allowed()) return { sent: false as const, reason: 'T3Code retained-thread guard refused' };
     await this.presentation.unsettleBeforeMessage(id, input.messageId);
     await this.intents.effect(input.messageId, 'orchestration.dispatchCommand', { type: 'message.dispatch', commandId: input.messageId, threadId: id, messageId: identity('message', input.messageId), text: input.text, attachments: [], createdBy: 'user', creationSource: 'server', dispatchMode: { type: 'queue_after_active' } }, () => {
       if (!guard.stillAllowed()) throw new ProvenPreSendRefusalError('T3Code send guard changed'); guard.beforeSend?.();
-    }); return { sent: true as const };
+    });
+    await this.nesting.afterFollowUp(id, input.messageId).catch(() => undefined);
+    return { sent: true as const };
   }
 
   async sendWhenIdle(_id: string, _input: HostAsk): Promise<string | null> { return unsupported('in-thread Nucleus questions'); }
@@ -441,7 +569,13 @@ export class T3CodeHost implements Host {
     }
   }
 
-  async stopAgentTurn(id: string) { const p = await this.reads.readProjection(id, 'observation'); const runs = p.runs.filter(r => activeStatuses.has(r.status)).map(r => r.id).sort(); if (!runs.length) return;
+  /**
+   * One explicit stop of this thread's live runs. A thread that has left observation
+   * still answers with the run T3's own thread list names, so an operator or a stalled
+   * turn stop keeps working; with nothing live there is nothing to send
+   * (nucleus#1328 review).
+   */
+  async stopAgentTurn(id: string) { const runs = await this.reads.activeRunIds(id); if (!runs.length) return;
     const key = identity('stop', canonical([id, runs])); await this.intents.effect(key, 'orchestration.dispatchCommand', { type: 'thread.stop', commandId: key, threadId: id }); }
 
   async archiveAgent(id: string) { const key = identity('archive', id); await this.intents.effect(key, 'orchestration.dispatchCommand', { type: 'thread.archive', commandId: key, threadId: id }); }

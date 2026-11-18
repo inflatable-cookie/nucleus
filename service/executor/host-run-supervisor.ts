@@ -17,10 +17,19 @@ import {
   writeVerifiedOwnedFile,
 } from "../../core/host-runs/host-run-files";
 import { HOST_RUN_RETAINED_OUTPUT_BYTES } from "../../core/host-runs/host-run-endpoint-types";
-import { HOST_RUN_CPU_COVERAGE_FILE, hostRunCpuCoverageSidecar } from "../../core/host-runs/host-run-cpu-coverage";
+import {
+  HOST_RUN_CPU_COVERAGE_FILE,
+  hostRunCpuCoverageSidecar,
+} from "../../core/host-runs/host-run-cpu-coverage";
 import { openHostRunRetainedOutput } from "../../core/host-runs/host-run-retained-output";
-import { executeHookProgram, type ExecutionOutcome } from "../../core/machine/process-exec";
-import { ProcessTreeCpuSampler } from "../../core/machine/process-tree-cpu";
+import {
+  executeHookProgram,
+  type ExecutionOutcome,
+} from "../../core/machine/process-exec";
+import {
+  ProcessTreeCpuSampler,
+  type ProcessTreeCpuReads,
+} from "../../core/machine/process-tree-cpu";
 /**
  * Detached supervisor for contract 010 client-protocol runs (Spec 035 part 3).
  *
@@ -45,16 +54,31 @@ export const HOST_RUN_CPU_SAMPLE_MS = 250;
 const IN_MEMORY_OUTPUT_BYTES = 64 * 1024;
 const ESCAPE_POLL_MS = 100;
 
-const sleep = (ms: number) => new Promise<void>(resolvePromise => setTimeout(resolvePromise, ms));
+const sleep = (ms: number) =>
+  new Promise<void>((resolvePromise) => setTimeout(resolvePromise, ms));
 
 /** Read and validate the plan the endpoint wrote for this run. */
-function readSupervisorPlan(stateDir: string, runId: string): HostRunSupervisorPlan {
-  const raw = readCheckedHostRunFile(stateDir, ["runs", runId, "supervisor.plan.json"]);
-  if (!raw) throw new Error("Host-run supervisor plan is missing or fails the owned-subtree checks");
+function readSupervisorPlan(
+  stateDir: string,
+  runId: string,
+): HostRunSupervisorPlan {
+  const raw = readCheckedHostRunFile(stateDir, [
+    "runs",
+    runId,
+    "supervisor.plan.json",
+  ]);
+  if (!raw)
+    throw new Error(
+      "Host-run supervisor plan is missing or fails the owned-subtree checks",
+    );
   const parsed = JSON.parse(raw.toString("utf8")) as { format?: unknown };
-  if (parsed.format !== HOST_RUN_SUPERVISOR_PLAN_FORMAT) throw new Error("Host-run supervisor plan has the wrong format");
+  if (parsed.format !== HOST_RUN_SUPERVISOR_PLAN_FORMAT)
+    throw new Error("Host-run supervisor plan has the wrong format");
   const plan: HostRunSupervisorPlan = hostRunSupervisorPlanSchema.parse(parsed);
-  if (plan.stateDir !== stateDir || plan.runId !== runId) throw new Error("Host-run supervisor plan identity does not match its arguments");
+  if (plan.stateDir !== stateDir || plan.runId !== runId)
+    throw new Error(
+      "Host-run supervisor plan identity does not match its arguments",
+    );
   return plan;
 }
 
@@ -66,12 +90,24 @@ function readSupervisorPlan(stateDir: string, runId: string): HostRunSupervisorP
 class SupervisorState {
   private state: HostRunSupervisorState;
 
-  constructor(private readonly plan: HostRunSupervisorPlan, startedAt: string) {
+  constructor(
+    private readonly plan: HostRunSupervisorPlan,
+    startedAt: string,
+  ) {
     this.state = hostRunSupervisorStateSchema.parse({
-      format: HOST_RUN_SUPERVISOR_STATE_FORMAT, version: 1, runId: plan.runId, epoch: plan.epoch,
-      supervisorPid: process.pid, supervisorStartIdentity: hostRunProcessStartIdentity(process.pid),
-      commandPid: null, commandPgid: null, commandStartIdentity: null,
-      termination: null, startedAt, updatedAt: startedAt, endedAt: null,
+      format: HOST_RUN_SUPERVISOR_STATE_FORMAT,
+      version: 1,
+      runId: plan.runId,
+      epoch: plan.epoch,
+      supervisorPid: process.pid,
+      supervisorStartIdentity: hostRunProcessStartIdentity(process.pid),
+      commandPid: null,
+      commandPgid: null,
+      commandStartIdentity: null,
+      termination: null,
+      startedAt,
+      updatedAt: startedAt,
+      endedAt: null,
     });
     this.persist({});
   }
@@ -82,8 +118,17 @@ class SupervisorState {
   }
 
   persist(patch: Partial<HostRunSupervisorState>): void {
-    this.state = hostRunSupervisorStateSchema.parse({ ...this.state, ...patch, updatedAt: new Date().toISOString() });
-    writeVerifiedOwnedFile(this.plan.stateDir, ["runs", this.plan.runId, "supervisor.state.json"], JSON.stringify(this.state), 0o600);
+    this.state = hostRunSupervisorStateSchema.parse({
+      ...this.state,
+      ...patch,
+      updatedAt: new Date().toISOString(),
+    });
+    writeVerifiedOwnedFile(
+      this.plan.stateDir,
+      ["runs", this.plan.runId, "supervisor.state.json"],
+      JSON.stringify(this.state),
+      0o600,
+    );
   }
 }
 
@@ -93,19 +138,35 @@ class SupervisorState {
  * and write the durable result. An unreadable cancel request is unknown, never
  * absent: the run is stopped and the reason is recorded beside it.
  */
-export async function runHostRunSupervisorMain(argv: string[] = process.argv.slice(2)): Promise<void> {
+export async function runHostRunSupervisorMain(
+  argv: string[] = process.argv.slice(2),
+  options: { cpuReads?: ProcessTreeCpuReads } = {},
+): Promise<void> {
   const [stateDir, runId] = argv;
-  if (!stateDir || !runId) throw new Error("Host-run supervisor needs its state directory and run id");
+  if (!stateDir || !runId)
+    throw new Error("Host-run supervisor needs its state directory and run id");
   const plan = readSupervisorPlan(stateDir, runId);
   // The plan holds env key names only; the values come from the run's ephemeral launch file.
   const launchEnv = readHostRunLaunchEnv(plan.stateDir, plan.runId);
-  if (!launchEnv) throw new Error("Host-run launch env is missing; the run was never launched");
+  if (!launchEnv)
+    throw new Error(
+      "Host-run launch env is missing; the run was never launched",
+    );
   const state = new SupervisorState(plan, new Date().toISOString());
-  const output = openHostRunRetainedOutput(plan.stateDir, plan.runId, HOST_RUN_RETAINED_OUTPUT_BYTES, launchEnv.HOST_RUN_TOKEN);
+  const output = openHostRunRetainedOutput(
+    plan.stateDir,
+    plan.runId,
+    HOST_RUN_RETAINED_OUTPUT_BYTES,
+    launchEnv.HOST_RUN_TOKEN,
+  );
   // A private identity marker inherited by the command and every descendant, so
   // the process owner can inventory an escaped `setsid` descendant.
   const identity = randomUUID();
-  const cpu = new ProcessTreeCpuSampler(identity, HOST_RUN_CPU_SAMPLE_MS);
+  const cpu = new ProcessTreeCpuSampler(
+    identity,
+    HOST_RUN_CPU_SAMPLE_MS,
+    options.cpuReads,
+  );
   const recordedFaults = new Set<string>();
   let cancelRecorded = false;
   let execution: ExecutionOutcome;
@@ -132,7 +193,10 @@ export async function runHostRunSupervisorMain(argv: string[] = process.argv.sli
         const request = readHostRunCancelRequest(plan.stateDir, plan.runId);
         if (request.state === "absent") return null;
         if (request.state === "requested") {
-          if (!cancelRecorded) { cancelRecorded = true; state.persist({ termination: "cancel" }); }
+          if (!cancelRecorded) {
+            cancelRecorded = true;
+            state.persist({ termination: "cancel" });
+          }
           return request.reason;
         }
         // Unreadable is unknown, not absent: the stop is honoured and the fault is
@@ -141,8 +205,14 @@ export async function runHostRunSupervisorMain(argv: string[] = process.argv.sli
         if (!recordedFaults.has(request.reason)) {
           recordedFaults.add(request.reason);
           state.persist({ termination: "cancel" });
-          recordSupervisorFault(plan, "cancel_request_unreadable", request.reason);
-          console.error(`Host-run cancel request for ${plan.runId} is unreadable; the run is stopped: ${request.reason}`);
+          recordSupervisorFault(
+            plan,
+            "cancel_request_unreadable",
+            request.reason,
+          );
+          console.error(
+            `Host-run cancel request for ${plan.runId} is unreadable; the run is stopped: ${request.reason}`,
+          );
         }
         return request.reason;
       },
@@ -152,9 +222,19 @@ export async function runHostRunSupervisorMain(argv: string[] = process.argv.sli
         // `detached` makes the command its own group (and session) leader, so the
         // group id is its pid and the command's own OS start identity scopes the
         // CPU samples to this group.
-        state.persist({ commandPid: pid, commandPgid: processGroupId, commandStartIdentity: startIdentity });
-        try { cpu.start({ pgid: processGroupId, leaderStartIdentity: startIdentity }); }
-        catch { /* CPU sampling never fails the run it measures. */ }
+        state.persist({
+          commandPid: pid,
+          commandPgid: processGroupId,
+          commandStartIdentity: startIdentity,
+        });
+        try {
+          cpu.start({
+            pgid: processGroupId,
+            leaderStartIdentity: startIdentity,
+          });
+        } catch {
+          /* CPU sampling never fails the run it measures. */
+        }
       },
     });
   } catch (error) {
@@ -165,7 +245,8 @@ export async function runHostRunSupervisorMain(argv: string[] = process.argv.sli
     throw error;
   }
 
-  if (execution.timedOut && state.termination === null) state.persist({ termination: "timeout" });
+  if (execution.timedOut && state.termination === null)
+    state.persist({ termination: "timeout" });
   // Every chunk arrived before the process owner settled; close the retained
   // streams (which writes any truncation marker) ahead of the result record.
   output.close();
@@ -186,18 +267,45 @@ function recordResult(
     // The CPU reason is Queue-internal: a private sidecar beside the run, written
     // ahead of the Contract 010 result; a failed write never blocks the result.
     try {
-      writeVerifiedOwnedFile(plan.stateDir, ["runs", plan.runId, HOST_RUN_CPU_COVERAGE_FILE],
-        JSON.stringify(hostRunCpuCoverageSidecar({ runId: plan.runId, epoch: plan.epoch }, cpuMs, cpuCoverage)), 0o600);
-    } catch { /* the reason stays unknown */ }
+      writeVerifiedOwnedFile(
+        plan.stateDir,
+        ["runs", plan.runId, HOST_RUN_CPU_COVERAGE_FILE],
+        JSON.stringify(
+          hostRunCpuCoverageSidecar(
+            { runId: plan.runId, epoch: plan.epoch },
+            cpuMs,
+            cpuCoverage,
+          ),
+        ),
+        0o600,
+      );
+    } catch {
+      /* the reason stays unknown */
+    }
     const exitCode = execution.signal ? null : execution.code;
     const endedAt = new Date().toISOString();
-    writeVerifiedOwnedFile(plan.stateDir, ["runs", plan.runId, "result.json"], JSON.stringify(hostRunResultSchema.parse({
-      format: "host.run.result", version: 1, runId: plan.runId, epoch: plan.epoch,
-      pgid, startIdentity,
-      exitCode, signal: execution.signal ?? (exitCode === null ? "unknown" : null),
-      startedAt: plan.startedAt, endedAt, wallMs: Math.max(0, Date.now() - Date.parse(plan.startedAt)), cpuMs,
-      escapedDescendants: execution.escapedDescendants ?? [],
-    })), 0o600);
+    writeVerifiedOwnedFile(
+      plan.stateDir,
+      ["runs", plan.runId, "result.json"],
+      JSON.stringify(
+        hostRunResultSchema.parse({
+          format: "host.run.result",
+          version: 1,
+          runId: plan.runId,
+          epoch: plan.epoch,
+          pgid,
+          startIdentity,
+          exitCode,
+          signal: execution.signal ?? (exitCode === null ? "unknown" : null),
+          startedAt: plan.startedAt,
+          endedAt,
+          wallMs: Math.max(0, Date.now() - Date.parse(plan.startedAt)),
+          cpuMs,
+          escapedDescendants: execution.escapedDescendants ?? [],
+        }),
+      ),
+      0o600,
+    );
   }
   // A command whose identity was never proven writes no result; the endpoint's
   // watch settles it lost once the supervisor is gone, never from a guess.
@@ -208,11 +316,25 @@ function recordResult(
  * supervisor stopped or could not prove something. Never the contract's record,
  * and a failed write never blocks the result.
  */
-function recordSupervisorFault(plan: HostRunSupervisorPlan, code: string, detail: string): void {
+function recordSupervisorFault(
+  plan: HostRunSupervisorPlan,
+  code: string,
+  detail: string,
+): void {
   try {
-    writeVerifiedOwnedFile(plan.stateDir, ["runs", plan.runId, "supervisor.faults.json"], JSON.stringify({
-      format: "host.run.supervisor.faults", version: 1, runId: plan.runId, epoch: plan.epoch,
-      faults: [{ code, detail, at: new Date().toISOString() }],
-    }), 0o600);
-  } catch { /* the stop itself is what keeps the run honest */ }
+    writeVerifiedOwnedFile(
+      plan.stateDir,
+      ["runs", plan.runId, "supervisor.faults.json"],
+      JSON.stringify({
+        format: "host.run.supervisor.faults",
+        version: 1,
+        runId: plan.runId,
+        epoch: plan.epoch,
+        faults: [{ code, detail, at: new Date().toISOString() }],
+      }),
+      0o600,
+    );
+  } catch {
+    /* the stop itself is what keeps the run honest */
+  }
 }

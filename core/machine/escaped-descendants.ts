@@ -1,7 +1,8 @@
 import type { HostRunEscapedDescendant } from "../../shared/contracts";
-import { pidAlive } from "./pid";
-import { processStartIdentityLiveness, processesForStartIdentity, processesForStartIdentityInTree, type ProcessStartIdentitySearch } from "./process-identity-search";
-import { startIdentityMatches } from "./start-identity";
+import {
+  processStartIdentityLivenessAsync, processesForStartIdentityAsync, processesForStartIdentityInTreeAsync,
+  type ProcessStartIdentitySearch,
+} from "./process-identity-search";
 
 /**
  * Custody of a run's escaped descendants: the processes a `setsid` (or
@@ -14,6 +15,10 @@ import { startIdentityMatches } from "./start-identity";
  * evidence it could not read. Callers that only need one settled inventory
  * (`escapedDescendantsOf`) and callers that must keep a run reserved until
  * absence is proven (`EscapedDescendantCustody`) read the same rule here.
+ *
+ * Every read is the asynchronous one (nucleus#1329): these checks run on the same
+ * loop that answers the service, and a host-wide `ps` on a loaded board is
+ * exactly the read that used to block it.
  */
 
 /**
@@ -55,8 +60,8 @@ export class EscapedDescendantCustody {
    * absence — an orphan whose parent already exited is out of reach — so it never
    * decides settlement.
    */
-  scan(processGroupId: number | null): void {
-    const found = processesForStartIdentityInTree(this.identity, { processGroupId, pids: this.recorded().map(entry => entry.pid) });
+  async scan(processGroupId: number | null): Promise<void> {
+    const found = await processesForStartIdentityInTreeAsync(this.identity, { processGroupId, pids: this.recorded().map(entry => entry.pid) });
     if (found.state !== "found") return;
     this.record(escapedDescendantsOf(found, processGroupId));
   }
@@ -79,17 +84,19 @@ export class EscapedDescendantCustody {
    * clean instant is kept across later clean scans, so a caller polling faster
    * than the interval proves absence on the first scan that lands past it.
    */
-  absenceProven(processGroupId: number | null, nowMs = Date.now()): boolean {
-    const found = processesForStartIdentity(this.identity);
+  async absenceProven(processGroupId: number | null, nowMs = Date.now()): Promise<boolean> {
+    const found = await processesForStartIdentityAsync(this.identity);
     if (found.state === "unknown") { this.firstClearScanAt = null; return false; }
     const escaped = found.state === "found" ? escapedDescendantsOf(found, processGroupId) : [];
     this.record(escaped);
     // A recorded descendant that is alive, that was recorded with an identity the
     // host could not read, or whose identity cannot be observed now, keeps the run
     // reserved: unknown is not absence.
-    const knowsLive = [...this.known.values()].some(entry =>
-      entry.startIdentity.endsWith("@unknown")
-      || processStartIdentityLiveness(entry.pid, entry.startIdentity) !== "dead");
+    let knowsLive = false;
+    for (const entry of this.known.values()) {
+      if (entry.startIdentity.endsWith("@unknown")
+        || await processStartIdentityLivenessAsync(entry.pid, entry.startIdentity) !== "dead") { knowsLive = true; break; }
+    }
     if (escaped.length || knowsLive) { this.firstClearScanAt = null; return false; }
     this.firstClearScanAt ??= nowMs;
     return nowMs - this.firstClearScanAt >= ESCAPED_DESCENDANT_PROOF_MS;
@@ -106,9 +113,9 @@ export class EscapedDescendantCustody {
    * process — that pid is not signalled, and an identity that cannot be observed
    * is not signalled either (fail closed).
    */
-  signal(signal: NodeJS.Signals): void {
+  async signal(signal: NodeJS.Signals): Promise<void> {
     for (const entry of this.known.values()) {
-      if (processStartIdentityLiveness(entry.pid, entry.startIdentity) !== "alive") continue;
+      if (await processStartIdentityLivenessAsync(entry.pid, entry.startIdentity) !== "alive") continue;
       try { process.kill(entry.pid, signal); } catch { /* the descendant is already gone */ }
     }
   }

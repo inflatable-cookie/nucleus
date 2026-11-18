@@ -143,7 +143,9 @@ a brief Saved or the reason it was not saved (Tom, 2026-10-22; Saving… stays q
   for a profile above the level's ceiling, or rated frontier below Maximum, applies only
   once the operator signs it off on the board. Nucleus asks through an operator
   decision linked to the task, on the requester's behalf: approve the
-  requested profile, pick another from the role's pool, or decline. Nothing
+  requested profile, pick another from the role's pool, or decline. A required
+  legacy worker preference for such a profile enters the same request and
+  decision lifecycle before dispatch; it grants no sign-off by itself. Nothing
   waits for the answer (Tom: "don't hold things up"): an unsigned request pins
   nothing, sets no thinking level and never leaves a role waiting, so the role
   runs on automatic selection within the level. When an approval arrives, Nucleus

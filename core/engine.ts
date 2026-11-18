@@ -215,8 +215,13 @@ export class Engine {
   hostAvailable: (id: string) => boolean = () => true;
   /** Registered, online host suitable for authenticated ingress; may not be a work host. */
   hostIngressAvailable: (id: string) => boolean = () => true;
+  /** A transport that failed during this audit pass stays unavailable to its tasks until the next pass. */
+  private readonly auditUnavailableHosts = new Set<string>();
+  markAuditHostUnavailable(id: string): void { this.auditUnavailableHosts.add(id); }
+  resetAuditHostAvailability(): void { this.auditUnavailableHosts.clear(); }
+
   taskHostAvailable(task: Task): boolean {
-    return Boolean(task.hostId && (!this.activeHostId || this.activeHostId === task.hostId) && this.hostAvailable(task.hostId)
+    return Boolean(task.hostId && !this.auditUnavailableHosts.has(task.hostId) && (!this.activeHostId || this.activeHostId === task.hostId) && this.hostAvailable(task.hostId)
       && this.store.runs(task.id).every(run => run.hostId === task.hostId));
   }
   /**
@@ -240,7 +245,7 @@ export class Engine {
   hostWait(task: Task): string | null {
     const hostId = task.hostId;
     if (!hostId || task.phase === 'done' || task.phase === 'cancelled') return null;
-    const online = this.withHost(hostId, () => this.hostAvailable(hostId));
+    const online = !this.auditUnavailableHosts.has(hostId) && this.withHost(hostId, () => this.hostAvailable(hostId));
     const outage = this.hostOutages.observe(hostId, online);
     if (!outage) {
       this.resolution.clearHostWait(task);
@@ -261,7 +266,7 @@ export class Engine {
     return detail;
   }
   private sweepOwner?: Sweep;
-  private get sweep(): Sweep { return this.sweepOwner ??= new Sweep(enginePorts(this, ['adapter', 'applyDeferredOwnerVerbs', 'deliverPendingBriefAmendments', 'archivePlannerGrants', 'archiveRetiredErroredAgents', 'auditPass', 'clearRetiredInvalidations', 'continueAwaitingReviewers', 'dispatchQueued', 'dispositionDeps', 'drainProjections', 'drainWaiters', 'enqueueTitle', 'ensureSweep', 'flushPrerequisiteReleases', 'host', 'hostAvailable', 'hostIds', 'hostOutages', 'hostWait', 'inventoryHostMatches', 'lifecycle', 'maxSweepWindows', 'migrateProjectOwnersToPlanners', 'noteStepFailure', 'observeRetiredWorkers', 'quiesce', 'reconcile', 'recoverExhaustedWorkers', 'removeSiblings', 'resumePausedStops', 'retiredObservationKey', 'retiredObservationPlan', 'scheduleLane', 'scheduleLifecycleFollowUp', 'scheduleTaskQuantum', 'settleQuiesce', 'startSweepChain', 'stopped', 'store', 'sweepChain', 'sweepCursor', 'sweepMode', 'sweepOrder', 'sweepPending', 'sweepStats', 'taskHostAvailable', 'wakeCapacityWaiter', 'wakePreludes', 'withHost'], ['checkpoints', 'delegateNativeQuestions', 'deliverDecisionNotices', 'deliverDrainNotices', 'deliverHoldNotices', 'deliverHostOutageNotices', 'deliverNotices', 'deliverQueuedMessages', 'observationTargets', 'observe', 'origins', 'raiseOperatorQuestions', 'recovery', 'resumeAskQuestions', 'resumeResponsibleAnsweredQuestions', 'settleBudgetClock'])); }
+  private get sweep(): Sweep { return this.sweepOwner ??= new Sweep(enginePorts(this, ['adapter', 'applyDeferredOwnerVerbs', 'deliverPendingBriefAmendments', 'archivePlannerGrants', 'archiveRetiredErroredAgents', 'auditPass', 'clearRetiredInvalidations', 'continueAwaitingReviewers', 'dispatchQueued', 'dispositionDeps', 'drainProjections', 'drainWaiters', 'enqueueTitle', 'ensureSweep', 'flushPrerequisiteReleases', 'host', 'hostAvailable', 'hostIds', 'hostOutages', 'hostWait', 'inventoryHostMatches', 'lifecycle', 'markAuditHostUnavailable', 'maxSweepWindows', 'migrateProjectOwnersToPlanners', 'noteStepFailure', 'observeRetiredWorkers', 'quiesce', 'reconcile', 'recoverExhaustedWorkers', 'removeSiblings', 'resetAuditHostAvailability', 'resumePausedStops', 'retiredObservationKey', 'retiredObservationPlan', 'scheduleLane', 'scheduleLifecycleFollowUp', 'scheduleTaskQuantum', 'settleQuiesce', 'startSweepChain', 'stopped', 'store', 'sweepChain', 'sweepCursor', 'sweepMode', 'sweepOrder', 'sweepPending', 'sweepStats', 'taskHostAvailable', 'wakeCapacityWaiter', 'wakePreludes', 'withHost'], ['checkpoints', 'delegateNativeQuestions', 'deliverDecisionNotices', 'deliverDrainNotices', 'deliverHoldNotices', 'deliverHostOutageNotices', 'deliverNotices', 'deliverQueuedMessages', 'observationTargets', 'observe', 'origins', 'raiseOperatorQuestions', 'recovery', 'resumeAskQuestions', 'resumeResponsibleAnsweredQuestions', 'settleBudgetClock'])); }
   readonly dispatchOwner = new Dispatch(this);
   private readonly dispatchAdmission = new DispatchAdmission({
     store: () => this.store,
@@ -522,10 +527,10 @@ export class Engine {
       get withHost() { return engine.withHost.bind(engine); },
       get resolution() { return portsContext(engine.resolution, ['attention', 'complete', 'settleCompletedExecutorBlocker']); },
     });
-    this.workerFailover = new WorkerFailover(enginePorts(this, ['activeHostId', 'adapter', 'host', 'launchAgent', 'note', 'profileCatalogKnown', 'profiles', 'workerProviderUnavailable', 'stopped', 'store', 'taskHostAvailable', 'withHost'], ['recordStop', 'resumeTransientProviderThread', 'resumeTransientWorker', 'retainedWorkerProfileIssue', 'suppressAutomaticRetry', 'transportDeferred', 'waiting']));
+    this.workerFailover = new WorkerFailover(enginePorts(this, ['activeHostId', 'adapter', 'host', 'launchAgent', 'note', 'profileCatalogKnown', 'profiles', 'workerProviderUnavailable', 'stopped', 'store', 'taskHostAvailable', 'withHost'], ['clearTransportWait', 'graceMs', 'recordStop', 'resumeTransientProviderThread', 'resumeTransientWorker', 'retainedWorkerProfileIssue', 'suppressAutomaticRetry', 'transportDeferred', 'waiting']));
     this.retiredObservations = new RetiredObservations(portsContext(this, ['activeHostId', 'host', 'retiredObservationKey', 'store', 'taskHostAvailable']));
     this.taskControlDispatcher = new TaskControlDispatcher(this);
-    this.recoverySettlement = new RecoverySettlement(enginePorts(this, ['coordinatorActionRunId', 'host', 'onTaskHost', 'performTaskControl', 'store'], ['attention', 'recovery', 'update']));
+    this.recoverySettlement = new RecoverySettlement(enginePorts(this, ['coordinatorActionRunId', 'selfForceRunId', 'host', 'onTaskHost', 'performTaskControl', 'store'], ['attention', 'recovery', 'update']));
     this.pausedStops = new PausedStops(this);
     this.routeControls = new RouteControls(this);
     this.taskCompletion = new TaskCompletion(this);
@@ -1099,6 +1104,9 @@ export class Engine {
   }
   prepareWorktreeLinks(task: Task): Promise<{ task: Task; recordFailure: string | null }> {
     return this.workspaceProvisioning.prepareWorktreeLinks(task);
+  }
+  ensureSharedSiblingCheckouts(task: Task) {
+    return this.workspaceProvisioning.ensureSharedSiblingCheckouts(task);
   }
   readStash(directory: string) {
     return this.workspaceProvisioning.readStash(directory);

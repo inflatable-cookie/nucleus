@@ -8,7 +8,8 @@ import { isCloseoutHookHold } from '../hooks/hooks';
 import { NO_ORIGIN_THREAD_WAIT, missingOriginHasPlanner, noticeId, noticeTarget, originRecipient } from './origin';
 import type { AgentObservation } from '../host/adapter';
 import { isAgentGoneRefusal } from '../host/errors';
-import { qaScheduleNoticeOwner } from '../qa/project-qa-schedule';
+import { qaSettlementHostMessageId } from '../qa/project-qa-notice';
+import { qaNoticeOwner } from '../qa/project-qa-schedule';
 import type { Resolution } from '../resolution';
 import { now } from '../store/store';
 import { active } from '../recovery/task-reasons';
@@ -215,7 +216,7 @@ export class Notices {
       };
       let live = episodeLive();
       if (n.kind === 'qa') {
-        const owner = qaScheduleNoticeOwner(this.store, n);
+        const owner = qaNoticeOwner(this.store, n);
         live = Boolean(owner);
         if (owner && n.status === 'pending' && n.agentId !== owner) {
           this.store.putNotice({ ...n, agentId: owner, recipientAgentId: owner }); continue;
@@ -239,7 +240,7 @@ export class Notices {
           if (!current || current.status !== 'pending') return null;
           let stillLive = episodeLive();
           if (n.kind === 'qa') {
-            const owner = qaScheduleNoticeOwner(this.store, current);
+            const owner = qaNoticeOwner(this.store, current);
             if (owner && (current.agentId !== owner || current.agentId !== n.agentId)) {
               this.store.putNotice({ ...current, agentId: owner, recipientAgentId: owner }); return null;
             }
@@ -248,7 +249,13 @@ export class Notices {
           if (!stillLive) { this.store.putNotice({ ...current, status: 'superseded', error: 'The drain episode ended before the prompt was delivered' }); return null; }
           return current;
         },
-        target: current => ({ agentId: current.agentId, id: current.id, text: current.text }),
+        target: current => {
+          if (current.kind === 'qa' && current.id.startsWith('project-qa-settled:')) {
+            const runId = current.taskId.startsWith('qa:') ? current.taskId.slice(3) : '';
+            return { agentId: current.agentId, id: qaSettlementHostMessageId(runId, current.agentId), text: current.text };
+          }
+          return { agentId: current.agentId, id: current.id, text: current.text };
+        },
         mark: (current, status, error) => this.store.putNotice({ ...current, error, status }),
       }));
       if (sent === 'paused') return;
@@ -484,12 +491,20 @@ export class Notices {
    * failed or interrupted delivery can never become a second notice.
    */
   async deliverDecisionNotices() {
-    if (!this.adapter.notify || this.paused()) return;
+    if (this.paused()) return;
     for (const decision of this.store.pendingDecisionDeliveries()) {
       const delivery = decision.delivery;
       if (!delivery || delivery.version !== decision.version || !delivery.agentId) continue;
+      const wait = (reason: string) => {
+        if (delivery.error === reason && delivery.attempts > 0) return;
+        this.store.updateDecisionDelivery(decision.id, { ...delivery, error: reason, attempts: Math.max(delivery.attempts, 1) });
+      };
       const host = await this.resolution.identifyOriginHost(delivery.agentId);
-      if (!host || !this.resolution.withHost(host, () => this.resolution.originHostAvailable(host))) continue;
+      if (!host) { wait('Cannot route this identity'); continue; }
+      if (!this.resolution.withHost(host, () => this.resolution.originHostAvailable(host) && Boolean(this.adapter.notify))) {
+        wait(`Waiting for host ${host}`);
+        continue;
+      }
       const attempts = delivery.attempts + 1;
       const sent = await this.resolution.withHost(host, () => this.sendDurably({
         recipient: delivery.agentId,

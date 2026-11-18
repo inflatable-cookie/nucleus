@@ -1,6 +1,6 @@
 import { PlanningPromotion } from "./planning-promotion";
 import { PlanningSubmission } from "./planning-submission";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { z } from "zod";
 import { type Store } from "../store/store";
 import { type Engine } from "../engine";
@@ -137,7 +137,11 @@ export class RuntimePlanning {
     catch (error) { return this.recordLeadCheckNotQueued(lead, error instanceof Error ? error.message : String(error)); }
     const digest = briefDigest(lead.body);
     const payload = leadCheckOperationPayloadSchema.parse({ type:"lead_check", id:lead.id, version:lead.version, digest, repository:repository.origin, baseBranch:lead.baseBranch });
-    const key = `lead-check:${operationInputHash([lead.id,lead.version,digest,repository.origin,lead.baseBranch])}`;
+    // A completed failed check is evidence of that attempt, not an answer to a
+    // later submission. A pending check still joins above; a retry gets a new
+    // durable occurrence tied to the failure it is rechecking.
+    const retryOf = lead.check?.ok === false ? randomUUID() : null;
+    const key = `lead-check:${operationInputHash([lead.id,lead.version,digest,repository.origin,lead.baseBranch,retryOf])}`;
     let acceptance: OperationAcceptance;
     try {
       acceptance = await this.context.engine.startOperation({ key, kind:"lead_check", payload, repoPath:repository.path, deferSchedule:true });

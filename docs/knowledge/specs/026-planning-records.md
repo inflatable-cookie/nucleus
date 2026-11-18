@@ -111,6 +111,8 @@ authorization note, plus optional base branch, lanes, tags, host and hold. It
 creates the lead, waits for its durable check, records exact-version approval,
 and waits for the existing promotion operation to return the task reference.
 Failed checks return the lead's findings without approval or promotion.
+Resubmitting the same open lead after a failed check starts a new durable check;
+concurrent identical submissions join one pending occurrence.
 
 Same-title matching is case-insensitive and trims outer whitespace, scoped to
 the resolved repository. An open lead with the same brief digest is checked, approved and promoted; a different brief is refused with the lead ID and `lead.edit` route. Numbered tasks,
@@ -569,7 +571,8 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
   The panel finds the Nucleus project whose repositories include the workspace's
   project root (`project.get` by repository) and shows the Pipeline and Planning views (lane discovery included) scoped to that project, with the multi-project selector preset
   to it. A workspace outside every Nucleus project shows a plain message. The
-  Papercuts view stays in the main surface; Dispatch limits, Profiles (with the
+  Papercuts view stays in the main surface; Dispatch limits, Hosts (the host
+  catalogue and the default host, nucleus#1325), Profiles (with the
   Subscriptions list beneath the profiles), Projects, Backups and Telemetry live
   in Nucleus's native
   Paseo settings screen (`addSettingsScreen`), which the header's Settings icon opens

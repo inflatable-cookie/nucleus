@@ -11,29 +11,47 @@ import { isAgentGoneRefusal } from "../../host/errors";
 export function productionDeps(options: {
   store: Store;
   hostAvailable?(task: Task): boolean;
+  readProcesses?: DispositionDeps["readProcesses"];
   withHost?<T>(id: string, fn: () => T): T;
   hooks: DispositionDeps["hooks"];
-  observe(id: string): Promise<{ active: boolean; permissions: boolean; status: string }>;
+  observe(
+    id: string,
+  ): Promise<{ active: boolean; permissions: boolean; status: string }>;
   retainThreadsUntilCloseout?(): boolean;
   archiveAgent(id: string): Promise<void>;
-  archiveWorkspace(task: Task, attachedAgentIds: ReadonlySet<string>): Promise<boolean>;
+  archiveWorkspace(
+    task: Task,
+    attachedAgentIds: ReadonlySet<string>,
+  ): Promise<boolean>;
   observeWorkspaceArchived(task: Task): Promise<boolean>;
   archiveSiblings?(task: Task): Promise<void>;
-  interruptTurn?(agentId: string, messageId: string, text: string): Promise<void>;
+  interruptTurn?(
+    agentId: string,
+    messageId: string,
+    text: string,
+  ): Promise<void>;
   listRemoteRefs?(task: Task): Promise<DispositionRef[]>;
 }): DispositionDeps {
   const { store } = options;
   return {
     hooks: options.hooks,
     hostAvailable: options.hostAvailable,
+    readProcesses: options.readProcesses,
     withHost: options.withHost,
-    ...(options.archiveSiblings ? { archiveSiblings: options.archiveSiblings } : {}),
+    ...(options.archiveSiblings
+      ? { archiveSiblings: options.archiveSiblings }
+      : {}),
     ...(options.interruptTurn ? { interruptTurn: options.interruptTurn } : {}),
     listRemoteRefs: options.listRemoteRefs ?? listOriginRefs,
     observeAgent: async (id) => {
       try {
         const state = await options.observe(id);
-        return { stopped: !state.active && !state.permissions && ["idle", "error", "closed"].includes(state.status) };
+        return {
+          stopped:
+            !state.active &&
+            !state.permissions &&
+            ["idle", "error", "closed"].includes(state.status),
+        };
       } catch (error) {
         if (isAgentGoneRefusal(error)) return { stopped: true };
         throw error;
@@ -42,9 +60,14 @@ export function productionDeps(options: {
     retainThreadsUntilCloseout: options.retainThreadsUntilCloseout,
     archiveAgent: (id) => options.archiveAgent(id),
     proveWorkspaceEmpty: (task) => proveWorkspaceEmpty(store, task),
-    proveRetainedByReplacement: (task, replacement) => proveRetainedByReplacement(task, replacement),
+    proveRetainedByReplacement: (task, replacement) =>
+      proveRetainedByReplacement(task, replacement),
     archiveWorkspace: async (task) => {
-      const attached = new Set([...ownedThreads(task, store.runs(task.id)).map((thread) => thread.agentId)]);
+      const attached = new Set([
+        ...ownedThreads(task, store.runs(task.id)).map(
+          (thread) => thread.agentId,
+        ),
+      ]);
       return options.archiveWorkspace(task, attached);
     },
     observeWorkspaceArchived: options.observeWorkspaceArchived,

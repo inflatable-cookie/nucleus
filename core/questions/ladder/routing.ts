@@ -10,6 +10,7 @@ import { escalationVerbChoices, plannerEscalationChoicesFor, type EscalationVerb
 import { plannerEscalations, type LadderEvent } from './records';
 import { parseEscalationReply } from './replies';
 import { escalationWaitDetail } from './waits';
+import { closeEscalationFollowups } from './continuation';
 
 /**
  * Routing one recorded escalation: the durable intent and wait the caller records,
@@ -117,6 +118,7 @@ export async function routePlannerEscalation(ladder: Ladder, t: Task, id: string
   };
   if (!reply && escalationOutlived(ladder.store.task(t.id))) {
     ladder.store.event(t.id, 'planner_escalation_answered', `${id}: answered by ordinary progress: the task merged or ended first`);
+    closeEscalationFollowups(ladder.store, t.id, id);
     return;
   }
   if (plannerEscalations(events() as LadderEvent[]).find(item => item.id === id)?.answered) return;

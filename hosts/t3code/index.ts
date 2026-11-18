@@ -109,6 +109,8 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
       return null;
     }
     observe(id: string) { return this.native.observe(id); }
+    beginHostPass(tasks: readonly Task[]) { return this.native.beginHostPass(tasks); }
+    endHostPass() { return this.native.endHostPass(); }
     observationInventory(ids: readonly string[]) { return this.native.observationInventory(ids); }
     taskWorkspaceArchived(id: string) { return this.native.workspaceArchived(id); }
     setTaskWorkspaceTitle(task: Task, title: string, requestId: string, uncertain: boolean) {

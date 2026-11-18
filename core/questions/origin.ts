@@ -96,6 +96,11 @@ export class OriginRouting {
   if(sameCallerIdentity(from,to)&&sameCallerIdentity(task.notificationAgentId,to,task.originHostId,hostId)&&task.originHostId===hostId&&task.originWorkspaceId===workspaceId&&!task.originError&&!task.originLookupError&&!task.plannerAgentId)return null;
   const overrides=movedOverrides(task.completionSubscriptionOverrides,from,to,workspaceId);
   return this.store.update(task.id,{notificationAgentId:to,originHostId:hostId,originWorkspaceId:workspaceId,originError:'',originLookupError:'',
+   // nucleus#1313: a planner change re-nests the presentation — an explicit detach
+   // only ever recorded "no planner thread for presentation", so naming a planner
+   // clears it and each host follows the new planner's own host.
+   ...(task.presentationDetached?{presentationDetached:null}:{}),
+   ...(task.presentationParent?{presentationParent:null}:{}),
    ...(overrides!==task.completionSubscriptionOverrides?{completionSubscriptionOverrides:overrides}:{}),...movedPlanner},
    'owner_changed',`${from} → ${to} by ${caller}${task.plannerAgentId?` (planner ${task.plannerAgentId} → ${to})`:''}: ${reason}`.slice(0,2000));
  }

@@ -103,6 +103,8 @@ export class TaskControlDispatcher {
         throw new DurableFenceRefusal(FORCE_CALLER_REFUSAL);
       if (!input.reason?.trim()) throw new DurableFenceRefusal(FORCE_REASON_REFUSAL);
       if (input.action === 'retry_effect') return operated(this.engine.forceSettleEffect(task, input));
+      if (input.action === 'move' && input.to === 'closeout' && task.resolution.mergedCommit)
+        return this.engine.applyTaskControlMove({ ...input, force: false }, operated, operationId);
       if (input.action === 'move') return operated(await this.engine.forceMove(task, input, operationId));
       throw new DurableFenceRefusal(FORCE_ACTION_REFUSAL);
     }

@@ -354,3 +354,59 @@ test('a foreign ticket and the incident report cannot create a completion', asyn
   assert.equal(store.events(task.id).filter(e=>e.kind==='completion_received').length,0);
  } finally {await engine.stop();await stop();store.close();}
 });
+
+test('a BB run ticket reports over loopback to the BB backend, never the sandboxed socket', async () => {
+ // nucleus#1315: Claude Code's sandbox refuses every Unix socket, so a BB role
+ // thread's helper hands the exact payload to the BB backend over loopback. The
+ // ticket names the host; the ticket's socket path does not exist here, which is
+ // what a sandbox looks like from the helper's side.
+ const dir = realpathSync(mkdtempSync(join(tmpdir(), 'ns-bb-relay-')));
+ const helper = join(dir, 'worker-report.mjs');
+ const ticket = join(dir, 'ticket.json');
+ const received: Array<{ path: string; body: any }> = [];
+ const server = createServer(async (request, response) => {
+  let body = '';
+  for await (const chunk of request) body += chunk;
+  received.push({ path: request.url ?? '', body: JSON.parse(body) });
+  response.setHeader('content-type', 'application/json');
+  response.end(JSON.stringify({ ok: true, receipt: 'relayed' }));
+ });
+ await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+ const address = server.address() as { port: number };
+ const base = `http://127.0.0.1:${address.port}`;
+ writeFileSync(helper, workerHelper);
+ const report = () => new Promise<{ code: number | null; out: string; err: string }>((resolve, reject) => {
+  const child = spawn(process.execPath, [helper, ticket], { stdio: ['pipe', 'pipe', 'pipe'], env: { ...process.env, BB_SERVER_URL: base, NUCLEUS_HELPER: helper, NUCLEUS_TICKET: ticket, NUCLEUS_CONTINUATION_TICKET: '', NUCLEUS_CONTINUATION_RUN_ID: '' } });
+  let out = '', err = '';
+  child.stdout.on('data', chunk => { out += chunk; });
+  child.stderr.on('data', chunk => { err += chunk; });
+  child.on('error', reject);
+  child.on('close', code => resolve({ code, out, err }));
+  child.stdin.end(JSON.stringify({ status: 'blocked', summary: 'Sandboxed report' }));
+ });
+ try {
+  writeFileSync(ticket, JSON.stringify({ socketPath: join(dir, 'absent.sock'), taskId: 'task-bb', runId: 'run-bb', host: 'bb:0123456789abcdef0123456789abcdef', token: 'bb-secret' }), { mode: 0o600 });
+  const accepted = await report();
+  assert.equal(accepted.code, 0, accepted.err);
+  assert.deepEqual(JSON.parse(accepted.out), { ok: true, receipt: 'relayed' });
+  assert.equal(received.length, 1);
+  assert.equal(received[0]!.path, '/api/v1/plugins/nucleus/http/report');
+  assert.equal(received[0]!.body.route, '/complete');
+  assert.equal(received[0]!.body.taskId, 'task-bb');
+  assert.equal(received[0]!.body.runId, 'run-bb');
+  assert.equal(received[0]!.body.token, 'bb-secret');
+  assert.equal(received[0]!.body.payload.status, 'blocked');
+  assert.match(received[0]!.body.payload.eventId, /^[a-f0-9]{64}$/);
+  // The backend's refusal is the helper's refusal: same body, non-zero exit.
+  server.removeAllListeners('request');
+  server.on('request', (_request, response) => { response.statusCode = 409; response.end('{"error":"The relay names another task"}'); });
+  const refused = await report();
+  assert.notEqual(refused.code, 0);
+  assert.match(refused.err, /another task/);
+  assert.doesNotMatch(refused.err, /bb-secret/, 'the helper never prints the run credential');
+ } finally {
+  server.closeAllConnections();
+  await new Promise<void>(resolve => server.close(() => resolve()));
+  rmSync(dir, { recursive: true, force: true });
+ }
+});

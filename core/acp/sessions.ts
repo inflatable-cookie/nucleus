@@ -46,7 +46,7 @@ export interface AcpSessionsOptions {
  * calls this with the surface the runtime attached, so the refusal is one rule
  * rather than a check each caller remembers.
  */
-export function bindAcpSession(acp: AcpSessionSurface | null, input: { taskId: string }): AcpSessionBinding {
+export function bindAcpSession(acp: AcpSessionSurface | null, input: { taskId: string; ignorePattern?: string; holdPattern?: string }): AcpSessionBinding {
   if (!acp) throw new Error("This process does not serve ACP sessions, so no binding was minted");
   return acp.bind(input);
 }
@@ -65,11 +65,13 @@ export class AcpSessions implements AcpSessionSurface {
   private get pollMs(): number { return this.options.pollMs ?? ACP_TURN_POLL_MS; }
 
   /** Mint this task's session and the pointer in its checkout. One session per task. */
-  bind(input: { taskId: string }): AcpSessionBinding {
+  bind(input: { taskId: string; ignorePattern?: string; holdPattern?: string }): AcpSessionBinding {
     const task = this.engine.store.task(input.taskId);
     if (task.removedAt) throw new Error(`Task ${acpTaskName(task)} was removed; no ACP session can be bound to it`);
     if (!task.directory) throw new Error(`Task ${acpTaskName(task)} has no workspace checkout yet; bind the ACP session once its worktree exists`);
-    return mintAcpSession({ dataHome: this.dataHome, socketPath: this.options.socketPath, taskId: task.id, directory: task.directory });
+    return mintAcpSession({ dataHome: this.dataHome, socketPath: this.options.socketPath, taskId: task.id, directory: task.directory,
+      ...(input.ignorePattern ? { ignorePattern: input.ignorePattern } : {}),
+      ...(input.holdPattern ? { holdPattern: input.holdPattern } : {}) });
   }
 
   /**

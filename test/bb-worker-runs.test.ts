@@ -13,7 +13,7 @@ function fixture() {
   let workspace: BbWorkspaceRecord = { id: 'bb-worktree-' + 'a'.repeat(40), directory: '/synthetic/worktree', projectId: 'proj_synthetic', repositoryRoot: '/synthetic/repo', title: 'Synthetic' };
   let now = 0;
   const ports = { hostId, operation: fake.operations.execute, state: () => structuredClone(state), save: (value: BbThreadState) => { state = structuredClone(value); },
-    workspace: () => workspace, putWorkspace: (value: BbWorkspaceRecord) => { workspace = value; }, parent: () => 'thr_planner',
+    workspace: () => workspace, putWorkspace: (value: BbWorkspaceRecord) => { workspace = value; }, parent: () => 'thr_planner', reference: () => '#1271',
     helperPath: '/synthetic/helper.mjs', ticketPath: (id: string) => `/synthetic/tickets/${id}.json`, notSent: () => false, now: () => now };
   const native = new BbThreads(ports);
   const spec = (run = 'run_synthetic', role = 'worker'): HostAgentSpec => ({
@@ -209,4 +209,19 @@ test('BB busy rows never fabricate a positive turn id or prove turn absence', as
   f.rows.get(agent.id).status = 'active';
   const state = await f.native.observe(agent.id);
   assert.equal(state.active, true); assert.equal(state.activeTurnId, undefined);
+});
+
+test('nucleus#1315 a BB role thread runs in Full Access whatever mode the profile names', async () => {
+  // Planner ruling (2026-11-18): a sandboxed BB role thread cannot run Effigy at
+  // all (Claude Code's sandbox refuses the boot-session sysctl Effigy's foreground
+  // identity reads), and Paseo role threads already run full-access /
+  // bypassPermissions. The profile's mode still describes the run; this host's
+  // native mode is the unattended one.
+  const f = fixture();
+  const acceptEdits = { ...f.spec(), profile: { ...f.spec().profile, modeId: 'accept-edits' } };
+  await f.native.createAgent(acceptEdits);
+  assert.equal(f.calls.find(c => c.method === 'threads.spawn')!.args.permissionMode, 'full');
+  const auto = { ...f.spec('run_auto'), profile: { ...f.spec('run_auto').profile, modeId: 'auto' } };
+  await f.native.createAgent(auto);
+  assert.equal(f.calls.filter(c => c.method === 'threads.spawn').at(-1)!.args.permissionMode, 'full');
 });

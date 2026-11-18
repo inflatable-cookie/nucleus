@@ -18,6 +18,15 @@ export interface HostRegistryStore {
   /** The last host close, so a restart resumes the same grace instead of
    * granting a new one. */
   writeDisconnectedAt?(at: number | null): void;
+  /** When each known host was last connected (ISO), kept beside the catalogue so
+   * Settings → Hosts can say when a retired host was last seen after a restart. */
+  readLastSeen?(): Record<string, string>;
+  writeLastSeen?(seen: Record<string, string>): void;
+}
+
+/** Why `forget` refused; the caller names it to the operator. */
+export class HostForgetRefusedError extends Error {
+  constructor(message: string) { super(message); this.name = "HostForgetRefusedError"; }
 }
 
 /**
@@ -107,7 +116,7 @@ export async function resolveOriginHost<T>(registry: HostRegistry<T>, agentId: s
 }
 
 export class HostRegistry<T> {
-  private readonly sessions = new Map<string, { endpoint: string; token: object; host: T }>();
+  private readonly sessions = new Map<string, { endpoint: string; token: object; host: T; connectedAt: number }>();
   private readonly resources = new Map<string, unknown>();
   private lastDisconnect: number | null = null;
   private readonly graceMs: number;
@@ -134,7 +143,9 @@ export class HostRegistry<T> {
       this.store.writeDisconnectedAt?.(null);
     });
     const token = {};
-    this.sessions.set(id, { endpoint, token, host });
+    const connectedAt = this.now();
+    this.sessions.set(id, { endpoint, token, host, connectedAt });
+    this.markSeen(id, connectedAt);
     this.lastDisconnect = null;
     return token;
   }
@@ -143,6 +154,7 @@ export class HostRegistry<T> {
   disconnect(id: string, token: object): void {
     if (this.sessions.get(id)?.token !== token) return;
     this.sessions.delete(id);
+    this.markSeen(id, this.now());
     if (!this.sessions.size) {
       this.lastDisconnect = this.now();
       this.store.writeDisconnectedAt?.(this.lastDisconnect);
@@ -163,6 +175,43 @@ export class HostRegistry<T> {
     if (this.sessions.size) return;
     this.lastDisconnect = this.now();
     this.store.writeDisconnectedAt?.(this.lastDisconnect);
+  }
+
+  /**
+   * Forget one host from the durable catalogue (Settings → Hosts, `host.remove`).
+   * A live host is never forgotten: a disconnect proves nothing about its effects,
+   * and an online host is plainly still needed. `check` runs inside the write's
+   * transaction so a dependency that lands between the confirm and the write still
+   * refuses. Nothing else is touched: threads, workspaces, events and run records
+   * keep the old host ID, and a host that connects again registers again as normal.
+   */
+  forget(id: string, check?: (entry: KnownHost) => void): KnownHost {
+    if (this.sessions.has(id)) throw new HostForgetRefusedError(`Host ${id} is online`);
+    return this.store.transaction(() => {
+      const known = this.store.read();
+      const entry = known.find(candidate => candidate.id === id);
+      if (!entry) throw new HostForgetRefusedError(`Host ${id} is not registered`);
+      check?.(entry);
+      this.store.write(known.filter(candidate => candidate.id !== id));
+      const seen = this.store.readLastSeen?.();
+      if (seen && id in seen) {
+        const { [id]: _removed, ...rest } = seen;
+        this.store.writeLastSeen?.(rest);
+      }
+      return entry;
+    });
+  }
+
+  /** When this host's live session began, or null while it is offline. */
+  connectedAt(id: string): number | null { return this.sessions.get(id)?.connectedAt ?? null; }
+  /** When this host was last connected, or null when Nucleus never recorded it. */
+  lastSeenAt(id: string): string | null { return this.store.readLastSeen?.()[id] ?? null; }
+
+  private markSeen(id: string, at: number): void {
+    if (!this.store.writeLastSeen) return;
+    // A failed bookkeeping write never fails a connect or a close.
+    try { this.store.writeLastSeen({ ...(this.store.readLastSeen?.() ?? {}), [id]: new Date(at).toISOString() }); }
+    catch { /* last-seen is display only */ }
   }
 
   get(id: string): T | undefined { return this.sessions.get(id)?.host; }

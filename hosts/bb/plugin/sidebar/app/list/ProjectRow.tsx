@@ -51,9 +51,11 @@ import {
 } from "@get-bb/plugin-sdk/app";
 import { NO_HIDDEN_THREADS, useHiddenThreadsStatus } from "./groupRollups.js";
 import {
+  NucleusNestedTaskPointers,
   NucleusProjectBoardMenuItem,
   NucleusTaskGroupStateLine,
   taskGroupTitle,
+  useNucleusNestedTaskPointers,
   useNucleusTaskGroup,
   type NucleusTaskGroup,
 } from "./nucleusTaskGroups.js";
@@ -879,7 +881,7 @@ function EnvironmentThreadGroupHeader({
           revealOnHover={!isCollapsed}
         />
       </span>
-      <span
+      {showRollupGlyph || taskGroup === null ? <span
         className={cn(
           "relative z-10 inline-flex shrink-0 items-center",
           rename.isEditing && "hidden",
@@ -897,7 +899,7 @@ function EnvironmentThreadGroupHeader({
             <ThreadStatusGlyph indicator={rollup.indicator} />
           </span>
         ) : null}
-        <div
+        {taskGroup === null ? <div
           data-sidebar-hover-actions-open={isActionsOpen ? "true" : undefined}
           data-sidebar-hover-actions-mobile={
             SIDEBAR_HOVER_ACTIONS_MOBILE_ALWAYS_VALUE
@@ -918,8 +920,8 @@ function EnvironmentThreadGroupHeader({
             onCloseAutoFocus={rename.onCloseAutoFocus}
             onOpenChange={setIsActionsOpen}
           />
-        </div>
-      </span>
+        </div> : null}
+      </span> : null}
     </>
   );
 
@@ -1891,12 +1893,20 @@ export const ProjectThreadTree = memo(function ProjectThreadTree({
       providedRootItems,
     ],
   );
+  const nestedPointers = useNucleusNestedTaskPointers(projectId);
 
   if (threadListState.status === "loading") {
     return <ThreadTreeLoadingSkeleton />;
   }
 
   if (rootItems.length === 0) {
+    // nucleus#1313 (Tom, 2026-11-17): a project whose only threads are nested
+    // under a planner in another project resolves to that project's section, so
+    // upstream's own empty state would say "No threads" over a live task. A
+    // compact pointer row names the planner the task nests under and jumps to
+    // it; a project with no threads anywhere keeps upstream's empty state.
+    if (nestedPointers.length > 0)
+      return <NucleusNestedTaskPointers pointers={nestedPointers} />;
     return (
       <ThreadListEmptyState
         message={

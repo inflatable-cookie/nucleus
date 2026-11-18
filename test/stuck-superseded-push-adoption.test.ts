@@ -54,3 +54,28 @@ test('b7a6fb99: a superseded run\'s clean pushed head is adopted and next offers
     assert.equal(next.prHead, pushed);
   } finally { await f.close(); }
 });
+
+test('an owner continuation delivers to the idle worker after a historical blocked revision and a superseded run', async () => {
+  const f = fixture();
+  try {
+    const pushed = 'c'.repeat(40), old = 'old-revision', superseded = 'superseded-revision';
+    f.setHead(pushed);
+    const run = (id: string, completion: Run['completion'], status: Run['status']) => ({
+      id, taskId: f.submitted.id, role: 'revision', generation: 1, head, base, agentId: 'worker', workspaceId: 'workspace',
+      profile: f.author, status, createdAt: new Date().toISOString(), lastObservedAt: null, active: false, idleSince: null,
+      completion, released: true,
+    } as Run);
+    f.store.putRun(run(old, { taskId: f.submitted.id, runId: old, eventId: 'blocked', status: 'blocked', summary: 'Stopped' }, 'finished'));
+    f.store.putRun(run(superseded, null, 'superseded'));
+    const current = f.current();
+    f.store.update(f.submitted.id, { phase: 'needs_attention', resumePrNumber: 1,
+      resolution: { ...current.resolution, currentRunId: null, attention: true } });
+    f.idle('worker');
+    await f.engine.performTaskControl(taskControlInputSchema.parse({ taskId: f.submitted.id, version: f.current().version,
+      action: 'move', to: 'work', reason: 'Continue the retained work', instruction: 'Finish the task' }));
+    await f.engine.wake();
+    assert.equal(f.current().prHead, pushed);
+    assert.equal(f.sends.at(-1)?.agentId, 'worker', f.current().reason);
+    assert.equal(f.current().resolution.attention, false);
+  } finally { await f.close(); }
+});

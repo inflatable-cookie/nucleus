@@ -39,6 +39,7 @@ export async function callerCliFixture(mismatch = false) {
   const hostResolutions: unknown[] = [];
   let revoked = false;
   let hostParticipantTicket: string | undefined;
+  let hostRunTicket: string | undefined;
   const callback = httpServer((req, res) => {
     let body = '';
     req.on('data', chunk => { body += chunk; });
@@ -55,7 +56,11 @@ export async function callerCliFixture(mismatch = false) {
     const reader = createFrameReader((frame: any) => {
       let result: unknown = {};
       if (frame.method === 'service.health') result = {protocolVersion:PROTOCOL_VERSION,rpcContracts: mismatch ? {} : rpcContracts};
-      else if (frame.method === 'caller.resolve') {hostResolutions.push(frame.input);const hostId=frame.input.hostKind==='t3code'?'t3code:32be2844-7204-4edc-a95a-35b05e42ded4':frame.input.hostKind==='bb'?`bb:${'c'.repeat(64)}`:'paseo-fixture';result = {caller:formatAgentId(hostId,frame.input.nativeAgentId),hostId,source:'host',...(hostParticipantTicket?{participantTicket:hostParticipantTicket}:{})};}
+      else if (frame.method === 'caller.resolve') {hostResolutions.push(frame.input);const hostId=frame.input.hostKind==='t3code'?'t3code:32be2844-7204-4edc-a95a-35b05e42ded4':frame.input.hostKind==='bb'?`bb:${'c'.repeat(64)}`:'paseo-fixture';result = {caller:formatAgentId(hostId,frame.input.nativeAgentId),hostId,source:'host',...(hostRunTicket?{runTicket:hostRunTicket}:{}),...(hostParticipantTicket?{participantTicket:hostParticipantTicket}:{})};}
+      else if (frame.method === 'agent.tell') {
+        calls.push({method:frame.method,input:frame.input});
+        result = {status:'queued',messageId:frame.input.eventId,to:'the Swallowtail planner',role:'planner',recordedAt:new Date().toISOString(),detail:'queued for the project inbox'};
+      }
       else if (frame.method !== 'service.auth') {
         calls.push({method:frame.method,input:frame.input});
         if(frame.method === 'queue.detail') result = detail;
@@ -74,10 +79,14 @@ export async function callerCliFixture(mismatch = false) {
     hostParticipantTicket = path;
     return path;
   };
+  const setHostRunTicket = (path = join(dir, 'run.json')) => {
+    hostRunTicket = path;
+    return path;
+  };
   for (const [source,payload] of Object.entries({run:{taskId:'task',runId:'run'},participant:{participantId:'00000000-0000-4000-8000-000000000001'}}))
     writeFileSync(join(dir,source+'.json'),JSON.stringify({socketPath:callbackPath,token:'synthetic-secret',...payload}));
   return {
-    calls, callbacks, hostResolutions, dir, revoke: () => {revoked=true;}, setHostParticipantTicket,
+    calls, callbacks, hostResolutions, dir, revoke: () => {revoked=true;}, setHostParticipantTicket, setHostRunTicket,
     caller: (source: string) => formatAgentId(source === 'host' ? 'paseo-fixture' : 't3code:fixture','thread'),
     invoke: (source: string, script: string, args: string[], input?: unknown, overrides: NodeJS.ProcessEnv = {}) => new Promise<{code:number|null;stdout:string;stderr:string}>(resolve => {
       const child=spawn(process.execPath,[new URL('../../bin/'+script,import.meta.url).pathname,...args],{env:{...process.env,NUCLEUS_DATA_HOME:dir,NUCLEUS_TICKET:['run','participant'].includes(source)?join(dir,source+'.json'):'',PASEO_AGENT_ID:source==='host'?'thread':'',...overrides}});

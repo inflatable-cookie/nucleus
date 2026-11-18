@@ -47,8 +47,8 @@ const cause=z.discriminatedUnion('kind',[
 const coordinatorAction=z.discriminatedUnion('verb',[
  z.object({verb:z.literal('restart'),role:restartRole.optional(),instruction:instruction.optional(),fresh:z.boolean().optional(),reason}).strict(),
  z.object({verb:z.literal('route'),role,profileId:z.string().trim().min(1).max(240),thinkingOptionId:z.string().optional(),now:z.boolean().optional(),reason}).strict(),
- z.object({verb:z.literal('move'),to:z.enum(['work','review','merge','closeout']),instruction:instruction.optional(),reason}).strict(),
- z.object({verb:z.literal('retry_effect'),effect:z.string().trim().min(1).max(240).optional(),reason}).strict(),
+ z.object({verb:z.literal('move'),to:z.enum(['work','review','merge','closeout']),instruction:instruction.optional(),force:z.boolean().optional(),reason}).strict(),
+ z.object({verb:z.literal('retry_effect'),effect:z.string().trim().min(1).max(240).optional(),force:z.boolean().optional(),reason}).strict(),
  z.object({verb:z.literal('cannot'),reason}).strict(),
 ]);
 server.registerTool('nucleus_report',{
@@ -129,4 +129,19 @@ server.registerTool('ask',{description:ASK_DESCRIPTION,inputSchema:askInputShape
 server.registerTool('nucleus_ask',{description:ASK_ALIAS_DESCRIPTION,inputSchema:askInputShape},input=>askCall(input,'nucleus_ask'));
 server.registerTool('tell',{description:TELL_DESCRIPTION,inputSchema:tellInputShape},input=>tellCall(input,'tell'));
 server.registerTool('nucleus_message',{description:TELL_ALIAS_DESCRIPTION,inputSchema:tellInputShape},input=>tellCall(input,'nucleus_message'));
+// The bridge lives exactly as long as the session that started it (nucleus#1329):
+// an agent host that exits leaves this helper reparented to init with a stdio
+// session nobody can use, and the paused stdin handle keeps the process alive
+// for hours. Two facts end it — the session's stream reaching EOF, and this
+// process being reparented away from the session's own pid. Identity is the
+// parent's pid, never a pattern; the sweep's cleanup still reaps a bridge a
+// crash leaves behind, by the identity the run recorded for it.
+const SESSION_PARENT_POLL_MS=2_000;
+const sessionParent=process.ppid;
+function sessionEnded(){process.exit(0);}
+if(process.stdin){
+  process.stdin.once('end',sessionEnded);
+  process.stdin.once('close',sessionEnded);
+}
+setInterval(()=>{if(process.ppid!==sessionParent)sessionEnded();},SESSION_PARENT_POLL_MS).unref();
 await server.connect(new StdioServerTransport());

@@ -12,6 +12,7 @@ import { OPERATOR_WORKER_REMAP_REASON } from "../recovery/task-reasons";
 import { taskHasPr } from "../forge/index";
 import { digest, now } from "../store/store";
 import { occupiesSlot } from "../dispatch/capacity";
+import { releaseStaleWorkerIntent, staleWorkerIntent } from "../recovery/absent-creation/stale-worker";
 import type { Engine } from "../engine";
 import { restartResumeChoice } from "../task-decision-rules";
 import { collectOwnerVerbFacts, currentRouteProfile, RestartRefusal, workerRestartRefusal } from "./owner-verbs";
@@ -82,6 +83,29 @@ export class WorkerRestarts {
     check();
     const settling = input.settleFences ? [...input.settleFences.runIds, ...(input.settleFences.displacedRunIds ?? [])] : [];
     const absent = task.agentIntent && !task.agentId;
+    // A stale creation intent outside `needs_attention` has no admitted retry. Exact lookup
+    // decides it: no agent settles the intent and a fresh worker starts from the current route.
+    if (absent && task.phase !== 'needs_attention') {
+      if (!staleWorkerIntent(task)) throw Error('Worker creation intent has no retained workspace or profile; inspect the task before restarting');
+      const found = await this.adapter.findAgents(task);
+      if (found.length) throw Error('Worker creation is no longer proven absent; inspect the matching agent before retrying');
+      await this.adapter.verifyWorkspace(task, task.directory!);
+      check();
+      return () => {
+        const current = check();
+        if (!staleWorkerIntent(current)) throw new TaskChangedRefusal('Worker creation changed during restart', input.version, current.version);
+        // The fresh creation takes the worker's current route, resolved from the live catalog: the recorded profile may name an old provider.
+        const routedId = current.profileRequests?.worker?.profileId ?? current.profile!.id;
+        const profile = this.engine.profilesFor(current.hostId).find(candidate => candidate.id === routedId) ?? current.profile!;
+        return this.store.transaction(() => {
+          if (input.settleFences) this.engine.settleVerbFences(task.id, input.settleFences);
+          releaseStaleWorkerIntent(this.store, current, `restart role=worker: ${input.instruction}`);
+          return this.store.update(task.id, { phase: 'dispatching', profile, workerModel: profile.model, reason: `Owner restart: creating a fresh worker on ${profile.provider}/${profile.model}`,
+            resolution: { ...current.resolution, currentRunId: null, attention: false, recoveryActive: false, recoveryAttempts: 0, recovery: null, stalledTurnStop: null } },
+            'absent_worker_routed', input.instruction);
+        });
+      };
+    }
     if (absent) {
       this.resolution.admitAbsentWorker(task, input.instruction, true, settling);
       const found = await this.adapter.findAgents(task);

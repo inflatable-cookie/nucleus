@@ -51,8 +51,13 @@ export function runIntent(input: { task: Task; role: Run['role']; resolution: La
   const profileGroup = s.selection.group
     ?? resolution.store.runs(t.id).findLast(run => run.agentId === s.selection.agentId && run.profileGroup)?.profileGroup
     ?? (s.selection.profile ? resolution.store.pool().find(entry => entry.profileId === s.selection.profile!.id)?.group ?? null : null);
+  const previousReader = role === 'reviewer' && s.selection.agentId
+    ? resolution.store.runs(t.id).findLast(run => run.role === 'reviewer' && run.agentId === s.selection.agentId) : null;
+  const reportRecovery = previousReader?.released && !previousReader.completion && previousReader.head === head
+    ? { reviewReportRecovery: previousReader.id } : {};
   return {
     ...s.round,
+    ...reportRecovery,
     ...scratch,
     ...proofOnly,
     briefVersion: brief?.version ?? null,

@@ -15,7 +15,7 @@ import { coordinatorActionPlan, coordinatorReportMatches, recoverySettlementPatc
 /** Reports currently being applied, so a second pass never applies the same claim twice. */
 export const recoveryApplicationsInFlight = new Set<string>();
 
-export type RecoverySettlementContext = Pick<Engine, 'coordinatorActionRunId' | 'host' | 'onTaskHost' | 'performTaskControl' | 'store'>
+export type RecoverySettlementContext = Pick<Engine, 'coordinatorActionRunId' | 'selfForceRunId' | 'host' | 'onTaskHost' | 'performTaskControl' | 'store'>
   & { readonly resolution: Pick<Resolution, 'attention' | 'recovery' | 'update'> };
 export class RecoverySettlement {
  constructor(readonly engine:RecoverySettlementContext){}
@@ -141,8 +141,10 @@ export class RecoverySettlement {
         usage: this.store.usageLevel(), verbRegistered: Boolean(verb) });
       if (!plan.ok) throw new Error(plan.refusal);
       const args = plan.args;
-      await this.engine.coordinatorActionRunId.run(run.id,
-        () => verb!.apply(input => this.engine.performTaskControl(input), args));
+      await this.engine.coordinatorActionRunId.run(run.id, () => {
+        const apply = () => verb!.apply(input => this.engine.performTaskControl(input), { ...args, ...(args.force ? { caller: run.agentId } : {}) });
+        return args.force ? this.engine.selfForceRunId.run(run.id, apply) : apply();
+      });
       finish("applied");
       return;
     } catch (error) {

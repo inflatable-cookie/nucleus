@@ -1,0 +1,1 @@
+Format changed TypeScript safely, check formatting without writing, name runnable shards in failure summaries, and check retired concepts against a recorded baseline. Scope cleanup test process reads to fixture-owned processes.

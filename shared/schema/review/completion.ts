@@ -25,9 +25,9 @@ export const coordinatorActionSchema = z.discriminatedUnion("verb", [
   z.object({ verb: z.literal("route"), role: z.enum(["worker", "reviewer", "coordinator"]), profileId: z.string().trim().min(1).max(240),
     thinkingOptionId: z.string().optional(), now: z.boolean().optional(), reason: z.string().trim().min(1).max(4000) }).strict(),
   z.object({ verb: z.literal("move"), to: z.enum(["work", "review", "merge", "closeout"]),
-    instruction: z.string().trim().min(1).max(12000).optional(), fresh: z.boolean().optional(), reason: z.string().trim().min(1).max(4000) }).strict(),
+    instruction: z.string().trim().min(1).max(12000).optional(), fresh: z.boolean().optional(), force: z.boolean().optional(), reason: z.string().trim().min(1).max(4000) }).strict(),
   z.object({ verb: z.literal("retry_effect"), effect: z.string().trim().min(1).max(240).optional(),
-    reason: z.string().trim().min(1).max(4000) }).strict(),
+    force: z.boolean().optional(), reason: z.string().trim().min(1).max(4000) }).strict(),
   z.object({ verb: z.literal("cannot"), reason: z.string().trim().min(1).max(4000) }).strict(),
 ]);
 

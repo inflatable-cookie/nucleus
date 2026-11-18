@@ -334,7 +334,12 @@ export function StopSlider<T extends string>({ c, a11yLabel, stopLabel, stops, v
   </View>;
 }
 /** A choice in an anchored dropdown: the stored value and its visible label. `group` renders a header above the first option of each group. */
-export type DropdownOption = { value: string; label: string; group?: string };
+/** `detail` is an optional second, muted line under the label (a model's full ID, say); it is dropped when it repeats the label. */
+export type DropdownOption = { value: string; label: string; group?: string; detail?: string };
+/** The option's second line, or nothing when it is empty or repeats the label. */
+const optionDetail = (option: DropdownOption | undefined) => option?.detail && option.detail !== option.label ? option.detail : "";
+/** The accessible name of an option: its label, then its second line when it has one. */
+const optionSpeech = (option: DropdownOption) => optionDetail(option) ? `${option.label}, ${optionDetail(option)}` : option.label;
 
 /** Hosts with a DOM (the Paseo settings page, the web board) dismiss an open dropdown on an outside press or Escape; native hosts skip the listeners. */
 type DocumentHost = {
@@ -356,6 +361,8 @@ type DocumentHost = {
  * header; `hideLabel` drops only the caption, for an owner that shows its own.
  * Either way the caption stays in the accessibility label. `placeholder` covers
  * pickers that act at once instead of holding a selection: it shows when no option matches.
+ * An option's `detail` renders as a smaller muted second line in the menu and in the
+ * closed trigger, and joins the label in both accessible names.
  */
 export function DropdownSelect({ label, value, options, onChange, c, minWidth = 170, compact = false, hideLabel = false, placeholder, disabled = false, invalid = false, emptyText }: {
   label: string; value: string; options: DropdownOption[]; onChange: (value: string) => void; c: Colors; minWidth?: number; compact?: boolean; hideLabel?: boolean;
@@ -365,7 +372,9 @@ export function DropdownSelect({ label, value, options, onChange, c, minWidth = 
   const [focused, setFocused] = useState(false);
   const r = roles(c);
   const box = useRef<View | null>(null), trigger = useRef<View | null>(null), menu = useRef<View | null>(null);
-  const selected = options.find(option => option.value === value)?.label ?? placeholder ?? value;
+  const chosen = options.find(option => option.value === value);
+  const selected = chosen?.label ?? placeholder ?? value;
+  const selectedDetail = optionDetail(chosen);
   // Escape and outside presses close the menu on hosts with a DOM. The pointer
   // listener checks the press landed outside the trigger and the menu first, so
   // choosing an option still reaches its own press; guarded like the header
@@ -386,19 +395,23 @@ export function DropdownSelect({ label, value, options, onChange, c, minWidth = 
   const size = compact ? control.compact : control;
   return <View ref={box} style={{ minWidth, maxWidth: "100%", gap: space.xxs, position: "relative", zIndex: open ? 30 : 0 }}>
     {!compact && !hideLabel && <FieldCaption c={c} text={label} />}
-    <Pressable ref={trigger} accessibilityRole="button" accessibilityLabel={`${label}, ${selected}`} accessibilityState={{ expanded: open, disabled }} disabled={disabled} onPress={() => setOpen(was => !was)}
+    <Pressable ref={trigger} accessibilityRole="button" accessibilityLabel={`${label}, ${selected}${selectedDetail ? `, ${selectedDetail}` : ""}`} accessibilityState={{ expanded: open, disabled }} disabled={disabled} onPress={() => setOpen(was => !was)}
       onFocus={() => setFocused(true)} onBlur={() => setFocused(false)} hitSlop={touchSlop(size.height)}
       style={{ ...controlFrame(c, { focused: focused || open, invalid, compact }), flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: compact ? 6 : space.xs, opacity: disabled ? 0.45 : 1, ...noOutline() }}>
-      <Text numberOfLines={1} style={{ ...controlText(c, compact), flexShrink: 1 }}>{selected}</Text><Icon name={open ? "ChevronUp" : "ChevronDown"} size={compact ? 12 : 14} color={r.muted} />
+      {selectedDetail
+        ? <View style={{ flexShrink: 1, minWidth: 0 }}><Text numberOfLines={1} style={controlText(c, compact)}>{selected}</Text><Text numberOfLines={1} style={captionText(c)}>{selectedDetail}</Text></View>
+        : <Text numberOfLines={1} style={{ ...controlText(c, compact), flexShrink: 1 }}>{selected}</Text>}<Icon name={open ? "ChevronUp" : "ChevronDown"} size={compact ? 12 : 14} color={r.muted} />
     </Pressable>
     {open && <Popover anchor={trigger} contentRef={menu} minWidth={160} atLeastAnchorWidth maxWidth={360} inlineStyle={{ top: "100%", left: 0, minWidth: "100%", marginTop: space.xxs }}>
       <ScrollView accessibilityRole="menu" nestedScrollEnabled style={{ maxHeight: 260, borderWidth: control.border, borderColor: r.border, borderRadius: control.radius, backgroundColor: r.section,
       shadowColor: overlay.shadow, shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.38, shadowRadius: 14, elevation: 12 }}>
       {options.map((option, index) => <React.Fragment key={option.value || "all"}>
         {option.group && option.group !== options[index - 1]?.group && <Text accessibilityRole="header" style={{ ...captionText(c), fontWeight: "600", paddingHorizontal: control.paddingX, paddingTop: space.xs, paddingBottom: space.xxs / 2 }}>{option.group}</Text>}
-        <Pressable accessibilityRole="menuitem" accessibilityLabel={`${label}: ${option.label}`} accessibilityState={{ selected: value === option.value }} onPress={() => { onChange(option.value); setOpen(false); }}
+        <Pressable accessibilityRole="menuitem" accessibilityLabel={`${label}: ${optionSpeech(option)}`} accessibilityState={{ selected: value === option.value }} onPress={() => { onChange(option.value); setOpen(false); }}
           style={{ minHeight: control.height, flexDirection: "row", alignItems: "center", gap: space.xs, paddingHorizontal: control.paddingX, backgroundColor: value === option.value ? r.raised : r.section }}>
-          {value === option.value && <Icon name="Check" size={14} color={r.accent} />}<Text numberOfLines={1} style={controlText(c)}>{option.label}</Text>
+          {value === option.value && <Icon name="Check" size={14} color={r.accent} />}{optionDetail(option)
+            ? <View style={{ flexShrink: 1, minWidth: 0, paddingVertical: space.xxs }}><Text numberOfLines={1} style={controlText(c)}>{option.label}</Text><Text numberOfLines={1} style={captionText(c)}>{optionDetail(option)}</Text></View>
+            : <Text numberOfLines={1} style={controlText(c)}>{option.label}</Text>}
         </Pressable>
       </React.Fragment>)}
       {!options.length && emptyText && <Text style={{ ...muted(c), fontSize: control.text.fontSize, lineHeight: control.text.lineHeight, paddingHorizontal: control.paddingX, paddingVertical: space.xs }}>{emptyText}</Text>}

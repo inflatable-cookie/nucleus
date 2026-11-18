@@ -288,9 +288,11 @@ commands from any directory; no checkout or separate Node installation is needed
 `nucleus version` reports package version, source revision, channel and the existing
 data home.
 `nucleus bb install`, `nucleus bb status` and `nucleus bb uninstall` are the BB host's
-operator route (Spec 062): the package ships the built BB plugin under `bb-plugin/`
-with `nucleus-build.json` naming the build it came from, and the commands wrap BB's
-own CLI for the plugin with ID `nucleus` only. The plugin is pinned to the service
+operator route (Spec 062): the package ships the built BB plugin under `bb-plugin/`,
+and `nucleus bb install` copies it under the Nucleus data home before passing it to BB
+(which may rebuild its install source), then makes that copy read-only. The package
+includes `nucleus-build.json` naming the build the plugin came from, and the commands
+wrap BB's own CLI for the plugin with ID `nucleus` only. The plugin is pinned to the service
 build: a service whose build changed refuses the plugin by naming both builds and
 `nucleus bb install`, and reinstalling stays an explicit operator command. Preparing
 a release therefore needs an installed `bb` command, which the build uses to produce

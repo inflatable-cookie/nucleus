@@ -25,11 +25,12 @@ next with `plan.get` (see the Nucleus skill, `nucleus`).
 
 - Agents use the installed `nucleus` command from any directory (Tom, 2026-11-16); repository CLI files are internal.
 
+- `effigy qa:retired-concepts` — check for new retired references against the recorded baseline.
 - `effigy tasks` — task inventory; `effigy test --plan` shows the test shape.
 - `effigy check` — typecheck and publication gate.
 - `effigy qa:docs` — docs checks.
-- `effigy test:affected [base] [--run]` — the test files the change can affect
-  (import graph against `origin/main` by default; `--run` runs them).
+- `effigy test:affected [base] [--run]` — the test files near the change
+  (against `origin/main` by default, at most 60; `--run` runs them).
 - `effigy qa` — the full local board: typecheck, docs checks, the parallel
   suite and the serial wall-clock lane (`test:timing`), fast checks first.
 - Parallel unit runs allow each physical test file 120 seconds in total
@@ -108,11 +109,15 @@ guard, proof tuple or exception-specific control is never the fix.
 ## Validate
 
 Run `effigy check` once. Then, at the committed head, run the affected test files
-once with `effigy test:affected --run` (Tom, 2026-11-12). It selects every
-`test/**/*.test.ts` that transitively imports a changed file, plus any test that
-names a changed file's path, or reads one of its ancestor directories, as a string literal, and
-runs them through the unit runner. Run `effigy test:affected` without `--run` to
-see the list and each file's reason. Run `effigy qa:docs` if docs changed.
+once with `effigy test:affected --run` (Tom, 2026-11-12). It selects the tests near
+the change: every `test/**/*.test.ts` that imports a changed file directly or through
+the test tree's own helpers and shard case files, plus any test that names a changed
+file's path, or reads one of its ancestor directories, as a string literal. The import
+walk never passes through production modules, and at most 60 files run, nearest first;
+the rest are printed as deferred to milestone QA, which runs the full suite (Tom,
+2026-11-18: "we need to avoid slamming the machine with concurrent large test runs").
+A deferred file is never a review finding. Run `effigy test:affected` without `--run`
+to see the list and each file's reason. Run `effigy qa:docs` if docs changed.
 Wall-clock oracles in the selection skip in the parallel lane and run in milestone
 QA's timing lane. Node test options ride after the files for a single file,
 e.g. `effigy test unit -- test/<file>.test.ts --test-skip-pattern=<pattern>`;

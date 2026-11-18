@@ -1,6 +1,6 @@
 import { test } from './support/sharded-test';
 import assert from 'node:assert/strict';
-import { writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -16,6 +16,8 @@ import { toolTimelinePage } from './support/tool-timeline';
 import { runPrompt } from '../core/dispatch/prompts';
 import { currentBrief } from '../core/planning/brief';
 import { collectOwnerVerbFacts, ownerTaskNext } from '../core/verbs/owner-verbs';
+import { verifyPr as machineVerifyPr } from '../core/git/git-proof';
+import { verifyPrIdentity as machineVerifyPrIdentity } from '../core/forge/pr-identity';
 
 function fixture() {
   const f = ownerRevisionFixture();
@@ -713,7 +715,59 @@ async function authorRevision(f: ReturnType<typeof fixture>, number: number) {
   return f.current();
 }
 
-test('the fourth consecutive retained round uses a fresh independent reviewer without resetting the author budget', async () => {
+test('a detached reviewer redelivers an accepted verdict without reattaching the checkout', async () => {
+  const f = fixture(); const oldPath = process.env.PATH;
+  try {
+    await f.engine.wake(); await f.report(f.current(), 'changes_required');
+    const run = await authorRevision(f, 1);
+    assert.equal(run.ordinaryDetached, true);
+    const prompt = runPrompt(f.store.task(f.task.id), { ...run, reviewReportRecovery: 'prior-run', reviewReason: 'Inspect the outstanding proof' }, '/helper', '/ticket', true);
+    assert.match(prompt, /Owner direction: Inspect the outstanding proof/);
+    assert.equal(runGit(f.workspace, 'branch', '--show-current'), '');
+    f.idle(run);
+    const bin = join(f.root, 'redelivery-bin'); mkdirSync(bin);
+    const git = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+    writeFileSync(join(bin, 'git'), `#!/bin/sh\nif [ "$1 $2 $3" = 'remote get-url origin' ]; then echo 'https://github.com/example/repo.git'; else exec '${git}' "$@"; fi\n`);
+    writeFileSync(join(bin, 'gh'), `#!/bin/sh\ncat '${join(bin, 'pull.json')}'\n`);
+    chmodSync(join(bin, 'git'), 0o755); chmodSync(join(bin, 'gh'), 0o755);
+    writeFileSync(join(bin, 'pull.json'), JSON.stringify({ state: 'open', draft: false, html_url: 'https://github.com/example/repo/pull/41',
+      head: { ref: 'feature/external', sha: run.head, repo: { full_name: 'example/repo' } }, base: { ref: 'main' } }));
+    process.env.PATH = `${bin}:${oldPath ?? ''}`;
+    f.adapter.verifyPr = machineVerifyPr;
+    f.adapter.verifyPrIdentity = machineVerifyPrIdentity;
+    let asked = 0; f.adapter.notify = async () => { asked++; };
+    const current = f.store.task(f.task.id);
+    await f.engine.performTaskControl(taskControlInputSchema.parse({ action: 'move', to: 'review', taskId: current.id, version: current.version, reason: 'Recover the lost report' }));
+    assert.equal(asked, 1);
+    assert.equal(runGit(f.workspace, 'branch', '--show-current'), '');
+    await f.report(run, 'ready_to_merge');
+    assert.equal(f.store.run(run.id)?.completion?.status, 'ready_to_merge');
+  } finally { process.env.PATH = oldPath; f.close(); }
+});
+
+test('refusing a fresh reviewer preserves the active detached checkout', async () => {
+  const f = fixture();
+  try {
+    await f.engine.wake(); await f.report(f.current(), 'changes_required');
+    const run = await authorRevision(f, 1);
+    assert.equal(run.ordinaryDetached, true);
+    assert.equal(runGit(f.workspace, 'branch', '--show-current'), '');
+    const head = runGit(f.workspace, 'rev-parse', 'HEAD');
+    const status = runGit(f.workspace, 'status', '--porcelain');
+    f.adapter.verifyPr = machineVerifyPr;
+    f.adapter.verifyPrIdentity = machineVerifyPrIdentity;
+    const current = f.store.task(f.task.id);
+    await assert.rejects(f.engine.performTaskControl(taskControlInputSchema.parse({ action: 'move', to: 'review', taskId: current.id, version: current.version, fresh: true, reason: 'Request another reviewer' })), /retained reviewer is still live/);
+    assert.equal(runGit(f.workspace, 'branch', '--show-current'), '');
+    assert.equal(runGit(f.workspace, 'rev-parse', 'HEAD'), head);
+    assert.equal(runGit(f.workspace, 'status', '--porcelain'), status);
+    assert.equal(f.store.task(f.task.id).resolution.currentRunId, run.id);
+    f.idle(run); await f.report(run, 'ready_to_merge');
+    assert.equal(f.store.run(run.id)?.completion?.status, 'ready_to_merge');
+  } finally { f.close(); }
+});
+
+test('later rounds keep the retained reviewer without resetting the author budget', async () => {
   const f = fixture();
   try {
     await f.engine.wake(); let reviewer = f.current(); const original = reviewer.agentId;
@@ -722,8 +776,8 @@ test('the fourth consecutive retained round uses a fresh independent reviewer wi
       reviewer = await authorRevision(f, n);
       assert.ok(reviewer, f.store.task(f.task.id).reason);
       assert.equal(reviewer.role, 'reviewer');
-      if (n < 4) { assert.equal(reviewer.agentId, original); assert.equal(reviewer.retainedRounds, n); }
-      else { assert.notEqual(reviewer.agentId, original); assert.equal(reviewer.retainedRounds, 0); }
+      assert.equal(reviewer.agentId, original); assert.equal(reviewer.retainedRounds, n);
+      assert.equal(f.store.runsForTasks([f.task.id]).find(run => run.id === reviewer.id)?.retainedRounds, n);
     }
     assert.equal(f.store.task(f.task.id).resolution.revisionRuns, 4);
   } finally { f.close(); }
@@ -741,18 +795,14 @@ test('a closed reviewer falls back through the ordinary fresh factory and preser
   } finally { f.close(); }
 });
 
-test('an errored reviewer with no live turn falls back through the ordinary fresh factory and preserves the source history', async () => {
+test('an errored reviewer is held until its availability is known', async () => {
   const f = fixture();
   try {
     await f.engine.wake(); const first = f.current(); await f.report(first, 'changes_required');
-    // Queue #601: the provider wave left the finished reviewer's agent errored
-    // with no active turn and no pending permission. It cannot write, so the
-    // retained reviewer's next round must not wait on it — custody admits it
-    // like a closed participant and the round goes fresh.
     f.states.set(first.agentId!, { ...f.states.get(first.agentId!)!, status: 'error', error: 'Connection error' });
-    const review = await authorRevision(f, 1);
-    assert.ok(review, f.store.task(f.task.id).reason);
-    assert.notEqual(review.agentId, first.agentId); assert.equal(review.head, f.workspaceHead());
+    await authorRevision(f, 1);
+    assert.equal(f.store.task(f.task.id).resolution.reviewerAgentId, first.agentId);
+    assert.match(f.store.task(f.task.id).reason, /Retained reviewer/);
     assert.equal(f.store.run(first.id)!.head, f.oldHead);
   } finally { f.close(); }
 });
@@ -768,7 +818,7 @@ for (const busy of ['permission', 'active turn', 'active flag'] as const) {
         ...(busy === 'permission' ? { permissions: true } : busy === 'active turn' ? { activeTurnId: 'turn-live' } : { active: true }) });
       await authorRevision(f, 1);
       assert.equal(f.sends.filter(run => run.role === 'reviewer').length, 0, busy);
-      assert.match(f.store.task(f.task.id).reason, /Ordinary review participant is not idle/, busy);
+      assert.match(f.store.task(f.task.id).reason, /Ordinary review participant is not idle|Retained reviewer .*cannot continue yet/, busy);
     } finally { f.close(); }
   });
 }
@@ -888,12 +938,13 @@ test('a genuine rebase author report receives base movement and covering evidenc
   } finally { f.close(); }
 });
 
-test('an explicit fresh restart after a retained round restores author placement and uses a new reviewer', async () => {
+test('a closed reviewer after a retained round permits a fresh reviewer', async () => {
   const f = fixture();
   try {
     await f.engine.wake(); const first = f.current(); await f.report(first, 'changes_required');
     const second = await authorRevision(f, 1);
     await f.report(second, 'blocked', { reviewResponsibility: 'environment' });
+    f.states.set(second.agentId!, { ...f.states.get(second.agentId!)!, status: 'closed', active: false });
     await f.engine.performTaskControl({ taskId: f.task.id, version: f.store.task(f.task.id).version, action: 'restart', role: 'reviewer', fresh: true, reason: 'Owner requests a fresh reviewer' });
     await f.engine.wake(); await f.engine.wake();
     const review = f.current(); assert.ok(review, f.store.task(f.task.id).reason);
@@ -999,7 +1050,7 @@ test('an operator source acceptance of the approved head supersedes the proof wa
   } finally { f.close(); }
 });
 
-for (const action of ['restart', 'route', 'uncertain', 'route-uncertain', 'route-delayed-stop'] as const) test(`exhausted detached reviewer replacement releases ownership: ${action}`, async () => {
+for (const action of ['restart', 'route', 'uncertain', 'route-uncertain', 'route-delayed-stop'] as const) test(`an exhausted but available reviewer is not replaced: ${action}`, async () => {
   const f = fixture();
   try {
     await f.engine.wake(); const first = f.current(); await f.report(first, 'changes_required');
@@ -1021,42 +1072,9 @@ for (const action of ['restart', 'route', 'uncertain', 'route-uncertain', 'route
       ? { action: 'route' as const, role: 'reviewer' as const, profileId: old.profile!.id, now: true, reason: 'Replace exhausted reviewer' }
       : { action: 'restart' as const, role: 'reviewer' as const, fresh: true, reason: 'Replace exhausted reviewer' };
     const restart = () => f.engine.performTaskControl({ ...control, taskId: f.task.id, version: f.store.task(f.task.id).version });
-    if (delayedStop) {
-      await restart();
-      assert.match(f.store.task(f.task.id).reason, /archive is not confirmed/);
-      assert.equal(attempts, 0, 'the stop reply does not prove inactivity');
-      const archiveKey = f.store.threadArchiveKey(old.agentId!, old.hostId)!;
-      assert.equal(f.store.getMeta<{ status: string }>(archiveKey)?.status, 'ready', 'the pending replacement is durable before inactivity');
-      await f.engine.resolution.observe();
-      assert.equal(attempts, 0, 'an active reviewer is never archived');
-      assert.equal(f.store.run(old.id)!.released, false);
-      assert.equal(f.store.task(f.task.id).resolution.currentRunId, old.id);
-      f.idle(old);
-      await f.engine.resolution.observe();
-      assert.equal(f.store.task(f.task.id).profileRequests?.reviewer?.profileId, old.profile!.id);
-    } else if (uncertain) {
-      await restart();
-      assert.match(f.store.task(f.task.id).reason, /archive is not confirmed/);
-      assert.equal(f.store.run(old.id)!.released, false);
-      await f.engine.resolution.observe();
-      assert.equal(f.store.run(old.id)!.released, false);
-      assert.equal(f.store.task(f.task.id).resolution.currentRunId, old.id);
-      assert.equal(attempts, 1, 'unknown delivery is observation-only');
-      if (action === 'route-uncertain') assert.equal(f.store.task(f.task.id).profileRequests?.reviewer?.profileId, old.profile!.id);
-      archived = true;
-      await f.engine.resolution.observe();
-    } else await restart();
-    assert.equal(attempts, 1);
-    assert.equal(f.store.run(old.id)!.released, true);
-    assert.equal(f.store.run(old.id)!.status, 'superseded');
-    assert.deepEqual(f.store.run(old.id)!.reviewCheckpoints, records);
-    assert.throws(() => f.store.authenticate(old.id, f.tokens.get(old.id)!));
-    await f.engine.wake(); await f.engine.wake();
-    const replacement = f.current(); assert.ok(replacement, f.store.task(f.task.id).reason);
-    assert.equal(replacement.role, 'reviewer'); assert.notEqual(replacement.agentId, old.agentId);
-    await f.report(replacement, 'changes_required');
-    await f.engine.wake();
-    assert.equal(f.current().role, 'revision', f.store.task(f.task.id).reason);
-    assert.equal(runGit(f.workspace, 'branch', '--show-current'), 'feature/external');
+    await assert.rejects(restart(), /retained reviewer/);
+    assert.equal(f.store.run(old.id)!.released, false);
+    assert.equal(f.store.task(f.task.id).resolution.currentRunId, old.id);
+    assert.equal(attempts, 0, 'an available retained reviewer is not archived');
   } finally { f.close(); }
 });

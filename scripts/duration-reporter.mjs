@@ -19,7 +19,8 @@ export default async function* durations(source) {
     if (event.type === "test:complete" && data.file && data.nesting === 0 && basename(String(data.name)) === basename(data.file))
       files.set(relative(process.cwd(), data.file), { ms: data.details?.duration_ms ?? 0, failed: Boolean(data.details?.error) });
     if (event.type === "test:fail" && !data.todo && !data.skip) {
-      const file = data.file ? relative(process.cwd(), String(data.file)) : "<unknown file>";
+      const physical = data.entryFile ?? data.file;
+      const file = physical ? relative(process.cwd(), String(physical)) : "<unknown file>";
       failures.push(`- ${file}: ${String(data.name ?? "<unnamed test>")}`);
     }
     else if (event.type === "test:summary" && !data.file) total = data.duration_ms ?? null;

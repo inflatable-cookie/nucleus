@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { socketFixtureRoot } from "./support/socket-fixture";
 import {
@@ -183,7 +183,7 @@ test("install writes only the plugin with ID nucleus, then points it at this dat
     bb.commands.map((args) => args.slice(0, 3)),
     [
       ["plugin", "list", "--json"],
-      ["plugin", "install", `path:${pluginDirectory}`],
+      ["plugin", "install", `path:${join(dataDir, "bb-plugin-install", BB_PLUGIN_ID)}`],
       ["plugin", "config", BB_PLUGIN_ID],
       ["plugin", "config", BB_PLUGIN_ID],
       ["plugin", "reload", BB_PLUGIN_ID],
@@ -200,10 +200,53 @@ test("install writes only the plugin with ID nucleus, then points it at this dat
     "the plugin can reach this service",
   );
   assert.equal(report.action, "installed");
+  assert.equal(report.pluginDirectory, join(dataDir, "bb-plugin-install", BB_PLUGIN_ID));
+  assert.notEqual(report.pluginDirectory, pluginDirectory);
   assert.equal(report.pluginBuildId, BUILD_A);
   assert.equal(report.serviceBuildId, BUILD_A);
   assert.equal(report.dataDir, dataDir);
   assert.match(report.detail, new RegExp(shortBuildId(BUILD_A)));
+});
+
+test("BB installs and rebuilds an owned copy without changing packaged version files", () => {
+  const packageRoot = socketFixtureRoot("bb-version-");
+  const source = builtPlugin(join(packageRoot, BB_PLUGIN_PACKAGE_DIR));
+  writeJson(join(source, "manifest.json"), {
+    files: { "dist/app.js": "source-app-digest", "dist/app.meta.json": "source-meta-digest" },
+  });
+  const fileBytes = (directory: string): Record<string, string> => {
+    const result: Record<string, string> = {};
+    const visit = (at: string, prefix = "") => {
+      for (const entry of readdirSync(at, { withFileTypes: true })) {
+        const path = join(at, entry.name), name = prefix ? `${prefix}/${entry.name}` : entry.name;
+        if (entry.isDirectory()) visit(path, name);
+        else result[name] = readFileSync(path).toString("base64");
+      }
+    };
+    visit(directory);
+    return result;
+  };
+  const before = fileBytes(source);
+  const plugins: Array<Record<string, unknown>> = [];
+  const base = fakeBb(() => plugins);
+  const bb = {
+    ...base,
+    exec(args: string[]) {
+      const answer = base.exec(args);
+      if (args[1] === "install") {
+        const installed = args[2]!.slice("path:".length);
+        // BB's plugin build writes generated files back into the path it installs.
+        writeFileSync(join(installed, "dist/app.js"), "BB rebuilt this plugin\n");
+        writeFileSync(join(installed, "dist/app.meta.json"), JSON.stringify({ sdkMajor: 99 }));
+      }
+      return answer;
+    },
+  };
+  const dataDir = dataHomeWithService(BUILD_A);
+  const report = installBbPlugin({ exec: bb.exec, dataDir, packageRoot });
+  assert.deepEqual(fileBytes(source), before, "the version package, including its manifest, stays byte-identical");
+  assert.match(readFileSync(join(report.pluginDirectory, "dist/app.js"), "utf8"), /BB rebuilt/);
+  assert.equal(statSync(report.pluginDirectory).mode & 0o222, 0, "the installed copy is read-only after BB finishes its build");
 });
 
 test("install refuses a namesake with ID nucleus it did not build and writes nothing", () => {
@@ -386,6 +429,22 @@ test("uninstall removes the plugin with ID nucleus and nothing else", () => {
     [["plugin", "uninstall", BB_PLUGIN_ID]],
   );
   assert.ok(bb.commands.every((args) => !args.includes("usage-pace")));
+});
+
+test("uninstall removes the BB plugin copy installed under this Nucleus data home", () => {
+  const packageRoot = socketFixtureRoot("bb-copy-uninstall-");
+  const source = builtPlugin(join(packageRoot, BB_PLUGIN_PACKAGE_DIR));
+  const dataDir = dataHomeWithService(BUILD_A);
+  const plugins: Array<Record<string, unknown>> = [];
+  const bb = fakeBb(() => plugins);
+  installBbPlugin({ exec: bb.exec, dataDir, packageRoot });
+  const managedCopy = join(dataDir, "bb-plugin-install", BB_PLUGIN_ID);
+  assert.equal(existsSync(managedCopy), true);
+  const report = uninstallBbPlugin({ exec: bb.exec, dataDir, packageRoot });
+  assert.equal(report.action, "removed");
+  assert.equal(report.plugin?.rootDir, managedCopy);
+  assert.equal(existsSync(managedCopy), false);
+  assert.equal(existsSync(source), true, "uninstall leaves the packaged version intact");
 });
 
 test("uninstall refuses a namesake with ID nucleus and writes nothing", () => {

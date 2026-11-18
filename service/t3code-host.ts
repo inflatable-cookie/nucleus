@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+import type { AcpSessionSurface } from '../shared/acp/surface';
 import { createHost, createAdapter, type T3DisconnectReason, type T3ProtocolError } from '../hosts/t3code';
 import type { Adapter, HostPolicyConstructor } from '../core/host';
 import { HostPolicies } from '../core/host/host-policies';
@@ -15,6 +16,8 @@ export interface T3ConnectionConfig {
 
 interface NativeConnection {
   readonly connected: boolean;
+  /** Whether this host is parenting role threads natively, or why it is not (nucleus#1305). */
+  readonly nativeParentingStatus?: string;
   readonly lastDisconnectReason?: T3DisconnectReason | null;
   readonly lastProtocolError?: T3ProtocolError | null;
   readonly hostId: string;
@@ -29,7 +32,7 @@ interface NativeConnection {
 
 type RegisteredHost = { adapter: Adapter; admission: Admission };
 interface ConnectionDependencies {
-  create(config: T3ConnectionConfig & { statePath: string }): NativeConnection;
+  create(config: T3ConnectionConfig & { statePath: string; acp?: () => AcpSessionSurface | null }): NativeConnection;
   adapter(host: NativeConnection): Adapter;
 }
 
@@ -46,19 +49,27 @@ export class T3HostConnection {
   private lastDisconnectReason: T3DisconnectReason | null = null;
   private lastProtocolError: T3ProtocolError | null = null;
 
+  private readonly dependencies: ConnectionDependencies;
   constructor(
     config: T3ConnectionConfig,
     private readonly dataDir: string,
     private readonly registry: HostRegistry<RegisteredHost>,
     private readonly makeAdmission: () => Admission,
-    private readonly dependencies: ConnectionDependencies = {
-      create: config => createHost(config),
+    dependencies?: ConnectionDependencies,
+    /**
+     * The service's ACP session surface, read when a host is built: it owns the parent
+     * thread's binding and the release of its held turn (nucleus#1305). Absent, the
+     * host keeps top-level role threads.
+     */
+    private readonly acp: () => AcpSessionSurface | null = () => null,
+  ) {
+    this.dependencies = dependencies ?? {
+      create: config => createHost({ ...config, acp: this.acp }),
       adapter: host => createAdapter(HostPolicies as unknown as HostPolicyConstructor, host as ReturnType<typeof createHost>, {
         socketPath: join(dataDir, 'callback.sock'),
         helperPath: join(dataDir, 'worker-report.mjs'),
       }),
-    },
-  ) {
+    };
     const endpoint = new URL(config.endpoint);
     if (!['http:', 'https:', 'ws:', 'wss:'].includes(endpoint.protocol)
       || endpoint.username || endpoint.password || endpoint.search || endpoint.hash)
@@ -68,11 +79,12 @@ export class T3HostConnection {
   }
 
   /** Only connection facts are returned; no endpoint, credential or native object. */
-  status(): { id: string | null; connected: boolean; error: string; version: string; threadShapePending: boolean; supportThreads: string; lastDisconnectReason: T3DisconnectReason | null; lastProtocolError: T3ProtocolError | null } {
+  status(): { id: string | null; connected: boolean; error: string; version: string; threadShapePending: boolean; supportThreads: string; nativeParenting: string; lastDisconnectReason: T3DisconnectReason | null; lastProtocolError: T3ProtocolError | null } {
     this.retireDisconnected();
     return { lastDisconnectReason: this.lastDisconnectReason, lastProtocolError: this.lastProtocolError, id: this.lastIdentity, connected: this.session !== null, error: this.errorValue, version: this.versionValue,
       threadShapePending: this.session !== null && this.host?.threadShapePending === true,
-      supportThreads: this.session !== null && this.host?.supportThreadStatus ? this.host.supportThreadStatus : '' };
+      supportThreads: this.session !== null && this.host?.supportThreadStatus ? this.host.supportThreadStatus : '',
+      nativeParenting: this.session !== null && this.host?.nativeParentingStatus ? this.host.nativeParentingStatus : '' };
   }
 
   /** A disconnected socket invalidates this claim, never another host's claim. */

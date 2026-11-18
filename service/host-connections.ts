@@ -63,6 +63,12 @@ export function wireEngineHosts(engine: Engine, runtime: EngineHostWiring): void
     const registered = runtime.hostRegistry.known().map(host => host.id);
     const online = runtime.hostRegistry.onlineIds();
     if (!repoPath && !origin && !explicit && !plannerHostId) {
+      const storedDefault = runtime.store.getMeta<import('../shared/host-kind').HostKind | null>('operatorDefaultHostKind');
+      const operatorDefaultHostKind = storedDefault === undefined ? 'paseo' : storedDefault;
+      if (operatorDefaultHostKind) {
+        const ofKind = online.filter(id => hostKindOf(id) === operatorDefaultHostKind);
+        if (ofKind.length === 1) return { hostId: ofKind[0]!, basis: 'sole_online_host' };
+      }
       if (online.length === 1) return { hostId: online[0]!, basis: 'sole_online_host' };
       return undefined;
     }
@@ -73,6 +79,10 @@ export function wireEngineHosts(engine: Engine, runtime: EngineHostWiring): void
       return resolveIngressHost({ explicit, repositoryHostKind: settings?.hostKind ?? null,
         operatorDefaultHostKind, plannerHostId, registered, online }).selection;
     } catch (error) {
+      // Omitted host, no repository kind, exactly one online host: that host, even
+      // when a repoPath is present (review-entry preview, papercut 78c18e51).
+      if (!explicit && !plannerHostId && !settings?.hostKind && online.length === 1)
+        return { hostId: online[0]!, basis: 'sole_online_host' };
       if (settings?.hostKind) throw new Error(`Cannot select host for repository ${settings.repository.origin ?? settings.repository.path}: ${error instanceof Error ? error.message : String(error)}`);
       throw error;
     }

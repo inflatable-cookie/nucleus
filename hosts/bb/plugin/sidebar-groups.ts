@@ -33,6 +33,7 @@ export const sidebarGroupSchema = z.object({
   taskId: z.string().min(1).max(240),
   number: z.number().int().positive().nullable(),
   reference: z.string().nullable(),
+  repository: z.string().min(1).max(240),
   title: z.string().min(1),
   phase: z.string().min(1).max(60),
   phaseLabel: z.string().min(1).max(240),

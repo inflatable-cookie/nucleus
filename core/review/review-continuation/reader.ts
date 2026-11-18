@@ -26,7 +26,7 @@ export function reviewContinuationLimit(store: Pick<Store, 'getMeta'>): number {
   return Number.isInteger(value) && (value as number) > 0 ? value as number : REVIEW_CONTINUATION_LIMIT;
 }
 
-export const REVIEW_BUDGET_EXHAUSTED = 'The reviewer spent its checkpoint budget and stopped; the project planner decides through the blocker ladder (Spec 058), and restart role=reviewer fresh replaces the retained reviewer deliberately at the same head (move to=review preserves the reader it can continue, so it refuses this one).';
+export const REVIEW_BUDGET_EXHAUSTED = 'The reviewer spent its checkpoint budget and stopped; restart role=reviewer or move to=review observes the retained reviewer and asks it to finish or redeliver its report at the same head.';
 export const REVIEW_AUTHORIZATION_REQUIRED = 'The reviewer saved a checkpoint; Queue continues the same reviewer from it once its turn ends. Checkpoints are preserved, not approval.';
 /**
  * The reviewer's own agent was positively observed closed with its checkpoint
@@ -43,7 +43,7 @@ export const REVIEW_AGENT_CLOSED = 'The reviewer\'s agent was observed closed in
  */
 export const REVIEW_AGENT_ERRORED = 'The reviewer\'s agent was observed errored in its workspace with no active turn and no pending permission; the same-agent continuation is impossible. The project planner decides through the blocker ladder (Spec 058), and restart role=reviewer fresh replaces the retained reviewer deliberately at the same head (move to=review preserves the reader it can continue, so it refuses this one).';
 /** The exits named when a delivered review turn cannot be resumed from the recorded facts. */
-export const REVIEW_FRESH_REPLACEMENT_EXIT = 'restart role=reviewer fresh replaces the retained reviewer deliberately at the same head; route role=reviewer with now does the same through the stop path';
+export const REVIEW_FRESH_REPLACEMENT_EXIT = 'restart role=reviewer fresh may replace the reviewer only when it is proven gone or ineligible; otherwise continue the retained reviewer';
 
 /** Old publication continuations and unfinished reviewer checkpoints cannot auto-resume.
  * The wait is derived from a current, unreleased reviewer run (nucleus#1106): a
@@ -104,7 +104,7 @@ export function reviewContinuationWait(task: Task, store: Pick<Store, 'run' | 'e
     if (stopped.kind === 'resume')
       return { reason: `The reviewer's delivered continuation for checkpoint ${delivery!.checkpointOrdinal} on run ${run!.id} (agent ${run!.agentId}) was stopped by the owner at ${stopped.at} and has no verdict or new checkpoint; restart role=reviewer resumes that one turn on the same reader, and ${REVIEW_FRESH_REPLACEMENT_EXIT}`, stop: 'operator_needed' };
     if (stopped.kind === 'refused') return { reason: stopped.reason, stop: 'operator_needed' };
-    return { reason: `The reviewer's delivered continuation for checkpoint ${delivery!.checkpointOrdinal} on run ${run!.id} (agent ${run!.agentId}) stopped without a verdict or a new checkpoint; route the reviewer to an available profile or start a fresh reviewer at the same head`, stop: 'operator_needed' };
+    return { reason: `The reviewer's delivered continuation for checkpoint ${delivery!.checkpointOrdinal} on run ${run!.id} (agent ${run!.agentId}) stopped without a verdict or a new checkpoint; move to=review observes the retained reviewer and asks for its report`, stop: 'operator_needed' };
   }
   if (state === 'reserved') return { reason: reviewDeliveryReason(delivery!.deliveryId, 'reserved'), stop: 'lifecycle' };
   if (state === 'uncertain') return { reason: reviewDeliveryReason(delivery!.deliveryId, 'uncertain'), stop: 'operator_needed' };
@@ -146,7 +146,7 @@ export function reviewerIdentityAtHead(task: Task, store: Pick<Store, 'run'>, he
   // A reader that is not at this head belongs to another source state: moving to
   // review at this head is the deliberate fresh review of a changed source.
   if (!task.prHead || task.prHead !== head || run.head !== head) return { kind: 'absent' };
-  if (!run.agentId || task.resolution.reviewerAgentId !== run.agentId)
+  if (!run.agentId || task.resolution.reviewerAgentId && task.resolution.reviewerAgentId !== run.agentId)
     return { kind: 'refused', run, refusal: `the task records reviewer agent ${task.resolution.reviewerAgentId ?? 'none'}, not the current reviewer run ${run.id} (agent ${run.agentId ?? 'unknown'}), so the participant identity cannot be proven and Nucleus cannot tell which reviewer is reading; it does not replace that reader — restart role=reviewer fresh or route role=reviewer with now replaces it deliberately` };
   if (task.workspaceId !== run.workspaceId)
     return { kind: 'refused', run, refusal: `the retained reviewer ${run.id} is bound to workspace ${run.workspaceId}, which its recorded source no longer names; Nucleus does not replace a retained reader it cannot prove — restart role=reviewer fresh or route role=reviewer with now replaces it deliberately` };

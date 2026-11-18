@@ -32,7 +32,6 @@ export type DispatchLimitsProps = {
   saveUsage: (level: UsageLevel, until: string | null) => Promise<void>;
   saveDemandOffsets: (value: UiQueueState["demandOffsets"]) => Promise<void>;
   saveCapacity: (values: api.CapacityAuthorityValues) => Promise<void>;
-  saveDefaultHost: (host: api.CapacityAuthorityValues["operatorDefaultHostKind"]) => Promise<void>;
   saveProjectLimit: (value: ProjectLimitPatch & { projectKey: string }) => Promise<void>;
 };
 
@@ -326,21 +325,6 @@ function ProjectLimitRow({ c, projectName, value, canSave, save }: { c: Colors; 
 }
 
 
-function HostDefault({ c, values, save }: { c: Colors; values: api.CapacityAuthorityValues | null; save: (host: api.CapacityAuthorityValues["operatorDefaultHostKind"]) => Promise<void> }) {
-  const [host, setHost] = useState<api.CapacityAuthorityValues["operatorDefaultHostKind"]>(values ? values.operatorDefaultHostKind : "paseo");
-  const auto = useSectionAutoSave(save);
-  useEffect(() => { if (values && !auto.saver.busy && !auto.failed) setHost(values.operatorDefaultHostKind); }, [values?.operatorDefaultHostKind, auto.failed]);
-  return <Section c={c} title="Default host" status={auto.status} description="New tasks use this host when their repository has no override. If it is offline, Nucleus uses the planner's host. Existing tasks keep their host.">
-    <DropdownSelect c={c} label="Default host" value={host ?? "inherit"} disabled={!values} options={[
-      { value: "paseo", label: "Paseo" }, { value: "t3code", label: "T3Code" }, { value: "bb", label: "BB" }, { value: "inherit", label: "Planner's host" },
-    ]} onChange={value => {
-      const next = value === "paseo" || value === "t3code" || value === "bb" ? value : null;
-      setHost(next);
-      if (values) auto.enqueue(next);
-    }} />
-  </Section>;
-}
-
 /**
  * Settings → Dispatch limits, in the order the operator reads it: usage level, task
  * slots, project overrides, role demand, then frontier grants.
@@ -350,7 +334,6 @@ export function DispatchLimits(props: DispatchLimitsProps) {
   const values = authority?.effective ?? null;
   return <View>
     <UsageSlider c={c} usage={state.usage} save={props.saveUsage} />
-    <HostDefault c={c} values={values} save={props.saveDefaultHost} />
     <TaskSlots c={c} values={values} authorityError={props.authorityError} retry={props.retryAuthority} save={props.saveCapacity} />
     <ProjectOverrides c={c} state={state} busy={props.busy} saveProjectLimit={props.saveProjectLimit} />
     <DemandOffsets c={c} offsets={state.demandOffsets} save={props.saveDemandOffsets} />

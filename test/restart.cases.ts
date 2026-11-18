@@ -1137,6 +1137,7 @@ test('a stopped reviewer restart refuses a finished recovery run whose agent is 
     f.observations.set('coord-agent', { id: 'coord-agent', workspaceId: 'workspace', status: 'running', active: true, permissions: false, error: '' });
 
     const before = f.current();
+    f.observations.set('review-agent', { id: 'review-agent', workspaceId: 'workspace', status: 'closed', active: false, permissions: false, error: '' });
     const restarted = await f.control({ fresh: true, instruction: 'Start a fresh reviewer' });
     assert.notEqual(restarted.version, before.version, 'the restart applied');
     assert.equal(f.store.run('recovery-run')!.released, true, 'the reported run settled from its report');
@@ -1161,6 +1162,7 @@ for (const fresh of [false, true]) {
       f.store.putRun(run);
       f.store.update(f.taskId, { resolution: { ...f.current().resolution, reviewerAgentId: 'review-agent', reviewerProfile: f.profiles.reviewer } });
 
+      if (fresh) f.observations.set('review-agent', { id: 'review-agent', workspaceId: 'workspace', status: 'closed', active: false, permissions: false, error: '' });
       const task = await f.control({ fresh, instruction: 'Review the current head' });
       assert.equal(task.phase, 'awaiting_review');
       assert.equal(task.resolution.reviewerAgentId, fresh ? null : 'review-agent');
@@ -1191,15 +1193,19 @@ test('absent reviewer creation: restart releases the uncertain run and resumes r
     f.store.update(f.taskId, { resolution: { ...f.current().resolution, currentRunId: run.id, reviewerAgentId: null, reviewerProfile: f.profiles.reviewer } });
 
     const task = await f.control();
-    assert.equal(f.store.run(run.id)!.released, false, 'the run is restarted, not released');
-    assert.equal(f.store.run(run.id)!.agentId, 'agent-absent-review-run');
-    assert.equal(task.resolution.currentRunId, run.id, 'the same run ID is kept');
-    assert.equal(task.resolution.reviewerAgentId, 'agent-absent-review-run');
+    assert.equal(f.store.run(run.id)!.released, true, 'the absent creation is released, not recreated under its run ID');
+    assert.equal(task.resolution.currentRunId, null);
+    assert.equal(task.phase, 'awaiting_review');
     assert.equal(ownerControlCount(f), 1);
+    await f.engine.wake();
+    const fresh = f.current().resolution.currentRunId!;
+    assert.notEqual(fresh, run.id, 'a fresh run identity');
+    assert.equal(f.store.run(fresh)!.agentId, `agent-${fresh}`);
+    assert.equal(f.current().resolution.reviewerAgentId, `agent-${fresh}`);
     // An authenticated reviewer result on the recreated run advances the task.
-    const token = f.createdRunTokens.get(run.id)!;
-    await f.engine.complete({ eventId: randomUUID(), taskId: f.taskId, runId: run.id, status: 'changes_required', summary: 'The author must address the finding', head, reviewResponsibility: 'author', reviewText: 'The retry path is missing an idempotency guard; please add one.' }, token);
-    assert.equal(f.store.run(run.id)!.completion?.status, 'changes_required', 'the authenticated result is recorded on the recreated run');
+    const token = f.createdRunTokens.get(fresh)!;
+    await f.engine.complete({ eventId: randomUUID(), taskId: f.taskId, runId: fresh, status: 'changes_required', summary: 'The author must address the finding', head, reviewResponsibility: 'author', reviewText: 'The retry path is missing an idempotency guard; please add one.' }, token);
+    assert.equal(f.store.run(fresh)!.completion?.status, 'changes_required', 'the authenticated result is recorded on the recreated run');
     assert.ok(f.events('run_completion').length >= 1, 'the authenticated result wrote its completion event');
     await f.engine.wake();
     assert.equal(f.current().phase, 'changes_requested', 'the authenticated result advanced the task');
@@ -1295,6 +1301,7 @@ for (const fresh of [false, true]) {
         f.store.db.prepare('INSERT INTO receipts(id,task,run,hash,response) VALUES(?,?,?,?,?)').run('ckpt-event', f.taskId, run.id, callbackDigest, JSON.stringify(response));
       });
 
+      if (fresh) f.observations.set('review-agent', { id: 'review-agent', workspaceId: 'workspace', status: 'closed', active: false, permissions: false, error: '' });
       const task = await f.control({ fresh, instruction: 'Finish the remaining reading and report' });
       assert.equal(task.resolution.incident?.status, 'resolved');
       assert.equal(task.resolution.recovery?.status, 'resolved');
@@ -1342,6 +1349,7 @@ test('checkpointed reviewer: a fresh restart supersedes the lease without a verd
     f.store.putRun(run);
     f.store.update(f.taskId, { resolution: { ...f.current().resolution, currentRunId: run.id, reviewerAgentId: 'review-agent', reviewerProfile: f.profiles.reviewer } });
 
+    f.observations.set('review-agent', { id: 'review-agent', workspaceId: 'workspace', status: 'closed', active: false, permissions: false, error: '' });
     const task = await f.control({ fresh: true });
     assert.equal(f.store.run(run.id)!.released, true, 'archived replacement releases ownership');
     assert.ok(f.store.run(run.id)!.replacedAt);
@@ -1665,7 +1673,7 @@ test('an uncertain resolution restart settles a finished idle recovery run (#356
     // The delegated creation ignores unreleased recovery runs, so the finished
     // one settles with the restart instead of riding along unreleased.
     const task = await f.control({ instruction: 'Create the reviewer once and continue' });
-    assert.equal(f.store.run('uncertain-review')!.agentId, 'agent-uncertain-review', 'the restart recreated the reviewer');
+    assert.equal(f.store.run('uncertain-review')!.released, true, 'the absent reviewer creation is released for a fresh run');
     const settled = f.store.run('recovery-run')!;
     assert.equal(settled.released, true);
     assert.equal(settled.status, 'finished');
@@ -1924,6 +1932,11 @@ for (const fresh of [false, true]) {
         incident: { id: 'review-stall', role: 'reviewer', runId: run.id, turnId: 'review-turn', fingerprint: 'review-stall', attempt: 0, cause: 'stalled_turn', detail: 'looks stalled', action: '', status: 'reconciling', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
       } });
       f.observations.set('review-agent', { id: 'review-agent', workspaceId: 'workspace', status: 'running', active: true, permissions: false, error: '', provider: 'codex', model: f.profiles.reviewer.model, activeTurnId: 'review-turn' });
+      if (fresh) {
+        await assert.rejects(f.control({ role: 'reviewer', fresh, instruction: 'Finish the review' }), /retained reviewer is still live/);
+        assert.equal(f.store.run(run.id)!.released, false);
+        return;
+      }
       const stopped = await f.control({ role: 'reviewer', fresh, instruction: 'Finish the review' });
       assert.equal(stopped.resolution.stalledTurnStop?.restartFresh, fresh);
       assert.equal(f.observations.get('review-agent')!.activeTurnId, undefined, 'the confirmed ended turn has no live turn ID');
@@ -1959,8 +1972,8 @@ test('a live healthy reviewer run is not a restart target and is never released'
     f.store.update(f.taskId, { resolution: { ...f.current().resolution, currentRunId: run.id, reviewerAgentId: 'review-agent', reviewerProfile: f.profiles.reviewer } });
     f.observations.set('review-agent', { id: 'review-agent', workspaceId: 'workspace', status: 'running', active: true, permissions: false, error: '' });
 
-    assert.equal(f.next().verbs.find(verb => verb.verb === 'restart')!.available, false, 'a live healthy reviewer is not listed');
-    await assert.rejects(f.control({ role: 'reviewer', fresh: true }), /needs a restart/);
+    assert.equal(f.next().verbs.find(verb => verb.verb === 'restart')!.available, true, 'restart rechecks the reviewer before requesting a report');
+    await assert.rejects(f.control({ role: 'reviewer', fresh: true }), /still live/);
     assert.equal(f.store.run(run.id)!.released, false, 'the live run was not released');
     assert.equal(f.observations.get('review-agent')!.active, true);
 
@@ -2241,7 +2254,8 @@ test('uncertain re-creation persists the new credential before the agent exists,
       try { f.store.authenticate(r.id, token); authenticatedDuringCreate = true; } catch { /* not yet persisted */ }
       throw new Error('simulated crash after creation');
     };
-    await assert.rejects(f.control());
+    await f.control();
+    await f.engine.wake();
     assert.equal(authenticatedDuringCreate, true, 'the creation token authenticates before the binding commits');
   } finally { await f.close(); }
 });

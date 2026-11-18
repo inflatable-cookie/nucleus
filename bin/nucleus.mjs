@@ -34,11 +34,12 @@ try {
     const helpers = {
       submit: './nucleus-submit.mjs',
       reparent: './nucleus-reparent.mjs',
+      detach: './nucleus-detach.mjs',
       'review-entry': './nucleus-review-entry.mjs',
       'bulk-dispose': './nucleus-bulk-dispose.mjs',
       subscribe: './nucleus-subscribe.mjs',
     };
-    if (!Object.hasOwn(helpers, name) && name !== 'report') throw Error('Choose a helper: submit, reparent, review-entry, bulk-dispose, subscribe, or report');
+    if (!Object.hasOwn(helpers, name) && name !== 'report') throw Error('Choose a helper: submit, reparent, detach, review-entry, bulk-dispose, subscribe, or report');
     const script = name === 'report' ? (process.env.NUCLEUS_HELPER || join(dataHome(), 'worker-report.mjs')) : fileURLToPath(new URL(helpers[name], import.meta.url));
     const ticket = name === 'report' ? (await import('./run-ticket.mjs')).runTicketPath() : null;
     const child = spawnSync(process.execPath, [script, ...(ticket ? [ticket] : []), ...helperArgs], { stdio: 'inherit' });

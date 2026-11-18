@@ -36,7 +36,13 @@ interface WireResponse {
   error?: { code?: string; message?: string };
 }
 
-function requestOnce(endpoint: string, method: string, epoch: number, body: unknown, timeoutMs: number): Promise<WireResponse> {
+function requestOnce(
+  endpoint: string,
+  method: string,
+  epoch: number,
+  body: unknown,
+  timeoutMs: number,
+): Promise<WireResponse> {
   return new Promise((resolve, reject) => {
     const socket = connect(endpoint);
     let buffer = "";
@@ -58,12 +64,14 @@ function requestOnce(endpoint: string, method: string, epoch: number, body: unkn
         }
       }
     });
-    socket.once("error", error => {
+    socket.once("error", (error) => {
       clearTimeout(timer);
       reject(error);
     });
     socket.once("connect", () => {
-      socket.write(`${JSON.stringify({ v: 1, id: randomUUID(), method, epoch, body })}\n`);
+      socket.write(
+        `${JSON.stringify({ v: 1, id: randomUUID(), method, epoch, body })}\n`,
+      );
     });
   });
 }
@@ -75,7 +83,11 @@ function requestOnce(endpoint: string, method: string, epoch: number, body: unkn
  */
 export async function awaitOwnedPrivateSettlement(
   owned: OwnedPrivateRun,
-  options: { timeoutMs?: number; pollMs?: number; requestTimeoutMs?: number } = {},
+  options: {
+    timeoutMs?: number;
+    pollMs?: number;
+    requestTimeoutMs?: number;
+  } = {},
 ): Promise<Record<string, any>> {
   const timeoutMs = options.timeoutMs ?? 30_000;
   const pollMs = options.pollMs ?? 50;
@@ -85,7 +97,13 @@ export async function awaitOwnedPrivateSettlement(
   for (;;) {
     let response: WireResponse;
     try {
-      response = await requestOnce(owned.endpoint, "status", owned.epoch, { runId: owned.runId }, requestTimeoutMs);
+      response = await requestOnce(
+        owned.endpoint,
+        "status",
+        owned.epoch,
+        { runId: owned.runId },
+        requestTimeoutMs,
+      );
     } catch (error) {
       lastObservation = error instanceof Error ? error.message : String(error);
       if (Date.now() >= deadline) {
@@ -93,7 +111,7 @@ export async function awaitOwnedPrivateSettlement(
           `owned private run ${owned.runId} never settled within ${timeoutMs} ms; last status attempt: ${lastObservation}`,
         );
       }
-      await new Promise(resolve => setTimeout(resolve, pollMs));
+      await new Promise((resolve) => setTimeout(resolve, pollMs));
       continue;
     }
     if (!response.ok) {
@@ -116,7 +134,11 @@ export async function awaitOwnedPrivateSettlement(
         `owned private run epoch changed: status names epoch ${body.epoch ?? "missing"} but the fixture owns epoch ${owned.epoch}; not settled`,
       );
     }
-    if (owned.pid !== undefined && owned.pid !== null && body.pid !== owned.pid) {
+    if (
+      owned.pid !== undefined &&
+      owned.pid !== null &&
+      body.pid !== owned.pid
+    ) {
       throw new Error(
         `owned private run process changed: status pid ${body.pid ?? "missing"} but the fixture owns pid ${owned.pid}; not settled`,
       );
@@ -143,19 +165,28 @@ export async function awaitOwnedPrivateSettlement(
         `owned private run ${owned.runId} never settled within ${timeoutMs} ms; last observation: ${lastObservation}`,
       );
     }
-    await new Promise(resolve => setTimeout(resolve, pollMs));
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
   }
 }
 
 /** Stop the owned supervisor through its own SIGTERM path, bounded so a gone child never hangs. */
-export async function stopPrivateSupervisor(child: ChildProcess, timeoutMs = 15_000): Promise<void> {
+export async function stopPrivateSupervisor(
+  child: ChildProcess,
+  timeoutMs = 15_000,
+): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) return;
   try {
-    child.kill("SIGTERM");
-  } catch {
-    return;
+    if (
+      !child.kill("SIGTERM") &&
+      child.exitCode === null &&
+      child.signalCode === null
+    )
+      throw new Error("the owned private supervisor could not be signalled");
+  } catch (error) {
+    if (child.exitCode !== null || child.signalCode !== null) return;
+    throw error;
   }
-  const exited = new Promise<void>(resolve => {
+  const exited = new Promise<void>((resolve) => {
     if (child.exitCode !== null || child.signalCode !== null) {
       resolve();
       return;
@@ -164,21 +195,31 @@ export async function stopPrivateSupervisor(child: ChildProcess, timeoutMs = 15_
   });
   const bounded = await Promise.race([
     exited.then(() => true as const),
-    new Promise(resolve => setTimeout(() => resolve(false as const), timeoutMs)),
+    new Promise((resolve) =>
+      setTimeout(() => resolve(false as const), timeoutMs),
+    ),
   ]);
   if (bounded) return;
   if (child.exitCode !== null || child.signalCode !== null) return;
   try {
-    child.kill("SIGKILL");
-  } catch {
-    return;
+    if (
+      !child.kill("SIGKILL") &&
+      child.exitCode === null &&
+      child.signalCode === null
+    )
+      throw new Error("the owned private supervisor could not be killed");
+  } catch (error) {
+    if (child.exitCode !== null || child.signalCode !== null) return;
+    throw error;
   }
   await Promise.race([
     exited,
-    new Promise(resolve => setTimeout(resolve, 5_000)),
+    new Promise((resolve) => setTimeout(resolve, 5_000)),
   ]);
   if (child.exitCode === null && child.signalCode === null) {
-    throw new Error(`owned private supervisor pid ${child.pid ?? "unknown"} did not exit after SIGTERM/SIGKILL within ${timeoutMs} ms`);
+    throw new Error(
+      `owned private supervisor pid ${child.pid ?? "unknown"} did not exit after SIGTERM/SIGKILL within ${timeoutMs} ms`,
+    );
   }
 }
 
@@ -196,9 +237,8 @@ export interface SettleStopDisposeOptions {
 
 /**
  * The one shared teardown order: settle the exact owned run while the endpoint
- * answers, stop the owned supervisor, then dispose the root. A settle failure
- * still stops and disposes for hygiene but rethrows, so it is never reported
- * as settled or deleted as success.
+ * answers, stop the owned server, then dispose the root. If settlement or
+ * server stop is unproven, preserve the root and report the failure.
  */
 export async function settleStopDisposePrivateFixture(
   child: ChildProcess,
@@ -209,7 +249,9 @@ export async function settleStopDisposePrivateFixture(
   let settleError: unknown = null;
   if (options.owned) {
     try {
-      settled = await awaitOwnedPrivateSettlement(options.owned, { timeoutMs: options.settlementTimeoutMs ?? 30_000 });
+      settled = await awaitOwnedPrivateSettlement(options.owned, {
+        timeoutMs: options.settlementTimeoutMs ?? 30_000,
+      });
     } catch (error) {
       settleError = error;
     }
@@ -221,16 +263,27 @@ export async function settleStopDisposePrivateFixture(
     stopError = error;
   }
   let disposeError: unknown = null;
-  try {
-    disposePrivateRoot(root);
-  } catch (error) {
-    disposeError = error;
+  if (settleError === null && stopError === null) {
+    try {
+      disposePrivateRoot(root);
+    } catch (error) {
+      disposeError = error;
+    }
   }
   if (settleError !== null || stopError !== null || disposeError !== null) {
     const parts: string[] = [];
-    if (settleError !== null) parts.push(`settle: ${settleError instanceof Error ? settleError.message : String(settleError)}`);
-    if (stopError !== null) parts.push(`stop: ${stopError instanceof Error ? stopError.message : String(stopError)}`);
-    if (disposeError !== null) parts.push(`dispose: ${disposeError instanceof Error ? disposeError.message : String(disposeError)}`);
+    if (settleError !== null)
+      parts.push(
+        `settle: ${settleError instanceof Error ? settleError.message : String(settleError)}`,
+      );
+    if (stopError !== null)
+      parts.push(
+        `stop: ${stopError instanceof Error ? stopError.message : String(stopError)}`,
+      );
+    if (disposeError !== null)
+      parts.push(
+        `dispose: ${disposeError instanceof Error ? disposeError.message : String(disposeError)}`,
+      );
     throw new Error(`private fixture teardown failed (${parts.join("; ")})`);
   }
   return settled;

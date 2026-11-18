@@ -258,7 +258,12 @@ export function fixture(
     },
     notify: async (agentId: string, messageId: string, text: string) => {
       prompts.push({ agentId, messageId, text });
+      if (messageId.startsWith('ns-reviewer-report-')) {
+        const state = states.get(agentId);
+        if (state) states.set(agentId, { ...state, status: 'running', active: true });
+      }
     },
+    steerOrNotify: async (agentId: string, messageId: string, text: string) => { prompts.push({ agentId, messageId, text }); },
     verifyPr: async () => ({
       head: remoteHead,
       url: "https://github.com/example/repo/pull/1",

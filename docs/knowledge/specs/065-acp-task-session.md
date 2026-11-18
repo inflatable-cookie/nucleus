@@ -41,7 +41,10 @@ nothing else:
   the task's history;
 - `session/prompt` holds the turn while the service says to, shows the
   lifecycle lines the service sends as `session/update` agent messages, and
-  forwards anything a person typed;
+  forwards anything a person typed. A host that released a turn re-enters the
+  thread with a prompt of its own, and the binding's `holdPattern` names it:
+  nothing is shown, nothing is forwarded, and the turn is held, which is what
+  gives the host's next child a live parent run (nucleus#1305);
 - `session/cancel` ends the held turn at once, so the client can steer;
 - `session/set_model` accepts the two advertised models.
 
@@ -55,11 +58,16 @@ are the messages. Exactly one prompt holds that slot per session, and any first
 prompt takes it — including one the agent does not answer. A host's waking
 notification that arrives before the operator's first message therefore cannot
 turn that message into an opening prompt and swallow it. Anything the agent must *not* answer arrives as configuration,
-never as parsing: the binding may carry an `ignorePattern` the host adapter
-supplies, and `NUCLEUS_ACP_IGNORE_PATTERN` overrides it for a host that cannot
-mint one. A prompt matching it ends the turn silently — nothing is shown and
-nothing is forwarded — which is how a host's own waking notification stays out
-of the task.
+never as parsing: the binding may carry an `ignorePattern` and a `holdPattern`
+the host adapter supplies, and `NUCLEUS_ACP_IGNORE_PATTERN` /
+`NUCLEUS_ACP_HOLD_PATTERN` override them for a host that cannot mint one. A prompt
+matching the ignore rule ends the turn silently: nothing is shown and nothing is
+forwarded, which is how a host's own waking notification stays out of the task. A
+prompt matching the hold rule is the same silence with the turn kept open, which is
+how a host re-enters a thread it released so the thread has a live run to parent its
+next child. Both are regular-expression sources the host adapter owns; the agent
+parses no remote text and knows no host. The two rules stay distinct on purpose: a
+notification has nothing left to do, a re-entry exists to keep the run alive.
 
 The agent keeps no durable state. Killing it and relaunching it reattaches from
 the binding and the task row.
@@ -73,8 +81,9 @@ the binding and the task row.
   createdAt}`, owner-only. Minting again for the same task replaces it, so every
   earlier token stops working at once.
 - `bindings/<sha256(checkout)>.json` is the pointer the agent reads:
-  `{sessionId, taskId, socketPath, token, ignorePattern?}`, owner-only, keyed by
-  the canonical path of the checkout the client launches the agent in.
+  `{sessionId, taskId, socketPath, token, ignorePattern?, holdPattern?}`,
+  owner-only, keyed by the canonical path of the checkout the client launches the
+  agent in.
 
 Nothing is written into the checkout, so a bound session never appears in
 `git status`. The token exists only in the pointer and as a hash in the record:
@@ -88,7 +97,10 @@ session for a task that has a checkout and answers with the session id and the
 pointer's path. Host adapters call it in-process before they open a task's
 thread; an operator calls it from the CLI to register the agent in an
 ACP-capable app by hand. A process that serves no ACP sessions refuses it
-instead of minting a pointer nothing answers.
+instead of minting a pointer nothing answers. The catalogue method names only the
+task; a host adapter calls `bind` in-process with its own `ignorePattern` and
+`holdPattern`, which is how the T3 adapter's parent thread is armed before it is
+launched.
 
 ### 3. The service API: hold, release, lifecycle text
 
@@ -161,6 +173,12 @@ reads the environment and launches it; `bin/nucleus-acp.mjs` is the installed
 command, written to `~/.local/bin/nucleus-acp` by the installer as the absolute
 command path an ACP client registers.
 
+The agent tests also cover the hold rule: a re-entry prompt shows nothing, forwards
+nothing, holds the turn until the service releases it, and leaves the operator's
+next message still forwarded; an ignore rule ends the turn while a hold rule holds
+it. The service tests prove a mint carries both host rules into the binding and
+that a mint without them writes neither.
+
 `test/acp-service.test.ts` covers the service side against a real store, engine
 and callback socket, including a spawned `bin/nucleus-acp.mjs` speaking ACP to
 the real service: minting and revocation, the catalogue method, the bind
@@ -176,8 +194,10 @@ docs.
 ## Not in this spec
 
 Parenting role threads as ACP children of this session, and registering the
-Nucleus provider in T3, are the host adapter's work: it holds the turn while its
-children are active and calls `release` when none is. Registering the provider
+Nucleus provider in T3, are the host adapter's work
+([t3code host adapter](t3code-host-adapter.md), "Native parenting"): it holds the
+turn while any child is active, releases it when none is, and re-enters with a
+`holdPattern` prompt before the next child. Registering the provider
 is one operator setting (`nucleus-acp` is the installed command path); a drift
 in the client's ACP revision is the adapter's compatibility check, not the
 agent's.

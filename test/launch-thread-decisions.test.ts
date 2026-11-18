@@ -47,13 +47,13 @@ test('reviewerRoundEligible outcomes', () => {
   const head = 'a'.repeat(40);
   const cases: [string, Parameters<typeof reviewerRoundEligible>[0], Parameters<typeof reviewerRoundEligible>[1], boolean][] = [
     ['finished released verdict under the round cap', { released: true, status: 'finished', completion: {}, retainedRounds: 1, head }, head, true],
-    ['finished released verdict at the round cap', { released: true, status: 'finished', completion: {}, retainedRounds: 3, head }, head, false],
-    ['finished without a completion', { released: true, status: 'finished', completion: null, retainedRounds: 0, head }, head, false],
+    ['finished released verdict at the former round cap', { released: true, status: 'finished', completion: {}, retainedRounds: 3, head }, head, true],
+    ['finished without a completion', { released: true, status: 'finished', completion: null, retainedRounds: 0, head }, head, true],
     ['unreleased finished verdict', { released: false, status: 'finished', completion: {}, retainedRounds: 0, head }, head, false],
     ['superseded stopped reader on the same head', { released: true, status: 'superseded', completion: null, head }, head, true],
-    ['superseded stopped reader on a different head', { released: true, status: 'superseded', completion: null, head }, 'b'.repeat(40), false],
-    ['superseded with a completion is not a stopped reader', { released: true, status: 'superseded', completion: {}, head }, head, false],
-    ['missing prior', null, head, false],
+    ['superseded stopped reader on a different head', { released: true, status: 'superseded', completion: null, head }, 'b'.repeat(40), true],
+    ['superseded with a completion', { released: true, status: 'superseded', completion: {}, head }, head, true],
+    ['missing prior requires live identity proof', null, head, true],
   ];
   for (const [label, prior, prHead, expected] of cases) assert.equal(reviewerRoundEligible(prior, prHead), expected, label);
 });

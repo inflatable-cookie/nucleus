@@ -59,6 +59,7 @@ implemented; the contracts summarise the durable rules and link here.
 | [061 — Worker proof files reach the retained reviewer](061-worker-proof-files.md) | implemented |
 | [062 — BB host adapter](062-bb-host-adapter.md) | approved; phases 0–6 implemented, phase 0 proved against isolated BB; phase 7 (trial and parity call) not started |
 | [065 — A host-agnostic ACP task session](065-acp-task-session.md) | implemented: the agent, its minted binding, the hold/release API and lifecycle text |
+| [066 — One reconciler](066-one-reconciler.md) | proposed |
 
 ## Host adapters
 

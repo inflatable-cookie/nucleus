@@ -1,4 +1,4 @@
-import { holdsOf, type Task } from '../../../shared/contracts';
+import { holdsOf, type Run, type Task } from '../../../shared/contracts';
 
 /**
  * The pure decisions of absence: whether an unowned workspace creation may be
@@ -32,3 +32,11 @@ export function absentWorkerStep(facts: { launchRetry: boolean; retryDue: boolea
   if (facts.matches > 1) return 'ambiguous';
   return 'replace';
 }
+
+/**
+ * An uncertain creation an exact lookup proved produced no agent. It is
+ * settled as absent: never resent, no longer a blocking recovery effect, and
+ * replaceable by an owner `route now` or `restart` from the current route.
+ */
+export const provenAbsentCreation = (run: Run): boolean =>
+  run.status === 'uncertain' && !run.agentId && Boolean(run.absentProvenAt);
