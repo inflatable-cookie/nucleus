@@ -448,7 +448,9 @@ test('a worker found outside its workspace is not replaced', async () => {
     f.store.update(f.task.id, { agentId: null, prUrl: null, prHead: null });
     f.foundAgents.set(runId, [{ id: 'misplaced', workspaceId: 'other-workspace' }]);
     await f.engine.recover(f.current());
+    const eventsAfterFirst = f.store.eventsAll(f.task.id).length;
     await f.engine.recover(f.current());
+    assert.equal(f.store.eventsAll(f.task.id).length, eventsAfterFirst, 'a repeated lookup adds no events');
     assert.equal(f.current().agentId, null);
     assert.equal(f.current().runId, runId);
     assert.equal(f.current().agentIntent, true);
