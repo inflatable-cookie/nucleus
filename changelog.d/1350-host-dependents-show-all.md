@@ -1,0 +1,1 @@
+- Settings → Hosts: a long "Depends on it" row shows its count, repeated kinds grouped (for example "thread cleanup ×417"), the first eight names and Show all, instead of every name at once.
