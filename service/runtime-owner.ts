@@ -12,6 +12,7 @@ import { RuntimeBoard } from "../core/runtime/board";
 
 import { compiledIdentity, stableInstalledPath } from "../shared/runtime.mjs";
 import { sourcePathFromModule } from "../shared/service/build";
+import { readBbPluginRoll } from "../shared/service/discovery";
 import { pluginRegistration } from "../shared/plugin-discovery.mjs";
 import { qaFenceStatus } from "../core/qa/qa-fence";
 import type { ProjectQaFenceInput } from "../shared/contracts";
@@ -892,6 +893,7 @@ export class QueueRuntime {
       hostRegistry: this.hostRegistry,
       t3Host: () => runtime.t3Host,
       bb: () => runtime.bbHost.status(),
+      bbPluginRoll: () => readBbPluginRoll(this.dataDir),
       admission: this.admission,
       capacityChanges: this.capacityChanges,
       maintenance: this.maintenance,

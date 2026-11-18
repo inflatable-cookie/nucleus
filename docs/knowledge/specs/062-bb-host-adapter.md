@@ -1670,10 +1670,19 @@ on its executor declaration, and the service refuses a different build — or an
 packaged service — before the identity probe, with a message naming both builds and `nucleus bb install`.
 Nothing registers, so the host is unavailable with that reason rather than connected and half-working.
 
-**Rolls stay in step.** A main-channel roll changes the service's build without touching BB. `nucleus bb
-status` then reads `behind` and names both builds, the plugin's next declaration is refused as above, and
-the board shows the BB host unavailable with that reason. Reinstalling stays an explicit operator command;
-nothing writes into the operator's BB automatically. A source checkout's service and a plugin installed
+**Rolls stay in step.** A main-channel roll changes the service's build, so the roll keeps BB's plugin
+on the build it landed (nucleus#1339, after two 2026-11-18 rolls left the plugin behind and BB tasks
+stalled behind an offline host until a planner installed it by hand). As part of the replacement, once
+the new build answers and `current` is activated, the bridge runs the activated version's own
+`nucleus bb status`: only a plugin BB reports as `behind` is installed, through that version's own
+`nucleus bb install` — the route above, unchanged, including the read-only managed copy, so a roll
+never writes into the installed version directory. A machine without the plugin is untouched; a plugin
+that is not ours (`unrecognised`) or a checkout install (`unpinned`) is left alone, and a BB this host
+cannot run or read is left exactly as it was. The step records its outcome in owner-only
+`queue-bb-plugin-roll.json` beside the roll record, the roll's own detail names an install or its
+failure, and `service.health` reports the record as `bbPlugin`, so a failed install is visible with its
+cause. A failed install never fails or reverts the roll, and the next landed roll runs the step again.
+A source checkout's service and a plugin installed
 from `hosts/bb/plugin` carry identities of the same shape, so the private proofs keep working: a source
 service pins nothing against an unpinned plugin, and a packaged service refuses one.
 
@@ -1685,7 +1694,8 @@ decision stay in `shared/`).
 
 Operator steps (the same text the README carries):
 
-1. `nucleus bb install` (after installing or rolling the Nucleus package).
+1. `nucleus bb install` (once, after installing the Nucleus package; a later roll keeps the plugin on the
+   build it lands).
 2. Point one test repository at BB: `repository.set` with `hostKind: "bb"`.
 3. Expect: `nucleus bb status` reports `match`; the board names the BB host online with its BB and plugin
    SDK versions; a dispatched task's worker thread appears under its planner in BB, and the sidebar's
@@ -1700,7 +1710,11 @@ write and reload name only ID `nucleus`; a namesake is refused for install and u
 nothing; an unrelated or namesake `--plugin-dir` never reaches BB; `status` for every state, including an
 unset or foreign `serviceDataDir`; the plugin's own reader agreeing with the shared record; the publication
 gate failing a package without the built plugin),
-and the pin cases live in `test/bb-host-registration.test.ts`. `effigy proof:bb:install` runs the whole
+and the pin cases live in `test/bb-host-registration.test.ts`. `test/bb-plugin-roll.test.ts` names the roll
+step (nucleus#1339): a plugin BB reports `behind` is installed and then reports `match`, with no file in
+packaged version directory changed; no plugin means no install; a plugin that is not ours is left alone;
+a failed install lands the roll anyway with its cause in the roll record and in health's `bbPlugin`; a
+fixture roll with no step configured reaches no BB. `effigy proof:bb:install` runs the whole
 route against the isolated BB server from phase 0: two pre-existing plugins (one an unrelated plugin, one
 standing in for Usage Pace) stay byte-identical and are named by no command across install, status and
 uninstall; the packaged plugin connects on the setting `install` itself wrote, is refused by name when

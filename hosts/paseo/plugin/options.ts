@@ -1,4 +1,5 @@
 import type { BridgeProcessActions } from "../../../shared/service/bridge-process";
+import type { BbPluginRollRecord } from "../../../shared/bb-plugin-roll";
 
 /** A command to spawn detached, as a plain value so the composition supplies it. */
 export type Command = { command: string; args: string[] };
@@ -52,6 +53,20 @@ export interface BridgeOptions {
    * plugin entry opts in, so fixtures never reload the live plugin.
    */
   reloadPluginCommand?: () => Command;
+  /**
+   * The BB plugin step a landed roll runs (nucleus#1339): report BB's installed
+   * plugin against the build the roll landed, and install this build's plugin
+   * when BB reports it behind. The input's `packageRoot` is the activated
+   * version, so the step runs that build's own `nucleus bb install`.
+   *
+   * Unset means no step: only the plugin entry opts in, so a fixture roll never
+   * reaches (or installs into) the operator's BB.
+   */
+  bbPluginRoll?: (input: {
+    packageRoot: string;
+    dataDir: string;
+    buildId: string;
+  }) => Promise<BbPluginRollRecord | null>;
   /**
    * Fixture ownership hook: called with the spawned child's pid the moment it
    * exists, before any identity file is published, so a test file's guard can
