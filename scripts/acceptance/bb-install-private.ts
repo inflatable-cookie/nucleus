@@ -33,6 +33,7 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
+  chmodSync,
   cpSync,
   existsSync,
   mkdirSync,
@@ -385,6 +386,7 @@ async function main() {
       identityFile,
       JSON.stringify({ buildId, revision: "0".repeat(40) }, null, 2) + "\n",
     );
+    const packagedFilesBeforeInstall = directoryDigest(packaged);
     note("packaged-plugin", true, {
       files: Object.keys(directoryDigest(packaged)).length,
       pinnedTo: buildId.slice(0, 12),
@@ -418,11 +420,22 @@ async function main() {
       serviceBuildId: string;
       dataDir: string;
     };
+    const installedIdentityFile = join(
+      serviceDataDir,
+      "bb-plugin-install",
+      PLUGIN_ID,
+      "nucleus-build.json",
+    );
     assert.equal(installed.action, "installed");
     assert.equal(installed.plugin.id, PLUGIN_ID);
     assert.notEqual(installed.plugin.status, "error");
     assert.equal(installed.pluginBuildId, buildId);
     assert.equal(installed.serviceBuildId, buildId);
+    assert.deepEqual(
+      directoryDigest(packaged),
+      packagedFilesBeforeInstall,
+      "BB's install/build leaves every packaged version file and manifest byte-identical",
+    );
     const listedAfterInstall = JSON.parse(
       await cli(["plugin", "list", "--json"]),
     ) as { plugins: Array<{ id: string }> };
@@ -435,6 +448,7 @@ async function main() {
       version: installed.plugin.version,
       status: installed.plugin.status,
       pinnedTo: buildId.slice(0, 12),
+      packageFilesUnchanged: true,
     });
     assert.deepEqual(
       await otherPlugins(),
@@ -457,8 +471,9 @@ async function main() {
     });
 
     // A rebuild from another build reads as behind, without a second install.
+    chmodSync(installedIdentityFile, 0o644);
     writeFileSync(
-      identityFile,
+      installedIdentityFile,
       JSON.stringify(
         { buildId: "f".repeat(16), revision: "0".repeat(40) },
         null,
@@ -472,7 +487,7 @@ async function main() {
     assert.equal(behind.state, "behind");
     assert.match(behind.detail, /nucleus bb install/);
     writeFileSync(
-      identityFile,
+      installedIdentityFile,
       JSON.stringify({ buildId, revision: "0".repeat(40) }, null, 2) + "\n",
     );
     note("status-behind", true, { state: behind.state, detail: behind.detail });
@@ -501,7 +516,7 @@ async function main() {
     // The same plugin from another build is refused on connect, and health names both
     // builds and the fix — the reason the board reports the host unavailable with.
     writeFileSync(
-      identityFile,
+      installedIdentityFile,
       JSON.stringify(
         { buildId: "f".repeat(16), revision: "0".repeat(40) },
         null,
@@ -535,7 +550,7 @@ async function main() {
 
     // 4. install again from the correct build restores the connection
     writeFileSync(
-      identityFile,
+      installedIdentityFile,
       JSON.stringify({ buildId, revision: "0".repeat(40) }, null, 2) + "\n",
     );
     await nucleus(["install", "--plugin-dir", packaged]);

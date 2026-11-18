@@ -62,8 +62,10 @@ BB, and nothing else in your BB is read or written.
    nucleus bb status
    ```
 
-   `nucleus bb install` runs BB's own install for the plugin with ID `nucleus`,
-   points the plugin at your Nucleus data home so it connects, and reloads it.
+   `nucleus bb install` copies the plugin to your Nucleus data home before BB
+   installs it, so BB builds cannot change the installed Nucleus version. It
+   points the plugin at that data home and reloads it; `nucleus bb uninstall`
+   removes the plugin and its managed copy.
    `nucleus bb status` reports the installed plugin's version and build against
    the running Nucleus service (`match`, or `behind` with the command to fix it),
    and says when the plugin is not configured to connect.
@@ -78,6 +80,9 @@ BB, and nothing else in your BB is read or written.
    is refused with a message naming both builds, and the board shows the BB host
    unavailable with that reason. Reinstall with `nucleus bb install`; Nucleus
    never writes into your BB on its own.
+   If Paseo detects a changed installed file, its bridge stays available, the
+   board reports the failed roll, and the notice recommends reinstalling that
+   version or rolling to a fresh build.
 4. **Remove it.** `nucleus bb uninstall` removes the plugin with ID `nucleus`.
    No other plugin, project or thread is touched; a plugin with ID `nucleus`
    that is not a Nucleus build is refused by name rather than overwritten or

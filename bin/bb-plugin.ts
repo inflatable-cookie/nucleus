@@ -34,8 +34,10 @@
  * decision are `shared/` facts.
  */
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
-import { join } from "node:path";
+import {
+  chmodSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, rmSync,
+} from "node:fs";
+import { join, resolve } from "node:path";
 import { dataHome } from "../shared/data-home.mjs";
 import { findBbCli } from "../shared/bb-cli.mjs";
 import { readServiceInfo } from "../shared/service/discovery";
@@ -67,6 +69,51 @@ export interface BbCommandContext {
 }
 
 const DEFAULT_TIMEOUT_MS = 180_000;
+
+/** BB is allowed to build its install source, so never hand it a version package. */
+function ownedPluginDirectory(dataDir: string): string {
+  return join(dataDir, "bb-plugin-install", BB_PLUGIN_ID);
+}
+
+function setTreeMode(root: string, directoryMode: number, fileMode: number): void {
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    const path = join(root, entry.name);
+    if (entry.isDirectory()) setTreeMode(path, directoryMode, fileMode);
+    else chmodSync(path, fileMode);
+  }
+  chmodSync(root, directoryMode);
+}
+
+function prepareBbPluginCopy(source: string, dataDir: string): string {
+  const destination = ownedPluginDirectory(dataDir);
+  mkdirSync(join(dataDir, "bb-plugin-install"), { recursive: true, mode: 0o700 });
+  try {
+    if (lstatSync(destination).isSymbolicLink()) {
+      throw new Error(`refusing to replace BB plugin copy symlink at ${destination}`);
+    }
+    setTreeMode(destination, 0o700, 0o600);
+    rmSync(destination, { recursive: true, force: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  cpSync(source, destination, { recursive: true, dereference: false });
+  return destination;
+}
+
+function makeBbPluginCopyReadOnly(directory: string): void {
+  // BB may rebuild the plugin during `plugin install`; lock it after that finishes.
+  setTreeMode(directory, 0o555, 0o444);
+}
+
+function removeBbPluginCopy(directory: string): void {
+  try {
+    if (lstatSync(directory).isSymbolicLink()) return;
+    setTreeMode(directory, 0o700, 0o600);
+    rmSync(directory, { recursive: true, force: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+}
 
 function bbExec(cli: string, env: NodeJS.ProcessEnv = process.env) {
   return (args: string[]): string =>
@@ -194,9 +241,11 @@ export function installBbPlugin(
       );
     }
   }
-  // The install carries the directory (a `path:` source). It is the only write that
-  // reaches BB before the plugin's own settings are configured.
-  input.exec(["plugin", "install", `path:${directory}`, "--yes"]);
+  // BB builds the plugin it installs, and that build writes into dist/. Give it an
+  // install-owned copy under the data home so version directories remain immutable.
+  const installDirectory = prepareBbPluginCopy(directory, input.dataDir);
+  input.exec(["plugin", "install", `path:${installDirectory}`, "--yes"]);
+  makeBbPluginCopyReadOnly(installDirectory);
   // The one setting the plugin needs to connect: this CLI's own data home. Written
   // through BB's own `plugin config`, for the plugin with ID `nucleus` only.
   input.exec([
@@ -240,7 +289,7 @@ export function installBbPlugin(
     plugin: installed,
     pluginBuildId,
     serviceBuildId,
-    pluginDirectory: directory,
+    pluginDirectory: installDirectory,
     dataDir: input.dataDir,
     detail,
   };
@@ -394,6 +443,9 @@ export function uninstallBbPlugin(
     throw new Error(
       `bb still lists a plugin with ID ${BB_PLUGIN_ID} after uninstall; read bb plugin logs ${BB_PLUGIN_ID}`,
     );
+  }
+  if (resolve(existing.rootDir ?? "") === resolve(ownedPluginDirectory(input.dataDir))) {
+    removeBbPluginCopy(ownedPluginDirectory(input.dataDir));
   }
   return {
     action: "removed",
