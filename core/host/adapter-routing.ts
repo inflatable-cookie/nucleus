@@ -152,7 +152,9 @@ export function routeHostAdapter(
               : error instanceof HostTransportFault
                 ? error
                 : new HostTransportFault(hostId, error);
-          engine.markAuditHostUnavailable(hostId);
+          const source = error instanceof HostTransportFault ? error.cause : error;
+          const timeout = source instanceof Error && (['ServiceHostTimeoutError', 'HostOperationTimeoutError', 'HostCallAbandonedError'].includes(source.name) || source.name === 'T3RpcError' && (source as Error & { code?: string }).code === 'timeout');
+          engine.markAuditHostUnavailable(hostId, timeout ? source.message : undefined);
           engine.hostOutages.observe(hostId, false);
           for (const task of engine.store.tasks()) {
             if (

@@ -1,3 +1,7 @@
+const hostTimedOut = (error: unknown): boolean => error instanceof Error &&
+  (['ServiceHostTimeoutError', 'HostOperationTimeoutError', 'HostCallAbandonedError'].includes(error.name)
+    || error.name === 'T3RpcError' && (error as Error & { code?: string }).code === 'timeout');
+
 import { sweepSettledRunProcesses } from "../machine/run-process-cleanup";
 import type { Engine } from "../engine";
 import type { Resolution } from "../resolution";
@@ -158,6 +162,7 @@ export class HostPass {
         try {
           await settle.call(adapter, run.agentId, run.id);
         } catch (error) {
+          if (hostTimedOut(error)) throw error;
           this.store.event(
             task.id,
             "thread_settlement_warning",
@@ -184,6 +189,7 @@ export class HostPass {
         try {
           await settleWorker.call(adapter, task.agentId, task.runId);
         } catch (error) {
+          if (hostTimedOut(error)) throw error;
           this.store.event(
             task.id,
             "thread_settlement_warning",
@@ -232,6 +238,7 @@ export class HostPass {
       try {
         await unsettle.call(adapter, task.agentId, task.id);
       } catch (error) {
+        if (hostTimedOut(error)) throw error;
         this.store.event(
           task.id,
           "thread_attention_warning",
@@ -437,7 +444,8 @@ export class HostPass {
     if (inventoryIds.length && this.adapter.observationInventory) {
       try {
         observed = await this.context.host.observationInventory(inventoryIds);
-      } catch {
+      } catch (error) {
+        if (hostTimedOut(error)) throw error;
         observed = null;
       }
     }
@@ -477,6 +485,7 @@ export class HostPass {
     try {
       await run();
     } catch (error) {
+      if (hostTimedOut(error)) throw error;
       // A step that fails at the transport boundary is this host's own answer for
       // the pass (Spec 066 R6): the client claims a connection the socket does not
       // honour, so the host did not answer and its tasks keep their wait. Only this

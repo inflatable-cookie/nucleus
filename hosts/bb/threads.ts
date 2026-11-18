@@ -52,12 +52,23 @@ export interface BbInteraction {
 export class BbThreads {
   constructor(private readonly ports: BbThreadPorts) {}
   private async read<T>(op: HostOperationName, input: unknown): Promise<T> {
-    const answer = parseHostOperationOutcome(op, await this.ports.operation(op, input));
-    if (!answer.ok) throw new HostUnknownDeliveryError({ command: `bb.${op}`, guidance: answer.failure.message });
-    const value = answer.value.value as Record<string, unknown>;
-    const id = (input as { threadId?: string } | null)?.threadId;
-    if (id && value.threadId !== id) throw new HostUnknownDeliveryError({ command: `bb.${op}`, guidance: 'The answer named a different thread' });
-    return value as T;
+    const decode = (outcome: unknown): T => {
+      const answer = parseHostOperationOutcome(op, outcome);
+      if (!answer.ok) throw new HostUnknownDeliveryError({ command: `bb.${op}`, guidance: answer.failure.message });
+      const value = answer.value.value as Record<string, unknown>;
+      const id = (input as { threadId?: string } | null)?.threadId;
+      if (id && value.threadId !== id) throw new HostUnknownDeliveryError({ command: `bb.${op}`, guidance: 'The answer named a different thread' });
+      return value as T;
+    };
+    try { return decode(await this.ports.operation(op, input)); }
+    catch (error) {
+      if (error && typeof error === 'object' && 'late' in error && (error as { late: unknown }).late instanceof Promise) {
+        const held = error as { late: Promise<unknown> };
+        held.late = held.late.then(decode);
+        void held.late.catch(() => {});
+      }
+      throw error;
+    }
   }
   private observation(row: BbRow): AgentObservation {
     const agent = this.ports.state().agents[row.threadId];
@@ -233,15 +244,23 @@ export class BbThreads {
     const state = this.ports.state();
     if (state.writes[key]?.status === 'settled') return;
     state.writes[key] = { status: 'unknown', ...(op === 'thread.title' ? { value: (input as { title: string }).title } : op === 'thread.reparent' ? { value: (input as { parentThreadId: string | null }).parentThreadId } : {}) }; this.ports.save(state);
-    try {
-      const result = await this.read<{ title?: string; status?: string; parentThreadId?: string | null; archivedAt?: number }>(op, input);
+    const settle = (result: { title?: string; status?: string; parentThreadId?: string | null; archivedAt?: number }) => {
       if (op === 'thread.stop' && !['idle', 'error'].includes(result.status ?? '')) throw new HostUnknownDeliveryError({ command: 'bb.thread.stop' });
       if (op === 'thread.title' && result.title !== (input as { title: string }).title) throw new HostUnknownDeliveryError({ command: 'bb.thread.title' });
       if (op === 'thread.reparent' && result.parentThreadId !== (input as { parentThreadId: string | null }).parentThreadId) throw new HostUnknownDeliveryError({ command: 'bb.thread.reparent' });
       if (op === 'thread.archive' && typeof result.archivedAt !== 'number') throw new HostUnknownDeliveryError({ command: 'bb.thread.archive' });
       if ((op === 'thread.interaction.respond' || op === 'thread.interaction.cancel') && !['resolved', 'resolving', 'interrupted'].includes(result.status ?? '')) throw new HostUnknownDeliveryError({ command: `bb.${op}` });
       const next = this.ports.state(); next.writes[key] = { ...next.writes[key], status: 'settled' }; this.ports.save(next);
+    };
+    try {
+      settle(await this.read(op, input));
     } catch (error) {
+      if (error && typeof error === 'object' && 'late' in error && (error as { late: unknown }).late instanceof Promise) {
+        const held = error as { late: Promise<unknown>; lateDelivery?: boolean };
+        if (op === 'thread.send') held.lateDelivery = true;
+        held.late = held.late.then(value => settle(value as Parameters<typeof settle>[0]));
+        void held.late.catch(() => {});
+      }
       if (this.ports.notSent(error)) { const next = this.ports.state(); next.writes[key] = { status: 'refused' }; this.ports.save(next); }
       throw error;
     }

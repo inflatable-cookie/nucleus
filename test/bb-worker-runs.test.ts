@@ -225,3 +225,26 @@ test('nucleus#1315 a BB role thread runs in Full Access whatever mode the profil
   await f.native.createAgent(auto);
   assert.equal(f.calls.filter(c => c.method === 'threads.spawn').at(-1)!.args.permissionMode, 'full');
 });
+
+test('a timed-out send keeps its intent and a late reply settles that same write', async () => {
+  const f = fixture();
+  const agent = await f.native.createAgent(f.spec());
+  const original = f.ports.operation;
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  f.ports.operation = async (op, input) => {
+    if (op !== 'thread.send') return original(op, input);
+    const late = gate.then(() => original(op, input));
+    const error = new Error('Host operation timed out') as Error & { late: Promise<unknown> };
+    error.late = late;
+    throw error;
+  };
+  await assert.rejects(f.native.send(agent.id, 'hello', 'message-1'), /timed out/);
+  assert.equal(f.state().writes[`send:${agent.id}:message-1`].status, 'unknown');
+  await assert.rejects(f.restart().send(agent.id, 'hello', 'message-1'), HostUnknownDeliveryError);
+  release();
+  for (let i = 0; i < 100 && f.state().writes[`send:${agent.id}:message-1`].status !== 'settled'; i++)
+    await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.state().writes[`send:${agent.id}:message-1`].status, 'settled');
+  assert.equal(f.calls.filter(call => call.method === 'threads.send').length, 1);
+});

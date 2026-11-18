@@ -450,6 +450,7 @@ export class AgentMessages {
       });
       return { status: "delivered", messageId: record.id, to: label, role, recordedAt: record.createdAt, deliveredAt: delivered.deliveredAt! };
     } catch (error) {
+      this.settleLateMessage(intent, identity.agentId, error);
       return this.failedSend(intent, label, role, error);
     } finally { this.deliveringMessages.delete(record.id); }
   }
@@ -542,8 +543,25 @@ export class AgentMessages {
       });
       return { status: "delivered", messageId: record.id, to: label, role: record.toRole, recordedAt: record.createdAt, deliveredAt: delivered.deliveredAt! };
     } catch (error) {
+      this.settleLateMessage(intent, agentId, error);
       return this.failedSend(intent, label, record.toRole, error);
     } finally { this.deliveringMessages.delete(record.id); }
+  }
+
+  /** A late acknowledgement settles only the same retained delivery intent. */
+  private settleLateMessage(intent: AgentMessageRecord, agentId: string | null, error: unknown): void {
+    const late = error && typeof error === 'object' && 'late' in error && 'lateDelivery' in error && (error as { lateDelivery?: unknown }).lateDelivery === true ? (error as { late?: unknown }).late : null;
+    if (!(late instanceof Promise)) return;
+    void late.then(() => {
+      if (this.stopped()) return;
+      const current = this.store.message(intent.id);
+      if (!current || current.status !== 'uncertain' || current.deliveryIntentAt !== intent.deliveryIntentAt || current.deliveryHostId !== intent.deliveryHostId) return;
+      this.store.transaction(() => {
+        this.store.putMessage({ ...current, status: 'delivered', toAgentId: agentId, deliveredAt: now(), error: '' });
+        this.store.event(intent.fromTaskId, 'agent_message_delivered', `${intent.id}: late host acknowledgement`);
+        this.store.event(intent.toTaskId, 'agent_message_delivered', `${intent.id}: late host acknowledgement`);
+      });
+    }).catch(() => {});
   }
 
   /** A send that failed: refused before it left stays queued; any other failure is unknown and never resent. */

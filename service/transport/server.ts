@@ -53,6 +53,7 @@ import {
   HostExecutorUnavailableError,
   HostOperationRefusedError,
   HostOperationUnknownDeliveryError,
+  HostOperationTimeoutError,
 } from "../host-executor";
 import {
   HOST_EXECUTOR_METHOD,
@@ -513,6 +514,15 @@ export class QueueService {
           try {
             result = await this.sendHostOperation(envelope.data.hostId, parsed.value.op, parsed.value.input);
           } catch (error) {
+            if (error instanceof HostOperationTimeoutError) {
+              this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, error: { code: "timeout", message: error.message }, continuation: true }, false, request.method);
+              connection.inFlight++;
+              void error.late.then(
+                result => this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, result }, false, request.method),
+                failure => this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, error: serviceError("internal", failure) }, false, request.method),
+              ).finally(() => { connection.inFlight--; });
+              return;
+            }
             const mapped = error instanceof HostOperationRefusedError
               ? { code: error.failure.code, message: error.failure.message }
               : error instanceof HostExecutorUnavailableError

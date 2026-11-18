@@ -62,3 +62,31 @@ test('executor settlement calls have no call timer while ordinary calls keep the
     assert.equal(await request, 'settled');
   }
 });
+
+test('a host RPC timeout retains its correlated late response', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'host-continuation-'));
+  const socketPath = join(root, 's');
+  let finish!: () => void;
+  const server = createServer(socket => {
+    const reader = createFrameReader((frame: any) => {
+      if (frame.method === 'service.auth') return socket.write(encodeFrame({ v: PROTOCOL_VERSION, id: frame.id, result: {} }));
+      socket.write(encodeFrame({ v: PROTOCOL_VERSION, id: frame.id, error: { code: 'timeout', message: 'host timed out' }, continuation: true }));
+      finish = () => socket.write(encodeFrame({ v: PROTOCOL_VERSION, id: frame.id, result: { accepted: true } }));
+    }, error => { throw error; });
+    socket.on('data', chunk => reader.feed(chunk));
+  });
+  await new Promise<void>(resolve => server.listen(socketPath, resolve));
+  const client = new ServiceClient({ socketPath, credential: 'synthetic' });
+  try {
+    const request = client.request('service.bb-host-operation', {}, 1_000);
+    let late!: Promise<unknown>;
+    await assert.rejects(request, (error: unknown) => {
+      assert.ok(error instanceof Error && 'late' in error);
+      late = (error as Error & { late: Promise<unknown> }).late;
+      return true;
+    });
+    finish();
+    assert.deepEqual(await late, { accepted: true });
+    assert.equal(client.inFlight, 0);
+  } finally { client.close(); await new Promise<void>(resolve => server.close(() => resolve())); }
+});

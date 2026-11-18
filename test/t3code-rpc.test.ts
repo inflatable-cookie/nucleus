@@ -724,3 +724,19 @@ test('a UTF-8 request over the byte limit is refused before sending', async t =>
   assert.equal(server.frames.length, 0);
   assert.equal(client.connected, true);
 });
+
+test('a timed-out T3 mutation retains its late response under the same request', async t => {
+  let sends = 0;
+  const server = await fakeServer(t, (frame, send) => {
+    if (frame._tag !== 'Request') return;
+    sends++;
+    setTimeout(() => send(success(frame, { accepted: true })), 40);
+  });
+  const client = await clientFor(t, server, 10);
+  let timeout!: T3RpcError;
+  await assert.rejects(client.call('orchestration.dispatchCommand', { type: 'message.dispatch' }), (error: unknown) => {
+    assert.ok(error instanceof T3RpcError); assert.equal(error.code, 'timeout'); timeout = error; return true;
+  });
+  assert.deepEqual(await timeout.late, { accepted: true });
+  assert.equal(sends, 1);
+});

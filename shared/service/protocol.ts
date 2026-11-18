@@ -75,6 +75,8 @@ export interface ServiceResponse {
   id: string;
   result?: unknown;
   error?: ServiceError;
+  /** A timed-out host operation can still deliver its correlated final response. */
+  continuation?: boolean;
 }
 
 export const REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,120}$/;

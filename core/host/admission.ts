@@ -427,6 +427,7 @@ export class Admission {
   private withinDeadline<T>(call: ActiveCall, work: () => Promise<T>): Promise<T> {
     const { deadlineMs } = call;
     let timer: NodeJS.Timeout | null = null;
+    const running = work();
     const expiry = new Promise<never>((_resolve, reject) => {
       timer = setTimeout(() => {
         timer = null;
@@ -436,11 +437,14 @@ export class Admission {
         this.lastAbandoned = call;
         this.abandonedAt = this.now();
         this.log(`Paseo ${call.cls} call ${call.holder} abandoned as unknown after ${Math.round(ageMs)} ms (deadline ${deadlineMs} ms): its admission slot is free and the call is not resent`);
-        reject(new HostCallAbandonedError({ call: call.cls, holder: call.holder, ageMs, deadlineMs }));
+        const error = new HostCallAbandonedError({ call: call.cls, holder: call.holder, ageMs, deadlineMs });
+        error.late = running;
+        error.lateDelivery = /^(notify|steerOrNotify):/.test(call.holder);
+        reject(error);
       }, deadlineMs);
       timer.unref?.();
     });
-    return Promise.race([work(), expiry]).finally(() => { if (timer) clearTimeout(timer); });
+    return Promise.race([running, expiry]).finally(() => { if (timer) clearTimeout(timer); });
   }
 
   /** Active calls at or past `thresholdMs`, oldest first, bounded to five. */

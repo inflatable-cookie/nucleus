@@ -124,6 +124,8 @@ export function sanitizeHostDeliveryDiagnostic(input: unknown): HostDeliveryDiag
 /** Diagnostic evidence is not proof of non-delivery and never permits a resend. */
 export class HostUnknownDeliveryError extends Error {
   readonly diagnostic: HostDeliveryDiagnostic;
+  late?: Promise<unknown>;
+  lateDelivery?: boolean;
   constructor(diagnostic?: HostDeliveryDiagnostic) {
     const clean = sanitizeHostDeliveryDiagnostic(diagnostic);
     super(`Host delivery is unknown; command was not resent${clean.command ? `; command ${clean.command}` : ''}${clean.field ? `; field ${clean.field}` : ''}${clean.reason ? `; reason ${clean.reason}` : ''}${clean.guidance ? `; guidance ${clean.guidance}` : ''}`);

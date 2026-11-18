@@ -235,6 +235,14 @@ export class T3IntentLedger {
       const diagnostic = sanitizeHostDeliveryDiagnostic(error instanceof T3RpcError ? { command: error.command, reason: error.reason, guidance }
         : error instanceof HostUnknownDeliveryError ? error.diagnostic : undefined);
       const unknown = new HostUnknownDeliveryError(diagnostic);
+      if (error instanceof T3RpcError && error.late) {
+        unknown.lateDelivery = error.command === 'message.dispatch';
+        unknown.late = error.late.then(result => {
+          state.update(current => { if (current.intents[key]?.status === 'unknown') current.intents[key] = { ...current.intents[key], kind, threadId, payload: encoded, status: 'settled', result }; });
+          return result;
+        });
+        void unknown.late.catch(() => {});
+      }
       try { state.update(current => { if (current.intents[key]?.status !== 'moot') current.intents[key] = { ...current.intents[key], kind, threadId, diagnostic }; }); }
       catch (persistenceError) { unknown.cause = persistenceError; }
       throw unknown;

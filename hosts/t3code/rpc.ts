@@ -11,6 +11,7 @@ export interface T3ConnectionConfig {
 /** Errors deliberately exclude remote error bodies, request data and ticket URLs. */
 export class T3RpcError extends Error {
   readonly command?: string;
+  late?: Promise<unknown>;
   /** The retained why: a known tag, a fixed shape name or an HTTP status. */
   readonly reason?: string;
 
@@ -64,6 +65,9 @@ type Pending = {
   reject(error: unknown): void;
   timer: ReturnType<typeof setTimeout>;
   values: number;
+  timedOut?: boolean;
+  resolveLate?(value: unknown): void;
+  rejectLate?(error: unknown): void;
 };
 const MAX_FRAME_BYTES = 16 * 1024 * 1024;
 const MAX_STREAM_VALUES = 10_000;
@@ -270,7 +274,7 @@ export class T3RpcClient {
 
   private request(method: string, payload: unknown, accept?: (value: unknown) => boolean): Promise<unknown> {
     if (!/^[A-Za-z][A-Za-z0-9.]{0,100}$/.test(method)) return Promise.reject(new T3RpcError('protocol', undefined, undefined, 'not_sent'));
-    if (!this.connected) return Promise.reject(new T3RpcError('transport', method, undefined, 'not_sent'));
+    if (!this.connected || this.pending.size >= 1024) return Promise.reject(new T3RpcError('transport', method, undefined, 'not_sent'));
     let data: string;
     const id = String(this.nextId++);
     try { data = JSON.stringify({ _tag: 'Request', id, tag: method, payload, headers: [] }); }
@@ -280,9 +284,16 @@ export class T3RpcClient {
       const timer = setTimeout(() => {
         const pending = this.pending.get(id);
         if (!pending) return;
-        this.pending.delete(id);
-        reject(new T3RpcError('timeout', method));
-        if (accept) this.sendControl({ _tag: 'Interrupt', requestId: id });
+        const error = new T3RpcError('timeout', method, undefined, 'unknown', { command: pending.command });
+        if (pending.command && !accept) {
+          pending.timedOut = true;
+          error.late = new Promise((resolveLate, rejectLate) => { pending.resolveLate = resolveLate; pending.rejectLate = rejectLate; });
+          void error.late.catch(() => {});
+        } else {
+          this.pending.delete(id);
+          if (accept) this.sendControl({ _tag: 'Interrupt', requestId: id });
+        }
+        reject(error);
       }, this.requestTimeoutMs ?? METHOD_TIMEOUT_MS[method] ?? this.timeoutMs);
       const command = object(payload) ? safeCommand(payload.type) : undefined;
       this.pending.set(id, { method, command: command ?? (method === 'orchestration.launchThread' ? method : undefined), accept, resolve, reject, timer, values: 0 });
@@ -372,7 +383,8 @@ export class T3RpcClient {
     if (!pending) return;
     this.pending.delete(id);
     clearTimeout(pending.timer);
-    if (failed) pending.reject(value); else pending.resolve(value);
+    if (pending.timedOut) { if (failed) pending.rejectLate?.(value); else pending.resolveLate?.(value); }
+    else if (failed) pending.reject(value); else pending.resolve(value);
   }
   private failAll(error: Error): void { for (const id of [...this.pending.keys()]) this.settle(id, error, true); }
   private noteProtocolError(branch: T3ProtocolErrorBranch, tag?: unknown): void {

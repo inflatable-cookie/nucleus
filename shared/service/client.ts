@@ -29,10 +29,19 @@ export class ServiceRequestError extends Error {
   }
 }
 
+/** A host operation timed out while its original response remains in flight. */
+export class ServiceHostTimeoutError extends ServiceRequestError {
+  constructor(message: string, readonly late: Promise<unknown>) { super("timeout", message); this.name = "ServiceHostTimeoutError"; }
+}
+
 interface Pending {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
   timer: NodeJS.Timeout | undefined;
+  trackedHost?: boolean;
+  timedOut?: boolean;
+  resolveLate?: (value: unknown) => void;
+  rejectLate?: (error: Error) => void;
 }
 
 export class ServiceClient {
@@ -109,18 +118,28 @@ export class ServiceClient {
       if (!this.issuedIds.has(id)) this.teardown(new ProtocolError("invalid_input", `Response for unknown request ${id}`));
       return;
     }
+    if (candidate.continuation === true && waiter.trackedHost && !waiter.timedOut) {
+      waiter.timedOut = true;
+      clearTimeout(waiter.timer);
+      const late = new Promise<unknown>((resolve, reject) => { waiter.resolveLate = resolve; waiter.rejectLate = reject; });
+      void late.catch(() => {});
+      const error = candidate.error as { message?: unknown } | undefined;
+      waiter.reject(new ServiceHostTimeoutError(typeof error?.message === "string" ? error.message : "Host operation timed out", late));
+      return;
+    }
     this.pending.delete(id);
     this.issuedIds.delete(id);
     clearTimeout(waiter.timer);
     if (candidate.error) {
       const error = candidate.error as { code?: unknown; message?: unknown };
-      waiter.reject(new ServiceRequestError(
+      const failure = new ServiceRequestError(
         typeof error.code === "string" ? error.code as ServiceErrorCode : "internal",
         typeof error.message === "string" ? error.message : "Service returned a typed error",
-      ));
+      );
+      if (waiter.timedOut) waiter.rejectLate?.(failure); else waiter.reject(failure);
       return;
     }
-    waiter.resolve(candidate.result ?? null);
+    if (waiter.timedOut) waiter.resolveLate?.(candidate.result ?? null); else waiter.resolve(candidate.result ?? null);
   }
 
   private send(request: unknown, id?: string) {
@@ -152,7 +171,7 @@ export class ServiceClient {
         this.pending.delete(id);
         reject(new ServiceRequestError("timeout", `${method} timed out after ${timeoutMs ?? this.options.requestTimeoutMs} ms`));
       }, timeoutMs ?? this.options.requestTimeoutMs);
-      this.pending.set(id, { resolve, reject, timer });
+      this.pending.set(id, { resolve, reject, timer, trackedHost: method === "service.bb-host-operation" });
       // `via` is transport provenance, not a caller claim: only the bridge sets it.
       // `key` is the caller's stable identity for one mutating call (request ledger).
       try { this.send({ v: PROTOCOL_VERSION, id, method, input, ...(via ? { via } : {}), ...(key ? { key } : {}) }, id); } catch (error) { clearTimeout(timer); this.pending.delete(id); this.issuedIds.delete(id); reject(error as Error); }
@@ -167,7 +186,7 @@ export class ServiceClient {
   private teardown(error: Error = new ServiceRequestError("unavailable", "Connection torn down")) {
     const pending = [...this.pending.values()];
     this.pending.clear();
-    for (const waiter of pending) { clearTimeout(waiter.timer); waiter.reject(error); }
+    for (const waiter of pending) { clearTimeout(waiter.timer); if (waiter.timedOut) waiter.rejectLate?.(error); else waiter.reject(error); }
     this.socket?.destroy();
     this.socket = null;
   }

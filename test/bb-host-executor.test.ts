@@ -153,3 +153,11 @@ test("a late host send reply remains correlated after the caller's deadline", as
   assert.deepEqual(await timeout.late, answer);
   assert.equal(instance.inFlight, 0);
 });
+
+
+test("a timed-out read frees its correlation slot and its late answer is dropped", async () => {
+  const { instance, written } = link(10);
+  await assert.rejects(instance.request("call.counters", {}), HostOperationTimeoutError);
+  assert.equal(instance.inFlight, 0);
+  assert.equal(instance.settle({ v: PROTOCOL_VERSION, id: written[0].id, result: outcome("call.counters", { calls: {} }) }), true);
+});

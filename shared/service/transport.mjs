@@ -51,5 +51,5 @@ export function isConnectionLoss(error) {
 export function isHostTransportFailure(error) {
   const code = errorCode(error);
   const message = errorMessage(error);
-  return CONNECT_CODES.has(code) || /\bTransport not connected\b|\bdisconnected\b|ECONNRESET|EPIPE|socket hang up|Liveness check timed out|Daemon connection did not settle|Daemon client closed|T3Code (?:transport|timeout)|authenticated host connection is unavailable/i.test(message);
+  return error?.name === 'ServiceHostTimeoutError' || error?.name === 'HostOperationTimeoutError' || CONNECT_CODES.has(code) || /\bTransport not connected\b|\bdisconnected\b|ECONNRESET|EPIPE|socket hang up|Liveness check timed out|Daemon connection did not settle|Daemon client closed|T3Code (?:transport|timeout)|authenticated host connection is unavailable/i.test(message);
 }

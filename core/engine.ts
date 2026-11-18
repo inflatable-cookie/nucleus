@@ -389,11 +389,14 @@ export class Engine {
   hostIngressAvailable: (id: string) => boolean = () => true;
   /** A transport that failed during this audit pass stays unavailable to its tasks until the next pass. */
   private readonly auditUnavailableHosts = new Set<string>();
-  markAuditHostUnavailable(id: string): void {
+  private readonly auditHostTimeouts = new Map<string, string>();
+  markAuditHostUnavailable(id: string, detail?: string): void {
     this.auditUnavailableHosts.add(id);
+    if (detail) this.auditHostTimeouts.set(id, detail);
   }
   resetAuditHostAvailability(): void {
     this.auditUnavailableHosts.clear();
+    this.auditHostTimeouts.clear();
   }
 
   taskHostAvailable(task: Task): boolean {
@@ -435,7 +438,8 @@ export class Engine {
       this.resolution.clearHostWait(task);
       return null;
     }
-    const detail = hostUnavailableDetail(hostId, outage.since);
+    const timeout = this.auditHostTimeouts.get(hostId);
+    const detail = `${hostUnavailableDetail(hostId, outage.since)}${timeout ? `: ${timeout}` : ""}`;
     let current = this.store.task(task.id);
     const wait = current.resolution.hostWait;
     if (wait?.hostId !== hostId || wait.since !== outage.since) {

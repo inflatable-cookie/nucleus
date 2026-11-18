@@ -74,6 +74,13 @@ export class HostExecutorUnavailableError extends Error {
   }
 }
 
+// Reads have no durable effect to reconcile after the caller stops waiting.
+const HOST_READS = new Set<HostOperationName>([
+  "identity.probe", "workspace.inspect", "thread.observe", "thread.cascade",
+  "thread.inventory", "thread.read", "thread.metadata", "thread.interactions",
+  "thread.timeline", "provider.catalog", "environment.list", "terminal.list", "call.counters",
+]);
+
 interface PendingOperation {
   op: HostOperationName;
   resolve: (outcome: HostOperationOutcome) => void;
@@ -102,6 +109,7 @@ export class HostExecutorLink {
   readonly declaration: HostExecutorDeclaration;
   readonly connectedAt = new Date().toISOString();
   private readonly pending = new Map<string, PendingOperation>();
+  private readonly expiredReads = new Set<string>();
   private readonly write: (frame: unknown) => void;
   private readonly deadlineMs: number;
   private closed = false;
@@ -137,6 +145,12 @@ export class HostExecutorLink {
       const timer = setTimeout(() => {
         const pending = this.pending.get(id);
         if (!pending) return;
+        if (HOST_READS.has(op)) {
+          this.pending.delete(id);
+          this.expiredReads.add(id);
+          if (this.expiredReads.size > 1024) this.expiredReads.delete(this.expiredReads.values().next().value!);
+          rejectLate(new HostOperationUnknownDeliveryError(op, "late read results are discarded"));
+        }
         reject(new HostOperationTimeoutError(op, this.deadlineMs, late));
       }, this.deadlineMs);
       timer.unref?.();
@@ -160,7 +174,7 @@ export class HostExecutorLink {
     const answer = frame as { v?: unknown; id?: unknown; result?: unknown; error?: unknown };
     if (answer.v !== PROTOCOL_VERSION || typeof answer.id !== "string") return false;
     const pending = this.pending.get(answer.id);
-    if (!pending) return false;
+    if (!pending) return this.expiredReads.delete(answer.id);
     if (answer.error !== undefined) {
       const failure = parseHostOperationFailure(answer.error);
       if (!failure) {
@@ -189,6 +203,7 @@ export class HostExecutorLink {
   /** The connection went away: every in-flight operation is unknown delivery. */
   close(reason = "the connection closed"): void {
     this.closed = true;
+    this.expiredReads.clear();
     for (const [id] of this.pending) this.settleOperation(id, reason);
   }
 

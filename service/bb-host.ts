@@ -146,6 +146,10 @@ export function createBbWorkspaceAdapter(
   store?: Store,
   requestOperation?: (op: HostOperationName, input: unknown) => Promise<HostOperationOutcome>,
 ) {
+  // One service connection per BB adapter: late operations share it rather than
+  // each retaining a separate socket while their answer is unknown.
+  let serviceClient: ServiceClient | undefined;
+  let serviceClientIdentity: string | undefined;
   async function operation(op: HostOperationName, input: unknown): Promise<HostOperationOutcome> {
     let online: boolean;
     try { online = connected(); }
@@ -156,14 +160,20 @@ export function createBbWorkspaceAdapter(
     try {
       const info = readServiceInfo(dataDir);
       if (!info) throw new Error("Nucleus service identity is unavailable");
-      client = new ServiceClient({ socketPath: info.socketPath, credential: info.credential });
+      const identity = JSON.stringify([info.socketPath, info.credential]);
+      if (serviceClientIdentity !== identity) {
+        serviceClient?.close();
+        serviceClient = new ServiceClient({ socketPath: info.socketPath, credential: info.credential });
+        serviceClientIdentity = identity;
+      }
+      client = serviceClient!;
       await client.connect();
     } catch (error) {
+      serviceClient = undefined;
+      serviceClientIdentity = undefined;
       throw new BbHostOperationNotSentError(error instanceof Error ? error.message : String(error));
     }
-    try {
-      return await client.request("service.bb-host-operation", { hostId, op, input }, 25_000) as HostOperationOutcome;
-    } finally { client.close(); }
+    return await client.request("service.bb-host-operation", { hostId, op, input }, 25_000) as HostOperationOutcome;
   }
   const workspaces = (): Record<string, BbWorkspaceRecord> => store?.getMeta<Record<string, BbWorkspaceRecord>>(WORKSPACES_KEY) ?? {};
   const getWorkspace = (id: string) => workspaces()[id];
