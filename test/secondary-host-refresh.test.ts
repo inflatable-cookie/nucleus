@@ -53,11 +53,23 @@ test("one refresh on secondary arrival, none on steady ticks, one again after a 
   await lifecycle.refreshOnSecondaryArrival();
   await lifecycle.refreshOnSecondaryArrival();
   await lifecycle.refreshOnSecondaryArrival();
-  assert.equal(host.refreshes.length, 1, "the arrival refresh runs once, not per tick");
+  assert.equal(
+    host.refreshes.length,
+    1,
+    "the arrival refresh runs once, not per tick",
+  );
   host.connected = false;
   await lifecycle.refreshOnSecondaryArrival();
-  assert.equal(host.refreshes.length, 1, "a disconnection refreshes nothing and rejects nothing");
+  assert.equal(
+    host.refreshes.length,
+    1,
+    "a disconnection refreshes nothing and rejects nothing",
+  );
   host.connected = true;
   await lifecycle.refreshOnSecondaryArrival();
-  assert.equal(host.refreshes.length, 2, "a reconnect owes one fresh catalog read");
+  assert.equal(
+    host.refreshes.length,
+    2,
+    "a reconnect owes one fresh catalog read",
+  );
 });

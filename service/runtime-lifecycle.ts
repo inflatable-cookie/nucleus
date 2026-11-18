@@ -219,7 +219,8 @@ export class RuntimeLifecycle {
     // ride the periodic profile pass. The chain runs on every bootstrap tick
     // and must never reject unhandled (a disconnected primary rejects refresh),
     // so the transition-guarded refresh is caught here.
-    void this.owner.t3Host()
+    void this.owner
+      .t3Host()
       ?.ensureConnected()
       .then(() => this.owner.plannerTickets.ensure())
       .then(() => this.refreshOnSecondaryArrival())

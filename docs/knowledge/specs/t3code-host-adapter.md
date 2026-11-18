@@ -1014,7 +1014,7 @@ the host id the service must come online as, `t3code:<environmentId>`.
 **Bearers.** Two sessions, split by scope. The service's **runtime** bearer has
 `orchestration:read` and `orchestration:operate` only, with a long TTL
 (`--ttl`, default 365 days), label and subject `nucleus`; it is stored owner-only
-in `<data home>/settings.json` as `t3code: { endpoint, bearer, sessionId,
+in `<data home>/settings.json` as `t3code: { endpoint, bearer, sessionId, environmentId, baseDir,
 expiresAt, probeThreadId? }`, and is never printed, reported or logged. The
 **install** bearer is minted for one registration with `providers:manage` and
 `orchestration:read`, used for the read and the single mutation, and revoked
@@ -1034,7 +1034,7 @@ nightly's operations are `create`, `upsert` and `remove`. Ownership is the rule
 BB's route uses: an existing `nucleus` instance is ours only when its driver is
 `acpRegistry`, its `source` is `local`, and its `commandPath` is that launcher; a
 namesake — another driver, or another command path — is refused by name for
-install *and* uninstall and never overwritten or removed.
+install *and* uninstall and never overwritten or removed. A launcher must carry the ownership marker and invoke the ACP entry point; the ordinary CLI launcher is not an ACP launcher.
 
 **Proving it.** After the mutation, install re-reads `server.getConfig` until the
 instance is ours, enabled, advertising at least one model and its probe has settled (or the wait expires), and then has the
@@ -1084,7 +1084,7 @@ only when it is ours (a namesake is refused by name), revokes every active sessi
 with subject `nucleus`, and clears `t3code` from the settings file. While tasks
 are live on `t3code:<environmentId>` it names them from `host.list`'s dependents
 and refuses unless `--live-tasks` is passed; a service that cannot report its
-hosts is a refusal too, because absence of proof is not proof of absence. It never
+hosts is a refusal too, unless `--live-tasks` explicitly overrides the unknown state. The selected endpoint, environment and session store must match the stored connection before it is used or cleared; a mismatch refuses without changes. Status reports provider registration as unknown when authenticated configuration cannot be read. It never
 archives, deletes or edits a thread, and never touches a project registration.
 The service drops the connection on its next bootstrap tick.
 
