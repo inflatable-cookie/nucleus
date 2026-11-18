@@ -32,7 +32,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createServer } from "node:http";
-import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -47,6 +47,7 @@ import { git, command } from "../../core/git/index";
 import { repoCommonDir, WORKSPACES_DIR } from "../../core/workspaces/workspace-allocation";
 import { digest } from "../../core/store/store";
 import { WorkspaceProvisioning } from "../../core/workspaces/workspace-provisioning";
+import { checkoutRunScratchPlacement, runTemporaryEnvironment } from "../../core/workspaces/run-scratch";
 import type { Engine } from "../../core/engine";
 
 const run = promisify(execFile);
@@ -174,6 +175,21 @@ async function main(): Promise<void> {
         { taskId: task.id, runId: "sandbox-worker-run", token: "worker-token", role: "worker" },
         { taskId: task.id, runId: "sandbox-reviewer-run", token: "reviewer-token", role: "reviewer" },
       ];
+      // Each run's recorded scratch leaf, created by the very call the BB adapter
+      // makes before `run.attach`, owner-only, before either thread exists.
+      const scratchPlacement = checkoutRunScratchPlacement({ mount: proofRoot, namespace: "nucleus" });
+      const scratch: Array<{ runId: string; role: string; path: string; mode: string; directory: boolean; symlink: boolean; createdBeforeSpawn: boolean }> = [];
+      for (const route of routes) {
+        store.putRun({ id: route.runId, taskId: task.id, hostId: bbHost, role: route.role === "worker" ? "revision" : "reviewer", generation: 0,
+          head: planningCommit, base: planningCommit, agentId: null, workspaceId: directory, profile: null, status: "intent",
+          createdAt: new Date().toISOString(), lastObservedAt: null, active: null, idleSince: null, completion: null, released: false, siblings: [] });
+        const recorded = store.run(route.runId)?.temporaryDirectory;
+        const environment = runTemporaryEnvironment(route.runId, scratchPlacement, recorded);
+        const leaf = lstatSync(environment.TMPDIR);
+        assert.ok(leaf.isDirectory() && !leaf.isSymbolicLink(), `run scratch for ${route.runId} is a real directory`);
+        assert.equal(leaf.mode & 0o077, 0, `run scratch for ${route.runId} is owner-only`);
+        scratch.push({ runId: route.runId, role: route.role, path: environment.TMPDIR, mode: `0${(leaf.mode & 0o777).toString(8)}`, directory: leaf.isDirectory(), symlink: leaf.isSymbolicLink(), createdBeforeSpawn: true });
+      }
       const prompts: Array<{ role: string; file: string }> = [];
       for (const route of routes) {
         const ticket = join(dataHome, "tickets", `${route.runId}.json`);
@@ -204,9 +220,10 @@ async function main(): Promise<void> {
         reports: bodies,
         sibling: { checkout: shared, head: await git(shared, "rev-parse", "HEAD"), placement: "WorkspaceProvisioning.ensureSharedSiblingCheckouts", secondTaskEvent: sharedPlacement?.detail ?? null },
         effigy: "effigy qa:docs ran inside the worker thread before its report",
+        scratch: { placement: "core/workspaces/run-scratch.ts runTemporaryEnvironment (the call service/bb-adapter.ts makes before run.attach)", runs: scratch },
         checkoutStatus: status.stdout.trim(),
       }, null, 2) + "\n");
-      console.log(JSON.stringify({ ok: true, proofRoot, threads: spawned, reports: bodies.map(body => ({ runId: body.runId, status: body.status })), sibling: shared }, null, 2));
+      console.log(JSON.stringify({ ok: true, proofRoot, threads: spawned, reports: bodies.map(body => ({ runId: body.runId, status: body.status })), scratch: scratch.map(entry => ({ runId: entry.runId, mode: entry.mode })), sibling: shared }, null, 2));
     } finally {
       store.close();
     }

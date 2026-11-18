@@ -1622,8 +1622,9 @@ BB 0.49.
 
 ### The route that landed
 
-- **The mode: Full Access (planner ruling, 2026-11-18).** A sandboxed BB role
-  thread cannot run Effigy at all: Effigy's foreground identity needs the boot
+- **The mode: Full Access (planner ruling, 2026-11-18; recorded in the task's
+  Nucleus-held brief v2, `sha256:af17b0ce…`).** A sandboxed BB role thread cannot
+  run Effigy at all: Effigy's foreground identity needs the boot
   session (`sysctlbyname("kern.bootsessionuuid")`), which Claude Code's sandbox
   refuses with `EPERM` (measured above), so Effigy refuses "foreground owner
   identity unavailable" before any command. Claude Code's sandbox settings expose
@@ -1674,8 +1675,19 @@ BB 0.49.
 With Full Access, Effigy runs in the thread: `scripts/acceptance/bb-sandbox-private.ts`
 prints a report only after `effigy qa:docs` succeeds inside the worker thread, so
 the report's arrival proves Effigy's foreground guard started and completed. The
-sandboxed-mode limitation above is Effigy's (its boot identity read), and the
-planner carries it to the Effigy planner.
+sandboxed-mode limitation above is Effigy's (its boot identity read); the held
+brief's amendment says Effigy has been told and that running inside a sandbox
+later is its own decision.
+
+The amendment restates acceptance 1 as: on the isolated BB server, with role
+threads launched as production launches them (Full Access), two role threads
+(worker and reviewer) each deliver their report; each run's scratch directory is
+present, owner-only, before launch; an Effigy selector runs in a role thread; and
+a test reading a sibling path passes through the production placement. The proof
+records every one of those, including each run's scratch leaf (`0700`, a real
+directory) created by the same `runTemporaryEnvironment` call the BB adapter makes
+before `run.attach` and before either thread exists, and it keeps the sandbox
+probes as the evidence for the limit.
 
 ### Tests and proof
 
@@ -1696,7 +1708,8 @@ production code — and a second task on the same repository re-observes it. Eac
 thread's single command requires the sibling read (`test -s ../sylib/README.md`)
 and the worker's also requires a real `effigy qa:docs` run, then hands its report
 to the helper: a delivered report proves all of it. Both reports arrived at the
-recorded callback socket, and the checkout stayed clean.
+recorded callback socket, the checkout stayed clean, and the evidence records each
+run's owner-only scratch leaf as present before either thread was spawned.
 
 ## Phase 0 evidence (2026-11-16)
 
