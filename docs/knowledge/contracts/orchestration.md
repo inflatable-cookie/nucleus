@@ -3126,8 +3126,9 @@ after the task finishes.
 - Paseo keeps its existing archive behaviour for released support threads,
   reviewer replacement and terminal cleanup. Its finished-task catch-up also
   records a direct archived or absent observation, including legacy threads with
-  no prior intent. Terminal task control and submit operations in attention are
-  superseded in bounded host passes, preserving their occurrence history.
+  no prior intent. Terminal restart controls and proven submissions in attention are superseded
+  in bounded host passes, preserving their occurrence history; cleanup controls
+  remain owed.
 - A done task's workspace is archived with every thread in it (Tom, 2026-09-27);
   only a running thread (active turn or pending permission) makes it wait. No
   unreleased task run may remain. Uncommitted files, unexpected or unpublished

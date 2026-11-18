@@ -1,31 +1,69 @@
 import { sweepSettledRunProcesses } from "../machine/run-process-cleanup";
 import type { Engine } from "../engine";
-import type { Resolution } from '../resolution';
+import type { Resolution } from "../resolution";
 import type { Task } from "../../shared/contracts";
 import type { AgentObservation } from "../host/adapter";
-import { catchUpFinishedTaskThreads, finishedThreadCleanupCatchUp } from '../workspaces/thread-archive';
-import { removesThreads } from '../workspaces/thread-archive-effect';
+import {
+  catchUpFinishedTaskThreads,
+  finishedThreadCleanupCatchUp,
+} from "../workspaces/thread-archive";
+import { removesThreads } from "../workspaces/thread-archive-effect";
 import { sanitizeHostFailureDetail, sanitizeHostFailureReason } from "../host";
 import { isTransportFailure } from "../../shared/transport";
-import { hasRecordedOperationSettlement } from '../recovery/recovery-effects';
+import {
+  hasRecordedOperationSettlement,
+  observedHostEffectEvidence,
+} from "../recovery/recovery-effects";
+import { operationIdForKey, operationInputHash } from "../store/store";
+import { submissionSchema } from "../../shared/contracts";
 
-const REVIEW_PHASES = new Set(['awaiting_review', 'report_ready', 'reviewing', 'changes_requested', 'verifying', 'merging', 'syncing', 'closing', 'done']);
-const SUPPORT_ROLES = new Set(['reviewer', 'recovery', 'coordinator', 'decider', 'executor']);
-const ATTENTION_PHASES = ['blocked', 'error', 'needs_attention'];
+const REVIEW_PHASES = new Set([
+  "awaiting_review",
+  "report_ready",
+  "reviewing",
+  "changes_requested",
+  "verifying",
+  "merging",
+  "syncing",
+  "closing",
+  "done",
+]);
+const SUPPORT_ROLES = new Set([
+  "reviewer",
+  "recovery",
+  "coordinator",
+  "decider",
+  "executor",
+]);
+const ATTENTION_PHASES = ["blocked", "error", "needs_attention"];
 
 function threadSettlementFailureReason(error: unknown): string {
-  if (!(error instanceof Error)) return 'unknown error';
-  const record = error as Error & { reason?: unknown; diagnostic?: { reason?: unknown }; field?: unknown };
-  const reason = sanitizeHostFailureReason(record.reason ?? record.diagnostic?.reason);
+  if (!(error instanceof Error)) return "unknown error";
+  const record = error as Error & {
+    reason?: unknown;
+    diagnostic?: { reason?: unknown };
+    field?: unknown;
+  };
+  const reason = sanitizeHostFailureReason(
+    record.reason ?? record.diagnostic?.reason,
+  );
   // A compatibility failure's field names the exact structural mismatch (a
   // snapshot name, a dotted decode path, a connection state); the name alone
   // never did. Every field is an adapter-authored constant, never remote text.
   const detail = sanitizeHostFailureDetail(record.field);
-  return `${error.name}${reason ? `: ${reason}` : ''}${detail ? ` (${detail})` : ''}`;
+  return `${error.name}${reason ? `: ${reason}` : ""}${detail ? ` (${detail})` : ""}`;
 }
 
-export type HostPassContext = Pick<Engine, 'adapter' | 'host' | 'inventoryHostMatches' | 'observeRetiredWorkers'
-  | 'retiredObservationKey' | 'retiredObservationPlan' | 'store'> & { readonly resolution: Pick<Resolution, 'observationTargets'> };
+export type HostPassContext = Pick<
+  Engine,
+  | "adapter"
+  | "host"
+  | "inventoryHostMatches"
+  | "observeRetiredWorkers"
+  | "retiredObservationKey"
+  | "retiredObservationPlan"
+  | "store"
+> & { readonly resolution: Pick<Resolution, "observationTargets"> };
 
 /** What one host's pass answers the audit pass that called it. */
 export type HostPassResult = {
@@ -55,8 +93,12 @@ export type HostPassResult = {
  */
 export class HostPass {
   constructor(readonly context: HostPassContext) {}
-  private get store() { return this.context.store; }
-  private get adapter() { return this.context.adapter; }
+  private get store() {
+    return this.context.store;
+  }
+  private get adapter() {
+    return this.context.adapter;
+  }
   /**
    * Hosts whose pass hit the transport boundary. One pass visits its hosts in
    * order, and the entry is cleared when a host's pass begins, so a reading never
@@ -80,35 +122,75 @@ export class HostPass {
       // it here would only make the attention pass unsettle it again, one
       // settle/unsettle pair per sweep. The ordinary settle resumes when
       // attention clears (nucleus#1181 review).
-      const attentionActive = task.resolution.attention || ATTENTION_PHASES.includes(task.phase);
+      const attentionActive =
+        task.resolution.attention || ATTENTION_PHASES.includes(task.phase);
       const runs = this.store.runs(task.id);
       // One row per task (Tom, 2026-11-15): while any of the task's agents is
       // still working, the worker row is the task's one visible row and it stays
       // unsettled. It settles only when the task waits on nothing Nucleus runs.
-      const liveWork = runs.some(run => !run.released && !run.completion);
+      const liveWork = runs.some((run) => !run.released && !run.completion);
       for (const run of runs) {
-        if (run.hostId !== hostId || !run.agentId || (!run.released && !run.completion)) continue;
+        if (
+          run.hostId !== hostId ||
+          !run.agentId ||
+          (!run.released && !run.completion)
+        )
+          continue;
         // The terminal lane's confirmed effect covers this thread, even when
         // settling it previously needed no native receipt. An unresolved effect
         // still needs observation and settlement on the next pass.
-        if (this.store.threadArchiveEffect(run.agentId, hostId)?.status === 'archived') continue;
-        const settle = run.role === 'revision' && REVIEW_PHASES.has(task.phase) && !attentionActive && !liveWork
-          ? settleWorker : SUPPORT_ROLES.has(run.role) ? settleSupport : undefined;
+        if (
+          this.store.threadArchiveEffect(run.agentId, hostId)?.status ===
+          "archived"
+        )
+          continue;
+        const settle =
+          run.role === "revision" &&
+          REVIEW_PHASES.has(task.phase) &&
+          !attentionActive &&
+          !liveWork
+            ? settleWorker
+            : SUPPORT_ROLES.has(run.role)
+              ? settleSupport
+              : undefined;
         if (!settle) continue;
-        try { await settle.call(adapter, run.agentId, run.id); }
-        catch (error) {
-          this.store.event(task.id, 'thread_settlement_warning',
-            `${run.role} thread ${run.agentId} settle for run ${run.id} failed: ${threadSettlementFailureReason(error)}`.slice(0, 4000));
+        try {
+          await settle.call(adapter, run.agentId, run.id);
+        } catch (error) {
+          this.store.event(
+            task.id,
+            "thread_settlement_warning",
+            `${run.role} thread ${run.agentId} settle for run ${run.id} failed: ${threadSettlementFailureReason(error)}`.slice(
+              0,
+              4000,
+            ),
+          );
         }
       }
       // The initial worker run predates the role run ledger on legacy tasks.
       // The task only reaches these phases after its handover was accepted.
-      if (settleWorker && !attentionActive && !liveWork && REVIEW_PHASES.has(task.phase) && task.agentId && task.runId && !runs.some(run => run.id === task.runId)
-        && this.store.threadArchiveEffect(task.agentId, hostId)?.status !== 'archived') {
-        try { await settleWorker.call(adapter, task.agentId, task.runId); }
-        catch (error) {
-          this.store.event(task.id, 'thread_settlement_warning',
-            `worker thread ${task.agentId} settle for run ${task.runId} failed: ${threadSettlementFailureReason(error)}`.slice(0, 4000));
+      if (
+        settleWorker &&
+        !attentionActive &&
+        !liveWork &&
+        REVIEW_PHASES.has(task.phase) &&
+        task.agentId &&
+        task.runId &&
+        !runs.some((run) => run.id === task.runId) &&
+        this.store.threadArchiveEffect(task.agentId, hostId)?.status !==
+          "archived"
+      ) {
+        try {
+          await settleWorker.call(adapter, task.agentId, task.runId);
+        } catch (error) {
+          this.store.event(
+            task.id,
+            "thread_settlement_warning",
+            `worker thread ${task.agentId} settle for run ${task.runId} failed: ${threadSettlementFailureReason(error)}`.slice(
+              0,
+              4000,
+            ),
+          );
         }
       }
     }
@@ -130,15 +212,33 @@ export class HostPass {
     if (!unsettle) return;
     for (const task of this.store.tasks()) {
       if (task.hostId !== hostId || task.removedAt != null) continue;
-      if (!task.agentId || ['done', 'cancelled'].includes(task.phase)) continue;
-      const liveWork = this.store.runs(task.id).some(run => !run.released && !run.completion);
-      if (!liveWork && !ATTENTION_PHASES.includes(task.phase) && !task.resolution.attention) continue;
+      if (!task.agentId || ["done", "cancelled"].includes(task.phase)) continue;
+      const liveWork = this.store
+        .runs(task.id)
+        .some((run) => !run.released && !run.completion);
+      if (
+        !liveWork &&
+        !ATTENTION_PHASES.includes(task.phase) &&
+        !task.resolution.attention
+      )
+        continue;
       // The terminal lane owns archived threads; support threads never surface.
-      if (this.store.threadArchiveEffect(task.agentId, hostId)?.status === 'archived') continue;
-      try { await unsettle.call(adapter, task.agentId, task.id); }
-      catch (error) {
-        this.store.event(task.id, 'thread_attention_warning',
-          `worker thread ${task.agentId} attention surfacing failed: ${threadSettlementFailureReason(error)}`.slice(0, 4000));
+      if (
+        this.store.threadArchiveEffect(task.agentId, hostId)?.status ===
+        "archived"
+      )
+        continue;
+      try {
+        await unsettle.call(adapter, task.agentId, task.id);
+      } catch (error) {
+        this.store.event(
+          task.id,
+          "thread_attention_warning",
+          `worker thread ${task.agentId} attention surfacing failed: ${threadSettlementFailureReason(error)}`.slice(
+            0,
+            4000,
+          ),
+        );
       }
     }
   }
@@ -147,91 +247,228 @@ export class HostPass {
    * One host's steps in the audit pass's order. A step that throws is recorded
    * here, and the host's later steps still run.
    */
+  private readonly terminalOperationCursor = new Map<string, number>();
   private readonly lastRunProcessSweep = new Map<string, number>();
 
   async run(host: string): Promise<HostPassResult> {
     // The pass's own task list is what the host's thread observation is scoped to:
     // a thread whose task is over is not read again, and every read this pass makes
     // is shared by its consumers. A host that does not present threads ignores it.
-    const tasks = this.store.tasks().filter(task => task.hostId === host);
+    const tasks = this.store.tasks().filter((task) => task.hostId === host);
     this.transportFailures.delete(host);
-    await this.step(host, 'beginHostPass', () => this.adapter.beginHostPass?.(tasks));
-    let passed: Omit<HostPassResult, 'transportAnswered'> | null = null;
-    try { passed = await this.hostPass(host, tasks); }
-    finally { await this.step(host, 'endHostPass', () => this.adapter.endHostPass?.()); }
+    await this.step(host, "beginHostPass", () =>
+      this.adapter.beginHostPass?.(tasks),
+    );
+    let passed: Omit<HostPassResult, "transportAnswered"> | null = null;
+    try {
+      passed = await this.hostPass(host, tasks);
+    } finally {
+      await this.step(host, "endHostPass", () => this.adapter.endHostPass?.());
+    }
     return { ...passed!, transportAnswered: !this.transportFailures.has(host) };
   }
 
   /** The pass's steps, between a host's `beginHostPass` and its `endHostPass`. */
-  private async hostPass(host: string, tasks: readonly Task[]): Promise<Omit<HostPassResult, 'transportAnswered'>> {
-    const result: Omit<HostPassResult, 'transportAnswered'> = { inventory: null, finishedCatchUp: new Map() };
+  private async hostPass(
+    host: string,
+    tasks: readonly Task[],
+  ): Promise<Omit<HostPassResult, "transportAnswered">> {
+    const result: Omit<HostPassResult, "transportAnswered"> = {
+      inventory: null,
+      finishedCatchUp: new Map(),
+    };
     if (this.adapter.hostProcessListing) {
-      const historical = Date.now() - (this.lastRunProcessSweep.get(host) ?? 0) >= 3_600_000;
+      const historical =
+        Date.now() - (this.lastRunProcessSweep.get(host) ?? 0) >= 3_600_000;
       if (historical) this.lastRunProcessSweep.set(host, Date.now());
-      await this.step(host, 'settledRunProcesses', () => sweepSettledRunProcesses(this.store, host,
-        { pendingOnly: !historical, readProcesses: () => this.adapter.hostProcessListing!() }));
+      await this.step(host, "settledRunProcesses", () =>
+        sweepSettledRunProcesses(this.store, host, {
+          pendingOnly: !historical,
+          readProcesses: () => this.adapter.hostProcessListing!(),
+        }),
+      );
     }
-    // Terminal tasks no longer have an owner step for these accepted controls.
-    // Keep the original operation and record only the superseded occurrence.
-    await this.step(host, 'settleTerminalOperations', () => {
-      const candidates = this.store.db.prepare(`SELECT operations.id FROM operations JOIN tasks ON tasks.id=operations.taskId
+    // Read one rotating page, including unresolved rows, so an unprovable
+    // submission cannot starve later work. Settled occurrences stay history.
+    await this.step(host, "settleTerminalOperations", () => {
+      const cursor = this.terminalOperationCursor.get(host) ?? 0;
+      const candidates = this.store.db
+        .prepare(
+          `SELECT operations.rowid AS position, operations.id AS id, tasks.id AS taskId
+        FROM operations JOIN tasks ON (tasks.id=operations.taskId OR
+          (operations.kind='submit' AND operations.taskId IS NULL AND tasks.submission=json_extract(operations.data,'$.submissionId')))
         WHERE operations.state='needs_attention' AND operations.kind IN ('task_control','submit')
-          AND json_extract(operations.data,'$.hostId')=? AND json_extract(tasks.data,'$.phase') IN ('done','cancelled')
-        ORDER BY operations.rowid`).all(host);
-      let settled = 0;
-      for (const row of candidates) {
-        if (settled >= 25) break;
+          AND COALESCE(json_extract(operations.data,'$.hostId'),json_extract(tasks.data,'$.hostId'))=?
+          AND json_extract(tasks.data,'$.hostId')=? AND json_extract(tasks.data,'$.phase') IN ('done','cancelled')
+          AND operations.rowid>? AND NOT EXISTS (SELECT 1 FROM events WHERE events.taskId=tasks.id
+            AND events.kind='operation_superseded' AND json_valid(events.detail)
+            AND json_extract(events.detail,'$.id')=operations.id
+            AND json_extract(events.detail,'$.inputHash')=operations.inputHash
+            AND json_extract(events.detail,'$.attempt')=json_extract(operations.data,'$.attempts')
+            AND json_extract(events.detail,'$.intentAt') IS json_extract(operations.data,'$.effect.intentAt')
+            AND json_type(events.detail,'$.evidence')='text')
+        ORDER BY operations.rowid LIMIT 25`,
+        )
+        .all(host, host, cursor);
+      this.terminalOperationCursor.set(
+        host,
+        candidates.length
+          ? Number(candidates[candidates.length - 1]!.position)
+          : 0,
+      );
+      for (const row of candidates)
         this.store.transaction(() => {
-          const operation = this.store.operation(String(row.id));
-          if (!operation || operation.state !== 'needs_attention' || !operation.taskId) return;
-          const task = this.store.task(operation.taskId);
-          if (!['done', 'cancelled'].includes(task.phase) || hasRecordedOperationSettlement(this.store, task, operation)) return;
-          this.store.event(task.id, 'operation_superseded', JSON.stringify({ id: operation.id, inputHash: operation.inputHash,
-            attempt: operation.attempts, intentAt: operation.effect?.intentAt, evidence: `task is ${task.phase}` }));
-          settled++;
+          let operation = this.store.operation(String(row.id));
+          if (!operation || operation.state !== "needs_attention") return;
+          const task = this.store.task(String(row.taskId));
+          if (
+            task.hostId !== host ||
+            !["done", "cancelled"].includes(task.phase)
+          )
+            return;
+          const payload = this.store.operationPayload(operation.id) as {
+            type?: string;
+            submission?: unknown;
+            control?: { action?: string; taskId?: string };
+          } | null;
+          if (
+            !payload ||
+            operation.id !== operationIdForKey(operation.key) ||
+            operation.inputHash !== operationInputHash(payload)
+          )
+            return;
+          if (operation.kind === "submit") {
+            const parsed = submissionSchema.safeParse(payload.submission);
+            if (
+              payload.type !== "submit" ||
+              !parsed.success ||
+              operation.submissionId !== parsed.data.submissionId ||
+              operation.key !== `submit:${parsed.data.submissionId}`
+            )
+              return;
+            try {
+              if (this.store.existing(parsed.data)?.id !== task.id) return;
+            } catch {
+              return;
+            }
+            if (operation.taskId && operation.taskId !== task.id) return;
+            if (!operation.taskId || !operation.hostId)
+              operation = this.store.putOperation({
+                ...operation,
+                taskId: task.id,
+                hostId: host,
+              });
+          } else {
+            if (
+              operation.taskId !== task.id ||
+              payload.control?.taskId !== task.id
+            )
+              return;
+            // The shared recovery decision recognises recorded restart
+            // supersessions; cleanup and other controls remain applicable.
+            if (
+              operation.effect?.kind !== "task_control" ||
+              operation.effect.target !== "restart" ||
+              payload.control.action !== "restart"
+            )
+              return;
+          }
+          if (hasRecordedOperationSettlement(this.store, task, operation))
+            return;
+          const evidence =
+            operation.kind === "task_control"
+              ? observedHostEffectEvidence(this.store, task, operation)
+              : null;
+          this.store.event(
+            task.id,
+            "operation_superseded",
+            JSON.stringify({
+              id: operation.id,
+              inputHash: operation.inputHash,
+              attempt: operation.attempts,
+              intentAt: operation.effect?.intentAt,
+              evidence: evidence ?? `task is ${task.phase}`,
+            }),
+          );
         });
-      }
     });
-    await this.step(host, 'reconcileReportedSettlements', () => this.adapter.reconcileReportedSettlements?.());
-    await this.step(host, 'settleFinishedT3Threads', () => this.settleFinishedT3Threads(host));
-    await this.step(host, 'surfaceWorkerRows', () => this.surfaceWorkerRows(host));
-    await this.step(host, 'reconcileThreadTitles', () => this.adapter.reconcileThreadTitles?.(tasks));
+    await this.step(host, "reconcileReportedSettlements", () =>
+      this.adapter.reconcileReportedSettlements?.(),
+    );
+    await this.step(host, "settleFinishedT3Threads", () =>
+      this.settleFinishedT3Threads(host),
+    );
+    await this.step(host, "surfaceWorkerRows", () =>
+      this.surfaceWorkerRows(host),
+    );
+    await this.step(host, "reconcileThreadTitles", () =>
+      this.adapter.reconcileThreadTitles?.(tasks),
+    );
     // Audit A6: one bounded labelled inventory answers every identity this
     // pass observes, and retired workers are re-read on their own slow cadence.
     // A list that cannot be walked to its end answers nothing, so every
     // identity falls back to the narrow read and no inactivity is inferred.
     const retiredPlan = this.context.retiredObservationPlan();
-    const inventoryIds = [...new Set([...retiredPlan.due, ...this.context.resolution.observationTargets()])];
+    const inventoryIds = [
+      ...new Set([
+        ...retiredPlan.due,
+        ...this.context.resolution.observationTargets(),
+      ]),
+    ];
     let observed: ReadonlyMap<string, AgentObservation> | null = null;
     if (inventoryIds.length && this.adapter.observationInventory) {
-      try { observed = await this.context.host.observationInventory(inventoryIds); }
-      catch { observed = null; }
+      try {
+        observed = await this.context.host.observationInventory(inventoryIds);
+      } catch {
+        observed = null;
+      }
     }
-    const retired = await this.context.observeRetiredWorkers(retiredPlan, observed);
-    if (retired.changed) this.store.setMeta(this.context.retiredObservationKey(host), retired.observations);
+    const retired = await this.context.observeRetiredWorkers(
+      retiredPlan,
+      observed,
+    );
+    if (retired.changed)
+      this.store.setMeta(
+        this.context.retiredObservationKey(host),
+        retired.observations,
+      );
     // A handover settle recorded for a thread whose turn was still ending is
     // retried on this host's pass. Presentation only: it never changes a task.
-    await this.step(host, 'reconcileSettledThreads', () => this.adapter.reconcileSettledThreads?.());
+    await this.step(host, "reconcileSettledThreads", () =>
+      this.adapter.reconcileSettledThreads?.(),
+    );
     // Select directly from finished history, but never await cleanup in the
     // shared host pass. These tasks join the rotating, bounded task window.
-    if (!this.store.getMeta('paused'))
-      for (const task of finishedThreadCleanupCatchUp(this.store, host, removesThreads(this.adapter)))
+    if (!this.store.getMeta("paused"))
+      for (const task of finishedThreadCleanupCatchUp(
+        this.store,
+        host,
+        removesThreads(this.adapter),
+      ))
         result.finishedCatchUp.set(task.id, task);
     if (this.context.inventoryHostMatches(host)) result.inventory = observed;
     return result;
   }
 
   /** One host step: a throw is recorded here and never stops the host's later steps. */
-  private async step(host: string, name: string, run: () => Promise<unknown> | unknown): Promise<void> {
-    try { await run(); }
-    catch (error) {
+  private async step(
+    host: string,
+    name: string,
+    run: () => Promise<unknown> | unknown,
+  ): Promise<void> {
+    try {
+      await run();
+    } catch (error) {
       // A step that fails at the transport boundary is this host's own answer for
       // the pass (Spec 066 R6): the client claims a connection the socket does not
       // honour, so the host did not answer and its tasks keep their wait. Only this
       // host's reading changes; another host's failure never reaches this record.
       if (isTransportFailure(error)) this.transportFailures.add(host);
       const detail = error instanceof Error ? error.message : String(error);
-      this.store.setMeta('hostPassError', `${host}/${name}: ${detail}`.slice(0, 2000));
+      this.store.setMeta(
+        "hostPassError",
+        `${host}/${name}: ${detail}`.slice(0, 2000),
+      );
     }
   }
 }
