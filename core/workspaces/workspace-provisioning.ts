@@ -1,12 +1,9 @@
 import type { Task, WorktreeLinks } from "../../shared/contracts";
 import { worktreeLinksSchema } from "../../shared/contracts";
-import { join } from "node:path";
-import { mkdirSync, existsSync } from "node:fs";
-import { git as defaultGit } from "../git/index";
 import { refreshCheckoutSiblings as inspectWorktreeRootSiblings, worktreeRootFor } from "./checkout-siblings";
 import type { Engine } from "../engine";
 import { siblingStoreRootFor } from "../store/sibling-store";
-import { createSiblingWorktrees, findingFor, inspectSiblingWorktrees, missingSiblingCheckout, removeSiblingWorktrees, siblingIdentity, siblingMembers, siblingNameFor, siblingsEnabled } from "./siblings";
+import { createSiblingWorktrees, ensureSharedSiblingCheckouts, findingFor, inspectSiblingWorktrees, removeSiblingWorktrees, siblingMembers, siblingsEnabled } from "./siblings";
 import { now } from "../store/store";
 import { canonicalLinkRoot, provisionWorktreeLinks, worktreeLinksDue, worktreeLinksSummary } from "./worktree-links";
 
@@ -21,8 +18,6 @@ export class WorkspaceProvisioning {
   constructor(readonly engine: Engine) {}
   get store() { return this.engine.store; }
   get adapter() { return this.engine.adapter; }
-  /** Git, replaceable by a fixture. */
-  get git() { return defaultGit; }
   get siblingDataDir() { return this.engine.siblingDataDir; }
   /**
    * Spec 027: ensure a task's sibling worktrees exist before its worker runs.
@@ -166,27 +161,14 @@ export class WorkspaceProvisioning {
     if (this.adapter.vocabulary?.kind !== "bb" || !current.directory || !this.siblingDataDir) return current;
     const members = siblingMembers(current, this.store.projectFor(current.repoPath, current.repository));
     if (!members.length) return current;
-    const outcomes: string[] = [];
-    const used = new Set<string>();
-    let root: string | null = null;
-    for (const member of members) {
-      let name = siblingNameFor(member);
-      for (let suffix = 2; used.has(name); suffix++) name = `${siblingNameFor(member)}-${suffix}`;
-      used.add(name);
-      const missing = missingSiblingCheckout(member);
-      if (missing) { outcomes.push(`${siblingIdentity(member)} skipped: ${missing}`); continue; }
-      try {
-        root ??= await canonicalLinkRoot(this.siblingDataDir, current.repoPath, current.directory);
-        const path = join(root, name);
-        if (existsSync(path)) { outcomes.push(`${name} existing`); continue; }
-        const commit = await this.git(member.path, "rev-parse", `refs/remotes/origin/${current.baseBranch}`);
-        await this.git(member.path, "worktree", "add", "--detach", path, commit);
-        outcomes.push(`${name} created at ${commit.slice(0, 12)}`);
-      } catch (error) {
-        outcomes.push(`${name} failed: ${error instanceof Error ? error.message : String(error)}`);
-      }
+    let detail: string;
+    try {
+      const root = await canonicalLinkRoot(this.siblingDataDir, current.repoPath, current.directory);
+      detail = (await ensureSharedSiblingCheckouts({ root, baseBranch: current.baseBranch, members })).map(outcome => outcome.detail).join("; ");
+    } catch (error) {
+      detail = `shared sibling checkouts failed: ${error instanceof Error ? error.message : String(error)}`;
     }
-    try { this.store.event(current.id, "shared_sibling_checkouts", outcomes.join("; ").slice(0, 2000)); } catch { /* placement is not less true for an unwritable event */ }
+    try { this.store.event(current.id, "shared_sibling_checkouts", detail.slice(0, 2000)); } catch { /* placement is not less true for an unwritable event */ }
     return current;
   }
   /** Best effort: an unreadable stash list only loses the readiness comparison. */
