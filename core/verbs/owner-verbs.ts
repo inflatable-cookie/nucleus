@@ -228,6 +228,24 @@ const setDependencies: OwnerVerb = {
   apply: applyMapped('set_dependencies'),
 };
 
+/**
+ * `detach` (nucleus#1313, Tom 2026-11-17): "the ability to detach a worker thread
+ * from a planner in case the planner needs replacing". It records that this
+ * task's presentation has no planner thread, so every host renders the group
+ * standalone; it changes no planner, no question route and no lifecycle, and a
+ * reparent that names a new planner re-nests the group and clears the record.
+ */
+const detach: OwnerVerb = {
+  verb: 'detach', action: 'detach',
+  input: verbInput({ reason: z.string().trim().min(1).max(4000).optional() }),
+  applicable: ({task}) => task.removedAt
+    ? { available: false, refusal: REMOVED_TASK_REFUSAL }
+    : task.presentationDetached
+      ? { available: false, refusal: `Presentation is already detached (${task.presentationDetached.by}); reparent the task to a planner thread to nest it again` }
+      : { available: true, args: {taskId: task.id, version: task.version}, fill: ['reason'] },
+  apply: applyMapped('detach'),
+};
+
 export const ownerVerbs: OwnerVerb[] = [
   stop,
   route,
@@ -239,6 +257,7 @@ export const ownerVerbs: OwnerVerb[] = [
   acceptReceipt,
   extendBudget,
   setDependencies,
+  detach,
 ];
 
 export const ownerVerb = (verb: string): OwnerVerb | undefined => ownerVerbs.find(entry => entry.verb === verb);

@@ -13,7 +13,7 @@ function fixture() {
   let workspace: BbWorkspaceRecord = { id: 'bb-worktree-' + 'a'.repeat(40), directory: '/synthetic/worktree', projectId: 'proj_synthetic', repositoryRoot: '/synthetic/repo', title: 'Synthetic' };
   let now = 0;
   const ports = { hostId, operation: fake.operations.execute, state: () => structuredClone(state), save: (value: BbThreadState) => { state = structuredClone(value); },
-    workspace: () => workspace, putWorkspace: (value: BbWorkspaceRecord) => { workspace = value; }, parent: () => 'thr_planner',
+    workspace: () => workspace, putWorkspace: (value: BbWorkspaceRecord) => { workspace = value; }, parent: () => 'thr_planner', reference: () => '#1271',
     helperPath: '/synthetic/helper.mjs', ticketPath: (id: string) => `/synthetic/tickets/${id}.json`, notSent: () => false, now: () => now };
   const native = new BbThreads(ports);
   const spec = (run = 'run_synthetic', role = 'worker'): HostAgentSpec => ({

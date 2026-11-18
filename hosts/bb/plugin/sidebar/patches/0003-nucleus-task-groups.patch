@@ -1,10 +1,10 @@
 --- a/app/list/nucleusTaskGroups.tsx
 +++ b/app/list/nucleusTaskGroups.tsx
-@@ -0,0 +1,210 @@
+@@ -0,0 +1,419 @@
 +/**
 + * The Nucleus task-group seam of the forked sidebar (Spec 062, decision 5a/5b).
 + *
-+ * This is the fork's own file, not an upstream one. It owns four things and
++ * This is the fork's own file, not an upstream one. It owns five things and
 + * nothing else:
 + *
 + * 1. the batched read — one `sidebarGroups` RPC call for every Nucleus task group,
@@ -21,7 +21,13 @@
 + *    BB projects Nucleus recorded for each Nucleus project, so a project row whose
 + *    BB project resolves gets one "Board" menu item linking to
 + *    `/plugins/nucleus/board/project/<nucleus-project-key>`; every other project
-+ *    row's menu is upstream's.
++ *    row's menu is upstream's;
++ * 5. the cross-project pointer (nucleus#1313, Tom 2026-11-17) — a task thread whose
++ *    planner lives in another project resolves to that project's section, so its
++ *    own project would show upstream's "No threads" over a live task. That project
++ *    gets one compact pointer row, "N tasks under <planner title>", linking to the
++ *    planner the threads nest under. Upstream's empty state stays for a project
++ *    with no threads anywhere.
 + *
 + * A group the read does not name — an unknown environment, a task whose first
 + * thread has not attached, or a read that has not landed — takes upstream's path
@@ -41,14 +47,25 @@
 +import { useAtom } from "jotai";
 +import { useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
 +import { ActionMenuItem, type ActionMenuSurface } from "@/components/ui/action-menu-items";
++import { Icon } from "@/components/ui/icon";
 +import {
 +  BOARD_SIGNAL_CHANNEL,
 +  projectBoardHref,
 +  sidebarGroupsContract,
++  sidebarTaskActionContract,
 +  type SidebarGroup,
 +  type SidebarProject,
 +} from "../../../sidebar-groups.js";
 +import { expandedTaskGroupsAtom } from "../preferences/atoms.js";
++import { resolveSidebarProjectId } from "../model/project-thread-groups.js";
++import {
++  pullRequestBadge,
++  pullRequestBadgeLabel,
++  pullRequestNumberLabel,
++  type PullRequestTone,
++} from "../../../../../../shared/pull-request-badge.js";
++import type { SidebarThread } from "../model/sidebar-thread.js";
++import { useSidebarData } from "../model/use-sidebar-data.js";
 +
 +interface NucleusTaskGroupsValue {
 +  groups: ReadonlyMap<string, SidebarGroup>;
@@ -146,8 +163,21 @@
 +}
 +
 +/** The one line the header adds: `#12 A title` over the task's state and its PR. */
-+const PR_LABEL_CLASS = "rounded-sm border border-current px-1 text-[10px] leading-4";
++const PR_CHIP_CLASS = "inline-flex shrink-0 items-center gap-1 text-[10px] leading-4";
 +const STATE_LINE_CLASS = "min-w-0 truncate text-[11px] leading-4 text-subtle-foreground";
++/**
++ * The tone palette, in the host app's own tokens: the board's theme roles
++ * (success/accent/danger/warning/muted) as CSS variables, so one shared mapping
++ * drives both surfaces (nucleus#1313, Tom 2026-11-17). `--pr-merged` is BB's
++ * universal merged colour; `--success` its open-PR colour.
++ */
++const PR_TONE_COLOR: Record<PullRequestTone, string> = {
++  success: "var(--success)",
++  accent: "var(--pr-merged)",
++  danger: "var(--destructive)",
++  warning: "var(--warning-text)",
++  muted: "var(--muted-foreground)",
++};
 +
 +/** `#12 Fix the flaky lane`, or the task's title alone before it has a number. */
 +export function taskGroupTitle(group: SidebarGroup): string {
@@ -155,34 +185,54 @@
 +  return group.number === null ? title : `#${group.number} ${title}`;
 +}
 +
-+/** The third line's PR chip: `#1296 OPEN`, `#1296 MERGED`, or nothing. */
++/**
++ * The third line's PR chip: the standard state icon plus `#39` in the state
++ * colour, with no visible state word — the state is the accessible label
++ * (nucleus#1313, Tom 2026-11-17). `shared/pull-request-badge.ts` is the one
++ * mapping, shared with the board's `PullRequestBadge`.
++ */
 +export function TaskGroupPullRequest({ group }: { group: SidebarGroup }) {
 +  if (group.prNumber === null || group.prState === null) return null;
++  const badge = pullRequestBadge({ state: group.prState, blocked: group.attention });
++  const color = PR_TONE_COLOR[badge.tone];
 +  return (
 +    <span
 +      data-nucleus-task-group-pr=""
-+      className="inline-flex shrink-0 items-center gap-1 text-[10px] leading-4 text-muted-foreground"
++      data-nucleus-task-group-pr-state={group.prState.toLowerCase()}
++      data-nucleus-task-group-pr-tone={badge.tone}
++      className={PR_CHIP_CLASS}
++      style={{ color }}
 +      title={group.prUrl ?? undefined}
++      role="img"
++      aria-label={pullRequestBadgeLabel(group.prNumber, badge)}
 +    >
-+      <span className="truncate">#{group.prNumber}</span>
-+      <span className={PR_LABEL_CLASS}>{group.prState}</span>
++      <Icon name={badge.icon} className="size-3.5" aria-hidden />
++      <span className="truncate">{pullRequestNumberLabel(group.prNumber)}</span>
 +    </span>
 +  );
 +}
 +
 +/**
-+ * The task group's state block: the state label from the shared title helper (the
-+ * service sends the string the Paseo board names the same state with), the recorded
-+ * wait when there is one, and the task's pull request when it has one. It renders
-+ * exactly the facts the service publishes and invents no check list or QA position.
++ * The task group's state block: the repository the task works on, then the state
++ * label from the shared title helper (the service sends the string the Paseo board
++ * names the same state with), the recorded wait when there is one, and the task's
++ * pull request when it has one. It renders exactly the facts the service publishes
++ * and invents no check list or QA position. The repository leads because a task can
++ * nest under a planner from another BB project, one Nucleus project can span several
++ * repositories, and a standalone container has no planner context at all
++ * (nucleus#1313, Tom 2026-11-17).
 + */
 +export function NucleusTaskGroupStateLine({ group }: { group: SidebarGroup }) {
 +  return (
 +    <span
 +      data-nucleus-task-group-state=""
 +      className="flex min-w-0 items-center gap-1.5"
-+      aria-label={`${group.reference ?? group.taskId}: ${group.stateLabel}${group.waitLabel ? `, ${group.waitLabel}` : ""}${group.prState ? `, pull request ${group.prState}` : ""}`}
++      aria-label={`${group.repository}, ${group.reference ?? group.taskId}: ${group.stateLabel}${group.waitLabel ? `, ${group.waitLabel}` : ""}${group.prState ? `, pull request ${group.prState}` : ""}`}
 +    >
++      <span className={`${STATE_LINE_CLASS} inline-flex shrink-0 items-center gap-1`} data-nucleus-task-group-repository="">
++        <Icon name="Folder" className="size-3" aria-hidden />
++        <span className="truncate">{group.repository}</span>
++      </span>
 +      <span className={STATE_LINE_CLASS} data-nucleus-task-group-state-label="">
 +        {group.stateLabel}
 +      </span>
@@ -193,6 +243,165 @@
 +      )}
 +      <TaskGroupPullRequest group={group} />
 +    </span>
++  );
++}
++
++/**
++ * One project's nested-elsewhere work, grouped by the thread it nests under.
++ * `count` is how many tasks (or, for a thread the read does not name as a Nucleus
++ * task, how many threads) of this project sit under that parent, `parentTitle` is
++ * the parent row's own display title (the planner a Nucleus task nests under), and
++ * `href` is the app route of that parent, so the pointer opens the nested group.
++ */
++export interface NestedTaskPointer {
++  /** The parent thread's id: one pointer per planner row. */
++  key: string;
++  count: number;
++  parentTitle: string;
++  href: string;
++}
++
++/**
++ * nucleus#1313: the threads that belong to `projectId` but are drawn under another
++ * project's row, because their parent chain resolves there. The sidebar attributes a
++ * nested thread to its root ancestor's project (`resolveSidebarProjectId`), so a
++ * task whose planner lives in another project leaves its own project looking empty.
++ * A thread whose parent is not in the list is not a pointer: there is no row to
++ * point at, and upstream's empty state is the honest answer.
++ */
++export function nestedTaskPointers(
++  projectId: string | null | undefined,
++  threads: readonly SidebarThread[],
++  taskEnvironmentIds: ReadonlySet<string> = new Set(),
++): NestedTaskPointer[] {
++  if (!projectId) return [];
++  const byId = new Map(threads.map((thread) => [thread.id, thread]));
++  const pointers = new Map<string, { pointer: NestedTaskPointer; tasks: Set<string> }>();
++  for (const thread of threads) {
++    if (thread.projectId !== projectId || thread.isHidden) continue;
++    if (resolveSidebarProjectId(thread, byId) === projectId) continue;
++    const parent = thread.parentThreadId === null ? null : byId.get(thread.parentThreadId) ?? null;
++    if (parent === null) continue;
++    // Every role thread of one task shares its environment, which the batched read
++    // names: the pointer counts the task once, however many of its threads nest here.
++    const environmentId = thread.environment?.id ?? null;
++    const identity = environmentId !== null && taskEnvironmentIds.has(environmentId) ? environmentId : thread.id;
++    const entry = pointers.get(parent.id);
++    if (entry === undefined) {
++      pointers.set(parent.id, {
++        pointer: { key: parent.id, count: 0, parentTitle: parent.displayTitle, href: parent.href },
++        tasks: new Set([identity]),
++      });
++    } else {
++      entry.tasks.add(identity);
++    }
++  }
++  return [...pointers.values()]
++    .map(({ pointer, tasks }) => ({ ...pointer, count: tasks.size }))
++    .sort((left, right) =>
++      left.parentTitle.localeCompare(right.parentTitle) || left.key.localeCompare(right.key),
++    );
++}
++
++/** The same read, from the live sidebar data: `[]` outside a host-backed list. */
++export function useNucleusNestedTaskPointers(projectId: string | null | undefined): NestedTaskPointer[] {
++  const { projects } = useSidebarData();
++  const taskGroups = useContext(NucleusTaskGroupsContext)?.groups;
++  return useMemo(() => {
++    if (!projectId) return [];
++    return nestedTaskPointers(
++      projectId,
++      projects.flatMap((project) => project.threads),
++      new Set(taskGroups?.keys() ?? []),
++    );
++  }, [projectId, projects, taskGroups]);
++}
++
++/** `1 task under <planner>` / `3 tasks under <planner>`. */
++export function nestedTaskPointerLabel(pointer: NestedTaskPointer): string {
++  return `${pointer.count} task${pointer.count === 1 ? "" : "s"} under ${pointer.parentTitle}`;
++}
++
++/**
++ * A project's compact pointer list: one row per parent its threads nest under. It
++ * is a plain anchor on the parent's own app route, so the host routes the click and
++ * middle-click, copy-link and open-in-new-window keep working.
++ */
++export function NucleusNestedTaskPointers({ pointers }: { pointers: readonly NestedTaskPointer[] }) {
++  if (pointers.length === 0) return null;
++  return (
++    <div data-nucleus-nested-task-pointers="" className="flex flex-col gap-0.5 px-2 py-1">
++      {pointers.map((pointer) => (
++        <a
++          key={pointer.key}
++          href={pointer.href}
++          data-nucleus-nested-task-pointer={pointer.key}
++          title={nestedTaskPointerLabel(pointer)}
++          className="min-w-0 truncate rounded-sm text-[11px] leading-4 text-subtle-foreground hover:text-foreground"
++        >
++          {nestedTaskPointerLabel(pointer)}
++        </a>
++      ))}
++    </div>
++  );
++}
++
++/**
++ * A Nucleus task group's own actions, in place of upstream's environment actions
++ * (nucleus#1313, Tom 2026-11-17: "Can we get rid of it?"). The three upstream
++ * actions are wrong for a task container: a new thread would add a participant
++ * Nucleus does not know about, Edit renames an environment the header no longer
++ * shows, and Archive would archive live role threads behind Nucleus's back. Instead
++ * the menu opens the task, opens its pull request when it has one, and detaches the
++ * group from its planner through the service's own `detach` owner control.
++ */
++export function NucleusTaskGroupMenuItems({ group, taskHref, surface }: {
++  group: SidebarGroup;
++  /** The representative role thread's app route: where the task-detail tab lives. */
++  taskHref: string;
++  surface: ActionMenuSurface;
++}) {
++  const rpc = useRpc<typeof sidebarTaskActionContract>();
++  const [busy, setBusy] = useState(false);
++  const [error, setError] = useState<string | null>(null);
++  const detach = async () => {
++    setBusy(true);
++    setError(null);
++    try {
++      await rpc.call("detachTask", { taskId: group.taskId, reason: "Detached from the BB sidebar" });
++    } catch (failure) {
++      setError(failure instanceof Error ? failure.message : String(failure));
++    } finally {
++      setBusy(false);
++    }
++  };
++  return (
++    <>
++      <ActionMenuItem surface={surface} icon="PanelRightOpen" href={taskHref}>
++        Open task
++      </ActionMenuItem>
++      {group.prUrl === null ? null : (
++        <ActionMenuItem surface={surface} icon="GitPullRequest" href={group.prUrl}>
++          Open pull request
++        </ActionMenuItem>
++      )}
++      <ActionMenuItem
++        surface={surface}
++        icon="Unlink"
++        disabled={busy}
++        onSelect={(event) => {
++          event.preventDefault();
++          void detach();
++        }}
++      >
++        Detach from planner
++      </ActionMenuItem>
++      {error === null ? null : (
++        <div role="alert" data-nucleus-task-group-action-error="" className="px-2 py-1 text-[11px] leading-4 text-destructive">
++          {error}
++        </div>
++      )}
++    </>
 +  );
 +}
 +
@@ -213,7 +422,7 @@
 +}
 --- a/app/list/nucleusTaskGroups.test.tsx
 +++ b/app/list/nucleusTaskGroups.test.tsx
-@@ -0,0 +1,454 @@
+@@ -0,0 +1,661 @@
 +// @vitest-environment jsdom
 +/**
 + * Spec 062, phase 5 acceptance (decision 5a/5b): the forked sidebar's Nucleus task
@@ -276,6 +485,7 @@
 +  taskId: "task_1296",
 +  number: 1296,
 +  reference: "nucleus#1296",
++  repository: "nucleus",
 +  title: "BB host phase 5",
 +  phase: "awaiting_review",
 +  phaseLabel: "Review",
@@ -415,6 +625,13 @@
 +  failRead?: boolean;
 +  projects?: ReadonlyArray<SidebarGroups["projects"][number]>;
 +  onSetPreference?: (key: string, value: unknown) => void;
++  onDetach?: (input: { taskId: string }) => void;
++  /** The project row under test. */
++  project?: ReturnType<typeof makeSidebarProject>;
++  /** What that row's own tree is given (the resolved project's threads). */
++  threadListState?: { status: "ready"; threads: SidebarThread[] };
++  /** Every thread the live sidebar data carries, across projects. */
++  allThreads?: SidebarThread[];
 +}
 +
 +function renderTaskGroups(options: RenderOptions = {}): {
@@ -439,6 +656,14 @@
 +      projects: options.projects ?? [],
 +    });
 +  }
++  // The task container's own action (nucleus#1313): the plugin forwards it to the
++  // service's `detach` owner control and answers with the recorded detach.
++  (rpc as unknown as Record<string, unknown>).detachTask = async (input: unknown) => {
++    options.onDetach?.(input as { taskId: string });
++    return { taskId: (input as { taskId: string }).taskId, detachedAt: new Date(0).toISOString(), detachedBy: "operator (board)" };
++  };
++  const project = options.project ?? makeSidebarProject({ id: "proj_test" });
++  const allThreads = options.allThreads ?? THREADS;
 +  const slot = renderSlot(
 +    { component: Harness },
 +    {
@@ -446,8 +671,8 @@
 +      children: (
 +        <NucleusSidebarGroupsProvider>
 +          <ProjectRow
-+            project={makeSidebarProject({ id: "proj_test" })}
-+            threadListState={{ status: "ready", threads: THREADS }}
++            project={project}
++            threadListState={options.threadListState ?? { status: "ready", threads: THREADS }}
 +            isActive={false}
 +            isCollapsed={false}
 +            compareThreads={() => 0}
@@ -464,8 +689,17 @@
 +      rpc: rpc as never,
 +      pluginId: "nucleus",
 +      sidebarThreads: {
-+        threads: THREADS,
-+        projects: [makeSidebarProject({ id: "proj_test" })],
++        threads: allThreads,
++        // Every project a thread names is in the live view; the row under test is
++        // the one this harness parameterises.
++        projects: [...new Map(
++          [makeSidebarProject({ id: "proj_test" }), project,
++            ...allThreads.map((thread) => makeSidebarProject({
++              id: thread.projectId,
++              name: thread.projectId === "proj_personal" ? "Personal" : thread.projectId,
++              isPersonal: thread.projectId === "proj_personal",
++            }))].map((entry) => [entry.id, entry]),
++        ).values()],
 +      },
 +    },
 +  );
@@ -519,9 +753,10 @@
 +    expect(
 +      header.querySelector("[data-nucleus-task-group-wait]")?.textContent,
 +    ).toBe("Waiting for QA capacity (position 2)");
++    // The PR chip is the state icon plus `#191`; the state rides the label.
 +    const pullRequest = header.querySelector("[data-nucleus-task-group-pr]");
-+    expect(pullRequest?.textContent).toBe("#191OPEN");
-+    expect(within(pullRequest as HTMLElement).getByText("OPEN")).not.toBeNull();
++    expect(pullRequest?.textContent).toBe("#191");
++    expect(pullRequest?.getAttribute("aria-label")).toBe("Pull request #191, open");
 +    // Collapsed by default, with no `collapsedEnvironments` entry: the fork's own
 +    // preference decides, so the two group classes cannot disagree.
 +    expect(header.getAttribute("data-nucleus-task-group-collapsed")).toBe("true");
@@ -666,5 +901,186 @@
 +    fireEvent.pointerDown(screen.getByRole("button", { name: "Test project actions" }), { button: 0 });
 +    await screen.findByRole("menuitem", { name: "Project settings" });
 +    expect(screen.queryByRole("menuitem", { name: "Board" })).toBeNull();
++  });
++});
++
++/**
++ * nucleus#1313 (Tom, 2026-11-17, poodle-lab#029): a task whose planner lives in
++ * another project resolves to that project's section (`resolveSidebarProjectId`
++ * walks the parent chain), so its own project showed upstream's "No threads" over
++ * a live task. The rows below are the live trial's shape: a worker in the task's
++ * project, nested under a planner thread in Tom's Personal project.
++ */
++describe("a project whose task nests under a planner in another project", () => {
++  const TASK_PROJECT = makeSidebarProject({ id: "proj_poodle_lab", name: "poodle-lab" });
++  const TASK_ENVIRONMENT = "env_poodle_task";
++  const SECOND_TASK_ENVIRONMENT = "env_poodle_task_2";
++  const planner = makeSidebarThread({
++    id: "thr_personal_planner",
++    projectId: "proj_personal",
++    title: "Tom's Personal planner",
++    titleFallback: "Planner",
++    latestAttentionAt: 5,
++  });
++  const taskThread = (id: string, title: string, environmentId: string) =>
++    makeSidebarThread({
++      id,
++      projectId: "proj_poodle_lab",
++      title,
++      titleFallback: title,
++      parentThreadId: "thr_personal_planner",
++      originPluginId: "nucleus",
++      environment: makeSidebarEnvironment({ id: environmentId, name: environmentId, isWorktree: true }),
++      latestAttentionAt: 6,
++    });
++  const worker = taskThread("thr_poodle_worker", "#1313 BB presentation", TASK_ENVIRONMENT);
++  const reviewer = taskThread("thr_poodle_reviewer", "1313 reviewer", TASK_ENVIRONMENT);
++  const secondWorker = taskThread("thr_poodle_second", "#1314 Second task", SECOND_TASK_ENVIRONMENT);
++
++  /** The batched read names both task environments, as the service does for live tasks. */
++  const TASK_GROUPS = [GROUP, SECOND_GROUP].map((group, index) => ({
++    ...group,
++    environmentId: index === 0 ? TASK_ENVIRONMENT : SECOND_TASK_ENVIRONMENT,
++  }));
++
++  it("shows a compact pointer to the planner instead of upstream's 'No threads'", async () => {
++    renderTaskGroups({ project: TASK_PROJECT, allThreads: [planner, worker], threadListState: { status: "ready", threads: [] }, groups: TASK_GROUPS });
++    const pointer = await screen.findByText("1 task under Tom's Personal planner");
++    expect(screen.queryByText("No threads")).toBeNull();
++    // The pointer is the planner's own app route, so the host routes the click.
++    const anchor = pointer.closest("a");
++    expect(anchor?.getAttribute("href")).toBe(
++      "/projects/proj_personal/threads/thr_personal_planner",
++    );
++    expect(document.querySelectorAll("[data-nucleus-nested-task-pointer]")).toHaveLength(1);
++  });
++
++  it("counts one task once however many of its role threads nest under the planner", async () => {
++    renderTaskGroups({ project: TASK_PROJECT, allThreads: [planner, worker, reviewer], threadListState: { status: "ready", threads: [] }, groups: TASK_GROUPS });
++    expect(await screen.findByText("1 task under Tom's Personal planner")).not.toBeNull();
++  });
++
++  it("counts two tasks under the same planner as two", async () => {
++    renderTaskGroups({ project: TASK_PROJECT, allThreads: [planner, worker, secondWorker], threadListState: { status: "ready", threads: [] }, groups: TASK_GROUPS });
++    expect(await screen.findByText("2 tasks under Tom's Personal planner")).not.toBeNull();
++    expect(screen.queryByText("No threads")).toBeNull();
++  });
++
++  it("keeps upstream's empty state for a project with no threads anywhere", async () => {
++    renderTaskGroups({ project: TASK_PROJECT, allThreads: [planner], threadListState: { status: "ready", threads: [] }, groups: [] });
++    expect(await screen.findByText("No threads")).not.toBeNull();
++    expect(document.querySelector("[data-nucleus-nested-task-pointer]")).toBeNull();
++  });
++
++  it("draws a project's own root thread as a row, never as a pointer", async () => {
++    const root = makeSidebarThread({
++      id: "thr_poodle_root",
++      projectId: "proj_poodle_lab",
++      title: "poodle-lab chat",
++      latestAttentionAt: 9,
++    });
++    renderTaskGroups({ project: TASK_PROJECT, allThreads: [planner, worker, root], threadListState: { status: "ready", threads: [root] }, groups: TASK_GROUPS });
++    expect(await screen.findByText("poodle-lab chat")).not.toBeNull();
++    expect(document.querySelector("[data-nucleus-nested-task-pointer]")).toBeNull();
++    expect(screen.queryByText("No threads")).toBeNull();
++  });
++});
++
++/**
++ * nucleus#1313 (Tom, 2026-11-17, live trial poodle-lab#029): the container says what
++ * repository the task works on, its PR is the standard icon plus `#39` in the state
++ * colour, and a Nucleus container offers the task's own actions instead of upstream's
++ * environment actions.
++ */
++describe("a task container's repository, PR chip and actions", () => {
++  function openTaskMenu(): void {
++    fireEvent.pointerDown(screen.getByRole("button", { name: "Task actions" }), { button: 0 });
++  }
++
++  it("leads the state line with the folder icon and the repository", async () => {
++    renderTaskGroups({ groups: [{ ...GROUP, repository: "poodle-lab" }] });
++    const repository = await waitFor(() => {
++      const found = document.querySelector<HTMLElement>("[data-nucleus-task-group-repository]");
++      expect(found).not.toBeNull();
++      return found!;
++    });
++    expect(repository.textContent).toBe("poodle-lab");
++    expect(repository.querySelector('[data-icon="Folder"]')).not.toBeNull();
++    // The chip keeps the PR state in the label, not in visible text.
++    const chip = document.querySelector<HTMLElement>("[data-nucleus-task-group-pr]")!;
++    expect(chip.textContent).toBe("#191");
++  });
++
++  it("draws the PR as the state icon and #39 with the state in the label, never as text", async () => {
++    renderTaskGroups({ groups: [GROUP] });
++    const chip = await waitFor(() => {
++      const found = document.querySelector<HTMLElement>("[data-nucleus-task-group-pr]");
++      expect(found).not.toBeNull();
++      return found!;
++    });
++    expect(chip.textContent).toBe("#191");
++    expect(chip.textContent).not.toContain("OPEN");
++    expect(chip.querySelector('[data-icon="GitPullRequest"]')).not.toBeNull();
++    expect(chip.getAttribute("data-nucleus-task-group-pr-tone")).toBe("success");
++    expect(chip.getAttribute("aria-label")).toBe("Pull request #191, open");
++  });
++
++  it("uses the merged glyph and the merged tone, and the closed one for closed", async () => {
++    renderTaskGroups({ groups: [{ ...GROUP, prState: "MERGED" }] });
++    const merged = await waitFor(() => {
++      const found = document.querySelector<HTMLElement>("[data-nucleus-task-group-pr]");
++      expect(found).not.toBeNull();
++      return found!;
++    });
++    expect(merged.querySelector('[data-icon="GitMerge"]')).not.toBeNull();
++    expect(merged.getAttribute("data-nucleus-task-group-pr-tone")).toBe("accent");
++
++    cleanup();
++    renderTaskGroups({ groups: [{ ...GROUP, prState: "CLOSED" }] });
++    const closed = await waitFor(() => {
++      const found = document.querySelector<HTMLElement>("[data-nucleus-task-group-pr]");
++      expect(found).not.toBeNull();
++      return found!;
++    });
++    expect(closed.querySelector('[data-icon="GitPullRequestClosed"]')).not.toBeNull();
++    expect(closed.getAttribute("data-nucleus-task-group-pr-tone")).toBe("danger");
++  });
++
++  it("offers only the task's own actions on a Nucleus container, and calls detach once", async () => {
++    const { slot } = renderTaskGroups({ groups: [GROUP] });
++    await waitFor(() => {
++      expect(taskGroupHeader(NUCLEUS_ENVIRONMENT)).not.toBeNull();
++    });
++    // Upstream's environment actions are gone from a task container.
++    const container = taskGroupRow(NUCLEUS_ENVIRONMENT);
++    expect(within(container).queryByRole("button", { name: "New thread in environment" })).toBeNull();
++    expect(within(container).queryByRole("button", { name: "Environment actions" })).toBeNull();
++    openTaskMenu();
++    expect(await screen.findByRole("menuitem", { name: "Open task" })).not.toBeNull();
++    expect(screen.getByRole("menuitem", { name: "Open pull request" }).getAttribute("href")).toBe(GROUP.prUrl);
++    // Upstream's rename/archive are gone; the task's own detach replaces them.
++    expect(screen.queryByRole("menuitem", { name: "Rename" })).toBeNull();
++    expect(screen.queryByRole("menuitem", { name: "Archive" })).toBeNull();
++    const detach = await screen.findByRole("menuitem", { name: "Detach from planner" });
++    fireEvent.click(detach);
++    await waitFor(() => {
++      expect(slot.rpcCalls.filter((call) => call.method === "detachTask")).toHaveLength(1);
++    });
++    expect(slot.rpcCalls.find((call) => call.method === "detachTask")!.input).toMatchObject({ taskId: "task_1296" });
++  });
++
++  it("leaves an ordinary worktree group with upstream's actions", async () => {
++    renderTaskGroups({ groups: [] });
++    await waitFor(() => {
++      expect(upstreamHeaderByEnvironment(UPSTREAM_ENVIRONMENT)).not.toBeNull();
++    });
++    // Upstream's new-thread control is present on the ordinary group, and its own
++    // environment menu keeps Rename and Archive.
++    const ordinary = upstreamHeaderByEnvironment(UPSTREAM_ENVIRONMENT);
++    expect(within(ordinary).getByRole("button", { name: "New thread in environment" })).not.toBeNull();
++    fireEvent.pointerDown(within(ordinary).getByRole("button", { name: "Environment actions" }), { button: 0 });
++    expect(await screen.findByRole("menuitem", { name: "Rename" })).not.toBeNull();
++    expect(screen.getByRole("menuitem", { name: "Archive" })).not.toBeNull();
++    expect(screen.queryByRole("menuitem", { name: "Detach from planner" })).toBeNull();
 +  });
 +});

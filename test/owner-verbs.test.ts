@@ -435,7 +435,7 @@ test('a fresh queued task lists routing and the stop that can park its dispatch'
       'a fresh queued task already follows ordinary dispatch and does not need restart');
     assert.ok(view.verbs.filter(verb => verb.verb === 'route' && verb.available).length === 3,
       'route is listed once for each role, each prefilled');
-    assert.deepEqual(view.verbs.filter(verb => verb.available && verb.verb !== 'route').map(verb => verb.verb), ['stop','set_dependencies'],
+    assert.deepEqual(view.verbs.filter(verb => verb.available && verb.verb !== 'route').map(verb => verb.verb), ['stop','set_dependencies','detach'],
       'owners can park dispatch or edit prerequisites before an agent starts');
     const stopped = await f.engine.stopTask(taskControlInputSchema.parse({ action: 'stop', taskId: f.taskId, version: f.task().version, reason: 'Park dispatch' }));
     assert.ok(holdsOf(stopped).dispatch);

@@ -43,7 +43,7 @@ function fixture() {
     }
   };
   const ports: BbThreadPorts = { hostId, operation, state: () => structuredClone(state), save: value => { state = structuredClone(value); },
-    workspace: () => workspace, putWorkspace: value => { workspace = value; }, parent: () => parentThread,
+    workspace: () => workspace, putWorkspace: value => { workspace = value; }, parent: () => parentThread, reference: () => '#1271',
     helperPath: '/synthetic/helper.mjs', ticketPath: id => `/synthetic/tickets/${id}.json`, notSent };
   const native = new BbThreads(ports);
   const spec = (run = 'run_synthetic', role = 'worker'): HostAgentSpec => ({

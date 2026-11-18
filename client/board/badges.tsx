@@ -6,6 +6,7 @@ import { holdBadgeTone, recordBadgeTone, stopBadgeTone, type BadgeTone } from ".
 import { waitStateLabels } from "../../shared/wait-state";
 import { taskWaitCardLabel, waitOwnerLabel } from "../../shared/task-detail-summary";
 import { plainCardText, type DisplayTask, attention, holdKindLabel, presentHoldKinds, stopBadgeLabel, budgetFields, budgetSummary, interactiveBadgeLabel, elapsedRun } from "./text";
+import { pullRequestBadge, pullRequestBadgeLabel, pullRequestNumberLabel } from "../../shared/pull-request-badge";
 import { useTick } from "../use-tick";
 import { roles, space, type as typeScale, radius } from "../design";
 
@@ -33,20 +34,26 @@ function WaitBadge({ wait, c, decisionTitle }: { wait: NonNullable<TaskSummary['
   const tone: BadgeTone = wait.state === 'needs_operator_input' || wait.state === 'needs_source_rights' ? 'warning' : wait.state === 'merge_hold' ? 'accent' : 'neutral';
   return <Badge label={label} tone={tone} c={c} bold a11y={plainWait ?? `Wait state: ${label}; owner ${waitOwnerLabel(wait.owner)}; next ${wait.nextAction}`} />;
 }
+/**
+ * nucleus#1313 (Tom, 2026-11-17): the PR is the standard icon plus `#39` in the
+ * state colour, with no visible text label; the state rides the accessible label.
+ * The mapping is `shared/pull-request-badge.ts`, shared with the BB sidebar's
+ * task-group chip so the two surfaces cannot drift.
+ */
 export function PullRequestBadge({task,state,c,small=false}:{task:DisplayTask;state?:"OPEN"|"CLOSED"|"MERGED";c:Colors;small?:boolean}) {
   if(!task.prUrl)return null;
   const status=task.resolution.mergedCommit?"MERGED":state;
-  const blocked=status==="OPEN" && attention(task);
   // Terminal PR state takes precedence over task attention.
+  const badge = pullRequestBadge({state:status ?? null, blocked: attention(task)});
   // Merged, closed, blocked and open read as the matching theme role: the board
   // carries no GitHub palette of its own.
   const r = roles(c);
-  const color=status==="MERGED"?r.accent:status==="CLOSED"?r.danger:blocked?r.warning:status==="OPEN"?r.success:c.foregroundMuted;
+  const color = badge.tone==="accent" ? r.accent : badge.tone==="danger" ? r.danger : badge.tone==="warning" ? r.warning : badge.tone==="success" ? r.success : c.foregroundMuted;
   const completionNumber = "completionPrNumber" in task ? task.completionPrNumber : "completion" in task ? task.completion?.prNumber ?? undefined : undefined;
   const number=task.resumePrNumber??completionNumber??task.prUrl.match(/\/pull\/(\d+)/)?.[1];
-  return <View accessible accessibilityLabel={`Pull request ${number??""}, ${blocked?"open, task needs attention":status?.toLowerCase()??"status unavailable"}`} style={{flexDirection:"row",alignItems:"center",gap:space.xxs}}>
-    <Icon name={status==="MERGED"?"GitMerge":status==="CLOSED"?"GitPullRequestClosed":"GitPullRequest"} size={small?12:14} color={color}/>
-    <Text style={{fontSize:small?typeScale.metadata.fontSize:typeScale.body.fontSize,color}}>{number?`PR #${number}`:"PR"}{status==="MERGED"?" · merged":status==="CLOSED"?" · closed":""}</Text>
+  return <View accessible accessibilityLabel={pullRequestBadgeLabel(number, badge)} style={{flexDirection:"row",alignItems:"center",gap:space.xxs}}>
+    <Icon name={badge.icon} size={small?12:14} color={color}/>
+    <Text style={{fontSize:small?typeScale.metadata.fontSize:typeScale.body.fontSize,color}}>{pullRequestNumberLabel(number)}</Text>
   </View>;
 }
 /** The theme colour for a badge tone; neutral keeps the muted badge. */

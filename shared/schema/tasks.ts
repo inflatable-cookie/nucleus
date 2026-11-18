@@ -30,6 +30,12 @@ export const taskSchema = submissionSchema.extend({
   entrypoint:z.enum(["worker","review","proof"]).default("worker"), reviewEntry:reviewEntryRecordSchema.nullable().default(null),
   id: z.string(), hostId: z.string(), createdAt: z.string(), updatedAt: z.string(), version: z.number(),
   originWorkspaceId:z.string().nullable().default(null), notificationAgentId:z.string().nullable().default(null), originError:z.string().default(""), originLookupError:z.string().default(""),
+  /**
+   * nucleus#1313: an explicit detach says this task's presentation has no planner
+   * thread. It is host-general — each host renders a detached task's group
+   * standalone — and a reparent that names a new planner clears it.
+   */
+  presentationDetached:z.object({at:z.string().datetime({offset:true}),by:z.string().trim().min(1).max(300)}).strict().nullable().default(null),
   creatorCompletionRecipients:z.array(completionRecipientSchema).default([]),
   completionSubscriptionOverrides:z.array(completionSubscriptionSchema).default([]),
   completionNotificationCohort:z.array(completionCohortMemberSchema).nullable().default(null),

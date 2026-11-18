@@ -1,4 +1,5 @@
 import { phaseNeedsAttention } from "../../shared/pipeline-board";
+import { repositoryLabel } from "../../shared/repository-label";
 import { isTerminalPhase, phaseStateLabel, taskStateLabel } from "../../shared/task-state";
 import { QA_CAPACITY_WAIT_PREFIX, waitStateLabels } from "../../shared/wait-state";
 import type { Project, Task, TaskSummary } from "../../shared/contracts";
@@ -115,6 +116,7 @@ export function readBbSidebarGroups(source: BbSidebarSource): BbSidebarGroups {
       taskId: task.id,
       number: typeof summary.number === "number" && summary.number > 0 ? summary.number : null,
       reference: summary.reference ?? null,
+      repository: repositoryLabel(summary, live),
       title: summary.title,
       phase: summary.phase,
       phaseLabel: label(phaseStateLabel(summary)),

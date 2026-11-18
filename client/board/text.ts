@@ -3,8 +3,9 @@ import { phaseNeedsAttention } from "../../shared/pipeline-board";
 import { prerequisiteReasonEntries } from "../../shared/wait-state";
 import React from "react";
 import type { HoldKind, Task, TaskDetail, TaskSummary } from "../../shared/contracts";
+import { repositoryShortName } from "../../shared/repository-label";
 
-export const projectName = (task: Pick<Task,"repoPath">) => task.repoPath.split(/[\\/]/).filter(Boolean).at(-1) ?? task.repoPath;
+export const projectName = (task: Pick<Task,"repoPath">) => repositoryShortName(task.repoPath);
 const UUID_TEXT = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
 const HASH_TEXT = /\b(?:[0-9a-f]{40}|[0-9a-f]{64})\b/gi;
 /** Card content stays readable while identifiers and digests remain available in task detail. */

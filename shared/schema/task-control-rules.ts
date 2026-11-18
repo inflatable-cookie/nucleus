@@ -543,12 +543,13 @@ export function checkTaskControlRules(input: TaskControlFields, ctx: z.Refinemen
       "proof",
       "accept_receipt",
       "extend_budget",
+      "detach",
     ].includes(input.action)
   )
     ctx.addIssue({
       code: "custom",
       path: ["reason"],
       message:
-        "A reason is only valid for cancellation withdrawal, cancellation, supersession, a brief amendment, a routing change, worker exclusion, re-review, a hold, a retained prerequisite wait, owner completion, a task move, an owner route, a restart, a stop or a recorded side-effect retry",
+        "A reason is only valid for cancellation withdrawal, cancellation, supersession, a brief amendment, a routing change, worker exclusion, re-review, a hold, a retained prerequisite wait, owner completion, a task move, an owner route, a restart, a stop, an explicit detach or a recorded side-effect retry",
     });
 }

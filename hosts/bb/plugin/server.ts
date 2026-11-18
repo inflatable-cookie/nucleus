@@ -17,7 +17,9 @@ import threadListPlugin from "./sidebar/server.js";
 import {
   BOARD_SIGNAL_CHANNEL,
   createSidebarGroupsService,
+  createSidebarTaskActionService,
   sidebarGroupsContract,
+  sidebarTaskActionContract,
 } from "./sidebar-groups";
 import {
   BB_LIFECYCLE_HINTS,
@@ -167,6 +169,12 @@ export default async function plugin(bb: BbPluginApi) {
   }), {
     experimental_description:
       "The forked sidebar's batched Nucleus task-group read: one answer for every group's state line.",
+  });
+  // The task group's own actions (nucleus#1313): detach names no planner and holds
+  // no plugin state, so it is one bounded forward to the service's owner control.
+  bb.rpc.register(sidebarTaskActionContract, createSidebarTaskActionService(() => channelClient), {
+    experimental_description:
+      "The forked sidebar's task-group action: detach a task's presentation from its planner.",
   });
   // Phase 6: the board, its Settings and its pills reach the service catalogue
   // through this one forwarding method, on the same retained connection.
