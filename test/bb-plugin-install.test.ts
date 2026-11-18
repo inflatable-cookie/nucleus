@@ -1,6 +1,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { socketFixtureRoot } from "./support/socket-fixture";
 import {
@@ -39,9 +49,11 @@ import {
  * refuses a namesake it did not build — for install *and* uninstall — and writes
  * nothing; it never hands an unrelated plugin to BB's `plugin install --yes`; `status`
  * reports the installed build against the running service's and says when the plugin
- * cannot connect; and the release build's publication gate fails when the packaged
- * plugin is missing or names another build. The isolated-BB proof
- * (`effigy proof:bb:install`) proves the same commands against a real server.
+ * cannot connect; the managed copy stays writable so a BB update's own bundle rebuild
+ * lands in it, and that rebuild is never a build mismatch (nucleus#1348); and the
+ * release build's publication gate fails when the packaged plugin is missing or names
+ * another build. The isolated-BB proof (`effigy proof:bb:install`) proves the same
+ * commands against a real server.
  */
 
 const BUILD_A = "a".repeat(64);
@@ -83,6 +95,21 @@ function builtPlugin(
     });
   }
   return directory;
+}
+
+/** Every path in a tree its owner cannot write: the mode BB's own rebuild needs. */
+function unwritable(root: string): string[] {
+  const found: string[] = [];
+  const visit = (at: string) => {
+    if ((statSync(at).mode & 0o200) === 0) found.push(at);
+    for (const entry of readdirSync(at, { withFileTypes: true })) {
+      const path = join(at, entry.name);
+      if (entry.isDirectory()) visit(path);
+      else if ((statSync(path).mode & 0o200) === 0) found.push(path);
+    }
+  };
+  visit(root);
+  return found;
 }
 
 /** A BB data home whose `queue-service.json` names the running service's build. */
@@ -183,7 +210,11 @@ test("install writes only the plugin with ID nucleus, then points it at this dat
     bb.commands.map((args) => args.slice(0, 3)),
     [
       ["plugin", "list", "--json"],
-      ["plugin", "install", `path:${join(dataDir, "bb-plugin-install", BB_PLUGIN_ID)}`],
+      [
+        "plugin",
+        "install",
+        `path:${join(dataDir, "bb-plugin-install", BB_PLUGIN_ID)}`,
+      ],
       ["plugin", "config", BB_PLUGIN_ID],
       ["plugin", "config", BB_PLUGIN_ID],
       ["plugin", "reload", BB_PLUGIN_ID],
@@ -200,7 +231,10 @@ test("install writes only the plugin with ID nucleus, then points it at this dat
     "the plugin can reach this service",
   );
   assert.equal(report.action, "installed");
-  assert.equal(report.pluginDirectory, join(dataDir, "bb-plugin-install", BB_PLUGIN_ID));
+  assert.equal(
+    report.pluginDirectory,
+    join(dataDir, "bb-plugin-install", BB_PLUGIN_ID),
+  );
   assert.notEqual(report.pluginDirectory, pluginDirectory);
   assert.equal(report.pluginBuildId, BUILD_A);
   assert.equal(report.serviceBuildId, BUILD_A);
@@ -212,13 +246,17 @@ test("BB installs and rebuilds an owned copy without changing packaged version f
   const packageRoot = socketFixtureRoot("bb-version-");
   const source = builtPlugin(join(packageRoot, BB_PLUGIN_PACKAGE_DIR));
   writeJson(join(source, "manifest.json"), {
-    files: { "dist/app.js": "source-app-digest", "dist/app.meta.json": "source-meta-digest" },
+    files: {
+      "dist/app.js": "source-app-digest",
+      "dist/app.meta.json": "source-meta-digest",
+    },
   });
   const fileBytes = (directory: string): Record<string, string> => {
     const result: Record<string, string> = {};
     const visit = (at: string, prefix = "") => {
       for (const entry of readdirSync(at, { withFileTypes: true })) {
-        const path = join(at, entry.name), name = prefix ? `${prefix}/${entry.name}` : entry.name;
+        const path = join(at, entry.name),
+          name = prefix ? `${prefix}/${entry.name}` : entry.name;
         if (entry.isDirectory()) visit(path, name);
         else result[name] = readFileSync(path).toString("base64");
       }
@@ -236,17 +274,117 @@ test("BB installs and rebuilds an owned copy without changing packaged version f
       if (args[1] === "install") {
         const installed = args[2]!.slice("path:".length);
         // BB's plugin build writes generated files back into the path it installs.
-        writeFileSync(join(installed, "dist/app.js"), "BB rebuilt this plugin\n");
-        writeFileSync(join(installed, "dist/app.meta.json"), JSON.stringify({ sdkMajor: 99 }));
+        writeFileSync(
+          join(installed, "dist/app.js"),
+          "BB rebuilt this plugin\n",
+        );
+        writeFileSync(
+          join(installed, "dist/app.meta.json"),
+          JSON.stringify({ sdkMajor: 99 }),
+        );
       }
       return answer;
     },
   };
   const dataDir = dataHomeWithService(BUILD_A);
   const report = installBbPlugin({ exec: bb.exec, dataDir, packageRoot });
-  assert.deepEqual(fileBytes(source), before, "the version package, including its manifest, stays byte-identical");
-  assert.match(readFileSync(join(report.pluginDirectory, "dist/app.js"), "utf8"), /BB rebuilt/);
-  assert.equal(statSync(report.pluginDirectory).mode & 0o222, 0, "the installed copy is read-only after BB finishes its build");
+  assert.deepEqual(
+    fileBytes(source),
+    before,
+    "the version package, including its manifest, stays byte-identical",
+  );
+  assert.match(
+    readFileSync(join(report.pluginDirectory, "dist/app.js"), "utf8"),
+    /BB rebuilt/,
+  );
+  assert.deepEqual(
+    unwritable(report.pluginDirectory),
+    [],
+    "the installed copy is writable by its owner, so BB can rebuild into it later",
+  );
+});
+
+test("a BB update's SDK rebuild writes into the installed copy and stays a build match", () => {
+  const packageRoot = socketFixtureRoot("bb-update-");
+  const source = builtPlugin(join(packageRoot, BB_PLUGIN_PACKAGE_DIR), {
+    buildId: BUILD_A,
+  });
+  const sourceBundle = readFileSync(join(source, "dist/app.js"));
+  const plugins: Array<Record<string, unknown>> = [];
+  const bb = fakeBb(() => plugins);
+  const dataDir = dataHomeWithService(BUILD_A);
+  const installed = installBbPlugin({ exec: bb.exec, dataDir, packageRoot });
+  const copy = installed.pluginDirectory;
+
+  // BB rebuilt every plugin's frontend on a 0.49 → 0.50.1 update: it stages the new
+  // bundle in a fresh directory inside `dist/` and swaps it in. This is the exact shape
+  // that failed with `EACCES: permission denied, mkdtemp '.../dist/.stage-…'`.
+  const stage = mkdtempSync(join(copy, "dist", ".stage-"));
+  writeFileSync(
+    join(stage, "app.js"),
+    "// rebuilt against plugin SDK 0.6.157\n",
+  );
+  writeFileSync(
+    join(stage, "app.meta.json"),
+    JSON.stringify({ sdkVersion: "0.6.157", sdkMajor: 0 }),
+  );
+  for (const name of ["app.js", "app.meta.json"])
+    renameSync(join(stage, name), join(copy, "dist", name));
+  rmSync(stage, { recursive: true, force: true });
+  assert.match(
+    readFileSync(join(copy, "dist/app.js"), "utf8"),
+    /rebuilt against plugin SDK/,
+    "the rebuild landed in the installed copy",
+  );
+  assert.equal(
+    readBbPluginBuild(copy)?.buildId,
+    BUILD_A,
+    "a frontend rebuild leaves the Nucleus build identity alone",
+  );
+
+  // The bundle is BB's own build output: the status reads the build identity only, and
+  // so does the service's own check on the declaring plugin.
+  const status = bbPluginStatus({ exec: bb.exec, dataDir, packageRoot });
+  assert.equal(status.state, "match");
+  assert.equal(status.pluginBuildId, BUILD_A);
+  assert.match(status.detail, new RegExp(shortBuildId(BUILD_A)));
+  assert.deepEqual(
+    bbPluginBuildPin({
+      serviceBuildId: BUILD_A,
+      serviceCompiled: true,
+      pluginBuildId: readBbPluginBuild(copy)?.buildId ?? null,
+    }),
+    { ok: true },
+    "the service accepts the host after BB's rebuild",
+  );
+
+  // A reinstall after the rebuild still installs a fresh copy: it never edits the old
+  // one in place (nucleus#1319). A file only the rebuild left behind is gone.
+  writeFileSync(join(copy, "dist", "rebuilt-only.txt"), "BB's own output\n");
+  const reinstalled = installBbPlugin({ exec: bb.exec, dataDir, packageRoot });
+  assert.equal(reinstalled.pluginDirectory, copy);
+  assert.equal(
+    existsSync(join(copy, "dist", "rebuilt-only.txt")),
+    false,
+    "the reinstall replaced the copy instead of updating it in place",
+  );
+  assert.deepEqual(
+    readFileSync(join(copy, "dist/app.js")),
+    sourceBundle,
+    "the fresh copy carries the packaged bundle again",
+  );
+  assert.deepEqual(
+    readdirSync(join(copy, "dist")).filter((name) =>
+      name.startsWith(".stage-"),
+    ),
+    [],
+    "no staging directory survives the install",
+  );
+  assert.deepEqual(unwritable(copy), [], "the fresh copy is writable too");
+  assert.equal(
+    bbPluginStatus({ exec: bb.exec, dataDir, packageRoot }).state,
+    "match",
+  );
 });
 
 test("install refuses a namesake with ID nucleus it did not build and writes nothing", () => {
@@ -444,7 +582,11 @@ test("uninstall removes the BB plugin copy installed under this Nucleus data hom
   assert.equal(report.action, "removed");
   assert.equal(report.plugin?.rootDir, managedCopy);
   assert.equal(existsSync(managedCopy), false);
-  assert.equal(existsSync(source), true, "uninstall leaves the packaged version intact");
+  assert.equal(
+    existsSync(source),
+    true,
+    "uninstall leaves the packaged version intact",
+  );
 });
 
 test("uninstall refuses a namesake with ID nucleus and writes nothing", () => {
