@@ -1,0 +1,1 @@
+- `effigy test:affected` selects only the tests near a change (direct importers, test helpers, path literals) and runs at most 60, nearest first; the rest are deferred to milestone QA, so concurrent task runs no longer amount to full suites.

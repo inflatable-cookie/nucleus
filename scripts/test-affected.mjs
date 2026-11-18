@@ -1,10 +1,15 @@
 // `effigy test:affected [base] [--run] [--head=<ref>]`: the test files a change can affect.
 //
-// The selection is the reverse import graph over the source trees, read from one
-// git ref (default HEAD, so committed work only), plus a path-literal rule for
+// The selection is the tests near a change, read from one git ref (default HEAD,
+// so committed work only): tests that import a changed file directly or through
+// the test tree's own helpers and shard case files, plus a path-literal rule for
 // tests that reach a file without importing it (spawned entries, files read by
-// path). It never selects a full suite: a change the graph cannot place is listed
-// as unmapped instead. Pure selection (selectAffected) takes plain maps so the
+// path). The import walk never passes through production modules: following hubs
+// such as the engine or the store reached ~92% of the suite, so every core task
+// ran a full suite in all but name (Tom, 2026-11-18: "we need to avoid slamming
+// the machine with concurrent large test runs"). The transitive sweep is milestone
+// QA's job. At most MAX_AFFECTED files run, nearest first; the rest are listed as
+// deferred to milestone QA. A change the graph cannot place is listed as unmapped. Pure selection (selectAffected) takes plain maps so the
 // fixture tests need no git; the CLI reads the ref through git.
 import { spawnSync } from 'node:child_process';
 import { posix, resolve } from 'node:path';
@@ -25,6 +30,10 @@ const EXTENSIONS = ['.ts', '.tsx', '.mts', '.cts', '.mjs', '.cjs', '.js', '.jsx'
 const DOCS = /\.md$|^(?:docs|skills|changelog\.d)\//;
 
 export const SERIAL_LANE_SOURCE = './support/timing';
+/** The most test files one affected run starts; the rest are deferred to milestone QA. */
+export const MAX_AFFECTED = 60;
+/** Nearest first: a changed test, an importer, a test naming the path, a directory walk. */
+const TIERS = ['changed test', 'imports', 'names', 'reads directory'];
 
 export function isGraphNode(path) {
   return CODE.test(path) && (ROOT_FILES.includes(path) || GRAPH_ROOTS.some(root => path.startsWith(`${root}/`)));
@@ -63,9 +72,10 @@ export function resolveLocal(known, from, specifier) {
  * @param {string[]} input.changed repository-relative paths changed against the base
  * @param {Set<string>} input.files every path that exists at the ref
  * @param {Map<string, string>} input.sources text of each graph node (code under the roots)
- * @returns {{ tests: { file: string, reasons: string[] }[], unmapped: string[], serial: string[] }}
+ * @param {number} [input.max] the most files to select (default MAX_AFFECTED)
+ * @returns {{ tests: { file: string, reasons: string[] }[], deferred: { file: string, reasons: string[] }[], unmapped: string[], serial: string[] }}
  */
-export function selectAffected({ changed, files, sources }) {
+export function selectAffected({ changed, files, sources, max = MAX_AFFECTED }) {
   const known = new Set([...files, ...changed]);
   const importers = new Map();
   const imports = new Map();
@@ -99,31 +109,38 @@ export function selectAffected({ changed, files, sources }) {
   }));
 
   const reasons = new Map();
-  const add = (test, reason) => {
+  const tier = new Map();
+  const depth = new Map();
+  const add = (test, reason, kind, hops = 0) => {
     if (!reasons.has(test)) reasons.set(test, []);
     const list = reasons.get(test);
     if (!list.includes(reason)) list.push(reason);
+    const rank = TIERS.indexOf(kind);
+    if (!tier.has(test) || rank < tier.get(test)) tier.set(test, rank);
+    if (hops && (!depth.has(test) || hops < depth.get(test))) depth.set(test, hops);
   };
   const unmapped = [];
 
   for (const path of changed) {
-    if (isTestFile(path) && files.has(path)) add(path, 'changed test');
+    if (isTestFile(path) && files.has(path)) add(path, 'changed test', 'changed test');
     let graphReached = false;
     for (const start of implementationsOf(path)) {
-      // Breadth-first over importers: the first chain to a test is its shortest.
+      // Breadth-first over importers, but only through the test tree (helpers and
+      // shard case files): a production importer ends the walk, so a hub module
+      // never pulls in every test that reaches it.
       const via = new Map([[start, null]]);
       const queue = [start];
       while (queue.length) {
         const node = queue.shift();
         for (const importer of importers.get(node) ?? []) {
-          if (via.has(importer)) continue;
+          if (via.has(importer) || !importer.startsWith('test/')) continue;
           via.set(importer, node);
           queue.push(importer);
           if (isTestFile(importer) && files.has(importer)) {
             graphReached = true;
             const chain = [importer];
             for (let next = via.get(importer); next; next = via.get(next)) chain.push(next);
-            add(importer, `${chain.join(' → ')}`);
+            add(importer, `${chain.join(' → ')}`, 'imports', chain.length);
           }
         }
       }
@@ -142,23 +159,31 @@ export function selectAffected({ changed, files, sources }) {
       const text = scope.get(test);
       if (names.some(name => text.includes(name))) {
         named = true;
-        add(test, `names ${path}`);
+        add(test, `names ${path}`, 'names');
       } else {
         const hit = directoryLiterals.find(([, literal]) => text.includes(literal));
         if (hit) {
           named = true;
-          add(test, `reads directory ${hit[0]}`);
+          add(test, `reads directory ${hit[0]}`, 'reads directory');
         }
       }
     }
     if (!graphReached && !named && !isGraphNode(path) && !DOCS.test(path) && !isTestFile(path)) unmapped.push(path);
   }
 
-  const selected = [...reasons.keys()].sort();
+  // Nearest first: tier, then a direct import before a chain through test helpers,
+  // then the test the most changed files reach, then path. The cap keeps the nearest.
+  const ranked = [...reasons.keys()].sort((a, b) => tier.get(a) - tier.get(b)
+    || (depth.get(a) ?? Infinity) - (depth.get(b) ?? Infinity)
+    || reasons.get(b).length - reasons.get(a).length
+    || (a < b ? -1 : a > b ? 1 : 0));
+  const selected = ranked.slice(0, max).sort();
+  const deferred = ranked.slice(max).sort();
   // Scope text folds in the `.cases` files a shard entry requires, as timing-source.mjs does.
   const serial = selected.filter(test => scope.get(test)?.includes(SERIAL_LANE_SOURCE));
   return {
     tests: selected.map(file => ({ file, reasons: reasons.get(file) })),
+    deferred: deferred.map(file => ({ file, reasons: reasons.get(file) })),
     unmapped: unmapped.sort(),
     serial,
   };
@@ -211,13 +236,14 @@ function main(argv) {
   // --paths replaces the diff: measuring a named change's selection and run time.
   const paths = argv.find(arg => arg.startsWith('--paths='))?.slice('--paths='.length).split(',').filter(Boolean) ?? null;
   const { changed, files, sources } = readRepository(base, head, paths);
-  const { tests, unmapped, serial } = selectAffected({ changed, files, sources });
+  const { tests, deferred, unmapped, serial } = selectAffected({ changed, files, sources });
   const dirty = paths ? '' : git(['status', '--porcelain', '--untracked-files=no']).trim();
 
   console.log(`test:affected: ${changed.length} changed path(s) against ${mergeBase} (head ${head})`);
   if (dirty) console.log('test:affected: uncommitted changes are not selected; commit first');
   for (const { file, reasons } of tests) console.log(`  ${file}  ← ${reasons[0]}`);
   console.log(`test:affected: ${tests.length} test file(s) affected`);
+  if (deferred.length) console.log(`test:affected: ${deferred.length} more file(s) are past the ${MAX_AFFECTED}-file cap and deferred to milestone QA; this is not a finding`);
   if (serial.length) console.log(`test:affected: ${serial.length} wall-clock file(s) skip in the parallel lane; milestone QA's timing lane runs them`);
   if (unmapped.length) console.log(`test:affected: not in the import graph, so no test is selected for: ${unmapped.join(', ')}`);
   if (!run || !tests.length) return 0;
