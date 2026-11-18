@@ -176,6 +176,7 @@ async function pairToken(port: number, token: string): Promise<string> {
   assert.match(String(paired.headers["set-cookie"]), /HttpOnly/);
   assert.match(String(paired.headers["set-cookie"]), /SameSite=Strict/);
   assert.match(String(paired.headers["set-cookie"]), /Path=\//);
+  assert.match(String(paired.headers["set-cookie"]), /Max-Age=2592000/);
   assert.equal((await http(port, "/api/session", { cookie, host: `127.0.0.1:${port}` })).status, 200);
   return cookie!;
 }
@@ -389,9 +390,17 @@ test("every API request needs a paired session and rejects missing, unknown, exp
     // Use extends the idle expiry, while the original one-time link still expires.
     const cookie = await pairedToken(fixture);
     fixture.clock.now += 29 * 24 * 60 * 60_000;
-    assert.equal((await rpc(fixture.port, "queue.ui-snapshot", {}, cookie)).status, 200);
-    fixture.clock.now += 2 * 24 * 60 * 60_000;
-    assert.equal((await rpc(fixture.port, "queue.ui-snapshot", {}, cookie)).status, 200, "a recent use rolls the session expiry forward");
+    const extending = await rpc(fixture.port, "queue.ui-snapshot", {}, cookie);
+    assert.equal(extending.status, 200);
+    assert.match(String(extending.headers["set-cookie"]), /Max-Age=2592000/, "an extending request rolls the browser cookie too");
+    fixture.clock.now += 12 * 60 * 60_000;
+    const throttled = await rpc(fixture.port, "queue.ui-snapshot", {}, cookie);
+    assert.equal(throttled.status, 200);
+    assert.equal(throttled.headers["set-cookie"], undefined, "the cookie refresh is throttled to about once a day");
+    fixture.clock.now += 24 * 60 * 60_000;
+    const rolledAgain = await rpc(fixture.port, "queue.ui-snapshot", {}, cookie);
+    assert.equal(rolledAgain.status, 200);
+    assert.match(String(rolledAgain.headers["set-cookie"]), /Max-Age=2592000/);
 
     // The link token's expiry is read from the service clock.
     fixture.clock.now += 31 * 24 * 60 * 60_000;
@@ -413,11 +422,9 @@ test("every API request needs a paired session and rejects missing, unknown, exp
       await fixture.client.request("service.ui-link", { action: "revoke" }),
       { revoked: 1 },
     );
-    assert.equal(
-      (await rpc(fixture.port, "queue.ui-snapshot", {}, second.token)).status,
-      401,
-      "a revoked token is refused",
-    );
+    const refusedRevoked = await rpc(fixture.port, "queue.ui-snapshot", {}, second.token);
+    assert.equal(refusedRevoked.status, 401, "a revoked token is refused");
+    assert.match(String(refusedRevoked.headers["set-cookie"]), /Max-Age=0/, "a refused revoked session clears the browser cookie");
     assert.equal(
       (await rpc(fixture.port, "queue.ui-snapshot", {}, minted.token)).status,
       401,

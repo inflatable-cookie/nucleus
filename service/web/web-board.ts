@@ -51,6 +51,8 @@ export const WEB_TOKEN_MAX_MINUTES = 24 * 60;
 export const WEB_BOARD_DEFAULT_PORT = 4318;
 export const WEB_SESSION_IDLE_MS = 30 * 24 * 60 * 60 * 1000;
 const SESSION_COOKIE = "nucleus_session";
+/** Refresh rolling sessions at most about once a day. */
+const WEB_SESSION_REFRESH_MS = 24 * 60 * 60 * 1000;
 /** Outstanding tokens are bounded; the oldest is evicted first. */
 const MAX_OUTSTANDING_TOKENS = 16;
 const MAX_STREAMS = 8;
@@ -239,7 +241,7 @@ export class WebBoard {
     this.boundPort = address.port;
     this.unsubscribe = this.options.host.subscribe(() => this.publish());
     this.tokenTimer = setInterval(
-      () => { this.touchOpenStreams(); this.dropRevokedStreams(); },
+      () => this.dropRevokedStreams(),
       STREAM_TOKEN_CHECK_MS,
     );
     this.tokenTimer.unref?.();
@@ -432,7 +434,7 @@ export class WebBoard {
     this.sessions.set(sessionKey, this.now() + WEB_SESSION_IDLE_MS);
     await this.saveSessions();
     sendJson(response, 200, { paired: true }, {
-      "set-cookie": `${SESSION_COOKIE}=${cookie}; HttpOnly; SameSite=Strict; Path=/`,
+      "set-cookie": sessionCookie(cookie),
     });
   }
 
@@ -452,8 +454,12 @@ export class WebBoard {
       sendJson(response, 403, refusal("origin", "Cookie-authenticated writes require this board's exact Origin."));
       return null;
     }
-    this.sessions.set(key, this.now() + WEB_SESSION_IDLE_MS);
-    await this.saveSessions();
+    const expiry = this.sessions.get(key)!;
+    if (expiry <= this.now() + WEB_SESSION_IDLE_MS - WEB_SESSION_REFRESH_MS) {
+      this.sessions.set(key, this.now() + WEB_SESSION_IDLE_MS);
+      response.setHeader("set-cookie", sessionCookie(sessionCookieValue(request)!));
+      await this.saveSessions();
+    }
     return key;
   }
 
@@ -510,7 +516,10 @@ export class WebBoard {
         "unauthenticated",
         "A valid paired board session is required. Open a fresh link from `nucleus ui`; missing, unknown, expired and revoked sessions are refused alike.",
       ),
-      { "www-authenticate": 'Bearer realm="nucleus-board"' },
+      {
+        "www-authenticate": 'Bearer realm="nucleus-board"',
+        "set-cookie": clearSessionCookie(),
+      },
     );
   }
 
@@ -669,15 +678,20 @@ export class WebBoard {
     );
   }
 
-  private touchOpenStreams(): void {
-    let changed = false;
-    for (const stream of this.streams) {
-      if (!this.sessions.has(stream.key)) continue;
-      this.sessions.set(stream.key, this.now() + WEB_SESSION_IDLE_MS);
-      changed = true;
-    }
-    if (changed) void this.saveSessions();
-  }
+}
+
+function sessionCookieValue(request: IncomingMessage): string | null {
+  const cookie = request.headers.cookie?.split(";").map(part => part.trim()).find(part => part.startsWith(`${SESSION_COOKIE}=`));
+  const value = cookie?.slice(SESSION_COOKIE.length + 1);
+  return value && TOKEN_PATTERN.test(value) ? value : null;
+}
+
+function sessionCookie(value: string): string {
+  return `${SESSION_COOKIE}=${value}; Max-Age=${WEB_SESSION_IDLE_MS / 1000}; HttpOnly; SameSite=Strict; Path=/`;
+}
+
+function clearSessionCookie(): string {
+  return `${SESSION_COOKIE}=; Max-Age=0; HttpOnly; SameSite=Strict; Path=/`;
 }
 
 function bearerToken(request: IncomingMessage): string | undefined {
