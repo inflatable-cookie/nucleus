@@ -1,6 +1,6 @@
 # Spec 066 — One reconciler
 
-Status: proposed
+Status: approved (Tom, 2026-11-18: "Approve, go for it"). Batches 1, 2 and 5 and the merge and terminal-cleanup slice are briefed first.
 Audience: queue implementers and reviewers
 
 ## Outcome
@@ -12,7 +12,7 @@ are ready. A host failure stays with that host and its tasks.
 
 Spec 050 put owner verbs over the lifecycle. This proposal finishes the
 settlement side of that work. The [holding records](#holding-records) describe
-the current code. The changes below require design approval before implementation.
+the current code. Tom approved the design on 2026-11-18; implementation follows the batch plan below.
 
 ## What a sweep decides
 
