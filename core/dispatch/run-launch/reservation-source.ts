@@ -2,6 +2,7 @@ import type { LaunchReserveContext } from '../launch';
 import type { LaunchMachinePorts } from './machine';
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { Profile, Run, StashEntry, Task } from '../../../shared/contracts';
+import { describeIntegrationFastForward } from '../../git/index';
 import { currentBrief } from '../../planning/brief';
 import { checkHistoryFromStore } from '../../forge/index';
 import { ordinaryReviewDelta } from '../../review/ordinary-review';
@@ -83,6 +84,7 @@ export class RunReservationSource {
       ? await this.machine.coveringEvidence!(t, checkHistoryFromStore(this.store, t.repoPath, Date.now(), t.prHead ?? ""), this.store.checksPolicyFor(t))
       : null;
     if (coveringEvidence && coveringEvidence.head !== t.prHead) throw Error('Covering evidence belongs to a different review head');
+    if (coveringEvidence?.integrationFastForward) this.store.event(t.id, 'integration_checkout_fast_forwarded', describeIntegrationFastForward(t.baseBranch, coveringEvidence.integrationFastForward));
     const roundBase = coveringEvidence?.base ?? t.resolution.mergeBase ?? t.planningBase;
     // Queue 524 (papercut 2061d84f): a reviewer reads author evidence posted as
     // PR issue comments with gh. The run carries a bounded pointer (never

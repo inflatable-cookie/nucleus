@@ -5,7 +5,7 @@ import type { Task } from "../../shared/contracts";
 import type { Store } from "../store/store";
 import { gitText, statusEntries } from "../git/git-snapshot";
 import { gitFastForward, gitRun, formatGitError } from "../git/git-command";
-import { withIntegrationCheckout } from "../git/index";
+import { fastForwardIntegrationBase, withIntegrationCheckout, describeIntegrationFastForward, type IntegrationFastForward } from "../git/index";
 import { requestServiceRollAfterRepositorySync } from "../forge/roll-request";
 import { removeTree } from "../workspaces/tree-removal";
 import { WARM_CANDIDATE_NAME, isolationDataDirFor, isolationPathFor, isOwnedIsolationPath } from "./hook-isolation";
@@ -84,9 +84,15 @@ export class HookCheckouts {
     if (existsSync(path)) throw new Error("Isolated checkout still exists after removal");
   }
 
-  /** The clean, synchronized integration base commit for one repository, proven against origin. */
-  async integrationBase(task: Task, verifyCleanSynchronizedBase: (root: string, baseBranch: string, baseCommit: string) => Promise<void> = (root, baseBranch, baseCommit) => this.verifyCleanSynchronizedBase(root, baseBranch, baseCommit)): Promise<string> {
+  /**
+   * The clean, synchronized integration base commit for one repository, proven against origin.
+   * A clean checkout strictly behind origin is fast-forwarded first, so a prospective-merge
+   * check never holds on staleness that the next merge gate would have repaired.
+   */
+  async integrationBase(task: Task, verifyCleanSynchronizedBase: (root: string, baseBranch: string, baseCommit: string) => Promise<void> = (root, baseBranch, baseCommit) => this.verifyCleanSynchronizedBase(root, baseBranch, baseCommit), onFastForward?: (move: IntegrationFastForward) => void): Promise<string> {
     return withIntegrationCheckout(task, async (checkout, unchanged) => {
+      const moved = await fastForwardIntegrationBase(checkout, task.baseBranch);
+      if (moved) onFastForward?.(moved);
       const head = await gitText(checkout, "rev-parse", "HEAD");
       await verifyCleanSynchronizedBase(checkout, task.baseBranch, head);
       await unchanged();

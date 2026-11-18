@@ -20,6 +20,7 @@ import type {
 } from "../../shared/contracts";
 import { Store } from "../store/store";
 import { gitText, snapshotGit } from "../git/git-snapshot";
+import { describeIntegrationFastForward } from "../git/git-dispatch";
 import {
   executeHookProgram,
   type ExecutionRequest,
@@ -664,6 +665,7 @@ export class RepositoryHooks {
       task,
       (root, baseBranch, baseCommit) =>
         this.verifyCleanSynchronizedBase(root, baseBranch, baseCommit),
+      move => this.store.event(task.id, "integration_checkout_fast_forwarded", describeIntegrationFastForward(task.baseBranch, move)),
     );
   }
 

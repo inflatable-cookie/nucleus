@@ -12,7 +12,7 @@ const patterns = [
   /Integration checkout is dirty/i,
   /Integration checkout is on a different branch/i,
   /Local integration branch differs from origin/i,
-  /Local integration branch must match origin before merge/i,
+  /Integration checkout has an operation in progress/i,
   /Preserving dirty or switched integration checkout/i,
   /Integration synchronization did not leave a clean expected head/i,
   /Integration write requires a clean synchronized base/i,

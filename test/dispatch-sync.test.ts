@@ -931,7 +931,7 @@ test('release forge gates retain clean, owned, origin and closeout publication b
   await assert.rejects(verifyCloseoutPublication(task), /already.*(?:checked out|used)/);
   await git(repo, 'worktree', 'remove', owned);
   await git(repo, 'branch', '-f', 'release/v0.5', main);
-  await assert.rejects(integrationBaseGate(task, released), /match origin before merge/);
+  await assert.rejects(integrationBaseGate(task, released), /Local integration branch differs from origin/);
   await assert.rejects(verifyCloseoutPublication(task), /head changed during closeout/);
   await git(repo, 'branch', '-f', 'release/v0.5', released);
   await assert.rejects(integrationBaseGate({...task, brief: null}, released), /different branch/);

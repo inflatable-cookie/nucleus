@@ -2,6 +2,7 @@ import type { Task } from '../../shared/contracts';
 import type { Resolution } from '../resolution';
 import type { CheckObservationFields, MergeGateResult, RequiredChecksResult } from '../resolution';
 import { checkHistoryFromStore, checkPolicyObservationKey, type CheckObservation } from '../forge/index';
+import { describeIntegrationFastForward } from '../git/index';
 import { now } from '../store/store';
 import { MERGE_GATE_SETTINGS_ATTEMPTS } from '../recovery/task-reasons';
 
@@ -44,7 +45,7 @@ export class CheckEvidence {
   async mergeGate(t: Task): Promise<MergeGateResult> {
     return this.settingsBoundObservation(t, revision => this.adapter.mergeGate!(t,
       checkHistoryFromStore(this.store, t.repoPath, Date.now(), t.prHead ?? ""),
-      this.context.reviewerSetting(t) ?? undefined, this.store.checksPolicyFor(t)), {
+      this.context.reviewerSetting(t) ?? undefined, this.store.checksPolicyFor(t)).then(observed => this.recordFastForward(t, observed)), {
       timings: observed => observed.timings,
       observed: 'the merge gate observed hosted checks',
       then: 'using its result',
@@ -52,6 +53,15 @@ export class CheckEvidence {
       this.store.event(t.id, 'merge_gate_settings_changed', `Repository settings changed during ${MERGE_GATE_SETTINGS_ATTEMPTS} consecutive merge-gate observations; holding instead of merging on a stale policy`);
       return { head: current.prHead ?? '', base: current.resolution.mergeBase ?? '', wait: 'Repository settings have been changing during the merge gate; re-observing the exact-head gates' };
     });
+  }
+  /**
+   * A gate observation that fast-forwarded the integration checkout records that
+   * move on the task that caused it. Only the observation that moved the checkout
+   * carries it, so one fast-forward is one event however many observations follow.
+   */
+  private recordFastForward(t: Task, observed: MergeGateResult): MergeGateResult {
+    if (observed.integrationFastForward) this.store.event(t.id, 'integration_checkout_fast_forwarded', describeIntegrationFastForward(t.baseBranch, observed.integrationFastForward));
+    return observed;
   }
   /** The same freshness-checked read for the pending-check poll, which yields the integration turn and is re-run before any merge. */
   async requiredChecks(t: Task): Promise<RequiredChecksResult> {
