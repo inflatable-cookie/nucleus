@@ -2,7 +2,7 @@ import { admitPhaseFacts } from "../scheduling/phase-latency";
 import { resultApplied, recordResultApplied } from "../intake/applied-result";
 import type { Completion, Run, Task } from "../../shared/contracts";
 import { taskPrNumber } from "../forge/index";
-import { git } from "../git/index";
+import { git, recordIntegrationFastForward } from "../git/index";
 import {
   hookHoldReason,
   isCloseoutAuthorityHook,
@@ -350,6 +350,7 @@ export class Closeout {
     const commit = await this.adapter.syncMain!(
       t,
       () => !this.resolution.paused(),
+      (move) => recordIntegrationFastForward(this.store, t, move),
     );
     this.store.event(
       t.id,

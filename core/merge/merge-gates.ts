@@ -7,7 +7,10 @@ import {
   type LadderEvent,
 } from "../questions/ladder";
 import { isFailedChecksReason, taskPrNumber } from "../forge/index";
-import { GitReadTimeoutError } from "../git/index";
+import {
+  GitReadTimeoutError,
+  recordIntegrationFastForward,
+} from "../git/index";
 import {
   hookHoldReason,
   isStaleIntegrationBaseRefusal,
@@ -590,6 +593,7 @@ export class MergeGates {
       const base = await this.resolution.hooks!.renewIntegrationBase(
         t,
         () => !this.resolution.paused(),
+        (move) => recordIntegrationFastForward(this.store, t, move),
       );
       this.store.event(
         t.id,

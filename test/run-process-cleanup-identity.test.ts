@@ -19,6 +19,40 @@ import {
 import { runInfrastructurePids } from "../core/machine/owned-tool-process-proof";
 import { processParentPid } from "../core/machine/process-identity";
 import type { HostProcessFact } from "../core/host/types";
+import { bbProcessFixture } from "./support/bb-process-fixture";
+
+test("cleanup protects the bound BB runtime without protecting its tool", async () => {
+  const f = fixture();
+  try {
+    const facts = await bbProcessFixture(f.root, "thr_fixture");
+    facts.push({
+      ...facts[2]!,
+      pid: 104,
+      ppid: 102,
+      command: "node build.mjs",
+    });
+    const run = {
+      id: "run",
+      taskId: f.task.id,
+      hostId: "bb:fixture",
+      agentId: "thr_fixture",
+    };
+    const protectedPids = protectedRunInfrastructure(f.store, [run], facts);
+    for (const pid of [101, 102, 103])
+      assert.equal(protectedPids.has(pid), true);
+    assert.equal(protectedPids.has(104), false);
+    assert.equal(
+      protectedRunInfrastructure(
+        f.store,
+        [{ ...run, agentId: "other" }],
+        facts,
+      ).has(101),
+      false,
+    );
+  } finally {
+    await f.close();
+  }
+});
 
 test("ownership has path boundaries and protects a provider, helper, ancestors and standing runtime", () => {
   const fact = (pid: number, ppid: number, command: string) => ({

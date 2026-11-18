@@ -20,6 +20,7 @@ import type {
 } from "../../shared/contracts";
 import { Store } from "../store/store";
 import { gitText, snapshotGit } from "../git/git-snapshot";
+import { recordIntegrationFastForward, type IntegrationFastForwardObserver } from "../git/git-dispatch";
 import {
   executeHookProgram,
   type ExecutionRequest,
@@ -664,6 +665,7 @@ export class RepositoryHooks {
       task,
       (root, baseBranch, baseCommit) =>
         this.verifyCleanSynchronizedBase(root, baseBranch, baseCommit),
+      move => recordIntegrationFastForward(this.store, task, move),
     );
   }
 
@@ -673,8 +675,8 @@ export class RepositoryHooks {
    * precondition. Dirty, wrong-branch and locally-ahead checkouts still refuse,
    * so the cleanliness proof is not relaxed; only origin being ahead is renewed.
    */
-  renewIntegrationBase(task: Task, allowed: () => boolean): Promise<string> {
-    return this.checkouts.renewIntegrationBase(task, allowed);
+  renewIntegrationBase(task: Task, allowed: () => boolean, observe?: IntegrationFastForwardObserver): Promise<string> {
+    return this.checkouts.renewIntegrationBase(task, allowed, observe);
   }
 
   prospectiveMergeGate(

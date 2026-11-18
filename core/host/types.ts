@@ -76,6 +76,10 @@ export interface HostProcessFact {
   startIdentity: string;
   command: string;
   cwd: string | null;
+  /** BB session identity read from that process's environment; null means unreadable. */
+  bbThreadId?: string | null;
+  /** The executable resolves to the installed Cua Driver, not a workspace copy. */
+  trustedCuaExecutable?: boolean;
 }
 
 /**

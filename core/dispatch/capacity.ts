@@ -436,6 +436,18 @@ export function slotRequestDecision(
     occupiesSlot(candidate)
   )
     return false;
+  // An unavailable host cannot consume a future slot while healthy hosts wait.
+  // The independent hostWait survives when an owner-facing stop takes precedence.
+  if (
+    candidate.phase === "queued" &&
+    (candidate.resolution.hostWait ||
+      candidate.resolution.stop?.reason === "host_unavailable" ||
+      (candidate.entrypoint === "review" &&
+        candidate.originHostId &&
+        candidate.originHostId !== candidate.hostId &&
+        candidate.resolution.stop?.reason === "origin_busy"))
+  )
+    return false;
   if (mergeHeld(candidate) && candidate.phase === "verifying") return false;
   if (
     candidate.phase === "verifying" &&
@@ -652,7 +664,44 @@ export class SlotAdmission {
     // A completed retained wait on changes_requested is parked for explicit
     // operator action, so it is not currently requesting a revision slot.
     if (slotAdmissionExempt(task)) return "";
-    const tasks = view?.tasks ?? this.store.admissionCandidates(task);
+    let tasks = view?.tasks ?? this.store.admissionCandidates(task);
+    // A bounded queue page can be full of origin waits that reserve nothing.
+    // Rank the remaining requests too, including a review just recovered from
+    // that wait. Preserve the active-capacity projection for live run owners.
+    if (
+      !view &&
+      tasks.some(
+        (candidate) =>
+          candidate.phase === "queued" &&
+          candidate.entrypoint === "review" &&
+          candidate.originHostId &&
+          candidate.originHostId !== candidate.hostId &&
+          candidate.resolution.stop?.reason === "origin_busy",
+      )
+    ) {
+      const all = this.store.tasks();
+      const waiting = all.filter(
+        (candidate) =>
+          candidate.phase === "queued" &&
+          candidate.entrypoint === "review" &&
+          candidate.originHostId &&
+          candidate.originHostId !== candidate.hostId &&
+          candidate.resolution.stop?.reason === "origin_busy",
+      ).length;
+      const limit =
+        this.store.getMeta<number>("globalLimit") ?? DEFAULT_GLOBAL_LIMIT;
+      const included = new Map(
+        this.store
+          .readyQueueHeads(limit + 2 + waiting)
+          .map((candidate) => [candidate.id, candidate]),
+      );
+      for (const candidate of this.store.activeCapacityTasks())
+        included.set(candidate.id, candidate);
+      if (!included.has(task.id)) included.set(task.id, task);
+      tasks = all
+        .filter((candidate) => included.has(candidate.id))
+        .map((candidate) => included.get(candidate.id)!);
+    }
     const current = tasks.find((candidate) => candidate.id === task.id) ?? task;
     const taskRuns = view?.runsByTask.get(task.id) ?? this.store.runs(task.id);
     if (slotAdmissionExempt(task, current, taskRuns)) return "";

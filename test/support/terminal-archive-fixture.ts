@@ -29,7 +29,7 @@ export const missingHistory =
 
 export async function terminalArchiveFixture(
   t: TestContext,
-  options: { unfinished?: boolean } = {},
+  options: { unfinished?: boolean; hostId?: string } = {},
 ) {
   const root = await realpath(
     await mkdtemp(join(tmpdir(), "ns-terminal-archive-retry-")),
@@ -61,8 +61,9 @@ export async function terminalArchiveFixture(
     await rm(root, { recursive: true, force: true });
   };
   store.setMeta("paused", false);
-  store.setMeta("hostId", "host");
-  store.setMeta("hostRegistry", [{ id: "host", endpoint: "fixture" }]);
+  const hostId = options.hostId ?? "host";
+  store.setMeta("hostId", hostId);
+  store.setMeta("hostRegistry", [{ id: hostId, endpoint: "fixture" }]);
   const inserted = store.insert(
     submissionSchema.parse({
       submissionId: randomUUID(),
@@ -72,7 +73,7 @@ export async function terminalArchiveFixture(
       handoffPath: "handoff.md",
       originAgentId: "origin",
     }),
-    "host",
+    hostId,
     "handoff",
     base,
   );

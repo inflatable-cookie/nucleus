@@ -284,7 +284,7 @@ test('integration gate records the fetched remote base without rebasing a behind
   await git(dir,'clone','--branch','main',join(dir,'remote.git'),'worker');const worker=join(dir,'worker');await git(worker,'checkout','-b','feature');writeFileSync(join(worker,'feature.txt'),'feature');await git(worker,'add','feature.txt');await git(worker,'commit','-m','feature');const staleHead=await git(worker,'rev-parse','HEAD');
   writeFileSync(join(root,'base.txt'),'b');await git(root,'commit','-am','base b');await git(root,'push');const currentBase=await git(root,'rev-parse','HEAD');
   assert.deepEqual(await integrationBaseGate({repoPath:root,baseBranch:'main',directory:worker},staleHead),{base:currentBase,wait:''});
-  writeFileSync(join(root,'unrelated.txt'),'dirty');await assert.rejects(integrationBaseGate({repoPath:root,baseBranch:'main',directory:worker},staleHead),/dirty or switched/);
+  writeFileSync(join(root,'unrelated.txt'),'dirty');await assert.rejects(integrationBaseGate({repoPath:root,baseBranch:'main',directory:worker},staleHead),/Integration checkout is dirty/);
   rmSync(join(root,'unrelated.txt'));
   await git(worker,'fetch','origin','main');
   await git(worker,'merge','--no-edit',currentBase);const updatedHead=await git(worker,'rev-parse','HEAD');

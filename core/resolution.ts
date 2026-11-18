@@ -1,3 +1,5 @@
+import type { IntegrationFastForwardObserver } from "./git/git-dispatch";
+import type { FormalReviewRuntime } from "./forge/reviews";
 import { portsContext } from "./port-context";
 import {
   ambientHostPorts,
@@ -294,6 +296,8 @@ export interface ResolutionAdapter {
     history?: CheckHistory,
     reviewer?: ReviewerSetting,
     checksPolicy?: RepositoryChecksPolicy,
+    runtime?: FormalReviewRuntime,
+    observeFastForward?: IntegrationFastForwardObserver,
   ): Promise<MergeGateResult>;
   requiredChecks?(
     task: Task,
@@ -305,6 +309,7 @@ export interface ResolutionAdapter {
     task: Task,
     history?: CheckHistory,
     checksPolicy?: RepositoryChecksPolicy,
+    observeFastForward?: IntegrationFastForwardObserver,
   ): Promise<RequiredChecksResult & { base: string }>;
   /** Queue 524: bounded pointer to author evidence posted as PR issue comments (never bodies). Empty when none exist. */
   authorCommentEvidence?(
@@ -320,7 +325,11 @@ export interface ResolutionAdapter {
     base: string;
     proof?: { proven: boolean; detail: string };
   }>;
-  syncMain(task: Task, allowed?: () => boolean): Promise<string>;
+  syncMain(
+    task: Task,
+    allowed?: () => boolean,
+    observeFastForward?: IntegrationFastForwardObserver,
+  ): Promise<string>;
   verifyCloseout(task: Task, result?: Completion): Promise<string | void>;
   notify(
     agentId: string,

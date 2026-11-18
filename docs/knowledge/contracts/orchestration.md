@@ -1351,6 +1351,16 @@ request identities and submitted handoffs are not rewritten.
   Nothing is settled from the stop's text or a reason prefix (the #1321 rule is
   retired), a host that did not answer settles nothing, a repeated pass adds no
   event, send or notice, and an owner stop beside the wait keeps its question.
+- A thrown adapter fault carries its host identity into sweep steps, observation
+  and dispatch. It holds that host's tasks while the sweep continues to later
+  steps and healthy tasks. The diagnostic is a separate idempotent event, so repeated
+  refusals leave the outage wait unchanged. A review waiting on a different origin
+  host names that host and does not mark its execution host offline or reserve a
+  slot. Queue scans continue past those waits; a recovered origin is proved before
+  the review rejoins fair slot ordering. A fault outside a host still records `engineError`.
+  Bounding calls that never return is tracked separately in nucleus#1347.
+- A queued task waiting for an unavailable host does not reserve an available
+  slot ahead of another host; its reservation returns when its host wait clears.
 - The wait is independent of the task's stop (nucleus#1198 review). When nothing
   more specific already stops the task the stop reads `host_unavailable`, naming
   the host and the outage start. A stop that belongs to an owner answer (budget,
@@ -1442,9 +1452,23 @@ request identities and submitted handoffs are not rewritten.
   written once and never re-armed; failures and conflicts are non-blocking
   findings. A record that cannot be written stays `pending` and the prompt says
   links may be missing.
-- Links resolve through configured primary checkouts, live and unpinned, are
+- On other hosts links resolve through configured primary checkouts, live and unpinned, are
   shared by the repository's tasks and are never removed by Nucleus. The worker
   prompt, task detail and `next` disclose the record.
+- New BB worktrees have task-owned parents, so each declared source with a task
+  sibling pin links to that task's recorded copy without colliding with another
+  task's links. Existing workspace bindings retain their original paths. A
+  missing or changed copy or a conflicting link is a named wait before the
+  worker or reviewer; review checks the current binding, declaration and pins
+  from the filesystem, so an absent or stale provisioning record does not hide
+  a correct retained workspace. It never replaces an occupied path. A shared
+  dependency link at the repository worktree root still triggers a private npm
+  install for a task nested under its own parent.
+  BB does not run `worktree.setup`.
+  BB cannot inject a per-thread environment, so visibility of Paseo's Playwright
+  browser cache is a named capability gap until observed in the BB thread.
+  Retained BB run prompts bind the helper to the current run's ticket explicitly,
+  including after a plugin roll.
 - Manual preparation stays per brief: a brief may authorise exactly one `effigy
   bundle sync --json` and one read-only `effigy bundle inspect --json` in the
   checkout, naming the installed tool. A missing or unreadable result is a
@@ -2384,9 +2408,23 @@ movement invalidates source approval and preserves the normal readiness gates.
   tasks take a per-repository FIFO integration turn held through verification,
   merge, synchronization and closeout; a changed base refreshes verification
   against the unchanged head without a rebase unless GitHub or branch policy
-  requires one. A local integration base that origin has moved past is
-  fast-forwarded by the gate itself, at most three times per pass, and parks
-  for an operator only after that bound ([repository hooks](repository-hooks.md#prospective-merge-target)).
+  requires one.
+- Nucleus keeps the registered integration checkout current. Before a merge
+  gate, integration sync or prospective-merge check, a checkout that is on the
+  integration branch, clean (`.gitignore` respected), with no rebase, merge,
+  cherry-pick or revert in progress, and strictly behind `origin/<base>` is
+  fast-forwarded under the per-base integration lock. One
+  `integration_checkout_fast_forwarded` event names the old and new heads; a
+  second pass finds the checkout current and records nothing. Every path that
+  moves the registered checkout (the merge gate and its covering and forced
+  observers, the prospective-merge base, integration sync, stale-base renewal,
+  dispatch validation and canonical publication sync) records that event at the
+  moment the move lands, so a later failure in the same pass cannot lose it. Every other state
+  (dirty, ahead, diverged, another or detached branch, an operation in progress)
+  is never touched: the task waits on the named reason and repository.
+- A stale-base refusal from a repository hook is renewed by the same
+  fast-forward at most three times per pass and parks for an operator only after
+  that bound ([repository hooks](repository-hooks.md#prospective-merge-target)).
 - Uncertain unlanded merge responses use the bounded proof and single guarded
   re-issue of [Spec 038](../specs/038-bounded-uncertain-merge-reconciliation.md);
   every fresh-gate hold in that recovery shares the 30-minute bound, after which
@@ -2995,7 +3033,9 @@ movement invalidates source approval and preserves the normal readiness gates.
   re-arms a pending deadline when the task or operation is observed. A successful
   retry of the failed resolution operation closes its episode even if the task
   stays in the same phase; a skipped pass or another operation does not.
-- Nucleus serializes its own canonical-checkout fast-forwards. Git lock files
+- Nucleus serializes its own canonical-checkout fast-forwards, and the registered
+  integration checkout's reads and fast-forwards share the per-base integration
+  lock with Queue-owned integration checkouts. Git lock files
   do not identify their owner: another Nucleus or Paseo Git process may hold
   one. Nucleus waits and never removes the lock. A merged task retains its
   integration turn while synchronization waits.
@@ -3079,7 +3119,7 @@ after the task finishes.
 | `run_intent` | `RunReservationAdmission.admit` | `Observation.observe` performs the exact creation lookup. Lifecycle abandons an agentless reservation at terminal phase without a new launch. Terminal creation with unknown delivery still needs proof. | Agentless reservation settlement only |
 | `sibling_worktrees_intent` | `WorkspaceProvisioning.ensureSiblings` | The same provisioner checks recorded paths and pinned commits before adopting or creating a checkout. A terminal row with intent and no pins lacks a reader. | No, terminal cleanup reads pins |
 | `stalled_turn_stop_intent` | `StalledTurnStops` | Worker or run observation reconciles the recorded turn or accepts its authenticated completion. | No general terminal visit |
-| `thread_archive_intent` | `archiveFinishedThreads` and replacement archive writers | Thread cleanup observes the exact native identity. Terminal catch-up revisits deletion-capable hosts. Archive-only hosts lack that terminal catch-up. Exhausted matching retries can be rearmed through `retry_effect workspace_archive.<id>`. | Deletion-capable hosts only |
+| `thread_archive_intent` | `archiveFinishedThreads` and replacement archive writers | Thread cleanup observes the exact native identity. Terminal catch-up revisits archive-only and deletion-capable hosts, recording a direct observation of an already archived or absent thread. Exhausted matching retries can be rearmed through `retry_effect workspace_archive.<id>`. | Done and completed cancellation where supported |
 | `transient_provider_resume_intent` | `TransientResume` worker and run paths | Worker and run observation re-enter the provider resume path using the retained binding and bounded episode. A terminal row receives no continuation. | No |
 | `unused_workspace_archive_intent` | `archiveUnusedWorkspace` | `retry_effect workspace_archive.<id>` observes the catalog or re-proves local teardown. The duplicate retains its own evidence. | Owner action |
 | `workspace_archive_intent` | `ArchiveProof.archiveProvedWorkspace` and `TaskRemoval.removeTask` | Lifecycle uses `reconcileGoneWorkspace` and the existing archive proofs. An unreadable binding remains a named `retry_effect workspace_archive.<id>` observation. | Done, plus observation of an outstanding removal intent |
@@ -3132,7 +3172,7 @@ after the task finishes.
   support thread still owes deletion. Unknown deletion delivery is never resent,
   and only a proven pre-delivery failure remains retryable through the terminal
   lane; cleanup failure never blocks task closeout.
-- The sweep directly queries already-finished T3 tasks with outstanding thread
+- The sweep directly queries already-finished tasks with outstanding thread
   cleanup, rather than using the active-capacity index. A bounded rotating window
   schedules those tasks on their existing task lanes, so a slow cleanup cannot
   hold the host sweep and permanently pending candidates cannot starve later tasks.
@@ -3141,7 +3181,15 @@ after the task finishes.
   before the catch-up query therefore still has its completion record, and later
   sweeps do nothing once cleanup is confirmed.
 - Paseo keeps its existing archive behaviour for released support threads,
-  reviewer replacement and terminal cleanup.
+  reviewer replacement and terminal cleanup. Its finished-task catch-up also
+  records a direct archived or absent observation, including legacy threads with
+  no prior intent. Hosts and task next show the current recorded thread wait.
+  An exhausted archive with an eligible, unarchived workspace names the existing
+  workspace retry; otherwise the task waits for the host's next observation.
+  Terminal restart controls are superseded only when the shared recovery decision
+  proves their participants released. Proven submissions settle as the same
+  occurrence in recovery and Hosts. Bounded host passes keep unresolved cleanup
+  controls visible.
 - A done task's workspace is archived with every thread in it (Tom, 2026-09-27);
   only a running thread (active turn or pending permission) makes it wait. No
   unreleased task run may remain. Uncommitted files, unexpected or unpublished
@@ -3407,6 +3455,22 @@ after the task finishes.
   it exited between the listing and its inspection leaves the table instead of
   blocking with an unreadable fact; only a genuinely unreadable read stays
   unknown.
+  BB's own provider bridge, session and direct `cua-driver mcp` server are
+  participant runtime when the session's readable `BB_THREAD_ID` matches the
+  recorded BB participant and the bridge's parent is the BB host daemon. The
+  bridge carries no thread identity itself. An unreadable or different thread
+  holds; a command beneath the session or its MCP server remains a tool. The
+  same binding protects these runtime processes from run cleanup and permits
+  workspace proof after BB reports the participant idle or closed. Archive
+  proof includes every recorded task run in the workspace, including recovery
+  and closeout, as well as task-row workers. The process
+  reader retains only the thread identity and checks the session's start identity
+  after reading its environment. The Cua server's loaded executable, read by PID
+  and rechecked against its start identity, must resolve to the installed
+  executable; displayed arguments alone do not prove it. On Darwin it reads NUL-delimited kernel process
+  arguments through the system JavaScript automation bridge and `sysctl`; an unavailable reader or
+  denied kernel read stays unknown. Task sweeps also preserve plausible BB
+  bridge runtimes with unknown identity and do not signal their process groups.
   Those runtimes take two facts from the listing, never a provider
   name list: the program is one the provider ships (inside an application bundle
   such as `Foo.app/Contents/…`, or beside the provider's own executable under

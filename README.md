@@ -69,6 +69,9 @@ BB, and nothing else in your BB is read or written.
    `nucleus bb status` reports the installed plugin's version and build against
    the running Nucleus service (`match`, or `behind` with the command to fix it),
    and says when the plugin is not configured to connect.
+   A BB update needs no Nucleus action: BB rebuilds the plugin's frontend itself
+   in that managed copy, and what is checked is the Nucleus build identity it
+   was installed from, never that bundle.
    A later service roll keeps the plugin current by itself: when your BB has the
    plugin installed from another build, the roll runs the same install route,
    and a roll that could not update it says so in the roll state, in

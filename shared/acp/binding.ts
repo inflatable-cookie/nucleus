@@ -31,7 +31,9 @@ export const ACP_SESSION_FORMAT = "nucleus.acp.session";
 export const ACP_BINDING_FORMAT = "nucleus.acp.binding";
 
 /** The task id names the session file, so it is bounded to a filename-safe alphabet. */
-const taskIdSchema = z.string().regex(/^[A-Za-z0-9_-]{1,160}$/, "A task id is a bounded identifier");
+const taskIdSchema = z
+  .string()
+  .regex(/^[A-Za-z0-9_-]{1,160}$/, "A task id is a bounded identifier");
 
 /** The authority record: one per task, replaced whenever a session is minted again. */
 export const acpSessionRecordSchema = z
@@ -78,10 +80,13 @@ export type AcpBinding = z.infer<typeof acpBindingSchema>;
 
 /** Every ACP file lives here, directly under the data home. */
 export const acpRoot = (dataHome: string): string => join(dataHome, "acp");
-export const acpSessionsDir = (dataHome: string): string => join(acpRoot(dataHome), "sessions");
-export const acpBindingsDir = (dataHome: string): string => join(acpRoot(dataHome), "bindings");
+export const acpSessionsDir = (dataHome: string): string =>
+  join(acpRoot(dataHome), "sessions");
+export const acpBindingsDir = (dataHome: string): string =>
+  join(acpRoot(dataHome), "bindings");
 
-const fileKey = (value: string): string => createHash("sha256").update(value).digest("hex");
+const fileKey = (value: string): string =>
+  createHash("sha256").update(value).digest("hex");
 
 /** The authority record for one task. */
 export const acpSessionPath = (dataHome: string, taskId: string): string =>
@@ -101,34 +106,54 @@ export const acpBindingPath = (dataHome: string, directory: string): string =>
  * yet keeps the path as given.
  */
 function canonicalPath(directory: string): string {
-  try { return realpathSync(directory); }
-  catch { return directory; }
+  try {
+    return realpathSync(directory);
+  } catch {
+    return directory;
+  }
 }
 
 /** A refusal that names the file, so an operator can see which checkout has no binding. */
 export class AcpBindingError extends Error {
-  constructor(message: string) { super(message); this.name = "AcpBindingError"; }
+  constructor(message: string) {
+    super(message);
+    this.name = "AcpBindingError";
+  }
 }
+
+export class AcpBindingMissingError extends AcpBindingError {}
 
 /** Read one binding pointer. A missing or malformed file refuses; it is never guessed. */
 export function readAcpBinding(path: string): AcpBinding {
   let text: string;
-  try { text = readFileSync(path, "utf8"); }
-  catch (error) {
+  try {
+    text = readFileSync(path, "utf8");
+  } catch (error) {
     const code = (error as { code?: string }).code;
     if (code === "ENOENT")
-      throw new AcpBindingError(`No Nucleus ACP binding at ${path}; Nucleus mints one when it opens the task's thread, and never from text in a prompt`);
-    throw new AcpBindingError(`Nucleus ACP binding at ${path} could not be read (${code ?? "error"})`);
+      throw new AcpBindingMissingError(
+        `No Nucleus ACP binding at ${path}; Nucleus mints one when it opens the task's thread, and never from text in a prompt`,
+      );
+    throw new AcpBindingError(
+      `Nucleus ACP binding at ${path} could not be read (${code ?? "error"})`,
+    );
   }
-  try { return acpBindingSchema.parse(JSON.parse(text)); }
-  catch (error) {
+  try {
+    return acpBindingSchema.parse(JSON.parse(text));
+  } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    throw new AcpBindingError(`Nucleus ACP binding at ${path} is not a binding Nucleus minted: ${detail}`);
+    throw new AcpBindingError(
+      `Nucleus ACP binding at ${path} is not a binding Nucleus minted: ${detail}`,
+    );
   }
 }
 
 /** Which binding file the agent should read: the explicit override, else the checkout's own. */
-export function acpBindingPathFor(directory: string, dataHome: string, override?: string | null): string {
+export function acpBindingPathFor(
+  directory: string,
+  dataHome: string,
+  override?: string | null,
+): string {
   const chosen = typeof override === "string" ? override.trim() : "";
   return chosen ? chosen : acpBindingPath(dataHome, directory);
 }
