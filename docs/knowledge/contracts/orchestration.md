@@ -231,7 +231,9 @@ periodic chores and one host's steps belong to their own owners: **SweepMaintena
 the owner/lane passes on their own cadence, and **HostPass**
 (`core/scheduling/host-pass.ts`) runs one host's settlement, row-surfacing,
 inventory, retired-worker, title and finished-thread steps, recording a step that
-throws as `hostPassError` instead of dropping it.
+throws as `hostPassError` instead of dropping it. A host transport failure while
+entering a host pass opens that host's ordinary `host_unavailable` wait for its
+tasks and the fleet pass continues; it never becomes `engineError`.
 
 **ControlContext** (`core/verbs/control-context.ts`). Holds the hidden parameters of
 every verb (`selfForceRunId`, `coordinatorActionRunId`, `replayingDeferredVerb`)

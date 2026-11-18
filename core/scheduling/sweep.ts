@@ -15,6 +15,7 @@ import { startsNoRuns } from "../closeout/queue-drain";
 import { now } from "../store/store";
 import { HostPass } from "./host-pass";
 import { SweepMaintenance } from "./sweep-maintenance";
+import { isTransportFailure } from "../../shared/transport";
 
 /**
  * Tasks reconciled per bounded safety-sweep window (Spec 013). The minute sweep
@@ -26,7 +27,7 @@ const SWEEP_WINDOW = 25;
 const MAX_SWEEP_WINDOWS = 400;
 type DrainWaiter = { resolve: () => void; reject: (error: Error) => void };
 
-export type SweepContext = Pick<Engine, 'adapter' | 'applyDeferredOwnerVerbs' | 'deliverPendingBriefAmendments' | 'archivePlannerGrants' | 'archiveRetiredErroredAgents' | 'auditPass' | 'clearRetiredInvalidations' | 'continueAwaitingReviewers' | 'dispatchQueued' | 'dispositionDeps' | 'drainProjections' | 'drainWaiters' | 'enqueueTitle' | 'ensureSweep' | 'flushPrerequisiteReleases' | 'host' | 'hostAvailable' | 'hostIds' | 'hostOutages' | 'hostWait' | 'inventoryHostMatches' | 'lifecycle' | 'maxSweepWindows' | 'migrateProjectOwnersToPlanners' | 'noteStepFailure' | 'observeRetiredWorkers' | 'quiesce' | 'reconcile' | 'recoverExhaustedWorkers' | 'removeSiblings' | 'resumePausedStops' | 'retiredObservationKey' | 'retiredObservationPlan' | 'scheduleLane' | 'scheduleLifecycleFollowUp' | 'scheduleTaskQuantum' | 'settleQuiesce' | 'startSweepChain' | 'stopped' | 'store' | 'sweepChain' | 'sweepCursor' | 'sweepMode' | 'sweepOrder' | 'sweepPending' | 'sweepStats' | 'taskHostAvailable' | 'wakeCapacityWaiter' | 'wakePreludes' | 'withHost'> & { readonly resolution: Pick<Resolution, 'checkpoints' | 'delegateNativeQuestions' | 'deliverDecisionNotices' | 'deliverDrainNotices' | 'deliverHoldNotices' | 'deliverHostOutageNotices' | 'deliverNotices' | 'deliverQueuedMessages' | 'observationTargets' | 'observe' | 'origins' | 'raiseOperatorQuestions' | 'recovery' | 'resumeAskQuestions' | 'resumeResponsibleAnsweredQuestions' | 'settleBudgetClock'> };
+export type SweepContext = Pick<Engine, 'adapter' | 'applyDeferredOwnerVerbs' | 'deliverPendingBriefAmendments' | 'archivePlannerGrants' | 'archiveRetiredErroredAgents' | 'auditPass' | 'clearRetiredInvalidations' | 'continueAwaitingReviewers' | 'dispatchQueued' | 'dispositionDeps' | 'drainProjections' | 'drainWaiters' | 'enqueueTitle' | 'ensureSweep' | 'flushPrerequisiteReleases' | 'host' | 'hostAvailable' | 'hostIds' | 'hostOutages' | 'hostWait' | 'inventoryHostMatches' | 'lifecycle' | 'markAuditHostUnavailable' | 'maxSweepWindows' | 'migrateProjectOwnersToPlanners' | 'noteStepFailure' | 'observeRetiredWorkers' | 'quiesce' | 'reconcile' | 'recoverExhaustedWorkers' | 'removeSiblings' | 'resetAuditHostAvailability' | 'resumePausedStops' | 'retiredObservationKey' | 'retiredObservationPlan' | 'scheduleLane' | 'scheduleLifecycleFollowUp' | 'scheduleTaskQuantum' | 'settleQuiesce' | 'startSweepChain' | 'stopped' | 'store' | 'sweepChain' | 'sweepCursor' | 'sweepMode' | 'sweepOrder' | 'sweepPending' | 'sweepStats' | 'taskHostAvailable' | 'wakeCapacityWaiter' | 'wakePreludes' | 'withHost'> & { readonly resolution: Pick<Resolution, 'checkpoints' | 'delegateNativeQuestions' | 'deliverDecisionNotices' | 'deliverDrainNotices' | 'deliverHoldNotices' | 'deliverHostOutageNotices' | 'deliverNotices' | 'deliverQueuedMessages' | 'observationTargets' | 'observe' | 'origins' | 'raiseOperatorQuestions' | 'recovery' | 'resumeAskQuestions' | 'resumeResponsibleAnsweredQuestions' | 'settleBudgetClock'> };
 
 export class Sweep {
   private hostPassOwner: HostPass | null = null;
@@ -167,6 +168,7 @@ export class Sweep {
 
   async auditPass(drain: boolean, visited: Set<string> = new Set()): Promise<{ fault: Error | null; covered: boolean; visited: Set<string> }> {
     try {
+      this.engine.resetAuditHostAvailability();
       this.engine.store.setMeta("engineError", "");
       // One diagnostic slot per pass for the per-host steps a fleet sweep must
       // not stall on: `HostPass` records a step that throws there.
@@ -183,13 +185,24 @@ export class Sweep {
       const finishedCatchUp = new Map<string, Task>();
       const hosts = new Set([...this.engine.hostIds(), ...this.engine.store.tasks().flatMap(task => task.hostId ? [task.hostId] : [])]);
       for (const host of hosts) {
-        const passed = await this.engine.withHost(host, async () => {
-          // Tom, 2026-11-14 (T3 lane v18, host dropout option 1: wait): one durable
-          // record of when this host went away, kept whether or not it has tasks.
-          this.engine.hostOutages.observe(host, this.engine.hostAvailable(host));
-          if (!this.engine.hostAvailable(host)) return null;
-          return this.hostPass.run(host);
-        });
+        let passed: Awaited<ReturnType<HostPass['run']>> | null;
+        try {
+          passed = await this.engine.withHost(host, async () => {
+            // Tom, 2026-11-14 (T3 lane v18, host dropout option 1: wait): one durable
+            // record of when this host went away, kept whether or not it has tasks.
+            this.engine.hostOutages.observe(host, this.engine.hostAvailable(host));
+            if (!this.engine.hostAvailable(host)) return null;
+            return this.hostPass.run(host);
+          });
+        } catch (error) {
+          if (!isTransportFailure(error)) throw error;
+          // A connected registry claim can still fail at the transport boundary.
+          // Keep this host's tasks on the existing outage wait for this pass, and
+          // continue the fleet sweep without turning the host loss into engineError.
+          this.engine.markAuditHostUnavailable(host);
+          this.engine.hostOutages.observe(host, false);
+          continue;
+        }
         // Nothing is read from a host that is away: the wait itself is the stop.
         if (!passed) continue;
         if (passed.inventory) inventory = passed.inventory;
