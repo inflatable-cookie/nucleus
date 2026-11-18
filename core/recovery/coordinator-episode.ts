@@ -1,13 +1,13 @@
 import { resultApplied, recordResultApplied } from '../intake/applied-result';
 import { digest, latestRunCompletion, now, type Store } from '../store/store';
-import type { Completion, RecoveryActionBinding, Run, Task } from '../../shared/contracts';
+import { isDispositionActive, isDispositionComplete, taskOwner, type Completion, type RecoveryActionBinding, type Run, type Task } from '../../shared/contracts';
 import type { TaskStopReason } from '../../shared/task-stop';
 import type { Resolution } from '../resolution';
 import { missingOriginHasPlanner } from '../questions/origin';
-import { taskOwner } from '../../shared/contracts';
 import { randomUUID } from 'node:crypto';
 import { threadRunningReason } from '../intake/thread-waits';
-import { creationFailureDetail } from './task-reasons';
+import { creationProducerId, readCreationAttempt } from '../store/store-task-funnel';
+import { creationLookup } from './absent-creation/restarts';
 import { taskProgressDigest } from './coordinator-report';
 import { recoveryApplicationsInFlight } from './coordinator-settlement';
 import { liveNoopSummary, liveRecoveryWait, liveWorkingParticipant } from './live-noop';
@@ -31,6 +31,26 @@ export const key=(t:Task,runs:Run[])=>t.resolution.stop
  : digest(t.originError?`origin:${taskOwner(t)}:${t.originWorkspaceId}:${t.coordinatorGeneration}`:`${t.phase}:${cause(t,runs)}:${t.resolution.currentRunId ?? t.runId}:${t.coordinatorGeneration}`);
 
 type RecoveryEpisode=NonNullable<Task['resolution']['recovery']>;
+const agentlessCreation=(run:Run|null):run is Run=>Boolean(run&&run.role==='recovery'&&!run.released&&!run.agentId&&!run.completion&&['intent','uncertain'].includes(run.status));
+
+/** The termination witness must already exist when the exact lookup starts. */
+export async function observeRecoveryCreation(resolution:RecoveryContext, task:Task, run:Run){
+ if(!run.hostId||run.hostId!==task.hostId||!run.workspaceId||!resolution.hostAvailable(task,run))
+  throw Error('The recovery creation lookup needs its recorded host and workspace online');
+ const attempt=readCreationAttempt(resolution.store,run);
+ const terminatedBy=attempt?.settlement ? 'call_settled'
+  : attempt&&attempt.producerId!==creationProducerId ? 'service_replaced' : null;
+ const graceFrom=Date.parse(attempt?.settlement?.at??attempt?.reservedAt??'');
+ const proof=attempt&&terminatedBy&&Date.now()-graceFrom>=resolution.graceMs
+  ? {attemptId:attempt.attemptId,terminatedBy} : null;
+ const found=await resolution.onTaskHost(run,()=>{
+  if(!resolution.adapter.findRunAgents)throw Error('Run identity lookup is unavailable');
+  return resolution.adapter.findRunAgents(run);
+ });
+ return {task,run,lookup:creationLookup(found,run.workspaceId),proof};
+}
+type RecoveryCreationObservation=Awaited<ReturnType<typeof observeRecoveryCreation>>;
+
 /** A report that was authenticated and accepted, and could not be applied. */
 export const ACCEPTED_RECOVERY_NOT_APPLIED_PREFIX = 'Accepted recovery report was not applied: ';
 
@@ -272,23 +292,41 @@ export class CoordinatorEpisode {
   });
   return settled;
  }
- /** An escalated recovery whose coordinator creation never bound an agent: it holds the lane and no pass settles it. */
+ /** The coordinator restart subject while its escalated creation still owns the run. */
  absentRun(t:Task){
   const incident=t.resolution.recovery,run=incident?.runId?this.store.run(incident.runId):null;
-  if(!incident||incident.status!=='escalated'||!run||run.role!=='recovery'||run.released||run.agentId||run.completion||!['intent','uncertain'].includes(run.status))return null;
-  return run;
+  return incident?.status==='escalated'&&agentlessCreation(run)?run:null;
  }
- failedCreationRun(t:Task,run:Run){
-  const incident=t.resolution.recovery;
-  return this.absentRun(t)?.id===run.id&&run.generation===t.coordinatorGeneration&&incident?.generation===run.generation&&creationFailureDetail(incident.summary)!==null;
+ /** Recheck the occurrence that was observed before binding or releasing it. */
+ currentCreation({task,run}:RecoveryCreationObservation){
+  const current=this.store.task(task.id),latest=this.store.run(run.id),episode=current.resolution.recovery,prior=task.resolution.recovery;
+  if(!agentlessCreation(latest)||latest.taskId!==current.id||latest.hostId!==run.hostId||latest.workspaceId!==run.workspaceId
+   ||latest.generation!==run.generation||latest.createdAt!==run.createdAt||current.coordinatorGeneration!==run.generation
+   ||!episode||!prior||episode.id!==prior.id||episode.key!==prior.key||episode.runId!==run.id||episode.generation!==run.generation
+   ||episode.agentId||episode.action||episode.status==='resolved'||episode.generation!==prior.generation
+   ||(current.lastSubstantiveVersion??current.version)!==(task.lastSubstantiveVersion??task.version)
+   ||current.removedAt||isDispositionActive(current)||isDispositionComplete(current)||['done','cancelled'].includes(current.phase)
+   ||this.resolution.stopped()
+   ||!this.resolution.hostAvailable(current,latest))return null;
+  return {current,run:latest,episode};
  }
- /** Releases a proven-absent recovery run; the escalation stays open for the operator and nothing is launched. */
- releaseAbsent(t:Task,runId:string,proof:string){
-  const current=this.store.task(t.id),run=this.absentRun(current);
-  if(!run||run.id!==runId)throw Error('Task changed during absent recovery-run verification');
+ /** The run, credential and episode release together. The underlying stop keeps its own owner. */
+ releaseAbsent(observed:RecoveryCreationObservation):Task|null{
+  if(!this.store.db.isTransaction)return this.store.transaction(()=>this.releaseAbsent(observed));
+  if(observed.lookup.kind!=='absent'||!observed.proof)return null;
+  const binding=this.currentCreation(observed);
+  if(!binding)return null;
+  const {current,run,episode}=binding;
+  if(readCreationAttempt(this.store,run)?.attemptId!==observed.proof.attemptId)return null;
+  const at=now(),summary='Exact lookup found no recovery agent after its creation producer stopped';
+  const incident=current.resolution.incident;
   this.store.deleteCredential(run.id);
-  this.store.putRun({...run,status:'superseded',released:true});
-  return this.resolution.update(current,{recoveryActive:false,recovery:{...current.resolution.recovery!,runId:null,agentId:null}},{},'absent_recovery_released',proof);
+  this.store.putRun({...run,status:'superseded',released:true,active:false,absentProvenAt:at});
+  return this.resolution.update(current,{
+   recoveryActive:false,recovery:{...episode,status:'resolved',runId:null,agentId:null,summary},
+   ...(incident?.runId===run.id&&incident.status!=='resolved'
+    ? {incident:{...incident,status:'resolved' as const,detail:summary,updatedAt:at}} : {}),
+  },{},'absent_recovery_released',JSON.stringify({runId:run.id,...observed.proof}));
  }
  save(t:Task,patch:Partial<RecoveryEpisode>){
   const current=this.store.task(t.id);

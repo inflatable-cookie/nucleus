@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { Store } from '../core/store/store';
+import { creationProducerId, readCreationAttempt } from '../core/store/store-task-funnel';
 import { Engine } from '../core/engine';
 import { submissionSchema, type Profile, type Run, type Task } from '../shared/contracts';
 import type { Adapter, AgentObservation } from '../core/host';
@@ -92,6 +93,10 @@ test('a throw at deliverLaunchRun after reservation leaves the run_intent record
     assert.equal(run?.released, false);
     assert.ok(credential);
     assert.equal(f.current().resolution.currentRunId, run!.id);
+    const attempt = readCreationAttempt(f.store, run!);
+    assert.equal(attempt?.producerId, creationProducerId);
+    assert.ok(attempt.attemptId);
+    assert.equal(attempt.settlement, null);
     assert.ok(f.store.counts()['profile:reviewer'] ?? f.store.counts()['review']);
   } finally { await f.close(); }
 });
@@ -107,6 +112,7 @@ test('a throw at createRun after reservation leaves the run_intent record', asyn
     assert.ok(run);
     assert.ok(credential);
     assert.equal(f.current().resolution.currentRunId, run!.id);
+    assert.equal(readCreationAttempt(f.store, run!)?.settlement?.outcome, 'threw');
   } finally { await f.close(); }
 });
 

@@ -1,7 +1,11 @@
 import { callerNativeId, foreignIdentityRefusal, parseAgentId } from '../../shared/agent-identity';
-import type { ReviewEntryInput } from '../../shared/contracts';
+import type { ReviewEntryInput, Run, Task } from '../../shared/contracts';
 import { originReviewProof, type OriginReviewHost } from '../review/origin-review-adapter';
+import type { Store } from '../store/store';
+import { creationProducerId, readCreationAttempt, settleCreationAttempt } from '../store/store-task-funnel';
+import { trackHostCreation } from './admission';
 import type { Adapter, AgentObservation, OriginAgent } from './adapter';
+import { HostCallAbandonedError, ProvenPreSendRefusalError } from './errors';
 
 /**
  * Direct adapter calls that still name an agent: HostFacade already routes the
@@ -21,7 +25,7 @@ const AGENT_ARGS: Record<string, number[]> = {
 export interface HostAdapterRoutingOwner {
   readonly activeHostId: string | undefined;
   resolveHostAdapter: (id: string) => Adapter | undefined;
-  store: { task(id: string): { originHostId?: string | null; hostId?: string | null } };
+  store: Pick<Store, 'db' | 'event' | 'transaction'> & { task(id: string): { originHostId?: string | null; hostId?: string | null } };
   withHost<T>(id: string, fn: () => T): T;
   hostAvailable: (id: string) => boolean;
   host: OriginReviewHost;
@@ -35,6 +39,7 @@ export interface HostAdapterRoutingOwner {
  * task's origin host; a missing or offline origin host refuses, named.
  */
 export function routeHostAdapter(owner: HostAdapterRoutingOwner, fallback: Adapter): Adapter {
+  const creating = new Set<string>();
   const proxy: Adapter = new Proxy(fallback, {
     get: (selectedFallback, property) => {
       const id = owner.activeHostId;
@@ -55,6 +60,42 @@ export function routeHostAdapter(owner: HostAdapterRoutingOwner, fallback: Adapt
         };
       }
       if (typeof value !== 'function') return value;
+      if (property === 'createAgent' || property === 'createRun') {
+        return async (...args: unknown[]) => {
+          const task = args[0] as Task;
+          const binding = property === 'createRun' ? { ...(args[1] as Run), hostId: task.hostId }
+            : { id: task.runId!, taskId: task.id, hostId: task.hostId, workspaceId: task.workspaceId, role: 'worker' as const };
+          const attempt = readCreationAttempt(owner.store, binding);
+          if (!attempt) return Reflect.apply(value, selected, args);
+          let admitted = false;
+          try {
+            return await trackHostCreation(selected, property, args, async create => {
+              admitted = true;
+              const current = readCreationAttempt(owner.store, binding);
+              if (current?.attemptId !== attempt.attemptId || current.producerId !== creationProducerId
+                || current.settlement || creating.has(attempt.attemptId))
+                throw new ProvenPreSendRefusalError('Agent creation reservation is no longer available');
+              creating.add(attempt.attemptId);
+              let outcome: 'returned' | 'threw' = 'threw';
+              try {
+                const agent = await create();
+                outcome = 'returned';
+                return agent;
+              } finally {
+                creating.delete(attempt.attemptId);
+                settleCreationAttempt(owner.store, attempt, outcome);
+              }
+            });
+          } catch (error) {
+            // A caller deadline does not stop the native promise. Its own
+            // return or throw will record settlement, even after abandonment.
+            if (!admitted && !(error instanceof HostCallAbandonedError) && attempt.producerId === creationProducerId
+              && !creating.has(attempt.attemptId))
+              settleCreationAttempt(owner.store, attempt, 'threw');
+            throw error;
+          }
+        };
+      }
       // Some older call sites still use adapter methods directly instead of
       // HostFacade. Keep that compatibility safe at the transport boundary:
       // qualified IDs are unwrapped only for the selected host, for every

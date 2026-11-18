@@ -5,6 +5,7 @@ import { occupiesSlot, capacityFor } from "../dispatch/capacity";
 import { taskPrNumber } from "../forge/index";
 import { runsUnchangedSince } from "../recovery/observation-advance";
 import { coordinatorReportMatches } from "../recovery/coordinator-report";
+import { observeRecoveryCreation } from "../recovery/coordinator-episode";
 import { DurableFenceRefusal } from "../intake/run-settlement";
 import { now } from "../store/store";
 import { REMOVED_TASK_REFUSAL } from "./control-refusals";
@@ -87,18 +88,16 @@ export class EpisodeRestarts {
     const version = task.version;
     const absentRecovery = this.resolution.recovery.absentRun(task);
     if (absentRecovery) {
-      if (!this.resolution.adapter.findRunAgents) throw Error('Run identity lookup is unavailable');
-      const found = await this.resolution.adapter.findRunAgents(absentRecovery);
-      if (found.length) throw Error('Recovery run creation is no longer proven absent; inspect the matching agent before retrying');
+      const observed = await observeRecoveryCreation(this.resolution, task, absentRecovery);
+      if (observed.lookup.kind !== 'absent') throw Error('Recovery run creation is no longer proven absent; inspect the matching agent before retrying');
+      if (!observed.proof) throw Error('Recovery creation still owns this run; its producer has not been proved stopped after the lookup grace period');
       return this.engine.control(() => this.store.transaction(() => {
         const current = this.store.task(task.id);
         this.engine.requireOwnerControlCurrent(current, version, 'Task changed during absent recovery-run verification');
-        if (this.resolution.recovery.absentRun(current)?.id !== absentRecovery.id)
-          throw new TaskChangedRefusal('Task changed during absent recovery-run verification', version, current.version);
         const others = this.store.runs(task.id).filter(run => !run.released && run.id !== absentRecovery.id);
         if (others.length) throw Error('Resolve the other retained runs before restarting coordinator recovery');
-        this.adapter.purgeReportingFiles?.(task.id, [absentRecovery.id]);
-        const released = this.resolution.recovery.releaseAbsent(current, absentRecovery.id, 'Exact task/run label lookup found no recovery agent');
+        const released = this.resolution.recovery.releaseAbsent(observed);
+        if (!released) throw new TaskChangedRefusal('Task changed during absent recovery-run verification', version, current.version);
         return this.resolution.operatorReturn(released, { recoveryActive: false, recovery: null, recoveryAttempts: 0 },
           {}, 'coordinator_rearmed', `Owner restarted coordinator recovery: ${reason}`);
       }), `task:${task.id}`);

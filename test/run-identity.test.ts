@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { Store } from '../core/store/store';
+import { creationProducerId, readCreationAttempt } from '../core/store/store-task-funnel';
 import { Engine } from '../core/engine';
 import { PaseoAdapter, type Adapter, type AgentObservation } from '../service/paseo-composition';
 import { reportingIdentityMismatch } from '../core/intake/reporting-identity';
@@ -87,6 +88,11 @@ test('one worker creation mints exactly one run identity across task, credential
     assert.equal(f.states.get(current.agentId!)!.labels!['nucleus.mcpBinding'], current.runId);
     assert.equal(f.store.events(task.id).filter(event => event.kind === 'agent_intent').length, 1);
     assert.equal(f.store.events(task.id).filter(event => event.kind === 'agent_created').length, 1);
+    const attempt = readCreationAttempt(f.store, { id: created.runId, taskId: task.id, hostId: current.hostId,
+      workspaceId: current.workspaceId, role: 'worker' });
+    assert.equal(attempt?.producerId, creationProducerId);
+    assert.ok(attempt.attemptId);
+    assert.equal(attempt.settlement?.outcome, 'returned');
   } finally { await f.close(); }
 });
 
