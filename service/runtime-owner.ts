@@ -975,7 +975,7 @@ export class QueueRuntime {
   dropLead(input: Parameters<Leads["drop"]>[0]) { return this.planning.dropLead(input); }
   reopenLead(input: Parameters<Leads["reopen"]>[0]) { return this.planning.reopenLead(input); }
   promoteLead(input: Parameters<Leads["promote"]>[0]) { return this.planning.promoteLead(input); }
-  async checkLead(input: { id:string; repository?:string; baseBranch?:string }, acceptance = true) { return this.planning.checkLead(input, acceptance); }
+  async checkLead(input: { id:string; repository?:string; baseBranch?:string; hostId?:string; identitySource?:import("../shared/host-kind").IdentitySource }, acceptance = true) { return this.planning.checkLead(input, acceptance); }
   private async executeLeadCheck(payload: unknown, operationId: string): Promise<OperationResult> { return this.planning.executeLeadCheck(payload, operationId); }
   submitLead(input: Parameters<RuntimePlanning["submitLead"]>[0]) { return this.planning.submitLead(input); }
   approveLead(input:{id:string;version:number;digest:string;approver:string;note:string;relayed:boolean}) { return this.planning.approveLead(input); }

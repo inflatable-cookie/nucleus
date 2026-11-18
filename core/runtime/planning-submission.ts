@@ -1,6 +1,7 @@
 import { assertSubmissionRouting } from "../planning/submission-routing";
 import { now, operationIdForKey } from "../store/store";
 import type { Submission } from "../../shared/contracts";
+import type { IdentitySource } from "../../shared/host-kind";
 import { complexityRefusal } from "../../shared/demand";
 import { validateCompletionRecipients } from "../scheduling/cohort";
 import { repositoryOrigin } from "../planning/lanes";
@@ -23,12 +24,13 @@ export class PlanningSubmission {
    * promotion Queue already accepted passes false: an operation accepted before
    * Spec 053 required complexity still replays (review #597).
    */
-  async checkDraft(input: { id: string; text: string; repoPath: string; baseBranch: string; originAgentId: string; attachedLanes?: string[] }, acceptance = true) {
+  async checkDraft(input: { id: string; text: string; repoPath: string; baseBranch: string; originAgentId: string; attachedLanes?: string[]; originIdentity?: IdentitySource }, acceptance = true) {
     let prepared: Awaited<ReturnType<typeof prepareDraftContent>> | null = null;
     try {
       const repository = await repositoryOrigin(input.repoPath) ?? input.repoPath;
       prepared = await prepareDraftContent({ text: input.text, repoPath: input.repoPath, baseBranch: input.baseBranch, originAgentId: input.originAgentId, draftId: input.id });
-      const submission = prepared.submission;
+      // The caller's proven identity decides the origin host of a check, as it does for a submission.
+      const submission = input.originIdentity ? { ...prepared.submission, originIdentity: input.originIdentity } : prepared.submission;
       const missingComplexity = acceptance ? complexityRefusal(submission) : null;
       if (missingComplexity) throw new Error(missingComplexity);
       const stageProfileRefusal = this.context.engine.briefStageProfileRefusal(input.text, submission.scope);
@@ -55,6 +57,7 @@ export class PlanningSubmission {
     const { captureHandoff } = await import("../planning/handoff");
     const prepared = await captureHandoff(input);
     if (input.hostId) prepared.submission = { ...prepared.submission, hostId: input.hostId };
+    prepared.submission = this.context.store.resolveSubmissionDependencies(prepared.submission);
     if (input.dryRun) {
       const origin = await repositoryOrigin(prepared.submission.repoPath).catch(() => null);
       const hostId = this.context.engine.selectIngressHost(input.hostId, prepared.submission.repoPath, origin, prepared.submission.originIdentity?.hostId);

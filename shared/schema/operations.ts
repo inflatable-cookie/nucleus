@@ -38,6 +38,8 @@ export const sourcePromotionOperationPayloadSchema = z.object({
 export const leadCheckOperationPayloadSchema = z.object({
   type: z.literal("lead_check"), id: z.string().min(1), version: z.number().int().positive(),
   digest: briefDigestSchema, repository: z.string().min(1), baseBranch: gitBranchNameSchema.default("main"),
+  /** The submitting caller's proven identity: it decides the origin host of a completion-notifying brief, as at promotion. */
+  identitySource: identitySourceSchema.optional(),
 }).strict();
 
 export const operationPayloadSchema = z.discriminatedUnion("type", [

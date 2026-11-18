@@ -194,6 +194,7 @@ export class Store {
     transaction: fn => this.transaction(fn),
     task: id => this.task(id),
     taskReference: id => this.taskReference(id),
+    dependencyTaskId: identity => this.dependencyTaskId(identity),
     update: (id, change, kind, detail, expected) => this.update(id, change as Partial<Task> & { attention?: never }, kind, detail, expected),
     dependencyWait: task => this.dependencyWait(task),
     putNotice: notice => this.putNotice(notice),
@@ -671,7 +672,24 @@ export class Store {
   liveSnapshot(input: SnapshotInput = {}): { tasks: ReturnType<typeof compactLiveTask>[]; cursor: string | null; hasMore: boolean } { return this.tasksStore.liveSnapshot(input); }
   task(id: string): Task { return this.tasksStore.task(id); }
   existing(input: Submission): Task | null { return this.submissionsStore.existing(input); }
-  taskReference(id:string) { return this.tasksStore.taskReference(id); }
+  /**
+   * A prerequisite named by task UUID or task reference (`owner/repo#072`, `repo#72`). Every
+   * dependency boundary resolves through here, so the accepted forms cannot drift. An unknown
+   * reference refuses by name; a UUID passes through and its existence check is the reader's.
+   */
+  dependencyTaskId(identity: string): string {
+    try { return this.numbers.resolve(identity); }
+    catch (error) {
+      if (error instanceof Error && error.message.startsWith("Ambiguous")) throw error;
+      throw new Error(`Prerequisite task does not exist: ${identity}. Submit prerequisites first.`);
+    }
+  }
+  /** The submission with its reference-form prerequisites named by UUID; the same submission then has one identity. */
+  resolveSubmissionDependencies(input: Submission): Submission {
+    if (!input.dependsOn.some(id => id.includes("#"))) return input;
+    return { ...input, dependsOn: input.dependsOn.map(id => this.dependencyTaskId(id)) };
+  }
+  taskReference(id:string) { return this.tasksStore.taskReference(this.dependencyTaskId(id)); }
   validateDependencies(input: Submission) { return this.submissionsStore.validateDependencies(input); }
   promoteQueuedTask(task:Task,actor="operator control"):Task { return this.submissionsStore.promoteQueuedTask(task, actor); }
   dependencyWait(task: Pick<Task,"dependsOn">): string { return this.tasksStore.dependencyWait(task); }
