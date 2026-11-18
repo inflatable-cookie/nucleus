@@ -206,7 +206,8 @@ export const hostOperationValueSchemas = {
   "thread.metadata": z.object({ threads: z.array(z.object({ threadId: boundedText(128), metadata: pluginMetadataSchema.nullable() }).strict()).max(200) }).strict(),
   "thread.title": z.object({ threadId: boundedText(128), title: nullableText(400) }).strict(),
   "thread.timeline": z.object({ threadId: boundedText(128), hasOlder: z.boolean(), pendingBackgroundTasks: z.array(boundedText(128)).max(32),
-    entries: z.array(z.object({ id: boundedText(200), seq: timestamp, at: timestamp, turnId: nullableText(128),
+    // BB composes thread, row kind and provider call ID; preserve the full identity.
+    entries: z.array(z.object({ id: boundedText(4_096), seq: timestamp, at: timestamp, turnId: nullableText(128),
       status: z.enum(["pending", "completed", "error", "interrupted"]), name: boundedText(128) }).strict()).max(2000),
   }).strict(),
   "thread.send": z.object({ threadId: boundedText(128), delivery: z.enum(["sent", "queued"]), mode: z.enum(HOST_SEND_MODES) }).strict(),

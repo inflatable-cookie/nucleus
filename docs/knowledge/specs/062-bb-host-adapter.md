@@ -1065,7 +1065,8 @@ starting, provisioning and waiting for a host remain
 busy without claiming a provider turn has begun. Per-agent observation reads fresh default
 execution options to prove the retained reviewer’s model; batch inventory does not add that read. Merge and cleanup use a per-thread bounded timeline,
 including pending tools and background activity, alongside core’s fresh inactivity and owned-process
-proof; the bounded page never claims complete history. Unknown spawns walk live and archived origin
+proof; the bounded page never claims complete history. Timeline entry IDs preserve BB’s full
+composite identity, bounded at 4,096 characters on the host channel. Unknown spawns walk live and archived origin
 pages, including hidden rows across every project, then read metadata in chunks. Only one exact
 task/run/host match binds. Empty, partial and ambiguous reads never authorize another spawn,
 including after the observation window; the existing attention path retains the intent.
