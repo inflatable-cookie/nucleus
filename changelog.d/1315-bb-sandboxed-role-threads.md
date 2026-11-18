@@ -6,7 +6,7 @@ not there falls back to the socket). The service also creates a BB run's
 owner-only scratch leaf before its thread exists, and keeps one shared sibling
 checkout per repository beside the task checkout — the same shape a Paseo
 worktree root has — so every task on that repository resolves relative sibling
-paths. BB role threads now run in Full Access (planner ruling, 2026-11-18, recorded in the task's held brief v2):
+paths. BB role threads now run in Full Access (planner ruling, 2026-11-18, recorded in the task's held brief, v2 and carried in v3):
 Claude Code's sandbox refuses the boot-session sysctl Effigy's foreground
 identity reads, so a sandboxed thread cannot validate at all; Paseo role threads
 already run full-access / bypassPermissions.

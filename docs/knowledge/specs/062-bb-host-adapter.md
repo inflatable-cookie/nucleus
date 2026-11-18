@@ -1623,7 +1623,8 @@ BB 0.49.
 ### The route that landed
 
 - **The mode: Full Access (planner ruling, 2026-11-18; recorded in the task's
-  Nucleus-held brief v2, `sha256:af17b0ce…`).** A sandboxed BB role thread cannot
+  Nucleus-held brief v2, `sha256:af17b0ce…`; carried into v3, `sha256:2c7bf152…`).**
+  A sandboxed BB role thread cannot
   run Effigy at all: Effigy's foreground identity needs the boot
   session (`sysctlbyname("kern.bootsessionuuid")`), which Claude Code's sandbox
   refuses with `EPERM` (measured above), so Effigy refuses "foreground owner
@@ -1689,6 +1690,15 @@ directory) created by the same `runTemporaryEnvironment` call the BB adapter mak
 before `run.attach` and before either thread exists, and it keeps the sandbox
 probes as the evidence for the limit.
 
+**Brief v3 (2026-11-18) rules the hand-built launch production-equivalent for
+this task.** The proof writes its own run records, scratch, tickets and prompts
+and spawns the threads with the BB CLI in Full Access. That is sufficient here: it
+shows on a real BB that the relay, the callback socket, Full Access, the sibling
+placement and Effigy all work. The adapter's own scratch and ticket creation is
+covered by `test/bb-run-scratch.test.ts`, and the end-to-end production launch
+(Nucleus dispatch creating the runs and `BbThreads` spawning the threads) is the
+planner's live BB trial after this merges, not part of this PR.
+
 ### Tests and proof
 
 `test/bb-report-relay.test.ts` pins the relay's gate (ticket by run id,
@@ -1698,8 +1708,9 @@ pins the generated helper choosing the loopback route for a `bb:` ticket and
 never printing the credential; `test/bb-plugin-backend.test.ts` pins the
 registered route and its refusals; `test/bb-run-scratch.test.ts` pins the
 owner-only leaf existing before `run.attach` and a launch refusal when it cannot
-be proved; `test/siblings.test.ts` pins the pinned-sibling link for a BB
-workspace, no change on another host, and an occupied name left untouched.
+be proved; `test/siblings.test.ts` pins one shared sibling checkout per
+repository for a `bb:` host, a second task re-observing it, no change on another
+host, and an occupied path left untouched.
 `effigy proof:bb:sandbox` runs two Claude Code role threads against an isolated
 BB server (the plugin installed into it, `sandboxEnabled` on, Full Access) in a
 real task worktree under the canonical per-repository root. The sibling checkout
