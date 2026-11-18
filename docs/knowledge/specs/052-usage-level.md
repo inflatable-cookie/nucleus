@@ -123,7 +123,10 @@ tiers" are `frontier` (Opus-class) and `very_high` (Sol extra-high-class).
   and continues as its usual revision run on a fresh agent at the climbed
   profile; delivery binds that agent and run as the task's retained worker,
   keeps the selected subscription group on both the run and the task, and
-  charges the group's assignment, so a later same-tier revision continues it. The climb is recorded before the launch
+  charges that fresh binding's assignment, so a later same-tier revision
+  continues it. A retained revision, re-review or coordinator turn keeps its
+  thread and charges nothing: the rotation history counts fresh and explicitly
+  selected bindings only. The climb is recorded before the launch
   so its tier stays permitted, and the `changes_requested` phase alone never
   authorizes it. Request reconciliation (`reconcileRoutingSignoffs`) and route
   admission read the same recorded climb, so a request or route at the earned

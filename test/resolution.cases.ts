@@ -1982,19 +1982,24 @@ test("changes return to the same worker and re-review resumes the same reviewer"
   try {
     await f.engine.wake();
     const reviewer = f.run().agentId;
+    const workerCharges = f.store.counts()["author"] ?? 0;
     await f.report("changes_required");
     await f.engine.wake();
     assert.equal(f.run().role, "revision");
     assert.equal(f.run().agentId, "worker");
+    assert.equal(f.store.counts()["author"] ?? 0, workerCharges, "a retained revision does not charge the group again");
+    const reviewCharges = f.store.counts()["review"] ?? 0;
     f.setHead("d".repeat(40));
     await f.report("ready_for_review");
     await f.engine.wake();
     assert.equal(f.run().role, "reviewer");
     assert.equal(f.run().agentId, reviewer);
     assert.equal(f.creates.length, 1);
+    assert.equal(f.store.counts()["review"] ?? 0, reviewCharges, "a retained re-review does not charge the group again");
   } finally {
     await f.close();
   }
+});
 test('Spec 052: an applied changes-required review climbs the next worker run one tier, and a retained reviewer below the climbed worker is replaced',async()=>{
  const f=fixture(false,false,undefined,true);try{
   f.adapter.verifyResume=async()=>{};
@@ -2051,16 +2056,16 @@ test('Spec 052: an applied changes-required review climbs the next worker run on
   f.store.setMeta('pool',[...f.store.pool(),{profileId:topReviewer.id,enabled:true,group:'reviewer-top',roles:['reviewer'],weight:1,scopes:['general'],capability:'very_high',cost:'medium'}]);
   assert.equal(f.engine.resolution.select({...f.current(),profile:highWorker,profileGroup:'worker-high'},'reviewer')?.profile.id,topReviewer.id,'Maximum selects a top-tier reviewer');
   f.store.setMeta('usageLevel',{level:'normal',until:null,setAt:new Date().toISOString()});
+  const climbedCharges=f.store.counts()['worker-high']??0;
   await f.report('changes_required');
   await f.engine.resolution.launch(f.current(),'revision');
   const second=f.run();
   assert.equal(second.role,'revision');
   assert.equal(second.profile?.id,highWorker.id,'the second revision stays at the requested tier');
   assert.ok(f.store.events(f.task.id).filter(event=>event.kind==='worker_climb_armed').length===1,'only the first review round climbs');
+  assert.equal(f.store.counts()['worker-high']??0,climbedCharges,'the retained second revision does not charge the group again');
   assert.equal(second.agentId,revision.agentId,'the next same-tier revision continues the worker the climb bound');
  }finally{await f.close()}
-});
-
 });
 test("re-review replaces a closed reviewer while preserving the ordinary source workspace", async () => {
   const f = fixture(false, false, undefined, true);

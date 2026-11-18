@@ -32,10 +32,15 @@ export function retainedThreadBinding(ctx: LaunchThreadContext, t: Task, role: R
     : role === 'executor' ? priorExecutor?.agentId ?? null : t.coordinatorAgentId || null;
   const profile = options.profile ?? firstWorkerSelection?.profile ?? (role === 'revision' ? t.profile : role === 'reviewer' ? t.resolution.reviewerProfile
     : role === 'executor' ? priorExecutor?.profile ?? null : store.runs(t.id).findLast(run => run.agentId === agentId && run.profile)?.profile ?? null);
-  // The selected profile's own pool group is the binding's group for every role,
-  // so reservation charges the assignment and delivery keeps it on the run and
-  // the task (a revision with no retained agent had a null group here).
-  const group = firstWorkerSelection?.entry.group ?? groupForProfile(ctx, profile);
+  // The group is charged on a fresh or explicitly selected binding, and on a
+  // binding with no retained agent (the Spec 052 climb). A retained revision,
+  // re-review or coordinator turn keeps its existing thread and must not add an
+  // assignment: Spec 053 rotates over the last 50, so retained turns would crowd
+  // the history and push busy profiles down the rotation.
+  const group = firstWorkerSelection?.entry.group
+    ?? (options.profile ? groupForProfile(ctx, options.profile) : null)
+    ?? (role === 'executor' && priorExecutor?.profile ? groupForProfile(ctx, priorExecutor.profile) : null)
+    ?? (agentId ? null : groupForProfile(ctx, profile));
   return { agentId, profile, group, priorExecutor };
 }
 
