@@ -1801,16 +1801,20 @@ review or merge credit; live participants and unsettled effects remain fences.
 
 ### Uncertain creation and absence
 
-- A run or worker creation that errors, or whose host call passes its admission
-  deadline, is `uncertain` with no agent. Nothing resends it.
-- Observation runs an exact lookup on each pending agentless run. Zero matches
-  after the grace window is absence. The first absence gets one same-role
-  automatic replacement. A second absence, with the replacement budget spent,
-  settles the run as absent: it records `absentProvenAt`, observation never
-  looks it up again, and it stops being a blocking run-delivery effect, so
-  `next` does not offer `retry_effect` for it. The task waits with `route` and
-  `restart` suggested. No coordinator is engaged, because the coordinator's own
-  creation runs on the same host.
+- Each fresh agent reservation records the service process and creation attempt
+  in the same transaction. The native creation call records its return or throw
+  against that attempt. An admission deadline leaves a pending native call owned.
+- The recovery sweep and coordinator restart require a complete exact lookup on
+  the recorded host and workspace to release an agentless recovery. A zero
+  result clears its run, credential and episode binding together when the lookup
+  started after grace and the attempt had settled or belonged to a previous
+  service process. A legacy reservation without a producer record stays unknown.
+- A single exact match binds in the sweep. An incomplete, unavailable or
+  ambiguous reading holds the reservation. Release keeps the original task stop
+  and recovery allowance. Ordinary admission gives any later launch a fresh run.
+- Worker and other resolution sweeps retain agentless creations on empty
+  inventory. Their owner-control cutover is tracked in
+  [Spec 066](../specs/066-one-reconciler.md).
 - `route role=reviewer now` on a proven-absent run releases it without an archive
   wait: its credential is revoked and its incident resolves. The reviewer then
   launches one fresh run on the named profile. A creation not yet proven absent
@@ -2894,14 +2898,8 @@ movement invalidates source approval and preserves the normal readiness gates.
 - An attention notice states the current stop. A resolved recovery episode,
   including an action recorded not applied because an owner verb superseded it,
   is history and is never quoted as a live blockage.
-- After the grace, one complete exact lookup resolves an uncertain creation: a
-  single match binds; proven absence revokes the callback and issues at most one
-  same-role replacement; ambiguity escalates.
-- An uncertain reviewer or coordinator creation with no agent ID stays fenced
-  until a versioned operator action proves zero matches, revokes the callback
-  and launches one fresh run. A failed recovery-coordinator creation is
-  reconciled only when its error is recorded and its generation is current.
-  Generic retry never clears an unresolved creation intent.
+- Agentless recovery follows the proof and release rules in
+  [Uncertain creation and absence](#uncertain-creation-and-absence).
 - A decision that escalates, spends a coordinator run or returns work verifies
   live the facts named in Spec 016 rule 4, once per attempt; a failed read is
   `unverified` and retries within a bounded grace

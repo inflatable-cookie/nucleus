@@ -13,6 +13,8 @@ import { dirname, join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { Store, digest } from "../core/store/store";
+import { creationProducerId, readCreationAttempt } from "../core/store/store-task-funnel";
+import { Admission, admitAdapter } from "../core/host/admission";
 import { briefDigest } from "../core/planning/brief";
 import { Engine, controlHasExternalEffect } from "../core/engine";
 import {
@@ -125,6 +127,7 @@ function fixture(
   mergeHold = false,
   uncertainMergeRetryMs?: number,
   realSource = false,
+  admission?: Admission,
 ) {
   const source = realSource ? ownerRevisionFixture() : null;
   const head = source?.oldHead ?? "a".repeat(40),
@@ -388,7 +391,7 @@ function fixture(
   );
   const engine = new Engine(
     store,
-    adapter,
+    admission ? admitAdapter(adapter, admission) : adapter,
     0,
     () => true,
     undefined,
@@ -14220,47 +14223,240 @@ function plantAbsentRecovery(f: ReturnType<typeof fixture>) {
   });
   return run;
 }
-test("restart coordinator looks up and releases an agentless escalated recovery", async () => {
-  for (const status of ["intent", "uncertain"] as const) {
-    const f = fixture();
-    try {
-      enableRecovery(f);
-      const run = plantAbsentRecovery(f);
-      f.store.putRun({ ...run, status });
-      f.adapter.findRunAgents = async () => [
-        { id: "late", workspaceId: "workspace" },
-      ];
-      const restart = () =>
-        f.engine.performTaskControl({
-          taskId: f.task.id,
-          version: f.current().version,
-          action: "restart",
-          role: "coordinator",
-          reason: "Resume recovery",
-        });
-      await assert.rejects(restart(), /no longer proven absent/);
-      assert.equal(f.store.run(run.id)?.released, false);
-      f.adapter.findRunAgents = async () => [];
-      await restart();
-      assert.equal(f.store.run(run.id)?.released, true);
-      assert.equal(f.store.run(run.id)?.status, "superseded");
-      assert.throws(
-        () => f.store.authenticate(run.id, "old-token"),
-        /Unauthorized/,
-      );
-      assert.equal(f.current().resolution.recovery, null);
-      await f.engine.wake();
-      assert.ok(
-        f.store
-          .runs(f.task.id)
-          .some((item) => item.role === "recovery" && item.id !== run.id),
-        "recovery is relaunched",
-      );
-    } finally {
-      await f.close();
-    }
+/** Recreate the 1ad25d09 shape through the coordinator reservation and creation writers. */
+function startC4(f: ReturnType<typeof fixture>) {
+  const recipients = enableRecovery(f);
+  f.store.update(f.task.id, { phase: "needs_attention" });
+  attention(f, "The integration check needs a follow-up");
+  let capture!: (value: {run: Run; token: string}) => void;
+  const started = new Promise<{run: Run; token: string}>(resolve => { capture = resolve; });
+  let finish!: () => void;
+  const finished = new Promise<void>(resolve => { finish = resolve; });
+  f.adapter.createRun = async (_task, run, token) => {
+    f.creates.push(run);
+    capture({run: f.store.run(run.id)!, token});
+    await finished;
+    throw new Error("Synthetic OpenCode launch ended before an agent was returned");
+  };
+  const route = f.engine.resolution.recovery.route(f.current());
+  return { recipients, started: Promise.race([started, route.then(result => {
+    throw Error(`Recovery returned before reserving a run: ${result}; ${f.current().reason}`);
+  })]), finish, route };
+}
+
+function nextC4Move(store: Store, taskId: string) {
+  return ownerTaskNext(collectOwnerVerbFacts(store, store.task(taskId))).verbs.find(verb =>
+    verb.verb === "move" && (verb.args?.to === "review" || verb.refusal?.startsWith("move review:")));
+}
+
+function restartC4(f: ReturnType<typeof fixture>) {
+  return f.engine.performTaskControl({
+    taskId: f.task.id, version: f.current().version, action: "restart",
+    role: "coordinator", reason: "Resume the recovery episode",
+  });
+}
+
+test("C4 restart requires both exact absence and a settled producer", async () => {
+  const f = fixture();
+  const launch = startC4(f);
+  try {
+    const {run, token} = await launch.started;
+    await f.engine.resolution.recovery.pass(f.task.id);
+    assert.equal(f.current().resolution.recovery?.status, "escalated");
+    await assert.rejects(restartC4(f), /producer has not been proved stopped/);
+    assert.equal(nextC4Move(f.store, f.task.id)?.available, false);
+    assert.equal(f.store.run(run.id)?.released, false);
+    assert.doesNotThrow(() => f.store.authenticate(run.id, token));
+
+    launch.finish();
+    await launch.route;
+    f.adapter.findRunAgents = async () => [{ id: "late", workspaceId: "workspace" }];
+    await assert.rejects(restartC4(f), /no longer proven absent/);
+    assert.equal(f.store.run(run.id)?.released, false);
+
+    f.adapter.findRunAgents = async () => [];
+    await restartC4(f);
+    assert.equal(f.store.run(run.id)?.status, "superseded");
+    assert.equal(f.store.run(run.id)?.released, true);
+    assert.ok(f.store.run(run.id)?.absentProvenAt);
+    assert.throws(() => f.store.authenticate(run.id, token), /Unauthorized/);
+    assert.equal(f.current().resolution.recovery, null);
+
+    const create = f.adapter.createRun;
+    f.adapter.createRun = async (task, next, credential) => {
+      assert.notEqual(next.id, run.id);
+      return create(task, next, credential);
+    };
+    await f.engine.resolution.recovery.route(f.current());
+    assert.equal(f.creates.filter(item => item.id === run.id).length, 1);
+    assert.ok(f.creates.some(item => item.role === "recovery" && item.id !== run.id));
+  } finally {
+    launch.finish();
+    await launch.route;
+    await f.close();
   }
 });
+
+test("C4 sweep releases the settled agentless recovery after reopen and permits an ordinary move", async () => {
+  const f = fixture();
+  const launch = startC4(f);
+  try {
+    const {run, token} = await launch.started;
+    assert.deepEqual([run.role, run.status, run.agentId, run.released, run.active, run.completion],
+      ["recovery", "intent", null, false, null, null]);
+    assert.equal(f.current().resolution.recovery?.runId, run.id);
+    const intent = readCreationAttempt(f.store, run);
+    assert.equal(intent?.producerId, creationProducerId);
+    assert.ok(intent.attemptId);
+    assert.equal(intent.settlement, null);
+    assert.match(nextC4Move(f.store, f.task.id)?.refusal ?? "", /delivery is unknown|run-delivery/);
+
+    launch.finish();
+    await launch.route;
+    assert.equal(readCreationAttempt(f.store, run)?.settlement?.outcome, "threw");
+    assert.equal(f.store.run(run.id)?.released, false);
+    await f.engine.stop();
+
+    const reopened = new Store(join(f.dir, "queue.sqlite"));
+    const resumed = new Engine(reopened, f.adapter, 120_000);
+    resumed.profiles = [...f.engine.profiles];
+    try {
+      assert.equal(readCreationAttempt(reopened, run)?.settlement?.attemptId, intent.attemptId);
+      await resumed.resolution.recovery.pass(f.task.id);
+      assert.equal(reopened.run(run.id)?.released, false, "the completed call still needs a lookup after grace");
+      reopened.db.prepare("UPDATE events SET at=? WHERE taskId=? AND kind='creation_attempt_settled'")
+        .run(new Date(Date.now() - 180_000).toISOString(), f.task.id);
+      const countsBefore = [f.creates.length, f.sends.length, launch.recipients.length, reopened.notices(f.task.id).length];
+      const attemptsBefore = reopened.task(f.task.id).resolution.recoveryAttempts;
+      await resumed.resolution.recovery.pass(f.task.id);
+      const settled = reopened.task(f.task.id);
+      assert.equal(reopened.run(run.id)?.released, true);
+      assert.equal(reopened.run(run.id)?.status, "superseded");
+      assert.ok(reopened.run(run.id)?.absentProvenAt);
+      assert.throws(() => reopened.authenticate(run.id, token), /Unauthorized/);
+      assert.equal(settled.resolution.recovery?.runId, null);
+      assert.equal(settled.resolution.recovery?.status, "resolved");
+      assert.equal(settled.resolution.recoveryActive, false);
+      assert.equal(settled.resolution.recoveryAttempts, attemptsBefore);
+      const releases = reopened.eventsAll(f.task.id).filter(event => event.kind === "absent_recovery_released");
+      assert.deepEqual(releases.map(event => JSON.parse(event.detail)),
+        [{runId: run.id, attemptId: intent.attemptId, terminatedBy: "call_settled"}]);
+      assert.equal(nextC4Move(reopened, f.task.id)?.available, true);
+
+      const eventCount = reopened.eventsAll(f.task.id).length;
+      await resumed.resolution.recovery.pass(f.task.id);
+      await resumed.resolution.recovery.route(settled);
+      assert.equal(reopened.eventsAll(f.task.id).length, eventCount);
+      assert.deepEqual([f.creates.length, f.sends.length, launch.recipients.length, reopened.notices(f.task.id).length], countsBefore);
+
+      f.adapter.createRun = async (task, next) => ({id: `agent-${next.id}`, workspaceId: task.workspaceId});
+      const moved = await resumed.performTaskControl({
+        taskId: f.task.id, version: settled.version, action: "move", to: "review",
+        reason: "Review the retained exact PR head",
+      });
+      assert.ok(["awaiting_review", "reviewing"].includes(moved.phase), moved.reason);
+    } finally {
+      await resumed.stop();
+      reopened.close();
+    }
+  } finally {
+    launch.finish();
+    await launch.route;
+    await f.close();
+  }
+});
+
+test("C4 transport deadline keeps a live producer owned until the native call ends", async () => {
+  const admission = new Admission({startIntervalMs: 0, callDeadlineMs: 30});
+  const f = fixture(false, false, undefined, false, admission);
+  const keepAlive = setTimeout(() => {}, 5000);
+  const launch = startC4(f);
+  try {
+    const {run, token} = await launch.started;
+    await launch.route;
+    assert.equal(admission.snapshot().abandoned.count, 1);
+    assert.equal(readCreationAttempt(f.store, run)?.settlement, null);
+    await f.engine.resolution.recovery.pass(f.task.id);
+    assert.equal(f.store.run(run.id)?.released, false);
+    assert.equal(nextC4Move(f.store, f.task.id)?.available, false);
+    assert.doesNotThrow(() => f.store.authenticate(run.id, token));
+    launch.finish();
+    await new Promise<void>(resolve => setImmediate(resolve));
+    assert.equal(readCreationAttempt(f.store, run)?.settlement?.outcome, "threw");
+    await f.engine.resolution.recovery.pass(f.task.id);
+    assert.equal(f.store.run(run.id)?.released, true);
+  } finally {
+    clearTimeout(keepAlive);
+    launch.finish();
+    await launch.route;
+    await f.close();
+  }
+});
+
+test("C4 needs a complete online lookup and a recorded producer identity", async () => {
+  const f = fixture();
+  const launch = startC4(f);
+  try {
+    const {run, token} = await launch.started;
+    launch.finish();
+    await launch.route;
+    for (const reason of ["Exact inventory page was incomplete", "Host lookup timed out"]) {
+      f.adapter.findRunAgents = async () => { throw Error(reason); };
+      await f.engine.resolution.recovery.pass(f.task.id);
+      await assert.rejects(restartC4(f), new RegExp(reason));
+      assert.equal(f.store.run(run.id)?.released, false);
+      assert.equal(nextC4Move(f.store, f.task.id)?.available, false);
+    }
+    let lookups = 0;
+    f.adapter.findRunAgents = async () => { lookups++; return []; };
+    f.engine.hostAvailable = () => false;
+    await f.engine.resolution.recovery.pass(f.task.id);
+    await assert.rejects(restartC4(f), /host.*online|unavailable/);
+    assert.equal(lookups, 0);
+    assert.equal(f.store.run(run.id)?.released, false);
+
+    f.engine.hostAvailable = () => true;
+    // Recreate a legacy row from the real writer by removing its typed record.
+    f.store.db.prepare("DELETE FROM events WHERE taskId=? AND kind='creation_attempt_reserved'").run(f.task.id);
+    await f.engine.resolution.recovery.pass(f.task.id);
+    await assert.rejects(restartC4(f), /producer has not been proved stopped/);
+    assert.equal(f.store.run(run.id)?.released, false);
+    assert.doesNotThrow(() => f.store.authenticate(run.id, token));
+  } finally {
+    launch.finish();
+    await launch.route;
+    await f.close();
+  }
+});
+
+test("C4 release after a service roll uses the recorded producer identity", async () => {
+  const f = fixture();
+  const launch = startC4(f);
+  try {
+    const {run, token} = await launch.started;
+    const attempt = readCreationAttempt(f.store, run)!;
+    launch.finish();
+    await launch.route;
+    // Replay the on-disk state from a different service process that exited
+    // before recording a settlement. The run and binding came from real writers.
+    f.store.db.prepare("DELETE FROM events WHERE taskId=? AND kind='creation_attempt_settled'").run(f.task.id);
+    f.store.db.prepare("UPDATE events SET detail=json_set(detail,'$.producerId',?) WHERE taskId=? AND kind='creation_attempt_reserved'")
+      .run(randomUUID(), f.task.id);
+    assert.equal(readCreationAttempt(f.store, run)?.settlement, null);
+    await f.engine.resolution.recovery.pass(f.task.id);
+    assert.equal(f.store.run(run.id)?.released, true);
+    assert.throws(() => f.store.authenticate(run.id, token), /Unauthorized/);
+    const releases = f.store.eventsAll(f.task.id).filter(event => event.kind === "absent_recovery_released");
+    assert.deepEqual(releases.map(event => JSON.parse(event.detail)),
+      [{runId: run.id, attemptId: attempt.attemptId, terminatedBy: "service_replaced"}]);
+    assert.equal(nextC4Move(f.store, f.task.id)?.available, true);
+  } finally {
+    launch.finish();
+    await launch.route;
+    await f.close();
+  }
+});
+
 test("recovery pass keeps an uncertain agentless coordinator owned on empty lookup", async () => {
   const f = fixture();
   try {

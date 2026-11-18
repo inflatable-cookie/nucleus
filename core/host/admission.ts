@@ -17,7 +17,7 @@ import type { Adapter } from "./adapter";
 import { isTransportFailure } from "../../shared/transport";
 import { HostCallAbandonedError } from "./errors";
 import { withPaseoCallTiming, type PaseoCallRecorder } from "../../shared/host-call-timing";
-import { DEFAULT_GLOBAL_LIMIT } from "../../shared/contracts";
+import { DEFAULT_GLOBAL_LIMIT, type Run } from "../../shared/contracts";
 import {
   type AdmissionClass, type PaseoAdmission,
 } from "../../shared/telemetry";
@@ -689,6 +689,21 @@ export function admissionOf(adapter: Adapter): Admission | null {
   return (adapter as Partial<Admitted>)[ADMISSION] ?? null;
 }
 
+type CreationMethod = 'createAgent' | 'createRun';
+type CreationCall = () => Promise<{ id: string; workspaceId: string | null }>;
+type TrackCreation = (call: CreationCall) => ReturnType<CreationCall>;
+const TRACK_CREATION = Symbol('trackHostCreation');
+type TrackedCreationAdapter = Adapter & {
+  [TRACK_CREATION](method: CreationMethod, args: unknown[], track: TrackCreation): ReturnType<CreationCall>;
+};
+
+/** Track the native creation promise inside admission's caller deadline. */
+export function trackHostCreation(adapter: Adapter, method: CreationMethod, args: unknown[], track: TrackCreation) {
+  const admitted = (adapter as Partial<TrackedCreationAdapter>)[TRACK_CREATION];
+  if (admitted) return admitted(method, args, track);
+  return track(() => Reflect.apply(adapter[method]!, adapter, args));
+}
+
 /**
  * Wrap an adapter so every outbound Paseo call passes through one admission
  * controller. Methods that are not classified forward unchanged, so identity,
@@ -785,7 +800,10 @@ export function admitAdapter(raw: Adapter, admission: Admission): Adapter {
   set("findWorkspaces", call("inventory", "findWorkspaces", args => requestIdentity("findWorkspaces", args)));
   set("findCloseoutWorkspaces", call("inventory", "findCloseoutWorkspaces", args => requestIdentity("findCloseoutWorkspaces", args)));
   set("findAgents", call("inventory", "findAgents", args => requestIdentity("findAgents", args)));
-  set("findRunAgents", call("inventory", "findRunAgents", args => requestIdentity("findRunAgents", args)));
+  // A recovery release needs a read started after producer proof. Sharing an
+  // earlier lookup could reuse an empty inventory from while it was alive.
+  set("findRunAgents", call("inventory", "findRunAgents", args => (args[0] as Run).role === 'recovery'
+    ? undefined : requestIdentity("findRunAgents", args)));
   set("findOpenBranchPr", call("control", "findOpenBranchPr", args => requestIdentity("findOpenBranchPr", args)));
   set("findAnyOpenBranchPr", call("control", "findAnyOpenBranchPr", args => requestIdentity("findAnyOpenBranchPr", args)));
   // populateTaskWorktree is Git bulk work and stays unwrapped: wrapping it as
@@ -828,14 +846,14 @@ export function admitAdapter(raw: Adapter, admission: Admission): Adapter {
   set("archiveAgent", call("cleanup", "archiveAgent", args => requestIdentity("archiveAgent", args), (args) => {
     if (typeof args[0] === "string") admission.invalidate(args[0]);
   }));
-  set("createAgent", call("control", "createAgent", args => requestIdentity("createAgent", args), (_args, result) => {
-    const agent = result as { id?: string } | undefined;
-    if (agent?.id) admission.invalidate(agent.id);
-  }));
-  set("createRun", call("control", "createRun", args => requestIdentity("createRun", args), (_args, result) => {
-    const agent = result as { id?: string } | undefined;
-    if (agent?.id) admission.invalidate(agent.id);
-  }));
+  const create = (name: CreationMethod, args: unknown[], track: TrackCreation = work => work()) =>
+    admission.run("control", () => track(() => Reflect.apply(held[name] as (...input: unknown[]) => ReturnType<CreationCall>, raw, args)), requestIdentity(name, args),
+      { holder: requestHolder(name, args) }).then(agent => {
+      if (agent?.id) admission.invalidate(agent.id);
+      return agent;
+    });
+  for (const method of ['createAgent', 'createRun'] as const)
+    if (typeof held[method] === 'function') set(method, (...args: unknown[]) => create(method, args));
   set("sendRun", call("callback", "sendRun", args => requestIdentity("sendRun", args), (args) => {
     const run = args[1] as { agentId?: string | null } | undefined;
     if (run?.agentId) admission.invalidate(run.agentId);
@@ -870,6 +888,7 @@ export function admitAdapter(raw: Adapter, admission: Admission): Adapter {
   return new Proxy(raw, {
     get(target, prop, receiver) {
       if (prop === ADMISSION) return admission;
+      if (prop === TRACK_CREATION) return create;
       if (typeof prop !== "string") return Reflect.get(target, prop, receiver);
       const override = overrides[prop];
       if (override) return override;

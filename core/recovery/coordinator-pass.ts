@@ -1,4 +1,3 @@
-import { creationLookup } from './absent-creation/restarts';
 import { missingReportBindingCompletion } from '../intake/reporting-failure';
 import { digest, now } from '../store/store';
 import type {Run, Task} from '../../shared/contracts';
@@ -7,7 +6,7 @@ import { isWaitingTaskStop } from '../../shared/task-stop';
 import { reviewFenceHoldsCoordinators } from '../review/review-continuation';
 import { dispatchBlocked } from '../dispatch/capacity';
 import {escalationSummary} from './task-reasons';
-import {ACCEPTED_RECOVERY_NOT_APPLIED_PREFIX, cause, needsAttention, type CoordinatorEpisode, type RecoveryContext} from './coordinator-episode';
+import {ACCEPTED_RECOVERY_NOT_APPLIED_PREFIX, cause, needsAttention, observeRecoveryCreation, type CoordinatorEpisode, type RecoveryContext} from './coordinator-episode';
 import { plannerEscalations, type LadderEvent } from '../questions/ladder';
 import { closeEscalationFollowups } from '../questions/ladder/continuation';
 import {liveRecoveryWait,liveWorkingParticipant,observeRecoveryParticipants} from './live-noop';
@@ -166,17 +165,29 @@ export class CoordinatorPass {
     }
     if(!run.agentId){
      if(this.resolution.startsNoRuns())continue;
-     const found=await this.resolution.adapter.findRunAgents!(run);
+     const observed=await observeRecoveryCreation(this.resolution,t,run);
      if(this.resolution.stopped()||this.resolution.startsNoRuns())return;
      t=this.store.task(t.id);
      if(dispatchBlocked(t)||reviewFenceHoldsCoordinators(t,this.store))continue;
-     const latestRun=this.store.run(run.id);
-     if(!latestRun||latestRun.released||t.resolution.recovery?.runId!==latestRun.id||latestRun.generation!==t.coordinatorGeneration)continue;
-     run=latestRun;
-     const creation=creationLookup(found,run.workspaceId);
-     if(!run.agentId&&creation.kind!=='bound'){this.episode.escalate(t,'Coordinator recovery creation is uncertain; no duplicate was launched. Inspect the queue run before retrying.');continue;}
-     if(!run.agentId&&creation.kind==='bound'){run={...run,agentId:creation.agentId,status:'running'};this.store.putRun(run);}
-     if(t.coordinatorGeneration===run.generation&&!t.coordinatorAgentId)this.store.update(t.id,{coordinatorAgentId:run.agentId!},'coordinator_assigned',run.agentId!);
+     const creation=observed.lookup;
+     if(creation.kind==='absent'&&observed.proof){this.episode.releaseAbsent(observed);continue;}
+     const bound=this.store.transaction(()=>{
+      const binding=this.episode.currentCreation(observed);
+      if(!binding)return null;
+      const {current,run:latest}=binding;
+      if(creation.kind!=='bound'){
+       this.episode.escalate(current,'Coordinator recovery creation is uncertain; no duplicate was launched. Inspect the queue run before retrying.');
+       return null;
+      }
+      const enrolled={...latest,agentId:creation.agentId,status:'running' as const};
+      this.store.putRun(enrolled);
+      this.episode.save(current,{agentId:creation.agentId});
+      if(current.coordinatorAgentId!==creation.agentId)this.store.update(current.id,{coordinatorAgentId:creation.agentId},'coordinator_assigned',creation.agentId);
+      return enrolled;
+     });
+     if(!bound)continue;
+     run=bound;
+     t=this.store.task(t.id);
     }
     const state=await this.resolution.onTaskHost(t, () => this.resolution.host.observe(run!.agentId!));if(this.resolution.stopped())return;
     const idle=!state.active&&!state.permissions&&['idle','error','closed'].includes(state.status);
