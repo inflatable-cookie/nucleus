@@ -19,7 +19,7 @@ export async function restartAfterIntent(
   start: (store: Store) => Engine,
   verify: (
     store: Store,
-    sweep: () => Promise<void>,
+    sweep: (expectedEvents?: readonly string[]) => Promise<void>,
     engine: Engine,
   ) => Promise<void>,
 ) {
@@ -47,13 +47,30 @@ export async function restartAfterIntent(
   try {
     await verify(
       reopened,
-      async () => {
-        const notices = reopened.notices(taskId);
+      async (expectedEvents = []) => {
+        const before = completedPass
+          ? {
+              events: reopened.eventsAll(taskId),
+              notices: reopened.notices(taskId),
+            }
+          : undefined;
         await restarted.sweepOnce();
         await restarted.drainCleanup();
         await restarted.quiesce();
         assert.equal(reopened.getMeta("engineError"), "");
-        if (completedPass) assert.deepEqual(reopened.notices(taskId), notices);
+        if (before) {
+          const events = reopened.eventsAll(taskId);
+          assert.deepEqual(
+            events.slice(0, before.events.length),
+            before.events,
+          );
+          assert.deepEqual(
+            events.slice(before.events.length).map((event) => event.kind),
+            expectedEvents,
+            "Unexpected events on a later sweep",
+          );
+          assert.deepEqual(reopened.notices(taskId), before.notices);
+        }
         completedPass = true;
       },
       restarted,

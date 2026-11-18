@@ -12,7 +12,7 @@ import {
   dispositionSchema,
   reviewEntryRecordSchema,
 } from "../shared/contracts";
-import { profile } from "./support/fakes";
+import { observeIdle, profile } from "./support/fakes";
 import {
   assertRetry,
   deferredRestart,
@@ -27,17 +27,24 @@ for (const agent of [false, true]) {
   test(`${kind} binds the original native resource across a roll`, async (t) => {
     let attempts = 0;
     let observed = 0;
+    let agentCreations = 0;
     const worker = profile("worker-profile");
     const f = intentFixture(
       t,
       {
         validate: async () => head,
         verifyWorkspace: async (task) => task.branch,
+        observe: async (id) => ({
+          ...(await observeIdle("ws")(id)),
+          status: "running",
+          active: true,
+        }),
         createWorkspace: async () => {
           attempts++;
           throw lostReply;
         },
         createAgent: async () => {
+          agentCreations++;
           if (agent) {
             attempts++;
             throw lostReply;
@@ -100,15 +107,16 @@ for (const agent of [false, true]) {
         );
         assert.ok(observed >= 1, "read the original target before continuing");
         assert.equal(attempts, 1);
-        const count = store
-          .eventsAll(f.id)
-          .filter((e) => e.kind === kind).length;
-        await sweep();
-        assert.equal(
-          store.eventsAll(f.id).filter((e) => e.kind === kind).length,
-          count,
-        );
+        assert.equal(agentCreations, 1);
+        // Binding gives the next pass a worker to observe for the first time.
+        await sweep(agent ? ["agent_state", "task_waiting"] : ["agent_state"]);
+        assert.equal(store.task(f.id).lastAgentStatus, "running");
+        assert.equal(store.task(f.id).reason, "Worker running");
         assert.equal(attempts, 1);
+        assert.equal(agentCreations, 1);
+        await sweep();
+        assert.equal(attempts, 1);
+        assert.equal(agentCreations, 1);
       },
     );
   });
@@ -119,7 +127,7 @@ test("closeout_workspace_intent rebinds the existing workspace", async (t) => {
   let observations = 0;
   const closeout = { id: "closeout", directory: "fixture-closeout" };
   const ports = {
-    workspaceAvailable: async () => false,
+    workspaceAvailable: async (id: string) => id === closeout.id,
     createCloseoutWorkspace: async () => {
       sends++;
       throw lostReply;
@@ -160,16 +168,21 @@ test("closeout_workspace_intent rebinds the existing workspace", async (t) => {
         store.task(f.id).resolution.closeoutWorkspaceId,
         closeout.id,
       );
+      assert.equal(
+        store.task(f.id).resolution.coordinatorWorkspaceId,
+        closeout.id,
+      );
       assert.equal(sends, 1);
       assert.equal(observations, 1);
-      await sweep();
       assert.equal(
         store
           .eventsAll(f.id)
           .filter((e) => e.kind === "closeout_workspace_created").length,
         1,
       );
+      await sweep();
       assert.equal(sends, 1);
+      assert.equal(observations, 1);
     },
   );
 });
