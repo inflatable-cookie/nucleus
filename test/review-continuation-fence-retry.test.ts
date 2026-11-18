@@ -2,6 +2,63 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { fixture } from './support/review-continuation-fixture';
 
+test('an idle reviewer with a delivered checkpoint can redeliver its report on the same run', async () => {
+  const f = fixture(); try {
+    await f.report({ covered: ['Diff'], remaining: ['Tests'] }, 'report-lost');
+    await f.engine.wake();
+    assert.equal(f.reviewerDeliveries.length, 1);
+    const sent: { id: string; text: string }[] = [];
+    f.adapter.notify = async (_agent, id, text) => { sent.push({ id, text }); };
+    const task = f.current();
+    await f.engine.performTaskControl({ action: 'move', to: 'review', taskId: task.id, version: task.version, reason: 'Recover the lost report' });
+    assert.equal(sent.length, 1);
+    assert.match(sent[0]!.id, /^ns-reviewer-report-/);
+    assert.equal(f.current().resolution.currentRunId, f.runId);
+    assert.equal(f.createdRuns.length, 0);
+  } finally { await f.close(); }
+});
+
+test('a missing task-level binding does not allow replacing its current reviewer', async () => {
+  const f = fixture(); try {
+    const task = f.current();
+    f.store.update(task.id, { resolution: { ...task.resolution, reviewerAgentId: null } });
+    await assert.rejects(f.engine.performTaskControl({ action: 'move', to: 'review', fresh: true, taskId: task.id,
+      version: f.current().version, reason: 'Replace the reviewer' }), /retained reviewer/);
+    assert.equal(f.createdRuns.length, 0);
+  } finally { await f.close(); }
+});
+
+test('an owner restarts an exhausted checkpoint through the retained reviewer', async () => {
+  const f = fixture(); try {
+    await f.report({ covered: ['Diff'], remaining: ['Tests'] }, 'exhausted');
+    f.store.putRun({ ...f.run(), reviewBudgetExhaustedAt: new Date().toISOString() });
+    const sent: string[] = [];
+    f.adapter.notify = async (_agent, _id, text) => { sent.push(text); };
+    const task = f.current();
+    await f.engine.performTaskControl({ action: 'restart', role: 'reviewer', taskId: task.id, version: task.version,
+      reason: 'Finish the review', instruction: 'Check the outstanding tests' });
+    assert.equal(sent.length, 1);
+    assert.match(sent[0]!, /Check the outstanding tests/);
+    assert.equal(f.current().resolution.currentRunId, f.runId);
+    assert.equal(f.createdRuns.length, 0);
+  } finally { await f.close(); }
+});
+
+test('a prior result fence does not force a fresh reviewer when the retained reader is idle', async () => {
+  const f = fixture(); try {
+    await f.report({ covered: ['Diff'], remaining: ['Tests'] }, 'result-fence');
+    const task = f.current();
+    f.store.update(task.id, { resolution: { ...task.resolution, review: { eventId: 'saved', taskId: task.id, runId: f.runId,
+      status: 'blocked', summary: 'Prior environment fault', head: f.run().head, reviewResponsibility: 'environment' } } });
+    const sent: string[] = [];
+    f.adapter.notify = async (_agent, _id, text) => { sent.push(text); };
+    await f.engine.performTaskControl({ action: 'move', to: 'review', taskId: task.id, version: f.current().version, reason: 'Recover review' });
+    assert.equal(sent.length, 1);
+    assert.equal(f.current().resolution.currentRunId, f.runId);
+    assert.equal(f.createdRuns.length, 0);
+  } finally { await f.close(); }
+});
+
 test('checkpoint fences do not authorize replacing an available reviewer', async () => {
   for (const shape of ['result', 'run'] as const) {
     const f = fixture(); try {

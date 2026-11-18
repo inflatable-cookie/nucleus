@@ -782,6 +782,18 @@ test('move closeout re-observes a recorded merge after integration sync failed',
   } finally { await f.close(); }
 });
 
+test('move closeout keeps an already completed merge terminal', async () => {
+  const f = fixture(); try {
+    dispatched(f, { phase: 'done', resolution: { ...f.task().resolution, mergeHead: head, mergedCommit: 'd'.repeat(40), syncedCommit: 'd'.repeat(40) } });
+    const before = f.task();
+    await assert.rejects(f.engine.performTaskControl(taskControlInputSchema.parse({ action: 'move', to: 'closeout', taskId: f.taskId,
+      version: before.version, reason: 'Confirm closeout', caller: CALLER })), /could not change the task/);
+    const after = f.task();
+    assert.equal(after.phase, 'done');
+    assert.equal(after.resolution.mergedCommit, before.resolution.mergedCommit);
+  } finally { await f.close(); }
+});
+
 test('move closeout refuses a recorded merge whose forge identity or review does not match', async () => {
   for (const mismatch of ['head', 'commit', 'review'] as const) {
     const f = fixture(); try {

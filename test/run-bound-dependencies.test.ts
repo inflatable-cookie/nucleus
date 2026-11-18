@@ -338,6 +338,26 @@ test("a host run admitted while the cleanup's idleness proofs await still holds 
   } finally { await engine.stop(); f.store.close(); }
 });
 
+test("a host run admitted during checkout identity proof holds the removal", { timeout: HOOK_TEST_TIMEOUT_MS }, async t => {
+  const f = await setup(t, false, true);
+  authorResult(f, "author-identity-race", "blocked");
+  const engine = new Engine(f.store, settlingAdapter(f, { active: false }), 0);
+  const hold = engine.runBuildOutputHold.bind(engine), find = f.store.hostRunHoldingWorkspace.bind(f.store);
+  let afterHold = false, checks = 0;
+  engine.runBuildOutputHold = async (task, record) => { const result = await hold(task, record); afterHold = true; return result; };
+  f.store.hostRunHoldingWorkspace = directory => {
+    if (afterHold && ++checks === 2) f.store.putHostRun(hostRunAt(directory, "running", false));
+    return find(directory);
+  };
+  try {
+    await engine.settleRunBuildOutputs(f.task.id);
+    assert.ok(checks >= 2);
+    assert.ok((await stat(f.target)).isDirectory());
+    assert.notEqual(runRecord(f)?.state, "complete");
+    assert.match(runRecord(f)?.detail ?? "", /host run run-running-/);
+  } finally { await engine.stop(); f.store.close(); }
+});
+
 test("a host run recorded under a case alias of the workspace holds it on a case-insensitive volume (review #564)", { timeout: HOOK_TEST_TIMEOUT_MS }, async t => {
   const f = await setup(t, false, true);
   const alias = f.directory.replace(/\/ns-/, "/NS-");

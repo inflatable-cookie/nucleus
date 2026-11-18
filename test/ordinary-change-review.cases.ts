@@ -723,6 +723,7 @@ test('later rounds keep the retained reviewer without resetting the author budge
       assert.ok(reviewer, f.store.task(f.task.id).reason);
       assert.equal(reviewer.role, 'reviewer');
       assert.equal(reviewer.agentId, original); assert.equal(reviewer.retainedRounds, n);
+      assert.equal(f.store.runsForTasks([f.task.id]).find(run => run.id === reviewer.id)?.retainedRounds, n);
     }
     assert.equal(f.store.task(f.task.id).resolution.revisionRuns, 4);
   } finally { f.close(); }

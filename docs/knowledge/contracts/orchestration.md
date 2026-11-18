@@ -2092,10 +2092,10 @@ reports, grants or spends that history.
   the canonical project, or a project rooted at the checkout). Cleanliness is
   proved, then the task/run/workspace binding and the checkout's Git source
   are re-proved as the last awaited proof before send.
-- The continuation ends for good when the budget is spent or the reviewer's
-  agent is positively observed closed (`retainedAgentClosedAt`, nothing else
-  changed). `next` then offers `restart role=reviewer fresh` or `route
-  role=reviewer now`; `move to=review` refuses and names that exit.
+- A spent checkpoint allowance ends automatic checkpoint continuation. The
+  owner can ask the same idle reviewer to finish or redeliver its report after
+  the PR head and thread are observed. A positively closed reviewer may be
+  replaced; a missing report alone never authorizes replacement.
 - A reader whose creation delivery stayed uncertain is continuable on the exact
   authenticated checkpoint evidence that proves creation reached it.
 - Refusals before the adapter's send are definite failures. After the adapter

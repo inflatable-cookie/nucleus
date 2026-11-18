@@ -260,6 +260,18 @@ export class ExternalMerge {
       throw Error('Retained workspace does not match the recorded task source');
     return head;
   }
+  /** Re-prove the recorded source witness when acceptance kept a different merged head. */
+  async observeRecordedMerge(t: Task) {
+    if (!this.adapter.externalMerge) throw Error('External merge verification is unavailable');
+    const retained = Boolean(t.prHead && t.resolution.mergeHead && t.prHead !== t.resolution.mergeHead
+      && t.resolution.ownerAcceptances.some(item => item.kind === 'operator_source' && item.head === t.resolution.mergeHead));
+    const witness = retained ? await this.proveRetainedExternalMergeSource(t) : null;
+    const observed = await this.adapter.externalMerge(t, true, retained);
+    if (retained && (await this.proveRetainedExternalMergeSource(t) !== witness
+      || !observed || gitAncestrySync(t.directory!, witness!, observed.head) !== 'ancestor'))
+      throw Error('Retained source or ancestry changed during merge observation');
+    return observed;
+  }
   async recoverExternalMerge(t: Task) {
     if (this.resolution.paused() || !this.adapter.externalMerge || !t.workspaceId || (!t.agentId&&!t.reviewEntry) || !(t.reviewEntry?.prNumber||t.completion?.prNumber || t.resumePrNumber) || ['done','cancelled','queued'].includes(t.phase)) return false;
     if (t.resolution.mergedCommit && !['syncing', 'closing'].includes(t.phase)) {
@@ -267,7 +279,7 @@ export class ExternalMerge {
       if (!await this.resolution.executionLease(t, undefined, false, true)) return false;
       const runs = JSON.stringify(this.store.runs(t.id));
       let observed: Awaited<ReturnType<NonNullable<typeof this.adapter.externalMerge>>>;
-      try { observed = await this.adapter.externalMerge(t, true); }
+      try { observed = await this.observeRecordedMerge(t); }
       catch { this.noteExternalMergeProbe(t); return false; }
       this.noteExternalMergeProbe(t);
       if (!observed || observed.head !== t.resolution.mergeHead || observed.commit !== t.resolution.mergedCommit

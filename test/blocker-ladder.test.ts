@@ -943,6 +943,7 @@ test("reviewer-side free text and worker-labelled choices preserve the live revi
       const refusal = await f.engine.resolution.ladder.applyDelegatedEscalationAnswer(task.id, id, `ns-escalation-${id}`, answer, 'planner planner-1');
       assert.equal(refusal, null);
       assert.deepEqual(controls, []);
+      assert.ok(f.prompts.some(prompt => prompt.agentId === run.agentId && prompt.messageId === `ns-escalation-direction-${id}` && prompt.text.includes(answer)), 'the direction reaches the reviewer');
       assert.equal(f.store.run(run.id)?.released, false);
       assert.equal(f.current().resolution.currentRunId, run.id);
     } finally { await f.close(); }

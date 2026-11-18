@@ -94,6 +94,31 @@ test('a required request-only preference opens a board decision and uses its ans
   } finally { f.close(); }
 });
 
+test('a missing required preference asks for a route without granting sign-off', () => {
+  const f = fixture(); try {
+    const task = f.submit({ profileRequests: {}, preferredProfileId: 'missing', requirePreferred: true });
+    f.reconcile(task.id);
+    const decision = f.decisions.list({ task: task.id })[0]!;
+    assert.match(decision.question, /missing, disabled or unavailable/);
+    f.reconcile(task.id);
+    assert.equal(f.decisions.list({ task: task.id }).length, 1);
+    f.answer(decision.id, signoffUse('cheap'));
+    f.reconcile(task.id);
+    const request = f.store.task(task.id).profileRequests!.worker!;
+    assert.equal(request.profileId, 'cheap');
+    assert.equal(request.signoff, undefined);
+  } finally { f.close(); }
+});
+
+test('a disabled required preference surfaces a routing decision', () => {
+  const f = fixture(); try {
+    f.store.setMeta('pool', pool.map(entry => entry.profileId === 'cheap' ? { ...entry, enabled: false } : entry));
+    const task = f.submit({ profileRequests: {}, preferredProfileId: 'cheap', requirePreferred: true });
+    f.reconcile(task.id);
+    assert.match(f.decisions.list({ task: task.id })[0]!.question, /missing, disabled or unavailable/);
+  } finally { f.close(); }
+});
+
 test('the operator can pick another profile, decline, or answer by relay (which declines)', () => {
   const f = fixture(); try {
     const chosen = f.submit(); f.reconcile(chosen.id);

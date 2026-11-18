@@ -2,12 +2,14 @@ import type { Run, Task } from '../../shared/contracts';
 import type { Engine } from '../engine';
 import { hostFailureRefusalDetail } from '../host/errors';
 import { runsUnchangedSince } from '../recovery/observation-advance';
+import { taskPrNumber } from '../forge';
 
 /** A fresh reader may replace only a proven gone or non-independent binding. */
 export async function requireReviewerReplacement(engine: Engine, task: Task, version: number): Promise<void> {
-  const agentId = task.resolution.reviewerAgentId;
-  if (!agentId || engine.resolution.authorAgentIds(task).has(agentId)) return;
   const runs = engine.store.runs(task.id);
+  const current = runs.find(run => run.id === task.resolution.currentRunId && run.role === 'reviewer' && !run.released);
+  const agentId = task.resolution.reviewerAgentId ?? current?.agentId;
+  if (!agentId || engine.resolution.authorAgentIds(task).has(agentId)) return;
   const prior = runs.findLast(run => run.role === 'reviewer' && run.agentId === agentId);
   if (prior) {
     try { engine.resolution.assertReviewProfileIndependent(task, prior); }
@@ -35,13 +37,15 @@ export function unreportedReviewer(task: Task, runs: Run[]): Run | null {
   const run = runs.find(item => item.id === task.resolution.currentRunId);
   return run && run.role === 'reviewer' && !run.released && !run.completion && run.agentId
     && (!task.resolution.reviewerAgentId || run.agentId === task.resolution.reviewerAgentId) && run.workspaceId && run.head === task.prHead
-    && ['running', 'finished'].includes(run.status) && !(run.reviewCheckpoints?.length) ? run : null;
+    && ['running', 'finished'].includes(run.status) ? run : null;
 }
 
 /** Ask the retained reviewer to resend its result on the original credential, once. */
-export async function requestReviewerReport(engine: Engine, task: Task, run: Run, version: number, reason: string): Promise<Task> {
+export async function requestReviewerReport(engine: Engine, task: Task, run: Run, version: number, reason: string, instruction?: string): Promise<Task> {
   const store = engine.store, events = store.eventsAll(task.id);
   if (!engine.adapter.notify) throw Error('This host cannot request the retained reviewer report');
+  const pr = await engine.adapter.verifyPr(task, taskPrNumber(task));
+  if (pr.head !== run.head) throw Error('The PR head changed; the retained reviewer cannot report for the current head');
   if (events.some(event => event.kind === 'reviewer_report_request_sent' && event.detail.startsWith(`${run.id}:`)))
     throw Error('The retained reviewer was already asked to resend its report; wait for that report');
   if (events.some(event => event.kind === 'reviewer_report_request_intent' && event.detail.startsWith(`${run.id}:`)))
@@ -66,7 +70,7 @@ export async function requestReviewerReport(engine: Engine, task: Task, run: Run
     });
   }
   const messageId = `ns-reviewer-report-${run.id}`;
-  const text = `Nucleus did not receive your review report for run ${run.id} at head ${run.head}. Resend your existing authenticated report using this same run and credential; do not repeat checks or start another review. If you did not finish, report the actual state. Reason: ${reason}`;
+  const text = `Nucleus did not receive your review report for run ${run.id} at head ${run.head}. Resend your existing authenticated report using this same run and credential; do not repeat checks or start another review. If you did not finish, continue the review and report its result.${instruction ? ` Owner direction: ${instruction}` : ''} Reason: ${reason}`;
   store.event(task.id, 'reviewer_report_request_intent', `${run.id}: ${JSON.stringify({ agentId: run.agentId, messageId })}`);
   try {
     await engine.onTaskHost(task, () => engine.adapter.notify!(run.agentId!, messageId,

@@ -47,8 +47,8 @@ const cause=z.discriminatedUnion('kind',[
 const coordinatorAction=z.discriminatedUnion('verb',[
  z.object({verb:z.literal('restart'),role:restartRole.optional(),instruction:instruction.optional(),fresh:z.boolean().optional(),reason}).strict(),
  z.object({verb:z.literal('route'),role,profileId:z.string().trim().min(1).max(240),thinkingOptionId:z.string().optional(),now:z.boolean().optional(),reason}).strict(),
- z.object({verb:z.literal('move'),to:z.enum(['work','review','merge','closeout']),instruction:instruction.optional(),reason}).strict(),
- z.object({verb:z.literal('retry_effect'),effect:z.string().trim().min(1).max(240).optional(),reason}).strict(),
+ z.object({verb:z.literal('move'),to:z.enum(['work','review','merge','closeout']),instruction:instruction.optional(),force:z.boolean().optional(),reason}).strict(),
+ z.object({verb:z.literal('retry_effect'),effect:z.string().trim().min(1).max(240).optional(),force:z.boolean().optional(),reason}).strict(),
  z.object({verb:z.literal('cannot'),reason}).strict(),
 ]);
 server.registerTool('nucleus_report',{

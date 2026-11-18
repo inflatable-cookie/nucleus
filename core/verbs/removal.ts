@@ -223,6 +223,23 @@ export class TaskRemoval {
       // identity before any removal, even when the earlier observation was absent.
       const identity = await buildOutputCheckoutMismatch(task.repoPath, record.directory);
       if (identity) { this.recordRunBuildOutputState(taskId, record, record.state, identity); continue; }
+      // The identity lookup awaits Git. Recheck ownership synchronously after it,
+      // immediately before starting the destructive effect.
+      if (this.engine.stopped || this.store.getMeta('paused')) return;
+      const latest = this.store.task(taskId);
+      const latestRecord = latest.resolution.buildOutputCleanups.find(item => item.runId === record.runId && item.workspaceId === record.workspaceId);
+      if (latest.removedAt || isDispositionActive(latest) || !latestRecord || !['intent', 'uncertain'].includes(latestRecord.state)
+        || latestRecord.directory !== record.directory) continue;
+      const boundaryHostRun = this.store.hostRunHoldingWorkspace(record.directory);
+      if (boundaryHostRun) { this.recordRunBuildOutputState(taskId, record, record.state, hostRunHoldReason(boundaryHostRun)); continue; }
+      const boundaryRun = this.engine.unreleasedRunIn(record.workspaceId);
+      if (boundaryRun) { this.recordRunBuildOutputState(taskId, record, record.state, boundaryRun); continue; }
+      if (this.store.workspaceUsedByOtherTaskRun(taskId, record.workspaceId) || this.store.tasks().some(other => other.id !== taskId
+        && (other.workspaceId === record.workspaceId || other.directory === record.directory
+          || other.resolution.coordinatorWorkspaceId === record.workspaceId || other.resolution.closeoutWorkspaceId === record.workspaceId))) {
+        this.recordRunBuildOutputState(taskId, record, record.state, 'workspace is referenced by another task');
+        continue;
+      }
       let result: BuildOutputCleanupResult;
       // Queue #342 (node_modules superseded, 2026-10-20): run-bound settlement never removes installed dependencies; terminal cleanup does.
       try { result = await removeBuildOutput(record.directory, { keepDependencies: true }); }

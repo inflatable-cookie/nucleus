@@ -34,6 +34,7 @@ export async function moveToCloseout(engine: Engine, input: CloseoutMoveInput): 
   const task = store.task(input.taskId);
   if (task.removedAt) throw Error(REMOVED_TASK_REFUSAL);
   engine.requireOwnerControlCurrent(task, input.version, 'Task changed; refresh before retrying');
+  if (['done', 'cancelled'].includes(task.phase)) return task;
   const stateRefusal = moveStateRefusal(task, "closeout");
   if (stateRefusal) throw Error(stateRefusal);
   if (task.resolution.mergedCommit) return resumeRecordedMerge(engine, task, input);
@@ -71,7 +72,7 @@ async function resumeRecordedMerge(engine: Engine, task: Task, input: CloseoutMo
   const enclosing = input.enclosing?.();
   const quiet = () => engine.resolution.executionLease(task, enclosing, false, true);
   if (!await quiet()) throw Error('Task participants or effects are not settled; no closeout was started');
-  const observed = await engine.resolution.adapter.externalMerge(task, true);
+  const observed = await engine.resolution.externalMerge.observeRecordedMerge(task);
   const head = task.resolution.mergeHead;
   if (!observed || !head || observed.head !== head || observed.commit !== task.resolution.mergedCommit)
     throw Error('The forge merge does not match the recorded head and commit');

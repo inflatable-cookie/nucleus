@@ -48,6 +48,7 @@ export function reconcileRoutingSignoffs(store: Store, decisions: Decisions, tas
   reconcileGrantDecisions(store, decisions);
   try { task = store.task(taskId); } catch { return approvedRoutes; }
   const finished = task.phase === "done" || task.phase === "cancelled";
+  task = reconcileUnavailablePreference(store, decisions, task, profiles, finished);
   // A required legacy preference is also a worker routing request. Materialize
   // it only when it needs board sign-off, so the same decision lifecycle can
   // surface and settle it instead of leaving an invisible required wait.
@@ -141,6 +142,53 @@ export function reconcileRoutingSignoffs(store: Store, decisions: Decisions, tas
       JSON.stringify({ role, profileId: request.profileId, decisionId: decision.id }));
   }
   return approvedRoutes;
+}
+
+/** An unavailable required preference needs a choice, not a profile sign-off. */
+function reconcileUnavailablePreference(store: Store, decisions: Decisions, task: Task, profiles: readonly Profile[], finished: boolean): Task {
+  const request = task.profileRequests?.worker;
+  const profileId = request?.required ? request.profileId : !request && task.requirePreferred ? task.preferredProfileId : '';
+  if (!profileId) return task;
+  const entry = store.pool().find(item => item.profileId === profileId);
+  const profile = profiles.find(item => item.id === profileId);
+  const events = store.eventsAll(task.id);
+  const last = events.findLast(event => ['routing_unavailable_requested', 'routing_unavailable_resolved'].includes(event.kind) && event.detail.startsWith(`${profileId}: `));
+  const prior = last?.kind === 'routing_unavailable_requested' ? last : undefined;
+  if (entry?.enabled && profile?.available || finished || task.agentIntent || task.agentId) {
+    if (prior) {
+      try {
+        const record = JSON.parse(prior.detail.slice(profileId.length + 2)) as { decisionId: string };
+        withdrawSignoff(store, decisions, task.id, record.decisionId, 'The required routing wait no longer applies');
+        store.event(task.id, 'routing_unavailable_resolved', `${profileId}: routing wait ended`);
+      } catch { /* Keep unreadable evidence rather than guessing its identity. */ }
+    }
+    return task;
+  }
+  if (prior) {
+    let record: { decisionId: string; choices: Record<string, string> };
+    try { record = JSON.parse(prior.detail.slice(profileId.length + 2)); } catch { return task; }
+    let decision;
+    try { decision = decisions.get({ id: record.decisionId }); } catch { return task; }
+    if (decision.status !== 'answered' || !decision.answer || decision.answer.relayed || decision.answer.answeredBy !== 'operator (board)') return task;
+    const selected = record.choices[decision.answer.text.trim()];
+    if (selected) return store.update(task.id, { profileRequests: { ...task.profileRequests, worker: { profileId: selected, required: true, reason: 'Operator selected an available worker profile' } } },
+      'routing_unavailable_resolved', `${profileId}: selected ${selected}`);
+    if (decision.answer.text.trim() === SIGNOFF_DECLINE) return store.update(task.id, { requirePreferred: false, preferredProfileId: '',
+      profileRequests: { ...task.profileRequests, worker: undefined } }, 'routing_unavailable_resolved', `${profileId}: automatic selection`);
+    return task;
+  }
+  const choices: Record<string, string> = {};
+  for (const candidate of store.pool()) {
+    const available = profiles.find(item => item.id === candidate.profileId && item.available);
+    if (candidate.enabled && available && candidate.profileId !== profileId) choices[`Use ${available.name}`.slice(0, 200)] = candidate.profileId;
+  }
+  const origin = normalizeRepositoryOrigin(task.repository ?? '');
+  const decision = decisions.add({ askedBy: taskOwner(task), project: origin ? { origin, path: task.repoPath } : null, tasks: [task.id],
+    question: `Required worker profile ${profileId} is missing, disabled or unavailable. Which route should this task use?`,
+    context: 'Selecting a profile does not grant a usage-level sign-off; any required sign-off is asked separately.',
+    options: [SIGNOFF_DECLINE, ...Object.keys(choices).slice(0, 13)] });
+  store.event(task.id, 'routing_unavailable_requested', `${profileId}: ${JSON.stringify({ decisionId: decision.id, choices })}`);
+  return task;
 }
 
 function poolEntryForRequiredPreference(task: Task, store: Store): string | null {
