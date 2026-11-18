@@ -1,24 +1,33 @@
 /**
- * Opt-in proof (nucleus#1315): sandboxed BB role threads deliver their reports
- * and read their sibling checkout.
+ * Opt-in proof (nucleus#1315): a BB role thread reports, validates and reads its
+ * sibling checkout.
  *
  * `effigy proof:bb:sandbox` starts an isolated BB server with its own data
  * directory and port, installs this repository's plugin into that server only,
- * and runs two real `claude-code` threads in the same unmanaged task workspace
- * with BB's Claude provider sandbox on (the installed default `sandboxEnabled`)
- * and `auto` ("Approve for me") permissions: a workspace-scope mode, so the
- * provider sandbox applies, and unattended approvals are reviewed automatically.
+ * and runs two real `claude-code` role threads in one task workspace under BB's
+ * Full Access mode — the mode Nucleus now launches a BB role thread in (planner
+ * ruling, 2026-11-18), because a sandboxed thread cannot run Effigy at all.
  *
- * Each thread must run one shell command: prove a relative sibling checkout is
- * readable (`test -s ../sylib/README.md`) and, only then, hand its report to the
- * packaged helper. The helper cannot open a Unix socket from inside the sandbox;
- * it posts to the plugin's loopback relay, which the BB server executes outside
- * that sandbox. The proof records the two delivered reports (task, run, status,
- * and the sibling text the thread read on the way) and the sandbox evidence.
+ * What it proves:
  *
- * It never touches the operator's live BB: the data directory must be inside
- * this run's scratch root and must not be, contain or sit inside `~/.bb`
- * (`assertIsolatedDataDir`, shared with the other private BB proofs).
+ * 1. **The production sibling placement.** The workspace is a real task worktree
+ *    under the canonical per-repository root, and the sibling checkout beside it
+ *    is made by `WorkspaceProvisioning.ensureSharedSiblingCheckouts` (the same code
+ *    a BB launch runs), from the project's sibling repository — never by this
+ *    script. A second task on the same repository re-observes it, so the link is
+ *    shared rather than per-task.
+ * 2. **Reports and validation from the thread.** Each thread's one command proves
+ *    the relative sibling read (`test -s ../sylib/README.md`), runs a real Effigy
+ *    selector (its foreground guard is what the sandbox blocked), and only then
+ *    hands its report to the packaged helper. The helper posts to the plugin's
+ *    loopback relay, which forwards to the run's ticket-bound callback socket from
+ *    the BB server process.
+ *
+ * It never touches the operator's live BB: the data directory must be inside this
+ * run's scratch root and must not be, contain or sit inside `~/.bb`
+ * (`assertIsolatedDataDir`, shared with the other private BB proofs). It also
+ * scrubs the live Nucleus admission-hook environment, so the thread's Effigy run
+ * never reserves capacity on the operator's service.
  */
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
@@ -26,24 +35,51 @@ import { createServer } from "node:http";
 import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { assertIsolatedDataDir, findBb, freePort, portOpen, startProcess, stopProcess, waitFor, type Child } from "./bb-private";
 import { buildBoard } from "../bb/build-board.mjs";
 import { workerHelper } from "../../service/callbacks/callback";
+import { Store } from "../../core/store/store";
+import { submissionSchema } from "../../shared/contracts";
+import { git, command } from "../../core/git/index";
+import { repoCommonDir, WORKSPACES_DIR } from "../../core/workspaces/workspace-allocation";
+import { digest } from "../../core/store/store";
+import { WorkspaceProvisioning } from "../../core/workspaces/workspace-provisioning";
+import type { Engine } from "../../core/engine";
 
 const run = promisify(execFile);
 const checkout = fileURLToPath(new URL("../..", import.meta.url));
+const bbHost = `bb:${"a".repeat(32)}`;
 
-interface Route { taskId: string; runId: string; token: string; sibling: string }
+interface Route { taskId: string; runId: string; token: string; role: string }
 
-function prompt(route: Route, helper: string, ticket: string, headline: string): string {
-  return `You are a Nucleus role thread running inside BB's provider sandbox. Run exactly this one bash command with the Bash tool and print its raw output. Do not retry, do not use other tools, do not edit files.
+function prompt(route: Route, helper: string, ticket: string, effigyCheckout: string): string {
+  const report = JSON.stringify({ taskId: route.taskId, runId: route.runId, status: "blocked", headline: `${route.role} report`, summary: `BB ${route.role} report after a sibling read and an Effigy run` });
+  const effigy = route.role === "worker" ? `( cd ${JSON.stringify(effigyCheckout)} && effigy qa:docs >/dev/null 2>&1 ) && ` : "";
+  return `You are a Nucleus role thread running in BB. Run exactly this one bash command with the Bash tool and print its raw output. Do not retry, do not use other tools, do not edit files.
 
-test -s ../sylib/README.md && node ${JSON.stringify(helper)} ${JSON.stringify(ticket)} <<'NUCLEUS_RESULT'
-${JSON.stringify({ taskId: route.taskId, runId: route.runId, status: "blocked", headline, summary: `Sandboxed ${headline.toLowerCase()} through the BB loopback relay` })}
+test -s ../sylib/README.md && ${effigy}node ${JSON.stringify(helper)} ${JSON.stringify(ticket)} <<'NUCLEUS_RESULT'
+${report}
 NUCLEUS_RESULT
 `;
+}
+
+async function repo(root: string, name: string, files: Record<string, string>): Promise<string> {
+  await command("git", ["init", "--bare", "--initial-branch=main", join(root, `${name}.git`)], root);
+  await command("git", ["clone", join(root, `${name}.git`), join(root, name)], root);
+  const path = join(root, name);
+  await git(path, "config", "user.name", "Proof");
+  await git(path, "config", "user.email", "proof@example.invalid");
+  for (const [file, content] of Object.entries(files)) {
+    mkdirSync(join(path, file, ".."), { recursive: true });
+    writeFileSync(join(path, file), content);
+  }
+  await git(path, "add", "-A");
+  await git(path, "commit", "-m", `fixture ${name}`);
+  await git(path, "push", "origin", "main");
+  return path;
 }
 
 async function main(): Promise<void> {
@@ -62,7 +98,10 @@ async function main(): Promise<void> {
   const serverPort = await freePort();
   const daemonPort = await freePort();
   const serverUrl = `http://127.0.0.1:${serverPort}`;
+  // The thread's Effigy run must never reserve capacity on the operator's service.
   const env: NodeJS.ProcessEnv = { ...process.env, BB_DATA_DIR: bbData, BB_SERVER_URL: serverUrl, BB_HOST_DAEMON_PORT: String(daemonPort), BB_TELEMETRY: "false", BB_CLI_ERROR_LOG: "0" };
+  delete env.EFFIGY_ADMISSION_HOOK;
+  delete env.QUEUE_ADMISSION_SOCKET;
   const cli = async (argv: string[]): Promise<string> => (await run(bb.cli, argv, { env, maxBuffer: 32 * 1024 * 1024, timeout: 240_000 })).stdout;
   const cliJson = async <T>(argv: string[]): Promise<T> => JSON.parse(await cli([...argv, "--json"])) as T;
 
@@ -91,62 +130,86 @@ async function main(): Promise<void> {
     await cli(["plugin", "install", `path:${plugin}`, "--yes"]);
     await cli(["plugin", "config", "nucleus", "set", "serviceDataDir", dataHome]);
     await cli(["plugin", "reload", "nucleus"]);
-    // The sandbox is the installed Claude provider's own default; this records it
-    // rather than changing it, so a future default flip cannot silently pass.
     const sandboxConfig = await cli(["plugin", "config", "provider-claude-code"]);
-    assert.match(sandboxConfig, /sandboxEnabled = true/, "the proof runs with the Claude Code sandbox on");
+    assert.match(sandboxConfig, /sandboxEnabled = true/, "the provider setting stays on; Nucleus's mode is Full Access");
 
-    // The task workspace and the sibling checkout `../sylib` the thread must read.
-    const workspace = join(proofRoot, "ws", "ns-task");
-    mkdirSync(workspace, { recursive: true });
-    await run("git", ["init", "--initial-branch=main", workspace], { env });
-    writeFileSync(join(workspace, "README.md"), "sandbox proof\n");
-    await run("git", ["-C", workspace, "add", "-A"], { env });
-    await run("git", ["-C", workspace, "-c", "user.email=proof@example.invalid", "-c", "user.name=Proof", "commit", "-m", "fixture"], { env });
-    const sibling = join(proofRoot, "ws", "sylib");
-    mkdirSync(sibling, { recursive: true });
-    writeFileSync(join(sibling, "README.md"), "sibling checkout the sandboxed thread must read\n");
-    const project = await cliJson<{ id: string }>(["project", "create", "--name", "sandbox proof", "--root", workspace]);
+    // Two pushed repositories: the task's own and its sibling, plus the task
+    // workspace under the canonical per-repository root.
+    const repos = join(proofRoot, "repos");
+    mkdirSync(repos, { recursive: true });
+    const alpha = await repo(repos, "alpha", { "README.md": "sandbox proof\n" });
+    const beta = await repo(repos, "sylib", { "README.md": "sibling checkout the BB role thread must read\n" });
+    await git(beta, "fetch", "origin", "main");
+    const store = new Store(join(dataHome, "queue.sqlite"));
+    try {
+      store.upsertProject({ key: "proof", name: "Proof", repositories: [{ origin: "acme/alpha", path: alpha }, { origin: "acme/sylib", path: beta }], primary: { origin: "acme/alpha", path: alpha } });
+      const planningCommit = await git(alpha, "rev-parse", "HEAD");
+      const task = store.insert(submissionSchema.parse({ submissionId: randomUUID(), title: "Sandbox proof", repoPath: alpha, planningCommit, handoffPath: "handoff.md", originAgentId: "origin", baseBranch: "main" }), bbHost, "handoff", planningCommit);
+      const workspaceRoot = join(proofRoot, WORKSPACES_DIR, digest(await repoCommonDir(alpha)));
+      const directory = join(workspaceRoot, `ns-${task.id}`);
+      mkdirSync(workspaceRoot, { recursive: true });
+      await git(alpha, "fetch", "origin", "main");
+      await git(alpha, "worktree", "add", "-b", task.branch, directory, planningCommit);
+      const running = store.update(task.id, { workspaceId: `bb-worktree-${"a".repeat(40)}`, directory, baseBranch: "main" });
+      // The production placement a BB launch runs; this script never makes the link.
+      const provisioning = new WorkspaceProvisioning({ store, siblingDataDir: proofRoot, adapter: { vocabulary: { kind: "bb", label: "BB", providers: {} } } } as unknown as Engine);
+      await provisioning.ensureSharedSiblingCheckouts(running);
+      const shared = join(workspaceRoot, "sylib");
+      assert.equal(await git(shared, "rev-parse", "HEAD"), await git(beta, "rev-parse", "refs/remotes/origin/main"), "the shared sibling checkout is the sibling repository's base");
+      // A second task on the same repository resolves the same shared checkout.
+      const second = store.insert(submissionSchema.parse({ submissionId: randomUUID(), title: "Second proof task", repoPath: alpha, planningCommit, handoffPath: "handoff.md", originAgentId: "origin", baseBranch: "main" }), bbHost, "handoff", planningCommit);
+      const secondDirectory = join(workspaceRoot, `ns-${second.id}`);
+      await git(alpha, "worktree", "add", "-b", second.branch, secondDirectory, planningCommit);
+      await provisioning.ensureSharedSiblingCheckouts(store.update(second.id, { workspaceId: `bb-worktree-${"b".repeat(40)}`, directory: secondDirectory, baseBranch: "main" }));
+      assert.equal(await git(shared, "rev-parse", "HEAD"), await git(beta, "rev-parse", "refs/remotes/origin/main"), "the second task re-observed the existing shared checkout");
+      const sharedPlacement = store.events(second.id).find(event => event.kind === "shared_sibling_checkouts");
+      assert.match(sharedPlacement?.detail ?? "", /sylib existing/);
 
-    // The callback socket and the two run tickets: the helper posts the ticket's
-    // exact payload to the plugin relay, and the plugin forwards it here.
-    const socketPath = join(dataHome, "callback.sock");
-    await new Promise<void>(resolve => callback.listen(socketPath, resolve));
-    const helper = join(dataHome, "worker-report.mjs");
-    writeFileSync(helper, workerHelper, { mode: 0o600 });
-    const routes: Route[] = [
-      { taskId: "sandbox-task", runId: "sandbox-worker-run", token: "worker-token", sibling: await (await import("node:fs/promises")).readFile(join(sibling, "README.md"), "utf8") },
-      { taskId: "sandbox-task", runId: "sandbox-reviewer-run", token: "reviewer-token", sibling: "" },
-    ];
-    const threads: Array<{ role: string; ticket: string; prompt: string }> = [];
-    for (const [index, route] of routes.entries()) {
-      const ticket = join(dataHome, "tickets", `${route.runId}.json`);
-      writeFileSync(ticket, JSON.stringify({ socketPath, taskId: route.taskId, runId: route.runId, host: `bb:${"a".repeat(32)}`, token: route.token }), { mode: 0o600 });
-      const role = index === 0 ? "worker" : "reviewer";
-      const text = prompt(route, helper, ticket, `${role} report`);
-      const promptFile = join(proofRoot, `${role}-prompt.txt`);
-      writeFileSync(promptFile, text);
-      threads.push({ role, ticket, prompt: promptFile });
+      const project = await cliJson<{ id: string }>(["project", "create", "--name", "sandbox proof", "--root", directory]);
+      const socketPath = join(dataHome, "callback.sock");
+      await new Promise<void>(resolve => callback.listen(socketPath, resolve));
+      const helper = join(dataHome, "worker-report.mjs");
+      writeFileSync(helper, workerHelper, { mode: 0o600 });
+      const routes: Route[] = [
+        { taskId: task.id, runId: "sandbox-worker-run", token: "worker-token", role: "worker" },
+        { taskId: task.id, runId: "sandbox-reviewer-run", token: "reviewer-token", role: "reviewer" },
+      ];
+      const prompts: Array<{ role: string; file: string }> = [];
+      for (const route of routes) {
+        const ticket = join(dataHome, "tickets", `${route.runId}.json`);
+        writeFileSync(ticket, JSON.stringify({ socketPath, taskId: route.taskId, runId: route.runId, host: bbHost, token: route.token }), { mode: 0o600 });
+        const file = join(proofRoot, `${route.role}-prompt.txt`);
+        writeFileSync(file, prompt(route, helper, ticket, checkout));
+        prompts.push({ role: route.role, file });
+      }
+
+      const spawned: Array<{ role: string; threadId: string }> = [];
+      for (const entry of prompts) {
+        const answer = await cliJson<{ id: string }>(["thread", "spawn", "--project", project.id, "--environment", directory, "--provider", "claude-code", "--permission-mode", "full", "--prompt-file", entry.file, "--visibility", "hidden"]);
+        spawned.push({ role: entry.role, threadId: answer.id });
+      }
+      // Each thread's command is gated on the sibling read and (the worker's) an
+      // Effigy run, so two delivered reports prove all three steps ran.
+      await waitFor("two BB role reports", async () => reports.length >= 2 ? reports : null, 300_000);
+      const bodies = reports.map(entry => entry.body);
+      assert.equal(reports.every(entry => entry.path === "/complete"), true);
+      assert.deepEqual(bodies.map(body => body.runId).sort(), routes.map(route => route.runId).sort());
+      assert.deepEqual(bodies.map(body => body.status), ["blocked", "blocked"]);
+      assert.equal(bodies.every(body => body.taskId === task.id), true);
+      const status = await run("git", ["-C", directory, "status", "--porcelain", "--untracked-files=all"], { env });
+      assert.equal(status.stdout.trim(), "", "the role threads left the checkout clean");
+      writeFileSync(join(proofRoot, "evidence.json"), JSON.stringify({
+        mode: "claude-code Full Access; provider sandboxEnabled remains true",
+        threads: spawned,
+        reports: bodies,
+        sibling: { checkout: shared, head: await git(shared, "rev-parse", "HEAD"), placement: "WorkspaceProvisioning.ensureSharedSiblingCheckouts", secondTaskEvent: sharedPlacement?.detail ?? null },
+        effigy: "effigy qa:docs ran inside the worker thread before its report",
+        checkoutStatus: status.stdout.trim(),
+      }, null, 2) + "\n");
+      console.log(JSON.stringify({ ok: true, proofRoot, threads: spawned, reports: bodies.map(body => ({ runId: body.runId, status: body.status })), sibling: shared }, null, 2));
+    } finally {
+      store.close();
     }
-
-    const spawned: Array<{ role: string; threadId: string }> = [];
-    for (const thread of threads) {
-      const answer = await cliJson<{ id: string }>(["thread", "spawn", "--project", project.id, "--environment", workspace, "--provider", "claude-code", "--permission-mode", "auto", "--prompt-file", thread.prompt, "--visibility", "hidden"]);
-      spawned.push({ role: thread.role, threadId: answer.id });
-    }
-    // Both threads must deliver through the sandbox. The `test -s ../sylib` guard
-    // in the same command is what proves the sibling read inside the sandbox: a
-    // thread that could not read it sends nothing.
-    await waitFor("two sandboxed role reports", async () => reports.length >= 2 ? reports : null, 300_000);
-    const bodies = reports.map(entry => entry.body);
-    assert.equal(reports.every(entry => entry.path === "/complete"), true);
-    assert.deepEqual(bodies.map(body => body.runId).sort(), routes.map(route => route.runId).sort());
-    assert.deepEqual(bodies.map(body => body.status), ["blocked", "blocked"]);
-    assert.equal(bodies.every(body => body.taskId === "sandbox-task"), true);
-    const head = await run("git", ["-C", workspace, "status", "--porcelain", "--untracked-files=all"], { env });
-    assert.equal(head.stdout.trim(), "", "the sandboxed threads left the checkout clean");
-    writeFileSync(join(proofRoot, "evidence.json"), JSON.stringify({ sandbox: "claude-code auto (Approve for me), provider sandboxEnabled = true", threads: spawned, reports: bodies, siblingRead: routes[0].sibling.trim() }, null, 2) + "\n");
-    console.log(JSON.stringify({ ok: true, proofRoot, threads: spawned, reports: bodies.map(body => ({ runId: body.runId, status: body.status })), sandbox: "on" }, null, 2));
   } finally {
     callback.closeAllConnections();
     await new Promise<void>(resolve => callback.close(() => resolve()));

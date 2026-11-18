@@ -1098,8 +1098,8 @@ export class Engine {
   prepareWorktreeLinks(task: Task): Promise<{ task: Task; recordFailure: string | null }> {
     return this.workspaceProvisioning.prepareWorktreeLinks(task);
   }
-  linkPinnedSiblingCheckouts(task: Task) {
-    return this.workspaceProvisioning.linkPinnedSiblingCheckouts(task);
+  ensureSharedSiblingCheckouts(task: Task) {
+    return this.workspaceProvisioning.ensureSharedSiblingCheckouts(task);
   }
   readStash(directory: string) {
     return this.workspaceProvisioning.readStash(directory);

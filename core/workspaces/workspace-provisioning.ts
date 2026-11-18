@@ -1,13 +1,14 @@
 import type { Task, WorktreeLinks } from "../../shared/contracts";
 import { worktreeLinksSchema } from "../../shared/contracts";
-import { basename, dirname } from "node:path";
-import { lstat } from "node:fs/promises";
+import { join } from "node:path";
+import { mkdirSync, existsSync } from "node:fs";
+import { git as defaultGit } from "../git/index";
 import { refreshCheckoutSiblings as inspectWorktreeRootSiblings, worktreeRootFor } from "./checkout-siblings";
 import type { Engine } from "../engine";
 import { siblingStoreRootFor } from "../store/sibling-store";
-import { createSiblingWorktrees, findingFor, inspectSiblingWorktrees, removeSiblingWorktrees, siblingMembers, siblingsEnabled } from "./siblings";
+import { createSiblingWorktrees, findingFor, inspectSiblingWorktrees, missingSiblingCheckout, removeSiblingWorktrees, siblingIdentity, siblingMembers, siblingNameFor, siblingsEnabled } from "./siblings";
 import { now } from "../store/store";
-import { canonicalLinkRoot, placeWorktreeLink, provisionWorktreeLinks, worktreeLinksDue, worktreeLinksSummary } from "./worktree-links";
+import { canonicalLinkRoot, provisionWorktreeLinks, worktreeLinksDue, worktreeLinksSummary } from "./worktree-links";
 
 /**
  * What a task's checkout gets beside it before its worker runs: sibling
@@ -20,6 +21,8 @@ export class WorkspaceProvisioning {
   constructor(readonly engine: Engine) {}
   get store() { return this.engine.store; }
   get adapter() { return this.engine.adapter; }
+  /** Git, replaceable by a fixture. */
+  get git() { return defaultGit; }
   get siblingDataDir() { return this.engine.siblingDataDir; }
   /**
    * Spec 027: ensure a task's sibling worktrees exist before its worker runs.
@@ -144,38 +147,46 @@ export class WorkspaceProvisioning {
     }
   }
   /**
-   * BB task workspaces get their sibling checkouts beside them (nucleus#1315).
+   * A repository's worktree root keeps one shared checkout per sibling repository
+   * (nucleus#1315; Paseo parity, Spec 028).
    *
-   * A Paseo worktree root holds the sibling clones the repository's own link
-   * tasks placed there, so a dependant's relative `../sibling` resolves. A BB
-   * workspace is registered by Nucleus as an external directory and the
-   * provider runs inside its own OS sandbox, so nothing in the thread may create
-   * that link (and the sandbox refuses writes outside the checkout anyway). The
-   * service places one link per task-pinned sibling worktree, through the same
-   * "create when absent, reuse an exact match, leave anything else untouched"
-   * placement the declared links use, and records the outcome as an event. It
-   * never blocks a launch: a missing link is disclosed as policy in the prompt
-   * and a worker reports a blocker if its work needs it.
+   * A Paseo worktree root holds the sibling clones the repository's own link tasks
+   * placed there, shared by every task of that repository, and a dependant's
+   * relative `../sibling` resolves against them. A BB workspace is registered by
+   * Nucleus as an external directory, so a BB role thread cannot create anything
+   * beside its checkout. The service therefore makes the same shared checkout
+   * every BB task of the repository can read: one detached worktree per project
+   * sibling member under the canonical worktree root, at the sibling's fetched
+   * `origin/<base>` when it is first created. An existing path is never replaced
+   * (Spec 028's refresh owns freshness, and another task may be reading it), and
+   * an occupied path is recorded, not removed. Only a `bb:` host is touched.
    */
-  async linkPinnedSiblingCheckouts(task: Task): Promise<Task> {
+  async ensureSharedSiblingCheckouts(task: Task): Promise<Task> {
     const current = this.store.task(task.id);
-    const pins = current.siblingPins ?? [];
-    if (this.adapter.vocabulary?.kind !== "bb" || !pins.length || !current.directory || !this.siblingDataDir) return current;
+    if (this.adapter.vocabulary?.kind !== "bb" || !current.directory || !this.siblingDataDir) return current;
+    const members = siblingMembers(current, this.store.projectFor(current.repoPath, current.repository));
+    if (!members.length) return current;
     const outcomes: string[] = [];
-    for (const pin of pins) {
-      const name = basename(pin.path);
+    const used = new Set<string>();
+    let root: string | null = null;
+    for (const member of members) {
+      let name = siblingNameFor(member);
+      for (let suffix = 2; used.has(name); suffix++) name = `${siblingNameFor(member)}-${suffix}`;
+      used.add(name);
+      const missing = missingSiblingCheckout(member);
+      if (missing) { outcomes.push(`${siblingIdentity(member)} skipped: ${missing}`); continue; }
       try {
-        const entry = await lstat(pin.path);
-        if (!entry.isDirectory() || entry.isSymbolicLink()) throw new Error("the pinned sibling path is not a real directory");
-        const dataDir = this.siblingDataDir;
-        const root = await canonicalLinkRoot(dataDir, current.repoPath, current.directory);
-        const placed = await placeWorktreeLink(root, name, pin.path);
-        outcomes.push(`${name} ${placed.outcome}${placed.reason ? `: ${placed.reason}` : ""}`);
+        root ??= await canonicalLinkRoot(this.siblingDataDir, current.repoPath, current.directory);
+        const path = join(root, name);
+        if (existsSync(path)) { outcomes.push(`${name} existing`); continue; }
+        const commit = await this.git(member.path, "rev-parse", `refs/remotes/origin/${current.baseBranch}`);
+        await this.git(member.path, "worktree", "add", "--detach", path, commit);
+        outcomes.push(`${name} created at ${commit.slice(0, 12)}`);
       } catch (error) {
         outcomes.push(`${name} failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
-    try { this.store.event(current.id, "pinned_sibling_links", outcomes.join("; ").slice(0, 2000)); } catch { /* the placement is not less true for an unwritable event */ }
+    try { this.store.event(current.id, "shared_sibling_checkouts", outcomes.join("; ").slice(0, 2000)); } catch { /* placement is not less true for an unwritable event */ }
     return current;
   }
   /** Best effort: an unreadable stash list only loses the readiness comparison. */

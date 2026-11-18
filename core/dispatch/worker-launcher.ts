@@ -54,10 +54,10 @@ export class WorkerLauncher {
     task = await this.engine.refreshCheckoutSiblings(task, "worker_creation");
     let worktreeLinkRecordFailure: string | null;
     ({ task, recordFailure: worktreeLinkRecordFailure } = await this.engine.prepareWorktreeLinks(task));
-    // BB task workspaces carry their sibling checkouts beside the checkout
-    // (nucleus#1315); every other host's worktree root is provisioned by the
-    // repository's own link tasks and is left exactly as it was.
-    task = await this.engine.linkPinnedSiblingCheckouts(task);
+    // A BB task workspace carries one shared checkout per sibling repository
+    // beside the checkout (nucleus#1315); every other host's worktree root is
+    // provisioned by the repository's own link tasks and is left as it was.
+    task = await this.engine.ensureSharedSiblingCheckouts(task);
     if (!task.directory || !task.workspaceId || !task.profile) throw new Error("Missing workspace or route");
     // Keep the source and authority observed before awaited creation proofs.
     task=structuredClone(this.store.task(task.id));

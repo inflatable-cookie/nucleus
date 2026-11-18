@@ -75,7 +75,7 @@ export function queueSiblingBlock(task: Pick<Task, 'siblingPins' | 'siblingFindi
   // (nucleus#1315). Paseo worktree roots carry the repository's own link-task
   // clones already, so no such line is added there.
   const linked = typeof task.hostId === 'string' && task.hostId.startsWith('bb:')
-    ? `\nNucleus links each of these pinned checkouts beside this checkout (${pins.map(pin => `../${pin.path.split('/').pop() || pin.repository}`).join(', ')}), so a relative sibling path resolves without any other preparation. A missing link is a blocker to report, never permission to create one from the sandbox.`
+    ? `\nBeside this checkout, Nucleus keeps one shared checkout per sibling repository for every task of this repository (${pins.map(pin => `../${pin.path.split('/').pop() || pin.repository}`).join(', ')}), refreshed to origin's default branch like a Paseo worktree root, so a relative sibling path resolves without any other preparation. A missing checkout is a blocker to report, never permission to create one from the thread.`
     : '';
   return `Sibling repositories (read-only by rule; never edit, commit, merge or push them — the fix for a real change is a linked task):\n${lines}${linked}\n${findings ? `Recorded sibling changes under review:\n${findings}\n` : ''}`;
 }

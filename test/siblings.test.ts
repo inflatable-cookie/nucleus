@@ -1,7 +1,7 @@
 import { fakeAdapter, createTaskAgent } from './support/fakes';
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, realpath, mkdir, readFile, readlink, lstat, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, realpath, mkdir, readFile, lstat, writeFile, rm } from 'node:fs/promises';
 import { existsSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, basename } from 'node:path';
@@ -268,54 +268,69 @@ test('Spec 027 #10 a conflicting sibling path skips that member instead of parki
 });
 
 /**
- * nucleus#1315: a BB task workspace carries its pinned sibling checkouts beside
- * the checkout. A Paseo worktree root already holds the clones the repository's
- * own link tasks placed there; a BB run happens inside a provider OS sandbox that
- * may create nothing outside the checkout, so the service places the link before
- * the worker launches. The same create-if-absent / reuse-exact / leave-anything-
- * else placement is used, and only BB is affected.
+ * nucleus#1315: every BB task of a repository reads one shared sibling checkout in
+ * the worktree root. A Paseo root already holds the clones the repository's own
+ * link tasks placed there; a BB role thread can create nothing beside its checkout,
+ * so the service makes that shared checkout at the sibling's fetched base.
  */
-async function bbWorkspaceFixture(t: TestContext, hostKind: 'bb' | 'paseo') {
+async function sharedSiblingFixture(t: TestContext, hostKind: 'bb' | 'paseo') {
   const f = await twoRepos(t);
-  const task = submit(f.store, f.alpha.path, f.alpha.origin);
-  const pinned = await realpath(await mkdtemp(join(tmpdir(), 'nsq-pinned-')));
-  t.after(async () => rm(pinned, { recursive: true, force: true }));
-  const pinPath = join(pinned, 'beta');
-  await mkdir(pinPath);
+  f.store.upsertProject({ key: 'suite', name: 'Suite', repositories: [f.alpha, f.beta], primary: f.alpha });
+  const task = submit(f.store, f.alpha.path, f.alpha.origin, 'Shared sibling task', {}, { commit: f.planningCommit, handoff: 'docs/handoffs/plan.md', base: f.planningCommit });
   const common = await repoCommonDir(f.alpha.path);
   const root = join(f.dir, WORKSPACES_DIR, digest(common));
   const directory = join(root, `ns-${task.id}`);
-  await mkdir(directory, { recursive: true });
-  const updated = f.store.update(task.id, { workspaceId: 'bb-worktree-' + 'a'.repeat(40), directory, siblingPins: [{ repository: 'acme/beta', path: pinPath, commit: 'c'.repeat(40) }] });
+  await mkdir(root, { recursive: true });
+  await git(f.alpha.path, 'worktree', 'add', '-b', task.branch, directory, task.planningCommit);
+  const updated = f.store.update(task.id, { workspaceId: `bb-worktree-${'a'.repeat(40)}`, directory, baseBranch: 'main' });
   const engine = {
     store: f.store,
     siblingDataDir: f.dir,
     adapter: { vocabulary: { kind: hostKind, label: hostKind === 'bb' ? 'BB' : 'Paseo', providers: {} } },
   } as unknown as Engine;
-  return { ...f, task: updated, pinPath, root, directory, provisioning: new WorkspaceProvisioning(engine) };
+  return { ...f, task: updated, root, directory, provisioning: new WorkspaceProvisioning(engine) };
 }
 
-test('nucleus#1315 a BB task workspace gets its pinned sibling checkout linked beside it', { timeout: HOOK_TEST_TIMEOUT_MS }, async (t: TestContext) => {
-  const f = await bbWorkspaceFixture(t, 'bb');
-  await f.provisioning.linkPinnedSiblingCheckouts(f.task);
-  const link = join(f.root, 'beta');
-  assert.equal(await readlink(link), f.pinPath);
-  assert.equal((await lstat(link)).isSymbolicLink(), true);
-  assert.ok(f.store.events(f.task.id).some(event => event.kind === 'pinned_sibling_links' && /beta created/.test(event.detail)));
+test('nucleus#1315 a BB repository root gets one shared sibling checkout every task reads', { timeout: HOOK_TEST_TIMEOUT_MS }, async (t: TestContext) => {
+  const f = await sharedSiblingFixture(t, 'bb');
+  await f.provisioning.ensureSharedSiblingCheckouts(f.task);
+  const shared = join(f.root, 'beta');
+  assert.equal(existsSync(shared), true);
+  assert.equal((await lstat(shared)).isDirectory(), true, 'a real checkout, not a link');
+  const expected = await git(f.beta.path, 'rev-parse', 'refs/remotes/origin/main');
+  assert.equal(await git(shared, 'rev-parse', 'HEAD'), expected, 'detached at the sibling origin base');
+  assert.equal(await git(shared, 'rev-parse', '--abbrev-ref', 'HEAD'), 'HEAD');
+  // The checkout relative path resolves: 32 of 149 lab tests failed on exactly this.
+  assert.equal(await readFile(join(f.directory, '..', 'beta', 'README.md'), 'utf8'), 'beta\n');
+  assert.ok(f.store.events(f.task.id).some(event => event.kind === 'shared_sibling_checkouts' && /beta created/.test(event.detail)));
+});
+
+test('nucleus#1315 a second BB task on the same repository resolves the same shared checkout', { timeout: HOOK_TEST_TIMEOUT_MS }, async (t: TestContext) => {
+  const f = await sharedSiblingFixture(t, 'bb');
+  await f.provisioning.ensureSharedSiblingCheckouts(f.task);
+  const shared = join(f.root, 'beta');
+  const first = await git(shared, 'rev-parse', 'HEAD');
+  const second = submit(f.store, f.alpha.path, f.alpha.origin, 'Second task on the repository', {}, { commit: f.planningCommit, handoff: 'docs/handoffs/plan.md', base: f.planningCommit });
+  const secondDirectory = join(f.root, `ns-${second.id}`);
+  await git(f.alpha.path, 'worktree', 'add', '-b', second.branch, secondDirectory, second.planningCommit);
+  await f.provisioning.ensureSharedSiblingCheckouts(f.store.update(second.id, { workspaceId: `bb-worktree-${'b'.repeat(40)}`, directory: secondDirectory, baseBranch: 'main' }));
+  assert.equal(await git(shared, 'rev-parse', 'HEAD'), first, 'the existing shared checkout is never replaced');
+  assert.equal(await readFile(join(secondDirectory, '..', 'beta', 'README.md'), 'utf8'), 'beta\n', 'the second task resolves ../beta too');
+  assert.ok(f.store.events(second.id).some(event => event.kind === 'shared_sibling_checkouts' && /beta existing/.test(event.detail)));
 });
 
 test('nucleus#1315 another host keeps its worktree root exactly as the repository left it', { timeout: HOOK_TEST_TIMEOUT_MS }, async (t: TestContext) => {
-  const f = await bbWorkspaceFixture(t, 'paseo');
-  await f.provisioning.linkPinnedSiblingCheckouts(f.task);
+  const f = await sharedSiblingFixture(t, 'paseo');
+  await f.provisioning.ensureSharedSiblingCheckouts(f.task);
   assert.equal(existsSync(join(f.root, 'beta')), false);
-  assert.equal(f.store.events(f.task.id).some(event => event.kind === 'pinned_sibling_links'), false);
+  assert.equal(f.store.events(f.task.id).some(event => event.kind === 'shared_sibling_checkouts'), false);
 });
 
-test('nucleus#1315 an occupied sibling name is left untouched and recorded', { timeout: HOOK_TEST_TIMEOUT_MS }, async (t: TestContext) => {
-  const f = await bbWorkspaceFixture(t, 'bb');
+test('nucleus#1315 an occupied sibling path is left untouched and recorded', { timeout: HOOK_TEST_TIMEOUT_MS }, async (t: TestContext) => {
+  const f = await sharedSiblingFixture(t, 'bb');
   const occupied = join(f.root, 'beta');
-  await writeFile(occupied, 'not a link\n');
-  await f.provisioning.linkPinnedSiblingCheckouts(f.task);
-  assert.equal(await readFile(occupied, 'utf8'), 'not a link\n');
-  assert.ok(f.store.events(f.task.id).some(event => event.kind === 'pinned_sibling_links' && /beta conflict/.test(event.detail)));
+  await writeFile(occupied, 'not a checkout\n');
+  await f.provisioning.ensureSharedSiblingCheckouts(f.task);
+  assert.equal(await readFile(occupied, 'utf8'), 'not a checkout\n');
+  assert.ok(f.store.events(f.task.id).some(event => event.kind === 'shared_sibling_checkouts' && /beta existing/.test(event.detail)));
 });
