@@ -142,3 +142,38 @@ test('an empty catalogue and a failed read each say so', async () => {
     assert.equal(retried, 1);
   } finally { failed.done(); }
 });
+
+test('a long dependents row shows its count, eight names and Show all; a short row lists every name', async () => {
+  // 465 unsettled effects, worded as `hostDependents` words them (synthetic task references).
+  const effects = [
+    ...Array.from({ length: 417 }, (_, i) => `thread cleanup for acme#${i + 1}`),
+    ...Array.from({ length: 40 }, (_, i) => `process cleanup for acme#${i + 500}`),
+    ...Array.from({ length: 8 }, (_, i) => `dispatch for acme#${i + 600}`),
+  ];
+  const host = (id: string, names: string[]) => ({ id, kind: 't3code', label: 'T3Code', endpoint: 'ws://127.0.0.1:3773/ws', state: 'offline', reason: 'Host is offline', isDefault: false,
+    versions: [], dependents: [{ kind: 'effect', label: 'unsettled effect', names }], removalBlockers: [] });
+  const list = hostList.output.parse({ defaultHostKind: 'paseo', removals: [], hosts: [host('t3code:long', effects), host('t3code:short', effects.slice(0, 3))] });
+  const { ui, done } = await mountHosts({ list });
+  try {
+    ui.press('Show details for t3code:long');
+    let text = ui.text();
+    assert.match(text, /465 unsettled effects/);
+    assert.match(text, /thread cleanup ×417 · process cleanup ×40 · dispatch ×8/, 'repeated kinds group with their counts');
+    assert.match(text, /thread cleanup for acme#8\b/);
+    assert.doesNotMatch(text, /thread cleanup for acme#9\b/, 'only the first eight names show');
+    assert.doesNotMatch(text, /process cleanup for acme#/);
+    ui.press('Show all 465 unsettled effects on t3code:long');
+    text = ui.text();
+    for (const name of effects) assert.ok(text.includes(name), `expanded row names ${name}`);
+    ui.press('Show fewer 465 unsettled effects on t3code:long');
+    assert.doesNotMatch(ui.text(), /thread cleanup for acme#9\b/);
+    ui.press('Hide details for t3code:long');
+
+    ui.press('Show details for t3code:short');
+    text = ui.text();
+    assert.match(text, /3 unsettled effects/);
+    assert.match(text, /thread cleanup for acme#1, thread cleanup for acme#2, thread cleanup for acme#3/);
+    assert.equal(ui.query('Show all 3 unsettled effects on t3code:short'), undefined, 'a short row has no Show all');
+    assert.doesNotMatch(text, /×/, 'a short row has no group summary');
+  } finally { done(); }
+});

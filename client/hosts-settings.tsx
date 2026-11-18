@@ -5,7 +5,7 @@ import { radius, roles, space, type } from "./design";
 import { formatLocalDateTime } from "./date-time-field";
 import { errorText } from "./error-text";
 import type * as api from "../shared/contracts";
-import type { HostView } from "../shared/rpc/hosts";
+import type { HostDependency, HostView } from "../shared/rpc/hosts";
 
 /*
  * Settings → Hosts (nucleus#1325): every registered host with its status, a
@@ -56,6 +56,42 @@ function Detail({ c, label, value }: { c: Colors; label: string; value: string }
   </View>;
 }
 
+/** A dependents row lists this many names before Show all (Tom, 2026-11-18). */
+export const DEPENDENT_PREVIEW = 8;
+
+/**
+ * Repeated kinds in a long row, most frequent first: "thread cleanup ×417". The
+ * kind is the text before " for "; a row with no repeats has no summary.
+ */
+export function dependencyGroups(names: readonly string[]): string {
+  const counts = new Map<string, number>();
+  for (const name of names) {
+    const at = name.indexOf(" for ");
+    if (at <= 0) return "";
+    const kind = name.slice(0, at);
+    counts.set(kind, (counts.get(kind) ?? 0) + 1);
+  }
+  if (counts.size >= names.length) return "";
+  return [...counts].sort((a, b) => b[1] - a[1]).map(([kind, count]) => count > 1 ? `${kind} ×${count}` : kind).join(" · ");
+}
+
+/** One "Depends on it" row: the count, the first few names, and Show all when long. */
+function DependencyRow({ c, hostId, dependency }: { c: Colors; hostId: string; dependency: HostDependency }) {
+  const [all, setAll] = useState(false);
+  const count = dependency.names.length;
+  const noun = `${dependency.label}${count === 1 ? "" : "s"}`;
+  const long = count > DEPENDENT_PREVIEW;
+  const shown = long && !all ? dependency.names.slice(0, DEPENDENT_PREVIEW) : dependency.names;
+  const groups = long ? dependencyGroups(dependency.names) : "";
+  return <View style={{ gap: space.xxs }}>
+    <Detail c={c} label={`${count} ${noun}`} value={`${groups ? `${groups}\n` : ""}${shown.join(", ")}${long && !all ? ", …" : ""}`} />
+    {long && <Pressable accessibilityRole="button" accessibilityLabel={`${all ? "Show fewer" : "Show all"} ${count} ${noun} on ${hostId}`} accessibilityState={{ expanded: all }}
+      onPress={() => setAll(value => !value)} style={{ marginLeft: 96 + space.sm, alignSelf: "flex-start" }}>
+      <Text style={{ color: roles(c).accent, fontSize: type.metadata.fontSize, lineHeight: type.metadata.lineHeight }}>{all ? "Show fewer" : "Show all"}</Text>
+    </Pressable>}
+  </View>;
+}
+
 const ago = (at: string, now: number) => {
   const seconds = Math.max(0, Math.round((now - Date.parse(at)) / 1000));
   return seconds < 90 ? `${seconds} s ago` : `${Math.round(seconds / 60)} min ago`;
@@ -99,7 +135,7 @@ export function HostRow({ c, host, remove, now = Date.now() }: { c: Colors; host
         <Text style={{ ...small(c), fontWeight: "600" }}>Depends on it</Text>
       </HelpLine>
       {host.dependents.length
-        ? host.dependents.map(dependency => <Detail key={dependency.kind} c={c} label={`${dependency.names.length} ${dependency.label}${dependency.names.length === 1 ? "" : "s"}`} value={dependency.names.join(", ")} />)
+        ? host.dependents.map(dependency => <DependencyRow key={dependency.kind} c={c} hostId={host.id} dependency={dependency} />)
         : <Text style={small(c)}>Nothing</Text>}
       <View style={{ ...row, justifyContent: "flex-end" }}>
         <ActionButton c={c} action="remove" label={`Remove ${host.id}`} disabled={busy || confirming} onPress={() => { setError(""); setConfirming(true); }} />
