@@ -171,3 +171,46 @@ test('private connection settings refuse credential-bearing endpoints', () => {
     assert.throws(() => new T3HostConnection({ endpoint, bearer: 'synthetic' }, '/synthetic-state', hosts, () => new Admission()), /endpoint/);
   }
 });
+
+test('a live reconfigure adopts the operator route\'s new connection without a restart', async () => {
+  // nucleus#1330: `nucleus t3 install` writes the stored connection while the
+  // service runs. The adopted connection releases the previous environment's
+  // claim and registers the one the new file names; a cleared connection drops it.
+  const { hosts } = registry();
+  const first = new NativeHost();
+  const second = new NativeHost();
+  second.hostId = 't3code:second-environment';
+  const configs: Array<{ endpoint: string; bearer: string }> = [];
+  const manager = new T3HostConnection(
+    { endpoint: 'http://127.0.0.1:10002', bearer: 'synthetic-private-bearer' },
+    '/synthetic-state', hosts, () => new Admission(),
+    {
+      create: input => {
+        configs.push({ endpoint: input.endpoint, bearer: input.bearer });
+        return (configs.length === 1 ? first : second) as never;
+      },
+      adapter: () => ({ observe: async (id: string) => ({ id, workspaceId: null, status: 'idle', active: false, permissions: false, error: '' }) } as Adapter),
+    });
+  try {
+    await manager.ensureConnected();
+    assert.deepEqual(hosts.onlineIds(), ['paseo-environment', 't3code:synthetic-environment']);
+
+    manager.reconfigure({ endpoint: 'http://127.0.0.1:10003', bearer: 'synthetic-rotated-bearer' });
+    assert.equal(manager.status().connected, false, 'the previous claim is released immediately');
+    assert.deepEqual(hosts.onlineIds(), ['paseo-environment']);
+    await manager.ensureConnected();
+    assert.deepEqual(hosts.onlineIds(), ['paseo-environment', 't3code:second-environment']);
+    assert.equal(configs.length, 2);
+    assert.equal(configs[1]!.endpoint, 'http://127.0.0.1:10003');
+    assert.equal(configs[1]!.bearer, 'synthetic-rotated-bearer');
+
+    // An unchanged connection is not a reconnect: the operator re-running install
+    // with the same file must not churn the host.
+    manager.reconfigure({ endpoint: 'http://127.0.0.1:10003', bearer: 'synthetic-rotated-bearer' });
+    assert.equal(manager.status().connected, true);
+    assert.equal(configs.length, 2);
+  } finally {
+    manager.close();
+  }
+  assert.deepEqual(hosts.onlineIds(), ['paseo-environment']);
+});

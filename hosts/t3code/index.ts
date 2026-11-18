@@ -7,7 +7,7 @@ import { T3CodeHost, type T3CodeConfig } from './adapter';
 
 export { T3CodeHost, type T3CodeConfig } from './adapter';
 export { T3CompatibilityError } from './contracts';
-export { T3RpcError } from './rpc';
+export { T3RpcError, T3RpcClient } from './rpc';
 export function createHost(config: T3CodeConfig): T3CodeHost { return new T3CodeHost(config); }
 
 export type T3Reporting = {

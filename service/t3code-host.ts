@@ -36,6 +36,16 @@ interface ConnectionDependencies {
   adapter(host: NativeConnection): Adapter;
 }
 
+/** The one validation both construction and a live reconfigure apply. */
+function validateConfig(config: T3ConnectionConfig): T3ConnectionConfig {
+  const endpoint = new URL(config.endpoint);
+  if (!['http:', 'https:', 'ws:', 'wss:'].includes(endpoint.protocol)
+    || endpoint.username || endpoint.password || endpoint.search || endpoint.hash)
+    throw new Error('T3Code endpoint must be an HTTP or WebSocket URL without credentials, query or fragment');
+  if (!config.bearer.trim()) throw new Error('T3Code session bearer is required');
+  return { ...config };
+}
+
 /** A secondary host has its own connection, registry claim and admission state. */
 export class T3HostConnection {
   #config: T3ConnectionConfig;
@@ -70,12 +80,34 @@ export class T3HostConnection {
         helperPath: join(dataDir, 'worker-report.mjs'),
       }),
     };
-    const endpoint = new URL(config.endpoint);
-    if (!['http:', 'https:', 'ws:', 'wss:'].includes(endpoint.protocol)
-      || endpoint.username || endpoint.password || endpoint.search || endpoint.hash)
-      throw new Error('T3Code endpoint must be an HTTP or WebSocket URL without credentials, query or fragment');
-    if (!config.bearer.trim()) throw new Error('T3Code session bearer is required');
-    this.#config = { ...config };
+    this.#config = validateConfig(config);
+  }
+
+  /**
+   * Adopt the connection `nucleus t3 install` / `uninstall` just wrote, without a
+   * service restart (nucleus#1330). The previous environment's claim is released
+   * first, so the next `ensureConnected` registers the host the new file names —
+   * or, after an uninstall, nothing. Callers pass an already-validated shape.
+   */
+  reconfigure(config: T3ConnectionConfig): void {
+    const next = validateConfig(config);
+    if (this.#config.bearer === next.bearer && this.#config.endpoint === next.endpoint
+      && this.#config.probeThreadId === next.probeThreadId) return;
+    this.#config = next;
+    this.detach();
+  }
+
+  /** Drop this connection's claim and native host, leaving the object usable. */
+  private detach(): void {
+    if (this.session) this.registry.disconnect(this.session.id, this.session.token);
+    this.session = null;
+    this.host?.close();
+    this.host = null;
+    this.lastIdentity = null;
+    this.errorValue = '';
+    this.lastDisconnectReason = null;
+    this.lastProtocolError = null;
+    this.versionValue = '';
   }
 
   /** Only connection facts are returned; no endpoint, credential or native object. */
@@ -143,9 +175,6 @@ export class T3HostConnection {
 
   close(): void {
     this.closed = true;
-    if (this.session) this.registry.disconnect(this.session.id, this.session.token);
-    this.session = null;
-    this.host?.close();
-    this.host = null;
+    this.detach();
   }
 }

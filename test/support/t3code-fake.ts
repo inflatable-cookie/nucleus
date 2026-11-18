@@ -173,6 +173,8 @@ export async function t3Fake(t: TestContext, directory: string) {
   const shells: Array<{ threads: string[]; archivedThreads: string[] }> = [];
   /** Requests refused for a bearer other than this fake's own, as the server answers them. */
   const unauthorized: Array<{ path: string }> = [];
+  /** Every bearer a socket ticket was fetched with, in order: which connection carried which call. */
+  const bearers: string[] = [];
   const projectRows: Value[] = [{ id: 'synthetic-project', title: 'Synthetic project', workspaceRoot: directory }];
   const archivedProjects = new Set<string>();
   const threads = new Map<string, Value>([['synthetic-probe', threadProjection('synthetic-probe', directory)]]);
@@ -261,6 +263,22 @@ export async function t3Fake(t: TestContext, directory: string) {
     /** `server.getConfig`'s `settings` block; the client's own hide switch lives here. */
     settings: { hideTaggedThreads: false, hiddenThreadTags: [] as string[] } as Value,
     /**
+     * `settings.providerInstances`: the stored provider instances the nightly keeps
+     * in its own settings (`server.updateSettings`'s mutation target). Absent when
+     * no test reads or writes one, so the served block keeps its previous shape.
+     */
+    providerInstances: undefined as Value | undefined,
+    /** Authorization headers this fake refuses, for a token-rotation case. */
+    rejectBearers: [] as string[],
+    /**
+     * The readiness a mutation leaves behind. The installed nightly answers a
+     * provider upsert with `ready` and then reports its own ACP probe's verdict
+     * (`warning` when the agent refuses a test session), so an install test sets
+     * these to score the probe result the operator route has to report.
+     */
+    upsertProviderStatus: 'ready' as string,
+    upsertProviderMessage: '' as string,
+    /**
      * A launched or messaged thread starts a live run, the way a provider turn does.
      * The parenting tests need the parent thread to be live while a child is created
      * (nightly: `Parent run ... is not active.`).
@@ -294,7 +312,18 @@ export async function t3Fake(t: TestContext, directory: string) {
     // the installed server refuses an unknown bearer, and a fixture that threw from an
     // HTTP handler could be crashed by any other client on the host, which fails the
     // whole file with an uncaught exception that is not the test's (nucleus#1305 run).
-    if (request.headers.authorization !== 'Bearer synthetic-bearer') {
+    // The environment descriptor is public on the nightly (a reachability probe
+    // reads it before any bearer exists); everything else needs a session.
+    const publicPath = new URL(request.url!, 'http://localhost').pathname;
+    if (publicPath === '/.well-known/t3/environment') {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ environmentId: controls.environmentId, serverVersion: controls.version, orchestrationProtocolVersion: controls.protocol }));
+      return;
+    }
+    // Every `synthetic-*` bearer is this fake's own: the operator install route
+    // mints one bearer per scope split and proves which one carried which call.
+    const authorization = `${request.headers.authorization ?? ''}`;
+    if (controls.rejectBearers.includes(authorization) || !/^Bearer synthetic-/.test(authorization)) {
       unauthorized.push({ path: request.url ?? '' });
       response.writeHead(401, { 'content-type': 'application/json' });
       response.end(JSON.stringify({ error: 'Unauthorized' }));
@@ -303,7 +332,12 @@ export async function t3Fake(t: TestContext, directory: string) {
     response.writeHead(200, { 'content-type': 'application/json' });
     const url = new URL(request.url!, 'http://localhost');
     if (url.pathname === '/api/auth/websocket-ticket/rpc') {
+      bearers.push(authorization);
       response.end(JSON.stringify({ ticket: 'synthetic-ticket', expiresAt: '2099-01-01T00:00:00.000Z' }));
+      return;
+    }
+    if (url.pathname === '/.well-known/t3/environment') {
+      response.end(JSON.stringify({ environmentId: controls.environmentId, serverVersion: controls.version, orchestrationProtocolVersion: controls.protocol }));
       return;
     }
     assert.fail(`unexpected HTTP route ${url.pathname}`);
@@ -353,6 +387,9 @@ export async function t3Fake(t: TestContext, directory: string) {
     const socket = rawSocket as Socket;
     upgrades++;
     sockets.add(socket); socket.on('close', () => { sockets.delete(socket); closes++; });
+    // A client that exits mid-frame resets the connection; that is the client's
+    // own teardown and never the fake's failure.
+    socket.on('error', () => { sockets.delete(socket); });
     const url = new URL(request.url!, 'http://localhost');
     assert.equal(url.pathname, '/ws'); assert.equal(url.searchParams.get('wsTicket'), 'synthetic-ticket');
     const accept = createHash('sha1').update(`${request.headers['sec-websocket-key']}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`).digest('base64');
@@ -378,14 +415,17 @@ export async function t3Fake(t: TestContext, directory: string) {
           const serviceTier: Value = { id: 'serviceTier', label: 'Service Tier', type: 'select', currentValue: 'standard',
             options: [{ id: 'standard', label: 'Standard', isDefault: true }, { id: 'priority', label: 'Priority' }] };
           const verbose: Value = { id: 'verbose', label: 'Verbose', type: 'boolean', currentValue: true };
+          const settings = controls.providerInstances
+            ? { ...controls.settings, providerInstances: controls.providerInstances }
+            : controls.settings;
           if (controls.providers) return success({
             environment: { environmentId: controls.environmentId, serverVersion: controls.version, orchestrationProtocolVersion: controls.protocol },
             providers: controls.providers,
-            settings: controls.settings,
+            settings,
           });
           return success({
             environment: { environmentId: controls.environmentId, serverVersion: controls.version, orchestrationProtocolVersion: controls.protocol },
-            settings: controls.settings,
+            settings,
             providers: [
               {
                 instanceId: 'synthetic-provider', displayName: 'Synthetic provider', enabled: true, status: 'ready',
@@ -401,6 +441,29 @@ export async function t3Fake(t: TestContext, directory: string) {
             ],
             unrelatedAdditiveField: true,
           });
+        }
+        case 'server.updateSettings': {
+          // The nightly's provider-instance mutation (`create`, `upsert`, `remove`)
+          // over its stored instances, with a readiness row the client then reads.
+          const mutation = payload.providerInstanceMutation as Value | undefined;
+          if (!mutation) return success(controls.settings);
+          const instances = { ...(controls.providerInstances ?? {}) };
+          if (mutation.operation === 'remove') {
+            if (!Object.hasOwn(instances, mutation.instanceId)) return failure({ _tag: 'Fail', error: { _tag: 'ServerSettingsError', message: 'Provider instance not found.' } });
+            delete instances[mutation.instanceId];
+            controls.providers = (controls.providers ?? []).filter(provider => provider.instanceId !== mutation.instanceId);
+          } else {
+            if (mutation.operation === 'create' && Object.hasOwn(instances, mutation.instanceId))
+              return failure({ _tag: 'Fail', error: { _tag: 'ServerSettingsError', message: 'Provider instance already exists.' } });
+            instances[mutation.instanceId] = mutation.instance;
+            const ready = { instanceId: mutation.instanceId, displayName: mutation.instance.displayName ?? null,
+              driver: mutation.instance.driver, enabled: mutation.instance.enabled !== false, status: controls.upsertProviderStatus,
+              ...(controls.upsertProviderMessage ? { message: controls.upsertProviderMessage } : {}),
+              models: [{ slug: 'nucleus', name: 'Nucleus' }, { slug: 'nucleus-quiet', name: 'Nucleus (quiet)' }] };
+            controls.providers = [...(controls.providers ?? []).filter(provider => provider.instanceId !== mutation.instanceId), ready];
+          }
+          controls.providerInstances = instances;
+          return success({ ...controls.settings, providerInstances: instances });
         }
         case 'orchestration.subscribeShell': {
           // A removed thread is normally in no list: the nightly's own shell reads
@@ -690,5 +753,5 @@ export async function t3Fake(t: TestContext, directory: string) {
   const injectRaw = (text: string) => { for (const write of injectors) write(text); };
   const fullSnapshotBytes = (threadId: string) => Buffer.byteLength(JSON.stringify({ _tag: 'Chunk', requestId: 'synthetic-request',
     values: [{ kind: 'snapshot', snapshotSequence: controls.snapshotSequence, projection: wireProjection(threads.get(threadId)!) }] }));
-  return { endpoint: `http://127.0.0.1:${address.port}`, controls, threads, commands, requests, snapshots, shells, unauthorized, controlFrames, frameBytes, fullSnapshotBytes, get upgrades() { return upgrades; }, get closes() { return closes; }, projects: projectRows, dropSockets, inject, injectRaw };
+  return { endpoint: `http://127.0.0.1:${address.port}`, controls, threads, commands, requests, snapshots, shells, unauthorized, bearers, controlFrames, frameBytes, fullSnapshotBytes, get upgrades() { return upgrades; }, get closes() { return closes; }, projects: projectRows, dropSockets, inject, injectRaw };
 }

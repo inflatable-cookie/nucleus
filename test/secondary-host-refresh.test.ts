@@ -22,10 +22,11 @@ interface ArrivalHost {
 const stub = (connected: boolean) => {
   const host: ArrivalHost = { refreshes: [], connected };
   const owner = {
-    t3Host: {
+    t3Host: () => ({
       status: () => ({ connected: host.connected }),
       ensureConnected: async () => undefined,
-    },
+    }),
+    refreshT3Settings: () => undefined,
     engine: {
       refresh: async () => {
         host.refreshes.push(host.refreshes.length + 1);

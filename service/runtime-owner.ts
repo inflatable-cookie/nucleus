@@ -50,6 +50,7 @@ import { Admission, admitAdapter, type AdmissionOptions } from "../core/host/adm
 import { HostRegistry, HOST_IDLE_GRACE_MS, type KnownHost } from "../core/host/host-registry";
 import type { IdentitySource } from "../shared/host-kind";
 import { T3HostConnection, type T3ConnectionConfig } from "./t3code-host";
+import { readT3Connection, sameT3Connection, settingsFileStamp, t3SettingsPath } from "../shared/t3/settings";
 import { BbHostConnection, recordBbPresentationParentChange, type BbHostRejectedInput, type BbHostReleasedInput, type BbHostVerifiedInput } from "./bb-host";
 import {
   HostConnections,
@@ -243,7 +244,19 @@ export class QueueRuntime {
   readonly admission: Admission;
   readonly hostRegistry: HostRegistry<{ adapter: Adapter; admission: Admission }>;
   private hostSession: { id: string; token: object } | null = null;
-  private readonly t3Host: T3HostConnection | null;
+  /**
+   * The T3Code connection (Spec: t3code host adapter). Mutable because the
+   * operator route `nucleus t3 install` / `uninstall` writes the stored connection
+   * while the service runs, and the next bootstrap tick adopts it without a
+   * restart (nucleus#1330). Every reader goes through the owner object, so a
+   * replaced connection is what health, the lifecycle and the catalogue report.
+   */
+  private t3Host: T3HostConnection | null;
+  /** The connection in force, and the settings-file stamp it was read at. */
+  private t3Config: T3ConnectionConfig | null = null;
+  private t3SettingsStamp = "";
+  /** The one admission factory the secondary host is built with, reused on adoption. */
+  private readonly makeAdmission: () => Admission;
   /**
    * The BB host's registration and identity (Spec 062, phase 1). The executor
    * connection itself lives in the service process; this object is the durable
@@ -426,12 +439,15 @@ export class QueueRuntime {
       writeLastSeen: seen => this.store.setMeta("hostLastSeen", seen),
     }, options.hostNow ?? Date.now, options.hostIdleGraceMs ?? HOST_IDLE_GRACE_MS);
     const createAdmission = () => new Admission({ ...options.admission, totalLimit: () => this.store.configuredPaseoCallLimit(), workspaceBudget: () => this.store.getMeta<number>("globalLimit") ?? DEFAULT_GLOBAL_LIMIT });
+    this.makeAdmission = createAdmission;
     // The ACP session surface is attached later in bootstrap (Spec 065), so the host
     // reads it through this getter rather than capturing it: a T3 parent thread is
     // minted from it and released through it (nucleus#1305).
     this.t3Host = this.settings.t3code
       ? new T3HostConnection(this.settings.t3code, this.dataDir, this.hostRegistry, createAdmission, undefined, () => this.engine.acp)
       : null;
+    this.t3Config = this.settings.t3code ?? null;
+    this.t3SettingsStamp = settingsFileStamp(t3SettingsPath(this.dataDir));
     this.bbHost = new BbHostConnection(this.store, this.hostRegistry, createAdmission, this.dataDir);
     const recordedHost = this.hostRegistry.primary()?.id;
     this.admission = recordedHost ? this.hostRegistry.resource(recordedHost, createAdmission) : createAdmission();
@@ -546,7 +562,8 @@ export class QueueRuntime {
       admission: this.admission,
       hostRegistry: this.hostRegistry,
       plannerTickets: this.plannerTickets,
-      t3Host: this.t3Host,
+      t3Host: () => runtime.t3Host,
+      refreshT3Settings: () => runtime.refreshT3Settings(),
       daemonUrl: this.settings.daemonUrl,
       connectTimeoutMs: this.connectTimeoutMs,
       readPrStates: (tasks) => readPrStates(tasks),
@@ -569,7 +586,7 @@ export class QueueRuntime {
       engine: this.engine,
       lifecycle: this.lifecycle,
       hostRegistry: this.hostRegistry,
-      t3Host: this.t3Host,
+      t3Host: () => runtime.t3Host,
       bb: () => runtime.bbHost.status(),
       admission: this.admission,
       capacityChanges: this.capacityChanges,
@@ -691,6 +708,43 @@ export class QueueRuntime {
   get paseoHostId(): string { return this.paseo.hostId; }
   private connected(): boolean { return this.hosts.connected(); }
   private anyHostConnected(): boolean { return this.hosts.anyHostConnected(); }
+
+  /**
+   * Adopt a connection the operator route just wrote, or dropped, without a
+   * restart (nucleus#1330). The settings file's stamp decides whether there is
+   * anything to read, so an ordinary bootstrap tick costs one stat; a changed
+   * `t3code` block closes the previous connection's claim and builds the one the
+   * file now names. A malformed block changes nothing: the connection that is
+   * working keeps working until the file is fixed.
+   */
+  refreshT3Settings(): void {
+    if (this.closing) return;
+    const path = t3SettingsPath(this.dataDir);
+    const stamp = settingsFileStamp(path);
+    if (stamp === this.t3SettingsStamp) return;
+    this.t3SettingsStamp = stamp;
+    let next: T3ConnectionConfig | null;
+    try {
+      next = readT3Connection(this.dataDir);
+    } catch (error) {
+      console.error("T3Code settings reload refused:", error instanceof Error ? error.message : String(error));
+      return;
+    }
+    if (sameT3Connection(next, this.t3Config)) return;
+    this.t3Config = next;
+    this.t3Host?.close();
+    this.t3Host = null;
+    if (!next) return;
+    try {
+      this.t3Host = new T3HostConnection(next, this.dataDir, this.hostRegistry, this.makeAdmission, undefined, () => this.engine.acp);
+    } catch (error) {
+      console.error("T3Code connection refused:", error instanceof Error ? error.message : String(error));
+      return;
+    }
+    void this.t3Host.ensureConnected().catch(() => {
+      /* the next bootstrap tick reconnects; health reports the failure */
+    });
+  }
 
   /** A lost host connection is not evidence that any host run ended. */
   hostShutdownDue(): boolean { return this.hosts.hostShutdownDue(); }
