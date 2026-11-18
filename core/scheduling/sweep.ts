@@ -205,6 +205,15 @@ export class Sweep {
         }
         // Nothing is read from a host that is away: the wait itself is the stop.
         if (!passed) continue;
+        // Spec 066 R1/R6 (C2): the pass's reading of one host, shared with that
+        // host's task visits. A step that failed at the transport boundary means the
+        // host did not answer, even though the registry still claims the connection:
+        // the reading is the failure, not the claim. So this host's tasks keep their
+        // host-scoped wait for the pass, and no other host's visit sees it.
+        if (!passed.transportAnswered) {
+          this.engine.markAuditHostUnavailable(host);
+          this.engine.hostOutages.observe(host, false);
+        }
         if (passed.inventory) inventory = passed.inventory;
         for (const [id, task] of passed.finishedCatchUp) finishedCatchUp.set(id, task);
       }
@@ -220,7 +229,18 @@ export class Sweep {
       // before recovery reads the same threads, so a fresh resume never races
       // an armed failover.
       if (!startsNoRuns(this.engine.store, this.engine.stopped)) await this.engine.resumePausedStops();
-      if (!startsNoRuns(this.engine.store, this.engine.stopped)) await this.engine.recoverExhaustedWorkers();
+      if (!startsNoRuns(this.engine.store, this.engine.stopped)) {
+        try { await this.engine.recoverExhaustedWorkers(); }
+        catch (error) {
+          // The failover pass walks every host on its own; one of them can hit the
+          // transport boundary. That answers for that host and never for the fleet
+          // (Spec 066 R6, C2), so the pass records it and still visits every other
+          // host's tasks. The next pass re-reads the host that failed.
+          if (!isTransportFailure(error)) throw error;
+          this.engine.store.setMeta('hostPassError',
+            `recoverExhaustedWorkers: ${error instanceof Error ? error.message : String(error)}`.slice(0, 2000));
+        }
+      }
       // Retired-errored archive is not drain settlement: it waits for unpause
       // (same as main). Running it under pause doubled the A6 retired-worker
       // observe. It does not hold `drained`.
@@ -299,7 +319,26 @@ export class Sweep {
           // workspace or a dispatch hold keeps the task from progress — including a
           // task whose quantum this sweep cannot start at all. The host wait is
           // recorded first, so the pause is dated from the outage's own start.
-          const hostWait = this.engine.hostWait(task);
+          //
+          // The visit settles the task's host-scoped wait from this host's own
+          // reading (Spec 066 R1/R3/R6, C2): the one settlement (`clearHostWait`)
+          // clears an outage wait and a transport deferral together, and only when
+          // the host answered. A host that did not answer, or another host's
+          // failure, leaves this wait exactly as it is.
+          let hostWait: string | null;
+          try { hostWait = this.engine.hostWait(task); }
+          catch (error) {
+            // The host stopped answering between its pass and this visit. That is
+            // this task's own host going away, not the fleet's: hold this task and
+            // keep visiting the rest of the order (Spec 066 R6).
+            if (!isTransportFailure(error)) throw error;
+            if (task.hostId) {
+              this.engine.markAuditHostUnavailable(task.hostId);
+              this.engine.hostOutages.observe(task.hostId, false);
+            }
+            reconciled.add(task.id);
+            continue;
+          }
           this.engine.resolution.settleBudgetClock(task);
           reconciled.add(task.id);
           // Nothing is sent to a host that is away: no quantum, no recovery, no

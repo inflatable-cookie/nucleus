@@ -6,6 +6,7 @@ import type { AgentObservation } from "../host/adapter";
 import { catchUpFinishedTaskThreads, finishedThreadCleanupCatchUp } from '../workspaces/thread-archive';
 import { removesThreads } from '../workspaces/thread-archive-effect';
 import { sanitizeHostFailureDetail, sanitizeHostFailureReason } from "../host";
+import { isTransportFailure } from "../../shared/transport";
 
 const REVIEW_PHASES = new Set(['awaiting_review', 'report_ready', 'reviewing', 'changes_requested', 'verifying', 'merging', 'syncing', 'closing', 'done']);
 const SUPPORT_ROLES = new Set(['reviewer', 'recovery', 'coordinator', 'decider', 'executor']);
@@ -31,6 +32,14 @@ export type HostPassResult = {
   inventory: ReadonlyMap<string, AgentObservation> | null;
   /** Finished tasks whose thread cleanup is still owed, for the bounded task window. */
   finishedCatchUp: Map<string, Task>;
+  /**
+   * This host's transport answered the whole pass (Spec 066 R1/R6, C2). A step that
+   * fails at the transport boundary means it did not: the registry can still claim
+   * a connection the socket does not honour, so the pass reads the failure, not the
+   * claim. The sweep shares this record with the same host's task visits, and a
+   * host that did not answer settles nothing while another host's tasks progress.
+   */
+  transportAnswered: boolean;
 };
 
 /**
@@ -47,6 +56,12 @@ export class HostPass {
   constructor(readonly context: HostPassContext) {}
   private get store() { return this.context.store; }
   private get adapter() { return this.context.adapter; }
+  /**
+   * Hosts whose pass hit the transport boundary. One pass visits its hosts in
+   * order, and the entry is cleared when a host's pass begins, so a reading never
+   * outlives the pass that made it and never answers for another host.
+   */
+  private readonly transportFailures = new Set<string>();
 
   /**
    * Thread settlement is a sweep invariant, not a callback side effect. Reports
@@ -138,14 +153,17 @@ export class HostPass {
     // a thread whose task is over is not read again, and every read this pass makes
     // is shared by its consumers. A host that does not present threads ignores it.
     const tasks = this.store.tasks().filter(task => task.hostId === host);
+    this.transportFailures.delete(host);
     await this.step(host, 'beginHostPass', () => this.adapter.beginHostPass?.(tasks));
-    try { return await this.hostPass(host, tasks); }
+    let passed: Omit<HostPassResult, 'transportAnswered'> | null = null;
+    try { passed = await this.hostPass(host, tasks); }
     finally { await this.step(host, 'endHostPass', () => this.adapter.endHostPass?.()); }
+    return { ...passed!, transportAnswered: !this.transportFailures.has(host) };
   }
 
   /** The pass's steps, between a host's `beginHostPass` and its `endHostPass`. */
-  private async hostPass(host: string, tasks: readonly Task[]): Promise<HostPassResult> {
-    const result: HostPassResult = { inventory: null, finishedCatchUp: new Map() };
+  private async hostPass(host: string, tasks: readonly Task[]): Promise<Omit<HostPassResult, 'transportAnswered'>> {
+    const result: Omit<HostPassResult, 'transportAnswered'> = { inventory: null, finishedCatchUp: new Map() };
     if (this.adapter.hostProcessListing) {
       const historical = Date.now() - (this.lastRunProcessSweep.get(host) ?? 0) >= 3_600_000;
       if (historical) this.lastRunProcessSweep.set(host, Date.now());
@@ -185,6 +203,11 @@ export class HostPass {
   private async step(host: string, name: string, run: () => Promise<unknown> | unknown): Promise<void> {
     try { await run(); }
     catch (error) {
+      // A step that fails at the transport boundary is this host's own answer for
+      // the pass (Spec 066 R6): the client claims a connection the socket does not
+      // honour, so the host did not answer and its tasks keep their wait. Only this
+      // host's reading changes; another host's failure never reaches this record.
+      if (isTransportFailure(error)) this.transportFailures.add(host);
       const detail = error instanceof Error ? error.message : String(error);
       this.store.setMeta('hostPassError', `${host}/${name}: ${detail}`.slice(0, 2000));
     }
