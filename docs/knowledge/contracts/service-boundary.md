@@ -388,10 +388,14 @@ The runtime build packages both bundles together.
   expires after 8 hours by default (5 minutes to 24 hours through `ttlMinutes`)
   and is held as a digest in memory. The page reads the fragment once, exchanges
   the token at `/api/pair`, then removes the fragment. The service sets an
-  HttpOnly, SameSite=Strict, Path=/ cookie (no Secure flag on loopback). It stores
-  only each cookie's SHA-256 digest and rolling expiry in
-  `<workRoot>/nucleus-web-sessions.json`, mode 0600. Sessions expire after 30 days
-  without use; use extends expiry. A service restart preserves paired sessions.
+  HttpOnly, SameSite=Strict, Path=/ cookie (no Secure flag on loopback) with
+  `Max-Age=2592000` (30 days). It stores only each cookie's SHA-256 digest and
+  rolling expiry in `<workRoot>/nucleus-web-sessions.json`, mode 0600. Sessions
+  expire after 30 days without use; use extends expiry and re-sends the cookie
+  with a fresh 30-day `Max-Age` at most about once a day. Event-stream keepalives
+  do not count as use. A refused request clears the cookie with `Max-Age=0`, but
+  the server remains authoritative for expired or revoked sessions. A service
+  restart preserves paired sessions.
   `nucleus ui --revoke` (`service.ui-link` with `action: "revoke"`) clears every
   paired session and outstanding link token and closes their live streams.
   The plugin can call `service.ui-link` later; its bridge does not forward it yet.
