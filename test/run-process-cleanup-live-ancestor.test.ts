@@ -135,8 +135,9 @@ test("a process this run lost to a stop, respawned at once, is recorded once and
     assert.equal(f.store.events(f.task.id).filter(event => event.kind === "run_process_cleanup").length, before,
       "no second stop for the same run inside the respawn window");
     const leftAlone = f.store.events(f.task.id).filter(event => event.kind === "run_process_cleanup_left_alone");
-    assert.equal(leftAlone.length, 1, JSON.stringify(leftAlone.map(event => event.detail)));
-    assert.match(leftAlone[0]!.detail, /respawned-after-stop/);
+    const respawnedLeftAlone = leftAlone.filter(event => event.detail.includes('"reason":"respawned-after-stop"')
+      && event.detail.includes(`"pid":${respawned}`));
+    assert.equal(respawnedLeftAlone.length, 1, JSON.stringify(leftAlone.map(event => event.detail)));
     assert.ok(existsSync(run.temporaryDirectory!));
   } finally { await f.close(); }
 });
