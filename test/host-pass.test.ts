@@ -11,6 +11,7 @@ import { HostPass } from "../core/scheduling/host-pass";
 import type { Adapter, AgentObservation } from "../core/host";
 import { fakeAdapter, submission, observeIdle } from "./support/fakes";
 import { catchUpFinishedTaskThreads } from "../core/workspaces/thread-archive";
+import { archiveProbeKey } from "../core/workspaces/thread-archive-effect";
 import { hostDependents } from "../core/host/host-dependents";
 import { queueOperationSchema } from "../shared/operations";
 import { recoveryEffects } from "../core/recovery/recovery-effects";
@@ -770,4 +771,79 @@ test("an exhausted thread archive names the existing workspace retry only when e
   );
   assert.ok(retry);
   assert.match(String(retry.args?.summary), /synthetic host offline/);
+});
+
+test("a failed archive read after an idle observation shows its effect detail in both views", async (t) => {
+  let unavailable = true;
+  let taskId = "";
+  const adapter = fakeAdapter({
+    observe: async (id) => ({
+      ...(await observeIdle("ws")(id)),
+      labels: { "northstar.task": taskId },
+    }),
+    originAgent: async () => {
+      if (unavailable) throw Error("synthetic archive read unavailable");
+      return null;
+    },
+    archiveAgent: async () =>
+      assert.fail("an unavailable archive read must not send"),
+  });
+  const f = fixture(t, adapter);
+  f.store.setMeta("paused", false);
+  const task = f.store.insert(submission(), HOST, "handoff", "a".repeat(40));
+  taskId = task.id;
+  f.store.update(task.id, {
+    phase: "done",
+    agentId: "worker",
+    workspaceId: "ws",
+    directory: "/synthetic/ws",
+    prHead: "b".repeat(40),
+    resolution: {
+      ...task.resolution,
+      mergedCommit: "b".repeat(40),
+      syncedCommit: "b".repeat(40),
+      archivedWorkspaceIds: ["ws"],
+    },
+  });
+  const next = () =>
+    ownerTaskNext(collectOwnerVerbFacts(f.store, f.store.task(task.id)));
+  for (let pass = 0; pass < 2; pass++) {
+    await catchUpFinishedTaskThreads(f.store, adapter, task.id);
+    assert.equal(
+      f.store.getMeta(archiveProbeKey(f.store, task.id, "worker")),
+      undefined,
+    );
+    const effect = f.store.getMeta<{ status: string; detail?: string }>(
+      f.store.threadArchiveKey("worker", HOST)!,
+    );
+    assert.equal(effect?.status, "ready");
+    assert.match(effect?.detail ?? "", /synthetic archive read unavailable/);
+    const names =
+      hostDependents(f.store, { id: HOST, kind: "paseo", primary: true })
+        .find((item) => item.kind === "effect")
+        ?.names.join(" ") ?? "";
+    assert.match(names, /synthetic archive read unavailable/);
+    assert.ok(
+      next().verbs.some(
+        (view) =>
+          view.verb === "retry_effect" &&
+          !view.available &&
+          /synthetic archive read unavailable/.test(view.refusal ?? "") &&
+          /host observation/.test(view.refusal ?? ""),
+      ),
+    );
+  }
+  unavailable = false;
+  await catchUpFinishedTaskThreads(f.store, adapter, task.id);
+  assert.equal(
+    hostDependents(f.store, { id: HOST, kind: "paseo", primary: true }).some(
+      (item) => item.kind === "effect",
+    ),
+    false,
+  );
+  assert.ok(
+    !next().verbs.some((view) =>
+      (view.refusal ?? "").includes("synthetic archive read unavailable"),
+    ),
+  );
 });

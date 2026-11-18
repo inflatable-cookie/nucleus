@@ -583,6 +583,7 @@ export function terminalThreadCleanupWaits(
       return [];
     const reason =
       store.getMeta<string>(archiveProbeKey(store, task.id, agentId)) ||
+      (effect?.status !== "archived" && effect?.detail) ||
       "Waiting for the host to observe the thread";
     const canRearm =
       (effect?.retries ?? 0) >= 3 &&
