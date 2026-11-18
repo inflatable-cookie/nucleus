@@ -83,6 +83,9 @@ export class RetryEffectControls {
 
   /** Settle an already-gone terminal target without replaying a cleanup effect. */
   private async settleAbsentCleanup(task: Task, input: TaskControlInput): Promise<Task | null> {
+    // Leave paused retries to the ordinary handler, which reports the hold
+    // without observing the host or changing cleanup state.
+    if (this.store.getMeta('paused') === true) return null;
     const archiveId = input.effect ? ownerEffectIdentity(input.effect, 'workspace_archive') : null;
     if (archiveId && task.phase === 'done') {
       const archived = await this.settleAbsentArchive(task, archiveId);

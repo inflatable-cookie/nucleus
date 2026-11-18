@@ -279,6 +279,33 @@ test('a failed archive observation waits, then completes when the host answers',
   } finally { await f.close(); }
 });
 
+test('a paused gone-workspace retry makes no observation and settles after resume', async () => {
+  const f = fixture();
+  try {
+    plantDone(f, join(f.dir, 'paused-gone'), {
+      workspaceArchiveRetries: [{ workspaceId: 'workspace', attempts: 1, error: 'Transport not connected (status: disposed)', nextAttemptAt: new Date(0).toISOString() }],
+    });
+    let observations = 0;
+    f.setObserveArchive(async () => { observations++; return true; });
+    f.store.setMeta('paused', true);
+    const before = f.task();
+    const retry = () => f.engine.performTaskControl(taskControlInputSchema.parse({
+      action: 'retry_effect', taskId: f.taskId, version: f.task().version,
+      effect: 'workspace_archive.workspace', reason: 'Observe the gone workspace', caller: CALLER,
+    }));
+    await assert.rejects(retry(), /Nucleus is paused; this retry ran no archive attempt/);
+    assert.equal(observations, 0);
+    assert.equal(f.counts().archives, 0);
+    assert.deepEqual(f.task().resolution, before.resolution);
+    assert.equal(f.events('workspace_archived').length, 0);
+    f.store.setMeta('paused', false);
+    const settled = await retry();
+    assert.deepEqual(settled.resolution.archivedWorkspaceIds, ['workspace']);
+    assert.equal(observations, 1);
+    assert.equal(f.counts().archives, 0);
+  } finally { await f.close(); }
+});
+
 test('an ambiguous catalog observation never archives', async () => {
   const f = fixture();
   try {
