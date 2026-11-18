@@ -1068,7 +1068,7 @@ test('uncertain revision delivery is refused in next and control without releasi
   } finally { await f.close(); }
 });
 
-test('absent worker creation: restart replays the retained creation under the same run', async () => {
+test('absent worker creation: restart retains the run pending producer-proof cutover', async () => {
   const f = fixture(); try {
     f.store.update(f.taskId, {
       phase: 'needs_attention', reason: ABSENT_WORKER_REASON, workspaceIntent: true, agentIntent: true,
@@ -1078,8 +1078,8 @@ test('absent worker creation: restart replays the retained creation under the sa
     const task = await f.control({ instruction: 'Create the worker once and continue' });
     assert.equal(task.phase, 'dispatching');
     assert.equal(task.agentIntent, false);
-    assert.equal(task.runId, 'absent-run', 'the retained run ID is kept');
-    assert.equal(task.restartRunId, 'absent-run', 'the launcher reuses the same run for the retried creation');
+    assert.equal(task.runId, 'absent-run');
+    assert.equal(task.restartRunId, 'absent-run');
     assert.equal(ownerControlCount(f), 1);
   } finally { await f.close(); }
 });

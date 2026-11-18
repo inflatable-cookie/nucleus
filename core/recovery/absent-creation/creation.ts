@@ -1,13 +1,13 @@
-import type { Resolution } from '../../resolution';
+import type { Resolution, ResolutionAdapter } from '../../resolution';
+import type { Run } from '../../../shared/contracts';
 import type { Task } from "../../../shared/contracts";
-import { isDispositionActive } from "../../../shared/contracts";
 import type { Engine } from '../../engine';
-import { isPiSettingsLockFailure } from '../exhaustion';
 import { worktreeLinksForBinding, worktreeLinksForClearedIntent } from '../../workspaces/worktree-links';
 import { retainNodeModules, workspaceCreationRefusal } from '../../workspaces/workspace-allocation';
 import { startsNoRuns } from '../../closeout/queue-drain';
-import { ABSENT_WORKER_REASON, ABSENT_WORKER_REPLACEMENT_REASON, PRE_AGENT_LAUNCH_FAILURE_REASON } from '../task-reasons';
-import { absentWorkerStep, workspaceReplayAllowed } from './decisions';
+import { ABSENT_WORKER_REASON } from '../task-reasons';
+import { workspaceReplayAllowed } from './decisions';
+import { creationLookup } from './restarts';
 
 export type CreationRecoveryContext = Pick<Engine, 'adapter' | 'idleGraceMs' | 'launchAgent' | 'launchProofOnly' | 'note' | 'reconcileAbsentWorker' | 'recoverProofOnlyDispatch' | 'stopped' | 'store'>
   & { readonly resolution: Pick<Resolution, 'ensureIncident' | 'resolveIncident' | 'resumeAbsentWorker' | 'returnToDispatch' | 'saveIncident'> };
@@ -73,17 +73,33 @@ export class CreationRecovery {
       this.engine.note(task.id, workspaceCreationRefusal(classified), 'operator_needed', "needs_attention");
       return;
     } else if (task.agentIntent && !task.agentId) {
-      const found = await this.adapter.findAgents(task);
-      if (found.length === 1 && found[0].workspaceId === task.workspaceId) {
+      // Worker intents live on the task, but the host lookup must still carry
+      // the exact run label. A task-only inventory can contain older threads.
+      const lookup = this.adapter as typeof this.adapter & Partial<Pick<ResolutionAdapter, 'findRunAgents'>>;
+      if (!task.runId || !lookup.findRunAgents) {
+        this.engine.note(task.id, 'Exact worker creation lookup is unavailable; the intent remains owned', 'operator_needed', 'needs_attention');
+        return;
+      }
+      const identity = { id: task.runId, taskId: task.id, hostId: task.hostId, role: 'worker', workspaceId: task.workspaceId } as unknown as Run;
+      const found = await lookup.findRunAgents(identity);
+      const decision = creationLookup(found, task.workspaceId);
+      if (decision.kind === 'bound') {
         const latest = this.store.task(task.id);
         // Another reconciliation may have bound or replaced this intent while
         // lookup was in flight. Its newer state owns the task; do not park it.
-        if (!latest.agentIntent || latest.agentId || latest.runId !== task.runId) return;
+        if (latest.version !== task.version || !latest.agentIntent || latest.agentId || latest.runId !== task.runId || latest.workspaceId !== task.workspaceId) return;
         this.resolution.resolveIncident(latest, task.runId, 'Exact lookup bound the created worker');
-        this.store.update(task.id, { agentId: found[0].id, phase: "working", reason: "Recovered worker identity" }, "agent_recovered", found[0].id);
+        this.store.update(task.id, { agentId: decision.agentId, phase: "working", reason: "Recovered worker identity" }, "agent_recovered", decision.agentId);
         return;
       }
-      await this.engine.reconcileAbsentWorker(this.store.task(task.id), found.length);
+      const latest = this.store.task(task.id);
+      if (latest.version !== task.version || !latest.agentIntent || latest.agentId || latest.runId !== task.runId || latest.workspaceId !== task.workspaceId) return;
+      // A match in a different workspace is unknown placement, not absence.
+      if (decision.kind === 'unknown' && found.length === 1) {
+        this.engine.note(latest.id, 'Worker creation lookup found an agent outside the retained workspace; no resource was created', 'operator_needed', 'needs_attention');
+        return;
+      }
+      await this.engine.reconcileAbsentWorker(latest, found.length);
     }
   }
   /** Reconcile a proof-only provisioning intent and resume only its proof route. */
@@ -123,63 +139,16 @@ export class CreationRecovery {
     if (task.proofOnly && workspace) retainNodeModules(task.repoPath, workspace.directory);
     if (!startsNoRuns(this.store, this.engine.stopped)) await this.engine.launchProofOnly(this.store.task(task.id));
   }
-  /** Zero/one/many worker-creation reconciliation: after the bounded grace, exactly one replacement, then coordinator attention. */
+  /** An empty inventory does not prove that the original producer has stopped. */
   async reconcileAbsentWorker(t: Task, matches: number) {
     const incident = this.resolution.ensureIncident(t, null, ABSENT_WORKER_REASON, 'exact_lookup');
-    const launchRetry=t.transientProviderRetry?.runId===t.runId&&t.transientProviderRetry.status==='waiting'&&t.transientProviderRetry.resumes===0&&isPiSettingsLockFailure(t.transientProviderRetry.error)?t.transientProviderRetry:null;
-    const firstStep = absentWorkerStep({ launchRetry: Boolean(launchRetry), retryDue: launchRetry && matches === 0 ? !(Date.now() < Date.parse(launchRetry.retryAt ?? '')) : false, matches, graceElapsed: false });
-    if(firstStep === 'launch_retry' && launchRetry){
-      try{
-        if(t.removedAt||isDispositionActive(t))throw new Error('Task is no longer reconcilable');
-        if(!t.workspaceId||!t.directory||!t.profile||!t.runId)throw new Error('Pre-agent launch retry requires the retained workspace, profile and run intent');
-        if(t.completion||t.prUrl||t.prHead||t.resumePrNumber||t.resolution.currentRunId||t.resolution.mergeIntent)throw new Error('Pre-agent launch retry requires untouched initial dispatch state');
-        this.engine.note(t.id,PRE_AGENT_LAUNCH_FAILURE_REASON, 'operator_needed', 'needs_attention');
-        const failed=this.store.task(t.id);
-        await this.adapter.verifyWorkspace(failed,failed.directory!);
-        const latest=this.store.task(failed.id);
-        if(latest.version!==failed.version||latest.reason!==PRE_AGENT_LAUNCH_FAILURE_REASON||latest.runId!==failed.runId||!latest.agentIntent||latest.agentId||latest.transientProviderRetry?.runId!==failed.runId||latest.transientProviderRetry.status!=='waiting'||latest.transientProviderRetry.resumes!==0||!isPiSettingsLockFailure(latest.transientProviderRetry.error))throw new Error('Task changed during pre-agent launch retry verification');
-        this.adapter.purgeReportingFiles?.(latest.id,[latest.runId!]);
-        this.store.transaction(()=>{
-          this.resolution.resumeAbsentWorker(latest,'Confirmed absent Pi launch after settings-lock race; Nucleus issued one retry');
-          this.resolution.saveIncident(this.store.task(latest.id),{action:'replacement',attempt:incident.attempt+1,detail:'Pre-agent settings-lock failure was exact-looked-up; one retry issued'});
-        });
-      }catch(error){this.engine.note(t.id,error instanceof Error?error.message:String(error), 'classify', 'needs_attention');}
-      return;
-    }
-    if (launchRetry && matches === 0) return;
-    if (absentWorkerStep({ launchRetry: false, retryDue: false, matches, graceElapsed: !(Date.now() - Date.parse(incident.createdAt) < this.engine.idleGraceMs) }) === 'wait') return;
+    if (Date.now() - Date.parse(incident.createdAt) < this.engine.idleGraceMs) return;
     const current = this.store.task(t.id);
-    // Durable replacement budget: one recorded worker replacement means the next absence escalates.
-    const step = absentWorkerStep({ launchRetry: false, retryDue: false, matches, graceElapsed: true, replacementSpent: this.store.events(t.id).some(event => event.kind === 'absent_worker_retry') });
-    if (step === 'escalate') {
-      const reason = ABSENT_WORKER_REPLACEMENT_REASON;
-      this.engine.note(current.id, reason, 'operator_needed', 'needs_attention');
-      this.resolution.ensureIncident(current, null, reason);
-      return;
-    }
-    if (step === 'ambiguous') {
-      const reason = `Worker creation lookup is ambiguous (${matches} matching agents); no resource was created`;
-      this.engine.note(current.id, reason, 'operator_needed', 'needs_attention');
-      this.resolution.ensureIncident(current, null, reason);
-      return;
-    }
-    try {
-      if (current.removedAt || isDispositionActive(current)) throw new Error('Task is no longer reconcilable');
-      if (!current.workspaceId || !current.directory || !current.profile || !current.runId) throw new Error('Absent worker replacement requires the retained workspace, profile and run intent');
-      if (current.completion || current.prUrl || current.prHead || current.resumePrNumber || current.resolution.currentRunId || current.resolution.mergeIntent) throw new Error('Absent worker replacement requires untouched initial dispatch state');
-      this.engine.note(current.id, ABSENT_WORKER_REASON, 'operator_needed', 'needs_attention');
-      await this.adapter.verifyWorkspace(current, current.directory);
-      const latest = this.store.task(current.id);
-      if (!latest.agentIntent || latest.agentId || latest.runId !== current.runId) throw new Error('Task changed during absent-worker verification');
-      this.adapter.purgeReportingFiles?.(current.id, [current.runId]);
-      this.store.transaction(() => {
-        this.store.deleteCredential(current.runId!);
-        this.resolution.resumeAbsentWorker(latest, 'Confirmed absent worker; Nucleus issued one replacement creation');
-        const incident = current.resolution.incident;
-        if (incident) this.resolution.saveIncident(this.store.task(latest.id), { action: 'replacement', attempt: incident.attempt + 1, detail: 'Proven-absent worker callback revoked; one replacement issued' });
-      });
-    } catch (error) {
-      this.engine.note(current.id, error instanceof Error ? error.message : String(error), 'classify', 'needs_attention');
-    }
+    if (!current.agentIntent || current.agentId || current.runId !== t.runId) return;
+    const replacementSpent = this.store.events(t.id).some(event => event.kind === 'absent_worker_retry');
+    const reason = matches === 0
+      ? `Worker creation remains uncertain: no agent was found, but the original create may still deliver${replacementSpent ? '; the automatic replacement allowance was already used' : ''}`
+      : `Worker creation lookup is ambiguous (${matches} matching agents); no resource was created`;
+    this.engine.note(current.id, reason, 'operator_needed', 'needs_attention');
   }
 }

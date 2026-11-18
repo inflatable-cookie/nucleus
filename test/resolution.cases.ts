@@ -6502,41 +6502,23 @@ test("closeout recovery waits for normal merge synchronization before reading th
     await f.close();
   }
 });
-test("a proven-absent reviewer creation is replaced once, then escalates without another launch", async () => {
+test("an uncertain reviewer creation stays owned after repeated empty lookups", async () => {
   const f = fixture();
   try {
     let calls = 0;
-    f.adapter.createRun = async () => {
-      calls++;
-      throw new Error("Transport lost");
-    };
+    f.adapter.createRun = async () => { calls++; throw new Error("Transport lost"); };
+    await f.engine.wake();
+    const run = f.store.runs(f.task.id).find(r => r.role === "reviewer")!;
+    await f.engine.wake();
+    const events = f.store.eventsAll(f.task.id).length;
     await f.engine.wake();
     assert.equal(calls, 1);
-    assert.equal(
-      f.store.runs(f.task.id).filter((r) => r.role === "reviewer").length,
-      1,
-    );
-    await f.engine.wake();
-    // One automatic replacement ran after the exact lookup proved the creation absent.
-    assert.equal(calls, 2);
-    assert.equal(
-      f.store.runs(f.task.id).filter((r) => r.role === "reviewer" && r.released)
-        .length,
-      1,
-    );
-    await f.engine.wake();
-    // The second absence settles as absent and waits for the owner: no coordinator, no relaunch.
-    assert.equal(calls, 2);
-    assert.equal(f.current().resolution.attention, false);
-    assert.match(f.current().reason, /also proved absent/);
-    assert.deepEqual(f.current().resolution.stop?.suggestedVerbs, [
-      "route",
-      "restart",
-    ]);
-    assert.equal(f.current().resolution.recovery?.runId ?? null, null);
-  } finally {
-    await f.close();
-  }
+    assert.equal(f.store.runs(f.task.id).filter(r => r.role === "reviewer").length, 1);
+    assert.equal(f.store.run(run.id)?.released, false);
+    assert.ok(!f.store.run(run.id)?.absentProvenAt);
+    assert.equal(f.store.eventsAll(f.task.id).length, events);
+    assert.match(f.current().reason, /still uncertain/);
+  } finally { await f.close(); }
 });
 
 test("blocked closeout can resynchronize main and retry on the retained coordinator", async () => {
@@ -12219,7 +12201,7 @@ test("coordinator resume replaces a freshly verified absent initial worker witho
       },
     });
     f.store.setCredential(oldRun, "old-token");
-    await f.engine.wake();
+    await f.engine.resolution.recovery.route(f.current());
     const recovery = f.store.run(f.current().resolution.recovery!.runId!)!;
     f.idle(recovery.agentId!, recovery.workspaceId);
     f.engine.resolution.complete(
@@ -14279,42 +14261,24 @@ test("restart coordinator looks up and releases an agentless escalated recovery"
     }
   }
 });
-test("recovery pass releases a failed agentless coordinator creation after an exact empty lookup", async () => {
+test("recovery pass keeps an uncertain agentless coordinator owned on empty lookup", async () => {
   const f = fixture();
   try {
     enableRecovery(f);
     const run = plantAbsentRecovery(f);
-    let purged: string[] = [];
-    f.adapter.purgeReportingFiles = (_task, runs) => {
-      purged = runs;
-    };
+    let purged = false;
+    f.adapter.purgeReportingFiles = () => { purged = true; };
     await f.engine.resolution.recovery.pass();
-    const released = f.current();
-    assert.equal(f.store.run(run.id)?.status, "superseded");
-    assert.equal(f.store.run(run.id)?.released, true);
-    assert.deepEqual(purged, [run.id]);
-    assert.throws(
-      () => f.store.authenticate(run.id, "old-token"),
-      /Unauthorized/,
-    );
-    assert.equal(released.resolution.recovery?.status, "escalated");
-    assert.equal(released.resolution.recovery?.runId, null);
-    assert.equal(released.resolution.recoveryActive, false);
-    assert.equal(released.resolution.attention, true);
-    assert.equal(
-      f.creates.filter((item) => item.role === "recovery").length,
-      0,
-    );
-    const proof = f.store
-      .events(f.task.id)
-      .find((event) => event.kind === "absent_recovery_released");
-    assert.equal(
-      proof?.detail,
-      "Exact task/run label lookup found no coordinator; failed creation superseded and released",
-    );
-  } finally {
-    await f.close();
-  }
+    const count = f.store.eventsAll(f.task.id).length;
+    await f.engine.resolution.recovery.pass();
+    assert.equal(f.store.eventsAll(f.task.id).length, count);
+    assert.equal(f.store.run(run.id)?.released, false);
+    assert.equal(f.store.run(run.id)?.agentId, null);
+    assert.equal(purged, false);
+    assert.doesNotThrow(() => f.store.authenticate(run.id, "old-token"));
+    assert.equal(f.current().resolution.recovery?.runId, run.id);
+    assert.equal(f.creates.filter(item => item.role === "recovery").length, 0);
+  } finally { await f.close(); }
 });
 test("recovery pass binds one exact coordinator match and keeps ambiguous creation escalated", async () => {
   const f = fixture();

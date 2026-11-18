@@ -5,16 +5,24 @@ import { isDispositionActive, isDispositionComplete } from '../../../shared/cont
 import { isPiSettingsLockFailure } from '../exhaustion';
 import { taskPrNumber } from '../../forge/index';
 import type { Resolution } from '../../resolution';
-import { absentReplacementRecord, absentReplacementSpent } from './budget';
+import { absentReplacementRecord } from './budget';
 import { provenAbsentCreation } from './decisions';
 
-/** Recreate proven-absent runs and workers under their same identities. */
+/** Classify a complete, occurrence-bound lookup without treating uncertain placement as absence. */
+export function creationLookup(found: { id: string; workspaceId: string | null }[], workspaceId: string | null):
+  { kind: 'absent' } | { kind: 'bound'; agentId: string } | { kind: 'unknown' } {
+  if (found.length === 0) return { kind: 'absent' };
+  if (found.length === 1 && workspaceId && found[0]!.workspaceId === workspaceId && found[0]!.id)
+    return { kind: 'bound', agentId: found[0]!.id };
+  return { kind: 'unknown' };
+}
+
+/** Admit replacements for proven-absent creations. */
 export type AbsentRestartsContext = Pick<Resolution, 'adapter' | 'attention' | 'ensureIncident' | 'graceMs' | 'paused' | 'recordIncidentEvent' | 'resolveIncident' | 'resumeWorkerContinuation' | 'settleVerbFences' | 'store' | 'update' | 'waiting'>;
 
 /**
- * The resolution-side half of absence: admit and replay a proven-absent worker
- * creation, recreate one proven-absent reviewer, closeout or executor run under
- * the SAME run id, and issue exactly one same-role replacement. The engine-side
+ * The resolution-side half of absence: settle a proven-absent worker or
+ * resolution run and route a fresh same-role creation. The engine-side
  * half, which owns workspace creation and the worker-absence observations, is
  * `CreationRecovery` in `creation.ts`; the budget both read is `budget.ts`.
  */
@@ -53,8 +61,8 @@ export class AbsentRestarts {
     const action=this.admitAbsentWorker(t,instruction,authorized);
     return this.resolution.resumeWorkerContinuation(t,authorized,current=>{
       this.store.deleteCredential(current.runId!);
-      // Spec 050 `restart`: keep the run identity and mark it, so the launcher
-      // reuses it for the retried creation instead of minting a second run.
+      // The owner-restart path retains its existing behavior pending the
+      // producer-proof cutover; the sweep never calls it from an empty lookup.
       return this.store.update(current.id,{agentIntent:false,runId:current.runId,restartRunId:current.runId,transientProviderRetry:undefined,phase:'dispatching',reason:'Confirmed absent worker; creating a worker in the retained workspace',resolution:{...current.resolution,pendingWorkerInstruction:action}},authorized?'absent_worker_operator_replacement':'absent_worker_retry',action);
     });
   }
@@ -120,8 +128,8 @@ export class AbsentRestarts {
 
   /**
    * Zero/one/many reconciliation for one uncertain creation. After the bounded
-   * grace: bind one exact match (done by the caller), replace a proven-absent
-   * creation exactly once, or hand ambiguity and second failures to the coordinator.
+   * grace: bind one exact match (done by the caller), retain an unproved
+   * empty result, or hand ambiguous results to the coordinator.
    */
   async reconcileAbsentCreation(t: Task, run: Run, found: { id: string; workspaceId: string | null }[]) {
     if (isDispositionActive(t) || isDispositionComplete(t)) return;
@@ -130,24 +138,14 @@ export class AbsentRestarts {
     const incident = this.resolution.ensureIncident(t, run, ABSENT_RESOLUTION_REASON, 'exact_lookup');
     if (Date.now() - Date.parse(incident.createdAt) < this.graceMs) return;
     const current = this.store.task(t.id);
-    // The replacement budget is durable: one recorded same-role replacement means the next absence settles as absent for the owner.
-    if (absentReplacementSpent(this.store.events(t.id), run.role)) {
-      if (found.length) {
-        this.resolution.attention(current, `${run.role} creation lookup found ${found.length} matching agents; no resource was created`);
-        return;
-      }
-      this.settleAbsentProof(current, run);
-      return;
-    }
-    if (found.length > 1) {
+    const lookup = creationLookup(found, run.workspaceId);
+    if (lookup.kind !== 'absent') {
       this.resolution.attention(current, `${run.role} creation lookup is ambiguous (${found.length} matching agents); no resource was created`);
       return;
     }
-    try {
-      await this.replaceAbsentCreation(current, run);
-    } catch (error) {
-      this.resolution.attention(this.store.task(t.id), `Absent ${run.role} creation could not be replaced safely: ${error instanceof Error ? error.message : String(error)}`);
-    }
+    // An empty inventory does not prove that the original producer cannot
+    // deliver later. Keep the run and credential owned and observe it again.
+    this.resolution.waiting(current, `The ${run.role} creation is still uncertain; its original request remains owned`, 'lifecycle');
   }
 
   /**
