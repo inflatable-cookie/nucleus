@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { HostOperationTimeoutError, HostUnknownDeliveryError } from '../core/host/errors';
+import { HostUnknownDeliveryError } from '../core/host/errors';
+import { HostOperationTimeoutError } from '../core/host/adapter-routing';
 import { isTransportFailure } from '../shared/transport';
 
 test('a host operation timeout retains unknown delivery and names the host', () => {

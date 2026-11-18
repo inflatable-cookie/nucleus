@@ -225,3 +225,28 @@ test('nucleus#1315 a BB role thread runs in Full Access whatever mode the profil
   await f.native.createAgent(auto);
   assert.equal(f.calls.filter(c => c.method === 'threads.spawn').at(-1)!.args.permissionMode, 'full');
 });
+
+test('a timed-out BB title remains held until a later observation, without another write', async () => {
+  const f = fixture();
+  const agent = await f.native.createAgent(f.spec());
+  const execute = f.ports.operation;
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  f.ports.operation = async (op, input) => {
+    if (op === 'thread.title') await gate;
+    return execute(op, input);
+  };
+  const { routeHostAdapter, HostOperationTimeoutError } = await import('../core/host/adapter-routing');
+  const target = { notify: () => f.native.title(agent.id, 'New title', 'one') } as unknown as import('../core/host/adapter').Adapter;
+  const owner = { activeHostId: hostId, resolveHostAdapter: () => target, hostOperationTimeoutMs: 10,
+    store: {}, host: {}, hostOnline: () => true, hostAvailable: () => true,
+    withHost: (_id: string, fn: () => unknown) => fn() } as unknown as import('../core/host/adapter-routing').HostAdapterRoutingOwner;
+  const adapter = routeHostAdapter(owner, target);
+  await assert.rejects(adapter.notify!('agent', 'message', 'text'), HostOperationTimeoutError);
+  assert.equal(Object.values(f.state().writes).filter(w => w.status === 'unknown').length, 1);
+  await assert.rejects(f.native.title(agent.id, 'New title', 'two'), HostUnknownDeliveryError);
+  release();
+  for (let i = 0; i < 100 && f.rows.get(agent.id).title !== 'New title'; i++) await new Promise(resolve => setImmediate(resolve));
+  await f.native.title(agent.id, 'New title', 'three');
+  assert.equal(f.calls.filter(c => c.method === 'threads.update').length, 1);
+});
