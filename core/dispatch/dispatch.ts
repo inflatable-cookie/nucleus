@@ -59,12 +59,14 @@ export class Dispatch {
       availability.map(group => [group.group, groupIsUnavailable(group)]),
       this.store.usageLevel(), this.store.demandRoleOffsets()]));
     const limit = this.store.getMeta<number>("globalLimit") ?? DEFAULT_GLOBAL_LIMIT;
-    const candidates = queuedDispatchOrder(this.store.readyQueueHeads(limit + 2, repoPath, dispatchHeld));
     await this.resolution.withDispatchPass(async () => {
+      const attempted = new Set<string>();
+      const failedHosts = new Set<string>();
       const visit = (candidate: Task) => this.engine.scheduleLane(`task:${candidate.id}`, LANE_PRIORITY_TASK, () => this.engine.dispatchTask(candidate.id, dispatchHeld))
         .catch(error => {
           const hostId = hostFaultHost(error);
           if (!hostId) throw error;
+          failedHosts.add(hostId);
           const fault = error instanceof HostTransportFault ? error : new HostTransportFault(hostId, error);
           this.engine.markAuditHostUnavailable(hostId);
           this.engine.hostOutages.observe(hostId, false);
@@ -73,16 +75,25 @@ export class Dispatch {
             this.engine.hostWait(task);
             this.engine.noteStepFailure(task.id, fault);
           }
+        }).then(() => {
+          // FirstDispatch can record the transport wait itself before returning.
+          const task = this.store.task(candidate.id);
+          if (task.hostId && task.resolution.stop?.reason === 'host_unavailable') failedHosts.add(task.hostId);
         });
-      const { start, rest } = queuedVisits(candidates, this.store.activeCapacityTasks().filter(task => occupiesSlot(task)),
-        this.store.projectDispatchLimitResolver(), this.store.papercutDispatchPolicy(), () => "none", limit);
-      // Free slots start together, so one slow or stuck workspace doesn't hold up the next.
-      // Each task has its own lane and the intent transaction re-checks capacity and the gap.
-      const results = await Promise.allSettled(start.map(visit));
-      const failed = results.find(result => result.status === "rejected");
-      if (failed) throw (failed as PromiseRejectedResult).reason;
-      // Waiting for a slot is derived on read, not a reason to visit a task.
-      void rest;
+      for (;;) {
+        const skipped = this.store.tasks().filter(task => task.hostId && failedHosts.has(task.hostId)).length;
+        const candidates = queuedDispatchOrder(this.store.readyQueueHeads(limit + 2 + skipped, repoPath, dispatchHeld))
+          .filter(task => !attempted.has(task.id) && (!task.hostId || !failedHosts.has(task.hostId)));
+        const { start } = queuedVisits(candidates, this.store.activeCapacityTasks().filter(task => occupiesSlot(task)),
+          this.store.projectDispatchLimitResolver(), this.store.papercutDispatchPolicy(), () => "none", limit);
+        if (!start.length) break;
+        for (const task of start) attempted.add(task.id);
+        const before = failedHosts.size;
+        const results = await Promise.allSettled(start.map(visit));
+        const failed = results.find(result => result.status === "rejected");
+        if (failed) throw (failed as PromiseRejectedResult).reason;
+        if (failedHosts.size === before) break;
+      }
     });
   }
   workspacePressureWait(task: Task, host = this.adapter.hostLoad?.()): string {

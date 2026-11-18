@@ -173,3 +173,16 @@ test('queued dispatch contains one host fault and retains other starts', async t
   assert.equal(f.store.task(f.offline.id).resolution.stop?.reason, 'host_unavailable');
   assert.match(f.store.task(f.offline.id).resolution.stop?.detail ?? '', /plugin build mismatch/);
 });
+
+test('an unavailable first queue head gives the free slot to a healthy host', async t => {
+  const f = fixture(t);
+  for (const task of [f.offline, f.healthy]) f.store.update(task.id, { phase: 'queued' });
+  f.store.setMeta('globalLimit', 1);
+  const attempted: string[] = [];
+  f.engine.dispatchTask = async id => {
+    attempted.push(id);
+    if (id === f.offline.id) throw new HostTransportFault(OFFLINE_HOST, new Error('plugin build mismatch'));
+  };
+  await f.engine.dispatchOwner.dispatchQueued();
+  assert.deepEqual(attempted, [f.offline.id, f.healthy.id]);
+});
