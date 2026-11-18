@@ -15,6 +15,7 @@ import { digest, now } from "../store/store";
 import { OPERATOR_WORKER_REMAP_REASON, PROFILE_CATALOG_LOADING_REFUSAL, isAcceptedReview } from "../recovery/task-reasons";
 import { decideWorkerReplacement, retainedWorkerFailureCause } from "../recovery/worker-replacement";
 import { proofOnlyReceiptAwaitingReview } from "../qa/proof-records";
+import { requireReviewerReplacement } from './reviewer-report';
 
 /** Build the route's task patch from facts captured in the transaction. */
 export function routePatch(f: {
@@ -147,6 +148,9 @@ export class RouteControls {
       // The displacement a `now` route owes; a sign-off-pending route owes none
       // and is written like a route without `now`.
       const replaceLive = replaceNow && !signoffPendingNow;
+      if (replaceLive && role === 'reviewer' && task.resolution.reviewerAgentId
+        && task.resolution.reviewerProfile?.id === profileId)
+        await requireReviewerReplacement(this.engine, task, task.version);
 
       // A `route now` displaces that role's live run, so a worker replacement owes
       // the same unresolved delivery and effect proofs the retained-worker

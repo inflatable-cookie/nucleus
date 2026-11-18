@@ -763,7 +763,7 @@ for (const busy of ['permission', 'active turn', 'active flag'] as const) {
         ...(busy === 'permission' ? { permissions: true } : busy === 'active turn' ? { activeTurnId: 'turn-live' } : { active: true }) });
       await authorRevision(f, 1);
       assert.equal(f.sends.filter(run => run.role === 'reviewer').length, 0, busy);
-      assert.match(f.store.task(f.task.id).reason, /Ordinary review participant is not idle/, busy);
+      assert.match(f.store.task(f.task.id).reason, /Ordinary review participant is not idle|Retained reviewer .*cannot continue yet/, busy);
     } finally { f.close(); }
   });
 }
@@ -883,12 +883,13 @@ test('a genuine rebase author report receives base movement and covering evidenc
   } finally { f.close(); }
 });
 
-test('an explicit fresh restart after a retained round restores author placement and uses a new reviewer', async () => {
+test('a closed reviewer after a retained round permits a fresh reviewer', async () => {
   const f = fixture();
   try {
     await f.engine.wake(); const first = f.current(); await f.report(first, 'changes_required');
     const second = await authorRevision(f, 1);
     await f.report(second, 'blocked', { reviewResponsibility: 'environment' });
+    f.states.set(second.agentId!, { ...f.states.get(second.agentId!)!, status: 'closed', active: false });
     await f.engine.performTaskControl({ taskId: f.task.id, version: f.store.task(f.task.id).version, action: 'restart', role: 'reviewer', fresh: true, reason: 'Owner requests a fresh reviewer' });
     await f.engine.wake(); await f.engine.wake();
     const review = f.current(); assert.ok(review, f.store.task(f.task.id).reason);
@@ -994,7 +995,7 @@ test('an operator source acceptance of the approved head supersedes the proof wa
   } finally { f.close(); }
 });
 
-for (const action of ['restart', 'route', 'uncertain', 'route-uncertain', 'route-delayed-stop'] as const) test(`exhausted detached reviewer replacement releases ownership: ${action}`, async () => {
+for (const action of ['restart', 'route', 'uncertain', 'route-uncertain', 'route-delayed-stop'] as const) test(`an exhausted but available reviewer is not replaced: ${action}`, async () => {
   const f = fixture();
   try {
     await f.engine.wake(); const first = f.current(); await f.report(first, 'changes_required');
@@ -1016,42 +1017,9 @@ for (const action of ['restart', 'route', 'uncertain', 'route-uncertain', 'route
       ? { action: 'route' as const, role: 'reviewer' as const, profileId: old.profile!.id, now: true, reason: 'Replace exhausted reviewer' }
       : { action: 'restart' as const, role: 'reviewer' as const, fresh: true, reason: 'Replace exhausted reviewer' };
     const restart = () => f.engine.performTaskControl({ ...control, taskId: f.task.id, version: f.store.task(f.task.id).version });
-    if (delayedStop) {
-      await restart();
-      assert.match(f.store.task(f.task.id).reason, /archive is not confirmed/);
-      assert.equal(attempts, 0, 'the stop reply does not prove inactivity');
-      const archiveKey = f.store.threadArchiveKey(old.agentId!, old.hostId)!;
-      assert.equal(f.store.getMeta<{ status: string }>(archiveKey)?.status, 'ready', 'the pending replacement is durable before inactivity');
-      await f.engine.resolution.observe();
-      assert.equal(attempts, 0, 'an active reviewer is never archived');
-      assert.equal(f.store.run(old.id)!.released, false);
-      assert.equal(f.store.task(f.task.id).resolution.currentRunId, old.id);
-      f.idle(old);
-      await f.engine.resolution.observe();
-      assert.equal(f.store.task(f.task.id).profileRequests?.reviewer?.profileId, old.profile!.id);
-    } else if (uncertain) {
-      await restart();
-      assert.match(f.store.task(f.task.id).reason, /archive is not confirmed/);
-      assert.equal(f.store.run(old.id)!.released, false);
-      await f.engine.resolution.observe();
-      assert.equal(f.store.run(old.id)!.released, false);
-      assert.equal(f.store.task(f.task.id).resolution.currentRunId, old.id);
-      assert.equal(attempts, 1, 'unknown delivery is observation-only');
-      if (action === 'route-uncertain') assert.equal(f.store.task(f.task.id).profileRequests?.reviewer?.profileId, old.profile!.id);
-      archived = true;
-      await f.engine.resolution.observe();
-    } else await restart();
-    assert.equal(attempts, 1);
-    assert.equal(f.store.run(old.id)!.released, true);
-    assert.equal(f.store.run(old.id)!.status, 'superseded');
-    assert.deepEqual(f.store.run(old.id)!.reviewCheckpoints, records);
-    assert.throws(() => f.store.authenticate(old.id, f.tokens.get(old.id)!));
-    await f.engine.wake(); await f.engine.wake();
-    const replacement = f.current(); assert.ok(replacement, f.store.task(f.task.id).reason);
-    assert.equal(replacement.role, 'reviewer'); assert.notEqual(replacement.agentId, old.agentId);
-    await f.report(replacement, 'changes_required');
-    await f.engine.wake();
-    assert.equal(f.current().role, 'revision', f.store.task(f.task.id).reason);
-    assert.equal(runGit(f.workspace, 'branch', '--show-current'), 'feature/external');
+    await assert.rejects(restart(), /retained reviewer/);
+    assert.equal(f.store.run(old.id)!.released, false);
+    assert.equal(f.store.task(f.task.id).resolution.currentRunId, old.id);
+    assert.equal(attempts, 0, 'an available retained reviewer is not archived');
   } finally { f.close(); }
 });

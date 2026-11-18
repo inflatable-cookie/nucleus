@@ -191,7 +191,7 @@ const restartReviewer = (f: ReturnType<typeof fixture>, reason = 'Continue the r
 
 // ── move to=review preserves the reader ─────────────────────────────────────
 
-test('ordinary move refuses an unproven reader binding, while fresh move takes the selection path', async () => {
+test('an unproven reader binding is never replaced without proof', async () => {
   for (const binding of ['agent', 'workspace'] as const) for (const busy of [false, true]) {
     const f = fixture(); try {
       await f.checkpoint('Reading the diff');
@@ -212,12 +212,9 @@ test('ordinary move refuses an unproven reader binding, while fresh move takes t
       assert.deepEqual(f.run(), run);
       assert.deepEqual(f.stops, [], 'ordinary move does not cancel an unproven reader');
 
-      const moved = await f.control({ action: 'move', to: 'review', fresh: true, reason: 'Replace the stale review' });
-      assert.equal(moved.phase, 'awaiting_review', 'fresh move does not inspect the continuation identity');
-      assert.equal(moved.resolution.reviewerAgentId, null);
-      if (busy) assert.ok(f.run().released, 'the explicit fresh move releases the turn it stopped');
-      else assert.ok(f.run().replacedAt, 'an idle but unproven reader remains fenced until archive is confirmed');
-      assert.equal(f.stops.length, busy ? 1 : 0, 'only a live reader turn needs stopping');
+      await assert.rejects(f.control({ action: 'move', to: 'review', fresh: true, reason: 'Replace the stale review' }), /retained reviewer/);
+      assert.equal(f.run().released, false);
+      assert.equal(f.stops.length, 0);
     } finally { await f.close(); }
   }
 });
@@ -375,45 +372,28 @@ weighted(2)('a workerless review entry continues its retained reader from the re
   } finally { await f.close(); }
 });
 
-weighted(2)('a stopped handover reader without checkpoint requires an explicit fresh restart',async()=>{
+weighted(2)('a stopped handover reader without a report is asked to redeliver',async()=>{
   const f=fixture({workerless:true});try{
     const original=f.run(),offer=f.view('restart');
     assert.equal(original.reviewCheckpoints?.length??0,0);
-    assert.equal(offer.available,true);assert.equal((offer.args as {fresh?:boolean}).fresh,true);
-    assert.match(offer.note??'',/new reader/);
-    const before=f.current(),events=f.store.eventsAll(f.submitted.id).length;
-    await assert.rejects(restartReviewer(f,'Continue same agent'),/restart role=reviewer fresh/);
-    await assert.rejects(f.control({action:'restart',role:'reviewer',fresh:false,reason:'Continue same agent'}),/restart role=reviewer fresh/);
-    assert.deepEqual(f.current(),before);assert.deepEqual(f.run(),original);
-    assert.equal(f.store.eventsAll(f.submitted.id).length,events);
-    assert.equal(f.createdRuns.length,0);assert.equal(f.reviewerDeliveries.length,0);
-    assert.match(f.moveReviewView().note??'',/idle reader cannot be silently replaced/);
-    await assert.rejects(f.control({action:'move',to:'review',reason:'Preserve the stopped reader'}),/restart role=reviewer fresh/);
+    assert.equal(offer.available,true);assert.equal((offer.args as {fresh?:boolean}).fresh,undefined);
+    assert.match(offer.note??'',/resend the report/);
+    await restartReviewer(f,'Continue same agent');
     assert.equal(f.current().resolution.currentRunId,f.runId);
     assert.equal(f.run().released,false);assert.equal(f.createdRuns.length,0);
-    const currentOffer=f.view('restart');assert.equal((currentOffer.args as {fresh?:boolean}).fresh,true);
-    await f.control({action:'restart',role:'reviewer',fresh:true,reason:'Deliberately replace the stopped reader'});
-    await f.engine.wake();await f.engine.wake();
-    assert.equal(f.run().released,true);assert.ok(f.run().replacedAt);
-    const replacements=f.store.runs(f.submitted.id).filter(run=>run.role==='reviewer'&&run.id!==f.runId);
-    assert.equal(replacements.length,1,`${f.current().phase}: ${f.current().reason}`);assert.equal(f.createdRuns.length,1);
-    assert.equal(replacements[0]!.workspaceId,'workspace');
-    assert.equal(f.current().resolution.review,null);
+    assert.equal(f.events('reviewer_report_request_sent').length,1);
   }finally{await f.close();}
 });
 
-weighted(2)('an idle task-workspace reader accepts callbacks and is replaced through the ordinary fresh restart',async()=>{
+weighted(2)('an idle checkpointed reader cannot be replaced while available',async()=>{
   const f=fixture({workerless:true});try{
     await f.checkpoint('Earlier reading');
     await f.checkpoint('New task-workspace progress');
     const before=f.run().reviewCheckpoints;
-    await f.control({action:'restart',role:'reviewer',fresh:true,reason:'Replace the idle reader'});
-    await f.engine.wake();await f.engine.wake();
-    const old=f.run();assert.equal(old.released,true);assert.ok(old.replacedAt);assert.deepEqual(old.reviewCheckpoints,before);
+    await assert.rejects(f.control({action:'restart',role:'reviewer',fresh:true,reason:'Replace the idle reader'}), /retained reviewer/);
+    const old=f.run();assert.equal(old.released,false);assert.deepEqual(old.reviewCheckpoints,before);
     assert.equal(f.current().resolution.review,null);
-    const replacement=f.store.runs(f.submitted.id).find(r=>r.role==='reviewer'&&r.id!==f.runId)!;
-    assert.ok(replacement,`${f.current().phase}: ${f.current().reason}`);
-    assert.equal(replacement.workspaceId,'workspace');
+    assert.equal(f.createdRuns.length,0);
   }finally{await f.close();}
 });
 
@@ -668,6 +648,7 @@ weighted(2)('a fresh reviewer is never dispatched past an unknown current Queue 
     // The retained continuation refuses, and so does the deliberate fresh route:
     // selection admits no reviewer while the current author is unknown.
     await assert.rejects(restartReviewer(f, 'Continue the retained external review'), /independence is unknown/);
+    f.observe({ status: 'closed', active: false });
     const fresh = await f.control({ action: 'restart', role: 'reviewer', fresh: true, reason: 'Deliberate fresh reviewer' });
     assert.equal(fresh.phase, 'awaiting_review');
     assert.equal(fresh.resolution.reviewerAgentId, null);
@@ -984,7 +965,8 @@ test('an amended brief is still carried to an awaiting checkpoint but never acro
     assert.equal(f.reviewerDeliveries.length, before, 'no turn was sent under the amended brief');
     assert.equal(f.store.run(f.runId)!.released, false, 'the reader keeps its lease and checkpoint');
 
-    // The deliberate replacement is the exit, and it is explicit.
+    // A replacement becomes eligible only after the retained reviewer is gone.
+    f.observe({ status: 'closed', active: false });
     await f.control({ action: 'restart', role: 'reviewer', fresh: true, reason: 'Replace the stopped reader at the amended brief' });
     assert.equal(f.current().phase, 'awaiting_review');
     assert.equal(f.store.run(f.runId)!.released, true);

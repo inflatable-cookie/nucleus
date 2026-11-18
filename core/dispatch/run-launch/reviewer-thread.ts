@@ -58,7 +58,8 @@ export async function retainReviewerThread(ctx: LaunchThreadContext, t: Task, ro
       const issue = ctx.retainedProfileIssue(profile) ?? ctx.signoffIssue(t, profile, 'reviewer')
         ?? (supersedingReviewer ? `a required reviewer route names ${supersedingReviewer}, superseding the retained reviewer` : null);
       if (issue) {
-        if (!supersedingReviewer) {
+        const prior = ctx.store.runs(t.id).findLast(run => run.role === 'reviewer' && run.agentId === agentId);
+        if (!supersedingReviewer && prior && !prior.completion && prior.head === t.prHead) {
           ctx.waiting(t, `Retained reviewer ${agentId} cannot continue yet (${issue}); its binding is preserved`, 'route_unavailable');
           return { kind: 'handled' };
         }

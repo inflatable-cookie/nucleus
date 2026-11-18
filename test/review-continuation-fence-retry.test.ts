@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { fixture } from './support/review-continuation-fixture';
 
-test('fresh review launches at the current head over either checkpoint fence', async () => {
+test('checkpoint fences do not authorize replacing an available reviewer', async () => {
   for (const shape of ['result', 'run'] as const) {
     const f = fixture(); try {
       await f.report({ covered: ['Diff'], remaining: ['Tests'] }, `fresh-${shape}`);
@@ -11,20 +11,11 @@ test('fresh review launches at the current head over either checkpoint fence', a
         review: { eventId: 'saved-block', taskId: f.submitted.id, runId: f.runId, status: 'blocked',
           summary: 'No findings; environment unavailable', head: f.run().head, reviewResponsibility: 'environment' } } });
       else f.store.putRun({ ...f.run(), id: 'other-reader', agentId: 'other-reader', reviewCheckpoints: [] });
-      await f.engine.performTaskControl({ action: 'move', to: 'review', fresh: true, taskId: f.submitted.id,
-        version: f.current().version, reason: 'Start a fresh independent review at this head' });
-      await f.engine.resolution.remindStoppedRun(f.current(), f.run());
-      assert.equal(f.store.events(f.submitted.id).filter(event => event.kind === 'callback_reminder').length, 0,
-        'a superseded reviewer gets no callback reminder');
-      assert.notEqual(f.current().resolution.incident?.runId, f.runId, 'a superseded reviewer creates no missing-callback incident');
-      f.store.setMeta('paused', false);
-      await f.engine.wake(); await f.engine.wake();
-      const replacement = f.store.run(f.current().resolution.currentRunId!);
-      assert.ok(replacement && replacement.id !== f.runId, shape);
-      assert.equal(replacement.role, 'reviewer');
-      assert.equal(replacement.head, f.run().head);
-      assert.notEqual(replacement.agentId, f.run().agentId);
-      assert.equal(f.createdRuns.length, 1);
+      await assert.rejects(f.engine.performTaskControl({ action: 'move', to: 'review', fresh: true, taskId: f.submitted.id,
+        version: f.current().version, reason: 'Start a fresh independent review at this head' }), /retained reviewer/);
+      assert.equal(f.current().resolution.currentRunId, f.runId, shape);
+      assert.equal(f.run().released, false);
+      assert.equal(f.createdRuns.length, 0);
       assert.equal(f.reviewerDeliveries.length, 0);
       assert.equal(f.run().reviewCheckpoints?.length, 1);
       assert.deepEqual(f.counts(), { merges: 0, syncs: 0 });

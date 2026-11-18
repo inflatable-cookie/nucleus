@@ -258,6 +258,10 @@ export function fixture(
     },
     notify: async (agentId: string, messageId: string, text: string) => {
       prompts.push({ agentId, messageId, text });
+      if (messageId.startsWith('ns-reviewer-report-')) {
+        const state = states.get(agentId);
+        if (state) states.set(agentId, { ...state, status: 'running', active: true });
+      }
     },
     verifyPr: async () => ({
       head: remoteHead,
