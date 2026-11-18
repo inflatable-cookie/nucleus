@@ -352,11 +352,10 @@ export class HostPass {
               return;
             }
             if (operation.taskId && operation.taskId !== task.id) return;
-            if (!operation.taskId || !operation.hostId)
+            if (!operation.taskId)
               operation = this.store.putOperation({
                 ...operation,
                 taskId: task.id,
-                hostId: host,
               });
           } else {
             if (

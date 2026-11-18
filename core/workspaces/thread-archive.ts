@@ -285,6 +285,16 @@ async function archiveTerminalTaskThreads(
         wait(agentId, String(error));
         return;
       }
+      // An active turn or pending permission waits for the next pass (review #543).
+      if (
+        observed.active ||
+        observed.activeTurnId ||
+        observed.permissions ||
+        !["idle", "error", "closed"].includes(observed.status)
+      ) {
+        wait(agentId, "Thread is active or waiting for permission");
+        return;
+      }
       // Observation needs no authority to mutate the thread. Legacy archived
       // threads can lack labels, so read their exact identity before refusing a write.
       if (!ownedByTask(observed.labels, task.id)) {
@@ -311,16 +321,6 @@ async function archiveTerminalTaskThreads(
         return;
       }
       op = opFor(agentId, observed.labels);
-      // An active turn or pending permission waits for the next pass (review #543).
-      if (
-        observed.active ||
-        observed.activeTurnId ||
-        observed.permissions ||
-        !["idle", "error", "closed"].includes(observed.status)
-      ) {
-        wait(agentId, "Thread is active or waiting for permission");
-        return;
-      }
       store.deleteMeta(archiveProbeKey(store, task.id, agentId));
       // Ownership may have changed while the observation was in flight.
       if (

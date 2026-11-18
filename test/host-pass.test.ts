@@ -333,7 +333,11 @@ test("a readable unlabelled archived thread settles, while an unreadable one wai
   const f = fixture(
     t,
     fakeAdapter({
-      observe: async (id) => ({ ...(await observeIdle("ws")(id)), labels: {} }),
+      observe: async (id) => ({
+        ...(await observeIdle("ws")(id)),
+        active: id === "live",
+        labels: {},
+      }),
       originAgent: async (id) => {
         if (id === "unknown") throw Error("offline");
         return { id, workspaceId: "ws", title: "", archived: true };
@@ -341,7 +345,7 @@ test("a readable unlabelled archived thread settles, while an unreadable one wai
     }),
   );
   f.store.setMeta("paused", false);
-  for (const id of ["archived", "unknown"]) {
+  for (const id of ["archived", "unknown", "live"]) {
     const task = f.store.insert(submission(), HOST, "handoff", "a".repeat(40));
     f.store.update(task.id, {
       phase: "done",

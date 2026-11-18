@@ -75,8 +75,8 @@ export function hostDependents(
   for (const row of db
     .prepare(
       `SELECT operations.kind AS kind, operations.taskId AS taskId FROM operations
-    LEFT JOIN tasks ON operations.kind='submit' AND operations.taskId IS NULL
-      AND tasks.submission=json_extract(operations.data,'$.submissionId')
+    LEFT JOIN tasks ON tasks.id=operations.taskId OR (operations.kind='submit' AND operations.taskId IS NULL
+      AND tasks.submission=json_extract(operations.data,'$.submissionId'))
     WHERE operations.state IN (${states}) AND COALESCE(json_extract(operations.data,'$.hostId'),json_extract(tasks.data,'$.hostId'))=?
       AND NOT (operations.state='needs_attention' AND (operations.kind='submit' OR (operations.kind='task_control'
         AND COALESCE(json_extract(operations.data,'$.effect.kind')='task_control' AND json_extract(operations.data,'$.effect.target')='restart',0))) AND EXISTS (SELECT 1 FROM events
