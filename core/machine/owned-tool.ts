@@ -1,6 +1,7 @@
 import { boundedToolHold } from "./bounded-tool";
 import {
   bbThreadForAgent,
+  bbWorkspaceThreads,
   ownedToolAgentProcessTreeVerdict,
 } from "./owned-tool-process-proof";
 import { readHostUidProcesses } from "./host-process-listing";
@@ -115,11 +116,10 @@ export class OwnedTools {
         boundRun?.workspaceId ??
         (task?.agentId === agentId ? task.workspaceId : undefined) ??
         undefined;
-      const bbThread = bbThreadForAgent(
-        agentId,
-        boundRun?.hostId ?? task?.hostId,
-      );
-      const bbThreads = bbThread ? [bbThread] : [];
+      const bbThreads =
+        task && bbThreadForAgent(agentId, boundRun?.hostId ?? task.hostId)
+          ? bbWorkspaceThreads(task, this.store.runs(task.id), workspaceId)
+          : [];
       const hold = await boundedToolHold(
         read,
         this.resolution.host,
@@ -246,6 +246,13 @@ export class OwnedTools {
         agentId,
         boundRun?.hostId ?? task.hostId,
       );
+      const bbThreads = bbThread
+        ? bbWorkspaceThreads(
+            task,
+            this.store.runs(task.id),
+            options.workspaceId,
+          )
+        : [];
       const verdict = ownedToolAgentProcessTreeVerdict(runIds, processes, {
         noTurnLive: true,
         bbThreads: bbThread ? [bbThread] : [],
@@ -269,7 +276,7 @@ export class OwnedTools {
         const workspaceIssue = await this.adapter.noLiveWorkspaceProcesses(
           options.workspaceId,
           runIds,
-          bbThread ? [bbThread] : [],
+          bbThreads,
         );
         if (!workspaceIssue) {
           this.recordOwnedToolSettlement(

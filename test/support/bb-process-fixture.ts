@@ -1,6 +1,6 @@
 import type { HostProcessFact } from "../../core/host/types";
 import { readBbSessionEnvironments } from "../../core/machine/host-process-listing";
-import { runProcessEnvironments } from "../../core/machine/run-process-identity";
+import { darwinBbThreadFromProcargs } from "../../core/machine/run-process-identity";
 
 /** BB daemon, bridge, session and its MCP server; session environment follows the real reader. */
 export async function bbProcessFixture(
@@ -36,15 +36,23 @@ export async function bbProcessFixture(
   ];
   await readBbSessionEnvironments(facts, {
     identity: async (pid) => ({ kind: "identity", identity: `${pid}@fixture` }),
-    environments: (pids, options) =>
-      runProcessEnvironments(pids, {
-        ...options,
-        platform: "darwin",
-        darwinRead: async () => {
-          if (thread === null) throw Error("unreadable");
-          return `102 ${facts[2]!.command} BB_THREAD_ID=${thread} BB_PROJECT_ID=prj_fixture\n`;
-        },
-      }),
+    platform: "darwin",
+    bbThreads: async () =>
+      new Map([
+        [
+          102,
+          thread === null
+            ? null
+            : darwinBbThreadFromProcargs(
+                Buffer.concat([
+                  Buffer.from([1, 0, 0, 0]),
+                  Buffer.from(
+                    `/fixture/claude\0\0claude\0OTHER=contains BB_THREAD_ID=wrong\0BB_THREAD_ID=${thread}\0\0`,
+                  ),
+                ]),
+              ),
+        ],
+      ]),
   });
   return facts;
 }

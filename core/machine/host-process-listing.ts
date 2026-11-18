@@ -22,7 +22,10 @@ import {
   readHostRunStartIdentity,
   startIdentityMatches,
 } from "./start-identity";
-import { runProcessEnvironments } from "./run-process-identity";
+import {
+  darwinBbThreadEnvironments,
+  runProcessEnvironments,
+} from "./run-process-identity";
 
 /** The longest command a process fact retains; the tail carries the arguments a proof reads. */
 export const HOST_PROCESS_COMMAND_MAX = 4096;
@@ -276,6 +279,8 @@ export async function readBbSessionEnvironments(
   facts: HostProcessFact[],
   reads: {
     environments?: typeof runProcessEnvironments;
+    bbThreads?: typeof darwinBbThreadEnvironments;
+    platform?: NodeJS.Platform;
     identity?: typeof readHostRunStartIdentity;
   } = {},
 ): Promise<void> {
@@ -292,27 +297,27 @@ export async function readBbSessionEnvironments(
     (fact) => fact.ppid != null && bridges.has(fact.ppid),
   );
   if (!candidates.length) return;
-  const environments = await (reads.environments ?? runProcessEnvironments)(
-    candidates.map((fact) => fact.pid),
-    {
-      commands: new Map(
-        candidates
-          .filter((fact) => fact.command.length < HOST_PROCESS_COMMAND_MAX)
-          .map((fact) => [fact.pid, fact.command]),
-      ),
-    },
-  );
+  const pids = candidates.map((fact) => fact.pid);
+  const platform = reads.platform ?? process.platform;
+  const threads =
+    platform === "darwin"
+      ? await (reads.bbThreads ?? darwinBbThreadEnvironments)(pids)
+      : new Map(
+          [
+            ...(await (reads.environments ?? runProcessEnvironments)(pids, {
+              platform,
+            })),
+          ].map(([pid, env]) => [pid, env?.BB_THREAD_ID ?? null]),
+        );
   await Promise.all(
     candidates.map(async (fact) => {
       const identity = await (reads.identity ?? readHostRunStartIdentity)(
         fact.pid,
       ).catch(() => ({ kind: "unavailable" as const }));
-      const environment = environments.get(fact.pid);
       fact.bbThreadId =
         identity.kind === "identity" &&
-        startIdentityMatches(fact.startIdentity, identity.identity) &&
-        environment
-          ? (environment.BB_THREAD_ID ?? null)
+        startIdentityMatches(fact.startIdentity, identity.identity)
+          ? (threads.get(fact.pid) ?? null)
           : null;
     }),
   );

@@ -2,6 +2,7 @@ import { realpathSync } from "node:fs";
 import type { HostProcessFact } from "../host/types";
 import { parseAgentId } from "../../shared/agent-identity";
 import { hostKindOf } from "../../shared/host-kind";
+import type { Run, Task } from "../../shared/contracts";
 /**
  * The owned-tool process proof: does the provider process rooted by this run's
  * own Queue MCP report helper still carry a descendant that could be work?
@@ -42,6 +43,29 @@ export function bbThreadForAgent(
   return qualified?.nativeAgentId ?? agentId;
 }
 
+/** All recorded participants of this workspace, not merely the one being observed. */
+export function bbWorkspaceThreads(
+  task: Task,
+  runs: readonly Run[],
+  workspaceId?: string | null,
+): string[] {
+  if (!workspaceId) return [];
+  const threads = new Set<string>();
+  const add = (agentId: string | null | undefined, hostId?: string | null) => {
+    const thread = bbThreadForAgent(agentId, hostId);
+    if (thread) threads.add(thread);
+  };
+  if (task.workspaceId === workspaceId) add(task.agentId, task.hostId);
+  for (const run of runs)
+    if (
+      run.taskId === task.id &&
+      run.workspaceId === workspaceId &&
+      ["revision", "reviewer", "executor"].includes(run.role)
+    )
+      add(run.agentId, run.hostId ?? task.hostId);
+  return [...threads];
+}
+
 /** Only a bridge under the BB daemon and its positively bound session are runtime. */
 export function bbRuntimePids(
   processes: readonly Pick<
@@ -50,18 +74,48 @@ export function bbRuntimePids(
   >[],
   threadIds: readonly string[],
 ): Set<number> {
+  return bbBridgePids(processes, new Set(threadIds.filter(Boolean)));
+}
+
+/** Cleanup must also preserve a plausible BB runtime whose environment is unreadable. */
+export function possibleBbRuntimePids(
+  processes: readonly Pick<
+    HostProcessFact,
+    "pid" | "ppid" | "command" | "bbThreadId"
+  >[],
+): Set<number> {
+  return bbBridgePids(processes, null);
+}
+
+function bbBridgePids(
+  processes: readonly Pick<
+    HostProcessFact,
+    "pid" | "ppid" | "command" | "bbThreadId"
+  >[],
+  wanted: Set<string> | null,
+): Set<number> {
   const runtime = new Set<number>();
-  const wanted = new Set(threadIds.filter(Boolean));
-  if (!wanted.size) return runtime;
+  if (wanted && !wanted.size) return runtime;
   const bbProgram = (command: string) =>
     /\.app\/Contents\/MacOS\/bb(?:\s|$)/i.test(command);
   const script = (command: string, name: string) =>
     command.includes(`/host-daemon/dist/${name}.mjs`);
+  if (!wanted)
+    for (const bridge of processes) {
+      const daemon = processes.find((fact) => fact.pid === bridge.ppid);
+      if (
+        daemon &&
+        bbProgram(bridge.command) &&
+        bbProgram(daemon.command) &&
+        script(bridge.command, "bb-provider-bridge-worker") &&
+        script(daemon.command, "daemon-bundle")
+      )
+        runtime.add(bridge.pid);
+    }
   for (const session of processes) {
     if (
-      !session.bbThreadId ||
-      !wanted.has(session.bbThreadId) ||
-      session.ppid == null
+      session.ppid == null ||
+      (wanted && (!session.bbThreadId || !wanted.has(session.bbThreadId)))
     )
       continue;
     const bridge = processes.find((fact) => fact.pid === session.ppid);

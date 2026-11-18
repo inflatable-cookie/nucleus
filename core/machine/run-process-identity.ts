@@ -26,6 +26,76 @@ export type RunProcessEnvironment = Partial<
   Record<(typeof KEYS)[number], string>
 >;
 
+/** Parse KERN_PROCARGS2 without flattening environment entries into ambiguous text. */
+export function darwinBbThreadFromProcargs(data: Buffer): string | null {
+  if (data.length < 5) return null;
+  const argc = data.readInt32LE(0);
+  if (argc < 1 || argc > 65536) return null;
+  let offset = data.indexOf(0, 4);
+  if (offset < 0) return null;
+  while (offset < data.length && data[offset] === 0) offset++;
+  for (let i = 0; i < argc; i++) {
+    offset = data.indexOf(0, offset);
+    if (offset < 0) return null;
+    offset++;
+  }
+  let value: string | null = null;
+  while (offset < data.length && data[offset] !== 0) {
+    const end = data.indexOf(0, offset);
+    if (end < 0) return null;
+    const entry = data.subarray(offset, end);
+    const prefix = Buffer.from("BB_THREAD_ID=");
+    if (entry.subarray(0, prefix.length).equals(prefix)) {
+      if (value !== null) return null;
+      value = entry.subarray(prefix.length).toString("utf8");
+    }
+    offset = end + 1;
+  }
+  return value || null;
+}
+
+// sysctl returns NUL-delimited argv and environment; ps -E loses the boundaries.
+// The helper emits only the requested PID's raw kernel response, never logs it,
+// and an unavailable system Python or denied sysctl leaves the fact unknown.
+const DARWIN_PROCARGS = `import base64, ctypes, json, sys
+lib = ctypes.CDLL(None, use_errno=True)
+out = {}
+for arg in sys.argv[1:]:
+    pid = int(arg)
+    mib = (ctypes.c_int * 3)(1, 49, pid)
+    size = ctypes.c_size_t(0)
+    if lib.sysctl(mib, 3, None, ctypes.byref(size), None, 0) != 0 or size.value > 2097152 or size.value < 5: continue
+    buf = ctypes.create_string_buffer(size.value)
+    if lib.sysctl(mib, 3, buf, ctypes.byref(size), None, 0) == 0:
+        out[arg] = base64.b64encode(buf.raw[:size.value]).decode('ascii')
+print(json.dumps(out))`;
+
+export async function darwinBbThreadEnvironments(
+  pids: readonly number[],
+): Promise<Map<number, string | null>> {
+  const result = new Map<number, string | null>(pids.map((pid) => [pid, null]));
+  for (let offset = 0; offset < pids.length; offset += 32) {
+    const chunk = pids.slice(offset, offset + 32);
+    try {
+      const { stdout } = await execFileAsync(
+        "/usr/bin/python3",
+        ["-c", DARWIN_PROCARGS, ...chunk.map(String)],
+        { encoding: "utf8", timeout: 5000, maxBuffer: 16 * 1024 * 1024 },
+      );
+      const output = JSON.parse(stdout) as Record<string, string>;
+      for (const pid of chunk)
+        if (typeof output[pid] === "string")
+          result.set(
+            pid,
+            darwinBbThreadFromProcargs(Buffer.from(output[pid]!, "base64")),
+          );
+    } catch {
+      /* No positive environment proof. */
+    }
+  }
+  return result;
+}
+
 /** The answer every custody decision reads: found, proved gone, or unobserved. */
 export type RunProcessLiveness = ReturnType<
   typeof processStartIdentityLiveness
@@ -42,8 +112,6 @@ export async function runProcessEnvironments(
   options: {
     platform?: NodeJS.Platform;
     darwinRead?: (pids: readonly number[]) => Promise<string>;
-    /** The prior non-environment command read separates argv from the environment. */
-    commands?: ReadonlyMap<number, string>;
   } = {},
 ): Promise<Map<number, RunProcessEnvironment | null>> {
   const result = new Map<number, RunProcessEnvironment | null>();
@@ -87,16 +155,10 @@ export async function runProcessEnvironments(
           if (!match) continue;
           const environment: RunProcessEnvironment = {};
           for (const key of KEYS) {
-            let source = match[2];
-            if (key === "BB_THREAD_ID") {
-              const command = options.commands?.get(Number(match[1]));
-              const normalized = source.replace(/\s+/g, " ").trim();
-              if (!command || !normalized.startsWith(`${command} `)) continue;
-              source = normalized.slice(command.length + 1);
-            }
+            if (key === "BB_THREAD_ID") continue; // ps output cannot prove entry boundaries.
             const value = new RegExp(
               `(?:^| )${key}=(.*?)(?= [A-Za-z_][A-Za-z_0-9]*=|$)`,
-            ).exec(source)?.[1];
+            ).exec(match[2])?.[1];
             if (value !== undefined) environment[key] = value;
           }
           result.set(Number(match[1]), environment);

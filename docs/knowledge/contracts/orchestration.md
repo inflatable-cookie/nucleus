@@ -3339,7 +3339,10 @@ movement invalidates source approval and preserves the normal readiness gates.
   same binding protects these runtime processes from run cleanup and permits
   workspace proof after BB reports the participant idle or closed. The process
   reader retains only the thread identity and checks the session's start identity
-  after reading its environment.
+  after reading its environment. On Darwin it reads NUL-delimited kernel process
+  arguments through the system Python and `sysctl`; an unavailable reader or
+  denied kernel read stays unknown. Task sweeps also preserve plausible BB
+  bridge runtimes with unknown identity and do not signal their process groups.
   Those runtimes take two facts from the listing, never a provider
   name list: the program is one the provider ships (inside an application bundle
   such as `Foo.app/Contents/…`, or beside the provider's own executable under

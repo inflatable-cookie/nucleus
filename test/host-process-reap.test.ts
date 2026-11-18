@@ -42,8 +42,38 @@ import {
 } from "../core/machine/owned-tool-process-proof";
 import type { HostProcessFact } from "../core/host/types";
 import type { Engine } from "../core/engine";
+import { bbProcessFixture } from "./support/bb-process-fixture";
 
 const GRACE_MS = 80;
+
+test("task sweep protects BB runtime and its group while selecting a workspace command", async () => {
+  const root = await mkdtemp(join(tmpdir(), "nsq-bb-sweep-"));
+  try {
+    const facts = await bbProcessFixture(root);
+    for (const fact of facts.slice(1)) fact.pgid = 101;
+    facts.push({
+      ...facts[2]!,
+      pid: 104,
+      ppid: 102,
+      command: "node build.mjs",
+    });
+    const result = await reapHostProcesses({
+      directory: root,
+      processes: facts,
+      recordedGroups: [{ pgid: 101, startIdentity: facts[1]!.startIdentity }],
+      identityLiveness: () => "unknown",
+      graceMs: 0,
+    });
+    assert.deepEqual(
+      result.failed.map((fact) => fact.pid),
+      [104],
+    );
+    assert.equal(result.failed[0]!.via, "cwd");
+    assert.deepEqual(result.terminated, []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test("owned tool process tree is settled only when the run helper is unique and has no other descendants", () => {
   const base = [

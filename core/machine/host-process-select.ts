@@ -310,6 +310,8 @@ export function selectHostProcessTargetsAndSkips(input: {
   paseo: PaseoProcessOwnership;
 }): HostProcessSelection {
   const blockedPgids = new Set(input.paseo.pgids);
+  for (const fact of input.processes)
+    if (input.protectedPids.has(fact.pid)) blockedPgids.add(fact.pgid);
   const provenPgids = provenRecordedPgids(
     input.recordedGroups,
     input.queuePgid,

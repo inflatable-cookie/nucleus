@@ -36,6 +36,14 @@ function fixture(t: TestContext, bb = false) {
     error: "",
   };
   let processes: HostProcessFact[] | null = [];
+  let runs: Array<{
+    id: string;
+    taskId: string;
+    workspaceId: string;
+    agentId: string;
+    role: string;
+    hostId: string;
+  }> = [];
   let page: TimelinePage | null = toolTimelinePage([], {
     projection: "bounded",
     hasOlder: true,
@@ -62,6 +70,7 @@ function fixture(t: TestContext, bb = false) {
     store: {
       task: () => task,
       run: () => null,
+      runs: () => runs,
       eventsAll: () => [],
       event: () => {},
     },
@@ -94,6 +103,9 @@ function fixture(t: TestContext, bb = false) {
     setProcesses: (value: HostProcessFact[] | null) => {
       processes = value;
     },
+    setRuns: (value: typeof runs) => {
+      runs = value;
+    },
     setPage: (value: TimelinePage | null) => {
       page = value;
     },
@@ -125,6 +137,38 @@ test("BB bridge and session are bound runtime, while their commands and unknown 
   for (const thread of ["other-thread", null]) {
     f.setProcesses(await bbProcessFixture(f.task.directory, thread));
     assert.match((await f.proof())!, /process 101 remains/);
+  }
+});
+
+test("both BB participants in a shared workspace are runtime, but either session can run work", async (t) => {
+  const f = fixture(t, true);
+  f.setRuns([
+    {
+      id: "review-run",
+      taskId: f.task.id,
+      workspaceId: f.task.workspaceId,
+      agentId: "reviewer",
+      role: "reviewer",
+      hostId: f.task.hostId,
+    },
+  ]);
+  const worker = await bbProcessFixture(f.task.directory, f.task.agentId);
+  const reviewer = (await bbProcessFixture(f.task.directory, "reviewer")).map(
+    (fact) => ({
+      ...fact,
+      pid: fact.pid + 1000,
+      ppid: fact.ppid === 1 ? 1 : fact.ppid! + 1000,
+    }),
+  );
+  f.setProcesses([...worker, ...reviewer]);
+  assert.equal(await f.proof(), null);
+  for (const parent of [102, 1102]) {
+    f.setProcesses([
+      ...worker,
+      ...reviewer,
+      { ...worker[2]!, pid: 3000, ppid: parent, command: "node build.mjs" },
+    ]);
+    assert.match((await f.proof())!, /process 3000 remains/);
   }
 });
 

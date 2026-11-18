@@ -7,20 +7,22 @@ import {
 } from "./support/run-process-cleanup-fixture";
 import { existsSync } from "node:fs";
 import { processParentPid } from "../core/machine/process-identity";
-import { runProcessEnvironments } from "../core/machine/run-process-identity";
+import {
+  darwinBbThreadEnvironments,
+  darwinBbThreadFromProcargs,
+  runProcessEnvironments,
+} from "../core/machine/run-process-identity";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { sweepSettledRunProcesses } from "../core/machine/run-process-cleanup";
 
 test("process environment reads retain the BB thread binding and no unrelated fields", async () => {
   const environments = await runProcessEnvironments([123], {
     platform: "darwin",
-    commands: new Map([[123, "agent --session"]]),
     darwinRead: async () =>
       "  123 agent --session BB_THREAD_ID=thr_fixture SECRET=private TMPDIR=/scratch\n",
   });
-  assert.deepEqual(environments.get(123), {
-    BB_THREAD_ID: "thr_fixture",
-    TMPDIR: "/scratch",
-  });
+  assert.deepEqual(environments.get(123), { TMPDIR: "/scratch" });
   const unreadable = await runProcessEnvironments([123], {
     platform: "darwin",
     darwinRead: async () => {
@@ -30,12 +32,48 @@ test("process environment reads retain the BB thread binding and no unrelated fi
   assert.equal(unreadable.get(123), null);
   const spoofed = await runProcessEnvironments([123], {
     platform: "darwin",
-    commands: new Map([[123, "agent BB_THREAD_ID=thr_fixture"]]),
     darwinRead: async () =>
       "  123 agent BB_THREAD_ID=thr_fixture SECRET=private\n",
   });
   assert.equal(spoofed.get(123)?.BB_THREAD_ID, undefined);
+  const procargs = Buffer.concat([
+    Buffer.from([1, 0, 0, 0]),
+    Buffer.from(
+      "/agent\0\0agent\0OTHER=x BB_THREAD_ID=wrong\0BB_THREAD_ID=right\0\0",
+    ),
+  ]);
+  assert.equal(darwinBbThreadFromProcargs(procargs), "right");
+  assert.equal(darwinBbThreadFromProcargs(procargs.subarray(0, -2)), null);
 });
+
+test(
+  "Darwin kernel reader reads an actual child environment with entry boundaries",
+  { skip: process.platform !== "darwin" },
+  async () => {
+    const child = spawn(
+      process.execPath,
+      ["-e", 'process.stdout.write("ready"); setInterval(() => {}, 1000)'],
+      {
+        env: {
+          ...process.env,
+          OTHER: "contains BB_THREAD_ID=wrong",
+          BB_THREAD_ID: "thr_fixture",
+        },
+        stdio: ["ignore", "pipe", "ignore"],
+      },
+    );
+    try {
+      await once(child.stdout!, "data");
+      assert.equal(
+        (await darwinBbThreadEnvironments([child.pid!])).get(child.pid!),
+        "thr_fixture",
+      );
+    } finally {
+      child.kill();
+      await once(child, "exit");
+    }
+  },
+);
 
 test("unavailable scans retain intent and scratch; a surviving identity is recorded and retried", async () => {
   const f = fixture();
