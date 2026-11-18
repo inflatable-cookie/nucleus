@@ -58,6 +58,14 @@ export class HostOperationUnknownDeliveryError extends Error {
   }
 }
 
+/** The caller's deadline elapsed; the original request still owns its reply. */
+export class HostOperationTimeoutError extends HostOperationUnknownDeliveryError {
+  constructor(op: HostOperationName, deadlineMs: number, readonly late: Promise<HostOperationOutcome>) {
+    super(op, `no answer within ${deadlineMs} ms; delivery remains unknown`);
+    this.name = "HostOperationTimeoutError";
+  }
+}
+
 /** No executor connection is holding this host's role right now. */
 export class HostExecutorUnavailableError extends Error {
   constructor(readonly hostId: string) {
@@ -71,6 +79,8 @@ interface PendingOperation {
   resolve: (outcome: HostOperationOutcome) => void;
   reject: (error: Error) => void;
   timer: NodeJS.Timeout;
+  resolveLate: (outcome: HostOperationOutcome) => void;
+  rejectLate: (error: Error) => void;
 }
 
 export interface HostExecutorLinkOptions {
@@ -94,7 +104,6 @@ export class HostExecutorLink {
   private readonly pending = new Map<string, PendingOperation>();
   private readonly write: (frame: unknown) => void;
   private readonly deadlineMs: number;
-  private readonly now: () => number;
   private closed = false;
 
   constructor(options: HostExecutorLinkOptions) {
@@ -102,7 +111,6 @@ export class HostExecutorLink {
     this.declaration = options.declaration;
     this.write = options.write;
     this.deadlineMs = options.deadlineMs ?? HOST_OPERATION_DEADLINE_MS;
-    this.now = options.now ?? Date.now;
   }
 
   get inFlight(): number { return this.pending.size; }
@@ -116,15 +124,23 @@ export class HostExecutorLink {
   request(op: HostOperationName, input: unknown): Promise<HostOperationOutcome> {
     const parsed: Parsed<{ op: HostOperationName; input: unknown }> = parseHostOperationRequest({ op, input });
     if (!parsed.ok) return Promise.reject(new HostOperationRefusedError(op, parsed.failure));
-    if (this.closed) return Promise.reject(new HostExecutorUnavailableError(this.hostId));
+    // Keep correlation bounded. Capacity exhaustion refuses before another write;
+    // it never turns an unresolved operation into a reason to resend it.
+    if (this.closed || this.pending.size >= 1024) return Promise.reject(new HostExecutorUnavailableError(this.hostId));
     const id = `host-op-${randomUUID()}`;
+    let resolveLate!: (outcome: HostOperationOutcome) => void;
+    let rejectLate!: (error: Error) => void;
+    const late = new Promise<HostOperationOutcome>((resolve, reject) => { resolveLate = resolve; rejectLate = reject; });
+    // A caller may choose observation rather than consume the late answer.
+    void late.catch(() => {});
     return new Promise<HostOperationOutcome>((resolve, reject) => {
       const timer = setTimeout(() => {
-        if (!this.pending.delete(id)) return;
-        reject(new HostOperationUnknownDeliveryError(op, `no answer within ${this.deadlineMs} ms; ${this.now()} is not proof it did not land`));
+        const pending = this.pending.get(id);
+        if (!pending) return;
+        reject(new HostOperationTimeoutError(op, this.deadlineMs, late));
       }, this.deadlineMs);
       timer.unref?.();
-      this.pending.set(id, { op, resolve, reject, timer });
+      this.pending.set(id, { op, resolve, reject, timer, resolveLate, rejectLate });
       const frame: ServiceRequest = { v: PROTOCOL_VERSION, id, method: HOST_OPERATION_METHOD, input: parsed.value };
       try {
         this.write(frame);
@@ -181,9 +197,10 @@ export class HostExecutorLink {
     if (!pending) return;
     this.pending.delete(id);
     clearTimeout(pending.timer);
-    if (error) pending.reject(error);
-    else if (unknownReason !== null) pending.reject(new HostOperationUnknownDeliveryError(pending.op, unknownReason));
-    else if (outcome) pending.resolve(outcome);
-    else pending.reject(new HostOperationUnknownDeliveryError(pending.op, "the answer carried neither a result nor a refusal"));
+    const failure = error ?? (unknownReason !== null
+      ? new HostOperationUnknownDeliveryError(pending.op, unknownReason)
+      : outcome ? null : new HostOperationUnknownDeliveryError(pending.op, "the answer carried neither a result nor a refusal"));
+    if (failure) { pending.reject(failure); pending.rejectLate(failure); }
+    else if (outcome) { pending.resolve(outcome); pending.resolveLate(outcome); }
   }
 }

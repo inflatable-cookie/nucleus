@@ -5,6 +5,7 @@ import {
   HostExecutorUnavailableError,
   HostOperationRefusedError,
   HostOperationUnknownDeliveryError,
+  HostOperationTimeoutError,
 } from "../service/host-executor";
 import { isHostOperationNonDelivery } from "../shared/host-operation";
 import { PROTOCOL_VERSION } from "../shared/service/protocol";
@@ -142,13 +143,13 @@ test("an answer frame that names no in-flight operation is reported, not guessed
   assert.equal(instance.settle({ v: PROTOCOL_VERSION, id: "host-op-unknown", method: "host.op" }), false);
 });
 
-test("a late host reply remains correlated after the caller's deadline", async () => {
+test("a late host send reply remains correlated after the caller's deadline", async () => {
   const { instance, written } = link(10);
-  const request = instance.request("call.counters", {});
-  await assert.rejects(request, HostOperationUnknownDeliveryError);
-  assert.equal(instance.settle({
-    v: PROTOCOL_VERSION,
-    id: written[0].id,
-    result: outcome("call.counters", { calls: {} }),
-  }), true, "a late answer belongs to its original request");
+  const request = instance.request("thread.send", { threadId: "thr_1", text: "hello", messageId: "msg_1" });
+  let timeout!: HostOperationTimeoutError;
+  await assert.rejects(request, (error: unknown) => { assert.ok(error instanceof HostOperationTimeoutError); timeout = error; return true; });
+  const answer = outcome("thread.send", { threadId: "thr_1", delivery: "sent", mode: "queue" });
+  assert.equal(instance.settle({ v: PROTOCOL_VERSION, id: written[0].id, result: answer }), true);
+  assert.deepEqual(await timeout.late, answer);
+  assert.equal(instance.inFlight, 0);
 });
