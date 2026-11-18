@@ -111,8 +111,8 @@ test("critical automatic selection requires peer capability and different model 
     const priorPeerAuthor = { ...f.task, workerModels: ["worker", "peer"] };
     assert.equal(
       f.engine.resolution.select(priorPeerAuthor, "reviewer")?.profile.id,
-      undefined,
-      "frontier needs sign-off, and no independent high reviewer remains at the worker's tier",
+      "cheap",
+      "frontier needs sign-off and no independent high reviewer remains, so the best permitted independent reviewer serves (Tom, 2026-11-18)",
     );
     assert.equal(
       f.engine.resolution.select(
@@ -124,8 +124,8 @@ test("critical automatic selection requires peer capability and different model 
         },
         "reviewer",
       )?.profile.id,
-      undefined,
-      "no independent reviewer at the frontier worker's tier: the role waits rather than certifying on a weaker profile",
+      "peer",
+      "no independent reviewer at the frontier worker's tier: the most capable permitted independent one reviews (Tom, 2026-11-18)",
     );
   } finally {
     f.store.close();
@@ -139,7 +139,7 @@ test("unrated worker/reviewer and unsigned frontier cannot prove critical capabi
       e.profileId === "peer" ? { ...e, capability: null } : e,
     );
     f.store.setMeta("pool", entries);
-    assert.equal(f.engine.resolution.select(f.task, "reviewer"), null, "no independent reviewer reaches the worker's tier");
+    assert.ok(f.engine.resolution.select(f.task, "reviewer"), "a reviewer is still selected when none proves critical capability; the fallback proceeds");
     const chosen = { profile: profiles[2] };
     assert.equal(criticalReviewerMeets(f.task, chosen.profile, entries), false);
     const record = (
@@ -182,12 +182,12 @@ test("ordinary tasks keep ordinary routing and critical selection respects avail
       f.engine.resolution.select({ ...f.task, critical: false }, "reviewer")
         ?.profile.id,
       "peer",
-      "a noncritical reviewer is also at least the worker's actual capability (Spec 052)",
+      "a noncritical reviewer at the default offset matches the worker's tier",
     );
     assert.equal(
       f.engine.resolution.select(f.task, "reviewer", ["peer"])?.profile.id,
-      undefined,
-      "with the peer unavailable, no reviewer reaches the worker's tier",
+      "cheap",
+      "with the peer unavailable, the best permitted reviewer serves instead of parking",
     );
     assert.equal(
       f.engine.resolution.select(

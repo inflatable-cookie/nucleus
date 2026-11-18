@@ -139,25 +139,27 @@ tiers" are `frontier` (Opus-class) and `very_high` (Sol extra-high-class).
   is its demand: it rotates inside that tier, takes the nearest tier above only
   when nothing carries it, and falls back to the most capable profile at or
   below the requested tier on a shortfall. A profile above the requested tier is
-  never automatic, and neither a worker preference nor a `preferredProfileId`
+  never automatic for a worker, and neither a worker preference nor a `preferredProfileId`
   reaches it; only an explicit request or owner route does. Maximum's own rule
   is the top two tiers for workers and reviewers, an explicit worker request
   included, and an unrated retained reviewer is below it too; a coordinator keeps
   its configured offset instead.
-- **Reviewers never run below the worker's actual tier.** A fresh, preferred or
-  retained reviewer below the pool rating of the profile the worker actually ran
-  on is not usable: selection returns no reviewer and the role waits for a route
-  rather than certifying a stronger tier on a weaker profile. At Maximum the same
-  floor is the top two tiers, so a level change replaces a retained reviewer that
-  no longer meets it.
+- **The reviewer offset sets the reviewer's tier.** A reviewer's demand is the
+  worker's actual tier (its calculated demand before a worker ran) moved by the
+  reviewer offset, so a negative offset reviews below the worker. No reviewer
+  floor parks review: when no independent profile carries the reviewer's tier,
+  the nearest permitted tier above serves, and otherwise the most capable
+  permitted profile. A critical task prefers a reviewer at least as capable as
+  the worker when one is permitted, and falls back the same way. At Maximum
+  reviewers still use the top two tiers (Tom, 2026-11-18: "a reviewer should be
+  able to be lower tier"; "a Sol reviewer for an Opus worker is fine"; the
+  earlier absolute floor was never his rule).
 - **Nothing waits for an escalation sign-off** except the Low submission gate.
   A role whose preferred profile needs permission runs on the best allowed tier
   while the decision is open on the board, as before.
-- **Other roles.** Reviewers keep the independence rule and at least the
-  worker's actual capability: the reviewer's demand is floored at the pool
-  rating of the profile the worker actually ran on (not its calculated demand),
-  and a retained reviewer below a climbed or routed worker is replaced on the
-  next round.
+- **Other roles.** Reviewers keep the independence rule, and a retained
+  reviewer below the reviewer demand (the worker's actual tier moved by the
+  reviewer offset) is replaced on the next round.
   Coordinator and recovery runs keep their existing offset under every level,
   including Maximum.
 - **Eligibility** (Tom, 2026-11-09). Automatic selection may use a profile when

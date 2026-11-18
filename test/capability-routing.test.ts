@@ -370,3 +370,34 @@ test('nucleus#1139: a task\'s host catalog keeps profiles it cannot run out of s
   }finally{await engine.stop();store.close();rmSync(dir,{recursive:true,force:true});}
 });
 
+
+test('a reviewer takes the nearest permitted tier above when no independent profile carries its tier (2026-11-18 review backlog)',()=>{
+  const {profiles,pool}=ladder();
+  const usage=equalUsage(pool);
+  // The worker ran on the only high profile, so review independence removes it
+  // from the candidates; the next independent match is one tier higher.
+  const worker=profiles.find(p=>p.id==='agent-high')!;
+  const task={...taskOf({complexity:'high'}),profile:worker} as Task;
+  const independent=profiles.filter(p=>p.id!=='agent-high');
+  assert.equal(ids(chooseProfile(task,independent,pool,usage,new Set(),'reviewer',usage,'high')),'agent-very_high','at High the very-high profile reviews instead of parking the task');
+  assert.equal(ids(chooseProfile(task,independent,pool,usage,new Set(),'reviewer',usage,'extra_high')),'agent-very_high','the nearest tier above, not the top tier');
+  assert.equal(ids(chooseProfile(task,independent,pool,usage,new Set(),'reviewer',usage,'normal')),'agent-medium','at Normal the very-high tier needs sign-off, so the best permitted profile reviews instead of parking');
+  assert.equal(ids(chooseProfile(task,profiles,pool,usage,new Set(),'reviewer',usage,'high')),'agent-high','an independent profile at the exact tier still wins over a higher one');
+  assert.equal(ids(chooseProfile(task,independent,pool,usage,new Set(),'worker',usage,'high')),'agent-medium','a worker stays capped at the requested tier');
+});
+
+test('the reviewer offset applies below the worker, and no reviewer floor parks review (Tom, 2026-11-18)',()=>{
+  const {profiles,pool}=ladder();
+  const usage=equalUsage(pool);
+  const worker=profiles.find(p=>p.id==='agent-high')!;
+  const task={...taskOf({complexity:'high'}),profile:worker} as Task;
+  const independent=profiles.filter(p=>p.id!=='agent-high');
+  const below={worker:0,reviewer:-1,coordinator:-2};
+  assert.equal(ids(chooseProfile(task,independent,pool,usage,new Set(),'reviewer',usage,'high',below)),'agent-medium','reviewer -1 reviews a high worker on a medium profile');
+  assert.equal(ids(chooseProfile({...task,critical:true} as Task,independent,pool,usage,new Set(),'reviewer',usage,'high',below)),'agent-very_high','a critical task prefers a reviewer at least as capable as the worker when one is permitted');
+  // An Opus-like frontier worker: the only other top profile is very-high.
+  const top=profiles.find(p=>p.id==='agent-frontier')!;
+  const frontierTask={...taskOf({complexity:'very_high',critical:true}),profile:top} as Task;
+  const others=profiles.filter(p=>p.id!=='agent-frontier');
+  assert.equal(ids(chooseProfile(frontierTask,others,pool,usage,new Set(),'reviewer',usage,'high')),'agent-very_high','a very-high reviewer reviews a frontier worker instead of parking');
+});

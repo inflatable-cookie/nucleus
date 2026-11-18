@@ -81,9 +81,11 @@ Selection for a run then:
    the most capable profile at or below the task's requested tier. A profile
    above the requested tier is never automatic (Maximum's rule is the top two
    tiers for workers and reviewers only; a coordinator keeps its offset). A
-   reviewer's floor is absolute: with no independent profile at the worker's
-   actual tier, selection returns none and the role waits for a route. An unrated
-   capability counts as `medium`.
+   reviewer is not capped at the requested tier and has no absolute floor: its
+   demand is the worker's actual tier moved by the reviewer offset, and it takes
+   the nearest permitted tier above or the most capable permitted profile rather
+   than wait ([Spec 052](052-usage-level.md)). An unrated capability counts as
+   `medium`.
 3. Weights each kept profile by its **effective weight**: the configured
    `weight` times the **cost lean**. The lean is `COST_LEAN` (2) for each cost
    step below `very_high`: very_low ×16, low ×8, medium ×4, high ×2, very_high
