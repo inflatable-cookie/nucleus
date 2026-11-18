@@ -23,6 +23,7 @@ class NativeHost {
   threadShapePending = false;
   compatibilityFailure = '';
   supportThreadStatus = 'support threads visible: hide setting not enabled (README: T3: one row per task)';
+  nativeParentingStatus = 'native parenting not used yet';
   connects = 0;
   closes = 0;
   probe: string | undefined;
@@ -65,7 +66,7 @@ test('second host registers separately, retains its admission on reconnect, and 
     assert.notEqual(admission, primary.admission);
     assert.equal(first.probe, 'synthetic-probe');
     assert.deepEqual(manager.status(), { lastDisconnectReason: null, lastProtocolError: null, id: first.hostId, connected: true, error: '', version: first.version, threadShapePending: false,
-      supportThreads: first.supportThreadStatus });
+      supportThreads: first.supportThreadStatus, nativeParenting: first.nativeParentingStatus });
 
     first.connected = false;
     manager.retireDisconnected();
@@ -90,7 +91,7 @@ test('an empty T3 host registers online while its thread shape is pending', asyn
     await manager.ensureConnected();
     assert.deepEqual(hosts.onlineIds(), ['paseo-environment', empty.hostId]);
     assert.deepEqual(manager.status(), { lastDisconnectReason: null, lastProtocolError: null, id: empty.hostId, connected: true, error: '', version: empty.version, threadShapePending: true,
-      supportThreads: empty.supportThreadStatus });
+      supportThreads: empty.supportThreadStatus, nativeParenting: empty.nativeParentingStatus });
   } finally { manager.close(); }
 });
 

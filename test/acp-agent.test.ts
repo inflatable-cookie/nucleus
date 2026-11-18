@@ -217,6 +217,54 @@ test("an injected ignore rule ends the prompt silently: no text shown, nothing f
   await client.closed();
 });
 
+test("an injected hold rule keeps the turn without showing or forwarding the host's re-entry", async () => {
+  // A host that released the thread re-enters it to parent its next child: the prompt
+  // is configuration, so it is never shown as the agent's words and never forwarded as
+  // the operator's, but the turn is held — which is the whole point of the re-entry.
+  const client = harness({ agent: { hold: text => text.includes("nucleus-hold-the-task-thread") } });
+  await client.lines.untilResult(client.request("session/new", { cwd: "/fixture/checkout" }));
+  const opening = client.request("session/prompt", { sessionId: binding.sessionId, prompt: [{ type: "text", text: "opening" }] });
+  await turnStarted(client.transport, 2);
+  client.transport.release();
+  await client.lines.untilResult(opening);
+  const pollsBefore = client.transport.turns.length;
+  const reentry = client.request("session/prompt", { sessionId: binding.sessionId, prompt: [{ type: "text", text: "nucleus-hold-the-task-thread: task-1" }] });
+  await turnStarted(client.transport, pollsBefore + 1);
+  assert.equal(client.transport.messages.length, 0, "the re-entry is never the operator's message");
+  // It holds: the service's release is what ends it, exactly as for a held turn, and
+  // the host's marker is never shown as the agent's own words.
+  client.transport.release();
+  const { updates, result } = await client.lines.untilResult(reentry);
+  assert.deepEqual(result.result, { stopReason: "end_turn" });
+  assert.equal(updates.some(update => JSON.stringify(update).includes("nucleus-hold-the-task-thread")), false,
+    "a re-entry prompt is never shown as the agent's words");
+  assert.equal(updates.length, 1, "only the release line is shown");
+  // The operator's next message still forwards: one re-entry does not consume the thread.
+  const operator = client.request("session/prompt", { sessionId: binding.sessionId, prompt: [{ type: "text", text: "what is left?" }] });
+  await turnStarted(client.transport, 5);
+  client.transport.release();
+  await client.lines.untilResult(operator);
+  assert.equal(client.transport.messages.length, 1);
+  assert.equal(client.transport.messages[0]!.text, "what is left?");
+  await client.closed();
+});
+
+test("a hold rule and an ignore rule stay distinct: an ignored prompt ends the turn", async () => {
+  const client = harness({ agent: { hold: text => text.includes("nucleus-hold-the-task-thread"), ignore: text => text.includes("Delegated task node:delegated-task:") } });
+  await client.lines.untilResult(client.request("session/new", { cwd: "/fixture/checkout" }));
+  const opening = client.request("session/prompt", { sessionId: binding.sessionId, prompt: [{ type: "text", text: "opening" }] });
+  await turnStarted(client.transport, 2);
+  client.transport.release();
+  await client.lines.untilResult(opening);
+  const pollsBefore = client.transport.turns.length;
+  const wake = client.request("session/prompt", { sessionId: binding.sessionId, prompt: [{ type: "text", text: "Delegated task node:delegated-task:abc [completed]" }] });
+  const { result } = await client.lines.untilResult(wake);
+  assert.deepEqual(result.result, { stopReason: "end_turn" });
+  assert.equal(client.transport.turns.length, pollsBefore, "an ignored prompt never reaches the service");
+  assert.equal(client.transport.messages.length, 0);
+  await client.closed();
+});
+
 test("a wake prompt arriving first consumes the opening slot, so the operator's next message is forwarded", async () => {
   const client = harness({ agent: { ignore: text => text.includes("Delegated task node:delegated-task:") } });
   await client.lines.untilResult(client.request("session/new", { cwd: "/fixture/checkout" }));

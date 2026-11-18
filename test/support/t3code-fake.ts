@@ -20,7 +20,8 @@ const shapes = contract.wireShapes as {
   snapshotKeys: string[];
   projectionKeys: string[]; threadKeys: string[]; runKeys: string[]; runtimeRequestKeys: string[];
   turnItemBaseKeys: string[]; turnItemTypeKeys: Record<string, string[]>; messageKeys: string[];
-  visibleTurnItemKeys: string[]; providerThreadKeys: string[]; pendingBackgroundTaskKeys: string[] };
+  visibleTurnItemKeys: string[]; providerThreadKeys: string[]; pendingBackgroundTaskKeys: string[];
+  subagentKeys: string[] };
 const modelSelection = { instanceId: 'synthetic-provider', model: 'synthetic-model' };
 
 /** One pending background task the nightly's provider thread reports (nightly `OrchestrationV2PendingBackgroundTask`). */
@@ -36,6 +37,20 @@ export function syntheticProviderThread(overrides: Value = {}): Value {
     nativeConversationHeadRef: null, status: 'idle', firstRunOrdinal: 1, lastRunOrdinal: 1, handoffIds: [],
     forkedFrom: null, contextUsage: null, nativeMetadata: null, goal: null, createdAt: STAMP, updatedAt: STAMP, ...rest,
     pendingBackgroundTasks: (tasks ?? []).map((task: Value) => syntheticBackgroundTask(task)) };
+}
+
+/**
+ * One delegated task of a parent thread (nightly `OrchestrationV2Subagent`, recorded
+ * in `wireShapes.subagentKeys`). The adapter reads `completionDelivery.state` to decide
+ * whether a child's completion can still wake the parent.
+ */
+export function syntheticSubagent(overrides: Value = {}): Value {
+  const id = overrides.id ?? 'node:delegated-task:synthetic';
+  return { id, threadId: 'synthetic-probe', runId: null, parentNodeId: `parent-node-${id}`, origin: 'app_owned',
+    createdBy: 'user', driver: 'codex', providerInstanceId: 'synthetic-provider', providerThreadId: null,
+    childThreadId: `thread:delegated-task:${id}`, nativeTaskRef: null, prompt: 'Synthetic task',
+    title: null, model: 'synthetic-model', status: 'running', result: null, startedAt: STAMP,
+    completedAt: null, updatedAt: STAMP, ...overrides, completionDelivery: overrides.completionDelivery ?? { state: 'pending', observedByRunId: null } };
 }
 
 export function syntheticThread(id: string, directory: string, overrides: Value = {}): Value {
@@ -109,9 +124,10 @@ function wireProjection(p: Value, windowItemIds?: Set<string>): Value {
       .map((item: Value, index: number) => ({ position: index + 1,
         sourceItemId: item.id, sourceThreadId: threadId, visibility: 'local', item })),
     // Collections the Nightly always projects, empty unless the test supplies them.
-    attempts: p.attempts ?? [], nodes: p.nodes ?? [], subagents: p.subagents ?? [],
+    attempts: p.attempts ?? [], nodes: p.nodes ?? [],
     providerSessions: p.providerSessions ?? [],
     providerThreads: (p.providerThreads ?? []).map((thread: Value) => syntheticProviderThread(thread)),
+    subagents: (p.subagents ?? []).map((task: Value) => syntheticSubagent(task)),
     providerTurns: p.providerTurns ?? [], plans: p.plans ?? [], checkpointScopes: p.checkpointScopes ?? [],
     checkpoints: p.checkpoints ?? [], contextHandoffs: p.contextHandoffs ?? [], contextTransfers: p.contextTransfers ?? [],
     updatedAt: p.updatedAt ?? STAMP };
@@ -136,6 +152,7 @@ function assertWireRecords(projection: Value): void {
   missing(projection.providerThreads, shapes.providerThreadKeys, 'providerThread');
   for (const thread of projection.providerThreads)
     missing(thread.pendingBackgroundTasks ?? [], shapes.pendingBackgroundTaskKeys, 'pendingBackgroundTask');
+  missing(projection.subagents ?? [], shapes.subagentKeys, 'subagent');
   for (const item of projection.turnItems) {
     const extra = shapes.turnItemTypeKeys[item.type] ?? [];
     missing([item], [...shapes.turnItemBaseKeys, 'type', ...extra.filter((key: string) => !shapes.turnItemBaseKeys.includes(key))], `turnItem ${item.type}`);
@@ -152,6 +169,10 @@ export async function t3Fake(t: TestContext, directory: string) {
   const commands: Value[] = [];
   /** Every thread snapshot this fake served: what the client asked for and what it got. */
   const snapshots: Value[] = [];
+  /** The rows of every shell snapshot served, so a test can prove which shape it exercised. */
+  const shells: Array<{ threads: string[]; archivedThreads: string[] }> = [];
+  /** Requests refused for a bearer other than this fake's own, as the server answers them. */
+  const unauthorized: Array<{ path: string }> = [];
   const projectRows: Value[] = [{ id: 'synthetic-project', title: 'Synthetic project', workspaceRoot: directory }];
   const archivedProjects = new Set<string>();
   const threads = new Map<string, Value>([['synthetic-probe', threadProjection('synthetic-probe', directory)]]);
@@ -238,7 +259,19 @@ export async function t3Fake(t: TestContext, directory: string) {
     /** Replaces the single synthetic provider in `server.getConfig` when set (nightly provider shapes). */
     providers: undefined as Value[] | undefined,
     /** `server.getConfig`'s `settings` block; the client's own hide switch lives here. */
-    settings: { hideTaggedThreads: false, hiddenThreadTags: [] as string[] } as Value };
+    settings: { hideTaggedThreads: false, hiddenThreadTags: [] as string[] } as Value,
+    /**
+     * A launched or messaged thread starts a live run, the way a provider turn does.
+     * The parenting tests need the parent thread to be live while a child is created
+     * (nightly: `Parent run ... is not active.`).
+     */
+    runOnLaunch: false,
+    /**
+     * Serve a removed thread as a `deletedAt` tombstone in the shell lists instead of
+     * omitting it. Both shapes exist on the wire, and a reader must treat either one as
+     * the same deletion fact (nucleus#1305 review).
+     */
+    shellTombstones: false };
   /** Command receipts make a replayed project mutation answer with its recorded outcome. */
   const projectReceipts = new Map<string, { type: string; projectId: string }>();
   const sockets = new Set<Socket>();
@@ -257,7 +290,16 @@ export async function t3Fake(t: TestContext, directory: string) {
     socket.write(Buffer.concat([header, bytes]));
   };
   const server = createServer((request, response) => {
-    assert.equal(request.headers.authorization, 'Bearer synthetic-bearer');
+    // A stranger's request gets the nightly's own answer — 401 — instead of throwing:
+    // the installed server refuses an unknown bearer, and a fixture that threw from an
+    // HTTP handler could be crashed by any other client on the host, which fails the
+    // whole file with an uncaught exception that is not the test's (nucleus#1305 run).
+    if (request.headers.authorization !== 'Bearer synthetic-bearer') {
+      unauthorized.push({ path: request.url ?? '' });
+      response.writeHead(401, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ error: 'Unauthorized' }));
+      return;
+    }
     response.writeHead(200, { 'content-type': 'application/json' });
     const url = new URL(request.url!, 'http://localhost');
     if (url.pathname === '/api/auth/websocket-ticket/rpc') {
@@ -284,6 +326,29 @@ export async function t3Fake(t: TestContext, directory: string) {
     return value;
   };
   const projects = () => projectRows.map(row => ({ ...row, archivedAt: archivedProjects.has(row.id) ? STAMP : null }));
+  /**
+   * The nightly's recordSubagentFollowup outcome: a message to a finished delegated
+   * child starts a new app-owned task under the dispatch's own command id
+   * (`node:delegated-task:<commandId>`), and T3 leaves that task's completion wake
+   * pending — the one a host must dispose itself.
+   */
+  const recordFollowUp = (payload: Value) => {
+    const child = threads.get(payload.threadId)!;
+    const parentId = child.thread.lineage?.parentThreadId;
+    const parent = parentId === null || parentId === undefined ? undefined : threads.get(parentId);
+    if (!parent) return;
+    const owner = [...parent.runs].reverse().find((run: Value) =>
+      ['preparing', 'starting', 'running', 'waiting'].includes(run.status)) ?? [...parent.runs].reverse()[0];
+    if (controls.runOnLaunch)
+      child.runs.push(syntheticRun(payload.threadId, child.runs.length + 1, { id: `run:${payload.commandId}`,
+        status: 'running', rootNodeId: `node:root:${payload.commandId}` }));
+    parent.subagents = [...(parent.subagents ?? []), syntheticSubagent({
+      id: `node:delegated-task:${payload.commandId}`, threadId: parentId, runId: owner?.id ?? null,
+      parentNodeId: owner?.rootNodeId ?? null, driver: 'codex', providerInstanceId: child.thread.providerInstanceId,
+      childThreadId: payload.threadId, prompt: payload.text, title: child.thread.title,
+      model: child.thread.modelSelection?.model ?? null, status: 'running',
+    })];
+  };
   server.on('upgrade', (request, rawSocket) => {
     const socket = rawSocket as Socket;
     upgrades++;
@@ -338,16 +403,21 @@ export async function t3Fake(t: TestContext, directory: string) {
           });
         }
         case 'orchestration.subscribeShell': {
-          const active = [...threads.values()].filter(p => !p.thread.archivedAt && !p.thread.deletedAt).map(shell);
-          // A removed thread is in no list: the nightly's own shell reads filter
-          // `deleted_at IS NULL`, so absence is the positive answer there.
-          const archived = [...threads.values()].filter(p => p.thread.archivedAt && !p.thread.deletedAt).map(shell);
+          // A removed thread is normally in no list: the nightly's own shell reads
+          // filter `deleted_at IS NULL`, so absence is the positive answer there. A
+          // nightly that keeps the tombstone is modelled by `controls.shellTombstones`.
+          const listed = (p: Value, archived: boolean) =>
+            (archived ? Boolean(p.thread.archivedAt) : !p.thread.archivedAt) && (!p.thread.deletedAt || controls.shellTombstones);
+          const active = [...threads.values()].filter(p => listed(p, false)).map(shell);
+          const archived = [...threads.values()].filter(p => listed(p, true)).map(shell);
+          shells.push({ threads: active.map(row => row.id), archivedThreads: archived.map(row => row.id) });
           return stream([{ kind: 'snapshot', snapshot: { schemaVersion: 1, snapshotSequence: controls.snapshotSequence, projects: projects(), threads: active, archivedThreads: archived } },
             ...(controls.enrichment ? [{ kind: 'snapshot', resolvedRepositoryIdentityRoots: [directory], snapshot: { threads: [], archivedThreads: [] } }] : []), ...marker()]);
         }
         case 'orchestration.getArchivedShellSnapshot':
           controls.beforeArchiveRead();
-          return success({ schemaVersion: 1, snapshotSequence: controls.snapshotSequence, projects: projects(), threads: [...threads.values()].filter(p => p.thread.archivedAt && !p.thread.deletedAt).map(shell) });
+          return success({ schemaVersion: 1, snapshotSequence: controls.snapshotSequence, projects: projects(),
+            threads: [...threads.values()].filter(p => p.thread.archivedAt && (!p.thread.deletedAt || controls.shellTombstones)).map(shell) });
         case 'orchestration.subscribeThread': {
           for (const field of Object.keys(payload))
             assert.ok(contract.subscribeThread.input.includes(field), `subscribeThread.${field} is not a recorded input field`);
@@ -396,6 +466,8 @@ export async function t3Fake(t: TestContext, directory: string) {
           p.thread.title = payload.title; p.thread.modelSelection = payload.modelSelection; p.thread.providerInstanceId = payload.modelSelection.instanceId;
           p.thread.runtimeMode = payload.runtimeMode;
           p.messages.push({ id: payload.initialMessage.messageId, role: 'user', text: payload.initialMessage.text });
+          if (controls.runOnLaunch) p.runs.push(syntheticRun(payload.threadId, 1, { id: `run:launch:${payload.threadId}`,
+            status: 'running', rootNodeId: `node:root:${payload.threadId}` }));
           threads.set(payload.threadId, p);
           return success({ threadId: payload.threadId, projection: wireProjection(p), resumed: false, sequence: 1 });
         }
@@ -421,7 +493,18 @@ export async function t3Fake(t: TestContext, directory: string) {
           // parent thread and a target thread, and carries no single `threadId`.
           const p = (payload.threadId ? threads.get(payload.threadId) : threads.get(payload.targetThreadId))!;
           switch (payload.type) {
-            case 'message.dispatch': p.messages.push({ id: payload.messageId, role: 'user', text: payload.text }); break;
+            case 'message.dispatch': {
+              p.messages.push({ id: payload.messageId, role: 'user', text: payload.text });
+              // A message to a thread with no live run starts one, as a provider turn
+              // does. A follow-up to a delegated child also records a new app-owned
+              // task under the dispatch's own command id, exactly as the nightly's
+              // recordSubagentFollowup does (node:delegated-task:<commandId>).
+              if (controls.runOnLaunch && !p.runs.some((run: Value) => ['preparing', 'starting', 'running', 'waiting'].includes(run.status)))
+                p.runs.push(syntheticRun(payload.threadId, p.runs.length + 1, { id: `run:${payload.commandId}`,
+                  status: 'running', rootNodeId: `node:root:${payload.commandId}` }));
+              if (payload.threadId.startsWith('thread:delegated-task:')) recordFollowUp(payload);
+              break;
+            }
             case 'thread.stop': for (const run of p.runs) run.status = 'cancelled'; break;
             case 'thread.archive': p.thread.archivedAt = STAMP; break;
             case 'thread.delete':
@@ -467,6 +550,58 @@ export async function t3Fake(t: TestContext, directory: string) {
                   title: p.thread.title, targetThreadId: payload.targetThreadId, targetRunId: payload.targetRunId,
                   targetProviderInstanceId: p.thread.providerInstanceId, targetModel: p.thread.modelSelection.model,
                 })];
+              break;
+            }
+            case 'delegated_task.request': {
+              // The nightly's own rule: a child created with a workspace strategy is
+              // dispatched defer_start and never starts outside T3's MCP handler.
+              assert.equal(payload.workspaceStrategy, undefined, 'a delegated child is created without a workspace strategy');
+              if (payload.completionWake !== undefined)
+                assert.ok(contract.commands['delegated_task.request'].completionWakeValues.includes(payload.completionWake));
+              const parentId = payload.parentThreadId;
+              const parent = threads.get(parentId);
+              assert.ok(parent, 'delegated_task.request names an existing parent thread');
+              const run = (parent!.runs ?? []).find((candidate: Value) => candidate.id === payload.parentRunId);
+              const live = ['preparing', 'starting', 'running', 'waiting'];
+              if (!run || !live.includes(run.status))
+                return failure({ _tag: 'Fail', error: { _tag: 'OrchestrationV2DispatchCommandError', commandId: payload.commandId,
+                  message: `Parent run ${payload.parentRunId} is not active.` } });
+              assert.equal(run.rootNodeId, payload.parentNodeId, 'the parent node is the root of the held run');
+              const childId = `thread:delegated-task:${payload.commandId}`;
+              const taskId = `node:delegated-task:${payload.commandId}`;
+              const child = threadProjection(childId, parent!.thread.worktreePath);
+              child.thread.title = payload.title ?? 'Delegated task';
+              child.thread.modelSelection = payload.modelSelection;
+              child.thread.providerInstanceId = payload.modelSelection.instanceId;
+              child.thread.runtimeMode = payload.runtimeMode;
+              child.thread.lineage = { parentThreadId: parentId, relationshipToParent: 'subagent',
+                rootThreadId: parent!.thread.lineage?.rootThreadId ?? parentId };
+              child.thread.forkedFrom = { type: 'node', nodeId: taskId };
+              child.runs = [syntheticRun(childId, 1, { id: `run:${payload.commandId}`, status: 'running', rootNodeId: `node:root:${payload.commandId}` })];
+              child.messages.push({ id: `message:delegated-task:${payload.commandId}`, role: 'user', text: payload.task });
+              threads.set(childId, child);
+              parent!.subagents = [...(parent!.subagents ?? []), syntheticSubagent({
+                id: taskId, threadId: parentId, runId: payload.parentRunId, parentNodeId: payload.parentNodeId,
+                driver: 'codex', providerInstanceId: payload.modelSelection.instanceId, childThreadId: childId,
+                prompt: payload.task, title: payload.title ?? null, model: payload.modelSelection.model,
+                status: 'running', ...(payload.completionWake === undefined ? {} : { completionWake: payload.completionWake }),
+              })];
+              break;
+            }
+            case 'delegated_task.completion-delivery.dispose': {
+              const parent = threads.get(payload.parentThreadId);
+              assert.ok(parent, 'a dispose names an existing parent thread');
+              const task = (parent!.subagents ?? []).find((candidate: Value) => candidate.id === payload.taskId && candidate.origin === 'app_owned');
+              if (!task) return failure({ _tag: 'Fail', error: { _tag: 'OrchestrationV2DispatchCommandError', commandId: payload.commandId,
+                message: `Delegated task ${payload.taskId} is not an app-owned task of thread ${payload.parentThreadId}.` } });
+              task.completionDelivery = { state: 'disposed', observedByRunId: null };
+              break;
+            }
+            case 'delegated_task.wake-policy': {
+              const parent = threads.get(payload.parentThreadId)!;
+              const task = (parent.subagents ?? []).find((candidate: Value) => candidate.id === payload.taskId);
+              assert.ok(task, 'a wake policy names an existing delegated task');
+              task!.completionWake = payload.completionWake;
               break;
             }
             case 'runtime-request.respond': {
@@ -555,5 +690,5 @@ export async function t3Fake(t: TestContext, directory: string) {
   const injectRaw = (text: string) => { for (const write of injectors) write(text); };
   const fullSnapshotBytes = (threadId: string) => Buffer.byteLength(JSON.stringify({ _tag: 'Chunk', requestId: 'synthetic-request',
     values: [{ kind: 'snapshot', snapshotSequence: controls.snapshotSequence, projection: wireProjection(threads.get(threadId)!) }] }));
-  return { endpoint: `http://127.0.0.1:${address.port}`, controls, threads, commands, requests, snapshots, controlFrames, frameBytes, fullSnapshotBytes, get upgrades() { return upgrades; }, get closes() { return closes; }, projects: projectRows, dropSockets, inject, injectRaw };
+  return { endpoint: `http://127.0.0.1:${address.port}`, controls, threads, commands, requests, snapshots, shells, unauthorized, controlFrames, frameBytes, fullSnapshotBytes, get upgrades() { return upgrades; }, get closes() { return closes; }, projects: projectRows, dropSockets, inject, injectRaw };
 }

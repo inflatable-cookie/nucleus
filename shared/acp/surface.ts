@@ -35,9 +35,16 @@ export interface AcpTurnReply {
 
 export interface AcpMessageInput { taskId: string; sessionId: string; eventId: string; text: string }
 
+/** The host-shaped prompt rules a minting adapter may attach (see `shared/acp/binding`). */
+export interface AcpBindingRules { ignorePattern?: string; holdPattern?: string }
+
 export interface AcpSessionSurface {
-  /** Mint this task's session and the pointer in its checkout. One session per task. */
-  bind(input: { taskId: string }): AcpSessionBinding;
+  /**
+   * Mint this task's session and the pointer in its checkout. One session per task.
+   * A host adapter names its own prompt rules here, because the agent never parses
+   * remote text: an ignore prompt ends the turn, a hold prompt holds it.
+   */
+  bind(input: { taskId: string } & AcpBindingRules): AcpSessionBinding;
   /** Ask whether to keep holding this turn, and which lifecycle lines to show. */
   turn(input: AcpTurnInput, token: string): Promise<AcpTurnReply>;
   /** The operator's text in the task's thread: recorded and routed by Nucleus, never by the agent. */

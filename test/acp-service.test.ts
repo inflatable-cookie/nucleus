@@ -108,6 +108,29 @@ test("bind mints an owner-only record and pointer, never puts the token in the r
   } finally { await fixture.close(); }
 });
 
+test("a host adapter's mint names the prompt rules its launched agent reads", async () => {
+  const fixture = await acpFixture();
+  try {
+    // The T3 adapter mints with its own two rules (nucleus#1305): an ignore pattern for
+    // the host's wake text and a hold pattern for its re-entry. Both ride the binding
+    // pointer, which is why the agent needs no host knowledge and parses no remote text.
+    const minted = fixture.acp.bind({ taskId: fixture.taskId,
+      ignorePattern: 'Delegated task node:delegated-task:',
+      holdPattern: 'nucleus-hold-the-task-thread' });
+    const binding = readAcpBinding(minted.bindingPath);
+    assert.equal(binding.ignorePattern, 'Delegated task node:delegated-task:');
+    assert.equal(binding.holdPattern, 'nucleus-hold-the-task-thread');
+    assert.equal(binding.taskId, fixture.taskId);
+    // A mint without rules writes neither field: a host that has no such text is not
+    // given a rule it never asked for.
+    const plain = fixture.acp.bind({ taskId: fixture.taskId });
+    const pointer = readAcpBinding(plain.bindingPath);
+    assert.equal(pointer.ignorePattern, undefined);
+    assert.equal(pointer.holdPattern, undefined);
+    assert.equal(JSON.stringify(pointer).includes('nucleus-hold-the-task-thread'), false);
+  } finally { await fixture.close(); }
+});
+
 test("acp.bind is a catalogue method whose answer carries no credential", async () => {
   const fixture = await acpFixture();
   try {

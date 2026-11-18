@@ -26,6 +26,8 @@ export interface MintAcpSessionInput {
   directory: string;
   /** A host's own waking-prompt rule for this session (see `acpBindingSchema`). */
   ignorePattern?: string;
+  /** The same host's re-entry prompt rule: nothing shown or forwarded, and the turn holds. */
+  holdPattern?: string;
   now?: () => string;
 }
 
@@ -45,6 +47,7 @@ export function mintAcpSession(input: MintAcpSessionInput): AcpSessionBinding {
     format: ACP_BINDING_FORMAT, version: 1, sessionId, taskId: record.taskId,
     socketPath: input.socketPath, token,
     ...(input.ignorePattern ? { ignorePattern: input.ignorePattern } : {}),
+    ...(input.holdPattern ? { holdPattern: input.holdPattern } : {}),
   });
   const bindingPath = acpBindingPath(input.dataHome, input.directory);
   for (const dir of [acpSessionsDir(input.dataHome), acpBindingsDir(input.dataHome)]) mkdirSync(dir, { recursive: true, mode: 0o700 });

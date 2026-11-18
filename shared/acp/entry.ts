@@ -11,6 +11,7 @@
  * - `NUCLEUS_DATA_HOME`: the data home whose `acp/bindings/` holds the pointer.
  * - `NUCLEUS_ACP_SESSION`: an explicit binding path, for a host that can pass one.
  * - `NUCLEUS_ACP_IGNORE_PATTERN`: a host's waking-prompt rule when the binding has none.
+ * - `NUCLEUS_ACP_HOLD_PATTERN`: a host's re-entry rule when the binding has none.
  */
 import { isAbsolute, join } from "node:path";
 import { compiledIdentity } from "../runtime.mjs";
@@ -44,6 +45,9 @@ export async function runAcpAgentFromEnvironment(options: AcpEntryOptions = {}):
   const explicitIgnore = env.NUCLEUS_ACP_IGNORE_PATTERN?.trim();
   const ignore = compileIgnore(explicitIgnore ?? null);
   if (!ignore.ok) { log(`NUCLEUS_ACP_IGNORE_PATTERN is not a usable regular expression: ${explicitIgnore}`); return 1; }
+  const explicitHold = env.NUCLEUS_ACP_HOLD_PATTERN?.trim();
+  const hold = compileIgnore(explicitHold ?? null);
+  if (!hold.ok) { log(`NUCLEUS_ACP_HOLD_PATTERN is not a usable regular expression: ${explicitHold}`); return 1; }
   /** One compile per pattern: every prompt of a session asks the same rule. */
   const hostRules = new Map<string, IgnoreCompilation>();
   const hostRuleFor = (pattern: string | null): IgnoreCompilation => {
@@ -65,6 +69,11 @@ export async function runAcpAgentFromEnvironment(options: AcpEntryOptions = {}):
       const hostRule = hostRuleFor(binding.ignorePattern ?? null);
       if (!hostRule.ok) { log(`the binding's ignorePattern is not a usable regular expression: ${binding.ignorePattern}`); return false; }
       return (ignore.rule?.(text) ?? false) || (hostRule.rule?.(text) ?? false);
+    },
+    hold(text, binding) {
+      const hostRule = hostRuleFor(binding.holdPattern ?? null);
+      if (!hostRule.ok) { log(`the binding's holdPattern is not a usable regular expression: ${binding.holdPattern}`); return false; }
+      return (hold.rule?.(text) ?? false) || (hostRule.rule?.(text) ?? false);
     },
   });
   await agent.run(options.stdin ?? process.stdin, options.stdout ?? process.stdout);

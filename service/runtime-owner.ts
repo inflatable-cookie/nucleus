@@ -421,7 +421,12 @@ export class QueueRuntime {
       writeDisconnectedAt: at => this.store.setMeta("hostDisconnectedAt", at),
     }, options.hostNow ?? Date.now, options.hostIdleGraceMs ?? HOST_IDLE_GRACE_MS);
     const createAdmission = () => new Admission({ ...options.admission, totalLimit: () => this.store.configuredPaseoCallLimit(), workspaceBudget: () => this.store.getMeta<number>("globalLimit") ?? DEFAULT_GLOBAL_LIMIT });
-    this.t3Host = this.settings.t3code ? new T3HostConnection(this.settings.t3code, this.dataDir, this.hostRegistry, createAdmission) : null;
+    // The ACP session surface is attached later in bootstrap (Spec 065), so the host
+    // reads it through this getter rather than capturing it: a T3 parent thread is
+    // minted from it and released through it (nucleus#1305).
+    this.t3Host = this.settings.t3code
+      ? new T3HostConnection(this.settings.t3code, this.dataDir, this.hostRegistry, createAdmission, undefined, () => this.engine.acp)
+      : null;
     this.bbHost = new BbHostConnection(this.store, this.hostRegistry, createAdmission, this.dataDir);
     const recordedHost = this.hostRegistry.primary()?.id;
     this.admission = recordedHost ? this.hostRegistry.resource(recordedHost, createAdmission) : createAdmission();

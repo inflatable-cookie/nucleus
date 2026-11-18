@@ -88,6 +88,26 @@ export const turnItem = z.object({ id, type: id, requestId: id.optional(),
  */
 export const visibleTurnItem = z.object({ position: z.number().int().nonnegative(), visibility: id.optional(),
   sourceThreadId: id.optional(), sourceItemId: id, item: turnItem });
+/**
+ * One delegated task of a thread (the nightly's `OrchestrationV2Subagent`): the
+ * record a task's parent thread carries for each native child, including the state
+ * of the completion wake that must never reach the parent agent. `app_owned` marks a
+ * child the app created (`delegated_task.request` or a follow-up dispatch); the task
+ * id is `node:delegated-task:<commandId>` and its thread id
+ * `thread:delegated-task:<commandId>`.
+ */
+export const subagent = z.object({ id, threadId: id.optional(), runId: id.nullable().optional(), parentNodeId: id.optional(),
+  origin: id, childThreadId: id.nullable().optional(), prompt: z.string().optional(), title: z.string().nullable().optional(),
+  model: z.string().nullable().optional(), status: id, result: z.string().nullable().optional(),
+  completionDelivery: z.object({ state: id, observedByRunId: id.nullable().optional() }).optional() }).passthrough();
+/**
+ * The delivery states the nightly records for one delegated task's completion. Only
+ * `pending` can still wake the parent; `disposed` is the settled state Nucleus asks
+ * for, and a task already `disposed` answers a repeated dispose without an effect.
+ */
+export const delegatedDeliveryStates = ['pending', 'claimed', 'acknowledged', 'delivered', 'disposed'] as const;
+/** The wake policies a delegated task may name; `settled_only` never wakes a live parent. */
+export const completionWakeValues = ['always', 'settled_only'] as const;
 /** Window-retained provider threads: active threads, referenced threads and the latest todo owner. */
 export const providerThread = z.object({ id,
   pendingBackgroundTasks: z.array(pendingBackgroundTask).optional() }).passthrough();
@@ -101,6 +121,8 @@ export const projection = z.object({
   /** The nightly's own visible window; absent only on a projection decoded before this field was read. */
   visibleTurnItems: z.array(visibleTurnItem).optional(),
   providerThreads: z.array(providerThread).optional(),
+  /** Every delegated task the thread carries; the parent's own children are here. */
+  subagents: z.array(subagent).optional(),
   messages: z.array(z.object({ id, role: id, text: z.string() })), updatedAt: date,
 });
 /** Coverage flags are consumed facts, not optional hints that can be truthiness-tested. */
@@ -119,6 +141,13 @@ export const config = z.object({ environment: z.object({ environmentId: id, serv
    */
   settings: z.object({ hideTaggedThreads: z.boolean().optional(), hiddenThreadTags: z.array(z.string()).optional() }).passthrough().optional(),
   providers: z.array(z.object({ instanceId: id, displayName: z.string().optional(), enabled: z.boolean(),
+    /**
+     * The nightly's provider driver (`acpRegistry` for an ACP provider an operator
+     * registered in settings). Read-only capability fact: the native-parent path
+     * needs the Nucleus ACP instance, and a driver it does not report is not refused
+     * on its own (an older nightly may omit it).
+     */
+    driver: z.string().optional(),
     /** The nightly `ServerProvider` field: the runtime modes this provider offers. Absent means all four. */
     supportedRuntimeModes: z.array(runtimeMode).optional(),
     status: z.string(), models: z.array(z.object({ slug: id, name: z.string(), aliases: z.array(z.string()).optional(),

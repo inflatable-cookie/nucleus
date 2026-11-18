@@ -15,8 +15,14 @@ Provider subscription usage belongs to T3Code and its host-specific plugins.
 Nucleus adds no subscription usage gauge; Spec 052's usage level remains a
 separate dispatch policy setting.
 
-Worker, reviewer and recovery identities are separate top-level T3 threads.
-No role uses T3's delegated-task relationship. The adapter does not patch T3,
+A task is one T3 thread on the Nucleus ACP provider (Spec 065) and its worker,
+reviewer, recovery, closeout and executor threads are that thread's native
+subagent children (Tom, 2026-11-16; nucleus#1305 — see [Native
+parenting](#native-parenting)). The parent authors nothing: it shows the task's
+lifecycle and holds its turn while any child runs. When the provider is missing or
+a child cannot be created the task falls back to separate top-level role threads,
+tagged and linked by [one row per task](#one-row-per-task), with no loss of
+function. The adapter does not patch T3,
 attach Nucleus MCP servers, raise Nucleus questions inside threads or contribute
 T3 UI. A T3 thread reports through the packaged nucleus helper with the run
 ticket named in its prompt. Nucleus-raised questions go to the web board and
@@ -134,6 +140,22 @@ single pending stream proves attribution in the presence of late replies.
 
 Strict decoding validates consumed fields and their types while tolerating
 unrelated extra fields, so additive nightly changes do not become version pins.
+
+Drift check for the delegated-task shapes (read-only, installed nightly
+`0.1.11-nightly.20261117.4838`, app commit `ea6d3fc30fb0`, source
+`OrchestrationV2` command union in `ManagedEndpointRuntime-*.mjs` and
+`orchestrationV2.dispatch.delegatedTaskRequest` in `runtimeLayer-*.mjs`):
+`delegated_task.request` takes `{type, createdBy, creationSource, commandId,
+parentThreadId, parentRunId, parentNodeId, task, title?, modelSelection,
+runtimeMode, interactionMode, workspaceStrategy?, completionWake?}`;
+`delegated_task.completion-delivery.dispose` takes `{type, commandId,
+parentThreadId, taskId}`; the derived ids are `thread:delegated-task:<commandId>`,
+`node:delegated-task:<commandId>`, `message:delegated-task:<commandId>`; a child's
+completion delivery state is one of `pending`, `claimed`, `acknowledged`,
+`delivered`, `disposed`; and the projection's `subagents` record carries
+`completionDelivery`. The contract fixture records all of it and the fake nightly
+asserts the shapes a send must have. Nucleus sends neither `delegated_task
+.wake-policy`, `delegated_task.remote.*` nor a canary.
 
 T3 provides no RPC schema discovery or dry run. Never send a canary mutation to
 establish compatibility. Pin the target nightly's command shapes as synthetic
@@ -271,7 +293,11 @@ the write if the desired title is already present.
 | Host operation | T3 RPC or command | Required result |
 | --- | --- | --- |
 | Register project | `projects.mutate` / `project.create` mutation | Deterministic IDs bind the real repository root; the receipt ledger answers replays; reconcile unknown delivery against the complete inventory before retry |
-| Create | `orchestration.launchThread` with explicit thread/message IDs, provider instance/model, prompt, the profile's runtime mode and model options, and `existing_worktree` | Top-level thread with the exact project and directory |
+| Create (fallback) | `orchestration.launchThread` with explicit thread/message IDs, provider instance/model, prompt, the profile's runtime mode and model options, and `existing_worktree` | Top-level thread with the exact project and directory |
+| Create parent | `orchestration.launchThread` on the `nucleus` provider instance with the ACP model and the task's own checkout | The task's one row; its run is held by the ACP agent, never a model's turn |
+| Create role child | `delegated_task.request` anchored on the parent's live run and root node, with the profile's provider, model, runtime mode and options, and no `workspaceStrategy` | A native subagent child that inherits the parent's checkout; deterministic `thread:delegated-task:<commandId>` |
+| Dispose a child's wake | `delegated_task.completion-delivery.dispose` naming `node:delegated-task:<commandId>` | `completionDelivery.state: disposed`; sent after the create and after every follow-up dispatch |
+| Hold and release the parent | `message.dispatch` (one re-entry prompt) and the ACP session's `release` | The parent's run is live exactly while a child may be created; the task settles in T3 when nothing runs |
 | Follow-up | `orchestration.dispatchCommand` / `message.dispatch` | Stable command and message IDs; receipt records acceptance |
 | Observe | `orchestration.subscribeShell` and a bounded `orchestration.subscribeThread` | Fresh state, including active run and pending request, from a snapshot whose timeline window never makes a long thread unobservable |
 | Answer question or permission | `runtime-request.respond` through dispatch | Exact request, thread and workspace; typed answers or approval decision |
@@ -582,9 +608,113 @@ invent a second follow-up. Expired or nonresumable approvals cannot be answered
 again. An interrupted answer remains uncertain even if the request later expires;
 expiry is not evidence that the original answer was never delivered.
 
+## Native parenting
+
+A task's row is a thread on the Nucleus ACP provider (Spec 065), and every role is
+that thread's native subagent child (Tom, 2026-11-16: "role threads become native
+subagent children of the worker on the T3 host"; nucleus#1305). The earlier ruling
+that every role is a separate top-level thread (2026-11-11) and the worker-as-parent
+design that stopped on question routing (nucleus#1290) are both replaced.
+
+**Why the parent has no model.** T3 routes a pending child `user_input` to the
+parent's agent (`DelegatedTaskQuestionReactor`), whatever the child's completion
+delivery state, and the parent's Stop would end its children. A parent that is a
+working agent would therefore be consulted about a reviewer's questions, which is
+exactly what exact-head independent review forbids. The parent is instead the
+Nucleus ACP agent: it holds its turn, shows the task's lifecycle text and authors
+nothing. Nucleus answers each child's runtime requests itself
+(`runtime-request.respond` naming the child), so the parent is never asked.
+
+**What makes a child creatable.** `delegated_task.request` refuses a parent run
+that is not active (`Parent run … is not active.`) and a parent node that is not
+part of that run. The adapter therefore reads the parent's latest live run
+immediately before the send and anchors the child on it and its root node. A child
+takes no `workspaceStrategy`: with one, T3 dispatches its first message
+`defer_start` and only its own MCP `delegate_task` handler prepares the run, so an
+outside client's child would never start. A role whose run needs a different
+checkout therefore stays a top-level thread — the fallback, never a silent re-home.
+
+**The turn is held, released and re-entered.** The ACP agent holds the parent's
+turn while the service says to. The adapter releases it when no role child of the
+task is live, so the task settles in T3 instead of reading as busy forever. Before
+the next child, the parent is re-entered with a message whose text carries the
+adapter's `nucleus-hold-the-task-thread` marker; the binding's `holdPattern` names
+that marker, so the agent holds the turn and shows or forwards nothing. A settled
+parent is unsettled first (`thread.unsettle`), because a settled thread does not
+start a run. The re-entry is bounded: a parent T3 will not run is a proven reason
+to park the native path for that task (ten minutes) and keep working on top-level
+threads.
+
+**Completion wakes never reach the parent.** Every child is created with
+`completionWake: "settled_only"` and its delivery is disposed
+(`delegated_task.completion-delivery.dispose`) right after the create. A follow-up
+`message.dispatch` to a child starts a new delegated task under the dispatch's own
+command id (`node:delegated-task:<commandId>`), and T3 does not dispose that one,
+so the adapter disposes it too. The sweep reads the parent's `subagents` and
+disposes any `pending` or `claimed` delivery it finds, which settles a wake whose
+fast-path dispose was lost. The binding also ignores the nightly's wake and restart
+wordings, so even a wake that arrives is never forwarded to the task as a person's
+message.
+
+**Only a recorded child is a child.** A task can have a parent and still run some
+of its roles as top-level threads (a different checkout, a parked native path, an
+archived parent). A child is a thread whose own recorded agent entry names the
+parent it was created under; nothing is inferred from the task having a parent. So a
+fallback role thread of a parented task keeps every one-row rule — it is tagged,
+linked, settled and stepped like any top-level support thread — and its follow-ups
+send no child dispose (nucleus#1305 review).
+
+**A finished parent is never relaunched.** A parent whose thread is archived, or
+deleted, ends the nested path for that task: the remaining roles launch as top-level
+threads and the record keeps its archived marker so later roles fall back at once.
+Launching a second parent would orphan the task's existing children and re-mint a
+binding under a thread nothing runs. Deletion is read two ways from the same
+inventory, because the nightly omits a removed thread from the shell lists and also
+serves it as a `deletedAt` tombstone: absent or tombstoned are the same fact.
+
+**A deleted child does not hold the turn.** The release decision reads one complete
+inventory: a child absent from it, or listed there as a `deletedAt` tombstone, is
+deleted (a positive fact, never a read that failed), and a live child counts only
+while its shell reports a live run or an `activeRunId`. An inventory the host cannot
+read keeps the turn rather than guessing.
+
+**Identity and durability.** The parent thread id, its command id and the ACP
+session are deterministic for a task
+(`identity('thread', …)` and `identity('parent-launch', …)`), recorded in the
+adapter's state before the send, and a lost reply is settled by finding the thread
+before anything is launched again. A child's id is derived from its command id, so
+a lost reply cannot produce an unowned thread; a failed child command is read back
+first — adopted when the child exists, and only a proven absence falls back to a
+top-level thread under the launch's own command identity. The parent is kept out of
+the recorded agent labels, because it is nobody's run: `findAgents` must not mistake
+it for the worker the task created.
+
+**Presentation follows the recorded row.** A recorded child's title (including the
+step suffix), worker settle and attention unsettle address the parent row it is drawn
+inside, and a child's own settle is a no-op. A role thread that is not a recorded
+child — a worker or revision run that fell back to a top-level thread of a parented
+task — keeps its own row: its title, settle and unsettle are written to that thread
+and never to the parent, so a fallback worker is settled where it actually runs
+(nucleus#1305 review). When the task ends, the sweep archives the parent; the shared
+project registration is untouched.
+
+**The provider is checked, never assumed.** The nested path needs an enabled,
+ready provider instance named `nucleus` whose driver is `acpRegistry`, advertising
+the `nucleus` model (the agent's two display models, Spec 065). An operator
+registers it once; the adapter reads `server.getConfig` at connect and at each
+create, records what it found in its own state, and reports it as
+`service.health`'s `t3code.nativeParenting` line. A missing, disabled or
+wrong-driver instance falls back to top-level role threads with guidance naming the
+provider to register. Nucleus never writes T3 settings.
+
 ## One row per task
 
-One task reads as one row (Tom, 2026-11-15). Three things follow.
+One task reads as one row (Tom, 2026-11-15). This is the fallback shape: a task
+whose parent cannot be launched, or a role whose run needs another checkout, keeps
+top-level threads, and these rules are what make them read as one row. A nested
+task needs none of them — T3 draws its children inside the parent row itself — so
+the adapter records no tag, card or step for a child (nucleus#1305). Three things
+follow.
 
 **Support threads are tagged.** Every support thread created on T3 — reviewer,
 recovery, verification, closeout and executor; every role but the worker-shaped
@@ -638,7 +768,11 @@ own routes.
 
 While a T3 task is open, its worker, reviewer, recovery, coordinator and executor
 threads are never archived or deleted, with one exception: a superseded worker
-is archived at once (Tom, 2026-11-13; nucleus#1181). Released support threads stay settled
+is archived at once (Tom, 2026-11-13; nucleus#1181). A nested task's parent thread
+is archived by the nesting sweep once the task reaches a terminal phase or is
+removed (`thread.archive`, deterministic command id, one archive per thread); its
+children keep their own run lifecycle. Releasing the parent's held turn is not an
+archive and changes no thread fact. Released support threads stay settled
 (`thread.settle`, above), and the task keeps its retained reviewer and recovery
 bindings; the next round or fault continues the same thread through the host's
 follow-up helper, which sends `thread.unsettle` before the message. Every
@@ -819,6 +953,30 @@ A second lifecycle test keeps a released recovery
 thread settled while the task is open and continues the same thread for the next
 fault instead of opening another. The test fails on a tree
 without the model-option, archive and steering work.
+
+`test/t3code-nesting.test.ts` covers native parenting on the same fake transport,
+with the Nucleus ACP provider registered in its `server.getConfig`: the parent
+launch on that provider and the task checkout with the binding's ignore and hold
+rules minted first; the role as a child of the held run with the profile's own
+provider, model and runtime mode and no workspace strategy; the dispose under the
+derived node id; a released parent re-entered by a marked message and the next
+child anchored on the re-entered run; a follow-up's own dispose; one release per
+held turn and the parent's archive at a terminal phase; child questions and
+permissions answered on the child with the parent never addressed; a reconnect
+that re-enters the same parent rather than launching another; the fallbacks (no
+provider, a non-ACP driver, a role in another checkout, a parent T3 will not run)
+with the host status naming why; an unknown child command never resent under the
+same identity; the recorded delegated-task wire shapes decoding into the projection;
+a fallback role of a parented task staying a tagged, settled top-level thread that
+sends no child dispose; a worker that fell back to a top-level thread keeping its own
+title, settle and unsettle instead of writing them to the parent; a deleted child
+releasing the parent turn; a `deletedAt` tombstone in the inventory counting as
+deleted for both a child and the parent; and a role launched after its parent was
+archived, or after the parent vanished from the inventory, falling back instead of
+relaunching it. `test/acp-agent.test.ts` adds the hold rule (nothing shown, nothing
+forwarded, the turn held) and keeps it distinct from the ignore rule;
+`test/acp-service.test.ts` proves a mint carries both prompt rules into the binding
+and that a mint without them writes neither.
 
 `test/t3code-one-row.test.ts` covers the one-row model on the same fake transport:
 a reviewer launch tags the thread, records exactly one `thread_created` card on the
