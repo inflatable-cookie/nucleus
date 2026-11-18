@@ -237,8 +237,6 @@ export class Operations {
     )
       throw new Error("Operation submissionId does not match its payload");
     const previous = this.store.operationForKey(input.key);
-    if (input.hostId && previous && previous.hostId !== input.hostId)
-      throw new Error("Operation host does not match its recorded selection");
     const repoPath = input.repoPath ?? submission?.repoPath ?? undefined;
     const promotion = (
       input.payload as { source?: { repository?: string } } | null
@@ -258,6 +256,30 @@ export class Operations {
       (input.payload as { identitySource?: { hostId?: string } } | null)
         ?.identitySource?.hostId ??
       promotionIdentityHostId;
+    const submissionKind = [
+      "submit",
+      "review_entry",
+      "source_promote",
+    ].includes(input.kind);
+    // A BB submission's caller host is ingress identity; the accepted operation
+    // records the separately selected work host. Permit that mismatch only when
+    // the retry carries the exact same payload and BB caller identity.
+    const sameBbIngressReplay = Boolean(
+      previous &&
+        submissionKind &&
+        input.hostId &&
+        input.hostId === plannerHostId &&
+        hostKindOf(input.hostId) === "bb" &&
+        previous.kind === input.kind &&
+        previous.inputHash === operationInputHash(input.payload),
+    );
+    if (
+      input.hostId &&
+      previous &&
+      previous.hostId !== input.hostId &&
+      !sameBbIngressReplay
+    )
+      throw new Error("Operation host does not match its recorded selection");
     const ingressSelection = previous
       ? undefined
       : taskId
@@ -288,11 +310,6 @@ export class Operations {
                 }
               : undefined;
           })());
-    const submissionKind = [
-      "submit",
-      "review_entry",
-      "source_promote",
-    ].includes(input.kind);
     const bbIngressHostId =
       !previous && submissionKind
         ? assertBbSubmissionIngressAvailable(

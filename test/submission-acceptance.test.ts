@@ -192,7 +192,7 @@ test(
 );
 
 test(
-  "an online BB planner can dry-run and submit through ingress while dispatch keeps the configured work host",
+  "an online BB planner can dry-run, submit, and replay through ingress while dispatch keeps the work host",
   { timeout: 15000 },
   async (t) => {
     const f = await fixture(t);
@@ -214,7 +214,7 @@ test(
     const caller = formatAgentId(bbHostId, "thr_submitter");
     const input = {
       ...f.input,
-      hostId: undefined,
+      hostId: bbHostId,
       originAgentId: caller,
       originIdentity: { agent: caller, hostId: bbHostId },
     };
@@ -235,6 +235,12 @@ test(
       "fixture-host",
       "the BB caller is intake identity; dispatch selection stays on the configured default work host",
     );
+    assert.notEqual(task.hostId, bbHostId);
+
+    const replay = await f.runtime.submitHandoff(input);
+    assert.ok("operation" in replay && replay.operation);
+    assert.equal(replay.operation.id, receipt.operation.id);
+    assert.equal(replay.operation.state, "succeeded");
   },
 );
 
