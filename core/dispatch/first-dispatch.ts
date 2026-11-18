@@ -4,7 +4,7 @@ import { isDispositionActive, workerProfileIsExcluded } from '../../shared/contr
 import { unavailableGroupNames } from '../../shared/pool';
 import { capacityRefusal, dispatchBlocked, occupiesSlot } from './capacity';
 import { workspaceAdmissionGapMs } from '../engine';
-import { GitBulkCommandError } from '../git/index';
+import { GitBulkCommandError, recordIntegrationFastForward } from '../git/index';
 import type { GitTransientEpisode } from '../git/git-transient-backoff';
 import { WORKSPACE_POPULATE_BUDGET_MS } from '../workspaces/workspace-allocation';
 import { worktreeLinksForBinding, worktreeLinksForIntent } from '../workspaces/worktree-links';
@@ -126,7 +126,7 @@ export class FirstDispatch {
     }
     try {
       if (!task.workspaceId) await this.adapter.preflightWorkspaceStorage?.(task);
-      const base = await this.adapter.validate(task);
+      const base = await this.adapter.validate(task, move => recordIntegrationFastForward(this.store, task, move));
       if (transientBefore) this.store.deleteMeta(this.context.transientKey(taskId));
       const latest = this.store.task(task.id);
       if (startsNoRuns(this.store, this.context.stopped) || latest.phase !== "queued" || dispatchBlocked(latest) || latest.version !== task.version) return;

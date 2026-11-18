@@ -1,3 +1,5 @@
+import type { IntegrationFastForwardObserver } from './git/git-dispatch';
+import type { FormalReviewRuntime } from './forge/reviews';
 import { portsContext } from './port-context';
 import { ambientHostPorts, onOwnerHost, type HostPorts } from './host/host-ports';
 import { CriticalReviewFallback } from './dispatch/critical-review-fallback';
@@ -106,7 +108,7 @@ import { type EscalationVerbChoice } from './questions/ladder';
 /** Task 382: the check evidence a merge gate reports beside its wait: the effective hosted-check policy, the required and advisory results at the exact head, and the repository settings revision the policy came from. */
 export type OverdueCheckEvidence = {key: string; name: string; state: string; elapsedMs: number; jobUrl: string; runnerLabels: string[]};
 export type CheckObservationFields = {checksPolicy?: RepositoryChecksPolicy; requirements?: {known: boolean; required: number; reason?: string}; advisory?: CheckObservation[]; requiredEvidence?: CheckObservation[]; settingsRevision?: number | null; overdueCheck?: OverdueCheckEvidence};
-export type MergeGateResult = { timings?: Record<string, number>; head: string; base: string; wait: string; integrationFastForward?: {from: string; to: string}; needsRebase?: boolean; checksFailed?: boolean; overdue?: boolean; pendingCheck?: boolean; infrastructure?: boolean; infraRunIds?: string[] } & CheckObservationFields;
+export type MergeGateResult = { timings?: Record<string, number>; head: string; base: string; wait: string; needsRebase?: boolean; checksFailed?: boolean; overdue?: boolean; pendingCheck?: boolean; infrastructure?: boolean; infraRunIds?: string[] } & CheckObservationFields;
 export type RequiredChecksResult = { head: string; wait: string; needsRebase?: boolean; checksFailed?: boolean; overdue?: boolean; pendingCheck?: boolean; infrastructure?: boolean; infraRunIds?: string[] } & CheckObservationFields;
 /** Project-d #117: an evidence-only PR verified for a continuation, and the task facts the accepting transaction re-checks. */
 export type { ContinuedPrBinding } from './review/continued-pr';
@@ -157,16 +159,16 @@ export interface ResolutionAdapter {
   reconcileReviewPublication?(store:Store, task:Task, run:Run, reviewer:ReviewerSetting, reason:string, allowed:()=>boolean):Promise<number>;
   verifyReview(task: Task, run: Run, result: Completion, reviewer?: ReviewerSetting): Promise<number | void>;
   externalMerge?(task: Task, acceptHead?: boolean, retainedSource?: boolean): Promise<{head:string;commit:string}|null>;
-  mergeGate(task: Task, history?: CheckHistory, reviewer?: ReviewerSetting, checksPolicy?: RepositoryChecksPolicy): Promise<MergeGateResult>;
+  mergeGate(task: Task, history?: CheckHistory, reviewer?: ReviewerSetting, checksPolicy?: RepositoryChecksPolicy, runtime?: FormalReviewRuntime, observeFastForward?: IntegrationFastForwardObserver): Promise<MergeGateResult>;
   requiredChecks?(task: Task, history?: CheckHistory, checksPolicy?: RepositoryChecksPolicy): Promise<RequiredChecksResult>;
   /** Checks and integration base for a subsequent review round, without merge-review admission. */
-  coveringEvidence?(task: Task, history?: CheckHistory, checksPolicy?: RepositoryChecksPolicy): Promise<RequiredChecksResult & { base: string; integrationFastForward?: {from: string; to: string} }>;
+  coveringEvidence?(task: Task, history?: CheckHistory, checksPolicy?: RepositoryChecksPolicy, observeFastForward?: IntegrationFastForwardObserver): Promise<RequiredChecksResult & { base: string }>;
   /** Queue 524: bounded pointer to author evidence posted as PR issue comments (never bodies). Empty when none exist. */
   authorCommentEvidence?(task: Task, priorCommentId?: number | null): Promise<string>;
   rerunFailedWorkflowRuns?(task: Task, runIds: string[]): Promise<string[]>;
   merge(task: Task, allowed?: () => boolean): Promise<void>;
   merged(task: Task): Promise<{ merged: boolean; commit: string | null; head: string; base: string; proof?: { proven: boolean; detail: string } }>;
-  syncMain(task: Task, allowed?: () => boolean): Promise<string>;
+  syncMain(task: Task, allowed?: () => boolean, observeFastForward?: IntegrationFastForwardObserver): Promise<string>;
   verifyCloseout(task: Task, result?:Completion): Promise<string|void>;
   notify(agentId: string, messageId: string, text: string, sourceAgentId?: string): Promise<void>;
 }

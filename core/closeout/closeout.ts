@@ -1,7 +1,7 @@
 import { resultApplied, recordResultApplied } from '../intake/applied-result';
 import type { Completion, Run, Task } from '../../shared/contracts';
 import { taskPrNumber } from '../forge/index';
-import { git } from '../git/index';
+import { git, recordIntegrationFastForward } from '../git/index';
 import { hookHoldReason, isCloseoutAuthorityHook, type CloseoutAuthority } from '../hooks/hooks';
 import { hostProcessSweepIntent } from '../machine/host-process-reap';
 import { isBlockingRecoveryEffect, recoveryEffects, recoveryEffectsRefusal } from '../recovery/recovery-effects';
@@ -118,7 +118,7 @@ export class Closeout {
     t = this.store.task(t.id);
     if (!await this.resolution.executionLease(t,undefined,true) || this.resolution.paused()) return;
     const syncStarted = Date.now();
-    const commit = await this.adapter.syncMain!(t, () => !this.resolution.paused());
+    const commit = await this.adapter.syncMain!(t, () => !this.resolution.paused(), move => recordIntegrationFastForward(this.store, t, move));
     this.store.event(t.id, 'integration_sync_duration', `${Date.now() - syncStarted}ms`);
     this.resolution.update(t, { syncedCommit: commit }, { phase: 'closing', reason: 'Integration branch synchronized; coordinator closeout pending' }, 'main_synchronized');
   }

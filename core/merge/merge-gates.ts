@@ -1,6 +1,6 @@
 import { blockerCauseId, escalationWaitDetail, findOpenPlannerEscalation, plannerEscalationQuestion, type LadderEvent } from '../questions/ladder';
 import { isFailedChecksReason, taskPrNumber } from '../forge/index';
-import { GitReadTimeoutError } from '../git/index';
+import { GitReadTimeoutError, recordIntegrationFastForward } from '../git/index';
 import { hookHoldReason, isStaleIntegrationBaseRefusal, gitRaw, repositoryIsGitCheckout, type HookEmissionResult, type ProspectiveMergeOutcome } from '../hooks/hooks';
 import { reviewEntryInputForTask, verifyReviewEntryCanonicalAuthor, ReviewEntryRefusal, type ReviewEntryAdapter } from '../review/review-entry';
 import { now } from '../store/store';
@@ -289,7 +289,7 @@ export class MergeGates {
   private async renewIntegrationBase(t: Task, renewal: number): Promise<boolean> {
     const bound = `${renewal} of ${INTEGRATION_BASE_RENEWAL_LIMIT}`;
     try {
-      const base = await this.resolution.hooks!.renewIntegrationBase(t, () => !this.resolution.paused());
+      const base = await this.resolution.hooks!.renewIntegrationBase(t, () => !this.resolution.paused(), move => recordIntegrationFastForward(this.store, t, move));
       this.store.event(t.id, 'integration_base_renewed', `${base} at renewal ${bound}`);
       return true;
     } catch (error) {

@@ -1,6 +1,6 @@
 import { FORCE_MOVE_REFUSAL, FORCE_MERGED_REFUSAL, FORCE_PAUSED_REFUSAL, FORCE_MERGE_UNAVAILABLE_REFUSAL, FORCE_HOLD_REFUSAL, FORCE_MERGE_OBSERVATION_REFUSAL, FORCE_EFFECT_REQUIRED_REFUSAL, FORCE_PUBLICATION_REFUSAL, missingForcedEffectRefusal } from './verb-refusal-text';
 import { randomUUID } from "node:crypto";
-import type { OwnerAcceptanceRecord, Run, Task, TaskControlInput } from "../../shared/contracts";
+import type { OwnerAcceptanceRecord, RepositoryChecksPolicy, Run, Task, TaskControlInput } from "../../shared/contracts";
 import { OPERATOR_BOARD_CALLER, holdsOf, syncHoldProjection } from "../../shared/contracts";
 import { normalizeRepositoryOrigin } from "../../shared/lanes";
 import type { Engine } from "../engine";
@@ -11,10 +11,20 @@ import { runsUnchangedSince } from "../recovery/observation-advance";
 import { collectOwnerVerbFacts, ownerEffectOccurrence, ownerPendingEffects, qualifiedAcceptanceEligibility } from "./owner-verbs";
 import type { Adapter } from "../host/adapter";
 import { recoveryEffects, recoverySettlementKey } from "../recovery/recovery-effects";
-import type { ResolutionAdapter } from "../resolution";
+import type { MergeGateResult, ResolutionAdapter } from "../resolution";
 import { DurableFenceRefusal } from "../intake/run-settlement";
-import { now } from "../store/store";
+import { now, type Store } from "../store/store";
+import { recordIntegrationFastForward } from "../git/index";
 import { appliedMergeVerdict, plannerIdMatches, readyReviewAtHead } from "../recovery/task-reasons";
+
+/**
+ * The forced merge's own gate observation. A gate that fast-forwards the registered
+ * checkout records that move at the moment it lands, so a forced merge that moves the
+ * shared checkout is audited even when the same gate then refuses.
+ */
+export function observeForceMergeGate(adapter: Partial<Pick<ResolutionAdapter, 'mergeGate'>>, store: Pick<Store, 'event'>, task: Task, policy: RepositoryChecksPolicy): Promise<MergeGateResult> {
+  return adapter.mergeGate!(task, undefined, undefined, policy, undefined, move => recordIntegrationFastForward(store, task, move));
+}
 
 /** Refuse a force merge before observing checks when its source authority is insufficient. */
 export function forceMergeSourceRefusal(task: Task, input: TaskControlInput, head: string, selfRole: string | null): string | null {
@@ -231,12 +241,12 @@ export class ForceVerbs {
         const review = task.resolution.review;
         if (selfRole) {
           if (!this.resolution.adapter.mergeGate) throw new DurableFenceRefusal('Merge checks cannot be observed');
-          const gate = await this.resolution.adapter.mergeGate(task, undefined, undefined, this.store.checksPolicyFor(task));
+          const gate = await observeForceMergeGate(this.resolution.adapter, this.store, task, this.store.checksPolicyFor(task));
           if (gate.head !== pr.head) throw new DurableFenceRefusal('Merge check head changed; read next');
           if (gate.wait) {
             if (selfRole !== 'reviewer') throw new DurableFenceRefusal('Worker and recovery cannot force merge past a failed check');
             if (this.store.run(review!.runId)?.agentId !== this.store.run(this.engine.selfForceRunId.getStore()!)?.agentId) throw new DurableFenceRefusal('Only the reviewer own applied verdict may force checks');
-            const requiredGate = await this.resolution.adapter.mergeGate(task, undefined, undefined, 'required');
+            const requiredGate = await observeForceMergeGate(this.resolution.adapter, this.store, task, 'required');
             const admission = forceMergeAdmission(pr.head, reason, gate, requiredGate);
             if ('refusal' in admission) throw new DurableFenceRefusal(admission.refusal);
             forcedChecks = admission.forcedChecks;

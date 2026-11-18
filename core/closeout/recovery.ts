@@ -3,6 +3,7 @@ import type { Engine } from '../engine';
 import type { LifecycleAdapter } from './archive-proof';
 import type { Resolution } from '../resolution';
 import { missingOriginHasPlanner } from '../questions/origin';
+import { recordIntegrationFastForward } from '../git/index';
 import { consumerBlockAdvance, isConsumerDeclaredBlock } from './closeout-renewal';
 import { CLOSEOUT_BASE_RENEWED_KIND, CLOSEOUT_BASE_RENEWAL_TRANSITION, closeoutBaseRenewalAllowed } from './closeout-base-refresh';
 
@@ -39,7 +40,7 @@ export class CloseoutRecovery {
     }
     if(!await this.engine.resolution.lease(task) || this.paused())return;
     if(this.engine.resolution.hasEarlierIntegrationTurn(task))return;
-    const commit=await this.engine.resolution.adapter.syncMain!(task,()=>!this.paused());
+    const commit=await this.engine.resolution.adapter.syncMain!(task,()=>!this.paused(),move=>recordIntegrationFastForward(this.store,task,move));
     if(this.paused())return;
     let t=this.engine.resolution.update(this.store.task(task.id),{syncedCommit:commit});
     let workspace=t.resolution.closeoutWorkspaceId?{id:t.resolution.closeoutWorkspaceId,directory:t.resolution.closeoutDirectory!}:null;

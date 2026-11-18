@@ -208,7 +208,7 @@ export type CheckClassification = {
   requiredEvidence?: CheckObservation[];
 };
 /** What a merge gate reports: its wait plus the policy and advisory evidence behind it. */
-export type GateEvidence = CheckClassification & {head: string; base: string; needsRebase?: boolean; timings?: Record<string, number>; integrationFastForward?: {from: string; to: string}};
+export type GateEvidence = CheckClassification & {head: string; base: string; needsRebase?: boolean; timings?: Record<string, number>};
 
 const ADVISORY_EVIDENCE_MAX = 50;
 function boundedCheckText(value: unknown, max = 500): string {

@@ -2374,7 +2374,11 @@ movement invalidates source approval and preserves the normal readiness gates.
   cherry-pick or revert in progress, and strictly behind `origin/<base>` is
   fast-forwarded under the per-base integration lock. One
   `integration_checkout_fast_forwarded` event names the old and new heads; a
-  second pass finds the checkout current and records nothing. Every other state
+  second pass finds the checkout current and records nothing. Every path that
+  moves the registered checkout (the merge gate and its covering and forced
+  observers, the prospective-merge base, integration sync, stale-base renewal,
+  dispatch validation and canonical publication sync) records that event at the
+  moment the move lands, so a later failure in the same pass cannot lose it. Every other state
   (dirty, ahead, diverged, another or detached branch, an operation in progress)
   is never touched: the task waits on the named reason and repository.
 - A stale-base refusal from a repository hook is renewed by the same

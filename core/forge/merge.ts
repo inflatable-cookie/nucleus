@@ -1,7 +1,7 @@
 import { taskPrNumber } from './pr-identity';
 import { reviewRequiredFor } from '../../shared/review-requirement';
 import { type Task, operatorSourceAcceptance, qualifiedOwnerAcceptance, type Run, type RepositoryChecksPolicy, type Completion } from '../../shared/contracts';
-import { withIntegrationCheckout, fastForwardIntegrationBase, git, gitStatus, verifyPr, queueCheckoutStatus, type IntegrationFastForward } from '../git/index';
+import { withIntegrationCheckout, fastForwardIntegrationBase, git, gitStatus, verifyPr, queueCheckoutStatus, type IntegrationFastForwardObserver } from '../git/index';
 import { type ReviewerSetting, type FormalReviewRuntime, verifyReview } from './reviews';
 import { readyReviewAtHead } from '../recovery/task-reasons';
 import { type CheckHistory, type GateEvidence, type CheckRequirementTransport, requiredCheckRequirements, branchUpdateRequired, observeCheckClassification, type CheckClassification, requiredChecks } from './checks';
@@ -29,16 +29,17 @@ export function classifyGithubMerge(p: {mergeable: string; mergeStateStatus: str
 /**
  * The integration base a merge gate proves. A clean checkout strictly behind origin
  * is fast-forwarded here, under the integration lock, before the base is read; any
- * other state refuses by name and is left untouched. `fastForward` is present only
- * when this call moved the checkout, so the caller records the event once.
+ * other state refuses by name and is left untouched. `observe` is called at the moment
+ * this call moves the checkout, so the move is recorded even if a later read of the pass fails.
  */
-export async function integrationBaseGate(t: Pick<Task,'repoPath'|'baseBranch'|'directory'> & Partial<Pick<Task,'brief'>>,_head:string): Promise<{base: string; wait: string; fastForward?: IntegrationFastForward}> {
+export async function integrationBaseGate(t: Pick<Task,'repoPath'|'baseBranch'|'directory'> & Partial<Pick<Task,'brief'>>,_head:string,observe?: IntegrationFastForwardObserver): Promise<{base: string; wait: string}> {
   if(!t.directory)throw new Error('Task has no worktree');
   return withIntegrationCheckout(t, async (checkout, unchanged) => {
     const fastForward = await fastForwardIntegrationBase(checkout, t.baseBranch);
+    if (fastForward) observe?.(fastForward);
     const base=await git(checkout,'rev-parse',`refs/remotes/origin/${t.baseBranch}`);
     await unchanged();
-    return {base,wait:'',...(fastForward ? {fastForward} : {})};
+    return {base,wait:''};
   });
 }
 /** The review evidence a merge requires: the accepted exact-head review, verified under its reviewer identity when the repository opted in. A qualified owner acceptance keeps the same proof burden for the authentic verdict it binds — the recorded `changes_required` review is verified at the exact head instead of being waived. An explicit operator source acceptance (2026-10-20) binds the exact current head with no review identity: nothing is verified or invented here, and GitHub's own branch rules still gate the merge. An opted-in repository cannot skip the gate for a recorded verdict: a review-backed acceptance still needs the authentic reviewed evidence verified at the forge. */
@@ -63,7 +64,7 @@ export function reviewRequirementsWait(t: Task, reviewDecision: string | null | 
     && (reviewDecision === 'CHANGES_REQUESTED' || reviewDecision === 'REVIEW_REQUIRED')
     ? 'GitHub review requirements are not satisfied' : '';
 }
-export async function mergeGate(t: Task, history?: CheckHistory, reviewer?: ReviewerSetting | null, checksPolicy: RepositoryChecksPolicy = 'all', runtime?: FormalReviewRuntime): Promise<GateEvidence> {
+export async function mergeGate(t: Task, history?: CheckHistory, reviewer?: ReviewerSetting | null, checksPolicy: RepositoryChecksPolicy = 'all', runtime?: FormalReviewRuntime, observeFastForward?: IntegrationFastForwardObserver): Promise<GateEvidence> {
   const timings: Record<string, number> = {};
   const timed = async <T>(name: string, work: () => Promise<T>): Promise<T> => {
     const started = Date.now();
@@ -83,7 +84,7 @@ export async function mergeGate(t: Task, history?: CheckHistory, reviewer?: Revi
   const [data, , gate, requirements, updateRequired] = await Promise.all([
     timed('graphql', () => api(t, 'graphql', ['-f', `query=${query}`, '-f', `owner=${owner}`, '-f', `repo=${repository}`, '-F', `number=${taskPrNumber(t)}`])),
     timed('review_identity', () => requiredMergeReview(t, reviewer, {...runtime, verifyPr: async () => pr})),
-    timed('integration_base', () => integrationBaseGate(t, pr.head)),
+    timed('integration_base', () => integrationBaseGate(t, pr.head, observeFastForward)),
     checksPolicy === 'required' ? timed('check_requirements', () => requiredCheckRequirements(t, owner, repository, t.baseBranch, read)) : undefined,
     // Finish the other reads before surfacing a strict-rule refusal. In
     // particular, the integration checkout must not outlive this attempt.
@@ -91,31 +92,30 @@ export async function mergeGate(t: Task, history?: CheckHistory, reviewer?: Revi
       .then(value => ({value}), error => ({error})),
   ]);
   if ('error' in updateRequired) throw updateRequired.error;
-  const integration = gate.fastForward ? {integrationFastForward: gate.fastForward} : {};
   if (data.errors?.length) throw new Error('GitHub merge gate query failed');
   const p = data.data?.repository?.pullRequest;
   if (!p || p.headRefOid !== pr.head || p.baseRefName !== t.baseBranch || p.isDraft || p.state !== 'OPEN') throw new Error('PR identity changed during merge verification');
   if (p.reviewThreads.pageInfo.hasNextPage || p.statusCheckRollup?.contexts.pageInfo.hasNextPage) throw new Error('Merge evidence pagination is incomplete');
-  if (p.reviewThreads.nodes.some((n: {isResolved: boolean}) => !n.isResolved)) return { timings, head: pr.head, base: gate.base, ...integration, wait: 'Unresolved PR review threads remain' };
+  if (p.reviewThreads.nodes.some((n: {isResolved: boolean}) => !n.isResolved)) return { timings, head: pr.head, base: gate.base, wait: 'Unresolved PR review threads remain' };
   const reviewWait = reviewRequirementsWait(t, p.reviewDecision);
-  if (reviewWait) return { timings, head: pr.head, base: gate.base, ...integration, wait: reviewWait };
+  if (reviewWait) return { timings, head: pr.head, base: gate.base, wait: reviewWait };
   // Requirement discovery reads the exact base branch GitHub enforces. A local
   // advisory setting never becomes an empty requirement set by default.
   const checks = await timed('check_classification', () => observeCheckClassification(t, p.statusCheckRollup?.contexts.nodes ?? [], history?.forHead?.(pr.head) ?? history, checksPolicy, requirements, owner, repository));
-  if (checks.wait) return { timings, head: pr.head, base: gate.base, ...integration, ...checks };
+  if (checks.wait) return { timings, head: pr.head, base: gate.base, ...checks };
   const merge=classifyGithubMerge({mergeable:String(p.mergeable),mergeStateStatus:String(p.mergeStateStatus)},updateRequired.value,{advisoryChecks: checksPolicy === 'required' && Boolean(requirements?.known)});
   const observed = checksPolicy === 'required' ? {checksPolicy, requirements: checks.requirements, requiredEvidence: checks.requiredEvidence, advisory: checks.advisory} : {};
-  if (merge.wait) return { timings, head: pr.head, base: gate.base, ...integration, ...merge, ...observed };
-  return { timings, head: pr.head, base: gate.base, ...integration, wait: '', ...observed };
+  if (merge.wait) return { timings, head: pr.head, base: gate.base, ...merge, ...observed };
+  return { timings, head: pr.head, base: gate.base, wait: '', ...observed };
 }
 /** Covering evidence for a subsequent review round: the exact PR's checks and the
  * integration base it would merge into. It never asks whether a review approves
  * merging — the next reviewer has not reviewed yet — and grants no merge credit;
  * the full merge gate still runs before any merge. */
-export async function coveringEvidence(t: Task, history?: CheckHistory, checksPolicy: RepositoryChecksPolicy = 'all'): Promise<CheckClassification & {head: string; base: string; integrationFastForward?: IntegrationFastForward}> {
+export async function coveringEvidence(t: Task, history?: CheckHistory, checksPolicy: RepositoryChecksPolicy = 'all', observeFastForward?: IntegrationFastForwardObserver): Promise<CheckClassification & {head: string; base: string}> {
   const checks = await requiredChecks(t, history, checksPolicy);
-  const gate = await integrationBaseGate(t, checks.head);
-  return { ...checks, base: gate.base, ...(gate.fastForward ? {integrationFastForward: gate.fastForward} : {}) };
+  const gate = await integrationBaseGate(t, checks.head, observeFastForward);
+  return { ...checks, base: gate.base };
 }
 export async function merge(t: Task, allowed: () => boolean = () => true) {
   const name = await repo(t);
@@ -175,14 +175,14 @@ export async function exactIntendedMerge(t: Pick<Task,'repoPath'|'baseBranch'|'r
   if(matches.length>1)throw Error('Multiple exact merge commits match the recorded merge intent');
   return matches[0]?.split(' ')[0]??null;
 }
-export async function syncMain(t: Task, allowed: () => boolean = () => true) {
-  const commit = await withIntegrationCheckout(t, (checkout, unchanged) => syncIntegrationCheckout({...t, repoPath: checkout}, allowed, unchanged));
+export async function syncMain(t: Task, allowed: () => boolean = () => true, observeFastForward?: IntegrationFastForwardObserver) {
+  const commit = await withIntegrationCheckout(t, (checkout, unchanged) => syncIntegrationCheckout({...t, repoPath: checkout}, allowed, unchanged, observeFastForward));
   if (await git(t.repoPath, 'branch', '--show-current') === t.baseBranch) {
     requestServiceRollAfterRepositorySync(t.repoPath);
   }
   return commit;
 }
-async function syncIntegrationCheckout(t: Task, allowed: () => boolean, unchanged: () => Promise<void>) {
+async function syncIntegrationCheckout(t: Task, allowed: () => boolean, unchanged: () => Promise<void>, observeFastForward?: IntegrationFastForwardObserver) {
   if (!t.resolution.mergedCommit) throw new Error('Merge has not been verified');
   if (await git(t.repoPath, 'branch', '--show-current') !== t.baseBranch || await gitStatus(t.repoPath, 'status', '--porcelain')) throw new Error('Preserving dirty or switched integration checkout after merge');
   await git(t.repoPath, 'fetch', 'origin', t.baseBranch);
@@ -200,7 +200,9 @@ async function syncIntegrationCheckout(t: Task, allowed: () => boolean, unchange
   if (await git(t.repoPath, 'branch', '--show-current') !== t.baseBranch || await gitStatus(t.repoPath, 'status', '--porcelain')) throw new Error('Integration checkout changed while fetching');
   await unchanged();
   if (!allowed()) throw new Error('Paused before local main update');
+  const from = await git(t.repoPath, 'rev-parse', 'HEAD');
   await gitFastForward(t.repoPath, remote);
+  if (from !== remote) observeFastForward?.({ from, to: remote });
   if (await git(t.repoPath, 'rev-parse', 'HEAD') !== remote || await gitStatus(t.repoPath, 'status', '--porcelain')) throw new Error('Integration synchronization did not leave a clean expected head');
   return remote;
 }
