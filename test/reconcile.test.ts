@@ -828,7 +828,7 @@ test('a route armed over a stale worker creation intent launches a fresh worker 
     addProfile(f, author2, 'author-2', 'worker');
     const launched: string[] = [];
     const createAgent = f.adapter.createAgent!;
-    f.adapter.createAgent = async (t, token) => { launched.push(t.profile?.id ?? ''); return createAgent(t, token); };
+    f.adapter.createAgent = async (t, token, prompt, legacy) => { launched.push(t.profile?.id ?? ''); return createAgent(t, token, prompt, legacy); };
     staleWorkerTask(f);
     await f.engine.performTaskControl({ taskId: f.task.id, version: f.current().version, action: 'route', role: 'worker', profileId: author2.id, reason: 'Owner route', caller: OWNER });
     await f.engine.wake(); await f.engine.wake();
