@@ -457,7 +457,6 @@ function connectionMismatch(
   context: Context,
   endpoint: string,
   environmentId: string,
-  sessions: T3SessionSummary[] | null,
 ): string | null {
   const connection = context.connection;
   if (!connection) return null;
@@ -470,15 +469,6 @@ function connectionMismatch(
     resolve(connection.baseDir) !== resolve(context.baseDir)
   )
     return "selected T3 base directory differs from the stored connection";
-  if (
-    !connection.sessionId ||
-    !sessions?.some(
-      (row) =>
-        row.sessionId === connection.sessionId &&
-        row.subject === T3_SESSION_SUBJECT,
-    )
-  )
-    return "stored bearer session was not found in the selected T3 session store";
   return null;
 }
 
@@ -510,12 +500,7 @@ async function install(
   });
 
   const sessions = sessionCli(context);
-  const mismatch = connectionMismatch(
-    context,
-    endpoint,
-    server.environmentId,
-    sessions.list(),
-  );
+  const mismatch = connectionMismatch(context, endpoint, server.environmentId);
   if (mismatch)
     throw new Error(`${mismatch}; refusing to replace the stored connection`);
   // One short-lived bearer does the read and the one write, and is revoked in the
@@ -715,7 +700,7 @@ async function status(
   }
   const mismatch =
     endpoint && server
-      ? connectionMismatch(context, endpoint, server.environmentId, sessions)
+      ? connectionMismatch(context, endpoint, server.environmentId)
       : null;
   if (mismatch) serverError = mismatch;
   if (endpoint && context.connection && server && !mismatch) {
@@ -738,7 +723,13 @@ async function status(
     config,
     server,
     serverError,
-    sessions,
+    sessions:
+      !mismatch &&
+      context.connection?.baseDir &&
+      context.connection.environmentId &&
+      server
+        ? sessions
+        : null,
     bearerAccepted: accepted,
     service: service.available
       ? (service.t3 ?? {
@@ -796,12 +787,7 @@ async function uninstall(
     throw new Error(
       "No T3Code endpoint is known; refusing to change the stored connection or sessions",
     );
-  const mismatch = connectionMismatch(
-    context,
-    endpoint,
-    environmentId,
-    sessions.list(),
-  );
+  const mismatch = connectionMismatch(context, endpoint, environmentId);
   if (mismatch) throw new Error(`${mismatch}; uninstall made no changes`);
   const hostId = environmentId ? `t3code:${environmentId}` : "";
 

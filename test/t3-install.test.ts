@@ -810,3 +810,65 @@ test("a second T3 environment never receives the stored bearer or clears its con
   assert.equal(second.bearers.length, 0);
   assert.equal(JSON.stringify(settingsFile(target)), old);
 });
+
+test("legacy endpoint-and-bearer settings are checked and migrated or removed", async (t) => {
+  const target = fixture();
+  const fake = await t3Fake(t, target.directory);
+  writeDescriptor(target, fake.endpoint);
+  const writeLegacy = () =>
+    writeFileSync(
+      join(target.dataDir, "settings.json"),
+      JSON.stringify({
+        t3code: { endpoint: fake.endpoint, bearer: "synthetic-legacy-bearer" },
+      }),
+    );
+  writeLegacy();
+  const status = JSON.parse((await runCli(target, statusArgs(target))).stdout);
+  assert.equal(status.bearer.valid, true);
+  assert.deepEqual(status.bearer.scopes, []);
+  assert.equal(status.bearer.expiresAt, null);
+  const install = await runCli(target, installArgs(target));
+  assert.equal(install.code, 0, install.stderr);
+  assert.ok((settingsFile(target).t3code as { sessionId?: string }).sessionId);
+  writeLegacy();
+  const uninstall = await runCli(target, uninstallArgs(target));
+  assert.equal(uninstall.code, 0, uninstall.stderr);
+  assert.equal(settingsFile(target).t3code, undefined);
+  assert.equal(fake.controls.providerInstances?.nucleus, undefined);
+});
+
+test("a revoked runtime session reports no unrelated scopes and can rotate or uninstall", async (t) => {
+  const target = fixture();
+  const fake = await t3Fake(t, target.directory);
+  writeDescriptor(target, fake.endpoint);
+  assert.equal((await runCli(target, installArgs(target))).code, 0);
+  const revokeRuntime = () => {
+    const id = (settingsFile(target).t3code as { sessionId: string }).sessionId;
+    const rows = sessions(target);
+    const row = rows.find((candidate) => candidate.sessionId === id)!;
+    row.revokedAt = new Date().toISOString();
+    fake.controls.rejectBearers.push(`Bearer ${row.token}`);
+    rows.push({
+      sessionId: `unrelated-${id}`,
+      token: "synthetic-unrelated",
+      scopes: ["providers:manage"],
+      subject: "nucleus",
+      label: "nucleus",
+      ttl: "1h",
+      expiresAt: "2099-01-01T00:00:00.000Z",
+    } as typeof row);
+    writeFileSync(join(target.stateDir, "sessions.json"), JSON.stringify(rows));
+  };
+  revokeRuntime();
+  const status = JSON.parse((await runCli(target, statusArgs(target))).stdout);
+  assert.equal(status.bearer.valid, false);
+  assert.deepEqual(status.bearer.scopes, []);
+  assert.equal(status.bearer.expiresAt, null);
+  assert.match(status.bearer.problem, /nucleus t3 install/);
+  const install = await runCli(target, installArgs(target));
+  assert.equal(install.code, 0, install.stderr);
+  revokeRuntime();
+  const uninstall = await runCli(target, uninstallArgs(target));
+  assert.equal(uninstall.code, 0, uninstall.stderr);
+  assert.equal(settingsFile(target).t3code, undefined);
+});

@@ -384,13 +384,13 @@ export function observeBearer(
       nearExpiry: false,
       problem: "no T3Code connection is stored; run `nucleus t3 install`",
     };
-  const session =
-    sessions?.find(
-      (candidate) => candidate.sessionId === connection.sessionId,
-    ) ??
-    sessions?.find((candidate) => candidate.subject === T3_SESSION_SUBJECT) ??
-    null;
-  const expiresAt = session?.expiresAt ?? connection.expiresAt ?? null;
+  const listedSession = connection.sessionId
+    ? (sessions?.find(
+        (candidate) => candidate.sessionId === connection.sessionId,
+      ) ?? null)
+    : null;
+  const session = accepted === true ? listedSession : null;
+  const expiresAt = session?.expiresAt ?? null;
   const expiresInMs = expiresAt ? Date.parse(expiresAt) - now : null;
   const expiresInDays =
     expiresInMs === null || Number.isNaN(expiresInMs)
@@ -405,7 +405,7 @@ export function observeBearer(
   if (accepted === false)
     problem =
       "T3Code refused the stored bearer; run `nucleus t3 install` to mint a new one";
-  else if (sessions && !session)
+  else if (sessions && connection.sessionId && !listedSession)
     problem =
       "the stored bearer is not an active T3Code session; run `nucleus t3 install` to mint a new one";
   else if (nearExpiry)
@@ -420,7 +420,8 @@ export function observeBearer(
       "the stored bearer carries a settings scope; the service needs only the orchestration scopes";
   return {
     present: true,
-    valid: accepted,
+    valid:
+      sessions && connection.sessionId && !listedSession ? false : accepted,
     scopes,
     expiresAt,
     expiresInDays,

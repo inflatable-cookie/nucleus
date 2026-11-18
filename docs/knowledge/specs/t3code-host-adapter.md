@@ -1084,7 +1084,7 @@ only when it is ours (a namesake is refused by name), revokes every active sessi
 with subject `nucleus`, and clears `t3code` from the settings file. While tasks
 are live on `t3code:<environmentId>` it names them from `host.list`'s dependents
 and refuses unless `--live-tasks` is passed; a service that cannot report its
-hosts is a refusal too, unless `--live-tasks` explicitly overrides the unknown state. The selected endpoint, environment and session store must match the stored connection before it is used or cleared; a mismatch refuses without changes. Status reports provider registration as unknown when authenticated configuration cannot be read. It never
+hosts is a refusal too, unless `--live-tasks` explicitly overrides the unknown state. The selected endpoint and any recorded environment and base directory must match the stored connection; a mismatch refuses without changes. Legacy endpoint-and-bearer settings can be checked at that same endpoint and migrated. A missing or revoked runtime session does not prevent install from rotating it or uninstall from removing the connection: the short-lived session must authenticate to the selected server before its provider can be changed. Status attributes session scopes and expiry only to the saved session in a verified matching store. Status reports provider registration as unknown when authenticated configuration cannot be read. It never
 archives, deletes or edits a thread, and never touches a project registration.
 The service drops the connection on its next bootstrap tick.
 
