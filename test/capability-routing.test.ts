@@ -65,6 +65,8 @@ test('explicit preferred and required requests win independent of rating distanc
   const above={...taskOf({complexity:'medium'}),profileRequests:{worker:{profileId:'agent-very_high',reason:'Explicit route above the requested tier',required:false,signoff:signed}}};
   assert.equal(ids(chooseProfile(above,profiles,pool,usage,new Set(),'worker',usage,'extra_high')),'agent-very_high','an explicit request reaches above the requested tier');
   assert.equal(ids(chooseProfile({...above,profileRequests:{worker:{profileId:'agent-very_high',reason:'Explicit request',required:false}}},profiles,pool,usage,new Set(),'worker',usage,'extra_high')),'agent-very_high','an explicit request (no sign-off needed at Extra high) reaches above the requested tier');
+  const lowerRequest={...taskOf({complexity:'very_high'}),profileRequests:{worker:{profileId:'agent-medium',reason:'Cheaper please',required:true,signoff:signed}}};
+  assert.equal(chooseProfile(lowerRequest,profiles,pool,usage,new Set(),'worker',usage,'maximum'),null,'a required lower-tier worker request cannot serve at Maximum');
   assert.equal(chooseProfile(taskOf({complexity:'very_high',preferredProfileId:far.profileId,requirePreferred:true}),profiles,pool.filter(e=>e.profileId!==far.profileId),usage,new Set()),null,'required preference never falls back to a perfect fit');
   const requested=taskOf({complexity:'very_high',profileRequests:{worker:{profileId:far.profileId,reason:'Operator asked for this profile',required:false}}});
   assert.equal(ids(chooseProfile(requested,profiles,pool,usage,new Set())),far.profileId);

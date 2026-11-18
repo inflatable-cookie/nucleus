@@ -32,8 +32,10 @@ export function retainedThreadBinding(ctx: LaunchThreadContext, t: Task, role: R
     : role === 'executor' ? priorExecutor?.agentId ?? null : t.coordinatorAgentId || null;
   const profile = options.profile ?? firstWorkerSelection?.profile ?? (role === 'revision' ? t.profile : role === 'reviewer' ? t.resolution.reviewerProfile
     : role === 'executor' ? priorExecutor?.profile ?? null : store.runs(t.id).findLast(run => run.agentId === agentId && run.profile)?.profile ?? null);
-  const group = firstWorkerSelection?.entry.group ?? (options.profile ? store.pool().find(entry => entry.profileId === options.profile!.id)?.group ?? null
-    : role === 'executor' && priorExecutor?.profile ? store.pool().find(entry => entry.profileId === priorExecutor.profile!.id)?.group ?? null : null);
+  // The selected profile's own pool group is the binding's group for every role,
+  // so reservation charges the assignment and delivery keeps it on the run and
+  // the task (a revision with no retained agent had a null group here).
+  const group = firstWorkerSelection?.entry.group ?? groupForProfile(ctx, profile);
   return { agentId, profile, group, priorExecutor };
 }
 

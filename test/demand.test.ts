@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { demandPick, requestedTier, runDemand, taskDemandPreview, workerStartTier, workerStepUp, type DemandCandidate } from '../shared/demand';
+import { demandPick, requestedTier, runDemand, taskDemandPreview, workerClimbTarget, workerStartTier, workerStepUp, type DemandCandidate } from '../shared/demand';
 import { poolSchema, submissionSchema, usageLevelSchema, usageLevels, type CapabilityLevel, type DemandLevel, type Profile, type ProfileCapability, type Task, type UsageLevel } from '../shared/contracts';
 import { chooseProfile } from '../core/dispatch/routing';
 import { requestOnly } from '../shared/pool';
@@ -70,6 +70,17 @@ test('052: against the real pool shape, every level starts at its table tier and
       assert.ok(topTwo.has(entry.capability!), `${complexity}: ${row.role} runs on ${entry.capability} at maximum`);
     }
   }
+});
+
+test('052: the climb is one step from the worker\'s actual tier, after a shortfall too', () => {
+  const pool = [entry('low', 'low', 'low'), entry('medium', 'medium', 'medium'), entry('high', 'high', 'high')];
+  const climb = (profileId: string | null) => workerClimbTarget({ complexity: 'high', profile: profileId ? { id: profileId } : null,
+    resolution: { review: { status: 'changes_required', runId: 'review-1' }, workerClimb: null } }, pool, 'normal');
+  // The first run started one tier below (medium) and the shortfall path actually
+  // used low; the revision climbs to the missing intermediate tier, not to high.
+  assert.deepEqual(climb('low'), { from: 'low', to: 'medium', reviewRunId: 'review-1' });
+  assert.deepEqual(climb('medium'), { from: 'medium', to: 'high', reviewRunId: 'review-1' });
+  assert.equal(climb('high'), null, 'a worker already at the requested tier does not climb');
 });
 
 test('052: coordinator and recovery offsets are unchanged under every level, maximum included', () => {

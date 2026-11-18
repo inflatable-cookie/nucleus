@@ -64,6 +64,7 @@ import { pipelineBoard, pipelineColumn } from "../shared/pipeline-board";
 import { REPOSITORY_CONTENTION_GRACE_MS } from "../core/scheduling/repository-contention";
 import { Decisions } from "../core/planning/decisions";
 import { chooseProfile } from "../core/dispatch/routing";
+import { resolveNonDeliveryRoute } from "../core/dispatch/run-launch/non-delivery-route";
 import {
   reconcileRoutingSignoffs,
   signoffApprove,
@@ -84,6 +85,7 @@ import {
   WorkerSourceRefusal,
 } from "../core/git/index";
 import { DEFAULT_UNCERTAIN_MERGE_RETRY_MS } from "../shared/contracts";
+
 
 test("local Git status timeout classification requires the child timeout witness", () => {
   const timeout = gitReadTimeoutFailure(["status", "--porcelain"], 600000, {
@@ -2017,6 +2019,9 @@ test('Spec 052: an applied changes-required review climbs the next worker run on
   assert.notEqual(revision.agentId,'worker','the climb starts a fresh revision agent');
   assert.equal(climbed.retiredWorkers.length,1,'the retained worker is retired for the archive sweep');
   assert.equal(climbed.agentId,revision.agentId,'the fresh revision agent is bound as the task\'s retained worker');
+  assert.equal(revision.profileGroup,'worker-high','the revision run carries the selected subscription group');
+  assert.equal(climbed.profileGroup,'worker-high','the task keeps the selected subscription group');
+  assert.ok((f.store.counts()['worker-high'] ?? 0) >= 1,'the assignment is charged to the selected group');
   assert.equal(climbed.runId,revision.id,'the revision run is the task\'s current worker run');
   assert.equal(climbed.resolution.workerClimb?.to,'high');
   assert.equal(climbed.resolution.workerClimb?.from,'medium');
@@ -2037,6 +2042,10 @@ test('Spec 052: an applied changes-required review climbs the next worker run on
   // Maximum raises the retained reviewer floor to the top two tiers as well.
   f.store.setMeta('usageLevel',{level:'maximum',until:null,setAt:new Date().toISOString()});
   assert.match(String(f.engine.resolution.reviewerCapabilityIssue(f.current(),highReviewer)),/top two tiers Maximum/,'a retained reviewer below Maximum\'s tiers is replaced');
+  const unrated=profile('reviewer-unrated','test/reviewer-unrated');
+  f.engine.profiles=[...f.engine.profiles,unrated];
+  f.store.setMeta('pool',[...f.store.pool(),{profileId:unrated.id,enabled:true,group:'reviewer-unrated',roles:['reviewer'],weight:1,scopes:['general'],cost:'medium'}]);
+  assert.match(String(f.engine.resolution.reviewerCapabilityIssue(f.current(),unrated)),/unrated.*top two tiers Maximum/,'an unrated retained reviewer is below Maximum\'s floor');
   const topReviewer=profile('reviewer-top','test/reviewer-top');
   f.engine.profiles=[...f.engine.profiles,topReviewer];
   f.store.setMeta('pool',[...f.store.pool(),{profileId:topReviewer.id,enabled:true,group:'reviewer-top',roles:['reviewer'],weight:1,scopes:['general'],capability:'very_high',cost:'medium'}]);
@@ -3008,6 +3017,35 @@ test("responsible non-delivery gets one retained pushback, one same-capability p
   } finally {
     await f.close();
   }
+test('Spec 052: a non-delivery alternate keeps the climbed tier in its permission filter', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ns-nondelivery-climb-'));
+  const store = new Store(join(dir, 'queue.sqlite'));
+  try {
+    const task = store.insert(submissionSchema.parse({ submissionId: 'nondelivery-climb', title: 'Non-delivery climb', repoPath: '/repo',
+      planningCommit: base, handoffPath: 'h', originAgentId: 'origin', complexity: 'very_high' }), 'host', 'handoff', base);
+    const top = profile('top', 'test/top');
+    const alt = { ...profile('alt', 'test/alt'), provider: 'other' };
+    store.setMeta('pool', [
+      { profileId: top.id, enabled: true, group: 'top', roles: ['worker'], weight: 1, scopes: ['general'], capability: 'very_high', cost: 'high' },
+      { profileId: alt.id, enabled: true, group: 'alt', roles: ['worker'], weight: 1, scopes: ['general'], capability: 'very_high', cost: 'high' },
+    ]);
+    store.setMeta('usageLevel', { level: 'normal', until: null, setAt: new Date().toISOString() });
+    const taskWith = (climb: boolean) => store.update(task.id, { profile: top, profileGroup: 'top', agentId: 'worker', runId: 'run',
+      workspaceId: 'workspace', directory: '/worktree',
+      resolution: { ...store.task(task.id).resolution, nonDeliveryRoutePending: true, currentRunId: null,
+        workerClimb: climb ? { reviewRunId: 'review-1', from: 'high' as const, to: 'very_high' as const, profileId: top.id, at: '2026-11-17T00:00:00.000Z' } : null } });
+    const ctx = () => ({ store, profiles: () => [top, alt], counts: () => store.counts(),
+      recentCounts: () => store.counts(), availability: () => [], update: () => {},
+      waiting: () => {}, openPlannerEscalation: () => {},
+      host: { observe: async (id: string) => ({ id, workspaceId: 'workspace', status: 'idle', active: false, permissions: false, error: '' }) } } as never);
+    const withClimb = taskWith(true);
+    const climbed = await resolveNonDeliveryRoute(ctx(), withClimb, 'revision');
+    assert.equal(climbed.kind, 'alternate', 'the very-high alternate is eligible on the climbed tier');
+    assert.equal(climbed.kind === 'alternate' ? climbed.profile.id : null, alt.id);
+    const beforeClimb = await resolveNonDeliveryRoute(ctx(), taskWith(false), 'revision');
+    assert.equal(beforeClimb.kind, 'handled', 'without the recorded climb the very-high alternate is filtered out');
+  } finally { store.close(); rmSync(dir, { recursive: true, force: true }); }
+});
 
 });
 

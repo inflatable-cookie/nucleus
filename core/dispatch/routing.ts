@@ -261,13 +261,13 @@ export function chooseProfile(task: Task, profiles: Profile[], pool: PoolEntry[]
   // tier, a climbed or routed worker never falls back below its actual profile,
   // and a reviewer is floored at the same actual profile.
   const demand = role === "worker" ? (climb ? climb.to : raised) : role === "reviewer" ? raised : fullDemand;
-  // A reviewer never runs below the worker's actual capability, and a preferred
-  // reviewer is held to the same floor.
-  const reviewerMeets = (entry: PoolEntry) => {
+  // Maximum reserves the top two tiers for workers and reviewers (an explicit
+  // request included), and a reviewer never runs below the worker's actual tier.
+  const roleMeets = (entry: PoolEntry) => {
+    if (usage === "maximum" && role !== "coordinator" && !topTier(entry.capability)) return false;
     if (role !== "reviewer") return true;
     // An unrated capability counts as medium, as the demand rank does.
     const rank = entry.capability ? demandRank(entry.capability) : demandRank("medium");
-    if (usage === "maximum" && !topTier(entry.capability)) return false;
     return !workerActual || rank >= demandRank(workerActual);
   };
   let eligible = pool.flatMap(entry => {
@@ -286,9 +286,9 @@ export function chooseProfile(task: Task, profiles: Profile[], pool: PoolEntry[]
     // An explicit (honoured) request or owner route is its own permission; a
     // plain preference never reaches above the requested tier or a tier the
     // level holds. A preferred reviewer must also meet the worker's capability.
-    const preferredReaches = Boolean(preferred) && (request
-      ? reviewerMeets(preferred!.entry)
-      : automaticReachable(preferred!.entry, usage, requested, climbTier, role) && reviewerMeets(preferred!.entry));
+    const preferredReaches = Boolean(preferred) && roleMeets(preferred!.entry) && (request
+      ? true
+      : automaticReachable(preferred!.entry, usage, requested, climbTier, role));
     if (preferred && preferredReaches) return preferred;
     if (required) return null;
   }
@@ -311,7 +311,7 @@ export function chooseProfile(task: Task, profiles: Profile[], pool: PoolEntry[]
   // The reviewer floor is absolute: when every independent candidate is weaker
   // than the worker's actual tier, the role waits for a route rather than
   // certifying that tier on a weaker profile.
-  const tier = role === "reviewer" ? rawTier.filter(entry => reviewerMeets(entry)) : rawTier;
+  const tier = rawTier.filter(entry => roleMeets(entry));
   const inTier = new Set(tier.map(entry => entry.profileId));
   const ranked = eligible.filter(candidate => inTier.has(candidate.entry.profileId));
   const share = (candidate: typeof ranked[number]) => effectiveWeight(candidate.entry.weight, candidate.entry.cost);
@@ -550,15 +550,19 @@ export class RoleSelection {
     if (!assigned) return null;
     const pool = this.store.pool();
     const usage = this.store.usageLevel();
-    const worker = workerActualTier(t, pool);
-    const reviewer = pool.find(entry => entry.profileId === assigned.id)?.capability ?? null;
-    if (!reviewer) return null;
+    const entry = pool.find(item => item.profileId === assigned.id);
+    // A null capability is a supported rating (unrated counts as medium), not
+    // an absent profile: Maximum's top-tier floor still applies to it.
+    const reviewer = entry?.capability ?? null;
+    if (!entry) return null;
     if (usage === "maximum" && !topTier(reviewer))
-      return `reviewer profile ${assigned.name || assigned.id} is rated ${reviewer}, below the top two tiers Maximum reserves for reviewers`;
+      return `reviewer profile ${assigned.name || assigned.id} is rated ${reviewer ?? "unrated"}, below the top two tiers Maximum reserves for reviewers`;
+    const worker = workerActualTier(t, pool);
     const calculated = runDemand(t.complexity, "reviewer", usage, this.store.demandRoleOffsets());
     const required = worker && demandRank(worker) > demandRank(calculated) ? worker : calculated;
-    return demandRank(reviewer) < demandRank(required)
-      ? `reviewer profile ${assigned.name || assigned.id} is rated ${reviewer}, below the ${required} tier this run needs`
+    const reviewerRank = reviewer ? demandRank(reviewer) : demandRank("medium");
+    return reviewerRank < demandRank(required)
+      ? `reviewer profile ${assigned.name || assigned.id} is rated ${reviewer ?? "unrated"}, below the ${required} tier this run needs`
       : null;
   }
   retainedProfileIssue(assigned:Profile|null){

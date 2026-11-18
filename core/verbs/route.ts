@@ -113,7 +113,7 @@ export class RouteControls {
       if (!reason) throw Error("route requires a reason");
       // Round 4: a route applies while paused; only dispatch waits for unpause.
 
-      const thinking = input.thinkingOptionId ?? (role === "worker" ? honouredWorkerThinking(task, this.store.pool(), this.store.usageLevel()) : "") ?? "";
+      const thinking = input.thinkingOptionId ?? (role === "worker" ? honouredWorkerThinking(task, this.store.pool(), this.store.usageLevel(), requestedTier(task.complexity), climbedTier(task)) : "") ?? "";
       this.engine.requireProfileCatalog();
       // The task's own host decides availability: a profile its catalog cannot
       // run is refused here, before it is ever recorded (nucleus#1139 review).

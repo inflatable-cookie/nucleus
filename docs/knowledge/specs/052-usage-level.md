@@ -121,12 +121,15 @@ tiers" are `frontier` (Opus-class) and `very_high` (Sol extra-high-class).
   the climb is the one automatic worker replacement: the ordinary revision
   launch records the climb, retires the retained worker (for the archive sweep),
   and continues as its usual revision run on a fresh agent at the climbed
-  profile; delivery binds that agent and run as the task's retained worker, so a
-  later same-tier revision continues it. The climb is recorded before the launch
+  profile; delivery binds that agent and run as the task's retained worker,
+  keeps the selected subscription group on both the run and the task, and
+  charges the group's assignment, so a later same-tier revision continues it. The climb is recorded before the launch
   so its tier stays permitted, and the `changes_requested` phase alone never
   authorizes it. Request reconciliation (`reconcileRoutingSignoffs`) and route
   admission read the same recorded climb, so a request or route at the earned
-  tier needs no second sign-off. Climbing back to the requested
+  tier needs no second sign-off; the same-capability non-delivery and rate-limit
+  replacements read it too, so an eligible alternate on the earned tier is not
+  discarded. Climbing back to the requested
   tier never needs permission; going above it is an explicit planner or
   operator route.
 - **Automatic selection stays at or below the requested tier.** The run's tier
@@ -135,8 +138,9 @@ tiers" are `frontier` (Opus-class) and `very_high` (Sol extra-high-class).
   below the requested tier on a shortfall. A profile above the requested tier is
   never automatic, and neither a worker preference nor a `preferredProfileId`
   reaches it; only an explicit request or owner route does. Maximum's own rule
-  is the top two tiers for workers and reviewers; a coordinator keeps its
-  configured offset instead.
+  is the top two tiers for workers and reviewers, an explicit worker request
+  included, and an unrated retained reviewer is below it too; a coordinator keeps
+  its configured offset instead.
 - **Reviewers never run below the worker's actual tier.** A fresh, preferred or
   retained reviewer below the pool rating of the profile the worker actually ran
   on is not usable: selection returns no reviewer and the role waits for a route

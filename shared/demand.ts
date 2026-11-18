@@ -97,8 +97,10 @@ export function workerClimbTarget(task: {
   // tier. A task the level starts at the requested tier (a High/Extra-high run,
   // or a configured role offset that moved a lower run) does not climb.
   if (demandRank(start) >= demandRank(requested)) return null;
-  const actual = workerActualTier(task, pool) ?? start;
-  const from = demandRank(actual) > demandRank(start) ? actual : start;
+  // One step from the tier the worker actually ran on: a first run that used
+  // the shortfall path must climb to the missing intermediate tier, never skip
+  // it (Tom, 2026-11-17).
+  const from = workerActualTier(task, pool) ?? start;
   const target = Math.min(demandRank(from) + 1, demandRank(requested));
   if (target <= demandRank(from)) return null;
   return { from, to: DEMAND_LEVELS[target], reviewRunId: review.runId };

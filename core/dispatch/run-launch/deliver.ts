@@ -188,7 +188,7 @@ export class RunLaunchDeliver {
           // Spec 052 (Tom, 2026-11-17): the climb retired the previous worker
           // before this revision. The fresh revision agent becomes the task's
           // retained worker, so the next same-tier revision continues it.
-          this.store.update(t.id, { agentId, runId: run.id, profile, profileGroup: group,
+          this.store.update(t.id, { agentId, runId: run.id, profile, profileGroup: group ?? t.profileGroup ?? null,
             workerModel: profile!.model, workerModels: [...new Set([...t.workerModels, profile!.model])] },
             'worker_climb_bound', agentId);
         }

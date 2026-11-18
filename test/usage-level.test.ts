@@ -62,13 +62,14 @@ test('Spec 052 diagnostics: the explanation matches what chooseProfile does, for
         // A request reaches exactly the profiles the level's permission rule does
         // not hold; the task's requested-tier bound only stops automatic
         // selection, which is what the explanation reports.
-        const reviewerTopTier = role !== 'reviewer' || level !== 'maximum' || topTier(capability);
+        // Maximum reserves the top two tiers for workers and reviewers, an explicit request included.
+        const roleTopTier = !(level === 'maximum' && role !== 'coordinator' && !topTier(capability));
         assert.equal(chooseProfile(requestedProfile, profiles, [entry], {}, new Set(), role, {}, level)?.profile.id === 'p',
-          !requestOnly(entry, level, requested) && reviewerTopTier,
+          !requestOnly(entry, level, requested) && roleTopTier,
           `${label} ${role}: an unsigned request reaches exactly where the level and the role floor allow it`);
         const signed = { ...adopt, profileRequests: { [role]: { profileId: 'p', reason: 'Owner request', required: false,
           signoff: { status: 'approved' as const, decisionId: 'd', by: 'operator (board)', at: '2026-10-21T00:00:00.000Z', note: '' } } } };
-        assert.equal(chooseProfile(signed, profiles, [entry], {}, new Set(), role, {}, level)?.profile.id, reviewerTopTier ? 'p' : undefined,
+        assert.equal(chooseProfile(signed, profiles, [entry], {}, new Set(), role, {}, level)?.profile.id, roleTopTier ? 'p' : undefined,
           `${label} ${role}: a signed-off request works wherever the level and the role floor allow it`);
       }
       // Cost is never the permission rule (Tom, 2026-11-17), and a tier at or
