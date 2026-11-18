@@ -3022,6 +3022,7 @@ test("responsible non-delivery gets one retained pushback, one same-capability p
   } finally {
     await f.close();
   }
+});
 test('Spec 052: a non-delivery alternate keeps the climbed tier in its permission filter', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'ns-nondelivery-climb-'));
   const store = new Store(join(dir, 'queue.sqlite'));
@@ -3050,8 +3051,6 @@ test('Spec 052: a non-delivery alternate keeps the climbed tier in its permissio
     const beforeClimb = await resolveNonDeliveryRoute(ctx(), taskWith(false), 'revision');
     assert.equal(beforeClimb.kind, 'handled', 'without the recorded climb the very-high alternate is filtered out');
   } finally { store.close(); rmSync(dir, { recursive: true, force: true }); }
-});
-
 });
 
 test("a pending non-delivery replacement with no eligible provider escalates once to the planner", async () => {
