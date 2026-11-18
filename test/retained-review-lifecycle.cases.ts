@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { Store, digest } from '../core/store/store';
 import { Engine } from '../core/engine';
-import { REVIEW_AGENT_CLOSED, REVIEW_BUDGET_EXHAUSTED } from '../core/review/review-continuation';
+import { REVIEW_AGENT_CLOSED } from '../core/review/review-continuation';
 import {
   holdsOf, proofExecutionRecordSchema, REVIEW_CONTINUATION_LIMIT, reviewDeliveryAuthorizationSchema, reviewEntryRecordSchema, runSchema, submissionSchema, taskControlInputSchema, taskNextSchema,
   type Profile, type Run, type Task,
@@ -237,7 +237,7 @@ test('move to=review preserves and continues an awaiting checkpoint on the same 
   } finally { await f.close(); }
 });
 
-test('move to=review preserves a reader that is still reading, and a delivered turn sends nothing new', async () => {
+test('move to=review preserves an active reader and recovers a stopped delivered turn', async () => {
   const f = fixture(); try {
     // Reading with no saved coverage yet: nothing is replaced mid-read.
     f.observe({ status: 'running', active: true });
@@ -254,12 +254,10 @@ test('move to=review preserves a reader that is still reading, and a delivered t
     await f.engine.wake(); await f.engine.quiesce();
     assert.equal(f.reviewerDeliveries.length, 1);
     assert.equal(f.events('review_auto_continued').length, 1);
-    const before = f.current().version;
     const delivered = await f.control({ action: 'move', to: 'review', reason: 'Keep the reader on its delivered turn' });
     assert.equal(delivered.resolution.currentRunId, f.runId);
     assert.equal(f.reviewerDeliveries.length, 1, 'no second turn is sent for a delivered continuation without a verdict');
-    assert.equal(f.events('move_review_retained').length, 2);
-    assert.ok(delivered.version > before);
+    assert.equal(f.events('reviewer_report_request_sent').length, 1, 'the idle reader is asked for its report');
   } finally { await f.close(); }
 });
 
@@ -771,10 +769,8 @@ test('the stop-backed resume still needs a matching idle reader, the same identi
     assert.equal(f.reviewerDeliveries.length, 1);
     f.store.update(f.submitted.id, { prHead: head });
 
-    // A spent budget or a closed reader keeps its own explicit exits.
-    f.store.putRun({ ...f.run(), reviewBudgetExhaustedAt: new Date().toISOString() });
-    await assert.rejects(restartReviewer(f, 'Resume the stopped turn'), new RegExp(REVIEW_BUDGET_EXHAUSTED.slice(0, 40)));
-    f.store.putRun({ ...f.run(), reviewBudgetExhaustedAt: undefined, retainedAgentClosedAt: new Date().toISOString() });
+    // A closed reader keeps its own explicit exit.
+    f.store.putRun({ ...f.run(), retainedAgentClosedAt: new Date().toISOString() });
     await assert.rejects(restartReviewer(f, 'Resume the stopped turn'), new RegExp(REVIEW_AGENT_CLOSED.slice(0, 40)));
     assert.equal(f.reviewerDeliveries.length, 1);
 

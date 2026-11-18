@@ -9,7 +9,7 @@ import { z } from "zod";
 import { isDispositionActive, taskControlInputSchema, taskNextVerbSchema, type Run, type Task, type TaskControlInput, type TaskNextVerb } from "../../shared/contracts";
 import { operatorReplacementPending } from "../recovery/task-reasons";
 import { blockingRecoveryEffectsRefusal } from "../recovery/recovery-effects";
-import { reviewInProgress, reviewerIdentityAtHead, reviewContinuationState, retainedReaderStateDecision, retainedReaderStoredRefusal, retainedReaderUnavailableRefusal, reviewContinuationWait, keepRetainedReviewer } from "../review/review-continuation";
+import { reviewInProgress, reviewerIdentityAtHead, reviewContinuationState, reviewResultFencesRun, retainedReaderStateDecision, retainedReaderStoredRefusal, retainedReaderUnavailableRefusal, reviewContinuationWait, keepRetainedReviewer } from "../review/review-continuation";
 import { durableRunFence, currentReadyPrEvidence, prIdentity } from './owner-facts';
 import type { OwnerVerbFacts } from './owner-facts';
 import { verbInput } from './owner-shared';
@@ -143,6 +143,8 @@ function moveViews(facts: OwnerVerbFacts): TaskNextVerb[] {
     if (reader) {
       const state = reviewContinuationState(task, facts.store);
       const readerDecision = retainedReaderStateDecision(state);
+      if (state === 'exhausted' || state === 'awaiting' && reviewResultFencesRun(facts.store, task, reader))
+        return { available: true, args: {}, note: 'Nucleus verifies the exact PR head and observes the retained reviewer before requesting its report.' };
       const storedRefusal = retainedReaderStoredRefusal(state, reviewContinuationWait(task, facts.store).reason);
       if (storedRefusal) return { available: false, refusal: storedRefusal };
       // An awaiting checkpoint is the one case where the move delegates a
@@ -155,10 +157,10 @@ function moveViews(facts: OwnerVerbFacts): TaskNextVerb[] {
         if (plan?.kind === 'refused') return { available: false, refusal: plan.refusal };
         if (plan?.kind === 'fresh_only') return { available: false, refusal: retainedReaderUnavailableRefusal() };
         if (plan?.kind === 'ready')
-          return { available: true, args: {}, note: `This preserves the valid reader on run ${reader.id} (agent ${reader.agentId}) at ${task.prHead} and continues checkpoint ${plan.checkpoint.ordinal} through the ordinary retained-restart delivery${plan.deferred ? ', recorded now and delivered once the task is unheld' : ' once the reviewer is idle'}. restart role=reviewer fresh or route role=reviewer with now replaces it deliberately.${plan.note ? ` ${plan.note}` : ''}` };
+          return { available: true, args: {}, note: `This preserves the valid reader on run ${reader.id} (agent ${reader.agentId}) at ${task.prHead} and continues checkpoint ${plan.checkpoint.ordinal} through the ordinary retained-restart delivery${plan.deferred ? ', recorded now and delivered once the task is unheld' : ' once the reviewer is idle'}.${plan.note ? ` ${plan.note}` : ''}` };
         return { available: false, refusal: `the saved checkpoint on run ${reader.id} is no longer the reviewer's latest; read next again before moving` };
       }
-      return { available: true, args: {}, note: `This preserves the valid reader on run ${reader.id} (agent ${reader.agentId}) at ${task.prHead} and sends no new review turn; restart role=reviewer fresh or route role=reviewer with now replaces it deliberately.` };
+      return { available: true, args: {}, note: `This observes the retained reader on run ${reader.id} (agent ${reader.agentId}) at ${task.prHead}, preserving an active turn or recovering a stopped report.` };
     }
     if(identity.kind==='valid'){
       const reviewGate = liveGate('review', true);

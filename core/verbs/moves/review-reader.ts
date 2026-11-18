@@ -2,7 +2,7 @@ import { taskControlInputSchema, type Run, type Task, type TaskControlInput } fr
 import type { Engine } from "../../engine";
 import type { AgentObservation } from "../../host/adapter";
 import { hostFailureRefusalDetail } from "../../host/errors";
-import { REVIEW_FRESH_REPLACEMENT_EXIT, reviewContinuationState, reviewContinuationWait, reviewInProgress, reviewResultFencesRun, retainedReaderStateDecision, retainedReaderStoredRefusal, retainedReaderUnavailableRefusal } from "../../review/review-continuation";
+import { REVIEW_FRESH_REPLACEMENT_EXIT, reviewContinuationState, reviewContinuationWait, reviewInProgress, reviewResultFencesRun, stoppedDeliveryResume, retainedReaderStateDecision, retainedReaderStoredRefusal, retainedReaderUnavailableRefusal } from "../../review/review-continuation";
 import { plainHandoverFreshRestart, RestartRefusal } from "../owner-verbs";
 import type { FinishedRuns, ReviewMoveInput, VerifiedPr } from "./types";
 import { requestReviewerReport, unreportedReviewer } from '../reviewer-report';
@@ -57,7 +57,11 @@ export async function moveRetainedReader(engine: Engine, input: ReviewMoveInput,
   if (observed.id !== reading.agentId || observed.workspaceId !== reading.workspaceId)
     throw Error('Move to review cannot prove the retained reviewer in its workspace; no review turn was sent');
   const busy = observed.active || Boolean(observed.activeTurnId) || observed.permissions;
-  if (!busy && (!reader || state === 'continuing' || state === 'exhausted' || reviewResultFencesRun(store, latestTask, reading))
+  const delivery = reading.reviewDeliveries?.findLast(item => item.checkpointOrdinal === reading.reviewCheckpoints?.at(-1)?.ordinal && item.status === 'delivered');
+  const stoppedAfterDelivery = state === 'continuing' && reading.active === false && reading.lastObservedAt != null && delivery?.observedAt != null
+    && Date.parse(reading.lastObservedAt) > Date.parse(delivery.observedAt)
+    && delivery && stoppedDeliveryResume(store, latestTask, reading, delivery).kind === 'none';
+  if (!busy && (!reader || stoppedAfterDelivery || state === 'exhausted' || state === 'awaiting' && reviewResultFencesRun(store, latestTask, reading))
     && unreportedReviewer(latestTask, store.runs(task.id))?.id === reading.id)
     return requestReviewerReport(engine, latestTask, reading, input.version, input.reason);
   const decision = retainedReaderDecision({ reader: Boolean(reader), state, busy: Boolean(busy), status: observed.status,

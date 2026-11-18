@@ -1315,26 +1315,22 @@ weighted(3)("a result at an older head is history for every status after the aut
   }
 });
 
-weighted(3)('an idle checkpoint fenced by its own-head result is shown stopped and offers an applicable fresh reviewer', async () => {
+weighted(3)('an idle checkpoint fenced by its own-head result can recover through its retained reviewer', async () => {
   const f = fixture(); try {
     await f.report({ covered: ['Diff'], remaining: ['Proofs'] }, 'own-head-result-cp');
     const result = completionSchema.parse({ eventId: 'own-head-review-result', taskId: f.submitted.id, runId: f.runId,
       status: 'ready_to_merge', summary: 'Approved at this head', head });
     f.store.update(f.submitted.id, { resolution: { ...f.current().resolution, review: result } });
-    await f.engine.wake();
     const next = ownerTaskNext(collectOwnerVerbFacts(f.store, f.current()));
-    assert.equal(next.activeRun?.status, 'stopped');
-    assert.match(next.stop?.detail ?? '', /reviewer result fences checkpoint/);
-    const restart = next.verbs.find(verb => verb.available && verb.verb === 'restart' && verb.args?.role === 'reviewer');
-    assert.ok(restart, 'next offers restart role=reviewer fresh');
-    assert.equal(restart.args?.fresh, true);
-    f.adapter.originAgent = async () => ({ id: 'review-agent', workspaceId: 'workspace', title: 'reviewer', archived: true });
-    const outcome = await acceptControl(f, taskControlInputSchema.parse({ ...restart.args,
-      reason: 'The result fences the saved checkpoint; start a fresh review at this head', caller: 'owner' }));
+    const move = next.verbs.find(verb => verb.available && verb.verb === 'move' && verb.args?.to === 'review');
+    assert.ok(move, 'next offers move to review');
+    const messages: string[] = [];
+    f.adapter.notify = async (_agent, _id, text) => { messages.push(text); };
+    const outcome = await acceptControl(f, taskControlInputSchema.parse({ ...move.args,
+      reason: 'Recover the review report at this head', caller: 'owner' }));
     assert.equal(outcome.state, 'succeeded', outcome.diagnostic);
-    assert.equal(f.store.run(f.runId)?.status, 'superseded');
-    assert.equal(f.store.run(f.runId)?.released, true);
-    assert.equal(f.reviewerDeliveries.length, 0, 'the fenced run receives no second turn');
+    assert.equal(f.store.run(f.runId)?.released, false);
+    assert.equal(messages.length, 1, 'the same reader is asked to report');
   } finally { await f.close(); }
 });
 

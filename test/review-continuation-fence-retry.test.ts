@@ -7,6 +7,7 @@ test('an idle reviewer with a delivered checkpoint can redeliver its report on t
     await f.report({ covered: ['Diff'], remaining: ['Tests'] }, 'report-lost');
     await f.engine.wake();
     assert.equal(f.reviewerDeliveries.length, 1);
+    f.store.putRun({ ...f.run(), active: false, lastObservedAt: new Date(Date.now() + 1000).toISOString() });
     const sent: { id: string; text: string }[] = [];
     f.adapter.notify = async (_agent, id, text) => { sent.push({ id, text }); };
     const task = f.current();

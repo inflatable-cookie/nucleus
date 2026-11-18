@@ -368,14 +368,16 @@ export const restart: OwnerVerb = {
     }
     const role = deriveRestartRole(task, runs);
     const shape = restartShape(task, runs, role, facts.events);
-    const reviewer = role === 'reviewer' && shape !== 'stalled_run' ? unreportedReviewer(task, runs) : null;
+    const candidate = role === 'reviewer' && shape !== 'stalled_run' ? unreportedReviewer(task, runs) : null;
+    const reviewer = candidate && !candidate.retainedAgentClosedAt
+      && (!(candidate.reviewCheckpoints?.length) || candidate.reviewBudgetExhaustedAt) ? candidate : null;
     if (reviewer) {
       const requested = facts.events.some(event => ['reviewer_report_request_sent', 'reviewer_report_request_intent'].includes(event.kind)
         && event.detail.startsWith(`${reviewer.id}:`));
       return requested
         ? { available: false, refusal: `Reviewer ${reviewer.id} already has a report request or unknown delivery; inspect its thread` }
         : { available: true, fill: ['reason'], args: { taskId: task.id, version: task.version, role: 'reviewer' },
-          note: `Asks retained reviewer ${reviewer.agentId} to resend the report on run ${reviewer.id} after observing it idle; no new review starts.` };
+          note: `Asks retained reviewer ${reviewer.agentId} to resend the report on run ${reviewer.id} after observing it idle; no new review starts.${rejectedReadingNote(reviewer)}` };
     }
     // nucleus#1195: one bounded continuation asks a live proof executor whose
     // result never arrived to resend that report on its existing run and
