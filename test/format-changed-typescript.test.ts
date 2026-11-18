@@ -60,10 +60,14 @@ async function fixtureRepo(t: TestContext, name: string, content: string) {
 }
 
 function runFmt(root: string, check = false) {
-  return spawnSync(process.execPath, [formatScript, ...(check ? ["--check"] : [])], {
-    cwd: root,
-    encoding: "utf8",
-  });
+  return spawnSync(
+    process.execPath,
+    [formatScript, ...(check ? ["--check"] : [])],
+    {
+      cwd: root,
+      encoding: "utf8",
+    },
+  );
 }
 
 /** The task 544 shape: a large class that was never prettier-formatted, with a JSDoc member mid-file. */
@@ -303,11 +307,18 @@ test("formatting plan applies changed hunks and reports surrounding drift", () =
 test("end to end: whole-file formatting preserves methods around a changed member", async (t) => {
   const committed = driftedEngine();
   const root = await fixtureRepo(t, "engine.ts", committed);
-  const edited = committed.replace("return refused!=null }", "return refused!=null; }");
+  const edited = committed.replace(
+    "return refused!=null }",
+    "return refused!=null; }",
+  );
   await writeFile(join(root, "engine.ts"), edited);
   const check = runFmt(root, true);
   assert.equal(check.status, 1);
-  assert.equal(await readFile(join(root, "engine.ts"), "utf8"), edited, "check writes nothing");
+  assert.equal(
+    await readFile(join(root, "engine.ts"), "utf8"),
+    edited,
+    "check writes nothing",
+  );
   const result = runFmt(root);
   assert.equal(result.status, 0, result.stderr);
   const output = await readFile(join(root, "engine.ts"), "utf8");

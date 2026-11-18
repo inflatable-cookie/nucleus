@@ -1,20 +1,68 @@
-import type { Resolution } from '../resolution';
-import { holdsOf, runtimeRetirementFailure, type Task } from '../../shared/contracts';
-import { OWNER_STOP_HOLD_PREFIX, releasePatch } from '../merge/merge-hold';
-import type { Engine } from '../engine';
-import { portsContext } from '../port-context';
-import { CloseoutRecovery } from './recovery';
+import type { Resolution } from "../resolution";
+import {
+  holdsOf,
+  runtimeRetirementFailure,
+  type Task,
+} from "../../shared/contracts";
+import { OWNER_STOP_HOLD_PREFIX, releasePatch } from "../merge/merge-hold";
+import type { Engine } from "../engine";
+import { portsContext } from "../port-context";
+import { CloseoutRecovery } from "./recovery";
 
-import { externalWorkspaceArchiveDue, settleExternalWorkspaceArchive } from '../workspaces/external-workspace-archive';
-import { archiveIntentUnreadable, archiveSettledByOwner } from '../workspaces/archive-intent';
-import { archiveRetryWaiting, recordArchiveRetry, terminalArchiveSource, terminalArchiveWorkspaces, workspaceArchiveFailureReason, type WorkspaceArchiveRetry } from './terminal-archive';
-import { ArchiveProof, type LifecycleAdapter } from './archive-proof';
-import { ArchiveScheduler } from './archive-scheduler';
-import { runTerminalHooks } from './terminal-hooks';
-import { missingOriginHasPlanner } from '../questions/origin';
-import { admissionOf } from '../host/admission';
+import {
+  externalWorkspaceArchiveDue,
+  settleExternalWorkspaceArchive,
+} from "../workspaces/external-workspace-archive";
+import {
+  archiveIntentUnreadable,
+  archiveSettledByOwner,
+} from "../workspaces/archive-intent";
+import {
+  archiveRetryWaiting,
+  recordArchiveRetry,
+  terminalArchiveSource,
+  terminalArchiveWorkspaces,
+  workspaceArchiveFailureReason,
+  type WorkspaceArchiveRetry,
+} from "./terminal-archive";
+import { ArchiveProof, type LifecycleAdapter } from "./archive-proof";
+import { ArchiveScheduler } from "./archive-scheduler";
+import { runTerminalHooks } from "./terminal-hooks";
+import { missingOriginHasPlanner } from "../questions/origin";
+import { admissionOf } from "../host/admission";
 
-export type LifecycleContext = Pick<Engine, 'adapter' | 'drainCleanup' | 'enqueueCleanup' | 'hooks' | 'host' | 'onTaskHost' | 'removeSiblings' | 'retirement' | 'scheduleRetirement' | 'scheduleRunBuildOutputs' | 'settleObservedIdleRuns' | 'settleTerminalIntentRuns' | 'settleTerminalRecoveryEpisode' | 'stopped' | 'store' | 'taskHostAvailable' | 'withHost'> & { readonly resolution: Pick<Resolution, 'adapter' | 'closeoutAuthority' | 'hasEarlierIntegrationTurn' | 'lease' | 'attention' | 'environmentDeferred' | 'transportDeferred' | 'update'> };
+export type LifecycleContext = Pick<
+  Engine,
+  | "adapter"
+  | "drainCleanup"
+  | "enqueueCleanup"
+  | "hooks"
+  | "host"
+  | "onTaskHost"
+  | "removeSiblings"
+  | "retirement"
+  | "scheduleRetirement"
+  | "scheduleRunBuildOutputs"
+  | "settleObservedIdleRuns"
+  | "settleTerminalIntentRuns"
+  | "settleTerminalRecoveryEpisode"
+  | "stopped"
+  | "store"
+  | "taskHostAvailable"
+  | "withHost"
+> & {
+  readonly resolution: Pick<
+    Resolution,
+    | "adapter"
+    | "closeoutAuthority"
+    | "hasEarlierIntegrationTurn"
+    | "lease"
+    | "attention"
+    | "environmentDeferred"
+    | "transportDeferred"
+    | "update"
+  >;
+};
 
 /**
  * The lifecycle owner for a task's terminal workspace: which workspaces are due,
@@ -28,52 +76,116 @@ export class Lifecycle {
   private readonly scheduler: ArchiveScheduler;
   constructor(readonly engine: LifecycleContext) {
     this.closeoutRecovery = new CloseoutRecovery({
-      get adapter() { return engine.adapter; },
-      get host() { return engine.host; },
-      get onTaskHost() { return engine.onTaskHost.bind(engine); },
-      get resolution() { return portsContext(engine.resolution, ['adapter', 'closeoutAuthority', 'hasEarlierIntegrationTurn', 'lease', 'update']); },
-      get stopped() { return engine.stopped; },
-      get store() { return engine.store; },
+      get adapter() {
+        return engine.adapter;
+      },
+      get host() {
+        return engine.host;
+      },
+      get onTaskHost() {
+        return engine.onTaskHost.bind(engine);
+      },
+      get resolution() {
+        return portsContext(engine.resolution, [
+          "adapter",
+          "closeoutAuthority",
+          "hasEarlierIntegrationTurn",
+          "lease",
+          "update",
+        ]);
+      },
+      get stopped() {
+        return engine.stopped;
+      },
+      get store() {
+        return engine.store;
+      },
     });
     this.proof = new ArchiveProof({
-      adapter: engine.adapter, hooks: engine.hooks, retirement: engine.retirement, stopped: engine.stopped,
-      store: engine.store, resolution: { update: engine.resolution.update.bind(engine.resolution) },
+      adapter: engine.adapter,
+      hooks: engine.hooks,
+      retirement: engine.retirement,
+      stopped: engine.stopped,
+      store: engine.store,
+      resolution: { update: engine.resolution.update.bind(engine.resolution) },
     });
     this.scheduler = new ArchiveScheduler({
-      adapter: engine.adapter, drainCleanup: () => engine.drainCleanup(), enqueueCleanup: (taskId, retryWorkspaceId) => engine.enqueueCleanup(taskId, retryWorkspaceId),
-      hooks: engine.hooks, scheduleRetirement: taskId => engine.scheduleRetirement(taskId),
-      scheduleRunBuildOutputs: taskId => engine.scheduleRunBuildOutputs(taskId),
-      settleTerminalIntentRuns: taskId => engine.settleTerminalIntentRuns(taskId),
-      stopped: engine.stopped, store: engine.store, taskHostAvailable: task => engine.taskHostAvailable(task),
+      adapter: engine.adapter,
+      drainCleanup: () => engine.drainCleanup(),
+      enqueueCleanup: (taskId, retryWorkspaceId) =>
+        engine.enqueueCleanup(taskId, retryWorkspaceId),
+      hooks: engine.hooks,
+      scheduleRetirement: (taskId) => engine.scheduleRetirement(taskId),
+      scheduleRunBuildOutputs: (taskId) =>
+        engine.scheduleRunBuildOutputs(taskId),
+      settleTerminalIntentRuns: (taskId) =>
+        engine.settleTerminalIntentRuns(taskId),
+      stopped: engine.stopped,
+      store: engine.store,
+      taskHostAvailable: (task) => engine.taskHostAvailable(task),
       withHost: (id, fn) => engine.withHost(id, fn),
-      resolution: { attention: (...args) => engine.resolution.attention(...args), environmentDeferred: (...args) => engine.resolution.environmentDeferred(...args), transportDeferred: (...args) => engine.resolution.transportDeferred(...args), update: (...args) => engine.resolution.update(...args) },
+      resolution: {
+        attention: (...args) => engine.resolution.attention(...args),
+        environmentDeferred: (...args) =>
+          engine.resolution.environmentDeferred(...args),
+        transportDeferred: (...args) =>
+          engine.resolution.transportDeferred(...args),
+        update: (...args) => engine.resolution.update(...args),
+      },
       closeout: {
-        renewStaleCloseoutBase: task => this.renewStaleCloseoutBase(task),
-        renewConsumerBlockedCloseout: task => this.renewConsumerBlockedCloseout(task),
-        recover: task => this.recover(task),
+        renewStaleCloseoutBase: (task) => this.renewStaleCloseoutBase(task),
+        renewConsumerBlockedCloseout: (task) =>
+          this.renewConsumerBlockedCloseout(task),
+        recover: (task) => this.recover(task),
       },
     });
   }
-  get store() { return this.engine.store; }
-  get adapter() { return this.engine.adapter as Engine['adapter'] & Partial<LifecycleAdapter>; }
-  paused() { return this.engine.stopped || this.store.getMeta('paused') === true; }
-  recover(task: Task) { return this.closeoutRecovery.recover(task); }
-  private renewStaleCloseoutBase(task: Task) { return this.closeoutRecovery.renewStaleCloseoutBase(task); }
-  get consumerBlockFetchMs() { return this.closeoutRecovery.consumerBlockFetchMs; }
-  set consumerBlockFetchMs(value: number) { this.closeoutRecovery.consumerBlockFetchMs = value; }
-  private renewConsumerBlockedCloseout(task: Task) { return this.closeoutRecovery.renewConsumerBlockedCloseout(task); }
+  get store() {
+    return this.engine.store;
+  }
+  get adapter() {
+    return this.engine.adapter as Engine["adapter"] & Partial<LifecycleAdapter>;
+  }
+  paused() {
+    return this.engine.stopped || this.store.getMeta("paused") === true;
+  }
+  recover(task: Task) {
+    return this.closeoutRecovery.recover(task);
+  }
+  private renewStaleCloseoutBase(task: Task) {
+    return this.closeoutRecovery.renewStaleCloseoutBase(task);
+  }
+  get consumerBlockFetchMs() {
+    return this.closeoutRecovery.consumerBlockFetchMs;
+  }
+  set consumerBlockFetchMs(value: number) {
+    this.closeoutRecovery.consumerBlockFetchMs = value;
+  }
+  private renewConsumerBlockedCloseout(task: Task) {
+    return this.closeoutRecovery.renewConsumerBlockedCloseout(task);
+  }
   /** A passed retention reconciliation makes the retained workspace ready for immediate cleanup. */
   retentionReconciled(taskId: string, workspaceId: string | null) {
     const current = this.store.task(taskId);
     if (workspaceId) {
       const retries = current.resolution.workspaceArchiveRetries;
-      const workspaceArchiveRetries = retries.filter(record => record.workspaceId !== workspaceId);
+      const workspaceArchiveRetries = retries.filter(
+        (record) => record.workspaceId !== workspaceId,
+      );
       if (workspaceArchiveRetries.length !== retries.length) {
         const archiveFailure = workspaceArchiveFailureReason(retries);
-        const cleanupReason = current.resolution.cleanupReason === archiveFailure
-          ? runtimeRetirementFailure(current) || workspaceArchiveFailureReason(workspaceArchiveRetries)
-          : current.resolution.cleanupReason;
-        this.engine.resolution.update(current, { workspaceArchiveRetries, cleanupReason }, {}, 'workspace_archive_retry_cleared', workspaceId);
+        const cleanupReason =
+          current.resolution.cleanupReason === archiveFailure
+            ? runtimeRetirementFailure(current) ||
+              workspaceArchiveFailureReason(workspaceArchiveRetries)
+            : current.resolution.cleanupReason;
+        this.engine.resolution.update(
+          current,
+          { workspaceArchiveRetries, cleanupReason },
+          {},
+          "workspace_archive_retry_cleared",
+          workspaceId,
+        );
       }
     }
     this.engine.enqueueCleanup(taskId);
@@ -84,14 +196,27 @@ export class Lifecycle {
    * this method only gives it the engine's adapter, pause fence and the
    * versioned resolution write.
    */
-  private async settlePreservedCatalogArchive(task: Task, retryWorkspaceId?: string): Promise<Task> {
+  private async settlePreservedCatalogArchive(
+    task: Task,
+    retryWorkspaceId?: string,
+  ): Promise<Task> {
     try {
-      return await settleExternalWorkspaceArchive({
-        store: this.store, adapter: this.adapter, paused: () => this.paused(),
-        resolution: this.engine.resolution,
-      }, task.id, retryWorkspaceId);
+      return await settleExternalWorkspaceArchive(
+        {
+          store: this.store,
+          adapter: this.adapter,
+          paused: () => this.paused(),
+          resolution: this.engine.resolution,
+        },
+        task.id,
+        retryWorkspaceId,
+      );
     } catch (error) {
-      this.store.event(task.id, 'external_workspace_archive_warning', error instanceof Error ? error.message : String(error));
+      this.store.event(
+        task.id,
+        "external_workspace_archive_warning",
+        error instanceof Error ? error.message : String(error),
+      );
       return this.store.task(task.id);
     }
   }
@@ -107,10 +232,20 @@ export class Lifecycle {
     const runs = this.store.runs(taskId);
     const owned = [
       { id: task.workspaceId, directory: task.directory },
-      { id: task.resolution.closeoutWorkspaceId, directory: task.resolution.closeoutDirectory },
-      ...runs.filter(run => run.reviewSourceView?.directory).map(run => ({ id: run.workspaceId, directory: run.reviewSourceView!.directory })),
+      {
+        id: task.resolution.closeoutWorkspaceId,
+        directory: task.resolution.closeoutDirectory,
+      },
+      ...runs
+        .filter((run) => run.reviewSourceView?.directory)
+        .map((run) => ({
+          id: run.workspaceId,
+          directory: run.reviewSourceView!.directory,
+        })),
     ];
-    const match = owned.find(workspace => workspace.id && workspace.directory === worktree);
+    const match = owned.find(
+      (workspace) => workspace.id && workspace.directory === worktree,
+    );
     if (match?.id) this.retentionReconciled(taskId, match.id);
   }
   /**
@@ -124,23 +259,43 @@ export class Lifecycle {
    * on passes that cannot act.
    */
   private archiveWorkDue(task: Task, retryWorkspaceId?: string): boolean {
-    if (task.resolution.finishedHook || task.resolution.hostProcessSweep) return true;
+    if (task.resolution.finishedHook || task.resolution.hostProcessSweep)
+      return true;
     if (externalWorkspaceArchiveDue(task, retryWorkspaceId)) return true;
     const runs = this.store.runs(task.id);
-    return terminalArchiveWorkspaces(task, runs).some(workspace => {
-      if (!workspace.id || !workspace.directory || !workspace.head) return false;
-      if (retryWorkspaceId !== workspace.id && archiveSettledByOwner(task, workspace.id)) return false;
-      if (task.resolution.archivedWorkspaceIds.includes(workspace.id)) return false;
+    return terminalArchiveWorkspaces(task, runs).some((workspace) => {
+      if (!workspace.id || !workspace.directory || !workspace.head)
+        return false;
+      if (
+        retryWorkspaceId !== workspace.id &&
+        archiveSettledByOwner(task, workspace.id)
+      )
+        return false;
+      if (task.resolution.archivedWorkspaceIds.includes(workspace.id))
+        return false;
       if (retryWorkspaceId) return retryWorkspaceId === workspace.id;
-      return !archiveRetryWaiting(task.resolution.workspaceArchiveRetries.find(record => record.workspaceId === workspace.id));
+      return !archiveRetryWaiting(
+        task.resolution.workspaceArchiveRetries.find(
+          (record) => record.workspaceId === workspace.id,
+        ),
+      );
     });
   }
   /** A finished task's owner-stop dispatch hold is released; it has no work left to stop. */
   private releaseFinishedStopHold(task: Task): Task {
     const hold = holdsOf(task).dispatch;
-    if (task.phase !== 'done' || !hold || !hold.reason.startsWith(OWNER_STOP_HOLD_PREFIX)) return task;
-    return this.store.update(task.id, releasePatch(task, 'dispatch'), 'hold_released',
-      `Dispatch hold released: the task finished, so its owner stop (${hold.reason.slice(0, 300)}) has no work left to stop`);
+    if (
+      task.phase !== "done" ||
+      !hold ||
+      !hold.reason.startsWith(OWNER_STOP_HOLD_PREFIX)
+    )
+      return task;
+    return this.store.update(
+      task.id,
+      releasePatch(task, "dispatch"),
+      "hold_released",
+      `Dispatch hold released: the task finished, so its owner stop (${hold.reason.slice(0, 300)}) has no work left to stop`,
+    );
   }
   /**
    * A nonterminal task owes no archive of its own. One durable
@@ -148,7 +303,10 @@ export class Lifecycle {
    * was lost, so an intent naming no reviewer run is reported with whatever the
    * catalog still answers. An unknown outcome is observed, never re-sent.
    */
-  private async observeUnreadableArchiveIntent(task: Task, retryWorkspaceId?: string) {
+  private async observeUnreadableArchiveIntent(
+    task: Task,
+    retryWorkspaceId?: string,
+  ) {
     const archiveTaskWorkspace = this.adapter.archiveTaskWorkspace;
     if (!archiveTaskWorkspace) return;
     const runs = this.store.runs(task.id);
@@ -156,23 +314,43 @@ export class Lifecycle {
     if (unreadable) {
       // The same interval governs an unreadable intent's catalog observation, so a
       // recorded backoff is not re-read on every sweep; an owner retry still runs.
-      const unreadableRetry = this.store.task(task.id).resolution.workspaceArchiveRetries.find(record => record.workspaceId === unreadable);
-      if (retryWorkspaceId !== unreadable && unreadableRetry && Date.parse(unreadableRetry.nextAttemptAt) > Date.now()) return;
+      const unreadableRetry = this.store
+        .task(task.id)
+        .resolution.workspaceArchiveRetries.find(
+          (record) => record.workspaceId === unreadable,
+        );
+      if (
+        retryWorkspaceId !== unreadable &&
+        unreadableRetry &&
+        Date.parse(unreadableRetry.nextAttemptAt) > Date.now()
+      )
+        return;
       if (!this.paused()) {
-        let observation = '';
+        let observation = "";
         if (this.adapter.taskWorkspaceArchived) {
           // `taskWorkspaceArchived` answers true when the entry is gone from the
           // catalog: read it that way round, never backwards.
           try {
-            observation = await this.adapter.taskWorkspaceArchived(unreadable)
-              ? '; the catalog no longer lists that workspace entry' : '; the catalog still lists that workspace entry';
-          } catch { observation = '; the catalog observation was unavailable'; }
+            observation = (await this.adapter.taskWorkspaceArchived(unreadable))
+              ? "; the catalog no longer lists that workspace entry"
+              : "; the catalog still lists that workspace entry";
+          } catch {
+            observation = "; the catalog observation was unavailable";
+          }
         }
         // Every due observation is one bounded occurrence: recording it advances the
         // deadline even when the answer is unchanged, so the next sweep inside the
         // new interval reads nothing.
-        recordArchiveRetry({ store: this.store, update: this.engine.resolution.update.bind(this.engine.resolution) }, task.id, unreadable,
-          `The recorded review view archive intent no longer matches a reviewer run, so its checkout and publication cannot be re-proved${observation}. Inspect that workspace entry before retrying`, false);
+        recordArchiveRetry(
+          {
+            store: this.store,
+            update: this.engine.resolution.update.bind(this.engine.resolution),
+          },
+          task.id,
+          unreadable,
+          `The recorded review view archive intent no longer matches a reviewer run, so its checkout and publication cannot be re-proved${observation}. Inspect that workspace entry before retrying`,
+          false,
+        );
       }
       return;
     }
@@ -181,15 +359,35 @@ export class Lifecycle {
     // A terminal task's stale recovery episode settles before any gate below can
     // return: a cancelled task never reaches the done-only archive, and a done task
     // without a recorded merge stops at the merge guard. The settlement is store-only.
-    if (['done', 'cancelled'].includes(task.phase) && task.resolution.recoveryActive) {
-      this.engine.settleTerminalRecoveryEpisode(task.id, 'end-of-task cleanup');
+    if (
+      ["done", "cancelled"].includes(task.phase) &&
+      task.resolution.recoveryActive
+    ) {
+      this.engine.settleTerminalRecoveryEpisode(task.id, "end-of-task cleanup");
       task = this.store.task(task.id);
     }
-    if (task.phase !== 'done' && (task.originError && !missingOriginHasPlanner(this.store, task) || task.originLookupError || this.paused() || !this.adapter.archiveTaskWorkspace)) return;
-    if (task.phase !== 'done') return this.observeUnreadableArchiveIntent(task, retryWorkspaceId);
+    if (
+      task.phase !== "done" &&
+      ((task.originError && !missingOriginHasPlanner(this.store, task)) ||
+        task.originLookupError ||
+        this.paused() ||
+        !this.adapter.archiveTaskWorkspace)
+    )
+      return;
+    if (task.phase !== "done")
+      return this.observeUnreadableArchiveIntent(task, retryWorkspaceId);
     const { reportOnly, proofOnlyDone } = terminalArchiveSource(task);
-    if (task.originError && !missingOriginHasPlanner(this.store, task) || task.originLookupError || this.paused() || task.phase !== 'done'
-      || (!reportOnly && !proofOnlyDone && (!task.resolution.mergedCommit || !task.resolution.syncedCommit)) || !this.adapter.archiveTaskWorkspace) return;
+    if (
+      (task.originError && !missingOriginHasPlanner(this.store, task)) ||
+      task.originLookupError ||
+      this.paused() ||
+      task.phase !== "done" ||
+      (!reportOnly &&
+        !proofOnlyDone &&
+        (!task.resolution.mergedCommit || !task.resolution.syncedCommit)) ||
+      !this.adapter.archiveTaskWorkspace
+    )
+      return;
     // Degraded admission defers archive work as it defers titles: no attempt is
     // made or recorded, and the next healthy pass finds the same work due. An
     // owner retry still runs, so its refusal is reported rather than swallowed.
@@ -204,8 +402,14 @@ export class Lifecycle {
     // permission, is released with history kept before the archive waits on it.
     // This runs before the recoveryActive gate because such a run is exactly
     // what keeps the recovery episode reading active.
-    if (task.resolution.recoveryActive || this.store.runs(task.id).some(run => !run.released)) {
-      await this.engine.settleObservedIdleRuns(task.id, 'End-of-task cleanup released an idle run with no live turn');
+    if (
+      task.resolution.recoveryActive ||
+      this.store.runs(task.id).some((run) => !run.released)
+    ) {
+      await this.engine.settleObservedIdleRuns(
+        task.id,
+        "End-of-task cleanup released an idle run with no live turn",
+      );
       task = this.store.task(task.id);
     }
     if (task.resolution.recoveryActive) return;
@@ -215,7 +419,11 @@ export class Lifecycle {
     // due - a due owned-workspace archive, a due preserved catalog archive or
     // the durable terminal-transition intents - never on every pass of a
     // workspace whose retry is still backed off.
-    if (this.archiveWorkDue(task, retryWorkspaceId)) await runTerminalHooks({ store: this.store, hooks: this.engine.hooks, adapter: this.adapter }, task);
+    if (this.archiveWorkDue(task, retryWorkspaceId))
+      await runTerminalHooks(
+        { store: this.store, hooks: this.engine.hooks, adapter: this.adapter },
+        task,
+      );
     // Spec 027: sibling worktrees leave with the task's own workspaces.
     if (task.siblingPins.length) await this.engine.removeSiblings(task.id);
     // Spec 017: a merged review-entry task's preserved external workspace keeps
@@ -225,29 +433,65 @@ export class Lifecycle {
     // loop: its own durable record and events are the visible state.
     task = await this.settlePreservedCatalogArchive(task, retryWorkspaceId);
     const runs = this.store.runs(task.id);
-    const attachedAgentIds = new Set([task.agentId, task.coordinatorAgentId, task.resolution.reviewerAgentId,
-      ...task.retiredWorkers.map(worker => worker.agentId), ...runs.map(run => run.agentId)].filter((id): id is string => Boolean(id)).filter(id => {
-        // Terminal deletion is already confirmed by the host and recorded in
-        // the thread lane. Such a thread has no projection left to observe.
-        // Pending/unknown effects and live runs keep the participant proof.
-        const key = this.store.threadArchiveKey(id, task.hostId);
-        const effect = key ? this.store.getMeta<{ status: string; op?: string }>(key) : undefined;
-        return effect?.status !== 'archived' || effect.op !== 'delete' || runs.some(run => run.agentId === id && !run.released);
-      }));
+    const attachedAgentIds = new Set(
+      [
+        task.agentId,
+        task.coordinatorAgentId,
+        task.resolution.reviewerAgentId,
+        ...task.retiredWorkers.map((worker) => worker.agentId),
+        ...runs.map((run) => run.agentId),
+      ]
+        .filter((id): id is string => Boolean(id))
+        .filter((id) => {
+          // Terminal deletion is already confirmed by the host and recorded in
+          // the thread lane. Such a thread has no projection left to observe.
+          // Pending/unknown effects and live runs keep the participant proof.
+          const key = this.store.threadArchiveKey(id, task.hostId);
+          const effect = key
+            ? this.store.getMeta<{ status: string; op?: string }>(key)
+            : undefined;
+          return (
+            effect?.status !== "archived" ||
+            effect.op !== "delete" ||
+            runs.some((run) => run.agentId === id && !run.released)
+          );
+        }),
+    );
     for (const workspace of terminalArchiveWorkspaces(task, runs)) {
-      if (!workspace.id || !workspace.directory || !workspace.head || task.resolution.archivedWorkspaceIds.includes(workspace.id)) continue;
+      if (
+        !workspace.id ||
+        !workspace.directory ||
+        !workspace.head ||
+        task.resolution.archivedWorkspaceIds.includes(workspace.id)
+      )
+        continue;
       const id = workspace.id;
-      if (retryWorkspaceId !== id && archiveSettledByOwner(this.store.task(task.id), id)) continue;
+      if (
+        retryWorkspaceId !== id &&
+        archiveSettledByOwner(this.store.task(task.id), id)
+      )
+        continue;
       if (retryWorkspaceId && retryWorkspaceId !== id) continue;
-      const retry: WorkspaceArchiveRetry | undefined = this.store.task(task.id).resolution.workspaceArchiveRetries.find(record => record.workspaceId === id);
+      const retry: WorkspaceArchiveRetry | undefined = this.store
+        .task(task.id)
+        .resolution.workspaceArchiveRetries.find(
+          (record) => record.workspaceId === id,
+        );
       // An owner retries this workspace now without erasing its failed attempts
       // or uncertain intent. All ordinary archive proofs apply.
       if (!retryWorkspaceId && archiveRetryWaiting(retry)) continue;
-      await this.proof.archiveWorkspace(task, workspace, { runs, attachedAgentIds });
+      await this.proof.archiveWorkspace(task, workspace, {
+        runs,
+        attachedAgentIds,
+      });
       task = this.store.task(task.id);
     }
   }
-  async enqueuePass(scopedHost?: string): Promise<void> { return this.scheduler.enqueuePass(scopedHost); }
+  async enqueuePass(scopedHost?: string): Promise<void> {
+    return this.scheduler.enqueuePass(scopedHost);
+  }
   /** Direct pass: reconcile recoverable tasks, then await the serial cleanup drain. */
-  async pass(): Promise<void> { return this.scheduler.pass(); }
+  async pass(): Promise<void> {
+    return this.scheduler.pass();
+  }
 }
