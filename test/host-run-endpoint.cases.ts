@@ -14,6 +14,7 @@
 import { test, weighted, weightedTiming } from "./support/sharded-test";
 import { timingTest } from "./support/timing";
 import { HOST_RUN_FIXTURE_EVENT_TIMEOUT_MS } from "./support/budgets";
+import { noCpuReads, scopedIdentityListing, singleCommandCpuReads } from "./support/scoped-identity";
 const timing = weightedTiming(timingTest);
 import assert from "node:assert/strict";
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
@@ -63,6 +64,7 @@ import { mainPrivateHostRunSupervisorStateSchema } from "./support/main-private-
 import { HOST_RUN_CPU_COVERAGE_FILE, boundSidecarCoverage } from "../core/host-runs/host-run-cpu-coverage";
 import { hostRunResultSchema } from "../shared/contracts";
 import { runHostRunSupervisorMain } from "../service/executor/host-run-supervisor";
+import { spawnDetachedSupervisor } from "../core/qa/supervisor-process";
 import { overrideIdentityListing } from "../core/machine/process-identity-search";
 import { HOST_RUN_IDENTITY_PROOF_CACHE_MS, hostRunOwnStartIdentity, readHostRunStartIdentity, RecordedIdentityProofs, startIdentityMatches, type StartIdentityRead } from "../core/machine/start-identity";
 
@@ -1000,6 +1002,15 @@ weighted(2)("a submit body with a missing mandatory field is invalid", async t =
   assert.equal(invalid.error!.code, "invalid");
 });
 
+/** Each detached fixture publishes its own PID and start identity before work. */
+function recordedChildProgram(path: string, body: string): string {
+  const identityModule = fileURLToPath(new URL("../core/machine/start-identity.ts", import.meta.url));
+  return `const fs=require('fs'); const {hostRunProcessStartIdentity}=require(${JSON.stringify(identityModule)});
+` +
+    `fs.writeFileSync(${JSON.stringify(path)}, JSON.stringify({pid:process.pid,identity:hostRunProcessStartIdentity(process.pid)}));
+` + body;
+}
+
 function supervisorPlan(stateDir: string, runId: string, argv: string[], overrides: Partial<HostRunSupervisorPlan> & { env?: Record<string, string> } = {}): HostRunSupervisorPlan {
   const paths = hostRunSupervisorPaths(stateDir, runId);
   const { env = { ...process.env } as Record<string, string>, ...planOverrides } = overrides;
@@ -1014,10 +1025,11 @@ function supervisorPlan(stateDir: string, runId: string, argv: string[], overrid
 
 weighted(3)("the real supervisor runs a command and writes a durable host.run.result", async t => {
   const stateDir = mkdtempSync(join(tmpdir(), "hre-"));
+  scopedIdentityListing(t);
   t.after(() => rmSync(stateDir, { recursive: true, force: true }));
   const plan = supervisorPlan(stateDir, "real-pass", [process.execPath, "-e", "process.stdout.write('hello-supervisor');process.exit(0)"]);
   writeAtomicOwnedFile(hostRunSupervisorPaths(plan.stateDir, plan.runId).planPath, JSON.stringify(plan), 0o600);
-  await runHostRunSupervisorMain([plan.stateDir, plan.runId]);
+  await runHostRunSupervisorMain([plan.stateDir, plan.runId], { cpuReads: noCpuReads });
   const result = hostRunResultSchema.parse(JSON.parse(readFileSync(hostRunSupervisorPaths(plan.stateDir, plan.runId).resultPath, "utf8")));
   assert.equal(result.runId, "real-pass");
   assert.equal(result.exitCode, 0);
@@ -1027,6 +1039,7 @@ weighted(3)("the real supervisor runs a command and writes a durable host.run.re
 
 test("the real supervisor records the command tree's CPU time, so the scheduler can budget from history", async t => {
   const stateDir = mkdtempSync(join(tmpdir(), "hre-"));
+  scopedIdentityListing(t);
   t.after(() => rmSync(stateDir, { recursive: true, force: true }));
   // Busy past several group reads (PROCESS_TREE_GROUP_READ_MS, task 434): the
   // sampled total is a lower bound, and a command that exits inside the first
@@ -1034,7 +1047,7 @@ test("the real supervisor records the command tree's CPU time, so the scheduler 
   const busy = "const end=Date.now()+2500;let x=0;while(Date.now()<end){x+=Math.sqrt(x+1)}process.stdout.write(String(x>0))";
   const plan = supervisorPlan(stateDir, "real-cpu", [process.execPath, "-e", busy]);
   writeAtomicOwnedFile(hostRunSupervisorPaths(plan.stateDir, plan.runId).planPath, JSON.stringify(plan), 0o600);
-  await runHostRunSupervisorMain([plan.stateDir, plan.runId]);
+  await runHostRunSupervisorMain([plan.stateDir, plan.runId], { cpuReads: singleCommandCpuReads(hostRunSupervisorPaths(plan.stateDir, plan.runId).statePath) });
   const result = hostRunResultSchema.parse(JSON.parse(readFileSync(hostRunSupervisorPaths(plan.stateDir, plan.runId).resultPath, "utf8")));
   assert.equal(result.exitCode, 0);
   assert.ok(typeof result.cpuMs === "number" && result.cpuMs > 200, `a busy command records its CPU time (got ${result.cpuMs})`);
@@ -1050,22 +1063,24 @@ test("the real supervisor records the command tree's CPU time, so the scheduler 
 
 test("the real supervisor redacts the launch token across output chunks", async t => {
   const stateDir = mkdtempSync(join(tmpdir(), "hre-"));
+  scopedIdentityListing(t);
   t.after(() => rmSync(stateDir, { recursive: true, force: true }));
   const secret = "host-run-secret-for-output";
   const source = "const token=process.env.HOST_RUN_TOKEN;process.stdout.write('before'+token.slice(0,9));setTimeout(()=>{process.stdout.write(token.slice(9)+'after');process.stderr.write(token);process.exit(0)},10)";
   const plan = supervisorPlan(stateDir, "redact-token", [process.execPath, "-e", source], { env: { ...process.env, HOST_RUN_TOKEN: secret } });
   writeAtomicOwnedFile(hostRunSupervisorPaths(plan.stateDir, plan.runId).planPath, JSON.stringify(plan), 0o600);
-  await runHostRunSupervisorMain([plan.stateDir, plan.runId]);
+  await runHostRunSupervisorMain([plan.stateDir, plan.runId], { cpuReads: noCpuReads });
   assert.equal(readFileSync(hostRunSupervisorPaths(plan.stateDir, plan.runId).stdoutPath, "utf8"), "before[REDACTED]after");
   assert.equal(readFileSync(hostRunSupervisorPaths(plan.stateDir, plan.runId).stderrPath, "utf8"), "[REDACTED]");
 });
 
 test("the real supervisor honours a durable cancel request and records it", async t => {
   const stateDir = mkdtempSync(join(tmpdir(), "hre-"));
+  scopedIdentityListing(t);
   t.after(() => rmSync(stateDir, { recursive: true, force: true }));
   const plan = supervisorPlan(stateDir, "real-cancel", [process.execPath, "-e", "setTimeout(()=>{}, 10000)"], { runTimeoutMs: 10_000 });
   writeAtomicOwnedFile(hostRunSupervisorPaths(plan.stateDir, plan.runId).planPath, JSON.stringify(plan), 0o600);
-  const running = runHostRunSupervisorMain([plan.stateDir, plan.runId]);
+  const running = runHostRunSupervisorMain([plan.stateDir, plan.runId], { cpuReads: noCpuReads });
   await waitFor(() => existsSync(hostRunSupervisorPaths(plan.stateDir, plan.runId).statePath), HOST_RUN_FIXTURE_EVENT_TIMEOUT_MS);
   writeAtomicOwnedFile(hostRunSupervisorPaths(plan.stateDir, plan.runId).cancelPath, JSON.stringify({
     format: "host.run.cancel", version: 1, runId: "real-cancel", reason: "test", requestedAt: new Date().toISOString(),
@@ -1083,7 +1098,16 @@ weighted(4)("the endpoint launches the detached supervisor and settles from its 
   const { Store } = await import("../core/store/store");
   const store = new Store(":memory:");
   const scheduler = new HostRunScheduler(store, { capacity });
-  const endpoint = new HostRunEndpoint(scheduler, { stateDir }); // the production detached supervisor
+  // The submitted command is known to create no descendants. Keep the real
+  // detached supervisor and process launch while scoping its observations.
+  const entry = join(stateDir, "supervisor-fixture.mjs");
+  writeFileSync(entry, `import { overrideIdentityListing } from ${JSON.stringify(new URL("../core/machine/process-identity-search.ts", import.meta.url).href)};
+import { runHostRunSupervisorMain } from ${JSON.stringify(new URL("../service/executor/host-run-supervisor.ts", import.meta.url).href)};
+import { noCpuReads } from ${JSON.stringify(new URL("./support/scoped-identity.ts", import.meta.url).href)};
+overrideIdentityListing({state:'absent'}); await runHostRunSupervisorMain(process.argv.slice(2), {cpuReads:noCpuReads});`);
+  const endpoint = new HostRunEndpoint(scheduler, { stateDir, supervisorSpawn: plan => {
+    spawnDetachedSupervisor({ entry, argv: [plan.stateDir, plan.runId], failureMessage: "fixture supervisor did not start" });
+  } });
   t.after(async () => { await endpoint.stop(); store.close(); rmSync(stateDir, { recursive: true, force: true }); });
   await endpoint.start();
   const wire = client(endpoint.socketPath);
@@ -1139,6 +1163,7 @@ test("owned-subtree reads reject a symlinked ancestor that points outside", asyn
 
 weighted(2)("the real supervisor waits for the process group to empty before settling", async t => {
   const stateDir = mkdtempSync(join(tmpdir(), "hre-"));
+  scopedIdentityListing(t);
   t.after(() => rmSync(stateDir, { recursive: true, force: true }));
   // The leader spawns a same-group child with closed stdio, then exits. The
   // root cause of run a645572d: settling on pipe closure would release capacity
@@ -1146,7 +1171,7 @@ weighted(2)("the real supervisor waits for the process group to empty before set
   const script = `const {spawn}=require('child_process');spawn(process.execPath,['-e','setTimeout(()=>{},500)'],{stdio:'ignore'});process.exit(0);`;
   const plan = supervisorPlan(stateDir, "real-group", [process.execPath, "-e", script], { runTimeoutMs: 10_000 });
   writeAtomicOwnedFile(hostRunSupervisorPaths(plan.stateDir, plan.runId).planPath, JSON.stringify(plan), 0o600);
-  await runHostRunSupervisorMain([plan.stateDir, plan.runId]);
+  await runHostRunSupervisorMain([plan.stateDir, plan.runId], { cpuReads: noCpuReads });
   const result = hostRunResultSchema.parse(JSON.parse(readFileSync(hostRunSupervisorPaths(plan.stateDir, plan.runId).resultPath, "utf8")));
   assert.equal(result.exitCode, 0);
   assert.ok(result.wallMs >= 400, `the result waited for the group to empty (wallMs ${result.wallMs})`);
@@ -1155,18 +1180,21 @@ weighted(2)("the real supervisor waits for the process group to empty before set
 
 weighted(2)("the real supervisor inventories an escaped setsid descendant and waits for it", async t => {
   const stateDir = mkdtempSync(join(tmpdir(), "hre-"));
+  const childPath = join(stateDir, "escape-identity.json");
+  scopedIdentityListing(t, [childPath]);
   t.after(() => rmSync(stateDir, { recursive: true, force: true }));
   // The leader starts a detached child in its own session, then exits. The child
   // leaves the run's process group, so the supervisor must record it as a fact
   // and keep the run reserved until it is gone. The leader stays alive long
   // enough for the in-run inventory (ppid walk) to see the child before
   // launchd reparents it; the child outlives that window so settlement waits.
+  const childProgram = recordedChildProgram(childPath, 'setTimeout(()=>{},5000)');
   const script = `const {spawn}=require('child_process');
-spawn(process.execPath,['-e','setTimeout(()=>{},5000)'],{detached:true,stdio:'ignore'}).unref();
+spawn(process.execPath,['--import','tsx','-e',${JSON.stringify(childProgram)}],{detached:true,stdio:'ignore'}).unref();
 setTimeout(()=>process.exit(0),3000);`;
   const plan = supervisorPlan(stateDir, "real-escape", [process.execPath, "-e", script], { runTimeoutMs: 10_000 });
   writeAtomicOwnedFile(hostRunSupervisorPaths(plan.stateDir, plan.runId).planPath, JSON.stringify(plan), 0o600);
-  await runHostRunSupervisorMain([plan.stateDir, plan.runId]);
+  await runHostRunSupervisorMain([plan.stateDir, plan.runId], { cpuReads: noCpuReads });
   const result = hostRunResultSchema.parse(JSON.parse(readFileSync(hostRunSupervisorPaths(plan.stateDir, plan.runId).resultPath, "utf8")));
   assert.equal(result.exitCode, 0);
   assert.ok(result.escapedDescendants.length >= 1, "the escaped descendant is recorded");
@@ -1177,14 +1205,14 @@ setTimeout(()=>process.exit(0),3000);`;
 weighted(5)("a persistent unknown identity scan does not write a clean result over a live escaped child", async t => {
   const stateDir = mkdtempSync(join(tmpdir(), "hre-"));
   const pidPath = join(stateDir, "child.pid");
+  const scoped = scopedIdentityListing(t, [pidPath]);
   overrideIdentityListing({ state: "unknown" });
   t.after(() => {
     overrideIdentityListing(null);
     if (existsSync(pidPath)) {
-      const pid = Number(readFileSync(pidPath, "utf8"));
-      if (Number.isSafeInteger(pid) && pid > 0) {
+      const { pid, identity } = JSON.parse(readFileSync(pidPath, "utf8")) as { pid: number; identity: string };
+      if (Number.isSafeInteger(pid) && pid > 0 && identity === hostRunProcessStartIdentity(pid)) {
         try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
-        try { process.kill(-pid, "SIGKILL"); } catch { /* already gone */ }
       }
     }
     rmSync(stateDir, { recursive: true, force: true });
@@ -1192,20 +1220,21 @@ weighted(5)("a persistent unknown identity scan does not write a clean result ov
   // The previous 8 s bound wrote host.run.result with no escaped descendants
   // while Darwin listings stayed unknown. A live setsid child must keep that
   // result unwritten until a readable scan proves absence or records the child.
-  const script = `const {spawn}=require('child_process');const {writeFileSync}=require('fs');
-const child=spawn(process.execPath,['-e','setTimeout(()=>{},15000)'],{detached:true,stdio:'ignore'});
-child.unref();
-writeFileSync(process.env.CHILD_PID,String(child.pid));
-setTimeout(()=>process.exit(0),400);`;
+  const identityModule = fileURLToPath(new URL("../core/machine/start-identity.ts", import.meta.url));
+  const childProgram = `const fs=require('fs'); const {hostRunProcessStartIdentity}=require(${JSON.stringify(identityModule)});
+const identity=hostRunProcessStartIdentity(process.pid); fs.writeFileSync(process.env.CHILD_PID, JSON.stringify({pid:process.pid,identity})); setTimeout(()=>{},15000);`;
+  const script = `const {spawn}=require('child_process');
+const child=spawn(process.execPath,['--import','tsx','-e',${JSON.stringify(childProgram)}],{detached:true,stdio:'ignore'});
+child.unref(); setTimeout(()=>process.exit(0),400);`;
   const plan = supervisorPlan(stateDir, "unknown-escape", [process.execPath, "-e", script], {
     runTimeoutMs: 30_000, env: { ...process.env, CHILD_PID: pidPath },
   });
   writeAtomicOwnedFile(hostRunSupervisorPaths(plan.stateDir, plan.runId).planPath, JSON.stringify(plan), 0o600);
-  const running = runHostRunSupervisorMain([plan.stateDir, plan.runId]);
-  await waitFor(() => existsSync(pidPath) && Number(readFileSync(pidPath, "utf8")) > 0);
+  const running = runHostRunSupervisorMain([plan.stateDir, plan.runId], { cpuReads: noCpuReads });
+  await waitFor(() => existsSync(pidPath) && JSON.parse(readFileSync(pidPath, "utf8")).pid > 0);
   await new Promise(resolvePromise => setTimeout(resolvePromise, 9_000));
   assert.equal(existsSync(hostRunSupervisorPaths(plan.stateDir, plan.runId).resultPath), false, "an unreadable listing does not settle a live escaped child as absent");
-  overrideIdentityListing(null);
+  overrideIdentityListing(scoped);
   await running;
   const result = hostRunResultSchema.parse(JSON.parse(readFileSync(hostRunSupervisorPaths(plan.stateDir, plan.runId).resultPath, "utf8")));
   assert.ok(result.escapedDescendants.length >= 1, "the escaped descendant is recorded once listings are readable");
@@ -2243,12 +2272,13 @@ test("the verified read keeps a missing file, an unreadable file and a present f
 
 weighted(3)("an unreadable cancel request stops the run instead of reading as no cancel", async t => {
   const stateDir = mkdtempSync(join(tmpdir(), "hre-"));
+  scopedIdentityListing(t);
   t.after(() => rmSync(stateDir, { recursive: true, force: true }));
   const plan = supervisorPlan(stateDir, "cancel-corrupt", [process.execPath, "-e", "setTimeout(()=>{}, 20000)"], { runTimeoutMs: 20_000 });
   writeAtomicOwnedFile(hostRunSupervisorPaths(plan.stateDir, plan.runId).planPath, JSON.stringify(plan), 0o600);
   writeAtomicOwnedFile(hostRunSupervisorPaths(plan.stateDir, plan.runId).cancelPath, "{\"format\":", 0o600);
   const started = Date.now();
-  await runHostRunSupervisorMain([plan.stateDir, plan.runId]);
+  await runHostRunSupervisorMain([plan.stateDir, plan.runId], { cpuReads: noCpuReads });
   assert.ok(Date.now() - started < 10_000, "the run is stopped well before its timeout");
   const result = hostRunResultSchema.parse(JSON.parse(readFileSync(hostRunSupervisorPaths(plan.stateDir, plan.runId).resultPath, "utf8")));
   assert.equal(result.exitCode, null);
@@ -2262,11 +2292,12 @@ weighted(3)("an unreadable cancel request stops the run instead of reading as no
 
 weighted(2)("retained output is bounded per stream and says it was truncated", async t => {
   const stateDir = mkdtempSync(join(tmpdir(), "hre-"));
+  scopedIdentityListing(t);
   t.after(() => rmSync(stateDir, { recursive: true, force: true }));
   const chunk = "x".repeat(HOST_RUN_RETAINED_OUTPUT_BYTES + 1024 * 1024);
   const plan = supervisorPlan(stateDir, "capped", [process.execPath, "-e", `process.stdout.write('x'.repeat(${chunk.length}))`]);
   writeAtomicOwnedFile(hostRunSupervisorPaths(plan.stateDir, plan.runId).planPath, JSON.stringify(plan), 0o600);
-  await runHostRunSupervisorMain([plan.stateDir, plan.runId]);
+  await runHostRunSupervisorMain([plan.stateDir, plan.runId], { cpuReads: noCpuReads });
   const stdout = readFileSync(hostRunSupervisorPaths(plan.stateDir, plan.runId).stdoutPath, "utf8");
   assert.ok(Buffer.byteLength(stdout) <= HOST_RUN_RETAINED_OUTPUT_BYTES + 1024, `the retained stream is capped (got ${Buffer.byteLength(stdout)} bytes)`);
   assert.match(stdout, /queue: output truncated: observed=\d+ retained=\d+ omitted=\d+ cap=\d+; beginning kept/);
@@ -2281,16 +2312,19 @@ weighted(2)("retained output is bounded per stream and says it was truncated", a
 
 weighted(3)("an escaped descendant that writes after the group empties keeps its output", async t => {
   const stateDir = mkdtempSync(join(tmpdir(), "hre-"));
+  const childPath = join(stateDir, "escape-identity.json");
+  scopedIdentityListing(t, [childPath]);
   t.after(() => rmSync(stateDir, { recursive: true, force: true }));
   // The leader starts a detached child that outlives it and writes to the run's
   // stdout after the leader is gone. The run's pipes stay open until that child
   // is proven absent, so the bytes are retained instead of lost to EPIPE.
+  const childProgram = recordedChildProgram(childPath, 'setTimeout(()=>{process.stdout.write("late-escaped")},700)');
   const script = `const {spawn}=require('child_process');
-spawn(process.execPath,['-e','setTimeout(()=>{process.stdout.write("late-escaped")},700)'],{detached:true,stdio:'inherit'}).unref();
+spawn(process.execPath,['--import','tsx','-e',${JSON.stringify(childProgram)}],{detached:true,stdio:'inherit'}).unref();
 setTimeout(()=>process.exit(0),100);`;
   const plan = supervisorPlan(stateDir, "late-escape", [process.execPath, "-e", script], { runTimeoutMs: 15_000 });
   writeAtomicOwnedFile(hostRunSupervisorPaths(plan.stateDir, plan.runId).planPath, JSON.stringify(plan), 0o600);
-  await runHostRunSupervisorMain([plan.stateDir, plan.runId]);
+  await runHostRunSupervisorMain([plan.stateDir, plan.runId], { cpuReads: noCpuReads });
   const stdout = readFileSync(hostRunSupervisorPaths(plan.stateDir, plan.runId).stdoutPath, "utf8");
   assert.match(stdout, /late-escaped/, "output written after the group emptied is retained");
   const result = hostRunResultSchema.parse(JSON.parse(readFileSync(hostRunSupervisorPaths(plan.stateDir, plan.runId).resultPath, "utf8")));
@@ -2301,17 +2335,20 @@ setTimeout(()=>process.exit(0),100);`;
 
 weighted(3)("a cancel that arrives while an escaped descendant runs still stops the run", async t => {
   const stateDir = mkdtempSync(join(tmpdir(), "hre-"));
+  const childPath = join(stateDir, "escape-identity.json");
+  scopedIdentityListing(t, [childPath]);
   t.after(() => rmSync(stateDir, { recursive: true, force: true }));
   // The leader leaves a detached child behind and exits at once. The cancel
   // arrives after the group is empty: the run must still stop well before its
   // timeout, and the stop must reach that child.
+  const childProgram = recordedChildProgram(childPath, 'setTimeout(()=>{},8000)');
   const script = `const {spawn}=require('child_process');
-spawn(process.execPath,['-e','setTimeout(()=>{},8000)'],{detached:true,stdio:'ignore'}).unref();
+spawn(process.execPath,['--import','tsx','-e',${JSON.stringify(childProgram)}],{detached:true,stdio:'ignore'}).unref();
 process.exit(0);`;
   const plan = supervisorPlan(stateDir, "cancel-escape", [process.execPath, "-e", script], { runTimeoutMs: 30_000 });
   writeAtomicOwnedFile(hostRunSupervisorPaths(plan.stateDir, plan.runId).planPath, JSON.stringify(plan), 0o600);
   const started = Date.now();
-  const running = runHostRunSupervisorMain([plan.stateDir, plan.runId]);
+  const running = runHostRunSupervisorMain([plan.stateDir, plan.runId], { cpuReads: noCpuReads });
   await waitFor(() => existsSync(hostRunSupervisorPaths(plan.stateDir, plan.runId).statePath), HOST_RUN_FIXTURE_EVENT_TIMEOUT_MS);
   await new Promise(resolvePromise => setTimeout(resolvePromise, 400));
   writeAtomicOwnedFile(hostRunSupervisorPaths(plan.stateDir, plan.runId).cancelPath, JSON.stringify({
@@ -2351,28 +2388,26 @@ test("a path the verified chain refuses reads as unreadable, never as absent", a
 
 weighted(3)("an orphan escaped after the leader exits is recorded and settled over", async t => {
   const stateDir = mkdtempSync(join(tmpdir(), "hre-"));
-  const orphanPidPath = join(stateDir, "orphan.pid");
+  const orphanPidPath = join(stateDir, "orphan.json");
+  const earlierPidPath = join(stateDir, "earlier.json");
+  scopedIdentityListing(t, [earlierPidPath, orphanPidPath]);
   t.after(() => rmSync(stateDir, { recursive: true, force: true }));
-  // A recorded escapee exists from early in the run. A same-group survivor waits
-  // for the leader to exit, then detaches its own child and exits at once, so the
-  // orphan is reparented before any scan can reach it through its parent: only the
-  // full identity listing at group-empty can prove it, and a recorded escapee must
-  // not hide it.
-  const detacher = `const {spawn}=require('child_process');const {writeFileSync}=require('fs');
-setTimeout(()=>{
-  const child=spawn(process.execPath,['-e','setTimeout(()=>{},1500)'],{detached:true,stdio:'ignore'});
-  child.unref();writeFileSync(process.env.ORPHAN_PID,String(child.pid));process.exit(0);
-}, 700);`;
+  // Both detached children publish identities; the second is reparented before
+  // its parent's next tree walk, so the settled inventory must still include it.
+  const orphanProgram = recordedChildProgram(orphanPidPath, 'setTimeout(()=>{},1500)');
+  const earlierProgram = recordedChildProgram(earlierPidPath, 'setTimeout(()=>{},3000)');
+  const detacher = `const {spawn}=require('child_process');
+setTimeout(()=>{const child=spawn(process.execPath,['--import','tsx','-e',${JSON.stringify(orphanProgram)}],{detached:true,stdio:'ignore'});child.unref();process.exit(0);},700);`;
   const script = `const {spawn}=require('child_process');
-spawn(process.execPath,['-e','setTimeout(()=>{},3000)'],{detached:true,stdio:'ignore'}).unref();
-spawn(process.execPath,['-e',${JSON.stringify(detacher)}],{stdio:'ignore',env:{...process.env,ORPHAN_PID:process.env.ORPHAN_PID}});
+spawn(process.execPath,['--import','tsx','-e',${JSON.stringify(earlierProgram)}],{detached:true,stdio:'ignore'}).unref();
+spawn(process.execPath,['-e',${JSON.stringify(detacher)}],{stdio:'ignore'});
 setTimeout(()=>process.exit(0),400);`;
   const plan = supervisorPlan(stateDir, "orphan-escape", [process.execPath, "-e", script], {
     runTimeoutMs: 20_000, env: { ...process.env, ORPHAN_PID: orphanPidPath },
   });
   writeAtomicOwnedFile(hostRunSupervisorPaths(plan.stateDir, plan.runId).planPath, JSON.stringify(plan), 0o600);
-  await runHostRunSupervisorMain([plan.stateDir, plan.runId]);
-  const orphanPid = Number(readFileSync(orphanPidPath, "utf8"));
+  await runHostRunSupervisorMain([plan.stateDir, plan.runId], { cpuReads: noCpuReads });
+  const orphanPid = (JSON.parse(readFileSync(orphanPidPath, "utf8")) as { pid: number }).pid;
   assert.ok(Number.isSafeInteger(orphanPid) && orphanPid > 0, "the survivor recorded its detached child");
   const result = hostRunResultSchema.parse(JSON.parse(readFileSync(hostRunSupervisorPaths(plan.stateDir, plan.runId).resultPath, "utf8")));
   const recorded = result.escapedDescendants.map(entry => entry.pid);

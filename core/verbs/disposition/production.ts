@@ -11,6 +11,7 @@ import { isAgentGoneRefusal } from "../../host/errors";
 export function productionDeps(options: {
   store: Store;
   hostAvailable?(task: Task): boolean;
+  readProcesses?: DispositionDeps["readProcesses"];
   withHost?<T>(id: string, fn: () => T): T;
   hooks: DispositionDeps["hooks"];
   observe(id: string): Promise<{ active: boolean; permissions: boolean; status: string }>;
@@ -26,6 +27,7 @@ export function productionDeps(options: {
   return {
     hooks: options.hooks,
     hostAvailable: options.hostAvailable,
+    readProcesses: options.readProcesses,
     withHost: options.withHost,
     ...(options.archiveSiblings ? { archiveSiblings: options.archiveSiblings } : {}),
     ...(options.interruptTurn ? { interruptTurn: options.interruptTurn } : {}),

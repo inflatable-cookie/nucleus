@@ -2,7 +2,6 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { fixture, runningPid, wait } from "./support/run-process-cleanup-fixture";
 import { existsSync } from "node:fs";
-import { readHostUidProcesses } from "../core/machine/host-process-listing";
 import { processParentPid } from "../core/machine/process-identity";
 import { runProcessEnvironments } from "../core/machine/run-process-identity";
 import { sweepSettledRunProcesses } from "../core/machine/run-process-cleanup";
@@ -13,7 +12,7 @@ test("unavailable scans retain intent and scratch; a surviving identity is recor
     const run = f.run(); f.release(run);
     await sweepSettledRunProcesses(f.store, "fixture-host", { readProcesses: async () => null });
     assert.ok(f.store.getMeta(`runProcessCleanup:${run.id}`)); assert.ok(existsSync(run.temporaryDirectory!));
-    const read = await readHostUidProcesses(); assert.equal(read.state, "listed");
+    const read = await f.listing(); assert.equal(read.state, "listed");
     if (read.state !== "listed") return;
     const fact = { ...read.processes.find(item => item.pid === process.pid)!, pid: 999999, ppid: 1, command: `node ${run.temporaryDirectory}/tool.cjs` };
     await sweepSettledRunProcesses(f.store, "fixture-host", { readProcesses: async () => [fact], readEnvironments: async () => new Map([[fact.pid, {}]]),
@@ -31,7 +30,7 @@ for (const failure of ["one process", "Darwin chunk"] as const) test(`an unreada
     await wait(() => existsSync(foreign.ready));
     await f.cleanup();
     f.release(run);
-    const read = await readHostUidProcesses(); assert.equal(read.state, "listed");
+    const read = await f.listing(); assert.equal(read.state, "listed");
     if (read.state !== "listed") return;
     // The snapshot keeps the agent host in it: ownership is decided on a table
     // whose ancestry is the real one.

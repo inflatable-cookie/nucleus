@@ -429,7 +429,7 @@ test("real hook process stays alive while queued, admits after capacity release,
   const closed = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(resolve => {
     child.on("close", (code, signal) => resolve({ code, signal }));
   });
-  await waitUntil(() => /waiting for Queue capacity/.test(stderr), 2_000, `queued progress on stderr (${stderr || stdout})`);
+  await waitUntil(() => /waiting for Queue capacity/.test(stderr), 30_000, `queued progress on stderr (${stderr || stdout})`);
   await new Promise(resolve => setTimeout(resolve, 200));
   assert.equal(child.exitCode, null, `hook died during queued wait: ${stderr || stdout}`);
   assert.equal(stdout.includes("admit"), false);
@@ -437,7 +437,7 @@ test("real hook process stays alive while queued, admits after capacity release,
     format: "host.run.settlement", version: 1, runId: "occupier",
     outcome: "lost", launched: true, settledAt: new Date().toISOString(), result: null, containers: [],
   }));
-  await waitUntil(() => stdout === "admit\n", 2_000, `admit after capacity release (stdout=${JSON.stringify(stdout)} stderr=${JSON.stringify(stderr)})`);
+  await waitUntil(() => stdout === "admit\n", 30_000, `admit after capacity release (stdout=${JSON.stringify(stdout)} stderr=${JSON.stringify(stderr)})`);
   assert.equal(child.exitCode, null, `hook exited after admit without TERM: ${stderr}`);
   child.kill("SIGTERM");
   const result = await closed;

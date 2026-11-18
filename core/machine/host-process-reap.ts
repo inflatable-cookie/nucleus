@@ -62,6 +62,8 @@ export interface HostProcessSweepOptions {
   force?: boolean;
   /** Test seam: substitute the host process table. */
   processes?: HostProcessFact[] | null;
+  /** Optional scoped reader, evaluated only when a sweep needs a listing. */
+  readProcesses?: () => Promise<HostProcessFact[] | null>;
   /** Test seam: override start-identity liveness between discovery and signal. */
   identityLiveness?: (pid: number, startIdentity: string) => ReturnType<typeof processStartIdentityLiveness>;
 }
@@ -185,6 +187,7 @@ export async function reapHostProcesses(input: {
   protectedPids?: Iterable<number>;
   paseoDaemonPid?: number | null;
   processes?: HostProcessFact[] | null;
+  readProcesses?: () => Promise<HostProcessFact[] | null>;
   graceMs?: number;
   identityLiveness?: HostProcessSweepOptions["identityLiveness"];
 }): Promise<HostProcessSweepResult> {
@@ -197,9 +200,14 @@ export async function reapHostProcesses(input: {
   if (!worktree && !recorded.length) return noSweep();
   let processes: HostProcessFact[] | null;
   if (input.processes === undefined) {
+    if (input.readProcesses) {
+      try { processes = await input.readProcesses(); }
+      catch { processes = null; }
+    } else {
     const read = await readHostUidProcesses();
     if (read.state === "unknown") return noSweep({ read: "process-listing", reason: read.reason });
     processes = read.processes;
+    }
   } else processes = input.processes;
   if (!processes) return noSweep({ read: "process-listing", reason: "the host process listing is unavailable" });
   if (worktree && processes.length && processes.every(process => process.cwd === null))
@@ -243,6 +251,7 @@ export async function sweepTaskHostProcesses(store: Store, task: Task, options: 
       protectedPids: options.protectedPids,
       paseoDaemonPid: options.paseoDaemonPid,
       processes: options.processes,
+      readProcesses: options.readProcesses,
       graceMs: options.graceMs,
       identityLiveness: options.identityLiveness,
     });

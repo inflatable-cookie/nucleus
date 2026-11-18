@@ -21,7 +21,7 @@ test("release stops an inherited-ticket orphan after its observed host and helpe
     // A new store owner has only the durable host proof; neither host nor helper remains.
     const reopened = new Store(f.store.path);
     (reopened as unknown as { runScratchRemover: unknown }).runScratchRemover = (f.store as unknown as { runScratchRemover: unknown }).runScratchRemover;
-    try { await sweepSettledRunProcesses(reopened, "fixture-host"); }
+    try { await sweepSettledRunProcesses(reopened, "fixture-host", { readProcesses: async () => { const read = await f.listing(); return read.state === "listed" ? read.processes : null; } }); }
     finally { reopened.close(); }
     await wait(() => !runningPid(child.tool));
     assert.equal(readFileSync(child.term, "utf8"), "true", "TERM handler still has its scratch");

@@ -72,10 +72,11 @@ test('the terminal-transition intents still run their one evaluation when no arc
   // The durable host-process intent is the restart authority for the transition's
   // one sweep: it runs and clears even though the archive retry is hours away.
   f.updateResolution({ hostProcessSweep: hostProcessSweepIntent('done') });
+  let scans = 0;
+  f.adapter.hostProcessListing = async () => { scans++; return []; };
   await log.reset();
   await lifecycle.pass();
-  const swept = log.counts();
-  assert.ok(swept.ps > 0, `the durable sweep intent runs the host sweep: ${JSON.stringify(swept)}`);
+  assert.ok(scans > 0, 'the durable sweep intent runs the host sweep');
   assert.equal(f.task().resolution.hostProcessSweep, null, 'one evaluation clears the intent');
   assert.ok(f.store.events(f.task().id).some(event => event.kind === 'host_process_sweep_settled'));
   assert.equal(attempts(), before, 'the archive itself is still backed off');

@@ -1,4 +1,5 @@
-import { test, type TestContext } from 'node:test';
+import type { TestContext } from 'node:test';
+import { test } from './support/sharded-test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
@@ -202,10 +203,9 @@ test('a source change after the recorded discard intent is preserved, never arch
   } finally { await f.close(); }
 });
 
-test('every fence still holds under a cancelled-workspace discard', { timeout: HOOK_TEST_TIMEOUT_MS }, async t => {
-  const shapes = ['unauthorized', 'relay-without-note', 'stale-version', 'pause', 'dispatch-hold', 'open-pr', 'shared',
-    'retention', 'unreleased-run', 'unknown-observation', 'wrong-directory-record', 'wrong-task-record'] as const;
-  for (const shape of shapes) await t.test(shape, async t => {
+const shapes = ['unauthorized', 'relay-without-note', 'stale-version', 'pause', 'dispatch-hold', 'open-pr', 'shared',
+  'retention', 'unreleased-run', 'unknown-observation', 'wrong-directory-record', 'wrong-task-record'] as const;
+for (const shape of shapes) test(`every fence still holds under a cancelled-workspace discard: ${shape}`, { timeout: HOOK_TEST_TIMEOUT_MS }, async t => {
     const f = await fixture(t);
     try {
       await f.dirty();
@@ -262,7 +262,6 @@ test('every fence still holds under a cancelled-workspace discard', { timeout: H
         assert.ok(f.record(), 'the owner decision is durable before any effect');
       }
     } finally { await f.close(); }
-  });
 });
 
 test('a paused cancelled-workspace discard applies the same durable decision once unpaused', { timeout: HOOK_TEST_TIMEOUT_MS }, async t => {

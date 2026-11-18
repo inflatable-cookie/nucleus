@@ -44,6 +44,8 @@ async function publicFixture(t: TestContext) {
   // helper path shares.
   await mkdir(data, { recursive: true });
   const adapter = new PaseoAdapter('ws://127.0.0.1:1', join(data, 'callback.sock'), join(data, 'worker-report.mjs'));
+  adapter.scanForWorktreeAdd = () => ({ state: 'absent' });
+  adapter.hostProcessListing = async () => [];
   // The fixture has no daemon: the bootstrap connect must fail fast rather than
   // reach a socket, and no sweep may run.
   adapter.connect = async () => { throw Error('fixture daemon is absent'); };

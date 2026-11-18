@@ -151,9 +151,11 @@ export async function awaitOwnedPrivateSettlement(
 export async function stopPrivateSupervisor(child: ChildProcess, timeoutMs = 15_000): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) return;
   try {
-    child.kill("SIGTERM");
-  } catch {
-    return;
+    if (!child.kill("SIGTERM") && child.exitCode === null && child.signalCode === null)
+      throw new Error("the owned private supervisor could not be signalled");
+  } catch (error) {
+    if (child.exitCode !== null || child.signalCode !== null) return;
+    throw error;
   }
   const exited = new Promise<void>(resolve => {
     if (child.exitCode !== null || child.signalCode !== null) {
@@ -169,9 +171,11 @@ export async function stopPrivateSupervisor(child: ChildProcess, timeoutMs = 15_
   if (bounded) return;
   if (child.exitCode !== null || child.signalCode !== null) return;
   try {
-    child.kill("SIGKILL");
-  } catch {
-    return;
+    if (!child.kill("SIGKILL") && child.exitCode === null && child.signalCode === null)
+      throw new Error("the owned private supervisor could not be killed");
+  } catch (error) {
+    if (child.exitCode !== null || child.signalCode !== null) return;
+    throw error;
   }
   await Promise.race([
     exited,
@@ -196,9 +200,8 @@ export interface SettleStopDisposeOptions {
 
 /**
  * The one shared teardown order: settle the exact owned run while the endpoint
- * answers, stop the owned supervisor, then dispose the root. A settle failure
- * still stops and disposes for hygiene but rethrows, so it is never reported
- * as settled or deleted as success.
+ * answers, stop the owned server, then dispose the root. If settlement or
+ * server stop is unproven, preserve the root and report the failure.
  */
 export async function settleStopDisposePrivateFixture(
   child: ChildProcess,
@@ -221,10 +224,9 @@ export async function settleStopDisposePrivateFixture(
     stopError = error;
   }
   let disposeError: unknown = null;
-  try {
-    disposePrivateRoot(root);
-  } catch (error) {
-    disposeError = error;
+  if (settleError === null && stopError === null) {
+    try { disposePrivateRoot(root); }
+    catch (error) { disposeError = error; }
   }
   if (settleError !== null || stopError !== null || disposeError !== null) {
     const parts: string[] = [];

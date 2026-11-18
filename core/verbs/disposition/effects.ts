@@ -257,7 +257,7 @@ async function progressDispositionStep(store: Store, deps: DispositionDeps, task
         // evidence; the disposition keeps its current status and is re-attempted
         // on the next pass, so `retry_effect` re-runs the gate and a pass then
         // archives.
-        try { await sweepTaskHostProcesses(store, store.task(taskId), { force: true }); }
+        try { await sweepTaskHostProcesses(store, store.task(taskId), { force: true, readProcesses: deps.readProcesses }); }
         catch (error) { store.event(taskId, "host_process_sweep_warning", `Host process sweep could not run: ${error instanceof Error ? error.message : String(error)}`); }
         const retention = await deps.hooks.preArchive?.(store.task(taskId));
         if (retention?.hold) {
@@ -371,7 +371,7 @@ async function progressDispositionStep(store: Store, deps: DispositionDeps, task
   // uncertainty is a task-history warning and never reopens the task.
   try { await deps.hooks.finished?.(completed); }
   catch (error) { store.event(taskId, "finished_hook_warning", `task.finished could not run: ${error instanceof Error ? error.message : String(error)}`); }
-  try { await sweepTaskHostProcesses(store, store.task(taskId)); }
+  try { await sweepTaskHostProcesses(store, store.task(taskId), { readProcesses: deps.readProcesses }); }
   catch (error) { store.event(taskId, "host_process_sweep_warning", `Host process sweep could not run: ${error instanceof Error ? error.message : String(error)}`); }
   // The stop and sweep clear their durable intents, so re-read the latest projection.
   return store.task(taskId);

@@ -4,7 +4,6 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { fixture, runningPid, wait } from "./support/run-process-cleanup-fixture";
-import { readHostUidProcesses } from "../core/machine/host-process-listing";
 import { hostOwesRunProcessCleanup } from "../core/machine/run-process-cleanup";
 import { LaneScheduler } from "../core/scheduling/lane-scheduler";
 import { LANE_PRIORITY_AUDIT } from "../core/scheduling/lane-priorities";
@@ -30,7 +29,7 @@ function laneContext(f: ReturnType<typeof fixture>) {
     adapter: {
       hostProcessListing: async () => {
         listings++;
-        const read = await readHostUidProcesses();
+        const read = await f.listing();
         return read.state === "listed" ? read.processes : null;
       },
     },

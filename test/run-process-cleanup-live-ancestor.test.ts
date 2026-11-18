@@ -46,6 +46,7 @@ function respawningHost(f: ReturnType<typeof fixture>, run: Run) {
   const helper = join(f.root, "mcp-report.mjs"), tool = join(f.root, "respawned-tool.cjs");
   const launcher = join(f.root, "launcher.cjs"), host = join(f.root, "host.cjs");
   const pidFile = join(f.root, "respawned-tool.pid"), ready = join(f.root, "retained-host.ready");
+  const helperPidFile = join(f.root, "retained-helper.pid");
   writeFileSync(helper, "setInterval(() => {}, 1000);");
   writeFileSync(tool, "setInterval(() => {}, 1000);");
   writeFileSync(launcher, `
@@ -58,7 +59,8 @@ function respawningHost(f: ReturnType<typeof fixture>, run: Run) {
   `);
   writeFileSync(host, `
     const fs = require('node:fs'), { spawn } = require('node:child_process');
-    spawn(process.execPath, [${JSON.stringify(helper)}, ${JSON.stringify(join(f.root, "tickets", `mcp-${run.id}.json`))}], { stdio: 'ignore' });
+    const report = spawn(process.execPath, [${JSON.stringify(helper)}, ${JSON.stringify(join(f.root, "tickets", `mcp-${run.id}.json`))}], { stdio: 'ignore' });
+    fs.writeFileSync(${JSON.stringify(helperPidFile)}, String(report.pid));
     const launch = () => spawn(process.execPath, [${JSON.stringify(launcher)}, ${JSON.stringify(tool)}, ${JSON.stringify(pidFile)}],
       { detached: true, stdio: 'ignore' }).unref();
     launch();
@@ -71,7 +73,7 @@ function respawningHost(f: ReturnType<typeof fixture>, run: Run) {
     }, 25);
     setInterval(() => {}, 1000);
   `);
-  return launched(f, run, host, { pidFile, ready } as { pidFile: string; ready: string });
+  return launched(f, run, host, { pidFile, ready, helperPidFile });
 }
 
 function launched<T extends { infoFile: string } | { pidFile: string }>(f: ReturnType<typeof fixture>, run: Run, script: string, files: T & { ready: string }): T & { ready: string; host: number } {
@@ -115,6 +117,7 @@ test("a process this run lost to a stop, respawned at once, is recorded once and
     const run = f.run("reviewer"), held = respawningHost(f, run);
     await wait(() => existsSync(held.pidFile) && existsSync(held.ready));
     const first = toolPid(held.pidFile); f.track(first);
+    f.track(toolPid(held.helperPidFile));
     await wait(() => processParentPid(first) === 1);
     // One observation while the run is live records the provider's identity.
     await f.cleanup();

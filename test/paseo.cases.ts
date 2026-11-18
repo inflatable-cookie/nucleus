@@ -596,6 +596,9 @@ async function canonicalWorkspaceFixture(t: TestContext) {
   const baseHead = await git(primary, "rev-parse", "HEAD");
   const dataDir = join(root, "data");
   const adapter = new PaseoAdapter("ws://127.0.0.1:1", join(dataDir, "callback.sock"), join(dataDir, "worker-report.mjs"));
+  // All Git creation in this private fixture has settled before inspection.
+  adapter.scanForWorktreeAdd = () => ({ state: "absent" });
+  adapter.hostProcessListing = async () => [];
   const ownedPath = join(dataDir, "workspaces", digest(await repoCommonDir(primary)), "ns-task");
   const catalog = bindCatalog(adapter, ownedPath, canonicalDescriptor(primary, ownedPath));
   const task = { id: "task", title: "Fix closeout", repoPath: primary, branch: "ns-task", baseBranch: "main",

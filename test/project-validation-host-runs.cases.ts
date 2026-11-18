@@ -14,15 +14,19 @@ import { command, git } from '../core/git/index';
 import { Store, digest } from '../core/store/store';
 import { Engine } from '../core/engine';
 import { requestDisposition, type DispositionDeps } from '../core/verbs/disposition';
-import { RepositoryHooks } from '../core/hooks/hooks';
+import { RepositoryHooks as ProductionRepositoryHooks } from '../core/hooks/hooks';
+import { scopedValidationFixture, validationFixtureHostListing } from './support/scoped-validation';
 import { HostRunScheduler, NO_HISTORY_CPU_SHARE, selectorForArgv } from '../core/host-runs/host-run-scheduler';
 import { projectValidationSupervisorPaths, readProjectValidationPlan, readProjectValidationResult, readProjectValidationSupervisorState, writeProjectValidationPlan, writeProjectValidationResult, writeProjectValidationSupervisorState } from '../core/qa/project-validation-supervisor';
 import { readHostRunTokenKeys } from '../service/callbacks/host-run-endpoint';
 import { verifyRunToken } from "./host-run-token-fixture";
 import { hostRunSettlementSchema, projectValidationResultSchema, submissionSchema, type Profile, type Task } from '../shared/contracts';
 import { frozenHostRunRecordSchema } from './support/contract-010-frozen';
+import { overrideCommandTokenSearch } from '../core/machine/process-identity';
 import { processGroupEmpty, processGroupHasStartIdentity } from '../core/machine/process-group';
-import { processesForStartIdentity, processStartIdentityLiveness } from '../core/machine/process-identity-search';
+import { overrideIdentityListing, processStartIdentityLiveness } from '../core/machine/process-identity-search';
+import { hostRunProcessStartIdentity, startIdentityProves } from '../core/machine/start-identity';
+import { scopedIdentityListing } from './support/scoped-identity';
 import { telemetrySnapshotSchema } from '../shared/telemetry';
 import type { Adapter } from '../core/host';
 import { timingTest } from './support/timing';
@@ -31,9 +35,19 @@ import { telemetrySnapshot } from '../core/telemetry/telemetry';
 
 const timing = weightedTiming(timingTest);
 
+const validationScopes = new WeakMap<Store, (hooks: ProductionRepositoryHooks) => void>();
+class RepositoryHooks extends ProductionRepositoryHooks {
+  constructor(store: Store, options: ConstructorParameters<typeof ProductionRepositoryHooks>[1] = {}) {
+    super(store, options);
+    validationScopes.get(store)?.(this);
+  }
+}
+
+
 const validationCommand = (script: string) => ({ argv: [process.execPath, '-e', script], timeoutMs: HOOK_TEST_TIMEOUT_MS, maxOutputBytes: 4096, terminationGraceMs: 30_000 });
 
 const cancellationDeps = (hooks: RepositoryHooks): DispositionDeps => ({
+  readProcesses: validationFixtureHostListing,
   hooks: { emit: async () => ({ hold: false, attention: false, records: [] }),
     cancelProjectValidation: (task, reason) => hooks.cancelProjectValidation(task, reason) },
   observeAgent: async () => ({ stopped: true }), archiveAgent: async () => {}, archiveSiblings: async () => {},
@@ -54,7 +68,7 @@ const projectValidationSeed: GitSeed = { name: 'project-validation', build: asyn
 } };
 
 /** A repository with a reviewed worker head: the plain project-validation shape. */
-async function fixture(t: any) {
+async function fixture(t: any, scopeValidation = false) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'nsq-project-validation-')));
   t.after(() => rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
   await materializeSeed(projectValidationSeed, root);
@@ -70,6 +84,7 @@ async function fixture(t: any) {
   const storeDir = await mkdtemp(join(tmpdir(), 'nsq-project-validation-store-'));
   t.after(() => rm(storeDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
   const store = new Store(join(storeDir, 'queue.sqlite'));
+  if (scopeValidation) validationScopes.set(store, scopedValidationFixture(t));
   const submitted = store.insert(submissionSchema.parse({
     submissionId: randomUUID(), title: 'Project validation scheduler', repoPath: repo, baseBranch: 'main',
     planningCommit: base, handoffPath: 'docs/plan.json', originAgentId: 'origin',
@@ -93,7 +108,7 @@ const grantIntegrationTurn = (store: Store, taskId: string) => {
 };
 
 test('Queue validation records its host-run settlement and writes no legacy admission block', async t => {
-  const f = await fixture(t);
+  const f = await fixture(t, true);
   t.after(() => f.store.close());
   const task = grantIntegrationTurn(f.store, f.task.id);
   const scheduler = new HostRunScheduler(f.store, { capacity: () => ({ cpuCapacity: 8, memoryCapacityBytes: 8_000_000_000, freeMemoryBytes: 8_000_000_000, loadAverage: [] }) });
@@ -120,7 +135,7 @@ test('Queue validation records its host-run settlement and writes no legacy admi
 });
 
 test('a half-removed owned candidate is rebuilt and project validation proceeds', async t => {
-  const f = await fixture(t);
+  const f = await fixture(t, true);
   t.after(() => f.store.close());
   const task = grantIntegrationTurn(f.store, f.task.id);
   const scheduler = new HostRunScheduler(f.store, { capacity: () => ({ cpuCapacity: 8, memoryCapacityBytes: 8_000_000_000, freeMemoryBytes: 8_000_000_000, loadAverage: [] }) });
@@ -152,7 +167,7 @@ test('a half-removed owned candidate is rebuilt and project validation proceeds'
 });
 
 weighted(2)('a service roll during candidate cleanup keeps the verdict and finishes removal on reattach', { timeout: HOOK_TEST_TIMEOUT_MS }, async t => {
-  const f = await fixture(t);
+  const f = await fixture(t, true);
   t.after(() => f.store.close());
   const task = grantIntegrationTurn(f.store, f.task.id);
   const capacity = () => ({ cpuCapacity: 8, memoryCapacityBytes: 8_000_000_000, freeMemoryBytes: 8_000_000_000, loadAverage: [] });
@@ -204,7 +219,7 @@ weighted(2)('a service roll during candidate cleanup keeps the verdict and finis
 });
 
 test('a settled validation for the prior PR head is recorded superseded before current-head validation', async t => {
-  const f = await fixture(t);
+  const f = await fixture(t, true);
   t.after(() => f.store.close());
   const task = grantIntegrationTurn(f.store, f.task.id);
   f.store.update(task.id, { resolution: { ...task.resolution, projectValidation: {
@@ -228,7 +243,7 @@ test('a settled validation for the prior PR head is recorded superseded before c
 });
 
 test('Queue project validation persists and redacts the contract token', async t => {
-  const f = await fixture(t);
+  const f = await fixture(t, true);
   t.after(() => f.store.close());
   const task = grantIntegrationTurn(f.store, f.task.id);
   const scheduler = new HostRunScheduler(f.store, { capacity: () => ({ cpuCapacity: 8, memoryCapacityBytes: 8_000_000_000, freeMemoryBytes: 8_000_000_000, loadAverage: [] }) });
@@ -263,7 +278,7 @@ test('Queue project validation persists and redacts the contract token', async t
 });
 
 test('a capped validation failure keeps its beginning and its end in the durable finding', async t => {
-  const f = await fixture(t);
+  const f = await fixture(t, true);
   t.after(() => f.store.close());
   const task = grantIntegrationTurn(f.store, f.task.id);
   const scheduler = new HostRunScheduler(f.store, { capacity: () => ({ cpuCapacity: 8, memoryCapacityBytes: 8_000_000_000, freeMemoryBytes: 8_000_000_000, loadAverage: [] }) });
@@ -283,7 +298,7 @@ test('a capped validation failure keeps its beginning and its end in the durable
 });
 
 test('validation records measured process-tree CPU and that run feeds selector history', async t => {
-  const f = await fixture(t);
+  const f = await fixture(t, true);
   t.after(() => f.store.close());
   const task = grantIntegrationTurn(f.store, f.task.id);
   const scheduler = new HostRunScheduler(f.store, { capacity: () => ({ cpuCapacity: 8, memoryCapacityBytes: 8_000_000_000, freeMemoryBytes: 8_000_000_000, loadAverage: [] }) });
@@ -325,7 +340,7 @@ test('validation records measured process-tree CPU and that run feeds selector h
 });
 
 test('a live validation stays reserved when Queue cannot persist observed process identity', async t => {
-  const f = await fixture(t);
+  const f = await fixture(t, true);
   t.after(() => f.store.close());
   const task = grantIntegrationTurn(f.store, f.task.id);
   const scheduler = new HostRunScheduler(f.store, { capacity: () => ({ cpuCapacity: 8, memoryCapacityBytes: 8_000_000_000, freeMemoryBytes: 8_000_000_000, loadAverage: [] }) });
@@ -368,7 +383,7 @@ test('a live validation stays reserved when Queue cannot persist observed proces
 });
 
 weighted(2)('task cancellation stops a launched validation and settles it cancelled', { timeout: HOOK_TEST_TIMEOUT_MS }, async t => {
-  const f = await fixture(t);
+  const f = await fixture(t, true);
   t.after(() => f.store.close());
   const task = grantIntegrationTurn(f.store, f.task.id);
   const scheduler = new HostRunScheduler(f.store, { capacity: () => ({ cpuCapacity: 8, memoryCapacityBytes: 8_000_000_000, freeMemoryBytes: 8_000_000_000, loadAverage: [] }) });
@@ -415,7 +430,7 @@ weighted(2)('task cancellation stops a launched validation and settles it cancel
 });
 
 weighted(2)('task cancellation after service reattachment reaches the detached validation supervisor', { timeout: HOOK_TEST_TIMEOUT_MS }, async t => {
-  const f = await fixture(t);
+  const f = await fixture(t, true);
   t.after(() => f.store.close());
   const task = grantIntegrationTurn(f.store, f.task.id);
   const capacity = () => ({ cpuCapacity: 8, memoryCapacityBytes: 8_000_000_000, freeMemoryBytes: 8_000_000_000, loadAverage: [] });
@@ -470,6 +485,9 @@ test('a proven-lost validation is held and never launched again automatically', 
   const marker = join(f.root, 'must-not-launch');
   const validation = validationCommand(`require('node:fs').writeFileSync(${JSON.stringify(marker)}, 'launched')`);
   const runId = randomUUID(), token = randomUUID(), pid = 2_147_483_647;
+  // This deliberately synthetic lost row never started a fixture process.
+  overrideIdentityListing(identity => identity === token ? { state: 'absent' } : { state: 'unknown' });
+  t.after(() => overrideIdentityListing(null));
   const startedAt = new Date().toISOString();
   const selector = selectorForArgv(validation.argv, 'validation');
   const scheduled = scheduler.adoptRunning({ id: runId, epoch: 1, caller: `queue:validation:${task.id}:${f.head}`,
@@ -507,7 +525,7 @@ test('a proven-lost validation is held and never launched again automatically', 
 });
 
 weighted(2)('a durable validation result reconciles after Queue restarts without relaunching', async t => {
-  const f = await fixture(t);
+  const f = await fixture(t, true);
   t.after(() => f.store.close());
   const task = grantIntegrationTurn(f.store, f.task.id);
   const scheduler = new HostRunScheduler(f.store, { capacity: () => ({ cpuCapacity: 8, memoryCapacityBytes: 8_000_000_000, freeMemoryBytes: 8_000_000_000, loadAverage: [] }) });
@@ -526,6 +544,10 @@ weighted(2)('a durable validation result reconciles after Queue restarts without
   const rebuilt = await (hooks as any).buildProspectiveCandidate(task, candidatePath, f.base, f.head);
   assert.equal(rebuilt.kind, 'built', JSON.stringify(rebuilt));
   const identityToken = randomUUID();
+  // No fixture process was launched with this replacement identity.
+  overrideCommandTokenSearch(token => token === identityToken ? { state: 'absent' } : { state: 'unknown' });
+  overrideIdentityListing(token => token === identityToken ? { state: 'absent' } : { state: 'unknown' });
+  t.after(() => { overrideCommandTokenSearch(null); overrideIdentityListing(null); });
   const paths = projectValidationSupervisorPaths((hooks as any).isolationDataDir(), prior.hostRunId!);
   await mkdir(paths.root, { recursive: true, mode: 0o700 });
   writeProjectValidationPlan(paths.planPath, { format: 'queue.project-validation.plan', version: 1,
@@ -565,7 +587,7 @@ weighted(2)('a durable validation result reconciles after Queue restarts without
  * so an observation opens with an absent-result read and a later publication can
  * land after that read but before the supervisor exit is proven.
  */
-async function armPublicationInterval(f: Awaited<ReturnType<typeof fixture>>, hooks: RepositoryHooks,
+async function armPublicationInterval(t: any, f: Awaited<ReturnType<typeof fixture>>, hooks: RepositoryHooks,
   scheduler: HostRunScheduler, options: { exitCode: number; state: 'passed' | 'refused' }) {
   const task = f.store.task(f.task.id);
   const marker = join(f.root, `validation-launches-${options.state}`);
@@ -583,8 +605,17 @@ async function armPublicationInterval(f: Awaited<ReturnType<typeof fixture>>, ho
     runClass: 'heavy', hostRunStateDir: f.hostRunStateDir, identityToken, root: candidatePath, argv,
     timeoutMs: HOOK_TEST_TIMEOUT_MS, maxOutputBytes: 4096, terminationGraceMs: 30_000, launchedAt,
     statePath: paths.statePath, resultPath: paths.resultPath });
-  const supervisor = spawn(process.execPath, ['--import', 'tsx',
-    fileURLToPath(new URL('../bin/queue-validation-supervisor.mjs', import.meta.url)), paths.planPath, identityToken],
+  // This command does not fork. Its detached supervisor can use the fixture's
+  // empty escaped-child inventory without scanning unrelated host processes.
+  const supervisorEntry = join(f.root, 'validation-fixture-supervisor.mjs');
+  await writeFile(supervisorEntry, `
+    import { overrideIdentityListing } from ${JSON.stringify(new URL('../core/machine/process-identity-search.ts', import.meta.url).href)};
+    import { runProjectValidationSupervisorMain } from ${JSON.stringify(new URL('../service/executor/project-validation-supervisor-runner.ts', import.meta.url).href)};
+    import { noCpuReads } from ${JSON.stringify(new URL('./support/scoped-identity.ts', import.meta.url).href)};
+    overrideIdentityListing({ state: 'absent' });
+    await runProjectValidationSupervisorMain(undefined, { cpuReads: noCpuReads });
+  `);
+  const supervisor = spawn(process.execPath, ['--import', 'tsx', supervisorEntry, paths.planPath, identityToken],
   { cwd: fileURLToPath(new URL('..', import.meta.url)), stdio: 'ignore' });
   const supervisorExit = await new Promise<number | null>((resolve, reject) => {
     supervisor.on('error', reject);
@@ -603,7 +634,12 @@ async function armPublicationInterval(f: Awaited<ReturnType<typeof fixture>>, ho
   assert.ok(supervisorState?.activeProcess, 'the supervisor recorded its command process identity');
   assert.throws(() => process.kill(supervisorState.supervisorPid, 0), { code: 'ESRCH' },
     'the producer is proven exited before the observation runs');
-  assert.equal(processesForStartIdentity(identityToken).state, 'absent', 'no command process carries the identity');
+  // The command above cannot fork; its recorded start identity is the entire fixture set.
+  assert.equal(processStartIdentityLiveness(supervisorState.activeProcess.pid, supervisorState.activeProcess.startIdentity), 'dead', 'no command process carries the identity');
+  const commandRecord = join(f.root, `validation-command-${runId}.json`);
+  await writeFile(commandRecord, JSON.stringify({ pid: supervisorState.activeProcess.pid, identity: supervisorState.activeProcess.startIdentity }));
+  const identityRecords = [commandRecord];
+  scopedIdentityListing(t, identityRecords);
   assert.equal(processGroupEmpty(supervisorState.activeProcess.processGroupId), true, 'the command group is proven empty');
   assert.equal(await launches(), 1, 'the command ran exactly once');
 
@@ -626,7 +662,7 @@ async function armPublicationInterval(f: Awaited<ReturnType<typeof fixture>>, ho
   // The helper draws no cleanup duty for the authentic command's numeric group: it
   // already proved that group exited, and a later signal would only reach whatever
   // process now holds that group id.
-  return { paths, authentic, supervisorState, launches, identityToken, epoch, runId,
+  return { paths, authentic, supervisorState, launches, identityToken, identityRecords, epoch, runId,
     validation: { argv, timeoutMs: HOOK_TEST_TIMEOUT_MS, maxOutputBytes: 4096, terminationGraceMs: 30_000 } };
 }
 
@@ -659,7 +695,7 @@ weighted(2)('a result published between the absent-result read and the proven ex
     const scheduler = new HostRunScheduler(f.store, { capacity: () => ({ cpuCapacity: 8, memoryCapacityBytes: 8_000_000_000, freeMemoryBytes: 8_000_000_000, loadAverage: [] }) });
     t.after(() => scheduler.stop());
     const hooks = new RepositoryHooks(f.store, { hostRuns: scheduler, validationPollMs: 25 });
-    const armed = await armPublicationInterval(f, hooks, scheduler, scenario);
+    const armed = await armPublicationInterval(t, f, hooks, scheduler, scenario);
 
     const { outcome, published } = await reconcileWithIntervalPublication(t, f,
       () => writeProjectValidationResult(armed.paths.resultPath, armed.authentic),
@@ -698,7 +734,7 @@ weighted(2)('a result published inside the exit interval cannot settle while the
   const scheduler = new HostRunScheduler(f.store, { capacity: () => ({ cpuCapacity: 8, memoryCapacityBytes: 8_000_000_000, freeMemoryBytes: 8_000_000_000, loadAverage: [] }) });
   t.after(() => scheduler.stop());
   const hooks = new RepositoryHooks(f.store, { hostRuns: scheduler, validationPollMs: 25 });
-  const armed = await armPublicationInterval(f, hooks, scheduler, { exitCode: 0, state: 'passed' });
+  const armed = await armPublicationInterval(t, f, hooks, scheduler, { exitCode: 0, state: 'passed' });
   const ready = join(f.root, 'live-validation-group');
   const holder = spawn(process.execPath, ['-e',
     `require('node:fs').writeFileSync(${JSON.stringify(ready)}, 'ready');setInterval(() => {}, 1000)`],
@@ -731,7 +767,7 @@ weighted(2)('a mismatched result published inside the exit interval is refused w
   const scheduler = new HostRunScheduler(f.store, { capacity: () => ({ cpuCapacity: 8, memoryCapacityBytes: 8_000_000_000, freeMemoryBytes: 8_000_000_000, loadAverage: [] }) });
   t.after(() => scheduler.stop());
   const hooks = new RepositoryHooks(f.store, { hostRuns: scheduler, validationPollMs: 25 });
-  const armed = await armPublicationInterval(f, hooks, scheduler, { exitCode: 0, state: 'passed' });
+  const armed = await armPublicationInterval(t, f, hooks, scheduler, { exitCode: 0, state: 'passed' });
 
   const { outcome, published } = await reconcileWithIntervalPublication(t, f,
     () => writeProjectValidationResult(armed.paths.resultPath, { ...armed.authentic, epoch: armed.authentic.epoch + 1 }),
@@ -754,7 +790,7 @@ weighted(2)('an unreadable result published inside the exit interval keeps the l
   const scheduler = new HostRunScheduler(f.store, { capacity: () => ({ cpuCapacity: 8, memoryCapacityBytes: 8_000_000_000, freeMemoryBytes: 8_000_000_000, loadAverage: [] }) });
   t.after(() => scheduler.stop());
   const hooks = new RepositoryHooks(f.store, { hostRuns: scheduler, validationPollMs: 25 });
-  const armed = await armPublicationInterval(f, hooks, scheduler, { exitCode: 0, state: 'passed' });
+  const armed = await armPublicationInterval(t, f, hooks, scheduler, { exitCode: 0, state: 'passed' });
 
   const { outcome, published } = await reconcileWithIntervalPublication(t, f,
     () => writeFileSync(armed.paths.resultPath, '{"format":"queue.project-validation.result",', { mode: 0o600 }),
@@ -782,7 +818,7 @@ weighted(2)('a result published inside the exit interval waits for its live supe
   const scheduler = new HostRunScheduler(f.store, { capacity: () => ({ cpuCapacity: 8, memoryCapacityBytes: 8_000_000_000, freeMemoryBytes: 8_000_000_000, loadAverage: [] }) });
   t.after(() => scheduler.stop());
   const hooks = new RepositoryHooks(f.store, { hostRuns: scheduler, validationPollMs: 25 });
-  const armed = await armPublicationInterval(f, hooks, scheduler, { exitCode: 0, state: 'passed' });
+  const armed = await armPublicationInterval(t, f, hooks, scheduler, { exitCode: 0, state: 'passed' });
   // A live producer identity: the run's token is in a live process's own argv.
   const producer = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)', armed.identityToken], { stdio: 'ignore' });
   t.after(() => { try { producer.kill('SIGKILL'); } catch { /* it already exited */ } });
@@ -814,7 +850,7 @@ weighted(2)('a result published inside the exit interval holds while the produce
   const scheduler = new HostRunScheduler(f.store, { capacity: () => ({ cpuCapacity: 8, memoryCapacityBytes: 8_000_000_000, freeMemoryBytes: 8_000_000_000, loadAverage: [] }) });
   t.after(() => scheduler.stop());
   const hooks = new RepositoryHooks(f.store, { hostRuns: scheduler, validationPollMs: 25 });
-  const armed = await armPublicationInterval(f, hooks, scheduler, { exitCode: 0, state: 'passed' });
+  const armed = await armPublicationInterval(t, f, hooks, scheduler, { exitCode: 0, state: 'passed' });
   const producer = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)', armed.identityToken], { stdio: 'ignore' });
   t.after(() => { try { producer.kill('SIGKILL'); } catch { /* it already exited */ } });
   writeProjectValidationSupervisorState(armed.paths.statePath, { ...armed.supervisorState!, supervisorPid: producer.pid! });
@@ -850,7 +886,7 @@ weighted(2)('a result published inside the exit interval holds while an identity
   const scheduler = new HostRunScheduler(f.store, { capacity: () => ({ cpuCapacity: 8, memoryCapacityBytes: 8_000_000_000, freeMemoryBytes: 8_000_000_000, loadAverage: [] }) });
   t.after(() => scheduler.stop());
   const hooks = new RepositoryHooks(f.store, { hostRuns: scheduler, validationPollMs: 25 });
-  const armed = await armPublicationInterval(f, hooks, scheduler, { exitCode: 0, state: 'passed' });
+  const armed = await armPublicationInterval(t, f, hooks, scheduler, { exitCode: 0, state: 'passed' });
   // One process carrying the run's inherited identity outlives the recorded group.
   const ready = join(f.root, 'escaped-identity-process');
   const escaped = spawn(process.execPath, ['-e',
@@ -859,6 +895,11 @@ weighted(2)('a result published inside the exit interval holds while an identity
   escaped.unref();
   t.after(() => { try { process.kill(-escaped.pid!, 'SIGKILL'); } catch { /* the owned group already exited */ } });
   await waitFor(() => existsSync(ready), HOST_RUN_FIXTURE_EVENT_TIMEOUT_MS, 'the identity-bearing process to start');
+  const escapedIdentity = hostRunProcessStartIdentity(escaped.pid!);
+  assert.ok(startIdentityProves(escapedIdentity));
+  const escapedRecord = join(f.root, 'escaped-identity.json');
+  await writeFile(escapedRecord, JSON.stringify({ pid: escaped.pid, identity: escapedIdentity }));
+  armed.identityRecords.push(escapedRecord);
   // The supervisor itself is proven dead; only the remaining tree is still live.
   writeProjectValidationSupervisorState(armed.paths.statePath, { ...armed.supervisorState!, supervisorPid: 2_147_483_647 });
 
@@ -882,7 +923,7 @@ weighted(2)('a result whose identity token alone mismatches holds without settle
   const scheduler = new HostRunScheduler(f.store, { capacity: () => ({ cpuCapacity: 8, memoryCapacityBytes: 8_000_000_000, freeMemoryBytes: 8_000_000_000, loadAverage: [] }) });
   t.after(() => scheduler.stop());
   const hooks = new RepositoryHooks(f.store, { hostRuns: scheduler, validationPollMs: 25 });
-  const armed = await armPublicationInterval(f, hooks, scheduler, { exitCode: 0, state: 'passed' });
+  const armed = await armPublicationInterval(t, f, hooks, scheduler, { exitCode: 0, state: 'passed' });
 
   const { outcome, published } = await reconcileWithIntervalPublication(t, f,
     () => writeProjectValidationResult(armed.paths.resultPath, { ...armed.authentic, identityToken: randomUUID() }),
@@ -907,7 +948,7 @@ weighted(2)('a result from another run published inside the exit interval settle
   const scheduler = new HostRunScheduler(f.store, { capacity: () => ({ cpuCapacity: 8, memoryCapacityBytes: 8_000_000_000, freeMemoryBytes: 8_000_000_000, loadAverage: [] }) });
   t.after(() => scheduler.stop());
   const hooks = new RepositoryHooks(f.store, { hostRuns: scheduler, validationPollMs: 25 });
-  const armed = await armPublicationInterval(f, hooks, scheduler, { exitCode: 0, state: 'passed' });
+  const armed = await armPublicationInterval(t, f, hooks, scheduler, { exitCode: 0, state: 'passed' });
   const otherRunId = randomUUID();
   assert.notEqual(otherRunId, armed.runId, 'the published row names a different run');
 
@@ -933,7 +974,7 @@ weighted(2)('a result from another run published inside the exit interval settle
 });
 
 weighted(3)('a live validation supervisor with a stale heartbeat is terminated and settles lost', { timeout: HOOK_TEST_TIMEOUT_MS }, async t => {
-  const f = await fixture(t);
+  const f = await fixture(t, true);
   t.after(() => f.store.close());
   const task = grantIntegrationTurn(f.store, f.task.id);
   const scheduler = new HostRunScheduler(f.store, { capacity: () => ({ cpuCapacity: 8, memoryCapacityBytes: 8_000_000_000, freeMemoryBytes: 8_000_000_000, loadAverage: [] }) });
@@ -1003,7 +1044,7 @@ weighted(4)('a service restart reconciles the same interval result and settles i
   const before = new HostRunScheduler(f.store, { capacity });
   t.after(() => before.stop());
   const hooksBefore = new RepositoryHooks(f.store, { hostRuns: before, validationPollMs: 25 });
-  const armed = await armPublicationInterval(f, hooksBefore, before, { exitCode: 0, state: 'passed' });
+  const armed = await armPublicationInterval(t, f, hooksBefore, before, { exitCode: 0, state: 'passed' });
 
   // The drafting service instance stops; a fresh one reattaches the same run row.
   before.stop();
@@ -1036,7 +1077,7 @@ weighted(4)('a service restart reconciles the same interval result and settles i
 });
 
 test('Queue host scheduler owns the validation wait position and clears it after admission', async t => {
-  const f = await fixture(t);
+  const f = await fixture(t, true);
   t.after(() => f.store.close());
   const task = grantIntegrationTurn(f.store, f.task.id);
   const scheduler = new HostRunScheduler(f.store, { capacity: () => ({ cpuCapacity: 1, memoryCapacityBytes: 1_000_000_000, freeMemoryBytes: 1_000_000_000, loadAverage: [] }) });
@@ -1064,7 +1105,7 @@ test('Queue host scheduler owns the validation wait position and clears it after
 });
 
 test('a task cancellation fence settled before admission prevents queued validation from launching', async t => {
-  const f = await fixture(t);
+  const f = await fixture(t, true);
   t.after(() => f.store.close());
   const task = grantIntegrationTurn(f.store, f.task.id);
   const scheduler = new HostRunScheduler(f.store, { capacity: () => ({ cpuCapacity: 1, memoryCapacityBytes: 1_000_000_000, freeMemoryBytes: 1_000_000_000, loadAverage: [] }) });
@@ -1101,7 +1142,7 @@ test('a task cancellation fence settled before admission prevents queued validat
 });
 
 test('client runs queued then running in Queue keep the worker alive without spawning an admission query', async t => {
-  const f = await fixture(t);
+  const f = await fixture(t, true);
   t.after(() => f.store.close());
   const scheduler = new HostRunScheduler(f.store, { capacity: () => ({ cpuCapacity: 1, memoryCapacityBytes: 1_000_000_000, freeMemoryBytes: 1_000_000_000, loadAverage: [] }) });
   const submittedAt = new Date().toISOString();
@@ -1123,6 +1164,7 @@ test('client runs queued then running in Queue keep the worker alive without spa
   process.env.EFFIGY_INVOCATIONS = invocations;
   try {
     const engine = new Engine(f.store, idleAdapterFor(f.store), 0);
+    validationScopes.get(f.store)?.(engine.hooks);
     engine.hooks.options.hostRuns = scheduler;
     f.store.setMeta('paused', false);
     const working = f.store.update(f.task.id, { phase: 'working', idleSince: '2026-09-28T10:00:00.000Z' });
@@ -1151,7 +1193,7 @@ test('client runs queued then running in Queue keep the worker alive without spa
 // A 100 ms capacity deadline settled through scheduler timers is a wall-clock
 // oracle: under the parallel suite's load it measured starvation, so it runs alone.
 timing(1)('Queue scheduler capacity_timeout becomes a typed hold with scheduler telemetry', {}, async t => {
-  const f = await fixture(t);
+  const f = await fixture(t, true);
   t.after(() => f.store.close());
   const task = grantIntegrationTurn(f.store, f.task.id);
   const scheduler = new HostRunScheduler(f.store, {
@@ -1186,17 +1228,18 @@ timing(1)('Queue scheduler capacity_timeout becomes a typed hold with scheduler 
 });
 
 test('an operator retry clears the capacity hold so the validation actually runs again', async t => {
-  const f = await fixture(t);
+  const f = await fixture(t, true);
   t.after(() => f.store.close());
   const held = { argv: ['effigy', 'qa'], digest: 'd'.repeat(64), exitCode: null, durationMs: 0, outputTail: 'QA capacity unavailable: deadline lapsed', base: f.base, head: f.head, state: 'hold' as const, queueBuild: '', settingsRevision: 0, pid: null, capacityWait: null, capacityUnavailable: true };
   f.store.update(f.task.id, { phase: 'needs_attention', reason: 'QA capacity unavailable', resolution: { ...f.store.task(f.task.id).resolution, attention: true, projectValidation: held } });
   const engine = new Engine(f.store, idleAdapterFor(f.store), 0);
+  validationScopes.get(f.store)?.(engine.hooks);
   const retried = engine.resolution.retry(f.store.task(f.task.id), false, undefined, true);
   assert.equal(retried.resolution.projectValidation, null);
 });
 
 test('failing its checks after admission keeps the failure semantics of today', async t => {
-  const f = await fixture(t);
+  const f = await fixture(t, true);
   t.after(() => f.store.close());
   const task = grantIntegrationTurn(f.store, f.task.id);
   const scheduler = new HostRunScheduler(f.store);
@@ -1213,7 +1256,7 @@ test('failing its checks after admission keeps the failure semantics of today', 
 });
 
 test('telemetry reports queue wait, wall and CPU separately per project and task type', async t => {
-  const f = await fixture(t);
+  const f = await fixture(t, true);
   t.after(() => f.store.close());
   const base = { argv: ['effigy', 'qa'], digest: 'd'.repeat(64), exitCode: 0, durationMs: 10, outputTail: '', base: f.base, head: f.head, state: 'passed' as const, queueBuild: '', settingsRevision: 0, pid: null, capacityWait: null, capacityUnavailable: false };
   const joined = { ...base, hostRunTelemetry: { queueWaitMs: 100, wallMs: 1000, cpuMs: 700, outcome: 'passed' as const } };
@@ -1251,6 +1294,7 @@ test('historical validation records with admission blocks remain readable', () =
 /** An adapter whose only worker is idle in its own workspace; enough for the liveness sweep. */
 function idleAdapterFor(store: Store): Adapter {
   return {
+    hostProcessListing: validationFixtureHostListing,
     profiles: async () => [] as Profile[], validate: async (t: Task) => t.planningCommit,
     createWorkspace: async (t: Task) => ({ id: `ws-${t.id}`, directory: '/fixture' }),
     findWorkspaces: async () => [], verifyWorkspace: async (t: Task) => t.branch,

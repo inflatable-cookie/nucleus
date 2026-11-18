@@ -6,8 +6,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   commandLooksLikeEffigyQa, commandLooksLikeValidation, cwdInWorktree, cwdMapFromLsof,
-  findWorktreeValidation, retryOnceAfterIncompleteScan, worktreeValidationVerdict, type CwdState,
+  retryOnceAfterIncompleteScan, worktreeValidationVerdict, type CwdState,
 } from '../core/workspaces/worktree-validation';
+import { readProcessSubset } from '../core/machine/host-process-listing';
 
 test('an incomplete process scan retries once and a complete scan does not retry', () => {
   let calls = 0;
@@ -55,7 +56,7 @@ test('cwd matching is the worktree or a directory inside it, never a sibling pre
   assert.equal(cwdInWorktree('/tmp/ns-tas', '/tmp/ns-task'), false);
 });
 
-test('findWorktreeValidation matches a live process in the worktree and ignores a sibling', async t => {
+test('worktree validation matches a live fixture process and ignores a sibling', async t => {
   const root = await mkdtemp(join(tmpdir(), 'nsq-worktree-qa-'));
   t.after(() => rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
   const worktree = join(root, 'task');
@@ -69,16 +70,26 @@ test('findWorktreeValidation matches a live process in the worktree and ignores 
   });
   t.after(() => { try { if (live.pid) process.kill(live.pid); } catch { /* already gone */ } });
   t.after(() => { try { if (outsider.pid) process.kill(outsider.pid); } catch { /* already gone */ } });
-  const found = await waitFor(() => {
-    const scan = findWorktreeValidation(worktree);
-    return scan.state === 'alive' ? scan : null;
-  }, 8_000, 'worktree QA process');
+  assert.ok(live.pid && outsider.pid);
+  const deadline = Date.now() + 10_000;
+  let read = await readProcessSubset([live.pid, outsider.pid]);
+  while (Date.now() < deadline && (read.state !== 'listed' || read.processes.filter(f => f.command.includes('effigy qa:changed') && f.cwd).length !== 2)) {
+    await new Promise(resolve => setTimeout(resolve, 50));
+    read = await readProcessSubset([live.pid, outsider.pid]);
+  }
+  assert.equal(read.state, 'listed');
+  if (read.state !== 'listed') return;
+  const listing = read.processes.map(({ pid, command }) => ({ pid, command }));
+  const cwds = () => new Map(read.processes.map(({ pid, cwd }) => [pid, cwd ? { state: 'read' as const, path: cwd } : { state: 'unreadable' as const }]));
+  const found = worktreeValidationVerdict(worktree, listing, [], cwds);
+  assert.equal(found.state, 'alive');
+  if (found.state !== 'alive') return;
   assert.equal(found.pid, live.pid);
   assert.match(found.command, /effigy qa:changed/);
-  const other = findWorktreeValidation(sibling);
+  const other = worktreeValidationVerdict(sibling, listing, [], cwds);
   assert.equal(other.state, 'alive');
   assert.equal(other.state === 'alive' ? other.pid : null, outsider.pid);
-  assert.equal(findWorktreeValidation(join(root, 'missing')).state, 'absent');
+  assert.equal(worktreeValidationVerdict(join(root, 'missing'), listing, [], cwds).state, 'absent');
 });
 
 test('worktreeValidationVerdict distinguishes a complete empty scan from an incomplete listing', () => {
@@ -155,13 +166,3 @@ test('cwdMapFromLsof treats omitted pids as gone only on a completed exit 0', ()
   );
   assert.deepEqual(printedMatch, { state: 'alive', command: 'effigy qa:changed', pid: 2 });
 });
-
-async function waitFor<T>(probe: () => T | null, timeoutMs: number, label: string): Promise<NonNullable<T>> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const value = probe();
-    if (value) return value;
-    await new Promise(resolve => setTimeout(resolve, 50));
-  }
-  throw new Error(`timed out waiting for ${label}`);
-}

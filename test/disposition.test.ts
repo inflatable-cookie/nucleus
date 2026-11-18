@@ -209,6 +209,7 @@ const submit = (title: string, repoPath = '/repo') => submissionSchema.parse({
 
 function stubDeps(overrides: Partial<DispositionDeps> = {}): DispositionDeps & { archived: string[]; proofs: number } {
   const deps = {
+    readProcesses: async () => [],
     archived: [] as string[], proofs: 0,
     hooks: { emit: async () => ({ hold: false, attention: false, records: [] as unknown[] }) },
     observeAgent: async () => ({ stopped: true }),
@@ -242,6 +243,7 @@ function fixture() {
   const archived: string[] = [];
   const interrupts: { agentId: string; messageId: string; text: string }[] = [];
   const adapter = {
+    hostProcessListing: async () => [],
     observe: async (id: string) => { const state = states.get(id); if (!state) throw new Error('Agent was not found'); return state; },
     archiveAgent: async (id: string) => { archived.push(id); states.delete(id); },
     interruptAndContinue: async (agentId: string, messageId: string, text: string) => { interrupts.push({ agentId, messageId, text }); },
@@ -371,6 +373,7 @@ test('cancelled-task archive refuses an idle unrelated thread', async () => {
       agents:{list:async()=>({entries:[{agent:foreign}],pageInfo:{hasMore:false}})},
     }});
     const adapter={
+      hostProcessListing:async()=>[],
       observe:async(id:string)=>({id,workspaceId:assigned.workspaceId,status:'idle',active:false,permissions:false,error:''}),
       archiveAgent:async()=>{},
       archiveTaskWorkspace:async(...args:Parameters<NonNullable<Adapter['archiveTaskWorkspace']>>)=>{
@@ -585,6 +588,7 @@ test('bulk disposition fences every target first, then drains effects serially w
   store.setMeta('paused', false);
   let activeArchives = 0, maxArchives = 0;
   const adapter = {
+    hostProcessListing: async () => [],
     observe: observeIdle(null),
     archiveAgent: async () => {
       activeArchives++; maxArchives = Math.max(maxArchives, activeArchives);
@@ -622,6 +626,7 @@ test('unfinished bulk disposition resumes from durable progress after restart', 
   const store = new Store(join(dir, 'queue.sqlite'));
   store.setMeta('paused', false);
   const adapter = {
+    hostProcessListing: async () => [],
     observe: observeIdle(null),
     archiveAgent: async () => {},
   } as unknown as Adapter;
@@ -1217,6 +1222,7 @@ test('MCP dispose tools share the service contract and reject self-disposal', as
   const caller = dispatched(store, 'Caller');
   states.set(caller.agentId!, { id: caller.agentId!, workspaceId: caller.workspaceId, status: 'idle', active: false, permissions: false, error: '' });
   const engine = new Engine(store, {
+    hostProcessListing: async () => [],
     observe: async (id: string) => { const state = states.get(id); if (!state) throw new Error('Agent was not found'); return state; },
     archiveAgent: async (id: string) => { states.delete(id); },
   } as unknown as Adapter, 0);

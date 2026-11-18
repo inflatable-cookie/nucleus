@@ -4,7 +4,6 @@ import { spawnSync } from "node:child_process";
 import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fixture, runningPid, wait } from "./support/run-process-cleanup-fixture";
-import { readHostUidProcesses } from "../core/machine/host-process-listing";
 import { processParentPid } from "../core/machine/process-identity";
 import { runProcessEnvironments } from "../core/machine/run-process-identity";
 import { sweepSettledRunProcesses } from "../core/machine/run-process-cleanup";
@@ -19,7 +18,7 @@ test("an owned orphan with an unknown start identity retains scratch and intent 
     process.kill(child.host, "SIGKILL"); process.kill(child.helper, "SIGKILL");
     await wait(() => !runningPid(child.host) && !runningPid(child.helper) && processParentPid(child.tool) === 1);
     f.release(run);
-    const read = await readHostUidProcesses(); assert.equal(read.state, "listed");
+    const read = await f.listing(); assert.equal(read.state, "listed");
     if (read.state !== "listed") return;
     const fact = read.processes.find(item => item.pid === child.tool)!;
     assert.ok(fact);
@@ -53,7 +52,7 @@ for (const savedHost of [false, true]) test(`an unreadable live-run environment 
     const pid = Number(parent.stdout.trim()); assert.ok(pid > 0); f.track(pid);
     await wait(() => existsSync(ready));
     f.release(settled);
-    const read = await readHostUidProcesses(); assert.equal(read.state, "listed");
+    const read = await f.listing(); assert.equal(read.state, "listed");
     if (read.state !== "listed") return;
     const fact = read.processes.find(item => item.pid === pid)!;
     assert.ok(fact); assert.equal(fact.ppid, 1);

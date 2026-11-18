@@ -296,7 +296,7 @@ function lifecycleFor(store: Store, hooks: RepositoryHooks, archived: Array<{ id
     store, hooks, stopped: false, paused: () => false,
     // #912: lifecycle runs each host-scoped effect through the engine host context.
     withHost: (_id: string, fn: () => unknown) => fn(), taskHostAvailable: () => true,
-    adapter: { archiveTaskWorkspace: async (_task: Task, id: string, directory: string) => { archived.push({ id, directory }); return true; } },
+    adapter: { hostProcessListing: async () => [], archiveTaskWorkspace: async (_task: Task, id: string, directory: string) => { archived.push({ id, directory }); return true; } },
     retirement: { capture: async () => null, markArchived: (task: Task) => task.resolution.runtimeRetirements, archived: async () => {}, hasScope: () => false, flagArchiveFailure: () => {} },
     resolution: { update: (task: Task, changes: Record<string, unknown>, _patch: Record<string, unknown>, kind: string, detail: string) => store.update(task.id, { resolution: { ...store.task(task.id).resolution, ...changes } as Task['resolution'] }, kind, detail) },
     removeSiblings: async () => {},
@@ -333,6 +333,7 @@ test('a completed cancellation runs the finished stop and never reopens the task
     const stopped: string[] = [];
     const intents: Array<Task['resolution']['finishedHook']> = [];
     const deps: DispositionDeps = {
+      readProcesses: async () => [],
       hooks: {
         emit: async () => ({ hold: false, attention: false, records: [] as unknown[] }),
         finished: async (target: Task) => { stopped.push(target.phase); intents.push(target.resolution.finishedHook); return { hold: false, attention: false, records: [] as unknown[] }; },
@@ -368,6 +369,7 @@ test('a throwing finished stop cannot reopen a completed cancellation', async ()
       workspaceId: `ws-${inserted.id}`, directory: `/missing-${inserted.id}`, agentId: `worker-${inserted.id}`, runId: 'run-1',
     });
     const deps: DispositionDeps = {
+      readProcesses: async () => [],
       hooks: {
         emit: async () => ({ hold: false, attention: false, records: [] as unknown[] }),
         finished: async () => { throw new Error('runtime stop exploded'); },

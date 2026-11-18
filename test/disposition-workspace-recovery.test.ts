@@ -107,6 +107,7 @@ async function supersessionFixture(t: TestContext, shape: 'retained' | 'squashed
   const archives: string[] = [], archivedAgents: string[] = [];
   const observation: AgentObservation = { id: `worker-${original.id}`, workspaceId: 'ws-original', status: 'idle', active: false, permissions: false, error: '' };
   const adapter = {
+    hostProcessListing: async () => [],
     observe: async (id: string) => ({ ...observation, id }),
     archiveAgent: async (id: string) => { archivedAgents.push(id); },
     archiveTaskWorkspace: async (_task: Task, id: string, path: string) => { archives.push(id); rmSync(path, { recursive: true, force: true }); return true; },
@@ -117,6 +118,7 @@ async function supersessionFixture(t: TestContext, shape: 'retained' | 'squashed
   const next = () => ownerTaskNext(collectOwnerVerbFacts(store, task()));
   const resume = async () => {
     await resumeDispositions(store, productionDeps({
+      readProcesses: async () => [],
       store, hooks: { emit: async () => ({ hold: false, attention: false, records: [] as unknown[] }) },
       observe: observeIdle('ws-original'),
       archiveAgent: async (id: string) => { archivedAgents.push(id); },

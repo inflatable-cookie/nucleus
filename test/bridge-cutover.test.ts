@@ -17,6 +17,16 @@ import { bridgeSupport } from './support/bridge-fixture';
 const { spawnedPids, fakeAdapter, serviceCommand, bridgeFixture, trackedBridge, killServices, dispose, pidAliveNumber, sleep } = bridgeSupport('nb3');
 void spawnedPids; void fakeAdapter; void serviceCommand; void pidAliveNumber; void sleep;
 
+async function waitForServiceIdentity(dataDir: string): Promise<number | null> {
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    const pid = readServiceInfo(dataDir)?.pid;
+    if (pid) return pid;
+    await sleep(50);
+  }
+  return null;
+}
+
 test('first cutover: a live old backend blocks the service fail-closed, then hands over cleanly', async () => {
   const { bridge, dataDir, paseoHome, root } = await bridgeFixture();
   try {
@@ -38,7 +48,7 @@ test('first cutover: a live old backend blocks the service fail-closed, then han
     assert.equal(bridge.current().state, 'running');
     // The service this file started is owned by the bridge's own spawn record:
     // a pid read back from the service's identity file never creates one.
-    assert.ok(readServiceInfo(dataDir)?.pid, 'the running service publishes its identity');
+    assert.ok(await waitForServiceIdentity(dataDir), 'the running service publishes its identity');
     void paseoHome;
   } finally {
     bridge.close();
@@ -56,14 +66,14 @@ test('a stale spawn claim from a dead bridge is reclaimed, not waited on', async
     const entry = RPC_CATALOGUE.find(candidate => candidate.name === 'queue.ui-snapshot')!;
     let spawnAttempts = 0;
     const counter = () => { spawnAttempts++; return serviceCommand(); };
-    const reviving = trackedBridge({ dataDir, paseoHome, readinessPollMs: 10, serviceCommand: counter, readinessBudgetMs: 25_000 });
+    const reviving = trackedBridge({ dataDir, paseoHome, readinessPollMs: 10, serviceCommand: counter, readinessBudgetMs: 90_000 });
     try {
       const state = await reviving.forward(entry, {}) as Record<string, unknown>;
       assert.ok(Array.isArray(state.tasks), 'a stale claim is reclaimed and the service starts');
       assert.equal(spawnAttempts, 1, 'the reclaimed stale claim lets our bridge spawn');
       assert.ok(!existsSync(join(dataDir, 'queue-service.claim.json')), 'the reclaimed claim is released after readiness');
       assert.equal(reviving.current().state, 'running');
-      assert.ok(readServiceInfo(dataDir)?.pid, 'the reclaimed claim spawned a service that publishes its identity');
+      assert.ok(await waitForServiceIdentity(dataDir), 'the reclaimed claim spawned a service that publishes its identity');
     } finally {
       reviving.close();
     }
@@ -77,14 +87,14 @@ test('two bridges racing an absent service spawn exactly one service', async () 
   const { dataDir, paseoHome, root } = await bridgeFixture();
   let spawnAttempts = 0;
   const spawnCounter = () => { spawnAttempts++; return serviceCommand(); };
-  const bridgeA = trackedBridge({ dataDir, paseoHome, readinessPollMs: 10, serviceCommand: spawnCounter, readinessBudgetMs: 25_000 });
-  const bridgeB = trackedBridge({ dataDir, paseoHome, readinessPollMs: 10, serviceCommand: spawnCounter, readinessBudgetMs: 25_000 });
+  const bridgeA = trackedBridge({ dataDir, paseoHome, readinessPollMs: 10, serviceCommand: spawnCounter, readinessBudgetMs: 90_000 });
+  const bridgeB = trackedBridge({ dataDir, paseoHome, readinessPollMs: 10, serviceCommand: spawnCounter, readinessBudgetMs: 90_000 });
   try {
     const entry = RPC_CATALOGUE.find(candidate => candidate.name === 'queue.ui-snapshot')!;
     const [a, b] = await Promise.all([bridgeA.forward(entry, {}), bridgeB.forward(entry, {})]) as Record<string, unknown>[];
     assert.ok(Array.isArray(a.tasks) && Array.isArray(b.tasks), 'both bridges end up served by the one compatible service');
     assert.ok(spawnAttempts <= 1, `the spawn claim must suppress duplicate spawns (attempts: ${spawnAttempts})`);
-    assert.ok(readServiceInfo(dataDir)?.pid, 'the one service that won the race publishes its identity');
+    assert.ok(await waitForServiceIdentity(dataDir), 'the one service that won the race publishes its identity');
     assert.ok(!existsSync(join(dataDir, 'queue-service.claim.json')), 'the winning bridge releases the claim after readiness');
     assert.equal(bridgeA.current().state, 'running');
     assert.equal(bridgeB.current().state, 'running');

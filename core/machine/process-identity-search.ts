@@ -95,8 +95,8 @@ export async function processStartIdentityLivenessAsync(pid: number, startIdenti
 }
 
 /** Test seam: substitute identity listings. Production is null. */
-let identityListingOverride: ProcessStartIdentitySearch | null = null;
-export function overrideIdentityListing(result: ProcessStartIdentitySearch | null): void {
+let identityListingOverride: ProcessStartIdentitySearch | ((identity: string) => ProcessStartIdentitySearch) | null = null;
+export function overrideIdentityListing(result: ProcessStartIdentitySearch | ((identity: string) => ProcessStartIdentitySearch) | null): void {
   identityListingOverride = result;
 }
 
@@ -137,7 +137,7 @@ function linuxIdentitySearch(identity: string): ProcessStartIdentitySearch {
 /** Find live processes carrying a step's inherited private identity. */
 export function processesForStartIdentity(identity: string): ProcessStartIdentitySearch {
   if (!identity) return { state: "absent" };
-  if (identityListingOverride) return identityListingOverride;
+  if (identityListingOverride) return typeof identityListingOverride === "function" ? identityListingOverride(identity) : identityListingOverride;
   if (process.platform === "linux") return linuxIdentitySearch(identity);
   // A host-wide `ps -E -A` times out or overflows on a loaded board (load ~50
   // is normal here), and its failure is `unknown`, never "no escaped
@@ -181,7 +181,7 @@ function identityTreeCandidates(
  */
 export async function processesForStartIdentityAsync(identity: string): Promise<ProcessStartIdentitySearch> {
   if (!identity) return { state: "absent" };
-  if (identityListingOverride) return identityListingOverride;
+  if (identityListingOverride) return typeof identityListingOverride === "function" ? identityListingOverride(identity) : identityListingOverride;
   if (process.platform === "linux") return linuxIdentitySearch(identity);
   if (process.platform === "darwin") return darwinProcessReadsAsync().fullEnvironmentScan(identity);
   return { state: "unknown" };
@@ -193,7 +193,7 @@ export async function processesForStartIdentityInTreeAsync(
   roots: { processGroupId: number | null; pids: readonly number[] },
 ): Promise<ProcessStartIdentitySearch> {
   if (!identity) return { state: "absent" };
-  if (identityListingOverride) return identityListingOverride;
+  if (identityListingOverride) return typeof identityListingOverride === "function" ? identityListingOverride(identity) : identityListingOverride;
   if (process.platform === "linux") return processesForStartIdentity(identity);
   if (process.platform !== "darwin") return { state: "unknown" };
   const reads = darwinProcessReadsAsync();

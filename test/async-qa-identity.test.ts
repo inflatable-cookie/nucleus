@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { processCommandLineAsync, findProcessByCommandTokenAsync } from '../core/machine/process-identity';
+import { processCommandLineAsync, scanTokenVerdict } from '../core/machine/process-identity';
 import { supervisorLivenessAsync } from '../core/machine/start-identity';
 import { ProjectQaRunner } from './project-qa-runner-fixture';
 
@@ -21,8 +21,9 @@ test('async supervisor reads yield and retain token identity, mismatch and dead 
   assert.ok(line?.includes(token));
   assert.equal((await supervisorLivenessAsync(pid, token)).state, 'live');
   assert.equal((await supervisorLivenessAsync(pid, 'different-token')).state, 'dead');
-  assert.deepEqual(await findProcessByCommandTokenAsync(token), { state: 'found', pid });
-  assert.equal((await findProcessByCommandTokenAsync(`absent-${randomUUID()}`)).state, 'absent');
+  const fixtureListing = [{ pid, read: { state: 'read' as const, line: line! } }];
+  assert.deepEqual(scanTokenVerdict(fixtureListing, token), { state: 'found', pid });
+  assert.equal(scanTokenVerdict(fixtureListing, `absent-${randomUUID()}`).state, 'absent');
   const closed = once(child, 'exit');
   child.kill();
   await closed;

@@ -15,7 +15,8 @@ import { randomUUID } from 'node:crypto';
 import { Store } from '../core/store/store';
 import { Engine } from '../core/engine';
 import { git, command } from '../core/git/index';
-import { RepositoryHooks, isolationDataDirFor, isolationRootFor, statusEntries, warmCandidatePathFor } from '../core/hooks/hooks';
+import { RepositoryHooks as ProductionRepositoryHooks, isolationDataDirFor, isolationRootFor, statusEntries, warmCandidatePathFor } from '../core/hooks/hooks';
+import { scopedValidationFixture } from './support/scoped-validation';
 import { controlManifestSchema, hookEventV2Schema, hookEventV3Schema, anyHookEventSchema, hookRecordSchema } from '../shared/hooks';
 import { submissionSchema, REVISION_BUDGET, type Profile, type Run } from '../shared/contracts';
 import type { Adapter, AgentObservation } from '../core/host';
@@ -29,6 +30,15 @@ import { configuredClone, materializeSeed } from './support/git-seed';
 import { observedParticipantTimeline } from './support/tool-timeline';
 
 const setupGit = (cwd: string, ...args: string[]) => promisify(execFile)('git', args, { cwd, timeout: 180_000, maxBuffer: 16 * 1024 * 1024 });
+
+const validationScopes = new WeakMap<Store, (hooks: ProductionRepositoryHooks) => void>();
+class RepositoryHooks extends ProductionRepositoryHooks {
+  constructor(store: Store, options: ConstructorParameters<typeof ProductionRepositoryHooks>[1] = {}) {
+    super(store, options);
+    validationScopes.get(store)?.(this);
+  }
+}
+
 
 const worker: Profile = { id: 'worker', name: 'Worker', provider: 'test', model: 'test', notes: '', available: true, problem: '', supportedThinking: [] };
 const coordinator: Profile = { id: 'coordinator', name: 'Coordinator', provider: 'test', model: 'coordinator', notes: '', available: true, problem: '', supportedThinking: [] };
@@ -132,6 +142,7 @@ async function prospectiveFixture(t: any, options: FixtureOptions = {}) {
     current: { epoch: 1, keyB64: Buffer.alloc(32, 0x53).toString('base64') } }), { mode: 0o600 });
   const dbPath = join(storeDir, 'queue.sqlite');
   const store = new Store(dbPath);
+  validationScopes.set(store, scopedValidationFixture(t));
   store.setMeta('hostId', 'host'); // Queue #912: register the host this fixture's ingress uses.
   return { root, repo, directory, base, head, store, dbPath, ledger };
 }
@@ -798,6 +809,7 @@ async function resolutionFixture(t: any, options: FixtureOptions & { mergeGateBa
     verifyCloseout: async () => undefined, notify: async () => {},
   });
   const engine = new Engine(f.store, adapter, 0);
+  validationScopes.get(f.store)?.(engine.hooks);
   engine.profiles = [worker, coordinator];
   return { ...f, store: f.store, engine, adapter, taskId: submitted.id, runs, mergeCount: () => merges, current: () => f.store.task(submitted.id), close: async () => { await engine.stop(); f.store.close(); } };
 }

@@ -1,3 +1,4 @@
+import type { HostProcessFact } from "../../host/types";
 import type { DispositionRef, Task, WorkDisposition } from "../../../shared/contracts";
 import type { HookContext } from "../../hooks/hooks";
 import type { HookRecord } from "../../../shared/hooks";
@@ -15,6 +16,7 @@ export interface DispositionRequest {
 /** Remote effects the disposition driver reconciles. Tests inject fakes; production wires the adapter and git. */
 export interface DispositionDeps {
   hostAvailable?(task: Task): boolean;
+  readProcesses?: () => Promise<HostProcessFact[] | null>;
   withHost?<T>(id: string, fn: () => T): T;
   hooks: {
     emit(event: "task.cancelled", task: Task, context: HookContext): Promise<{ hold: boolean; attention: boolean; records: unknown[] }>;

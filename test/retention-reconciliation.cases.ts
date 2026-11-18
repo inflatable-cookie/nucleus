@@ -143,7 +143,7 @@ function lifecycleFor(store: Store, hooks: RepositoryHooks, archived: Array<{ id
   taskWorkspaceArchived?: (id: string) => Promise<boolean>) {
   const engine = {
     store, hooks, stopped: false, paused: () => false,
-    adapter: { archiveTaskWorkspace: async (_task: Task, id: string, directory: string) => { archived.push({ id, directory }); return true; },
+    adapter: { hostProcessListing: async () => [], archiveTaskWorkspace: async (_task: Task, id: string, directory: string) => { archived.push({ id, directory }); return true; },
       ...(taskWorkspaceArchived ? { taskWorkspaceArchived } : {}) },
     retirement: { capture: async () => null, markArchived: (task: Task) => task.resolution.runtimeRetirements, archived: async () => {}, hasScope: () => false, flagArchiveFailure: () => {} },
     resolution: { update: (task: Task, changes: Record<string, unknown>, _patch: Record<string, unknown>, kind: string, detail: string) => store.update(task.id, { resolution: { ...store.task(task.id).resolution, ...changes } as Task['resolution'] }, kind, detail) },
@@ -294,7 +294,7 @@ weighted(12)('a passed reconciliation clears the workspace archive backoff and i
     cleanupReason: `Workspace archive for ${retry.workspaceId} failed: ${retry.error}`,
   } });
 
-  const engine = new Engine(f.store, {} as any);
+  const engine = new Engine(f.store, { hostProcessListing: async () => [] } as any);
   engine.hooks.retryRetentionAtIntegrationBase = (task, reason) => f.hooks.retryRetentionAtIntegrationBase(task, reason);
   engine.wakeTask = async () => {};
   engine.wakeRepository = async () => {};

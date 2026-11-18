@@ -247,6 +247,7 @@ test("the done-task archive path captures the token and proves retirement", asyn
   });
   const { invoke, calls } = fakeEffigy();
   const adapter = {
+    hostProcessListing: async () => [],
     archiveTaskWorkspace: async (_task: unknown, _id: string, _dir: string, _head: string, allowed: () => boolean) => allowed(),
   } as unknown as Adapter;
   const engine = new Engine(store, adapter, 0, () => true, new RuntimeRetirementService(store, invoke));
@@ -285,6 +286,7 @@ test("the cancelled-task archive path captures the token and proves retirement",
   await writeFile(join(gitDir, "effigy-runtime-scope"), token);
   let archived = false;
   const adapter = {
+    hostProcessListing: async () => [],
     observe: observeIdle("ws", "agent"),
     archiveAgent: async () => {},
     archiveTaskWorkspace: async (_task: unknown, _id: string, _dir: string, _head: string, allowed: () => boolean, uncertain: boolean) => {
@@ -335,6 +337,7 @@ test("the duplicate-cleanup archive path captures the token and proves retiremen
   });
   let visible = true;
   const adapter = {
+    hostProcessListing: async () => [],
     findWorkspaces: async () => (visible ? [{ id: "old", directory: old }] : []),
     archiveTaskWorkspace: async (_task: unknown, _id: string, _dir: string, _head: string, allowed: () => boolean, uncertain: boolean) => {
       if (uncertain) throw Error("Workspace archive outcome is uncertain; inspect before retrying");
@@ -371,6 +374,7 @@ test("an unused-workspace teardown failure records and retries its tokenless arc
   });
   let visible = true, archives = 0;
   const adapter = {
+    hostProcessListing: async () => [],
     findWorkspaces: async () => visible ? [{ id: "old", directory: old }] : [],
     archiveTaskWorkspace: async (_task: unknown, _id: string, _dir: string, _head: string, allowed: () => boolean, uncertain: boolean) => {
       archives++;
@@ -416,6 +420,7 @@ test("a teardown Paseo reports as failed flags the cleanup without recording a c
     resolution: { ...inserted.resolution, mergedCommit: head, syncedCommit: head },
   });
   const adapter = {
+    hostProcessListing: async () => [],
     archiveTaskWorkspace: async (_task: unknown, _id: string, _dir: string, _head: string, allowed: () => boolean) => {
       assert.equal(allowed(), true);
       throw Error("worktree.teardown hook failed: runtime scope still owns resources");
@@ -447,6 +452,7 @@ test("a teardown failure without a captured token stays flagged until the archiv
   });
   let archives = 0;
   const adapter = {
+    hostProcessListing: async () => [],
     // The failed teardown records the archive intent before it throws, so the retry
     // must reconcile that intent: the workspace is still listed, so the archive re-runs.
     taskWorkspaceArchived: async () => false,

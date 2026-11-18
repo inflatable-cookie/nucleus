@@ -22,6 +22,17 @@ export { pidAlive } from "./pid";
 const PS_TIMEOUT_MS = 5_000;
 const execFileAsync = promisify(execFile);
 
+/** Fixture-only command inventory; production uses the host reader. */
+let worktreeAddOverride: ((path: string) => ProcessSearch) | null = null;
+export function overrideWorktreeAddSearch(read: ((path: string) => ProcessSearch) | null): void {
+  worktreeAddOverride = read;
+}
+
+let commandTokenOverride: ((token: string) => ProcessSearch) | null = null;
+export function overrideCommandTokenSearch(read: ((token: string) => ProcessSearch) | null): void {
+  commandTokenOverride = read;
+}
+
 /** One `/proc/<pid>/cmdline` read: its line, or why it could not be read. */
 export type ProcCommandLine =
   | { state: "read"; line: string }
@@ -122,6 +133,7 @@ export async function processCommandLineAsync(pid: number): Promise<string | nul
 
 /** Async token search with the same complete-listing requirement as the synchronous scan. */
 export async function findProcessByCommandTokenAsync(token: string): Promise<ProcessSearch> {
+  if (commandTokenOverride) return commandTokenOverride(token);
   if (!token || process.platform === "linux") return findProcessByCommandToken(token);
   try {
     const { stdout } = await execFileAsync("ps", ["-A", "-ww", "-o", "pid=,command="], {
@@ -182,6 +194,7 @@ export function worktreeAddTargets(line: string, targetPath: string): boolean {
  * populate as missing.
  */
 export function findGitWorktreeAdd(targetPath: string): ProcessSearch {
+  if (worktreeAddOverride) return worktreeAddOverride(targetPath);
   if (!targetPath) return { state: "absent" };
   const listed = listProcessCommands();
   if (!Array.isArray(listed)) return listed;
@@ -196,6 +209,7 @@ export function findGitWorktreeAdd(targetPath: string): ProcessSearch {
  * or an entry the host would not let us read), which proves nothing.
  */
 export function findProcessByCommandToken(token: string): ProcessSearch {
+  if (commandTokenOverride) return commandTokenOverride(token);
   if (!token) return { state: "absent" };
   const listed = listProcessCommands();
   if (!Array.isArray(listed)) return listed;

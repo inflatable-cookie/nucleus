@@ -12,7 +12,7 @@ import { ProspectiveMerge } from "../merge/prospective-merge";
 import { ProjectValidationRunner } from "../qa/project-validation";
 import { HostRunScheduler } from "../host-runs/host-run-scheduler";
 import { repositoryOrigin } from "../planning/lanes";
-import { requestDisposition } from "../verbs/disposition";
+import { requestDisposition, type DispositionDeps } from "../verbs/disposition";
 import {
   hookHoldReason,
   type AutomaticReplayAttempt, type HeldAutomaticReplay, type HookContext, type HookEmissionResult,
@@ -103,10 +103,10 @@ export async function assertReviewSkipSupported(
 }
 
 /** Cancel one still-queued task through the same durable disposition model as post-dispatch work. */
-export async function cancelQueuedTask(store: Store, hooks: RepositoryHooks, task: Task): Promise<Task> {
+export async function cancelQueuedTask(store: Store, hooks: RepositoryHooks, task: Task, readProcesses?: DispositionDeps["readProcesses"]): Promise<Task> {
   if (task.phase !== "queued") throw new Error("Cancellation is only available before dispatch");
   return requestDisposition(store, {
-    hooks,
+    hooks, readProcesses,
     observeAgent: async () => ({ stopped: true }),
     archiveAgent: async () => {},
     proveWorkspaceEmpty: async () => ({ empty: true, detail: "No task workspace was created" }),

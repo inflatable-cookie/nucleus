@@ -11,7 +11,7 @@ import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { readHostRunTokenKeys } from "../service/callbacks/host-run-endpoint";
 import { settleStopDisposePrivateFixture, type OwnedPrivateRun } from "./support/host-run-private-fixture";
 
@@ -35,7 +35,24 @@ test("--supervise replaces the private server on SIGUSR2 over the same state and
   const work = join(root, "w");
   mkdirSync(work, { recursive: true });
   writeFileSync(join(work, "run.cjs"), `const fs=require("node:fs");const d=process.argv[2];const tick=()=>{if(fs.existsSync(d+"/release"))process.exit(0);setTimeout(tick,50)};tick();`);
-  const child = spawn(process.execPath, ["--import", "tsx", script, "--supervise", "--state-dir", stateDir], { env: { ...process.env, HOME: root }, stdio: ["ignore", "pipe", "inherit"] });
+  // The submitted command is the single run.cjs process above: it never forks.
+  // Install the fixture listing only in its detached supervisor, including after
+  // the server roll; leave the real server and its authority protocol intact.
+  const preload = join(root, "supervisor-fixture.mjs");
+  const supervisor = fileURLToPath(new URL("../bin/queue-host-run-supervisor.mjs", import.meta.url));
+  const searchModule = new URL("../core/machine/process-identity-search.ts", import.meta.url).href;
+  const runnerModule = new URL("../service/executor/host-run-supervisor.ts", import.meta.url).href;
+  const fixtureModule = new URL("./support/scoped-identity.ts", import.meta.url).href;
+  writeFileSync(preload, `if (process.argv[1] === ${JSON.stringify(supervisor)}) {
+    const { overrideIdentityListing } = await import(${JSON.stringify(searchModule)});
+    const { runHostRunSupervisorMain } = await import(${JSON.stringify(runnerModule)});
+    const { noCpuReads } = await import(${JSON.stringify(fixtureModule)});
+    overrideIdentityListing({ state: "absent" });
+    await runHostRunSupervisorMain(undefined, { cpuReads: noCpuReads });
+    process.exit(0);
+  }`);
+  const nodeOptions = `${process.env.NODE_OPTIONS ?? ""} --import tsx --import ${pathToFileURL(preload).href}`.trim();
+  const child = spawn(process.execPath, ["--import", "tsx", script, "--supervise", "--state-dir", stateDir], { env: { ...process.env, HOME: root, NODE_OPTIONS: nodeOptions }, stdio: ["ignore", "pipe", "inherit"] });
   const authorityLines: Array<Record<string, any>> = [];
   const waiters: Array<() => void> = [];
   let buffer = "";

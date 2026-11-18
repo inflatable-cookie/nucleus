@@ -1,3 +1,4 @@
+import { overrideWorktreeAddSearch } from '../core/machine/process-identity';
 /**
  * Task 1255: a milestone QA checkout that dies mid-creation is cleaned up
  * under the run's ownership proof and retried once, never left as an
@@ -74,6 +75,9 @@ test('a checkout creation killed partway is cleaned up and retried once, and the
   const { root, repo, base } = await registeredRepo(t);
   const runRoot = join(root, 'run-root');
   const checkoutPath = join(root, 'project-qa', 'deadbeef', 'run-id');
+  // This fixture writes the partial directory itself and serializes each git attempt.
+  overrideWorktreeAddSearch(path => path === checkoutPath ? { state: 'absent' } : { state: 'unknown' });
+  t.after(() => overrideWorktreeAddSearch(null));
   // The partial directory a killed `git worktree add` leaves behind.
   await mkdir(checkoutPath, { recursive: true });
   await writeFile(join(checkoutPath, 'partial.bin'), 'half a clone\n');
@@ -96,6 +100,9 @@ test('two checkout creation failures record a plain failure, not an uncertain re
   const { root, repo } = await registeredRepo(t);
   const runRoot = join(root, 'run-root');
   const checkoutPath = join(root, 'project-qa', 'deadbeef', 'run-id');
+  // This fixture writes the partial directory itself and serializes each git attempt.
+  overrideWorktreeAddSearch(path => path === checkoutPath ? { state: 'absent' } : { state: 'unknown' });
+  t.after(() => overrideWorktreeAddSearch(null));
   const attempts: number[] = [];
   const run = pipelineRun({
     registered: repo, runRoot, checkoutPath, base: 'f'.repeat(40),

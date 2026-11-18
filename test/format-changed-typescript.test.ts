@@ -59,8 +59,8 @@ async function fixtureRepo(t: TestContext, name: string, content: string) {
   return root;
 }
 
-function runFmt(root: string) {
-  return spawnSync(process.execPath, [formatScript], {
+function runFmt(root: string, check = false) {
+  return spawnSync(process.execPath, [formatScript, ...(check ? ["--check"] : [])], {
     cwd: root,
     encoding: "utf8",
   });
@@ -300,58 +300,23 @@ test("formatting plan applies changed hunks and reports surrounding drift", () =
   assert.equal(broken.reason, "diff-failed");
 });
 
-test("end to end: a doc comment change formats despite drift elsewhere", async (t) => {
+test("end to end: whole-file formatting preserves methods around a changed member", async (t) => {
   const committed = driftedEngine();
   const root = await fixtureRepo(t, "engine.ts", committed);
-  const edited = (await readFile(join(root, "engine.ts"), "utf8")).replace(
-    "Refuse displacement while a refusal window is active.",
-    "Refuse displacement while a refusal window or dispute is active.",
-  );
-  assert.notEqual(edited, committed, "fixture edit must change the file");
+  const edited = committed.replace("return refused!=null }", "return refused!=null; }");
   await writeFile(join(root, "engine.ts"), edited);
-
-  // Fixture precondition: the class really is drifted, so whole-file prettier
-  // output would reformat far beyond the changed hunk.
-  assert.notEqual(prettierFormat(edited), edited);
-
-  const result = runFmt(root);
-  assert.equal(result.status, 0, result.stderr);
-  assert.equal(
-    await readFile(join(root, "engine.ts"), "utf8"),
-    edited,
-    "unrelated drift must remain byte-identical",
-  );
-  assert.match(result.stderr, /fmt: noted engine\.ts/);
-  assert.match(result.stderr, /outside the changed hunks/);
-  assert.equal(
-    gitUnifiedDiff(edited, prettierFormat(edited))
-      .split("\n")
-      .filter((line) => line.startsWith("@@ ")).length > 1,
-    true,
-  );
-});
-
-test("end to end: formats a changed statement while preserving distant drift", async (t) => {
-  const committed = driftedEngine();
-  const root = await fixtureRepo(t, "engine.ts", committed);
-  const edited = committed.replace(
-    "  displaceRefusal(target: string): boolean { const refused=this.cache.get(target); return refused!=null }",
-    "  displaceRefusal(target: string): boolean { const refused=this.cache.get(target); return refused!=null; }",
-  );
-  await writeFile(join(root, "engine.ts"), edited);
+  const check = runFmt(root, true);
+  assert.equal(check.status, 1);
+  assert.equal(await readFile(join(root, "engine.ts"), "utf8"), edited, "check writes nothing");
   const result = runFmt(root);
   assert.equal(result.status, 0, result.stderr);
   const output = await readFile(join(root, "engine.ts"), "utf8");
-  assert.match(
-    output,
-    /displaceRefusal\(target: string\): boolean \{\n    const refused = this\.cache\.get\(target\);\n    return refused != null;\n  \}/,
-  );
-  assert.match(
-    output,
-    /private cache=new Map<string,string>\(\)/,
-    "unrelated class drift stays unchanged",
-  );
-  assert.match(result.stderr, /fmt: noted engine\.ts/);
+  assert.equal(output, prettierFormat(edited));
+  for (let index = 0; index < 12; index += 1) {
+    assert.match(output, new RegExp(`helper${index}\\(`));
+    assert.match(output, new RegExp(`tail${index}\\(`));
+  }
+  assert.equal(runFmt(root, true).status, 0);
 });
 
 test("end to end: hunks in a clean class format exactly as whole-file prettier would", async (t) => {
@@ -424,4 +389,16 @@ test("end to end: an untracked TypeScript file is formatted wholly", async (t) =
     await readFile(join(root, "extra.ts"), "utf8"),
     "const x = 1;\n",
   );
+});
+
+test("check detects committed drift in a clean review checkout", async (t) => {
+  const root = await fixtureRepo(t, "engine.ts", "const value = 1;\n");
+  await gitRun(root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+  const changed = "const value=2\n";
+  await writeFile(join(root, "engine.ts"), changed);
+  await gitRun(root, ["add", "engine.ts"]);
+  await gitRun(root, ["commit", "-m", "change"]);
+  const result = runFmt(root, true);
+  assert.equal(result.status, 1, result.stderr);
+  assert.equal(await readFile(join(root, "engine.ts"), "utf8"), changed);
 });

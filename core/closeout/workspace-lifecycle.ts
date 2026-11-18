@@ -215,7 +215,7 @@ export class Lifecycle {
     // due - a due owned-workspace archive, a due preserved catalog archive or
     // the durable terminal-transition intents - never on every pass of a
     // workspace whose retry is still backed off.
-    if (this.archiveWorkDue(task, retryWorkspaceId)) await runTerminalHooks({ store: this.store, hooks: this.engine.hooks }, task);
+    if (this.archiveWorkDue(task, retryWorkspaceId)) await runTerminalHooks({ store: this.store, hooks: this.engine.hooks, adapter: this.adapter }, task);
     // Spec 027: sibling worktrees leave with the task's own workspaces.
     if (task.siblingPins.length) await this.engine.removeSiblings(task.id);
     // Spec 017: a merged review-entry task's preserved external workspace keeps

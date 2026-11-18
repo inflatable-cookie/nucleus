@@ -90,9 +90,9 @@ function linuxBootId(): string | null {
   catch { return null; }
 }
 
-async function linuxProcesses(uid: number): Promise<HostProcessListRead> {
+async function linuxProcesses(uid: number, pids?: readonly number[]): Promise<HostProcessListRead> {
   let entries: string[];
-  try { entries = readdirSync("/proc"); }
+  try { entries = pids ? pids.map(String) : readdirSync("/proc"); }
   catch (error) { return { state: "unknown", reason: `the /proc listing is unreadable: ${String(error)}` }; }
   const bootId = linuxBootId();
   const listed: HostProcessFact[] = [];
@@ -119,8 +119,10 @@ async function linuxProcesses(uid: number): Promise<HostProcessListRead> {
   return { state: "listed", processes: listed };
 }
 
-async function darwinProcesses(uid: number): Promise<HostProcessListRead> {
-  const listing = await processListing("ps", ["-axo", "uid=,pid=,ppid=,pgid=,stat=,lstart=,command="],
+async function darwinProcesses(uid: number, requested?: readonly number[]): Promise<HostProcessListRead> {
+  if (requested && !requested.length) return { state: "listed", processes: [] };
+  const args = requested ? ["-p", requested.join(","), "-o", "uid=,pid=,ppid=,pgid=,stat=,lstart=,command="] : ["-axo", "uid=,pid=,ppid=,pgid=,stat=,lstart=,command="];
+  const listing = await processListing("ps", args,
     { ...process.env, LC_ALL: "C", TZ: "UTC" });
   if (listing.status !== 0 || !listing.stdout)
     return { state: "unknown", reason: `the host process listing failed: ${listing.error ? String(listing.error) : `ps exited with code ${listing.status}`}` };
@@ -137,10 +139,9 @@ async function darwinProcesses(uid: number): Promise<HostProcessListRead> {
     });
   }
   const pids = facts.map(fact => fact.pid);
-  let cwds = cwdMapFromLsof(pids, await processListing("lsof", ["-a", "-d", "cwd", "-Fn", "-u", String(uid)]));
-  if (!cwds && pids.length) {
-    cwds = cwdMapFromLsof(pids, await processListing("lsof", ["-a", "-d", "cwd", "-Fn", "-p", pids.join(",")]));
-  }
+  if (!pids.length) return { state: "listed", processes: [] };
+  // One bounded cwd read for the PIDs from this snapshot; a failed read stays unknown.
+  const cwds = cwdMapFromLsof(pids, await processListing("lsof", ["-a", "-d", "cwd", "-Fn", "-p", pids.join(",")]));
   if (cwds) for (const fact of facts) {
     const cwd = cwds.get(fact.pid);
     if (cwd?.state === "read") fact.cwd = cwd.path;
@@ -160,4 +161,15 @@ export async function readHostUidProcesses(): Promise<HostProcessListRead> {
   if (process.platform === "linux") return linuxProcesses(uid);
   if (process.platform === "darwin") return darwinProcesses(uid);
   return { state: "unknown", reason: `host process listing is unsupported on ${process.platform}` };
+}
+
+/** Read only explicitly owned fixture PIDs; never infer a host-wide absence from this subset. */
+export async function readProcessSubset(pids: readonly number[]): Promise<HostProcessListRead> {
+  const requested = [...new Set(pids)].filter(pid => Number.isSafeInteger(pid) && pid > 0);
+  if (!requested.length) return { state: "listed", processes: [] };
+  const uid = uidOf();
+  if (uid < 0) return { state: "unknown", reason: "the host process owner cannot be read" };
+  if (process.platform === "linux") return linuxProcesses(uid, requested);
+  if (process.platform === "darwin") return darwinProcesses(uid, requested);
+  return { state: "unknown", reason: `process listing is unsupported on ${process.platform}` };
 }

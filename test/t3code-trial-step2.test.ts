@@ -772,6 +772,11 @@ async function ownerRetryFixture(t: TestContext) {
   t.after(() => host.close());
   await host.connect();
   const adapter = createAdapter(Policy, host, { socketPath: join(data, 'callback.sock'), helperPath: join(data, 'worker-report.mjs') });
+  // This fixture serializes its Git setup and starts no provider processes.
+  const machine = adapter as unknown as Record<string, unknown>;
+  machine.scanForWorktreeAdd = () => ({ state: 'absent' });
+  machine.worktreeValidation = () => ({ state: 'absent' });
+  machine.hostProcessListing = async () => [];
   const store = new Store(join(data, 'queue.sqlite'));
   const engine = new Engine(store, adapter, 0);
   const task = store.insert(submissionSchema.parse({

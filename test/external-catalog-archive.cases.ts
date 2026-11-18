@@ -200,6 +200,7 @@ function platform(f: Fixture, options: PlatformOptions = {}) {
     } },
   } });
   const engineAdapter: Adapter = fakeAdapter({
+    hostProcessListing: async () => [],
     profiles: async () => [], validate: async () => "", createWorkspace: async () => { throw Error("unused by the catalog archive"); },
      verifyWorkspace: async task => task.branch,
     createAgent: async () => { throw Error("unused by the catalog archive"); },

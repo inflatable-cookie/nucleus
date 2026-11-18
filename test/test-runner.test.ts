@@ -225,6 +225,22 @@ test('a failing selected file still fails the selector run', () => {
   assert.doesNotMatch(summary, /todo\.test\.mjs|tracked todo/);
 });
 
+test('a sharded failure summary names the runnable shard', () => {
+  const root = unitFixture();
+  writeFileSync(join(root, 'test', 'sharded-helper.mjs'), [
+    "import { test } from 'node:test';",
+    "export function register() { test('sharded failure', () => { throw Error('fixture failure'); }); }",
+  ].join('\n'));
+  writeFileSync(join(root, 'test', 'family-2.test.mjs'), "import { register } from './sharded-helper.mjs'; register();\n");
+  const result = runUnitSelector(root, ['test/family-2.test.mjs']);
+  assert.equal(result.status, 1, `${result.stdout}${result.stderr}`);
+  const path = `${result.stdout}${result.stderr}`.match(/Failure summary file: (.+)$/m)?.[1];
+  assert.ok(path);
+  const summary = readFileSync(path, 'utf8');
+  assert.match(summary, /test\/family-2\.test\.mjs: sharded failure/);
+  assert.doesNotMatch(summary, /sharded-helper\.mjs/);
+});
+
 test('serial wall-clock oracles are classified by the support/timing marker', () => {
   assert.equal(isSerialLaneSource(`import { timingTest } from '${SERIAL_LANE_MARKER}';`), true);
   assert.equal(isSerialLaneSource("import { bridgeSupport } from './support/bridge-fixture';"), false);

@@ -309,6 +309,7 @@ test('intake-owned review workspaces use guarded cleanup; external ownership sta
       // workspace owes the ordinary Queue-owned teardown.
       assert.equal(store.lifecycleTasks().some(x=>x.id===t.id),true);
       const adapter=Object.create(PaseoAdapter.prototype) as InstanceType<typeof PaseoAdapter>;
+      (adapter as unknown as Adapter).hostProcessListing=async()=>[];
       Object.defineProperty(adapter,'helperPath',{value:join(f.root,'worker-report.mjs')});
       Object.defineProperty(adapter,'api',{value:{workspaces:{ref:()=>({directory:f.workspace,refresh:async()=>{},current:()=>({projectRootPath:f.repo,worktreeSlug:'external-pr-checkout'}),archive:async()=>{archives++;rmSync(f.workspace,{recursive:true,force:true});return{archivedAt:new Date().toISOString()};}})},agents:{list:async()=>({entries:[],pageInfo:{hasMore:false}})}}});
       const engine=new Engine(store,adapter,0),lifecycle=new Lifecycle(engine);

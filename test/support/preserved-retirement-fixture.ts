@@ -121,6 +121,7 @@ export function archiverFor(f: Awaited<ReturnType<typeof setup>>, agents: unknow
 
 export function engineAdapter(archiveWorkspace: Adapter["archiveTaskWorkspace"], observeStatus = "idle"): Adapter {
   return {
+    hostProcessListing: async () => [],
     profiles: async () => [], validate: async () => "", createWorkspace: async () => { throw new Error("unused"); },
     findWorkspaces: async () => [], verifyWorkspace: async task => task.branch,
     createAgent: async () => { throw new Error("unused"); }, findAgents: async () => [],
@@ -145,6 +146,7 @@ export async function preservedFixture(t: Parameters<typeof setup>[0], agents: u
     archiveTaskWorkspace: (...args: Parameters<NonNullable<Adapter['archiveTaskWorkspace']>>) => archiver.archiveTaskWorkspace(...args),
     taskWorkspaceArchived: id => archiver.taskWorkspaceArchived(id),
     verifyCancelledWorkspacePr: async () => {}, findAnyOpenBranchPr: async () => [],
+    hostProcessListing: async () => [],
   };
   const runtime = new RuntimeRetirementService(f.store, async () => ({ code: 0, timedOut: false, spawnError: '', output: '{"scope":{"kind":"none"}}' }));
   const engine = new Engine(f.store, adapter, 0, undefined, runtime);

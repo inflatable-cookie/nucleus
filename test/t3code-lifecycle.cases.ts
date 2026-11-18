@@ -1,4 +1,5 @@
-import { test, type TestContext } from 'node:test';
+import type { TestContext } from 'node:test';
+import { test } from './support/sharded-test';
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -194,6 +195,9 @@ async function fixture(t: TestContext): Promise<Fixture> {
   // The fake Nightly starts no provider processes. Supply that positive fact
   // through the real machine port; owned-tool policy still checks its roots.
   forge.hostProcessListing = async () => [];
+  // The fixture owns its worktrees and launches no validation process.
+  forge.scanForWorktreeAdd = () => ({ state: "absent" });
+  forge.worktreeValidation = () => ({ state: "absent" });
   const merges: string[] = [];
   // The forge echoes the worktree's live head: the completion head, the run
   // heads and every gate answer stay the same real commit, so the closeout

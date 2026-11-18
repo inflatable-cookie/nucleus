@@ -1,29 +1,24 @@
 #!/usr/bin/env node
-/**
- * effigy fmt: format the TypeScript files this worktree changed.
- *
- * Prettier's range formatting only selects statement-level source elements,
- * so a range that starts inside a class body — a member or its JSDoc — snaps
- * out to the enclosing class declaration and reprints every unrelated member,
- * and per-hunk bottom-up runs then point later ranges at shifted offsets.
- * Instead, each changed file is formatted whole in memory, then only formatter
- * diff hunks that overlap the source change are applied. Unrelated formatting
- * drift is reported and left untouched.
- */
-import { execFileSync } from "node:child_process";
+/** Format whole changed TypeScript files, or check them without writing. */
+import { execFileSync, spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { changedRegionsFromDiff, formattingPlan, gitUnifiedDiff } from "./format-changed-plan.mjs";
+import { changedRegionsFromDiff } from "./format-changed-plan.mjs";
 
 const root = process.cwd();
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const prettier = resolve(scriptDirectory, "../node_modules/prettier/bin/prettier.cjs");
 const BUFFER_BYTES = 64 * 1024 * 1024;
 
+// A clean review checkout still has committed changes relative to main.
+const main = spawnSync("git", ["rev-parse", "--verify", "origin/main"], { cwd: root, stdio: "ignore" });
+const base = main.status === 0
+  ? execFileSync("git", ["merge-base", "HEAD", "origin/main"], { cwd: root, encoding: "utf8" }).trim()
+  : "HEAD";
 const diff = execFileSync(
   "git",
-  ["diff", "--no-ext-diff", "--no-color", "--unified=0", "HEAD", "--", ":(glob)**/*.ts", ":(glob)**/*.tsx"],
+  ["diff", "--no-ext-diff", "--no-color", "--unified=0", base, "--", ":(glob)**/*.ts", ":(glob)**/*.tsx"],
   { cwd: root, encoding: "utf8", maxBuffer: BUFFER_BYTES }
 );
 const untracked = execFileSync("git", ["ls-files", "--others", "--exclude-standard", "-z"], { cwd: root, encoding: "utf8", maxBuffer: BUFFER_BYTES })
@@ -40,39 +35,26 @@ function prettierText(absolute) {
   }
 }
 
-let skipped = 0;
+const check = process.argv.includes("--check");
 let failed = false;
-for (const [file, regions] of regionsByFile) {
+const files = new Set([...regionsByFile.keys(), ...untracked]);
+for (const file of files) {
   const absolute = resolve(root, file);
-  let current;
-  let formatted;
   try {
-    current = readFileSync(absolute, "utf8");
-    formatted = prettierText(absolute);
+    const current = readFileSync(absolute, "utf8");
+    const formatted = prettierText(absolute);
+    if (formatted === current) continue;
+    if (check) {
+      process.stderr.write(`fmt: formatting drift in ${file}\n`);
+      failed = true;
+    } else {
+      writeFileSync(absolute, formatted);
+      process.stdout.write(`Formatted ${file}.\n`);
+    }
   } catch (error) {
     process.stderr.write(`fmt: ${error instanceof Error ? error.message : String(error)}\n`);
     failed = true;
-    continue;
-  }
-  if (formatted === current) continue;
-  const plan = formattingPlan({ current, formatted, regions, slack: 0, runUnifiedDiff: gitUnifiedDiff });
-  if (plan.safe) {
-    if (plan.text !== current) writeFileSync(absolute, plan.text);
-    if (plan.drift.length) {
-      process.stderr.write(`fmt: noted ${file}: formatting drift outside the changed hunks at line(s) ${plan.drift.join(", ")}; left unchanged.\n`);
-    }
-    if (plan.text === current) continue;
-    process.stdout.write(`Formatted ${file} within the changed hunks.\n`);
-  } else {
-    skipped += 1;
-    process.stderr.write(`fmt: skipped ${file}: the drift check failed (${plan.detail}); nothing was written.\n`);
   }
 }
-
-for (const file of untracked) {
-  execFileSync(process.execPath, [prettier, "--write", resolve(root, file)], { cwd: root, stdio: "inherit" });
-}
-
-if (regionsByFile.size === 0 && untracked.length === 0) process.stdout.write("No changed TypeScript files to format.\n");
-if (skipped > 0) process.stderr.write(`fmt: skipped ${skipped} changed file(s) because the diff could not be scoped safely.\n`);
+if (files.size === 0) process.stdout.write("No changed TypeScript files to format.\n");
 if (failed) process.exitCode = 1;

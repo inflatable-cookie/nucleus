@@ -1,3 +1,4 @@
+import { scopedIdentityListing } from './support/scoped-identity';
 /**
  * Task 388: bounded QA diagnostics stay honest across the output cap.
  *
@@ -380,6 +381,8 @@ test("a large stream of short ordinary lines trims its tail without quadratic sh
 });
 
 test("a draining QA stream with split redaction and a final partial line settles within the bound", async t => {
+  // The stream producer below is one non-forking fixture process.
+  scopedIdentityListing(t);
   const root = mkdtempSync(join(tmpdir(), "nsq-qa-stream-drain-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const token = "host-run-token-0123456789-abcdefghijklmnopqrstuvwxyz";

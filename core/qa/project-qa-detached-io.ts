@@ -8,6 +8,7 @@ import { executeHookProgram } from "../machine/process-exec";
 import { minimalHookEnvironment } from "../hooks/hook-result";
 import { withRunTemporaryDirectory } from "../workspaces/run-scratch";
 import { ProcessTreeCpuSampler, type ProcessTreeCpu } from "../machine/process-tree-cpu";
+import type { ProcessTreeCpuReads } from "../machine/process-host-reads";
 import { defaultHostRunStateDir } from "../host-runs/host-run-files";
 import { HOST_RUN_TOKEN_GRACE_MS } from "../host-runs/host-run-endpoint-types";
 import { hostRunLaunchEnvironment } from "../host-runs/host-run-wire";
@@ -32,7 +33,7 @@ export const SUPERVISOR_HEARTBEAT_MS = 2_000;
  * from the pipeline run, and without this sync they would keep an undefined
  * token in production and record the secret unredacted.
  */
-export function detachedSupervisorIo(plan: QaSupervisionPlan, statePath: string, tokenHolder?: { hostRunToken?: string }): QaPipelineIo {
+export function detachedSupervisorIo(plan: QaSupervisionPlan, statePath: string, tokenHolder?: { hostRunToken?: string }, cpuReads?: ProcessTreeCpuReads): QaPipelineIo {
   const supervisorEnv = Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
   const { resultPath, cancelPath, planPath, cpuCoveragePath, heartbeatPath } = qaSupervisionPaths(plan.runRoot, plan.runId, plan.attempt);
   let current: QaSupervisionState | null = null;
@@ -106,7 +107,7 @@ export function detachedSupervisorIo(plan: QaSupervisionPlan, statePath: string,
     cpu: () => cpuSampler?.read() ?? finalCpu,
     begin: state => {
       current = state;
-      cpuSampler = new ProcessTreeCpuSampler(plan.identityToken);
+      cpuSampler = new ProcessTreeCpuSampler(plan.identityToken, undefined, cpuReads);
       cpuSampler.start();
       timer = setInterval(() => {
         if (!current || heartbeatWriting) return;

@@ -1,3 +1,4 @@
+import { noCpuReads, scopedIdentityListing } from './support/scoped-identity';
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -21,6 +22,8 @@ async function until(predicate: () => boolean, ms = 20_000) {
 }
 
 test("a real blocked step-log pipe cannot stop the supervisor heartbeat or regress its lifecycle state", { skip: process.platform === "win32" }, async t => {
+  // The fixture's shell only prints; it creates no escaped children.
+  scopedIdentityListing(t);
   const root = await mkdtemp(join(tmpdir(), "qa-heartbeat-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   const repo = join(root, "registered");
@@ -46,7 +49,7 @@ test("a real blocked step-log pipe cannot stop the supervisor heartbeat or regre
   const plan = qaSupervisionPlanSchema.parse({ ...run, schema: "queue.project-qa.plan.v1", schema_version: 1,
     identityToken, hookTimeoutMs: 10_000, hookMaxOutputBytes: 1024 });
   const paths = qaSupervisionPaths(runRoot, runId);
-  const io = detachedSupervisorIo(plan, paths.statePath, run);
+  const io = detachedSupervisorIo(plan, paths.statePath, run, noCpuReads);
   const pipe = qaStepLogPaths(runRoot, runId, "qa").stdoutPath;
   execFileSync("mkfifo", ["-m", "600", pipe]);
   let entered = false, completed = false, settled = false;

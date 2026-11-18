@@ -170,6 +170,9 @@ async function fixture(t: TestContext): Promise<Fixture> {
   // Every native read and write crosses the real operation executor with recorded BB DTOs.
   const forge = adapter as unknown as Record<string, unknown>;
   forge.hostProcessListing = async () => [];
+  // This fixture serializes its own worktree additions inside its private repo.
+  forge.scanForWorktreeAdd = () => ({ state: "absent" });
+  forge.worktreeValidation = () => ({ state: "absent" });
   forge.hostLoad = () => ({ load: 0, cpus: 1 });
   const merges: string[] = [];
   const liveHead = async (task?: { directory?: string }) => (await git(task?.directory ?? repo, 'rev-parse', 'HEAD')).trim();
@@ -198,7 +201,17 @@ async function fixture(t: TestContext): Promise<Fixture> {
   let bbToken = runtime.hostRegistry.connect(bbHost, 'bb-endpoint', { adapter, admission: runtime.admission });
   const disconnectHost = () => { claimed = false; runtime.hostRegistry.disconnect(bbHost, bbToken); };
   const reconnectHost = (next: HostAdapter = adapter) => { claimed = true; bbToken = runtime.hostRegistry.connect(bbHost, 'bb-endpoint', { adapter: next, admission: runtime.admission }); };
-  const restartAdapter = () => createBbHostAdapter(bbHost, () => claimed, dataDir, runtime.store, fake.operations.execute);
+  const restartAdapter = () => {
+    const restarted = createBbHostAdapter(bbHost, () => claimed, dataDir, runtime.store, fake.operations.execute);
+    // The synthetic forge survives the host reconnect just as the fake BB rows do.
+    const fixtureForge = restarted as unknown as Record<string, unknown>;
+    for (const name of ['hostProcessListing', 'scanForWorktreeAdd', 'worktreeValidation', 'hostLoad',
+      'verifyPr', 'verifyPrIdentity', 'verifyCleanQueueWorktree', 'verifyReview', 'publishReview',
+      'reconcileFormalReviewPublication', 'coveringEvidence', 'authorCommentEvidence', 'findOpenBranchPr',
+      'verifyCancelledWorkspacePr', 'externalMerge', 'rerunFailedWorkflowRuns', 'mergeGate', 'requiredChecks',
+      'merge', 'merged', 'syncMain', 'verifyCloseout']) fixtureForge[name] = forge[name];
+    return restarted;
+  };
   runtime.store.putRepository({ origin: repo, path: repo }, null, '', null, null, null, undefined, undefined, 'bb');
   runtime.store.upsertProject({ key: 'lifecycle', name: 'Lifecycle', repositories: [{ origin: repo, path: repo }] });
   const planner = formatAgentId(paseoHost, 'planner');

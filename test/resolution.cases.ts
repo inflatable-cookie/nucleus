@@ -71,6 +71,7 @@ function fixture(notifyOriginOnCloseout=false, mergeHold=false, uncertainMergeRe
   const tokens=new Map<string,string>(), creates:Run[]=[], sends:Run[]=[], continuations:{run:Run;messageId:string;text:string}[]=[], notices:string[]=[], prompts:string[]=[], reruns:string[][]=[];
   let merges=0,syncs=0,reviewChecks=0,currentHead=head,localHead=head,remoteHead=head;
   const adapter: Adapter & ResolutionAdapter & { hostId: string } = fakeAdapter({
+    hostProcessListing: async () => [],
     // Queue #912: origin and owner hosts resolve from the adapter; this fixture has its one host.
     hostId: 'host',
     profiles:async()=>[worker,reviewer,coordinator],validate:async()=>base,verifyWorkspace:async()=>task.branch,

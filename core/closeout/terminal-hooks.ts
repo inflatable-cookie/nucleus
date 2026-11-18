@@ -1,12 +1,14 @@
 import type { Task } from '../../shared/contracts';
 import type { Store } from '../store/store';
 import type { RepositoryHooks } from '../hooks/hooks';
+import type { HostProcessFact } from '../host/types';
 import { sweepTaskHostProcesses } from '../machine/host-process-reap';
 
 /** The store and hook owner a terminal task's finished hook and process sweep read. */
 export interface TerminalHookContext {
   readonly store: Store;
   readonly hooks: Pick<RepositoryHooks, 'finished'>;
+  readonly adapter?: { hostProcessListing?: () => Promise<HostProcessFact[] | null> };
 }
 
 /**
@@ -26,6 +28,6 @@ export async function runFinishedHook(ctx: TerminalHookContext, task: Task): Pro
  */
 export async function runTerminalHooks(ctx: TerminalHookContext, task: Task): Promise<void> {
   await runFinishedHook(ctx, task);
-  try { await sweepTaskHostProcesses(ctx.store, ctx.store.task(task.id)); }
+  try { await sweepTaskHostProcesses(ctx.store, ctx.store.task(task.id), { readProcesses: ctx.adapter?.hostProcessListing ? () => ctx.adapter!.hostProcessListing!() : undefined }); }
   catch (error) { ctx.store.event(task.id, 'host_process_sweep_warning', `Host process sweep could not run: ${error instanceof Error ? error.message : String(error)}`); }
 }

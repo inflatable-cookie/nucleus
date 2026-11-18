@@ -111,7 +111,21 @@ test('an idle pi-style participant with a stale shell item settles after a no-pr
     const checkedRunIds:string[][]=[];
     f.adapter.noLiveWorkspaceProcesses=async(_workspaceId,runIds)=>{checkedRunIds.push([...runIds]);return null;};
     f.setTool({type:'tool_call',callId:'left-behind',name:'Bash',status:'running',detail:{type:'shell',command:'effigy qa'}});
-    const result=await f.runtime.taskControl(f.control()) as Task;
+    const response=await f.runtime.taskControl(f.control());
+    let result: Task;
+    if ('accepted' in response && response.accepted) {
+      const deadline=Date.now()+60_000;
+      let operation=f.runtime.operationStatus({operationId:response.operation.id});
+      while ((operation.state==='pending'||operation.state==='running') && Date.now()<deadline) {
+        await new Promise(resolve=>setTimeout(resolve,50));
+        operation=f.runtime.operationStatus({operationId:response.operation.id});
+      }
+      assert.equal(operation.state,'succeeded',operation.diagnostic);
+      result=f.runtime.store.task(f.taskId);
+    } else {
+      assert.ok('resolution' in response, 'task control returned a task or accepted operation');
+      result=response as Task;
+    }
     assert.equal(result.resolution.mergeHead,f.final);
     assert.ok(task.runId && checkedRunIds.some(runIds=>runIds.includes(task.runId!)),'initial task-row run identity is included in the process proof');
   }finally{await f.close();}

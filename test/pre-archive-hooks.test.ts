@@ -227,7 +227,7 @@ function lifecycleFor(store: Store, hooks: RepositoryHooks, archived: Array<{ id
   const engine = {
     store, hooks, stopped: false, paused: () => false,
     enqueueCleanup: async () => {},
-    adapter: { archiveTaskWorkspace: async (_task: Task, id: string, directory: string) => { archived.push({ id, directory }); return true; } },
+    adapter: { hostProcessListing: async () => [], archiveTaskWorkspace: async (_task: Task, id: string, directory: string) => { archived.push({ id, directory }); return true; } },
     retirement: { capture: async () => null, markArchived: (task: Task) => task.resolution.runtimeRetirements, archived: async () => {}, hasScope: () => false, flagArchiveFailure: () => {} },
     resolution: { update: (task: Task, changes: Record<string, unknown>, _patch: Record<string, unknown>, kind: string, detail: string) => store.update(task.id, { resolution: { ...store.task(task.id).resolution, ...changes } as Task['resolution'] }, kind, detail) },
     removeSiblings: async () => {},
@@ -310,6 +310,7 @@ test('the disposition archive holds until the retention gate settles, then archi
     let hold = true;
     const archived: string[] = [];
     const deps: DispositionDeps = {
+      readProcesses: async () => [],
       hooks: {
         emit: async () => ({ hold: false, attention: false, records: [] as unknown[] }),
         preArchive: async () => hold ? { hold: true, detail: 'Repository hook retention task.pre_archive holds this transition: mandatory originals are not durable' } : { hold: false, detail: '' },

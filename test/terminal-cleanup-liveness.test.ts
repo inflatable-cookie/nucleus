@@ -38,6 +38,7 @@ function fixture() {
   const observe = (id: string, state: Partial<AgentObservation> = {}) => states.set(id, { id, workspaceId: 'ws', status: 'idle', active: false, permissions: false, error: '', ...state });
   const archived: string[] = [];
   const adapter = {
+    hostProcessListing: async () => [],
     // Only a registered observation answers; anything else is unobservable.
     observe: async (id: string) => { const state = states.get(id); if (!state) throw new Error('Agent missing'); return state; },
     archiveTaskWorkspace: async (_t: Task, id: string, _dir: string, _head: string, allowed: () => boolean) => { if (!allowed()) return false; archived.push(id); return true; },

@@ -7,7 +7,6 @@ import { join } from "node:path";
 import { processBelongsToRun, orphanExecutesRunScratch } from "../core/machine/run-process-cleanup";
 import { protectedRunInfrastructure, rememberRunProcessHosts } from "../core/machine/run-process-hosts";
 import { runInfrastructurePids } from "../core/machine/owned-tool-process-proof";
-import { readHostUidProcesses } from "../core/machine/host-process-listing";
 import { processParentPid } from "../core/machine/process-identity";
 import type { HostProcessFact } from "../core/host/types";
 
@@ -60,7 +59,7 @@ test("saved infrastructure protection compares start identities rather than recy
   try {
     const run = f.run(), child = await f.hostTool(run);
     await f.cleanup();
-    const read = await readHostUidProcesses(); assert.equal(read.state, "listed");
+    const read = await f.listing(); assert.equal(read.state, "listed");
     if (read.state !== "listed") return;
     const provider = read.processes.find(fact => fact.pid === child.host)!;
     assert.ok(provider);

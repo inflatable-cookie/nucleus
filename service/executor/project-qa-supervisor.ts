@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import type { ProcessTreeCpuReads } from "../../core/machine/process-host-reads";
 import { qaSupervisionPlanSchema, qaSupervisionPaths } from "../../core/qa/project-qa-supervision-files";
 import { defaultHostRunStateDir } from "../../core/host-runs/host-run-files";
 import { assertCheckoutAvailable } from "../../core/workspaces/checkout-volume";
@@ -16,6 +17,7 @@ import { runQaTeardownRetry } from "../../core/qa/project-qa-teardown";
 export async function runQaSupervisorMain(
   argv = process.argv.slice(2),
   fixtureAdmission?: (checkoutPath: string) => void,
+  fixtureCpuReads?: ProcessTreeCpuReads,
 ): Promise<void> {
   const [planPath, identityToken] = argv;
   if (!planPath || !identityToken) throw new Error("QA supervisor needs the plan path and its identity token");
@@ -36,12 +38,12 @@ export async function runQaSupervisorMain(
   const identity = { pid: process.pid, identityToken: plan.identityToken };
   if (plan.mode === "teardown_retry") {
     if (!plan.retry) throw new Error("QA teardown retry plan carries no retry payload");
-    await runQaTeardownRetry(identity, run, detachedSupervisorIo(plan, statePath, run), {
+    await runQaTeardownRetry(identity, run, detachedSupervisorIo(plan, statePath, run, fixtureCpuReads), {
       command: plan.retry.command, priorSteps: plan.retry.priorSteps, qaExitCode: plan.retry.qaExitCode,
       priorCancelReason: plan.retry.priorCancelReason, reason: plan.retry.reason, cleanupOnly: plan.retry.cleanupOnly,
       priorFailedStep: plan.retry.priorFailedStep,
     });
     return;
   }
-  await runProjectQaPipeline(identity, run, detachedSupervisorIo(plan, statePath, run));
+  await runProjectQaPipeline(identity, run, detachedSupervisorIo(plan, statePath, run, fixtureCpuReads));
 }

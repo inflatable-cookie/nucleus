@@ -45,6 +45,9 @@ export async function terminalArchiveFixture(t: TestContext, options: { unfinish
   const adapter = new PaseoAdapter('ws://127.0.0.1:1', join(data, 'callback.sock'), join(data, 'worker-report.mjs'));
   const directory = join(data, 'workspaces', digest(await repoCommonDir(primary)), inserted.branch);
   adapter.findWorkspaces = async () => [];
+  // This fixture starts each worktree creation serially and owns the repository.
+  adapter.scanForWorktreeAdd = () => ({ state: "absent" });
+  adapter.hostProcessListing = async () => [];
   await adapter.populateTaskWorktree(inserted);
   await writeFile(join(directory, 'task.txt'), 'task\n');
   await git(directory, 'add', '-A');

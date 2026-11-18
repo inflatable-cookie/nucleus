@@ -19,7 +19,7 @@ import {
   reapHostProcesses, sweepTaskHostProcesses, terminateHostProcessTargets,
 } from "../core/machine/host-process-reap";
 import { selectHostProcessTargets, type HostProcessTarget } from "../core/machine/host-process-select";
-import { readHostUidProcesses } from "../core/machine/host-process-listing";
+import { readProcessSubset } from "../core/machine/host-process-listing";
 import { ownedToolAgentProcessTreeVerdict, ownedToolProcessTreeVerdict } from "../core/machine/owned-tool-process-proof";
 import type { HostProcessFact } from "../core/host/types";
 import type { Engine } from "../core/engine";
@@ -250,9 +250,18 @@ function stopTrackedFixtureChild(pid: number | null): void {
  * direct evidence of ownership even while the launcher's identity read is slow
  * or failed.
  */
+const fixtureCandidatePaths = new Map<number, string>();
+async function fixtureFacts(pids: number[]): Promise<HostProcessFact[]> {
+  const read = await readProcessSubset(pids);
+  assert.equal(read.state, "listed");
+  return read.state === "listed" ? read.processes : [];
+}
 async function liveFixtureChildrenOf(pid: number): Promise<number[]> {
-  if (!Number.isSafeInteger(pid) || pid <= 0) return [];
-  const read = await readHostUidProcesses();
+  const path = fixtureCandidatePaths.get(pid);
+  if (!path || !existsSync(path)) return [];
+  const candidate = Number(readFileSync(path, "utf8"));
+  if (!Number.isSafeInteger(candidate) || candidate <= 0) return [];
+  const read = await readProcessSubset([candidate]);
   const facts = read.state === "listed" ? read.processes : null;
   if (!facts) return [];
   return facts.filter(fact => fact.ppid === pid && (fact.command ?? "").includes("setInterval(() => {}, 1000)")).map(fact => fact.pid);
@@ -401,6 +410,7 @@ function writeLauncherScript(path: string, keepAlive: boolean): void {
     `import { hostRunProcessStartIdentity, startIdentityMatches } from ${JSON.stringify(START_IDENTITY_MODULE)};`,
     'const pidPath = process.argv[2];',
     'const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { cwd: process.cwd(), detached: true, stdio: "ignore" });',
+    'writeFileSync(`${pidPath}.candidate`, String(child.pid));',
     'child.unref();',
     'const startedAt = Date.now();',
     'let identity = hostRunProcessStartIdentity(child.pid);',
@@ -419,7 +429,9 @@ function writeLauncherScript(path: string, keepAlive: boolean): void {
 function spawnFixtureLauncher(cwd: string, childPidPath: string, keepAlive: boolean, detached: boolean): ChildProcess {
   const launcherPath = join(dirname(childPidPath), keepAlive ? "fake-paseo-daemon.mjs" : "orphan-sleeper.mjs");
   writeLauncherScript(launcherPath, keepAlive);
-  return spawn(process.execPath, ["--import", TSX_LOADER, launcherPath, childPidPath], { cwd, stdio: "ignore", detached });
+  const launcher = spawn(process.execPath, ["--import", TSX_LOADER, launcherPath, childPidPath], { cwd, stdio: "ignore", detached });
+  if (launcher.pid) fixtureCandidatePaths.set(launcher.pid, `${childPidPath}.candidate`);
+  return launcher;
 }
 
 function spawnFakePaseoDaemonWithDetachedAgent(cwd: string, childPidPath: string): ChildProcess {
@@ -432,7 +444,7 @@ function spawnOrphanSleeper(cwd: string, childPidPath: string): ChildProcess {
 
 async function waitForProcessFact(pid: number, predicate: (fact: HostProcessFact) => boolean, timeoutMs: number, label: string): Promise<void> {
   await waitFor(async () => {
-    const read = await readHostUidProcesses();
+    const read = await readProcessSubset([pid]);
     const fact = (read.state === 'listed' ? read.processes : []).find(entry => entry.pid === pid);
     return Boolean(fact && predicate(fact));
   }, timeoutMs, label);
@@ -510,7 +522,7 @@ test("a fixture whose cwd is the temp worktree is terminated and recorded", asyn
   const store = new Store(join(storeDir, "queue.sqlite"));
   t.after(() => store.close());
   const task = insertTerminal(store, worktree, "done");
-  const result = await sweepTaskHostProcesses(store, task, { graceMs: GRACE_MS });
+  const result = await sweepTaskHostProcesses(store, task, { graceMs: GRACE_MS, processes: await fixtureFacts([childPid]) });
   await waitFor(() => !pidAlive(childPid), 2_000, "cwd fixture exit");
   assert.ok(result.terminated.some(target => target.pid === childPid), formatHostProcessSweepEvent(result));
   const event = store.events(task.id).find(row => row.kind === HOST_PROCESS_SWEEP_KIND);
@@ -541,7 +553,7 @@ test("a resumed agent child of the Paseo daemon survives and is logged once", as
   const store = new Store(join(storeDir, "queue.sqlite"));
   t.after(() => store.close());
   const task = insertTerminal(store, worktree, "done");
-  const options = { graceMs: GRACE_MS, paseoDaemonPid: daemon.pid };
+  const options = { graceMs: GRACE_MS, paseoDaemonPid: daemon.pid, processes: await fixtureFacts([daemon.pid!, agentPid]) };
   const result = await sweepTaskHostProcesses(store, task, options);
   assert.equal(pidAlive(agentPid), true);
   assert.ok(result.skippedPaseo.some(target => target.pid === agentPid));
@@ -568,7 +580,7 @@ test("an orphaned worktree keepalive is terminated", async t => {
   await waitFor(() => pidAlive(orphanPid), 2_000, "orphan keepalive alive");
   await waitForProcessFact(orphanPid, fact => fact.ppid === 1, 10_000, "keepalive reparenting");
 
-  const result = await reapHostProcesses({ directory: worktree, graceMs: GRACE_MS, paseoDaemonPid: null });
+  const result = await reapHostProcesses({ directory: worktree, graceMs: GRACE_MS, paseoDaemonPid: null, processes: await fixtureFacts([orphanPid]) });
   await waitFor(() => !pidAlive(orphanPid), 2_000, "orphan keepalive exit");
   assert.ok(result.terminated.some(target => target.pid === orphanPid));
 });
@@ -584,6 +596,7 @@ test("a recorded hook group equal to the Paseo daemon group is never group-signa
     directory: null,
     graceMs: GRACE_MS,
     paseoDaemonPid: daemon.pid,
+    processes: await fixtureFacts([daemon.pid!]),
     recordedGroups: [{ pgid: daemon.pid!, startIdentity: hostRunProcessStartIdentity(daemon.pid!) }],
   });
   assert.equal(pidAlive(daemon.pid!), true);
@@ -613,6 +626,7 @@ test("a detached child in a recorded pgid is terminated even outside the worktre
   const task = insertTerminal(store, worktree, "cancelled");
   const result = await sweepTaskHostProcesses(store, task, {
     graceMs: GRACE_MS,
+    processes: await fixtureFacts([childPid]),
     recordedGroups: [{ pgid: childPid, startIdentity: hostRunProcessStartIdentity(childPid) }],
   });
   await waitFor(() => !pidAlive(childPid), 2_000, "detached fixture exit");
@@ -671,7 +685,7 @@ test("a process outside the worktree is left running", async t => {
   const store = new Store(join(storeDir, "queue.sqlite"));
   t.after(() => store.close());
   const task = insertTerminal(store, worktree, "done");
-  const result = await sweepTaskHostProcesses(store, task, { graceMs: GRACE_MS });
+  const result = await sweepTaskHostProcesses(store, task, { graceMs: GRACE_MS, processes: await fixtureFacts([child.pid!]) });
   assert.equal(pidAlive(child.pid!), true);
   assert.equal(result.terminated.some(target => target.pid === child.pid), false);
 });
@@ -700,6 +714,7 @@ test("a recycled recorded pgid is never signalled", async t => {
   const result = await reapHostProcesses({
     directory: null,
     graceMs: GRACE_MS,
+    processes: await fixtureFacts([child.pid!]),
     recordedGroups: [{ pgid: child.pid!, startIdentity: "stale-identity-token-0001" }],
   });
   assert.equal(pidAlive(child.pid!), true);
@@ -732,7 +747,7 @@ test("a durable intent recovers a cancelled sweep a crash left unrun", async t =
     // #912: lifecycle runs each host-scoped effect through the engine host context.
     withHost: (_id: string, fn: () => unknown) => fn(), taskHostAvailable: () => true,
     hooks: { finished: async () => ({ hold: false, attention: false, records: [] }) },
-    adapter: {},
+    adapter: { hostProcessListing: () => fixtureFacts([childPid]) },
     retirement: { capture: async () => null, markArchived: (current: Task) => current.resolution.runtimeRetirements, archived: async () => {}, hasScope: () => false, flagArchiveFailure: () => {} },
     resolution: { update: (current: Task, changes: Record<string, unknown>, _patch: Record<string, unknown>, kind: string, detail: string) => store.update(current.id, { resolution: { ...store.task(current.id).resolution, ...changes } as Task["resolution"] }, kind, detail) },
     removeSiblings: async () => {},
@@ -762,7 +777,7 @@ test("macOS host discovery keeps the event loop responsive while ps/lsof run", {
   let ticked = false;
   const timer = setTimeout(() => { ticked = true; }, 0);
   try {
-    const read = await readHostUidProcesses();
+    const read = await readProcessSubset([process.pid]);
     assert.equal(ticked, true, "OS discovery must not block a queued timer");
     assert.ok(read.state === 'listed' && read.processes.some(fact => fact.pid === process.pid), "current process is retained in discovery");
   } finally { clearTimeout(timer); }

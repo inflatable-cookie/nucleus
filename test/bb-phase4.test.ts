@@ -323,6 +323,7 @@ test('BB phase 4: a reviewer replacement archives only the displaced thread thro
     };
     store.setMeta('bbWorkspaces', { [handle]: { id: handle, directory: '/synthetic/worktree', projectId: 'proj_synthetic', repositoryRoot: '/synthetic/repo', title: 'Synthetic' } satisfies BbWorkspaceRecord });
     const adapter = createBbHostAdapter(hostId, () => true, directory, store, operation) as Adapter & { guardedNativeAgentCreate(spec: HostAgentSpec, mcp: boolean, retry: boolean): Promise<{ id: string; workspaceId: string | null }> };
+    adapter.hostProcessListing = async () => [];
     const profile: Profile = { id: 'synthetic-profile', name: 'Synthetic profile', provider: 'codex', model: 'synthetic-model', notes: '', available: true, problem: '', supportedThinking: ['high'], thinkingOptionId: 'high' };
     const spec = (run: string, role: string): HostAgentSpec => ({ workspaceId: handle, taskNumber: 1271, title: `${role}: Synthetic task`, profile, mcpBindingPath: null,
       attempt: () => ({ requestId: `ns-${run}`, labels: wireLabels({ task: initial.id, run, role }), environment: {}, prompt: 'Synthetic prompt.' }) });
@@ -375,6 +376,7 @@ test('BB phase 4: closeout refused by a foreign cascade stays unarchived and is 
     };
     store.setMeta('bbWorkspaces', { [handle]: { id: handle, directory: '/synthetic/worktree', projectId: 'proj_synthetic', repositoryRoot: '/synthetic/repo', title: 'Synthetic' } satisfies BbWorkspaceRecord });
     const adapter = createBbHostAdapter(hostId, () => true, directory, store, operation) as Adapter & { guardedNativeAgentCreate(spec: HostAgentSpec, mcp: boolean, retry: boolean): Promise<{ id: string; workspaceId: string | null }> };
+    adapter.hostProcessListing = async () => [];
     const profile: Profile = { id: 'synthetic-profile', name: 'Synthetic profile', provider: 'codex', model: 'synthetic-model', notes: '', available: true, problem: '', supportedThinking: ['high'], thinkingOptionId: 'high' };
     const worker = await adapter.guardedNativeAgentCreate({ workspaceId: handle, taskNumber: 1271, title: 'Synthetic task', profile, mcpBindingPath: null,
       attempt: () => ({ requestId: 'ns-worker', labels: wireLabels({ task: initial.id, run: 'run_worker', role: 'worker' }), environment: {}, prompt: 'Synthetic prompt.' }) }, false, false);

@@ -11,11 +11,11 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
 import { connect } from "node:net";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   awaitOwnedPrivateSettlement,
   settleStopDisposePrivateFixture,
@@ -50,7 +50,24 @@ function startSupervised(): Started {
   const stateDir = join(root, "s");
   const work = join(root, "w");
   mkdirSync(work, { recursive: true });
-  const child = spawn(process.execPath, ["--import", "tsx", script, "--supervise", "--state-dir", stateDir], { env: { ...process.env, HOME: root }, stdio: ["ignore", "pipe", "inherit"] });
+  // Both submitted fixture commands are single, non-forking processes.
+  // Install the fixture listing only in its detached supervisor, including after
+  // the server roll; leave the real server and its authority protocol intact.
+  const preload = join(root, "supervisor-fixture.mjs");
+  const supervisor = fileURLToPath(new URL("../bin/queue-host-run-supervisor.mjs", import.meta.url));
+  const searchModule = new URL("../core/machine/process-identity-search.ts", import.meta.url).href;
+  const runnerModule = new URL("../service/executor/host-run-supervisor.ts", import.meta.url).href;
+  const fixtureModule = new URL("./support/scoped-identity.ts", import.meta.url).href;
+  writeFileSync(preload, `if (process.argv[1] === ${JSON.stringify(supervisor)}) {
+    const { overrideIdentityListing } = await import(${JSON.stringify(searchModule)});
+    const { runHostRunSupervisorMain } = await import(${JSON.stringify(runnerModule)});
+    const { noCpuReads } = await import(${JSON.stringify(fixtureModule)});
+    overrideIdentityListing({ state: "absent" });
+    await runHostRunSupervisorMain(undefined, { cpuReads: noCpuReads });
+    process.exit(0);
+  }`);
+  const nodeOptions = `${process.env.NODE_OPTIONS ?? ""} --import tsx --import ${pathToFileURL(preload).href}`.trim();
+  const child = spawn(process.execPath, ["--import", "tsx", script, "--supervise", "--state-dir", stateDir], { env: { ...process.env, HOME: root, NODE_OPTIONS: nodeOptions }, stdio: ["ignore", "pipe", "inherit"] });
   const authorityLines: Array<Record<string, any>> = [];
   const waiters: Array<() => void> = [];
   let buffer = "";
@@ -183,4 +200,16 @@ test("an unknown or mismatched run refuses settlement instead of deleting state 
   assert.equal(settled.runId, runId);
   assert.equal(settled.state, "settled");
   assert.ok(settled.settlement, "the owned run settles once its own identity is presented");
+});
+
+
+test("an unproven settlement preserves the owned fixture root", async t => {
+  const root = mkdtempSync(join(tmpdir(), "hrp-unsettled-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  writeFileSync(join(root, "sentinel"), "owned state");
+  const exited = { exitCode: 0, signalCode: null } as ChildProcess;
+  await assert.rejects(settleStopDisposePrivateFixture(exited, root, {
+    owned: { endpoint: join(root, "absent.sock"), epoch: 1, runId: "fixture" }, settlementTimeoutMs: 1,
+  }), /never settled/);
+  assert.equal(readFileSync(join(root, "sentinel"), "utf8"), "owned state");
 });

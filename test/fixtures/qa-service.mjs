@@ -19,13 +19,15 @@ const { assertCheckoutAvailable } = await import("../../core/workspaces/checkout
 const { realpath } = await import("node:fs/promises");
 const { Store, digest } = await import("../../core/store/store.ts");
 const { ProjectQaRunner } = await import("../../core/qa/project-qa.ts");
-const { qaSupervisionPaths, readQaSupervision } = await import("../../core/qa/project-qa-supervision-files.ts");
+const { qaSupervisionPaths, readQaSupervision, readQaSupervisionPlan } = await import("../../core/qa/project-qa-supervision-files.ts");
 
+const { scopedQaFixture } = await import("../support/scoped-qa.ts");
+const { hostRunProcessStartIdentity } = await import("../../core/machine/start-identity.ts");
 const out = value => process.stdout.write(`${JSON.stringify(value)}\n`);
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 function makeRunner(input) {
-  return new ProjectQaRunner(new Store(input.storePath ?? join(input.dataDir, "queue.sqlite")), {
+  const runner = new ProjectQaRunner(new Store(input.storePath ?? join(input.dataDir, "queue.sqlite")), {
     dataDir: input.dataDir,
     supervisionPollMs: 100,
     ...(input.fixtureMount ? {
@@ -35,6 +37,10 @@ function makeRunner(input) {
       supervisorEntry: join(import.meta.dirname, "qa-private-supervisor.mjs"),
     } : {}),
   });
+  const scope = scopedQaFixture({ after: () => {} }, [input.dataDir, ...(input.fixtureMount ? [input.fixtureMount] : [])]);
+  scope(runner);
+  runner.fixtureScope = scope;
+  return runner;
 }
 
 async function waitForSettle(runner, id, timeoutMs) {
@@ -66,6 +72,15 @@ if (action === "run") {
 
 if (action === "settle") {
   const runner = makeRunner(input);
+  const record = runner.store.qaRun(input.id);
+  if (record) {
+    const root = join(await realpath(input.dataDir), "project-qa", digest(record.key).slice(0, 24));
+    const paths = qaSupervisionPaths(root, record.id);
+    const plan = readQaSupervisionPlan(paths.planPath);
+    const state = readQaSupervision(paths.statePath);
+    if (plan && state) runner.fixtureScope.adopt(plan.identityToken, state.pid,
+      state.supervisorStartIdentity ?? hostRunProcessStartIdentity(state.pid), paths.planPath);
+  }
   await runner.get({ id: input.id });
   out({ record: await waitForSettle(runner, input.id, input.timeoutMs ?? 60_000) });
   process.exit(0);

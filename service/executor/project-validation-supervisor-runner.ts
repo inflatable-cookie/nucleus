@@ -4,6 +4,7 @@ import { HOST_RUN_TOKEN_GRACE_MS } from "../../core/host-runs/host-run-endpoint-
 import { hostRunLaunchEnvironment } from "../../core/host-runs/host-run-wire";
 import { issueHostRunToken, redactHostRunToken } from "../../core/host-runs/host-run-token";
 import { ProcessTreeCpuSampler } from "../../core/machine/process-tree-cpu";
+import type { ProcessTreeCpuReads } from "../../core/machine/process-host-reads";
 import { hostRunProcessStartIdentity } from "../../core/machine/start-identity";
 import { hostRunCpuCoverageSidecar } from "../../core/host-runs/host-run-cpu-coverage";
 import { realpathSync } from "node:fs";
@@ -21,7 +22,7 @@ import { streamTruncation, headTailWithMarker, tailWithTruncationMarker } from "
 const HEARTBEAT_MS = 2_000;
 
 /** Run one prospective-merge validation outside the Queue service process. */
-export async function runProjectValidationSupervisorMain(argv = process.argv.slice(2)): Promise<void> {
+export async function runProjectValidationSupervisorMain(argv = process.argv.slice(2), options: { cpuReads?: ProcessTreeCpuReads } = {}): Promise<void> {
   const [planPath, identityToken] = argv;
   if (!planPath || !identityToken) throw new Error("Project-validation supervisor needs its plan path and identity token");
   const plan = readProjectValidationPlan(planPath);
@@ -50,7 +51,7 @@ export async function runProjectValidationSupervisorMain(argv = process.argv.sli
   persist();
   const heartbeat = setInterval(() => { try { persist(); } catch { /* The result remains the terminal record. */ } }, HEARTBEAT_MS);
   heartbeat.unref?.();
-  const cpu = new ProcessTreeCpuSampler(identityToken);
+  const cpu = new ProcessTreeCpuSampler(identityToken, undefined, options.cpuReads);
   const commandStarted = Date.now();
   try {
     let execution: Awaited<ReturnType<typeof executeHookProgram>>;

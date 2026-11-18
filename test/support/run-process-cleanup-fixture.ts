@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store } from "../../core/store/store";
 import { sweepSettledRunProcesses } from "../../core/machine/run-process-cleanup";
+import { readProcessSubset } from "../../core/machine/host-process-listing";
 import { pidAlive } from "../../core/machine/pid";
 import { checkoutRunScratchPlacement, removeRecordedRunScratchDirectory, runTemporaryEnvironment } from "../../core/workspaces/run-scratch";
 import { submissionSchema, type Run } from "../../shared/contracts";
@@ -80,13 +81,15 @@ export function fixture() {
     return { pid, ready, term };
   }
   const release = (record: Run) => store.putRun({ ...record, released: true, status: "finished", active: false });
-  const cleanup = () => sweepSettledRunProcesses(store, "fixture-host", { graceMs: 100 });
+  const listing = async () => readProcessSubset([process.pid, ...pids.filter(runningPid)]);
+  const cleanup = () => sweepSettledRunProcesses(store, "fixture-host", { graceMs: 100,
+    readProcesses: async () => { const read = await listing(); return read.state === "listed" ? read.processes : null; } });
   async function close() {
     for (const pid of pids) { try { process.kill(pid, "SIGKILL"); } catch { /* Our fixture child already exited. */ } }
     await wait(() => pids.every(pid => !runningPid(pid)));
     store.close(); rmSync(root, { recursive: true, force: true });
   }
-  return { root, store, task, run, anchor, hostTool, orphan, release, cleanup, close, track: (pid: number) => pids.push(pid) };
+  return { root, store, task, run, anchor, hostTool, orphan, release, cleanup, listing, close, track: (pid: number) => pids.push(pid) };
 }
 export function runningPid(pid: number): boolean {
   if (!pidAlive(pid)) return false;

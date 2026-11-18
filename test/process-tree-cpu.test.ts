@@ -255,6 +255,18 @@ test('the Darwin reads use deterministic argv and set COMMAND_MODE only on the g
   }
 });
 
+test('group membership reads only the requested process group', () => {
+  let args: string[] = [];
+  let mode: string | undefined;
+  const reads = darwinProcessReads((_command, actual, options) => {
+    args = actual; mode = options.env?.COMMAND_MODE;
+    return { pid: 1, output: [], stdout: `101 ${PGID}\n102 9999\n`, stderr: '', status: 0, signal: null };
+  });
+  assert.deepEqual(reads.groupMembers(PGID), [101]);
+  assert.deepEqual(args, ['-ww', '-g', String(PGID), '-o', 'pid=,pgid=']);
+  assert.equal(mode, 'unix2003');
+});
+
 test('the candidate read lists the host without environments, then reads environments only for those pids', () => {
   const seen: Array<{ args: string[]; maxBuffer?: number }> = [];
   const reads = darwinProcessReads((command, args, options) => {

@@ -304,6 +304,7 @@ test("an unlocked dirty slug-matched worktree at an arbitrary path is not a remo
     assert.equal(existsSync(join(paseoWt, "notes.txt")), true);
 
     const adapter = new PaseoAdapter("ws://127.0.0.1:1", join(dataDir, "cb.sock"), join(dataDir, "report.mjs"));
+    adapter.scanForWorktreeAdd = () => ({ state: "absent" });
     await assert.rejects(() => adapter.inspectOrphanWorkspace(task), /not a provable orphan.*unlocked and dirty/);
     await assert.rejects(() => adapter.removeOrphanWorkspace(task, fabricated), /not a provable orphan.*unlocked and dirty/);
     assert.equal(existsSync(join(paseoWt, "notes.txt")), true);
@@ -344,6 +345,7 @@ test("Queue gitBulk populate from the selected base then Paseo registers the exi
 
     const requests: unknown[] = [];
     const adapter = new PaseoAdapter("ws://127.0.0.1:1", join(dataDir, "cb.sock"), join(dataDir, "report.mjs"));
+    adapter.scanForWorktreeAdd = () => ({ state: "absent" });
     (adapter as any).api = { workspaces: {
       list: async () => ({ entries: [], pageInfo: { hasMore: false } }),
       create: async (input: unknown) => { requests.push(input); return { id: "workspace", directory: ownedPath }; },

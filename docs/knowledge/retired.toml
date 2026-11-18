@@ -1,6 +1,6 @@
 # Concepts that no longer exist. The retired-concepts check fails on any listed
 # term, path or config key found outside `allow`
-# (`effigy skill run northstar-lean/retired-concepts`).
+# Run `effigy qa:retired-concepts` to check against the recorded baseline.
 #
 # frozen: immutable artefacts, exempt from every retirement and skipped by
 # check-links.

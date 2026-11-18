@@ -2,7 +2,6 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { fixture, runningPid, wait } from "./support/run-process-cleanup-fixture";
-import { readHostUidProcesses } from "../core/machine/host-process-listing";
 import { runProcessEnvironments, type RunProcessEnvironment } from "../core/machine/run-process-identity";
 import { sweepSettledRunProcesses } from "../core/machine/run-process-cleanup";
 import type { HostProcessFact } from "../core/host/types";
@@ -13,8 +12,8 @@ import type { HostProcessFact } from "../core/host/types";
  * again at all, and a process read that never answers cannot hold the sweep.
  */
 
-async function listing(): Promise<HostProcessFact[]> {
-  const read = await readHostUidProcesses();
+async function listing(f: ReturnType<typeof fixture>): Promise<HostProcessFact[]> {
+  const read = await f.listing();
   assert.equal(read.state, "listed");
   return read.state === "listed" ? read.processes : [];
 }
@@ -27,7 +26,7 @@ test("one process snapshot and one ownership read settle every run in a sweep", 
     await wait(() => existsSync(one.ready) && existsSync(two.ready));
     f.release(first); f.release(second);
     let snapshots = 0, ownership = 0;
-    const facts = await listing();
+    const facts = await listing(f);
     // Both runs are decided in one pass over the same table: each keeps its
     // owned process alive with a visible retry because ownership is unreadable.
     await sweepSettledRunProcesses(f.store, "fixture-host", { graceMs: 100,
@@ -86,7 +85,7 @@ test("an ownership read that never answers leaves processes alive and the intent
     const run = f.run(), child = f.orphan(run, "command");
     await wait(() => existsSync(child.ready));
     f.release(run);
-    const facts = await listing();
+    const facts = await listing(f);
     await sweepSettledRunProcesses(f.store, "fixture-host", { graceMs: 100, readBoundMs: 60,
       readProcesses: async () => facts,
       readEnvironments: () => new Promise<Map<number, RunProcessEnvironment | null>>(() => {}) });

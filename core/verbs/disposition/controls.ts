@@ -22,6 +22,7 @@ export class Dispositions {
   dispositionDeps() {
     return productionDeps({
       store: this.store, hooks: this.engine.hooks,
+      readProcesses: this.adapter.hostProcessListing ? () => this.adapter.hostProcessListing!() : undefined,
       hostAvailable: task => this.engine.taskHostAvailable(task),
       withHost: (id, fn) => this.engine.withHost(id, fn),
       observe: (id) => this.engine.host.observe(id),

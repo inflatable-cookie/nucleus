@@ -144,7 +144,7 @@ export function darwinProcessReads(run: PsRun = spawnSync) {
     },
     /** The pids the kernel lists in this group; null on any failure. */
     groupMembers(pgid: number): number[] | null {
-      const stdout = psRead(run, ["-ww", "-A", "-o", "pid=,pgid="], 1024 * 1024);
+      const stdout = psRead(run, ["-ww", "-g", String(pgid), "-o", "pid=,pgid="], 1024 * 1024, psEnv({ COMMAND_MODE: "unix2003" }));
       return stdout === null ? null : parseGroupMembers(stdout, pgid);
     },
     /** `ps -ww -g <pgid> -o pid=,pgid=,lstart=,time=`; null on any failure. */

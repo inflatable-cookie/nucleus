@@ -62,6 +62,7 @@ export async function fixture(historicalPartial=false,historicalOnly=false,prese
       }};
   }},agents:{list:async()=>({entries:agents.map(agent=>({agent})),pageInfo:{hasMore:false}})}}});
   const adapter=f.buildAdapter();
+  adapter.hostProcessListing=async()=>[];
   // A released reader's own history is complete and tool-free, and the adapter's
   // participant proof observes it by identity rather than assuming idleness.
   archiver.observe=(id:string)=>adapter.observe(id);

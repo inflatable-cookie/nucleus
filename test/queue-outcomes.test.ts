@@ -374,6 +374,7 @@ async function closeoutFixture(t: { after: (fn: () => Promise<void> | void) => v
   idle('worker'); idle('origin', 'origin-workspace');
   const tokens = new Map<string, string>(), creates: Run[] = [], notices: string[] = [];
   const adapter: Adapter & ResolutionAdapter = {
+    hostProcessListing: async () => [],
     profiles: async () => [worker, coordinator], validate: async () => head, verifyWorkspace: async () => 'main',
     createWorkspace: async () => { throw new Error('Closeout must not create workspaces'); }, findWorkspaces: async () => [],
     createAgent: async () => { throw new Error('No worker dispatch expected'); }, findAgents: async () => [],

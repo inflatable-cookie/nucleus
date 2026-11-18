@@ -17,7 +17,7 @@ import { requiredCheckPollMetaKey } from '../core/forge/index';
 import { ownerRevisionFixture } from './support/review-entry-fixture';
 import { observedParticipantTimeline } from './support/tool-timeline';
 import { waitFor } from './support/budgets';
-import { readHostUidProcesses } from '../core/machine/host-process-listing';
+import { readProcessSubset } from '../core/machine/host-process-listing';
 
 const head = 'a'.repeat(40), base = 'b'.repeat(40), merged = 'c'.repeat(40);
 
@@ -101,7 +101,7 @@ test('a reported participant stray tool is reaped after grace and the merge leas
   const launcher=spawn(process.execPath,[orphanScript,workspace,pidFile],{cwd:f.dir,stdio:'ignore'});
   await once(launcher,'exit');
   childPid=Number(readFileSync(pidFile,'utf8'));
-  const listing=await readHostUidProcesses();
+  const listing=await readProcessSubset([childPid]);
   const facts=listing.state==='listed'?listing.processes:null;
   const childFact=facts?.find(fact=>fact.pid===childPid);
   assert.ok(childFact,'the host listing sees the started worktree process');

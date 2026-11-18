@@ -52,6 +52,8 @@ async function repoWithPolicy(t: any, events: string[], outcome: 'ok' | 'blocked
   const calls = { workspaces: 0, agents: 0 };
   let observation: Partial<AgentObservation> = { status: 'idle', active: false };
   const adapter: Adapter = fakeAdapter({
+    hostProcessListing: async () => [],
+    worktreeValidation: () => ({ state: 'absent' }),
     profiles: async () => [profile], validate: async () => head,
     createWorkspace: async (task) => { calls.workspaces++; return { id: `ws-${task.id}`, directory: repo }; },
      verifyWorkspace: async task => task.branch,
@@ -135,13 +137,13 @@ test('advisory blocked policy records a failure but lets the durable blocked pha
 test('queued cancellation runs task.cancelled and a required failure holds the task', async t => {
   const f = await repoWithPolicy(t, ['task.cancelled'], 'blocked');
   const task = f.add();
-  const held = await cancelQueuedTask(f.store, f.engine.hooks, task);
+  const held = await cancelQueuedTask(f.store, f.engine.hooks, task, async () => []);
   assert.equal(held.phase, 'needs_attention');
   assert.equal(f.store.hookEvents(task.id)[0].state, 'blocked');
 
   const g = await repoWithPolicy(t, ['task.cancelled'], 'ok');
   const cancellable = g.add();
-  const cancelled = await cancelQueuedTask(g.store, g.engine.hooks, cancellable);
+  const cancelled = await cancelQueuedTask(g.store, g.engine.hooks, cancellable, async () => []);
   assert.equal(cancelled.phase, 'cancelled');
 });
 

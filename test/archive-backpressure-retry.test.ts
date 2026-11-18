@@ -172,6 +172,7 @@ async function externalFixture(t: TestContext, degraded: boolean) {
     },
   };
   const raw: Adapter = fakeAdapter({
+    hostProcessListing: async () => [],
     profiles: async () => [], validate: async () => '', createWorkspace: async () => { throw Error('unused'); },
      verifyWorkspace: async task => task.branch,
     createAgent: async () => { throw Error('unused'); },

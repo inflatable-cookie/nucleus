@@ -382,6 +382,7 @@ test('a branch left behind by an interrupted orphan removal is still detected an
     run('init', '-q', '-b', 'main'); run('-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'base');
     const task = { id: 'abc', repoPath: dir, baseBranch: 'main', branch: 'ns-abc' } as Task;
     const adapter = new PaseoAdapter('ws://127.0.0.1:1', join(dir, 'cb.sock'), join(dir, 'report.mjs'));
+    adapter.scanForWorktreeAdd = () => ({ state: 'absent' });
     run('branch', 'ns-abc');
     const orphan = await adapter.inspectOrphanWorkspace(task);
     assert.equal(orphan?.directory, null, 'the branch alone is an orphan when no worktree is listed');
@@ -400,6 +401,7 @@ test('a leftover that is not a provable orphan blocks replay instead of reading 
     run('init', '-q', '-b', 'main'); run('commit', '-q', '--allow-empty', '-m', 'base');
     const task = { id: 'abc', repoPath: dir, baseBranch: 'main', branch: 'ns-abc' } as Task;
     const adapter = new PaseoAdapter('ws://127.0.0.1:1', join(dir, 'cb.sock'), join(dir, 'report.mjs'));
+    adapter.scanForWorktreeAdd = () => ({ state: 'absent' });
     assert.equal(await adapter.inspectOrphanWorkspace(task), null, 'nothing left means replay is safe');
     run('branch', 'ns-abc');
     const tree = join(dir, 'wt', 'ns-abc');

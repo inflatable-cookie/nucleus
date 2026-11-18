@@ -12,6 +12,7 @@
 import { test } from './support/sharded-test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, realpathSync } from 'node:fs';
 import { mkdtemp, mkdir, readFile, realpath, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
@@ -21,7 +22,7 @@ import { fileURLToPath } from 'node:url';
 import { command, git } from '../core/git/index';
 import type { ExecutionRequest } from '../core/hooks/hooks';
 import { Store, digest } from '../core/store/store';
-import { ProjectQaRunner, DEFAULT_PROJECT_QA_ARGV, DEFAULT_PROJECT_QA_TIMEOUT_MS } from './project-qa-runner-fixture';
+import { ProjectQaRunner as FixtureProjectQaRunner, DEFAULT_PROJECT_QA_ARGV, DEFAULT_PROJECT_QA_TIMEOUT_MS } from './project-qa-runner-fixture';
 import {
   QA_SUPERVISION_SCHEMA,
   QA_SUPERVISION_PLAN_SCHEMA,
@@ -37,9 +38,11 @@ import {
   writeQaSupervision,
   writeQaSupervisionPlan,
 } from '../core/qa/project-qa-supervision-files';
-import { supervisorLiveness } from '../core/machine/start-identity';
+import { hostRunProcessStartIdentity, startIdentityProves, supervisorLiveness } from '../core/machine/start-identity';
+import { scopedIdentityListing } from './support/scoped-identity';
+import { scopedQaFixture } from './support/scoped-qa';
 import { parseProjectQaWorktreeHooks, removeQaWorkspace } from '../core/qa/project-qa-worktree';
-import { findProcessByCommandToken, scanTokenVerdict, type ProcCommandLine } from '../core/machine/process-identity';
+import { overrideCommandTokenSearch, overrideWorktreeAddSearch, processCommandLine, scanTokenVerdict, type ProcCommandLine } from '../core/machine/process-identity';
 import { HostRunScheduler, classifyHostRun } from '../core/host-runs/host-run-scheduler';
 import { checkoutRunScratchPlacement, runScratchRoot, runTemporaryDirectory, type RunScratchPlacement } from '../core/workspaces/run-scratch';
 import type { CheckoutVolumeInfo } from '../core/workspaces/checkout-volume';
@@ -47,7 +50,7 @@ import { readHostRunTokenKeys } from '../service/callbacks/host-run-endpoint';
 import { verifyRunToken } from "./host-run-token-fixture";
 import { hostRunResultSchema, hostRunSettlementSchema, projectQaCancelInputSchema, projectQaGet, projectQaRunSchema, DEFAULT_PROCESS_TERMINATION_GRACE_MS, PROJECT_QA_TIMEOUT_MAX_MS, projectQaSchema, repositorySetInputSchema, type ProjectQaRun, projectQaRetryTeardownInputSchema } from '../shared/contracts';
 import { processGroupEmpty, processGroupHasStartIdentity } from '../core/machine/process-group';
-import { PROCESS_START_IDENTITY_ENV, processesForStartIdentity } from '../core/machine/process-identity-search';
+import { overrideIdentityListing, processStartIdentityLiveness, PROCESS_START_IDENTITY_ENV, processesForStartIdentity } from '../core/machine/process-identity-search';
 import { HOOK_TEST_TIMEOUT_MS, waitFor } from './support/budgets';
 import { frozenHostRunSettlementSchema } from './support/contract-010-frozen';
 import { buildConfiguredClone, materializeSeed, type GitSeed } from './support/git-seed';
@@ -55,6 +58,14 @@ import type { QaPipelineOutcome } from '../core/qa/project-qa-pipeline';
 import { recordQaServiceLifecycle } from "../core/qa/project-qa-diagnostics";
 import { writeQaJsonAsync } from "../core/qa/project-qa-async-io";
 import { confirmStaleSupervisorHeartbeat } from '../core/machine/supervisor-watchdog';
+
+const qaScopes = new WeakMap<Store, (runner: FixtureProjectQaRunner) => void>();
+class ProjectQaRunner extends FixtureProjectQaRunner {
+  constructor(store: Store, options: ConstructorParameters<typeof FixtureProjectQaRunner>[1] = {}) {
+    super(store, options);
+    qaScopes.get(store)?.(this);
+  }
+}
 
 /** Every case starts from the same published one-commit repository. */
 const publishedRepository: GitSeed = { name: 'pqa', build: async root => {
@@ -65,6 +76,27 @@ const publishedRepository: GitSeed = { name: 'pqa', build: async root => {
   await git(repo, 'commit', '-m', 'initial');
   await git(repo, 'push', 'origin', 'main');
 } };
+
+/** These synthetic rows have no step processes; an optional carrier is the only supervisor. */
+function scopedQaSyntheticSearch(t: any, token: string, carrier?: { pid: number; startIdentity: string }) {
+  overrideCommandTokenSearch(identity => {
+    if (identity !== token) return { state: 'unknown' };
+    if (!carrier) return { state: 'absent' };
+    const live = processStartIdentityLiveness(carrier.pid, carrier.startIdentity);
+    if (live === 'dead') return { state: 'absent' };
+    if (live === 'unknown') return { state: 'unknown' };
+    const line = processCommandLine(carrier.pid);
+    return line === null ? { state: 'unknown' } : line.includes(token) ? { state: 'found', pid: carrier.pid } : { state: 'absent' };
+  });
+  overrideIdentityListing(identity => identity === token ? { state: 'absent' } : { state: 'unknown' });
+  t.after(() => { overrideCommandTokenSearch(null); overrideIdentityListing(null); });
+}
+
+/** These cases serialize their own worktree creation and cleanup. */
+function scopedQaWorktreeSearch(t: any, roots: string[]) {
+  overrideWorktreeAddSearch(path => roots.some(root => path.startsWith(`${root}/`)) ? { state: 'absent' } : { state: 'unknown' });
+  t.after(() => overrideWorktreeAddSearch(null));
+}
 
 async function fixture(t: any) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'nsq-pqa-')));
@@ -81,6 +113,7 @@ async function fixture(t: any) {
   await mkdir(hostRunStateDir, { recursive: true, mode: 0o700 });
   await writeFile(join(hostRunStateDir, 'token.key'), JSON.stringify({ format: 'host.run.keys', version: 1,
     current: { epoch: 1, keyB64: Buffer.alloc(32, 0x51).toString('base64') } }), { mode: 0o600 });
+  qaScopes.set(store, scopedQaFixture(t, [root, dataDir], undefined, t.name === 'contract 010 QA results record measured process-tree CPU'));
   return { root, repo, store, dataDir, hostRunStateDir };
 }
 
@@ -216,6 +249,7 @@ test('the checkout is the fetched integration head in a Queue-owned directory', 
 
 test('new QA checkout uses private external placement while supervision stays internal', async t => {
   const f = await fixture(t);
+  scopedQaWorktreeSearch(t, [f.root, f.dataDir]);
   const builds = join(f.root, 'builds');
   await mkdir(builds);
   let observed = '', admissions = 0;
@@ -320,6 +354,7 @@ test('QA refuses unavailable storage before a checkout and preserves a lost admi
 
 test('external QA runs setup and teardown and retains a checkout when storage disappears', async t => {
   const f = await fixture(t);
+  scopedQaWorktreeSearch(t, [f.root, f.dataDir]);
   await setWorktreeHooks(f, { setup: 'setup-fixture', teardown: 'teardown-fixture' });
   const builds = join(f.root, 'builds');
   await mkdir(builds);
@@ -347,6 +382,7 @@ test('external QA runs setup and teardown and retains a checkout when storage di
 
 test('external QA cleanup rejects a foreign directory without deleting it', async t => {
   const f = await fixture(t);
+  scopedQaWorktreeSearch(t, [f.root, f.dataDir]);
   const foreign = join(f.root, 'foreign');
   await mkdir(foreign);
   await writeFile(join(foreign, 'keep'), 'owner');
@@ -356,6 +392,7 @@ test('external QA cleanup rejects a foreign directory without deleting it', asyn
 
 test('external cleanup retry never repeats a completed teardown', async t => {
   const f = await fixture(t);
+  scopedQaWorktreeSearch(t, [f.root, f.dataDir]);
   await setWorktreeHooks(f, { teardown: 'teardown-fixture' });
   const builds = join(f.root, 'builds');
   await mkdir(builds);
@@ -384,6 +421,7 @@ test('external cleanup retry never repeats a completed teardown', async t => {
 
 test('lost external QA creation waits visibly while storage is unavailable and reconciles after repair', async t => {
   const f = await fixture(t), key = await realpath(f.repo), id = randomUUID();
+  scopedQaWorktreeSearch(t, [f.root, f.dataDir]);
   const builds = join(f.root, 'builds');
   await mkdir(builds);
   const checkoutPath = join(builds, 'project-qa', digest(key).slice(0, 24), id);
@@ -1075,6 +1113,15 @@ test('a durable QA result settles while an escaped descendant holds capacity unt
   });
   assert.ok(carrier.pid);
   const childGroupId = carrier.pid!;
+  const identity = hostRunProcessStartIdentity(childGroupId);
+  assert.ok(startIdentityProves(identity), 'the fixture carrier has a provable start identity');
+  const carrierRecord = join(f.root, 'carrier-identity.json');
+  await writeFile(carrierRecord, JSON.stringify({ pid: childGroupId, identity }));
+  scopedIdentityListing(t, [carrierRecord]);
+  // This row is synthetic: it names a deliberately nonexistent supervisor,
+  // and the carrier above is the only process launched by the fixture.
+  overrideCommandTokenSearch(token => token === identityToken ? { state: 'absent' } : { state: 'unknown' });
+  t.after(() => overrideCommandTokenSearch(null));
   const processGroupId = 2_147_000_000;
   t.after(() => { try { process.kill(-childGroupId, 'SIGKILL'); } catch { /* already gone */ } });
   let escapedDescendant: { pid: number; startIdentity: string } | undefined;
@@ -1149,11 +1196,12 @@ test('a setsid descendant holding stdout does not keep a settled step open and i
   let escaped: number[] = [];
   // The descendant's pid is fixture-owned so cleanup still finds it when the
   // settlement assertion fails before the run records the escaped identity.
-  const descendantPidFile = join(f.root, 'setsid-descendant.pid');
+  const descendantPidFile = join(f.root, 'setsid-descendant.json');
+  const scope = scopedQaFixture(t, [f.root, f.dataDir], descendantPidFile);
   t.after(async () => {
     for (const pid of escaped) { try { process.kill(pid, 'SIGKILL'); } catch { /* already exited */ } }
     try {
-      const pid = Number(await readFile(descendantPidFile, 'utf8'));
+      const { pid } = JSON.parse(await readFile(descendantPidFile, 'utf8')) as { pid: number };
       if (Number.isSafeInteger(pid) && pid > 1) process.kill(pid, 'SIGKILL');
     } catch { /* no descendant was recorded */ }
   });
@@ -1161,17 +1209,22 @@ test('a setsid descendant holding stdout does not keep a settled step open and i
   // spawn event, so the supervisor sees an executed child with the run's
   // marker environment rather than a fork that has not exec'd yet. It is still
   // a live setsid descendant holding stdout.
+  const childScript = `import { hostRunProcessStartIdentity } from ${JSON.stringify(new URL('../core/machine/start-identity.ts', import.meta.url).href)};
+    import { writeFileSync } from 'node:fs';
+    writeFileSync(${JSON.stringify(descendantPidFile)}, JSON.stringify({ pid: process.pid, identity: hostRunProcessStartIdentity(process.pid) }));
+    setInterval(() => {}, 1000);`;
   const script = [
     "const { spawn } = require('node:child_process');",
     "const fs = require('node:fs');",
-    "const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: ['ignore', 1, 2] });",
-    `fs.writeFileSync(${JSON.stringify(descendantPidFile)}, String(child.pid));`,
+    `const child = spawn(process.execPath, ['--import', ${JSON.stringify(createRequire(import.meta.url).resolve('tsx'))}, '--input-type=module', '-e', ${JSON.stringify(childScript)}], { detached: true, stdio: ['ignore', 1, 2] });`,
     "child.unref();",
-    "child.on('spawn', () => process.stdout.write('parent done\\n'));",
+    `const ready = () => fs.existsSync(${JSON.stringify(descendantPidFile)}) ? process.stdout.write('parent done\\n') : setTimeout(ready, 20);`,
+    "child.on('spawn', ready);",
   ].join(' ');
   f.store.putRepository({ origin: null, path: f.repo }, null, '', null, null,
     { argv: [process.execPath, '-e', script], timeoutMs: 30_000, maxOutputBytes: 4096, terminationGraceMs: 100 });
   const runner = new ProjectQaRunner(f.store, { dataDir: f.dataDir, supervisionPollMs: 25 });
+  scope(runner);
   const started = await runner.run({ repository: f.repo });
   await waitFor(() => !['queued', 'running'].includes(f.store.qaRun(started.id)?.state ?? ''), 15_000, 'the command group to settle despite the inherited stdout pipe');
   const settled = f.store.qaRun(started.id)!;
@@ -1272,6 +1325,7 @@ test('concurrent requests share one run: the claim is atomic across runner insta
 
 test('an orphaned running row runs teardown, then reconciles to lost with its checkout removed', async t => {
   const f = await fixture(t);
+  scopedQaWorktreeSearch(t, [f.root, f.dataDir]);
   const { randomUUID } = await import('node:crypto');
   const real = await realpath(f.repo);
   const id = randomUUID();
@@ -1405,10 +1459,12 @@ test('a service roll mid-QA survives: a fresh service re-attaches to the detache
 
 test('a live supervisor with a stale heartbeat is terminated only after unchanged confirmation and settles lost', async t => {
   const f = await fixture(t);
+  const scope = scopedQaFixture(t, [f.root, f.dataDir]);
   await setWorktreeHooks(f, { setup: 'echo setup-done', teardown: 'echo teardown-done' });
   f.store.putRepository({ origin: null, path: f.repo }, null, '', null, null,
     { argv: ['/bin/sh', '-c', 'sleep 60'], timeoutMs: 120_000, maxOutputBytes: 4096, terminationGraceMs: 30_000 });
   const runner = new ProjectQaRunner(f.store, { dataDir: f.dataDir, supervisionPollMs: 100 });
+  scope(runner);
   // Keep the original run's background watcher from racing the observer that
   // owns the stale-heartbeat proof below. Install the seam before run() starts it.
   let originalWatcherStarted = false;
@@ -1427,6 +1483,7 @@ test('a live supervisor with a stale heartbeat is terminated only after unchange
 
   // A live supervisor is never reconciled away by another reader.
   const observer = new ProjectQaRunner(f.store, { dataDir: f.dataDir, supervisionPollMs: 100 });
+  scope(observer);
   assert.equal((await observer.get({ id: started.id }))!.state, 'running', 'a live supervisor keeps the run running');
 
   const active = supervisor.activeProcess!;
@@ -1543,8 +1600,8 @@ test('supervisor liveness trusts only the run token: a different command line is
     'an unreadable command line is never proof of death');
   assert.equal(supervisorLiveness(4242, 'token-abc', { alive: () => false, command: () => command }).state, 'dead',
     'a gone pid is proven dead');
-  assert.equal(findProcessByCommandToken(`nobody-carries-${randomUUID()}`).state, 'absent',
-    'a completed scan with no match is proof of absence');
+  assert.equal(scanTokenVerdict([{ pid: process.pid, read: { state: 'read', line: processCommandLine(process.pid) ?? '' } }], `nobody-carries-${randomUUID()}`).state, 'absent',
+    'a completed fixture scan with no match is proof of absence');
   // Linux /proc can refuse a read while the process exists; that entry may be
   // the supervisor, so it must leave the scan unknown rather than absent.
   const entry = (pid: number, read: ProcCommandLine) => ({ pid, read });
@@ -1588,6 +1645,7 @@ test('a restarted service settles a finished run from its durable result record'
   const f = await fixture(t);
   const id = randomUUID();
   const startedAt = new Date(Date.now() - 50).toISOString();
+  scopedQaSyntheticSearch(t, 'finished-supervisor-token-1234');
   const real = await seedSupervisedRow(f, { id, pid: process.pid, identityToken: 'finished-supervisor-token-1234', startedAt });
   const runRoot = join(await realpath(f.dataDir), 'project-qa', digest(real).slice(0, 24));
   const { resultPath } = qaSupervisionPaths(runRoot, id);
@@ -1656,6 +1714,7 @@ test('a bare live pid is never proof of a supervisor: a mismatched identity reco
   const f = await fixture(t);
   const id = randomUUID();
   const startedAt = new Date().toISOString();
+  scopedQaSyntheticSearch(t, 'not-carried-by-this-process-000000');
   // A live pid with no matching command line, as a recycled pid or a stale plan
   // would look. Recovery must settle the run, not watch an unrelated process.
   const real = await seedSupervisedRow(f, { id, pid: process.pid, identityToken: 'not-carried-by-this-process-000000', startedAt,
@@ -1677,7 +1736,10 @@ test('a claimed run with no published pid follows the live token-bearing process
   // after a roll between spawn and recording its pid.
   const carrier = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)', identityToken], { stdio: 'ignore' });
   t.after(() => { try { carrier.kill('SIGKILL'); } catch { /* already gone */ } });
-  await waitFor(() => findProcessByCommandToken(identityToken).state === 'found', 10_000, 'the token-bearing process to be visible');
+  await waitFor(() => Boolean(carrier.pid && processCommandLine(carrier.pid)?.includes(identityToken)), 10_000, 'the token-bearing process to be visible');
+  const carrierIdentity = hostRunProcessStartIdentity(carrier.pid!);
+  assert.ok(startIdentityProves(carrierIdentity));
+  scopedQaSyntheticSearch(t, identityToken, { pid: carrier.pid!, startIdentity: carrierIdentity });
   const startedAt = new Date().toISOString();
   const real = await seedSupervisedRow(f, { id, pid: null, identityToken, startedAt });
   const runner = new ProjectQaRunner(f.store, { dataDir: f.dataDir, supervisionPollMs: 25 });
@@ -1701,12 +1763,15 @@ test('a claimed run with no published pid follows the live token-bearing process
 test('a service restart resumes a claimed QA run before supervisor state, with a queued or running QA row', async t => {
   for (const qaState of ['queued', 'running'] as const) {
     const f = await fixture(t);
+    const scope = scopedQaFixture(t, [f.root, f.dataDir]);
     const id = randomUUID();
     const startedAt = new Date().toISOString();
     const markerPath = join(f.dataDir, 'qa-command-count');
     const argv = [process.execPath, '-e', `require('node:fs').appendFileSync(${JSON.stringify(markerPath)}, 'x')`];
     const base = await git(f.repo, 'rev-parse', 'HEAD');
-    const real = await seedSupervisedRow(f, { id, pid: null, identityToken: randomUUID(), startedAt, argv, base, timeoutMs: 60_000, state: qaState });
+    const identityToken = randomUUID();
+    scope.knownAbsent(identityToken);
+    const real = await seedSupervisedRow(f, { id, pid: null, identityToken, startedAt, argv, base, timeoutMs: 60_000, state: qaState });
     const scheduler = new HostRunScheduler(f.store, { capacity: () => ({ cpuCapacity: 2, memoryCapacityBytes: 2_000_000_000,
       freeMemoryBytes: 2_000_000_000, loadAverage: [] }) });
     t.after(() => scheduler.stop());
@@ -1718,6 +1783,7 @@ test('a service restart resumes a claimed QA run before supervisor state, with a
     // publishes initial state. Reusing the same plan is safe because that state
     // precedes checkout preparation and every QA command.
     const restarted = new ProjectQaRunner(f.store, { dataDir: f.dataDir, hostRuns: scheduler, supervisionPollMs: 25 });
+    scope(restarted);
     if (qaState === 'queued') await restarted.list();
     else await restarted.get({ id });
     await waitFor(() => !['queued', 'running'].includes(f.store.qaRun(id)?.state ?? ''), 30_000, 'the restarted run to settle');
@@ -2197,7 +2263,10 @@ test('a teardown retry is refused while a supervisor is live', async t => {
   const identityToken = `live-retry-token-${randomUUID()}`;
   const carrier = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)', identityToken], { stdio: 'ignore' });
   t.after(() => { try { carrier.kill('SIGKILL'); } catch { /* already gone */ } });
-  await waitFor(() => findProcessByCommandToken(identityToken).state === 'found', 10_000, 'the live supervisor carrier to appear');
+  await waitFor(() => Boolean(carrier.pid && processCommandLine(carrier.pid)?.includes(identityToken)), 10_000, 'the live supervisor carrier to appear');
+  const carrierIdentity = hostRunProcessStartIdentity(carrier.pid!);
+  assert.ok(startIdentityProves(carrierIdentity));
+  scopedQaSyntheticSearch(t, identityToken, { pid: carrier.pid!, startIdentity: carrierIdentity });
   const runRoot = join(await realpath(f.dataDir), 'project-qa', digest(started.key).slice(0, 24));
   const { planPath } = qaSupervisionPaths(runRoot, started.id);
   writeQaSupervisionPlan(planPath, qaSupervisionPlanSchema.parse({

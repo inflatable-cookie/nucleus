@@ -455,6 +455,7 @@ async function engineFixture(t: any, options: { event: 'task.blocked' | 'task.cl
   for (const id of ['worker', 'reviewer', 'coordinator']) states.set(id, { id, workspaceId: 'task-ws', status: 'idle', active: false, permissions: false, error: '' });
   const tokens = new Map<string, string>(), creates: { role: string }[] = [];
   const adapter: Adapter & ResolutionAdapter = fakeAdapter({
+    hostProcessListing: async () => [],
     profiles: async () => [worker, coordinator], validate: async () => head, verifyWorkspace: async () => 'main',
     createWorkspace: async () => { throw new Error('No workspace dispatch expected'); },
     createAgent: async () => { throw new Error('No worker dispatch expected'); },

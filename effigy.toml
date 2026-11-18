@@ -65,6 +65,8 @@ check = [{ task = "check:types" }, { task = "check:plugin-types" }, { task = "ch
 # Proves a move PR changed no moved code; see scripts/check-moves.ts.
 "check:moves" = "node --import tsx scripts/check-moves.ts {args}"
 fmt = "node scripts/format-changed-typescript.mjs"
+"fmt:check" = "node scripts/format-changed-typescript.mjs --check"
+"qa:retired-concepts" = "node scripts/check-retired-concepts.mjs"
 # Wall-clock oracles run alone after the parallel suite; see scripts/test-timing.mjs.
 "test:timing" = "npm run test:timing -- {args}"
 # Fast checks first: a type or docs failure surfaces in seconds, not after the unit stage.
