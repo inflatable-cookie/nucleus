@@ -367,7 +367,8 @@ export const restart: OwnerVerb = {
       return { available: false, refusal: restartTerminalRefusal(task, "refusal" in parked ? parked.refusal : undefined) };
     }
     const role = deriveRestartRole(task, runs);
-    const reviewer = role === 'reviewer' ? unreportedReviewer(task, runs) : null;
+    const shape = restartShape(task, runs, role, facts.events);
+    const reviewer = role === 'reviewer' && shape !== 'stalled_run' ? unreportedReviewer(task, runs) : null;
     if (reviewer) {
       const requested = facts.events.some(event => ['reviewer_report_request_sent', 'reviewer_report_request_intent'].includes(event.kind)
         && event.detail.startsWith(`${reviewer.id}:`));
@@ -376,7 +377,6 @@ export const restart: OwnerVerb = {
         : { available: true, fill: ['reason'], args: { taskId: task.id, version: task.version, role: 'reviewer' },
           note: `Asks retained reviewer ${reviewer.agentId} to resend the report on run ${reviewer.id} after observing it idle; no new review starts.` };
     }
-    const shape = restartShape(task, runs, role, facts.events);
     // nucleus#1195: one bounded continuation asks a live proof executor whose
     // result never arrived to resend that report on its existing run and
     // credential. It re-runs no selector and starts no run, so the view names the

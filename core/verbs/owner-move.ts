@@ -14,6 +14,7 @@ import { durableRunFence, currentReadyPrEvidence, prIdentity } from './owner-fac
 import type { OwnerVerbFacts } from './owner-facts';
 import { verbInput } from './owner-shared';
 import type { OwnerVerbApplicability, OwnerVerb } from './owner-shared';
+import { interactiveSessionOpen } from '../dispatch/interactive';
 import { retainedContinuationPlan } from './owner-restart';
 
 export const moveTargets = ["work", "review", "merge", "closeout"] as const;
@@ -96,6 +97,7 @@ function moveViews(facts: OwnerVerbFacts): TaskNextVerb[] {
   };
   const work = ((): OwnerVerbApplicability => {
     const shared = gate("work"); if (shared) return shared;
+    if (interactiveSessionOpen(task, runs)) return { available: false, refusal: 'The interactive worker session is still open; continue it in its thread' };
     if (task.entrypoint === "proof" && task.proofOnly)
       return { available: false, refusal: "A proof-only qualification has no worker; review the settled receipt with move to=review" };
     const running = liveGate("work", true); if (!running.available) return running;

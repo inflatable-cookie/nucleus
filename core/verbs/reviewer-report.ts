@@ -1,12 +1,14 @@
 import type { Run, Task } from '../../shared/contracts';
 import type { Engine } from '../engine';
 import { hostFailureRefusalDetail } from '../host/errors';
+import { runsUnchangedSince } from '../recovery/observation-advance';
 
 /** A fresh reader may replace only a proven gone or non-independent binding. */
 export async function requireReviewerReplacement(engine: Engine, task: Task, version: number): Promise<void> {
   const agentId = task.resolution.reviewerAgentId;
   if (!agentId || engine.resolution.authorAgentIds(task).has(agentId)) return;
-  const prior = engine.store.runs(task.id).findLast(run => run.role === 'reviewer' && run.agentId === agentId);
+  const runs = engine.store.runs(task.id);
+  const prior = runs.findLast(run => run.role === 'reviewer' && run.agentId === agentId);
   if (prior) {
     try { engine.resolution.assertReviewProfileIndependent(task, prior); }
     catch (error) {
@@ -23,6 +25,7 @@ export async function requireReviewerReplacement(engine: Engine, task: Task, ver
     } catch { /* An unreadable archive is not proof of absence. */ }
   }
   engine.requireOwnerControlCurrent(engine.store.task(task.id), version, 'Task changed during reviewer observation; refresh before retrying');
+  if (!runsUnchangedSince(runs, engine.store.runs(task.id))) throw Error('Task or run changed; refresh before retrying');
   if (state.id !== agentId || !archived || state.active || state.activeTurnId || state.permissions)
     throw Error('The retained reviewer is still live or its absence is unproven; continue that reviewer instead');
 }
@@ -52,9 +55,6 @@ export async function requestReviewerReport(engine: Engine, task: Task, run: Run
     throw Error('The retained reviewer binding changed; no report was requested');
   if (state.active || state.activeTurnId || state.permissions || !['idle', 'error'].includes(state.status))
     throw Error('The retained reviewer is not positively idle; its current turn owns the report');
-  const toolIssue = await engine.resolution.participantToolIssue(task.id, run.agentId!, run.workspaceId!);
-  if (toolIssue) throw Error(`The retained reviewer still has live or unknown tool work: ${toolIssue}`);
-  engine.requireOwnerControlCurrent(store.task(task.id), version, 'Task changed during reviewer observation; refresh before retrying');
   if (JSON.stringify(store.run(run.id)) !== JSON.stringify(run)) throw Error('The reviewer run changed during observation');
   if (!task.resolution.reviewerAgentId) {
     task = store.transaction(() => {

@@ -160,7 +160,7 @@ test('an accepted stop of an idle worker shows its dispatch hold and the still-o
     const restart = verb(f, 'restart')[0]!;
     assert.equal(restart.available, true);
     assert.equal(after.activeRun?.status, 'stopped');
-    assert.equal(verb(f, 'move').find(entry => entry.args?.to === 'work'), undefined, 'no move work view is offered as available');
+    assert.equal(verb(f, 'move').find(entry => entry.args?.to === 'work')?.available, true, 'the owner can explicitly return the task to work');
 
     // Board projection: one hold chip kind and the hold stop, never a fabricated wait.
     const card = f.board();

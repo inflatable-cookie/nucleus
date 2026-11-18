@@ -35,6 +35,7 @@ function fixture(t: TestContext, adapterFields: Loose = {}) {
   const adapter: Loose = {
     supportsCoordinatorRecovery: true,
     profiles: async () => [],
+    verifyPr: async () => ({ head, url: 'https://github.com/example/repo/pull/7' }),
     observe: async (id: string): Promise<AgentObservation> => ({ id, workspaceId: 'ws', status: 'idle', active: false, permissions: false, error: '' } as AgentObservation),
     workspaceAvailable: async () => true,
     findRunAgents: async () => [],

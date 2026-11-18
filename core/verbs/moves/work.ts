@@ -11,6 +11,7 @@ import { currentRouteProfile } from "../owner-verbs";
 import { MOVE_WORK_AUTHOR_REFUSAL, MOVE_WORK_REPLACEMENT_REFUSAL, moveStateRefusal, REMOVED_TASK_REFUSAL } from "../control-refusals";
 import { RETAINED_PREREQUISITE_REFUSAL } from "../verb-refusal-text";
 import { cancelDisplacedReviewers, observeReviewerDisplacement } from "./review-displacement";
+import { interactiveSessionOpen } from '../../dispatch/interactive';
 
 /** The owner `move to=work` request, after the verb has parsed it. */
 export type WorkMoveInput = {
@@ -44,6 +45,7 @@ export async function moveToWork(engine: Engine, input: WorkMoveInput): Promise<
   engine.requireOwnerControlCurrent(task, input.version, 'Task changed; refresh before retrying');
   const stateRefusal = moveStateRefusal(task, "work");
   if (stateRefusal) throw Error(stateRefusal);
+  if (interactiveSessionOpen(task, store.runs(task.id))) throw Error('The interactive worker session is still open; continue it in its thread');
   // Spec 050 (#3569): finished runs settle by observation before the run
   // fence — including a completed reviewer run, whose verdict the task already
   // carries; one that cannot settle refuses here, with nothing written.

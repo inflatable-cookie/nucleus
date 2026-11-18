@@ -225,6 +225,7 @@ test('an owner reviewer restart survives an observation recorded during its own 
     const livenessGate = gate();
     let fired = false;
     const observe = f.adapter.observe;
+    f.adapter.originAgent = async (id: string) => ({ id, workspaceId: 'workspace', archived: true, status: 'idle', title: id });
     f.adapter.observe = async (id: string) => {
       if (!fired) { fired = true; livenessGate.enter(); await livenessGate.released; f.observeWorker('review-agent'); }
       return observe(id);
@@ -257,6 +258,7 @@ test('an unsettled run change during the same awaited read still refuses and cha
     const livenessGate = gate();
     let fired = false;
     const observe = f.adapter.observe;
+    f.adapter.originAgent = async (id: string) => ({ id, workspaceId: 'workspace', archived: true, status: 'idle', title: id });
     f.adapter.observe = async (id: string) => {
       if (!fired) { fired = true; livenessGate.enter(); await livenessGate.released; f.store.putRun({ ...f.store.run(run.id)!, status: 'uncertain' }); }
       return observe(id);
