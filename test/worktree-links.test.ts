@@ -566,6 +566,7 @@ test(
         await realpath(pin.path),
       );
     const view = {
+      id: taskId,
       hostId: `bb:${"b".repeat(32)}`,
       repoPath: f.primary,
       directory,

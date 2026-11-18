@@ -228,9 +228,13 @@ export class WorkspaceProvisioning {
     task: Task,
   ): Promise<{ task: Task; recordFailure: string | null }> {
     const current = this.store.task(task.id);
+    const configured = [
+      ...this.store.repositories().map((row) => row.repository),
+      ...this.store.projects().flatMap((project) => project.repositories),
+    ];
     const existingWait = worktreeLinksDue(current)
       ? null
-      : await bbWorktreeLinksWait(current);
+      : await bbWorktreeLinksWait(current, configured);
     const previousAt =
       current.worktreeLinks?.state === "prepared"
         ? current.worktreeLinks.at
@@ -266,10 +270,7 @@ export class WorkspaceProvisioning {
       provisionWorktreeLinks({
         dataDir,
         task: current,
-        configured: [
-          ...this.store.repositories().map((row) => row.repository),
-          ...this.store.projects().flatMap((project) => project.repositories),
-        ],
+        configured,
         ...(bb
           ? {
               pinned: {

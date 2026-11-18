@@ -800,16 +800,24 @@ export async function bbWorktreeLinksWait(
     | "worktreeLinks"
     | "siblingPins"
     | "repoPath"
+    | "id"
   >,
   configured?: readonly ConfiguredCheckout[],
 ): Promise<string | null> {
   if (!task.hostId?.startsWith("bb:")) return null;
-  if (
-    !task.directory ||
-    !task.workspaceId ||
-    task.worktreeLinks?.state !== "prepared"
-  )
+  if (!task.directory || !task.workspaceId)
     return "BB sibling provisioning waits: this workspace has no prepared link record";
+  if (task.worktreeLinks?.state !== "prepared") {
+    if (!task.siblingPins.length && configured) {
+      const declared = await declaredWorktreeLinks({
+        directory: task.directory,
+        primaryRoot: task.repoPath,
+        configured,
+      });
+      if (!declared.candidates.length && !declared.findings.length) return null;
+    }
+    return "BB sibling provisioning waits: this workspace has no prepared link record";
+  }
   const record = task.worktreeLinks;
   if (
     record.workspaceId !== task.workspaceId ||
@@ -826,6 +834,18 @@ export async function bbWorktreeLinksWait(
     const name = basename(pin.path);
     const link = record.links.find((item) => item.name === name);
     const root = await realpath(pin.path).catch(() => null);
+    const parent = dirname(pin.path);
+    const directoryEntry = await lstat(pin.path).catch(() => null);
+    const parentEntry = await lstat(parent).catch(() => null);
+    if (
+      basename(parent) !== task.id ||
+      basename(dirname(parent)) !== "siblings" ||
+      !directoryEntry?.isDirectory() ||
+      directoryEntry.isSymbolicLink() ||
+      !parentEntry?.isDirectory() ||
+      parentEntry.isSymbolicLink()
+    )
+      return `BB sibling provisioning waits: ${name} is not the task's recorded sibling copy`;
     if (
       !root ||
       !link ||
@@ -838,6 +858,27 @@ export async function bbWorktreeLinksWait(
       )) !== pin.commit
     )
       return `BB sibling provisioning waits: ${name} no longer matches its pinned commit`;
+    if (configured) {
+      const row = configured.find(
+        (item) => (item.origin || item.path) === pin.repository,
+      );
+      const common = await gitText(
+        pin.path,
+        "rev-parse",
+        "--path-format=absolute",
+        "--git-common-dir",
+      ).catch(() => null);
+      const expectedCommon =
+        row &&
+        (await gitText(
+          row.path,
+          "rev-parse",
+          "--path-format=absolute",
+          "--git-common-dir",
+        ).catch(() => null));
+      if (!common || !expectedCommon || common !== expectedCommon)
+        return `BB sibling provisioning waits: ${name} does not belong to its configured repository`;
+    }
   }
   if (configured) {
     const declaration = await declaredWorktreeLinks({

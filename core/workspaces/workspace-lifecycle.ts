@@ -210,6 +210,15 @@ export class WorkspaceLifecycle {
     )
       this.admitWorkspace(placement, task, directory);
   }
+  private legacyPaths(task: Task, common: string): string[] {
+    return [
+      ...new Set(
+        [this.host.dataDir(), ...this.placementRoots()].map((root) =>
+          ownedWorkspacePath(root, common, task.id),
+        ),
+      ),
+    ];
+  }
   /**
    * Only a creation in progress reports steps. A reconciliation's inspection stays silent:
    * a progress write moves the task's version, and the replay it decides fences on that version.
@@ -256,7 +265,9 @@ export class WorkspaceLifecycle {
     return classifyWorkspaceCreation({
       task,
       ownedPath,
-      legacyPaths: legacyPath && legacyPath !== ownedPath ? [legacyPath] : [],
+      legacyPaths: this.legacyPaths(task, common).filter(
+        (path) => path !== ownedPath,
+      ),
       admitObserved: (directory) =>
         this.admitObservedWorkspace(task, common, directory),
       skipProcessScan: options.skipProcessScan,
@@ -289,9 +300,7 @@ export class WorkspaceLifecycle {
         return populateOwnedWorktree({
           task,
           ownedPath,
-          legacyPaths: [
-            ownedWorkspacePath(this.host.dataDir(), common, task.id),
-          ],
+          legacyPaths: this.legacyPaths(task, common),
           admitObserved: (directory) =>
             this.admitObservedWorkspace(task, common, directory),
           admit: placement
@@ -330,7 +339,7 @@ export class WorkspaceLifecycle {
     return populateOwnedWorktree({
       task,
       ownedPath,
-      legacyPaths: [ownedWorkspacePath(this.host.dataDir(), common, task.id)],
+      legacyPaths: this.legacyPaths(task, common),
       admitObserved: (directory) =>
         this.admitObservedWorkspace(task, common, directory),
       admit: placement
@@ -689,9 +698,11 @@ export class WorkspaceLifecycle {
     // called that. An external registered workspace is the task's own binding
     // wherever Paseo roots its project, so its recorded id matches as well
     // (nucleus#1261).
-    const allocated = [ownedPath, legacyPath].filter((path): path is string =>
-      Boolean(path),
-    );
+    const allocated = [
+      ownedPath,
+      legacyPath,
+      ...(common ? this.legacyPaths(task, common) : []),
+    ].filter((path): path is string => Boolean(path));
     const matches = entries
       .filter(
         (w) =>
