@@ -40,6 +40,8 @@
   "retiredAgent": [
     "deletedAt",
     "labels",
+    "parentThreadId",
+    "title",
     "workspaceId"
   ]
 }

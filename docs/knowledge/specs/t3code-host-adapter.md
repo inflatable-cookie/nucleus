@@ -533,13 +533,13 @@ A host pass states the tasks it still works on (`beginHostPass`, closed by
 (nucleus#1328). The adapter observes a thread only while its Nucleus task is
 live: a thread whose task is done or cancelled, or that T3's own thread list
 reports archived or removed, leaves observation. Its live record moves to the
-stored `retiredAgents` index, which keeps only the launch identity — workspace and
-labels — so an exact settle, an exact lookup and the terminal archive lane still
-answer; the intent ledger, the settle markers and every recorded command stay
-exactly as recorded, and a confirmed deletion drops the retired record. Nothing
-leaves T3: leaving observation never deletes, archives or edits a thread, and a
-person or planner re-attaching a thread returns it to observation under the
-ordinary verbs. A thread that has left observation answers from the thread list
+stored `retiredAgents` index, which keeps the identity its own rows read —
+workspace, labels, the recorded parent link a nested child's one-row rule needs, and
+the task's state title — so an exact settle, an exact lookup and the terminal archive
+lane still answer; the intent ledger, the settle markers and every recorded command
+stay exactly as recorded, and a confirmed deletion marks the retired record. Nothing
+leaves T3: leaving observation never deletes, archives or edits a thread, and a person
+or planner re-attaching a thread returns it to observation under the ordinary verbs. A thread that has left observation answers from the thread list
 alone, because that row already carries the thread record, its status, active run
 and pending request; `observe`, `originAgent` and the archive lane therefore read
 no snapshot for it, and a read that would need one is refused rather than answered
@@ -547,8 +547,10 @@ from memory.
 
 Inside one pass every consumer shares one thread list and one snapshot per thread:
 status, row step, presentation, settle and pending questions all read the same
-answer, so a tracked thread costs at most one `subscribeThread` per sweep however
-many paths ask about it. The pass skips a thread's snapshot entirely while the row
+answer, so a tracked thread costs at most one `subscribeThread` per pass however many
+paths ask about it, plus at most one more after each command the pass sends to that
+thread (the write invalidates the snapshot the pass held, so a post-write read is
+never answered from before the write). The pass skips a thread's snapshot entirely while the row
 T3 reports for it — the whole row, including `updatedAt`, `status`, `activeRunId`,
 `settledOverride`, `archivedAt`, `deletedAt` and the pending request — is unchanged
 since the snapshot it already holds, so a sweep with nothing new in T3 serves no
@@ -558,11 +560,11 @@ one snapshot per pass. A transcript read is never served from a bounded snapshot
 and an unreadable thread list falls back to the plain per-thread read instead of
 holding a marker it could not prove.
 
-The move is reversible: a thread T3 no longer reports archived — a person or a
-planner re-attached it — returns to observation on the next pass with the same
-launch identity, and recording a thread again under its own identity (an ordinary
-launch, or a child created again) writes its live record and retires the retired
-entry. A confirmed removal keeps its entry marked, is never restored, and is never
+The move is reversible and loses nothing: a thread T3 no longer reports archived — a
+person or a planner re-attached it — returns to observation on the next pass with the
+record it had, including its recorded parent link and state title, and recording a
+thread again under its own identity (an ordinary launch, or a child created again)
+writes its live record and retires the retired entry. A confirmed removal keeps its entry marked, is never restored, and is never
 an exact-lookup answer, so one thread is never named twice.
 
 Leaving observation never turns a delivery fact into a settled one. An unknown

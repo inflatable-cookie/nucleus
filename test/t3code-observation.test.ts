@@ -42,6 +42,8 @@ async function fixture(t: TestContext, input: {
   unknownSettles?: readonly { threadId: string; runId: string }[];
   /** Threads this host proved it removed. */
   deleted?: readonly string[];
+  /** Tasks this host runs on its own parent thread. */
+  parents?: readonly { taskId: string; threadId: string; title?: string }[];
   seed?: (server: Fake, directory: string) => void;
 }) {
   const root = mkdtempSync(join(tmpdir(), 't3code-observation-'));
@@ -50,7 +52,7 @@ async function fixture(t: TestContext, input: {
   const statePath = join(root, 'state.json');
   writeFileSync(statePath, JSON.stringify(storedHostState({ directory, threads: input.threads,
     settled: input.settled, pendingSettles: input.pendingSettles, unknownSettles: input.unknownSettles,
-    deleted: input.deleted })), { mode: 0o600 });
+    deleted: input.deleted, parents: input.parents })), { mode: 0o600 });
   for (const thread of input.threads) seed(server, thread.id, directory);
   input.seed?.(server, directory);
   const host = new T3CodeHost({ endpoint: server.endpoint, bearer: 'synthetic-bearer', statePath, timeoutMs: 1_000,
@@ -391,4 +393,32 @@ test('a retired thread returns to observation when T3 stops reporting it archive
   assert.equal(host.state.read().retiredAgents?.[thread.id], undefined, 'and the retired entry is gone');
   const found = await host.findAgents({ [WIRE_LABEL_KEYS.task]: thread.taskId, [WIRE_LABEL_KEYS.run]: thread.runId });
   assert.deepEqual(found.map(entry => entry.id), [thread.id], 'an exact lookup names the thread once');
+});
+
+test('a re-attached nested child keeps its parent link and row title', async t => {
+  // The retired record is the whole row identity, not just labels: a nested child
+  // whose thread comes back must still be its parent's child, or its own row surfaces
+  // and breaks the one-row rule (nucleus#1305, nucleus#1328 review).
+  const parentThread = threadId('parent');
+  const child = { id: threadId('child'), taskId: 'task-live', runId: 'run-child', parentThreadId: parentThread, title: 'Working*: synthetic' };
+  const { host, server } = await fixture(t, {
+    threads: [child],
+    parents: [{ taskId: child.taskId, threadId: parentThread, title: 'Working*: synthetic' }],
+    seed: (fake, directory) => { seed(fake, child.id, directory); fake.threads.get(child.id)!.thread.archivedAt = STAMP; },
+  });
+  const tasks = [taskFact(child.taskId, 'working')] as Task[];
+  await host.beginHostPass(tasks);
+  await host.endHostPass();
+  const retired = host.state.read().retiredAgents?.[child.id];
+  assert.equal(retired?.parentThreadId, parentThread, 'the retired record keeps the parent link');
+  assert.equal(retired?.title, 'Working*: synthetic', 'and the task state title its row rides on');
+  // T3 no longer reports it archived: the thread comes back as the child it was.
+  server.threads.get(child.id)!.thread.archivedAt = null;
+  await host.beginHostPass(tasks);
+  await host.endHostPass();
+  const restored = host.state.read().agents[child.id];
+  assert.equal(restored?.parentThreadId, parentThread, 'the restored record keeps the parent link');
+  assert.equal(restored?.title, 'Working*: synthetic', 'and the title');
+  assert.equal(host.state.read().retiredAgents?.[child.id], undefined, 'the retired entry is gone');
+  assert.equal(host.nesting.taskOfChild(child.id), child.taskId, 'the one-row rule still resolves the child');
 });

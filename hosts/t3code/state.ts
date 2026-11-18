@@ -28,14 +28,17 @@ const agent = z.object({ id: z.string(), workspaceId: z.string(), labels: z.reco
    */
   parentThreadId: z.string().optional() });
 /**
- * A thread this host no longer observes (nucleus#1328): exactly the launch identity
- * an exact settle or lookup still reads, after the live record left `agents`. Its
- * ledger entries, settle marker and recorded intents are untouched — this is only
- * what observation would otherwise keep paying for on a thread whose task is over.
- * `deletedAt` records the host's own confirmed removal, which is the one fact that
- * keeps a removed thread out of observation after its live record is gone.
+ * A thread this host no longer observes (nucleus#1328): exactly what an exact settle
+ * or lookup still reads, and what its own row still needs — the launch identity, the
+ * recorded parent link a nested child's one-row rule reads, and the task's state title
+ * the row rides on. Its ledger entries, settle marker and recorded intents are
+ * untouched; this is only what observation would otherwise keep paying for on a thread
+ * whose task is over. `deletedAt` records the host's own confirmed removal, which is
+ * the one fact that keeps a removed thread out of observation after its live record is
+ * gone.
  */
-const retiredAgent = z.object({ workspaceId: z.string(), labels: z.record(z.string(), z.string()), deletedAt: z.string().optional() });
+const retiredAgent = z.object({ workspaceId: z.string(), labels: z.record(z.string(), z.string()),
+  parentThreadId: z.string().optional(), title: z.string().optional(), deletedAt: z.string().optional() });
 const diagnostic = z.object({ command: z.string().optional(), field: z.string().optional(), reason: z.string().optional(), guidance: z.string().optional() }).strict().refine(value => {
   const clean = sanitizeHostDeliveryDiagnostic(value);
   return clean.command === value.command && clean.field === value.field && clean.reason === value.reason && clean.guidance === value.guidance;
@@ -165,6 +168,25 @@ export type T3RetiredAgent = z.infer<typeof retiredAgent>;
  */
 export function agentRecord(state: T3State, threadId: string): T3AgentRecord | T3RetiredAgent | undefined {
   return state.agents[threadId] ?? state.retiredAgents?.[threadId];
+}
+
+/**
+ * The record a thread keeps when it leaves observation. It is the whole row identity,
+ * not just the labels: `parentThreadId` is what makes a nested child a child
+ * (`nesting.taskOfChild`), and `title` is the state title its row rides on, so a thread
+ * that comes back has the record it had (nucleus#1328 review).
+ */
+export function retiredRecord(record: T3AgentRecord): T3RetiredAgent {
+  return { workspaceId: record.workspaceId, labels: record.labels,
+    ...(record.parentThreadId === undefined ? {} : { parentThreadId: record.parentThreadId }),
+    ...(record.title === undefined ? {} : { title: record.title }) };
+}
+
+/** The live record a retired entry comes back as, with nothing lost in the round trip. */
+export function restoredRecord(id: string, record: T3RetiredAgent): T3AgentRecord {
+  return { id, workspaceId: record.workspaceId, labels: record.labels,
+    ...(record.parentThreadId === undefined ? {} : { parentThreadId: record.parentThreadId }),
+    ...(record.title === undefined ? {} : { title: record.title }) };
 }
 
 /** One command payload as recorded in the ledger, and the kind it is. */

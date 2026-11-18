@@ -7,7 +7,7 @@ import { WIRE_LABEL_KEYS } from '../../shared/wire-labels';
 import { ArchiveNotDeliveredError, ProvenPreSendRefusalError } from '../../core/host';
 import { T3RpcClient, type T3ConnectionConfig } from './rpc';
 import { t3codeVocabulary } from './vocabulary';
-import { T3StateFile, canonical } from './state';
+import { T3StateFile, canonical, retiredRecord, restoredRecord } from './state';
 import { decode, config, optionDescriptor, T3CompatibilityError, runtimeModes, defaultRuntimeMode, type RuntimeMode } from './contracts';
 import { activeStatuses, T3Reads, type Projection, type ThreadReadKind } from './reads';
 import { identity, T3IntentLedger } from './intents';
@@ -204,9 +204,10 @@ export class T3CodeHost implements Host {
    * stay exactly as recorded.
    *
    * The move is reversible: a thread T3 no longer reports archived (a person or a
-   * planner re-attached it) returns to observation on the next pass, with the same
-   * launch identity. Nothing else about the thread is restored, because nothing else
-   * was ever needed to observe it.
+   * planner re-attached it) returns to observation on the next pass with the record it
+   * had. The retired record keeps every fact this host's own rows read from it — the
+   * launch identity, the recorded parent link a nested child's one-row rule needs, and
+   * the task's state title — so the round trip loses nothing (nucleus#1328 review).
    */
   async reconcileObservation(): Promise<void> {
     const state = this.state.read();
@@ -224,13 +225,13 @@ export class T3CodeHost implements Host {
       for (const id of retire) {
         const record = next.agents[id];
         if (!record) continue;
-        next.retiredAgents[id] = { workspaceId: record.workspaceId, labels: record.labels };
+        next.retiredAgents[id] = retiredRecord(record);
         delete next.agents[id];
       }
       for (const id of restore) {
         const record = next.retiredAgents?.[id];
         if (!record || next.agents[id]) continue;
-        next.agents[id] = { id, workspaceId: record.workspaceId, labels: record.labels };
+        next.agents[id] = restoredRecord(id, record);
         delete next.retiredAgents[id];
       }
     });
