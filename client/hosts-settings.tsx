@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 import { ActionButton, Button, DropdownSelect, HelpPopover, HelpTip, InlineConfirm, Section, muted, row, sectionCard, useSectionAutoSave, type Colors } from "./controls";
-import { roles, space, type } from "./design";
+import { radius, roles, space, type } from "./design";
 import { formatLocalDateTime } from "./date-time-field";
 import { errorText } from "./error-text";
 import type * as api from "../shared/contracts";
@@ -79,7 +79,7 @@ export function HostRow({ c, host, remove, now = Date.now() }: { c: Colors; host
   return <View accessibilityLabel={`${name} ${host.id}, ${STATE_TEXT[host.state]}${host.isDefault ? ", default" : ""}`} style={{ ...sectionCard(c), gap: space.xs }}>
     <Pressable accessibilityRole="button" accessibilityLabel={`${open ? "Hide" : "Show"} details for ${host.id}`} accessibilityState={{ expanded: open }} onPress={() => setOpen(value => !value)}
       style={{ flexDirection: "row", alignItems: "center", gap: space.xs, minWidth: 0 }}>
-      <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: stateColor, flexShrink: 0 }} />
+      <View style={{ width: 8, height: 8, borderRadius: radius.control, backgroundColor: stateColor, flexShrink: 0 }} />
       <Text numberOfLines={1} style={{ color: r.foreground, fontWeight: "600", fontSize: type.body.fontSize, lineHeight: type.body.lineHeight, flexShrink: 0 }}>{host.label}</Text>
       <Text numberOfLines={1} style={{ ...small(c), flexShrink: 1, minWidth: 0 }}>{host.id}</Text>
       {host.isDefault && <Text accessibilityLabel="Default host" style={{ color: r.accent, fontSize: type.metadata.fontSize, lineHeight: type.metadata.lineHeight, flexShrink: 0 }}>Default</Text>}
