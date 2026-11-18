@@ -1138,7 +1138,11 @@ answer stays correlated to the original request and can settle its retained
 intent; late reads are discarded. An abandoned effect that starts another
 request has it refused rather than sent outside the admission it no longer holds.
 BB's reverse channel retains timed-out effect requests on one shared connection,
-with bounded capacity; exhausting that capacity refuses new calls before send.
+with bounded capacity; exhausting that capacity refuses new writes before send
+while fresh recovery reads remain available. T3 retains the original attempt's
+ownership while its reply is pending, so a fresh read cannot authorize a second
+send. Paseo's admission deadline fences any send that has not started yet; only
+an already-issued send can supply a late delivery acknowledgement.
 `service.health.admission` names every held slot past five seconds (`heldSlots`:
 class, holder, age, deadline) and the last abandoned call, and logs a wait for a
 slot with the oldest holder and its age. `heldSlots` names the admitted effect

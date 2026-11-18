@@ -1,3 +1,4 @@
+import { isHostOperationTimeout } from "../core/host/errors";
 import { HostPolicies } from "../core/host/host-policies";
 import type { Adapter, HostPolicyConstructor } from "../core/host";
 import {
@@ -598,7 +599,8 @@ export function composeBbAdapter(input: {
         if (task.agentId) {
           try {
             await threads.reparentTaskThreads(task.id, threads.parent(task.id));
-          } catch {
+          } catch (error) {
+            if (isHostOperationTimeout(error)) throw error;
             /* an unreadable or unknown write is retried only by observation on the next sweep */
           }
         }
@@ -609,7 +611,8 @@ export function composeBbAdapter(input: {
             continue;
           try {
             await threads.archiveAgent(retired.agentId);
-          } catch {
+          } catch (error) {
+            if (isHostOperationTimeout(error)) throw error;
             /* The durable intent and fresh turn/cascade reads govern the next sweep. */
           }
         }
@@ -625,7 +628,8 @@ export function composeBbAdapter(input: {
             const observed = await threads.observe(superseded);
             if (observed.active || observed.permissions) continue;
             await threads.archiveAgent(superseded);
-          } catch {
+          } catch (error) {
+            if (isHostOperationTimeout(error)) throw error;
             /* A live turn or unknown delivery is observed again on the next sweep. */
           }
         }
@@ -642,7 +646,8 @@ export function composeBbAdapter(input: {
             `${task.id}:${task.version}`,
             false,
           );
-        } catch {
+        } catch (error) {
+          if (isHostOperationTimeout(error)) throw error;
           /* An unreadable row or unknown write is observation-only on the next sweep. */
         }
       }

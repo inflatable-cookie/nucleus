@@ -1,7 +1,4 @@
-const hostTimedOut = (error: unknown): boolean => error instanceof Error &&
-  (['ServiceHostTimeoutError', 'HostOperationTimeoutError', 'HostCallAbandonedError'].includes(error.name)
-    || error.name === 'T3RpcError' && (error as Error & { code?: string }).code === 'timeout');
-
+import { isHostOperationTimeout as hostTimedOut } from "../host/errors";
 import { sweepSettledRunProcesses } from "../machine/run-process-cleanup";
 import type { Engine } from "../engine";
 import type { Resolution } from "../resolution";

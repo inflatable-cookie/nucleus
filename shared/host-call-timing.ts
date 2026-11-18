@@ -10,7 +10,10 @@ const context = new AsyncLocalStorage<PaseoCallRecorder>();
  * with no recorder, with any enclosing timing context cleared, so a request is
  * sampled by exactly one admitted run.
  */
-export function withPaseoCallTiming<T>(record: PaseoCallRecorder | undefined, work: () => Promise<T>): Promise<T> {
+export function withPaseoCallTiming<T>(
+  record: PaseoCallRecorder | undefined,
+  work: () => Promise<T>,
+): Promise<T> {
   return record ? context.run(record, work) : context.exit(work);
 }
 
@@ -25,5 +28,23 @@ export function paseoCall<T>(request: () => Promise<T>): Promise<T> {
   return context.exit(() => record(request));
 }
 
-
 export const hasPaseoCallTiming = () => Boolean(context.getStore());
+
+/** The admitted effect's deadline also fences any later native send. */
+const hostFence = new AsyncLocalStorage<{
+  open(): boolean;
+  sent(promise: Promise<unknown>): void;
+}>();
+export function withHostCallFence<T>(
+  fence: { open(): boolean; sent(promise: Promise<unknown>): void },
+  work: () => Promise<T>,
+): Promise<T> {
+  return hostFence.run(fence, work);
+}
+export function ensureHostCallOpen(): void {
+  if (hostFence.getStore()?.open() === false)
+    throw new Error("Host admission expired before send");
+}
+export function recordHostSend(promise: Promise<unknown>): void {
+  hostFence.getStore()?.sent(promise);
+}

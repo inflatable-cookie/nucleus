@@ -1,12 +1,26 @@
 import { z } from "zod";
 import { digest, now } from "../store/store";
-import { agentMessageRecordSchema, formatTaskNumber, type AgentMessageRecord, type Task } from "../../shared/contracts";
+import {
+  agentMessageRecordSchema,
+  formatTaskNumber,
+  type AgentMessageRecord,
+  type Task,
+} from "../../shared/contracts";
 import { normalizeRepositoryOrigin } from "../../shared/lanes";
 import { askBinding } from "./agent-ask";
 import type { Resolution } from "../resolution";
-import { ProvenPreSendRefusalError } from '../recovery/task-reasons';
-import { normalizeTellTarget, TASK_ROLES, verbTargetSchema, type TellTarget } from "../../shared/agent-verbs.mjs";
-import { resolveTicketCaller, participantProjectScope, participantScopeOf } from "../dispatch/participant-tickets";
+import { ProvenPreSendRefusalError } from "../recovery/task-reasons";
+import {
+  normalizeTellTarget,
+  TASK_ROLES,
+  verbTargetSchema,
+  type TellTarget,
+} from "../../shared/agent-verbs.mjs";
+import {
+  resolveTicketCaller,
+  participantProjectScope,
+  participantScopeOf,
+} from "../dispatch/participant-tickets";
 import { projectOfTarget, taskByReference } from "./agent-targets";
 import { ProjectAgentTargetRefusal } from "../planning/project-agents";
 
@@ -38,7 +52,13 @@ export const AGENT_MESSAGE_INLINE_DELIVERY_MS = 2_000;
 
 export const AGENT_MESSAGE_ROLES = ["worker", "reviewer", "executor"] as const;
 /** Every role a message row can carry: a task's worker, reviewer or live proof executor, a planner ladder, or a named project agent. */
-export type AgentMessageRole = "worker" | "reviewer" | "executor" | "planner" | "agent" | "operator";
+export type AgentMessageRole =
+  | "worker"
+  | "reviewer"
+  | "executor"
+  | "planner"
+  | "agent"
+  | "operator";
 
 /**
  * The `tell` request. A run sender names its taskId and runId; a planner or named
@@ -58,33 +78,80 @@ export const agentMessageSchema = z
   .superRefine((value, ctx) => {
     const byRun = value.taskId !== undefined || value.runId !== undefined;
     if (byRun === (value.participantId !== undefined))
-      ctx.addIssue({ code: "custom", path: ["participantId"], message: "Name the sending run (taskId and runId) or a participant ticket, not both" });
+      ctx.addIssue({
+        code: "custom",
+        path: ["participantId"],
+        message:
+          "Name the sending run (taskId and runId) or a participant ticket, not both",
+      });
     if (byRun && (value.taskId === undefined || value.runId === undefined))
-      ctx.addIssue({ code: "custom", path: ["runId"], message: "A run sender names both taskId and runId" });
-    try { normalizeTellTarget(value.to, value.role); }
-    catch (error) { ctx.addIssue({ code: "custom", path: ["to"], message: error instanceof Error ? error.message : String(error) }); }
+      ctx.addIssue({
+        code: "custom",
+        path: ["runId"],
+        message: "A run sender names both taskId and runId",
+      });
+    try {
+      normalizeTellTarget(value.to, value.role);
+    } catch (error) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["to"],
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
   });
 export type AgentMessageRequest = z.infer<typeof agentMessageSchema>;
 
 export type AgentMessageReceipt =
-  | { status: "delivered"; messageId: string; to: string; role: AgentMessageRole; recordedAt: string; deliveredAt: string }
-  | { status: "queued"; messageId: string; to: string; role: AgentMessageRole; recordedAt: string; detail: string }
-  | { status: "uncertain"; messageId: string; to: string; role: AgentMessageRole; recordedAt: string; detail: string }
-  | { status: "expired"; messageId: string; to: string; role: AgentMessageRole; recordedAt: string; detail: string }
+  | {
+      status: "delivered";
+      messageId: string;
+      to: string;
+      role: AgentMessageRole;
+      recordedAt: string;
+      deliveredAt: string;
+    }
+  | {
+      status: "queued";
+      messageId: string;
+      to: string;
+      role: AgentMessageRole;
+      recordedAt: string;
+      detail: string;
+    }
+  | {
+      status: "uncertain";
+      messageId: string;
+      to: string;
+      role: AgentMessageRole;
+      recordedAt: string;
+      detail: string;
+    }
+  | {
+      status: "expired";
+      messageId: string;
+      to: string;
+      role: AgentMessageRole;
+      recordedAt: string;
+      detail: string;
+    }
   | { status: "duplicate"; messageId: string; detail: string };
 
 /** A planner or named-agent endpoint's store key, shared by its messages' `toTaskId` and its project's events. */
-export const projectEndpointId = (projectKey: string): string => `project:${projectKey}`;
+export const projectEndpointId = (projectKey: string): string =>
+  `project:${projectKey}`;
 
 export const agentMessageContentKey = (
   fromTaskId: string,
   toTaskId: string,
   role: AgentMessageRole,
   text: string,
-): string => digest(["agent-message", fromTaskId, toTaskId, role, digest(text)].join(":"));
+): string =>
+  digest(["agent-message", fromTaskId, toTaskId, role, digest(text)].join(":"));
 
-export const agentMessageRecord = (record: AgentMessageRecord): AgentMessageRecord =>
-  agentMessageRecordSchema.parse(record);
+export const agentMessageRecord = (
+  record: AgentMessageRecord,
+): AgentMessageRecord => agentMessageRecordSchema.parse(record);
 
 /**
  * The labelled text delivered into the recipient's thread. It names the sender's
@@ -99,8 +166,10 @@ export function agentMessageDeliveryText(record: {
 }): string {
   const from = record.fromReference ?? record.fromTaskId;
   // The operator is a person, not an agent: its reference already says who spoke.
-  const attribution = record.fromRole === "operator" ? ""
-    : ` (${record.fromRole}${record.fromProject ? `, project ${record.fromProject}` : ""})`;
+  const attribution =
+    record.fromRole === "operator"
+      ? ""
+      : ` (${record.fromRole}${record.fromProject ? `, project ${record.fromProject}` : ""})`;
   return [
     `Queue message from ${from}${attribution}:`,
     record.text,
@@ -126,17 +195,39 @@ interface MessageSender {
 /** Who a message is for, once resolved: a task's worker or reviewer, a planner ladder, or a named agent. */
 type Recipient =
   | { kind: "task"; task: Task; role: "worker" | "reviewer" | "executor" }
-  | { kind: "planners"; projectKey: string; ladderTaskId: string | null; label: string }
-  | { kind: "agent"; projectKey: string; name: string; agentId: string; hostId: string; label: string };
+  | {
+      kind: "planners";
+      projectKey: string;
+      ladderTaskId: string | null;
+      label: string;
+    }
+  | {
+      kind: "agent";
+      projectKey: string;
+      name: string;
+      agentId: string;
+      hostId: string;
+      label: string;
+    };
 
 /** Send, deliver and sweep `tell`. */
 export class AgentMessages {
   constructor(readonly resolution: Resolution) {}
-  get store() { return this.resolution.store; }
-  get adapter() { return this.resolution.adapter; }
-  stopped() { return this.resolution.stopped(); }
-  paused() { return this.resolution.paused(); }
-  private askBinding(task: Task, runId: string) { return askBinding(this.store, task, runId); }
+  get store() {
+    return this.resolution.store;
+  }
+  get adapter() {
+    return this.resolution.adapter;
+  }
+  stopped() {
+    return this.resolution.stopped();
+  }
+  paused() {
+    return this.resolution.paused();
+  }
+  private askBinding(task: Task, runId: string) {
+    return askBinding(this.store, task, runId);
+  }
   /** Spec 058 rollout step 3: message deliveries in flight, so a send and the sweep never double-deliver. */
   private readonly deliveringMessages = new Set<string>();
 
@@ -147,12 +238,19 @@ export class AgentMessages {
    * archived, gone or unreadable one never does. Nothing in a message changes a
    * brief, hold, verdict, budget or any other task state.
    */
-  async agentMessage(input: AgentMessageRequest, token: string): Promise<AgentMessageReceipt> {
-    const sender = input.participantId !== undefined
-      ? this.participantSender(input.participantId, token)
-      : this.runSender(input.taskId!, input.runId!, token);
+  async agentMessage(
+    input: AgentMessageRequest,
+    token: string,
+  ): Promise<AgentMessageReceipt> {
+    const sender =
+      input.participantId !== undefined
+        ? this.participantSender(input.participantId, token)
+        : this.runSender(input.taskId!, input.runId!, token);
     const target = normalizeTellTarget(input.to, input.role);
-    if (target.kind === "counterpart" && !sender.task) throw Error("A planner or named agent reaches a task through its role: {task, role}");
+    if (target.kind === "counterpart" && !sender.task)
+      throw Error(
+        "A planner or named agent reaches a task through its role: {task, role}",
+      );
     const recipient = await this.resolveRecipient(sender, target);
     return this.sendMessage(sender, recipient, input.eventId, input.text);
   }
@@ -166,12 +264,20 @@ export class AgentMessages {
     input: Pick<AgentMessageRequest, "eventId" | "to" | "role" | "text">,
   ): Promise<AgentMessageReceipt> {
     const sender: MessageSender = {
-      task: null, taskId: `host:${identity.caller}`, role: "agent",
-      agentId: identity.caller, hostId: identity.hostId, reference: identity.caller,
-      project: null, projectKey: null,
+      task: null,
+      taskId: `host:${identity.caller}`,
+      role: "agent",
+      agentId: identity.caller,
+      hostId: identity.hostId,
+      reference: identity.caller,
+      project: null,
+      projectKey: null,
     };
     const target = normalizeTellTarget(input.to, input.role);
-    if (target.kind === "counterpart") throw Error("A host thread reaches a task through its role: {task, role}");
+    if (target.kind === "counterpart")
+      throw Error(
+        "A host thread reaches a task through its role: {task, role}",
+      );
     const recipient = await this.resolveRecipient(sender, target);
     return this.sendMessage(sender, recipient, input.eventId, input.text);
   }
@@ -183,104 +289,214 @@ export class AgentMessages {
    * to whoever is doing the work: the worker when it has one, else the reviewer, else
    * the planner ladder. Information only, as every message is.
    */
-  async operatorMessage(taskId: string, eventId: string, text: string): Promise<AgentMessageReceipt> {
+  async operatorMessage(
+    taskId: string,
+    eventId: string,
+    text: string,
+  ): Promise<AgentMessageReceipt> {
     const store = this.store;
     const task = store.task(taskId);
-    if (task.removedAt) throw Error(`Task ${this.taskLabel(task)} was removed; it cannot receive messages`);
+    if (task.removedAt)
+      throw Error(
+        `Task ${this.taskLabel(task)} was removed; it cannot receive messages`,
+      );
     if (task.phase === "done" || task.phase === "cancelled")
-      throw Error(`Task ${this.taskLabel(task)} is ${task.phase}; a finished task cannot receive messages`);
-    const project = store.projectFor(task.repoPath, normalizeRepositoryOrigin(task.repository ?? ""));
+      throw Error(
+        `Task ${this.taskLabel(task)} is ${task.phase}; a finished task cannot receive messages`,
+      );
+    const project = store.projectFor(
+      task.repoPath,
+      normalizeRepositoryOrigin(task.repository ?? ""),
+    );
     const sender: MessageSender = {
-      task: null, taskId: task.id, role: "operator", agentId: null, hostId: task.hostId ?? null,
-      reference: "the operator", project: project?.name ?? null, projectKey: project?.key ?? null,
+      task: null,
+      taskId: task.id,
+      role: "operator",
+      agentId: null,
+      hostId: task.hostId ?? null,
+      reference: "the operator",
+      project: project?.name ?? null,
+      projectKey: project?.key ?? null,
     };
-    const recipient: Recipient = this.messageRecipientIdentity(task, "worker").present ? this.taskRecipient(task, "worker")
-      : this.messageRecipientIdentity(task, "reviewer").present ? this.taskRecipient(task, "reviewer")
+    const recipient: Recipient = this.messageRecipientIdentity(task, "worker")
+      .present
+      ? this.taskRecipient(task, "worker")
+      : this.messageRecipientIdentity(task, "reviewer").present
+        ? this.taskRecipient(task, "reviewer")
         : this.ladderRecipient(task);
     return this.sendMessage(sender, recipient, eventId, text);
   }
 
-  /** A worker's or reviewer's run, authenticated by its binding. */  private runSender(taskId: string, runId: string, token: string): MessageSender {
+  /** A worker's or reviewer's run, authenticated by its binding. */ private runSender(
+    taskId: string,
+    runId: string,
+    token: string,
+  ): MessageSender {
     const store = this.store;
     store.authenticate(runId, token);
     const task = store.task(taskId);
     if (task.removedAt) throw Error("Task was removed");
     const run = this.askBinding(task, runId);
-    if (run.role !== "revision" && run.role !== "reviewer") throw Error(`A ${run.role} run cannot send messages; tell is the worker's and reviewer's channel`);
-    const project = store.projectFor(task.repoPath, normalizeRepositoryOrigin(task.repository ?? ""));
+    if (run.role !== "revision" && run.role !== "reviewer")
+      throw Error(
+        `A ${run.role} run cannot send messages; tell is the worker's and reviewer's channel`,
+      );
+    const project = store.projectFor(
+      task.repoPath,
+      normalizeRepositoryOrigin(task.repository ?? ""),
+    );
     return {
-      task, taskId: task.id, role: run.role === "reviewer" ? "reviewer" : "worker",
-      agentId: run.agentId ?? task.agentId, hostId: run.hostId ?? null, reference: task.reference ?? null,
-      project: project?.name ?? null, projectKey: project?.key ?? null,
+      task,
+      taskId: task.id,
+      role: run.role === "reviewer" ? "reviewer" : "worker",
+      agentId: run.agentId ?? task.agentId,
+      hostId: run.hostId ?? null,
+      reference: task.reference ?? null,
+      project: project?.name ?? null,
+      projectKey: project?.key ?? null,
     };
   }
 
   /** A planner's, named agent's or task-planner's participant ticket. A task-planner is labelled by its resolved identity. */
-  private participantSender(participantId: string, token: string): MessageSender {
+  private participantSender(
+    participantId: string,
+    token: string,
+  ): MessageSender {
     const store = this.store;
     const caller = resolveTicketCaller(store, { participantId }, token);
     if (participantScopeOf(store, participantId)?.kind === "task-planner") {
       return {
-        task: null, taskId: `task-planner:${participantId}`, role: "planner",
-        agentId: caller.caller, hostId: caller.hostId, reference: "the task planner",
-        project: null, projectKey: null,
+        task: null,
+        taskId: `task-planner:${participantId}`,
+        role: "planner",
+        agentId: caller.caller,
+        hostId: caller.hostId,
+        reference: "the task planner",
+        project: null,
+        projectKey: null,
       };
     }
     const scope = participantProjectScope(store, participantId);
-    if (!scope) throw Error("A participant ticket names no project to label a message with");
+    if (!scope)
+      throw Error(
+        "A participant ticket names no project to label a message with",
+      );
     const project = store.projectByKey(scope.projectKey);
     if (!project) throw Error(`Unknown project ${scope.projectKey}`);
     return {
-      task: null, taskId: projectEndpointId(project.key), role: scope.name ? "agent" : "planner",
-      agentId: caller.caller, hostId: caller.hostId, reference: `the ${project.key} ${scope.name ?? "planner"}`,
-      project: project.name, projectKey: project.key,
+      task: null,
+      taskId: projectEndpointId(project.key),
+      role: scope.name ? "agent" : "planner",
+      agentId: caller.caller,
+      hostId: caller.hostId,
+      reference: `the ${project.key} ${scope.name ?? "planner"}`,
+      project: project.name,
+      projectKey: project.key,
     };
   }
 
   /** Resolve a `tell` target to its recipient. Refuses what it cannot address, and sends nothing. */
-  private async resolveRecipient(sender: MessageSender, target: TellTarget): Promise<Recipient> {
+  private async resolveRecipient(
+    sender: MessageSender,
+    target: TellTarget,
+  ): Promise<Recipient> {
     const store = this.store;
     if (target.kind === "counterpart") {
-      if (target.role === sender.role) throw Error(`A ${target.role} cannot tell itself`);
+      if (target.role === sender.role)
+        throw Error(`A ${target.role} cannot tell itself`);
       return this.taskRecipient(sender.task!, target.role);
     }
     if (target.kind === "planner") {
       if (sender.task) return this.ladderRecipient(sender.task);
-      if (!sender.projectKey) throw Error("No project planner can receive this message");
-      return { kind: "planners", projectKey: sender.projectKey, ladderTaskId: null, label: `the ${sender.projectKey} planner` };
+      if (!sender.projectKey)
+        throw Error("No project planner can receive this message");
+      return {
+        kind: "planners",
+        projectKey: sender.projectKey,
+        ladderTaskId: null,
+        label: `the ${sender.projectKey} planner`,
+      };
     }
     if (target.kind === "task") {
       const recipient = taskByReference(store, sender.task, target.task);
       if (target.role === "planner") return this.ladderRecipient(recipient);
-      if (sender.task && recipient.id === sender.task.id && target.role === sender.role) throw Error("A task cannot message itself");
+      if (
+        sender.task &&
+        recipient.id === sender.task.id &&
+        target.role === sender.role
+      )
+        throw Error("A task cannot message itself");
       return this.taskRecipient(recipient, target.role);
     }
     const project = projectOfTarget(store, target.project);
-    if (target.agent === null) return { kind: "planners", projectKey: project.key, ladderTaskId: null, label: `the ${project.key} planner` };
+    if (target.agent === null)
+      return {
+        kind: "planners",
+        projectKey: project.key,
+        ladderTaskId: null,
+        label: `the ${project.key} planner`,
+      };
     // Named agents are observed here; an archived, gone or unknown agent refuses with its state.
-    const agent = await this.resolution.resolveProjectAgentTarget(project.key, target.agent);
-    return { kind: "agent", projectKey: project.key, name: target.agent, agentId: agent.agentId, hostId: agent.hostId, label: `the ${project.key} ${target.agent}` };
+    const agent = await this.resolution.resolveProjectAgentTarget(
+      project.key,
+      target.agent,
+    );
+    return {
+      kind: "agent",
+      projectKey: project.key,
+      name: target.agent,
+      agentId: agent.agentId,
+      hostId: agent.hostId,
+      label: `the ${project.key} ${target.agent}`,
+    };
   }
 
   /** A task's worker or reviewer, when it is a message's recipient: terminal, removed and roleless tasks refuse. */
-  private taskRecipient(task: Task, role: "worker" | "reviewer" | "executor"): Recipient {
-    if (task.removedAt) throw Error(`Task ${this.taskLabel(task)} was removed; it cannot receive messages`);
-    if (task.phase === "done" || task.phase === "cancelled") throw Error(`Task ${this.taskLabel(task)} is ${task.phase}; terminal tasks cannot receive messages`);
+  private taskRecipient(
+    task: Task,
+    role: "worker" | "reviewer" | "executor",
+  ): Recipient {
+    if (task.removedAt)
+      throw Error(
+        `Task ${this.taskLabel(task)} was removed; it cannot receive messages`,
+      );
+    if (task.phase === "done" || task.phase === "cancelled")
+      throw Error(
+        `Task ${this.taskLabel(task)} is ${task.phase}; terminal tasks cannot receive messages`,
+      );
     const identity = this.messageRecipientIdentity(task, role);
-    if (!identity.present) throw Error(`Task ${this.taskLabel(task)} has no ${role}, so there is no current agent to receive a message`);
+    if (!identity.present)
+      throw Error(
+        `Task ${this.taskLabel(task)} has no ${role}, so there is no current agent to receive a message`,
+      );
     return { kind: "task", task, role };
   }
 
   /** A task's planner ladder: its own planner first, then the project's planner, decided at each delivery. */
   private ladderRecipient(task: Task): Recipient {
     const projectKey = this.plannerProjectKey(task);
-    if (!projectKey) throw Error(`No project owns ${this.taskLabel(task)}, so no planner can receive a message`);
-    return { kind: "planners", projectKey, ladderTaskId: task.id, label: `the ${projectKey} planner` };
+    if (!projectKey)
+      throw Error(
+        `No project owns ${this.taskLabel(task)}, so no planner can receive a message`,
+      );
+    return {
+      kind: "planners",
+      projectKey,
+      ladderTaskId: task.id,
+      label: `the ${projectKey} planner`,
+    };
   }
 
   /** The project whose planner answers a task: its own project, else Queue's planner. */
   private plannerProjectKey(task: Task): string | null {
-    return this.store.projectFor(task.repoPath, normalizeRepositoryOrigin(task.repository ?? ""))?.key ?? this.store.queueProject()?.key ?? null;
+    return (
+      this.store.projectFor(
+        task.repoPath,
+        normalizeRepositoryOrigin(task.repository ?? ""),
+      )?.key ??
+      this.store.queueProject()?.key ??
+      null
+    );
   }
 
   /**
@@ -288,62 +504,149 @@ export class AgentMessages {
    * between runs keeps it queued for the role's next turn; a planner or agent
    * recipient with no live thread keeps it in the project's inbox.
    */
-  private async sendMessage(sender: MessageSender, recipient: Recipient, eventId: string, text: string): Promise<AgentMessageReceipt> {
+  private async sendMessage(
+    sender: MessageSender,
+    recipient: Recipient,
+    eventId: string,
+    text: string,
+  ): Promise<AgentMessageReceipt> {
     const store = this.store;
-    const toTaskId = recipient.kind === "task" ? recipient.task.id : projectEndpointId(recipient.projectKey);
-    const toRole: AgentMessageRole = recipient.kind === "task" ? recipient.role : recipient.kind === "planners" ? "planner" : "agent";
-    const label = recipient.kind === "task" ? this.taskLabel(recipient.task) : recipient.label;
+    const toTaskId =
+      recipient.kind === "task"
+        ? recipient.task.id
+        : projectEndpointId(recipient.projectKey);
+    const toRole: AgentMessageRole =
+      recipient.kind === "task"
+        ? recipient.role
+        : recipient.kind === "planners"
+          ? "planner"
+          : "agent";
+    const label =
+      recipient.kind === "task"
+        ? this.taskLabel(recipient.task)
+        : recipient.label;
     const subject = recipient.kind === "task" ? `Task ${label}` : label;
-    const contentKey = agentMessageContentKey(sender.taskId, toTaskId, toRole, text);
-    const withinWindow = (record: AgentMessageRecord) => Date.now() - Date.parse(record.createdAt) < AGENT_MESSAGE_RATE_WINDOW_MS;
-    const existing = store.messages(toTaskId).filter(record => record.toTaskId === toTaskId);
+    const contentKey = agentMessageContentKey(
+      sender.taskId,
+      toTaskId,
+      toRole,
+      text,
+    );
+    const withinWindow = (record: AgentMessageRecord) =>
+      Date.now() - Date.parse(record.createdAt) < AGENT_MESSAGE_RATE_WINDOW_MS;
+    const existing = store
+      .messages(toTaskId)
+      .filter((record) => record.toTaskId === toTaskId);
     // An identical retry is the same send only while the recorded message is still inside the
     // rate window: the recorded receipt returns and nothing delivers twice. Past the window the
     // identical call is a new message again, under a derived row id, subject to the same
     // duplicate and rate rules as any other send.
-    const replay = existing.find(record => record.id === eventId);
+    const replay = existing.find((record) => record.id === eventId);
     if (replay?.status === "uncertain") return this.receiptOf(replay, label);
     if (replay && withinWindow(replay)) return this.receiptOf(replay, label);
     // Repeated identical messages inside the rate window are dropped and reported,
     // so two agents that echo each other cannot loop; past the window a genuine
     // repeat is a new message again.
-    const duplicate = existing.find(record => record.contentKey === contentKey && (record.status === "uncertain" || withinWindow(record)));
-    if (duplicate) return { status: "duplicate", messageId: duplicate.id, detail: duplicate.status === "uncertain"
-      ? `An identical message (${duplicate.id}) has an unknown delivery outcome; it was not resent.`
-      : `An identical message (${duplicate.id}) was already recorded for this recipient and role within the rate window; it was dropped, not delivered again.` };
+    const duplicate = existing.find(
+      (record) =>
+        record.contentKey === contentKey &&
+        (record.status === "uncertain" || withinWindow(record)),
+    );
+    if (duplicate)
+      return {
+        status: "duplicate",
+        messageId: duplicate.id,
+        detail:
+          duplicate.status === "uncertain"
+            ? `An identical message (${duplicate.id}) has an unknown delivery outcome; it was not resent.`
+            : `An identical message (${duplicate.id}) was already recorded for this recipient and role within the rate window; it was dropped, not delivered again.`,
+      };
     const received = existing.filter(withinWindow).length;
-    if (received >= AGENT_MESSAGE_RATE_LIMIT) throw Error(`${subject} has received ${received} messages in the last hour (limit ${AGENT_MESSAGE_RATE_LIMIT}); send later — messages are for information, not for steering`);
-    const identity = recipient.kind === "task" ? this.messageRecipientIdentity(recipient.task, recipient.role) : null;
+    if (received >= AGENT_MESSAGE_RATE_LIMIT)
+      throw Error(
+        `${subject} has received ${received} messages in the last hour (limit ${AGENT_MESSAGE_RATE_LIMIT}); send later — messages are for information, not for steering`,
+      );
+    const identity =
+      recipient.kind === "task"
+        ? this.messageRecipientIdentity(recipient.task, recipient.role)
+        : null;
     const createdAt = now();
     const record = agentMessageRecordSchema.parse({
       // The event id is the row identity, so a past-window repeat of the same call derives one.
-      id: replay ? digest(["agent-message-repeat", eventId, createdAt].join(":")) : eventId,
+      id: replay
+        ? digest(["agent-message-repeat", eventId, createdAt].join(":"))
+        : eventId,
       contentKey,
-      fromTaskId: sender.taskId, fromRole: sender.role, fromAgentId: sender.agentId, fromHostId: sender.hostId,
-      fromReference: sender.reference, fromProject: sender.project,
-      toTaskId, toRole,
-      toAgentId: recipient.kind === "task" ? identity!.agentId : recipient.kind === "agent" ? recipient.agentId : null,
-      toReference: recipient.kind === "task" ? recipient.task.reference ?? null : label,
-      toHostId: recipient.kind === "task" ? recipient.task.hostId : recipient.kind === "agent" ? recipient.hostId : null,
+      fromTaskId: sender.taskId,
+      fromRole: sender.role,
+      fromAgentId: sender.agentId,
+      fromHostId: sender.hostId,
+      fromReference: sender.reference,
+      fromProject: sender.project,
+      toTaskId,
+      toRole,
+      toAgentId:
+        recipient.kind === "task"
+          ? identity!.agentId
+          : recipient.kind === "agent"
+            ? recipient.agentId
+            : null,
+      toReference:
+        recipient.kind === "task" ? (recipient.task.reference ?? null) : label,
+      toHostId:
+        recipient.kind === "task"
+          ? recipient.task.hostId
+          : recipient.kind === "agent"
+            ? recipient.hostId
+            : null,
       toProjectKey: recipient.kind === "task" ? null : recipient.projectKey,
       toAgentName: recipient.kind === "agent" ? recipient.name : null,
-      toLadderTaskId: recipient.kind === "planners" ? recipient.ladderTaskId : null,
-      textDigest: digest(text), text, status: "queued", createdAt, deliveredAt: null, error: "",
+      toLadderTaskId:
+        recipient.kind === "planners" ? recipient.ladderTaskId : null,
+      textDigest: digest(text),
+      text,
+      status: "queued",
+      createdAt,
+      deliveredAt: null,
+      error: "",
     } satisfies AgentMessageRecord);
     const live = recipient.kind === "task" ? identity!.live : true;
-    const statusLine = live ? "queued for delivery" : `queued; ${identity!.wait}`;
+    const statusLine = live
+      ? "queued for delivery"
+      : `queued; ${identity!.wait}`;
     store.transaction(() => {
       store.putMessage(record);
-      store.event(sender.taskId, "agent_message_sent", `${record.id}: to ${subject} (${toRole}); ${statusLine}`);
-      store.event(toTaskId, "agent_message_received", `${record.id}: from ${sender.reference ?? sender.taskId} (${sender.role}); ${statusLine}`);
+      store.event(
+        sender.taskId,
+        "agent_message_sent",
+        `${record.id}: to ${subject} (${toRole}); ${statusLine}`,
+      );
+      store.event(
+        toTaskId,
+        "agent_message_received",
+        `${record.id}: from ${sender.reference ?? sender.taskId} (${sender.role}); ${statusLine}`,
+      );
     });
     if (recipient.kind === "task") {
-      if (!identity!.live) return { status: "queued", messageId: record.id, to: label, role: recipient.role, recordedAt: record.createdAt, detail: `${identity!.wait.charAt(0).toUpperCase()}${identity!.wait.slice(1)}; Nucleus will deliver it when the ${recipient.role}'s next turn starts.` };
-      return await this.deliverWithinInlineWindow(record, label, recipient.role,
-        () => this.deliverAgentMessage(store.task(recipient.task.id), record));
+      if (!identity!.live)
+        return {
+          status: "queued",
+          messageId: record.id,
+          to: label,
+          role: recipient.role,
+          recordedAt: record.createdAt,
+          detail: `${identity!.wait.charAt(0).toUpperCase()}${identity!.wait.slice(1)}; Nucleus will deliver it when the ${recipient.role}'s next turn starts.`,
+        };
+      return await this.deliverWithinInlineWindow(
+        record,
+        label,
+        recipient.role,
+        () => this.deliverAgentMessage(store.task(recipient.task.id), record),
+      );
     }
-    return await this.deliverWithinInlineWindow(record, label, toRole,
-      () => this.deliverThreadMessage(record));
+    return await this.deliverWithinInlineWindow(record, label, toRole, () =>
+      this.deliverThreadMessage(record),
+    );
   }
 
   /** Start delivery now, but return the durable receipt after a short inline window. */
@@ -355,104 +658,314 @@ export class AgentMessages {
   ): Promise<AgentMessageReceipt> {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const delivery = Promise.resolve().then(deliver);
-    const timeout = new Promise<null>(resolve => {
+    const timeout = new Promise<null>((resolve) => {
       timer = setTimeout(() => resolve(null), AGENT_MESSAGE_INLINE_DELIVERY_MS);
       timer.unref?.();
     });
     try {
       const receipt = await Promise.race([delivery, timeout]);
-      return receipt ?? {
-        status: "queued",
-        messageId: record.id,
-        to: label,
-        role,
-        recordedAt: record.createdAt,
-        detail: "Message recorded; delivery is still in progress. Retry the identical tell JSON to read its outcome; it will not be sent twice.",
-      };
+      return (
+        receipt ?? {
+          status: "queued",
+          messageId: record.id,
+          to: label,
+          role,
+          recordedAt: record.createdAt,
+          detail:
+            "Message recorded; delivery is still in progress. Retry the identical tell JSON to read its outcome; it will not be sent twice.",
+        }
+      );
     } finally {
       if (timer) clearTimeout(timer);
     }
   }
 
   /** Resolve a `tell` recipient from a task id, a `repo#number` reference, a bare number or `#number`. */
-  messageRecipientTask(from: Task, to: string): Task { return taskByReference(this.store, from, to); }
+  messageRecipientTask(from: Task, to: string): Task {
+    return taskByReference(this.store, from, to);
+  }
   /** The recipient task's current agent for a role: none (`present` false), between turns, or live now. */
-  messageRecipientIdentity(task: Task, role: "worker" | "reviewer" | "executor"): { agentId: string | null; present: boolean; live: boolean; wait: string } {
+  messageRecipientIdentity(
+    task: Task,
+    role: "worker" | "reviewer" | "executor",
+  ): { agentId: string | null; present: boolean; live: boolean; wait: string } {
     const runs = this.store.runs(task.id);
     // nucleus#1195: the live proof executor is a tell recipient. Its one run owns
     // the thread while unreleased, and a message waits for the next live turn.
     if (role === "executor") {
-      const executor = runs.findLast(candidate => candidate.role === "executor" && candidate.taskId === task.id
-        && !candidate.released && Boolean(candidate.agentId));
-      const live = Boolean(executor && executor.agentId && executor.hostId === task.hostId && task.hostId && !executor.completion);
-      return { agentId: executor?.agentId ?? null, present: Boolean(executor?.agentId), live, wait: "its proof executor is between turns" };
+      const executor = runs.findLast(
+        (candidate) =>
+          candidate.role === "executor" &&
+          candidate.taskId === task.id &&
+          !candidate.released &&
+          Boolean(candidate.agentId),
+      );
+      const live = Boolean(
+        executor &&
+          executor.agentId &&
+          executor.hostId === task.hostId &&
+          task.hostId &&
+          !executor.completion,
+      );
+      return {
+        agentId: executor?.agentId ?? null,
+        present: Boolean(executor?.agentId),
+        live,
+        wait: "its proof executor is between turns",
+      };
     }
     if (role === "reviewer") {
       const agentId = task.resolution.reviewerAgentId;
-      const live = Boolean(agentId && runs.some(candidate => candidate.role === "reviewer" && candidate.taskId === task.id
-        && candidate.agentId === agentId && candidate.hostId === task.hostId && Boolean(task.hostId) && !candidate.released && !candidate.completion));
-      return { agentId: agentId ?? null, present: Boolean(agentId), live, wait: "its reviewer is between turns" };
+      const live = Boolean(
+        agentId &&
+          runs.some(
+            (candidate) =>
+              candidate.role === "reviewer" &&
+              candidate.taskId === task.id &&
+              candidate.agentId === agentId &&
+              candidate.hostId === task.hostId &&
+              Boolean(task.hostId) &&
+              !candidate.released &&
+              !candidate.completion,
+          ),
+      );
+      return {
+        agentId: agentId ?? null,
+        present: Boolean(agentId),
+        live,
+        wait: "its reviewer is between turns",
+      };
     }
-    const current = task.resolution.currentRunId ? runs.find(candidate => candidate.id === task.resolution.currentRunId) : null;
-    if (current && current.role === "revision" && current.taskId === task.id && current.hostId === task.hostId && task.hostId && !current.released && !current.completion && current.agentId)
+    const current = task.resolution.currentRunId
+      ? runs.find((candidate) => candidate.id === task.resolution.currentRunId)
+      : null;
+    if (
+      current &&
+      current.role === "revision" &&
+      current.taskId === task.id &&
+      current.hostId === task.hostId &&
+      task.hostId &&
+      !current.released &&
+      !current.completion &&
+      current.agentId
+    )
       return { agentId: current.agentId, present: true, live: true, wait: "" };
-    const retained = runs.filter(candidate => candidate.role === "revision" && candidate.taskId === task.id && candidate.hostId === task.hostId && task.hostId && !candidate.released && !candidate.completion && candidate.agentId).at(-1);
-    if (retained?.agentId) return { agentId: retained.agentId, present: true, live: true, wait: "" };
+    const retained = runs
+      .filter(
+        (candidate) =>
+          candidate.role === "revision" &&
+          candidate.taskId === task.id &&
+          candidate.hostId === task.hostId &&
+          task.hostId &&
+          !candidate.released &&
+          !candidate.completion &&
+          candidate.agentId,
+      )
+      .at(-1);
+    if (retained?.agentId)
+      return { agentId: retained.agentId, present: true, live: true, wait: "" };
     // The initial worker lives on the task row, never as a run; it is live only while the task is working.
-    if (task.agentId && task.runId && !task.completion && task.phase === "working") return { agentId: task.agentId, present: true, live: true, wait: "" };
+    if (
+      task.agentId &&
+      task.runId &&
+      !task.completion &&
+      task.phase === "working"
+    )
+      return { agentId: task.agentId, present: true, live: true, wait: "" };
     if (task.agentId && task.runId && !task.completion)
-      return { agentId: task.agentId, present: true, live: false, wait: task.phase === "queued" || task.phase === "dispatching" ? "no worker turn is running yet" : "its worker is between turns" };
-    return { agentId: null, present: false, live: false, wait: "no worker has started yet" };
+      return {
+        agentId: task.agentId,
+        present: true,
+        live: false,
+        wait:
+          task.phase === "queued" || task.phase === "dispatching"
+            ? "no worker turn is running yet"
+            : "its worker is between turns",
+      };
+    return {
+      agentId: null,
+      present: false,
+      live: false,
+      wait: "no worker has started yet",
+    };
   }
   /**
    * Deliver one recorded message into a live task recipient's thread; on failure it
    * stays queued for the sweep. The recipient thread is observed first: an archived
    * or gone thread is never sent to, and the message waits for the next live turn.
    */
-  async deliverAgentMessage(recipient: Task, record: AgentMessageRecord): Promise<AgentMessageReceipt> {
+  async deliverAgentMessage(
+    recipient: Task,
+    record: AgentMessageRecord,
+  ): Promise<AgentMessageReceipt> {
     const store = this.store;
     const label = this.taskLabel(recipient);
     const role = record.toRole as "worker" | "reviewer" | "executor";
-    if (record.status !== "queued") return this.messageReceipt(recipient, role, record);
-    if (record.deliveryIntentAt && record.deliveryIntentState !== "refused") return { status: "uncertain", messageId: record.id, to: label, role, recordedAt: record.createdAt, detail: "Delivery outcome is unknown; the recorded intent will not be resent." };
+    if (record.status !== "queued")
+      return this.messageReceipt(recipient, role, record);
+    if (record.deliveryIntentAt && record.deliveryIntentState !== "refused")
+      return {
+        status: "uncertain",
+        messageId: record.id,
+        to: label,
+        role,
+        recordedAt: record.createdAt,
+        detail:
+          "Delivery outcome is unknown; the recorded intent will not be resent.",
+      };
     let identity = this.messageRecipientIdentity(recipient, role);
-    if (identity.live && identity.agentId && await this.resolution.plannerThreadGone(identity.agentId))
-      identity = { ...identity, live: false, wait: "its thread is archived or gone" };
-    if (recipient.removedAt || recipient.phase === "done" || recipient.phase === "cancelled") {
-      const expired: AgentMessageRecord = { ...record, status: "expired", error: `recipient task ${label} finished before delivery` };
+    if (
+      identity.live &&
+      identity.agentId &&
+      (await this.resolution.plannerThreadGone(identity.agentId))
+    )
+      identity = {
+        ...identity,
+        live: false,
+        wait: "its thread is archived or gone",
+      };
+    if (
+      recipient.removedAt ||
+      recipient.phase === "done" ||
+      recipient.phase === "cancelled"
+    ) {
+      const expired: AgentMessageRecord = {
+        ...record,
+        status: "expired",
+        error: `recipient task ${label} finished before delivery`,
+      };
       store.transaction(() => {
         store.putMessage(expired);
-        store.event(record.fromTaskId, "agent_message_expired", `${record.id}: to ${label} (${role}); the recipient finished before delivery`);
-        store.event(recipient.id, "agent_message_expired", `${record.id}: from ${record.fromReference ?? record.fromTaskId} (${record.fromRole}); the task finished before delivery`);
+        store.event(
+          record.fromTaskId,
+          "agent_message_expired",
+          `${record.id}: to ${label} (${role}); the recipient finished before delivery`,
+        );
+        store.event(
+          recipient.id,
+          "agent_message_expired",
+          `${record.id}: from ${record.fromReference ?? record.fromTaskId} (${record.fromRole}); the task finished before delivery`,
+        );
       });
-      return { status: "expired", messageId: record.id, to: label, role, recordedAt: record.createdAt, detail: "The recipient task finished before delivery; the message expired." };
+      return {
+        status: "expired",
+        messageId: record.id,
+        to: label,
+        role,
+        recordedAt: record.createdAt,
+        detail:
+          "The recipient task finished before delivery; the message expired.",
+      };
     }
-    if (!identity.live || !identity.agentId) return { status: "queued", messageId: record.id, to: label, role, recordedAt: record.createdAt, detail: `${identity.wait.charAt(0).toUpperCase()}${identity.wait.slice(1)}; Nucleus will deliver it when the ${role}'s next turn starts.` };
+    if (!identity.live || !identity.agentId)
+      return {
+        status: "queued",
+        messageId: record.id,
+        to: label,
+        role,
+        recordedAt: record.createdAt,
+        detail: `${identity.wait.charAt(0).toUpperCase()}${identity.wait.slice(1)}; Nucleus will deliver it when the ${role}'s next turn starts.`,
+      };
     const hostId = recipient.hostId;
-    if (record.toHostId && record.toHostId !== hostId) return { status: "queued", messageId: record.id, to: label, role, recordedAt: record.createdAt, detail: "Waiting for the recorded recipient host." };
-    if (!hostId || !this.resolution.withHost(hostId, () => this.resolution.hostAvailable(recipient)))
-      return { status: "queued", messageId: record.id, to: label, role, recordedAt: record.createdAt, detail: hostId ? `Waiting for host ${hostId}.` : "Waiting for a proven recipient host." };
-    if (!this.resolution.withHost(hostId, () => this.adapter.notify)) return { status: "queued", messageId: record.id, to: label, role, recordedAt: record.createdAt, detail: "The recipient host cannot deliver messages." };
-    if (this.deliveringMessages.has(record.id)) return { status: "queued", messageId: record.id, to: label, role, recordedAt: record.createdAt, detail: "A delivery is already in flight." };
+    if (record.toHostId && record.toHostId !== hostId)
+      return {
+        status: "queued",
+        messageId: record.id,
+        to: label,
+        role,
+        recordedAt: record.createdAt,
+        detail: "Waiting for the recorded recipient host.",
+      };
+    if (
+      !hostId ||
+      !this.resolution.withHost(hostId, () =>
+        this.resolution.hostAvailable(recipient),
+      )
+    )
+      return {
+        status: "queued",
+        messageId: record.id,
+        to: label,
+        role,
+        recordedAt: record.createdAt,
+        detail: hostId
+          ? `Waiting for host ${hostId}.`
+          : "Waiting for a proven recipient host.",
+      };
+    if (!this.resolution.withHost(hostId, () => this.adapter.notify))
+      return {
+        status: "queued",
+        messageId: record.id,
+        to: label,
+        role,
+        recordedAt: record.createdAt,
+        detail: "The recipient host cannot deliver messages.",
+      };
+    if (this.deliveringMessages.has(record.id))
+      return {
+        status: "queued",
+        messageId: record.id,
+        to: label,
+        role,
+        recordedAt: record.createdAt,
+        detail: "A delivery is already in flight.",
+      };
     this.deliveringMessages.add(record.id);
-    const intent = { ...record, status: "uncertain" as const, deliveryIntentAt: now(), deliveryHostId: hostId, deliveryIntentState: "intent" as const };
+    const intent = {
+      ...record,
+      status: "uncertain" as const,
+      deliveryIntentAt: now(),
+      deliveryHostId: hostId,
+      deliveryIntentState: "intent" as const,
+    };
     try {
       store.putMessage(intent);
-      await this.resolution.withHost(hostId, () => this.resolution.host.steerOrNotify(identity.agentId!, {
-        messageId: `ns-agent-message-${record.id}`,
-        text: agentMessageDeliveryText({ fromReference: record.fromReference, fromTaskId: record.fromTaskId, fromRole: record.fromRole, fromProject: record.fromProject, text: record.text }),
-      }));
-      const delivered: AgentMessageRecord = { ...intent, status: "delivered", toAgentId: identity.agentId, deliveredAt: now(), error: "" };
+      await this.resolution.withHost(hostId, () =>
+        this.resolution.host.steerOrNotify(identity.agentId!, {
+          messageId: `ns-agent-message-${record.id}`,
+          text: agentMessageDeliveryText({
+            fromReference: record.fromReference,
+            fromTaskId: record.fromTaskId,
+            fromRole: record.fromRole,
+            fromProject: record.fromProject,
+            text: record.text,
+          }),
+        }),
+      );
+      const delivered: AgentMessageRecord = {
+        ...intent,
+        status: "delivered",
+        toAgentId: identity.agentId,
+        deliveredAt: now(),
+        error: "",
+      };
       store.transaction(() => {
         store.putMessage(delivered);
-        store.event(record.fromTaskId, "agent_message_delivered", `${record.id}: to ${label} (${role}); delivered`);
-        store.event(recipient.id, "agent_message_delivered", `${record.id}: from ${record.fromReference ?? record.fromTaskId} (${record.fromRole}); delivered`);
+        store.event(
+          record.fromTaskId,
+          "agent_message_delivered",
+          `${record.id}: to ${label} (${role}); delivered`,
+        );
+        store.event(
+          recipient.id,
+          "agent_message_delivered",
+          `${record.id}: from ${record.fromReference ?? record.fromTaskId} (${record.fromRole}); delivered`,
+        );
       });
-      return { status: "delivered", messageId: record.id, to: label, role, recordedAt: record.createdAt, deliveredAt: delivered.deliveredAt! };
+      return {
+        status: "delivered",
+        messageId: record.id,
+        to: label,
+        role,
+        recordedAt: record.createdAt,
+        deliveredAt: delivered.deliveredAt!,
+      };
     } catch (error) {
       this.settleLateMessage(intent, identity.agentId, error);
       return this.failedSend(intent, label, role, error);
-    } finally { this.deliveringMessages.delete(record.id); }
+    } finally {
+      this.deliveringMessages.delete(record.id);
+    }
   }
 
   /**
@@ -462,129 +975,366 @@ export class AgentMessages {
    * live candidate leaves it in the project's inbox (a named agent that is archived or
    * gone expires instead, because a named agent is never replaced).
    */
-  private async deliverThreadMessage(record: AgentMessageRecord): Promise<AgentMessageReceipt> {
+  private async deliverThreadMessage(
+    record: AgentMessageRecord,
+  ): Promise<AgentMessageReceipt> {
     const store = this.store;
     const current = store.message(record.id) ?? record;
     const label = current.toReference ?? `project ${current.toProjectKey}`;
     const role = current.toRole;
     if (current.status !== "queued") return this.receiptOf(current, label);
-    if (current.deliveryIntentAt && current.deliveryIntentState !== "refused") return { status: "uncertain", messageId: current.id, to: label, role, recordedAt: current.createdAt, detail: "Delivery outcome is unknown; the recorded intent will not be resent." };
-    if (this.deliveringMessages.has(current.id)) return { status: "queued", messageId: current.id, to: label, role, recordedAt: current.createdAt, detail: "A delivery is already in flight." };
+    if (current.deliveryIntentAt && current.deliveryIntentState !== "refused")
+      return {
+        status: "uncertain",
+        messageId: current.id,
+        to: label,
+        role,
+        recordedAt: current.createdAt,
+        detail:
+          "Delivery outcome is unknown; the recorded intent will not be resent.",
+      };
+    if (this.deliveringMessages.has(current.id))
+      return {
+        status: "queued",
+        messageId: current.id,
+        to: label,
+        role,
+        recordedAt: current.createdAt,
+        detail: "A delivery is already in flight.",
+      };
     let candidates: Array<{ agentId: string; hostId?: string }>;
-    try { candidates = await this.threadCandidates(current); }
-    catch (error) {
-      if (error instanceof ProjectAgentTargetRefusal && (error.state === "archived" || error.state === "gone" || error.state === "unregistered")) {
+    try {
+      candidates = await this.threadCandidates(current);
+    } catch (error) {
+      if (
+        error instanceof ProjectAgentTargetRefusal &&
+        (error.state === "archived" ||
+          error.state === "gone" ||
+          error.state === "unregistered")
+      ) {
         const detail = `agent ${current.toAgentName ?? "unknown"} is ${error.state}; nothing was sent`;
         store.transaction(() => {
-          store.putMessage({ ...current, status: "expired", error: detail.slice(0, 1000) });
-          store.event(current.fromTaskId, "agent_message_expired", `${current.id}: to ${label} (${role}); ${detail}`);
-          store.event(current.toTaskId, "agent_message_expired", `${current.id}: from ${current.fromReference ?? current.fromTaskId} (${current.fromRole}); ${detail}`);
+          store.putMessage({
+            ...current,
+            status: "expired",
+            error: detail.slice(0, 1000),
+          });
+          store.event(
+            current.fromTaskId,
+            "agent_message_expired",
+            `${current.id}: to ${label} (${role}); ${detail}`,
+          );
+          store.event(
+            current.toTaskId,
+            "agent_message_expired",
+            `${current.id}: from ${current.fromReference ?? current.fromTaskId} (${current.fromRole}); ${detail}`,
+          );
         });
-        return { status: "expired", messageId: current.id, to: label, role, recordedAt: current.createdAt, detail: `${detail}.` };
+        return {
+          status: "expired",
+          messageId: current.id,
+          to: label,
+          role,
+          recordedAt: current.createdAt,
+          detail: `${detail}.`,
+        };
       }
-      return { status: "queued", messageId: current.id, to: label, role, recordedAt: current.createdAt, detail: error instanceof Error ? error.message : String(error) };
+      return {
+        status: "queued",
+        messageId: current.id,
+        to: label,
+        role,
+        recordedAt: current.createdAt,
+        detail: error instanceof Error ? error.message : String(error),
+      };
     }
     for (const candidate of candidates) {
-      const hostId = await this.liveThreadHost(candidate.agentId, candidate.hostId);
+      const hostId = await this.liveThreadHost(
+        candidate.agentId,
+        candidate.hostId,
+      );
       if (!hostId) continue;
       return this.notifyThread(current, candidate.agentId, hostId, label);
     }
-    const detail = current.toRole === "agent"
-      ? `Agent ${current.toAgentName ?? "unknown"} is not live on its host; the message waits until it is reachable.`
-      : `No live planner for project ${current.toProjectKey}; the message waits in its inbox for the next live planner.`;
-    return { status: "queued", messageId: current.id, to: label, role, recordedAt: current.createdAt, detail };
+    const detail =
+      current.toRole === "agent"
+        ? `Agent ${current.toAgentName ?? "unknown"} is not live on its host; the message waits until it is reachable.`
+        : `No live planner for project ${current.toProjectKey}; the message waits in its inbox for the next live planner.`;
+    return {
+      status: "queued",
+      messageId: current.id,
+      to: label,
+      role,
+      recordedAt: current.createdAt,
+      detail,
+    };
   }
 
   /** The threads a planner or agent message may reach, in order; each is re-read at delivery, never trusted from the record. */
-  private async threadCandidates(record: AgentMessageRecord): Promise<Array<{ agentId: string; hostId?: string }>> {
+  private async threadCandidates(
+    record: AgentMessageRecord,
+  ): Promise<Array<{ agentId: string; hostId?: string }>> {
     const key = record.toProjectKey!;
     if (record.toRole === "agent") {
-      const target = await this.resolution.resolveProjectAgentTarget(key, record.toAgentName ?? null);
+      const target = await this.resolution.resolveProjectAgentTarget(
+        key,
+        record.toAgentName ?? null,
+      );
       return [{ agentId: target.agentId, hostId: target.hostId }];
     }
     const candidates: Array<{ agentId: string; hostId?: string }> = [];
     if (record.toLadderTaskId) {
       try {
         const task = this.store.task(record.toLadderTaskId);
-        for (const rung of (await this.resolution.plannerRungsFor(task)).rungs) candidates.push({ agentId: rung.agentId });
-      } catch { /* the ladder's task is gone; the project's planner still answers */ }
+        for (const rung of (await this.resolution.plannerRungsFor(task)).rungs)
+          candidates.push({ agentId: rung.agentId });
+      } catch {
+        /* the ladder's task is gone; the project's planner still answers */
+      }
     }
     try {
-      const fallback = await this.resolution.resolveProjectAgentTarget(key, null);
+      const fallback = await this.resolution.resolveProjectAgentTarget(
+        key,
+        null,
+      );
       candidates.push({ agentId: fallback.agentId, hostId: fallback.hostId });
-    } catch { /* no fallback planner is registered */ }
-    return candidates.filter((candidate, index) => candidates.findIndex(other => other.agentId === candidate.agentId) === index);
+    } catch {
+      /* no fallback planner is registered */
+    }
+    return candidates.filter(
+      (candidate, index) =>
+        candidates.findIndex((other) => other.agentId === candidate.agentId) ===
+        index,
+    );
   }
 
   /** A thread's host when it is available and observed live (not archived, not gone); null otherwise. */
-  private async liveThreadHost(agentId: string, hintHostId?: string): Promise<string | null> {
-    const hostId = hintHostId ?? await this.resolution.identifyOriginHost(agentId);
-    if (!hostId || !this.resolution.withHost(hostId, () => this.resolution.originHostAvailable(hostId))) return null;
+  private async liveThreadHost(
+    agentId: string,
+    hintHostId?: string,
+  ): Promise<string | null> {
+    const hostId =
+      hintHostId ?? (await this.resolution.identifyOriginHost(agentId));
+    if (
+      !hostId ||
+      !this.resolution.withHost(hostId, () =>
+        this.resolution.originHostAvailable(hostId),
+      )
+    )
+      return null;
     if (await this.resolution.plannerThreadGone(agentId)) return null;
     return hostId;
   }
 
   /** One planner or agent delivery, fenced by an intent record so an unknown outcome is never resent. */
-  private async notifyThread(record: AgentMessageRecord, agentId: string, hostId: string, label: string): Promise<AgentMessageReceipt> {
+  private async notifyThread(
+    record: AgentMessageRecord,
+    agentId: string,
+    hostId: string,
+    label: string,
+  ): Promise<AgentMessageReceipt> {
     const store = this.store;
-    const intent: AgentMessageRecord = { ...record, toAgentId: agentId, toHostId: hostId, status: "uncertain", deliveryIntentAt: now(), deliveryHostId: hostId, deliveryIntentState: "intent" };
+    const intent: AgentMessageRecord = {
+      ...record,
+      toAgentId: agentId,
+      toHostId: hostId,
+      status: "uncertain",
+      deliveryIntentAt: now(),
+      deliveryHostId: hostId,
+      deliveryIntentState: "intent",
+    };
     this.deliveringMessages.add(record.id);
     try {
       store.putMessage(intent);
-      await this.resolution.withHost(hostId, () => this.resolution.host.steerOrNotify(agentId, {
-        messageId: `ns-agent-message-${record.id}`,
-        text: agentMessageDeliveryText({ fromReference: record.fromReference, fromTaskId: record.fromTaskId, fromRole: record.fromRole, fromProject: record.fromProject, text: record.text }),
-      }));
-      const delivered: AgentMessageRecord = { ...intent, status: "delivered", deliveredAt: now(), error: "" };
+      await this.resolution.withHost(hostId, () =>
+        this.resolution.host.steerOrNotify(agentId, {
+          messageId: `ns-agent-message-${record.id}`,
+          text: agentMessageDeliveryText({
+            fromReference: record.fromReference,
+            fromTaskId: record.fromTaskId,
+            fromRole: record.fromRole,
+            fromProject: record.fromProject,
+            text: record.text,
+          }),
+        }),
+      );
+      const delivered: AgentMessageRecord = {
+        ...intent,
+        status: "delivered",
+        deliveredAt: now(),
+        error: "",
+      };
       store.transaction(() => {
         store.putMessage(delivered);
-        store.event(record.fromTaskId, "agent_message_delivered", `${record.id}: to ${label} (${record.toRole}); delivered`);
-        store.event(record.toTaskId, "agent_message_delivered", `${record.id}: from ${record.fromReference ?? record.fromTaskId} (${record.fromRole}); delivered`);
+        store.event(
+          record.fromTaskId,
+          "agent_message_delivered",
+          `${record.id}: to ${label} (${record.toRole}); delivered`,
+        );
+        store.event(
+          record.toTaskId,
+          "agent_message_delivered",
+          `${record.id}: from ${record.fromReference ?? record.fromTaskId} (${record.fromRole}); delivered`,
+        );
       });
-      return { status: "delivered", messageId: record.id, to: label, role: record.toRole, recordedAt: record.createdAt, deliveredAt: delivered.deliveredAt! };
+      return {
+        status: "delivered",
+        messageId: record.id,
+        to: label,
+        role: record.toRole,
+        recordedAt: record.createdAt,
+        deliveredAt: delivered.deliveredAt!,
+      };
     } catch (error) {
       this.settleLateMessage(intent, agentId, error);
       return this.failedSend(intent, label, record.toRole, error);
-    } finally { this.deliveringMessages.delete(record.id); }
+    } finally {
+      this.deliveringMessages.delete(record.id);
+    }
   }
 
   /** A late acknowledgement settles only the same retained delivery intent. */
-  private settleLateMessage(intent: AgentMessageRecord, agentId: string | null, error: unknown): void {
-    const late = error && typeof error === 'object' && 'late' in error && 'lateDelivery' in error && (error as { lateDelivery?: unknown }).lateDelivery === true ? (error as { late?: unknown }).late : null;
+  private settleLateMessage(
+    intent: AgentMessageRecord,
+    agentId: string | null,
+    error: unknown,
+  ): void {
+    const late =
+      error &&
+      typeof error === "object" &&
+      "late" in error &&
+      "lateDelivery" in error &&
+      (error as { lateDelivery?: unknown }).lateDelivery === true
+        ? (error as { late?: unknown }).late
+        : null;
     if (!(late instanceof Promise)) return;
-    void late.then(() => {
-      if (this.stopped()) return;
-      const current = this.store.message(intent.id);
-      if (!current || current.status !== 'uncertain' || current.deliveryIntentAt !== intent.deliveryIntentAt || current.deliveryHostId !== intent.deliveryHostId) return;
-      this.store.transaction(() => {
-        this.store.putMessage({ ...current, status: 'delivered', toAgentId: agentId, deliveredAt: now(), error: '' });
-        this.store.event(intent.fromTaskId, 'agent_message_delivered', `${intent.id}: late host acknowledgement`);
-        this.store.event(intent.toTaskId, 'agent_message_delivered', `${intent.id}: late host acknowledgement`);
-      });
-    }).catch(() => {});
+    void late
+      .then(() => {
+        if (this.stopped()) return;
+        const current = this.store.message(intent.id);
+        if (
+          !current ||
+          current.status !== "uncertain" ||
+          current.deliveryIntentAt !== intent.deliveryIntentAt ||
+          current.deliveryHostId !== intent.deliveryHostId
+        )
+          return;
+        this.store.transaction(() => {
+          this.store.putMessage({
+            ...current,
+            status: "delivered",
+            toAgentId: agentId,
+            deliveredAt: now(),
+            error: "",
+          });
+          this.store.event(
+            intent.fromTaskId,
+            "agent_message_delivered",
+            `${intent.id}: late host acknowledgement`,
+          );
+          this.store.event(
+            intent.toTaskId,
+            "agent_message_delivered",
+            `${intent.id}: late host acknowledgement`,
+          );
+        });
+      })
+      .catch(() => {});
   }
 
   /** A send that failed: refused before it left stays queued; any other failure is unknown and never resent. */
-  private failedSend(intent: AgentMessageRecord, label: string, role: AgentMessageRole, error: unknown): AgentMessageReceipt {
+  private failedSend(
+    intent: AgentMessageRecord,
+    label: string,
+    role: AgentMessageRole,
+    error: unknown,
+  ): AgentMessageReceipt {
     const detail = error instanceof Error ? error.message : String(error);
     const refused = error instanceof ProvenPreSendRefusalError;
-    if (!this.stopped()) this.store.putMessage(refused
-      ? { ...intent, status: "queued", deliveryIntentState: "refused", error: `delivery refused before send: ${detail}`.slice(0, 1000) }
-      : { ...intent, error: `delivery outcome unknown: ${detail}`.slice(0, 1000) });
-    return { status: refused ? "queued" : "uncertain", messageId: intent.id, to: label, role, recordedAt: intent.createdAt, detail: refused ? `Delivery was refused before send (${detail}); it remains queued.` : `Delivery outcome is unknown (${detail}); the recorded intent will not be resent.` };
+    if (!this.stopped())
+      this.store.putMessage(
+        refused
+          ? {
+              ...intent,
+              status: "queued",
+              deliveryIntentState: "refused",
+              error: `delivery refused before send: ${detail}`.slice(0, 1000),
+            }
+          : {
+              ...intent,
+              error: `delivery outcome unknown: ${detail}`.slice(0, 1000),
+            },
+      );
+    return {
+      status: refused ? "queued" : "uncertain",
+      messageId: intent.id,
+      to: label,
+      role,
+      recordedAt: intent.createdAt,
+      detail: refused
+        ? `Delivery was refused before send (${detail}); it remains queued.`
+        : `Delivery outcome is unknown (${detail}); the recorded intent will not be resent.`,
+    };
   }
 
-  messageReceipt(recipient: Task, role: AgentMessageRole, record: AgentMessageRecord): AgentMessageReceipt {
+  messageReceipt(
+    recipient: Task,
+    role: AgentMessageRole,
+    record: AgentMessageRecord,
+  ): AgentMessageReceipt {
     return this.receiptOf(record, this.taskLabel(recipient), role);
   }
   /** The receipt a recorded message reports, for any recipient kind. */
-  private receiptOf(record: AgentMessageRecord, label: string, role: AgentMessageRole = record.toRole): AgentMessageReceipt {
-    if (record.status === "delivered") return { status: "delivered", messageId: record.id, to: label, role, recordedAt: record.createdAt, deliveredAt: record.deliveredAt ?? record.createdAt };
-    if (record.status === "expired") return { status: "expired", messageId: record.id, to: label, role, recordedAt: record.createdAt, detail: record.error || "The recipient finished before delivery; the message expired." };
-    if (record.deliveryIntentAt && record.deliveryIntentState !== "refused") return { status: "uncertain", messageId: record.id, to: label, role, recordedAt: record.createdAt, detail: "Delivery outcome is unknown; the recorded intent will not be resent." };
-    return { status: "queued", messageId: record.id, to: label, role, recordedAt: record.createdAt, detail: `${record.error ? `${record.error}; r` : "R"}etained queued for the ${role}'s next turn.` };
+  private receiptOf(
+    record: AgentMessageRecord,
+    label: string,
+    role: AgentMessageRole = record.toRole,
+  ): AgentMessageReceipt {
+    if (record.status === "delivered")
+      return {
+        status: "delivered",
+        messageId: record.id,
+        to: label,
+        role,
+        recordedAt: record.createdAt,
+        deliveredAt: record.deliveredAt ?? record.createdAt,
+      };
+    if (record.status === "expired")
+      return {
+        status: "expired",
+        messageId: record.id,
+        to: label,
+        role,
+        recordedAt: record.createdAt,
+        detail:
+          record.error ||
+          "The recipient finished before delivery; the message expired.",
+      };
+    if (record.deliveryIntentAt && record.deliveryIntentState !== "refused")
+      return {
+        status: "uncertain",
+        messageId: record.id,
+        to: label,
+        role,
+        recordedAt: record.createdAt,
+        detail:
+          "Delivery outcome is unknown; the recorded intent will not be resent.",
+      };
+    return {
+      status: "queued",
+      messageId: record.id,
+      to: label,
+      role,
+      recordedAt: record.createdAt,
+      detail: `${record.error ? `${record.error}; r` : "R"}etained queued for the ${role}'s next turn.`,
+    };
   }
-  taskLabel(task: Task): string { return task.reference ?? (task.number ? `#${formatTaskNumber(task.number)}` : task.id); }
+  taskLabel(task: Task): string {
+    return (
+      task.reference ??
+      (task.number ? `#${formatTaskNumber(task.number)}` : task.id)
+    );
+  }
   /**
    * Spec 058 rollout step 3: deliver queued messages whose recipient now has a live
    * thread — the "next turn" the sender was promised, or the next live planner for a
@@ -601,7 +1351,9 @@ export class AgentMessages {
         try {
           const receipt = await this.deliverThreadMessage(record);
           if (receipt.status === "delivered") delivered++;
-        } catch { /* a transient failure keeps its message queued for the next wake */ }
+        } catch {
+          /* a transient failure keeps its message queued for the next wake */
+        }
         continue;
       }
       // A recipient whose task row is gone (purged) can never receive: its queued messages
@@ -612,15 +1364,25 @@ export class AgentMessages {
         const current = this.store.message(record.id);
         if (current?.status !== "queued") continue;
         this.store.transaction(() => {
-          this.store.putMessage({ ...current, status: "expired", error: "the recipient task is gone before delivery" });
-          this.store.event(record.fromTaskId, "agent_message_expired", `${record.id}: to ${current.toReference ?? current.toTaskId} (${record.toRole}); the recipient is gone before delivery`);
+          this.store.putMessage({
+            ...current,
+            status: "expired",
+            error: "the recipient task is gone before delivery",
+          });
+          this.store.event(
+            record.fromTaskId,
+            "agent_message_expired",
+            `${record.id}: to ${current.toReference ?? current.toTaskId} (${record.toRole}); the recipient is gone before delivery`,
+          );
         });
         continue;
       }
       try {
         const receipt = await this.deliverAgentMessage(recipient, record);
         if (receipt.status === "delivered") delivered++;
-      } catch { /* a transient failure keeps its message queued for the next wake */ }
+      } catch {
+        /* a transient failure keeps its message queued for the next wake */
+      }
     }
   }
 }

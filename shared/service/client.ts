@@ -10,9 +10,16 @@ import { waitsForSettlement } from "./settlement-wait";
 import { connect, type Socket } from "node:net";
 import { randomUUID } from "node:crypto";
 import {
-  PROTOCOL_VERSION, DEFAULT_REQUEST_TIMEOUT_MS, MAX_IN_FLIGHT, REQUEST_ID_PATTERN,
-  ProtocolError, createFrameReader, encodeFrame, parseRequest,
-  type ServiceErrorCode, type ServiceResponse,
+  PROTOCOL_VERSION,
+  DEFAULT_REQUEST_TIMEOUT_MS,
+  MAX_IN_FLIGHT,
+  REQUEST_ID_PATTERN,
+  ProtocolError,
+  createFrameReader,
+  encodeFrame,
+  parseRequest,
+  type ServiceErrorCode,
+  type ServiceResponse,
 } from "./protocol";
 
 export interface ServiceClientOptions {
@@ -23,7 +30,10 @@ export interface ServiceClientOptions {
 }
 
 export class ServiceRequestError extends Error {
-  constructor(readonly code: ServiceErrorCode, message: string) {
+  constructor(
+    readonly code: ServiceErrorCode,
+    message: string,
+  ) {
     super(`Queue service request failed (${code}): ${message}`);
     this.name = "ServiceRequestError";
   }
@@ -31,7 +41,13 @@ export class ServiceRequestError extends Error {
 
 /** A host operation timed out while its original response remains in flight. */
 export class ServiceHostTimeoutError extends ServiceRequestError {
-  constructor(message: string, readonly late: Promise<unknown>) { super("timeout", message); this.name = "ServiceHostTimeoutError"; }
+  constructor(
+    message: string,
+    readonly late: Promise<unknown>,
+  ) {
+    super("timeout", message);
+    this.name = "ServiceHostTimeoutError";
+  }
 }
 
 interface Pending {
@@ -49,21 +65,34 @@ export class ServiceClient {
   private pending = new Map<string, Pending>();
   /** Ids issued by this client; bounded, so a fabricated id fails closed while an expired one is a stray. */
   private issuedIds = new Map<string, true>();
-  private readonly options: Required<Pick<ServiceClientOptions, "requestTimeoutMs" | "maxInFlight">> & ServiceClientOptions;
+  private readonly options: Required<
+    Pick<ServiceClientOptions, "requestTimeoutMs" | "maxInFlight">
+  > &
+    ServiceClientOptions;
   private connectPromise: Promise<void> | null = null;
 
   constructor(options: ServiceClientOptions) {
-    this.options = { requestTimeoutMs: DEFAULT_REQUEST_TIMEOUT_MS, maxInFlight: MAX_IN_FLIGHT, ...options };
+    this.options = {
+      requestTimeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
+      maxInFlight: MAX_IN_FLIGHT,
+      ...options,
+    };
   }
 
-  get connected() { return Boolean(this.socket && !this.socket.destroyed); }
-  get inFlight() { return this.pending.size; }
+  get connected() {
+    return Boolean(this.socket && !this.socket.destroyed);
+  }
+  get inFlight() {
+    return this.pending.size;
+  }
 
   /** Connect and authenticate once; concurrent callers share one handshake. */
   connect(): Promise<void> {
     if (this.connected) return Promise.resolve();
     if (this.connectPromise) return this.connectPromise;
-    this.connectPromise = this.establish().finally(() => { this.connectPromise = null; });
+    this.connectPromise = this.establish().finally(() => {
+      this.connectPromise = null;
+    });
     return this.connectPromise;
   }
 
@@ -77,54 +106,120 @@ export class ServiceClient {
         reject(error);
       };
       const socket = connect(this.options.socketPath);
-      socket.setTimeout(5000, () => { socket.destroy(); fail(new Error("Service socket connect timed out")); });
-      socket.on("error", error => fail(new Error(`Service socket connect failed: ${error.message}`)));
+      socket.setTimeout(5000, () => {
+        socket.destroy();
+        fail(new Error("Service socket connect timed out"));
+      });
+      socket.on("error", (error) =>
+        fail(new Error(`Service socket connect failed: ${error.message}`)),
+      );
       socket.on("connect", () => {
         socket.setTimeout(0);
         const reader = createFrameReader(
-          frame => this.onFrame(frame),
-          error => this.teardown(new ProtocolError(error.code, error.message)),
+          (frame) => this.onFrame(frame),
+          (error) =>
+            this.teardown(new ProtocolError(error.code, error.message)),
         );
-        socket.on("data", chunk => reader.feed(chunk));
-        socket.on("error", error => this.teardown(new Error(error.message)));
-        socket.on("close", () => this.teardown(new Error("Service socket closed")));
+        socket.on("data", (chunk) => reader.feed(chunk));
+        socket.on("error", (error) => this.teardown(new Error(error.message)));
+        socket.on("close", () =>
+          this.teardown(new Error("Service socket closed")),
+        );
         this.socket = socket;
         // First frame is always the credential handshake.
         const id = randomUUID();
-        this.send({ v: PROTOCOL_VERSION, id, method: "service.auth", input: { credential: this.options.credential } }, id);
+        this.send(
+          {
+            v: PROTOCOL_VERSION,
+            id,
+            method: "service.auth",
+            input: { credential: this.options.credential },
+          },
+          id,
+        );
         this.pending.set(id, {
           resolve: () => {
             settled = true;
             resolve();
           },
           reject: (error: Error) => fail(error),
-          timer: setTimeout(() => fail(new ServiceRequestError("timeout", "Authentication timed out")), this.options.requestTimeoutMs),
+          timer: setTimeout(
+            () =>
+              fail(
+                new ServiceRequestError("timeout", "Authentication timed out"),
+              ),
+            this.options.requestTimeoutMs,
+          ),
         });
       });
     });
   }
 
   private onFrame(frame: unknown) {
-    if (typeof frame !== "object" || frame === null) { this.teardown(new ProtocolError("invalid_input", "Response is not an object")); return; }
+    if (typeof frame !== "object" || frame === null) {
+      this.teardown(
+        new ProtocolError("invalid_input", "Response is not an object"),
+      );
+      return;
+    }
     const candidate = frame as Record<string, unknown>;
-    if (candidate.v !== PROTOCOL_VERSION) { this.teardown(new ProtocolError("protocol_version", "Service spoke an unsupported protocol version")); return; }
-    const id = typeof candidate.id === "string" && REQUEST_ID_PATTERN.test(candidate.id) ? candidate.id : null;
-    if (!id) { this.teardown(new ProtocolError("invalid_input", "Response id is missing or out of bounds")); return; }
+    if (candidate.v !== PROTOCOL_VERSION) {
+      this.teardown(
+        new ProtocolError(
+          "protocol_version",
+          "Service spoke an unsupported protocol version",
+        ),
+      );
+      return;
+    }
+    const id =
+      typeof candidate.id === "string" && REQUEST_ID_PATTERN.test(candidate.id)
+        ? candidate.id
+        : null;
+    if (!id) {
+      this.teardown(
+        new ProtocolError(
+          "invalid_input",
+          "Response id is missing or out of bounds",
+        ),
+      );
+      return;
+    }
     const waiter = this.pending.get(id);
     if (!waiter) {
       // A late response for a request this client actually issued is a stray:
       // ignore it. An id this client never issued means the stream is no longer
       // framed by our own requests; fail closed.
-      if (!this.issuedIds.has(id)) this.teardown(new ProtocolError("invalid_input", `Response for unknown request ${id}`));
+      if (!this.issuedIds.has(id))
+        this.teardown(
+          new ProtocolError(
+            "invalid_input",
+            `Response for unknown request ${id}`,
+          ),
+        );
       return;
     }
-    if (candidate.continuation === true && waiter.trackedHost && !waiter.timedOut) {
+    if (
+      candidate.continuation === true &&
+      waiter.trackedHost &&
+      !waiter.timedOut
+    ) {
       waiter.timedOut = true;
       clearTimeout(waiter.timer);
-      const late = new Promise<unknown>((resolve, reject) => { waiter.resolveLate = resolve; waiter.rejectLate = reject; });
+      const late = new Promise<unknown>((resolve, reject) => {
+        waiter.resolveLate = resolve;
+        waiter.rejectLate = reject;
+      });
       void late.catch(() => {});
       const error = candidate.error as { message?: unknown } | undefined;
-      waiter.reject(new ServiceHostTimeoutError(typeof error?.message === "string" ? error.message : "Host operation timed out", late));
+      waiter.reject(
+        new ServiceHostTimeoutError(
+          typeof error?.message === "string"
+            ? error.message
+            : "Host operation timed out",
+          late,
+        ),
+      );
       return;
     }
     this.pending.delete(id);
@@ -133,19 +228,31 @@ export class ServiceClient {
     if (candidate.error) {
       const error = candidate.error as { code?: unknown; message?: unknown };
       const failure = new ServiceRequestError(
-        typeof error.code === "string" ? error.code as ServiceErrorCode : "internal",
-        typeof error.message === "string" ? error.message : "Service returned a typed error",
+        typeof error.code === "string"
+          ? (error.code as ServiceErrorCode)
+          : "internal",
+        typeof error.message === "string"
+          ? error.message
+          : "Service returned a typed error",
       );
-      if (waiter.timedOut) waiter.rejectLate?.(failure); else waiter.reject(failure);
+      if (waiter.timedOut) waiter.rejectLate?.(failure);
+      else waiter.reject(failure);
       return;
     }
-    if (waiter.timedOut) waiter.resolveLate?.(candidate.result ?? null); else waiter.resolve(candidate.result ?? null);
+    if (waiter.timedOut) waiter.resolveLate?.(candidate.result ?? null);
+    else waiter.resolve(candidate.result ?? null);
   }
 
   private send(request: unknown, id?: string) {
     const socket = this.socket;
-    if (!socket || socket.destroyed) throw new Error("Service socket is not connected");
-    if (socket.bufferSize > 32 * 1024 * 1024) { this.teardown(new ServiceRequestError("busy", "Socket write buffer exceeded")); return; }
+    if (!socket || socket.destroyed)
+      throw new Error("Service socket is not connected");
+    if (socket.bufferSize > 32 * 1024 * 1024) {
+      this.teardown(
+        new ServiceRequestError("busy", "Socket write buffer exceeded"),
+      );
+      return;
+    }
     socket.write(encodeFrame(request));
     if (id) {
       this.issuedIds.set(id, true);
@@ -159,22 +266,64 @@ export class ServiceClient {
   }
 
   /** One bounded request; the same id never carries a different method. */
-  async request(method: string, input: unknown, timeoutMs?: number, via?: "paseo", key?: string): Promise<unknown> {
+  async request(
+    method: string,
+    input: unknown,
+    timeoutMs?: number,
+    via?: "paseo",
+    key?: string,
+  ): Promise<unknown> {
     if (!this.connected) await this.connect();
-    if (this.pending.size >= this.options.maxInFlight) throw new ServiceRequestError("busy", `More than ${this.options.maxInFlight} in-flight service requests`);
+    if (
+      [...this.pending.values()].filter((waiter) => !waiter.timedOut).length >=
+      this.options.maxInFlight
+    )
+      throw new ServiceRequestError(
+        "busy",
+        `More than ${this.options.maxInFlight} in-flight service requests`,
+      );
     const id = randomUUID();
     return await new Promise<unknown>((resolve, reject) => {
       // Explicit settlement calls own no transport deadline. Socket loss still rejects,
       // and the existing durable request/operation reads reconcile uncertain delivery.
       const waitForSettlement = waitsForSettlement(method, input);
-      const timer = waitForSettlement ? undefined : setTimeout(() => {
-        this.pending.delete(id);
-        reject(new ServiceRequestError("timeout", `${method} timed out after ${timeoutMs ?? this.options.requestTimeoutMs} ms`));
-      }, timeoutMs ?? this.options.requestTimeoutMs);
-      this.pending.set(id, { resolve, reject, timer, trackedHost: method === "service.bb-host-operation" });
+      const timer = waitForSettlement
+        ? undefined
+        : setTimeout(() => {
+            this.pending.delete(id);
+            reject(
+              new ServiceRequestError(
+                "timeout",
+                `${method} timed out after ${timeoutMs ?? this.options.requestTimeoutMs} ms`,
+              ),
+            );
+          }, timeoutMs ?? this.options.requestTimeoutMs);
+      this.pending.set(id, {
+        resolve,
+        reject,
+        timer,
+        trackedHost: method === "service.bb-host-operation",
+      });
       // `via` is transport provenance, not a caller claim: only the bridge sets it.
       // `key` is the caller's stable identity for one mutating call (request ledger).
-      try { this.send({ v: PROTOCOL_VERSION, id, method, input, ...(via ? { via } : {}), ...(key ? { key } : {}) }, id); } catch (error) { clearTimeout(timer); this.pending.delete(id); this.issuedIds.delete(id); reject(error as Error); }
+      try {
+        this.send(
+          {
+            v: PROTOCOL_VERSION,
+            id,
+            method,
+            input,
+            ...(via ? { via } : {}),
+            ...(key ? { key } : {}),
+          },
+          id,
+        );
+      } catch (error) {
+        clearTimeout(timer);
+        this.pending.delete(id);
+        this.issuedIds.delete(id);
+        reject(error as Error);
+      }
     });
   }
 
@@ -183,15 +332,31 @@ export class ServiceClient {
     return this.request("service.health", {}, timeoutMs);
   }
 
-  private teardown(error: Error = new ServiceRequestError("unavailable", "Connection torn down")) {
+  private teardown(
+    error: Error = new ServiceRequestError(
+      "unavailable",
+      "Connection torn down",
+    ),
+  ) {
     const pending = [...this.pending.values()];
     this.pending.clear();
-    for (const waiter of pending) { clearTimeout(waiter.timer); if (waiter.timedOut) waiter.rejectLate?.(error); else waiter.reject(error); }
+    for (const waiter of pending) {
+      clearTimeout(waiter.timer);
+      if (waiter.timedOut) waiter.rejectLate?.(error);
+      else waiter.reject(error);
+    }
     this.socket?.destroy();
     this.socket = null;
   }
 
-  close() { this.teardown(new ServiceRequestError("unavailable", "Client closed the service connection")); }
+  close() {
+    this.teardown(
+      new ServiceRequestError(
+        "unavailable",
+        "Client closed the service connection",
+      ),
+    );
+  }
 }
 
 // Keep the ServiceResponse type referenced for the wire contract documentation.

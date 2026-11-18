@@ -7,6 +7,7 @@ import type { Adapter } from "../core/host/adapter";
 import { fakeAdapter, profile, submission } from "./support/fakes";
 import { HostTransportFault } from "../core/host/adapter-routing";
 import { HostExecutorLink } from "../service/host-executor";
+import { createBbHostAdapter } from "../service/bb-host";
 import {
   record as reviewRecord,
   ownerRevisionFixture,
@@ -139,6 +140,7 @@ test("real admission gives one free slot to healthy hosts while a BB host waits,
     "plugin build mismatch",
     "registry offline",
     "hung operation",
+    "hung BB pass",
   ]) {
     const store = new Store(":memory:");
     const worker = profile("worker");
@@ -152,8 +154,26 @@ test("real admission gives one free slot to healthy hosts while a BB host waits,
     });
     const engine = new Engine(store, adapter, 0);
     store.setMeta("paused", false);
-    store.setMeta("globalLimit", refusal === "hung operation" ? 2 : 1);
-    const link = new HostExecutorLink({ hostId: 'bb:offline', declaration: { role: 'host-executor', host: { dataDir: '/synthetic/bb', bbVersion: 'test', sdkVersion: 'test' } }, deadlineMs: 10, write: () => {} });
+    store.setMeta(
+      "globalLimit",
+      refusal === "hung operation" ? 2 : refusal === "hung BB pass" ? 3 : 1,
+    );
+    let hostRequests = 0;
+    const link = new HostExecutorLink({
+      hostId: "bb:offline",
+      declaration: {
+        role: "host-executor",
+        host: {
+          dataDir: "/synthetic/bb",
+          bbVersion: "test",
+          sdkVersion: "test",
+        },
+      },
+      deadlineMs: 10,
+      write: () => {
+        hostRequests++;
+      },
+    });
     store.setMeta("pool", [
       {
         profileId: worker.id,
@@ -181,7 +201,10 @@ test("real admission gives one free slot to healthy hosts while a BB host waits,
     const refusing = fakeAdapter({
       ...adapter,
       validate: async () => {
-        if (refusal === "hung operation") { await link.request('call.counters', {}); return 'a'.repeat(40); }
+        if (refusal === "hung operation") {
+          await link.request("call.counters", {});
+          return "a".repeat(40);
+        }
         if (refusal === "plugin build mismatch")
           throw new HostTransportFault("bb:offline", new Error(refusal));
         throw new Error(refusal);
@@ -233,8 +256,53 @@ test("real admission gives one free slot to healthy hosts while a BB host waits,
     const bb2 = add("bb:offline", "bb2");
     const paseo = add("paseo:primary", "paseo");
     const t3 = add("t3code:primary", "t3");
+    let retained: ReturnType<typeof add> | undefined;
+    if (refusal === "hung BB pass") {
+      retained = add("bb:offline", "retained-bb");
+      store.update(retained.id, {
+        phase: "working",
+        agentId: "thr_retained",
+        runId: "run_retained",
+      });
+      store.setMeta("bbThreads", {
+        agents: {
+          thr_retained: {
+            id: "thr_retained",
+            task: retained.id,
+            run: "run_retained",
+            role: "worker",
+            workspaceId: "ws",
+            parentThreadId: null,
+            labels: {},
+          },
+        },
+        spawns: {},
+        writes: {},
+      });
+      const realBb = createBbHostAdapter(
+        "bb:offline",
+        () => true,
+        "",
+        store,
+        (op, input) => link.request(op, input),
+      );
+      engine.resolveHostAdapter = (host) =>
+        host === "bb:offline" ? realBb : adapter;
+    }
     try {
+      const passStarted = Date.now();
       await engine.auditPass(true);
+      if (refusal === "hung BB pass") {
+        assert.ok(
+          Date.now() - passStarted < 5_000,
+          "one request deadline bounds the pass",
+        );
+        assert.equal(
+          hostRequests,
+          1,
+          "BB stops after its first timed-out request",
+        );
+      }
       assert.equal(
         store.task(bb.id).resolution.stop?.reason,
         "host_unavailable",
@@ -243,8 +311,16 @@ test("real admission gives one free slot to healthy hosts while a BB host waits,
         store.task(bb2.id).resolution.stop?.reason,
         "host_unavailable",
       );
-      if (refusal === "hung operation") {
-        assert.match(store.task(bb.id).resolution.stop?.detail ?? "", /no answer within/);
+      if (refusal === "hung operation" || refusal === "hung BB pass") {
+        if (retained)
+          assert.match(
+            store.task(retained.id).resolution.stop?.detail ?? "",
+            /no answer within/,
+          );
+        assert.match(
+          store.task(bb.id).resolution.stop?.detail ?? "",
+          /no answer within/,
+        );
         assert.deepEqual(new Set(launches), new Set([paseo.id, t3.id]));
         continue;
       }
