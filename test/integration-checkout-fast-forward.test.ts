@@ -7,7 +7,10 @@ import { join } from "node:path";
 import { describeIntegrationFastForward, fastForwardIntegrationBase, git } from "../core/git/index";
 import { integrationBaseGate } from "../core/forge/index";
 import { HookCheckouts } from "../core/hooks/hook-checkouts";
-import type { Task } from "../shared/contracts";
+import { RepositoryHooks } from "../core/hooks/hooks";
+import { CheckEvidence } from "../core/merge/check-evidence";
+import { Store } from "../core/store/store";
+import { submissionSchema, type Task } from "../shared/contracts";
 
 /**
  * Real Git fixture: a bare origin and the registered integration clone on `main`.
@@ -146,4 +149,36 @@ test("a checkout in the middle of a rebase is refused by its operation and not m
   await assert.rejects(fastForwardIntegrationBase(f.root, "main"), /Integration checkout has an operation in progress \(rebase-(merge|apply)\)/);
   assert.equal(await git(f.root, "rev-parse", "HEAD"), stopped);
   await git(f.root, "rebase", "--abort");
+});
+
+test("a fast-forward through the prospective-merge base records one event on the task that moved it", async t => {
+  const f = await fixture(t, 2);
+  const store = new Store(join(f.dir, "queue.sqlite"));
+  t.after(() => store.close());
+  const task = store.insert(submissionSchema.parse({ submissionId: "ff-prospective", title: "prospective", repoPath: f.root, planningCommit: f.before, handoffPath: "ff.md", originAgentId: "origin" }), "host", "handoff", f.before);
+  const hooks = new RepositoryHooks(store);
+  assert.equal(await hooks.integrationBase(task), f.remote);
+  assert.equal(await hooks.integrationBase(task), f.remote);
+  const moved = store.events(task.id).filter(event => event.kind === "integration_checkout_fast_forwarded");
+  assert.deepEqual(moved.map(event => event.detail), [describeIntegrationFastForward("main", { from: f.before, to: f.remote })]);
+});
+
+test("a merge-gate observation that moved the checkout records one event and a later observation records none", async t => {
+  const f = await fixture(t, 2);
+  const store = new Store(join(f.dir, "queue.sqlite"));
+  t.after(() => store.close());
+  const task = store.insert(submissionSchema.parse({ submissionId: "ff-gate", title: "gate", repoPath: f.root, planningCommit: f.before, handoffPath: "gate.md", originAgentId: "origin" }), "host", "handoff", f.before);
+  // The adapter wraps integrationBaseGate exactly as the forge merge gate does.
+  const adapter = {
+    mergeGate: async (current: Task) => {
+      const gate = await integrationBaseGate(current, "head");
+      return { head: "head", base: gate.base, wait: "", ...(gate.fastForward ? { integrationFastForward: gate.fastForward } : {}) };
+    },
+  };
+  const evidence = new CheckEvidence({ adapter, reviewerSetting: () => null, store } as unknown as ConstructorParameters<typeof CheckEvidence>[0]);
+  const gated = { ...task, directory: f.root };
+  assert.equal((await evidence.mergeGate(gated)).base, f.remote);
+  assert.equal((await evidence.mergeGate(gated)).base, f.remote);
+  const moved = store.events(task.id).filter(event => event.kind === "integration_checkout_fast_forwarded");
+  assert.deepEqual(moved.map(event => event.detail), [describeIntegrationFastForward("main", { from: f.before, to: f.remote })]);
 });
