@@ -1444,9 +1444,23 @@ request identities and submitted handoffs are not rewritten.
   written once and never re-armed; failures and conflicts are non-blocking
   findings. A record that cannot be written stays `pending` and the prompt says
   links may be missing.
-- Links resolve through configured primary checkouts, live and unpinned, are
+- On other hosts links resolve through configured primary checkouts, live and unpinned, are
   shared by the repository's tasks and are never removed by Nucleus. The worker
   prompt, task detail and `next` disclose the record.
+- New BB worktrees have task-owned parents, so each declared source with a task
+  sibling pin links to that task's recorded copy without colliding with another
+  task's links. Existing workspace bindings retain their original paths. A
+  missing or changed copy or a conflicting link is a named wait before the
+  worker or reviewer; review checks the current binding, declaration and pins
+  from the filesystem, so an absent or stale provisioning record does not hide
+  a correct retained workspace. It never replaces an occupied path. A shared
+  dependency link at the repository worktree root still triggers a private npm
+  install for a task nested under its own parent.
+  BB does not run `worktree.setup`.
+  BB cannot inject a per-thread environment, so visibility of Paseo's Playwright
+  browser cache is a named capability gap until observed in the BB thread.
+  Retained BB run prompts bind the helper to the current run's ticket explicitly,
+  including after a plugin roll.
 - Manual preparation stays per brief: a brief may authorise exactly one `effigy
   bundle sync --json` and one read-only `effigy bundle inspect --json` in the
   checkout, naming the installed tool. A missing or unreadable result is a
