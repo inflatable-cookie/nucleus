@@ -135,8 +135,16 @@ test("a process this run lost to a stop, respawned at once, is recorded once and
     assert.equal(f.store.events(f.task.id).filter(event => event.kind === "run_process_cleanup").length, before,
       "no second stop for the same run inside the respawn window");
     const leftAlone = f.store.events(f.task.id).filter(event => event.kind === "run_process_cleanup_left_alone");
-    assert.equal(leftAlone.length, 1, JSON.stringify(leftAlone.map(event => event.detail)));
-    assert.match(leftAlone[0]!.detail, /respawned-after-stop/);
+    // The respawn is recorded once and never chased. A sweep round that lands in
+    // the moment between the host losing its tool and starting the next one has
+    // no owned target, so it records the host's own live-ancestor reason instead:
+    // a distinct fact, recorded once while the host stands, never a repeat.
+    const respawnRecords = leftAlone.filter(event => event.detail.includes("respawned-after-stop"));
+    assert.equal(respawnRecords.length, 1, JSON.stringify(leftAlone.map(event => event.detail)));
+    assert.match(respawnRecords[0]!.detail, /respawned-after-stop/);
+    assert.ok(leftAlone.every(event => /respawned-after-stop|live-ancestor/.test(event.detail)),
+      JSON.stringify(leftAlone.map(event => event.detail)));
+    assert.ok(leftAlone.length <= 2, JSON.stringify(leftAlone.map(event => event.detail)));
     assert.ok(existsSync(run.temporaryDirectory!));
   } finally { await f.close(); }
 });

@@ -13,15 +13,15 @@ import type { HostProcessFact } from '../host/types';
  */
 import { existsSync } from "node:fs";
 import { realpathSync } from "node:fs";
-import { processGroupEmpty, signalProcessGroup } from "./process-group";
+import { processGroupEmpty, signalProcessGroupAsync } from "./process-group";
 import { processStartIdentityLiveness } from "./process-identity-search";
 import { pidAlive } from "./pid";
 import { now, type Store } from "../store/store";
 import type { Task } from "../../shared/contracts";
 import { readHostUidProcesses } from "./host-process-listing";
 import {
-  isGroupBirthIdentity, paseoProcessOwnership, provenRecordedPgids, protectedHostPids, queueProcessGroupId,
-  recordedGroupIdentityProven, recordedProcessGroupsForTask, selectHostProcessTargetsAndSkips,
+  isGroupBirthIdentity, paseoProcessOwnership, provenRecordedPgidsAsync, protectedHostPids, queueProcessGroupId,
+  recordedGroupIdentityProvenAsync, recordedProcessGroupsForTask, selectHostProcessTargetsAndSkips,
   type HostProcessTarget, type RecordedProcessGroup,
 } from "./host-process-select";
 
@@ -103,22 +103,29 @@ export async function terminateHostProcessTargets(
     recordedGroups?: RecordedProcessGroup[];
     paseoPids?: Iterable<number>;
     paseoPgids?: Iterable<number>;
+    /**
+     * The process table the caller already holds. A recorded `pid@time` group
+     * identity is then proved from that table instead of a synchronous `ps` per
+     * group, so this stop stays off the event loop.
+     */
+    processes?: HostProcessFact[] | null;
   } = {},
 ): Promise<Omit<HostProcessSweepResult, "unavailable">> {
   const graceMs = options.graceMs ?? HOST_PROCESS_SWEEP_GRACE_MS;
   const liveness = options.identityLiveness ?? processStartIdentityLiveness;
   const queuePgid = queueProcessGroupId();
   const recordedGroups = options.recordedGroups ?? [];
+  const processTable = options.processes ?? undefined;
   const paseoPids = new Set(options.paseoPids ?? []);
   const paseoPgids = new Set(options.paseoPgids ?? []);
-  const provenPgids = provenRecordedPgids(recordedGroups, queuePgid, undefined, paseoPgids);
+  const provenPgids = await provenRecordedPgidsAsync(recordedGroups, queuePgid, processTable, paseoPgids);
   const terminated: HostProcessTarget[] = [];
   const failed: Array<HostProcessTarget & { reason: string }> = [];
   const groupSignalled = new Set<number>();
 
   for (const group of recordedGroups) {
     if (!provenPgids.has(group.pgid) || !isGroupBirthIdentity(group.startIdentity)) continue;
-    if (signalProcessGroup(group.pgid, group.startIdentity, "SIGTERM")) groupSignalled.add(group.pgid);
+    if (await signalProcessGroupAsync(group.pgid, group.startIdentity, "SIGTERM")) groupSignalled.add(group.pgid);
   }
 
   for (const target of targets) {
@@ -149,8 +156,8 @@ export async function terminateHostProcessTargets(
   for (const group of recordedGroups) {
     if (!provenPgids.has(group.pgid) || paseoPgids.has(group.pgid) || !isGroupBirthIdentity(group.startIdentity)) continue;
     if (processGroupEmpty(group.pgid)) continue;
-    if (!recordedGroupIdentityProven(group)) continue;
-    signalProcessGroup(group.pgid, group.startIdentity, "SIGKILL");
+    if (!await recordedGroupIdentityProvenAsync(group, processTable)) continue;
+    await signalProcessGroupAsync(group.pgid, group.startIdentity, "SIGKILL");
   }
   for (const target of terminated) {
     if (paseoPids.has(target.pid)) continue;
@@ -208,7 +215,7 @@ export async function reapHostProcesses(input: {
   });
   const result = await terminateHostProcessTargets(selection.targets, {
     graceMs: input.graceMs, identityLiveness: input.identityLiveness, recordedGroups: recorded,
-    paseoPids: paseo.pids, paseoPgids: paseo.pgids,
+    paseoPids: paseo.pids, paseoPgids: paseo.pgids, processes,
   });
   return { ...result, skippedPaseo: selection.skippedPaseo, unavailable: null };
 }

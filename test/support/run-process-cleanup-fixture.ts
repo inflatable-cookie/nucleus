@@ -35,9 +35,13 @@ export function fixture() {
     const child = spawn(process.execPath, [helper, join(root, "tickets", `mcp-${record.id}.json`)], { stdio: "ignore" });
     assert.ok(child.pid); pids.push(child.pid);
   }
-  async function hostTool(record: Run, ignoreTerm = false, orphanHost = false) {
-    const helper = join(root, "mcp-report.mjs"), script = join(root, "host-tool.cjs"), hostScript = join(root, "host.cjs");
-    const infoFile = join(root, "host-processes.json"), ready = join(root, "host-tool.ready"), term = join(root, "host-tool.term");
+  async function hostTool(record: Run, ignoreTerm = false, orphanHost = false, tag = "") {
+    // A tag keeps two hosts' fixture files apart in one test; the helper's own
+    // file name stays `mcp-report.mjs`, which is the identity every reader matches.
+    const directory = tag ? join(root, tag) : root;
+    if (tag) mkdirSync(directory, { recursive: true });
+    const helper = join(directory, "mcp-report.mjs"), script = join(directory, "host-tool.cjs"), hostScript = join(directory, "host.cjs");
+    const infoFile = join(directory, "host-processes.json"), ready = join(directory, "host-tool.ready"), term = join(directory, "host-tool.term");
     writeFileSync(helper, "setInterval(() => {}, 1000);");
     writeFileSync(script, `const fs = require('node:fs'); process.on('SIGTERM', () => { fs.writeFileSync(${JSON.stringify(term)}, String(fs.existsSync(${JSON.stringify(record.temporaryDirectory)}))); ${ignoreTerm ? "" : "process.exit(0);"} }); fs.writeFileSync(${JSON.stringify(ready)}, 'ready'); setInterval(() => {}, 1000);`);
     writeFileSync(hostScript, `const fs = require('node:fs'); const spawn = require('node:child_process').spawn;

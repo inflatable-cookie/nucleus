@@ -3,8 +3,8 @@ import { randomUUID } from "node:crypto";
 import { DEFAULT_PROCESS_TERMINATION_GRACE_MS, PROCESS_TERMINATION_GRACE_MAX_MS, type HostRunEscapedDescendant } from "../../shared/contracts";
 import { withSpawnSlot } from "../dispatch/spawn-gate";
 import { ESCAPED_DESCENDANT_SCAN_MS, EscapedDescendantCustody, escapedDescendantsOf } from "./escaped-descendants";
-import { processGroupEmpty, signalProcessGroup, waitForProcessGroupEmpty } from "./process-group";
-import { processStartIdentityEnvironment, processesForStartIdentity } from "./process-identity-search";
+import { processGroupEmpty, signalProcessGroupAsync, waitForProcessGroupEmpty } from "./process-group";
+import { processStartIdentityEnvironment, processesForStartIdentityAsync } from "./process-identity-search";
 import { hostRunProcessStartIdentity } from "./start-identity";
 import { BoundedStreamRetention, FailureFirstStreamRetention } from "./output-retention";
 
@@ -139,7 +139,7 @@ export function executeHookProgram(request: ExecutionRequest): Promise<Execution
         try {
           // A descendant that left the group takes the same first signal: the
           // group may already be empty while it still runs.
-          escapedCustody?.signal("SIGTERM");
+          await escapedCustody?.signal("SIGTERM");
           const signalWhenProven = async (signal: NodeJS.Signals) => {
             const deadline = Date.now() + PROCESS_GROUP_IDENTITY_WAIT_MS;
             for (;;) {
@@ -152,7 +152,7 @@ export function executeHookProgram(request: ExecutionRequest): Promise<Execution
                 try { process.kill(-pgid, signal); return true; }
                 catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
               }
-              if (signalProcessGroup(pgid, identity, signal)) return true;
+              if (await signalProcessGroupAsync(pgid, identity, signal)) return true;
               if (Date.now() >= deadline) return false;
               await new Promise(resolve => setTimeout(resolve, 20));
             }
@@ -167,7 +167,7 @@ export function executeHookProgram(request: ExecutionRequest): Promise<Execution
             outcome.processGroupEmpty = true;
             return;
           }
-          escapedCustody?.signal("SIGKILL");
+          await escapedCustody?.signal("SIGKILL");
           if (await signalWhenProven("SIGKILL")) outcome.terminationSignal = "SIGKILL";
           else outcome.terminationError = "Could not prove the recorded process-group identity for SIGKILL";
           outcome.processGroupEmpty = await waitForProcessGroupEmpty(pgid, POST_KILL_PROCESS_GROUP_WAIT_MS);
@@ -181,20 +181,21 @@ export function executeHookProgram(request: ExecutionRequest): Promise<Execution
       return termination;
     };
     /**
-     * One bounded proof of absence. The full identity listing records every
-     * descendant that left the group and answers whether the run may settle; when
-     * the stop has a stage, the descendants this listing just found are signalled
-     * with it, so one that leaves the group after the escalation is still stopped.
+     * One bounded proof of absence, awaited so the reads leave the event loop
+     * free. The full identity listing records every descendant that left the
+     * group and answers whether the run may settle; when the stop has a stage,
+     * the descendants this listing just found are signalled with it, so one that
+     * leaves the group after the escalation is still stopped.
      */
-    const proveEscapedAbsence = (pgid: number, stopAt: number | null): boolean => {
+    const proveEscapedAbsence = async (pgid: number, stopAt: number | null): Promise<boolean> => {
       if (!escapedCustody) return true;
       const now = Date.now();
       if (now - lastEscapedScanAt < ESCAPED_DESCENDANT_SCAN_MS) return false;
       lastEscapedScanAt = now;
-      if (escapedCustody.absenceProven(pgid, now)) return true;
+      if (await escapedCustody.absenceProven(pgid, now)) return true;
       if (stopAt !== null) {
         const escalated = outcome.terminationSignal === "SIGKILL" || now - stopAt >= graceMs;
-        escapedCustody.signal(escalated ? "SIGKILL" : "SIGTERM");
+        await escapedCustody.signal(escalated ? "SIGKILL" : "SIGTERM");
       }
       return false;
     };
@@ -211,7 +212,9 @@ export function executeHookProgram(request: ExecutionRequest): Promise<Execution
         const now = Date.now();
         if (now - lastEscapedScanAt >= ESCAPED_DESCENDANT_SCAN_MS) {
           lastEscapedScanAt = now;
-          escapedCustody.scan(processGroupId);
+          // The inventory is asynchronous; a later tick never starts a second one
+          // while this read is still in flight.
+          void escapedCustody.scan(processGroupId);
         }
       }
       void finishWhenGroupIsEmpty();
@@ -227,14 +230,17 @@ export function executeHookProgram(request: ExecutionRequest): Promise<Execution
         return;
       }
       if (!processGroupEmpty(processGroupId)) return;
-      if (escapedCustody && !proveEscapedAbsence(processGroupId, terminationAt)) return;
+      // The absence proof reads the host asynchronously, so another tick may have
+      // settled while it was in flight.
+      if (escapedCustody && !await proveEscapedAbsence(processGroupId, terminationAt)) return;
+      if (settled || finishing) return;
       finishing = true;
       outcome.processGroupEmpty = true;
       // The escaped-descendant rule has one owner: this is its settled inventory,
       // recorded as a fact so a leak stays visible instead of holding capacity.
       outcome.escapedDescendants = escapedCustody
         ? escapedCustody.recorded()
-        : escapedDescendantsOf(processesForStartIdentity(leaderStartIdentity), processGroupId);
+        : escapedDescendantsOf(await processesForStartIdentityAsync(leaderStartIdentity), processGroupId);
       // Let already-buffered pipe data reach the readers. The process group is
       // the settlement boundary; an escaped descendant holding a pipe cannot
       // keep this step alive after this point.

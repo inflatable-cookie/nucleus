@@ -1,5 +1,5 @@
 import { readFileSync, readdirSync } from "node:fs";
-import { darwinProcessReads } from "./process-host-reads";
+import { darwinProcessReads, darwinProcessReadsAsync } from "./process-host-reads";
 import { environmentHasIdentity, processStartIdentityLiveness } from "./process-identity-search";
 import { parseLinuxProcStat } from "./start-identity";
 
@@ -58,9 +58,33 @@ export function processGroupHasStartIdentity(pgid: number, identity: string): bo
   return false;
 }
 
+/**
+ * The same proof off the event loop: both Darwin reads are spawned, so a stop on
+ * the service's loop never blocks it on `ps`. Linux reads `/proc` either way.
+ */
+export async function processGroupHasStartIdentityAsync(pgid: number, identity: string): Promise<boolean> {
+  if (!Number.isSafeInteger(pgid) || pgid <= 0 || !identity) return false;
+  if (process.platform !== "darwin") return processGroupHasStartIdentity(pgid, identity);
+  const reads = darwinProcessReadsAsync();
+  const members = await reads.groupMembers(pgid);
+  if (members === null || !members.length) return false;
+  const found = await reads.environmentScan(identity, members);
+  return found.state === "found" && found.processes.some(process => process.processGroupId === pgid);
+}
+
 /** Signal a process group only while a live member proves its recorded identity. */
 export function signalProcessGroup(pgid: number, identity: string, signal: NodeJS.Signals): boolean {
   if (!processGroupHasStartIdentity(pgid, identity)) return false;
+  try { process.kill(-pgid, signal); return true; }
+  catch (error) {
+    if (["ESRCH", "EPERM"].includes((error as NodeJS.ErrnoException).code ?? "")) return false;
+    throw error;
+  }
+}
+
+/** `signalProcessGroup` with its identity proof spawned rather than blocking. */
+export async function signalProcessGroupAsync(pgid: number, identity: string, signal: NodeJS.Signals): Promise<boolean> {
+  if (!await processGroupHasStartIdentityAsync(pgid, identity)) return false;
   try { process.kill(-pgid, signal); return true; }
   catch (error) {
     if (["ESRCH", "EPERM"].includes((error as NodeJS.ErrnoException).code ?? "")) return false;

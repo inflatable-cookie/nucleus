@@ -1507,8 +1507,13 @@ request identities and submitted handoffs are not rewritten.
   with OS start identity rechecked before each signal. Only an inherited run ticket,
   inherited scratch path or command naming that run's scratch proves ownership;
   a shared checkout or process group alone never does. Agent hosts, their standing
-  runtimes, reporting helpers and processes carrying a live run's identity are
-  protected. Host observation retains helper-proven provider and standing-runtime
+  runtimes and processes carrying a live run's identity are protected; a reporting
+  helper is protected only while the provider session that started it is in the
+  table, because a helper is session-scoped while those runtimes outlive every
+  turn. A helper left behind by an exited provider is the settled run's own
+  leftover: the ticket it still holds is that run's identity, so cleanup stops it
+  under the recorded PID and start identity even when no host identity was ever
+  retained. Host observation retains helper-proven provider and standing-runtime
   PID/start identities, so attached tools and orphans remain distinguishable after
   the helper exits; runtimes identified from a still-live saved provider are also
   retained before it can exit. Saved protection never follows a recycled PID. Without an
@@ -1540,7 +1545,15 @@ request identities and submitted handoffs are not rewritten.
   the same evidence and is treated the same way. One sweep takes one process-table
   snapshot and one ownership-environment read for every run it settles, bounded so
   a read that never answers cannot hold it, and a run whose cleanup proved itself
-  complete is never scanned again — hourly or per pass. Cleanup runs on its own
+  complete is never scanned again — hourly or per pass. Every liveness and
+  ownership check in that sweep reads the same snapshot, so a sweep spawns no
+  synchronous `ps` at all: the liveness frame that dominated the executor profile
+  is gone (nucleus#1329). Signalling still rests on the recorded birth identity at
+  the moment of the signal, from one bounded spawned identity read for exactly the
+  targets that run owns; a read that cannot be made leaves the snapshot's answer
+  standing rather than inventing one. A fact the kernel or the snapshot proves gone
+  is not an unread holder, so a process that died between the listing and its own
+  environment read cannot defer a cleanup the run no longer owes. Cleanup runs on its own
   host lane (`cleanup:<host>`), one queued sweep per host, so it never holds a
   task's exclusive lane and never starves an owner control behind it. That queued
   sweep is host-scoped, never task-scoped: a burst of tasks on one host coalesces

@@ -3,8 +3,9 @@ import type { Store } from "../store/store";
 import type { HostProcessFact } from "../host/types";
 import { readHostUidProcesses } from "./host-process-listing";
 import { pidAlive } from "./pid";
-import { runProcessEnvironments, runProcessLiveness, type RunProcessEnvironment } from "./run-process-identity";
+import { runProcessEnvironments, listedProcessLiveness, refreshedRunProcessLiveness, type RunProcessEnvironment } from "./run-process-identity";
 import { hasRunProcessHost, protectedRunInfrastructure, rememberRunProcessHosts } from "./run-process-hosts";
+import { orphanedRunHelperPids } from "./owned-tool-process-proof";
 import { protectedHostPids } from "./host-process-select";
 import { terminateHostProcessTargets } from "./host-process-reap";
 
@@ -180,6 +181,13 @@ async function sweep(store: Store, hostId: string, options: Parameters<typeof sw
   if (!facts) return; // Intents and scratch survive an unavailable observation.
   rememberRunProcessHosts(store, candidates.known, facts);
   if (!runs.length) return;
+  // Every liveness and identity answer below reads this one table. A sweep spawns
+  // no synchronous `ps`: the profile's dominant stack was
+  // `sweep → runProcessLiveness → processStartIdentityLiveness → startLine →
+  // spawnSync` (nucleus#1329). Signalling still proves an identity now, from one
+  // bounded spawned read for exactly the targets.
+  const tableLiveness = listedProcessLiveness(facts);
+  const orphanedHelpers = orphanedRunHelperPids(facts);
   const byPid: Ancestry = new Map(facts.map(fact => [fact.pid, fact]));
   const dataHome = dirname(store.path);
   const live = facts.filter(fact => !fact.state?.startsWith("Z"));
@@ -224,10 +232,12 @@ async function sweep(store: Store, hostId: string, options: Parameters<typeof sw
     // With no observed host, an environment-only holder can still be that host.
     // A scratch command cannot rule out a different live run's inherited
     // identity when its environment is unreadable. Unknown start identities
-    // also remain owned evidence, but cannot authorize a signal.
+    // also remain owned evidence, but cannot authorize a signal. A per-run report
+    // bridge whose provider has exited is the run's own leftover even when no
+    // host was ever recorded for it.
     const eligible = ownedFacts.filter(fact => rooted.has(fact.pid) && environments.get(fact.pid) != null
       && !fact.startIdentity.endsWith("@unknown") && fact.command.trim()
-      && (hasRunProcessHost(store, run) || orphanExecutesRunScratch(fact, run.temporaryDirectory)));
+      && (hasRunProcessHost(store, run) || orphanExecutesRunScratch(fact, run.temporaryDirectory) || orphanedHelpers.has(fact.pid)));
     const intent = store.getMeta<CleanupRun>(key(run.id));
     // A process this run already lost to a stop, seen again within the window, is
     // recorded once and left alone: the live host respawned it, so stopping it
@@ -240,21 +250,30 @@ async function sweep(store: Store, hostId: string, options: Parameters<typeof sw
     const respawned = round > 0 ? eligible.filter(fact => !existed.has(factKey(fact))) : [];
     if (respawned.length) recordLeftAlone(store, run, hostId, "respawned-after-stop", respawned, startedAt);
     const owned = respawned.length ? eligible.filter(fact => !respawned.some(item => item.pid === fact.pid)) : eligible;
+    // One bounded spawned identity read for exactly these targets, so a signal
+    // still rests on the recorded birth identity now rather than on the listing.
+    const liveness = owned.length
+      ? await boundedRead(() => refreshedRunProcessLiveness(owned.map(fact => fact.pid), tableLiveness), options?.readBoundMs ?? RUN_PROCESS_READ_BOUND_MS) ?? tableLiveness
+      : tableLiveness;
     const result = await (options?.terminate ?? terminateHostProcessTargets)(owned.map(fact => ({ ...fact, cwd: fact.cwd ?? "", startTime: fact.startIdentity, via: "cwd" as const })),
-      { graceMs: options?.graceMs, identityLiveness: (pid, identity) => stillSettled() ? runProcessLiveness(pid, identity) : "unknown" });
+      { graceMs: options?.graceMs, identityLiveness: (pid, identity) => stillSettled() ? liveness(pid, identity) : "unknown" });
     // A target whose identity is proved dead has already exited: a re-read that
     // still lists it is not a survivor to retry, or a sweep would keep the
     // scratch of a process it just stopped.
-    const failed = result.failed.filter(fact => runProcessLiveness(fact.pid, fact.startIdentity) !== "dead");
+    const failed = result.failed.filter(fact => liveness(fact.pid, fact.startIdentity) !== "dead");
     if (result.terminated.length || failed.length) store.event(run.taskId, "run_process_cleanup", JSON.stringify({ runId: run.id,
       stopped: result.terminated.map(fact => ({ pid: fact.pid, startIdentity: fact.startIdentity })),
       survivors: failed.map(fact => ({ pid: fact.pid, startIdentity: fact.startIdentity, reason: fact.reason })) }));
     stopped ||= result.terminated.length > 0;
     if (result.terminated.length) recordStop(store, run, hostId, startedAt);
     // A failed per-process read (including a failed ps chunk) is not a negative
-    // ownership proof. Only tools with complete identity can be stopped.
+    // ownership proof. Only tools with complete identity can be stopped. A fact
+    // the kernel or the table proves gone is not an unread holder: a process that
+    // died between the listing and its environment read must not defer a cleanup
+    // it no longer owes.
     const unknown = facts.filter(fact => !fact.state?.startsWith("Z")
-      && environments.get(fact.pid) == null && (fact.startIdentity.endsWith("@unknown") || runProcessLiveness(fact.pid, fact.startIdentity) !== "dead"));
+      && environments.get(fact.pid) == null
+      && (fact.startIdentity.endsWith("@unknown") || (tableLiveness(fact.pid, fact.startIdentity) !== "dead" && pidAlive(fact.pid))));
     const ambiguous = ownedFacts.filter(fact => !eligible.some(target => target.pid === fact.pid));
     if (unknown.length || ambiguous.length || failed.length) {
       const reason = unknown.length ? "process environment ownership is unreadable"

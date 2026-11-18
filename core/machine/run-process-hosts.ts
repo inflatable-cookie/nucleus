@@ -1,6 +1,6 @@
 import type { Store } from "../store/store";
 import type { HostProcessFact } from "../host/types";
-import { providerRuntimePids, runInfrastructurePids, runProviderBindings } from "./owned-tool-process-proof";
+import { orphanedRunHelperPids, providerRuntimePids, runInfrastructurePids, runProviderBindings } from "./owned-tool-process-proof";
 import { startIdentityMatches } from "./start-identity";
 
 export interface ProcessRunIdentity { id: string; taskId: string; agentId?: string | null }
@@ -43,10 +43,14 @@ export function rememberRunProcessHosts(store: Store, runs: ProcessRunIdentity[]
 /** A saved identity excludes exactly that host incarnation, never a recycled PID. */
 export function protectedRunInfrastructure(store: Store, runs: ProcessRunIdentity[], facts: HostProcessFact[]): Set<number> {
   const protectedPids = runInfrastructurePids(facts);
+  // A saved record outlives the helper it was written with. A bridge whose
+  // provider has since exited keeps no exclusion: its identity is the run's own
+  // leftover, and the sweep's cleanup reaps it by that identity (nucleus#1329).
+  const orphaned = orphanedRunHelperPids(facts);
   for (const run of runs) {
     const record = store.getMeta<RunProcessHost>(key(run.id));
     if (!record) continue;
-    for (const fact of facts) if (record.infrastructure.some(identity => identity.pid === fact.pid && startIdentityMatches(identity.startIdentity, fact.startIdentity)))
+    for (const fact of facts) if (!orphaned.has(fact.pid) && record.infrastructure.some(identity => identity.pid === fact.pid && startIdentityMatches(identity.startIdentity, fact.startIdentity)))
       protectedPids.add(fact.pid);
     const provider = facts.find(fact => fact.pid === record.provider.pid);
     if (provider && startIdentityMatches(record.provider.startIdentity, provider.startIdentity))
