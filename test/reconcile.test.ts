@@ -434,7 +434,11 @@ test('an operator may mint a worker past the automatic budget, and the budget st
     f.adapter.createAgent = async (t, token) => { attempts++; return { id: `agent-${t.runId}`, workspaceId: t.workspaceId }; };
     f.adapter.stopAgentTurn = async () => {};
     const resumed = await f.engine.performTaskControl({ taskId: held.id, version: held.version, action: 'restart', role: 'worker', reason: 'Resume the retained worker', instruction: 'Mint the retained worker and continue the approved dossiers.' });
-    assert.equal(resumed.agentId !== null || resumed.phase === 'dispatching' || resumed.phase === 'working', true, `expected a worker to be minted, saw ${resumed.phase}`);
+    assert.equal(resumed.phase, 'queued', 'replacement waits for ordinary admission');
+    assert.equal(resumed.runId, null, 'the absent run is not replayed');
+    await f.engine.wake();
+    assert.notEqual(f.current().runId, held.runId, 'admission mints a fresh run');
+    assert.ok(f.current().agentId, 'a fresh worker is created');
     assert.equal(f.events('absent_worker_operator_replacement').length, 1, 'the operator replacement is recorded distinctly');
     assert.equal(f.events('absent_worker_retry').length, automaticRetries, 'the automatic budget did not move');
     assert.equal(f.current().workspaceId, workspace, 'the retained workspace is reused, not replaced');
