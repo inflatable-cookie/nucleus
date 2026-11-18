@@ -306,6 +306,57 @@ test('a paused gone-workspace retry makes no observation and settles after resum
   } finally { await f.close(); }
 });
 
+test('a live closeout run holds a gone-workspace retry', async () => {
+  const f = fixture();
+  try {
+    plantDone(f, join(f.dir, 'live-run-gone'), {
+      workspaceArchiveRetries: [{ workspaceId: 'workspace', attempts: 1, error: 'Transport disconnected', nextAttemptAt: new Date(0).toISOString() }],
+    });
+    f.store.putRun(runSchema.parse({
+      id: 'closeout-run', taskId: f.taskId, role: 'closeout', generation: 1, head, base,
+      agentId: 'closeout-agent', workspaceId: 'workspace', profile: null, status: 'running',
+      createdAt: new Date().toISOString(), lastObservedAt: null, active: true, idleSince: null, completion: null, released: false,
+    }) as Run);
+    f.observations.set('closeout-agent', { id: 'closeout-agent', workspaceId: 'workspace', status: 'running', active: true, permissions: false, error: '' });
+    let observations = 0;
+    f.setObserveArchive(async () => { observations++; return true; });
+    await assert.rejects(f.engine.performTaskControl(taskControlInputSchema.parse({
+      action: 'retry_effect', taskId: f.taskId, version: f.task().version,
+      effect: 'workspace_archive.workspace', reason: 'Observe the gone workspace', caller: CALLER,
+    })), /Waiting for all task runs to release/);
+    assert.equal(observations, 0);
+    assert.deepEqual(f.task().resolution.archivedWorkspaceIds, []);
+    assert.equal(f.events('workspace_archived').length, 0);
+    assert.equal(f.counts().archives, 0);
+  } finally { await f.close(); }
+});
+
+test('a retry overlapping a cleanup sweep settles a gone workspace once', async () => {
+  const f = fixture();
+  try {
+    plantDone(f, join(f.dir, 'concurrent-gone'), {
+      workspaceArchiveRetries: [{ workspaceId: 'workspace', attempts: 1, error: 'Transport disconnected', nextAttemptAt: new Date(0).toISOString() }],
+    });
+    let started!: () => void, release!: () => void;
+    const observing = new Promise<void>(resolve => { started = resolve; });
+    const wait = new Promise<void>(resolve => { release = resolve; });
+    let observations = 0;
+    f.setObserveArchive(async () => { observations++; started(); await wait; return true; });
+    f.engine.enqueueCleanup(f.taskId);
+    await observing;
+    const retry = f.engine.performTaskControl(taskControlInputSchema.parse({
+      action: 'retry_effect', taskId: f.taskId, version: f.task().version,
+      effect: 'workspace_archive.workspace', reason: 'Observe the gone workspace', caller: CALLER,
+    }));
+    release();
+    await retry;
+    assert.deepEqual(f.task().resolution.archivedWorkspaceIds, ['workspace']);
+    assert.equal(f.events('workspace_archived').length, 1);
+    assert.equal(observations, 1);
+    assert.equal(f.counts().archives, 0);
+  } finally { await f.close(); }
+});
+
 test('an ambiguous catalog observation never archives', async () => {
   const f = fixture();
   try {
