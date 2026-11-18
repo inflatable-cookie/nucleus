@@ -5,7 +5,7 @@ import type { OriginAgent } from './identity';
 
 /** The task workspace lifecycle: validation and storage preflight, creation, inspection, recovery, title, lookup and removal, the source proofs a continuation needs, the checkout identity proofs, and the review-entry workspace. */
 export interface HostWorkspaces {
-  validate(task: Task): Promise<string>;
+  validate(task: Task, observeFastForward?: (move: {from: string; to: string}) => void): Promise<string>;
   preflightWorkspaceStorage?(task: Task): Promise<void>;
   createReviewEntryWorkspace?(spec: {requestId:string;title:string;repoPath:string;prNumber:number}):Promise<{id:string}>;
   createWorkspace(task: Task, options?: { freshlyPopulated?: boolean }): Promise<{ id: string; directory: string }>;

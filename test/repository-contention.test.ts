@@ -32,7 +32,10 @@ test("repository contention keeps a burst quiet and elects one leader after grac
 test("semantic failures bypass repository contention grace", () => {
   assert.equal(isRepositoryContention("Review found a contract violation"), false);
   assert.equal(isRepositoryContention("Integration checkout is dirty; preserve it and resolve before dispatch"), true);
-  assert.equal(isRepositoryContention("Local integration branch must match origin before merge"), true);
+  // The old "must match origin" refusal is gone: a behind checkout is fast-forwarded, never parked on that text.
+  assert.equal(isRepositoryContention("Local integration branch must match origin before merge"), false);
+  assert.equal(isRepositoryContention("Local integration branch differs from origin: local main and origin/main have diverged at /repo"), true);
+  assert.equal(isRepositoryContention("Integration checkout has an operation in progress (rebase-merge) at /repo; finish or abort it before integration"), true);
   assert.equal(isRepositoryContention("Preserving dirty or switched integration checkout after merge"), true);
   assert.equal(isRepositoryContention("Repository hook ledger task.closeout holds this transition: Integration write requires a clean synchronized base"), false);
 });

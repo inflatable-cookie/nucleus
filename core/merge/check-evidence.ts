@@ -2,6 +2,7 @@ import type { Task } from '../../shared/contracts';
 import type { Resolution } from '../resolution';
 import type { CheckObservationFields, MergeGateResult, RequiredChecksResult } from '../resolution';
 import { checkHistoryFromStore, checkPolicyObservationKey, type CheckObservation } from '../forge/index';
+import { recordIntegrationFastForward } from '../git/index';
 import { now } from '../store/store';
 import { MERGE_GATE_SETTINGS_ATTEMPTS } from '../recovery/task-reasons';
 
@@ -44,7 +45,7 @@ export class CheckEvidence {
   async mergeGate(t: Task): Promise<MergeGateResult> {
     return this.settingsBoundObservation(t, revision => this.adapter.mergeGate!(t,
       checkHistoryFromStore(this.store, t.repoPath, Date.now(), t.prHead ?? ""),
-      this.context.reviewerSetting(t) ?? undefined, this.store.checksPolicyFor(t)), {
+      this.context.reviewerSetting(t) ?? undefined, this.store.checksPolicyFor(t), undefined, move => recordIntegrationFastForward(this.store, t, move)), {
       timings: observed => observed.timings,
       observed: 'the merge gate observed hosted checks',
       then: 'using its result',

@@ -5,7 +5,7 @@ import type { Task } from "../../shared/contracts";
 import type { Store } from "../store/store";
 import { gitText, statusEntries } from "../git/git-snapshot";
 import { gitFastForward, gitRun, formatGitError } from "../git/git-command";
-import { withIntegrationCheckout } from "../git/index";
+import { fastForwardIntegrationBase, withIntegrationCheckout, type IntegrationFastForwardObserver } from "../git/index";
 import { requestServiceRollAfterRepositorySync } from "../forge/roll-request";
 import { removeTree } from "../workspaces/tree-removal";
 import { WARM_CANDIDATE_NAME, isolationDataDirFor, isolationPathFor, isOwnedIsolationPath } from "./hook-isolation";
@@ -84,9 +84,15 @@ export class HookCheckouts {
     if (existsSync(path)) throw new Error("Isolated checkout still exists after removal");
   }
 
-  /** The clean, synchronized integration base commit for one repository, proven against origin. */
-  async integrationBase(task: Task, verifyCleanSynchronizedBase: (root: string, baseBranch: string, baseCommit: string) => Promise<void> = (root, baseBranch, baseCommit) => this.verifyCleanSynchronizedBase(root, baseBranch, baseCommit)): Promise<string> {
+  /**
+   * The clean, synchronized integration base commit for one repository, proven against origin.
+   * A clean checkout strictly behind origin is fast-forwarded first, so a prospective-merge
+   * check never holds on staleness that the next merge gate would have repaired.
+   */
+  async integrationBase(task: Task, verifyCleanSynchronizedBase: (root: string, baseBranch: string, baseCommit: string) => Promise<void> = (root, baseBranch, baseCommit) => this.verifyCleanSynchronizedBase(root, baseBranch, baseCommit), observe?: IntegrationFastForwardObserver): Promise<string> {
     return withIntegrationCheckout(task, async (checkout, unchanged) => {
+      const moved = await fastForwardIntegrationBase(checkout, task.baseBranch);
+      if (moved) observe?.(moved);
       const head = await gitText(checkout, "rev-parse", "HEAD");
       await verifyCleanSynchronizedBase(checkout, task.baseBranch, head);
       await unchanged();
@@ -100,7 +106,7 @@ export class HookCheckouts {
    * precondition. Dirty, wrong-branch and locally-ahead checkouts still refuse,
    * so the cleanliness proof is not relaxed; only origin being ahead is renewed.
    */
-  async renewIntegrationBase(task: Task, allowed: () => boolean): Promise<string> {
+  async renewIntegrationBase(task: Task, allowed: () => boolean, observe?: IntegrationFastForwardObserver): Promise<string> {
     return withIntegrationCheckout(task, async (checkout, unchanged) => {
       if (await gitText(checkout, "branch", "--show-current") !== task.baseBranch) throw new Error("Integration checkout is not on the base branch");
       if ((await statusEntries(checkout, false)).length) throw new Error("Integration checkout has tracked or untracked changes");
@@ -114,6 +120,7 @@ export class HookCheckouts {
       await unchanged();
       if (!allowed()) throw new Error("Paused before local main update");
       await gitFastForward(checkout, remote);
+      observe?.({ from: head, to: remote });
       if (await gitText(checkout, "rev-parse", "HEAD") !== remote || (await statusEntries(checkout, false)).length)
         throw new Error("Integration synchronization did not leave a clean expected head");
       // A direct update of the registered checkout is the same main change the post-merge sync announces.

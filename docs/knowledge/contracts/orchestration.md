@@ -2367,9 +2367,23 @@ movement invalidates source approval and preserves the normal readiness gates.
   tasks take a per-repository FIFO integration turn held through verification,
   merge, synchronization and closeout; a changed base refreshes verification
   against the unchanged head without a rebase unless GitHub or branch policy
-  requires one. A local integration base that origin has moved past is
-  fast-forwarded by the gate itself, at most three times per pass, and parks
-  for an operator only after that bound ([repository hooks](repository-hooks.md#prospective-merge-target)).
+  requires one.
+- Nucleus keeps the registered integration checkout current. Before a merge
+  gate, integration sync or prospective-merge check, a checkout that is on the
+  integration branch, clean (`.gitignore` respected), with no rebase, merge,
+  cherry-pick or revert in progress, and strictly behind `origin/<base>` is
+  fast-forwarded under the per-base integration lock. One
+  `integration_checkout_fast_forwarded` event names the old and new heads; a
+  second pass finds the checkout current and records nothing. Every path that
+  moves the registered checkout (the merge gate and its covering and forced
+  observers, the prospective-merge base, integration sync, stale-base renewal,
+  dispatch validation and canonical publication sync) records that event at the
+  moment the move lands, so a later failure in the same pass cannot lose it. Every other state
+  (dirty, ahead, diverged, another or detached branch, an operation in progress)
+  is never touched: the task waits on the named reason and repository.
+- A stale-base refusal from a repository hook is renewed by the same
+  fast-forward at most three times per pass and parks for an operator only after
+  that bound ([repository hooks](repository-hooks.md#prospective-merge-target)).
 - Uncertain unlanded merge responses use the bounded proof and single guarded
   re-issue of [Spec 038](../specs/038-bounded-uncertain-merge-reconciliation.md);
   every fresh-gate hold in that recovery shares the 30-minute bound, after which
@@ -2978,7 +2992,9 @@ movement invalidates source approval and preserves the normal readiness gates.
   re-arms a pending deadline when the task or operation is observed. A successful
   retry of the failed resolution operation closes its episode even if the task
   stays in the same phase; a skipped pass or another operation does not.
-- Nucleus serializes its own canonical-checkout fast-forwards. Git lock files
+- Nucleus serializes its own canonical-checkout fast-forwards, and the registered
+  integration checkout's reads and fast-forwards share the per-base integration
+  lock with Queue-owned integration checkouts. Git lock files
   do not identify their owner: another Nucleus or Paseo Git process may hold
   one. Nucleus waits and never removes the lock. A merged task retains its
   integration turn while synchronization waits.
