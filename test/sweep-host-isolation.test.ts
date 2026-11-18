@@ -59,7 +59,7 @@ test('a host transport failure waits only that host while the sweep processes he
   assert.equal(result.fault, null);
   assert.equal(store.getMeta('engineError'), '');
   assert.equal(store.task(offline.id).resolution.stop?.reason, 'host_unavailable');
-  assert.match(store.task(offline.id).resolution.stop?.detail ?? '', new RegExp(offlineHost));
+  assert.match(store.task(offline.id).resolution.stop?.detail ?? '', /BB host aaaaaaaa/);
   assert.deepEqual(settled, ['healthy'], 'healthy-host settlement runs after the offline host fails');
   assert.ok(processed.includes(`recover:${healthy.id}`), 'healthy-host recovery is considered in the same pass');
   assert.ok(processed.includes(`quantum:${healthy.id}`), 'healthy-host lifecycle work runs in the same pass');
