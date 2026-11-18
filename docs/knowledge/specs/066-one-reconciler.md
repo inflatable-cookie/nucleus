@@ -196,9 +196,9 @@ be cleared by the expiry of an unrelated wait.
 On 2026-11-18, `service.health` reported **13,311.11 ms** worst executor-loop
 delay since the service started at 09:29:22 UTC. The adjacent read-only
 `service.profile` capture requested 30 seconds and recorded 30.60 seconds of
-weighted samples. The window after capture peaked at **1,971.81 ms**, so the
-profile supplies current hot frames rather than a stack for the earlier
-13-second event. The histogram stores the maximum and no stack.
+weighted samples. The adjacent health windows peaked at 1,971.81 ms before
+capture and 2,844.22 ms after it. The profile supplies current hot frames.
+The histogram records the earlier maximum without a stack.
 
 | Capture frames | Time |
 | --- | ---: |
