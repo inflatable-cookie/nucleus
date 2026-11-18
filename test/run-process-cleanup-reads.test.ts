@@ -10,6 +10,18 @@ import { processParentPid } from "../core/machine/process-identity";
 import { runProcessEnvironments } from "../core/machine/run-process-identity";
 import { sweepSettledRunProcesses } from "../core/machine/run-process-cleanup";
 
+test("process environment reads retain the BB thread binding and no unrelated fields", async () => {
+  const environments = await runProcessEnvironments([123], {
+    platform: "darwin",
+    darwinRead: async () => "  123 agent --session BB_THREAD_ID=thr_fixture SECRET=private TMPDIR=/scratch\n",
+  });
+  assert.deepEqual(environments.get(123), { BB_THREAD_ID: "thr_fixture", TMPDIR: "/scratch" });
+  const unreadable = await runProcessEnvironments([123], {
+    platform: "darwin", darwinRead: async () => { throw Error("unreadable"); },
+  });
+  assert.equal(unreadable.get(123), null);
+});
+
 test("unavailable scans retain intent and scratch; a surviving identity is recorded and retried", async () => {
   const f = fixture();
   try {

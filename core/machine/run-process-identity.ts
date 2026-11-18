@@ -8,7 +8,7 @@ import { processStartIdentityLiveness, processStartIdentityLivenessAsync } from 
 import { readHostRunStartIdentity, startIdentityMatches } from "./start-identity";
 
 const execFileAsync = promisify(execFile);
-const KEYS = ["NUCLEUS_TICKET", "NUCLEUS_CONTINUATION_TICKET", "TMPDIR", "TMP", "TEMP"] as const;
+const KEYS = ["NUCLEUS_TICKET", "NUCLEUS_CONTINUATION_TICKET", "TMPDIR", "TMP", "TEMP", "BB_THREAD_ID"] as const;
 export type RunProcessEnvironment = Partial<Record<typeof KEYS[number], string>>;
 
 /** The answer every custody decision reads: found, proved gone, or unobserved. */
