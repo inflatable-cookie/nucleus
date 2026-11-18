@@ -9,7 +9,7 @@ import { holdsOf } from "../../shared/holds";
 import { externalWorkspace } from "../../shared/workspace-ownership";
 import { boardVisible, StoreBoardIndex } from "./store-board-index";
 import { StoreQueueIndex } from "./store-queue-index";
-import { archiveIntentOutstanding } from "../workspaces/archive-intent";
+import { archiveIntentOutstanding, archiveSettledByOwner } from "../workspaces/archive-intent";
 import type { FinishedDrainTask } from "../planning/lane-drains";
 
 /** One stored task's detached parts; a bulk read supplies the side stores for its page. */
@@ -438,13 +438,15 @@ export class StoreTasks {
       if (task.phase === "cancelled" && task.resolution?.recoveryActive) return !this.runs(task.id).some(run => run.role === "recovery" && !run.released);
       if (task.phase !== "done") return false;
       if (task.resolution.buildOutputCleanups.some(record => !record.runId && record.state === 'intent')) return true;
+      const archived = task.resolution.archivedWorkspaceIds;
+      if (task.resolution.workspaceArchiveRetries.some(record => !archived.includes(record.workspaceId)
+        && !archiveSettledByOwner(task, record.workspaceId))) return true;
       // Spec 017: a merged review-entry task's preserved external workspace owes
       // its catalog archive pass until every registration the last complete
       // inventory observed is settled. It is not a Queue-owned workspace archive,
       // so it never enters `archivedWorkspaceIds` and never frees this scan.
       if (task.reviewEntry?.preserveWorkspace === true && task.workspaceId != null
         && !externalWorkspaceArchivesSettled(task)) return true;
-      const archived = task.resolution?.archivedWorkspaceIds ?? [];
       // An external registered workspace is never archived, so it owes no pass.
       if (!externalWorkspace(task) && task.workspaceId != null && !archived.includes(task.workspaceId)) return true;
       const closeoutWorkspaceId = task.resolution?.closeoutWorkspaceId;

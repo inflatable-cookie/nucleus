@@ -15,6 +15,17 @@ import { reconcileGoneWorkspace } from './archive-reconcile';
 import { archiveIntentOutstanding } from '../workspaces/archive-intent';
 import { recordArchiveRetry, workspaceArchiveFailureReason, type TerminalWorkspace } from './terminal-archive';
 
+/**
+ * A separate workspace can advance after the prior target has a per-workspace
+ * retry. That retry survives replacing the single intent pointer, and causes
+ * the next attempt to observe that target before any archive call.
+ */
+export function canRecordWorkspaceArchive(task: Task, id: string): boolean {
+  const prior = task.resolution.archiveIntentWorkspaceId;
+  return !archiveIntentOutstanding(task) || prior === id
+    || task.resolution.workspaceArchiveRetries.some(record => record.workspaceId === prior);
+}
+
 /** The host operations a workspace archive and its runtime retirement ask for. */
 export interface LifecycleAdapter {
   workspaceAvailable(id: string): Promise<boolean>;
@@ -120,6 +131,7 @@ export class ArchiveProof {
         assertReviewSourceIdentity(current, latest, () => this.primaryArchived(task), this.adapter.workspaceIdAccepted?.bind(this.adapter));
       }
       return !this.paused() && !current.removedAt && current.phase === 'done' && !holdsOf(current).dispatch
+        && canRecordWorkspaceArchive(current, id)
         && current.workspaceId === task.workspaceId && current.directory === task.directory && current.branch === task.branch
         && !(id === current.workspaceId && externalWorkspace(current))
         && !this.store.runs(task.id).some(run => !run.released) && !this.store.workspaceUsedByOtherTaskRun(task.id, id) && !this.store.hostRunHoldingWorkspace(directory)
@@ -141,8 +153,8 @@ export class ArchiveProof {
     const archived = await this.adapter.archiveTaskWorkspace!(task, id, directory, head, () => {
       if (!allowed()) return false;
       const current = this.store.task(task.id);
-      if (archiveIntentOutstanding(current))
-        return current.resolution.archiveIntentWorkspaceId === id && (current.resolution.archiveIntentHead ?? head) === head;
+      if (current.resolution.archiveIntentWorkspaceId === id && archiveIntentOutstanding(current))
+        return (current.resolution.archiveIntentHead ?? head) === head;
       this.context.resolution.update(current, { archiveIntentWorkspaceId: id, archiveIntentHead: head }, {}, 'workspace_archive_intent', head);
       return true;
     }, archiveUncertain, { requirePublished: true, attachedAgentIds, requireDirectory: false, allowIdleForeignThreads: !reviewRun,

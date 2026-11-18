@@ -176,6 +176,8 @@ const oracleLifecycle = (store: Store) => oracleRows(store, `SELECT data FROM ta
     (SELECT 1 FROM json_each(json_extract(data,'$.resolution.archivedWorkspaceIds')) WHERE value=json_extract(tasks.data,'$.resolution.archiveIntentWorkspaceId')))
   OR (json_extract(data,'$.phase')='done' AND (
     EXISTS (SELECT 1 FROM json_each(json_extract(data,'$.resolution.buildOutputCleanups')) WHERE json_extract(value,'$.runId') IS NULL AND json_extract(value,'$.state')='intent') OR
+    EXISTS (SELECT 1 FROM json_each(json_extract(data,'$.resolution.workspaceArchiveRetries')) AS retry WHERE NOT EXISTS
+      (SELECT 1 FROM json_each(json_extract(data,'$.resolution.archivedWorkspaceIds')) WHERE value=json_extract(retry.value,'$.workspaceId'))) OR
     ((json_extract(data,'$.reviewEntry') IS NULL OR json_extract(data,'$.reviewEntry.preserveWorkspace')=0) AND json_extract(data,'$.workspaceId') IS NOT NULL AND NOT EXISTS
       (SELECT 1 FROM json_each(json_extract(data,'$.resolution.archivedWorkspaceIds')) WHERE value=json_extract(tasks.data,'$.workspaceId')))
     OR (json_extract(data,'$.resolution.closeoutWorkspaceId') IS NOT NULL AND NOT EXISTS

@@ -28,7 +28,7 @@ import {
   type TerminalWorkspace,
   type WorkspaceArchiveRetry,
 } from "./terminal-archive";
-import { ArchiveProof, type LifecycleAdapter } from "./archive-proof";
+import { ArchiveProof, canRecordWorkspaceArchive, type LifecycleAdapter } from "./archive-proof";
 import { ArchiveScheduler } from "./archive-scheduler";
 import { runTerminalHooks } from "./terminal-hooks";
 import { missingOriginHasPlanner } from "../questions/origin";
@@ -499,7 +499,7 @@ export class Lifecycle {
         archiveSettledByOwner(this.store.task(task.id), id)
       )
         continue;
-      if (archiveIntentOutstanding(task) && task.resolution.archiveIntentWorkspaceId !== id) continue;
+      if (!canRecordWorkspaceArchive(task, id)) continue;
       const retry: WorkspaceArchiveRetry | undefined = this.store
         .task(task.id)
         .resolution.workspaceArchiveRetries.find(
