@@ -301,12 +301,22 @@ test("CLI, native UI and Queue MCP forward task controls through the shared cont
   assert.match(ui, /function OperationState/);
   assert.match(ui, /operation\.diagnostic/);
   const catalogue = read("shared/rpc-catalogue.ts");
-  assert.match(catalogue, /queue\.task.*taskControl/);
-  assert.match(catalogue, /queue\.operation-start.*operationStart/);
-  assert.match(catalogue, /queue\.operation-status.*operationStatus/);
-  assert.match(catalogue, /lane\.upsert.*upsertLane/);
-  assert.match(catalogue, /lane\.status.*setLaneStatus/);
-  assert.match(catalogue, /lanes.*listLanes/);
+  // The catalogue formats one field per line, so each fact is the name paired with
+  // its contract, not two tokens on one line (the formatter's whole-file pass over
+  // `shared/rpc-catalogue.ts` broke the old same-line reads).
+  for (const [name, contract] of [
+    ["queue.task", "taskControl"],
+    ["queue.operation-start", "operationStart"],
+    ["queue.operation-status", "operationStatus"],
+    ["lane.upsert", "laneUpsert"],
+    ["lane.status", "laneStatus"],
+    ["lanes", "lanes"],
+  ])
+    assert.match(
+      catalogue,
+      new RegExp(`name: "${name}",\\s*contract: contracts\\.${contract},`),
+      `${name} forwards its own contract`,
+    );
 });
 
 test("no substantive implementation remains at the repository root", () => {
