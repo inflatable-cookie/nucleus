@@ -672,6 +672,14 @@ export class SlotAdmission {
       return requesting;
     };
     const readsAsRequest = (candidate: Task) => {
+      // An offline host cannot use a free slot or reserve another host's turn.
+      if (
+        !candidate.hostId ||
+        !this.resolution.withHost(candidate.hostId, () =>
+          this.resolution.hostAvailable(candidate),
+        )
+      )
+        return false;
       const input: {
         integrationReady?: boolean;
         routingRetryAllowed?: boolean;

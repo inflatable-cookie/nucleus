@@ -2,6 +2,7 @@ import type { Task } from "../../shared/contracts";
 import { extendedTaskBudgetLimits, taskBudget } from "../../shared/task-budget";
 import { Decisions } from "../planning/decisions";
 import { agentAskDecisionId } from "./agent-ask";
+import { askLifecycle } from "./agent-ask-events";
 import type { Resolution } from "../resolution";
 
 /** The recorded budget questions a task carries: their ids, in event order. */
@@ -178,6 +179,7 @@ export class QuestionSupersession {
     events: Array<{ kind: string; detail: string }>,
     mark: (id: string) => { kind: string; detail: string },
     withdrawReason: string,
+    exceptAskId?: string,
   ): string[] {
     const settled = (kind: string, id: string) =>
       events.some(
@@ -188,6 +190,7 @@ export class QuestionSupersession {
       const id = event.detail.split(":", 1)[0]!;
       if (
         !id ||
+        id === exceptAskId ||
         settled("agent_ask_answered", id) ||
         settled("agent_ask_superseded", id)
       )
@@ -226,8 +229,15 @@ export class QuestionSupersession {
     this.dismissSupersededNativeQuestions(taskId, ids);
     return ids;
   }
-  supersedeOpenOwnerQuestions(taskId: string, reason: string): void {
+  supersedeOpenOwnerQuestions(
+    taskId: string,
+    reason: string,
+    exceptAskId?: string,
+  ): void {
     const events = this.store.eventsAll(taskId);
+    const joined = exceptAskId
+      ? askLifecycle(events, exceptAskId)?.joined
+      : null;
     const settled = (kind: string, id: string) =>
       events.some(
         (event) => event.kind === kind && event.detail.startsWith(`${id}:`),
@@ -245,7 +255,12 @@ export class QuestionSupersession {
           : "responsible_question_answered";
       for (const event of events.filter((item) => item.kind === questionKind)) {
         const id = event.detail.split(":", 1)[0]!;
-        if (!id || settled(answeredKind, id) || settled(markerKind, id))
+        if (
+          !id ||
+          id === joined ||
+          settled(answeredKind, id) ||
+          settled(markerKind, id)
+        )
           continue;
         this.store.event(taskId, markerKind, `${id}: ${reason}`.slice(0, 2000));
         this.resolution.responsibleQuestions.get(id)?.abort();
@@ -290,6 +305,7 @@ export class QuestionSupersession {
           detail: `${id}: ${reason}`.slice(0, 2000),
         }),
         reason,
+        exceptAskId,
       );
       for (const id of supersededIds) {
         if (

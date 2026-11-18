@@ -32,6 +32,7 @@ import {
 import { LANE_PRIORITY_TASK } from "./lane-priorities";
 import { now, type Store } from "../store/store";
 import { settlementHeld, startsNoRuns } from "../closeout/queue-drain";
+import { markPhaseFact } from "./phase-latency";
 
 /**
  * A wake that threw after its caller stopped waiting. The engine being stopped is
@@ -185,6 +186,7 @@ export type TaskWakesContext = Pick<
   Engine,
   | "resolution"
   | "admission"
+  | "applyDeferredOwnerVerbs"
   | "armGitTransient"
   | "cleanContext"
   | "completionFollowUps"
@@ -465,10 +467,26 @@ export class TaskWakes {
             !settlementHeld(this.store, this.engine.stopped) &&
             beforeRuns.some(
               (run) =>
-                !run.released && run.completion && run.role !== "recovery",
+                !run.released &&
+                run.role !== "recovery" &&
+                (run.completion ||
+                  (run.active &&
+                    Date.now() -
+                      Date.parse(run.lastObservedAt ?? run.createdAt) >=
+                      16000)),
             )
           )
             await this.resolution.observe(null, taskId);
+          for (const previous of beforeRuns) {
+            const current = this.store.run(previous.id);
+            if (!previous.released && current?.released && current.completion)
+              markPhaseFact(
+                this.store,
+                taskId,
+                `release:${current.id}:${current.completion.eventId}`,
+                `${current.role} result released; next step awaiting admission`,
+              );
+          }
           await this.resolution.integrationQuantum(taskId, () =>
             this.engine.taskQuantum(taskId),
           );
@@ -531,6 +549,12 @@ export class TaskWakes {
         task.phase,
       );
     const ready = (task: Task) =>
+      Boolean(
+        task.hostId &&
+          this.engine.withHost(task.hostId, () =>
+            this.engine.taskHostAvailable(task),
+          ),
+      ) &&
       !task.prerequisiteWait &&
       (task.phase !== "queued" ||
         (!this.store.dependencyWait(task) &&
@@ -541,18 +565,24 @@ export class TaskWakes {
       candidate,
     ).find(ready);
     if (!next) return;
+    markPhaseFact(
+      this.store,
+      next.id,
+      `capacity:${releasingTaskId}:${next.version}`,
+      "Freed slot awaiting admission",
+    );
     this.engine.cleanContext(() => {
       if (next.phase !== "queued") {
         void this.engine.cleanContext(() => this.engine.wakeTask(next.id));
         return;
       }
       void this.engine
-        .scheduleLane(`task:${next.id}`, LANE_PRIORITY_TASK, () =>
-          this.engine.dispatchTask(
+        .scheduleLane(`task:${next.id}`, LANE_PRIORITY_TASK, () => {
+          return this.engine.dispatchTask(
             next.id,
             this.store.getMeta<boolean>("dispatchHeld") ?? false,
-          ),
-        )
+          );
+        })
         .catch((error) =>
           recordWakeFailure(
             this.store,
@@ -568,6 +598,7 @@ export class TaskWakes {
   scheduleLifecycleFollowUp(taskId: string): boolean {
     if (this.lifecycleFollowUps.has(taskId)) return true;
     this.lifecycleFollowUps.add(taskId);
+    const queuedAt = now();
     setImmediate(() => {
       try {
         if (settlementHeld(this.store, this.engine.stopped)) return;
@@ -578,6 +609,13 @@ export class TaskWakes {
           return;
         }
         if (task.removedAt || dispatchBlocked(task)) return;
+        markPhaseFact(
+          this.store,
+          taskId,
+          `phase:${task.version}`,
+          `${task.phase} follow-up awaiting admission`,
+          queuedAt,
+        );
         // AsyncLocalStorage propagates through setImmediate. Exit the old lane
         // context so this queues behind it instead of taking the inline path.
         this.engine.cleanContext(() => {
@@ -610,28 +648,66 @@ export class TaskWakes {
     // A callback or control is authoritative evidence that this task's agents
     // changed state, so its cached observations must not answer for them.
     const admission = this.admission;
-    if (admission) {
-      try {
-        const task = this.store.task(taskId);
+    try {
+      const task = this.store.task(taskId);
+      const runs = this.store.runs(taskId);
+      const callbacks = runs
+        .filter((run) => !run.released && run.completion)
+        .map((run) => run.completion!);
+      if (task.phase === "working" && task.completion?.runId === task.runId)
+        callbacks.push(task.completion);
+      const events = callbacks.length ? this.store.eventsAll(taskId) : [];
+      for (const callback of callbacks) {
+        const event = events.findLast(
+          (item) =>
+            item.kind ===
+            (callback.runId === task.runId
+              ? "completion_received"
+              : "run_completion"),
+        );
+        markPhaseFact(
+          this.store,
+          taskId,
+          `callback:${callback.eventId}`,
+          "Accepted result awaiting task admission",
+          event?.at ?? now(),
+        );
+      }
+      if (admission)
         for (const id of [
           task.agentId,
           task.coordinatorAgentId,
           task.resolution.reviewerAgentId,
-          ...this.store
-            .runs(taskId)
+          ...runs
             .filter((run) => !run.released && run.completion)
             .map((run) => run.agentId),
         ])
           admission.invalidate(id ?? "");
-      } catch {
-        /* a purged or missing task has no cached observation to invalidate */
-      }
+    } catch {
+      /* a purged or missing task has no observation or latency to record */
     }
     // A discarded quantum at shutdown has no caller with a durable decision to
     // make: the task lane records its own faults, so callers stay fire-and-forget.
     // A wake that fails with the engine still running is recorded on the task.
     return this.engine
       .scheduleTaskQuantum(taskId)
+      .then(() => {
+        if (
+          this.store.taskOrNull(taskId)?.resolution.deferredVerb?.input
+            .__workerAsk
+        )
+          void this.engine
+            .cleanContext(() => this.engine.applyDeferredOwnerVerbs())
+            .catch((error) =>
+              recordWakeFailure(
+                this.store,
+                this.engine.stopped,
+                taskId,
+                "Deferred direction wake",
+                error,
+              ),
+            );
+      })
       .catch((error) =>
         recordWakeFailure(
           this.store,

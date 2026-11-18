@@ -1,3 +1,4 @@
+import { admitPhaseFacts } from "../scheduling/phase-latency";
 import type { Engine } from "../engine";
 import type { Task } from "../../shared/contracts";
 import {
@@ -319,6 +320,7 @@ export class FirstDispatch {
           "dispatch_intent",
           selection.profile.name,
         );
+        admitPhaseFacts(this.store, task.id);
         this.store.chargeAssignment(
           selection.entry.group,
           selection.profile.id,

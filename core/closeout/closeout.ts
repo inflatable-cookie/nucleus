@@ -1,3 +1,4 @@
+import { admitPhaseFacts } from "../scheduling/phase-latency";
 import { resultApplied, recordResultApplied } from "../intake/applied-result";
 import type { Completion, Run, Task } from "../../shared/contracts";
 import { taskPrNumber } from "../forge/index";
@@ -328,11 +329,13 @@ export class Closeout {
       return;
     }
     const authority = await this.resolution.closeoutAuthority(t);
-    if (authority === "hook")
+    if (authority === "hook") {
+      admitPhaseFacts(this.store, t.id);
       await this.resolution.hookCloseout(this.store.task(t.id));
-    else if (authority === "queue")
+    } else if (authority === "queue") {
+      admitPhaseFacts(this.store, t.id);
       await this.resolution.queueCloseout(this.store.task(t.id));
-    else await this.resolution.launch(t, "closeout");
+    } else await this.resolution.launch(t, "closeout");
   }
   async advanceSyncing(t: Task): Promise<void> {
     if (!this.resolution.claimIntegrationTurn(t)) return;
@@ -342,6 +345,7 @@ export class Closeout {
       this.resolution.paused()
     )
       return;
+    admitPhaseFacts(this.store, t.id);
     const syncStarted = Date.now();
     const commit = await this.adapter.syncMain!(
       t,

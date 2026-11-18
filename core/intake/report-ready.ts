@@ -3,6 +3,7 @@ import { heldBriefQueuePolicy } from "../planning/handoff";
 import type { Resolution } from "../resolution";
 import type { Store } from "../store/store";
 import { recordResultApplied, resultApplied } from "./applied-result";
+import { admitPhaseFacts } from "../scheduling/phase-latency";
 
 /**
  * `report_ready` is one report-only result: the brief it was dispatched under must
@@ -74,5 +75,6 @@ export function settleReportReady(
     "revision_report_ready",
   );
   recordResultApplied(facts.store, task.id, run.id);
+  admitPhaseFacts(facts.store, task.id);
   return true;
 }

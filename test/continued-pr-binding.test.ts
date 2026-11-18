@@ -438,9 +438,8 @@ test("Project-D #117, #612 route: restart role=worker on a blocked report naming
       10_000,
       "revision to enter review",
     );
-    assert.equal(
-      f.current().phase,
-      "awaiting_review",
+    assert.ok(
+      ["awaiting_review", "reviewing"].includes(f.current().phase),
       "the ready revision enters review on the bound PR",
     );
     release();
@@ -1171,9 +1170,8 @@ test("Queue #392: restart role=worker on a discovered PR resumes the same PR wit
       "revision to enter review",
     );
     const current = f.current();
-    assert.equal(
-      current.phase,
-      "awaiting_review",
+    assert.ok(
+      ["awaiting_review", "reviewing"].includes(current.phase),
       "the worker's own authenticated ready result enters independent review",
     );
     release();

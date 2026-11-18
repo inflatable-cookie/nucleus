@@ -51,6 +51,11 @@ export class AgentAsks {
     return this.resolution.stopped;
   }
   readonly routingAgentAsks = new Set<string>();
+  /** The exact authenticated ask currently holding a run's in-turn tool call. */
+  readonly inTurnAsks = new Map<
+    string,
+    { askId: string; runId: string; agentId: string | null }
+  >();
   /** The bounded in-turn wait and poll cadence; tests shrink them. */
   agentAskWaitMs = AGENT_ASK_WAIT_MS;
   agentAskPollMs = AGENT_ASK_POLL_MS;
@@ -117,7 +122,28 @@ export class AgentAsks {
       ? this.resolution.joinedQuestion(events, ask.id)
       : this.resolution.recordAndRouteAsk(task, run, ask);
     if (existing && !joined) this.resumeAgentAsk(task, ask);
-    return await this.resolution.awaitAgentAsk(task.id, ask.id, joined);
+    const waiting = { askId: ask.id, runId: run.id, agentId: run.agentId };
+    this.inTurnAsks.set(task.id, waiting);
+    let returnedAnswer = false;
+    try {
+      const receipt = await this.resolution.awaitAgentAsk(
+        task.id,
+        ask.id,
+        joined,
+      );
+      returnedAnswer = receipt.status === "answered";
+      return receipt;
+    } finally {
+      if (returnedAnswer) {
+        // The host can still report the tool's turn active briefly after the answer.
+        const timer = setTimeout(() => {
+          if (this.inTurnAsks.get(task.id) === waiting)
+            this.inTurnAsks.delete(task.id);
+        }, 3000);
+        timer.unref();
+      } else if (this.inTurnAsks.get(task.id) === waiting)
+        this.inTurnAsks.delete(task.id);
+    }
   }
   askBinding(task: Task, runId: string): Pick<Run, "id" | "role" | "agentId"> {
     return askBinding(this.store, task, runId);
@@ -892,6 +918,22 @@ export class AgentAsks {
           return { status: "answered", askId, answer, answeredBy: who };
         }
       }
+      // A recorded owner direction needs the agent's turn to finish. Yield the
+      // tool call without answering or cancelling its independently routed ask.
+      if (
+        this.store
+          .eventsAll(taskId)
+          .some(
+            (event) =>
+              event.kind === "agent_ask_yield" &&
+              event.detail.startsWith(`${askId}:`),
+          )
+      )
+        return {
+          status: "pending",
+          askId,
+          detail: this.resolution.agentAskPendingDetail(taskId, askId),
+        };
       if (Date.now() >= deadline || this.stopped())
         return {
           status: "pending",

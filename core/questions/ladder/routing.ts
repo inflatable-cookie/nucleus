@@ -113,6 +113,9 @@ export async function routePlannerEscalation(
   question: string,
 ): Promise<void> {
   const events = () => ladder.store.eventsAll(t.id);
+  const deferred = ladder.store.task(t.id).resolution.deferredVerb?.input
+    .__workerAsk as { escalationId?: string } | undefined;
+  if (deferred?.escalationId === id) return;
   if (
     events().some(
       (event) =>
@@ -341,6 +344,11 @@ export async function routePlannerEscalation(
       : delegated?.rung === "project"
         ? `ns-escalation-${id}-project`
         : `ns-escalation-${id}`;
+  // The delegated command may have deferred the direction while this route was
+  // awaiting its reply. Do not submit that same direction a second time.
+  const pendingDirection = ladder.store.task(t.id).resolution.deferredVerb
+    ?.input.__workerAsk as { escalationId?: string } | undefined;
+  if (pendingDirection?.escalationId === id) return;
   let refusal = recordedRefusal
     ? recordedRefusal.detail.slice(`${id}:`.length).trim()
     : await ladder.resolution.escalationSettlement.settlePlannerEscalation(

@@ -1,3 +1,4 @@
+import { admitPhaseFacts } from "../../scheduling/phase-latency";
 import type { LaunchReserveContext } from "../launch";
 import type { Run, Task } from "../../../shared/contracts";
 import {
@@ -271,6 +272,7 @@ export class RunReservationAdmission {
         },
         "run_intent",
       );
+      admitPhaseFacts(this.store, t.id);
       if (replacingReviewer)
         this.store.event(
           t.id,

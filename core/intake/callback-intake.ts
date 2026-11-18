@@ -301,6 +301,7 @@ export class CallbackIntake {
         }
       }
       const receipt = this.resolution.complete(input, token, startEvidence);
+      void this.engine.cleanContext(() => this.engine.wakeTask(input.taskId));
       await this.settleHandedOverWorker(input.taskId, sourceRun, input.status);
       await this.settleReportedThread(sourceRun);
       await this.resolution.settleCompletedExecutorBlocker(input);
@@ -478,6 +479,7 @@ export class CallbackIntake {
         this.store.runs(task.id),
       ),
     });
+    void this.engine.cleanContext(() => this.engine.wakeTask(input.taskId));
     const events = this.store.eventsAll(task.id);
     const nonDelivery =
       input.status === "report_ready"

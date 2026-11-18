@@ -287,9 +287,7 @@ export class Delegation {
     );
   }
   /** A restart may resume observation, never delivery. Unknown sends remain fenced. */
-  delegatedDelivery(
-    id: string,
-  ): {
+  delegatedDelivery(id: string): {
     taskId: string;
     recipient: string;
     role: string;
@@ -546,6 +544,7 @@ export class Delegation {
     const recorded = events.findLast(
       (event) => event.kind === "delegated_answer",
     );
+    let correctingRefusal = false;
     if (recorded) {
       const receipt = JSON.parse(recorded.detail) as {
         questionId: string;
@@ -564,6 +563,21 @@ export class Delegation {
       );
       if (outcome?.kind === "delegated_command_applied") return receipt;
       if (outcome?.kind === "delegated_command_refused") {
+        // An uncertain owner action is not a definite refusal: another answer
+        // could repeat an effect whose delivery is still unknown.
+        if (
+          this.store
+            .eventsAll(authority.taskId)
+            .some(
+              (event) =>
+                event.id > recorded.id &&
+                event.kind === "planner_escalation_action_uncertain" &&
+                event.detail.startsWith(`${escalationId}:`),
+            )
+        )
+          return Promise.reject(
+            Error(outcome.detail.slice(outcome.detail.indexOf(":") + 2)),
+          );
         if (
           answer === receipt.answer &&
           input.reason?.trim() === receipt.reason &&
@@ -572,7 +586,9 @@ export class Delegation {
           return Promise.reject(
             Error(outcome.detail.slice(outcome.detail.indexOf(":") + 2)),
           );
-        // Keep the refused receipt as history and accept a distinct correction.
+        // The same delegated recipient can correct a definite refusal even if
+        // the original answer window elapsed while the direction was deferred.
+        correctingRefusal = true;
       } else {
         if (!isEscalation) return receipt;
         const taskEvents = this.store.eventsAll(authority.taskId);
@@ -601,8 +617,9 @@ export class Delegation {
       }
     }
     if (
-      events.some((event) => event.kind === "delegated_closed") ||
-      Date.now() > authority.deadline
+      !correctingRefusal &&
+      (events.some((event) => event.kind === "delegated_closed") ||
+        Date.now() > authority.deadline)
     )
       throw Error("This delegated answer window has closed");
     const reason = input.reason?.trim();
@@ -663,6 +680,14 @@ export class Delegation {
         reason,
       ).then(
         () => {
+          if (
+            this.deferredEscalation(
+              authority.taskId,
+              escalationId,
+              input.questionId,
+            )
+          )
+            return { ...receipt, status: "pending" as const };
           this.recordCommandApplied(key, escalationId, receiptEventId);
           return receipt;
         },
@@ -675,6 +700,19 @@ export class Delegation {
       );
     }
     return receipt;
+  }
+  private deferredEscalation(
+    taskId: string,
+    escalationId: string,
+    questionId: string,
+  ): boolean {
+    const marker = this.store.task(taskId).resolution.deferredVerb?.input
+      .__workerAsk as
+      | { escalationId?: string; questionId?: string }
+      | undefined;
+    return (
+      marker?.escalationId === escalationId && marker.questionId === questionId
+    );
   }
   private async recoverRecordedEscalationAnswer(
     key: string,
@@ -699,6 +737,8 @@ export class Delegation {
     recordedId: number,
   ) {
     const taskEvents = this.store.eventsAll(authority.taskId);
+    if (this.deferredEscalation(authority.taskId, escalationId, questionId))
+      return { ...receipt, status: "pending" as const };
     const inProcess =
       await this.resolution.escalationSettlement.awaitDelegatedEscalationSettlement(
         authority.taskId,
@@ -748,6 +788,8 @@ export class Delegation {
         questionId,
         recordedId,
       );
+    if (reconciled === "pending")
+      return { ...receipt, status: "pending" as const };
     if (reconciled === "applied") {
       this.recordCommandApplied(key, escalationId, recordedId);
       return receipt;
@@ -811,6 +853,8 @@ export class Delegation {
       receipt.reason,
     ).then(
       () => {
+        if (this.deferredEscalation(authority.taskId, escalationId, questionId))
+          return { ...receipt, status: "pending" as const };
         this.recordCommandApplied(key, escalationId, recordedId);
         return receipt;
       },

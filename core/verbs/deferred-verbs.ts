@@ -21,6 +21,7 @@ export class DeferredOwnerVerbs {
   get store() {
     return this.engine.store;
   }
+  private readonly applying = new Set<string>();
 
   /** Record an owner verb to apply once the wait clears, bound to the run (and checkpoint) it was for. */
   deferOwnerVerb(
@@ -61,9 +62,56 @@ export class DeferredOwnerVerbs {
     kind: string,
     detail: string,
   ): void {
+    let refusedEscalation: string | undefined;
     this.store.transaction(() => {
       const current = this.store.task(taskId);
       if (current.resolution.deferredVerb?.at !== at) return;
+      const marker = current.resolution.deferredVerb.input.__workerAsk as
+        | { escalationId?: string; questionId?: string }
+        | undefined;
+      if (
+        marker?.escalationId &&
+        marker.questionId &&
+        (kind === "owner_verb_applied" || kind === "deferred_verb_refused")
+      ) {
+        const key = `delegation:${marker.questionId}`;
+        const events = this.store.eventsAll(key);
+        const answer = events.findLast(
+          (event) => event.kind === "delegated_answer",
+        );
+        if (
+          answer &&
+          !events.some(
+            (event) =>
+              event.id > answer.id &&
+              (event.kind === "delegated_command_applied" ||
+                event.kind === "delegated_command_refused"),
+          )
+        )
+          this.store.event(
+            key,
+            kind === "owner_verb_applied"
+              ? "delegated_command_applied"
+              : "delegated_command_refused",
+            `${marker.escalationId}: ${kind === "owner_verb_applied" ? `applied after answer event ${answer.id}` : detail}`.slice(
+              0,
+              4000,
+            ),
+          );
+      }
+      if (kind === "deferred_verb_refused" && marker?.escalationId) {
+        refusedEscalation = marker.escalationId;
+        this.store.event(
+          taskId,
+          "planner_escalation_refused",
+          `${marker.escalationId}: ${detail}`.slice(0, 4000),
+        );
+        this.store.event(
+          taskId,
+          "planner_escalation_answer_refused",
+          `${marker.escalationId}: ${detail}`.slice(0, 4000),
+        );
+      }
       this.store.update(
         taskId,
         { resolution: { ...current.resolution, deferredVerb: null } },
@@ -71,6 +119,12 @@ export class DeferredOwnerVerbs {
         detail.slice(0, 2000),
       );
     });
+    if (refusedEscalation)
+      this.engine.resolution.waiting(
+        this.store.task(taskId),
+        `Escalation ${refusedEscalation} is unresolved: ${detail}`,
+        "escalated",
+      );
   }
 
   /** Why a recorded verb's target no longer holds, or null. */
@@ -193,46 +247,139 @@ export class DeferredOwnerVerbs {
             (input.action === "move" && input.to === "review"));
         if (!isContinuation) continue;
       }
-      const changed = this.targetChanged(task, deferred.target ?? null);
-      if (changed) {
-        this.dropDeferredVerb(
-          id,
-          deferred.at,
-          "deferred_verb_refused",
-          `${String(deferred.input.action)}: ${changed}`,
-        );
-        continue;
-      }
-      this.store.event(
-        id,
-        "owner_verb_resumed",
-        JSON.stringify({
-          action: deferred.input.action,
-          recordedAt: deferred.at,
-        }),
-      );
+      if (this.applying.has(id)) continue;
+      this.applying.add(id);
       try {
-        await this.engine.replayingDeferredVerb.run(true, () =>
-          this.engine.performTaskControl(
-            taskControlInputSchema.parse({
-              ...deferred.input,
-              version: this.store.task(id).version,
-            }) as TaskControlInput,
-          ),
+        const { __workerAsk, ...control } = deferred.input;
+        if (__workerAsk) {
+          const marker = __workerAsk as {
+            runId?: string;
+            agentId?: string;
+            workspaceId?: string;
+          };
+          if (
+            !marker.runId ||
+            !marker.agentId ||
+            !marker.workspaceId ||
+            task.agentId !== marker.agentId ||
+            task.workspaceId !== marker.workspaceId ||
+            (task.runId !== marker.runId &&
+              task.resolution.currentRunId !== marker.runId)
+          ) {
+            this.dropDeferredVerb(
+              id,
+              deferred.at,
+              "deferred_verb_refused",
+              "The retained worker identity changed before its recorded direction",
+            );
+            continue;
+          }
+          let observed;
+          try {
+            observed = await this.engine.host.observe(marker.agentId);
+          } catch {
+            continue;
+          }
+          if (
+            observed.id !== marker.agentId ||
+            observed.workspaceId !== marker.workspaceId
+          )
+            continue;
+          if (
+            observed.active ||
+            observed.activeTurnId ||
+            observed.permissions ||
+            !["idle", "error"].includes(observed.status)
+          )
+            continue;
+          const latest = this.store.task(id);
+          if (latest.resolution.deferredVerb?.at !== deferred.at) continue;
+          if (
+            latest.agentId !== marker.agentId ||
+            latest.workspaceId !== marker.workspaceId ||
+            (latest.runId !== marker.runId &&
+              latest.resolution.currentRunId !== marker.runId)
+          ) {
+            this.dropDeferredVerb(
+              id,
+              deferred.at,
+              "deferred_verb_refused",
+              "The retained worker identity changed during observation",
+            );
+            continue;
+          }
+        }
+        const changed = this.targetChanged(
+          this.store.task(id),
+          deferred.target ?? null,
         );
-        this.dropDeferredVerb(
+        if (changed) {
+          this.dropDeferredVerb(
+            id,
+            deferred.at,
+            "deferred_verb_refused",
+            `${String(control.action)}: ${changed}`,
+          );
+          continue;
+        }
+        this.store.event(
           id,
-          deferred.at,
-          "owner_verb_applied",
-          String(deferred.input.action),
+          "owner_verb_resumed",
+          JSON.stringify({ action: control.action, recordedAt: deferred.at }),
         );
-      } catch (error) {
-        this.dropDeferredVerb(
-          id,
-          deferred.at,
-          "deferred_verb_refused",
-          `${String(deferred.input.action)}: ${error instanceof Error ? error.message : String(error)}`,
-        );
+        try {
+          await this.engine.replayingDeferredVerb.run(true, () =>
+            this.engine.performTaskControl(
+              taskControlInputSchema.parse({
+                ...control,
+                version: this.store.task(id).version,
+              }) as TaskControlInput,
+            ),
+          );
+          const marker = __workerAsk as
+            | { escalationId?: string; who?: string; answer?: string }
+            | undefined;
+          if (marker?.escalationId) {
+            this.store.event(
+              id,
+              "planner_escalation_answered",
+              `${marker.escalationId}: answered by ${marker.who ?? "planner"}: ${marker.answer ?? ""}`.slice(
+                0,
+                4000,
+              ),
+            );
+            this.store.event(
+              id,
+              "planner_escalation_applied",
+              `${marker.escalationId}: deferred direction applied`,
+            );
+          }
+          this.dropDeferredVerb(
+            id,
+            deferred.at,
+            "owner_verb_applied",
+            String(control.action),
+          );
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          // The worker can start another turn between the two observations. This
+          // particular refusal is before continuation delivery; retain the intent.
+          if (
+            __workerAsk &&
+            /The retained worker is (?:not positively idle|no longer positively idle)/.test(
+              detail,
+            )
+          )
+            continue;
+          this.dropDeferredVerb(
+            id,
+            deferred.at,
+            "deferred_verb_refused",
+            `${String(control.action)}: ${detail}`,
+          );
+        }
+      } finally {
+        this.applying.delete(id);
       }
     }
   }

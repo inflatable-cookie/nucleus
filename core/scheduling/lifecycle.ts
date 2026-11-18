@@ -354,8 +354,9 @@ export class SchedulingLifecycle {
       await this.context.launch(t, "reviewer");
     } else if (t.phase === "changes_requested") {
       await this.context.advanceChangesRequested(t);
-    } else if (t.phase === "verifying") await this.context.verification(t);
-    else if (t.phase === "closing") {
+    } else if (t.phase === "verifying") {
+      await this.context.verification(t);
+    } else if (t.phase === "closing") {
       await this.context.advanceClosing(t);
     } else if (t.phase === "merging") {
       await this.context.advanceMerging(t);

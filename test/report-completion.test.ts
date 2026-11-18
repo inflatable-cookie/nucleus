@@ -383,6 +383,13 @@ test("report_ready releases an opted-in worker into planner acceptance without b
     await f.engine.wakeTask(task.id);
     const waiting = f.store.task(task.id);
     assert.equal(waiting.phase, "report_ready");
+    const { slowPhaseWaits } = await import("../service/runtime-health");
+    assert.equal(
+      slowPhaseWaits(f.store, Date.now() + 60_000).filter(
+        (wait) => wait.taskId === task.id,
+      ).length,
+      0,
+    );
     assert.equal(waiting.completion?.status, "report_ready");
     assert.deepEqual(waiting.completion?.artifact, result.artifact);
     assert.equal(waiting.resolution.incident, null);
@@ -488,6 +495,13 @@ test("report_ready releases a report-only revision into planner acceptance", asy
     await f.engine.wakeTask(task.id);
     const waiting = f.store.task(task.id);
     assert.equal(waiting.phase, "report_ready");
+    const { slowPhaseWaits } = await import("../service/runtime-health");
+    assert.deepEqual(
+      slowPhaseWaits(f.store, Date.now() + 60_000).filter(
+        (wait) => wait.taskId === task.id,
+      ),
+      [],
+    );
     assert.equal(waiting.completion?.status, "report_ready");
     assert.deepEqual(waiting.completion?.artifact, artifact);
     assert.equal(f.store.run(runId)?.released, true);

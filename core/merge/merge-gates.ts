@@ -1,3 +1,4 @@
+import { admitPhaseFacts } from "../scheduling/phase-latency";
 import {
   blockerCauseId,
   escalationWaitDetail,
@@ -629,6 +630,7 @@ export class MergeGates {
     if (!this.resolution.claimIntegrationTurn(t)) return;
     t = this.store.task(t.id);
     if (this.resolution.paused()) return;
+    admitPhaseFacts(this.store, t.id);
     // The merge gate must prove the same integration base the prospective-merge
     // hook observed. External base movement between the hook and that proof
     // discards the candidate result and rebuilds one current candidate instead
@@ -793,6 +795,7 @@ export class MergeGates {
       this.resolution.paused()
     )
       return;
+    admitPhaseFacts(this.store, t.id);
     if (t.resolution.mergedCommit && !t.resolution.syncedCommit) {
       this.resolution.update(
         t,

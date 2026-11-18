@@ -4,6 +4,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store } from "../core/store/store";
+import { slowPhaseWaits } from "../service/runtime-health";
+import { markPhaseFact } from "../core/scheduling/phase-latency";
 import {
   createTelemetrySnapshotCache,
   deriveTaskTelemetry,
@@ -77,6 +79,80 @@ function fixture() {
     },
   };
 }
+
+test("health names only overdue Nucleus phase admissions", () => {
+  const f = fixture();
+  try {
+    const task = f.add("phase-wait");
+    assert.deepEqual(slowPhaseWaits(f.store, start + 50_000), []);
+    f.store.setMeta(`phaseLatency:${task.id}`, {
+      pending: [
+        {
+          key: "fact",
+          since: iso(10_000),
+          cause: "Accepted result awaiting task admission",
+        },
+      ],
+      samples: [],
+    });
+    assert.deepEqual(slowPhaseWaits(f.store, start + 40_000), []);
+    const waits = slowPhaseWaits(f.store, start + 40_001);
+    assert.equal(waits.length, 1);
+    assert.equal(waits[0].taskId, task.id);
+    assert.equal(waits[0].cause, "Accepted result awaiting task admission");
+    assert.equal(waits[0].elapsedMs, 30_001);
+    f.store.setMeta(`phaseLatency:${task.id}`, { pending: [], samples: [] });
+    assert.deepEqual(slowPhaseWaits(f.store, start + 50_000), []);
+  } finally {
+    f.close();
+  }
+});
+
+test("a busy observation hides a callback wait only while it is fresh", () => {
+  const f = fixture();
+  try {
+    const task = f.add("busy-callback");
+    f.store.putRun(
+      runSchema.parse({
+        id: "busy-run",
+        taskId: task.id,
+        role: "reviewer",
+        generation: 1,
+        head: "a".repeat(40),
+        base: "a".repeat(40),
+        agentId: "agent",
+        workspaceId: "workspace",
+        profile: null,
+        status: "running",
+        createdAt: iso(0),
+        lastObservedAt: iso(29_000),
+        active: true,
+        idleSince: null,
+        released: false,
+        completion: {
+          eventId: "callback-event",
+          taskId: task.id,
+          runId: "busy-run",
+          status: "changes_required",
+          summary: "Finished",
+        },
+      }),
+    );
+    markPhaseFact(
+      f.store,
+      task.id,
+      "callback:callback-event",
+      "Accepted result awaiting observation",
+      iso(0),
+    );
+    assert.deepEqual(slowPhaseWaits(f.store, start + 31_000), []);
+    const waits = slowPhaseWaits(f.store, start + 45_000);
+    assert.equal(waits.length, 1);
+    assert.equal(waits[0]?.cause, "Accepted result awaiting observation");
+  } finally {
+    f.close();
+  }
+});
 
 test("telemetry bounds historical group and filter rows while retaining exact aggregates", () => {
   const f = fixture();

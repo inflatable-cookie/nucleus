@@ -1,3 +1,4 @@
+import { admitPhaseFacts } from "../../scheduling/phase-latency";
 import {
   parseAgentId,
   sameCallerIdentity,
@@ -46,6 +47,7 @@ async function announceReportReady(
       "report_ready",
     );
     recordResultApplied(store, current.id, completion.runId);
+    admitPhaseFacts(store, current.id);
     return true;
   });
   if (!applied) return;

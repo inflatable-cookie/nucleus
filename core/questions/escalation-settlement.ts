@@ -116,6 +116,100 @@ export class EscalationSettlement {
       ? { status: "refused", reason: refusal }
       : { status: "applied" };
   }
+  /** A worker's own in-turn ask must yield before its owner direction can pass the idle fence. */
+  private async deferForWorkerAsk(
+    task: Task,
+    id: string,
+    questionId: string,
+    who: string,
+    answer: string,
+    input: TaskControlInput,
+  ): Promise<boolean> {
+    if (
+      !(
+        (input.action === "move" && input.to === "work") ||
+        (input.action === "restart" && input.role === "worker" && !input.fresh)
+      )
+    )
+      return false;
+    const waiting = this.resolution.agentAsks.inTurnAsks.get(task.id);
+    if (
+      !waiting ||
+      !task.agentId ||
+      !task.workspaceId ||
+      waiting.agentId !== task.agentId ||
+      (waiting.runId !== task.runId &&
+        waiting.runId !== task.resolution.currentRunId)
+    )
+      return false;
+    const observed = await this.resolution.onTaskHost(task, () =>
+      this.resolution.host.observe(task.agentId!),
+    );
+    if (
+      observed.id !== task.agentId ||
+      observed.workspaceId !== task.workspaceId ||
+      !(observed.active || observed.activeTurnId)
+    )
+      return false;
+    this.store.transaction(() => {
+      const current = this.store.task(task.id);
+      if (
+        current.version !== task.version ||
+        this.resolution.agentAsks.inTurnAsks.get(task.id) !== waiting
+      )
+        throw Error(
+          "Task or worker question changed during escalation answer; read next again",
+        );
+      if (current.resolution.deferredVerb)
+        throw Error("Another owner direction is already deferred");
+      const { version: _version, ...rest } = input;
+      const marker = {
+        askId: waiting.askId,
+        runId: waiting.runId,
+        agentId: task.agentId,
+        workspaceId: task.workspaceId,
+        escalationId: id,
+        questionId,
+        who,
+        answer,
+      };
+      this.store.event(
+        task.id,
+        "planner_escalation_answer_pending",
+        `${id}: ${JSON.stringify({ questionId, who, answer, control: input })}`,
+      );
+      this.store.update(
+        task.id,
+        {
+          reason:
+            "Owner direction recorded; waiting for the worker turn to release",
+          resolution: {
+            ...current.resolution,
+            deferredVerb: {
+              input: { ...rest, __workerAsk: marker },
+              at: new Date().toISOString(),
+              why: "held",
+              target: null,
+            },
+          },
+        },
+        "owner_verb_deferred",
+        JSON.stringify({
+          action: input.action,
+          role: "worker",
+          why: "worker_ask",
+          target: marker,
+        }),
+      );
+      this.store.event(
+        task.id,
+        "agent_ask_yield",
+        `${waiting.askId}: owner direction is waiting for the worker turn`,
+      );
+    });
+    this.resolution.wakeDeferredDirection?.(task.id);
+    return true;
+  }
   private async settlePlannerEscalationOnce(
     t: Task,
     id: string,
@@ -399,6 +493,17 @@ export class EscalationSettlement {
           reason,
           ...grant,
         });
+        if (
+          await this.deferForWorkerAsk(
+            current,
+            id,
+            questionId,
+            who,
+            answer,
+            controlInput,
+          )
+        )
+          return null;
         this.store.event(
           t.id,
           "planner_escalation_answer_pending",
@@ -578,6 +683,17 @@ export class EscalationSettlement {
               ...grant,
             };
       const controlInput = taskControlInputSchema.parse(input);
+      if (
+        await this.deferForWorkerAsk(
+          current,
+          id,
+          questionId,
+          who,
+          answer,
+          controlInput,
+        )
+      )
+        return null;
       this.store.event(
         t.id,
         "planner_escalation_answer_pending",
@@ -683,7 +799,7 @@ export class EscalationSettlement {
     id: string,
     questionId: string,
     receiptEventId: number,
-  ): "applied" | "unknown" | null {
+  ): "applied" | "pending" | "unknown" | null {
     const events = this.store.eventsAll(taskId);
     const pending = events.findLast(
       (event) =>
@@ -708,6 +824,12 @@ export class EscalationSettlement {
       return "unknown";
     }
     if (intent.questionId !== questionId) return "unknown";
+    const deferred = this.store.task(taskId).resolution.deferredVerb?.input
+      .__workerAsk as
+      | { escalationId?: string; questionId?: string }
+      | undefined;
+    if (deferred?.escalationId === id && deferred.questionId === questionId)
+      return "pending";
     const control = intent.control;
     if (!control && escalationOutlived(this.store.task(taskId))) {
       this.store.event(

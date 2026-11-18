@@ -313,9 +313,7 @@ export interface ResolutionAdapter {
   ): Promise<string>;
   rerunFailedWorkflowRuns?(task: Task, runIds: string[]): Promise<string[]>;
   merge(task: Task, allowed?: () => boolean): Promise<void>;
-  merged(
-    task: Task,
-  ): Promise<{
+  merged(task: Task): Promise<{
     merged: boolean;
     commit: string | null;
     head: string;
@@ -1168,9 +1166,7 @@ export class Resolution {
       rung,
     );
   }
-  delegatedDelivery(
-    id: string,
-  ): {
+  delegatedDelivery(id: string): {
     taskId: string;
     recipient: string;
     role: string;
@@ -2543,10 +2539,15 @@ export class Resolution {
    * task's previous state. Keep the question history, but make later native
    * or delegated answers inert and close any linked board decision.
    */
-  supersedeOpenOwnerQuestions(taskId: string, reason: string): void {
+  supersedeOpenOwnerQuestions(
+    taskId: string,
+    reason: string,
+    exceptAskId?: string,
+  ): void {
     return this.questionSupersession.supersedeOpenOwnerQuestions(
       taskId,
       reason,
+      exceptAskId,
     );
   }
   answerOpenAgentAsks(
@@ -2987,6 +2988,7 @@ export class Resolution {
    * answer applies through the existing verbs, never through a new control.
    */
   applyOperatorControl?: (input: TaskControlInput) => Promise<unknown>;
+  wakeDeferredDirection?: (taskId: string) => void;
   launch(
     t: Task,
     role: Run["role"],

@@ -17384,19 +17384,21 @@ test("reported busy reviewer settles and starts the author without a sweep", asy
       head: run.head,
       reviewCommentId: 1,
     };
+    t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
     const started = Date.now();
-    f.engine.resolution.complete(result, token);
-    await f.engine.wakeTask(f.task.id);
+    const receipt = await f.engine.complete(result, token);
+    assert.equal(receipt.accepted, true);
     assert.equal(
       f.store.run(run.id)?.released,
       false,
       "an active turn keeps the lease",
     );
     f.idle(run.agentId!, run.workspaceId);
-    const deadline = Date.now() + 12000;
-    while (
-      Date.now() < deadline &&
-      f.current().resolution.currentRunId === run.id
+    t.mock.timers.tick(1000);
+    for (
+      let i = 0;
+      i < 1200 && f.current().resolution.currentRunId === run.id;
+      i++
     )
       await new Promise((resolve) => setTimeout(resolve, 10));
     assert.equal(f.store.run(run.id)?.released, true);
@@ -17421,13 +17423,68 @@ test("reported busy reviewer settles and starts the author without a sweep", asy
       `report-to-next-dispatch: ${elapsed} ms (task events, production backoff)`,
     );
     assert.ok(elapsed < 12000, `report-to-dispatch ${elapsed} ms`);
+    assert.ok(
+      events.some(
+        (event) =>
+          event.kind === "phase_latency" &&
+          event.detail.includes("Accepted result awaiting task admission"),
+      ),
+    );
     assert.ok(Date.now() - started < 12000);
   } finally {
     await f.close();
   }
 });
 
-test("busy reported run has a bounded number of direct observations", async (t) => {
+test("released result remains an overdue wait until the next run is admitted", async (t) => {
+  const f = fixture(false, false, undefined, true);
+  try {
+    await f.engine.wake();
+    const run = f.run();
+    f.idle(run.agentId!, run.workspaceId!);
+    const slotAdmissionReason = f.engine.resolution.slotAdmissionReason.bind(
+      f.engine.resolution,
+    );
+    f.engine.resolution.slotAdmissionReason = () => "Waiting for capacity";
+    t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
+    await f.engine.complete(
+      {
+        eventId: "latency-held-review",
+        taskId: f.task.id,
+        runId: run.id,
+        status: "changes_required",
+        reviewResponsibility: "author",
+        summary: "Fix",
+        head: run.head,
+        reviewCommentId: 1,
+      },
+      f.tokens.get(run.id)!,
+    );
+    await f.engine.quiesce();
+    assert.equal(f.store.run(run.id)?.released, true);
+    t.mock.timers.tick(31_000);
+    const { slowPhaseWaits } = await import("../service/runtime-health");
+    assert.ok(
+      slowPhaseWaits(f.store).some(
+        (wait) => wait.taskId === f.task.id && /released/.test(wait.cause),
+      ),
+    );
+    f.engine.resolution.slotAdmissionReason = slotAdmissionReason;
+    await f.engine.wakeTask(f.task.id);
+    await f.engine.quiesce();
+    assert.equal(f.run().role, "revision");
+    assert.equal(
+      slowPhaseWaits(f.store).filter((wait) => wait.taskId === f.task.id)
+        .length,
+      0,
+    );
+  } finally {
+    t.mock.timers.reset();
+    await f.close();
+  }
+});
+
+test("busy reported run keeps observing until it releases", async (t) => {
   const f = fixture(false, false, undefined, true);
   try {
     await f.engine.wake();
@@ -17467,27 +17524,95 @@ test("busy reported run has a bounded number of direct observations", async (t) 
     await f.engine.wakeTask(f.task.id);
     await new Promise((resolve) => setTimeout(resolve, 250));
     assert.equal(f.store.run(run.id)?.released, false);
-    assert.equal(
-      observations,
-      4,
-      "one callback observation plus three bounded follow-ups",
+    assert.ok(
+      observations > 4,
+      "observation continues after the initial backoff",
     );
-    const atBound = JSON.stringify(calls);
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    f.idle(run.agentId!, run.workspaceId!);
+    for (let i = 0; i < 50 && !f.store.run(run.id)?.released; i++)
+      await new Promise((resolve) => setTimeout(resolve, 10));
     assert.equal(
-      observations,
-      4,
-      "an unchanged busy run does not restart the budget",
+      f.store.run(run.id)?.released,
+      true,
+      "an idle observation releases the reported run",
     );
+    t.diagnostic(`continued observations while busy: ${observations}`);
+  } finally {
+    await f.close();
+  }
+});
+
+test("a timer re-observes an active run as its observation ages", async (t) => {
+  const f = fixture();
+  try {
+    await f.engine.wake();
+    const run = f.run();
+    f.engine.completionFollowUps.stop();
+    t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: Date.now() });
+    f.store.putRun({
+      ...run,
+      active: true,
+      lastObservedAt: new Date().toISOString(),
+    });
+    await f.engine.wakeTask(f.task.id);
+    f.idle(run.agentId!, run.workspaceId!);
+    for (const delay of [2000, 4000, 8000]) {
+      t.mock.timers.tick(delay);
+      await f.engine.quiesce();
+      assert.equal(f.store.run(run.id)?.active, true);
+    }
+    t.mock.timers.tick(2000);
+    await f.engine.quiesce();
     assert.equal(
-      JSON.stringify(calls),
-      atBound,
-      "no adapter method churns after the bound",
-    );
-    t.diagnostic(
-      `callback and three follow-ups under slow observations: ${JSON.stringify(calls)}`,
+      f.store.run(run.id)?.active,
+      false,
+      "the default cadence observes it at the 16-second deadline without a sweep",
     );
   } finally {
+    t.mock.timers.reset();
+    await f.close();
+  }
+});
+
+test("an unknown stale observation retries with backoff instead of spinning", async (t) => {
+  const f = fixture();
+  try {
+    await f.engine.wake();
+    const run = f.run();
+    f.engine.completionFollowUps.stop();
+    t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: Date.now() });
+    const lastObservedAt = new Date(Date.now() - 20_000).toISOString();
+    f.store.putRun({ ...run, active: true, lastObservedAt });
+    f.engine.completionFollowUpDelays = [100];
+    let observations = 0;
+    const original = f.adapter.observe.bind(f.adapter);
+    f.adapter.observe = async (id) => {
+      if (id !== run.agentId) return original(id);
+      observations++;
+      return {
+        id,
+        workspaceId: run.workspaceId!,
+        status: "pending",
+        active: false,
+        permissions: false,
+        error: "",
+      };
+    };
+    await f.engine.wakeTask(f.task.id);
+    t.mock.timers.tick(0);
+    await f.engine.quiesce();
+    const afterDeadline = observations;
+    assert.ok(afterDeadline > 0);
+    t.mock.timers.tick(99);
+    await f.engine.quiesce();
+    assert.equal(observations, afterDeadline);
+    t.mock.timers.tick(1);
+    await f.engine.quiesce();
+    assert.ok(observations > afterDeadline);
+    assert.equal(f.store.run(run.id)?.lastObservedAt, lastObservedAt);
+    assert.equal(f.store.run(run.id)?.active, true);
+  } finally {
+    t.mock.timers.reset();
     await f.close();
   }
 });

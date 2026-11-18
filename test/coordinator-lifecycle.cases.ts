@@ -3889,6 +3889,8 @@ test("a same-head author return puts its review ahead of the applied findings, n
     scheduleLifecycleFollowUp: (taskId: string) => void;
   };
   lanes.scheduleLifecycleFollowUp = () => {};
+  const wakeTask = f.engine.wakeTask.bind(f.engine);
+  f.engine.wakeTask = async () => {};
   try {
     // An ordinary changes_required verdict applies at the head, so the author
     // return is the open decision.
@@ -3908,6 +3910,7 @@ test("a same-head author return puts its review ahead of the applied findings, n
     );
     f.idle("review-agent");
     await f.engine.resolution.observe();
+    await wakeTask(f.submitted.id);
     await f.engine.quiesce();
     assert.equal(f.current().phase, "changes_requested");
     assert.equal(
@@ -3919,7 +3922,7 @@ test("a same-head author return puts its review ahead of the applied findings, n
       true,
       "the author revision is the open decision",
     );
-    await f.engine.wake();
+    await wakeTask(f.submitted.id);
     // The retained author's revision returns ready_for_review at the same unchanged head.
     const revision = f.current().resolution.currentRunId;
     assert.ok(revision, "the revision run was dispatched");
@@ -3939,6 +3942,7 @@ test("a same-head author return puts its review ahead of the applied findings, n
       f.tokens.get(revision)!,
     );
     await f.engine.resolution.observe();
+    await wakeTask(f.submitted.id);
     await f.engine.quiesce();
     assert.equal(f.current().phase, "awaiting_review");
     assert.equal(
@@ -3992,6 +3996,7 @@ test("a same-head author return puts its review ahead of the applied findings, n
       /another request to return the author/,
     );
   } finally {
+    delete (f.engine as unknown as { wakeTask?: unknown }).wakeTask;
     delete (lanes as { scheduleLifecycleFollowUp?: unknown })
       .scheduleLifecycleFollowUp;
     await f.close();
@@ -4560,6 +4565,77 @@ test("a coordinator refreshes its plan once after a stale version refusal", asyn
     assert.equal(f.events("coordinator_action_refused").length, 0);
     assert.equal(workerTurns(f).length, 1);
   } finally {
+    await f.close();
+  }
+});
+
+test("an active recovery without a result is observed by the default timer", async (t) => {
+  const f = fixture();
+  try {
+    const run = await workerErrorEpisode(f);
+    f.engine.completionFollowUps.stop();
+    f.states.set(run.agentId!, {
+      ...f.states.get(run.agentId!)!,
+      status: "running",
+      active: true,
+    });
+    t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: Date.now() });
+    let observed = 0;
+    f.hooks.onObserve = (id) => {
+      if (id === run.agentId) observed++;
+    };
+    await f.engine.wakeTask(f.submitted.id);
+    const initial = observed;
+    assert.ok(initial > 0);
+    f.idle(run.agentId!);
+    t.mock.timers.tick(2000);
+    await f.engine.quiesce();
+    assert.ok(
+      observed > initial,
+      "the service re-observes recovery without a sweep or callback",
+    );
+  } finally {
+    t.mock.timers.reset();
+    await f.close();
+  }
+});
+
+test("a reported busy recovery is re-observed and released on its timer", async (t) => {
+  const f = fixture();
+  try {
+    const run = await workerErrorEpisode(f);
+    f.engine.completionFollowUpDelays = [5000];
+    f.states.set(run.agentId!, {
+      ...f.states.get(run.agentId!)!,
+      status: "running",
+      active: true,
+    });
+    t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: Date.now() });
+    await f.engine.complete(
+      {
+        eventId: "timed-recovery",
+        taskId: f.submitted.id,
+        runId: run.id,
+        status: "recovered",
+        summary: "Continue",
+        coordinatorGeneration: run.generation,
+        coordinatorAction: {
+          verb: "restart",
+          role: "worker",
+          instruction: "Continue",
+          reason: "Continue",
+        },
+      },
+      f.tokens.get(run.id)!,
+    );
+    await f.engine.quiesce();
+    assert.equal(f.run(run.id).released, false);
+    f.idle(run.agentId!);
+    t.mock.timers.tick(5000);
+    await f.engine.quiesce();
+    assert.equal(f.run(run.id).released, true);
+  } finally {
+    t.mock.timers.reset();
     await f.close();
   }
 });

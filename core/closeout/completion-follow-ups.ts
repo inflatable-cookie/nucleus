@@ -119,10 +119,15 @@ export class CompletionFollowUps {
   }
   private readonly completionFollowUps = new Map<
     string,
-    { key: string; attempts: number; timer?: ReturnType<typeof setTimeout> }
+    {
+      key: string;
+      attempts: number;
+      attemptedDeadlines: Map<string, number>;
+      timer?: ReturnType<typeof setTimeout>;
+    }
   >();
-  /** Replaceable by tests; five follow-ups over 62 seconds, then the safety sweep owns recovery. */
-  completionFollowUpDelays = [2000, 4000, 8000, 16000, 32000];
+  /** Replaceable by tests; keep observing a reported thread at most 16 seconds apart. */
+  completionFollowUpDelays = [2000, 4000, 8000, 16000];
   private readonly terminalArchiveFollowUps = new Map<
     string,
     { attempts: number; timer?: ReturnType<typeof setTimeout> }
@@ -249,14 +254,20 @@ export class CompletionFollowUps {
    * signal can wake the lane sooner; timers never authorize release themselves. */
   scheduleCompletionFollowUp(task: Task, runs: Run[]): void {
     const pending = runs
-      .filter((run) => !run.released && run.completion)
-      .map((run) => JSON.stringify([run.id, run.completion!.eventId]));
+      .filter((run) => !run.released && (run.completion || run.active))
+      .map((run) =>
+        JSON.stringify([run.id, run.completion?.eventId ?? "active"]),
+      );
     if (
       task.phase === "working" &&
       task.completion &&
       task.runId === task.completion.runId
     )
       pending.push(JSON.stringify([task.runId, task.completion.eventId]));
+    if (task.resolution.deferredVerb?.input.__workerAsk)
+      pending.push(
+        JSON.stringify(["worker-ask", task.resolution.deferredVerb.at]),
+      );
     const key = pending.length ? JSON.stringify(pending.sort()) : "";
     let follow = this.completionFollowUps.get(task.id);
     if (!key || task.removedAt || dispatchBlocked(task)) {
@@ -266,14 +277,39 @@ export class CompletionFollowUps {
     }
     if (!follow || follow.key !== key) {
       if (follow?.timer) clearTimeout(follow.timer);
-      follow = { key, attempts: 0 };
+      follow = { key, attempts: 0, attemptedDeadlines: new Map() };
       this.completionFollowUps.set(task.id, follow);
     }
-    if (follow.timer || follow.attempts >= this.completionFollowUpDelays.length)
-      return;
-    const delay = this.completionFollowUpDelays[follow.attempts++];
+    if (follow.timer || !this.completionFollowUpDelays.length) return;
+    const backoff =
+      this.completionFollowUpDelays[
+        Math.min(follow.attempts++, this.completionFollowUpDelays.length - 1)
+      ];
+    const deadlines = runs
+      .filter((run) => !run.released && run.active)
+      .map((run) => ({
+        id: run.id,
+        deadline: Date.parse(run.lastObservedAt ?? run.createdAt) + 16_000,
+      }))
+      .filter(
+        (item) =>
+          Number.isFinite(item.deadline) &&
+          follow!.attemptedDeadlines.get(item.id) !== item.deadline,
+      );
+    const delay = deadlines.length
+      ? Math.max(
+          0,
+          Math.min(
+            backoff,
+            Math.min(...deadlines.map((item) => item.deadline)) - Date.now(),
+          ),
+        )
+      : backoff;
     follow.timer = setTimeout(() => {
       follow!.timer = undefined;
+      for (const item of deadlines)
+        if (item.deadline <= Date.now())
+          follow!.attemptedDeadlines.set(item.id, item.deadline);
       if (!settlementHeld(this.store, this.engine.stopped))
         void this.engine.cleanContext(() => this.engine.wakeTask(task.id));
     }, delay);

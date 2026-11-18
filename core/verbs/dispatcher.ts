@@ -124,9 +124,20 @@ export class TaskControlDispatcher {
       this.engine.settleLadderControl(before, result, input.action);
       // An applied owner instruction replaces open questions about the prior
       // task state. Their later answers remain auditable but cannot steer it.
+      const marker = this.engine.replayingDeferredVerb.getStore()
+        ? before.resolution.deferredVerb?.input.__workerAsk
+        : null;
+      const askId =
+        marker &&
+        typeof marker === "object" &&
+        "askId" in marker &&
+        typeof marker.askId === "string"
+          ? marker.askId
+          : undefined;
       this.resolution.supersedeOpenOwnerQuestions(
         input.taskId,
         `${input.action} applied at task version ${result.version}`,
+        askId,
       );
     }
     try {

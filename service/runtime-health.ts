@@ -13,6 +13,8 @@ import type { HostRunOutputFailureSummary } from "../core/host-runs/host-run-out
 import type { Admission } from "../core/host/admission";
 import type { HostRegistry } from "../core/host/host-registry";
 import type { Engine } from "../core/engine";
+import { phaseLatency } from "../core/scheduling/phase-latency";
+import { mergeFenced } from "../shared/contracts";
 import { hostKindOf } from "../shared/host-kind";
 import type { BbHostStatus } from "./bb-host";
 import type { BbPluginRollRecord } from "../shared/bb-plugin-roll";
@@ -97,6 +99,14 @@ export interface RuntimeHealth {
   admission: PaseoAdmission;
   /** Durable cursor evidence for the bounded safety sweep. */
   reconciliation: ReconciliationSweep;
+  /** Task facts that have waited over 30 seconds for a Nucleus lane. */
+  slowPhaseWaits?: {
+    taskId: string;
+    reference: string | null;
+    since: string;
+    cause: string;
+    elapsedMs: number;
+  }[];
   /**
    * Whether the post-connect bootstrap is pending and since when. A bootstrap that
    * hangs is otherwise invisible: health reported ready throughout the wedge that
@@ -282,6 +292,78 @@ export function retentionFailureEvidence(
   }
 }
 
+/** Only facts queued for a Nucleus lane are waits here; external work is not. */
+export function slowPhaseWaits(
+  store: Store,
+  at = Date.now(),
+): NonNullable<RuntimeHealth["slowPhaseWaits"]> {
+  return store
+    .maintenanceTasks()
+    .flatMap((task) => {
+      const pending = phaseLatency(store, task.id).pending;
+      const integrationWait =
+        ["verifying", "merging"].includes(task.phase) &&
+        (pending.some((wait) => wait.key.startsWith("release:")) ||
+          store
+            .runs(task.id)
+            .some(
+              (run) =>
+                run.role === "reviewer" &&
+                run.released &&
+                run.completion?.status === "ready_to_merge",
+            ));
+      const integrationHeld =
+        integrationWait &&
+        mergeFenced(task) &&
+        !task.resolution.mergeIntent &&
+        !task.resolution.mergedCommit;
+      return pending
+        .filter((wait) => {
+          if (integrationHeld) return false;
+          if (!wait.key.startsWith("callback:")) return true;
+          const eventId = wait.key.slice("callback:".length);
+          const run = store
+            .runs(task.id)
+            .find(
+              (item) => item.completion?.eventId === eventId && !item.released,
+            );
+          return !(
+            run?.active &&
+            run.lastObservedAt &&
+            Date.parse(run.lastObservedAt) >= Date.parse(wait.since) &&
+            at - Date.parse(run.lastObservedAt) < 16_000
+          );
+        })
+        .map((wait) => {
+          // A released operator fence starts a new admission opportunity; do not
+          // attribute the preceding external wait to Nucleus after it is lifted.
+          const released = integrationWait
+            ? store
+                .eventsAll(task.id)
+                .filter(
+                  (event) =>
+                    (["merge_release", "release"].includes(event.kind) ||
+                      (event.kind === "hold_auto_released" &&
+                        /^(merge|dispatch);/.test(event.detail))) &&
+                    Date.parse(event.at) > Date.parse(wait.since) &&
+                    Date.parse(event.at) <= at,
+                )
+                .at(-1)
+            : undefined;
+          const since = released?.at ?? wait.since;
+          return {
+            taskId: task.id,
+            reference: task.reference ?? null,
+            since,
+            cause: wait.cause,
+            elapsedMs: Math.max(0, at - Date.parse(since)),
+          };
+        })
+        .filter((wait) => wait.elapsedMs > 30_000);
+    })
+    .sort((a, b) => b.elapsedMs - a.elapsedMs);
+}
+
 export class RuntimeHealthProjection {
   private readonly context: RuntimeHealthContext;
 
@@ -362,6 +444,7 @@ export class RuntimeHealthProjection {
         ? this.context.admissionRpcMetrics()
         : null,
       reconciliation: this.context.engine.reconciliationSnapshot(),
+      slowPhaseWaits: slowPhaseWaits(store),
       eventLoop: this.context.eventLoopDelay.report(),
       capacityAuthority: (() => {
         const state = this.context.capacityChanges.state();

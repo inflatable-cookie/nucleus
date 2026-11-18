@@ -88,6 +88,7 @@ function fixture() {
     repoPath = "/project-a",
     dependsOn: string[] = [],
     lanes: string[] = [],
+    hostId = "host",
   ) =>
     store.insert(
       submissionSchema.parse({
@@ -100,7 +101,7 @@ function fixture() {
         handoffPath: "handoff.md",
         originAgentId: "origin",
       }),
-      "host",
+      hostId,
       "handoff",
       "a".repeat(40),
     );
@@ -469,17 +470,15 @@ test("routing epochs notice catalog, pool, subscription, usage and demand change
     {
       name: "subscription expiry",
       before: (f) => {
-        f.store.db
-          .prepare("INSERT INTO availability VALUES(?,?)")
-          .run(
-            "test",
-            JSON.stringify({
-              group: "test",
-              unavailable: true,
-              reason: "limit",
-              retryAt: "2999-01-01T00:00:00.000Z",
-            }),
-          );
+        f.store.db.prepare("INSERT INTO availability VALUES(?,?)").run(
+          "test",
+          JSON.stringify({
+            group: "test",
+            unavailable: true,
+            reason: "limit",
+            retryAt: "2999-01-01T00:00:00.000Z",
+          }),
+        );
       },
       change: (f) => {
         f.store.db
@@ -675,6 +674,24 @@ test("a freed slot wakes the ready head past a route-unavailable task", async ()
     await f.engine.quiesce();
     assert.notEqual(f.store.task(ready.id).phase, "queued");
     assert.equal(f.store.task(blocked.id).phase, "queued");
+  } finally {
+    await f.close();
+  }
+});
+
+test("a freed slot passes an offline head to a healthy waiter", async () => {
+  const f = fixture();
+  try {
+    f.store.setMeta("globalLimit", 1);
+    const offline = f.add("/project-a", [], [], "offline"),
+      healthy = f.add();
+    f.engine.hostAvailable = (id) => id !== "offline";
+    (
+      f.engine as unknown as { wakeCapacityWaiter(id: string): void }
+    ).wakeCapacityWaiter("released");
+    await f.engine.quiesce();
+    assert.equal(f.store.task(offline.id).phase, "queued");
+    assert.notEqual(f.store.task(healthy.id).phase, "queued");
   } finally {
     await f.close();
   }
