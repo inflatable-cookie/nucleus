@@ -9,6 +9,8 @@ import { now } from '../store/store';
 import type { Engine } from '../engine';
 import { collectOwnerVerbFacts, ownerEffectIdentity, ownerPendingEffects } from './owner-verbs';
 import { buildOutputCleanupHooks, buildOutputDirectoryAbsent } from '../workspaces/worktree-cleanup';
+import { reconcileGoneWorkspace } from '../closeout/archive-reconcile';
+import { terminalArchiveWorkspaces } from '../closeout/terminal-archive';
 
 /**
  * The owner's `retry_effect` verb: one named failed or uncertain side effect is
@@ -37,10 +39,13 @@ export class RetryEffectControls {
     const dispositionSettled = this.engine.replayedDispositionWorkspaceOutcome(task, input, operationId);
     if (dispositionSettled) return dispositionSettled;
     this.engine.requireOwnerControlCurrent(task, input.version, 'Task changed; refresh before retrying');
-    const beforeSettlement = this.engine.retryEffectBeforeSettlement(task, input);
-    if (beforeSettlement) return beforeSettlement;
+    // Observe a gone archive or cleanup target before any send. A terminal
+    // archive otherwise joins its cleanup lane in beforeSettlement and would
+    // resend while the host is unreachable.
     const absentCleanup = await this.settleAbsentCleanup(task, input);
     if (absentCleanup) return absentCleanup;
+    const beforeSettlement = this.engine.retryEffectBeforeSettlement(task, input);
+    if (beforeSettlement) return beforeSettlement;
     // An uncertain host-effect control the task has since answered settles by
     // observation, without force: the owner asked for the effect to be observed,
     // and the task's own later record is that observation (nucleus#1159).
@@ -78,10 +83,15 @@ export class RetryEffectControls {
 
   /** Settle an already-gone terminal target without replaying a cleanup effect. */
   private async settleAbsentCleanup(task: Task, input: TaskControlInput): Promise<Task | null> {
+    const archiveId = input.effect ? ownerEffectIdentity(input.effect, 'workspace_archive') : null;
+    if (archiveId && task.phase === 'done') {
+      const archived = await this.settleAbsentArchive(task, archiveId);
+      if (archived) return archived;
+    }
     const id = input.effect ? ownerEffectIdentity(input.effect, 'build_output_cleanup') : null;
     if (!id || !['done', 'cancelled'].includes(task.phase) || task.workspaceId !== id || !task.directory) return null;
     const record = task.resolution.buildOutputCleanups.find(item => item.workspaceId === id && !item.runId);
-    if (!record || !['uncertain', 'skipped'].includes(record.state) || record.directory !== task.directory) return null;
+    if (!record || !['uncertain', 'skipped', 'intent'].includes(record.state) || record.directory !== task.directory) return null;
     if (!await buildOutputDirectoryAbsent(record.directory)) return null;
     const adapter = this.engine.adapter;
     if (!adapter.preflightWorkspaceStorage || !adapter.taskWorkspaceArchived)
@@ -97,6 +107,36 @@ export class RetryEffectControls {
       });
       return this.store.task(task.id);
     });
+  }
+
+  /**
+   * Observe a named workspace archive before the cleanup lane can send. Catalog
+   * and disk both gone settle it; an unknown observation waits; a still-present
+   * workspace falls through to the ordinary owner-authorized retry.
+   */
+  private async settleAbsentArchive(task: Task, id: string): Promise<Task | null> {
+    const runs = this.store.runs(task.id);
+    const workspace = terminalArchiveWorkspaces(task, runs).find(item => item.id === id);
+    if (!workspace?.id || !workspace.directory || !workspace.head) return null;
+    const gone = await reconcileGoneWorkspace({
+      adapter: this.engine.adapter, retirement: this.engine.retirement, store: this.store,
+      update: this.engine.resolution.update.bind(this.engine.resolution),
+      primaryArchived: candidate => this.primaryArchived(candidate),
+    }, task, workspace, id, runs);
+    if (gone.kind === 'archived') return gone.task;
+    return null;
+  }
+
+  private primaryArchived(task: Task): boolean {
+    const current = this.store.task(task.id), primary = current.workspaceId;
+    if (!primary || current.directory !== task.directory || !current.resolution.archivedWorkspaceIds.includes(primary)) return false;
+    const retirement = current.resolution.runtimeRetirements.find(record => record.workspaceId === primary && record.directory === current.directory);
+    if (!retirement || retirement.state !== 'retired' || !retirement.scope || !retirement.provedAt) return false;
+    const provedAt = retirement.provedAt;
+    return this.store.eventsAll(task.id).some(event => event.kind === 'workspace_archived'
+      && event.detail.split('; ').includes(`workspace ${primary}`)
+      && !event.detail.includes('observed absent from the catalog and disk without a Queue archive intent')
+      && retirement.capturedAt <= event.at && retirement.capturedAt <= provedAt);
   }
 
   /**

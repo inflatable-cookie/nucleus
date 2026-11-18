@@ -38,16 +38,22 @@ export type GoneWorkspaceOutcome =
  */
 export async function reconcileGoneWorkspace(ctx: GoneWorkspaceContext, task: Task,
   workspace: TerminalWorkspace, id: string, runs: Run[]): Promise<GoneWorkspaceOutcome> {
-  const intended = ctx.store.task(task.id).resolution.archiveIntentWorkspaceId === id;
-  if (!intended && !(ctx.adapter.taskWorkspaceArchived && !existsSync(workspace.directory!))) return { kind: 'present' };
+  const current = ctx.store.task(task.id);
+  if (current.resolution.archivedWorkspaceIds.includes(id)) return { kind: 'archived', task: current };
+  const intended = current.resolution.archiveIntentWorkspaceId === id;
+  // A recorded retry is the same obligation as a recorded intent: the previous
+  // attempt is owed observation, never a silent present-path that can resend
+  // while the host is unreachable.
+  const owed = intended || current.resolution.workspaceArchiveRetries.some(record => record.workspaceId === id);
+  if (!owed && !(ctx.adapter.taskWorkspaceArchived && !existsSync(workspace.directory!))) return { kind: 'present' };
   if (!ctx.adapter.taskWorkspaceArchived) throw Error(`Waiting to reconcile the uncertain workspace archive for ${id}: workspace observation is unavailable`);
   let observed: boolean;
   try { observed = await ctx.adapter.taskWorkspaceArchived(id); }
   catch (error) {
-    if (intended) throw Error(`Waiting to reconcile the uncertain workspace archive for ${id}: ${error instanceof Error ? error.message : String(error)}`);
-    observed = false; // No intent: an unanswered observation leaves the ordinary archive path.
+    if (owed) throw Error(`Waiting to reconcile the uncertain workspace archive for ${id}: ${error instanceof Error ? error.message : String(error)}`);
+    observed = false; // No intent or retry: an unanswered observation leaves the ordinary archive path.
   }
-  if (!observed || existsSync(workspace.directory!)) return intended ? { kind: 'uncertain', observed } : { kind: 'present' };
+  if (!observed || existsSync(workspace.directory!)) return owed ? { kind: 'uncertain', observed } : { kind: 'present' };
   const reviewRun = runs.find(run => run.reviewSourceView?.workspaceId === id);
   if (reviewRun) {
     const view = reviewRun.reviewSourceView!;
