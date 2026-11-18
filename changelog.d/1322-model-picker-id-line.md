@@ -1,0 +1,1 @@
+- Settings: the profile editor's model picker shows each model's name with its full model ID (for example `opencode-go/deepseek-v4.1-flash`) on a smaller second line, in the menu and the closed control, so models routed through pi or OpenCode show their provider. A name equal to its ID shows once. `DropdownSelect` options take an optional `detail` line.

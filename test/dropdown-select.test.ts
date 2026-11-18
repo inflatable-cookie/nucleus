@@ -8,7 +8,7 @@ const h = React.createElement;
 const colors = new Proxy({}, { get: () => '#123' }) as never;
 
 type HarnessProps = {
-  options: { value: string; label: string; group?: string }[];
+  options: { value: string; label: string; group?: string; detail?: string }[];
   initial?: string;
   placeholder?: string;
   disabled?: boolean;
@@ -114,4 +114,28 @@ test('Escape or an outside press closes the menu without choosing', async () => 
   } finally {
     delete (globalThis as unknown as { document?: unknown }).document;
   }
+});
+
+test('an option\'s detail is a muted second line in the menu and the closed trigger, and joins both accessible names', async () => {
+  type Node = { type: string; props: Record<string, any>; children: Array<Node | string> };
+  const texts = (node: Node): string[] => node.type === 'Text' ? [node.children.join('')]
+    : (node.children.filter(child => typeof child !== 'string') as Node[]).flatMap(texts);
+  const detailed = [
+    { value: 'opencode-go/deepseek-v4.1-flash', label: 'Deepseek', detail: 'opencode-go/deepseek-v4.1-flash' },
+    { value: 'same', label: 'same', detail: 'same' },
+    { value: 'plain', label: 'Plain' },
+  ];
+  const { ui } = await harness({ options: detailed, initial: 'opencode-go/deepseek-v4.1-flash' });
+  const trigger = ui.get('Choice, Deepseek, opencode-go/deepseek-v4.1-flash') as Node;
+  assert.deepEqual(texts(trigger), ['Deepseek', 'opencode-go/deepseek-v4.1-flash'], 'the closed trigger shows both lines');
+  ui.press('Choice, Deepseek, opencode-go/deepseek-v4.1-flash');
+  assert.deepEqual(texts(ui.get('Choice: Deepseek, opencode-go/deepseek-v4.1-flash') as Node), ['Deepseek', 'opencode-go/deepseek-v4.1-flash']);
+  assert.deepEqual(texts(ui.get('Choice: same') as Node), ['same'], 'a detail equal to the label shows once');
+  assert.deepEqual(texts(ui.get('Choice: Plain') as Node), ['Plain'], 'an option without a detail keeps one line');
+  const idLine = ui.ofType('Text').find(node => node.children.join('') === 'opencode-go/deepseek-v4.1-flash')!;
+  assert.equal(idLine.props.numberOfLines, 1, 'the detail line truncates instead of widening the menu');
+  assert.ok(idLine.props.style.fontSize < ui.ofType('Text').find(node => node.children.join('') === 'Plain')!.props.style.fontSize, 'the detail is smaller than the label');
+  ui.press('Choice: same');
+  assert.deepEqual(texts(ui.get('Choice, same') as Node), ['same'], 'the trigger shows a matching label once');
+  ui.update(h('View'));
 });

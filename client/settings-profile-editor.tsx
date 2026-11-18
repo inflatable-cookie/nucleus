@@ -121,7 +121,8 @@ export function ProfileEditor({ c, catalog, catalogs, directory, projects, repos
       ? [{ value: draft.provider, label: `${draft.provider} · unavailable` }] : []),
   ];
   const modelOptions = [
-    ...(provider?.models ?? []).map(candidate => ({ value: candidate.id, label: candidate.label || candidate.id })),
+    // The model ID tells apart providers routed through one harness (pi, OpenCode); the option drops it when it equals the name.
+    ...(provider?.models ?? []).map(candidate => ({ value: candidate.id, label: candidate.label || candidate.id, detail: candidate.id })),
     ...(draft.model && !(provider?.models ?? []).some(candidate => candidate.id === draft.model || candidate.aliases.includes(draft.model))
       ? [{ value: draft.model, label: draft.model }] : []),
   ];

@@ -163,7 +163,7 @@ test('Settings Profiles creates a profile from the host catalog and shows the un
     assert.equal(ui.query('Save'), undefined);
     ui.type('Name', 'Fast worker');
     choose(ui, 'Provider', 'Codex', 'Choose a provider');
-    choose(ui, 'Model', 'GPT-5', 'Choose a model');
+    choose(ui, 'Model', 'GPT-5, gpt-5', 'Choose a model');
     await settle(() => state.creates.length === 1);
     assert.deepEqual(state.creates[0], {
       name: 'Fast worker', provider: 'codex', model: 'gpt-5',
@@ -234,7 +234,7 @@ test('Settings Profiles keeps a draft on a refused save and names the reason', a
     await settle(() => Boolean(ui.query('Provider: Codex')));
     ui.press('Provider: Codex');
     await settle(() => Boolean(ui.query('Model, Choose a model')));
-    choose(ui, 'Model', 'GPT-5', 'Choose a model');
+    choose(ui, 'Model', 'GPT-5, gpt-5', 'Choose a model');
     await settle(() => /Not saved: the profile store is unavailable/.test(ui.text()));
     assert.equal(ui.get('Name').props.value, 'Doomed', 'the draft survives the refusal');
     assert.equal(state.creates.length, 0);
@@ -245,7 +245,7 @@ test('Settings Profiles keeps a draft on a refused save and names the reason', a
     assert.equal(labelsIn(ui.get('New profile editor') as Node).includes('Profile save status'), true, 'the failure stays inside the editor');
     assert.equal(failure.props.accessibilityLiveRegion, 'polite');
     fail = false;
-    choose(ui, 'Model', 'GPT-5 mini', 'GPT-5');
+    choose(ui, 'Model', 'GPT-5 mini, gpt-5-mini', 'GPT-5, gpt-5');
     await settle(() => state.creates.length === 1);
     // The created profile opens in its own editor; a rename there saves after its pause and reads Saved.
     await settle(() => Boolean(ui.query('Doomed editor')));
@@ -274,7 +274,7 @@ test('the add flow uses dropdowns, Host default plain text, and a short unavaila
     assert.doesNotMatch(ui.text(), /Sign in required to use Cursor/);
     ui.press('Provider: Cursor · needs sign-in');
     await settle(() => Boolean(ui.query('Model, Choose a model')));
-    choose(ui, 'Model', 'Cursor 1', 'Choose a model');
+    choose(ui, 'Model', 'Cursor 1, cursor-1', 'Choose a model');
     assert.equal(ui.query('Mode, Host default'), undefined, 'an empty mode list is not a dropdown');
     assert.equal(ui.query('Thinking, Host default'), undefined, 'an empty thinking list is not a dropdown');
     const hostDefault = ui.ofType('Text').filter(node => node.children.join('') === 'Host default');
@@ -354,7 +354,7 @@ test('Profiles shows loading, an empty list, a catalog error, and long names wit
     await settle(() => Boolean(ui.query('Name')));
     assert.equal(ui.query('Notes'), undefined);
     assert.ok(ui.get('Provider, Codex'));
-    assert.ok(ui.get('Model, GPT-5'));
+    assert.ok(ui.get('Model, GPT-5, gpt-5'));
   } finally { ui.update(h('View', null)); }
 });
 
@@ -452,7 +452,7 @@ test('when registered projects disagree on feature values, Profiles names the pr
     ui.press('Add profile');
     await settle(() => Boolean(ui.query('Provider, Choose a provider')));
     choose(ui, 'Provider', 'Codex', 'Choose a provider');
-    choose(ui, 'Model', 'GPT-5', 'Choose a model');
+    choose(ui, 'Model', 'GPT-5, gpt-5', 'Choose a model');
     await settle(() => /Feature values differ for App and Other/.test(ui.text()) || /Feature values differ for Other and App/.test(ui.text()));
     assert.doesNotMatch(ui.text(), /\/app|\/other/);
     assert.ok(ui.get('Choose which project to use'));
@@ -474,7 +474,7 @@ test('removing a profile added this session leaves no ghost row', async () => {
     await settle(() => Boolean(ui.query('Close new profile')) && Boolean(ui.query('Provider, Choose a provider')));
     ui.type('Name', 'Fast worker');
     choose(ui, 'Provider', 'Codex', 'Choose a provider');
-    choose(ui, 'Model', 'GPT-5', 'Choose a model');
+    choose(ui, 'Model', 'GPT-5, gpt-5', 'Choose a model');
     await settle(() => state.creates.length === 1 && Boolean(ui.query('Close Fast worker') || ui.query('Edit Fast worker')));
     if (ui.query('Edit Fast worker')) ui.press('Edit Fast worker');
     await settle(() => Boolean(ui.query('Remove Fast worker')));
@@ -682,7 +682,7 @@ test('model option fields flow two to a row, an odd last one spans the row, and 
     assert.equal(rows().length, 0, 'no option rows before a model is chosen');
     layout(688);
     choose(ui, 'Provider', 'Codex', 'Choose a provider');
-    choose(ui, 'Model', 'GPT-5', 'Choose a model');
+    choose(ui, 'Model', 'GPT-5, gpt-5', 'Choose a model');
     await settle(() => rows().length === 2);
     const order = rows().map(cells => cells.map(cell => labelsIn(cell).find(label => /^(Mode|Thinking|Permissions), |^Feature Web search on$/.test(label))));
     assert.deepEqual(order, [['Mode, Host default', 'Thinking, High'], ['Feature Web search on', 'Permissions, Ask']], 'Mode and Thinking, then the features, two to a row');
@@ -690,12 +690,12 @@ test('model option fields flow two to a row, an odd last one spans the row, and 
     layout(358);
     for (const cells of rows()) for (const cell of cells) assert.equal(cell.props.style.minWidth, '100%', 'stacked on a phone');
     layout(688);
-    choose(ui, 'Model', 'GPT-5 mini', 'GPT-5');
+    choose(ui, 'Model', 'GPT-5 mini, gpt-5-mini', 'GPT-5, gpt-5');
     await settle(() => rows().length === 1 && rows()[0].length === 2);
     assert.ok(labelsIn(rows()[0][0]).includes('Mode, Host default'));
     assert.match(ui.text(), /Host default/, 'an empty thinking list stays plain text beside Mode');
     choose(ui, 'Provider', 'Claude', 'Codex');
-    choose(ui, 'Model', 'Claude 1', 'Choose a model');
+    choose(ui, 'Model', 'Claude 1, claude-1', 'Choose a model');
     await settle(() => rows().length === 1 && rows()[0].length === 1);
     assert.equal(rows()[0][0].props.style.flex, 1, 'a lone option spans the row');
   } finally { ui.update(h('View', null)); }
@@ -848,5 +848,53 @@ test('nucleus#970: while the first catalog read is in flight, no row reads unava
     await settle(() => ui.text().includes('Sol') && state.catalogReads.length > 0);
     assert.equal(ui.query('Sol: Unavailable'), undefined);
     assert.equal(ui.get('Refresh providers and models').props.accessibilityHint, 'Refresh providers and models');
+  } finally { ui.update(h('View', null)); }
+});
+
+test('nucleus#1322: the model picker shows each model\'s name and its model ID, once when they match', async () => {
+  await load();
+  const { paseoCatalog } = await import('./support/pool-shapes');
+  // Paseo's pi catalog shape; a synthetic second upstream shares the Deepseek label, so only the ID tells them apart.
+  const host = paseoCatalog();
+  const pi = host.providers.find(provider => provider.key === 'pi')!;
+  pi.models.push({ ...pi.models[1]!, id: 'opencode/deepseek-v4.1-flash' });
+  const state = fixture();
+  state.catalogAnswer = async () => ({ ...host, readAt: '2026-11-18T09:00:00.000Z' });
+  state.profiles = [
+    { id: 'pi', name: 'Pi deepseek', provider: 'pi', model: 'opencode-go/deepseek-v4.1-flash', notes: '' } as NucleusProfile,
+    { id: 'opus', name: 'Opus', provider: 'claude', model: 'claude-opus-5-5', notes: '' } as NucleusProfile,
+    { id: 'gone', name: 'Retired', provider: 'pi', model: 'opencode-go/retired-1', notes: '' } as NucleusProfile,
+  ];
+  const ui = mount(screenTree(state));
+  const lines = (node: Node) => (node.children.filter(child => typeof child !== 'string') as Node[]).flatMap(function texts(child: Node): string[] {
+    return child.type === 'Text' ? [child.children.join('')] : (child.children.filter(inner => typeof inner !== 'string') as Node[]).flatMap(texts);
+  });
+  try {
+    await settle(() => ui.text().includes('Profiles'));
+    ui.press('Profiles');
+    await settle(() => ui.text().includes('Pi deepseek') && state.catalogReads.length > 0);
+
+    ui.press('Edit Pi deepseek');
+    await settle(() => Boolean(ui.query('Model, Deepseek, opencode-go/deepseek-v4.1-flash')));
+    const trigger = ui.get('Model, Deepseek, opencode-go/deepseek-v4.1-flash') as Node;
+    assert.deepEqual(lines(trigger), ['Deepseek', 'opencode-go/deepseek-v4.1-flash'], 'the closed control shows the name over the model ID');
+    ui.press('Model, Deepseek, opencode-go/deepseek-v4.1-flash');
+    for (const [name, id] of [['Muse', 'opencode-go/muse-spark-1.3-contributor'], ['Deepseek', 'opencode-go/deepseek-v4.1-flash'], ['Deepseek', 'opencode/deepseek-v4.1-flash']]) {
+      assert.deepEqual(lines(ui.get(`Model: ${name}, ${id}`) as Node), [name, id], `${id} shows its name and ID`);
+    }
+    ui.press('Model, Deepseek, opencode-go/deepseek-v4.1-flash');
+    ui.press('Close Pi deepseek');
+
+    ui.press('Edit Opus');
+    await settle(() => Boolean(ui.query('Model, claude-opus-5-5')));
+    assert.deepEqual(lines(ui.get('Model, claude-opus-5-5') as Node), ['claude-opus-5-5'], 'a label equal to the ID shows once');
+    ui.press('Model, claude-opus-5-5');
+    assert.deepEqual(lines(ui.get('Model: claude-haiku-5-5') as Node), ['claude-haiku-5-5']);
+    ui.press('Model, claude-opus-5-5');
+    ui.press('Close Opus');
+
+    ui.press('Edit Retired');
+    await settle(() => Boolean(ui.query('Model, opencode-go/retired-1')));
+    assert.deepEqual(lines(ui.get('Model, opencode-go/retired-1') as Node), ['opencode-go/retired-1'], 'a model the host no longer reports shows its ID');
   } finally { ui.update(h('View', null)); }
 });
