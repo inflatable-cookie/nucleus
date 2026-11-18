@@ -844,10 +844,13 @@ test('a host-unavailable transport wait is re-evaluated once the host is back, n
   const f = fixture(); try {
     f.store.update(f.task.id, { phase: 'changes_requested', reason: 'Changes: waiting on host' });
     f.engine.resolution.transportDeferred(f.current(), new Error('host srv_1 is unavailable'));
-    assert.equal(f.current().resolution.stop?.reason, 'external_unavailable');
+    // Spec 066 C2: a transport failure is the task's own host not answering, so the
+    // wait it writes is the host-scoped wait — not a forge wait nothing answers.
+    assert.equal(f.current().resolution.stop?.reason, 'host_unavailable');
     await f.engine.wake();
-    assert.notEqual(f.current().resolution.stop?.reason, 'external_unavailable');
+    assert.notEqual(f.current().resolution.stop?.reason, 'host_unavailable');
     assert.doesNotMatch(f.current().reason, /^Daemon transport unavailable/);
+    assert.equal(f.events('host_wait_cleared').length, 1, 'the pass that observed the host settled the wait once');
   } finally { await f.close(); }
 });
 

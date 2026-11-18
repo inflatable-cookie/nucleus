@@ -233,7 +233,11 @@ the owner/lane passes on their own cadence, and **HostPass**
 inventory, retired-worker, title and finished-thread steps, recording a step that
 throws as `hostPassError` instead of dropping it. A host transport failure while
 entering a host pass opens that host's ordinary `host_unavailable` wait for its
-tasks and the fleet pass continues; it never becomes `engineError`.
+tasks and the fleet pass continues; it never becomes `engineError`. A step that
+fails at the transport boundary answers for that host alone: the pass reads the
+failure rather than the registry's connected claim, so only that host's tasks keep
+their host-scoped wait, and the same bounded reading covers a host read made during
+a task visit and the failover pass.
 
 **ControlContext** (`core/verbs/control-context.ts`). Holds the hidden parameters of
 every verb (`selfForceRunId`, `coordinatorActionRunId`, `replayingDeferredVerb`)
@@ -1330,6 +1334,16 @@ request identities and submitted handoffs are not rewritten.
   records its own durable wait (`resolution.hostWait`: the host and the time the
   outage was first observed). The outage record is durable (`hostOutages` meta),
   so a service restart during the outage keeps the same start.
+- A transport deferral of a task's own host is the same wait (Spec 066 batch 2,
+  nucleus#1332). `transportDeferred` records the cause durably (one
+  `transport_deferred` event per reading) and the host-scoped wait: a
+  `host_unavailable` stop carrying its diagnostic, beside the independent
+  `resolution.hostWait` when an outage recorded one. The pass that observes the
+  host answer settles both through one settlement (`clearHostWait`), recording one
+  `host_wait_cleared` event, and the ready task is visited in that same pass.
+  Nothing is settled from the stop's text or a reason prefix (the #1321 rule is
+  retired), a host that did not answer settles nothing, a repeated pass adds no
+  event, send or notice, and an owner stop beside the wait keeps its question.
 - The wait is independent of the task's stop (nucleus#1198 review). When nothing
   more specific already stops the task the stop reads `host_unavailable`, naming
   the host and the outage start. A stop that belongs to an owner answer (budget,
