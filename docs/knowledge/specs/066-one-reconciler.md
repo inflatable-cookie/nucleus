@@ -1,0 +1,324 @@
+# Spec 066 — One reconciler
+
+Status: proposed
+Audience: queue implementers and reviewers
+
+## Outcome
+
+A task advances when the facts permit its next step. Every sweep rechecks the
+conditions that can hold it, including conditions on a task already in
+attention. The board shows the present cause, who can act and which actions
+are ready. A host failure stays with that host and its tasks.
+
+Spec 050 put owner verbs over the lifecycle. This proposal finishes the
+settlement side of that work. The [holding records](#holding-records) describe
+the current code. The changes below require design approval before implementation.
+
+## What a sweep decides
+
+1. **R1 · Collect facts.** Use the existing audit cursor and exclusive task lane.
+   For each visited task, read its current phase, substantive version, bindings,
+   holds, accepted results, pending effects and applicable policy. Share bounded
+   host, forge, process and capacity observations across the pass. Mark an
+   observation as unknown when it is unavailable, ambiguous, incomplete or
+   belongs to a different identity. Recheck every applicable wait on each visit.
+   A retry deadline can govern an expensive probe, while the pass still checks
+   whether the wait applies and whether new facts have arrived.
+2. **R2 · Settle each occurrence.** Match the fact to the task, occurrence, host,
+   workspace, run or effect target, and source head where relevant. Persist
+   `settled` when affirmative evidence answers the effect, `refused` when
+   execution proves it never crossed the send boundary, and `superseded` when
+   the facts it depended on changed and it can no longer hold the current step.
+   Keep the initial intent, result, uncertainty and reason in history. A
+   superseded effect can still owe observation or cleanup on its original target.
+   Its settlement grants neither delivery credit nor permission to replay.
+3. **R3 · Derive the truthful phase.** Apply accepted current results through
+   their existing owners first. Then derive the next step from current facts:
+   retained or authorized work, review of the current source, gated merge, or
+   synchronization and closeout of a verified merge. Settle every stale stop,
+   incident, episode and reservation the transition obsoletes. Respect a live
+   participant and any unresolved effect that could still conflict with the
+   step. Keep a durable wake obligation until ordinary lifecycle admission
+   sees it, so clearing the last blocker survives a crash or a lost wake.
+4. **R4 · Decide actions once.** Sweep, `next` and owner verb execution use the
+   same decision for the same facts and caller. Offer a verb only when it has
+   an admissible step after the listed owner inputs. Put a refusal, missing
+   observation, or unavailable host capability in the explanation with its
+   owner and next observation. Observation-only reconciliation is sweep work.
+   `retry_effect` remains available for an applicable operation on one
+   occurrence, such as a failed required hook with a safe retry. `next` is
+   read-only. Expired or missing facts cause a wait and a scheduled observation.
+   Apply rechecks authority and identity. A real race after `next` returns
+   the changed fact and invites a fresh read.
+5. **R5 · Separate release from authorization.** Releasing a prerequisite,
+   pause, slot, timed park or offline host re-enters ordinary admission.
+   Continue a retained, already authorized step once. If an owner must
+   authorize another revision, show `move to=work` with its inputs. Release
+   alone creates no revision, policy waiver, approval, budget or route.
+6. **R6 · Read host capabilities as facts.** Distinguish a reachable host,
+   an unavailable host, a definite pre-send refusal and an unsupported
+   capability. A healthy host can still lack the required observation or
+   admission capability. Use the equivalent supported path if it establishes
+   the same fact. Otherwise surface the missing capability and which owner can
+   address it. Keep role, task, workspace and callback binding intact across
+   rolls. Host-local failures cannot stop another host's pass.
+
+For transport failures, a successful host read supersedes a transport wait
+for that host. It answers an individual operation only if it observes the
+operation's target or proves its dependence on an obsolete binding. A late
+restart might have armed a new turn on a still-current reviewer. Keep that
+conflict blocking while the target could still receive it. A verified terminal
+old run with no live or pending target effect, a newer incompatible binding
+with proven isolation, or verified merge of the exact PR can make the old
+control irrelevant to the current step. Preserve any residual participant or
+workspace cleanup obligation.
+
+An exact creation lookup must cover the original host, workspace and creation
+identity after its grace period and show a complete result. One match binds
+the existing occurrence. Zero matches settles it when the original reservation
+can no longer deliver. Multiple matches or a partial response leave it unknown.
+If ordinary admission still calls for that role, it can mint fresh intent
+under the current route and existing allowance. Use this for any role, including
+an agentless recovery reservation. A lookup timeout alone frees no reservation.
+
+### Commit boundary
+
+The pass may collect observations outside the write transaction. On the task
+lane, re-read the substantive version, immutable binding, effect attempt,
+authority and any relevant head/base before committing. Apply settlements,
+history, credential or reservation release and the next phase together.
+Persist a wake using the same transition identity, or make that phase discoverable
+by the existing durable sweep index. Repeating a pass must converge with no
+extra events, sends or notices for the same fact. A late authenticated result
+is handled by normal intake for its own binding. The sweep cannot attach it
+to a new run. Detect stale reads before writing and observe again.
+
+Use the existing task row, run, operation and effect journals. A read
+projection can combine their explanations without becoming another authority
+or hold. Index by current task and occurrence, collect fresh observations in
+bounded windows, and reuse an observation only within its validity scope.
+A hung probe yields with an explicit unknown result. Existing task-lane
+serialization and durable intent still protect mutations that outlive a
+window. Avoid full history reads on every task visit.
+
+### Owner decisions
+
+`move` chooses the truthful phase while preserving source, ownership and
+effect constraints. Ordinary work can resume once its stale blockers settle.
+Review needs the canonical PR and its observed head. Merge still needs the
+current exact-head decision. Closeout needs verified merge and integration
+facts. An ordinary move can settle obsolete records in the same transaction.
+Force remains an explicitly authorized decision about a still-current blocker
+under Spec 050, with a reason and the original evidence retained. Critical-task
+force restrictions still apply. A force decision supplies no missing fact.
+
+- Task ID, queue branch, host binding and PR identity stay fixed. A new run
+  has its own authenticated callback credential and receipt. Revocation and
+  callback replay checks remain with intake.
+- Review retains the independent reviewer and exact head, with provider/model
+  independence and existing routing policy. An explicit, recorded operator
+  source acceptance for that exact head remains the allowed substitute.
+  Head changes supersede review eligibility and its downstream proof.
+- Required checks, validation and hooks still bind their inputs. Merge still
+  uses the existing head/base, integration turn and authorization gates.
+  Observing an external merge records what happened and any missing review.
+  It does not grant merge or review credit.
+- Durable effect intent precedes every write outside the store. An unknown
+  response never authorizes a resend. Verified absence, a proved pre-send
+  refusal, or later independent authorization may permit a new occurrence
+  through its ordinary gate. An owner decision never launders old evidence.
+- Dispatch and merge holds, configured limits, provider exhaustion, approvals,
+  budgets and planner rulings keep their current owners. A fault the sweep
+  cannot settle stays with the worker, the retained reviewer, the planner
+  ladder or the retained recovery thread under Spec 058.
+
+## Reproduction cases
+
+The rows below use synthetic labels and replace all stored identities, URLs,
+paths, heads and timestamps with fixture values. Case-specific inputs come
+from read-only task detail, retained events, the two papercuts and the current
+producer schemas. A later terminal row proves the retained history it still
+contains. Where the old live row was overwritten, pair that history with its
+writer's record shape and recreate the intermediate state. Tests should assert
+both the durable settlement and the resulting `next`.
+
+| Case | Stored shape and fixture variants | What must clear |
+| --- | --- | --- |
+| **C1** · transport restart (papercut `075e392b`, #1319 and consumer tasks 6061, 6070, 6071, 067) | A `task_control` operation with `effect.target=restart`, `state=needs_attention`, `effect.status=uncertain`, `diagnostic=Transport`, `attempts=1`, null result and no `preSendReceipt`. All five task histories retain this shape after progression. Seed each role/binding variant with its original operation and a later independent move or settlement. | I01/I02, R2/R4. Supersede the obsolete occurrence and retain its evidence. A host answer without target evidence keeps the current conflict. No resend and no offered `retry_effect` that only returns “remains uncertain”. |
+| **C2** · daemon transport wait (#1318, #1321) | `resolution.stop` with lifecycle transport text, optionally underneath `resolution.hostWait`. Both histories have outage wait/resume and observation outage events. Preserve the old stop beside a successful host observation and an unrelated owner stop in a second task. | I09/I10, R1/R3/R6. Clear the transport condition on return, keep the owner stop, and visit the ready task. Simulate another host still failing. |
+| **C3** · stale capacity list (consumer task 6064) | A parked task with the slot-limit detail and old occupant references. Its current detail is terminal after a force move, with transport and recovery history. Recreate the old stop using the capacity writer and finish the listed tasks, including a released run with a stale activity flag. Also seed one real restart reservation that still owns a slot. | I11, R1/R3. Recompute membership and order, remove stale occupants, retain the real reservation, and wake the first eligible task. |
+| **C4** · agentless recovery intent (#1310) | `role=recovery`, `status=intent`, `agentId=null`, `released=false`, with an episode bound to its run, then no producer and exact absence. The force move history retains the same recovery shape as a superseded, released agentless run. | I03/I06, R2/R3. Release the obsolete run and its credential, settle the episode, and allow ordinary move. A live or ambiguously found recovery agent stays owned. |
+| **C5** · prerequisite release (#1317) | Recreate `prerequisiteWait` with `releasedAt`, released notice and parked continuation from `prerequisite_wait_set`, `prerequisite_wait_released` and `prerequisite_wait_resumed`. Its history also retains an uncertain restart (C1). Put the crash between release and wake. | I12, R3/R5. Observe the authorized continuation after restart and admit it once after any independent blocker settles. A changes-requested twin without authorization gets an applicable move and no automatic revision. |
+| **C6** · merged and stuck syncing (consumer tasks 6058, 6078) | `phase=syncing`, verified `mergedCommit`, old `syncing` reason “Resolution check retry requested”, and unresolved closeout state. Both histories have `resolution_retry`, closeout recovery budget and later `main_synchronized`. Seed one exact base already containing the merge and one safe fast-forward still owed. | I18/I19, R2/R3. Advance via integration and closeout, with no second merge or review. A divergent, dirty or unproved checkout retains its real gate. |
+| **C7** · two offered refusals | Parked worker with a stale absence reason and no `agentIntent` or run identity. Separately, a released run whose delivery ledger still reads `uncertain` despite later settlement evidence. Seed variants with a current exact worker intent and with an incomplete timeline. | I01/I03/I08/I25, R2/R4. Re-derive restart and retry applicability. Show the reason an action cannot proceed and offer the ordinary continuation when its facts qualify. Keep actual unknowns visible. |
+| **C8** · BB parity (papercut `8ed49091`) | A declared sibling pin exists but the task worktree lacks its published link and the link helper finds zero. A live retained BB reviewer across a plugin roll cannot resolve its callback environment, so a fresh restart refuses. Reproduce with synthetic pin, workspace and run ticket, the packaged helper and the recorded BB adapter capability shape. | I22/I23/I26, R4/R6. Prove or repair the owned link through ordinary provisioning before review admission. Resolve the exact run's callback route across the roll, or show the real capability fault. Live reader stays retained and no result is synthesized. |
+
+## Implementation batches
+
+Each row is a separate review and roll, capped at three production modules and
+about 1,500 changed lines including focused tests. Test fixtures use the cases
+above. Do not enable a path until the same PR covers its negative and replay
+twins. Stop at each batch's boundary if the diff needs another slice.
+
+| Order | Modules and change | Acceptance at that batch |
+| --- | --- | --- |
+| 1 | `core/recovery/recovery-effects.ts`, `core/recovery/effect-gates.ts`, `core/verbs/owner-effects.ts`. Use the existing recovery projection as the initial shared decision. Settle obsolete control and run-delivery occurrences from positive binding evidence. Replace the workspace-created special case and attention-prefix eligibility with the shared decision. | C1 and C7. Terminal/later displaced operations stop gating. An unknown live target still gates, and settled effects disappear from actionable verbs. |
+| 2 | `core/scheduling/sweep.ts`, `core/scheduling/host-pass.ts`, `core/recovery/task-stops.ts`. Re-evaluate transport waits from host-scoped observations and remove reason-prefix clearing. Preserve bounded host failure isolation. | C2. Cross-host progress under lost transport, stale connection claim and later return. Existing planner stop stays visible. |
+| 3 | `core/scheduling/task-quantum.ts`, `core/store/store-prerequisites.ts`, `core/scheduling/task-wakes.ts`. Release to a discoverable actionable phase or retained authorization. Eliminate the release-pass early return for a completed wait. | C5. Crash before wake, blocked role, repeated sweep and no implicit revision. |
+| 4 | `core/dispatch/capacity.ts`, `core/store/store-queue-index.ts`, `core/recovery/wait-context.ts`. Derive occupancy, order and wait detail on the current pass, including an explicit restart transfer. Use one read for admission and visible wait. | C3. Released/merged occupants are gone, the remaining reservation counts, and order still holds under a competing dispatch. |
+| 5 | `core/recovery/absent-creation/creation.ts`, `core/recovery/absent-creation/restarts.ts`, `core/recovery/coordinator-pass.ts`. Generalize the zero/one/many decision and release agentless role intent once. Preserve an explicit owner or bounded recovery allowance for a new attempt. | C4 and C7. Gone intent cannot fence a move. One match binds in place, a partial read holds and no second producer can race it. |
+| 6 | `core/verbs/restart-worker.ts`, `core/verbs/owner-restart.ts`, `core/verbs/route.ts`. Replace absence-only entry paths with the common settlement and admission result. Keep the live reviewer and ordinary routing authorization. | C1, C4 and C7. Preview and apply agree on the same facts. Replacement follows the live route under a fresh identity when admission calls for it. |
+| 7 | `core/recovery/retry-orchestration.ts`, `core/closeout/closeout.ts`, `core/verbs/moves/closeout.ts`. Route verified merge to one synchronization decision. Remove retry-text and stale episode dependencies from merged closeout. | C6. A known merged PR continues under ordinary move or sweep. Divergence and conflicting live effects still hold. |
+| 8 | `core/verbs/task-next.ts`, `core/verbs/verb-fences.ts`, `core/store/store-pre-send.ts`. Finish shared refusal projection for moves and retries. Consume positively bound pre-send evidence directly through sweep settlement. End the manually keyed correction route in a compatibility slice after its callers migrate. | C1, C4 and C7. No force for an obsolete binding and no input-hash ritual for a proved refusal. Changed run, caller and head still refuse. |
+| 9 | `core/workspaces/worktree-links.ts`, `service/bb-adapter.ts`, `service/callbacks/callback.ts`. Fix parity at the shared provisioning and binding edges. Verify declared link publication and retained helper resolution through a roll without granting extra authority. | C8. BB and Paseo reach the same link and reporting contract on supported paths. Missing capability remains a named wait or actionable owner decision. |
+| 10 | `core/machine/process-host-reads.ts`, `core/machine/run-process-cleanup.ts`, `service/executor/executor-worker.ts`. Bound or move synchronous liveness reads off the executor loop and coalesce snapshot work within existing freshness bounds. | C2 and C4 under a slow process reader. Healthy task and admission requests still answer, while identity and teardown evidence retain their current strength. Run a fixture fleet profile before and after. |
+
+The cutover also needs these bounded slices. Each slice replaces its old
+reader and writer together and keeps the specialized proof owner. Retained
+records remain readable during deployment and after restart.
+
+| Slice | Modules and change | Acceptance at that slice |
+| --- | --- | --- |
+| Creation cutover | `core/recovery/absent-creation/decisions.ts`, `core/recovery/absent-creation/stale-worker.ts`, `core/dispatch/worker-launcher.ts`. Drop reason matching and same-run absence replay as admission paths. | C4/C7 plus an original producer still in flight. A safe new launch takes the live route and its own new ID. |
+| Ladder and settled episodes | `core/questions/ladder/resume.ts`, `core/recovery/fence-settlement.ts`, `core/recovery/coordinator-episode.ts`. Retire parked-restart fallback and use the same stale binding and wake decision. | C4/C5 plus the live/no-op and genuine owner-decision twins. |
+| Publication and retained tools | `core/review/review-publication.ts`, `core/recovery/effect-reconcile.ts`, `core/verbs/retry-effect-recovery.ts`. Let ordinary observers answer delivery. Remove the operation and run observer-only retries. | C1/C7 with complete/incomplete timeline, an accepted later publication and a live tool. Forged or stale evidence changes nothing. |
+| Merge and terminal cleanup | `core/merge/external-merge.ts`, `core/closeout/archive-reconcile.ts`, `core/verbs/retry-effect.ts`. Fold pre-attention restoration and terminal absence-only retry into observation of current integration and cleanup obligations. | C6 with a verified merged commit and absent archive target. Preserve the dirty checkout, live participant and ambiguous catalog twins. |
+| Operation API compatibility | `shared/rpc/operations.ts`, `service/runtime-owner.ts`, `core/planning/operations.ts`. End manual pre-send correction after operators have ordinary receipt inspection and sweep settlement. | C1 retains the original uncertain record and can be inspected without mutating it. An old correction key is explicitly retired and never executes the original control. |
+| Independent gates | `core/merge/check-settlement.ts`, `core/hooks/hook-reconcile.ts`, `core/qa/project-validation.ts`. Publish exact check, hook and validation eligibility to the shared decision while their existing observers keep custody. Split this slice before review if any producer needs more than the line budget. | C6's already-confirmed merge proceeds. Changed head/base, guarded hook failure and an unknown live validation remain fenced. |
+
+The remaining authority rows keep their established controls. They participate
+by supplying a typed input to the common decision, so an independent hold,
+routing grant, disposition, or QA reservation has one explanation and cannot
+be cleared by the expiry of an unrelated wait.
+
+## Live service profile
+
+On 2026-11-18, `service.health` reported **13,311.11 ms** worst executor-loop
+delay since the service started at 09:29:22 UTC. The adjacent read-only
+`service.profile` capture requested 30 seconds and recorded 30.60 seconds of
+weighted samples. The window after capture peaked at **1,971.81 ms**, so the
+profile supplies current hot frames rather than a stack for the earlier
+13-second event. The histogram stores the maximum and no stack.
+
+| Capture frames | Time |
+| --- | ---: |
+| `sweep → runProcessLiveness → processStartIdentityLiveness → startLine → spawnSync → spawn` | 3.54 s in the dominant sampled stack, 4.12 s inclusive in `runProcessLiveness` |
+| `publishSnapshot → pushSnapshot → health → status → nativeParentingStatus / supportThreadStatus → read / readFileSync` | 4.68 s inclusive in `publishSnapshot` |
+| `protectedRunInfrastructure`, garbage collector, SQLite `all` | 1.47 s, 2.49 s, 1.27 s self |
+| `spawn`, `readFileSync` | 4.88 s and 1.76 s self |
+
+Inclusive and self times overlap. Batch 10 addresses the synchronous process
+and publication paths. The starting points are
+[`startLine`](../../../core/machine/process-host-reads.ts),
+[`protectedRunInfrastructure`](../../../core/machine/run-process-hosts.ts),
+and [`publishSnapshot`](../../../service/executor/executor-worker.ts).
+
+## Holding records
+
+This appendix compares the schema and meta records with sweep admission, phase
+advancement, `next` and verb execution at the planning head `bc3b425f7`.
+A row groups fields only when they gate the same step through the same owner.
+**Fact** means an observation is sufficient to clear the current condition.
+**Control** means an authorized decision is needed. **Both** means the current
+path requires a control even when the decision turns on a fact, or requires
+both kinds of input. The verbs column describes today's copy-ready offers and
+their known refusals. Generic stop suggestions can differ from those offers.
+
+### Execution and recovery
+
+| ID · Holding record | Current writer and clear condition | Current `next` and refusal | Basis and Spec 066 rule |
+| --- | --- | --- | --- |
+| **I01 · Operations.** `operations` in `pending`, `running` or `needs_attention`, including `task_control`, submission and rebind/review-entry effects. A settled operation may retain an uncertain effect. | `Operations.startOperation/runOperationOnce` in [operations.ts](../../../core/planning/operations.ts) record the key, input, attempt and effect boundary. Resume, result or owner settlement clears it. `blockingTaskOperations` in [recovery-effects.ts](../../../core/recovery/recovery-effects.ts) excludes the enclosing operation and owner-settled occurrences. `observedHostEffectEvidence` currently requires a later workspace binding event and run in that workspace. | `retry_effect operation.<id>` can refuse when that witness or a reconciled result is missing. `task_control_operation.<id>` handles an uncertain retry of another effect and can itself refuse. Ordinary moves can be fenced by the old operation. | Both. Spec 012, #1159, papercut `075e392b`, [retry-effect.ts](../../../core/verbs/retry-effect.ts) `retryEffectByObservation`. R2/R4. |
+| **I02 · Pre-send boundary and owner settlement.** `preSendBoundaryStartedAt/preSendReceipt/preSendHistory`; `resolution.ownerSettlements`. | `preSendReceiptProof` in [operation-receipts.ts](../../../core/planning/operation-receipts.ts) binds build, task/run, request hash, attempt and effect to the executed refusal. `StorePreSend.reconcileTaskControlPreSend` in [store-pre-send.ts](../../../core/store/store-pre-send.ts) checks that tuple and rejects changed bindings or delivery. Legacy relabeling additionally checks the admitted diagnostic, attempt and untouched boundary. `recoverySettlementKey` scopes force settlement to one occurrence, including merge request timestamp or validation identity. | No `next` verb for `operation-status reconcilePreSendInputHash`. It refuses missing/conflicting proof. `retry_effect force` or `move force` requires the authorized caller and a reason and can refuse a live effect, publication or critical task. | Both. #358, #463, #544 and Spec 050 ([force.ts](../../../core/verbs/force.ts)). R2/R4. |
+| **I03 · Creation and participant lease.** Worker `agentIntent/runId`; `runs.status=intent/running/stopped/uncertain`, `released`, current binding, activity, permission, workspace and delivery. | `RunLaunchReserve.reserveLaunchRun` journals before `RunLaunchDeliver.deliverLaunchRun`. `Observation.observe` binds observed agents. `RunRelease.settleFinishedRuns/settleObservedIdleRuns` in [fence-settlement.ts](../../../core/recovery/fence-settlement.ts) settle matching reports or positively displaced inactive runs. `runSettlementFence` and `classifyVerbRun` in `verb-fences.ts` prevent release with live/unknown identity, permission or effects. Also holds the service drain. | `restart`, `route now`, `move` or `stop` where the role and phase permit. `retry_effect run-delivery.<id>` can refuse a settled or agentless run, an unavailable or incomplete timeline, a live agent or changed workspace. An authenticated checkpoint can prove creation while separate sends remain uncertain. | Both. #323, #339, #1171, #1321. [effect-reconcile.ts](../../../core/recovery/effect-reconcile.ts) `reconcileUncertainRunDelivery/reconcileArchivedReviewerDispatch`. R2/R4. |
+| **I04 · Callback gap and paused stop.** Pending completion, idle/reminder timestamps, suppressed or superseded result, `pausedStop` on a task or run, and `resolution.stalledTurnStop`. | `CallbackIntake.complete` and `Observation.observe` process current reports and activity. `StalledTurnStops.stopStalledTurn` records the exact stop and bounds a reconciled retry. `TaskQuantum.quantumSteps` waits for matching inactivity or a callback and explicitly parks when the stop's run binding changed. `DeferredOwnerVerbs` and `paused-stops.ts` resume paused participants when dispatch resumes. | `restart` from a stalled stop, or `stop`; still subject to exact binding, permissions, tool fences and observed cancellation. A paused-stop wait has no generic retry. A mismatched stop today calls for owner inspection. | Both. #650, #937, #1148 and Spec 050 stalled-turn stop. R2/R3. |
+| **I05 · Incident and attention.** `phase=blocked/error/needs_attention`, `resolution.attention/incident`, missing result, and durable stop. | `TaskStops.attention/ensureIncident` in [task-stops.ts](../../../core/recovery/task-stops.ts) bind an incident to current work. `settleSupersededFencesInTx` settles a stale episode on a qualifying verb. `recoveryEffects` treats a review-effect wait as attention after a bound via `blockedEffectAttentionReason`. | `restart/route/move` as applicable. For a reconciling incident with no recovery owner, `retry_effect incident.<id>` re-proves its binding and can refuse if another run owns it. A wait can suppress recovery even if attention is recorded. | Both. Specs 016/050, #1159 and #1171. R1–R4. |
+| **I06 · Recovery episode, accepted action and breaker.** `recoveryActive/recoveryAttempts/recovery`, generation, progress digest, action binding and unreleased recovery run. | `CoordinatorPass.pass` and `CoordinatorEpisode` in [coordinator-episode.ts](../../../core/recovery/coordinator-episode.ts) persist/run episodes, check exact progress, consume an accepted action once and release settled runs. `recoveryPendingEscalation` bounds a pending episode with no run. An agentless run currently has separate exact-lookup and failed-creation paths. `unproductiveCoordinatorRuns` in `recovery-bound.ts` stops repeated no-progress recovery. | `restart role=coordinator`, `route` or a permitted phase `move`; active/unknown recovery or unconsumed action can refuse. A live no-op needs an observed participant. A spent breaker reaches the ladder; repeating restart does not grant a new recovery budget. | Both. Spec 058, #1171, #1258, #1278, #1316. R2–R5. |
+| **I07 · Owned tool and execution lease.** Latest `owned_tool_hold/owned_tool_settled` event per run, active terminal/tool/process, incomplete timeline or workspace validation. | `RunRelease.ownedToolHold`, `ParticipantLease.participantToolIssue/executionLease` and `owned-tool-process-proof.ts` match host, process identity, worktree and run. Matching process exit and complete evidence release the lease. | `retry_effect owned_tool.<runId>` is an observation and can refuse while tools remain or bindings conflict. `restart/move`, merge/sync and cleanup may also refuse. | Both. #351, #476, #1171 and #1203. R1/R2/R4. |
+| **I08 · Proven absence and replacement allowance.** `absentProvenAt`, reason-based pre-agent failure, `restartRunId`, absence events and abandoned workspace intent. | `CreationRecovery.recover/reconcileAbsentWorker` and `AbsentRestarts.admitAbsentWorker/replaceAbsentRunFromRoute` in [absent-creation](../../../core/recovery/absent-creation) use exact lookup, grace, zero/one/many and a one-replacement ledger. `releaseStaleWorkerIntent` drops the worker identity and credential. The legacy initial-worker path still arms the same run through `restartRunId`. #1321 excludes proved absence from recovery effects and moves resolution-role restarts to fresh runs. | `restart` or `route now`; the worker offer can still reach “Absent-worker retry requires a retained creation intent with no worker”. No `retry_effect` for a run already marked absent. Workspace replay/proof branches can refuse ambiguous or unowned directories. | Both. #323, #1147, #1321. R2–R5. |
+
+### Waits, admission and owner policy
+
+| ID · Holding record | Current writer and clear condition | Current `next` and refusal | Basis and Spec 066 rule |
+| --- | --- | --- | --- |
+| **I09 · Typed stop and older wait text.** `resolution.stop` reason, holder, detail, `since`, suggested verbs; stored `Task.reason` and `gitTransient:<id>` deadline. | `TaskStops.recordStop/waiting/transportDeferred/environmentDeferred`, `TaskWakes.deferGitTransient` and `EngineStop.note` write it. The producing lifecycle path rewrites it on progress. `clearTransportWait` recognizes the daemon prefix. `taskStopClassification/recordedStopIsWait` in [shared/task-stop.ts](../../../shared/task-stop.ts) infer some old waits from text, including read-only forge failures. A Git backoff ends on a due observation or reaches bounded attention. | Waits normally have no suggested verb. `next` can add available verbs on an aged queue wait, even when the owning lifecycle path is still held. `operator_needed` suggests restart/route/move and `run_stalled` suggests restart. Underlying gates can refuse. | Fact for transient waits, control for genuine decisions. Spec 050, #1148, #1257, #1320/#1321. R1/R3/R4. |
+| **I10 · Host outage/scope.** `resolution.hostWait`, outage meta, audit-host unavailable flag, host session/identity and runtime bootstrap readiness. | `Sweep.auditPass/recordQuantumOutage` and [host-outage.ts](../../../core/scheduling/host-outage.ts) `HostOutages.observe` scope loss. `TaskStops.clearHostWait` clears on return. `RuntimeLifecycle.ensureBootstrap/refresh` and `HostConnections` gate on the owning host/session and identity; a mismatched runtime/session needs repair. A long-outage notice is once per project/outage. | No launch action can repair transport. Existing restart/route can refuse offline or unsupported hosts. Rehosting stays an explicit authorized operation where supported. | Both. #1198, #1267, #1320/#1321. R1/R6. |
+| **I11 · Capacity and reservation.** Project/global/papercut slot limits, in-flight workspace limits, active run/task membership, fair ordering and `restartSlotHold`. | `capacity.ts` `occupiesSlot/decideSlotAdmission/projectInFlightWaitReason`, `StoreQueueIndex.index` and `SlotAdmission.withDispatchPass` derive membership from rows. `restart-episode.ts` preserves a slot across an approved restart; the matching launch consumes it. `TaskWakes.wakeCapacityWaiter` wakes a successor. `wait-context.ts` refreshes queued text; parked reason text can outlive its occupants. | Wait, with no capacity verb. `restart` or `move` can be blocked on admission. Board policy can change limits. | Fact for membership, control for limits. #1258/#1278, papercut `fedca2e8`. R1/R3/R5. |
+| **I12 · Dependencies and retained prerequisite wait.** `dependsOn`, `prerequisiteWait` with `releasedAt`, terminal `goalUnmet` and release notice. | `StorePrerequisites.updateDependencies/setPrerequisiteWait/reconcilePrerequisiteWait` own the rows. `Store.dependencyWait` reads completion/outcomes; missing, removed, cancelled and goal-unmet prerequisites need correction. `PrerequisiteReleases.flushPrerequisiteReleases` wakes queued dependants. `TaskQuantum.quantumSteps` can stop on the release pass before dispatch. Changes-requested release deliberately does not authorize a revision. | `set_dependencies` before first dispatch, or explicit `set_prerequisite_wait` correction. Open wait refuses work move and worker restart. Released wait can need `move to=work` or a retained restart. | Both. #232, #257, Spec 050 and the #1317 incident. R3/R5. |
+| **I13 · Holds and board pause.** `holds.dispatch/merge`, legacy `held/hold*`, hold generation, blocking notification and timed/prerequisite `until`; meta `paused/dispatchHeld`. | `Holds.reconcileHoldUntil` in [merge-hold.ts](../../../core/merge/merge-hold.ts) records owner/generation and reevaluates self-lifting holds. `DispatchAdmission.queuedExternalWait`, `dispatchGate` and `startsNoRuns` enforce board policy. User resume or holder release clears unconditional holds. | `release/keep_hold` for the recorded hold, with ownership and version checks. Keep refuses after merge intent. Dispatch hold or pause can defer an applicable delivery; active merge hold blocks only merge. Global changes are board controls. | Both. Specs 040/046/050, #650. R1/R4/R5. |
+| **I14 · Profile and provider admission.** `availability`, subscription group cooldown/exhaustion, profile catalog and routing epoch, profile requests, grants/signoff decision, critical comparison and worker exclusions. | `WorkerFailover.recoverExhaustedWorkers`, `ProviderRefusals.recoverRefusedReviewer`, `StoreQueueIndex.routingRetryAllowed` and `reconcileRoutingSignoffs` reevaluate on fresh availability/catalog or a decision. Group unavailability persists until provider evidence, configured reset/cooldown or authorized change. Exclusions and signed routing retain explicit policy. | `route` and sometimes `restart` under profile, host and independence policy. Both can refuse no eligible profile, unsupported thinking option, live displacement or missing sign-off. Capacity/provider waits offer no shortcut. | Both. Specs 030/045/052/053, #1158, #1316. R1/R4/R5. |
+| **I15 · Retry and budget policies.** `transientProviderRetry`, non-delivery and provider-refusal event ladders, replacement/author-round/continuation limits, `noAutomaticRetry`, budget limits/clock/extensions and budget question. | `non-delivery.ts`, `transient-resume.ts`, `worker-failover.ts` and `ProviderRefusals` record matching-run failures, evidence gap and backoff. `TaskStops.settleBudgetClock/clearPassedBudgetStop`, `author-revision-cap.ts`, `Ladder` and `budget-extension.ts` enforce measured use and owner allowance. #645's decided flag wins over old prose fallback. | `extend_budget`, `restart` or `move` for a permitted explicit step. Spent attempt, live run, forbidden replacement, missing relay or unchanged authorization can refuse. An automatic path stays parked where only an owner can decide. | Both. Specs 050/058, #645, #1153, #1214. R1/R4/R5. |
+| **I16 · Origin, interaction and decisions.** `originError`, thread busy/missing, interactive wait, `decisions`, ask/consult/joint-question/escalation events, delegated replies, timed park and withdrawn question. | `OriginRouting.pass`, `JointReviewQuestion.responsibleJointQuestion/settleJointQuestion`, [ladder/records.ts](../../../core/questions/ladder/records.ts) and `establishEscalationWait` track the current owner and cause. Answer, withdraw, changed binding or timed/dependency release settles through `ladder/resume.ts`. An incomplete native delivery stays uncertain and can be answered by the planner through the ladder. | Wait for idle or owner answer, reparent, or answer through the decision or question surface where owned. A parked restart can refuse and fall back to retained work. A different live actor or stale generation refuses settlement. | Both. Specs 051/058, #1171, #1258/#1278 and #1316. R2/R3/R5. |
+| **I17 · Deferred authorization.** `resolution.deferredVerb`, pending brief amendment, revision/worker instruction, author checkpoint intent and reviewer continuation target. | `DeferredOwnerVerbs.deferOwnerVerb/applyDeferredOwnerVerbs` save input and optional run/checkpoint/head, then consume on unpause/release or drop on target drift. `Sweep.auditPass` revisits amendments and checkpoint intents. Delivery already attempted is reconciled on its own occurrence. | The same restart/move/retry may record or refuse a deferred delivery. A deferred request with a changed target does not become authority to send to the new one. | Both. Spec 050 round 4, Spec 008, #1218. R2–R5. |
+
+### Source, review, integration and cleanup
+
+| ID · Holding record | Current writer and clear condition | Current `next` and refusal | Basis and Spec 066 rule |
+| --- | --- | --- | --- |
+| **I18 · Merge identity and response.** Canonical PR and head, `mergeIntent/mergeHead/mergeBase/mergeRequestedAt`, uncertain/pending response or retry, proof timer, `externalMergePreAttention`, `externalMerge/mergedWithNone`. | `MergeIntent.reconcileMergeIntent` in [merge-intent.ts](../../../core/merge/merge-intent.ts) observes the forge and applies the bounded proof/reissue decision. `ExternalMerge.recoverExternalMerge/resumeClearedAttention` restore prior phase on an answered probe or record the verified external merge. Exact head, base, PR, settings and current requested effect determine settlement. | `retry_effect merge-response.merge-response` can refuse an unproved result. `move to=merge` needs current qualifying evidence; `move to=closeout` needs verified merge. A descendant external merge or an undispatched review entry has a separate qualification path. | Both. Specs 038/050, #408, #1223, #1295/#1316. R2/R3. |
+| **I19 · Integration and closeout.** `integrationTurn`, merge/sync commit pair, reserved integration quantum, closeout run/workspace intent, closeout authority, renewal evidence and cleanup reason. | `IntegrationTurns.claimIntegrationTurn` arbitrates earlier tasks and reservations. `Closeout.advanceSyncing/advanceClosing` in [closeout.ts](../../../core/closeout/closeout.ts) require execution lease and owned base. A verified sync advances to the configured queue, hook or coordinator closeout. `CloseoutRecovery.renewStaleCloseoutBase/renewConsumerBlockedCloseout` apply bounded, condition-specific renewals. `RetryOrchestration.prepareRetry` can clear attention and leave the phase with “Resolution check retry requested”. | `move to=closeout`; worker or reviewer restart can reach the internal resolution retry. #1316's recorded-merge move re-observes exact commit/head, then requires review evidence, a quiet lease and unchanged runs. An ordinary sync can still wait on an earlier turn, effect, dirty checkout or participant. | Both. Spec 018, #1223/#1312/#1316. R1–R4. |
+| **I20 · Required checks and forge/QA policy.** Pending checks and failure episodes, timers, check-run identity, `forcedChecks`, stale/changed PR or base, merge conflict, forge readiness and QA fence. | `CheckWaits.applyMergeGateWait/holdPendingCheck/holdInfrastructureCancellation` and `CheckSettlement.reobservePendingChecks` scope by repo/PR/head/check and restore when a terminal or passing context answers. `checkEpisodeStep` prevents repeating an identical failure cycle. `qaFenceStatus` reads active repository QA authorization and expiry. [merge-gates.ts](../../../core/merge/merge-gates.ts) rechecks current merge inputs. | Wait or `move to=work/review` when current facts allow. A qualified `move to=merge` with force is owner-authorized and tied to failed check, job URL and head. Unchanged or stale check evidence, missing consent or merge conflict still refuse. QA fence has its repository-level control. | Both. #394, Spec 050, #1295 and the orchestration contract's check timer rule. R1–R5. |
+| **I21 · Hook occurrence, validation and publication.** `hook_events` intent/running/blocked/failed/result/published, baseline checkout/discard proof and required pre-merge, closeout, pre-archive or other gate. | `HookOccurrences.intent/settle`, `HookReconciler.reconcile` and `RepositoryHooks.reconcileTask` record invocation and reconcile durable result. Hook retry re-proves occurrence/payload, workspace and gate inputs. Base-advance renewal and merged-retention reproof can supersede old occurrences. Optional finished hooks can delay cleanup. | `retry_effect hook.<eventId>`, or `merged_task_retention.<eventId>` on the special terminal shape. The ordinary retry can refuse an unknown send, changed input, an untrusted checkout, or an unresolved discard; explicit discard is a separate authorization. | Both. Specs 001/002/007/010/015, #620/#1176. R2/R4. |
+| **I22 · Workspace and source custody.** `workspaceIntent`, host catalog/worktree identity, rebind/displaced workspace meta, read-only review workspace, sibling pin/intent, `worktreeLinks`, Git or scratch guard. | `WorkspaceProvisioning.ensureSiblings/prepareWorktreeLinks` and `worktreeLinksDue` inspect declared and published links. `CreationRecovery.recover` and `workspaceCreationRefusal` use exact catalog, storage and Git facts, including orphan-worktree safety. Planning-base mismatch, branch/head divergence, unpushed source, retained dirty/stashed work, live Git lock, missing volume and different workspace custody each stop their respective step. | `retry_effect workspace_creation` or `planning_base` when offered, with the named observation or discard proof. Restart/move/rebind can refuse unknown identity, unsafe checkout or source drift. Existing links or custody that failed a proof are shown with their reason. | Both. Specs 027/028/050, #1106/#1261/#1269/#1293, papercut `8ed49091`. R1/R2/R6. |
+| **I23 · Review source, custody and checkpoint.** `resolution.review/currentRunId`, review history and supersessions, retained checkpoint/run/round, proof retry, reviewer and worker identity, reader/source view. | `RunLaunchReserve.reserveLaunchRun` and `OrdinaryCustody.ordinaryRoundCustody` establish the reader at exact source. `ReviewAdvances.advanceChangesRequested`, `reviewResultFencesRun` and `reviewCheckpointRefusal` require current evidence. A head change supersedes source eligibility, while authenticated reports or proved reader closure settle custody. Reviewer selection enforces independence and the retained-reader continuation rules. | `restart role=reviewer`, `move to=review/work`, or explicit fresh restart after proved closure/budget exhaustion. Missing/changed head, author model collision, live reader, pending permissions, invalid/no checkpoint where required and unverified runtime can refuse. Formal verdict and qualified operator acceptance rules still govern merge. | Both. Specs 017/033/050/057/058, #482/#1097/#1298/#1316, papercut `8fffbf59`. R2/R4/R6. |
+| **I24 · Publication, message and notice intents.** `reviewPublication:<run>`, `Run.reviewDeliveries`, `notices` intent/uncertain, `task_messages` and native question delivery. | `claimReviewPublication/classifyReviewPublication` in [review-publication.ts](../../../core/review/review-publication.ts) bind body digest, marker, accepted callback receipt and forge ID. A later applied publication can supersede old evidence. `EffectReconcile.settleReviewDelivery` and timeline observers require the exact message and complete page. `Notices.deliverNotices` and `AgentMessages.deliverQueuedMessages` own queued delivery. Messages and ordinary notices can wait independently of the task. Unknown effect records can fence applicable lifecycle steps. | `retry_effect review_publication.<runId>`, `review-delivery.<id>` or `attention-notice.<id>` where projected. Can refuse unseen message, invalid receipt, live/unreleased reader, changed head or terminal/merge state. No tell resend or generic permission to replay. | Both. Specs 033/050/058, #482/#544/#1159; only the ordinary publication owner can publish supported evidence. R2/R4. |
+| **I25 · Control and continuation fences.** Removed/terminal task, active disposition, wrong phase, task version, enclosing operation, authorized caller, changed runs, branch/PR requirements, owner acceptance or force qualification. | `TaskControlDispatcher`, [verb-fences.ts](../../../core/verbs/verb-fences.ts) `VerbFences/ContinuationFences`, `owner-authority.ts`, `control-refusals.ts` and `moves/` re-read binding and role before a mutation. A racing observation can be admitted only under `observationAdvanceSince/runsUnchangedSince`. `completeStateRefusal` excludes live, undispatched, PR and merge work. | All owner verbs can refuse inapplicable scope, stale binding or authority. Some previews do not run apply's effect/identity proof; `restart` and `retry_effect` in C7 are concrete mismatches. `move to=merge` can require a qualification and head, and the control can refuse a changed verdict. | Both. Specs 003/036/050, #404/#476/#482/#1316. R2–R5. |
+| **I26 · Reporting and host capability.** Current run credential, callback receipts and transport, host adapter capability, BB roll/plugin registration, helper reporting binding. | `startCallbacks` in [callback.ts](../../../service/callbacks/callback.ts) and `CallbackIntake.complete` bind run/task/event/token and current source. `composeBbAdapter` declares helper reporting, board questions and no per-thread environment or shared workspace capability. Ticket recovery, helper relay/socket or registered host return can repair availability. Credentials or a source mismatch remain an authenticated refusal. | A real callback must arrive through the run's binding. `restart role=reviewer fresh` can refuse a still-live reader. A retained restart need not fix helper reachability. Missing native capability or relay appears as the reason, with no safe duplicate send. | Both. Spec 062, #1273/#1315/#1317/#1319, papercut `8ed49091`. R1/R4/R6. |
+| **I27 · Proof and validation execution.** `projectValidation`, supervisor plan/state/result, validation worktree and cleanup, proof-only GO, `awaitingProofs/proofRetry`, proof reservation, receipt/allowance/retirement and accepted proof files. | `ProjectValidationRunner.projectValidationGate/finishValidationObservation` bind result to candidate digest/head/host run. `proofWaitApplies`, `proofActivationPreview`, `holdProofOnlyGoWait`, `ProofAutorun.startRunnableProof` and `ReviewAdvances.settleSourceApprovalProof` check the exact selector, source and authority. An authenticated receipt or positively superseding head answers the applicable proof; a lost/failed recipe needs safe retry, a GO or independent acceptance as applicable. | `proof`, `accept_receipt` or `retry_effect project-validation.project-validation` where applicable. Still running, consumed allowance, wrong head or selector, invalid artifact, missing operator GO or missing admission can refuse. Running validation is already shown as a refusal for ordinary retry. | Both. Specs 054/055/057/061, #533/#662/#1195. R1–R5. |
+| **I28 · Disposition and removal.** `Task.disposition` and individual stop/close/hook/workspace intents and replacement proof, bulk disposition, `removedAt` or tombstone. | `Dispositions.disposeTask/resumeBulkDispositions`, `disposition/effects.ts` and `Sweep.auditPass` resume the exact durable transition. Withdraw only while no irreversible effect prevents it. `removal.ts` requires run/retention evidence; completed removal stays terminal. | `cancel` or `supersede` to retry, `withdraw_cancel` or `retry_effect disposition_workspace.<id>` as applicable. Normal controls refuse active disposition; changed replacement proof, live turns, open PR close intent or unsafe workspace policy can refuse. | Both. Specs 003/050, #1316. R2–R5. |
+| **I29 · Workspace/thread archive, runtime and build cleanup.** Archive intent/head, archived IDs, retries/exhaustion, workspace retirement, displaced/review view, build cleanup, retired-thread, finished hook and host-process sweep. | `ArchiveScheduler.enqueuePass`, `ArchiveProof.archiveWorkspace`, `OwnedWorkspaceArchive.archiveTaskWorkspace` and `CleanupLane.drain` require the precise catalog, checkout, participant and process proofs. `StoreThreadEffects.finishedTasksOwingCleanup` catches up on host return. Bound retries preserve unknown archive and external folders. Terminal cleanup can still hold retirement and room for future work. | `retry_effect workspace_archive.<id>`, `runtime_retirement.<id>`, `build_output_cleanup.<id>` or `external_workspace_archive.<id>`. The last archives a catalog entry while leaving its external folder in place. Can refuse unavailable catalog/storage, an extant or changed path, live tool, unsafe head, missing approval or conflicting thread. Run-bound cleanup stays with its run. | Both. Specs 006/018/050, #342/#1203/#1292/#1316 and papercut `b87375b0`. R1–R4. |
+
+### Service and lane boundaries
+
+| ID · Holding record | Current writer and clear condition | Current `next` and refusal | Basis and Spec 066 rule |
+| --- | --- | --- | --- |
+| **I30 · Scheduler and sweep ownership.** In-memory active lane, serialized control, spawn semaphore, integration quantum, cursor, attempted routing epoch and wake/timer. | `LaneScheduler.scheduleLane/control`, `boundQuantum`, `SpawnGate.run` and `Sweep.auditPass` own claims. The sweep bound yields to other lanes while the underlying owner keeps its lane until return. Task writes, host signals and normal ticks reindex/revisit. | No owner retry for a busy scheduler key. Controls serialize or time out behind it. The original command's outcome must be observed. | Fact. #1148/#1257, orchestration contract. R1/R3. |
+| **I31 · Service admission and replay.** Request ledger, admission backpressure, immutable operation input hash, runtime readiness/standby, schema and store admission. | `RequestLedger.open/settle/outcome`, `Operations.startOperation`, `RuntimeLifecycle.ensureBootstrap` and `StoreAdmission.initialize` enforce command identity and readiness. Same key reads the receipt; in-flight or changed-payload key refuses. A ready owning service/valid schema restores admission. `boundDrainProjection` counts unreleased runs and pending/running operations even when paused. | No per-task verb for the transport/store gate. Read service health, exact request outcome or operation status. A forced task retry cannot bypass admission or make a disconnected command safe. | Both. Specs 012/013, #1221/#1267. R1/R2/R6. |
+| **I32 · Host-run leases and QA scheduling.** `host_run_records/journal`, admission ticket/epoch, CPU reservations, live producer/escaped descendants, retained output failure, project QA admission/teardown and QA schedule. | `HostRunScheduler.tick`, `HostRunSettlement.settleIfDue/releaseCapacity`, `EffigyAdmissionEndpoint.reserve/ensureServing` and `projectQaAdmission.settleInterruptedPreparations` derive capacity and recover known supervisor outcomes. Missing or uncertain producer evidence can reserve capacity. Output custody can block evidence or reclamation separately. QA state clears on settled result/teardown or scoped owner disposition. | No ordinary task verb frees another host run. Validation retry can wait behind the scheduler. Project QA cancellation, teardown retry and accounting disposition have their own scoped controls and can refuse active or unreadable identities. | Both. Spec 035, #1210/#1236/#1239/#1255/#1281. R1/R2/R4. |
+| **I33 · Planning, repository and project gates.** Pending submission/lead-promotion intent, pinned source/brief or lane document, lane/project state, repository maintenance/rekey and project removal. | `Operations.resumeOperations`, `source-promotion-reconcile.ts`, `StoreProjectManagement.manageRemoveProject` and `applyRepositoryRekey` preserve existing task/repository identity and require settled bound work or authorization. `attachableLane` refuses unknown, closed or repository-mismatched lanes at attachment. `LaneDrainPass` derives informational drain episodes, and `idleLaneKeys` requires no live tasks or open leads before a lane auto-closes. Lane order and drain prompts confer no runtime authority. A repository contention episode in `repositoryContentionNeedsAttention` delays escalation until its bound. | No task verb writes a planning approval or rekeys a repository. A queued dependency or hold can have its existing owner control. Submission repair or project-level controls can refuse active incompatible work. | Both. Specs 019/026/041/056, #1126/#1205/#1247. R1/R5. |
+| **I34 · Projection and completion boundaries.** Stored task reason versus stop/budget/host view; `task_observations`, PR/view and status indexes, terminal outcome and closeout follow-ups. | `taskWaitStateContext/queuedReason`, `currentTaskStop` and `RuntimeLifecycle.prStateFacts` derive the visible cause. A fresh authoritative fact can supersede a stale projection. `TaskControlDispatcher` and ordinary lifecycle use authoritative rows. `completion-follow-ups.ts` and `StoreRetention` advance advisory cleanup and outcomes when their own gates settle. | A projection alone cannot reliably authorize a verb. Terminal task actions refuse except allowed effect/cleanup or inspection; report-only acceptance uses its explicit control and can refuse an unaccepted artifact or an open PR. | Fact for projection, control for acceptance. Specs 006/018/025/050, #1252 and papercut `703b4aa3`. R3/R4. |
+
+### Inventory boundary
+
+[The store schema](../../../core/store/store-schema.ts) also contains indexes,
+assignment history, planning versions/deltas, number counters, projection
+clocks, outcomes and tombstones. They are evidence or storage infrastructure.
+Their effective gates are above: profile policy, planning admission,
+dependency completion, identity/callback integrity and terminal removal.
+Telemetry, titles, sidebar membership, lane-drain prompts and completion
+notices do not authorize transitions. Where a delivery or maintenance record
+actually blocks work, the inventory names its effect or custody owner.
+
+The sweep must handle every stop carrying one of the existing reasons.
+Proof, provider, route, PR/head, workspace, validation, prerequisite, origin,
+host and capacity waits each read their owning facts. Lifecycle covers
+integration, checks, delivery, Git backoff and callback progress. An explicit
+hold, budget stop, interaction, escalation or unknown current effect stays
+visible until its own fact or authorized decision answers it.
+
+## Unwind after approval
+
+Keep all original intents and proofs readable. Remove the extra entry points
+and branch-specific fences as their rows migrate. Add each ID below to
+[`retired.toml`](../retired.toml) in the batch that removes its last active
+reader/writer. Set the retirement date then. During the proposal the controls
+are still in use. Compatibility readers for stored history belong on the
+corresponding allowlist.
+
+| Proposed retirement ID | Delete or fold into the shared path | Keep |
+| --- | --- | --- |
+| `workspace-witness-only-control-settlement` | Replace the #1159 binding-event-plus-later-run requirement in `observedHostEffectEvidence`, the review-effect prose prefix and observer-only `operation.<id>` retries. Batch 1. | Scoped positive evidence, durable attempt/side-effect history and timed attention for a genuinely current unknown. |
+| `manual-pre-send-operation-relabel` | Remove `reconcilePreSendInputHash` as a correction action, its `restart`-only receipt reconciliation and the #544 legacy refusal-message matcher as active authority. Consume typed receipt evidence from the sweep, and treat older ambiguous rows as unknown until target facts answer them. Batch 8 and the API compatibility slice. | Execution-authored receipt, input/effect/attempt provenance, outcome inspection, and exact binding for any proof. |
+| `prose-owned-transport-and-slot-waits` | Retire #1321's daemon-wait prefix test in `clearTransportWait` and the parked capacity-text path as a source of current membership. Keep #1320's host isolation and remove only duplicated stop writes. Batches 2 and 4. | Scoped outage and reservation records, pause accounting, per-project notice dedupe and fresh slot admission. |
+| `release-without-lifecycle-wake` | Remove the released prerequisite pass's early return and the #1258/#1278 ladder's parked-restart refusal fallback once both use the durable wake decision. Batch 3 and ladder slice. | Retained prerequisite and planner wait authority, release notice, and author-revision approval boundary. |
+| `role-specific-absent-creation-replay` | Fold `absentWorkerStep`, `admitAbsentWorker` reason matching, `restartRunId` replay, #1321's stale-worker side path and `CoordinatorEpisode.failedCreationRun/releaseAbsent` into shared occurrence settlement. Batches 5–6 and creation cutover. | Exact lookup, evidence of absence or enrollment, attempt allowance, same task/workspace and fresh run identity for newly authorized work. |
+| `effect-specific-next-refusal-workarounds` | Fold reconciling-incident retry, released-run retry, owner-only terminal absence check and moved stalled-stop inspection into the same applicability decision and observer. Remove stale episode/action holds when their target is superseded. Batches 1, 8 and follow-on cleanup. | Evidence for a live/unknown tool, exact action provenance, and one retained recovery owner or planner ruling. |
+| `merged-closeout-retry-parking` | Fold the #1316 recorded-merge re-entry branch and `resumeClearedAttention` pre-attention restore into common phase settlement. Remove the catch-all “Resolution check retry requested” write for verified merged work. Batch 7 and external-merge cutover. | Exact forge identity, independent review or recorded operator acceptance where required, integration/lease/cleanup proof, and actual external-merge history. |
+| `host-specific-continuation-exceptions` | Remove host-specific offers that require an unavailable observation or reporting route and the assumption that an existing sibling copy is a published link. Batch 9. | Host-qualified tickets, separate adapter capabilities and equivalent source/custody checks. |
+
+The narrow rounds also added real protections. Keep #1316's retained-reader
+custody, source observation before closeout, grant and native-question
+settlement, and protection against duplicate escalation answers. Keep #1321's
+proof of absence and fresh resolution-role creation, and #1278's real restart
+slot transfer. These feed the shared decision. Their separate fallbacks and
+preview rules can go when that decision takes over.
