@@ -9,7 +9,7 @@ alias = "nucleus"
   { task = "qa:docs:agent-defaults" },
 ]
 # The lean Northstar spine: orientation, knowledge index, plan and release.
-"qa:northstar:spine" = "effigy docs check paths README.md AGENTS.md docs/README.md docs/knowledge/README.md docs/knowledge/vision.md docs/knowledge/retired.toml docs/knowledge/questions.md docs/knowledge/contracts/release.md"
+"qa:northstar:spine" = "effigy docs check paths README.md AGENTS.md docs/README.md docs/knowledge/README.md docs/knowledge/vision.md docs/knowledge/questions.md docs/knowledge/contracts/release.md"
 "qa:northstar:agent-contract" = "effigy docs check contains AGENTS.md --require 'effigy tasks' --require 'effigy test --plan' --require 'docs/README.md' --require 'docs/knowledge/README.md'"
 "qa:northstar:readme" = "effigy docs check contains README.md --require 'docs/README.md'"
 "qa:northstar:docs-front-door" = "effigy docs check contains docs/README.md --require 'knowledge/'"
@@ -69,7 +69,6 @@ check = [{ task = "check:types" }, { task = "check:plugin-types" }, { task = "ch
 "check:moves" = "node --import tsx scripts/check-moves.ts {args}"
 fmt = "node scripts/format-changed-typescript.mjs"
 "fmt:check" = "node scripts/format-changed-typescript.mjs --check"
-"qa:retired-concepts" = "node scripts/check-retired-concepts.mjs"
 # Wall-clock oracles run alone after the parallel suite; see scripts/test-timing.mjs.
 "test:timing" = "npm run test:timing -- {args}"
 # Fast checks first: a type or docs failure surfaces in seconds, not after the unit stage.

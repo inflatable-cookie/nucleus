@@ -51,8 +51,7 @@ security find-generic-password -s nucleus.github-reviewer -a <org> -w
   environment, written into the repository or named in an error message.
 - The read tries the `nucleus.github-reviewer` service first and then the legacy
   `paseo-queue.github-reviewer` service, so a token stored before the rename
-  keeps working; move the item to the new service. The legacy name is recorded
-  in [retired.toml](../retired.toml) (`legacy-reviewer-keychain-service`).
+  keeps working; move the item to the new service.
 - A missing keychain item, an HTTP 401/403, or a missing write access refuses
   with a task attention reason naming the org, the keychain service (including
   the legacy fallback) and what is

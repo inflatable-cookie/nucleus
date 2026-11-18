@@ -306,11 +306,9 @@ visible until its own fact or authorized decision answers it.
 ## Unwind after approval
 
 Keep all original intents and proofs readable. Remove the extra entry points
-and branch-specific fences as their rows migrate. Add each ID below to
-[`retired.toml`](../retired.toml) in the batch that removes its last active
-reader/writer. Set the retirement date then. During the proposal the controls
-are still in use. Compatibility readers for stored history belong on the
-corresponding allowlist.
+and branch-specific fences as their rows migrate. Each ID below retires in the
+batch that removes its last active reader/writer. During the proposal the
+controls are still in use. Compatibility readers for stored history may stay.
 
 | Proposed retirement ID | Delete or fold into the shared path | Keep |
 | --- | --- | --- |

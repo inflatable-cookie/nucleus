@@ -520,10 +520,10 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
   concept on the board, I never use it"). The board always renders one row of
   columns holding every card in scope, each card once, whatever its lane count.
   The swim-lane view, its header switch, per-lane rows, row and cell expand and
-  collapse, and the card chip naming a shared task's other lanes are retired
-  (`retired.toml`, `board-swim-lanes`). A card keeps its lane membership, shown
-  in the task view; lane records, documents, Planning, lane drain and every lane
-  RPC and CLI route are unchanged. Lane discovery is Planning's "Find lanes".
+  collapse, and the card chip naming a shared task's other lanes are retired.
+  A card keeps its lane membership, shown in the task view; lane records,
+  documents, Planning, lane drain and every lane RPC and CLI route are
+  unchanged. Lane discovery is Planning's "Find lanes".
 - **The Status view is retired** (Tom, 2026-09-27): the Pipeline view covers it,
   column for column, plus planning records. Tasks has one view, the Pipeline; the
   separate Lanes destination is folded into Planning (Spec 019, revision

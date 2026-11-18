@@ -186,8 +186,7 @@ export function validateReviewComment(comment:{issue_url?:string;user?:{login?:s
  * or named in an error. Store it with
  * `security add-generic-password -a <org> -s nucleus.github-reviewer -w`.
  * A token stored under the legacy service `paseo-queue.github-reviewer` is
- * still read as a fallback; move the item to the new service. The legacy name
- * is recorded in docs/knowledge/retired.toml (`legacy-reviewer-keychain-service`).
+ * still read as a fallback; move the item to the new service.
  */
 export const REVIEWER_TOKEN_SERVICE = 'nucleus.github-reviewer';
 /** Pre-public legacy keychain service, read only as a fallback for existing tokens. */
