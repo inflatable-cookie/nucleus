@@ -15,7 +15,7 @@ import { startsNoRuns } from "../closeout/queue-drain";
 import { now } from "../store/store";
 import { HostPass } from "./host-pass";
 import { SweepMaintenance } from "./sweep-maintenance";
-import { isTransportFailure } from "../../shared/transport";
+import { HostTransportFault, hostFaultHost } from '../host/adapter-routing';
 
 /**
  * Tasks reconciled per bounded safety-sweep window (Spec 013). The minute sweep
@@ -31,10 +31,6 @@ export type SweepContext = Pick<Engine, 'adapter' | 'applyDeferredOwnerVerbs' | 
 
 export class Sweep {
   private hostPassOwner: HostPass | null = null;
-  /** A timed-out host pass retains ownership until it actually settles. */
-  private readonly pendingHostPasses = new Map<string, Promise<Awaited<ReturnType<HostPass['run']>>>>();
-  /** The same bound used for a task quantum; replaceable in tests. */
-  hostPassBoundMs = TASK_QUANTUM_BOUND_MS;
   private maintenanceOwner: SweepMaintenance | null = null;
   /** The one owner of one host's audit steps: settlement, presentation and observation reads. */
   get hostPass(): HostPass {
@@ -75,21 +71,22 @@ export class Sweep {
   maxSweepWindows = MAX_SWEEP_WINDOWS;
   readonly sweepStats = { windows: 0, swept: 0, tasks: 0, lastPassAt: null as string | null };
   constructor(readonly engine: SweepContext) {}
-  private async runHostPass(host: string): Promise<Awaited<ReturnType<HostPass['run']>> | null> {
-    let pending = this.pendingHostPasses.get(host);
-    if (!pending) {
-      pending = Promise.resolve().then(() => this.engine.withHost(host, () => this.hostPass.run(host)));
-      this.pendingHostPasses.set(host, pending);
-      void pending.finally(() => {
-        if (this.pendingHostPasses.get(host) === pending) this.pendingHostPasses.delete(host);
-      }).catch(() => {});
+  /** A failed host step is an outage for that host, never an engine fault. */
+  private async fleetStep(name: string, work: () => Promise<unknown>): Promise<void> {
+    try { await work(); }
+    catch (error) {
+      const hostId = hostFaultHost(error);
+      if (!hostId) throw error;
+      const fault = error instanceof HostTransportFault ? error : new HostTransportFault(hostId, error);
+      this.engine.markAuditHostUnavailable(hostId);
+      this.engine.hostOutages.observe(hostId, false);
+      this.engine.store.setMeta('hostPassError', `${hostId}/${name}: ${fault.message}`.slice(0, 2000));
+      for (const task of this.engine.store.tasks()) {
+        if (task.hostId !== hostId || ['done', 'cancelled'].includes(task.phase)) continue;
+        this.engine.hostWait(task);
+        this.engine.noteStepFailure(task.id, fault);
+      }
     }
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      return await Promise.race([pending, new Promise<null>(resolve => {
-        timer = setTimeout(() => resolve(null), this.hostPassBoundMs);
-      })]);
-    } finally { clearTimeout(timer); }
   }
   sweepOnce(): Promise<void> {
     if (this.engine.stopped) return Promise.resolve();
@@ -206,18 +203,16 @@ export class Sweep {
       const hosts = new Set([...this.engine.hostIds(), ...this.engine.store.tasks().flatMap(task => task.hostId ? [task.hostId] : [])]);
       for (const host of hosts) {
         let passed: Awaited<ReturnType<HostPass['run']>> | null;
-        let available = false;
         try {
           passed = await this.engine.withHost(host, async () => {
             // Tom, 2026-11-14 (T3 lane v18, host dropout option 1: wait): one durable
             // record of when this host went away, kept whether or not it has tasks.
-            available = this.engine.hostAvailable(host);
-            this.engine.hostOutages.observe(host, available);
-            if (!available) return null;
-            return this.runHostPass(host);
+            this.engine.hostOutages.observe(host, this.engine.hostAvailable(host));
+            if (!this.engine.hostAvailable(host)) return null;
+            return this.hostPass.run(host);
           });
         } catch (error) {
-          if (!isTransportFailure(error)) throw error;
+          if (!hostFaultHost(error)) throw error;
           // A connected registry claim can still fail at the transport boundary.
           // Keep this host's tasks on the existing outage wait for this pass, and
           // continue the fleet sweep without turning the host loss into engineError.
@@ -226,12 +221,7 @@ export class Sweep {
           continue;
         }
         // Nothing is read from a host that is away: the wait itself is the stop.
-        if (!passed) {
-          this.engine.markAuditHostUnavailable(host);
-          this.engine.hostOutages.observe(host, false);
-          if (available) this.engine.store.setMeta('hostPassError', `${host}: host pass did not answer within ${this.hostPassBoundMs} ms`);
-          continue;
-        }
+        if (!passed) continue;
         // Spec 066 R1/R6 (C2): the pass's reading of one host, shared with that
         // host's task visits. A step that failed at the transport boundary means the
         // host did not answer, even though the registry still claims the connection:
@@ -251,43 +241,33 @@ export class Sweep {
       // pre-check keeps passes without a fence on their exact previous timing.
       const preflight=this.engine.store.maintenanceTasks(true);
       if (!this.engine.stopped && preflight.some((task) => isDispositionActive(task)))
-        await resumeDispositions(this.engine.store, this.engine.dispositionDeps());
+        await this.fleetStep('resumeDispositions', () => resumeDispositions(this.engine.store, this.engine.dispositionDeps()));
       // Queue #650: unresolved paused-stop markers resume in their own threads
       // before recovery reads the same threads, so a fresh resume never races
       // an armed failover.
-      if (!startsNoRuns(this.engine.store, this.engine.stopped)) await this.engine.resumePausedStops();
-      if (!startsNoRuns(this.engine.store, this.engine.stopped)) {
-        try { await this.engine.recoverExhaustedWorkers(); }
-        catch (error) {
-          // The failover pass walks every host on its own; one of them can hit the
-          // transport boundary. That answers for that host and never for the fleet
-          // (Spec 066 R6, C2), so the pass records it and still visits every other
-          // host's tasks. The next pass re-reads the host that failed.
-          if (!isTransportFailure(error)) throw error;
-          this.engine.store.setMeta('hostPassError',
-            `recoverExhaustedWorkers: ${error instanceof Error ? error.message : String(error)}`.slice(0, 2000));
-        }
-      }
+      if (!startsNoRuns(this.engine.store, this.engine.stopped)) await this.fleetStep('resumePausedStops', () => this.engine.resumePausedStops());
+      if (!startsNoRuns(this.engine.store, this.engine.stopped))
+        await this.fleetStep('recoverExhaustedWorkers', () => this.engine.recoverExhaustedWorkers());
       // Retired-errored archive is not drain settlement: it waits for unpause
       // (same as main). Running it under pause doubled the A6 retired-worker
       // observe. It does not hold `drained`.
-      if (!startsNoRuns(this.engine.store, this.engine.stopped)) await this.engine.archiveRetiredErroredAgents();
+      if (!startsNoRuns(this.engine.store, this.engine.stopped)) await this.fleetStep('archiveRetiredErroredAgents', () => this.engine.archiveRetiredErroredAgents());
       // Round 4: owner verbs recorded while paused or held apply once that clears.
-      try { await this.engine.applyDeferredOwnerVerbs(); } catch { /* one task's replay never stalls the wake */ }
+      await this.fleetStep('applyDeferredOwnerVerbs', () => this.engine.applyDeferredOwnerVerbs());
       // Task 1218: an amendment recorded while its host was unreachable is delivered
       // by the next pass; an attempted send with an unknown outcome never is.
-      try { await this.engine.deliverPendingBriefAmendments(); } catch { /* the recorded intent waits for the next pass */ }
-      if(this.engine.adapter.originAgent)await this.engine.resolution.origins.pass();
+      await this.fleetStep('deliverPendingBriefAmendments', () => this.engine.deliverPendingBriefAmendments());
+      if(this.engine.adapter.originAgent)await this.fleetStep('origins', () => this.engine.resolution.origins.pass());
       // Keep the ordinary pass timing unchanged: only reach for the checkpoint
       // reconciler when a persisted continuation intent actually awaits delivery.
-      if (preflight.some(task => task.checkpoints.intent && task.checkpoints.intent.status !== 'delivered')) await this.engine.resolution.checkpoints.pass();
-      await this.engine.continueAwaitingReviewers(preflight);
-      await this.engine.lifecycle.enqueuePass();
+      if (preflight.some(task => task.checkpoints.intent && task.checkpoints.intent.status !== 'delivered')) await this.fleetStep('checkpoints', () => this.engine.resolution.checkpoints.pass());
+      await this.fleetStep('continueAwaitingReviewers', () => this.engine.continueAwaitingReviewers(preflight));
+      await this.fleetStep('lifecycle', () => this.engine.lifecycle.enqueuePass());
       const releasedTasks = new Set<string>();
-      await this.engine.resolution.observe(inventory, undefined, taskId => {
+      await this.fleetStep('observe', () => this.engine.resolution.observe(inventory, undefined, taskId => {
         if (this.engine.scheduleLifecycleFollowUp(taskId)) releasedTasks.add(taskId);
         this.engine.wakeCapacityWaiter(taskId);
-      });
+      }));
       // A callback-free worker may still have completed and pushed the one
       // queue-owned branch PR. Reconcile that exact identity before recovery
       // spends a coordinator run. The retained worker still owes an
@@ -358,7 +338,7 @@ export class Sweep {
             // The host stopped answering between its pass and this visit. That is
             // this task's own host going away, not the fleet's: hold this task and
             // keep visiting the rest of the order (Spec 066 R6).
-            if (!isTransportFailure(error)) throw error;
+            if (!hostFaultHost(error)) throw error;
             if (task.hostId) {
               this.engine.markAuditHostUnavailable(task.hostId);
               this.engine.hostOutages.observe(task.hostId, false);
@@ -396,22 +376,22 @@ export class Sweep {
       // Coverage is judged against this pass's fleet: every task in it visited.
       covered = !drain || order.every(task => visited.has(task.id));
       if (drain && covered) this.engine.sweepCursor = null;
-      await this.engine.resolution.deliverNotices();
-      await this.engine.resolution.deliverQueuedMessages();
-      await this.engine.resolution.resumeAskQuestions();
-      await this.engine.resolution.raiseOperatorQuestions();
-      await this.engine.resolution.delegateNativeQuestions();
-      await this.engine.resolution.resumeResponsibleAnsweredQuestions();
-      await this.engine.resolution.deliverHoldNotices();
-      await this.engine.resolution.deliverDecisionNotices();
-      await this.engine.resolution.deliverDrainNotices();
+      await this.fleetStep('deliverNotices', () => this.engine.resolution.deliverNotices());
+      await this.fleetStep('deliverQueuedMessages', () => this.engine.resolution.deliverQueuedMessages());
+      await this.fleetStep('resumeAskQuestions', () => this.engine.resolution.resumeAskQuestions());
+      await this.fleetStep('raiseOperatorQuestions', () => this.engine.resolution.raiseOperatorQuestions());
+      await this.fleetStep('delegateNativeQuestions', () => this.engine.resolution.delegateNativeQuestions());
+      await this.fleetStep('resumeResponsibleAnsweredQuestions', () => this.engine.resolution.resumeResponsibleAnsweredQuestions());
+      await this.fleetStep('deliverHoldNotices', () => this.engine.resolution.deliverHoldNotices());
+      await this.fleetStep('deliverDecisionNotices', () => this.engine.resolution.deliverDecisionNotices());
+      await this.fleetStep('deliverDrainNotices', () => this.engine.resolution.deliverDrainNotices());
       // The one long-outage notice: raised once per outage past the dispatch-limits
       // bound, then delivered through the durable notice path.
       this.engine.hostOutages.raiseNotices();
-      await this.engine.resolution.deliverHostOutageNotices();
+      await this.fleetStep('deliverHostOutageNotices', () => this.engine.resolution.deliverHostOutageNotices());
       if(this.engine.stopped)return { fault: null, covered: false, visited };
       if(startsNoRuns(this.engine.store, this.engine.stopped)){for(const id of reconciled)this.engine.enqueueTitle(id);return { fault: null, covered, visited };}
-      await this.engine.dispatchQueued();
+      await this.fleetStep('dispatchQueued', () => this.engine.dispatchQueued());
       for(const id of reconciled)this.engine.enqueueTitle(id);
       return { fault: null, covered, visited };
     } catch (error) { this.engine.store.setMeta("engineError", String(error)); return { fault: error instanceof Error ? error : new Error(String(error)), covered: false, visited }; }

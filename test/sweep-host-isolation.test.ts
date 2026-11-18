@@ -4,6 +4,7 @@ import { Store } from '../core/store/store';
 import { Engine } from '../core/engine';
 import type { Adapter } from '../core/host';
 import { submission } from './support/fakes';
+import { HostTransportFault } from '../core/host/adapter-routing';
 
 const OFFLINE_HOST = 'bb:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 const HEALTHY_HOST = 'paseo:primary';
@@ -61,7 +62,7 @@ function fixture(t: TestContext, adapter: Loose = {}) {
 test('a host transport failure waits only that host while the sweep processes healthy-host work', async t => {
   const f = fixture(t);
   f.engine.withHost = ((hostId: string, work: () => unknown) => {
-    if (hostId === OFFLINE_HOST) throw new Error(`Transport not connected: host ${hostId} is unavailable`);
+    if (hostId === OFFLINE_HOST) throw new HostTransportFault(hostId, new Error(`Transport not connected: host ${hostId} is unavailable`));
     return work();
   }) as typeof f.engine.withHost;
 
@@ -109,7 +110,7 @@ test('a host whose pass failed at the transport boundary keeps its own waits whi
 
 test('a transport failure inside the failover pass answers for one host and leaves the pass standing', async t => {
   const f = fixture(t);
-  f.engine.recoverExhaustedWorkers = async () => { throw new Error(`Transport not connected: host ${OFFLINE_HOST} is unavailable`); };
+  f.engine.recoverExhaustedWorkers = async () => { throw new HostTransportFault(OFFLINE_HOST, new Error(`Transport not connected: host ${OFFLINE_HOST} is unavailable`)); };
 
   const result = await f.engine.auditPass(true);
 
@@ -120,25 +121,55 @@ test('a transport failure inside the failover pass answers for one host and leav
   assert.ok(f.processed.includes(`dispatch:${f.healthy.id}`), 'and dispatched');
 });
 
-test('a stalled host pass yields to other hosts and does not start a duplicate pass', async t => {
-  let release!: () => void;
-  const stalled = new Promise<void>(resolve => { release = resolve; });
-  let starts = 0;
-  const f = fixture(t, {
-    reconcileReportedSettlements: async () => {
-      if (f.engine.activeHostId === OFFLINE_HOST) { starts++; await stalled; }
-    },
-  });
-  // The production bound is the task quantum bound; shorten it for this test.
-  (f.engine as unknown as { sweep: { hostPassBoundMs: number } }).sweep.hostPassBoundMs = 10;
-  try {
-    const first = await f.engine.auditPass(true);
-    assert.equal(first.fault, null);
-    assert.equal(f.store.getMeta('engineError'), '');
-    assert.equal(f.store.task(f.offline.id).resolution.stop?.reason, 'host_unavailable');
-    assert.ok(f.processed.includes(`quantum:${f.healthy.id}`));
-    assert.ok(f.processed.includes(`dispatch:${f.healthy.id}`));
-    await f.engine.auditPass(true);
-    assert.equal(starts, 1, 'the unresolved pass retains ownership');
-  } finally { release(); }
+test('a host fault in a fleet step leaves other hosts running and clears on return', async t => {
+  let offline = true;
+  const f = fixture(t);
+  const t3 = f.add('t3code:primary', 'T3 task');
+  f.engine.hostIds = () => [OFFLINE_HOST, HEALTHY_HOST, t3.hostId!];
+  f.engine.resolveHostAdapter = host => ({ notify: async () => {
+    if (host === OFFLINE_HOST && offline) throw new Error(`Transport not connected: host ${host} is unavailable`);
+  } }) as unknown as Adapter;
+  f.engine.resolution.deliverNotices = async () => {
+    await f.engine.withHost(OFFLINE_HOST, () => f.engine.adapter.notify!('recipient', 'notice', 'body'));
+  };
+
+  const first = await f.engine.auditPass(true);
+  assert.equal(first.fault, null);
+  assert.equal(f.store.getMeta('engineError'), '');
+  assert.ok(first.visited.has(f.offline.id) && first.visited.has(f.healthy.id) && first.visited.has(t3.id));
+  assert.equal(f.store.task(f.offline.id).resolution.stop?.reason, 'host_unavailable');
+  assert.match(f.store.task(f.offline.id).resolution.stop?.detail ?? '', /Transport not connected/);
+  assert.ok(f.processed.includes(`quantum:${f.healthy.id}`));
+  assert.ok(f.processed.includes(`quantum:${t3.id}`));
+  assert.ok(f.processed.includes(`dispatch:${f.healthy.id}`));
+
+  offline = false;
+  await f.engine.auditPass(true);
+  assert.equal(f.store.task(f.offline.id).resolution.hostWait, null);
+  assert.equal(f.store.task(f.offline.id).resolution.stop, null);
+  assert.ok(f.processed.includes(`quantum:${f.offline.id}`));
+});
+
+test('a non-host fleet failure still records engineError', async t => {
+  const f = fixture(t);
+  f.engine.resolution.deliverNotices = async () => { throw new Error('store invariant failed'); };
+  const result = await f.engine.auditPass(true);
+  assert.match(result.fault?.message ?? '', /store invariant failed/);
+  assert.match(String(f.store.getMeta('engineError')), /store invariant failed/);
+});
+
+test('queued dispatch contains one host fault and retains other starts', async t => {
+  const f = fixture(t);
+  const t3 = f.add('t3code:primary', 'T3 queued');
+  for (const task of [f.offline, f.healthy, t3]) f.store.update(task.id, { phase: 'queued' });
+  f.store.setMeta('globalLimit', 5);
+  const sent: string[] = [];
+  f.engine.dispatchTask = async id => {
+    if (id === f.offline.id) throw new HostTransportFault(OFFLINE_HOST, new Error('plugin build mismatch'));
+    sent.push(id);
+  };
+  await f.engine.dispatchOwner.dispatchQueued();
+  assert.deepEqual(new Set(sent), new Set([f.healthy.id, t3.id]));
+  assert.equal(f.store.task(f.offline.id).resolution.stop?.reason, 'host_unavailable');
+  assert.match(f.store.task(f.offline.id).resolution.stop?.detail ?? '', /plugin build mismatch/);
 });

@@ -1343,6 +1343,10 @@ request identities and submitted handoffs are not rewritten.
   Nothing is settled from the stop's text or a reason prefix (the #1321 rule is
   retired), a host that did not answer settles nothing, a repeated pass adds no
   event, send or notice, and an owner stop beside the wait keeps its question.
+- A thrown adapter fault carries its host identity into sweep steps, observation
+  and dispatch. It holds that host's tasks while the sweep continues to later
+  steps and healthy tasks. A fault outside a host still records `engineError`.
+  Bounding calls that never return is tracked separately in nucleus#1347.
 - The wait is independent of the task's stop (nucleus#1198 review). When nothing
   more specific already stops the task the stop reads `host_unavailable`, naming
   the host and the outage start. A stop that belongs to an owner answer (budget,

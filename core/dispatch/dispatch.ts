@@ -9,6 +9,7 @@ import { FirstDispatch } from './first-dispatch';
 import { ReviewEntryAdmission } from './review-entry-admission';
 import { ProofOnlyLaunch } from './proof-only-launch';
 import { WorkspacePressure } from './workspace-pressure';
+import { HostTransportFault, hostFaultHost } from '../host/adapter-routing';
 
 export { dispatchGate, decideWorkspacePressureWait } from './dispatch-decisions';
 
@@ -60,7 +61,19 @@ export class Dispatch {
     const limit = this.store.getMeta<number>("globalLimit") ?? DEFAULT_GLOBAL_LIMIT;
     const candidates = queuedDispatchOrder(this.store.readyQueueHeads(limit + 2, repoPath, dispatchHeld));
     await this.resolution.withDispatchPass(async () => {
-      const visit = (candidate: Task) => this.engine.scheduleLane(`task:${candidate.id}`, LANE_PRIORITY_TASK, () => this.engine.dispatchTask(candidate.id, dispatchHeld));
+      const visit = (candidate: Task) => this.engine.scheduleLane(`task:${candidate.id}`, LANE_PRIORITY_TASK, () => this.engine.dispatchTask(candidate.id, dispatchHeld))
+        .catch(error => {
+          const hostId = hostFaultHost(error);
+          if (!hostId) throw error;
+          const fault = error instanceof HostTransportFault ? error : new HostTransportFault(hostId, error);
+          this.engine.markAuditHostUnavailable(hostId);
+          this.engine.hostOutages.observe(hostId, false);
+          for (const task of this.store.tasks()) {
+            if (task.hostId !== hostId || ['done', 'cancelled'].includes(task.phase)) continue;
+            this.engine.hostWait(task);
+            this.engine.noteStepFailure(task.id, fault);
+          }
+        });
       const { start, rest } = queuedVisits(candidates, this.store.activeCapacityTasks().filter(task => occupiesSlot(task)),
         this.store.projectDispatchLimitResolver(), this.store.papercutDispatchPolicy(), () => "none", limit);
       // Free slots start together, so one slow or stuck workspace doesn't hold up the next.

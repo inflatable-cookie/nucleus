@@ -2,6 +2,31 @@ import { callerNativeId, foreignIdentityRefusal, parseAgentId } from '../../shar
 import type { ReviewEntryInput } from '../../shared/contracts';
 import { originReviewProof, type OriginReviewHost } from '../review/origin-review-adapter';
 import type { Adapter, AgentObservation, OriginAgent } from './adapter';
+const faultHosts = new WeakMap<object, string>();
+
+/** A transport failure attributed at the adapter boundary, before host context is lost. */
+export class HostTransportFault extends Error {
+  constructor(readonly hostId: string, cause: unknown) {
+    super(`Transport not connected: host ${hostId}: ${cause instanceof Error ? cause.message : String(cause)}`, { cause });
+    this.name = 'HostTransportFault';
+  }
+}
+
+function attributed(host: string | undefined, error: unknown): unknown {
+  if (!host || error instanceof HostTransportFault) return error;
+  if ((typeof error === 'object' && error !== null) || typeof error === 'function') {
+    if (!faultHosts.has(error as object)) faultHosts.set(error as object, host);
+    return error;
+  }
+  return new HostTransportFault(host, error);
+}
+
+/** Host identity captured where the adapter threw, without changing its error type. */
+export function hostFaultHost(error: unknown): string | undefined {
+  if (error instanceof HostTransportFault) return error.hostId;
+  return error !== null && (typeof error === 'object' || typeof error === 'function')
+    ? faultHosts.get(error as object) : undefined;
+}
 
 /**
  * Direct adapter calls that still name an agent: HostFacade already routes the
@@ -35,23 +60,28 @@ export interface HostAdapterRoutingOwner {
  * task's origin host; a missing or offline origin host refuses, named.
  */
 export function routeHostAdapter(owner: HostAdapterRoutingOwner, fallback: Adapter): Adapter {
+  const record = attributed;
   const proxy: Adapter = new Proxy(fallback, {
     get: (selectedFallback, property) => {
       const id = owner.activeHostId;
       const selected = id ? owner.resolveHostAdapter(id) : selectedFallback;
-      if (!selected) throw new Error(`Transport not connected: host ${id} is unavailable`);
-      const value = Reflect.get(selected, property, selected);
+      if (!selected) throw record(id, new HostTransportFault(id!, new Error(`Transport not connected: host ${id} is unavailable`)));
+      let value: unknown;
+      try { value = Reflect.get(selected, property, selected); }
+      catch (error) { throw record(id, error); }
       if (property === 'inspectReviewEntry' && typeof value === 'function') {
         return async (input: ReviewEntryInput, taskId?: string, suppliedProof?: { origin: OriginAgent; state: AgentObservation }) => {
-          if (suppliedProof || !taskId) return value.call(selected, input, taskId, suppliedProof);
+          try {
+          if (suppliedProof || !taskId) return await value.call(selected, input, taskId, suppliedProof);
           const task = owner.store.task(taskId), originHost = task.originHostId;
           if (!originHost) throw new Error('Transport not connected: review-entry origin host is unknown');
-          if (originHost === task.hostId) return value.call(selected, input, taskId);
+          if (originHost === task.hostId) return await value.call(selected, input, taskId);
           if (!owner.withHost(originHost, () => owner.hostAvailable(originHost)))
             throw new Error(`Transport not connected: waiting for origin host ${originHost}`);
           // Method-call the port: a class withHost (Engine) reads this.hostContext.
           const proof = await originReviewProof(owner.host, (id, fn) => owner.withHost(id, fn), originHost, input.submission.originAgentId);
-          return value.call(selected, input, taskId, proof);
+          return await value.call(selected, input, taskId, proof);
+          } catch (error) { throw record(id, error); }
         };
       }
       if (typeof value !== 'function') return value;
@@ -101,7 +131,10 @@ export function routeHostAdapter(owner: HostAdapterRoutingOwner, fallback: Adapt
         }
         if (property === 'observationInventory' && Array.isArray(normalized[0]))
           normalized[0] = (normalized[0] as unknown[]).map(native);
-        return value.apply(selected, normalized);
+        try {
+          const result: unknown = value.apply(selected, normalized);
+          return result instanceof Promise ? result.catch(error => { throw record(id, error); }) : result;
+        } catch (error) { throw record(id, error); }
       };
     },
     set: (selectedFallback, property, value) => Reflect.set(selectedFallback, property, value, selectedFallback),
