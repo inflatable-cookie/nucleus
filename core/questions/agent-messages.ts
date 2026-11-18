@@ -6,7 +6,7 @@ import { askBinding } from "./agent-ask";
 import type { Resolution } from "../resolution";
 import { ProvenPreSendRefusalError } from '../recovery/task-reasons';
 import { normalizeTellTarget, TASK_ROLES, verbTargetSchema, type TellTarget } from "../../shared/agent-verbs.mjs";
-import { resolveTicketCaller, participantProjectScope } from "../dispatch/participant-tickets";
+import { resolveTicketCaller, participantProjectScope, participantScopeOf } from "../dispatch/participant-tickets";
 import { projectOfTarget, taskByReference } from "./agent-targets";
 import { ProjectAgentTargetRefusal } from "../planning/project-agents";
 
@@ -158,6 +158,25 @@ export class AgentMessages {
   }
 
   /**
+   * Tell from a host-verified identity with no ticket. The sender is labelled by
+   * the resolved caller; any recognised caller can reach a project planner or task role.
+   */
+  async hostAgentMessage(
+    identity: { caller: string; hostId: string },
+    input: Pick<AgentMessageRequest, "eventId" | "to" | "role" | "text">,
+  ): Promise<AgentMessageReceipt> {
+    const sender: MessageSender = {
+      task: null, taskId: `host:${identity.caller}`, role: "agent",
+      agentId: identity.caller, hostId: identity.hostId, reference: identity.caller,
+      project: null, projectKey: null,
+    };
+    const target = normalizeTellTarget(input.to, input.role);
+    if (target.kind === "counterpart") throw Error("A host thread reaches a task through its role: {task, role}");
+    const recipient = await this.resolveRecipient(sender, target);
+    return this.sendMessage(sender, recipient, input.eventId, input.text);
+  }
+
+  /**
    * Spec 065: the operator's own text, typed into the task's ACP thread. The agent
    * forwards it and never answers it. It is recorded like every other message — from
    * the operator, about this task, with the same duplicate and rate rules — and goes
@@ -196,12 +215,19 @@ export class AgentMessages {
     };
   }
 
-  /** A planner's or named agent's participant ticket. A task-planner ticket names no project, so it cannot be labelled. */
+  /** A planner's, named agent's or task-planner's participant ticket. A task-planner is labelled by its resolved identity. */
   private participantSender(participantId: string, token: string): MessageSender {
     const store = this.store;
     const caller = resolveTicketCaller(store, { participantId }, token);
+    if (participantScopeOf(store, participantId)?.kind === "task-planner") {
+      return {
+        task: null, taskId: `task-planner:${participantId}`, role: "planner",
+        agentId: caller.caller, hostId: caller.hostId, reference: "the task planner",
+        project: null, projectKey: null,
+      };
+    }
     const scope = participantProjectScope(store, participantId);
-    if (!scope) throw Error("A task-planner ticket names no project to label a message with; a task-planner thread tells through its own task");
+    if (!scope) throw Error("A participant ticket names no project to label a message with");
     const project = store.projectByKey(scope.projectKey);
     if (!project) throw Error(`Unknown project ${scope.projectKey}`);
     return {

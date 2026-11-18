@@ -1111,7 +1111,7 @@ export class QueueRuntime {
   async reviewEntryWorkspace(input:import('../shared/contracts').ReviewEntryWorkspaceInput){
     await this.started;
     if(!this.anyHostConnected())throw Error(this.startError||'All hosts are disconnected');
-    const hostId = this.engine.selectIngressHost(input.hostId);
+    const hostId = this.engine.selectIngressHost(input.hostId, input.repoPath);
     if (!hostId || !this.engine.withHost(hostId, () => this.engine.hostAvailable(hostId))) throw Error('Selected review-entry host is unavailable');
     return this.engine.withHost(hostId, async () => {
       const created=await prepareReviewEntryWorkspace(this.engine.adapter,input);
@@ -1122,7 +1122,7 @@ export class QueueRuntime {
   async reviewEntryPreview(input:ReviewEntryInput){
     await this.started;
     if(!this.anyHostConnected())throw Error(this.startError||'All hosts are disconnected');
-    const hostId = this.engine.selectIngressHost(input.submission.hostId);
+    const hostId = this.engine.selectIngressHost(input.submission.hostId, input.submission.repoPath);
     if (!hostId || !this.engine.withHost(hostId, () => this.engine.hostAvailable(hostId))) throw Error('Selected review-entry host is unavailable');
     return this.engine.withHost(hostId, async () => {
       const adapter = this.engine.adapter as Adapter & ReviewEntryAdapter;
@@ -1400,33 +1400,35 @@ export class QueueRuntime {
    * The caller rides the CLI from its Nucleus ticket or host identity, never a typed name, and the
    * service binds the task to that thread's own live worktree. The Paseo
    * bridge path carries no reliable caller identity and is refused.
+   *
+   * Resolution order (every host kind): prove the thread on a live host, then the
+   * current run ticket for that identity, then a participant ticket, then the
+   * host-verified identity. A slow host answers "The host is slow; retry".
    */
   async resolveHostCaller(input: { hostKind: HostKind; nativeAgentId: string; hostScope?: string }) {
-    const hosts = this.hostRegistry.onlineIds().filter(id => hostKindOf(id) === input.hostKind);
-    let hostId: string;
-    if (input.hostKind === 't3code') {
-      const owners: string[] = [];
-      for (const candidate of hosts) {
-        try {
-          const observation = await this.engine.withHost(candidate, () => this.engine.host.observe(input.nativeAgentId));
-          if (observation?.id === input.nativeAgentId && observation.status !== 'gone') owners.push(candidate);
-        } catch { /* A host that cannot verify this thread is not an owner. */ }
-      }
-      if (owners.length !== 1) {
-        const online = hosts.length ? hosts.join(', ') : '(none)';
-        const reason = owners.length > 1 ? 'is ambiguous' : 'is not owned by any online host';
-        throw new Error(`T3Code thread ${input.nativeAgentId} ${reason}; online T3 hosts: ${online}`);
-      }
-      hostId = owners[0]!;
-    } else {
-      if (hosts.length !== 1) throw new Error(`Calling host identity is unavailable or ambiguous for ${input.hostKind}`);
-      hostId = hosts[0]!;
-    }
-    const caller = formatAgentId(hostId, input.nativeAgentId);
-    // This call is the planner thread's own proof of life, so its participant
-    // ticket travels in the response instead of a message into its thread.
-    const participantTicket = await this.plannerTickets.forCaller(caller);
-    return { caller, hostId, source: 'host' as const, ...(participantTicket ? { participantTicket } : {}) };
+    const { resolveHostCallerIdentity } = await import("../core/dispatch/caller-resolution");
+    const adapter = this.adapter as { helperPath?: string } | undefined;
+    return resolveHostCallerIdentity({
+      onlineIds: () => this.hostRegistry.onlineIds(),
+      observe: (hostId, nativeAgentId) => this.engine.withHost(hostId, () => this.engine.host.observe(nativeAgentId)),
+      unreleasedRuns: this.store ? (caller, hostId) => this.store.unreleasedRunsForAgent(caller, hostId) : undefined,
+      helperPath: adapter?.helperPath,
+      participantTicket: caller => this.plannerTickets.forCaller(caller),
+    }, input);
+  }
+
+  /** Catalogue tell for a host-verified thread that has no run or participant ticket. */
+  async tellFromHost(input: {
+    hostKind: HostKind; nativeAgentId: string; hostScope?: string;
+    eventId: string; to: import("../core/questions/agent-messages").AgentMessageRequest["to"];
+    role?: import("../core/questions/agent-messages").AgentMessageRequest["role"]; text: string;
+  }) {
+    await this.started;
+    const identity = await this.resolveHostCaller(input);
+    return this.engine.resolution.hostAgentMessage(
+      { caller: identity.caller, hostId: identity.hostId },
+      { eventId: input.eventId, to: input.to, role: input.role, text: input.text },
+    );
   }
 
   async registerTask(input: import('../shared/contracts').TaskRegistrationInput, _accepted: unknown, context?: { via?: string | null }) {

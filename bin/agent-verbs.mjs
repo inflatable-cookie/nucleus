@@ -8,6 +8,7 @@ import { readFileSync } from 'node:fs';
 import { readPayload } from './payload.mjs';
 import { callbackRequest } from '../shared/service/callback-client.mjs';
 import { cliCallerSource, resolveCliCaller } from './caller.mjs';
+import { queueClient } from './queue-client.mjs';
 
 /** The in-turn budget `ask` waits (120s) plus the callback margin the MCP binding also uses. */
 const ASK_CALLBACK_TIMEOUT_MS = 150_000;
@@ -35,8 +36,12 @@ async function runAgentVerb(verb, payload, env = process.env) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error(`nucleus ${verb} takes a JSON object`);
   const source = cliCallerSource(env);
   const identity = await resolveCliCaller({ source });
-  const ticketPath = source.source === 'ticket' ? source.path : identity.participantTicket;
-  if (!ticketPath) throw new Error(`nucleus ${verb} needs a Nucleus ticket; this thread has no participant role, so nothing was sent`);
+  const ticketPath = source.source === 'ticket' ? source.path : (identity.runTicket ?? identity.participantTicket);
+  if (!ticketPath) {
+    if (verb === 'ask') throw new Error('ask is a worker\'s and reviewer\'s verb; this thread has no run ticket, so nothing was asked');
+    if (source.source !== 'host') throw new Error(`nucleus ${verb} needs a Nucleus ticket; this thread has no participant role, so nothing was sent`);
+    return { caller: identity.caller, result: await tellFromHost(source, payload) };
+  }
   const ticket = ticketOf(ticketPath);
   // A planner or named agent answers questions with question.answer; it never asks. Refused before any service request.
   if (ticket.participantId && verb === 'ask')
@@ -54,6 +59,27 @@ async function runAgentVerb(verb, payload, env = process.env) {
   const eventId = createHash('sha256').update(JSON.stringify(body)).digest('hex');
   const result = await callbackRequest(ticket, spec.route, { eventId, ...body }, { timeoutMs: spec.timeoutMs, timeoutMessage: spec.timeoutMessage });
   return { caller: identity.caller, result };
+}
+
+/** Host-verified tell: the service re-proves the caller; the payload names a recipient. */
+async function tellFromHost(source, payload) {
+  const { runId, ...request } = payload;
+  const body = {
+    ...request,
+    hostKind: source.hostKind,
+    nativeAgentId: source.nativeAgentId,
+    ...(source.hostScope ? { hostScope: source.hostScope } : {}),
+  };
+  const eventId = createHash('sha256').update(JSON.stringify(body)).digest('hex');
+  const client = await queueClient();
+  try {
+    await client.connect();
+    return await client.request('agent.tell', { eventId, ...body }, TELL_CALLBACK_TIMEOUT_MS);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/timed out/i.test(message)) throw new Error('The host is slow; retry', { cause: error });
+    throw error;
+  } finally { await client.close(); }
 }
 
 // Loaded only by `nucleus ask` / `nucleus tell` (bin/nucleus.mjs) and run directly by the tests.

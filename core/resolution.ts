@@ -802,6 +802,9 @@ export class Resolution {
   awaitAgentAsk(taskId: string, askId: string, joined: string | null): Promise<AgentAskReceipt> { return this.agentAsks.awaitAgentAsk(taskId, askId, joined); }
   agentAskPendingDetail(taskId: string, askId: string): string { return this.agentAsks.agentAskPendingDetail(taskId, askId); }
   agentMessage(input: AgentMessageRequest, token: string): Promise<AgentMessageReceipt> { return this.agentMessages.agentMessage(input, token); }
+  hostAgentMessage(identity: { caller: string; hostId: string }, input: Pick<AgentMessageRequest, "eventId" | "to" | "role" | "text">): Promise<AgentMessageReceipt> {
+    return this.agentMessages.hostAgentMessage(identity, input);
+  }
   /** Spec 065: the operator's text from a task's ACP thread, routed as an operator message. */
   operatorMessage(taskId: string, eventId: string, text: string): Promise<AgentMessageReceipt> { return this.agentMessages.operatorMessage(taskId, eventId, text); }
   messageRecipientTask(from: Task, to: string): Task { return this.agentMessages.messageRecipientTask(from, to); }

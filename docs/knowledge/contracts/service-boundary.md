@@ -226,6 +226,13 @@ refused claim on its retained connection like the Paseo bridge.
 The CLI and helpers resolve the calling thread from a Nucleus-issued run or
 participant ticket first, then a host-supplied identity; caller records are
 host-qualified and existing bare Paseo IDs retain their legacy interpretation.
+An explicit ticket is the asker and delivery target for every verb that records a
+caller (`decision.add`, `lead.submit`, `question.answer`, `tell`); Nucleus records
+the ticket's thread, never an MCP session or host scope from the environment. A
+named ticket whose file is missing refuses when the host identity is an MCP
+session, rather than recording that session. A
+decision answer is delivered to that recorded asker or queued with a visible wait
+(attempts > 0); an identity Nucleus cannot route is shown on the decision.
 Planner assignment issues an owner-only participant ticket that reaches the thread
 in the response to its own next authenticated call, or in the response to the
 assignment when the thread named itself. A ticket message is the last route: it goes
@@ -233,9 +240,10 @@ only to a thread observed live on a host that supplies no calling-thread identit
 its own, and never into an archived, gone or unreadable thread. A planner without a
 ticket is recorded ticket pending and the board's project entry says so. Startup
 reconciles that state and sends nothing. Reassignment or clearing revokes the ticket.
-For `nucleus ask` and `nucleus tell`, a host-supplied caller can proceed only when
-`caller.resolve` returns that thread's participant ticket; an unregistered host caller
-is refused before a verb is sent. A bare legacy project-planner ID binds to a matching
+For `nucleus tell`, a recognised caller proceeds from an explicit ticket, the current
+run ticket `caller.resolve` locates from the verified thread, a participant ticket, or
+the host-verified identity via `agent.tell`. `nucleus ask` still needs a run ticket.
+A slow host answers "The host is slow; retry" instead of hanging. A bare legacy project-planner ID binds to a matching
 native ID on Paseo regardless of the historical setter, and never to another host.
 The same ticket covers a task's own planner (task 1109): keyed per proven host and
 thread rather than per task, handed over by the same two routes, and valid only
