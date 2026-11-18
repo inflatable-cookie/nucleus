@@ -1,8 +1,8 @@
 import type { Task } from '../../shared/contracts';
 import type { QueueOperation } from '../../shared/operations';
 import { BLOCKED_EFFECT_ATTENTION_PREFIX } from '../../shared/task-stop';
-import { now, type Store } from '../store/store';
-import { blockingRecoveryEffects, observedHostEffectEvidence, recoveryEffectsRefusal, reviewEffectWait } from './recovery-effects';
+import type { Store } from '../store/store';
+import { authenticatedCompletion, blockingRecoveryEffects, hasRecordedOperationSettlement, observedHostEffectEvidence, releasedRunDeliveryEvidence, recoveryEffectsRefusal, reviewEffectWait } from './recovery-effects';
 
 /**
  * Nucleus#1159: an uncertain side effect answers itself when later evidence
@@ -32,25 +32,47 @@ export const BLOCKED_EFFECT_ATTENTION_MS = 10 * 60_000;
  */
 export function settleObservedHostEffectOperations(store: Store, taskId: string): QueueOperation[] {
   const settled: QueueOperation[] = [];
-  for (const operation of store.operations({ taskId, states: ['needs_attention'], limit: 1000 })) {
-    if (!operation.taskId || operation.taskId !== taskId) continue;
-    const task = store.task(taskId);
-    const evidence = observedHostEffectEvidence(store, task, operation);
-    if (!evidence) continue;
-    const at = now();
-    const record = evidence.slice(0, 2000);
-    settled.push(store.putOperation({ ...operation, state: 'succeeded', settledAt: at, diagnostic: '',
-      result: { taskId: task.id, taskVersion: task.version, phase: task.phase, number: task.number ?? null, reference: task.reference ?? null },
-      effect: operation.effect ? { ...operation.effect, status: 'reconciled', result: record, resultAt: at } : null }));
-    store.event(taskId, 'operation_settled_by_evidence', `${operation.id}: ${record}`);
-  }
+  // The observer's own exact-run event can outlive an overwritten run row.
+  // Re-read inside the transaction and preserve the event; no send is retried.
+  store.transaction(() => {
+    for (const candidate of store.runs(taskId)) {
+      const run = store.run(candidate.id);
+      if (!run || run.taskId !== taskId) continue;
+      const evidence = releasedRunDeliveryEvidence(store, run);
+      if (!evidence) continue;
+      if (run.completion && !authenticatedCompletion(store, run)) {
+        // Keep an unverified result untouched; its own intake gate still owns it.
+        if (!store.eventsAll(taskId).some(event => event.kind === 'run_delivery_superseded' && event.detail.startsWith(`${run.id}: `)))
+          store.event(taskId, 'run_delivery_superseded', `${run.id}: ${evidence}`);
+        continue;
+      }
+      store.putRun({ ...run, status: run.completion ? 'finished' : 'superseded' });
+      store.event(taskId, 'run_delivery_superseded', `${run.id}: ${evidence}`);
+    }
+  });
+  store.transaction(() => {
+    for (const candidate of store.operations({ taskId, states: ['needs_attention'], limit: 1000 })) {
+      const operation = store.operation(candidate.id);
+      if (!operation || operation.taskId !== taskId || operation.state !== 'needs_attention') continue;
+      const task = store.task(taskId);
+      if (hasRecordedOperationSettlement(store, task, operation)) continue;
+      const evidence = observedHostEffectEvidence(store, task, operation);
+      if (!evidence) continue;
+      const record = { id: operation.id, inputHash: operation.inputHash, attempt: operation.attempts,
+        intentAt: operation.effect!.intentAt, evidence: evidence.slice(0, 1200) };
+      // Leave the uncertain operation intact: failed operations can reopen, and
+      // a successful result would claim delivery. The event closes this occurrence.
+      store.event(taskId, 'operation_superseded', JSON.stringify(record));
+      settled.push(operation);
+    }
+  });
   return settled;
 }
 
 /** True while the task's own recorded stop is this blocked-effect attention. */
 export function blockedEffectAttentionRecorded(task: Task): boolean {
   const stop = task.resolution.stop;
-  return stop?.reason === 'operator_needed' && stop.detail.startsWith(BLOCKED_EFFECT_ATTENTION_PREFIX);
+  return stop?.reason === 'operator_needed' && stop.suggestedVerbs.length === 1 && stop.suggestedVerbs[0] === 'retry_effect';
 }
 
 /**

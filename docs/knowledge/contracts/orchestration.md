@@ -2326,6 +2326,18 @@ movement invalidates source approval and preserves the normal readiness gates.
   offer settlement at the current head. Review credit still binds to its exact head.
 - A reviewer waits while recovery effects block dispatch; it does not repeatedly
   create runs until those effects change.
+- An uncertain restart stays a conflict until positive evidence makes its
+  occurrence obsolete. A later workspace binding alone does not identify its
+  target. An exact owner settlement, a verified merge of the task's exact head,
+  or an isolated later binding after all possible recorded targets are observed
+  released can supersede it. An initial worker's restart intent binds its run and
+  agent to the later worker-retirement record; older runs already released before
+  the attempt need no second release. An ordinarily released reviewer is history
+  when its matching accepted receipt and exact-run application event predate the
+  attempt. The original operation stays uncertain; a durable
+  occurrence-bound event records the supersession without permitting replay.
+  A released run's exact delivery-observer settlement also survives a stale run
+  row. Its separate workspace and participant cleanup obligations remain.
 
 - `retry_effect review_publication.<runId>` (with a `reason`) observes the
   publication and binds a found review or retries after fresh complete inventories

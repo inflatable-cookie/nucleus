@@ -11,6 +11,9 @@ import assert from 'node:assert/strict';
 import { Store, digest, operationIdForKey, operationInputHash } from '../core/store/store';
 import { classifyReviewPublication, reviewPublicationKey } from '../core/review/review-publication';
 import { recoveryEffects, blockingRecoveryEffects, blockingRecoveryEffectsRefusal, isBlockingRecoveryEffect, blockingTaskOperations, observedHostEffectEvidence, reviewEffectWait, reviewEffectWaitRefusal } from '../core/recovery/recovery-effects';
+import { settleObservedHostEffectOperations } from '../core/recovery/effect-gates';
+import { releaseRunFromRecordedCompletion, supersedeIdleRunInTx } from '../core/recovery/fence-settlement';
+import { collectOwnerVerbFacts, ownerTaskNext } from '../core/verbs/owner-verbs';
 import { verifyEnclosingOperation } from '../core/planning/enclosing-operation';
 import { taskControlOperation } from '../core/verbs/task-control-key';
 import { reviewPublicationBody } from '../core/forge/index';
@@ -312,46 +315,40 @@ test('the shared enclosing-operation verifier excludes only the exact running co
 });
 
 
-/**
- * Nucleus#1159: an uncertain host-effect control the task has since answered is
- * not a blocker. Later evidence (a binding after the control was accepted, then
- * a run used in that workspace) answers it; nothing else does.
- */
-test('a host-effect operation answered by later evidence stops blocking, and nothing else does', () => {
+test('restart needs target evidence; an exact later merge supersedes it without delivery credit', () => {
   const { store, task: inserted } = fixture();
   try {
     const accepted = new Date(Date.now() - 60_000).toISOString();
     const task = store.update(inserted.id, { workspaceIntent: true, workspaceId: 'workspace', directory: '/worktree' });
-    const input = taskControlInputSchema.parse({ taskId: task.id, version: task.version, action: 'restart', reason: 'Recover the worker' });
+    const input = taskControlInputSchema.parse({ taskId: task.id, version: task.version, action: 'restart', reason: 'Recover' });
     const { key, payload } = taskControlOperation(input), id = operationIdForKey(key);
     store.putOperation(queueOperationSchema.parse({ id, key, kind: 'task_control', inputHash: operationInputHash(payload),
-      state: 'needs_attention', taskId: task.id, expectedVersion: input.version, repoPath: null, submissionId: null,
-      createdAt: accepted, startedAt: accepted, settledAt: accepted, attempts: 1,
-      diagnostic: 'Host delivery is unknown; command was not resent; command project.create', result: null,
+      state: 'needs_attention', taskId: task.id, expectedVersion: input.version, createdAt: accepted,
+      startedAt: accepted, settledAt: accepted, attempts: 1, diagnostic: 'Transport', result: null,
       effect: { kind: 'task_control', target: 'restart', intentAt: accepted, status: 'uncertain', result: null, resultAt: null } }), payload);
-    // Unknown delivery with no later evidence is a blocker, and a gate reads it.
-    assert.equal(observedHostEffectEvidence(store, store.task(task.id), store.operation(id)!), null);
-    assert.deepEqual(blockingRecoveryEffects(store, store.task(task.id), { kinds: ['operation'] }).map(effect => effect.identity), [id]);
-    assert.deepEqual(blockingTaskOperations(store, store.task(task.id)).map(operation => operation.id), [id],
-      'a phase gate refuses on it');
-    // A binding alone is not proof the thread in it was created.
     store.event(task.id, 'workspace_created', 'workspace');
+    const run = reviewRun(store, task, { id: 'run-after', createdAt: new Date().toISOString() });
     assert.equal(observedHostEffectEvidence(store, store.task(task.id), store.operation(id)!), null);
     assert.equal(blockingTaskOperations(store, store.task(task.id)).length, 1);
-    // A run created in that workspace afterwards is.
-    store.putRun(runSchema.parse({ id: 'revision-used', taskId: task.id, role: 'revision', generation: 1, head, base,
-      agentId: 'revision-agent', workspaceId: 'workspace', profile: null, status: 'finished', createdAt: new Date().toISOString(),
-      lastObservedAt: null, active: false, idleSince: null, completion: null, released: true }));
-    const evidence = observedHostEffectEvidence(store, store.task(task.id), store.operation(id)!)!;
-    assert.match(evidence, /workspace workspace was bound at \/worktree after this control was accepted/);
-    assert.match(evidence, /revision run revision-used started there/);
-    const projected = recoveryEffects(store, store.task(task.id), { kinds: ['operation'] })[0]!;
-    assert.equal(projected.state, 'superseded', 'the projection is history, not a fence');
-    assert.match(projected.reason, /answered by later evidence/);
-    assert.deepEqual(blockingRecoveryEffects(store, store.task(task.id), { kinds: ['operation'] }), []);
-    assert.deepEqual(blockingTaskOperations(store, store.task(task.id)), []);
-    // The projection is a read: the operation row keeps its own recorded state.
-    assert.equal(store.operation(id)?.state, 'needs_attention');
+    store.update(task.id, { phase: 'syncing', prUrl: 'https://example.test/repo/pull/1', prHead: head,
+      resolution: { ...store.task(task.id).resolution, mergeHead: head, mergedCommit: base } }, 'merge_verified', '');
+    store.putRun({ ...run, released: false });
+    assert.equal(blockingTaskOperations(store, store.task(task.id)).length, 1, 'a live target remains a conflict');
+    store.putRun(run);
+    assert.equal(blockingTaskOperations(store, store.task(task.id)).length, 0);
+    settleObservedHostEffectOperations(store, task.id);
+    const settled = store.operation(id)!;
+    assert.equal(settled.state, 'needs_attention');
+    assert.equal(settled.effect?.status, 'uncertain');
+    assert.equal(settled.result, null);
+    assert.match(settled.diagnostic, /Transport/);
+    assert.match(store.eventsAll(task.id).find(event => event.kind === 'operation_superseded')!.detail, /exact PR head/);
+    const repeated = store.acceptOperation({ key, kind: 'task_control', inputHash: operationInputHash(payload),
+      taskId: task.id, expectedVersion: input.version, payload });
+    assert.ok('operation' in repeated);
+    assert.equal(repeated.operation.state, 'needs_attention', 'same key cannot reopen an uncertain send');
+    settleObservedHostEffectOperations(store, task.id);
+    assert.equal(store.eventsAll(task.id).filter(event => event.kind === 'operation_superseded').length, 1);
   } finally { store.close(); }
 });
 
@@ -376,5 +373,163 @@ test('the blocked-review wait is read from the stop Queue itself records', () =>
       'a stop that is not the review wait decodes nothing');
     assert.equal(reviewEffectWaitRefusal(stopFor('Another unresolved task operation fences reviewer continuation')), null);
     assert.equal(reviewEffectWaitRefusal(store.task(task.id)), null, 'a task with no recorded wait decodes nothing');
+  } finally { store.close(); }
+});
+
+
+test("stale released delivery preserves an authenticated reviewer publication", () => {
+  const { store, task: inserted } = fixture();
+  try {
+    const task = store.update(inserted.id, { prHead: head });
+    const completion = reviewCompletion(
+      task.id,
+      "review-result",
+      "changes_required",
+      { reviewCommentId: 41 },
+    );
+    const run = reviewRun(store, task, {
+      id: "review-result",
+      status: "finished",
+      completion,
+    });
+    accept(
+      store,
+      task.id,
+      run.id,
+      reviewCompletion(task.id, run.id, "changes_required"),
+    );
+    store.setMeta(reviewPublicationKey(run.id), {
+      hash: digest(
+        reviewPublicationBody(
+          task,
+          run,
+          "changes_required",
+          completion.reviewText!,
+        ),
+      ),
+      commentId: 41,
+    });
+    assert.equal(classifyReviewPublication(store, task, run).state, "settled");
+    store.event(
+      task.id,
+      "run_delivery_reconciled",
+      `${run.id}: exact creation message observed`,
+    );
+    store.putRun({ ...run, status: "uncertain" });
+    assert.equal(
+      blockingRecoveryEffects(store, task, { kinds: ["run-delivery"] }).length,
+      0,
+    );
+    assert.equal(ownerTaskNext(collectOwnerVerbFacts(store, task)).verbs.some(view =>
+      view.verb === 'retry_effect' && JSON.stringify(view.args ?? {}).includes(`run-delivery.${run.id}`)), false);
+    settleObservedHostEffectOperations(store, task.id);
+    assert.equal(store.run(run.id)?.status, "finished");
+    assert.equal(
+      classifyReviewPublication(store, task, store.run(run.id)!).state,
+      "settled",
+    );
+    settleObservedHostEffectOperations(store, task.id);
+    assert.equal(
+      store
+        .eventsAll(task.id)
+        .filter((event) => event.kind === "run_delivery_superseded").length,
+      1,
+    );
+    // A mismatched receipt cannot promote an invented completion.
+    store.putRun({
+      ...store.run(run.id)!,
+      status: "uncertain",
+      completion: { ...completion, summary: "forged" },
+    });
+    settleObservedHostEffectOperations(store, task.id);
+    assert.equal(store.run(run.id)?.status, "uncertain");
+  } finally {
+    store.close();
+  }
+});
+
+
+test('released run delivery uses its own observer settlement and converges', () => {
+  const { store, task } = fixture();
+  try {
+    const run = reviewRun(store, task, { id: 'old-run', status: 'uncertain' });
+    store.event(task.id, 'run_delivery_reconciled', 'other-run: exact creation message observed');
+    assert.equal(blockingRecoveryEffects(store, task, { kinds: ['run-delivery'] }).length, 1);
+    store.event(task.id, 'run_delivery_reconciled', `${run.id}: exact creation message observed`);
+    store.putRun({ ...run, released: false });
+    assert.equal(blockingRecoveryEffects(store, task, { kinds: ['run-delivery'] }).length, 1, 'live target still gates');
+    store.putRun(run);
+    assert.equal(recoveryEffects(store, task, { kinds: ['run-delivery'] })[0]?.state, 'superseded');
+    settleObservedHostEffectOperations(store, task.id);
+    assert.equal(store.run(run.id)?.status, 'superseded');
+    const events = store.eventsAll(task.id).filter(event => event.kind === 'run_delivery_superseded');
+    assert.equal(events.length, 1);
+    assert.match(events[0]!.detail, /run_delivery_reconciled/);
+    settleObservedHostEffectOperations(store, task.id);
+    assert.equal(store.eventsAll(task.id).filter(event => event.kind === 'run_delivery_superseded').length, 1);
+  } finally { store.close(); }
+});
+
+for (const [role, runRole] of [['reviewer', 'reviewer'], ['worker', 'revision'], ['executor', 'executor'], [undefined, 'reviewer']] as const) {
+  test(`a displaced ${role} restart settles only after its possible target releases`, () => {
+    const { store, task } = fixture();
+    try {
+      const run = reviewRun(store, task, { id: `old-${role}`, role: runRole, status: 'running', released: false,
+        createdAt: '2026-01-01T00:00:00.000Z' });
+      const second = reviewRun(store, task, { id: `other-${role}`, role: runRole, agentId: `other-agent-${role}`, status: 'running', released: false, createdAt: '2026-01-01T00:00:00.000Z' });
+      const input = taskControlInputSchema.parse({ taskId: task.id, version: task.version, action: 'restart', role, caller: 'owner', reason: 'Resume' });
+      const { key, payload } = taskControlOperation(input), id = operationIdForKey(key);
+      const accepted = '2026-01-02T00:00:00.000Z';
+      store.putOperation(queueOperationSchema.parse({ id, key, kind: 'task_control', inputHash: operationInputHash(payload),
+        state: 'needs_attention', taskId: task.id, expectedVersion: input.version, createdAt: accepted,
+        startedAt: accepted, settledAt: accepted, attempts: 1, diagnostic: 'Transport', result: null,
+        effect: { kind: 'task_control', target: 'restart', intentAt: accepted, status: 'uncertain', result: null, resultAt: null } }), payload);
+      store.update(task.id, { reason: 'Later binding' });
+      reviewRun(store, task, { id: `new-${role}`, role: runRole, agentId: `new-agent-${role}`, status: 'running', released: false,
+        createdAt: new Date().toISOString() });
+      assert.equal(blockingTaskOperations(store, store.task(task.id)).length, 1, 'unreleased target gates');
+      assert.equal(supersedeIdleRunInTx(store, task.id, run, 'Observed old agent idle'), true);
+      assert.equal(blockingTaskOperations(store, store.task(task.id)).length, 1, 'every possible target must release');
+      assert.equal(supersedeIdleRunInTx(store, task.id, second, 'Observed second agent idle'), true);
+      assert.equal(blockingTaskOperations(store, store.task(task.id)).length, 0);
+      settleObservedHostEffectOperations(store, task.id);
+      assert.equal(store.operation(id)?.effect?.status, 'uncertain');
+      assert.equal(store.eventsAll(task.id).filter(event => event.kind === 'operation_superseded').length, 1);
+      settleObservedHostEffectOperations(store, task.id);
+      assert.equal(store.eventsAll(task.id).filter(event => event.kind === 'operation_superseded').length, 1);
+    } finally { store.close(); }
+  });
+}
+
+
+test('an earlier released reviewer round does not hold a later displaced restart', async () => {
+  const { store, task } = fixture();
+  try {
+    const historical = reviewRun(store, task, { id: 'past-round', released: false, status: 'finished',
+      completion: reviewCompletion(task.id, 'past-round', 'changes_required') });
+    releaseRunFromRecordedCompletion(store, task.id, historical);
+    await new Promise(resolve => setTimeout(resolve, 10));
+    const target = reviewRun(store, task, { id: 'restart-target', agentId: 'target-agent', status: 'running', released: false });
+    const input = taskControlInputSchema.parse({ taskId: task.id, version: store.task(task.id).version,
+      action: 'restart', role: 'reviewer', reason: 'Continue', caller: 'owner' });
+    const { key, payload } = taskControlOperation(input), id = operationIdForKey(key), accepted = new Date().toISOString();
+    store.putOperation(queueOperationSchema.parse({ id, key, kind: 'task_control', inputHash: operationInputHash(payload),
+      state: 'needs_attention', taskId: task.id, expectedVersion: input.version, createdAt: accepted,
+      startedAt: accepted, settledAt: accepted, attempts: 1, diagnostic: 'Transport', result: null,
+      effect: { kind: 'task_control', target: 'restart', intentAt: accepted, status: 'uncertain', result: null, resultAt: null } }), payload);
+    await new Promise(resolve => setTimeout(resolve, 10));
+    store.update(task.id, { reason: 'A new review binding' });
+    reviewRun(store, task, { id: 'next-round', agentId: 'new-agent', status: 'running', released: false, createdAt: new Date().toISOString() });
+    const offered = () => ownerTaskNext(collectOwnerVerbFacts(store, store.task(task.id))).verbs.some(view =>
+      view.verb === 'retry_effect' && JSON.stringify(view.args ?? {}).includes(`operation.${id}`));
+    assert.equal(blockingTaskOperations(store, store.task(task.id)).length, 1, 'the real target is still live');
+    assert.equal(offered(), true);
+    assert.equal(supersedeIdleRunInTx(store, task.id, target, 'Observed target idle'), true);
+    assert.equal(blockingTaskOperations(store, store.task(task.id)).length, 0);
+    assert.equal(offered(), false);
+    settleObservedHostEffectOperations(store, task.id);
+    assert.equal(store.eventsAll(task.id).filter(event => event.kind === 'operation_superseded').length, 1);
+    settleObservedHostEffectOperations(store, task.id);
+    assert.equal(store.eventsAll(task.id).filter(event => event.kind === 'operation_superseded').length, 1);
   } finally { store.close(); }
 });

@@ -620,10 +620,9 @@ const PARSED: ParsedText[] = [
   { site: 'review recovery wait', reads: ['reviewEffectWaitRefusal(t) === refusal',
       '/^(?:Ordinary review|Review-entry) waits for (.+); settle it with retry_effect before continuing$/'],
     writers: ["`${run.ordinaryDetached?'Ordinary review':'Review-entry'} waits for ${recoveryEffectsRefusal(error.effects)}; settle it with retry_effect before continuing`"] },
-  // Nucleus#1159: the blocked review's attention is one authored sentence; the
-  // stop classification and the reconciler's reader both key on its constant.
+  // The classifier keeps the authored sentence; the reconciler reads the structured stop.
   { site: 'blocked effect attention',
-    reads: ['detail.startsWith(BLOCKED_EFFECT_ATTENTION_PREFIX)', 'stop.detail.startsWith(BLOCKED_EFFECT_ATTENTION_PREFIX)'],
+    reads: ['detail.startsWith(BLOCKED_EFFECT_ATTENTION_PREFIX)', "stop.suggestedVerbs[0] === 'retry_effect'"],
     writers: ['BLOCKED_EFFECT_ATTENTION_PREFIX = "An uncertain side effect blocks review"', '`${BLOCKED_EFFECT_ATTENTION_PREFIX}: ${recoveryEffectsRefusal(blocked)}'] },
   // The check's resume rule moved to its own owner; the parked-phase and accepted-PR
   // readers are the same two facts at their new site.
