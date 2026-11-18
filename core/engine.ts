@@ -520,7 +520,7 @@ export class Engine {
       get withHost() { return engine.withHost.bind(engine); },
       get resolution() { return portsContext(engine.resolution, ['attention', 'complete', 'settleCompletedExecutorBlocker']); },
     });
-    this.workerFailover = new WorkerFailover(enginePorts(this, ['activeHostId', 'adapter', 'host', 'launchAgent', 'note', 'profileCatalogKnown', 'profiles', 'workerProviderUnavailable', 'stopped', 'store', 'taskHostAvailable', 'withHost'], ['recordStop', 'resumeTransientProviderThread', 'resumeTransientWorker', 'retainedWorkerProfileIssue', 'suppressAutomaticRetry', 'transportDeferred', 'waiting']));
+    this.workerFailover = new WorkerFailover(enginePorts(this, ['activeHostId', 'adapter', 'host', 'launchAgent', 'note', 'profileCatalogKnown', 'profiles', 'workerProviderUnavailable', 'stopped', 'store', 'taskHostAvailable', 'withHost'], ['clearTransportWait', 'graceMs', 'recordStop', 'resumeTransientProviderThread', 'resumeTransientWorker', 'retainedWorkerProfileIssue', 'suppressAutomaticRetry', 'transportDeferred', 'waiting']));
     this.retiredObservations = new RetiredObservations(portsContext(this, ['activeHostId', 'host', 'retiredObservationKey', 'store', 'taskHostAvailable']));
     this.taskControlDispatcher = new TaskControlDispatcher(this);
     this.recoverySettlement = new RecoverySettlement(enginePorts(this, ['coordinatorActionRunId', 'selfForceRunId', 'host', 'onTaskHost', 'performTaskControl', 'store'], ['attention', 'recovery', 'update']));

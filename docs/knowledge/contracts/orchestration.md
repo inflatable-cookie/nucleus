@@ -686,7 +686,8 @@ Resolution, including `retry` so instance overrides still fire.
 
 **AbsentRestarts** (`core/recovery/absent-creation/restarts.ts`). Recreates
 proven-absent runs: an absent worker in the retained workspace, an absent
-resolution run, an uncertain-run restart under the same run ID, and the
+resolution run (released for a fresh run from the current route, never recreated
+under the recorded payload or the same run ID), and the
 one-replacement creation budget, whose record shape and reader are
 `absent-creation/budget.ts`. Enforces
 [Orphan worktree after a timed-out create](#orphan-worktree-after-a-timed-out-create).
@@ -1766,6 +1767,33 @@ review or merge credit; live participants and unsettled effects remain fences.
   a scan failure may show temporarily until a successful scan restores it.
 - When a retained thread blocks dispatch, the reason names its pending
   permission or question, active turn or non-resumable status.
+
+### Uncertain creation and absence
+
+- A run or worker creation that errors, or whose host call passes its admission
+  deadline, is `uncertain` with no agent. Nothing resends it.
+- Observation runs an exact lookup on each pending agentless run. Zero matches
+  after the grace window is absence. The first absence gets one same-role
+  automatic replacement. A second absence, with the replacement budget spent,
+  settles the run as absent: it records `absentProvenAt`, observation never
+  looks it up again, and it stops being a blocking run-delivery effect, so
+  `next` does not offer `retry_effect` for it. The task waits with `route` and
+  `restart` suggested. No coordinator is engaged, because the coordinator's own
+  creation runs on the same host.
+- `route role=reviewer now` on a proven-absent run releases it without an archive
+  wait: its credential is revoked and its incident resolves. The reviewer then
+  launches one fresh run on the named profile. A creation not yet proven absent
+  is refused, and route never stops or replaces it.
+- `restart` on a proven-absent resolution run releases it and launches a fresh
+  run from the role's current route. Its profile and provider come from the live
+  catalog, never the recorded creation payload. The new run has a new run ID and
+  creation intent.
+- A stale worker creation intent (no agent, no PR, no accepted result) with a
+  route or restart armed is settled by exact lookup first. Zero matches releases
+  the intent, and the armed replacement launches from the current route. One
+  matching agent binds to the task. Anything else waits for the operator.
+- A host-unavailable transport wait is re-evaluated by the first pass that sees
+  the host back.
 
 ### Retained worker recovery
 

@@ -155,6 +155,12 @@ export const runSchema = z.object({
   retainedAgentClosedAt: z.string().optional(),
   /** When an owner control replaced this reviewer with another; its verdict at the exact head may still finish the review. */
   replacedAt: z.string().optional(),
+  /**
+   * When an exact lookup proved this uncertain creation produced no agent. The
+   * run is never resent and stops blocking owner verbs; `route now` and
+   * `restart` release it and launch a fresh run from the current route.
+   */
+  absentProvenAt: z.string().optional(),
   // Retired legacy continuation: nothing writes these; old records still parse. An unsettled one fails closed on reviewer delivery.
   reviewContinuation: reviewContinuationIntentSchema.nullable().optional(),
   reviewContinuations: z.number().int().nonnegative().optional(),

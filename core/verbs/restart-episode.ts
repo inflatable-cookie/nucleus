@@ -207,8 +207,6 @@ export class EpisodeRestarts {
     if (restart && !found.length) {
       const wait = this.engine.dispatchWaitsFor(check());
       if (wait) return this.engine.deferOwnerVerb(check(), restart.input, wait, { runId: run.id });
-      await this.resolution.admitUncertainRunRestart(check(), run.id, settling);
-      admitLocal();
     }
     return async () => {
       const current = check();
@@ -228,7 +226,8 @@ export class EpisodeRestarts {
       if (restart) {
         const wait = this.engine.dispatchWaitsFor(current);
         if (wait) return this.engine.deferOwnerVerb(current, restart.input, wait, { runId: run.id });
-        return this.resolution.restartUncertainRun(current, run.id, restart.instruction, input.settleFences);
+        // The lookup above read zero matches: the creation is absent, so a fresh run starts from the current route.
+        return this.resolution.replaceAbsentRunFromRoute(current, run.id, restart.instruction, input.settleFences);
       }
       throw Error('Restart authorization is required');
     };
