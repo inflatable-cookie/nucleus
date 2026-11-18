@@ -41,7 +41,7 @@ export type CoordinatorPassContext = {
 /**
  * The recovery pass: one sweep over the tasks that hold a coordinator run. It
  * observes that exact run, settles it when it finished, supersedes it when the
- * generation changed, releases a proven-absent creation, hands a responsible
+ * generation changed, retains an unproved creation, hands a responsible
  * task's report to its planner ladder, and escalates a pending episode that
  * starts no run inside its bound. It decides nothing about which tasks need a
  * coordinator: that is `CoordinatorRoute`.
@@ -174,16 +174,6 @@ export class CoordinatorPass {
      if(!latestRun||latestRun.released||t.resolution.recovery?.runId!==latestRun.id||latestRun.generation!==t.coordinatorGeneration)continue;
      run=latestRun;
      const creation=creationLookup(found,run.workspaceId);
-     if(!run.agentId&&creation.kind==='absent'&&this.episode.failedCreationRun(t,run)){
-      const absentRunId=run.id,taskId=t.id;
-      this.resolution.adapter.purgeReportingFiles?.(taskId,[absentRunId]);
-      this.store.transaction(()=>{
-       const latestTask=this.store.task(taskId),currentRun=this.store.run(absentRunId);
-       if(currentRun&&this.episode.failedCreationRun(latestTask,currentRun))
-        this.episode.releaseAbsent(latestTask,absentRunId,'Exact task/run label lookup found no coordinator; failed creation superseded and released');
-      });
-      continue;
-     }
      if(!run.agentId&&creation.kind!=='bound'){this.episode.escalate(t,'Coordinator recovery creation is uncertain; no duplicate was launched. Inspect the queue run before retrying.');continue;}
      if(!run.agentId&&creation.kind==='bound'){run={...run,agentId:creation.agentId,status:'running'};this.store.putRun(run);}
      if(t.coordinatorGeneration===run.generation&&!t.coordinatorAgentId)this.store.update(t.id,{coordinatorAgentId:run.agentId!},'coordinator_assigned',run.agentId!);

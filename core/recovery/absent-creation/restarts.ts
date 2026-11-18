@@ -5,7 +5,7 @@ import { isDispositionActive, isDispositionComplete } from '../../../shared/cont
 import { isPiSettingsLockFailure } from '../exhaustion';
 import { taskPrNumber } from '../../forge/index';
 import type { Resolution } from '../../resolution';
-import { absentReplacementRecord, absentReplacementSpent } from './budget';
+import { absentReplacementRecord } from './budget';
 import { provenAbsentCreation } from './decisions';
 
 /** Classify a complete, occurrence-bound lookup without treating uncertain placement as absence. */
@@ -128,8 +128,8 @@ export class AbsentRestarts {
 
   /**
    * Zero/one/many reconciliation for one uncertain creation. After the bounded
-   * grace: bind one exact match (done by the caller), replace a proven-absent
-   * creation exactly once, or hand ambiguity and second failures to the coordinator.
+   * grace: bind one exact match (done by the caller), retain an unproved
+   * empty result, or hand ambiguous results to the coordinator.
    */
   async reconcileAbsentCreation(t: Task, run: Run, found: { id: string; workspaceId: string | null }[]) {
     if (isDispositionActive(t) || isDispositionComplete(t)) return;
@@ -138,24 +138,14 @@ export class AbsentRestarts {
     const incident = this.resolution.ensureIncident(t, run, ABSENT_RESOLUTION_REASON, 'exact_lookup');
     if (Date.now() - Date.parse(incident.createdAt) < this.graceMs) return;
     const current = this.store.task(t.id);
-    // The replacement budget is durable: one recorded same-role replacement means the next absence settles as absent for the owner.
-    if (absentReplacementSpent(this.store.events(t.id), run.role)) {
-      if (found.length) {
-        this.resolution.attention(current, `${run.role} creation lookup found ${found.length} matching agents; no resource was created`);
-        return;
-      }
-      this.settleAbsentProof(current, run);
-      return;
-    }
-    if (creationLookup(found, run.workspaceId).kind !== 'absent') {
+    const lookup = creationLookup(found, run.workspaceId);
+    if (lookup.kind !== 'absent') {
       this.resolution.attention(current, `${run.role} creation lookup is ambiguous (${found.length} matching agents); no resource was created`);
       return;
     }
-    try {
-      await this.replaceAbsentCreation(current, run);
-    } catch (error) {
-      this.resolution.attention(this.store.task(t.id), `Absent ${run.role} creation could not be replaced safely: ${error instanceof Error ? error.message : String(error)}`);
-    }
+    // An empty inventory does not prove that the original producer cannot
+    // deliver later. Keep the run and credential owned and observe it again.
+    this.resolution.waiting(current, `The ${run.role} creation is still uncertain; its original request remains owned`, 'lifecycle');
   }
 
   /**
