@@ -365,6 +365,23 @@ export class BbHostConnection {
     };
   }
 
+  /**
+   * Settings → Hosts (`host.remove`, nucleus#1325): forget an offline identity the
+   * registry has just dropped. The recorded identity goes with it, so the next
+   * declaration — the same server returning, or a replacement with another data
+   * directory — registers as a new host instead of refusing by `dataDir`. Workspace
+   * records and history are untouched. Call inside the registry's write transaction.
+   */
+  forget(hostId: string): void {
+    if (this.session?.id === hostId) throw new Error(`BB host ${hostId} is online`);
+    this.records.delete(hostId);
+    if (this.recorded()?.hostId === hostId) {
+      this.store.deleteMeta(META_KEY);
+      this.offlineReason = "";
+      this.lastRefusal = null;
+    }
+  }
+
   /** Whether this host identity holds a live registry claim right now. */
   connected(): boolean {
     return this.session !== null;

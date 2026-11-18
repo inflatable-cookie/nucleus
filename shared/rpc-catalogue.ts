@@ -166,6 +166,10 @@ export const RPC_CATALOGUE: RpcCatalogueEntry[] = [
   // The values in force and the record of applied changes; the only supported read
   // of the host's dispatch limits.
   { name: "queue.capacity-state", contract: contracts.capacityState, method: "capacityAuthorityState", mutating: false },
+  // Settings → Hosts (nucleus#1325): the catalogue with status, details and
+  // dependents, and the Settings-only verb that forgets one offline, unused host.
+  { name: "host.list", contract: contracts.hostList, method: "hostList", mutating: false },
+  { name: "host.remove", contract: contracts.hostRemove, method: "removeHost", mutating: true },
   { name: "queue.usage", contract: contracts.configureUsage, method: "configureUsage", mutating: true },
   { name: "queue.routing-grant", contract: contracts.routingGrant, method: "routingGrant", mutating: true },
   { name: "queue.demand-offsets", contract: contracts.configureDemandOffsets, method: "configureDemandOffsets", mutating: true },

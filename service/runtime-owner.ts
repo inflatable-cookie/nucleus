@@ -2,6 +2,7 @@ import { recordQaServiceLifecycle } from "../core/qa/project-qa-diagnostics";
 import { initializeWorkRoot } from "../core/workspaces/work-root.mjs";
 import { registerServiceRollRequest } from "./install/roll-request";
 import { currentServiceBuildId } from "../shared/service/build";
+import { HostCatalogueSettings } from "./host-settings";
 import { RuntimeQuestions } from "../core/runtime/questions";
 import { RuntimeSettings } from "../core/runtime/settings";
 import { ParticipantTickets } from "../core/dispatch/participant-tickets";
@@ -270,6 +271,8 @@ export class QueueRuntime {
   private readonly lifecycle: RuntimeLifecycle;
   /** Presentation of this runtime's facts; owns what health does and does not know. */
   private readonly healthProjection: RuntimeHealthProjection;
+  /** Settings → Hosts (nucleus#1325): the catalogue read and the operator's removal. */
+  private readonly hostSettings: HostCatalogueSettings;
   private idleShutdownLatched = false;
   private readonly pluginLostGraceMs: number;
   private closeCallbacks: (() => Promise<void>) | undefined;
@@ -419,6 +422,8 @@ export class QueueRuntime {
       transaction: fn => this.store.transaction(fn),
       readDisconnectedAt: () => this.store.getMeta<number | null>("hostDisconnectedAt") ?? null,
       writeDisconnectedAt: at => this.store.setMeta("hostDisconnectedAt", at),
+      readLastSeen: () => this.store.getMeta<Record<string, string>>("hostLastSeen") ?? {},
+      writeLastSeen: seen => this.store.setMeta("hostLastSeen", seen),
     }, options.hostNow ?? Date.now, options.hostIdleGraceMs ?? HOST_IDLE_GRACE_MS);
     const createAdmission = () => new Admission({ ...options.admission, totalLimit: () => this.store.configuredPaseoCallLimit(), workspaceBudget: () => this.store.getMeta<number>("globalLimit") ?? DEFAULT_GLOBAL_LIMIT });
     // The ACP session surface is attached later in bootstrap (Spec 065), so the host
@@ -579,6 +584,15 @@ export class QueueRuntime {
       hostRunEndpointError: () => runtime.hostRunEndpointError,
       admissionRpcMetrics: () =>
         runtime.admissionEndpoint?.rpcMetrics() ?? null,
+    });
+    this.hostSettings = new HostCatalogueSettings({
+      store: this.store,
+      hostRegistry: this.hostRegistry,
+      hostStates: () => runtime.healthProjection.hostStates(),
+      bb: () => runtime.bbHost.status(),
+      t3: () => runtime.t3Host?.status(),
+      defaultHostKind: () => runtime.capacityChanges.state().effective.operatorDefaultHostKind,
+      forgetBb: hostId => runtime.bbHost.forget(hostId),
     });
     this.liveRunPresence = this.createLiveRunPresence();
     this.eventLoopDelay.start();
@@ -1259,6 +1273,8 @@ export class QueueRuntime {
   async configureUsage(input: { level: UsageLevel; until?: string | null }) { return this.settingsOperations.configureUsage(input); }
   async configureDemandOffsets(input: DemandRoleOffsets) { return this.settingsOperations.configureDemandOffsets(input); }
   capacityAuthorityState() { return this.settingsOperations.capacityAuthorityState(); }
+  hostList() { this.markStoreAccess(); return this.hostSettings.hostList(); }
+  removeHost(input: { hostId: string }, _accepted?: unknown, context?: { via?: string | null }) { return this.hostSettings.removeHost(input, _accepted, context); }
   async configureCapacity(input: z.infer<typeof capacitySchema>, _accepted?: unknown, context?: { via?: string | null }) { return this.settingsOperations.configureCapacity(input, _accepted, context); }
   async configureProjectDispatchLimit(input: z.infer<typeof projectDispatchLimitSchema>) { return this.settingsOperations.configureProjectDispatchLimit(input); }
   upsertLane(input: import("../shared/contracts").LaneUpsertInput) { return this.planning.upsertLane(input); }

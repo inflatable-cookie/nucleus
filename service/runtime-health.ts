@@ -279,6 +279,32 @@ export class RuntimeHealthProjection {
     this.context = context;
   }
 
+  /**
+   * Each known host's presented state: the one projection `service.health`'s
+   * `hosts` and Settings → Hosts (`host.list`) both read, so they never disagree.
+   */
+  hostStates(
+    t3 = this.context.t3Host?.status(),
+    bb = this.context.bb(),
+  ): HostHealth[] {
+    const { hostRegistry, lifecycle } = this.context;
+    return projectHostStates({
+      known: hostRegistry.known(),
+      online: (id) => Boolean(hostRegistry.get(id)),
+      primaryId: hostRegistry.primary()?.id ?? null,
+      bbOfflineReason: bb.offlineReason,
+      t3: t3
+        ? {
+            id: t3.id,
+            error: t3.error,
+            threadShapePending: t3.threadShapePending,
+          }
+        : undefined,
+      identityConflict: lifecycle.identityConflict,
+      startError: lifecycle.startError,
+    });
+  }
+
   health(): RuntimeHealth {
     const { store, hostRegistry, lifecycle } = this.context;
     const t3 = this.context.t3Host?.status();
@@ -303,21 +329,7 @@ export class RuntimeHealthProjection {
       hostIdentityConflict: lifecycle.identityConflict,
       ...(t3 ? { t3code: t3 } : {}),
       ...(bb.hosts.length || bb.offlineReason || bb.lastRefusal ? { bb } : {}),
-      hosts: projectHostStates({
-        known: hostRegistry.known(),
-        online: (id) => Boolean(hostRegistry.get(id)),
-        primaryId: hostRegistry.primary()?.id ?? null,
-        bbOfflineReason: bb.offlineReason,
-        t3: t3
-          ? {
-              id: t3.id,
-              error: t3.error,
-              threadShapePending: t3.threadShapePending,
-            }
-          : undefined,
-        identityConflict: lifecycle.identityConflict,
-        startError: lifecycle.startError,
-      }),
+      hosts: this.hostStates(t3, bb),
       bootstrap: {
         pending: Boolean(lifecycle.bootstrapRunning),
         startedAt: lifecycle.bootstrapStartedAt,

@@ -26,9 +26,9 @@ const invokeBoard = async (method: string) => method === 'queue.ui-snapshot' ? b
 
 type Node = { type: string; props: Record<string, any>; children: Array<Node | string> };
 const tabsOf = (ui: Awaited<ReturnType<typeof screen>>) => (ui.get('Settings sections') as Node).children.filter((node): node is Node => typeof node !== 'string');
-const SECTIONS = ['Dispatch limits', 'Profiles', 'Projects', 'Backups', 'Telemetry'];
+const SECTIONS = ['Dispatch limits', 'Hosts', 'Profiles', 'Projects', 'Backups', 'Telemetry'];
 
-test('one row of five tabs at every width, the same at a narrow host, the Paseo settings column and a wide page', async () => {
+test('one row of six tabs at every width, the same at a narrow host, the Paseo settings column and a wide page', async () => {
   // nucleus#963: no dropdown and no rail; the host's compact flag changes nothing.
   for (const [width, compact] of [[390, true], [640, true], [688, true], [1024, false], [900, true]] as const) {
     const ui = await screen(width, invokeBoard, compact);
@@ -50,7 +50,7 @@ test('the tabs show the short labels and keep the full names for a screen reader
   const ui = await screen(688, invokeBoard, true);
   await settle(() => ui.text().includes('Usage level'));
   const shown = tabsOf(ui).map(tab => (function text(node: Node | string): string { return typeof node === 'string' ? node : node.children.map(text).join(''); })(tab));
-  assert.deepEqual(shown, ['Limits', 'Profiles', 'Projects', 'Backups', 'Telemetry']);
+  assert.deepEqual(shown, ['Limits', 'Hosts', 'Profiles', 'Projects', 'Backups', 'Telemetry']);
   assert.equal(tabsOf(ui).some(tab => tab.props.accessibilityLabel === 'Subscriptions'), false, 'no Subscriptions tab');
   ui.update(h('View'));
 });
