@@ -21,7 +21,7 @@ export interface HostPolicyPort extends Required<Pick<Adapter,
   ownedDataDirFor(task: Task, directory: string): Promise<string | null>;
   classifyOrphan(input: { directory: string; repoPath: string; dataDir: string; taskId: string; continuing?: boolean }): Promise<{ orphaned: true; adminDir: string; detail: string } | { orphaned: false }>;
   inspectOrphanWorkspace(task: Task): Promise<import('./types').OrphanWorkspace | null>;
-  noLiveWorkspaceProcesses(workspaceId: string, runIds: readonly string[]): Promise<string | null>;
+  noLiveWorkspaceProcesses(workspaceId: string, runIds: readonly string[], bbThreads?: readonly string[]): Promise<string | null>;
   createCloseoutWorkspace(task: Task): Promise<{ id: string; directory: string }>;
   findCloseoutWorkspaces(task: Task): Promise<{ id: string; directory: string }[]>;
   verifyCloseoutWorkspace(task: Task, id: string, directory: string): Promise<void>;

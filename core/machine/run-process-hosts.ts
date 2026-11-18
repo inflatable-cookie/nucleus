@@ -1,9 +1,9 @@
 import type { Store } from "../store/store";
 import type { HostProcessFact } from "../host/types";
-import { orphanedRunHelperPids, providerRuntimePids, runInfrastructurePids, runProviderBindings } from "./owned-tool-process-proof";
+import { bbThreadForAgent, orphanedRunHelperPids, providerRuntimePids, runInfrastructurePids, runProviderBindings } from "./owned-tool-process-proof";
 import { startIdentityMatches } from "./start-identity";
 
-export interface ProcessRunIdentity { id: string; taskId: string; agentId?: string | null }
+export interface ProcessRunIdentity { id: string; taskId: string; agentId?: string | null; hostId?: string | null }
 interface RunProcessHost {
   taskId: string;
   provider: Pick<HostProcessFact, "pid" | "startIdentity">;
@@ -42,7 +42,8 @@ export function rememberRunProcessHosts(store: Store, runs: ProcessRunIdentity[]
 
 /** A saved identity excludes exactly that host incarnation, never a recycled PID. */
 export function protectedRunInfrastructure(store: Store, runs: ProcessRunIdentity[], facts: HostProcessFact[]): Set<number> {
-  const protectedPids = runInfrastructurePids(facts);
+  const bbThreads = runs.map(run => bbThreadForAgent(run.agentId, run.hostId)).filter((thread): thread is string => Boolean(thread));
+  const protectedPids = runInfrastructurePids(facts, bbThreads);
   // A saved record outlives the helper it was written with. A bridge whose
   // provider has since exited keeps no exclusion: its identity is the run's own
   // leftover, and the sweep's cleanup reaps it by that identity (nucleus#1329).

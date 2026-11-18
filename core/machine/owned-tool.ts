@@ -1,5 +1,5 @@
 import { boundedToolHold } from './bounded-tool';
-import { ownedToolAgentProcessTreeVerdict } from './owned-tool-process-proof';
+import { bbThreadForAgent, ownedToolAgentProcessTreeVerdict } from './owned-tool-process-proof';
 import { readHostUidProcesses } from './host-process-listing';
 import type { Resolution } from '../resolution';
 import {
@@ -73,18 +73,20 @@ export class OwnedTools {
       const task = options.taskId ? this.store.task(options.taskId) : null;
       const boundRun = options.runId ? this.store.run(options.runId) : null;
       const workspaceId = options.workspaceId ?? boundRun?.workspaceId ?? (task?.agentId === agentId ? task.workspaceId : undefined) ?? undefined;
+      const bbThread = bbThreadForAgent(agentId, boundRun?.hostId ?? task?.hostId);
+      const bbThreads = bbThread ? [bbThread] : [];
       const hold = await boundedToolHold(read, this.resolution.host, agentId, workspaceId, async () => {
         if (!task || !runIds.length || !workspaceId || !this.adapter.noLiveWorkspaceProcesses || !this.adapter.hostProcessListing)
           return 'owned workspace or run process identity is unavailable';
         const temporaryDirectories = runIds.map(id => this.store.run(id)?.temporaryDirectory
           ?? (id === task.runId ? task.temporaryDirectory : undefined));
         if (temporaryDirectories.some(directory => !directory)) return 'a participant run temporary directory is unrecorded';
-        const workspaceIssue = await this.adapter.noLiveWorkspaceProcesses(workspaceId, runIds);
+        const workspaceIssue = await this.adapter.noLiveWorkspaceProcesses(workspaceId, runIds, bbThreads);
         if (workspaceIssue !== null) return workspaceIssue || 'the workspace process probe returned no verdict';
         const processes = await this.adapter.hostProcessListing();
         if (!processes) return 'the host process listing is unreadable';
         for (const directory of new Set(temporaryDirectories)) {
-          const issue = workspaceToolProcessIssue(processes, directory!, runIds);
+          const issue = workspaceToolProcessIssue(processes, directory!, runIds, bbThreads);
           if (issue) return issue;
         }
         return null;
@@ -126,7 +128,10 @@ export class OwnedTools {
         const listing = await readHostUidProcesses();
         processes = listing.state === 'listed' ? listing.processes : null;
       }
-      const verdict = ownedToolAgentProcessTreeVerdict(runIds, processes, { noTurnLive: true });
+      const boundRun = options.runId ? this.store.run(options.runId) : null;
+      const task = this.store.task(options.taskId);
+      const bbThread = bbThreadForAgent(agentId, boundRun?.hostId ?? task.hostId);
+      const verdict = ownedToolAgentProcessTreeVerdict(runIds, processes, { noTurnLive: true, bbThreads: bbThread ? [bbThread] : [] });
       if (verdict.state === 'empty') {
         const heldRunId = options.runId ?? verdict.runId;
         this.recordOwnedToolSettlement(options.taskId, heldRunId,
@@ -135,7 +140,7 @@ export class OwnedTools {
       } else if (verdict.state === 'live') {
         hold = `${toolLabel}; descendant pid ${verdict.pid} remains under provider pid ${verdict.providerPid}`;
       } else if (verdict.code === 'helper-missing' && options.workspaceId && this.adapter.noLiveWorkspaceProcesses) {
-        const workspaceIssue = await this.adapter.noLiveWorkspaceProcesses(options.workspaceId, runIds);
+        const workspaceIssue = await this.adapter.noLiveWorkspaceProcesses(options.workspaceId, runIds, bbThread ? [bbThread] : []);
         if (!workspaceIssue) {
           this.recordOwnedToolSettlement(options.taskId, runIds[0]!,
             `run ids ${runIds.join(', ')}: stale non-turn-bound tool settled; no process carried an MCP ticket and the task workspace process tree was empty`, true);

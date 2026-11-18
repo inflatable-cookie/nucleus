@@ -11,7 +11,8 @@ import { now } from '../store/store';
 import { OPERATOR_WORKER_REMAP_REASON } from './task-reasons';
 import { decideWorkerReplacement, isWorkerRouteApproved } from './worker-replacement';
 import { resolve, sep } from 'node:path';
-import { ownedToolProcessTreeVerdict } from '../machine/owned-tool-process-proof';
+import { bbRuntimePids, ownedToolProcessTreeVerdict } from '../machine/owned-tool-process-proof';
+import type { HostProcessFact } from '../host/types';
 
 /**
  * Mid-turn stall detection (Queue reliability lane). Paseo keeps reporting a
@@ -483,11 +484,12 @@ function isZombieProcess(process: { state?: string | null }): boolean {
   return Boolean(process.state && process.state.toUpperCase().startsWith('Z'));
 }
 /** Live process facts that keep a finished-turn shell tool from being settled. */
-export function workspaceToolProcessIssue(processes: Array<{ pid: number; ppid?: number | null; state?: string | null; command: string; cwd: string | null }>, directory: string, runIds: readonly string[]): string | null {
+export function workspaceToolProcessIssue(processes: Array<Pick<HostProcessFact, 'pid' | 'ppid' | 'state' | 'command' | 'cwd' | 'bbThreadId'>>, directory: string, runIds: readonly string[], bbThreads: readonly string[] = []): string | null {
   if (!runIds.length) return 'the participant has no recorded run identity for process proof';
   // Exited processes never arrive: the readers drop a process whose inspection
   // proves it is gone. What remains is filtered for zombies here.
   const live = processes.filter(process => !isZombieProcess(process));
+  const runtime = bbRuntimePids(live, bbThreads);
   const malformedHelpers = new Set<number>();
   for (const process of live) {
     const args = process.command.trim().match(/(?:"[^"]*"|'[^']*'|\S+)/g)?.map(arg => arg.replace(/^['"]|['"]$/g, '')) ?? [];
@@ -532,7 +534,7 @@ export function workspaceToolProcessIssue(processes: Array<{ pid: number; ppid?:
   }
   const malformed = live.find(item => rooted.has(item.pid) && malformedHelpers.has(item.pid));
   if (malformed) return `provider process ${malformed.pid} carries an unreadable or truncated MCP ticket identity`;
-  const process = live.find(item => rooted.has(item.pid));
+  const process = live.find(item => rooted.has(item.pid) && !runtime.has(item.pid));
   return process ? `process ${process.pid} remains in the task workspace process tree` : null;
 }
 

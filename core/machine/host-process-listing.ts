@@ -18,6 +18,8 @@ import {
 } from "../workspaces/worktree-validation";
 import { linuxProcCommandLine, type ProcCommandLine } from "./process-identity";
 import { linuxStartIdentity, macStartIdentity } from "./start-identity";
+import { readHostRunStartIdentity, startIdentityMatches } from "./start-identity";
+import { runProcessEnvironments } from "./run-process-identity";
 
 /** The longest command a process fact retains; the tail carries the arguments a proof reads. */
 export const HOST_PROCESS_COMMAND_MAX = 4096;
@@ -251,12 +253,34 @@ export async function readHostUidProcesses(): Promise<HostProcessListRead> {
       state: "unknown",
       reason: "the host process owner cannot be read on this platform",
     };
-  if (process.platform === "linux") return linuxProcesses(uid);
-  if (process.platform === "darwin") return darwinProcesses(uid);
+  if (process.platform === "linux" || process.platform === "darwin") {
+    const read = process.platform === "linux" ? await linuxProcesses(uid) : await darwinProcesses(uid);
+    if (read.state === "listed") await readBbSessionEnvironments(read.processes);
+    return read;
+  }
   return {
     state: "unknown",
     reason: `host process listing is unsupported on ${process.platform}`,
   };
+}
+
+/** Read only possible bridge sessions, and keep a reused or unreadable pid unknown. */
+export async function readBbSessionEnvironments(facts: HostProcessFact[], reads: {
+  environments?: typeof runProcessEnvironments;
+  identity?: typeof readHostRunStartIdentity;
+} = {}): Promise<void> {
+  const bridges = new Set(facts.filter(fact => /(?:^|\/)host-daemon\/dist\/bb-provider-bridge-worker\.mjs(?:\s|$)/.test(fact.command)).map(fact => fact.pid));
+  const candidates = facts.filter(fact => fact.ppid != null && bridges.has(fact.ppid));
+  if (!candidates.length) return;
+  const environments = await (reads.environments ?? runProcessEnvironments)(candidates.map(fact => fact.pid), {
+    commands: new Map(candidates.filter(fact => fact.command.length < HOST_PROCESS_COMMAND_MAX).map(fact => [fact.pid, fact.command])),
+  });
+  await Promise.all(candidates.map(async fact => {
+    const identity = await (reads.identity ?? readHostRunStartIdentity)(fact.pid).catch(() => ({ kind: "unavailable" as const }));
+    const environment = environments.get(fact.pid);
+    fact.bbThreadId = identity.kind === "identity" && startIdentityMatches(fact.startIdentity, identity.identity) && environment
+      ? environment.BB_THREAD_ID ?? null : null;
+  }));
 }
 
 /** Read only explicitly owned fixture PIDs; never infer a host-wide absence from this subset. */

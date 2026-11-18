@@ -7,6 +7,7 @@ import type { WorkspaceContinuationHost } from "./workspace-continuation";
 import type { TimelinePage } from "../recovery/stall";
 import { participantToolRunIds } from '../recovery/task-reasons';
 import { boundedToolHold } from '../machine/bounded-tool';
+import { bbThreadForAgent } from '../machine/owned-tool-process-proof';
 import { readToolTimeline, liveToolIssue, workspaceToolProcessIssue } from "../recovery/stall";
 import { verifyReviewSourceView } from "../review/review-source";
 import { verifyRecordedOrigin, verifyTaskWorktreeIdentity, originBranchContaining, git, queueCheckoutStatus } from "../git/index";
@@ -170,8 +171,11 @@ export class OwnedWorkspaceArchive {
               if(temporaryDirectories.some(root=>!root))return 'a participant run temporary directory is unrecorded';
               const processes=await this.host.hostProcessListing();
               if(!processes)return 'the host process listing is unreadable';
+              const bbThreads=runs.filter(run=>run.workspaceId===id).map(run=>bbThreadForAgent(run.agentId,run.hostId??task.hostId)).filter((thread):thread is string=>Boolean(thread));
+              const ownThread=bbThreadForAgent(agentId,runs.find(run=>runIds.includes(run.id))?.hostId??task.hostId);
+              if(ownThread&&!bbThreads.includes(ownThread))bbThreads.push(ownThread);
               for(const root of new Set([directory,...temporaryDirectories])){
-                const why=workspaceToolProcessIssue(processes,root!,runIds);
+                const why=workspaceToolProcessIssue(processes,root!,runIds,bbThreads);
                 if(why)return why;
               }
               return null;

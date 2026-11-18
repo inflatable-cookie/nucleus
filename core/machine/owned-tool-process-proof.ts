@@ -1,5 +1,7 @@
 import { realpathSync } from "node:fs";
 import type { HostProcessFact } from '../host/types';
+import { parseAgentId } from '../../shared/agent-identity';
+import { hostKindOf } from '../../shared/host-kind';
 /**
  * The owned-tool process proof: does the provider process rooted by this run's
  * own Queue MCP report helper still carry a descendant that could be work?
@@ -17,6 +19,38 @@ function commandArgv(command: string): string[] {
 
 function argvBase(arg: string | undefined): string | undefined {
   return arg?.split(/[\\/]/).pop();
+}
+
+/** A recorded BB participant identifies its own native thread, never a Paseo agent. */
+export function bbThreadForAgent(agentId: string | null | undefined, hostId?: string | null): string | null {
+  if (!agentId) return null;
+  const qualified = parseAgentId(agentId);
+  const host = qualified?.hostId ?? hostId;
+  if (hostKindOf(host) !== 'bb' || (qualified && hostId && qualified.hostId !== hostId)) return null;
+  return qualified?.nativeAgentId ?? agentId;
+}
+
+/** Only a bridge under the BB daemon and its positively bound session are runtime. */
+export function bbRuntimePids(processes: readonly Pick<HostProcessFact, 'pid' | 'ppid' | 'command' | 'bbThreadId'>[], threadIds: readonly string[]): Set<number> {
+  const runtime = new Set<number>();
+  const wanted = new Set(threadIds.filter(Boolean));
+  if (!wanted.size) return runtime;
+  const bbProgram = (command: string) => /\.app\/Contents\/MacOS\/bb(?:\s|$)/i.test(command);
+  const script = (command: string, name: string) => command.includes(`/host-daemon/dist/${name}.mjs`);
+  for (const session of processes) {
+    if (!session.bbThreadId || !wanted.has(session.bbThreadId) || session.ppid == null) continue;
+    const bridge = processes.find(fact => fact.pid === session.ppid);
+    const daemon = bridge && processes.find(fact => fact.pid === bridge.ppid);
+    if (!bridge || !daemon || !bbProgram(bridge.command) || !bbProgram(daemon.command)
+      || !script(bridge.command, 'bb-provider-bridge-worker') || !script(daemon.command, 'daemon-bundle')) continue;
+    runtime.add(bridge.pid); runtime.add(session.pid);
+    for (const child of processes) {
+      if (child.ppid !== session.pid) continue;
+      const argv = commandArgv(child.command);
+      if (argvBase(argv[0]) === 'cua-driver' && argv[1] === 'mcp') runtime.add(child.pid);
+    }
+  }
+  return runtime;
 }
 
 /** The per-run report bridges Queue starts beside an agent session. */
@@ -221,8 +255,8 @@ export function runProviderBindings(processes: readonly HostProcessFact[]): Arra
 }
 
 /** Agent hosts, their standing runtimes and report helpers are infrastructure, never run cleanup targets. */
-export function runInfrastructurePids(processes: readonly HostProcessFact[]): Set<number> {
-  const protectedPids = new Set<number>();
+export function runInfrastructurePids(processes: readonly HostProcessFact[], bbThreads: readonly string[] = []): Set<number> {
+  const protectedPids = bbRuntimePids(processes, bbThreads);
   const orphaned = orphanedRunHelperPids(processes);
   for (const helper of processes) {
     if (!isReportHelperCommand(helper.command)) continue;
@@ -249,6 +283,7 @@ export interface OwnedToolProcessProofOptions {
    * Absent or false reads every descendant as a possible command.
    */
   noTurnLive?: boolean;
+  bbThreads?: readonly string[];
 }
 
 /**
@@ -314,6 +349,7 @@ export function ownedToolProcessTreeVerdict(runId: string, processes: readonly H
   for (const pid of helperTree) descendants.delete(pid);
   const runtimes = options.noTurnLive
     ? providerRuntimePids(processes.find(process => process.pid === providerPid)!, processes) : null;
+  if (runtimes) for (const pid of bbRuntimePids(processes, options.bbThreads ?? [])) runtimes.add(pid);
   const other = [...descendants].sort((a, b) => a - b).find(pid => !runtimes?.has(pid));
   return other === undefined ? { state: "empty", providerPid, helperPid: helper.pid }
     : { state: "live", providerPid, helperPid: helper.pid, pid: other };

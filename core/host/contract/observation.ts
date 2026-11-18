@@ -44,5 +44,5 @@ export interface HostObservation {
   /** Complete host process table for proofs rooted in a Queue-launched provider. */
   hostProcessListing?(): Promise<HostProcessFact[] | null>;
   /** Complete host-process proof for a finished-turn shell tool. Null means no run process or workspace process remains. */
-  noLiveWorkspaceProcesses?(workspaceId: string, runIds: readonly string[]): Promise<string | null>;
+  noLiveWorkspaceProcesses?(workspaceId: string, runIds: readonly string[], bbThreads?: readonly string[]): Promise<string | null>;
 }

@@ -9,13 +9,14 @@ import type { AgentObservation } from '../core/host';
 import type { HostProcessFact, TimelinePage } from '../core/host/types';
 import { workspaceToolProcessIssue } from '../core/recovery/stall';
 import { toolTimelinePage } from './support/tool-timeline';
+import { bbProcessFixture } from './support/bb-process-fixture';
 
-function fixture(t: TestContext) {
+function fixture(t: TestContext, bb = false) {
   const root = mkdtempSync(join(tmpdir(), 'bounded-tool-evidence-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const directory = join(root, 'workspace'), temporaryDirectory = join(root, 'run-scratch');
   const task = { id: 'synthetic-task', agentId: 'synthetic-agent', workspaceId: 'synthetic-workspace',
-    runId: 'synthetic-run', directory, temporaryDirectory, resolution: { ownerSettlements: [] } };
+    runId: 'synthetic-run', directory, temporaryDirectory, hostId: bb ? 'bb:fixture' : 'paseo-fixture', resolution: { ownerSettlements: [] } };
   let observation: Partial<AgentObservation> | null = { id: task.agentId, workspaceId: task.workspaceId,
     status: 'idle', active: false, activeTurnId: null, permissions: false, error: '' };
   let processes: HostProcessFact[] | null = [];
@@ -23,7 +24,7 @@ function fixture(t: TestContext) {
   const adapter = {
     agentTimelinePage: async () => page,
     hostProcessListing: async () => processes,
-    noLiveWorkspaceProcesses: async () => processes ? workspaceToolProcessIssue(processes, directory, [task.runId]) : 'host process listing is unreadable',
+    noLiveWorkspaceProcesses: async (_workspace: string, _runs: readonly string[], threads: readonly string[] = []) => processes ? workspaceToolProcessIssue(processes, directory, [task.runId], threads) : 'host process listing is unreadable',
   };
   const resolution = { adapter, host: { agentTimelinePage: adapter.agentTimelinePage, observe: async () => observation },
     store: { task: () => task, run: () => null, eventsAll: () => [], event: () => {} } } as unknown as Resolution;
@@ -38,6 +39,21 @@ function fixture(t: TestContext) {
     page: () => page!,
   };
 }
+
+test('BB bridge and session are bound runtime, while their commands and unknown identities hold', async t => {
+  const f = fixture(t, true);
+  const facts = await bbProcessFixture(f.task.directory, f.task.agentId);
+  f.setProcesses(facts);
+  assert.equal(await f.proof(), null);
+  f.setProcesses([...facts, { ...facts[2]!, pid: 104, ppid: 102, command: 'node build.mjs' }]);
+  assert.match((await f.proof())!, /process 104 remains/);
+  f.setProcesses([...facts, { ...facts[2]!, pid: 105, ppid: 103, command: 'sh -c build', cwd: '/elsewhere' }]);
+  assert.match((await f.proof())!, /process 105 remains/);
+  for (const thread of ['other-thread', null]) {
+    f.setProcesses(await bbProcessFixture(f.task.directory, thread));
+    assert.match((await f.proof())!, /process 101 remains/);
+  }
+});
 
 test('bounded tools clear only with idle observation, a clear newest window and no owned processes', async t => {
   const f = fixture(t);

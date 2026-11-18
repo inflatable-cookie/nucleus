@@ -46,7 +46,7 @@ export type { HostWorktreeWorkspaceSpec } from "../../host/types";
 export class WorkspaceContinuation {
   constructor(private readonly host: WorkspaceContinuationHost) {}
 
-  async noLiveWorkspaceProcesses(workspaceId: string, runIds: readonly string[]): Promise<string | null> {
+  async noLiveWorkspaceProcesses(workspaceId: string, runIds: readonly string[], bbThreads: readonly string[] = []): Promise<string | null> {
     if (!runIds.length) return 'the participant has no recorded run identity for process proof';
     const workspace = this.host.workspaceHost.workspaceRef(workspaceId);
     if (!await workspace.refresh()) return 'the participant workspace is unreadable for process proof';
@@ -54,7 +54,7 @@ export class WorkspaceContinuation {
     if (!directory) return 'the participant workspace directory is unreadable for process proof';
     const processes = await this.host.hostProcessListing();
     if (!processes) return 'the host process listing is unreadable';
-    return workspaceToolProcessIssue(processes, directory, runIds);
+    return workspaceToolProcessIssue(processes, directory, runIds, bbThreads);
   }
   /** Check the exact retained task worktree before a deferred worker message is delivered. */
   async preflightWorkerContinuation(task: Task): Promise<{ available: true } | { available: false; reason: string }> {

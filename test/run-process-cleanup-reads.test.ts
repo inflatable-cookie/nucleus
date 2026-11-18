@@ -13,6 +13,7 @@ import { sweepSettledRunProcesses } from "../core/machine/run-process-cleanup";
 test("process environment reads retain the BB thread binding and no unrelated fields", async () => {
   const environments = await runProcessEnvironments([123], {
     platform: "darwin",
+    commands: new Map([[123, "agent --session"]]),
     darwinRead: async () => "  123 agent --session BB_THREAD_ID=thr_fixture SECRET=private TMPDIR=/scratch\n",
   });
   assert.deepEqual(environments.get(123), { BB_THREAD_ID: "thr_fixture", TMPDIR: "/scratch" });
@@ -20,6 +21,11 @@ test("process environment reads retain the BB thread binding and no unrelated fi
     platform: "darwin", darwinRead: async () => { throw Error("unreadable"); },
   });
   assert.equal(unreadable.get(123), null);
+  const spoofed = await runProcessEnvironments([123], {
+    platform: "darwin", commands: new Map([[123, "agent BB_THREAD_ID=thr_fixture"]]),
+    darwinRead: async () => "  123 agent BB_THREAD_ID=thr_fixture SECRET=private\n",
+  });
+  assert.equal(spoofed.get(123)?.BB_THREAD_ID, undefined);
 });
 
 test("unavailable scans retain intent and scratch; a surviving identity is recorded and retried", async () => {

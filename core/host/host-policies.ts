@@ -138,8 +138,8 @@ export abstract class HostPolicies extends MachinePorts {
 
   private get workspaceContinuation(): WorkspaceContinuation { return this.workspaceContinuationCache ??= new WorkspaceContinuation(this); }
 
-  noLiveWorkspaceProcesses(workspaceId: string, runIds: readonly string[]): Promise<string | null> {
-    return this.workspaceContinuation.noLiveWorkspaceProcesses(workspaceId, runIds);
+  noLiveWorkspaceProcesses(workspaceId: string, runIds: readonly string[], bbThreads?: readonly string[]): Promise<string | null> {
+    return this.workspaceContinuation.noLiveWorkspaceProcesses(workspaceId, runIds, bbThreads);
   }
 
   inspectOrphanWorkspace(task: Task): Promise<OrphanWorkspace | null> { return this.workspaceLifecycle.inspectOrphanWorkspace(task); }

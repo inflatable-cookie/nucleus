@@ -20,6 +20,8 @@ export type RunProcessLivenessLookup = (pid: number, startIdentity: string) => R
 export async function runProcessEnvironments(pids: readonly number[], options: {
   platform?: NodeJS.Platform;
   darwinRead?: (pids: readonly number[]) => Promise<string>;
+  /** The prior non-environment command read separates argv from the environment. */
+  commands?: ReadonlyMap<number, string>;
 } = {}): Promise<Map<number, RunProcessEnvironment | null>> {
   const result = new Map<number, RunProcessEnvironment | null>();
   const platform = options.platform ?? process.platform;
@@ -46,7 +48,14 @@ export async function runProcessEnvironments(pids: readonly number[], options: {
           if (!match) continue;
           const environment: RunProcessEnvironment = {};
           for (const key of KEYS) {
-            const value = new RegExp(`(?:^| )${key}=(.*?)(?= [A-Za-z_][A-Za-z_0-9]*=|$)`).exec(match[2])?.[1];
+            let source = match[2];
+            if (key === 'BB_THREAD_ID') {
+              const command = options.commands?.get(Number(match[1]));
+              const normalized = source.replace(/\s+/g, ' ').trim();
+              if (!command || !normalized.startsWith(`${command} `)) continue;
+              source = normalized.slice(command.length + 1);
+            }
+            const value = new RegExp(`(?:^| )${key}=(.*?)(?= [A-Za-z_][A-Za-z_0-9]*=|$)`).exec(source)?.[1];
             if (value !== undefined) environment[key] = value;
           }
           result.set(Number(match[1]), environment);

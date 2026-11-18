@@ -6,6 +6,7 @@ import type { Run } from '../shared/contracts';
 import type { HostProcessFact } from '../core/host/types';
 import { terminalArchiveFixture } from './support/terminal-archive-fixture';
 import { toolTimelinePage } from './support/tool-timeline';
+import { bbProcessFixture } from './support/bb-process-fixture';
 
 async function fixture(t: TestContext, attached = false) {
   const f = await terminalArchiveFixture(t, { unfinished: true });
@@ -55,6 +56,16 @@ test('workspace archive holds on missing participant run identities and scratch 
   f.setProcesses(null);
   await assert.rejects(f.archive(), /host process listing is unreadable/);
   assert.deepEqual(f.remote.archives, []);
+});
+
+test('an idle BB participant can archive with its bound runtime present', async t => {
+  const f = await fixture(t);
+  f.store.update(f.task().id, { hostId: 'bb:fixture' });
+  f.store.putRun({ ...f.run('older-participant', f.oldScratch), hostId: 'bb:fixture' });
+  f.store.putRun({ ...f.run('current-participant', f.currentScratch), hostId: 'bb:fixture' });
+  f.setProcesses(await bbProcessFixture(f.directory, f.agentId));
+  assert.deepEqual(await f.archive(), []);
+  assert.equal(existsSync(f.directory), false);
 });
 
 test('workspace archive refreshes the run inventory before local teardown', async t => {
