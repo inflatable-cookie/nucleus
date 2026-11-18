@@ -279,6 +279,9 @@ function slotAdmissionExempt(task: Task, current?: Task, runs: Run[] = []): bool
 export function slotRequestDecision(candidate: Task, parkedPhases: readonly string[], includeRecovery: boolean,
   facts: { integrationReady?: boolean; routingRetryAllowed?: boolean; dependencyWait?: string } = {}): boolean | 'read' {
   if (dispatchBlocked(candidate) || isDispositionActive(candidate) || occupiesSlot(candidate)) return false;
+  // An unavailable host cannot consume a future slot while healthy hosts wait.
+  // The independent hostWait survives when an owner-facing stop takes precedence.
+  if (candidate.phase === 'queued' && (candidate.resolution.hostWait || candidate.resolution.stop?.reason === 'host_unavailable')) return false;
   if (mergeHeld(candidate) && candidate.phase === 'verifying') return false;
   if (candidate.phase === 'verifying' && !candidate.resolution.mergedCommit && candidate.resolution.integrationTurn) {
     if (facts.integrationReady === undefined) return 'read';

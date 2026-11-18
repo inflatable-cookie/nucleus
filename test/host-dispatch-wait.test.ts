@@ -4,6 +4,7 @@ import { Engine } from '../core/engine';
 import { Store } from '../core/store/store';
 import { submissionSchema, summarizeTask } from '../shared/contracts';
 import type { Adapter } from '../core/host/adapter';
+import { fakeAdapter, profile, submission } from './support/fakes';
 
 test('an offline or unknown task host waits without starting a workspace effect', async () => {
   const store = new Store(':memory:');
@@ -49,5 +50,49 @@ test('new dispatch for a project on an offline host waits with host_unavailable'
     const card = summarizeTask(waiting, false, false, {}, [], undefined, 'online', store.eventsAll(task.id));
     assert.equal(card.stop, 'wait');
     assert.match(card.stopRecord?.detail ?? '', /Waiting on Paseo host offline since /);
+  } finally { await engine.stop(); store.close(); }
+});
+
+test('real admission gives one free slot to healthy hosts while a BB host waits, then resumes BB', async () => {
+  const store = new Store(':memory:');
+  const worker = profile('worker');
+  const launches: string[] = [];
+  const adapter = fakeAdapter({
+    validate: async () => 'a'.repeat(40),
+    createWorkspace: async task => ({ id: `ws-${task.id}`, directory: `/synthetic/workspaces/${task.id}` }),
+  });
+  const engine = new Engine(store, adapter, 0);
+  store.setMeta('paused', false);
+  store.setMeta('globalLimit', 1);
+  store.setMeta('pool', [{ profileId: worker.id, enabled: true, group: 'workers', weight: 1, scopes: ['general'] }]);
+  store.setProfiles([{ id: worker.id, name: worker.name, provider: worker.provider, model: worker.model, notes: '' }]);
+  engine.profiles = [worker];
+  engine.profileCatalogKnown = () => true;
+  engine.profilesFor = () => [worker];
+  let bbOnline = false;
+  engine.hostAvailable = host => host !== 'bb:offline' || bbOnline;
+  engine.enqueueTitle = () => {};
+  engine.launchAgent = async task => {
+    launches.push(task.id);
+    store.update(task.id, { phase: 'working', agentId: `agent-${task.id}`, agentActive: true });
+  };
+  const add = (hostId: string, title: string) => store.insert(submission({ title, repoPath: `/synthetic/${title}` }), hostId, 'handoff', 'a'.repeat(40));
+  const bb = add('bb:offline', 'bb');
+  const paseo = add('paseo:primary', 'paseo');
+  const t3 = add('t3code:primary', 't3');
+  try {
+    await engine.dispatchQueued();
+    assert.equal(store.task(bb.id).resolution.stop?.reason, 'host_unavailable');
+    assert.deepEqual(launches, [paseo.id], 'the real first-dispatch admission starts Paseo');
+    store.update(paseo.id, { phase: 'done', agentActive: false });
+    await engine.dispatchQueued();
+    assert.deepEqual(launches, [paseo.id, t3.id], 'T3 takes the released slot');
+    store.update(t3.id, { phase: 'done', agentActive: false });
+    bbOnline = true;
+    engine.hostWait(store.task(bb.id));
+    await engine.dispatchQueued();
+    assert.deepEqual(launches, [paseo.id, t3.id, bb.id], 'BB starts once on return');
+    await engine.dispatchQueued();
+    assert.deepEqual(launches, [paseo.id, t3.id, bb.id], 'no duplicate launch');
   } finally { await engine.stop(); store.close(); }
 });
