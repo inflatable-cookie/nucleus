@@ -83,6 +83,13 @@ an agentless recovery reservation. A lookup timeout alone frees no reservation.
 
 ### Commit boundary
 
+**No action is lost across a restart (Tom, 2026-11-18).** "Actions should not
+be lost if the service goes down and it must pick them back up when it
+relaunches." Every durable intent the store records is resumed after any stop,
+crash or roll, on terminal tasks too: it completes, settles, or shows as an
+applicable owner action. It is never silently dropped. Resuming re-observes the
+target before any resend.
+
 The pass may collect observations outside the write transaction. On the task
 lane, re-read the substantive version, immutable binding, effect attempt,
 authority and any relevant head/base before committing. Apply settlements,
