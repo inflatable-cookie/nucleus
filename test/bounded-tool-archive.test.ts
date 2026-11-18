@@ -8,8 +8,8 @@ import { terminalArchiveFixture } from './support/terminal-archive-fixture';
 import { toolTimelinePage } from './support/tool-timeline';
 import { bbProcessFixture } from './support/bb-process-fixture';
 
-async function fixture(t: TestContext, attached = false) {
-  const f = await terminalArchiveFixture(t, { unfinished: true });
+async function fixture(t: TestContext, attached = false, hostId?: string) {
+  const f = await terminalArchiveFixture(t, { unfinished: true, hostId });
   const agentId = attached ? 'synthetic-support' : 'worker';
   const oldScratch = join(f.root, 'old-run'), currentScratch = join(f.root, 'current-run');
   f.store.update(f.task().id, { runId: 'current-worker', temporaryDirectory: currentScratch });
@@ -59,8 +59,7 @@ test('workspace archive holds on missing participant run identities and scratch 
 });
 
 test('an idle BB participant can archive with its bound runtime present', async t => {
-  const f = await fixture(t);
-  f.store.update(f.task().id, { hostId: 'bb:fixture' });
+  const f = await fixture(t, false, 'bb:fixture');
   f.store.putRun({ ...f.run('older-participant', f.oldScratch), hostId: 'bb:fixture' });
   f.store.putRun({ ...f.run('current-participant', f.currentScratch), hostId: 'bb:fixture' });
   f.setProcesses(await bbProcessFixture(f.directory, f.agentId));
