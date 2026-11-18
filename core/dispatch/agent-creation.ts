@@ -1,5 +1,5 @@
-import type { CreationOwner } from '../host/types';
-export type { CreationOwner } from '../host/types';
+import type { CreationOwner } from "../host/types";
+export type { CreationOwner } from "../host/types";
 import { writeOwnedJson } from "../machine/owned-file.mjs";
 import { wireLabels } from "../../shared/wire-labels";
 import { mkdirSync, rmSync } from "node:fs";
@@ -9,35 +9,68 @@ import type { Profile, Run, Task } from "../../shared/contracts";
 import { sharedCargoEnvironment } from "../machine/cargo-cache";
 import { mergeAdmissionLaunchEnv } from "../qa/effigy-admission";
 import { runPrompt } from "./prompts";
-import { runTemporaryEnvironment, type RunScratchPlacement } from "../workspaces/run-scratch";
+import {
+  runTemporaryEnvironment,
+  type RunScratchPlacement,
+} from "../workspaces/run-scratch";
 import { materializeLaneDocuments } from "../planning/brief-lane-documents";
 
 type CallbackPaths = Pick<CreationOwner, "socketPath" | "helperPath">;
 
 /** Deterministic ticket path for a run; the prompt can name it before the write. */
-export function runTicketPath(paths: Pick<CallbackPaths, "helperPath">, runId: string): string {
+export function runTicketPath(
+  paths: Pick<CallbackPaths, "helperPath">,
+  runId: string,
+): string {
   return join(dirname(paths.helperPath), "tickets", `${runId}.json`);
 }
 
 /** The run ticket the authenticated fallback reads: its socket, identity, token and any coordinator generation. */
-export function writeRunTicket(paths: CallbackPaths, task: Task, run: { id: string; role: Run["role"] | "worker"; generation: number }, token: string): string {
-  const directory = join(dirname(paths.helperPath), "tickets"); mkdirSync(directory, { recursive: true, mode: 0o700 });
+export function writeRunTicket(
+  paths: CallbackPaths,
+  task: Task,
+  run: { id: string; role: Run["role"] | "worker"; generation: number },
+  token: string,
+): string {
+  const directory = join(dirname(paths.helperPath), "tickets");
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
   const path = runTicketPath(paths, run.id);
   // A coordinative run's generation never changes after creation, so the ticket can bind it for the
   // authenticated fallback: the helper sends it when the payload omits it. Other roles need no binding.
-  const generation = ['closeout', 'recovery', 'executor'].includes(run.role) ? { coordinatorGeneration: run.generation } : {};
+  const generation = ["closeout", "recovery", "executor"].includes(run.role)
+    ? { coordinatorGeneration: run.generation }
+    : {};
   // The ticket names its host so the packaged helper can pick a reporting route a
   // provider sandbox can reach (nucleus#1315). A `bb:` host reports over the BB
   // backend's loopback relay; every other host keeps the callback socket.
-  writeOwnedJson(path, { socketPath: paths.socketPath, taskId: task.id, runId: run.id, host: task.hostId, token, ...generation });
+  writeOwnedJson(path, {
+    socketPath: paths.socketPath,
+    taskId: task.id,
+    runId: run.id,
+    host: task.hostId,
+    token,
+    ...generation,
+  });
   return path;
 }
 
 /** The MCP reporting binding for one key, written atomically so the helper never reads a torn file. */
-export function writeMcpBinding(paths: CallbackPaths, key: string, task: Task, runId: string, token: string): string {
-  const dir = join(dirname(paths.helperPath), "tickets"); mkdirSync(dir, { recursive: true, mode: 0o700 });
+export function writeMcpBinding(
+  paths: CallbackPaths,
+  key: string,
+  task: Task,
+  runId: string,
+  token: string,
+): string {
+  const dir = join(dirname(paths.helperPath), "tickets");
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
   const path = join(dir, `mcp-${key}.json`);
-  writeOwnedJson(path, { socketPath: paths.socketPath, taskId: task.id, runId, token });
+  writeOwnedJson(path, {
+    socketPath: paths.socketPath,
+    taskId: task.id,
+    runId,
+    token,
+  });
   return path;
 }
 
@@ -47,20 +80,60 @@ export function removeMcpBinding(path: string): void {
 }
 
 /** The callback environment carries routing data only; the ticket owns the credential. */
-export function callbackEnvironment(paths: CallbackPaths, task: Task, runId: string): Record<string, string> {
-  const values = { SOCKET: paths.socketPath, TASK_ID: task.id, RUN_ID: runId,
-    HELPER: paths.helperPath, BRANCH: task.branch, BASE_BRANCH: task.baseBranch };
-  return Object.fromEntries(Object.entries(values).map(([key, value]) => [`NUCLEUS_${key}`, value]));
+export function callbackEnvironment(
+  paths: CallbackPaths,
+  task: Task,
+  runId: string,
+): Record<string, string> {
+  const values = {
+    SOCKET: paths.socketPath,
+    TASK_ID: task.id,
+    RUN_ID: runId,
+    HELPER: paths.helperPath,
+    BRANCH: task.branch,
+    BASE_BRANCH: task.baseBranch,
+  };
+  return Object.fromEntries(
+    Object.entries(values).map(([key, value]) => [`NUCLEUS_${key}`, value]),
+  );
 }
 
 /** The launch environment for one create: shared cargo, the run's scratch, the callback and the admission hook. */
-function launchEnvironment(owner: CreationOwner, task: Task, runId: string, temporaryDirectory: string | undefined, ticket: string): Record<string, string> {
-  return mergeAdmissionLaunchEnv({ ...sharedCargoEnvironment(), ...runTemporaryEnvironment(runId, owner.scratchPlacement(task), temporaryDirectory), ...callbackEnvironment(owner, task, runId), NUCLEUS_TICKET: ticket }, owner.admissionLaunchEnv);
+function launchEnvironment(
+  owner: CreationOwner,
+  task: Task,
+  runId: string,
+  temporaryDirectory: string | undefined,
+  ticket: string,
+): Record<string, string> {
+  return mergeAdmissionLaunchEnv(
+    {
+      ...sharedCargoEnvironment(),
+      ...runTemporaryEnvironment(
+        runId,
+        owner.scratchPlacement(task),
+        temporaryDirectory,
+      ),
+      ...callbackEnvironment(owner, task, runId),
+      NUCLEUS_TICKET: ticket,
+    },
+    owner.admissionLaunchEnv,
+  );
 }
 
 /** Prepare the recorded leaf for hosts that cannot pass a per-thread TMPDIR to their agent. */
-function prepareRunScratch(owner: CreationOwner, task: Task, runId: string, temporaryDirectory: string | undefined): void {
-  if (owner.prepareRunScratch) runTemporaryEnvironment(runId, owner.scratchPlacement(task), temporaryDirectory);
+function prepareRunScratch(
+  owner: CreationOwner,
+  task: Task,
+  runId: string,
+  temporaryDirectory: string | undefined,
+): void {
+  if (owner.prepareRunScratch)
+    runTemporaryEnvironment(
+      runId,
+      owner.scratchPlacement(task),
+      temporaryDirectory,
+    );
 }
 
 /**
@@ -68,24 +141,57 @@ function prepareRunScratch(owner: CreationOwner, task: Task, runId: string, temp
  * binding it reports through. `attempt` is read by the host at each create, so
  * the owner's launch admission is the one in force at that moment.
  */
-export function workerAgentSpec(owner: () => CreationOwner, task: Task, token: string, prompt: string, legacyPrompt: string): HostAgentSpec {
+export function workerAgentSpec(
+  owner: () => CreationOwner,
+  task: Task,
+  token: string,
+  prompt: string,
+  legacyPrompt: string,
+): HostAgentSpec {
   const runId = task.runId!;
-  const ticket = writeRunTicket(owner(), task, { id: runId, role: "worker", generation: 0 }, token);
-  const mcpBindingPath = owner().reportingViaMcp ? writeMcpBinding(owner(), runId, task, runId, token) : null;
+  const ticket = writeRunTicket(
+    owner(),
+    task,
+    { id: runId, role: "worker", generation: 0 },
+    token,
+  );
+  const mcpBindingPath = owner().reportingViaMcp
+    ? writeMcpBinding(owner(), runId, task, runId, token)
+    : null;
   return {
-    workspaceId: task.workspaceId!, profile: task.profile!, title: task.title, taskNumber: task.number, mcpBindingPath,
+    workspaceId: task.workspaceId!,
+    profile: task.profile!,
+    title: task.title,
+    taskNumber: task.number,
+    mcpBindingPath,
     attempt: (mcp, retry): HostAgentAttempt => {
       const current = owner();
       // Hosts that cannot inject a per-thread environment get an empty one. T3
       // manages its own scratch; BB opts into preparing Nucleus's recorded leaf
       // below before lane documents or the thread attach are created.
-      const environment = current.perThreadEnvironment === false ? {} : launchEnvironment(current, task, runId, task.temporaryDirectory, ticket);
-      if (current.perThreadEnvironment === false) prepareRunScratch(current, task, runId, task.temporaryDirectory);
+      const environment =
+        current.perThreadEnvironment === false
+          ? {}
+          : launchEnvironment(
+              current,
+              task,
+              runId,
+              task.temporaryDirectory,
+              ticket,
+            );
+      if (current.perThreadEnvironment === false)
+        prepareRunScratch(current, task, runId, task.temporaryDirectory);
       materializeLaneDocuments(task.temporaryDirectory, task.laneDocumentPins);
       return {
         requestId: retry ? `ns-agent-${runId}-socket` : `ns-agent-${runId}`,
         prompt: retry ? legacyPrompt : prompt,
-        labels: wireLabels({ task: task.id, run: runId, ...(mcp ? { mcpBinding: runId, mcpBindingPath: mcpBindingPath ?? undefined } : {}) }),
+        labels: wireLabels({
+          task: task.id,
+          run: runId,
+          ...(mcp
+            ? { mcpBinding: runId, mcpBindingPath: mcpBindingPath ?? undefined }
+            : {}),
+        }),
         environment,
       };
     },
@@ -97,24 +203,78 @@ export function workerAgentSpec(owner: () => CreationOwner, task: Task, token: s
  * then the MCP binding, the order the ticket-bearing prompt needs. The run's
  * prompt is built per attempt, because it differs with MCP reporting.
  */
-export function runAgentSpec(owner: () => CreationOwner, task: Task, run: Run, token: string, profile: Profile,
-  guard: HostAgentSpec["guard"] | undefined, context: RunPromptContext, ownerContext: RunPromptOwnerContext, affectedTestsCommand?: string): HostAgentSpec {
+export function runAgentSpec(
+  owner: () => CreationOwner,
+  task: Task,
+  run: Run,
+  token: string,
+  profile: Profile,
+  guard: HostAgentSpec["guard"] | undefined,
+  context: RunPromptContext,
+  ownerContext: RunPromptOwnerContext,
+  affectedTestsCommand?: string,
+): HostAgentSpec {
   const ticket = writeRunTicket(owner(), task, run, token);
-  const mcpBindingPath = owner().reportingViaMcp ? writeMcpBinding(owner(), run.id, task, run.id, token) : null;
+  const mcpBindingPath = owner().reportingViaMcp
+    ? writeMcpBinding(owner(), run.id, task, run.id, token)
+    : null;
   return {
-    workspaceId: run.workspaceId, profile, title: `${run.role}: ${task.title}`, taskNumber: task.number, mcpBindingPath, guard,
+    workspaceId: run.workspaceId,
+    profile,
+    title: `${run.role}: ${task.title}`,
+    taskNumber: task.number,
+    mcpBindingPath,
+    guard,
     attempt: (mcp, retry): HostAgentAttempt => {
       const current = owner();
       // Same no-environment policy as the worker spec. BB prepares its recorded
       // scratch below; lane documents materialize only after that leaf exists.
-      const environment = current.perThreadEnvironment === false ? {} : launchEnvironment(current, task, run.id, run.temporaryDirectory, ticket);
-      if (current.perThreadEnvironment === false) prepareRunScratch(current, task, run.id, run.temporaryDirectory);
-      const effectiveRun = { ...run, temporaryDirectory: current.perThreadEnvironment === false ? run.temporaryDirectory : environment.TMPDIR };
-      materializeLaneDocuments(effectiveRun.temporaryDirectory, task.laneDocumentPins);
+      const environment =
+        current.perThreadEnvironment === false
+          ? {}
+          : launchEnvironment(
+              current,
+              task,
+              run.id,
+              run.temporaryDirectory,
+              ticket,
+            );
+      if (current.perThreadEnvironment === false)
+        prepareRunScratch(current, task, run.id, run.temporaryDirectory);
+      const effectiveRun = {
+        ...run,
+        temporaryDirectory:
+          current.perThreadEnvironment === false
+            ? run.temporaryDirectory
+            : environment.TMPDIR,
+      };
+      materializeLaneDocuments(
+        effectiveRun.temporaryDirectory,
+        task.laneDocumentPins,
+      );
       return {
         requestId: retry ? `ns-run-${run.id}-socket` : `ns-run-${run.id}`,
-        prompt: runPrompt(task, effectiveRun, current.helperPath, ticket, mcp, context, ownerContext, affectedTestsCommand),
-        labels: wireLabels({ task: task.id, run: run.id, role: run.role, ...(mcp ? { mcpBinding: run.id, mcpBindingPath: mcpBindingPath ?? undefined } : {}) }),
+        prompt: runPrompt(
+          task,
+          effectiveRun,
+          current.helperPath,
+          ticket,
+          mcp,
+          context,
+          ownerContext,
+          affectedTestsCommand,
+        ),
+        labels: wireLabels({
+          task: task.id,
+          run: run.id,
+          role: run.role,
+          ...(mcp
+            ? {
+                mcpBinding: run.id,
+                mcpBindingPath: mcpBindingPath ?? undefined,
+              }
+            : {}),
+        }),
         environment,
       };
     },

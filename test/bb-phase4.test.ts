@@ -1,26 +1,48 @@
-import { test } from 'node:test';
-import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { randomUUID } from 'node:crypto';
-import { BbThreads, emptyBbThreadState, type BbThreadPorts, type BbThreadState, type BbWorkspaceRecord } from '../hosts/bb/threads';
-import { HostOperationError, type HostOperationName } from '../hosts/bb/plugin/operations';
-import { bbFake, bbWire } from './support/bb-fake';
-import { wireLabels } from '../shared/wire-labels';
-import { formatAgentId } from '../shared/agent-identity';
-import type { HostAgentSpec } from '../shared/host';
-import type { Profile, Run } from '../shared/contracts';
-import { submissionSchema } from '../shared/contracts';
-import { Store, qualifiedThreadArchiveEffectKey } from '../core/store/store';
-import { createBbHostAdapter } from '../service/bb-host';
-import { archiveReplacedReviewer, observeReviewerReplacement } from '../core/workspaces/thread-archive-replacement';
-import { archiveFinishedThreads, threadCleanupPending } from '../core/workspaces/thread-archive';
-import type { Adapter } from '../core/host';
-import { checkoutRunScratchPlacement } from '../core/workspaces/run-scratch';
-import { runAgentSpec, workerAgentSpec } from '../core/dispatch/agent-creation';
-import type { CreationOwner, RunScratchPlacement } from '../core/host/types';
-import type { Task } from '../shared/contracts';
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { randomUUID } from "node:crypto";
+import {
+  BbThreads,
+  emptyBbThreadState,
+  type BbThreadPorts,
+  type BbThreadState,
+  type BbWorkspaceRecord,
+} from "../hosts/bb/threads";
+import {
+  HostOperationError,
+  type HostOperationName,
+} from "../hosts/bb/plugin/operations";
+import { bbFake, bbWire } from "./support/bb-fake";
+import { wireLabels } from "../shared/wire-labels";
+import { formatAgentId } from "../shared/agent-identity";
+import type { HostAgentSpec } from "../shared/host";
+import type { Profile, Run } from "../shared/contracts";
+import { submissionSchema } from "../shared/contracts";
+import { Store, qualifiedThreadArchiveEffectKey } from "../core/store/store";
+import { createBbHostAdapter } from "../service/bb-host";
+import {
+  archiveReplacedReviewer,
+  observeReviewerReplacement,
+} from "../core/workspaces/thread-archive-replacement";
+import {
+  archiveFinishedThreads,
+  threadCleanupPending,
+} from "../core/workspaces/thread-archive";
+import type { Adapter } from "../core/host";
+import { checkoutRunScratchPlacement } from "../core/workspaces/run-scratch";
+import { runAgentSpec, workerAgentSpec } from "../core/dispatch/agent-creation";
+import type { CreationOwner, RunScratchPlacement } from "../core/host/types";
+import type { Task } from "../shared/contracts";
 
 /**
  * Spec 062 phase 4: delivery, questions and the support roles. Every call crosses
@@ -120,59 +142,173 @@ function fixture() {
   };
 }
 
-test('BB launch creates owner-only run scratch in the repository namespace before attaching the thread', async () => {
-  const root = mkdtempSync(join(tmpdir(), 'bb-run-scratch-'));
-  const mount = join(root, 'Stash');
+test("BB launch creates owner-only run scratch in the repository namespace before attaching the thread", async () => {
+  const root = mkdtempSync(join(tmpdir(), "bb-run-scratch-"));
+  const mount = join(root, "Stash");
   mkdirSync(mount, { mode: 0o700 });
-  const volume = { MountPoint: mount, VolumeUUID: 'fixture', Internal: false, Writable: true, WritableVolume: true };
-  const store = new Store(join(root, 'queue.sqlite'));
+  const volume = {
+    MountPoint: mount,
+    VolumeUUID: "fixture",
+    Internal: false,
+    Writable: true,
+    WritableVolume: true,
+  };
+  const store = new Store(join(root, "queue.sqlite"));
   let scratchPath: string | undefined;
   const fake = bbFake();
   const operation = async (op: HostOperationName, input: unknown) => {
-    if (op === 'run.attach') {
-      assert.ok(scratchPath && existsSync(scratchPath), 'BB receives the attach only after its recorded scratch leaf exists');
-      assert.equal(statSync(scratchPath!).mode & 0o777, 0o700, 'the run scratch leaf is owner-only');
-      assert.ok(scratchPath!.includes('/scratch/bb-lab/'), 'BB uses the repository namespace that Paseo uses');
+    if (op === "run.attach") {
+      assert.ok(
+        scratchPath && existsSync(scratchPath),
+        "BB receives the attach only after its recorded scratch leaf exists",
+      );
+      assert.equal(
+        statSync(scratchPath!).mode & 0o777,
+        0o700,
+        "the run scratch leaf is owner-only",
+      );
+      assert.ok(
+        scratchPath!.includes("/scratch/bb-lab/"),
+        "BB uses the repository namespace that Paseo uses",
+      );
     }
-    try { return await fake.operations.execute(op, input); }
-    catch (error) { if (error instanceof HostOperationError) throw error; throw new HostOperationError('unavailable', error instanceof Error ? error.message : String(error)); }
+    try {
+      return await fake.operations.execute(op, input);
+    } catch (error) {
+      if (error instanceof HostOperationError) throw error;
+      throw new HostOperationError(
+        "unavailable",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
   };
   try {
-    store.setMeta('paused', false);
-    store.setMeta('hostRegistry', [{ id: hostId, endpoint: 'fixture' }]);
-    const repositoryRoot = join(root, 'bb-lab');
-    const created = store.insert(submissionSchema.parse({ submissionId: randomUUID(), title: 'Scratch before launch', repoPath: repositoryRoot,
-      planningCommit: 'a'.repeat(40), handoffPath: '/synthetic/handoff.md', originAgentId: 'origin' }), hostId, '/synthetic/handoff.md', 'a'.repeat(40));
-    store.update(created.id, { phase: 'reviewing', workspaceId: handle, directory: '/synthetic/worktree', plannerAgentId: formatAgentId(hostId, 'thr_planner') });
-    store.setMeta('bbWorkspaces', { [handle]: { id: handle, directory: '/synthetic/worktree', projectId: 'proj_synthetic', repositoryRoot, title: 'Synthetic' } satisfies BbWorkspaceRecord });
-    const adapter = createBbHostAdapter(hostId, () => true, root, store, operation) as Adapter & {
+    store.setMeta("paused", false);
+    store.setMeta("hostRegistry", [{ id: hostId, endpoint: "fixture" }]);
+    const repositoryRoot = join(root, "bb-lab");
+    const created = store.insert(
+      submissionSchema.parse({
+        submissionId: randomUUID(),
+        title: "Scratch before launch",
+        repoPath: repositoryRoot,
+        planningCommit: "a".repeat(40),
+        handoffPath: "/synthetic/handoff.md",
+        originAgentId: "origin",
+      }),
+      hostId,
+      "/synthetic/handoff.md",
+      "a".repeat(40),
+    );
+    store.update(created.id, {
+      phase: "reviewing",
+      workspaceId: handle,
+      directory: "/synthetic/worktree",
+      plannerAgentId: formatAgentId(hostId, "thr_planner"),
+    });
+    store.setMeta("bbWorkspaces", {
+      [handle]: {
+        id: handle,
+        directory: "/synthetic/worktree",
+        projectId: "proj_synthetic",
+        repositoryRoot,
+        title: "Synthetic",
+      } satisfies BbWorkspaceRecord,
+    });
+    const adapter = createBbHostAdapter(
+      hostId,
+      () => true,
+      root,
+      store,
+      operation,
+    ) as Adapter & {
       runScratch: RunScratchPlacement;
       runTemporaryDirectory(runId: string, task?: Task): string;
       creationOwner(): CreationOwner;
-      guardedNativeAgentCreate(spec: HostAgentSpec, mcp: boolean, retry: boolean): Promise<{ id: string; workspaceId: string | null }>;
+      guardedNativeAgentCreate(
+        spec: HostAgentSpec,
+        mcp: boolean,
+        retry: boolean,
+      ): Promise<{ id: string; workspaceId: string | null }>;
     };
-    adapter.runScratch = checkoutRunScratchPlacement({ mount, uuid: 'fixture', observe: () => volume });
-    const profile: Profile = { id: 'synthetic-profile', name: 'Synthetic profile', provider: 'codex', model: 'synthetic-model', notes: '', available: true, problem: '', supportedThinking: ['high'], thinkingOptionId: 'high' };
-    const workerId = 'run_bb_worker_scratch';
+    adapter.runScratch = checkoutRunScratchPlacement({
+      mount,
+      uuid: "fixture",
+      observe: () => volume,
+    });
+    const profile: Profile = {
+      id: "synthetic-profile",
+      name: "Synthetic profile",
+      provider: "codex",
+      model: "synthetic-model",
+      notes: "",
+      available: true,
+      problem: "",
+      supportedThinking: ["high"],
+      thinkingOptionId: "high",
+    };
+    const workerId = "run_bb_worker_scratch";
     const initialTask = store.task(created.id);
     const workerPath = adapter.runTemporaryDirectory(workerId, initialTask);
-    store.update(initialTask.id, { runId: workerId, temporaryDirectory: workerPath, profile, branch: 'main', baseBranch: 'main' });
+    store.update(initialTask.id, {
+      runId: workerId,
+      temporaryDirectory: workerPath,
+      profile,
+      branch: "main",
+      baseBranch: "main",
+    });
     scratchPath = workerPath;
     const workerTask = store.task(created.id);
-    const worker = workerAgentSpec(() => adapter.creationOwner(), workerTask, 'synthetic-worker-ticket', 'Synthetic worker prompt', 'Synthetic legacy prompt');
-    const workerAgent = await adapter.guardedNativeAgentCreate(worker, false, false);
+    const worker = workerAgentSpec(
+      () => adapter.creationOwner(),
+      workerTask,
+      "synthetic-worker-ticket",
+      "Synthetic worker prompt",
+      "Synthetic legacy prompt",
+    );
+    const workerAgent = await adapter.guardedNativeAgentCreate(
+      worker,
+      false,
+      false,
+    );
     assert.ok(workerAgent.id);
     assert.ok(existsSync(workerPath));
 
     const task = store.task(created.id);
-    const runId = 'run_bb_scratch';
+    const runId = "run_bb_scratch";
     scratchPath = adapter.runTemporaryDirectory(runId, task);
     const at = new Date().toISOString();
-    const run = { id: runId, taskId: task.id, hostId, role: 'reviewer', generation: 0, head: 'b'.repeat(40), base: 'a'.repeat(40),
-      agentId: null, workspaceId: handle, profile, profileGroup: null, status: 'intent', createdAt: at, lastObservedAt: null,
-      active: null, idleSince: null, completion: null, released: false, temporaryDirectory: scratchPath } satisfies Run;
+    const run = {
+      id: runId,
+      taskId: task.id,
+      hostId,
+      role: "reviewer",
+      generation: 0,
+      head: "b".repeat(40),
+      base: "a".repeat(40),
+      agentId: null,
+      workspaceId: handle,
+      profile,
+      profileGroup: null,
+      status: "intent",
+      createdAt: at,
+      lastObservedAt: null,
+      active: null,
+      idleSince: null,
+      completion: null,
+      released: false,
+      temporaryDirectory: scratchPath,
+    } satisfies Run;
     store.putRun(run);
-    const spec = runAgentSpec(() => adapter.creationOwner(), task, run, 'synthetic-ticket', profile, undefined, null, null);
+    const spec = runAgentSpec(
+      () => adapter.creationOwner(),
+      task,
+      run,
+      "synthetic-ticket",
+      profile,
+      undefined,
+      null,
+      null,
+    );
     const agent = await adapter.guardedNativeAgentCreate(spec, false, false);
     assert.ok(agent.id);
     assert.ok(existsSync(scratchPath));
@@ -182,7 +318,7 @@ test('BB launch creates owner-only run scratch in the repository namespace befor
   }
 });
 
-test('BB phase 4: a follow-up steers a live turn and never resends an unknown steer', async () => {
+test("BB phase 4: a follow-up steers a live turn and never resends an unknown steer", async () => {
   const f = fixture();
   const worker = await f.native.createAgent(f.spec());
   f.rows.get(worker.id).status = "active";

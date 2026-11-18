@@ -233,9 +233,10 @@ test("a process this run lost to a stop, respawned at once, is recorded once and
       .filter((event) => event.kind === "run_process_cleanup_left_alone");
     // A host may also be observed between losing one tool and starting the next.
     // Keep that distinct live-ancestor fact while asserting this respawn precisely.
-    const respawnRecords = leftAlone.filter((event) =>
-      event.detail.includes('"reason":"respawned-after-stop"')
-      && event.detail.includes(`"pid":${respawned}`),
+    const respawnRecords = leftAlone.filter(
+      (event) =>
+        event.detail.includes('"reason":"respawned-after-stop"') &&
+        event.detail.includes(`"pid":${respawned}`),
     );
     assert.equal(
       respawnRecords.length,
@@ -248,7 +249,10 @@ test("a process this run lost to a stop, respawned at once, is recorded once and
       ),
       JSON.stringify(leftAlone.map((event) => event.detail)),
     );
-    assert.ok(leftAlone.length <= 2, JSON.stringify(leftAlone.map((event) => event.detail)));
+    assert.ok(
+      leftAlone.length <= 2,
+      JSON.stringify(leftAlone.map((event) => event.detail)),
+    );
     assert.ok(existsSync(run.temporaryDirectory!));
   } finally {
     await f.close();

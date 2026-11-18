@@ -26,14 +26,18 @@ import {
   forwardLifecycleHint,
   readBoardServiceState,
   parentChangedListener,
-
   withTerminalCommand,
   type BbLifecycleEvent,
   type BoardBridgeSource,
   type CliRegistration,
   type TerminalCreateSdk,
 } from "./board-bridge";
-import { REPORT_RELAY_MAX_BYTES, REPORT_RELAY_PATH, relayRunReport, ReportRelayRefusal } from "./report-relay";
+import {
+  REPORT_RELAY_MAX_BYTES,
+  REPORT_RELAY_PATH,
+  relayRunReport,
+  ReportRelayRefusal,
+} from "./report-relay";
 
 /** The plugin SDK this build was written against. A diagnostic, never an allowlist. */
 export const BB_PLUGIN_SDK_VERSION = "0.6.132";
@@ -53,14 +57,20 @@ const BOARD_SIGNAL_POLL_MS = 2_000;
  * Afterwards every move is published, and a failed read is retried on the next
  * tick — a missing signal delays a header, it never blocks the sidebar.
  */
-export function watchBoardSignal(bb: BbPluginApi, client: HostChannelClient): () => void {
+export function watchBoardSignal(
+  bb: BbPluginApi,
+  client: HostChannelClient,
+): () => void {
   let revision: number | null = null;
   let stopped = false;
   const poll = async (): Promise<void> => {
     if (stopped) return;
     let answer: unknown;
     try {
-      answer = await client.request("queue.ui-snapshot", revision === null ? {} : { revision });
+      answer = await client.request(
+        "queue.ui-snapshot",
+        revision === null ? {} : { revision },
+      );
     } catch {
       return;
     }
@@ -72,7 +82,9 @@ export function watchBoardSignal(bb: BbPluginApi, client: HostChannelClient): ()
     if (!first) bb.realtime.publish(BOARD_SIGNAL_CHANNEL, { revision: next });
   };
   void poll();
-  const timer = setInterval(() => { void poll(); }, BOARD_SIGNAL_POLL_MS);
+  const timer = setInterval(() => {
+    void poll();
+  }, BOARD_SIGNAL_POLL_MS);
   timer.unref?.();
   return () => {
     stopped = true;
@@ -81,7 +93,9 @@ export function watchBoardSignal(bb: BbPluginApi, client: HostChannelClient): ()
 }
 
 export default async function plugin(bb: BbPluginApi) {
-  bb.log.info(`nucleus host executor loaded (plugin SDK ${BB_PLUGIN_SDK_VERSION})`);
+  bb.log.info(
+    `nucleus host executor loaded (plugin SDK ${BB_PLUGIN_SDK_VERSION})`,
+  );
   // The Nucleus build this package came from (Spec 062, phase 7). A packaged plugin
   // declares it, so the service can refuse a plugin from another build by name; a
   // checkout install carries none and is what the private proofs install.
@@ -99,13 +113,16 @@ export default async function plugin(bb: BbPluginApi) {
     serviceDataDir: {
       type: "string",
       label: "Nucleus data directory",
-      description: "The Nucleus data home holding queue-service.json. The plugin connects out to that service and executes host operations for this BB server.",
+      description:
+        "The Nucleus data home holding queue-service.json. The plugin connects out to that service and executes host operations for this BB server.",
       default: "",
     },
   });
 
   const declarations = {
-    dataDir: () => (bb.server as unknown as { experimental_dataDir: string }).experimental_dataDir,
+    dataDir: () =>
+      (bb.server as unknown as { experimental_dataDir: string })
+        .experimental_dataDir,
     version: null as string | null,
   };
 
@@ -141,18 +158,31 @@ export default async function plugin(bb: BbPluginApi) {
   let vendoredCli: CliRegistration | null = null;
   const listApi = new Proxy(bb, {
     get(target, property) {
-      if (property === "cli") return { register: (registration: CliRegistration) => { vendoredCli = registration; } };
+      if (property === "cli")
+        return {
+          register: (registration: CliRegistration) => {
+            vendoredCli = registration;
+          },
+        };
       return Reflect.get(target, property, target);
     },
   });
   await threadListPlugin(listApi);
   const terminalSdk = () => bb.sdk as unknown as TerminalCreateSdk;
-  bb.cli.register(withTerminalCommand(vendoredCli ?? {
-    name: bb.pluginId,
-    summary: "Nucleus",
-    commands: [],
-    run: () => ({ exitCode: 2, stderr: "Unknown command. Try `bb nucleus terminal`.\n" }),
-  }, terminalSdk) as unknown as Parameters<typeof bb.cli.register>[0]);
+  bb.cli.register(
+    withTerminalCommand(
+      vendoredCli ?? {
+        name: bb.pluginId,
+        summary: "Nucleus",
+        commands: [],
+        run: () => ({
+          exitCode: 2,
+          stderr: "Unknown command. Try `bb nucleus terminal`.\n",
+        }),
+      },
+      terminalSdk,
+    ) as unknown as Parameters<typeof bb.cli.register>[0],
+  );
 
   // Metadata names the helper route; it carries no reporting credential and grants
   // no authority. The run ticket authenticates every helper request.
@@ -163,23 +193,37 @@ export default async function plugin(bb: BbPluginApi) {
   // Project rows resolve through BB's own project list too (decision 5d), so a row
   // keeps its board link with no live task workspace: one read per sidebar read.
   const samePath = (left: string, right: string) => {
-    const canonical = (value: string) => { try { return realpathSync(value); } catch { return value.replace(/\/+$/, ""); } };
+    const canonical = (value: string) => {
+      try {
+        return realpathSync(value);
+      } catch {
+        return value.replace(/\/+$/, "");
+      }
+    };
     return canonical(left) === canonical(right);
   };
-  bb.rpc.register(sidebarGroupsContract, createSidebarGroupsService(() => channelClient, {
-    list: () => (bb.sdk as unknown as { projects: { list(): Promise<unknown> } }).projects.list(),
-    samePath,
-  }), {
-    experimental_description:
-      "The forked sidebar's batched Nucleus task-group read: one answer for every group's state line.",
-  });
+  bb.rpc.register(
+    sidebarGroupsContract,
+    createSidebarGroupsService(() => channelClient, {
+      list: () =>
+        (
+          bb.sdk as unknown as { projects: { list(): Promise<unknown> } }
+        ).projects.list(),
+      samePath,
+    }),
+    {
+      experimental_description:
+        "The forked sidebar's batched Nucleus task-group read: one answer for every group's state line.",
+    },
+  );
   // Phase 6: the board, its Settings and its pills reach the service catalogue
   // through this one forwarding method, on the same retained connection.
   const boardSource = (): BoardBridgeSource | null => {
     const client = channelClient;
     if (!client) return null;
     return {
-      request: (method, input, timeoutMs, via) => client.request(method, input, timeoutMs, via),
+      request: (method, input, timeoutMs, via) =>
+        client.request(method, input, timeoutMs, via),
       serviceState: () => readBoardServiceState(client, nucleusBuild),
     };
   };
@@ -192,40 +236,75 @@ export default async function plugin(bb: BbPluginApi) {
   // report to this backend over loopback instead. The route runs here, outside the
   // provider sandbox, forwards only this data home's own ticket-bound callback
   // routes, and answers with the service's own answer.
-  bb.http.route("POST", REPORT_RELAY_PATH, async context => {
-    const declared = Number(context.req.header("content-length") ?? "0");
-    if (Number.isFinite(declared) && declared > REPORT_RELAY_MAX_BYTES)
-      return context.json({ error: "The relay body is too large" }, 413);
-    let body: unknown;
-    try {
-      body = await context.req.json();
-    } catch {
-      return context.json({ error: "The relay body is not JSON" }, 400);
-    }
-    const { serviceDataDir } = await settings.get();
-    try {
-      const answer = await relayRunReport({ dataDir: serviceDataDir || null, body });
-      return new Response(answer.body, { status: answer.status, headers: { "content-type": "application/json" } });
-    } catch (error) {
-      const refusal = error instanceof ReportRelayRefusal ? error.message : "The report relay failed";
-      bb.log.warn(`report relay refused: ${refusal}`);
-      return context.json({ error: refusal }, 409);
-    }
-  }, { auth: "local" });
+  bb.http.route(
+    "POST",
+    REPORT_RELAY_PATH,
+    async (context) => {
+      const declared = Number(context.req.header("content-length") ?? "0");
+      if (Number.isFinite(declared) && declared > REPORT_RELAY_MAX_BYTES)
+        return context.json({ error: "The relay body is too large" }, 413);
+      let body: unknown;
+      try {
+        body = await context.req.json();
+      } catch {
+        return context.json({ error: "The relay body is not JSON" }, 400);
+      }
+      const { serviceDataDir } = await settings.get();
+      try {
+        const answer = await relayRunReport({
+          dataDir: serviceDataDir || null,
+          body,
+        });
+        return new Response(answer.body, {
+          status: answer.status,
+          headers: { "content-type": "application/json" },
+        });
+      } catch (error) {
+        const refusal =
+          error instanceof ReportRelayRefusal
+            ? error.message
+            : "The report relay failed";
+        bb.log.warn(`report relay refused: ${refusal}`);
+        return context.json({ error: refusal }, 409);
+      }
+    },
+    { auth: "local" },
+  );
   // BB's thread events ride the existing bounded lifecycle hint, never a lifecycle write.
   for (const event of Object.keys(BB_LIFECYCLE_HINTS) as BbLifecycleEvent[]) {
-    bb.events.on(event, payload => { void forwardLifecycleHint(() => channelClient, event, payload as { thread?: { id?: unknown } }); });
+    bb.events.on(event, (payload) => {
+      void forwardLifecycleHint(
+        () => channelClient,
+        event,
+        payload as { thread?: { id?: unknown } },
+      );
+    });
   }
   // An operator drag is presentation intent; Nucleus's own reparent echoes are dropped (nucleus#1323).
-  const onParentChanged = parentChangedListener(() => channelClient, operations);
-  bb.events.on("experimental_thread.parentChanged", payload => { void onParentChanged(payload); });
+  const onParentChanged = parentChangedListener(
+    () => channelClient,
+    operations,
+  );
+  bb.events.on("experimental_thread.parentChanged", (payload) => {
+    void onParentChanged(payload);
+  });
 
-  bb.agents.configure(context => {
+  bb.agents.configure((context) => {
     const meta = context.pluginMetadata.nucleus;
-    if (!meta || typeof meta !== "object" || Array.isArray(meta)) return { tools: [], skills: [] };
+    if (!meta || typeof meta !== "object" || Array.isArray(meta))
+      return { tools: [], skills: [] };
     const binding = meta as Record<string, unknown>;
-    if (!["task", "run", "host", "helperPath", "ticketPath"].every(key => typeof binding[key] === "string")) return { tools: [], skills: [] };
-    return { tools: [], skills: [], instructions: `Nucleus reporting binding (data): ${JSON.stringify(binding)}. Report through the helper and ticket named in your run prompt.` };
+    if (
+      !["task", "run", "host", "helperPath", "ticketPath"].every(
+        (key) => typeof binding[key] === "string",
+      )
+    )
+      return { tools: [], skills: [] };
+    return {
+      tools: [],
+      skills: [],
+      instructions: `Nucleus reporting binding (data): ${JSON.stringify(binding)}. Report through the helper and ticket named in your run prompt.`,
+    };
   });
 
   await settings.get();
@@ -240,14 +319,18 @@ export default async function plugin(bb: BbPluginApi) {
       // cannot answer is a diagnostic, never a reason to refuse the role.
       await bbVersion();
       if (!serviceDataDir) {
-        bb.log.warn("Nucleus data directory is not configured; the host-operation channel waits for configuration");
-        await new Promise<void>(resolve => { signal.addEventListener("abort", () => resolve(), { once: true }); });
+        bb.log.warn(
+          "Nucleus data directory is not configured; the host-operation channel waits for configuration",
+        );
+        await new Promise<void>((resolve) => {
+          signal.addEventListener("abort", () => resolve(), { once: true });
+        });
         return;
       }
       await runHostChannel({
         serviceDataDir,
         operations,
-        onDeclared: client => {
+        onDeclared: (client) => {
           channelClient = client;
           const stopSignal = watchBoardSignal(bb, client);
           return () => {
@@ -255,7 +338,11 @@ export default async function plugin(bb: BbPluginApi) {
             stopSignal();
           };
         },
-        log: { info: message => bb.log.info(message), warn: message => bb.log.warn(message), error: message => bb.log.error(message) },
+        log: {
+          info: (message) => bb.log.info(message),
+          warn: (message) => bb.log.warn(message),
+          error: (message) => bb.log.error(message),
+        },
         signal,
         declaration: () => ({
           dataDir: declarations.dataDir(),
@@ -267,5 +354,7 @@ export default async function plugin(bb: BbPluginApi) {
     },
   });
 
-  bb.onDispose(() => { bb.log.info("nucleus host executor disposed"); });
+  bb.onDispose(() => {
+    bb.log.info("nucleus host executor disposed");
+  });
 }

@@ -50,7 +50,7 @@ export interface EngineHostWiring {
   hostRegistry: HostRegistry<RegisteredHost>;
   hostSession: HostSession | null;
   connected(): boolean;
-  store: Engine['store'];
+  store: Engine["store"];
 }
 
 /**
@@ -58,37 +58,70 @@ export interface EngineHostWiring {
  * availability. One owner of those assignments so QueueRuntime's constructor
  * does not also invent the routing policy.
  */
-export function wireEngineHosts(engine: Engine, runtime: EngineHostWiring): void {
-  engine.selectIngressSelection = (explicit, repoPath, origin, plannerHostId) => {
-    const registered = runtime.hostRegistry.known().map(host => host.id);
+export function wireEngineHosts(
+  engine: Engine,
+  runtime: EngineHostWiring,
+): void {
+  engine.selectIngressSelection = (
+    explicit,
+    repoPath,
+    origin,
+    plannerHostId,
+  ) => {
+    const registered = runtime.hostRegistry.known().map((host) => host.id);
     const online = runtime.hostRegistry.onlineIds();
     if (!repoPath && !origin && !explicit && !plannerHostId) {
-      const storedDefault = runtime.store.getMeta<import('../shared/host-kind').HostKind | null>('operatorDefaultHostKind');
-      const operatorDefaultHostKind = storedDefault === undefined ? 'paseo' : storedDefault;
+      const storedDefault = runtime.store.getMeta<
+        import("../shared/host-kind").HostKind | null
+      >("operatorDefaultHostKind");
+      const operatorDefaultHostKind =
+        storedDefault === undefined ? "paseo" : storedDefault;
       if (operatorDefaultHostKind) {
-        const ofKind = online.filter(id => hostKindOf(id) === operatorDefaultHostKind);
-        if (ofKind.length === 1) return { hostId: ofKind[0]!, basis: 'sole_online_host' };
+        const ofKind = online.filter(
+          (id) => hostKindOf(id) === operatorDefaultHostKind,
+        );
+        if (ofKind.length === 1)
+          return { hostId: ofKind[0]!, basis: "sole_online_host" };
       }
-      if (online.length === 1) return { hostId: online[0]!, basis: 'sole_online_host' };
+      if (online.length === 1)
+        return { hostId: online[0]!, basis: "sole_online_host" };
       return undefined;
     }
-    const settings = runtime.store.canonicalRepository(repoPath ?? '', origin);
-    const storedDefault = runtime.store.getMeta<import('../shared/host-kind').HostKind | null>('operatorDefaultHostKind');
-    const operatorDefaultHostKind = storedDefault === undefined ? 'paseo' : storedDefault;
+    const settings = runtime.store.canonicalRepository(repoPath ?? "", origin);
+    const storedDefault = runtime.store.getMeta<
+      import("../shared/host-kind").HostKind | null
+    >("operatorDefaultHostKind");
+    const operatorDefaultHostKind =
+      storedDefault === undefined ? "paseo" : storedDefault;
     try {
-      return resolveIngressHost({ explicit, repositoryHostKind: settings?.hostKind ?? null,
-        operatorDefaultHostKind, plannerHostId, registered, online }).selection;
+      return resolveIngressHost({
+        explicit,
+        repositoryHostKind: settings?.hostKind ?? null,
+        operatorDefaultHostKind,
+        plannerHostId,
+        registered,
+        online,
+      }).selection;
     } catch (error) {
       // Omitted host, no repository kind, exactly one online host: that host, even
       // when a repoPath is present (review-entry preview, papercut 78c18e51).
-      if (!explicit && !plannerHostId && !settings?.hostKind && online.length === 1)
-        return { hostId: online[0]!, basis: 'sole_online_host' };
-      if (settings?.hostKind) throw new Error(`Cannot select host for repository ${settings.repository.origin ?? settings.repository.path}: ${error instanceof Error ? error.message : String(error)}`);
+      if (
+        !explicit &&
+        !plannerHostId &&
+        !settings?.hostKind &&
+        online.length === 1
+      )
+        return { hostId: online[0]!, basis: "sole_online_host" };
+      if (settings?.hostKind)
+        throw new Error(
+          `Cannot select host for repository ${settings.repository.origin ?? settings.repository.path}: ${error instanceof Error ? error.message : String(error)}`,
+        );
       throw error;
     }
   };
   engine.selectIngressHost = (explicit, repoPath, origin, plannerHostId) =>
-    engine.selectIngressSelection(explicit, repoPath, origin, plannerHostId)?.hostId;
+    engine.selectIngressSelection(explicit, repoPath, origin, plannerHostId)
+      ?.hostId;
   engine.resolveHostAdapter = (id) => runtime.hostRegistry.get(id)?.adapter;
   engine.hostIds = () => runtime.hostRegistry.known().map((host) => host.id);
   engine.inventoryHostMatches = (id) => runtime.hostSession?.id === id;
@@ -101,20 +134,47 @@ export function wireEngineHosts(engine: Engine, runtime: EngineHostWiring): void
     runtime.hostRegistry.known().length === 1;
   engine.identifyOriginHost = (agentId, identitySource?: IdentitySource) => {
     const qualified = parseAgentId(agentId);
-    if (qualified) return Promise.resolve(runtime.hostRegistry.get(qualified.hostId) ? qualified.hostId : undefined);
-    return resolveOriginHost(runtime.hostRegistry, agentId, async (host, id) => {
-      if (!host.adapter.originAgent) return 'unknown';
-      try { return await new HostFacade({ adapter: host.adapter }).originAgent(id) ? 'mine' : 'not-mine'; }
-      catch { return 'unknown'; }
-    }, identitySourceHostEvidence(agentId, identitySource, runtime.hostRegistry.known().map((entry: KnownHost) => entry.id)));
+    if (qualified)
+      return Promise.resolve(
+        runtime.hostRegistry.get(qualified.hostId)
+          ? qualified.hostId
+          : undefined,
+      );
+    return resolveOriginHost(
+      runtime.hostRegistry,
+      agentId,
+      async (host, id) => {
+        if (!host.adapter.originAgent) return "unknown";
+        try {
+          return (await new HostFacade({ adapter: host.adapter }).originAgent(
+            id,
+          ))
+            ? "mine"
+            : "not-mine";
+        } catch {
+          return "unknown";
+        }
+      },
+      identitySourceHostEvidence(
+        agentId,
+        identitySource,
+        runtime.hostRegistry.known().map((entry: KnownHost) => entry.id),
+      ),
+    );
   };
-  engine.hostAvailable = id => {
+  engine.hostAvailable = (id) => {
     const selected = runtime.hostRegistry.get(id);
-    return Boolean(selected && (engine.activeHostId ? engine.activeHostId === id : selected.adapter === runtime.adapter && runtime.connected()));
+    return Boolean(
+      selected &&
+        (engine.activeHostId
+          ? engine.activeHostId === id
+          : selected.adapter === runtime.adapter && runtime.connected()),
+    );
   };
   // Intake may arrive over a secondary BB/T3 host. This only proves that the
   // selected ingress is online; work-host eligibility remains the stricter gate above.
-  engine.hostIngressAvailable = id => runtime.hostRegistry.onlineIds().includes(id);
+  engine.hostIngressAvailable = (id) =>
+    runtime.hostRegistry.onlineIds().includes(id);
 }
 
 /**
@@ -130,13 +190,25 @@ export class HostConnections {
 
   /** The connection alone gates lifecycle work. */
   connected(): boolean {
-    if (!hostConnected(this.owner.adapter) || (this.owner.hostSession !== null && this.owner.paseoHostId !== this.owner.hostSession.id)) {
-      if (this.owner.hostSession) this.owner.hostRegistry.disconnect(this.owner.hostSession.id, this.owner.hostSession.token);
+    if (
+      !hostConnected(this.owner.adapter) ||
+      (this.owner.hostSession !== null &&
+        this.owner.paseoHostId !== this.owner.hostSession.id)
+    ) {
+      if (this.owner.hostSession)
+        this.owner.hostRegistry.disconnect(
+          this.owner.hostSession.id,
+          this.owner.hostSession.token,
+        );
       this.owner.hostSession = null;
       this.owner.bootstrapped = false;
       return false;
     }
-    return this.owner.hostSession !== null && this.owner.hostRegistry.get(this.owner.hostSession.id)?.adapter === this.owner.adapter;
+    return (
+      this.owner.hostSession !== null &&
+      this.owner.hostRegistry.get(this.owner.hostSession.id)?.adapter ===
+        this.owner.adapter
+    );
   }
 
   anyHostConnected(): boolean {
@@ -149,13 +221,29 @@ export class HostConnections {
   hostShutdownDue(): boolean {
     this.owner.t3Host?.retireDisconnected();
     this.owner.bbHost.retireDisconnected();
-    if (this.owner.closing || this.owner.idleShutdownLatched || this.connected() || hostConnected(this.owner.adapter) || this.owner.bootstrapRunning || (this.owner.serveHostRunEndpoint && !this.owner.hostRunEndpoint?.serving())) return false;
-    if (!this.owner.hostRegistry.shouldShutdown(this.owner.hostRuns.liveRuns().length)) return false;
+    if (
+      this.owner.closing ||
+      this.owner.idleShutdownLatched ||
+      this.connected() ||
+      hostConnected(this.owner.adapter) ||
+      this.owner.bootstrapRunning ||
+      (this.owner.serveHostRunEndpoint &&
+        !this.owner.hostRunEndpoint?.serving())
+    )
+      return false;
+    if (
+      !this.owner.hostRegistry.shouldShutdown(
+        this.owner.hostRuns.liveRuns().length,
+      )
+    )
+      return false;
     this.owner.idleShutdownLatched = true;
     return true;
   }
 
-  cancelHostShutdown(): void { this.owner.idleShutdownLatched = false; }
+  cancelHostShutdown(): void {
+    this.owner.idleShutdownLatched = false;
+  }
 
   hostPresenceClosed(): void {
     this.owner.idleShutdownLatched = false;
@@ -175,7 +263,9 @@ export class HostConnections {
     const epoch = ++this.pluginPresenceEpoch;
     this.pluginPresenceTimer = setTimeout(() => {
       this.pluginPresenceTimer = null;
-      void this.raisePluginPresenceFault(epoch).catch(() => { /* a throwing store write must not kill the executor */ });
+      void this.raisePluginPresenceFault(epoch).catch(() => {
+        /* a throwing store write must not kill the executor */
+      });
     }, this.owner.pluginLostGraceMs);
     this.pluginPresenceTimer.unref?.();
   }
@@ -187,13 +277,16 @@ export class HostConnections {
   }
 
   pluginPresenceFaultMessage(): string {
-    if (!this.anyHostConnected()) return '';
-    return this.owner.store.getMeta<{ message?: string }>('pluginPresenceFault')?.message ?? '';
+    if (!this.anyHostConnected()) return "";
+    return (
+      this.owner.store.getMeta<{ message?: string }>("pluginPresenceFault")
+        ?.message ?? ""
+    );
   }
 
   private clearPluginPresenceFault(): void {
-    if (!this.owner.store.getMeta('pluginPresenceFault')) return;
-    this.owner.store.deleteMeta('pluginPresenceFault');
+    if (!this.owner.store.getMeta("pluginPresenceFault")) return;
+    this.owner.store.deleteMeta("pluginPresenceFault");
     this.owner.store.advanceRevision();
   }
 
@@ -201,7 +294,7 @@ export class HostConnections {
     if (epoch !== this.pluginPresenceEpoch) return;
     if (this.owner.closing) return;
     if (!this.anyHostConnected()) return;
-    if (this.owner.store.getMeta('pluginPresenceFault')) return;
+    if (this.owner.store.getMeta("pluginPresenceFault")) return;
     // The hint names the reload command of the plugin that is missing. With BB beside
     // Paseo either plugin can be the absent one, and Paseo's command cannot restore a
     // BB plugin (Spec 062, "Presence"). Paseo's own wording is kept when it is the
@@ -221,9 +314,11 @@ export class HostConnections {
       ? "The Nucleus plugin is not present while BB is still connected. The recovery thread cannot act while the plugin is down."
       : "The Nucleus plugin is not present while Paseo is still connected. The recovery thread cannot act while the plugin is down.";
     const at = new Date().toISOString();
-    this.owner.store.setMeta('pluginPresenceFault', { at, message });
+    this.owner.store.setMeta("pluginPresenceFault", { at, message });
     this.owner.store.advanceRevision();
-    const planner = this.owner.store.projectPlannerRecipient(this.owner.store.queueProject());
+    const planner = this.owner.store.projectPlannerRecipient(
+      this.owner.store.queueProject(),
+    );
     if (!planner || !this.owner.adapter.notify) return;
     try {
       const hostId = await this.owner.engine.identifyOriginHost(planner);

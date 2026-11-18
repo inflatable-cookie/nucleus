@@ -961,8 +961,9 @@ is reachable.
 - a connection that closes between the identity proof and the registration is not installed: its
   link is released and the claim the runtime just recorded is retired, so nothing reads online for a
   connection that no longer exists;
-- the work-host decision: a registered BB host counts as a live host for liveness, presence and
-  health, and never as an available work host;
+- the initial phase-1 work-host decision: a registered BB host counts as live for liveness,
+  presence and health, but phase 1 did not yet make it available for task work. Phase 3 below later
+  enables repository-selected BB task dispatch; caller identity alone still does not select work;
 - `service.health` carries a `bb` block (the registered identity, the announced BB and plugin-SDK
   versions, the probe's host list, and while offline the field-prefixed reason) and lists the
   identity in `hosts` as online or offline with that reason;
@@ -1308,12 +1309,13 @@ makes the fork a bounded commitment (5f).
 The shared board's historical `plans` method name is translated by the BB bridge to the canonical
 `queue.plans` catalogue method. BB threads may also call the CLI through `BB_THREAD_ID`; the service
 verifies that exact thread on one online BB host before recording its host-qualified identity. An
-online BB host is valid for authenticated submission ingress; an offline BB caller or explicitly
-selected BB ingress host refuses with typed `invalid_input` during dry-run and before operation
-acceptance, even when a separate work host is online. The operation and task retain the repository
-or operator-default work-host selection; a caller's BB host never becomes a task work host. When no
-repository or operator-default route is set, the sole online non-BB host is the unambiguous work-host
-fallback. The bridge forwards service-catalogue methods over the retained BB
+online BB host is valid for authenticated submission ingress. A BB caller can submit and promote
+tasks using the configured repository or operator-default work host, including BB when that route
+explicitly selects it; caller identity alone never selects the BB work host. An offline BB caller or
+selected BB host refuses with typed `invalid_input` during dry-run and before operation acceptance,
+even when a separate work host is online. When no repository or operator-default route is set, the
+sole online non-BB host remains the unambiguous work-host fallback. The bridge forwards
+service-catalogue methods over the retained BB
 connection, answers the bridge-catalogue `queue.service-state` read from `service.health`, and permits
 only the board's `host.run.board` read and `host.run.capacity.release` action from the reverse host
 channel. Other host-control calls remain refused.

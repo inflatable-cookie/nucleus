@@ -547,85 +547,302 @@ async function fixture(t: TestContext): Promise<Fixture> {
   };
 }
 
-test('BB ordinary lifecycle: dispatch, helper report, independent review, revision, verdict, merge, closeout and archive', async t => {
- const f = await fixture(t);
- try {
-  const result = leadSubmit.output.parse(await f.runtime.submitLead({
-   repository: { origin: f.repo, path: f.repo }, title: 'Lifecycle on BB',
-   body: '---\ntitle: Lifecycle on BB\nqueue:\n  complexity: medium\n---\n\n## Outcome\n\nRun the ordinary lifecycle on BB.\n',
-   baseBranch: 'main', lanes: [], tags: [], agent: f.planner, note: 'Tom authorized this synthetic fixture',
-  }));
-  assert.ok('taskId' in result, JSON.stringify(result));
-  let task = f.runtime.store.task(result.taskId);
-  assert.equal(task.hostId, bbHost);
-  f.runtime.store.update(task.id, { plannerAgentId: formatAgentId(bbHost, 'thr_planner') });
-  await f.runtime.engine.dispatchTask(task.id, false);
-  await driveUntil(f, () => Boolean(f.runtime.store.task(task.id).agentId), 'worker dispatched', task.id);
-  task = f.runtime.store.task(task.id);
-  const workerId = task.agentId!;
-  assert.equal(task.phase, 'working');
-  const launch = f.fake.calls.find(c => c.method === 'threads.spawn')!.args;
-  assert.equal(launch.parentThreadId, 'thr_planner'); assert.equal(launch.parentNotifications, 'off');
-  assert.match(launch.input[0].text, /nucleus helper report/);
-  // The BB adapter reports through the packaged helper and this run's ticket, never MCP.
-  assert.match(launch.input[0].text, /packaged nucleus helper with this run's ticket/);
-  assert.equal(launch.visibility, 'visible');
-  f.fake.rows.get(workerId).queuedWork = 'waiting';
-  const workspaceInventory = await (f.adapter as any).workspaceHost.workspaceThreads([task.workspaceId]);
-  assert.ok(workspaceInventory.threads.find((row: { id: string }) => row.id === workerId).activeTurn, 'queued work keeps workspace cleanup busy');
-  f.fake.rows.get(workerId).queuedWork = 'none';
-  const displacedRunId = randomUUID();
-  const displacedTemporary = f.adapter.runTemporaryDirectory!(displacedRunId, task);
-  assert.equal(existsSync(displacedTemporary), false, 'the synthetic displaced run starts without a scratch leaf');
-  const displaced = await f.adapter.createAgent({ ...task, runId: displacedRunId, temporaryDirectory: displacedTemporary }, 'synthetic-retired-token', 'Synthetic displaced worker');
-  assert.equal(existsSync(displacedTemporary), true, 'BB creates the displaced run scratch before attaching it');
-  const displacedHead = (await git(task.directory!, 'rev-parse', 'HEAD')).trim(), observedAt = new Date().toISOString();
-  f.runtime.store.putRun({ id: displacedRunId, taskId: task.id, hostId: bbHost, role: 'revision', generation: task.coordinatorGeneration,
-    head: displacedHead, base: displacedHead, agentId: displaced.id, workspaceId: task.workspaceId!, profile: task.profile!, profileGroup: task.profileGroup!,
-    temporaryDirectory: displacedTemporary, status: 'superseded', createdAt: observedAt, lastObservedAt: observedAt,
-    active: false, idleSince: observedAt, completion: null, released: true });
-  task = f.runtime.store.update(task.id, { retiredWorkers: [{ agentId: displaced.id, runId: displacedRunId, profile: task.profile!, reason: 'Synthetic replacement' }] });
-  f.fake.rows.get(displaced.id).status = 'active';
-  await f.adapter.reconcileThreadTitles!([task]);
-  assert.equal(f.fake.rows.get(displaced.id).archivedAt, null, 'a replaced worker with a live turn stays visible');
-  f.fake.rows.get(displaced.id).status = 'idle';
-  await f.adapter.reconcileThreadTitles!([task]);
-  assert.ok(f.fake.rows.get(displaced.id).archivedAt, 'the replaced worker archives after release and an ended turn');
-  assert.equal(f.fake.rows.get(workerId).archivedAt, null, 'the current worker stays visible');
-  const worktreeHead = (await git(task.directory!, 'rev-parse', 'HEAD')).trim();
-  const report = await helperReport(f, runTicketPath(f, { id: task.runId! }), { status: 'ready_for_review', summary: 'Ready', prNumber: 7, head: worktreeHead });
-  assert.equal(report.code, 0, report.err);
-  await driveUntil(f, () => Boolean(f.runtime.store.task(task.id).resolution.reviewerAgentId), 'independent reviewer launched', task.id);
-  task = f.runtime.store.task(task.id);
-  const reviewerId = task.resolution.reviewerAgentId!;
-  assert.notEqual(reviewerId, workerId);
-  f.fake.rows.get(reviewerId).hasPendingInteraction = true;
-  f.fake.interactions.set(reviewerId, [bbWire('interaction', { threadId: reviewerId })]);
-  await f.adapter.reconcileThreadTitles!([task]);
-  assert.match(f.fake.rows.get(workerId).title, /reviewer needs input/);
-  f.fake.rows.get(reviewerId).hasPendingInteraction = false;
-  assert.equal(f.fake.rows.get(reviewerId).environmentId, f.fake.rows.get(workerId).environmentId);
-  const reviewer = f.runtime.store.runs(task.id).find(r => r.role === 'reviewer' && r.agentId === reviewerId)!;
-  await reportAndWake(f, task.id, { eventId: randomUUID(), taskId: task.id, runId: reviewer.id, status: 'changes_required', summary: 'One finding', reviewText: 'Tighten the change.', reviewResponsibility: 'author', prNumber: 7, head: worktreeHead }, ticketToken(f, reviewer));
-  await driveUntil(f, () => f.runtime.store.runs(task.id).some(r => r.role === 'revision' && !r.released), 'revision reserved', task.id);
-  const revision = f.runtime.store.runs(task.id).findLast(r => r.role === 'revision' && !r.released)!;
-  await driveUntil(f, () => f.fake.calls.some(c => c.method === 'threads.send' && c.args.threadId === workerId), 'revision delivered to retained worker', task.id);
-  await reportAndWake(f, task.id, { eventId: randomUUID(), taskId: task.id, runId: revision.id, status: 'ready_for_review', summary: 'Finding addressed', prNumber: 7, head: worktreeHead }, ticketToken(f, revision));
-  await driveUntil(f, () => f.fake.calls.some(c => c.method === 'threads.send' && c.args.threadId === reviewerId), 'retained reviewer consulted', task.id);
-  const currentReview = f.runtime.store.runs(task.id).find(r => r.role === 'reviewer' && r.agentId === reviewerId && !r.released)!;
-  await reportAndWake(f, task.id, { eventId: randomUUID(), taskId: task.id, runId: currentReview.id, status: 'ready_to_merge', summary: 'Approved', reviewText: 'The finding is addressed.', prNumber: 7, head: worktreeHead }, ticketToken(f, currentReview));
-  await driveUntil(f, () => f.runtime.store.task(task.id).phase === 'done', 'merged and closed', task.id);
-  assert.ok(f.merges.length);
-  await driveUntil(f, () => Boolean(f.fake.rows.get(workerId).archivedAt), 'worker archived', task.id);
-  const workspaceId = task.workspaceId!;
-  await driveUntil(f, () => f.runtime.store.task(task.id).resolution.archivedWorkspaceIds.includes(workspaceId), 'workspace archived after published-source proof', task.id);
-  assert.equal(await f.adapter.taskWorkspaceArchived!(workspaceId), true);
-  assert.equal(existsSync(task.directory!), false, 'core removes only the proved clean, published task worktree');
-  assert.equal(f.fake.rows.get('thr_planner').archivedAt, null);
-  const archive = f.fake.calls.findIndex(c => c.method === 'threads.archive' && c.args.threadId === workerId);
-  assert.ok(f.fake.calls.slice(0, archive).some(c => c.method === 'threads.experimental_listCascade' && c.args.threadIds.includes(workerId)), 'the worker archive has a prior thread-scoped cascade proof');
-  assert.deepEqual(f.paseoObserves.filter(id => id !== 'planner'), []);
- } finally { await f.close(); }
+test("BB ordinary lifecycle: dispatch, helper report, independent review, revision, verdict, merge, closeout and archive", async (t) => {
+  const f = await fixture(t);
+  try {
+    const result = leadSubmit.output.parse(
+      await f.runtime.submitLead({
+        repository: { origin: f.repo, path: f.repo },
+        title: "Lifecycle on BB",
+        body: "---\ntitle: Lifecycle on BB\nqueue:\n  complexity: medium\n---\n\n## Outcome\n\nRun the ordinary lifecycle on BB.\n",
+        baseBranch: "main",
+        lanes: [],
+        tags: [],
+        agent: f.planner,
+        note: "Tom authorized this synthetic fixture",
+      }),
+    );
+    assert.ok("taskId" in result, JSON.stringify(result));
+    let task = f.runtime.store.task(result.taskId);
+    assert.equal(task.hostId, bbHost);
+    f.runtime.store.update(task.id, {
+      plannerAgentId: formatAgentId(bbHost, "thr_planner"),
+    });
+    await f.runtime.engine.dispatchTask(task.id, false);
+    await driveUntil(
+      f,
+      () => Boolean(f.runtime.store.task(task.id).agentId),
+      "worker dispatched",
+      task.id,
+    );
+    task = f.runtime.store.task(task.id);
+    const workerId = task.agentId!;
+    assert.equal(task.phase, "working");
+    const launch = f.fake.calls.find((c) => c.method === "threads.spawn")!.args;
+    assert.equal(launch.parentThreadId, "thr_planner");
+    assert.equal(launch.parentNotifications, "off");
+    assert.match(launch.input[0].text, /nucleus helper report/);
+    // The BB adapter reports through the packaged helper and this run's ticket, never MCP.
+    assert.match(
+      launch.input[0].text,
+      /packaged nucleus helper with this run's ticket/,
+    );
+    assert.equal(launch.visibility, "visible");
+    f.fake.rows.get(workerId).queuedWork = "waiting";
+    const workspaceInventory = await (
+      f.adapter as any
+    ).workspaceHost.workspaceThreads([task.workspaceId]);
+    assert.ok(
+      workspaceInventory.threads.find(
+        (row: { id: string }) => row.id === workerId,
+      ).activeTurn,
+      "queued work keeps workspace cleanup busy",
+    );
+    f.fake.rows.get(workerId).queuedWork = "none";
+    const displacedRunId = randomUUID();
+    const displacedTemporary = f.adapter.runTemporaryDirectory!(
+      displacedRunId,
+      task,
+    );
+    assert.equal(
+      existsSync(displacedTemporary),
+      false,
+      "the synthetic displaced run starts without a scratch leaf",
+    );
+    const displaced = await f.adapter.createAgent(
+      {
+        ...task,
+        runId: displacedRunId,
+        temporaryDirectory: displacedTemporary,
+      },
+      "synthetic-retired-token",
+      "Synthetic displaced worker",
+    );
+    assert.equal(
+      existsSync(displacedTemporary),
+      true,
+      "BB creates the displaced run scratch before attaching it",
+    );
+    const displacedHead = (
+        await git(task.directory!, "rev-parse", "HEAD")
+      ).trim(),
+      observedAt = new Date().toISOString();
+    f.runtime.store.putRun({
+      id: displacedRunId,
+      taskId: task.id,
+      hostId: bbHost,
+      role: "revision",
+      generation: task.coordinatorGeneration,
+      head: displacedHead,
+      base: displacedHead,
+      agentId: displaced.id,
+      workspaceId: task.workspaceId!,
+      profile: task.profile!,
+      profileGroup: task.profileGroup!,
+      temporaryDirectory: displacedTemporary,
+      status: "superseded",
+      createdAt: observedAt,
+      lastObservedAt: observedAt,
+      active: false,
+      idleSince: observedAt,
+      completion: null,
+      released: true,
+    });
+    task = f.runtime.store.update(task.id, {
+      retiredWorkers: [
+        {
+          agentId: displaced.id,
+          runId: displacedRunId,
+          profile: task.profile!,
+          reason: "Synthetic replacement",
+        },
+      ],
+    });
+    f.fake.rows.get(displaced.id).status = "active";
+    await f.adapter.reconcileThreadTitles!([task]);
+    assert.equal(
+      f.fake.rows.get(displaced.id).archivedAt,
+      null,
+      "a replaced worker with a live turn stays visible",
+    );
+    f.fake.rows.get(displaced.id).status = "idle";
+    await f.adapter.reconcileThreadTitles!([task]);
+    assert.ok(
+      f.fake.rows.get(displaced.id).archivedAt,
+      "the replaced worker archives after release and an ended turn",
+    );
+    assert.equal(
+      f.fake.rows.get(workerId).archivedAt,
+      null,
+      "the current worker stays visible",
+    );
+    const worktreeHead = (
+      await git(task.directory!, "rev-parse", "HEAD")
+    ).trim();
+    const report = await helperReport(
+      f,
+      runTicketPath(f, { id: task.runId! }),
+      {
+        status: "ready_for_review",
+        summary: "Ready",
+        prNumber: 7,
+        head: worktreeHead,
+      },
+    );
+    assert.equal(report.code, 0, report.err);
+    await driveUntil(
+      f,
+      () => Boolean(f.runtime.store.task(task.id).resolution.reviewerAgentId),
+      "independent reviewer launched",
+      task.id,
+    );
+    task = f.runtime.store.task(task.id);
+    const reviewerId = task.resolution.reviewerAgentId!;
+    assert.notEqual(reviewerId, workerId);
+    f.fake.rows.get(reviewerId).hasPendingInteraction = true;
+    f.fake.interactions.set(reviewerId, [
+      bbWire("interaction", { threadId: reviewerId }),
+    ]);
+    await f.adapter.reconcileThreadTitles!([task]);
+    assert.match(f.fake.rows.get(workerId).title, /reviewer needs input/);
+    f.fake.rows.get(reviewerId).hasPendingInteraction = false;
+    assert.equal(
+      f.fake.rows.get(reviewerId).environmentId,
+      f.fake.rows.get(workerId).environmentId,
+    );
+    const reviewer = f.runtime.store
+      .runs(task.id)
+      .find((r) => r.role === "reviewer" && r.agentId === reviewerId)!;
+    await reportAndWake(
+      f,
+      task.id,
+      {
+        eventId: randomUUID(),
+        taskId: task.id,
+        runId: reviewer.id,
+        status: "changes_required",
+        summary: "One finding",
+        reviewText: "Tighten the change.",
+        reviewResponsibility: "author",
+        prNumber: 7,
+        head: worktreeHead,
+      },
+      ticketToken(f, reviewer),
+    );
+    await driveUntil(
+      f,
+      () =>
+        f.runtime.store
+          .runs(task.id)
+          .some((r) => r.role === "revision" && !r.released),
+      "revision reserved",
+      task.id,
+    );
+    const revision = f.runtime.store
+      .runs(task.id)
+      .findLast((r) => r.role === "revision" && !r.released)!;
+    await driveUntil(
+      f,
+      () =>
+        f.fake.calls.some(
+          (c) => c.method === "threads.send" && c.args.threadId === workerId,
+        ),
+      "revision delivered to retained worker",
+      task.id,
+    );
+    await reportAndWake(
+      f,
+      task.id,
+      {
+        eventId: randomUUID(),
+        taskId: task.id,
+        runId: revision.id,
+        status: "ready_for_review",
+        summary: "Finding addressed",
+        prNumber: 7,
+        head: worktreeHead,
+      },
+      ticketToken(f, revision),
+    );
+    await driveUntil(
+      f,
+      () =>
+        f.fake.calls.some(
+          (c) => c.method === "threads.send" && c.args.threadId === reviewerId,
+        ),
+      "retained reviewer consulted",
+      task.id,
+    );
+    const currentReview = f.runtime.store
+      .runs(task.id)
+      .find(
+        (r) => r.role === "reviewer" && r.agentId === reviewerId && !r.released,
+      )!;
+    await reportAndWake(
+      f,
+      task.id,
+      {
+        eventId: randomUUID(),
+        taskId: task.id,
+        runId: currentReview.id,
+        status: "ready_to_merge",
+        summary: "Approved",
+        reviewText: "The finding is addressed.",
+        prNumber: 7,
+        head: worktreeHead,
+      },
+      ticketToken(f, currentReview),
+    );
+    await driveUntil(
+      f,
+      () => f.runtime.store.task(task.id).phase === "done",
+      "merged and closed",
+      task.id,
+    );
+    assert.ok(f.merges.length);
+    await driveUntil(
+      f,
+      () => Boolean(f.fake.rows.get(workerId).archivedAt),
+      "worker archived",
+      task.id,
+    );
+    const workspaceId = task.workspaceId!;
+    await driveUntil(
+      f,
+      () =>
+        f.runtime.store
+          .task(task.id)
+          .resolution.archivedWorkspaceIds.includes(workspaceId),
+      "workspace archived after published-source proof",
+      task.id,
+    );
+    assert.equal(await f.adapter.taskWorkspaceArchived!(workspaceId), true);
+    assert.equal(
+      existsSync(task.directory!),
+      false,
+      "core removes only the proved clean, published task worktree",
+    );
+    assert.equal(f.fake.rows.get("thr_planner").archivedAt, null);
+    const archive = f.fake.calls.findIndex(
+      (c) => c.method === "threads.archive" && c.args.threadId === workerId,
+    );
+    assert.ok(
+      f.fake.calls
+        .slice(0, archive)
+        .some(
+          (c) =>
+            c.method === "threads.experimental_listCascade" &&
+            c.args.threadIds.includes(workerId),
+        ),
+      "the worker archive has a prior thread-scoped cascade proof",
+    );
+    assert.deepEqual(
+      f.paseoObserves.filter((id) => id !== "planner"),
+      [],
+    );
+  } finally {
+    await f.close();
+  }
 });
 
 test("BB unknown worker spawn stays uncreated in attention after empty sweeps and adopts a late exact match", async (t) => {
