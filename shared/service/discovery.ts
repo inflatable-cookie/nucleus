@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { serviceRollSchema, type ServiceRoll } from "../service-roll";
+import { bbPluginRollSchema, BB_PLUGIN_ROLL_FILE, type BbPluginRollRecord } from "../bb-plugin-roll";
 /**
  * Local service identity and owner-only bootstrap files (Contract 007).
  *
@@ -87,6 +88,19 @@ export function readServiceInfo(dataDir: string): ServiceInfo | null {
 export function readServiceRoll(dataDir: string): ServiceRoll | null {
   try {
     return serviceRollSchema.parse(JSON.parse(readFileSync(join(dataDir, SERVICE_ROLL_FILE), "utf8")));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The BB plugin step the last landed roll ran (nucleus#1339), or null before one
+ * has: the bridge writes it beside the roll record, and `service.health` reports
+ * it so a failed plugin install is visible without reading the roll prose.
+ */
+export function readBbPluginRoll(dataDir: string): BbPluginRollRecord | null {
+  try {
+    return bbPluginRollSchema.parse(JSON.parse(readFileSync(join(dataDir, BB_PLUGIN_ROLL_FILE), "utf8")));
   } catch {
     return null;
   }

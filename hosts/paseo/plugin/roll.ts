@@ -2,6 +2,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { backendSourceDigest, sourcePathFromModule } from "../../../shared/service/build";
 import { readServiceRoll, SERVICE_ROLL_REQUEST_FILE } from "../../../shared/service/discovery";
+import { BB_PLUGIN_ROLL_FILE, bbPluginRollNote, bbPluginRollSchema, type BbPluginRollRecord } from "../../../shared/bb-plugin-roll";
 import type { ServiceRoll, ServiceRollDeferral } from "../../../shared/service-roll";
 import type { ServiceClient } from "../../../shared/service/client";
 import type { BridgeMainChannel } from "../../../shared/service/bridge-process";
@@ -270,7 +271,7 @@ export class RollScheduler {
         return readServiceRoll(this.core.dataDir);
       }
       const buildId = this.session.health?.["buildId"];
-      if (typeof buildId === "string") this.settleLandedRoll(buildId);
+      if (typeof buildId === "string") await this.settleLandedRoll(buildId);
       return null;
     }
     if (digest !== this.pendingDigest) {
@@ -342,7 +343,8 @@ export class RollScheduler {
       await this.core.ensure();
       const activationError = await this.convergeActivation();
       if (activationError) return record("retrying", identity.buildId, activationError);
-      const rolled = record("rolled", identity.buildId, `Service replaced after a verified main build${this.standbyRollNote()}`);
+      const bbNote = await this.bbPluginRollNote(activationRoot, identity.buildId);
+      const rolled = record("rolled", identity.buildId, `Service replaced after a verified main build${this.standbyRollNote()}${bbNote}`);
       this.deferrals = [];
       this.pendingDigest = null;
       this.reloadPlugin(identity.buildId);
@@ -368,11 +370,48 @@ export class RollScheduler {
     }
   }
 
-  /** Note appended to a landed roll when the bridge drained past a standby that never reported loaded. */
+  /**
+   * Note appended to a landed roll when the bridge drained past a standby that never reported loaded.
+   */
   private standbyRollNote(): string {
     const readiness = this.session.lastStandbyReadiness;
     if (!readiness || readiness.warm) return "";
     return `; the warm standby had not reported loaded after ${readiness.waitedMs} ms (${readiness.cause}), so the old service was drained anyway`;
+  }
+
+  /**
+   * The BB plugin step of a landed roll (nucleus#1339): report BB's installed
+   * plugin against the build this roll landed, install this build's plugin when BB
+   * reports it behind, and record what happened where health reads it.
+   *
+   * It returns the note the roll record carries. Nothing here can fail the roll:
+   * a step that could not run is recorded with its cause and the roll stays landed,
+   * and the next landed roll runs the step again. Unset in fixtures, so a test roll
+   * never reaches the operator's BB.
+   */
+  private async bbPluginRollNote(packageRoot: string, buildId: string): Promise<string> {
+    const step = this.core.options.bbPluginRoll;
+    if (!step) return "";
+    let record: BbPluginRollRecord | null;
+    try {
+      record = await step({ packageRoot, dataDir: this.core.dataDir, buildId });
+    } catch (error) {
+      record = {
+        at: new Date().toISOString(),
+        buildId,
+        action: "failed",
+        state: "error",
+        detail: `the BB plugin step could not run: ${error instanceof Error ? error.message : String(error)}`.slice(-4000),
+      };
+    }
+    if (!record) return "";
+    try {
+      this.core.processActions.writeOwnedJson(
+        join(this.core.dataDir, BB_PLUGIN_ROLL_FILE),
+        bbPluginRollSchema.parse(record),
+      );
+    } catch { /* the record is advisory, like the roll record itself */ }
+    return bbPluginRollNote(record);
   }
 
   /**
@@ -382,7 +421,7 @@ export class RollScheduler {
    * loaded from that source replaced the service first (papercut 2f9f0b06: a
    * plugin reload inside the settle window left the record deferred for good).
    */
-  settleLandedRoll(buildId: string) {
+  async settleLandedRoll(buildId: string) {
     // Activation is a roll step: a service that answers is not landed while
     // `current` and the installer entrypoints are still pending.
     if (this.activateInstalled) return;
@@ -410,7 +449,11 @@ export class RollScheduler {
       : roll.status === "replacing" ? "Service replaced after the interrupted replacement"
       : roll.status === "deferred" ? "A fresh bridge loaded this source and replaced the service while the roll was deferred, bypassing the roll; no roll typecheck ran for it"
       : "A fresh bridge loaded this source and replaced the service while the roll was typechecking; that check's completion was not observed and no passing roll typecheck is recorded";
-    this.writeRoll({ ...roll, status: "rolled", toBuild: buildId, at: new Date().toISOString(), detail });
+    // A landed roll keeps BB's installed plugin on the build it landed, wherever
+    // the landing was observed from: the version root is what this bridge now
+    // spawns from, and a root that ships no compiled CLI steps aside.
+    const bbNote = await this.bbPluginRollNote(this.session.sourcePath ?? sourcePathFromModule(), buildId);
+    this.writeRoll({ ...roll, status: "rolled", toBuild: buildId, at: new Date().toISOString(), detail: `${detail}${bbNote}` });
     this.reloadPlugin(buildId);
   }
 

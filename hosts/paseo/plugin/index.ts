@@ -6,6 +6,7 @@ import { type LifecycleSignalKind } from "../../../shared/lifecycle-signal";
 import * as contracts from "../../../shared/contracts";
 import { bridgeProcessActions } from "../../../service/install/bridge-process-actions";
 import { ServiceBridge } from "./bridge";
+import { bbPluginRoll } from "./bb-plugin-roll";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -36,8 +37,12 @@ export default function contribute(server: PluginServerContext) {
   // Discovery knows only `nucleus` (nucleus#971); a Paseo config that still names
   // the retired `northstar-queue` ID is ignored, not migrated.
   const pluginId = "nucleus";
-  // A landed roll reloads this plugin so the bridge and UI match the new service.
-  const bridge = new ServiceBridge({ processActions: bridgeProcessActions, reloadPluginCommand: () => pluginReloadCommand(pluginId) });
+  // A landed roll reloads this plugin so the bridge and UI match the new service,
+  // and keeps BB's installed plugin on the build it landed (nucleus#1339): the
+  // step runs the activated version's own `nucleus bb status`, and installs only
+  // when BB reports that plugin behind, through the same route `nucleus bb
+  // install` is. A machine without the plugin is untouched.
+  const bridge = new ServiceBridge({ processActions: bridgeProcessActions, reloadPluginCommand: () => pluginReloadCommand(pluginId), bbPluginRoll: input => bbPluginRoll(input) });
   // Reload adopts a compatible service; cold startup must not depend on opening
   // the board or receiving the first forwarded RPC. Bootstrap is bounded and
   // reports its failure through service-state without blocking registration.

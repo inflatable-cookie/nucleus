@@ -293,7 +293,7 @@ export class ServiceBridge {
       }
       this.session.attach(client, health, presenceClaimed);
       try { this.options.processActions.removeServiceStartupFailure(this.dataDir); } catch { /* readiness is authoritative even if cleanup fails */ }
-      this.roll.settleLandedRoll(buildId);
+      await this.roll.settleLandedRoll(buildId);
       return client;
     } catch {
       client.close();
