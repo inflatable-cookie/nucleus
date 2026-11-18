@@ -12325,7 +12325,7 @@ test("a stopped closeout run is reminded once; expiry nudges without replacing i
     await f.close();
   }
 });
-test("uncertain recovery creation never creates duplicates and escalates once", async () => {
+test("a recovery create that throws settles after exact absence without another launch or notice", async () => {
   const f = fixture();
   try {
     const recipients = enableRecovery(f);
@@ -12340,7 +12340,8 @@ test("uncertain recovery creation never creates duplicates and escalates once", 
     await f.engine.wake();
     assert.equal(calls, 1);
     assert.deepEqual(recipients, ["origin"]);
-    assert.equal(f.current().resolution.recovery?.status, "escalated");
+    assert.equal(f.current().resolution.recovery?.status, "resolved");
+    assert.equal(f.store.eventsAll(f.task.id).filter(event => event.kind === "absent_recovery_released").length, 1);
   } finally {
     await f.close();
   }
@@ -14411,7 +14412,7 @@ test("C4 needs a complete online lookup and a recorded producer identity", async
     f.adapter.findRunAgents = async () => { lookups++; return []; };
     f.engine.hostAvailable = () => false;
     await f.engine.resolution.recovery.pass(f.task.id);
-    await assert.rejects(restartC4(f), /host.*online|unavailable/);
+    await assert.rejects(restartC4(f), /waiting for host|host.*online|unavailable/);
     assert.equal(lookups, 0);
     assert.equal(f.store.run(run.id)?.released, false);
 
