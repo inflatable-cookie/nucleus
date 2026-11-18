@@ -526,6 +526,38 @@ quantum that does not return within two minutes (`TASK_QUANTUM_BOUND_MS`) no
 longer holds the sweep; the task records an `observation_outage` event and its
 lane stays held until the quantum returns (#1148, planner ruling).
 
+### Observation window
+
+A host pass states the tasks it still works on (`beginHostPass`, closed by
+`endHostPass`), and that is the whole scope of thread observation
+(nucleus#1328). The adapter observes a thread only while its Nucleus task is
+live: a thread whose task is done or cancelled, or that T3's own thread list
+reports archived or removed, leaves observation. Its live record moves to the
+stored `retiredAgents` index, which keeps only the launch identity — workspace and
+labels — so an exact settle, an exact lookup and the terminal archive lane still
+answer; the intent ledger, the settle markers and every recorded command stay
+exactly as recorded, and a confirmed deletion drops the retired record. Nothing
+leaves T3: leaving observation never deletes, archives or edits a thread, and a
+person or planner re-attaching a thread returns it to observation under the
+ordinary verbs. A thread that has left observation answers from the thread list
+alone, because that row already carries the thread record, its status, active run
+and pending request; `observe`, `originAgent` and the archive lane therefore read
+no snapshot for it, and a read that would need one is refused rather than answered
+from memory.
+
+Inside one pass every consumer shares one thread list and one snapshot per thread:
+status, row step, presentation, settle and pending questions all read the same
+answer, so a tracked thread costs at most one `subscribeThread` per sweep however
+many paths ask about it. The pass skips a thread's snapshot entirely while the row
+T3 reports for it — the whole row, including `updatedAt`, `status`, `activeRunId`,
+`settledOverride`, `archivedAt`, `deletedAt` and the pending request — is unchanged
+since the snapshot it already holds, so a sweep with nothing new in T3 serves no
+thread snapshot at all. A pending runtime request is never skipped across passes:
+the row summarizes one request, and the read that carries its questions is worth
+one snapshot per pass. A transcript read is never served from a bounded snapshot,
+and an unreadable thread list falls back to the plain per-thread read instead of
+holding a marker it could not prove.
+
 Report active run, idle, pending question/permission and archived state from
 positive native facts. A removed thread has no projection; the origin read uses
 `deletedAt` or absence from a complete authoritative inventory to prove removal.
@@ -943,7 +975,13 @@ cleanup and restart during both kinds of request. Identical decoder-formatted
 and post-effect handler defects must both retain unknown delivery. Contract
 fixtures pin the nightly command shapes rather than a server-version allowlist.
 Cross-host cases deliberately reuse native IDs and keep task, run, message and
-question ownership separate.
+question ownership separate. `test/t3code-observation.test.ts` counts thread
+snapshots on the serving side: a pass over stored terminal-task threads serves
+none, an unchanged live thread is not snapshotted again, a changed live thread is
+snapshotted once for every consumer, a thread T3 reports archived leaves
+observation, and a terminal task keeps its exact settle and lookup after its agent
+records leave the stored `agents` map. Its state fixture carries the stored file's
+own top-level and record key sets.
 
 A T3 worker thread is settled with `thread.settle` once its handover is accepted
 and the task moves to review, guarded by `expectedLatestRunId` so a thread a

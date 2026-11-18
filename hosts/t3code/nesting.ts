@@ -286,9 +286,11 @@ export class T3Nesting {
         await this.archiveParent(parent).catch(() => undefined);
         continue;
       }
+      // A parent that left observation is read no further: its task is over, and the
+      // archive above is the whole remaining work for it (nucleus#1328).
+      if (!this.core.reads.observes(parent.threadId)) continue;
       let projection: Projection;
-      try { projection = await this.core.reads.readProjection(parent.threadId, 'observation'); }
-      catch { continue; }
+      try { projection = await this.core.reads.readProjection(parent.threadId, 'observation'); } catch { continue; }
       if (projection.thread.deletedAt) { this.forgetParent(task.id); continue; }
       await this.disposePending(parent, projection);
       if (projection.thread.archivedAt) continue;

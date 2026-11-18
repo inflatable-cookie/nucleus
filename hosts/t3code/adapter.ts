@@ -156,6 +156,7 @@ export class T3CodeHost implements Host {
   async connect(probeThreadId = this.probeThreadId): Promise<void> {
     this.ready = false;
     this.reads.resetShape();
+    this.reads.resetObservation();
     try {
       await this.rpc.connect();
       const observed = decode(config, await this.rpc.call('server.getConfig', {}), 'server.getConfig');
@@ -182,7 +183,49 @@ export class T3CodeHost implements Host {
     if (this.state.read().hostId !== this.hostId) throw new T3CompatibilityError('durable host identity changed');
   }
   async profiles(): Promise<Profile[]> { return []; }
-  async observationInventory(ids: readonly string[]) { try { return new Map(await Promise.all(ids.map(async id => [id, await this.reads.observe(id)] as const))); } catch { return null; } }
+  /**
+   * One host pass opens (nucleus#1328): the tasks this host still works on decide
+   * which threads stay observed, and the pass's reads are shared across its
+   * consumers. A thread whose task is over, or that T3 reports archived or removed,
+   * leaves observation here: its live agent record moves to the retired index, which
+   * is what an exact settle or lookup still reads. Nothing in T3 is touched.
+   */
+  async beginHostPass(tasks: readonly Task[]): Promise<void> {
+    this.reads.beginPass(tasks);
+    await this.reconcileObservation();
+  }
+  /** The pass closes: the next one reads the thread list afresh. */
+  endHostPass() { this.reads.endPass(); }
+  /**
+   * Move the records of threads this host no longer observes out of the live map.
+   * Only the launch identity (workspace and labels) is kept, so an exact settle or
+   * lookup still answers; the ledger, the settle markers and every recorded intent
+   * stay exactly as recorded.
+   */
+  async reconcileObservation(): Promise<void> {
+    const tracked = Object.keys(this.state.read().agents);
+    if (!tracked.length) return;
+    const retired: string[] = [];
+    for (const id of tracked) if (!await this.reads.isObserved(id)) retired.push(id);
+    if (!retired.length) return;
+    this.state.update(state => {
+      state.retiredAgents ??= {};
+      for (const id of retired) {
+        const record = state.agents[id];
+        if (!record) continue;
+        state.retiredAgents[id] = { workspaceId: record.workspaceId, labels: record.labels };
+        delete state.agents[id];
+      }
+    });
+  }
+  async observationInventory(ids: readonly string[]) { try {
+    // A thread that left observation is not read: the pass's identity list never
+    // turns a finished thread back into a full snapshot (nucleus#1328). The whole
+    // list is walked either way, so a shorter map is still a complete answer.
+    const observed: string[] = [];
+    for (const id of ids) if (await this.reads.isObserved(id)) observed.push(id);
+    return new Map(await Promise.all(observed.map(async id => [id, await this.reads.observe(id)] as const)));
+  } catch { return null; } }
   async activeThreads() { return await this.reads.activeThreads(); }
   async findAgents(labels: Record<string, string>) { return await this.reads.findAgents(labels); }
   async listLiveAgents() { return await this.reads.listLiveAgents(); }
@@ -194,9 +237,12 @@ export class T3CodeHost implements Host {
     if (!found) { this.presentation.retireDeletedPresentationIntents(id); return null; }
     // A deleted thread may no longer have a readable projection. The complete
     // shell inventory's tombstone is already positive proof of the deletion.
-    if (found.deletedAt) {
-      this.presentation.retireDeletedPresentationIntents(id);
-      return { id, workspaceId: this.reads.workspaceFor(found) ?? `t3-project:${found.projectId}`, title: found.title, archived: !!found.archivedAt, deleted: true };
+    // An archived thread, or one whose task is over, has left observation: its
+    // list row and recorded identity answer this read with no snapshot at all.
+    if (found.deletedAt || found.archivedAt || !this.reads.observes(id)) {
+      if (found.deletedAt) this.presentation.retireDeletedPresentationIntents(id);
+      return { id, workspaceId: this.reads.workspaceFor(found) ?? (this.state.read().agents[id] ?? this.state.read().retiredAgents?.[id])?.workspaceId
+          ?? `t3-project:${found.projectId}`, title: found.title, archived: !!found.archivedAt, deleted: !!found.deletedAt };
     }
     const p = await this.reads.readProjection(id, 'observation');
     if (p.thread.deletedAt) this.presentation.retireDeletedPresentationIntents(id);

@@ -27,6 +27,15 @@ const agent = z.object({ id: z.string(), workspaceId: z.string(), labels: z.reco
    * (nucleus#1305 review).
    */
   parentThreadId: z.string().optional() });
+/**
+ * A thread this host no longer observes (nucleus#1328): exactly the launch identity
+ * an exact settle or lookup still reads, after the live record left `agents`. Its
+ * ledger entries, settle marker and recorded intents are untouched — this is only
+ * what observation would otherwise keep paying for on a thread whose task is over.
+ * `deletedAt` records the host's own confirmed removal, which is the one fact that
+ * keeps a removed thread out of observation after its live record is gone.
+ */
+const retiredAgent = z.object({ workspaceId: z.string(), labels: z.record(z.string(), z.string()), deletedAt: z.string().optional() });
 const diagnostic = z.object({ command: z.string().optional(), field: z.string().optional(), reason: z.string().optional(), guidance: z.string().optional() }).strict().refine(value => {
   const clean = sanitizeHostDeliveryDiagnostic(value);
   return clean.command === value.command && clean.field === value.field && clean.reason === value.reason && clean.guidance === value.guidance;
@@ -85,6 +94,14 @@ const parentThread = z.object({ taskId: z.string(), threadId: z.string(), sessio
   holdingSince: z.string().optional(), fallbackUntil: z.string().optional() });
 const schema = z.object({ version: z.literal(1), hostId: z.string(), lastPassedVersion: z.string(),
   workspaces: z.record(z.string(), workspace), agents: z.record(z.string(), agent), intents: z.record(z.string(), intent),
+  /**
+   * The threads this host no longer observes, by native thread id: the launch
+   * identity an exact lookup answers from, with no live record and no reads
+   * (nucleus#1328). A confirmed removal is recorded on the entry rather than
+   * dropped, because the launch identity is also the fact that keeps a removed
+   * thread out of observation.
+   */
+  retiredAgents: z.record(z.string(), retiredAgent).optional(),
   pendingSettles: z.record(z.string(), settleIntent).optional(),
   /**
    * One thread Nucleus last settled, by the command that settled it. An
@@ -138,6 +155,17 @@ const schema = z.object({ version: z.literal(1), hostId: z.string(), lastPassedV
   nesting: z.object({ state: z.enum(['nested', 'fallback']), reason: z.string(), at: z.string() }).optional() });
 export type T3State = z.infer<typeof schema>;
 export type T3SettleIntent = z.infer<typeof settleIntent>;
+export type T3AgentRecord = T3State['agents'][string];
+export type T3RetiredAgent = z.infer<typeof retiredAgent>;
+
+/**
+ * One thread's recorded launch identity, live or retired: the labels that name its
+ * task and role, and the workspace it was launched into. A retired thread answers an
+ * exact lookup from this record alone, without a native read.
+ */
+export function agentRecord(state: T3State, threadId: string): T3AgentRecord | T3RetiredAgent | undefined {
+  return state.agents[threadId] ?? state.retiredAgents?.[threadId];
+}
 
 /** One command payload as recorded in the ledger, and the kind it is. */
 type RecordedWire = { method?: string; payload?: { type?: unknown; threadId?: unknown; commandId?: unknown; requestId?: unknown; title?: unknown } };
