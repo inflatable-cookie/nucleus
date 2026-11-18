@@ -62,8 +62,11 @@ export async function moveRetainedReader(engine: Engine, input: ReviewMoveInput,
     && Date.parse(reading.lastObservedAt) > Date.parse(delivery.observedAt)
     && delivery && stoppedDeliveryResume(store, latestTask, reading, delivery).kind === 'none';
   if (!busy && (!reader || stoppedAfterDelivery || state === 'exhausted' || state === 'awaiting' && reviewResultFencesRun(store, latestTask, reading))
-    && unreportedReviewer(latestTask, store.runs(task.id))?.id === reading.id)
+    && unreportedReviewer(latestTask, store.runs(task.id))?.id === reading.id) {
+    const wait = engine.dispatchWaitsFor(latestTask, engine.isOwnerCall(), true);
+    if (wait) return engine.deferOwnerVerb(latestTask, taskControlInputSchema.parse({ ...input, action: 'move', to: 'review' }), wait, { runId: reading.id, head: reading.head });
     return requestReviewerReport(engine, latestTask, reading, input.version, input.reason);
+  }
   const decision = retainedReaderDecision({ reader: Boolean(reader), state, busy: Boolean(busy), status: observed.status,
     waitReason: wait.reason, agentId: reading.agentId, runId: reading.id });
   if (decision.kind === 'refuse') throw Error(decision.message);

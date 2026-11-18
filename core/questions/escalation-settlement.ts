@@ -5,6 +5,7 @@ import type { Resolution } from '../resolution';
 import { collectOwnerVerbFacts, ownerVerbViews } from '../verbs/owner-verbs';
 import { decodeEscalationChoice, escalationAnswerControl, escalationContinuationInstruction, escalationVerbChoices, extractDecisionIdCandidates, extractFirstIsoTimestamp, extractTaskReferenceCandidates, plannerEscalations, type EscalationVerbChoice, type LadderEvent } from './ladder';
 import { closeEscalationFollowups } from './ladder/continuation';
+import { ProvenPreSendRefusalError } from '../host/errors';
 
 type Answerer = { role: 'planner' | 'decider'; agentId: string } | { role: 'operator' };
 
@@ -75,19 +76,36 @@ export class EscalationSettlement {
       const workerChoice = selected.kind === 'owner' && (selected.choice.verb === 'move' && selected.choice.args.to === 'work'
         || (selected.choice.verb === 'restart' || selected.choice.verb === 'route') && selected.choice.args.role === 'worker');
       if (source?.role === 'reviewer' && (workerChoice || selected.kind === 'other' && control.action === 'work')) {
-        const deliverDirection = async () => {
-          if (!source.agentId || !this.resolution.adapter.notify) throw Error('The retained reviewer cannot receive the direction');
-          if (this.store.eventsAll(t.id).some(event => event.kind === 'reviewer_escalation_direction_intent' && event.detail.startsWith(`${id}:`)))
+        const deliverDirection = async (agentId = source.agentId) => {
+          const send = this.resolution.adapter.steerOrNotify ?? this.resolution.adapter.enqueueMessage;
+          if (!agentId || !send) throw Error('This host cannot steer or queue the reviewer direction');
+          const prior = this.store.eventsAll(t.id).findLast(event => ['reviewer_escalation_direction_intent', 'reviewer_escalation_direction_sent', 'reviewer_escalation_direction_refused'].includes(event.kind) && event.detail.startsWith(`${id}:`));
+          if (prior && prior.kind !== 'reviewer_escalation_direction_refused')
             throw Error('Reviewer direction delivery is already recorded or uncertain; inspect it before retrying');
-          this.store.event(t.id, 'reviewer_escalation_direction_intent', `${id}: ${source.agentId}`);
-          await this.resolution.onTaskHost(current, () => this.resolution.adapter.notify!(source.agentId!, `ns-escalation-direction-${id}`, `Owner direction for your review: ${answer}`));
-          this.store.event(t.id, 'reviewer_escalation_direction_sent', `${id}: ${source.agentId}`);
+          this.store.event(t.id, 'reviewer_escalation_direction_intent', `${id}: ${agentId}`);
+          try {
+            await this.resolution.onTaskHost(current, () => send.call(this.resolution.adapter, agentId, `ns-escalation-direction-${id}`, `Owner direction for your review: ${answer}`));
+          } catch (error) {
+            if (error instanceof ProvenPreSendRefusalError) this.store.event(t.id, 'reviewer_escalation_direction_refused', `${id}: ${error.message}`);
+            throw error;
+          }
+          this.store.event(t.id, 'reviewer_escalation_direction_sent', `${id}: ${agentId}`);
         };
         if (source.released || source.completion) {
-          const reviewerInput = taskControlInputSchema.parse({ taskId: current.id, version: current.version, action: 'move', to: 'review', reason, ...grant });
+          // The move persists its reason as the next reviewer run's prompt;
+          // bind the direction to that role, not to a historical agent ID.
+          const reviewerInput = taskControlInputSchema.parse({ taskId: current.id, version: current.version, action: 'move', to: 'review', reason: answer.slice(0, 4000), ...grant });
           this.store.event(t.id, 'planner_escalation_answer_pending', `${id}: ${JSON.stringify({ questionId, who, answer, control: reviewerInput })}`);
           await this.resolution.applyOperatorControl(reviewerInput);
-          await deliverDirection();
+          const after = this.store.task(current.id);
+          const active = after.resolution.currentRunId ? this.store.run(after.resolution.currentRunId) : null;
+          const queued = after.resolution.pendingReviewReason === reviewerInput.reason
+            || after.resolution.deferredVerb?.input.reason === reviewerInput.reason
+            || active?.role === 'reviewer' && active.reviewReason === reviewerInput.reason;
+          if (!queued) {
+            if (!active || active.role !== 'reviewer' || active.released || active.completion) throw Error('No current reviewer is bound to receive the direction');
+            await deliverDirection(active.agentId);
+          }
           this.store.event(t.id, 'planner_escalation_answered', `${id}: answered by ${who}: ${answer.slice(0, 4000)}`);
           this.store.event(t.id, 'planner_escalation_applied', `${id}: returned to the retained reviewer`);
           return null;

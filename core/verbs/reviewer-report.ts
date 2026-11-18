@@ -1,8 +1,20 @@
 import type { Run, Task } from '../../shared/contracts';
 import type { Engine } from '../engine';
-import { hostFailureRefusalDetail } from '../host/errors';
+import { hostFailureRefusalDetail, ProvenPreSendRefusalError } from '../host/errors';
 import { runsUnchangedSince } from '../recovery/observation-advance';
 import { taskPrNumber } from '../forge';
+import { ordinaryReviewSource } from '../review/ordinary-review';
+
+/** Observe the canonical PR without reattaching an ordinary detached review checkout. */
+export async function verifyReviewerPr(engine: Engine, task: Task, run: Run, number: number) {
+  if (!run.ordinaryDetached) return engine.adapter.verifyPr(task, number);
+  if (!engine.adapter.verifyPrIdentity) throw Error('Ordinary review canonical PR observation unavailable');
+  await ordinaryReviewSource(task, run.head, true);
+  const pr = await engine.adapter.verifyPrIdentity(task, number);
+  await ordinaryReviewSource(task, run.head, true);
+  if (pr.url !== task.prUrl || pr.head !== run.head) throw Error('Open PR, task and reviewer heads do not match');
+  return pr;
+}
 
 /** A fresh reader may replace only a proven gone or non-independent binding. */
 export async function requireReviewerReplacement(engine: Engine, task: Task, version: number): Promise<void> {
@@ -42,14 +54,10 @@ export function unreportedReviewer(task: Task, runs: Run[]): Run | null {
 
 /** Ask the retained reviewer to resend its result on the original credential, once. */
 export async function requestReviewerReport(engine: Engine, task: Task, run: Run, version: number, reason: string, instruction?: string): Promise<Task> {
-  const store = engine.store, events = store.eventsAll(task.id);
+  const store = engine.store;
   if (!engine.adapter.notify) throw Error('This host cannot request the retained reviewer report');
-  const pr = await engine.adapter.verifyPr(task, taskPrNumber(task));
+  const pr = await verifyReviewerPr(engine, task, run, taskPrNumber(task));
   if (pr.head !== run.head) throw Error('The PR head changed; the retained reviewer cannot report for the current head');
-  if (events.some(event => event.kind === 'reviewer_report_request_sent' && event.detail.startsWith(`${run.id}:`)))
-    throw Error('The retained reviewer was already asked to resend its report; wait for that report');
-  if (events.some(event => event.kind === 'reviewer_report_request_intent' && event.detail.startsWith(`${run.id}:`)))
-    throw Error('The retained reviewer report request has unknown delivery; inspect it before retrying');
   let state;
   try { state = await engine.onTaskHost(task, () => engine.host.observe(run.agentId!)); }
   catch (error) { throw Error(`The retained reviewer cannot be observed (${hostFailureRefusalDetail(error)}); no report was requested`); }
@@ -60,6 +68,8 @@ export async function requestReviewerReport(engine: Engine, task: Task, run: Run
   if (state.active || state.activeTurnId || state.permissions || !['idle', 'error'].includes(state.status))
     throw Error('The retained reviewer is not positively idle; its current turn owns the report');
   if (JSON.stringify(store.run(run.id)) !== JSON.stringify(run)) throw Error('The reviewer run changed during observation');
+  if (engine.dispatchWaitsFor(store.task(task.id), engine.isOwnerCall(), true))
+    throw new ProvenPreSendRefusalError('Dispatch is held; no reviewer report request was sent');
   if (!task.resolution.reviewerAgentId) {
     task = store.transaction(() => {
       const current = store.task(task.id);
@@ -69,6 +79,10 @@ export async function requestReviewerReport(engine: Engine, task: Task, run: Run
         'reviewer_binding_reconciled', `${run.id}: restored the retained reviewer from its current run`);
     });
   }
+  // Re-read after every awaited proof so concurrent callers cannot both send.
+  const prior = store.eventsAll(task.id).findLast(event => ['reviewer_report_request_sent', 'reviewer_report_request_intent', 'reviewer_report_request_refused'].includes(event.kind) && event.detail.startsWith(`${run.id}:`));
+  if (prior?.kind === 'reviewer_report_request_sent') throw Error('The retained reviewer was already asked to resend its report; wait for that report');
+  if (prior?.kind === 'reviewer_report_request_intent') throw Error('The retained reviewer report request has unknown delivery; inspect it before retrying');
   const messageId = `ns-reviewer-report-${run.id}`;
   const text = `Nucleus did not receive your review report for run ${run.id} at head ${run.head}. Resend your existing authenticated report using this same run and credential; do not repeat checks or start another review. If you did not finish, continue the review and report its result.${instruction ? ` Owner direction: ${instruction}` : ''} Reason: ${reason}`;
   store.event(task.id, 'reviewer_report_request_intent', `${run.id}: ${JSON.stringify({ agentId: run.agentId, messageId })}`);
@@ -76,6 +90,10 @@ export async function requestReviewerReport(engine: Engine, task: Task, run: Run
     await engine.onTaskHost(task, () => engine.adapter.notify!(run.agentId!, messageId,
       `${text}${engine.adapter.reportingFallback ? ` ${engine.adapter.reportingFallback(run)}` : ''}`.slice(0, 6000)));
   } catch (error) {
+    if (error instanceof ProvenPreSendRefusalError) {
+      store.event(task.id, 'reviewer_report_request_refused', `${run.id}: ${error.message}`);
+      throw error;
+    }
     throw Error(`Reviewer report request delivery is unknown (${error instanceof Error ? error.message : String(error)}); it was not retried`);
   }
   store.event(task.id, 'reviewer_report_request_sent', `${run.id}: ${JSON.stringify({ agentId: run.agentId, messageId })}`);

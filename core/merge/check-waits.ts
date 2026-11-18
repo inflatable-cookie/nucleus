@@ -1,6 +1,7 @@
 import type { Run, Task } from '../../shared/contracts';
 import { isFailedChecksReason, requiredCheckPollMetaKey, REQUIRED_CHECK_ESCALATION_MS, REQUIRED_CHECK_POLL_INTERVAL_MS } from '../forge/index';
 import { plannerEscalations, type LadderEvent, type PlannerEscalation } from '../questions/ladder';
+import { closeEscalationFollowups } from '../questions/ladder/continuation';
 import type { CheckObservationFields, MergeGateResult, OverdueCheckEvidence, RequiredChecksResult, Resolution } from '../resolution';
 import { now } from '../store/store';
 import { CheckEvidence } from './check-evidence';
@@ -96,6 +97,7 @@ export class CheckWaits {
       });
     if (escalation) {
       this.store.event(t.id, 'planner_escalation_resolved', `${escalation.id}: required check passed at reviewed head ${t.prHead ?? 'unknown'}`);
+      closeEscalationFollowups(this.store, t.id, escalation.id);
       if (t.resolution.stop?.reason === 'escalated')
         this.waiting(this.store.task(t.id), 'Required check passed; reacquiring repository integration turn', 'lifecycle');
     }

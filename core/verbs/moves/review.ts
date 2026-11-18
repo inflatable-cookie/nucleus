@@ -16,7 +16,7 @@ import { moveRetainedReader } from "./review-reader";
 import { commitReviewMove, nameLaunchFence, settleStoppedReviewers } from "./review-settle";
 import { moveProofOnlyReceiptToReview } from "./review-proof";
 import type { ReviewMoveInput } from "./types";
-import { requestReviewerReport, requireReviewerReplacement } from '../reviewer-report';
+import { requestReviewerReport, requireReviewerReplacement, verifyReviewerPr } from '../reviewer-report';
 
 /**
  * Spec 050 `move to=review`: a fresh independent review at the current PR
@@ -47,7 +47,9 @@ export async function moveToReview(engine: Engine, input: ReviewMoveInput, opera
   if (input.prNumber !== undefined && input.prNumber !== prNumber) throw Error(evidence
     ? `Move to review must use PR #${prNumber}, which the current ready result names`
     : `Move to review must use the retained task PR #${prNumber}`);
-  const pr = await adapter.verifyPr(task, prNumber);
+  const currentReader = input.fresh !== true ? runsBefore.findLast(run => run.role === 'reviewer' && !run.released && !run.completion && run.ordinaryDetached
+    && (run.id === task.resolution.currentRunId || !task.resolution.currentRunId && run.replacedAt && run.agentId === task.resolution.reviewerAgentId)) : null;
+  const pr = currentReader ? await verifyReviewerPr(engine, task, currentReader, prNumber) : await adapter.verifyPr(task, prNumber);
   if (input.fresh) await requireReviewerReplacement(engine, task, input.version);
   if (evidence && pr.head !== evidence.head)
     throw Error(`PR #${prNumber} is at ${pr.head}, not the head ${evidence.head} its current ready result reports; nothing was bound`);
@@ -65,6 +67,8 @@ export async function moveToReview(engine: Engine, input: ReviewMoveInput, opera
     ? runsBefore.findLast(run => run.role === 'reviewer' && !run.released && !run.completion && run.replacedAt
       && run.agentId === task.resolution.reviewerAgentId && run.head === pr.head) : null;
   if (detached) {
+    const wait = engine.dispatchWaitsFor(task, engine.isOwnerCall(), true);
+    if (wait) return engine.deferOwnerVerb(task, { ...input, action: 'move', to: 'review' }, wait, null);
     if (runsBefore.some(run => !run.released && run.id !== detached.id))
       throw Error('Another run still owns the task; settle it before requesting the reviewer report');
     const state = await engine.host.observe(detached.agentId!);

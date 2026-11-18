@@ -372,8 +372,9 @@ export const restart: OwnerVerb = {
     const reviewer = candidate && !candidate.retainedAgentClosedAt
       && (!(candidate.reviewCheckpoints?.length) || candidate.reviewBudgetExhaustedAt) ? candidate : null;
     if (reviewer) {
-      const requested = facts.events.some(event => ['reviewer_report_request_sent', 'reviewer_report_request_intent'].includes(event.kind)
+      const last = facts.events.findLast(event => ['reviewer_report_request_sent', 'reviewer_report_request_intent', 'reviewer_report_request_refused'].includes(event.kind)
         && event.detail.startsWith(`${reviewer.id}:`));
+      const requested = last?.kind === 'reviewer_report_request_sent' || last?.kind === 'reviewer_report_request_intent';
       return requested
         ? { available: false, refusal: `Reviewer ${reviewer.id} already has a report request or unknown delivery; inspect its thread` }
         : { available: true, fill: ['reason'], args: { taskId: task.id, version: task.version, role: 'reviewer' },

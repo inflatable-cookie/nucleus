@@ -1,6 +1,39 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { fixture } from './support/review-continuation-fixture';
+import { holdPatch, releasePatch } from '../core/merge/merge-hold';
+import { ProvenPreSendRefusalError } from '../core/host/errors';
+
+test('report recovery waits for a dispatch hold and sends after release', async () => {
+  const f = fixture(); try {
+    await f.report({ covered: ['Diff'], remaining: ['Tests'] }, 'held-recovery');
+    f.store.putRun({ ...f.run(), reviewBudgetExhaustedAt: new Date().toISOString() });
+    f.store.update(f.submitted.id, holdPatch(f.current(), 'dispatch', 'operator', 'Wait for capacity'));
+    const sent: string[] = [];
+    f.adapter.notify = async (_agent, _id, text) => { sent.push(text); };
+    await f.engine.performTaskControl({ action: 'restart', role: 'reviewer', taskId: f.submitted.id, version: f.current().version, reason: 'Recover review' });
+    assert.equal(sent.length, 0);
+    assert.equal(f.current().resolution.deferredVerb?.target?.runId, f.runId);
+    f.store.update(f.submitted.id, releasePatch(f.current(), 'dispatch'));
+    await f.engine.applyDeferredOwnerVerbs();
+    assert.equal(sent.length, 1);
+  } finally { await f.close(); }
+});
+
+test('a proven unsent report request can be retried but unknown delivery remains fenced', async () => {
+  for (const known of [true, false]) {
+    const f = fixture(); try {
+      await f.report({ covered: ['Diff'], remaining: ['Tests'] }, `send-${known}`);
+      f.store.putRun({ ...f.run(), reviewBudgetExhaustedAt: new Date().toISOString() });
+      let calls = 0;
+      f.adapter.notify = async () => { calls++; if (calls === 1) throw known ? new ProvenPreSendRefusalError('reviewer was not idle') : Error('connection lost'); };
+      const restart = () => f.engine.performTaskControl({ action: 'restart', role: 'reviewer', taskId: f.submitted.id, version: f.current().version, reason: 'Recover review' });
+      await assert.rejects(restart(), /before send|unknown/);
+      if (known) await restart(); else await assert.rejects(restart(), /unknown delivery/);
+      assert.equal(calls, known ? 2 : 1);
+    } finally { await f.close(); }
+  }
+});
 
 test('an idle reviewer with a delivered checkpoint can redeliver its report on the same run', async () => {
   const f = fixture(); try {

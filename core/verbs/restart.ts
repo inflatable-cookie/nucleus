@@ -187,8 +187,11 @@ export class RestartControls {
       if (["owner_stopped_worker", "stopped_revision"].includes(shape ?? ""))
         return this.engine.deferOwnerVerb(task, input, "held", { runId: targetRunId });
     }
-    if (unreported && !fresh && shape !== 'stalled_run' && (!(unreported.reviewCheckpoints?.length) || unreported.reviewBudgetExhaustedAt))
+    if (unreported && !fresh && shape !== 'stalled_run' && (!(unreported.reviewCheckpoints?.length) || unreported.reviewBudgetExhaustedAt)) {
+      const wait = this.engine.dispatchWaitsFor(task, this.engine.isOwnerCall(), true);
+      if (wait) return this.engine.deferOwnerVerb(task, input, wait, { runId: unreported.id, head: unreported.head });
       return requestReviewerReport(this.engine, task, unreported, input.version, reason, input.instruction);
+    }
     // The ceiling remains the automatic loop breaker. Only a deliberate
     // operator-relayed fresh worker restart can pass it.
     const workerReplacementShape = shape !== null && ["blocked_worker", "retained_worker", "blocked_with_pr", "stopped_revision"].includes(shape);

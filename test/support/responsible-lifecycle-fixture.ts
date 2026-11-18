@@ -263,6 +263,7 @@ export function fixture(
         if (state) states.set(agentId, { ...state, status: 'running', active: true });
       }
     },
+    steerOrNotify: async (agentId: string, messageId: string, text: string) => { prompts.push({ agentId, messageId, text }); },
     verifyPr: async () => ({
       head: remoteHead,
       url: "https://github.com/example/repo/pull/1",

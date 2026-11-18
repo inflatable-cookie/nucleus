@@ -1,6 +1,6 @@
 import { test } from './support/sharded-test';
 import assert from 'node:assert/strict';
-import { writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -16,6 +16,8 @@ import { toolTimelinePage } from './support/tool-timeline';
 import { runPrompt } from '../core/dispatch/prompts';
 import { currentBrief } from '../core/planning/brief';
 import { collectOwnerVerbFacts, ownerTaskNext } from '../core/verbs/owner-verbs';
+import { verifyPr as machineVerifyPr } from '../core/git/git-proof';
+import { verifyPrIdentity as machineVerifyPrIdentity } from '../core/forge/pr-identity';
 
 function fixture() {
   const f = ownerRevisionFixture();
@@ -712,6 +714,36 @@ async function authorRevision(f: ReturnType<typeof fixture>, number: number) {
   await f.engine.wake(); await f.engine.wake(); await f.engine.wake();
   return f.current();
 }
+
+test('a detached reviewer redelivers an accepted verdict without reattaching the checkout', async () => {
+  const f = fixture(); const oldPath = process.env.PATH;
+  try {
+    await f.engine.wake(); await f.report(f.current(), 'changes_required');
+    const run = await authorRevision(f, 1);
+    assert.equal(run.ordinaryDetached, true);
+    const prompt = runPrompt(f.store.task(f.task.id), { ...run, reviewReportRecovery: 'prior-run', reviewReason: 'Inspect the outstanding proof' }, '/helper', '/ticket', true);
+    assert.match(prompt, /Owner direction: Inspect the outstanding proof/);
+    assert.equal(runGit(f.workspace, 'branch', '--show-current'), '');
+    f.idle(run);
+    const bin = join(f.root, 'redelivery-bin'); mkdirSync(bin);
+    const git = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+    writeFileSync(join(bin, 'git'), `#!/bin/sh\nif [ "$1 $2 $3" = 'remote get-url origin' ]; then echo 'https://github.com/example/repo.git'; else exec '${git}' "$@"; fi\n`);
+    writeFileSync(join(bin, 'gh'), `#!/bin/sh\ncat '${join(bin, 'pull.json')}'\n`);
+    chmodSync(join(bin, 'git'), 0o755); chmodSync(join(bin, 'gh'), 0o755);
+    writeFileSync(join(bin, 'pull.json'), JSON.stringify({ state: 'open', draft: false, html_url: 'https://github.com/example/repo/pull/41',
+      head: { ref: 'feature/external', sha: run.head, repo: { full_name: 'example/repo' } }, base: { ref: 'main' } }));
+    process.env.PATH = `${bin}:${oldPath ?? ''}`;
+    f.adapter.verifyPr = machineVerifyPr;
+    f.adapter.verifyPrIdentity = machineVerifyPrIdentity;
+    let asked = 0; f.adapter.notify = async () => { asked++; };
+    const current = f.store.task(f.task.id);
+    await f.engine.performTaskControl(taskControlInputSchema.parse({ action: 'move', to: 'review', taskId: current.id, version: current.version, reason: 'Recover the lost report' }));
+    assert.equal(asked, 1);
+    assert.equal(runGit(f.workspace, 'branch', '--show-current'), '');
+    await f.report(run, 'ready_to_merge');
+    assert.equal(f.store.run(run.id)?.completion?.status, 'ready_to_merge');
+  } finally { process.env.PATH = oldPath; f.close(); }
+});
 
 test('later rounds keep the retained reviewer without resetting the author budget', async () => {
   const f = fixture();

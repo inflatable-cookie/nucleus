@@ -148,11 +148,26 @@ export function reconcileRoutingSignoffs(store: Store, decisions: Decisions, tas
 function reconcileUnavailablePreference(store: Store, decisions: Decisions, task: Task, profiles: readonly Profile[], finished: boolean): Task {
   const request = task.profileRequests?.worker;
   const profileId = request?.required ? request.profileId : !request && task.requirePreferred ? task.preferredProfileId : '';
+  const events = store.eventsAll(task.id);
+  // Reconcile all prior questions before consulting the current preference: a
+  // changed or cleared request must not leave an answerable orphan behind.
+  for (const event of events.filter(item => item.kind === 'routing_unavailable_requested')) {
+    const split = event.detail.indexOf(': ');
+    if (split < 0) continue;
+    const requested = event.detail.slice(0, split);
+    if (requested === profileId && !finished && !task.agentIntent && !task.agentId) continue;
+    if (events.some(item => item.id > event.id && item.kind === 'routing_unavailable_resolved' && item.detail.startsWith(`${requested}: `))) continue;
+    try {
+      const record = JSON.parse(event.detail.slice(split + 2)) as { decisionId: string };
+      if (withdrawOpen(decisions, record.decisionId, 'The required routing preference changed or the task advanced'))
+        store.event(task.id, 'routing_unavailable_resolved', `${requested}: routing preference changed`);
+      else store.event(task.id, 'routing_signoff_withdraw_failed', JSON.stringify({ decisionId: record.decisionId, reason: 'The required routing preference changed or the task advanced' }));
+    } catch { /* Preserve unreadable evidence rather than guessing its identity. */ }
+  }
   if (!profileId) return task;
   const entry = store.pool().find(item => item.profileId === profileId);
   const profile = profiles.find(item => item.id === profileId);
-  const events = store.eventsAll(task.id);
-  const last = events.findLast(event => ['routing_unavailable_requested', 'routing_unavailable_resolved'].includes(event.kind) && event.detail.startsWith(`${profileId}: `));
+  const last = store.eventsAll(task.id).findLast(event => ['routing_unavailable_requested', 'routing_unavailable_resolved'].includes(event.kind) && event.detail.startsWith(`${profileId}: `));
   const prior = last?.kind === 'routing_unavailable_requested' ? last : undefined;
   if (entry?.enabled && profile?.available || finished || task.agentIntent || task.agentId) {
     if (prior) {

@@ -263,7 +263,10 @@ export class ExternalMerge {
   /** Re-prove the recorded source witness when acceptance kept a different merged head. */
   async observeRecordedMerge(t: Task) {
     if (!this.adapter.externalMerge) throw Error('External merge verification is unavailable');
-    const retained = Boolean(t.prHead && t.resolution.mergeHead && t.prHead !== t.resolution.mergeHead
+    // A never-dispatched review entry keeps its intake head in prHead but its
+    // checkout is at the merged head; it uses the ordinary merged-head witness.
+    const unrunReviewEntry = Boolean(t.reviewEntry && !t.agentIntent && !t.agentId);
+    const retained = Boolean(!unrunReviewEntry && t.prHead && t.resolution.mergeHead && t.prHead !== t.resolution.mergeHead
       && t.resolution.ownerAcceptances.some(item => item.kind === 'operator_source' && item.head === t.resolution.mergeHead));
     const witness = retained ? await this.proveRetainedExternalMergeSource(t) : null;
     const observed = await this.adapter.externalMerge(t, true, retained);

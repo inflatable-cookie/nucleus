@@ -4,7 +4,7 @@ import {createHash,randomUUID} from 'node:crypto';
 import {chmodSync,mkdtempSync,rmSync,writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {queueOperationSchema} from '../shared/operations';
-import {holdPatch} from '../core/merge/merge-hold';
+import {holdPatch,releasePatch} from '../core/merge/merge-hold';
 import {now,operationInputHash} from '../core/store/store';
 import {normalizeRepositoryOrigin} from '../shared/lanes';
 import {bindReviewEntry, type ReviewEntryAdapter} from '../core/review/review-entry';
@@ -255,6 +255,30 @@ test('an explicit owner closeout reconciles a never-dispatched review-entry task
     await assert.rejects(runtime.taskControl(closeout(service,{qualification:ACCEPTANCE})),/outside that boundary|Only an unmerged dispatched task|recorded merge already has its source disposition/);
     assert.equal(store.task(before.id).resolution.ownerAcceptances!.length,1);
   }finally{await closeService(service);}
+});
+
+test('a stopped accepted review-entry merge re-enters sync using the merged checkout', async () => {
+  const service = await openService(); const { f, runtime, merged } = service; const forge = realForge(f);
+  try {
+    forge.answer(pullAnswer(f)(merged!.head, { mergeCommit: merged!.mergeCommit }));
+    await forge.run(runtime, async () => {
+      await runtime.taskControl(closeout(service, { qualification: ACCEPTANCE }));
+      const current = runtime.store.task(service.task.id);
+      runtime.store.update(current.id, { phase: 'blocked', reason: 'Integration sync stopped' });
+      const resumed = await runtime.taskControl(closeout(service)) as Task;
+      assert.equal(resumed.phase, 'syncing');
+      assert.equal(resumed.resolution.mergeHead, merged!.head);
+      assert.equal(runGit(f.workspace, 'rev-parse', 'HEAD'), merged!.head);
+      runtime.store.update(resumed.id, releasePatch(runtime.store.task(resumed.id), 'dispatch'));
+      runtime.store.update(resumed.id, releasePatch(runtime.store.task(resumed.id), 'merge'));
+      runtime.store.setMeta('paused', false);
+      f.state.syncCommit = merged!.mergeCommit;
+      await runtime.engine.resolution.advanceSyncing(runtime.store.task(resumed.id));
+      const synced = runtime.store.task(resumed.id);
+      assert.equal(synced.phase, 'closing');
+      assert.equal(synced.resolution.syncedCommit, merged!.mergeCommit);
+    });
+  } finally { forge.close(); await closeService(service); }
 });
 
 test('the parent behaviour reproduces the queued refusal through the public route because of its own running operation',async()=>{

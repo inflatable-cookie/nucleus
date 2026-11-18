@@ -950,6 +950,25 @@ test("reviewer-side free text and worker-labelled choices preserve the live revi
   }
 });
 
+test('a completed reviewer escalation queues its direction for the next reviewer role', async () => {
+  const f = fixture({ responsible: true });
+  try {
+    await f.engine.wake();
+    const run = f.run(), id = 'released-reviewer-direction', answer = 'Inspect the remaining tests';
+    f.store.putRun({ ...run, released: true, status: 'finished' });
+    f.store.event(f.current().id, 'planner_escalation', `${id}: cause ${'c'.repeat(64)}; run ${run.id}; question pending`);
+    f.store.event(f.current().id, 'planner_escalation_payload', `${id}: ${JSON.stringify({ runId: run.id, source: 'reviewer' })}`);
+    f.engine.resolution.applyOperatorControl = async input => {
+      const current = f.current();
+      return f.store.update(current.id, { resolution: { ...current.resolution, currentRunId: null, reviewerAgentId: 'new-reader', pendingReviewReason: input.reason! } });
+    };
+    const refusal = await f.engine.resolution.ladder.applyDelegatedEscalationAnswer(f.current().id, id, `ns-escalation-${id}`, answer, 'planner planner-1');
+    assert.equal(refusal, null);
+    assert.equal(f.current().resolution.pendingReviewReason, answer);
+    assert.ok(!f.prompts.some(prompt => prompt.messageId === `ns-escalation-direction-${id}`), 'no message goes to the historical reviewer');
+  } finally { await f.close(); }
+});
+
 test("a refusal follow-up answer is recovered across a service roll without resending its delivery", async () => {
   const f = fixture({ responsible: true });
   try {

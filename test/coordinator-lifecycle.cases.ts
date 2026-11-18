@@ -1729,6 +1729,22 @@ test('a refused retry effect returns the current choices to the coordinator', as
   } finally { await f.close(); }
 });
 
+test('an authenticated coordinator report settles its offered forced effect', async () => {
+  const f = fixture(); try {
+    f.store.db.prepare('DELETE FROM runs WHERE id=?').run(f.reviewerRunId);
+    f.store.update(f.submitted.id, { phase: 'needs_attention', reason: 'Observed tool is idle',
+      resolution: { ...f.current().resolution, currentRunId: null, reviewerAgentId: null, attention: true } });
+    f.store.event(f.submitted.id, 'owned_tool_hold', JSON.stringify({ runId: 'lost-tool', reason: 'unknown tool' }));
+    f.engine.resolution.recordStop(f.current(), 'operator_needed', 'Observed tool is idle', ['retry_effect']);
+    await f.engine.resolution.recovery.route(f.current());
+    const coordinator = f.coordinatorRuns().at(-1)!;
+    assert.ok(coordinator);
+    await f.coordinatorReport({ verb: 'retry_effect', effect: 'owned_tool.lost-tool', force: true, reason: 'Observed idle with no live child' }, coordinator.id);
+    await f.engine.resolution.recovery.pass(f.submitted.id);
+    assert.ok(f.current().resolution.ownerSettlements.some(item => item.effect === 'owned_tool.lost-tool'));
+  } finally { await f.close(); }
+});
+
 test('a coordinator reviewer restart or second choice enters review', async () => {
   const f=fixture(); try {
     f.store.db.prepare('DELETE FROM runs WHERE id=?').run(f.reviewerRunId);

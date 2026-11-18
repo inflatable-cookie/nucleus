@@ -119,6 +119,23 @@ test('a disabled required preference surfaces a routing decision', () => {
   } finally { f.close(); }
 });
 
+test('changing or clearing a required preference withdraws its old routing question', async () => {
+  for (const replacement of ['cheap', '']) {
+    const f = fixture(); const engine = new Engine(f.store, {} as Adapter, 0); engine.profiles = profiles;
+    try {
+      const task = f.submit({ profileRequests: {}, preferredProfileId: 'missing', requirePreferred: true, skipPRReview: true });
+      f.reconcile(task.id);
+      const decision = f.decisions.list({ task: task.id })[0]!;
+      await engine.performTaskControl(taskControlInputSchema.parse({ action: 'set_routing', taskId: task.id,
+        version: f.store.task(task.id).version, preferredProfileId: replacement, requirePreferred: Boolean(replacement),
+        reason: 'Change preference', caller: 'operator (board)' }));
+      f.reconcile(task.id);
+      assert.notEqual(f.decisions.get({ id: decision.id }).status, 'open');
+      assert.equal(f.store.task(task.id).preferredProfileId, replacement);
+    } finally { await engine.stop(); f.close(); }
+  }
+});
+
 test('the operator can pick another profile, decline, or answer by relay (which declines)', () => {
   const f = fixture(); try {
     const chosen = f.submit(); f.reconcile(chosen.id);
