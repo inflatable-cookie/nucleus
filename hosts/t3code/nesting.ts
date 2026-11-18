@@ -238,6 +238,8 @@ export class T3Nesting {
       if (old && canonical({ id: old.id, workspaceId: old.workspaceId, labels: old.labels }) !== canonical(record))
         throw new ProvenPreSendRefusalError('T3Code retained identity changed');
       state.agents[threadId] = { ...old, ...record, title: input.title, parentThreadId: parent.threadId };
+      // A child created again on a thread id this host had retired is observed again.
+      delete state.retiredAgents?.[threadId];
     });
     try {
       await this.core.intents.effect(commandId, 'orchestration.dispatchCommand', payload, () => {
@@ -286,9 +288,11 @@ export class T3Nesting {
         await this.archiveParent(parent).catch(() => undefined);
         continue;
       }
+      // A parent that left observation is read no further: its task is over, and the
+      // archive above is the whole remaining work for it (nucleus#1328).
+      if (!this.core.reads.observes(parent.threadId)) continue;
       let projection: Projection;
-      try { projection = await this.core.reads.readProjection(parent.threadId, 'observation'); }
-      catch { continue; }
+      try { projection = await this.core.reads.readProjection(parent.threadId, 'observation'); } catch { continue; }
       if (projection.thread.deletedAt) { this.forgetParent(task.id); continue; }
       await this.disposePending(parent, projection);
       if (projection.thread.archivedAt) continue;

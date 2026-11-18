@@ -4,7 +4,7 @@ import { WIRE_LABEL_KEYS } from '../../shared/wire-labels';
 import { HostUnknownDeliveryError, ProvenPreSendRefusalError } from '../../core/host';
 import type { Task } from '../../shared/contracts';
 import type { T3State, T3SettleIntent, T3StateFile } from './state';
-import { canonical } from './state';
+import { agentRecord, canonical } from './state';
 import type { T3Reads, Projection } from './reads';
 import { activeStatuses } from './reads';
 import { identity, intentKindOf, intentThreadId, isIntent, presentationThread } from './intents';
@@ -96,6 +96,14 @@ export class T3Presentation {
         if (apply) delete state.settledThreads![agentId];
         changed = true;
       }
+      // A retired thread the host confirmed removing keeps its launch identity and
+      // records the removal: the identity is what keeps a removed thread out of
+      // observation once its live record is gone, and it costs one short record.
+      for (const [agentId, retired] of Object.entries(state.retiredAgents ?? {})) {
+        if (retired.deletedAt || !this.core.intents.confirmedDeletion(state, agentId)) continue;
+        if (apply) state.retiredAgents![agentId] = { ...retired, deletedAt: new Date().toISOString() };
+        changed = true;
+      }
       return changed;
     };
     if (!observeDelete && !retire(snapshot, false)) return;
@@ -124,6 +132,10 @@ export class T3Presentation {
     const observed: Array<{ role: string; pending: boolean; live: boolean; faulted: boolean }> = [];
     for (const { id, role } of this.currentSupportThreads(taskId, support)) {
       try {
+        // A support thread that has left observation names no step: its role is no
+        // longer running on this host, and reading it would cost a full snapshot
+        // (nucleus#1328).
+        if (!await this.core.reads.isObserved(id)) continue;
         const projection = await this.core.reads.readProjection(id, 'observation');
         if (projection.thread.deletedAt) continue;
         const latest = latestRun(projection);
@@ -227,6 +239,7 @@ export class T3Presentation {
    */
   private async writeWorkerRow(threadId: string, title: string): Promise<void> {
     if (this.core.intents.confirmedDeletion(this.core.state.read(), threadId)) return;
+    if (!await this.core.reads.isObserved(threadId)) return;
     const projection = await this.core.reads.readProjection(threadId, 'observation');
     if (projection.thread.archivedAt || projection.thread.deletedAt) return;
     const record = () => this.core.state.update(current => { current.rowTitles = { ...current.rowTitles, [threadId]: title }; });
@@ -386,6 +399,9 @@ export class T3Presentation {
     if (!threadId) throw Error('Task worker thread is missing');
     const onParent = recordedParent !== undefined && threadId === recordedParent;
     if (this.core.intents.confirmedDeletion(state, threadId)) return;
+    // A row that left observation keeps the title it has: nothing is sent to a
+    // thread whose task is over or that T3 reports archived (nucleus#1328).
+    if (!await this.core.reads.isObserved(threadId)) return;
     // The task's own state title is the row's base; the step its support threads
     // are doing rides after it, so the one visible row names both (one row per
     // task, Tom 2026-11-15). The agent record keeps the base.
@@ -417,6 +433,7 @@ export class T3Presentation {
     if (task.number && !onParent) for (const [supportId, agent] of taskAgents) {
       const role = agent.labels[roleLabel];
       if (!role || role === 'worker' || this.core.intents.confirmedDeletion(this.core.state.read(), supportId)) continue;
+      if (!await this.core.reads.isObserved(supportId)) continue;
       const support = await this.core.reads.readProjection(supportId, 'observation');
       if (support.thread.archivedAt || support.thread.deletedAt) continue;
       const supportTitle = this.numberedThreadTitle(task.number, role, support.thread.title);
@@ -436,10 +453,13 @@ export class T3Presentation {
     if (this.core.intents.confirmedDeletion(this.core.state.read(), agentId)) { this.retireDeletedPresentationIntents(); return; }
     // Settled, and no unsettle since: no projection read, no second command.
     if (this.core.state.read().settledThreads?.[agentId]) return;
+    // A thread that left observation has no report to settle: its task is over, or
+    // T3 reports it archived or removed, and the terminal lane owns it (nucleus#1328).
+    if (!await this.core.reads.isObserved(agentId)) return;
+    const baseCommandId = identity('settle', canonical([this.core.hostId(), agentId, runId]));
     // At most one stale bind retires per call; the fresh bind for the current
     // latest run follows in the same pass.
     for (let round = 0; round < 2; round++) {
-      const baseCommandId = identity('settle', canonical([this.core.hostId(), agentId, runId]));
       let commandId = baseCommandId;
       let prior = this.core.state.read().intents[commandId];
       const projection = await this.core.reads.readProjection(agentId, 'observation');
@@ -488,6 +508,10 @@ export class T3Presentation {
       // the parent's held turn and release own that, so a child settle recorded before
       // nesting began is left as recorded rather than re-read and sent.
       if (this.core.nestedChild?.(intentThreadId(intent) ?? '')) return false;
+      // A thread that left observation proves nothing about this delivery: the entry
+      // stays exactly as recorded, unknown, and is not reconciled, resent or marked
+      // settled without a T3 read that proves it (nucleus#1328 review).
+      if (!this.core.reads.observes(intentThreadId(intent) ?? '')) return false;
       return isIntent('thread.settle', intent);
     });
     for (const [key, intent] of pending) {
@@ -510,10 +534,17 @@ export class T3Presentation {
    * thread). A bind that never named a latest run cannot be verified either
    * way, so it retires the same way instead of looping invisibly; a malformed
    * intent with no thread stays unknown delivery and is never resent.
+   * `unobserved` means this host no longer observes the thread, so nothing here
+   * can prove the delivery either way: the entry is left exactly as recorded and
+   * is never rewritten to settled without T3 evidence (nucleus#1328 review).
    */
-  async reconcileSettleIntent(key: string, intent: T3State['intents'][string]): Promise<'settled' | 'retired'> {
+  async reconcileSettleIntent(key: string, intent: T3State['intents'][string]): Promise<'settled' | 'retired' | 'unobserved'> {
     const threadId = intentThreadId(intent);
     if (!isIntent('thread.settle', intent) || !threadId) throw new HostUnknownDeliveryError();
+    // A thread that left observation proves nothing more: its task is over or T3
+    // reports it archived, the terminal lane owns the thread, and the recorded
+    // unknown delivery stays unknown. Nothing is written, read or resent.
+    if (!await this.core.reads.isObserved(threadId)) return 'unobserved';
     const payload = JSON.parse(intent.payload) as { payload?: { expectedLatestRunId?: string } };
     const projection = await this.core.reads.readProjection(threadId, 'observation');
     if (projection.thread.settledOverride === 'settled') { this.markSettleObserved(key); this.noteThreadSettled(threadId, key); return 'settled'; }
@@ -561,6 +592,9 @@ export class T3Presentation {
     // Clear before the read: a later settle re-reads even when this send's
     // own reply is lost.
     this.clearThreadSettled(agentId);
+    // A thread that left observation never surfaces: its task is over or it is
+    // archived, so there is no row to pull back into the main list (nucleus#1328).
+    if (!await this.core.reads.isObserved(agentId)) return;
     const projection = await this.core.reads.readProjection(agentId, 'observation');
     if (projection.thread.settledOverride !== 'settled' || projection.thread.archivedAt || projection.thread.deletedAt) return;
     const commandId = this.attentionUnsettleCommandId(agentId, taskId);
@@ -616,6 +650,10 @@ export class T3Presentation {
     if (this.core.intents.confirmedDeletion(this.core.state.read(), agentId)) { this.retireDeletedPresentationIntents(); return; }
     // Settled, and no unsettle since: no projection read, no second command.
     if (this.core.state.read().settledThreads?.[agentId]) return;
+    // A handover settle for a thread that left observation keeps its durable receipt
+    // and its pending record only: nothing is read or sent for a thread whose task is
+    // over, or that T3 reports archived or removed (nucleus#1328).
+    if (!await this.core.reads.isObserved(agentId)) return;
     const baseCommandId = identity('settle', canonical([this.core.hostId(), agentId, runId]));
     const existing = this.core.state.read().pendingSettles?.[baseCommandId];
     const commandId = this.workerSettleCommandId(agentId, runId);
@@ -664,6 +702,10 @@ export class T3Presentation {
       }
     }
     if (Date.now() - Date.parse(entry.recordedAt) > SETTLE_INTENT_TTL_MS) { this.forgetSettle(entry.commandId); return; }
+    // The thread left observation (its task is over, or T3 reports it archived or
+    // removed): the recorded settle can never be presented, so it is dropped rather
+    // than read for on every sweep (nucleus#1328).
+    if (!await this.core.reads.isObserved(entry.agentId)) { this.forgetSettle(entry.commandId); return; }
     const projection = await this.core.reads.readProjection(entry.agentId, 'observation');
     // Already settled, or retired: the handover needs no further presentation.
     if (projection.thread.settledOverride === 'settled' || projection.thread.archivedAt || projection.thread.deletedAt) {

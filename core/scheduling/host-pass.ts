@@ -134,6 +134,17 @@ export class HostPass {
   private readonly lastRunProcessSweep = new Map<string, number>();
 
   async run(host: string): Promise<HostPassResult> {
+    // The pass's own task list is what the host's thread observation is scoped to:
+    // a thread whose task is over is not read again, and every read this pass makes
+    // is shared by its consumers. A host that does not present threads ignores it.
+    const tasks = this.store.tasks().filter(task => task.hostId === host);
+    await this.step(host, 'beginHostPass', () => this.adapter.beginHostPass?.(tasks));
+    try { return await this.hostPass(host, tasks); }
+    finally { await this.step(host, 'endHostPass', () => this.adapter.endHostPass?.()); }
+  }
+
+  /** The pass's steps, between a host's `beginHostPass` and its `endHostPass`. */
+  private async hostPass(host: string, tasks: readonly Task[]): Promise<HostPassResult> {
     const result: HostPassResult = { inventory: null, finishedCatchUp: new Map() };
     if (this.adapter.hostProcessListing) {
       const historical = Date.now() - (this.lastRunProcessSweep.get(host) ?? 0) >= 3_600_000;
@@ -144,8 +155,7 @@ export class HostPass {
     await this.step(host, 'reconcileReportedSettlements', () => this.adapter.reconcileReportedSettlements?.());
     await this.step(host, 'settleFinishedT3Threads', () => this.settleFinishedT3Threads(host));
     await this.step(host, 'surfaceWorkerRows', () => this.surfaceWorkerRows(host));
-    await this.step(host, 'reconcileThreadTitles',
-      () => this.adapter.reconcileThreadTitles?.(this.store.tasks().filter(task => task.hostId === host)));
+    await this.step(host, 'reconcileThreadTitles', () => this.adapter.reconcileThreadTitles?.(tasks));
     // Audit A6: one bounded labelled inventory answers every identity this
     // pass observes, and retired workers are re-read on their own slow cadence.
     // A list that cannot be walked to its end answers nothing, so every
