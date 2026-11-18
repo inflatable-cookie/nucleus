@@ -621,10 +621,13 @@ describe("a task container's repository, PR chip and row width", () => {
     expect(within(container).queryByRole("button", { name: "Environment actions" })).toBeNull();
     expect(within(container).queryByRole("button", { name: "Task actions" })).toBeNull();
     expect(within(container).queryByRole("menu")).toBeNull();
-    const title = container.querySelector<HTMLElement>("[data-nucleus-task-group] > span");
-    expect(title).not.toBeNull();
-    expect(title!.className).toContain("flex-1");
-    expect(within(container).getByText(/Reviewing/).className).toContain("min-w-0");
+    // No hover-actions slot is rendered, so nothing reserves width beside the name block.
+    expect(container.querySelector("[data-sidebar-hover-actions-mobile]")).toBeNull();
+    const nameBlock = container.querySelector<HTMLElement>("[data-nucleus-task-group]");
+    expect(nameBlock).not.toBeNull();
+    expect(nameBlock!.className).toContain("flex-1");
+    expect(nameBlock!.className).toContain("min-w-0");
+    expect(nameBlock!.querySelector<HTMLElement>("[data-nucleus-task-group-state]")!.className).toContain("min-w-0");
   });
 
   it("leaves an ordinary worktree group with upstream's actions", async () => {
@@ -635,6 +638,8 @@ describe("a task container's repository, PR chip and row width", () => {
     // Upstream's new-thread control is present on the ordinary group, and its own
     // environment menu keeps Rename and Archive.
     const ordinary = upstreamHeaderByEnvironment(UPSTREAM_ENVIRONMENT);
+    // The hover-actions slot the task container no longer renders is upstream's own.
+    expect(ordinary.querySelector("[data-sidebar-hover-actions-mobile]")).not.toBeNull();
     expect(within(ordinary).getByRole("button", { name: "New thread in environment" })).not.toBeNull();
     fireEvent.pointerDown(within(ordinary).getByRole("button", { name: "Environment actions" }), { button: 0 });
     expect(await screen.findByRole("menuitem", { name: "Rename" })).not.toBeNull();

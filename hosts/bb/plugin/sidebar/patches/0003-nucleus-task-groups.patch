@@ -362,7 +362,7 @@
 +}
 --- a/app/list/nucleusTaskGroups.test.tsx
 +++ b/app/list/nucleusTaskGroups.test.tsx
-@@ -0,0 +1,651 @@
+@@ -0,0 +1,649 @@
 +// @vitest-environment jsdom
 +/**
 + * Spec 062, phase 5 acceptance (decision 5a/5b): the forked sidebar's Nucleus task
@@ -565,7 +565,6 @@
 +  failRead?: boolean;
 +  projects?: ReadonlyArray<SidebarGroups["projects"][number]>;
 +  onSetPreference?: (key: string, value: unknown) => void;
-+  onDetach?: (input: { taskId: string }) => void;
 +  /** The project row under test. */
 +  project?: ReturnType<typeof makeSidebarProject>;
 +  /** What that row's own tree is given (the resolved project's threads). */
@@ -596,12 +595,6 @@
 +      projects: options.projects ?? [],
 +    });
 +  }
-+  // The task container's own action (nucleus#1313): the plugin forwards it to the
-+  // service's `detach` owner control and answers with the recorded detach.
-+  (rpc as unknown as Record<string, unknown>).detachTask = async (input: unknown) => {
-+    options.onDetach?.(input as { taskId: string });
-+    return { taskId: (input as { taskId: string }).taskId, detachedAt: new Date(0).toISOString(), detachedBy: "operator (board)" };
-+  };
 +  const project = options.project ?? makeSidebarProject({ id: "proj_test" });
 +  const allThreads = options.allThreads ?? THREADS;
 +  const slot = renderSlot(
@@ -993,10 +986,13 @@
 +    expect(within(container).queryByRole("button", { name: "Environment actions" })).toBeNull();
 +    expect(within(container).queryByRole("button", { name: "Task actions" })).toBeNull();
 +    expect(within(container).queryByRole("menu")).toBeNull();
-+    const title = container.querySelector<HTMLElement>("[data-nucleus-task-group] > span");
-+    expect(title).not.toBeNull();
-+    expect(title!.className).toContain("flex-1");
-+    expect(within(container).getByText(/Reviewing/).className).toContain("min-w-0");
++    // No hover-actions slot is rendered, so nothing reserves width beside the name block.
++    expect(container.querySelector("[data-sidebar-hover-actions-mobile]")).toBeNull();
++    const nameBlock = container.querySelector<HTMLElement>("[data-nucleus-task-group]");
++    expect(nameBlock).not.toBeNull();
++    expect(nameBlock!.className).toContain("flex-1");
++    expect(nameBlock!.className).toContain("min-w-0");
++    expect(nameBlock!.querySelector<HTMLElement>("[data-nucleus-task-group-state]")!.className).toContain("min-w-0");
 +  });
 +
 +  it("leaves an ordinary worktree group with upstream's actions", async () => {
@@ -1007,6 +1003,8 @@
 +    // Upstream's new-thread control is present on the ordinary group, and its own
 +    // environment menu keeps Rename and Archive.
 +    const ordinary = upstreamHeaderByEnvironment(UPSTREAM_ENVIRONMENT);
++    // The hover-actions slot the task container no longer renders is upstream's own.
++    expect(ordinary.querySelector("[data-sidebar-hover-actions-mobile]")).not.toBeNull();
 +    expect(within(ordinary).getByRole("button", { name: "New thread in environment" })).not.toBeNull();
 +    fireEvent.pointerDown(within(ordinary).getByRole("button", { name: "Environment actions" }), { button: 0 });
 +    expect(await screen.findByRole("menuitem", { name: "Rename" })).not.toBeNull();
