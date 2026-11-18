@@ -78,7 +78,7 @@ export class CreationRecovery {
         const latest = this.store.task(task.id);
         // Another reconciliation may have bound or replaced this intent while
         // lookup was in flight. Its newer state owns the task; do not park it.
-        if (!latest.agentIntent || latest.agentId || latest.runId !== task.runId) return;
+        if (latest.version !== task.version || !latest.agentIntent || latest.agentId || latest.runId !== task.runId || latest.workspaceId !== task.workspaceId) return;
         this.resolution.resolveIncident(latest, task.runId, 'Exact lookup bound the created worker');
         this.store.update(task.id, { agentId: found[0].id, phase: "working", reason: "Recovered worker identity" }, "agent_recovered", found[0].id);
         return;
@@ -86,7 +86,11 @@ export class CreationRecovery {
       const latest = this.store.task(task.id);
       if (latest.version !== task.version || !latest.agentIntent || latest.agentId || latest.runId !== task.runId || latest.workspaceId !== task.workspaceId) return;
       // A match in a different workspace is unknown placement, not absence.
-      await this.engine.reconcileAbsentWorker(latest, found.length === 1 ? 2 : found.length);
+      if (found.length === 1) {
+        this.engine.note(latest.id, 'Worker creation lookup found an agent outside the retained workspace; no resource was created', 'operator_needed', 'needs_attention');
+        return;
+      }
+      await this.engine.reconcileAbsentWorker(latest, found.length);
     }
   }
   /** Reconcile a proof-only provisioning intent and resume only its proof route. */

@@ -505,6 +505,24 @@ test('a proven-absent reviewer creation is replaced without a recovery coordinat
   } finally { await f.close(); }
 });
 
+test('a reviewer creation found outside its workspace remains owned', async () => {
+  const f = fixture(50_000); try {
+    f.plantReview();
+    f.adapter.createRun = async () => { throw new Error('Transport lost'); };
+    await f.engine.wake();
+    const run = f.store.runs(f.task.id).find(item => item.role === 'reviewer')!;
+    f.foundAgents.set(run.id, [{ id: 'misplaced-reviewer', workspaceId: 'other-workspace' }]);
+    f.store.update(f.task.id, { resolution: { ...f.current().resolution,
+      incident: { ...f.current().resolution.incident!, createdAt: new Date(0).toISOString() } } });
+    await f.engine.wake();
+    await f.engine.wake();
+    assert.equal(f.store.run(run.id)?.released, false);
+    assert.equal(f.store.run(run.id)?.agentId, null);
+    assert.equal(f.store.runs(f.task.id).filter(item => item.role === 'reviewer').length, 1);
+    assert.equal(f.events('absent_creation_replaced').length, 0);
+  } finally { await f.close(); }
+});
+
 test('a review prompt the provider refuses for size settles not-delivered with a receipt, never uncertain', async () => {
   const f = fixture(50_000); try {
     enableRecovery(f);
@@ -862,6 +880,22 @@ test('a host-unavailable transport wait is re-evaluated once the host is back, n
     await f.engine.wake();
     assert.notEqual(f.current().resolution.stop?.reason, 'external_unavailable');
     assert.doesNotMatch(f.current().reason, /^Daemon transport unavailable/);
+  } finally { await f.close(); }
+});
+
+test('a stale absence reason without a worker intent returns to ordinary admission', async () => {
+  const f = fixture(); try {
+    f.store.update(f.task.id, { phase: 'needs_attention', agentId: null, agentIntent: false, runId: null,
+      prHead: null, prUrl: null, completion: null,
+      reason: 'Agent creation is uncertain or placement differs; no replacement launched' });
+    f.adapter.findWorkspaces = async () => [{ id: 'workspace', directory: '/worktree' }];
+    const views = ownerVerbViews(collectOwnerVerbFacts(f.store, f.current()));
+    assert.ok(views.some(view => view.verb === 'restart' && view.available && view.args?.role === 'worker'));
+    const resumed = await f.engine.performTaskControl({ taskId: f.task.id, version: f.current().version,
+      action: 'restart', role: 'worker', reason: 'Continue the approved work', caller: OWNER });
+    assert.equal(resumed.phase, 'queued');
+    assert.equal(resumed.agentIntent, false);
+    assert.equal(resumed.runId, null);
   } finally { await f.close(); }
 });
 
