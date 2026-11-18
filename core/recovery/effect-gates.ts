@@ -1,8 +1,26 @@
 import type { Task } from '../../shared/contracts';
 import type { QueueOperation } from '../../shared/operations';
 import { BLOCKED_EFFECT_ATTENTION_PREFIX } from '../../shared/task-stop';
-import { type Store } from '../store/store';
+import { digest, type Store } from '../store/store';
+import type { Run } from '../../shared/contracts';
 import { blockingRecoveryEffects, hasRecordedOperationSettlement, observedHostEffectEvidence, releasedRunDeliveryEvidence, recoveryEffectsRefusal, reviewEffectWait } from './recovery-effects';
+
+/** A released callback is terminal only when its own accepted receipt binds it. */
+function authenticatedCompletion(store: Store, run: Run): boolean {
+  const completion = run.completion;
+  if (!completion || completion.taskId !== run.taskId || completion.runId !== run.id
+      || (run.role === 'reviewer' && completion.head !== run.head)) return false;
+  const receipt = store.db.prepare('SELECT hash,response FROM receipts WHERE id=? AND task=? AND run=?')
+    .get(completion.eventId, run.taskId, run.id) as { hash?: string; response?: string } | undefined;
+  try {
+    if (!receipt || JSON.parse(receipt.response ?? '').accepted !== true) return false;
+    const withoutReview = { ...completion }; delete withoutReview.reviewId;
+    const withoutComment = { ...completion }; delete withoutComment.reviewCommentId;
+    const withoutBoth = { ...withoutReview }; delete withoutBoth.reviewCommentId;
+    return [completion, withoutReview, withoutComment, withoutBoth]
+      .some(value => digest(JSON.stringify(value)) === receipt.hash);
+  } catch { return false; }
+}
 
 /**
  * Nucleus#1159: an uncertain side effect answers itself when later evidence
@@ -40,7 +58,13 @@ export function settleObservedHostEffectOperations(store: Store, taskId: string)
       if (!run || run.taskId !== taskId) continue;
       const evidence = releasedRunDeliveryEvidence(store, run);
       if (!evidence) continue;
-      store.putRun({ ...run, status: 'superseded' });
+      if (run.completion && !authenticatedCompletion(store, run)) {
+        // Keep an unverified result untouched; its own intake gate still owns it.
+        if (!store.eventsAll(taskId).some(event => event.kind === 'run_delivery_superseded' && event.detail.startsWith(`${run.id}: `)))
+          store.event(taskId, 'run_delivery_superseded', `${run.id}: ${evidence}`);
+        continue;
+      }
+      store.putRun({ ...run, status: run.completion ? 'finished' : 'superseded' });
       store.event(taskId, 'run_delivery_superseded', `${run.id}: ${evidence}`);
     }
   });

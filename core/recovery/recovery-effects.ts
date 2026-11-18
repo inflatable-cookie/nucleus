@@ -3,7 +3,7 @@ import type { QueueOperation } from '../../shared/operations';
 import type { VerifiedEnclosingOperation } from '../planning/enclosing-operation';
 import { classifyReviewPublication, reviewPublicationKey, type ReviewPublicationClassification } from '../review/review-publication';
 import { reviewCheckpointRefusal } from '../review/review-continuation';
-import type { Store } from '../store/store';
+import { operationIdForKey, operationInputHash, type Store } from '../store/store';
 import { provenAbsentCreation } from './absent-creation/decisions';
 
 /**
@@ -303,25 +303,18 @@ export function observedHostEffectEvidence(store: Store, task: Task, operation: 
   const payload = store.operationPayload(operation.id) as { control?: { action?: string; taskId?: string; version?: number; role?: string; caller?: string; reason?: string } } | null;
   const control = payload?.control;
   if (Number.isFinite(accepted) && Number.isFinite(boundary) && boundary >= accepted && operation.expectedVersion && task.version > operation.expectedVersion
-      && control?.action === 'restart' && control.taskId === task.id && control.version === operation.expectedVersion) {
+      && control?.action === 'restart' && control.taskId === task.id && control.version === operation.expectedVersion
+      && operation.id === operationIdForKey(operation.key) && operation.inputHash === operationInputHash(payload)
+      && operation.attempts > 0 && operation.effect.status === 'uncertain') {
     const roles: Record<string, Run['role'][]> = { worker: ['revision'], reviewer: ['reviewer'],
       coordinator: ['recovery', 'closeout'], executor: ['executor'] };
-    const role = control.role && roles[control.role];
-    const audit = role && events.find(event => {
-      if (event.kind !== 'owner_control' || !(Date.parse(event.at) >= accepted && Date.parse(event.at) <= boundary)) return false;
-      try {
-        const value = JSON.parse(event.detail) as { verb?: string; caller?: string; reason?: string; identities?: { taskId?: string; version?: number; restart?: { role?: string } } };
-        return value.verb === 'restart' && value.caller === (control.caller ?? null) && value.reason === (control.reason ?? null)
-          && value.identities?.taskId === task.id && value.identities.version === operation.expectedVersion
-          && value.identities.restart?.role === control.role;
-      } catch { return false; }
-    });
-    if (role && audit) {
+    const role = control.role ? roles[control.role] : ['reviewer', 'revision', 'verification', 'closeout', 'recovery', 'executor'] as Run['role'][];
+    if (role) {
       const runs = store.runs(task.id);
       const roleRuns = runs.filter(run => role.includes(run.role));
       const incompleteHistory = roleRuns.some(run => !Number.isFinite(Date.parse(run.createdAt)));
       const candidates = roleRuns.filter(run => Date.parse(run.createdAt) <= boundary);
-      const untrackedWorker = control.role === 'worker' && task.runId && !runs.some(run => run.id === task.runId);
+      const untrackedWorker = (!control.role || control.role === 'worker') && task.runId && !runs.some(run => run.id === task.runId);
       const released = (run: Run) => run.released && Boolean(run.agentId) && ['finished', 'superseded'].includes(run.status)
         && !(task.checkpoints.intent?.status === 'pending' && task.checkpoints.intent.runId === run.id)
         && !(task.resolution.stalledTurnStop?.runId === run.id && task.resolution.stalledTurnStop.status !== 'completed')
@@ -340,7 +333,7 @@ export function observedHostEffectEvidence(store: Store, task: Task, operation: 
       const laterBinding = runs.some(run => role.includes(run.role) && Date.parse(run.createdAt) > boundary
         && Boolean(run.agentId) && candidates.every(old => old.agentId !== run.agentId));
       if (!untrackedWorker && !incompleteHistory && candidates.length && candidates.every(released) && (laterMove || laterBinding))
-        return `restart role ${control.role} targets ${candidates.map(run => run.id).join(', ')} were released; ${laterMove ? 'a later owner move' : 'a later isolated run binding'} advanced the task`;
+        return `restart role ${control.role ?? 'implicit'} targets ${candidates.map(run => run.id).join(', ')} were released; ${laterMove ? 'a later owner move' : 'a later isolated run binding'} advanced the task`;
     }
   }
   const { mergedCommit, mergeHead } = task.resolution;

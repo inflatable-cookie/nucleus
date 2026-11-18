@@ -12,8 +12,8 @@ import { Store, digest, operationIdForKey, operationInputHash } from '../core/st
 import { classifyReviewPublication, reviewPublicationKey } from '../core/review/review-publication';
 import { recoveryEffects, blockingRecoveryEffects, blockingRecoveryEffectsRefusal, isBlockingRecoveryEffect, blockingTaskOperations, observedHostEffectEvidence, reviewEffectWait, reviewEffectWaitRefusal } from '../core/recovery/recovery-effects';
 import { settleObservedHostEffectOperations } from '../core/recovery/effect-gates';
-import { ownerControlEventDetail } from '../core/verbs/owner-verbs';
 import { supersedeIdleRunInTx } from '../core/recovery/fence-settlement';
+import { collectOwnerVerbFacts, ownerTaskNext } from '../core/verbs/owner-verbs';
 import { verifyEnclosingOperation } from '../core/planning/enclosing-operation';
 import { taskControlOperation } from '../core/verbs/task-control-key';
 import { reviewPublicationBody } from '../core/forge/index';
@@ -377,6 +377,78 @@ test('the blocked-review wait is read from the stop Queue itself records', () =>
 });
 
 
+test("stale released delivery preserves an authenticated reviewer publication", () => {
+  const { store, task: inserted } = fixture();
+  try {
+    const task = store.update(inserted.id, { prHead: head });
+    const completion = reviewCompletion(
+      task.id,
+      "review-result",
+      "changes_required",
+      { reviewCommentId: 41 },
+    );
+    const run = reviewRun(store, task, {
+      id: "review-result",
+      status: "finished",
+      completion,
+    });
+    accept(
+      store,
+      task.id,
+      run.id,
+      reviewCompletion(task.id, run.id, "changes_required"),
+    );
+    store.setMeta(reviewPublicationKey(run.id), {
+      hash: digest(
+        reviewPublicationBody(
+          task,
+          run,
+          "changes_required",
+          completion.reviewText!,
+        ),
+      ),
+      commentId: 41,
+    });
+    assert.equal(classifyReviewPublication(store, task, run).state, "settled");
+    store.event(
+      task.id,
+      "run_delivery_reconciled",
+      `${run.id}: exact creation message observed`,
+    );
+    store.putRun({ ...run, status: "uncertain" });
+    assert.equal(
+      blockingRecoveryEffects(store, task, { kinds: ["run-delivery"] }).length,
+      0,
+    );
+    assert.equal(ownerTaskNext(collectOwnerVerbFacts(store, task)).verbs.some(view =>
+      view.verb === 'retry_effect' && JSON.stringify(view.args ?? {}).includes(`run-delivery.${run.id}`)), false);
+    settleObservedHostEffectOperations(store, task.id);
+    assert.equal(store.run(run.id)?.status, "finished");
+    assert.equal(
+      classifyReviewPublication(store, task, store.run(run.id)!).state,
+      "settled",
+    );
+    settleObservedHostEffectOperations(store, task.id);
+    assert.equal(
+      store
+        .eventsAll(task.id)
+        .filter((event) => event.kind === "run_delivery_superseded").length,
+      1,
+    );
+    // A mismatched receipt cannot promote an invented completion.
+    store.putRun({
+      ...store.run(run.id)!,
+      status: "uncertain",
+      completion: { ...completion, summary: "forged" },
+    });
+    settleObservedHostEffectOperations(store, task.id);
+    assert.equal(store.run(run.id)?.status, "uncertain");
+  } finally {
+    store.close();
+  }
+});
+
+
 test('released run delivery uses its own observer settlement and converges', () => {
   const { store, task } = fixture();
   try {
@@ -398,7 +470,7 @@ test('released run delivery uses its own observer settlement and converges', () 
   } finally { store.close(); }
 });
 
-for (const [role, runRole] of [['reviewer', 'reviewer'], ['worker', 'revision'], ['executor', 'executor']] as const) {
+for (const [role, runRole] of [['reviewer', 'reviewer'], ['worker', 'revision'], ['executor', 'executor'], [undefined, 'reviewer']] as const) {
   test(`a displaced ${role} restart settles only after its possible target releases`, () => {
     const { store, task } = fixture();
     try {
@@ -412,8 +484,6 @@ for (const [role, runRole] of [['reviewer', 'reviewer'], ['worker', 'revision'],
         state: 'needs_attention', taskId: task.id, expectedVersion: input.version, createdAt: accepted,
         startedAt: accepted, settledAt: accepted, attempts: 1, diagnostic: 'Transport', result: null,
         effect: { kind: 'task_control', target: 'restart', intentAt: accepted, status: 'uncertain', result: null, resultAt: null } }), payload);
-      store.event(task.id, 'owner_control', ownerControlEventDetail(store.task(task.id), input, 'needs_attention', 'reviewing'));
-      store.db.prepare("UPDATE events SET at=? WHERE id=(SELECT MAX(id) FROM events WHERE taskId=?)").run(accepted, task.id);
       store.update(task.id, { reason: 'Later binding' });
       reviewRun(store, task, { id: `new-${role}`, role: runRole, agentId: `new-agent-${role}`, status: 'running', released: false,
         createdAt: new Date().toISOString() });

@@ -19,6 +19,7 @@ import { REVIEW_AUTHORIZATION_REQUIRED, reviewCheckpointPathFor, writeReviewChec
 import { collectOwnerVerbFacts, ownerTaskNext } from '../core/verbs/owner-verbs';
 import { runFenceRefusal } from '../core/intake/run-settlement';
 import { recoveryEffects } from '../core/recovery/recovery-effects';
+import { supersedeIdleRunInTx } from '../core/recovery/fence-settlement';
 import { restartShape } from '../core/verbs/owner-restart';
 import { taskProgressDigest } from '../core/recovery/coordinator-report';
 import { runPrompt } from '../core/dispatch/prompts';
@@ -937,6 +938,117 @@ test('an owner restart with an intent but no sent receipt reports unknown delive
     assert.equal(f.events('owner_restart_instruction_intent').length, 1);
   } finally { await f.close(); }
 });
+
+test("a real lost restart settles after its old worker is isolated and released", async () => {
+  const f = fixture();
+  try {
+    retainedWorker(f, "retained_worker", false);
+    f.store.update(f.taskId, {
+      phase: "working",
+      agentActive: false,
+      lastAgentStatus: "idle",
+    });
+    const old = runSchema.parse({
+      id: "worker-run",
+      taskId: f.taskId,
+      role: "revision",
+      generation: 1,
+      head,
+      base,
+      agentId: "worker-agent",
+      workspaceId: "workspace",
+      profile: f.profiles.worker,
+      status: "running",
+      createdAt: new Date(Date.now() - 60_000).toISOString(),
+      lastObservedAt: null,
+      active: false,
+      idleSince: null,
+      completion: null,
+      released: false,
+    });
+    f.store.event(
+      f.taskId,
+      "owner_stopped",
+      JSON.stringify({ runIds: [old.id] }),
+    );
+    let sends = 0;
+    f.setNotify(async () => {
+      sends++;
+      throw new Error("Transport timeout after send");
+    });
+    const input = taskControlInputSchema.parse({
+      taskId: f.taskId,
+      version: f.current().version,
+      action: "restart",
+      role: "worker",
+      reason: "Continue",
+      caller: CALLER,
+    });
+    const { key, payload } = taskControlOperation(input);
+    const accepted = await f.engine.startOperation({
+      key,
+      kind: "task_control",
+      taskId: f.taskId,
+      expectedVersion: input.version,
+      payload,
+    });
+    assert.ok("accepted" in accepted);
+    const operation = await f.engine.awaitOperation(accepted.operation.id);
+    assert.equal(operation.state, "needs_attention");
+    assert.equal(operation.effect?.status, "uncertain");
+    assert.equal(f.events("owner_control").length, 0);
+    // Recreate the target's retained run record without altering the operation history.
+    f.store.putRun(old);
+    const offered = () =>
+      f
+        .next()
+        .verbs.some(
+          (v) =>
+            v.verb === "retry_effect" &&
+            JSON.stringify(v.args ?? {}).includes(`operation.${operation.id}`),
+        );
+    assert.equal(offered(), true);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const replacement = runSchema.parse({
+      ...old,
+      id: "replacement",
+      agentId: "replacement-agent",
+      createdAt: new Date().toISOString(),
+    });
+    f.store.putRun(replacement);
+    f.store.update(f.taskId, {
+      runId: replacement.id,
+      agentId: replacement.agentId,
+    });
+    assert.equal(
+      offered(),
+      true,
+      "a still-live original target keeps the conflict",
+    );
+    assert.equal(
+      supersedeIdleRunInTx(f.store, f.taskId, old, "Observed old worker idle"),
+      true,
+    );
+    assert.equal(offered(), false);
+    f.engine.reconcileBlockedEffects(f.taskId);
+    assert.equal(f.events("operation_superseded").length, 1);
+    f.engine.reconcileBlockedEffects(f.taskId);
+    assert.equal(f.events("operation_superseded").length, 1);
+    const repeated = await f.engine.startOperation({
+      key,
+      kind: "task_control",
+      taskId: f.taskId,
+      expectedVersion: input.version,
+      payload,
+    });
+    assert.ok("accepted" in repeated);
+    assert.equal(repeated.operation.state, "needs_attention");
+    assert.equal(sends, 1);
+  } finally {
+    await f.close();
+  }
+});
+
 
 for (const change of ['task version', 'run binding', 'competing run', 'delivery'] as const) {
   test(`worker restart rechecks ${change} after the observation await`, async () => {

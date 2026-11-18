@@ -19,7 +19,7 @@ import {
   type Run, type Task,
 } from '../shared/contracts';
 import { hookRecordSchema } from '../shared/hooks';
-import { ownerPendingEffects, collectOwnerVerbFacts, ownerTaskNext, ownerControlEventDetail } from '../core/verbs/owner-verbs';
+import { ownerPendingEffects, collectOwnerVerbFacts, ownerTaskNext } from '../core/verbs/owner-verbs';
 import { supersedeIdleRunInTx } from '../core/recovery/fence-settlement';
 import { RuntimeRetirementService, type EffigyAttempt } from '../core/runtime/runtime-retirement';
 import { HOOK_TEST_TIMEOUT_MS } from './support/budgets';
@@ -1788,8 +1788,6 @@ test('next drops a displaced restart after its old target is released', async ()
       state: 'needs_attention', taskId: f.taskId, expectedVersion: input.version, createdAt: accepted,
       startedAt: accepted, settledAt: accepted, attempts: 1, diagnostic: 'Transport', result: null,
       effect: { kind: 'task_control', target: 'restart', intentAt: accepted, status: 'uncertain', result: null, resultAt: null } }), payload);
-    f.store.event(f.taskId, 'owner_control', ownerControlEventDetail(f.task(), input, 'needs_attention', 'reviewing'));
-    f.store.db.prepare("UPDATE events SET at=? WHERE id=(SELECT MAX(id) FROM events WHERE taskId=?)").run(accepted, f.taskId);
     f.store.update(f.taskId, { reason: 'New binding' });
     reviewerRun(f, { id: 'new-review', agentId: 'new-review-agent' });
     const offered = () => f.next().verbs.some(view => view.verb === 'retry_effect' && JSON.stringify(view.args ?? {}).includes(`operation.${id}`));
