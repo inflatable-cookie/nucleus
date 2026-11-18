@@ -7225,6 +7225,7 @@ test("an overdue queued required check gets one recovery look, then waits and es
   Date.now = () => fakeNow;
   try {
     f.adapter.supportsCoordinatorRecovery = true;
+    f.adapter.runTemporaryDirectory = (runId) => `/synthetic/scratch/${runId}`;
     recordAcceptedReview(f, "merging");
     const key =
       "Stable process-spawning nextest\u0000https://github.com/example/repo/actions/runs/9/job/1";
@@ -7253,6 +7254,8 @@ test("an overdue queued required check gets one recovery look, then waits and es
     );
     const recovery = f.store.run(poll.recoveryRunId)!;
     assert.equal(recovery.role, "recovery");
+    assert.equal(recovery.temporaryDirectory, `/synthetic/scratch/${recovery.id}`);
+    assert.equal(f.creates.find(run => run.id === recovery.id)?.temporaryDirectory, recovery.temporaryDirectory);
     assert.match(f.current().reason, /queued, no runner yet/);
     assert.match(f.current().reason, /macos-latest/);
 

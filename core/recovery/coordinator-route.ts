@@ -335,7 +335,9 @@ export class CoordinatorRoute {
    const token=randomBytes(32).toString('hex');
    const target=recoveryTarget(t,t.resolution.currentRunId?this.store.run(t.resolution.currentRunId):null);
    if((target==='worker'||target==='reviewer')&&this.resolution.suppressAutomaticRetry(t,'recovery_rerun',cause(t,this.store.runs(t.id)),t.resolution.currentRunId))return null;
-   const run:Run={id:randomUUID(),taskId:t.id,role:'recovery',generation:t.coordinatorGeneration,head:t.prHead??t.planningBase,base:t.planningBase,workspaceId,agentId,profile,profileGroup:group,status:'intent',createdAt:now(),lastObservedAt:null,active:null,idleSince:null,completion:null,released:false};
+   const runId=randomUUID();
+   const temporaryDirectory=this.resolution.adapter.runTemporaryDirectory?.(runId,t);
+   const run:Run={id:runId,taskId:t.id,role:'recovery',generation:t.coordinatorGeneration,head:t.prHead??t.planningBase,base:t.planningBase,workspaceId,agentId,profile,profileGroup:group,status:'intent',createdAt:now(),lastObservedAt:null,active:null,idleSince:null,completion:null,released:false,...(temporaryDirectory ? {temporaryDirectory} : {})};
    let superseded=false,waitingForCapacity='',heldForDispatch=false,context:RecoveryDispatchSnapshot|null=null;
    this.store.transaction(()=>{
     // The awaits above leave room for an operator control (resume, revise, resolve) to clear or
