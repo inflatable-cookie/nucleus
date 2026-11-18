@@ -149,6 +149,12 @@ test("a busy observation hides a callback wait only while it is fresh", () => {
     const waits = slowPhaseWaits(f.store, start + 45_000);
     assert.equal(waits.length, 1);
     assert.equal(waits[0]?.cause, "Accepted result awaiting observation");
+    f.store.update(task.id, { phase: "merging", held: true, mergeHold: true });
+    assert.equal(
+      slowPhaseWaits(f.store, start + 45_000).length,
+      1,
+      "a merge hold does not hide an unrelated unreleased callback",
+    );
   } finally {
     f.close();
   }

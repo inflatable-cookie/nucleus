@@ -301,25 +301,24 @@ export function slowPhaseWaits(
     .maintenanceTasks()
     .flatMap((task) => {
       const pending = phaseLatency(store, task.id).pending;
-      const integrationWait =
-        ["verifying", "merging"].includes(task.phase) &&
-        (pending.some((wait) => wait.key.startsWith("release:")) ||
-          store
-            .runs(task.id)
-            .some(
-              (run) =>
-                run.role === "reviewer" &&
-                run.released &&
-                run.completion?.status === "ready_to_merge",
-            ));
+      const integrationWait = ["verifying", "merging"].includes(task.phase);
       const integrationHeld =
         integrationWait &&
         mergeFenced(task) &&
         !task.resolution.mergeIntent &&
         !task.resolution.mergedCommit;
+      const unreleasedCallback = (key: string) =>
+        key.startsWith("callback:") &&
+        store
+          .runs(task.id)
+          .some(
+            (run) =>
+              !run.released &&
+              run.completion?.eventId === key.slice("callback:".length),
+          );
       return pending
         .filter((wait) => {
-          if (integrationHeld) return false;
+          if (integrationHeld && !unreleasedCallback(wait.key)) return false;
           if (!wait.key.startsWith("callback:")) return true;
           const eventId = wait.key.slice("callback:".length);
           const run = store
@@ -337,19 +336,20 @@ export function slowPhaseWaits(
         .map((wait) => {
           // A released operator fence starts a new admission opportunity; do not
           // attribute the preceding external wait to Nucleus after it is lifted.
-          const released = integrationWait
-            ? store
-                .eventsAll(task.id)
-                .filter(
-                  (event) =>
-                    (["merge_release", "release"].includes(event.kind) ||
-                      (event.kind === "hold_auto_released" &&
-                        /^(merge|dispatch);/.test(event.detail))) &&
-                    Date.parse(event.at) > Date.parse(wait.since) &&
-                    Date.parse(event.at) <= at,
-                )
-                .at(-1)
-            : undefined;
+          const released =
+            integrationWait && !unreleasedCallback(wait.key)
+              ? store
+                  .eventsAll(task.id)
+                  .filter(
+                    (event) =>
+                      (["merge_release", "release"].includes(event.kind) ||
+                        (event.kind === "hold_auto_released" &&
+                          /^(merge|dispatch);/.test(event.detail))) &&
+                      Date.parse(event.at) > Date.parse(wait.since) &&
+                      Date.parse(event.at) <= at,
+                  )
+                  .at(-1)
+              : undefined;
           const since = released?.at ?? wait.since;
           return {
             taskId: task.id,

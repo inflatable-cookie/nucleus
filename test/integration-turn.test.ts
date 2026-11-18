@@ -650,6 +650,50 @@ test("health recognizes a sweep-released reviewer through an automatically lifte
   }
 });
 
+test("health excludes a held skip-review integration wait until release", async (t) => {
+  const f = fixture();
+  try {
+    const task = f.add();
+    f.store.update(task.id, { skipPRReview: true });
+    t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
+    await f.engine.performTaskControl({
+      taskId: task.id,
+      version: f.current(task.id).version,
+      action: "hold",
+      kind: "merge",
+      reason: "Operator review",
+    });
+    await f.engine.wakeTask(task.id);
+    await f.engine.quiesce();
+    assert.equal(f.current(task.id).phase, "merging");
+    assert.equal(
+      f.store.runs(task.id).filter((run) => run.role === "reviewer").length,
+      0,
+    );
+    assert.ok(phaseLatency(f.store, task.id).pending.length > 0);
+    t.mock.timers.tick(31_000);
+    assert.deepEqual(
+      slowPhaseWaits(f.store).filter((wait) => wait.taskId === task.id),
+      [],
+    );
+    await f.engine.performTaskControl({
+      taskId: task.id,
+      version: f.current(task.id).version,
+      action: "release",
+      kind: "merge",
+    });
+    assert.deepEqual(
+      slowPhaseWaits(f.store).filter((wait) => wait.taskId === task.id),
+      [],
+    );
+    await f.engine.wakeTask(task.id);
+    assert.ok(phaseLatency(f.store, task.id).samples.length > 0);
+  } finally {
+    t.mock.timers.reset();
+    await f.close();
+  }
+});
+
 test("a reviewed task merges while live agents fill every project slot", async () => {
   const f = fixture();
   try {
