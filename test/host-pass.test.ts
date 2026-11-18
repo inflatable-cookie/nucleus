@@ -14,6 +14,10 @@ import { catchUpFinishedTaskThreads } from "../core/workspaces/thread-archive";
 import { hostDependents } from "../core/host/host-dependents";
 import { queueOperationSchema } from "../shared/operations";
 import { recoveryEffects } from "../core/recovery/recovery-effects";
+import {
+  collectOwnerVerbFacts,
+  ownerTaskNext,
+} from "../core/verbs/owner-verbs";
 import { runSchema } from "../shared/contracts";
 
 /**
@@ -644,4 +648,126 @@ test("a stale worker completion does not settle an untracked current restart", a
       .filter((event) => event.kind === "operation_superseded").length,
     0,
   );
+});
+
+test("an unreadable finished thread names its wait on Hosts and task next", async (t) => {
+  let unavailable = true;
+  const adapter = fakeAdapter({
+    observe: async () => {
+      throw Error("synthetic host offline");
+    },
+    originAgent: async () => {
+      if (unavailable) throw Error("synthetic host offline");
+      return null;
+    },
+  });
+  const f = fixture(t, adapter);
+  f.store.setMeta("paused", false);
+  const task = f.store.insert(submission(), HOST, "handoff", "a".repeat(40));
+  f.store.update(task.id, {
+    phase: "done",
+    agentId: "worker",
+    workspaceId: "ws",
+    directory: "/synthetic/ws",
+    prHead: "b".repeat(40),
+    resolution: {
+      ...task.resolution,
+      mergedCommit: "b".repeat(40),
+      syncedCommit: "b".repeat(40),
+      archivedWorkspaceIds: ["ws"],
+    },
+  });
+  const inspect = () =>
+    ownerTaskNext(collectOwnerVerbFacts(f.store, f.store.task(task.id)));
+  await catchUpFinishedTaskThreads(f.store, adapter, task.id);
+  await catchUpFinishedTaskThreads(f.store, adapter, task.id);
+  const entry =
+    hostDependents(f.store, { id: HOST, kind: "paseo", primary: true })
+      .find((item) => item.kind === "effect")
+      ?.names.join(" ") ?? "";
+  assert.match(entry, /synthetic host offline/);
+  assert.match(entry, /waiting for the host observation/);
+  const retry = inspect().verbs.filter((view) => view.verb === "retry_effect");
+  assert.ok(
+    retry.some(
+      (view) =>
+        !view.available &&
+        /synthetic host offline/.test(view.refusal ?? "") &&
+        /host observation/.test(view.refusal ?? ""),
+    ),
+  );
+  assert.ok(
+    !retry.some(
+      (view) => view.available && view.args?.effect === "workspace_archive.ws",
+    ),
+  );
+  assert.equal(
+    f.store
+      .eventsAll(task.id)
+      .filter((event) => event.kind === "thread_archive_wait").length,
+    1,
+  );
+  unavailable = false;
+  await catchUpFinishedTaskThreads(f.store, adapter, task.id);
+  assert.equal(
+    hostDependents(f.store, { id: HOST, kind: "paseo", primary: true }).some(
+      (item) => item.kind === "effect",
+    ),
+    false,
+  );
+  assert.ok(
+    !inspect().verbs.some((view) =>
+      (view.refusal ?? "").includes("synthetic host offline"),
+    ),
+  );
+});
+
+test("an exhausted thread archive names the existing workspace retry only when eligible", async (t) => {
+  const adapter = fakeAdapter({
+    observe: async () => {
+      throw Error("synthetic host offline");
+    },
+    originAgent: async () => {
+      throw Error("synthetic host offline");
+    },
+  });
+  const f = fixture(t, adapter);
+  f.store.setMeta("paused", false);
+  const task = f.store.insert(submission(), HOST, "handoff", "a".repeat(40));
+  f.store.update(task.id, {
+    phase: "done",
+    agentId: "worker",
+    workspaceId: "ws",
+    directory: "/synthetic/ws",
+    prHead: "b".repeat(40),
+    resolution: {
+      ...task.resolution,
+      mergedCommit: "b".repeat(40),
+      syncedCommit: "b".repeat(40),
+    },
+  });
+  const key = f.store.threadArchiveKey("worker", HOST)!;
+  f.store.putThreadArchiveEffect(key, "worker", {
+    status: "ready",
+    at: new Date().toISOString(),
+    retries: 3,
+  });
+  await catchUpFinishedTaskThreads(f.store, adapter, task.id);
+  const entry =
+    hostDependents(f.store, { id: HOST, kind: "paseo", primary: true })
+      .find((item) => item.kind === "effect")
+      ?.names.join(" ") ?? "";
+  assert.match(entry, /retry_effect workspace_archive\.ws/);
+  assert.match(entry, /synthetic host offline/);
+  const views = ownerTaskNext(
+    collectOwnerVerbFacts(f.store, f.store.task(task.id)),
+  ).verbs;
+  const retry = views.find(
+    (view) =>
+      view.verb === "retry_effect" &&
+      view.available &&
+      view.args?.effect === "workspace_archive.ws",
+  );
+  assert.ok(retry);
+  assert.match(String(retry.args?.summary), /synthetic host offline/);
 });

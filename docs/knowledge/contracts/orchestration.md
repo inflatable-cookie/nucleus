@@ -3126,7 +3126,10 @@ after the task finishes.
 - Paseo keeps its existing archive behaviour for released support threads,
   reviewer replacement and terminal cleanup. Its finished-task catch-up also
   records a direct archived or absent observation, including legacy threads with
-  no prior intent. Terminal restart controls are superseded only when the shared recovery decision
+  no prior intent. Hosts and task next show the current recorded thread wait.
+  An exhausted archive with an eligible, unarchived workspace names the existing
+  workspace retry; otherwise the task waits for the host's next observation.
+  Terminal restart controls are superseded only when the shared recovery decision
   proves their participants released. Proven submissions settle as the same
   occurrence in recovery and Hosts. Bounded host passes keep unresolved cleanup
   controls visible.

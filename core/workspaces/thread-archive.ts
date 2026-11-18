@@ -6,6 +6,7 @@ import { Store, now } from "../store/store";
 import { reviewVerdictApplied } from "../review/review-publication";
 import { admissionOf } from "../host/admission";
 import { finishedThreadCleanupKey } from "../store/store-core";
+import { terminalArchiveWorkspaces } from "../closeout/terminal-archive";
 import {
   ownedByTask,
   threadBoundToAnotherLiveTask,
@@ -551,6 +552,53 @@ export function threadCleanupPending(
     const op = threadOperation(agentId, undefined, workerAgents, removal);
     const effect = store.getMeta<ArchiveEffect>(key);
     return !(effect?.status === "archived" && (effect.op ?? "archive") === op);
+  });
+}
+
+/** Current terminal thread waits, read from the same candidates and probe keys as cleanup. */
+export function terminalThreadCleanupWaits(
+  store: Store,
+  task: Task,
+  removal: boolean,
+): Array<{ agentId: string; reason: string; retryWorkspaceId: string | null }> {
+  if (!terminalThreadCleanup(task, removal) || !task.hostId) return [];
+  const runs = store.runs(task.id);
+  const workers = workerThreadIds(task, runs);
+  const agents = new Set(workers);
+  for (const run of runs)
+    if (run.hostId === task.hostId && run.agentId) agents.add(run.agentId);
+  const workspaces = terminalArchiveWorkspaces(task, runs).filter(
+    (workspace) =>
+      workspace.id &&
+      workspace.directory &&
+      workspace.head &&
+      !task.resolution.archivedWorkspaceIds.includes(workspace.id),
+  );
+  return [...agents].flatMap((agentId) => {
+    const key = store.threadArchiveKey(agentId, task.hostId);
+    if (!key) return [];
+    const effect = store.getMeta<ArchiveEffect>(key);
+    const op = threadOperation(agentId, undefined, workers, removal);
+    if (effect?.status === "archived" && (effect.op ?? "archive") === op)
+      return [];
+    const reason =
+      store.getMeta<string>(archiveProbeKey(store, task.id, agentId)) ||
+      "Waiting for the host to observe the thread";
+    const canRearm =
+      (effect?.retries ?? 0) >= 3 &&
+      (effect?.status === "ready" ||
+        (effect?.status === "uncertain" &&
+          effect.retryable === true &&
+          (effect.op ?? "archive") === "archive"));
+    const retry =
+      canRearm && !threadServesAnotherTask(store, task, agentId)
+        ? workspaces.find((workspace) =>
+            exhaustedThreadArchives(store, task, runs, workspace.id!).includes(
+              agentId,
+            ),
+          )
+        : undefined;
+    return [{ agentId, reason, retryWorkspaceId: retry?.id ?? null }];
   });
 }
 

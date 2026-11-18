@@ -1,7 +1,7 @@
-import type { DatabaseSync } from "node:sqlite";
+import type { Store } from "../store/store";
+import { terminalThreadCleanupWaits } from "../workspaces/thread-archive";
 import type { HostDependency } from "../../shared/rpc/hosts";
 import type { HostKind } from "../../shared/host-kind";
-import type { RepositorySettings, Task } from "../../shared/contracts";
 
 /**
  * What still uses one registered host (Settings → Hosts, nucleus#1325): the live
@@ -16,13 +16,6 @@ import type { RepositorySettings, Task } from "../../shared/contracts";
  * The primary Paseo host also answers for records written before host identities
  * were qualified (a task or run with no `hostId` belongs to it), so it counts them.
  */
-export interface HostDependentsSource {
-  readonly db: DatabaseSync;
-  numberFor(taskId: string): { reference: string } | null;
-  repositories(): RepositorySettings[];
-  finishedTasksOwingThreadCleanup(hostId: string, removal: boolean): Task[];
-}
-
 const LIVE_OPERATION_STATES = [
   "pending",
   "running",
@@ -30,7 +23,7 @@ const LIVE_OPERATION_STATES = [
 ] as const;
 
 export function hostDependents(
-  source: HostDependentsSource,
+  source: Store,
   host: { id: string; kind: HostKind; primary: boolean },
 ): HostDependency[] {
   const { db } = source;
@@ -102,8 +95,26 @@ export function hostDependents(
   for (const task of source.finishedTasksOwingThreadCleanup(
     host.id,
     host.kind === "t3code",
-  ))
-    effects.push(`thread cleanup for ${ref(task.id)}`);
+  )) {
+    const waits = terminalThreadCleanupWaits(
+      source,
+      task,
+      host.kind === "t3code",
+    );
+    const detail = waits
+      .map(
+        (wait) =>
+          `${wait.reason}; ${
+            wait.retryWorkspaceId
+              ? `owner can use retry_effect workspace_archive.${wait.retryWorkspaceId}`
+              : "waiting for the host observation on a later sweep"
+          }`,
+      )
+      .join("; ");
+    effects.push(
+      `thread cleanup for ${ref(task.id)}${detail ? `: ${detail}` : ""}`,
+    );
+  }
   if (effects.length)
     out.push({ kind: "effect", label: "unsettled effect", names: effects });
 
