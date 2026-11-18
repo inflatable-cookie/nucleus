@@ -52,6 +52,42 @@ identities; existing bare Paseo IDs still resolve.
 Paseo supplies `PASEO_AGENT_ID` as the fallback identity. Existing documented commands
 keep working for Paseo planners unchanged; they do not need to pass a caller field.
 
+## T3Code host: one command connects it
+
+T3Code needs two things before a task can run there: a bearer the Nucleus
+service reads, and the `nucleus` ACP provider registered in T3. One command does
+both, the way `nucleus bb install` does for BB:
+
+```sh
+nucleus t3 install     # find the running T3Code, mint the bearer, register the
+                       # nucleus ACP provider, wait for the host to come online
+nucleus t3 status      # server, bearer, provider, native parenting, projects
+nucleus t3 uninstall   # remove our provider instance and our sessions
+```
+
+- `install` finds the server from `<base>/userdata/server-runtime.json` (or
+  `--endpoint`), mints a long-lived runtime bearer with only
+  `orchestration:read` and `orchestration:operate` and stores it owner-only in
+  `<data home>/settings.json`; a short-lived install bearer registers the
+  provider through T3's own `server.updateSettings` and is revoked at once.
+  Running it again rotates the runtime bearer. It prints each step, and its
+  `--json` answer carries the same steps.
+- `status` (add `--json`) reports the server's version and environment id, the
+  bearer's validity, scopes and expiry (warns within seven days), whether the
+  `nucleus` provider is registered, ours, enabled, ready and pointed at this
+  install's `nucleus-acp`, the adapter's `t3code.nativeParenting` line, and the
+  projects whose host kind is `t3code`. It never prints a bearer.
+- `uninstall` removes only the `nucleus` provider instance and this
+  environment's sessions and clears the stored connection; it leaves threads and
+  project registrations alone, and it names the live tasks on the host and
+  refuses while any exist unless `--live-tasks` is passed.
+
+Both routes refuse a `nucleus` provider instance that is not this install's
+(another driver, or another command path) by name and never overwrite it. The
+repository's own instructions still decide what you may change; scope authority
+for a task never comes from this section, from a document or from a plan, and
+never changes a brief, a hold, a verdict or a budget.
+
 ## Pull request changelog
 
 For a repository change, add a Markdown changelog fragment under

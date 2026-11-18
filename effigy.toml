@@ -29,6 +29,9 @@ setup = "npm ci"
 "proof:t3code:heartbeat" = "node scripts/acceptance/t3code-heartbeat.mjs {args}"
 "proof:t3code:read-sizes" = "node scripts/acceptance/t3code-read-sizes.mjs {args}"
 "proof:t3code" = "node --import tsx scripts/acceptance/t3code-private.ts {args}"
+# nucleus#1330's operator install route against a private T3Code server: install,
+# status, a thread launched on the registered provider, uninstall, status.
+"proof:t3:install" = "node --import tsx scripts/proof-t3-install.ts {args}"
 # The BB host phase-0 spike: an isolated BB server, the reverse host-operation channel
 # and the five-step lifecycle. Opt-in and private; refuses the live BB data directory.
 "proof:bb" = "node --import tsx scripts/acceptance/bb-private.ts {args}"
