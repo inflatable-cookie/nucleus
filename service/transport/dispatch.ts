@@ -8,7 +8,7 @@
  * This module must stay free of transport imports.
  */
 import { RPC_CATALOGUE } from "../../shared/rpc-catalogue";
-import { capacityWriteRefusalMessage, capacityWriteSurface } from "../../shared/capacity-authority";
+import { SETTINGS_ONLY_METHODS, capacityWriteSurface } from "../../shared/capacity-authority";
 import { WEB_SURFACE, webSurfaceRefusal } from "../../shared/web-surface";
 
 const catalogue = new Map(RPC_CATALOGUE.map(entry => [entry.name, entry]));
@@ -55,8 +55,10 @@ export async function callCatalogueMethod(owner: unknown, method: string, input:
   // handler, with the same typed answer and zero mutation. The strict input schema
   // has already run, so a body claiming an identity is refused as input first; the
   // provenance, not the body, is what this reads.
-  if (entry.name === "queue.capacity" && !capacityWriteSurface(context.via))
-    throw new CapacityWriteRefusalError(entry.name, capacityWriteRefusalMessage());
+  // `host.remove` (Settings → Hosts, nucleus#1325) follows the same rule.
+  const settingsOnly = SETTINGS_ONLY_METHODS[entry.name];
+  if (settingsOnly && !capacityWriteSurface(context.via))
+    throw new CapacityWriteRefusalError(entry.name, settingsOnly());
   if (context.via === WEB_SURFACE) {
     const refusal = webSurfaceRefusal(entry.name);
     if (refusal) throw new SurfaceRefusalError(entry.name, refusal);

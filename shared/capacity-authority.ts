@@ -52,3 +52,18 @@ export function capacityWriteRefusalMessage(): string {
   return "queue.capacity is refused: only the operator changes Nucleus's dispatch limits, in Settings. "
     + "Nothing changed; do not retry. Every applied Settings change is recorded with its time, surface and before and after values (`queue.capacity-state`).";
 }
+
+/**
+ * Settings → Hosts (nucleus#1325): `host.remove` follows the same Settings-only
+ * rule and the same transport surfaces. An agent cannot forget a host.
+ */
+export function hostRemoveRefusalMessage(): string {
+  return "host.remove is refused: only the operator removes a registered host, in Settings → Hosts. "
+    + "Nothing changed; do not retry. Clear what still uses the host with the ordinary owner verbs, then ask the operator.";
+}
+
+/** The Settings-only methods and the refusal each answers off the Settings surface. */
+export const SETTINGS_ONLY_METHODS: Readonly<Record<string, () => string>> = {
+  "queue.capacity": capacityWriteRefusalMessage,
+  "host.remove": hostRemoveRefusalMessage,
+};

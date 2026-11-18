@@ -34,6 +34,7 @@ export function webSurfaceRefusal(method: string): string | null {
  */
 export const SETTINGS_WRITE_METHODS: ReadonlySet<string> = new Set([
   "queue.capacity",
+  "host.remove",
   "queue.pool",
   "queue.profile",
   "queue.availability",

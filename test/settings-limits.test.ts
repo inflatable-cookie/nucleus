@@ -37,7 +37,7 @@ async function mountLimits(overrides: Record<string, unknown> = {}) {
   const calls = { retry: 0 };
   const props = {
     c, state: state(), busy: false, authority: authority(), authorityError: null,
-    retryAuthority: () => { calls.retry++; }, refreshBoard: noop, saveUsage: noop, saveDemandOffsets: noop, saveCapacity: noop, saveDefaultHost: noop, saveProjectLimit: noop,
+    retryAuthority: () => { calls.retry++; }, refreshBoard: noop, saveUsage: noop, saveDemandOffsets: noop, saveCapacity: noop, saveProjectLimit: noop,
     ...overrides,
   };
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -65,25 +65,15 @@ test('limits show applied values beside controls, and the recorded changes stay 
   } finally { done(); }
 });
 
-test('the default host control saves through the dispatch limits Settings callback', async () => {
-  let saved: CapacityAuthorityValues["operatorDefaultHostKind"] | undefined;
-  const { ui, done } = await mountLimits({ saveDefaultHost: async (host: CapacityAuthorityValues["operatorDefaultHostKind"]) => { saved = host; } });
-  try {
-    ui.press('Default host, Paseo');
-    ui.press('Default host: BB');
-    await settle(() => saved === 'bb');
-    assert.equal(saved, 'bb');
-  } finally { done(); }
-});
-
 test('a full record adds nothing to the screen: Frontier grants is the last section', async () => {
   const twenty = Array.from({ length: 20 }, (_, index) => change(index + 1, { holdReminderMinutes: [120, 120 + index] }, `2026-11-01T0${index % 9}:00:00.000Z`));
   const { ui, done } = await mountLimits({ authority: authority({ changes: twenty }) });
   try {
     assert.equal(ui.get('Global dispatch limit (slots, 1–64)').props.value, '32');
     assert.doesNotMatch(ui.text(), /Recorded changes|of 20 kept/);
+    // nucleus#1325: the default host picker lives in Settings → Hosts now.
     const titles = ui.ofType('Text').map(node => node.children.join('')).filter(text => ['Usage level', 'Default host', 'Task slots', 'Project overrides', 'Role demand', 'Frontier grants'].includes(text));
-    assert.deepEqual(titles, ['Usage level', 'Default host', 'Default host', 'Task slots', 'Project overrides', 'Role demand', 'Frontier grants']);
+    assert.deepEqual(titles, ['Usage level', 'Task slots', 'Project overrides', 'Role demand', 'Frontier grants']);
   } finally { done(); }
 });
 

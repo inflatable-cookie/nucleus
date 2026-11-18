@@ -85,3 +85,4 @@ export * from "./rpc/plans";
 export * from "./schema/service";
 export * from "./rpc/service";
 export * from "./rpc/acp";
+export * from "./rpc/hosts";

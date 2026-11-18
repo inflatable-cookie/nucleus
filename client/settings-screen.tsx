@@ -17,12 +17,13 @@ import { useSettingsSection } from "./settings-hint";
 import { SettingsTelemetry } from "./settings-telemetry";
 import { BackupsPanel } from "./backups-panel";
 import { DispatchLimits } from "./limits";
+import { HostsPanel } from "./hosts-settings";
 import { ProjectsSection } from "./projects-settings";
 /** A board from a service that predates Spec 052 carries no dispatch routing policy. */
 
 /**
  * Queue's native Paseo settings screen (Spec 026 / nucleus#934): Dispatch limits,
- * Profiles (with Subscriptions beneath them, nucleus#963), Projects, Backups and
+ * Hosts (nucleus#1325), Profiles (with Subscriptions beneath them, nucleus#963), Projects, Backups and
  * Telemetry live here, one row of tabs at every width.
  * The header's Settings icon opens this screen through `openSettings`; the board
  * chooser's settings icon opens it at Projects through the section hint.
@@ -59,7 +60,10 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
   // applied changes. It is a separate read because the board projection keeps its
   // shape (service-boundary contract).
   const fetchCapacityState = useRpc(api.capacityState);
-  const capacityStateQuery = useQuery({ queryKey: ["nucleus", "capacity-state"], queryFn: () => fetchCapacityState({}), enabled: settingsTab === "capacity" });
+  const capacityStateQuery = useQuery({ queryKey: ["nucleus", "capacity-state"], queryFn: () => fetchCapacityState({}), enabled: settingsTab === "capacity" || settingsTab === "hosts" });
+  // Settings → Hosts (nucleus#1325): the catalogue with status and dependents, refreshed while open.
+  const fetchHosts = useRpc(api.hostList), removeHost = useRpc(api.hostRemove);
+  const hostsQuery = useQuery({ queryKey: ["nucleus", "hosts"], queryFn: () => fetchHosts({}), enabled: settingsTab === "hosts", refetchInterval: 15_000 });
   const listedNewest = backupsQuery.data?.snapshots.filter(entry => entry.verified).sort((a,b) => b.at.localeCompare(a.at))[0];
   const newestBackupAt = state?.backup?.newestSnapshotAt ?? listedNewest?.at ?? null;
   const backupAgeMs = newestBackupAt ? Date.now() - Date.parse(newestBackupAt) : Infinity;
@@ -88,7 +92,7 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
   return <PopoverHost style={{ width: "100%" }}><View accessibilityLabel="Nucleus settings" onLayout={event => setWidth(event.nativeEvent.layout.width)} style={{ flex: 1, width: "100%", minWidth: 0, minHeight: 0, backgroundColor: c.surface0, paddingTop: inset, gap: space.md }}>
     {(error || stateQuery.error || state?.error) && <View style={{ ...row, flexWrap: "nowrap" }}><Text accessibilityRole="alert" style={{ color: c.statusDanger, flex: 1 }}>{error || String(stateQuery.error || state?.error)}</Text>
       {error && <ActionButton c={c} action="close" label="Dismiss error" onPress={() => setError("")} />}</View>}
-    {/* Five short tabs fit one line at Paseo's 640–700 point settings column (nucleus#963). */}
+    {/* Six short tabs fit one line at Paseo's 640–700 point settings column (nucleus#963). */}
     <TabRow c={c} label="Settings sections" nowrap tabs={settingsViews.map(view => ({ id: view.id, text: view.short, label: view.label }))} value={settingsTab} onChange={setSettingsTab} />
     <View style={{flex:1, minWidth:0, minHeight:0, gap:space.sm}}>
     {settingsTab !== "backups" && (backupStale || backupError) &&
@@ -105,8 +109,13 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
         retryAuthority={() => void capacityStateQuery.refetch()} refreshBoard={() => stateQuery.refetch()}
         saveUsage={(level, until) => persist(() => setUsage({ level, until }))} saveDemandOffsets={value => persist(() => setDemandOffsets(value))}
         saveCapacity={value => persist(async () => { await setCapacity(value); await queryClient.refetchQueries({ queryKey: ["nucleus", "capacity-state"], exact: true }); })}
-        saveDefaultHost={host => persist(async () => { await setCapacity({ ...capacityStateQuery.data!.effective, operatorDefaultHostKind: host }); await queryClient.refetchQueries({ queryKey: ["nucleus", "capacity-state"], exact: true }); })}
         saveProjectLimit={value => persist(() => setProjectLimit(value))} />
+    </ScrollView>}
+    {settingsTab === "hosts" && <ScrollView style={{ flex: 1, minHeight: 0 }} contentContainerStyle={{ paddingBottom: inset, width: "100%", maxWidth: 780 }}>
+      <HostsPanel c={c} list={hostsQuery.data} loading={hostsQuery.isPending} loadError={hostsQuery.error} retry={() => void hostsQuery.refetch()}
+        defaultValues={capacityStateQuery.data?.effective ?? null}
+        saveDefaultHost={host => persist(async () => { await setCapacity({ ...capacityStateQuery.data!.effective, operatorDefaultHostKind: host }); await queryClient.refetchQueries({ queryKey: ["nucleus", "capacity-state"], exact: true }); await hostsQuery.refetch(); })}
+        remove={async hostId => { try { await removeHost({ hostId }); } finally { await hostsQuery.refetch(); } }} />
     </ScrollView>}
     {settingsTab === "projects" && <ProjectsSection c={c} compact={compact} inset={inset} query={projectsQuery}
       createProject={async input => {
