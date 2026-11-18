@@ -28,12 +28,14 @@ import { serviceStateSchema } from "../../../shared/schema/service";
 const CATALOGUE_METHOD = /^[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)+$/;
 
 /**
- * Methods the board never forwards: the service's own control frames (`service.*`)
- * and the reverse channel (`host.*`) are not catalogue calls, and a worker's
- * self-registration names its thread from its own shell, as on the web board.
+ * Host methods are a reverse control channel, so only the calls the board itself
+ * uses may cross it: the QA run/accounting read and its capacity-release action.
+ * The service's control frames (`service.*`) and a worker's self-registration
+ * remain unavailable to the board.
  */
-const REFUSED_PREFIXES = ["service.", "host."] as const;
+const REFUSED_PREFIXES = ["service."] as const;
 const REFUSED_METHODS = new Set(["task.register"]);
+const BOARD_HOST_METHODS = new Set(["host.run.board", "host.run.capacity.release"]);
 
 /** Historical board clients can send this alias; the service catalogue uses a dotted wire name. */
 const METHOD_ALIASES: Readonly<Record<string, string>> = { plans: "queue.plans" };
@@ -55,7 +57,8 @@ export const boardContract = defineRpcContract({
 export function boardCallRefusal(method: string): string | null {
   const canonical = METHOD_ALIASES[method] ?? method;
   if (!CATALOGUE_METHOD.test(canonical)) return `${method} is not a catalogue method`;
-  if (REFUSED_PREFIXES.some(prefix => canonical.startsWith(prefix)) || REFUSED_METHODS.has(canonical))
+  if (REFUSED_PREFIXES.some(prefix => canonical.startsWith(prefix)) || REFUSED_METHODS.has(canonical)
+    || (canonical.startsWith("host.") && !BOARD_HOST_METHODS.has(canonical)))
     return `${method} is not served to the BB board. Nothing changed; do not retry from BB.`;
   return null;
 }

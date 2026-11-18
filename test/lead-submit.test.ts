@@ -9,6 +9,8 @@ import { git } from '../core/git/index';
 import { leadSubmit } from '../shared/contracts';
 import { briefDigest } from '../core/planning/brief';
 import type { Adapter } from '../core/host';
+import { hostIdFromDataDir } from '../shared/host-operation';
+import { formatAgentId } from '../shared/agent-identity';
 
 const title = 'Submit the fixture';
 const body = `---\ntitle: ${title}\nqueue:\n  complexity: medium\n---\n\n## Outcome\nBuild the fixture.\n`;
@@ -51,6 +53,58 @@ test('one submission checks, records exact approval and returns the promoted tas
   // Completed and removed tasks still fence same-title submissions through permanent numbering.
   runtime.store.update(task.id, { phase: 'done', removedAt: new Date().toISOString(), reason: 'Fixture complete' });
   assert.deepEqual(await runtime.submitLead(input), result);
+});
+
+test('BB lead submission and promotion use verified ingress identity while tasks keep the work host', async t => {
+  const { runtime, input, repo } = await fixture(t);
+  const bbDataDir = join(repo, '..', 'bb-data');
+  const bbHostId = hostIdFromDataDir(bbDataDir);
+  const caller = formatAgentId(bbHostId, 'thr_submitter');
+  const connectedAt = new Date().toISOString();
+  assert.deepEqual(runtime.bbHostVerified({ hostId: bbHostId, dataDir: bbDataDir, bbVersion: '0.49.0', sdkVersion: '0.6.132', hostIds: ['host_synthetic'], connectedAt }), { ok: true });
+  runtime.store.setMeta('operatorDefaultHostKind', null);
+
+  const ingressSelections: Array<{ plannerHostId?: string; result: ReturnType<typeof runtime.engine.selectIngressSelection> }> = [];
+  const selectIngressSelection = runtime.engine.selectIngressSelection.bind(runtime.engine);
+  runtime.engine.selectIngressSelection = (explicit, repoPath, origin, plannerHostId) => {
+    const result = selectIngressSelection(explicit, repoPath, origin, plannerHostId);
+    ingressSelections.push({ plannerHostId, result });
+    return result;
+  };
+
+  const submitted = leadSubmit.output.parse(await runtime.submitLead({ ...input, agent: caller, identitySource: { agent: caller, hostId: bbHostId } }));
+  assert.ok('taskId' in submitted);
+  const submittedTask = runtime.store.task(submitted.taskId);
+  assert.equal(submittedTask.originAgentId, caller);
+  assert.equal(submittedTask.originIdentity?.hostId, bbHostId);
+  assert.equal(submittedTask.hostId, 'fixture-host', 'the BB caller does not become a task work host');
+  assert.deepEqual(submittedTask.hostSelection, { hostId: 'fixture-host', basis: 'sole_online_host' });
+  assert.ok(ingressSelections.some(selection => selection.plannerHostId === bbHostId
+    && selection.result?.hostId === bbHostId && selection.result.basis === 'planner_host'), 'lead.submit selected the verified BB caller for ingress');
+
+  const draftBody = body.replace(title, 'Direct BB promotion');
+  const lead = await runtime.addLead({ repositories: [{ origin: repo, path: repo }], title: 'Direct BB promotion', body: draftBody, lanes: [], author: caller });
+  assert.equal(lead.check?.ok, true, lead.check?.message);
+  const promoted = await runtime.promoteLeadToTask({ id: lead.id, repository: repo, agent: caller, note: input.note,
+    board: false, identitySource: { agent: caller, hostId: bbHostId } });
+  assert.ok('taskId' in promoted);
+  const promotedTask = runtime.store.task(promoted.taskId);
+  assert.equal(promotedTask.originIdentity?.hostId, bbHostId);
+  assert.equal(promotedTask.hostId, 'fixture-host');
+  assert.deepEqual(promotedTask.hostSelection, { hostId: 'fixture-host', basis: 'sole_online_host' });
+  assert.ok(ingressSelections.filter(selection => selection.plannerHostId === bbHostId)
+    .some(selection => selection.result?.hostId === bbHostId && selection.result.basis === 'planner_host'), 'promotion preserved the nested request identity source for ingress selection');
+
+  runtime.bbHostReleased({ hostId: bbHostId, connectedAt, reason: 'synthetic disconnect' });
+  const offlineLead = await runtime.addLead({ repositories: [{ origin: repo, path: repo }], title: 'Offline BB promotion',
+    body: body.replace(title, 'Offline BB promotion'), lanes: [], author: caller });
+  assert.equal(offlineLead.check?.ok, true, offlineLead.check?.message);
+  await assert.rejects(runtime.promoteLeadToTask({ id: offlineLead.id, repository: repo, agent: caller, note: input.note,
+    board: false, identitySource: { agent: caller, hostId: bbHostId } }), error => {
+    assert.match(String(error), new RegExp(bbHostId));
+    assert.match(String(error), /invalid_input|offline or unavailable for ingress/u);
+    return true;
+  });
 });
 
 test('failed brief checks return their findings and never approve or promote', async t => {

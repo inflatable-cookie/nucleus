@@ -118,6 +118,7 @@ function service(script: { tasks?: () => TaskSummary[]; decisions?: () => Decisi
       calls.push({ method, input, via });
       switch (method) {
         case 'queue.ui-snapshot': return board(script.tasks?.() ?? summaries(), revision++);
+        case 'host.run.board': return { runs: [], accounting: { readAt: AT, entries: [], complete: true } };
         case 'bb.sidebar-groups': return sidebar;
         case 'decision.list': return script.decisions?.() ?? [];
         case 'decision.agent-projects': return (input as { agents: Array<{ agentId: string }> }).agents.map(agent => ({ agentId: agent.agentId, project: agent.agentId === 'thr_planner' ? { key: 'synthetic', name: 'Synthetic' } : null }));
@@ -196,6 +197,7 @@ test('the board renders in its rail panel and every call reaches the service as 
   assert.ok(tree.text().includes('Elsewhere project task'));
   assert.ok(calls.some(call => call.method === 'queue.ui-snapshot'), 'the board read reached the service');
   assert.ok(calls.some(call => call.method === 'queue.plans'), 'the Planning view plan read reached the service through the dotted catalogue method');
+  assert.ok(calls.some(call => call.method === 'host.run.board' && call.via === 'bb'), 'the board host-run QA read returns through the BB bridge');
   assert.ok(calls.every(call => ALL_METHOD_NAMES.includes(call.method)), `every board method is in the service or bridge catalogue: ${calls.map(call => call.method).filter(method => !ALL_METHOD_NAMES.includes(method)).join(', ')}`);
   assert.ok(calls.length > 0 && calls.every(call => call.via === 'bb'), 'every forwarded call carries the BB surface');
 });

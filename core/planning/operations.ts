@@ -109,9 +109,11 @@ export class Operations {
     const repositoryOriginForSelection = promotion?.repository
       ?? (repoPath ? await repositoryOrigin(repoPath).catch(() => null) : null);
     const taskId = input.taskId ?? control?.taskId ?? removal?.taskId;
+    const promotionIdentityHostId = (input.payload as { request?: { identitySource?: { hostId?: string } } } | null)?.request?.identitySource?.hostId;
     const plannerHostId = (submission as { originIdentity?: { hostId?: string } } | undefined)?.originIdentity?.hostId
-      ?? (input.payload as { identitySource?: { hostId?: string } } | null)?.identitySource?.hostId;
-    const selected = previous ? undefined : taskId ? undefined
+      ?? (input.payload as { identitySource?: { hostId?: string } } | null)?.identitySource?.hostId
+      ?? promotionIdentityHostId;
+    const ingressSelection = previous ? undefined : taskId ? undefined
       : this.engine.selectIngressSelection(input.hostId, repoPath, repositoryOriginForSelection, plannerHostId)
         ?? (() => {
           // Older host ports and focused operation fixtures provide only an ID.
@@ -119,6 +121,44 @@ export class Operations {
           const hostId = this.engine.selectIngressHost(input.hostId, repoPath, repositoryOriginForSelection, plannerHostId);
           return hostId ? { hostId, basis: input.hostId ? 'explicit' as const : repoPath || repositoryOriginForSelection ? 'repository_host' as const : 'sole_online_host' as const } : undefined;
         })();
+    const submissionKind = ["submit", "review_entry", "source_promote"].includes(input.kind);
+    const bbIngressHostId = plannerHostId && hostKindOf(plannerHostId) === "bb" ? plannerHostId
+      : input.hostId && hostKindOf(input.hostId) === "bb" ? input.hostId : undefined;
+    if (!previous && submissionKind && bbIngressHostId && !this.engine.hostIngressAvailable(bbIngressHostId))
+      throw new ProtocolError("invalid_input", `Selected submission host ${bbIngressHostId} is offline or unavailable for ingress`);
+
+    // BB proves the authenticated caller's ingress identity, but it cannot run
+    // task work. Persist the repository/default work host on the operation and
+    // promoted task. If no route is configured, a sole online non-BB host is the
+    // existing unambiguous fallback; multiple hosts still require a setting.
+    let selected = ingressSelection;
+    if (!previous && submissionKind && bbIngressHostId) {
+      const explicitWorkHost = input.hostId && hostKindOf(input.hostId) !== "bb" ? input.hostId : undefined;
+      let workSelection: typeof ingressSelection = undefined;
+      try {
+        workSelection = this.engine.selectIngressSelection(explicitWorkHost, repoPath, repositoryOriginForSelection);
+      } catch (error) {
+        // With no repository/default route the ingress selector intentionally
+        // falls back to the caller. A BB caller cannot be the work host, so use
+        // the one unambiguous online non-BB host if that is all the service has.
+        const bbWasOnlyRoute = ingressSelection?.hostId === bbIngressHostId
+          && (ingressSelection.basis === "planner_host" || ingressSelection.basis === "explicit");
+        if (!bbWasOnlyRoute) throw error;
+        const workHosts = this.engine.hostIds().filter(id => hostKindOf(id) !== "bb" && this.engine.hostIngressAvailable(id));
+        if (workHosts.length === 1) workSelection = { hostId: workHosts[0]!, basis: "sole_online_host" };
+        else if (workHosts.length > 1) throw new ProtocolError("invalid_input", "No repository host or operator default selects a unique task work host");
+      }
+      if (workSelection && hostKindOf(workSelection.hostId) === "bb")
+        throw new ProtocolError("invalid_input", `Selected submission host ${workSelection.hostId} accepts ingress only and cannot run task work`);
+      if (!workSelection) {
+        const workHosts = this.engine.hostIds().filter(id => hostKindOf(id) !== "bb" && this.engine.hostIngressAvailable(id));
+        if (workHosts.length === 1) workSelection = { hostId: workHosts[0]!, basis: "sole_online_host" };
+        else if (workHosts.length > 1) throw new ProtocolError("invalid_input", "No repository host or operator default selects a unique task work host");
+      }
+      if (!workSelection)
+        throw new ProtocolError("invalid_input", `BB ingress ${bbIngressHostId} is online, but no repository or operator-default work host is registered`);
+      selected = workSelection;
+    }
     const hostId = previous ? previous.hostId : taskId
       ? this.store.task(taskId).hostId || undefined : selected?.hostId;
     const hostSelection = previous ? previous.hostSelection : taskId ? this.store.task(taskId).hostSelection : selected;
