@@ -4,10 +4,13 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { HOST_SLOW_RETRY, resolveHostCallerIdentity } from "../core/dispatch/caller-resolution";
+import { hostCallerIdentity } from "../bin/queue-client.mjs";
+import {
+  HOST_CALLER_OBSERVE_MS, HOST_CALLER_RESOLVE_TIMEOUT_MS, HOST_SLOW_RETRY, resolveHostCallerIdentity,
+} from "../core/dispatch/caller-resolution";
 import { runTicketPath } from "../core/dispatch/agent-creation";
 import { taskPlannerTicketKey } from "../core/dispatch/participant-tickets";
 import { Engine } from "../core/engine";
@@ -18,8 +21,10 @@ import { Store } from "../core/store/store";
 import { projectEndpointId } from "../core/questions/agent-messages";
 import { wireEngineHosts } from "../service/host-connections";
 import { formatAgentId } from "../shared/agent-identity";
-import { projectQaRunSchema, submissionSchema, type Run } from "../shared/contracts";
+import { callerSource } from "../shared/caller.mjs";
+import { projectQaRunSchema, runSchema, submissionSchema } from "../shared/contracts";
 import type { Adapter } from "../core/host";
+import { callerCliFixture } from "./support/caller-cli-fixture";
 import { projectAgentsFixture } from "./support/project-agents-fixture";
 
 const ticketOf = (path: string) => JSON.parse(readFileSync(path, "utf8")) as { participantId: string; token: string };
@@ -39,31 +44,77 @@ function qaRun(store: Store, extra: Record<string, unknown> = {}) {
 
 test("a retained thread with a stale environment resolves its current run (d8158bc3)", async () => {
   const dir = mkdtempSync(join(tmpdir(), "retained-stale-env-"));
+  const store = new Store(":memory:");
   const helperPath = join(dir, "helper.mjs");
   const runId = "run-retained";
+  const hostId = "paseo-primary";
+  const caller = formatAgentId(hostId, "retained-thread");
+  const gone = join(dir, "gone.json");
   mkdirSync(join(dir, "tickets"), { recursive: true });
-  const ticketPath = runTicketPath({ helperPath }, runId);
-  writeFileSync(ticketPath, JSON.stringify({ socketPath: join(dir, "c"), taskId: "task", runId, token: "t" }));
-  const caller = formatAgentId("paseo-primary", "retained-thread");
-  const identity = await resolveHostCallerIdentity({
-    onlineIds: () => ["paseo-primary"],
-    observe: async () => ({ id: "retained-thread", status: "idle" }),
-    unreleasedRuns: () => [{ id: runId, agentId: caller, hostId: "paseo-primary", released: false } as Run],
-    helperPath,
-  }, { hostKind: "paseo", nativeAgentId: "retained-thread" });
-  assert.equal(identity.caller, caller);
-  assert.equal(identity.runTicket, ticketPath);
-  assert.equal(identity.source, "host");
+  try {
+    const task = store.insert(submissionSchema.parse({
+      submissionId: "retained-stale", title: "Retained", repoPath: dir,
+      planningCommit: "a".repeat(40), handoffPath: "handoff.md", originAgentId: caller,
+    }), hostId, "handoff", "a".repeat(40));
+    store.putRun(runSchema.parse({
+      id: runId, taskId: task.id, role: "revision", status: "running", generation: 1,
+      head: "a".repeat(40), base: "a".repeat(40), agentId: caller, workspaceId: "workspace",
+      profile: null, lastObservedAt: null, active: true, idleSince: null, completion: null,
+      released: false, createdAt: new Date().toISOString(),
+    }));
+    const ticketPath = runTicketPath({ helperPath }, runId);
+    writeFileSync(ticketPath, JSON.stringify({ socketPath: join(dir, "c"), taskId: task.id, runId, token: "t" }));
+
+    assert.deepEqual(callerSource({ PASEO_AGENT_ID: "retained-thread" }, hostCallerIdentity),
+      { source: "host", hostKind: "paseo", nativeAgentId: "retained-thread" });
+    assert.deepEqual(callerSource({ NUCLEUS_TICKET: gone, PASEO_AGENT_ID: "retained-thread" }, hostCallerIdentity),
+      { source: "host", hostKind: "paseo", nativeAgentId: "retained-thread" });
+
+    const identity = await resolveHostCallerIdentity({
+      onlineIds: () => [hostId],
+      observe: async () => ({ id: "retained-thread", status: "idle" }),
+      unreleasedRuns: (agent, host) => store.unreleasedRunsForAgent(agent, host),
+      helperPath,
+    }, { hostKind: "paseo", nativeAgentId: "retained-thread" });
+    assert.equal(identity.caller, caller);
+    assert.equal(identity.runTicket, ticketPath);
+    assert.equal(identity.source, "host");
+
+    const f = await callerCliFixture();
+    try {
+      f.setHostRunTicket();
+      const unset = await f.invoke("host", "agent-verbs.mjs", ["tell", "-"],
+        { to: { project: "Swallowtail" }, text: "Stale unset ticket." });
+      assert.equal(unset.code, 0, unset.stderr);
+      const missing = await f.invoke("host", "agent-verbs.mjs", ["tell", "-"],
+        { to: { project: "Swallowtail" }, text: "Stale missing-path ticket." },
+        { NUCLEUS_TICKET: join(f.dir, "gone.json") });
+      assert.equal(missing.code, 0, missing.stderr);
+      assert.deepEqual(f.callbacks.map(call => call.path), ["/message", "/message"]);
+      assert.equal(f.calls.some(call => call.method === "agent.tell"), false);
+      for (const callback of f.callbacks) {
+        assert.equal(callback.input.taskId, "task");
+        assert.equal(callback.input.runId, "run");
+      }
+    } finally { await f.close(); }
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
-test("a slow host observe answers The host is slow; retry instead of hanging (d38b1d28)", async () => {
+test("a slow host observe answers The host is slow; retry instead of hanging (d38b1d28)", { timeout: 20_000 }, async () => {
+  const started = Date.now();
   await assert.rejects(
     () => resolveHostCallerIdentity({
       onlineIds: () => ["paseo-primary"],
-      observe: async () => { throw new Error("Agent observation timed out"); },
+      observe: () => new Promise(() => {}),
     }, { hostKind: "paseo", nativeAgentId: "plain-thread" }),
     error => error instanceof Error && error.message === HOST_SLOW_RETRY,
   );
+  const elapsed = Date.now() - started;
+  assert.ok(elapsed >= HOST_CALLER_OBSERVE_MS * 0.9, `observe bound not exercised: ${elapsed}ms`);
+  assert.ok(elapsed < HOST_CALLER_RESOLVE_TIMEOUT_MS, `hung past resolve bound: ${elapsed}ms`);
 });
 
 test("a task-planner ticket tells another project's planner (6109e3d3)", async () => {
