@@ -53,6 +53,12 @@ the change belongs upstream (Spec 062, decision 5f's exit path).
    does not know about), no Edit (it renames an environment the header no longer shows) and no
    Archive (it would archive live role threads behind Nucleus's back). Every ordinary worktree group
    keeps upstream's actions untouched.
+   nucleus#1336: a collapsed container draws its roll-up (upstream's `experimental_resolveThreadStatus`
+   over the hidden threads, drawn with `experimental_ThreadStatusGlyph`) in the leading icon slot in
+   place of the folder, labelled with the status for assistive technology, and renders no trailing
+   slot at all; its chevron reveals on hover or focus whether collapsed or expanded. Upstream draws
+   that roll-up absolutely positioned in the trailing slot, where it overlapped the chevron. An
+   expanded container, and an idle one, keep the folder. Ordinary groups keep upstream's markup.
 2. **`0002-expanded-task-groups-preference.patch` — `shared/preferences.ts`,
    `app/preferences/atoms.ts`.** One preference key, `expandedTaskGroups`
    (environment ids). Reason: a task group is collapsed by default and its expand

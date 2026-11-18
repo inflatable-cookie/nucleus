@@ -799,6 +799,9 @@ function EnvironmentThreadGroupHeader({
     null,
   );
   const showRollupGlyph = isCollapsed && rollup.indicator !== "none";
+  // nucleus#1336: a collapsed Nucleus task container draws its rolled-up status
+  // in the leading icon slot, so the trailing slot holds only the chevron.
+  const leadingStatus = taskGroup !== null && showRollupGlyph;
   const className = cn(
     SIDEBAR_HOVER_ACTIONS_ROW_CLASS,
     stickyLevel === undefined && "relative",
@@ -819,13 +822,20 @@ function EnvironmentThreadGroupHeader({
           SIDEBAR_GROUP_TEXT_CLASS,
           COARSE_POINTER_GLYPH_BOX_CLASS,
         )}
-        aria-hidden="true"
+        aria-hidden={leadingStatus ? undefined : "true"}
+        role={leadingStatus ? "img" : undefined}
+        aria-label={leadingStatus ? (rollup.label ?? "Task status") : undefined}
+        data-nucleus-task-group-status={leadingStatus ? rollup.indicator : undefined}
       >
-        <Icon
-          name={iconName}
-          className={COARSE_POINTER_ICON_SIZE_CLASS}
-          aria-hidden="true"
-        />
+        {leadingStatus ? (
+          <ThreadStatusGlyph indicator={rollup.indicator} />
+        ) : (
+          <Icon
+            name={iconName}
+            className={COARSE_POINTER_ICON_SIZE_CLASS}
+            aria-hidden="true"
+          />
+        )}
       </span>
       <span
         className={cn(
@@ -878,10 +888,10 @@ function EnvironmentThreadGroupHeader({
           expandLabel={`Expand ${displayName} threads`}
           collapseLabel={`Collapse ${displayName} threads`}
           onToggle={() => onToggleCollapsed(environmentId)}
-          revealOnHover={!isCollapsed}
+          revealOnHover={taskGroup !== null || !isCollapsed}
         />
       </span>
-      {showRollupGlyph || taskGroup === null ? <span
+      {taskGroup === null ? <span
         className={cn(
           "relative z-10 inline-flex shrink-0 items-center",
           rename.isEditing && "hidden",
@@ -899,7 +909,7 @@ function EnvironmentThreadGroupHeader({
             <ThreadStatusGlyph indicator={rollup.indicator} />
           </span>
         ) : null}
-        {taskGroup === null ? <div
+        <div
           data-sidebar-hover-actions-open={isActionsOpen ? "true" : undefined}
           data-sidebar-hover-actions-mobile={
             SIDEBAR_HOVER_ACTIONS_MOBILE_ALWAYS_VALUE
@@ -920,7 +930,7 @@ function EnvironmentThreadGroupHeader({
             onCloseAutoFocus={rename.onCloseAutoFocus}
             onOpenChange={setIsActionsOpen}
           />
-        </div> : null}
+        </div>
       </span> : null}
     </>
   );

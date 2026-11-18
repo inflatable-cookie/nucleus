@@ -33,7 +33,44 @@
    environmentId,
    environmentProviderId,
    representativeThread,
-@@ -821,18 +833,44 @@
+@@ -787,6 +799,9 @@
+     null,
+   );
+   const showRollupGlyph = isCollapsed && rollup.indicator !== "none";
++  // nucleus#1336: a collapsed Nucleus task container draws its rolled-up status
++  // in the leading icon slot, so the trailing slot holds only the chevron.
++  const leadingStatus = taskGroup !== null && showRollupGlyph;
+   const className = cn(
+     SIDEBAR_HOVER_ACTIONS_ROW_CLASS,
+     stickyLevel === undefined && "relative",
+@@ -807,13 +822,20 @@
+           SIDEBAR_GROUP_TEXT_CLASS,
+           COARSE_POINTER_GLYPH_BOX_CLASS,
+         )}
+-        aria-hidden="true"
++        aria-hidden={leadingStatus ? undefined : "true"}
++        role={leadingStatus ? "img" : undefined}
++        aria-label={leadingStatus ? (rollup.label ?? "Task status") : undefined}
++        data-nucleus-task-group-status={leadingStatus ? rollup.indicator : undefined}
+       >
+-        <Icon
+-          name={iconName}
+-          className={COARSE_POINTER_ICON_SIZE_CLASS}
+-          aria-hidden="true"
+-        />
++        {leadingStatus ? (
++          <ThreadStatusGlyph indicator={rollup.indicator} />
++        ) : (
++          <Icon
++            name={iconName}
++            className={COARSE_POINTER_ICON_SIZE_CLASS}
++            aria-hidden="true"
++          />
++        )}
+       </span>
+       <span
+         className={cn(
+@@ -821,18 +843,44 @@
            SIDEBAR_GROUP_TEXT_CLASS,
          )}
        >
@@ -90,36 +127,29 @@
          <SidebarChildToggleChevron
            disabled={rename.isEditing}
            className={rename.isEditing ? "hidden" : undefined}
-@@ -843,7 +881,7 @@
-           revealOnHover={!isCollapsed}
+@@ -840,10 +888,10 @@
+           expandLabel={`Expand ${displayName} threads`}
+           collapseLabel={`Collapse ${displayName} threads`}
+           onToggle={() => onToggleCollapsed(environmentId)}
+-          revealOnHover={!isCollapsed}
++          revealOnHover={taskGroup !== null || !isCollapsed}
          />
        </span>
 -      <span
-+      {showRollupGlyph || taskGroup === null ? <span
++      {taskGroup === null ? <span
          className={cn(
            "relative z-10 inline-flex shrink-0 items-center",
            rename.isEditing && "hidden",
-@@ -861,7 +899,7 @@
-             <ThreadStatusGlyph indicator={rollup.indicator} />
-           </span>
-         ) : null}
--        <div
-+        {taskGroup === null ? <div
-           data-sidebar-hover-actions-open={isActionsOpen ? "true" : undefined}
-           data-sidebar-hover-actions-mobile={
-             SIDEBAR_HOVER_ACTIONS_MOBILE_ALWAYS_VALUE
-@@ -882,8 +920,8 @@
-             onCloseAutoFocus={rename.onCloseAutoFocus}
+@@ -883,7 +931,7 @@
              onOpenChange={setIsActionsOpen}
            />
--        </div>
+         </div>
 -      </span>
-+        </div> : null}
 +      </span> : null}
      </>
    );
  
-@@ -959,6 +997,20 @@
+@@ -959,6 +1007,20 @@
    const { sectionId, pinned } = useThreadCreationPlacement(sectionWhenUnpinned);
    const { archiveThreadsPending, onArchiveThreads } =
      useArchiveEnvironmentThreadGroupAction({ environmentId });
@@ -140,7 +170,7 @@
    const handleCreateNewThread = useCallback(() => {
      onProjectSelect?.();
      navigate.toCompose({
-@@ -976,7 +1028,7 @@
+@@ -976,7 +1038,7 @@
      useWindowedThreadItems({
        items: nodeItems,
        collapsedThreadIds,
@@ -149,7 +179,7 @@
        selectedThreadId,
      });
  
-@@ -989,6 +1041,7 @@
+@@ -989,6 +1051,7 @@
        >
          <EnvironmentThreadGroupHeader
            dragBindings={dragBindings}
@@ -157,7 +187,7 @@
            environmentId={environmentId}
            environmentProviderId={environmentProviderId}
            representativeThread={representativeThread}
-@@ -999,13 +1052,13 @@
+@@ -999,13 +1062,13 @@
            })}
            parentLineDepth={parentLineDepth}
            hiddenThreads={stats.hiddenThreads}
@@ -174,7 +204,7 @@
            <div className="relative space-y-px">
              <ThreadTreeGroupLine parentRowDepth={rowDepth} />
              <SidebarWindowedItems
-@@ -1840,12 +1893,20 @@
+@@ -1840,12 +1903,20 @@
        providedRootItems,
      ],
    );
@@ -195,7 +225,7 @@
      return (
        <ThreadListEmptyState
          message={
-@@ -2207,7 +2268,10 @@
+@@ -2207,7 +2278,10 @@
          onRename={rename.startEditingFromMenu}
          onRemove={requestRemove}
          extraActions={(surface) => (
@@ -207,7 +237,7 @@
          )}
        />
      </SidebarHeaderControls>
-@@ -2217,7 +2281,10 @@
+@@ -2217,7 +2291,10 @@
      <>
        <ProjectActionsContextMenu
          extraActions={(surface) => (
