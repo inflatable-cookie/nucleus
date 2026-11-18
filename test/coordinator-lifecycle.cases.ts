@@ -1088,7 +1088,7 @@ test('a delivered continuation whose retained run stopped is reported as a stopp
     // delivered checkpoint, the run and agent, and the ordinary exits.
     assert.doesNotMatch(f.current().reason, /Reviewer continuing from checkpoint/);
     assert.match(f.current().reason, /delivered continuation for checkpoint 1 .*stopped without a verdict or a new checkpoint/);
-    assert.match(f.current().reason, /route the reviewer to an available profile|fresh reviewer/);
+    assert.match(f.current().reason, /move to=review observes the retained reviewer/);
     assert.equal(f.current().resolution.stop?.reason, 'operator_needed');
     // The evidence is preserved: checkpoint, delivery and run identity are intact.
     assert.equal(f.run().reviewCheckpoints?.length, 1);
