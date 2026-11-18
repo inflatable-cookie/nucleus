@@ -18,12 +18,13 @@ const INTAKE_OPERATION='e'.repeat(64);
  * verified and bound, the task is queued with zero runs, Queue is paused and both
  * holds stand. Returns the fixture so the test can assert nothing else moved.
  */
-async function admittedReviewEntry(){
+async function admittedReviewEntry(prerequisites:(store:Store,repo:string,planningCommit:string)=>string[]=()=>[]){
   const fixture=queueHeldBriefFixture(),store=new Store(join(fixture.root,'queue.sqlite'));
   try{
     approveBrief(store,fixture);
     store.setMeta('paused',true);
-    const input=reviewEntryInputSchema.parse({...fixture.reviewInput,workspaceMode:'isolated'});
+    const dependsOn=prerequisites(store,fixture.repo,fixture.planningCommit);
+    const input=reviewEntryInputSchema.parse({...fixture.reviewInput,workspaceMode:'isolated',submission:{...fixture.reviewInput.submission,dependsOn}});
     const operation=queueOperationSchema.parse({id:INTAKE_OPERATION,key:'review-entry-dependencies',kind:'review_entry',inputHash:'d'.repeat(64),
       state:'running',taskId:null,expectedVersion:null,repoPath:fixture.repo,submissionId:input.submission.submissionId,createdAt:now(),startedAt:now(),
       settledAt:null,attempts:1,diagnostic:'',result:null,effect:null});
@@ -205,4 +206,22 @@ test('any run, agent, completion, merge or pending side-effect intent still fenc
     assert.throws(()=>store.updateDependencies(store.task(worker.id),[]),/before dispatch begins/);
     assert.equal(store.task(worker.id).version,workerVersion);
   }finally{store.close();}
+});
+
+test('a review-entry bind names a prerequisite by reference and stores its UUID, so the wait resolves to the real task',async()=>{
+  // The review-entry path reaches store.insert without performSubmit; the store boundary must normalise it.
+  let prerequisite:Task|undefined;
+  const f=await admittedReviewEntry((store,repo,planningCommit)=>{
+    prerequisite=addTask(store,repo,planningCommit,'review-entry-reference-prerequisite');
+    const [name,number]=prerequisite.reference.split('#');
+    return [`${name}#${number!.padStart(4,'0')}`];
+  });
+  try{
+    const {store}=f;
+    assert.deepEqual(f.task.dependsOn,[prerequisite!.id]);
+    assert.deepEqual(store.task(f.task.id).dependsOn,[prerequisite!.id]);
+    const wait=store.dependencyWait(store.task(f.task.id));
+    assert.match(wait,new RegExp(`\\(${prerequisite!.id}\\): queued`));
+    assert.doesNotMatch(wait,/missing/);
+  }finally{await f.engine.stop();f.store.close();rmSync(f.fixture.root,{recursive:true,force:true});}
 });

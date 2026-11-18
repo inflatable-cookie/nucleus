@@ -671,7 +671,7 @@ export class Store {
   uiTasks(): Task[] { return this.tasksStore.uiTasks(); }
   liveSnapshot(input: SnapshotInput = {}): { tasks: ReturnType<typeof compactLiveTask>[]; cursor: string | null; hasMore: boolean } { return this.tasksStore.liveSnapshot(input); }
   task(id: string): Task { return this.tasksStore.task(id); }
-  existing(input: Submission): Task | null { return this.submissionsStore.existing(input); }
+  existing(input: Submission): Task | null { return this.submissionsStore.existing(this.resolveSubmissionDependencies(input)); }
   /**
    * A prerequisite named by task UUID or task reference (`owner/repo#072`, `repo#72`). Every
    * dependency boundary resolves through here, so the accepted forms cannot drift. An unknown
@@ -1167,7 +1167,7 @@ export class Store {
   acceptOperation(input: { key: string; kind: QueueOperation["kind"]; inputHash: string; taskId?: string | null; expectedVersion?: number | null; repoPath?: string | null; submissionId?: string | null; hostId?: string; hostSelection?: QueueOperation['hostSelection']; payload: unknown }, at = now()): OperationAcceptance { return this.operationsStore.acceptOperation(input, at); }
   receipt(input: Completion, token: string): { accepted: true; eventId: string } | null { return this.authStore.receipt(input, token); }
   /** The task and run write funnels; see `store-task-funnel.ts` for the rules they own. */
-  insert(input: Submission, hostId: string, handoffText: string, planningBase: string, initial: Partial<Task> = {}, credential?: {runId:string;token:string;prepare?:(task:Task)=>void}, origin?: string | null): Task { return this.funnel.insert(input, hostId, handoffText, planningBase, initial, credential, origin); }
+  insert(input: Submission, hostId: string, handoffText: string, planningBase: string, initial: Partial<Task> = {}, credential?: {runId:string;token:string;prepare?:(task:Task)=>void}, origin?: string | null): Task { return this.funnel.insert(this.resolveSubmissionDependencies(input), hostId, handoffText, planningBase, initial, credential, origin); }
   update(id: string, change: Partial<Task> & { attention?: never }, kind?: string, detail = "", expected?: number): Task { return this.funnel.update(id, change, kind, detail, expected); }
   putRun(run: Run, options: { usageOnly?: boolean } = {}): void { return this.funnel.putRun(run, options); }
   setRuntimeRetirements(id: string, records: RuntimeRetirement[]) { return this.funnel.setRuntimeRetirements(id, records); }
@@ -1193,7 +1193,7 @@ export class Store {
   /** Source link and task admission commit together; retries resolve the same task. */
   promoteSource(source: { kind: "lead" | "papercut"; id: string }, repository: string, approvedDigest: string, expectedSource: string,
     submission: Submission, hostId: string, planningBase: string, origin: string | null, initial: Partial<Task> = {}): Task | OperationResult {
-    return this.promotion.promoteSource(source, repository, approvedDigest, expectedSource, submission, hostId, planningBase, origin, initial); }
+    return this.promotion.promoteSource(source, repository, approvedDigest, expectedSource, this.resolveSubmissionDependencies(submission), hostId, planningBase, origin, initial); }
   /** A review entry may bind only a Queue-held brief whose exact checked approval still exists. */
   validateReviewEntryBrief(input: Submission, githubRepository: string): void { return this.promotion.validateReviewEntryBrief(input, githubRepository); }
   /** Consume the approved source and link it to the review task in its binding transaction. */
