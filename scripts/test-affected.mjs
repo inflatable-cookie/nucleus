@@ -153,9 +153,10 @@ export function selectAffected({ changed, files, sources, max = MAX_AFFECTED }) 
     // A test that walks a directory names it as a whole literal, not the file. Any
     // ancestor directory counts: a test that recurses `client/` reads `client/board/x.tsx`.
     const ancestors = segments.slice(0, -1).map((_, index) => segments.slice(0, index + 1).join('/'));
-    // A documentation change is checked by `effigy qa:docs`; tests that merely walk
-    // `docs/` would fill the cap without testing the change.
-    const directoryLiterals = DOCS.test(path) ? [] : ancestors.flatMap(dir => [`'${dir}'`, `"${dir}"`, `\`${dir}\``, `'${dir}/'`, `"${dir}/"`].map(literal => [dir, literal]));
+    // A documentation change is checked by `effigy qa:docs`, and a changed test runs
+    // itself; tests that merely walk `docs/` or `test/` would fill the cap without
+    // testing the change. Milestone QA runs them.
+    const directoryLiterals = DOCS.test(path) || isTestFile(path) ? [] : ancestors.flatMap(dir => [`'${dir}'`, `"${dir}"`, `\`${dir}\``, `'${dir}/'`, `"${dir}/"`].map(literal => [dir, literal]));
     let named = false;
     for (const test of tests) {
       const text = scope.get(test);

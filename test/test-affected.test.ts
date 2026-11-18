@@ -210,3 +210,11 @@ test('a documentation change does not select tests that only walk docs/', () => 
   });
   assert.deepEqual(selected(selectAffected({ changed: ['docs/knowledge/vision.md'], files, sources })), ['test/names-doc.test.ts']);
 });
+
+test('a changed test file does not select tests that only walk test/', () => {
+  const { files, sources } = tree({
+    'test/edited.test.ts': 'export {};',
+    'test/test-walk.test.ts': "const root = join(here, '..', 'test');\n",
+  });
+  assert.deepEqual(selected(selectAffected({ changed: ['test/edited.test.ts'], files, sources })), ['test/edited.test.ts']);
+});
