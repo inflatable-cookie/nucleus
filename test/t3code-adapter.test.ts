@@ -5,6 +5,7 @@ import { realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { T3CodeHost } from '../hosts/t3code/adapter';
+import { creationLookup } from '../core/recovery/absent-creation/restarts';
 import { T3RpcError } from '../hosts/t3code/rpc';
 import { ProvenPreSendRefusalError, HostUnknownDeliveryError, hostFailureRefusalDetail } from '../core/host';
 import { T3CompatibilityError } from '../hosts/t3code/contracts';
@@ -81,7 +82,30 @@ test('create uses an existing canonical worktree and explicit top-level provider
   assert.equal(created.workspaceId, workspace.id);
   for (const field of ['parentThreadId', 'parentRunId', 'delegatedFrom', 'environment', 'mcpServers']) assert.equal(Object.hasOwn(command, field), false, field);
   assert.equal((await host.observe(created.id)).workspaceId, workspace.id);
-  assert.deepEqual(await host.findAgents({ [WIRE_LABEL_KEYS.task]: 'synthetic-task' }), [created]);
+  assert.deepEqual(await host.findAgents({ [WIRE_LABEL_KEYS.task]: 'synthetic-task' }), [{ ...created, hostConfirmed: true }]);
+});
+
+test('creation lookup holds a local launch until T3 confirms its thread and workspace', async t => {
+  const { host, server, options, workspace, spec, directory } = await fixture(t);
+  server.controls.disconnectMutation = true;
+  await assert.rejects(host.createAgent(spec()));
+  server.controls.disconnectMutation = false;
+  const reloaded = new T3CodeHost(options); t.after(() => reloaded.close());
+  await reloaded.connect();
+  const labels = { [WIRE_LABEL_KEYS.task]: 'synthetic-task', [WIRE_LABEL_KEYS.run]: 'worker-run' };
+  const partial = await reloaded.findAgents(labels);
+  assert.equal(partial.length, 1);
+  assert.equal(partial[0]!.hostConfirmed, false);
+  assert.deepEqual(creationLookup(partial, workspace.id), { kind: 'unknown' });
+  assert.equal(server.commands.filter(command => command.method === 'orchestration.launchThread').length, 1);
+  assert.deepEqual(await reloaded.findAgents({ ...labels, [WIRE_LABEL_KEYS.run]: 'wrong-run' }), []);
+
+  server.threads.set(partial[0]!.id, threadProjection(partial[0]!.id, directory));
+  const confirmed = await reloaded.findAgents(labels);
+  assert.equal(confirmed[0]!.hostConfirmed, true);
+  assert.deepEqual(creationLookup(confirmed, workspace.id), { kind: 'bound', agentId: partial[0]!.id });
+  assert.deepEqual(creationLookup(confirmed, 'other-workspace'), { kind: 'unknown' });
+  assert.equal(server.commands.filter(command => command.method === 'orchestration.launchThread').length, 1);
 });
 
 test('new T3 worker, reviewer and recovery threads use task number and role titles', async t => {

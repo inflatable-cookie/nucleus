@@ -1324,6 +1324,24 @@ test('uncertain reviewer creation: restart binds the one exact existing agent in
   } finally { await f.close(); }
 });
 
+test('resolution observation holds a label-only reviewer creation', async () => {
+  const f = fixture(); try {
+    f.store.update(f.taskId, { phase: 'reviewing', workspaceIntent: true, agentIntent: true, workspaceId: 'workspace', directory: '/worktree',
+      agentId: 'worker-agent', runId: 'worker-run', profile: f.profiles.worker, workerModel: f.profiles.worker.model,
+      prUrl: 'https://github.com/example/repo/pull/7', prHead: head, resumePrNumber: 7 });
+    const run = runSchema.parse({ id: 'partial-reviewer-run', taskId: f.taskId, role: 'reviewer', generation: 1, head, base,
+      agentId: null, workspaceId: 'workspace', profile: f.profiles.reviewer, status: 'uncertain', createdAt: new Date().toISOString(),
+      lastObservedAt: null, active: null, idleSince: null, completion: null, released: false });
+    f.store.putRun(run);
+    f.store.update(f.taskId, { resolution: { ...f.current().resolution, currentRunId: run.id, reviewerAgentId: null } });
+    f.adapter.findRunAgents = async () => [{ id: 'local-only', workspaceId: 'workspace', hostConfirmed: false }];
+    await f.engine.resolution.observe();
+    assert.equal(f.store.run(run.id)!.agentId, null);
+    assert.equal(f.store.run(run.id)!.released, false);
+    assert.equal(f.createdRuns.length, 0);
+  } finally { await f.close(); }
+});
+
 test('uncertain reviewer creation: a single match outside the retained workspace refuses without creating a second agent', async () => {
   const f = fixture(); try {
     f.store.update(f.taskId, {

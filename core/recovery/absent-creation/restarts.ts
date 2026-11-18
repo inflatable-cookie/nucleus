@@ -9,10 +9,10 @@ import { absentReplacementRecord } from './budget';
 import { provenAbsentCreation } from './decisions';
 
 /** Classify a complete, occurrence-bound lookup without treating uncertain placement as absence. */
-export function creationLookup(found: { id: string; workspaceId: string | null }[], workspaceId: string | null):
+export function creationLookup(found: { id: string; workspaceId: string | null; hostConfirmed?: boolean }[], workspaceId: string | null):
   { kind: 'absent' } | { kind: 'bound'; agentId: string } | { kind: 'unknown' } {
   if (found.length === 0) return { kind: 'absent' };
-  if (found.length === 1 && workspaceId && found[0]!.workspaceId === workspaceId && found[0]!.id)
+  if (found.length === 1 && workspaceId && found[0]!.workspaceId === workspaceId && found[0]!.hostConfirmed !== false && found[0]!.id)
     return { kind: 'bound', agentId: found[0]!.id };
   return { kind: 'unknown' };
 }

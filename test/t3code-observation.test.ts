@@ -209,7 +209,7 @@ test('a terminal task keeps its exact settle and lookup after its agent records 
   const before = served();
   // An exact lookup answers from the launch identity alone: no snapshot.
   const found = await host.findAgents({ [WIRE_LABEL_KEYS.task]: 'task-done', [WIRE_LABEL_KEYS.run]: settledThread.runId });
-  assert.deepEqual(found, [{ id: settledThread.id, workspaceId: stored.retiredAgents![settledThread.id]!.workspaceId }]);
+  assert.deepEqual(found, [{ id: settledThread.id, workspaceId: stored.retiredAgents![settledThread.id]!.workspaceId, hostConfirmed: true }]);
   assert.equal(snapshotsFor(settledThread.id, before), 0, 'the exact lookup reads no T3 thread');
   // Settling again sends nothing and reads nothing: the task is over and the
   // recorded receipt is what a settle reads. The unresolved one is retired rather

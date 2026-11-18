@@ -344,27 +344,19 @@ export class T3Reads {
 
   async activeThreads() { return (await this.activeAndArchivedThreads()).filter(t => !t.archived && t.status !== 'gone'); }
 
-  /**
-   * The exact lookup: every thread whose recorded launch labels match, answered from
-   * what this host recorded. A thread it still observes is re-read so a changed
-   * retained workspace is refused; a thread that left observation answers from its
-   * retired record, which is all that lookup needs (nucleus#1328).
-   */
+  /** Match launch labels, but confirm each identity and workspace against T3's inventory. */
   async findAgents(labels: Record<string, string>) { this.core.requireConnection();
     const state = this.core.state.read(), matches = (candidate: { labels: Record<string, string> }) =>
       Object.entries(labels).every(([k,v]) => candidate.labels[k] === v);
     const live = Object.entries(state.agents).filter(([, agent]) => matches(agent));
     const liveIds = new Set(live.map(([id]) => id));
-    // A thread recorded live again after it retired answers once, from its live record;
-    // a removed thread is never an answer (nucleus#1328 review).
     const retired = Object.entries(state.retiredAgents ?? {}).filter(([id, agent]) => !agent.deletedAt && !liveIds.has(id) && matches(agent));
-    const found = await Promise.all(live.map(async ([id, {workspaceId}]) => {
-      if (!this.observes(id)) return { id, workspaceId };
-      const p = await this.readProjection(id, 'observation');
-      if (this.workspaceFor(p.thread) !== workspaceId) throw new T3CompatibilityError('retained thread workspace changed');
-      return {id,workspaceId};
-    }));
-    return [...found, ...retired.map(([id, {workspaceId}]) => ({ id, workspaceId }))];
+    if (!live.length && !retired.length) return [];
+    const { threads } = await this.memoisedInventory();
+    return [...live, ...retired].map(([id]) => {
+      const thread = threads.find(row => row.id === id && !row.deletedAt);
+      return { id, workspaceId: thread ? this.workspaceFor(thread) : null, hostConfirmed: !!thread };
+    });
   }
 
   async observe(id: string): Promise<T3ThreadObservation> {

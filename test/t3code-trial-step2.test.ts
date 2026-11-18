@@ -1149,7 +1149,7 @@ test("T3 adapter asks a retained reviewer and binds uncertain run creation", asy
     workspaceId: workspace.id,
   } as Run;
   assert.deepEqual(await adapter.findRunAgents(bound), [
-    { id: reviewer.id, workspaceId: workspace.id },
+    { id: reviewer.id, workspaceId: workspace.id, hostConfirmed: true },
   ]);
   assert.deepEqual(
     await adapter.findRunAgents({ ...bound, id: "run-other" }),

@@ -17,6 +17,7 @@ import { LoginSessionFaultError, isLoginSessionFault } from '../../shared/sessio
 import type { Resolution } from '../resolution';
 import { settlementHeld, startsNoRuns } from '../closeout/queue-drain';
 import { provenAbsentCreation } from './absent-creation/decisions';
+import { creationLookup } from './absent-creation/restarts';
 
 export type ObservationContext = Pick<Resolution, 'adapter' | 'attention' | 'environmentDeferred' | 'extendCallbackReminder' | 'graceMs' | 'heavyRunAlive' | 'host' | 'hostAvailable' | 'inventoryHostMatches' | 'launchingRuns' | 'onTaskHost' | 'orphanRuns' | 'paused' | 'reconcileAbsentCreation' | 'reconcileStalledTurnStop' | 'recoverRefusedReviewer' | 'remindStoppedRun' | 'resolveIncident' | 'resumeTransientProviderThread' | 'retainedProfileIssue' | 'stalls' | 'stopped' | 'store' | 'supersedeOrphans' | 'transportDeferred' | 'update' | 'waiting' | 'withHost'>;
 
@@ -87,8 +88,9 @@ export class Observation {
           if (provenAbsentCreation(run)) continue;
           const found = await this.adapter.findRunAgents!(run);
           if (dispatchBlocked(this.store.task(task.id))) continue;
-          if (found.length === 1 && found[0].workspaceId === run.workspaceId) {
-            run = { ...run, agentId: found[0].id, status: 'running' }; this.store.putRun(run);
+          const lookup = creationLookup(found, run.workspaceId);
+          if (lookup.kind === 'bound') {
+            run = { ...run, agentId: lookup.agentId, status: 'running' }; this.store.putRun(run);
             if (run.role === 'reviewer') this.resolution.update(task, { reviewerAgentId: run.agentId, reviewerProfile: run.profile });
             if (coordinative(run) && task.coordinatorGeneration === run.generation && !task.coordinatorAgentId) this.store.update(task.id, { coordinatorAgentId: run.agentId! }, 'coordinator_assigned', run.agentId!);
             this.resolution.resolveIncident(task, run.id, `Exact lookup bound the created ${run.role} run`);
