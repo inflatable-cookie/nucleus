@@ -202,3 +202,11 @@ test('within the cap a direct importer outranks a chain through test helpers', (
   assert.deepEqual(selected(result), ['test/z-direct.test.ts']);
   assert.deepEqual(result.deferred.map(entry => entry.file), ['test/a-via-helper.test.ts']);
 });
+
+test('a documentation change does not select tests that only walk docs/', () => {
+  const { files, sources } = tree({
+    'test/docs-walk.test.ts': "const root = join(here, 'docs');\n",
+    'test/names-doc.test.ts': "const vision = 'knowledge/vision.md';\n",
+  });
+  assert.deepEqual(selected(selectAffected({ changed: ['docs/knowledge/vision.md'], files, sources })), ['test/names-doc.test.ts']);
+});
