@@ -6,7 +6,7 @@ import { settleSupersededFences } from '../recovery/fence-settlement';
 import type { Run, Task, TaskControlInput } from "../../shared/contracts";
 import { WORKER_REPLACEMENT_CEILING } from "../../shared/contracts";
 import { requestOnly, groupIsUnavailable, honouredWorkerThinking } from "../../shared/pool";
-import { requestedTier } from "../../shared/demand";
+import { climbedTier, requestedTier } from "../../shared/demand";
 import type { Engine } from "../engine";
 import { collectOwnerVerbFacts, retainedWorkerDeliveryRefusal, reviewerSharesAuthorModel, type RouteRole } from "./owner-verbs";
 import { independentReviewRoutingConflict, reviewerFiltersWorker, validateNamedProfile, workerReviewerRouteRefusal, type RoutingPreflightInput } from "../dispatch/routing";
@@ -145,7 +145,8 @@ export class RouteControls {
       const carryDeclined = prior?.status === "declined" && Boolean(grant);
       const appliedGrant = carryDeclined ? null : grant;
       const requestedTierOfTask = requestedTier(task.complexity);
-      const signoffPendingNow = replaceNow && Boolean(routeEntry) && requestOnly(routeEntry!, this.store.usageLevel(), requestedTierOfTask) && input.caller !== OPERATOR_BOARD
+      const climbedTierOfTask = climbedTier(task);
+      const signoffPendingNow = replaceNow && Boolean(routeEntry) && requestOnly(routeEntry!, this.store.usageLevel(), requestedTierOfTask, climbedTierOfTask) && input.caller !== OPERATOR_BOARD
         && !(task.profileRequests?.[role]?.profileId === profileId && task.profileRequests[role]!.signoff?.status === "approved")
         && !appliedGrant;
       // The displacement a `now` route owes; a sign-off-pending route owes none
@@ -223,7 +224,7 @@ export class RouteControls {
       // reviewer independence waiver applies solely to an owner route.
       // An unsigned route keeps its thinking level on the request, so until the
       // operator signs it off automatic selection runs at the task's own level.
-      const unsignedRoute = Boolean(routeEntry && requestOnly(routeEntry, this.store.usageLevel(), requestedTierOfTask) && !signoff);
+      const unsignedRoute = Boolean(routeEntry && requestOnly(routeEntry, this.store.usageLevel(), requestedTierOfTask, climbedTierOfTask) && !signoff);
       const requests = { ...task.profileRequests, [role]: { profileId, reason, required: true, ownerRoute: true, ...(role === "worker" ? { routedAt: now() } : {}),
         ...((role !== "worker" || unsignedRoute) && input.thinkingOptionId !== undefined ? { thinkingOptionId: input.thinkingOptionId } : {}),
         ...(input.caller ? { requestedBy: input.caller } : {}), ...(signoff ? { signoff } : {}),
@@ -236,7 +237,7 @@ export class RouteControls {
           this.resolution.releaseAbsentRun(current, absentRun.id, `route now ${role} to ${profileId}`);
           current = this.store.task(task.id);
         }
-        const thinkingPatch = role === 'worker' && !unsignedRoute ? input.thinkingOptionId ?? honouredWorkerThinking(task, this.store.pool(), this.store.usageLevel(), requestedTierOfTask) : undefined;
+        const thinkingPatch = role === 'worker' && !unsignedRoute ? input.thinkingOptionId ?? honouredWorkerThinking(task, this.store.pool(), this.store.usageLevel(), requestedTierOfTask, climbedTierOfTask) : undefined;
         const currentRun = current.resolution.currentRunId ? this.store.run(current.resolution.currentRunId) : null;
         let continuation = '';
         let replacementRefusal: { rule: string; detail: string } | null = null;

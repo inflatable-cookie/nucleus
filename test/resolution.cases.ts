@@ -2016,6 +2016,8 @@ test('Spec 052: an applied changes-required review climbs the next worker run on
   assert.equal(revision.profile?.id,highWorker.id,'the revision runs on the high profile');
   assert.notEqual(revision.agentId,'worker','the climb starts a fresh revision agent');
   assert.equal(climbed.retiredWorkers.length,1,'the retained worker is retired for the archive sweep');
+  assert.equal(climbed.agentId,revision.agentId,'the fresh revision agent is bound as the task\'s retained worker');
+  assert.equal(climbed.runId,revision.id,'the revision run is the task\'s current worker run');
   assert.equal(climbed.resolution.workerClimb?.to,'high');
   assert.equal(climbed.resolution.workerClimb?.from,'medium');
   assert.ok(f.store.events(f.task.id).some(event=>event.kind==='worker_climb_armed'));
@@ -2027,17 +2029,26 @@ test('Spec 052: an applied changes-required review climbs the next worker run on
   f.store.setMeta('pool',[...f.store.pool(),
    {profileId:highReviewer.id,enabled:true,group:'reviewer-high',roles:['reviewer'],weight:1,scopes:['general'],capability:'high',cost:'medium'}]);
   f.store.update(f.task.id,{profile:highWorker,profileGroup:'worker-high',resolution:{...f.current().resolution,reviewerProfile:profile('reviewer')}});
-  assert.match(String(f.engine.resolution.reviewerCapabilityIssue(f.current(),profile('reviewer'))),/below the worker/,'the retained reviewer reads below the climbed worker');
+  assert.match(String(f.engine.resolution.reviewerCapabilityIssue(f.current(),profile('reviewer'))),/reviewer profile reviewer is rated medium/,'the retained reviewer reads below the tier this run needs');
   f.setHead('d'.repeat(40));
   await f.report('ready_for_review');
   assert.equal(f.run().role,'reviewer');
   assert.equal(f.run().profile?.id,highReviewer.id,'the retained medium reviewer is replaced above the climbed worker');
+  // Maximum raises the retained reviewer floor to the top two tiers as well.
+  f.store.setMeta('usageLevel',{level:'maximum',until:null,setAt:new Date().toISOString()});
+  assert.match(String(f.engine.resolution.reviewerCapabilityIssue(f.current(),highReviewer)),/top two tiers Maximum/,'a retained reviewer below Maximum\'s tiers is replaced');
+  const topReviewer=profile('reviewer-top','test/reviewer-top');
+  f.engine.profiles=[...f.engine.profiles,topReviewer];
+  f.store.setMeta('pool',[...f.store.pool(),{profileId:topReviewer.id,enabled:true,group:'reviewer-top',roles:['reviewer'],weight:1,scopes:['general'],capability:'very_high',cost:'medium'}]);
+  assert.equal(f.engine.resolution.select({...f.current(),profile:highWorker,profileGroup:'worker-high'},'reviewer')?.profile.id,topReviewer.id,'Maximum selects a top-tier reviewer');
+  f.store.setMeta('usageLevel',{level:'normal',until:null,setAt:new Date().toISOString()});
   await f.report('changes_required');
   await f.engine.resolution.launch(f.current(),'revision');
   const second=f.run();
   assert.equal(second.role,'revision');
   assert.equal(second.profile?.id,highWorker.id,'the second revision stays at the requested tier');
   assert.ok(f.store.events(f.task.id).filter(event=>event.kind==='worker_climb_armed').length===1,'only the first review round climbs');
+  assert.equal(second.agentId,revision.agentId,'the next same-tier revision continues the worker the climb bound');
  }finally{await f.close()}
 });
 

@@ -97,8 +97,8 @@ function VerbField({ field, value, onChange, roleValue, pool, profiles, usage, a
     return <View style={{ gap: space.xxs }}>
       <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}>Profile{roleValue ? ` for ${roleValue}` : ""}{choices.length ? "" : " · none eligible"}</Text>
       <View style={row}>{choices.map(({ entry, profile }) =>
-        <Button key={entry.profileId} small wrap c={c} text={`${profile!.name}${choiceTag(entry, usage, availability, routing?.requested, routing?.climbTier)}`} label={`Profile ${profile!.name}`} selected={value === entry.profileId} onPress={() => onChange(entry.profileId)} />)}</View>
-      <SelectedProfilePolicy entry={choices.find(item => item.entry.profileId === value)?.entry} usage={usage} availability={availability} requested={routing?.requested} climbTier={routing?.climbTier} explicit={() => "Route is an explicit request and applies at every usage level. "} c={c} />
+        <Button key={entry.profileId} small wrap c={c} text={`${profile!.name}${choiceTag(entry, usage, availability, routing?.requested, routing?.climbTier, (roleValue || "worker") as PolicyRole)}`} label={`Profile ${profile!.name}`} selected={value === entry.profileId} onPress={() => onChange(entry.profileId)} />)}</View>
+      <SelectedProfilePolicy entry={choices.find(item => item.entry.profileId === value)?.entry} usage={usage} availability={availability} requested={routing?.requested} climbTier={routing?.climbTier} role={(roleValue || "worker") as PolicyRole} explicit={() => "Route is an explicit request and applies at every usage level. "} c={c} />
     </View>;
   }
   const multiline = field === "instruction" || field === "reviewInstruction";
@@ -109,23 +109,24 @@ function VerbField({ field, value, onChange, roleValue, pool, profiles, usage, a
 
 type Availability = { group: string; unavailable: boolean; reason: string; retryAt: string | null }[];
 /** A chooser button's tag: an unavailable group, then the usage policy. The choosers offer enabled profiles only. */
+type PolicyRole = "worker" | "reviewer" | "coordinator";
 export function choiceTag(entry: PoolEntry, usage: UsageView, availability: Availability,
-  requested?: DemandLevel, climbTier?: DemandLevel | null): string {
-  return activeGroupLimit(availability, entry.group) ? " · group unavailable" : automaticSelectionTag(entry, usage.level, requested, climbTier);
+  requested?: DemandLevel, climbTier?: DemandLevel | null, role: PolicyRole = "worker"): string {
+  return activeGroupLimit(availability, entry.group) ? " · group unavailable" : automaticSelectionTag(entry, usage.level, requested, climbTier, role);
 }
 /** Spec 052: the chosen profile's automatic-selection policy under the level in force, beside the explicit choice. */
-export function SelectedProfilePolicy({ entry, usage, availability, requested, climbTier, explicit, c }: { entry: PoolEntry | undefined; usage: UsageView; availability: Availability; requested?: DemandLevel; climbTier?: DemandLevel | null; explicit: (requestRequired: boolean) => string; c: Colors }) {
+export function SelectedProfilePolicy({ entry, usage, availability, requested, climbTier, role = "worker", explicit, c }: { entry: PoolEntry | undefined; usage: UsageView; availability: Availability; requested?: DemandLevel; climbTier?: DemandLevel | null; role?: PolicyRole; explicit: (requestRequired: boolean) => string; c: Colors }) {
   if (!entry) return null;
   // An unavailable subscription group holds every dispatch to the profile, chosen or automatic, until it returns.
   const group = activeGroupLimit(availability, entry.group);
   if (group) return <Text style={{ color: c.statusWarning, fontSize: typeScale.metadata.fontSize, flexShrink: 1 }}>Subscription group {entry.group} is unavailable{group.reason ? `: ${group.reason}` : ""}{group.retryAt ? ` · until ${formatLocalDateTime(group.retryAt)}` : ""}. Nothing dispatches to this profile until the group returns, whatever the usage level.</Text>;
-  return <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize, flexShrink: 1 }}>{explicit(automaticSelection(entry, usage.level, requested, climbTier).startsWith("request"))}Automatic selection: {describeAutomaticSelection(entry, usage, formatLocalDateTime, requested, climbTier)}.</Text>;
+  return <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize, flexShrink: 1 }}>{explicit(automaticSelection(entry, usage.level, requested, climbTier, role).startsWith("request"))}Automatic selection: {describeAutomaticSelection(entry, usage, formatLocalDateTime, requested, climbTier, role)}.</Text>;
 }
 /** Spec 052: the profiles this task's routing names, read against the usage level in force. */
 export function RoutingPolicyLines({ policy, c }: { policy: RoutingPolicy | undefined; c: Colors }) {
   if (!policy?.profiles.length) return null;
   return <View style={{ gap: space.xxs / 2 }}>{policy.profiles.map(item =>
-    <Text key={`${item.role}:${item.source}:${item.profileId}`} accessibilityLabel={`Routing policy for ${item.role} profile ${item.profileId}`} style={{ ...muted(c), fontSize: typeScale.metadata.fontSize, flexShrink: 1 }}>{item.role} · {item.profileId} · {describeRoutePolicy(item, policy.usage, formatLocalDateTime)}</Text>)}
+    <Text key={`${item.role}:${item.source}:${item.profileId}`} accessibilityLabel={`Routing policy for ${item.role} profile ${item.profileId}`} style={{ ...muted(c), fontSize: typeScale.metadata.fontSize, flexShrink: 1 }}>{item.role} · {item.profileId} · {describeRoutePolicy(item, policy.usage, formatLocalDateTime, policy.requested, policy.climbTier)}</Text>)}
   </View>;
 }
 /**

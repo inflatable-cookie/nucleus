@@ -15,7 +15,7 @@ import {chooseProfile,eligibilityReasons,validateNamedProfile} from '../core/dis
 import {parseNorthstarDocument,submissionQueueFields} from '../core/planning/handoff';
 import {
   capabilityLevelSchema,outcomeSchema,poolRecordFromLegacy,poolSchema,scopeSchema,
-  submissionRecordFromLegacy,submissionSchema,taskControlInputSchema,type Profile,type PoolEntry,type Task,type UsageLevel,
+  submissionRecordFromLegacy,submissionSchema,taskControlInputSchema,usageLevels,type Profile,type PoolEntry,type Task,type UsageLevel,
 } from '../shared/contracts';
 import {saveProfileSettings} from '../shared/pool';
 import {runDemand} from '../shared/demand';
@@ -55,11 +55,16 @@ test('invalid enum values are refused on the pool rating, task complexity and sc
 
 test('explicit preferred and required requests win independent of rating distance',()=>{
   const {profiles,pool}=ladder();
-  const far=pool.find(e=>e.profileId==='agent-low')!,near=pool.find(e=>e.profileId==='agent-high')!;
+  const far=pool.find(e=>e.profileId==='agent-low')!;
   const usage=equalUsage(pool);
   assert.equal(ids(chooseProfile(taskOf({complexity:'very_high',preferredProfileId:far.profileId}),profiles,pool,usage,new Set())),far.profileId,'optional preference wins over the best fit');
-  assert.equal(ids(chooseProfile(taskOf({complexity:'very_low',preferredProfileId:near.profileId}),profiles,pool,usage,new Set())),near.profileId);
+  assert.equal(ids(chooseProfile(taskOf({complexity:'medium',preferredProfileId:far.profileId}),profiles,pool,usage,new Set())),far.profileId,'a preference within the requested tier wins over the best fit');
   assert.equal(chooseProfile(taskOf({complexity:'very_low',preferredProfileId:'agent-very_high',requirePreferred:true}),profiles,pool,usage,new Set()),null,'a preference never reaches a profile the level needs permission for (Spec 052, 2026-11-17)');
+  assert.equal(ids(chooseProfile(taskOf({complexity:'very_low',preferredProfileId:'agent-high'}),profiles,pool,usage,new Set())),'agent-low','a preference above the requested tier is not automatic');
+  const signed={status:'approved' as const,decisionId:'d',by:'operator (board)',at:'2026-11-17T00:00:00.000Z',note:''};
+  const above={...taskOf({complexity:'medium'}),profileRequests:{worker:{profileId:'agent-very_high',reason:'Explicit route above the requested tier',required:false,signoff:signed}}};
+  assert.equal(ids(chooseProfile(above,profiles,pool,usage,new Set(),'worker',usage,'extra_high')),'agent-very_high','an explicit request reaches above the requested tier');
+  assert.equal(ids(chooseProfile({...above,profileRequests:{worker:{profileId:'agent-very_high',reason:'Explicit request',required:false}}},profiles,pool,usage,new Set(),'worker',usage,'extra_high')),'agent-very_high','an explicit request (no sign-off needed at Extra high) reaches above the requested tier');
   assert.equal(chooseProfile(taskOf({complexity:'very_high',preferredProfileId:far.profileId,requirePreferred:true}),profiles,pool.filter(e=>e.profileId!==far.profileId),usage,new Set()),null,'required preference never falls back to a perfect fit');
   const requested=taskOf({complexity:'very_high',profileRequests:{worker:{profileId:far.profileId,reason:'Operator asked for this profile',required:false}}});
   assert.equal(ids(chooseProfile(requested,profiles,pool,usage,new Set())),far.profileId);
@@ -124,6 +129,21 @@ test('Spec 053: the stored role offsets move every automatic selection; invalid 
     store.setMeta('demandRoleOffsets',{worker:9,reviewer:0,coordinator:0});
     assert.deepEqual(store.demandRoleOffsets(),{worker:0,reviewer:0,coordinator:-2},'an out-of-range stored value is ignored');
   }finally{store.close();rmSync(dir,{recursive:true,force:true});}
+});
+
+test('Spec 052: the coordinator offset survives every level, including Maximum',()=>{
+  const {profiles,pool}=ladder();
+  const usage=equalUsage(pool);
+  const expected: Record<UsageLevel,string>={low:'agent-low',normal:'agent-low',high:'agent-medium',extra_high:'agent-medium',maximum:'agent-medium'};
+  for(const level of usageLevels)
+    assert.equal(ids(chooseProfile(taskOf({complexity:'very_high'}),profiles,pool,usage,new Set(),'coordinator',usage,level)),expected[level],`${level}: the coordinator keeps its two-step offset`);
+  // Maximum reserves workers and reviewers for the top two tiers, not the
+  // coordinator: with no top-tier profile the coordinator still has a pick.
+  const mediumProfile=profile('mid');
+  const mediumOnly=[poolSchema.parse({profileId:'mid',enabled:true,group:'mid',roles:['coordinator'],weight:1,scopes:['general'],capability:'medium',cost:'medium'})];
+  assert.equal(ids(chooseProfile(taskOf({complexity:'very_high'}),[mediumProfile],mediumOnly,{},new Set(),'coordinator',{},'maximum')),'mid','the coordinator keeps its offset at Maximum');
+  assert.equal(chooseProfile(taskOf({complexity:'very_high'}),[mediumProfile],mediumOnly,{},new Set(),'worker',{},'maximum'),null,'a worker still needs a top-tier profile at Maximum');
+  assert.equal(chooseProfile(taskOf({complexity:'very_high'}),[mediumProfile],mediumOnly,{},new Set(),'reviewer',{},'maximum'),null,'a reviewer still needs a top-tier profile at Maximum');
 });
 
 test('Spec 053: worker, reviewer and coordinator selection use the demand; the coordinator needs two steps less; explicit requests still lead',()=>{

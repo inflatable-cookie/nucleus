@@ -102,9 +102,10 @@ export function honouredRequest<T extends { profileId: string; reason: string; s
  * reviewers use the top two tiers), and not held by the level's permission rule.
  */
 export function automaticReachable(entry: Pick<PoolEntry, "cost" | "capability">, level: UsageLevel,
-  requested?: DemandLevel | null, climbTier?: DemandLevel | null): boolean {
+  requested?: DemandLevel | null, climbTier?: DemandLevel | null,
+  role: "worker" | "reviewer" | "coordinator" = "worker"): boolean {
   const tier = entry.capability;
-  if (level === "maximum") return topTier(tier);
+  if (level === "maximum" && role !== "coordinator") return topTier(tier);
   if (requested && tier && demandRank(tier) > demandRank(requested)) return false;
   return !requestOnly(entry, level, requested, climbTier);
 }
@@ -115,21 +116,21 @@ export function automaticReachable(entry: Pick<PoolEntry, "cost" | "capability">
  * never a gate; other gates (enabled, group, catalog) are reported beside it.
  */
 export function automaticSelection(entry: Pick<PoolEntry, "cost" | "capability">, level: UsageLevel, requested?: DemandLevel | null,
-  climbTier?: DemandLevel | null): NonNullable<RoutePolicy["automatic"]> {
-  return automaticReachable(entry, level, requested, climbTier) ? "allowed" : "request_tier";
+  climbTier?: DemandLevel | null, role: "worker" | "reviewer" | "coordinator" = "worker"): NonNullable<RoutePolicy["automatic"]> {
+  return automaticReachable(entry, level, requested, climbTier, role) ? "allowed" : "request_tier";
 }
 /** One plain sentence for `automaticSelection`; `time` formats the optional end time (the client passes local time). */
 export function describeAutomaticSelection(entry: Pick<PoolEntry, "cost" | "capability">, usage: UsageView, time: (iso: string) => string = iso => iso,
-  requested?: DemandLevel | null, climbTier?: DemandLevel | null): string {
+  requested?: DemandLevel | null, climbTier?: DemandLevel | null, role: "worker" | "reviewer" | "coordinator" = "worker"): string {
   const label = USAGE_LABELS[usage.level].label;
   const ends = !usage.expired && usage.until && usage.level !== "normal" ? ` until ${time(usage.until)}` : "";
   const ended = usage.expired && usage.until ? ` (${USAGE_LABELS[usage.setLevel].label} ended ${time(usage.until)})` : "";
-  switch (automaticSelection(entry, usage.level, requested, climbTier)) {
+  switch (automaticSelection(entry, usage.level, requested, climbTier, role)) {
     case "allowed": return `${entry.capability === "frontier" ? "Frontier · " : ""}Automatic at ${label}${ends}${ended}`;
     case "request_tier": {
       const tier = entry.capability === "frontier" ? "Frontier" : "Very high";
       const aboveRequested = requested && entry.capability && demandRank(entry.capability) > demandRank(requested);
-      const rule = usage.level === "maximum"
+      const rule = usage.level === "maximum" && role !== "coordinator"
         ? "below the top two tiers, which Maximum reserves for workers and reviewers"
         : aboveRequested ? `above the task's requested ${requested} tier, so an explicit route is required`
         : usage.level === "high" ? "request-only at High" : `top two tiers need permission at ${label}`;
@@ -143,8 +144,8 @@ export function describeAutomaticSelection(entry: Pick<PoolEntry, "cost" | "capa
  * chosen profile's wrapping sentence carries the level and end time.
  */
 export function automaticSelectionTag(entry: Pick<PoolEntry, "cost" | "capability">, level: UsageLevel, requested?: DemandLevel | null,
-  climbTier?: DemandLevel | null): string {
-  return automaticSelection(entry, level, requested, climbTier) === "request_tier" ? " · request only" : "";
+  climbTier?: DemandLevel | null, role: "worker" | "reviewer" | "coordinator" = "worker"): string {
+  return automaticSelection(entry, level, requested, climbTier, role) === "request_tier" ? " · request only" : "";
 }
 /** The full sentence for one routing policy row; the server passes ISO time, the client local time. */
 export function describeRoutePolicy(policy: Omit<RoutePolicy, "explanation">, usage: UsageView, time: (iso: string) => string = iso => iso,
@@ -161,7 +162,7 @@ export function describeRoutePolicy(policy: Omit<RoutePolicy, "explanation">, us
     : `Recorded ${policy.role} run used it (history, not today's policy)`;
   if (!policy.automatic) return `${source}; not in the pool, so automatic selection never uses it`;
   const preferenceOnly = policy.source === "preference" && policy.automatic.startsWith("request");
-  return `${source}; automatic selection: ${describeAutomaticSelection(policy, usage, time, requested, climbTier)}${preferenceOnly ? "; a preference alone does not select it" : ""}${policy.gates.length ? `; also ${policy.gates.join(", ")}` : ""}`;
+  return `${source}; automatic selection: ${describeAutomaticSelection(policy, usage, time, requested, climbTier, policy.role)}${preferenceOnly ? "; a preference alone does not select it" : ""}${policy.gates.length ? `; also ${policy.gates.join(", ")}` : ""}`;
 }
 export function saveProfileSettings(pool:PoolEntry[],settings:ProfileSettings):PoolEntry[]{
  const group=settings.group.trim();

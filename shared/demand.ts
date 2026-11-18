@@ -171,12 +171,13 @@ export const effectiveWeight = (weight: number, cost: CapabilityLevel | null | u
  * or below the ceiling. Maximum is its own rule: workers and reviewers use the
  * top two tiers whatever the complexity, and no lower tier is a substitute.
  * The ceiling keeps automatic selection from reaching above the task's own
- * requested tier, which is an explicit route.
+ * requested tier, which is an explicit route. `topOnly` is Maximum's separate
+ * rule and applies to workers and reviewers only, never a coordinator.
  */
 export function selectionTier<T extends { capability?: ProfileCapability | null }>(
-  demand: DemandLevel, entries: readonly T[], usage: UsageLevel, ceiling: DemandLevel,
+  demand: DemandLevel, entries: readonly T[], topOnly: boolean, ceiling: DemandLevel,
 ): { tier: T[]; shortfall: boolean } {
-  if (usage === "maximum") {
+  if (topOnly) {
     const top = entries.filter(entry => entry.capability === "very_high" || entry.capability === "frontier");
     return { tier: top, shortfall: !top.length };
   }
@@ -211,7 +212,7 @@ export type DemandPick = {
  */
 export function demandPick(demand: DemandLevel, usage: UsageLevel, candidates: readonly DemandCandidate[],
   unavailableGroups: ReadonlySet<string> = new Set(), excludedModels: ReadonlySet<string> = new Set(),
-  requested?: DemandLevel | null, climbTier?: DemandLevel | null, ceiling?: DemandLevel | null): DemandPick {
+  requested?: DemandLevel | null, climbTier?: DemandLevel | null, ceiling?: DemandLevel | null, topOnly = usage === "maximum"): DemandPick {
   const modelKey = (model: string) => model.split("/").at(-1)!.toLowerCase();
   const usable = candidates.filter(candidate => candidate.enabled && candidate.available && !unavailableGroups.has(candidate.group)
     && !excludedModels.has(modelKey(candidate.model)));
@@ -224,7 +225,7 @@ export function demandPick(demand: DemandLevel, usage: UsageLevel, candidates: r
   // requested-tier bound only stops automatic selection.
   const signoffOnly = usable.filter(candidate => gated(candidate) && profileRank(candidate.capability) >= demandRank(demand))
     .map(candidate => candidate.profileId);
-  const { tier: chosen, shortfall } = selectionTier(demand, automatic, usage, ceiling ?? usageCeiling(usage, within));
+  const { tier: chosen, shortfall } = selectionTier(demand, automatic, topOnly, ceiling ?? usageCeiling(usage, within));
   return {
     profileIds: chosen.map(candidate => candidate.profileId),
     shortfall: shortfall || !chosen.length,
@@ -266,9 +267,10 @@ export function taskDemandPreview(task: PreviewTask, pool: readonly PoolEntry[],
     const workerActual = workerActualTier(task, pool);
     const roleDemand = role === "reviewer" && workerActual ? (demandRank(workerActual) > demandRank(fullDemand) ? workerActual : fullDemand) : fullDemand;
     const demand = role === "worker" ? (climb ? climb.to : reviewed ? workerStepUp(roleDemand, requested) : roleDemand) : roleDemand;
-    const ceiling = usage === "maximum" ? "frontier"
+    const ceiling = role === "coordinator" ? requested
       : role === "reviewer" && demandRank(roleDemand) > demandRank(requested) ? roleDemand
-      : usageCeiling(usage, requested);
+      : usage === "maximum" ? "frontier"
+      : requested;
     const exception = role === "worker" ? climb?.to ?? climbed : climbed;
     const raw = task.profileRequests?.[role] ?? null;
     const request = raw ? { profileId: raw.profileId, replaces: Boolean(honouredRequest(raw, pool, usage, requested, exception)) } : null;
@@ -277,7 +279,7 @@ export function taskDemandPreview(task: PreviewTask, pool: readonly PoolEntry[],
     const pick = blocked ? { profileIds: [], shortfall: true, signoffOnly: [] }
       // A reviewer never runs on an opaque provider-default model either, as runtime refuses.
       : demandPick(demand, usage, role === "reviewer" ? candidates.filter(candidate => candidate.model.trim() && candidate.model.split("/").at(-1)!.toLowerCase() !== "default") : candidates,
-        unavailableGroups, role === "reviewer" ? authors : new Set(), requested, exception, ceiling);
+        unavailableGroups, role === "reviewer" ? authors : new Set(), requested, exception, ceiling, usage === "maximum" && role !== "coordinator");
     return { role, demand, pick, request, blocked };
   });
 }

@@ -174,6 +174,7 @@ export function TechnicalRouting({ task, state, drafts, busy, act, c }: {
               availability={state?.availability ?? []}
               requested={requestedTier(task.complexity)}
               climbTier={climbedTier(task)}
+              role="worker"
               explicit={(required) =>
                 required
                   ? "A preference alone does not select this profile; add a worker request with a reason. "

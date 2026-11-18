@@ -78,8 +78,11 @@ Selection for a run then:
 2. Keeps every profile at the run's own tier (the demand), whatever its cost; the
    nearest tier above is the bail-out when none carries it, and a shortfall takes
    the most capable profile at or below the task's requested tier. A profile
-   above the requested tier is never automatic; Maximum's rule is the top two
-   tiers. An unrated capability counts as `medium`.
+   above the requested tier is never automatic (Maximum's rule is the top two
+   tiers for workers and reviewers only; a coordinator keeps its offset). A
+   reviewer's floor is absolute: with no independent profile at the worker's
+   actual tier, selection returns none and the role waits for a route. An unrated
+   capability counts as `medium`.
 3. Weights each kept profile by its **effective weight**: the configured
    `weight` times the **cost lean**. The lean is `COST_LEAN` (2) for each cost
    step below `very_high`: very_low ×16, low ×8, medium ×4, high ×2, very_high

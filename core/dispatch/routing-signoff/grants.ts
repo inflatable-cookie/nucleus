@@ -14,7 +14,7 @@ import { parseAgentId, sameCallerIdentity } from '../../../shared/agent-identity
 import { randomUUID } from "node:crypto";
 import { requestOnly } from "../../../shared/pool";
 import { clipDecisionQuestion, routingGrantSchema, taskOwner, type DemandLevel, type RoutingGrant, type Task } from "../../../shared/contracts";
-import { requestedTier } from "../../../shared/demand";
+import { climbedTier, requestedTier } from "../../../shared/demand";
 import type { Decisions } from "../../planning/decisions";
 import type { Store } from "../../store/store";
 import { now } from "../../store/store";
@@ -65,10 +65,10 @@ function liveForPlanner(grants: RoutingGrant[], planner: string, at = Date.now()
   return grants.find(grant => sameCallerIdentity(grant.planner, planner) && (grant.status === "pending" || grantIsLive(grant, at)));
 }
 
-function grantCoversProfile(store: Store, grant: RoutingGrant, profileId: string, requested?: DemandLevel | null): boolean {
+function grantCoversProfile(store: Store, grant: RoutingGrant, profileId: string, requested?: DemandLevel | null, climbTier?: DemandLevel | null): boolean {
   if (grant.profiles.length) return grant.profiles.includes(profileId);
   const entry = store.pool().find(item => item.profileId === profileId);
-  return Boolean(entry && requestOnly(entry, store.usageLevel(), requested));
+  return Boolean(entry && requestOnly(entry, store.usageLevel(), requested, climbTier));
 }
 
 /** The active grant that covers this task's current owner and profile, or null. */
@@ -77,7 +77,7 @@ export function coveringGrant(store: Store, task: Task, profileId: string, at = 
   const owner = taskOwner(task);
   for (const grant of readRoutingGrants(store)) {
     if (!grantIsLive(grant, at) || !sameCallerIdentity(grant.planner, owner, undefined, task.originHostId)) continue;
-    if (grantCoversProfile(store, grant, profileId, requestedTier(task.complexity))) return grant;
+    if (grantCoversProfile(store, grant, profileId, requestedTier(task.complexity), climbedTier(task))) return grant;
   }
   return null;
 }

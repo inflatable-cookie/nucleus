@@ -386,8 +386,8 @@ test('Spec 052: bundled dark task detail explains each named profile\'s usage po
         await client.refetchQueries({ queryKey: ['nucleus', 'state'], exact: true });
         await client.refetchQueries({ queryKey: ['nucleus', 'next', task.id], exact: true });
         await selectDetailTab(tree, 'Technical');
-        await settle(() => line('worker', 'frontier').includes('Normal'));
-        assert.match(line('worker', 'frontier'), /automatic selection: Frontier: top two tiers need permission at Normal \(Maximum ended /);
+        await settle(() => line('worker', 'frontier').includes('above the task'));
+        assert.match(line('worker', 'frontier'), /automatic selection: Frontier: above the task's requested medium tier, so an explicit route is required \(Maximum ended /);
         await selectDetailTab(tree, 'Overview');
         assert.equal(flat(tree.get('Profile Frontier Opus')), 'Frontier Opus · request only');
         assert.equal(flat(tree.get('Profile Cheap')), 'Cheap · request only', 'below Maximum a frontier profile needs a request whatever its cost');

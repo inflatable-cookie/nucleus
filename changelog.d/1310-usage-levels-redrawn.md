@@ -22,7 +22,8 @@ climbs, and what needs the operator's permission (Tom, 2026-11-17).
   board hold.
 - Coordinator and recovery offsets are unchanged under every level, including
   `maximum`; reviewers keep independence and at least the worker's actual
-  profile tier, so a retained reviewer below a climbed worker is replaced.
+  profile tier, so a retained reviewer below a climbed worker is replaced, and
+  no weaker reviewer stands in when none reaches that tier.
 - Settings slider labels, `queue.usage`, `routingPolicy`, the board's profile
   tags and explanations, Spec 052, Spec 053 and the Nucleus skill describe the
   new rules; the profile editor no longer mentions a cost ceiling.

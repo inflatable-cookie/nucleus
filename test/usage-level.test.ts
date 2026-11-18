@@ -35,7 +35,7 @@ import { chooseProfile } from '../core/dispatch/routing';
 import { createTaskDetailCache } from '../core/telemetry/task-detail';
 import { collectOwnerVerbFacts, ownerTaskNext } from '../core/verbs/owner-verbs';
 import { USAGE_GATE_APPROVE, USAGE_GATE_WAIT, reconcileUsageGate, usageGateBlocked } from '../core/dispatch/usage-gate';
-import { automaticReachable, automaticSelection, automaticSelectionTag, demandRank, describeAutomaticSelection, requestOnly } from '../shared/pool';
+import { automaticReachable, automaticSelection, automaticSelectionTag, demandRank, describeAutomaticSelection, requestOnly, topTier } from '../shared/pool';
 import { workerStartTier } from '../shared/demand';
 import { configurePool, poolSchema, submissionSchema, usageLevels, type Profile, type Task, type UsageLevel, type UsageView } from '../shared/contracts';
 
@@ -55,17 +55,21 @@ test('Spec 052 diagnostics: the explanation matches what chooseProfile does, for
       const label = `${level}/${cost}/${capability}/${requested}`;
       const adopt = task.complexity === requested ? task : store.update(task.id, { complexity: requested });
       for (const role of ['worker', 'reviewer', 'coordinator'] as const) {
+        const automaticRole = automaticSelection(entry, level, requested, undefined, role);
         const picked = chooseProfile(adopt, profiles, [entry], {}, new Set(), role, {}, level)?.profile.id ?? null;
-        assert.equal(picked === 'p', automatic === 'allowed', `${label} ${role}: automatic selection agrees with the explanation`);
+        assert.equal(picked === 'p', automaticRole === 'allowed', `${label} ${role}: automatic selection agrees with the explanation`);
         const requestedProfile = { ...adopt, profileRequests: { [role]: { profileId: 'p', reason: 'Owner request', required: false } } };
         // A request reaches exactly the profiles the level's permission rule does
         // not hold; the task's requested-tier bound only stops automatic
         // selection, which is what the explanation reports.
+        const reviewerTopTier = role !== 'reviewer' || level !== 'maximum' || topTier(capability);
         assert.equal(chooseProfile(requestedProfile, profiles, [entry], {}, new Set(), role, {}, level)?.profile.id === 'p',
-          !requestOnly(entry, level, requested), `${label} ${role}: an unsigned request reaches exactly where the level grants permission`);
+          !requestOnly(entry, level, requested) && reviewerTopTier,
+          `${label} ${role}: an unsigned request reaches exactly where the level and the role floor allow it`);
         const signed = { ...adopt, profileRequests: { [role]: { profileId: 'p', reason: 'Owner request', required: false,
           signoff: { status: 'approved' as const, decisionId: 'd', by: 'operator (board)', at: '2026-10-21T00:00:00.000Z', note: '' } } } };
-        assert.equal(chooseProfile(signed, profiles, [entry], {}, new Set(), role, {}, level)?.profile.id, 'p', `${label} ${role}: a signed-off request works at every level`);
+        assert.equal(chooseProfile(signed, profiles, [entry], {}, new Set(), role, {}, level)?.profile.id, reviewerTopTier ? 'p' : undefined,
+          `${label} ${role}: a signed-off request works wherever the level and the role floor allow it`);
       }
       // Cost is never the permission rule (Tom, 2026-11-17), and a tier at or
       // below the task's requested tier is automatic whenever the level's
@@ -164,6 +168,28 @@ test('Spec 052 diagnostics: next and a cached detail read explain the policy fre
     assert.deepEqual([second.routingPolicy.usage.level, second.routingPolicy.usage.expired], ['normal', true]);
     assert.equal(second.routingPolicy.profiles.find(p => p.profileId === 'frontier')!.automatic, 'request_tier');
     assert.deepEqual(store.usageSetting(), { level: 'maximum', until, setAt: '2026-10-19T00:00:00.000Z' }, 'no read writes the setting');
+  } finally { store.close(); }
+});
+
+test('Spec 052: the board explains a recorded climb at the tier it earned', () => {
+  const store = new Store(':memory:');
+  try {
+    store.setMeta('pool', [policyEntry('wide', 'medium', 'very_high'), policyEntry('frontier', 'very_high', 'frontier')]);
+    const inserted = store.insert(submissionSchema.parse({ submissionId: 'climbed-board', title: 'Climbed', repoPath: '/repo', planningCommit: 'a'.repeat(40), handoffPath: 'h.md', originAgentId: 'origin', complexity: 'very_high' }), 'host', 'handoff', 'a'.repeat(40));
+    const task = store.update(inserted.id, { profile: policyProfile('wide'), completion: null });
+    store.setMeta('usageLevel', { level: 'normal', until: null, setAt: '2026-11-17T00:00:00.000Z' });
+    const before = store.routingPolicy(store.task(task.id), Date.now());
+    assert.equal(before.requested, 'very_high');
+    assert.equal(before.climbTier, null);
+    assert.equal(before.profiles.find(row => row.profileId === 'wide')?.automatic, 'request_tier', 'before the climb the requested very-high tier is held');
+    assert.match(before.profiles.find(row => row.profileId === 'wide')!.explanation, /top two tiers need permission at Normal/);
+    store.update(task.id, { resolution: { ...store.task(task.id).resolution,
+      workerClimb: { reviewRunId: 'review-1', from: 'high', to: 'very_high', profileId: 'wide', at: '2026-11-17T00:00:00.000Z' } } });
+    const climbed = store.routingPolicy(store.task(task.id), Date.now());
+    assert.equal(climbed.climbTier, 'very_high');
+    const row = climbed.profiles.find(item => item.profileId === 'wide')!;
+    assert.equal(row.automatic, 'allowed', 'the recorded climb covers the requested very-high tier');
+    assert.match(row.explanation, /Automatic at Normal/);
   } finally { store.close(); }
 });
 

@@ -111,8 +111,8 @@ test("critical automatic selection requires peer capability and different model 
     const priorPeerAuthor = { ...f.task, workerModels: ["worker", "peer"] };
     assert.equal(
       f.engine.resolution.select(priorPeerAuthor, "reviewer")?.profile.id,
-      "cheap",
-      "frontier needs sign-off, and prior author cannot review",
+      undefined,
+      "frontier needs sign-off, and no independent high reviewer remains at the worker's tier",
     );
     assert.equal(
       f.engine.resolution.select(
@@ -124,8 +124,8 @@ test("critical automatic selection requires peer capability and different model 
         },
         "reviewer",
       )?.profile.id,
-      "peer",
-      "with no independent frontier reviewer, the strongest available independent reviewer is the recorded fallback",
+      undefined,
+      "no independent reviewer at the frontier worker's tier: the role waits rather than certifying on a weaker profile",
     );
   } finally {
     f.store.close();
@@ -139,8 +139,8 @@ test("unrated worker/reviewer and unsigned frontier cannot prove critical capabi
       e.profileId === "peer" ? { ...e, capability: null } : e,
     );
     f.store.setMeta("pool", entries);
-    const chosen = f.engine.resolution.select(f.task, "reviewer")!;
-    assert.equal(chosen.profile.id, "peer", "the unrated peer is the strongest available independent reviewer below the worker's tier");
+    assert.equal(f.engine.resolution.select(f.task, "reviewer"), null, "no independent reviewer reaches the worker's tier");
+    const chosen = { profile: profiles[2] };
     assert.equal(criticalReviewerMeets(f.task, chosen.profile, entries), false);
     const record = (
       f.engine.resolution as unknown as {
@@ -186,7 +186,8 @@ test("ordinary tasks keep ordinary routing and critical selection respects avail
     );
     assert.equal(
       f.engine.resolution.select(f.task, "reviewer", ["peer"])?.profile.id,
-      "cheap",
+      undefined,
+      "with the peer unavailable, no reviewer reaches the worker's tier",
     );
     assert.equal(
       f.engine.resolution.select(

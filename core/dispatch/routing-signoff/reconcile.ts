@@ -6,7 +6,7 @@
  * to do is not written.
  */
 import { requestOnly, USAGE_LABELS } from "../../../shared/pool";
-import { requestedTier } from "../../../shared/demand";
+import { climbedTier, requestedTier } from "../../../shared/demand";
 import { normalizeRepositoryOrigin } from "../../../shared/lanes";
 import { taskOwner, type Profile, type Task } from "../../../shared/contracts";
 import type { Decisions } from "../../planning/decisions";
@@ -96,7 +96,7 @@ export function reconcileRoutingSignoffs(store: Store, decisions: Decisions, tas
     if (signoff?.endedGrantId) continue;
     if (signoff?.status === "approved" || signoff?.status === "declined") continue;
     const entry = pool.find(item => item.profileId === request.profileId);
-    if (!entry || !requestOnly(entry, usage, requestedTier(task.complexity))) {
+    if (!entry || !requestOnly(entry, usage, requestedTier(task.complexity), climbedTier(task))) {
       // The level now covers the profile: nothing to ask, and an open question is moot.
       if (signoff?.status === "pending" && signoff.decisionId)
         withdrawSignoff(store, decisions, task.id, signoff.decisionId, `The ${USAGE_LABELS[usage].label} usage level now covers this profile`);
