@@ -145,7 +145,7 @@ export class CoordinatorPass {
    // the done task, and its report is evidence (Resolution.complete); terminal cleanup releases the run.
    if(['done','cancelled'].includes(t.phase))continue;
    const episodeRunId=incident.runId;
-   if(reviewFenceHoldsCoordinators(t,this.store)){
+   if(reviewFenceHoldsCoordinators(t,this.store) && this.store.run(incident.runId)?.agentId){
     // A finished accepted recovery still settles its bookkeeping while review
     // authorization holds (Spec 050: no verb is refused by a stale record);
     // nothing else about the task moves until authorization returns.
@@ -165,23 +165,30 @@ export class CoordinatorPass {
     }
     if(!run.agentId){
      if(this.resolution.startsNoRuns())continue;
+     const observedVersion=t.version,observedRun=run;
      const found=await this.resolution.adapter.findRunAgents!(run);
      if(this.resolution.stopped()||this.resolution.startsNoRuns())return;
      t=this.store.task(t.id);
-     if(dispatchBlocked(t)||reviewFenceHoldsCoordinators(t,this.store))continue;
+     if(dispatchBlocked(t))continue;
      const latestRun=this.store.run(run.id);
-     if(!latestRun||latestRun.released||t.resolution.recovery?.runId!==latestRun.id||latestRun.generation!==t.coordinatorGeneration)continue;
+     if(t.version!==observedVersion||!latestRun||JSON.stringify(latestRun)!==JSON.stringify(observedRun)||latestRun.released||t.resolution.recovery?.runId!==latestRun.id||latestRun.generation!==t.coordinatorGeneration)continue;
      run=latestRun;
-     if(!run.agentId&&found.length===0&&this.episode.failedCreationRun(t,run)){
+     const failed=this.episode.failedCreationRun(t,run);
+     const age=Date.now()-Date.parse(run.createdAt);
+     if(!run.agentId&&found.length===0&&failed&&Number.isFinite(age)&&age>=this.resolution.graceMs){
       const absentRunId=run.id,taskId=t.id;
-      this.resolution.adapter.purgeReportingFiles?.(taskId,[absentRunId]);
+      let released=false;
       this.store.transaction(()=>{
        const latestTask=this.store.task(taskId),currentRun=this.store.run(absentRunId);
-       if(currentRun&&this.episode.failedCreationRun(latestTask,currentRun))
+       if(currentRun&&latestTask.version===t.version&&JSON.stringify(currentRun)===JSON.stringify(run)&&this.episode.failedCreationRun(latestTask,currentRun)){
         this.episode.releaseAbsent(latestTask,absentRunId,'Exact task/run label lookup found no coordinator; failed creation superseded and released');
+        released=true;
+       }
       });
+      if(released)this.resolution.adapter.purgeReportingFiles?.(taskId,[absentRunId]);
       continue;
      }
+     if(!run.agentId&&found.length===0&&failed&&(!Number.isFinite(age)||age<this.resolution.graceMs))continue;
      if(!run.agentId&&(found.length!==1||found[0].workspaceId!==run.workspaceId)){this.episode.escalate(t,'Coordinator recovery creation is uncertain; no duplicate was launched. Inspect the queue run before retrying.');continue;}
      if(!run.agentId){run={...run,agentId:found[0]!.id,status:'running'};this.store.putRun(run);}
      if(t.coordinatorGeneration===run.generation&&!t.coordinatorAgentId)this.store.update(t.id,{coordinatorAgentId:run.agentId!},'coordinator_assigned',run.agentId!);
