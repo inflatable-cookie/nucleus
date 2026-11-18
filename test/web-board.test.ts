@@ -651,6 +651,7 @@ test("paired sessions live in the data home and migrate once from the work root"
     assert.equal(oldPort, preferredPort, "the board binds its configured fixed port");
     await fixture.client.close();
     await fixture.service.stop();
+    mkdirSync(join(fixture.dataDir, "work"), { recursive: true });
     renameSync(sessionFile, oldSessionFile);
     const replacement = new QueueService({
       owner: { dataDir: fixture.dataDir }, fixture: "fake", debug: true,
