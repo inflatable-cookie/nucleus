@@ -200,11 +200,33 @@ interface RunnableServer {
   serverVersion: string;
 }
 
+/** Use the RPC client's transport mapping while retaining the origin's security and port. */
+export function t3HttpOrigin(endpoint: string): string {
+  const url = new URL(endpoint);
+  if (
+    !["http:", "https:", "ws:", "wss:"].includes(url.protocol) ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash
+  )
+    throw new Error(
+      "T3Code endpoint must be an HTTP or WebSocket URL without credentials, query or fragment",
+    );
+  url.protocol =
+    url.protocol === "ws:"
+      ? "http:"
+      : url.protocol === "wss:"
+        ? "https:"
+        : url.protocol;
+  return url.origin;
+}
+
 /** The environment descriptor an unauthenticated read answers; proves it is a T3 server. */
 async function probeServer(
   endpoint: string,
 ): Promise<{ environmentId: string; serverVersion: string }> {
-  const url = new URL("/.well-known/t3/environment", endpoint);
+  const url = new URL("/.well-known/t3/environment", t3HttpOrigin(endpoint));
   let response: Response;
   try {
     response = await fetch(url, { signal: AbortSignal.timeout(5_000) });
@@ -460,7 +482,7 @@ function connectionMismatch(
 ): string | null {
   const connection = context.connection;
   if (!connection) return null;
-  if (new URL(endpoint).origin !== new URL(connection.endpoint).origin)
+  if (t3HttpOrigin(endpoint) !== t3HttpOrigin(connection.endpoint))
     return "selected endpoint differs from the stored connection";
   if (connection.environmentId && connection.environmentId !== environmentId)
     return "selected T3 environment differs from the stored connection";

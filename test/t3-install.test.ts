@@ -26,6 +26,7 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { t3Fake } from "./support/t3code-fake";
+import { t3HttpOrigin } from "../bin/t3-install";
 import {
   liveTaskNames,
   liveTaskRefusal,
@@ -871,4 +872,49 @@ test("a revoked runtime session reports no unrelated scopes and can rotate or un
   const uninstall = await runCli(target, uninstallArgs(target));
   assert.equal(uninstall.code, 0, uninstall.stderr);
   assert.equal(settingsFile(target).t3code, undefined);
+});
+
+test("legacy WebSocket connections work with or without a server descriptor", async (t) => {
+  for (const descriptor of [true, false]) {
+    const target = fixture();
+    const fake = await t3Fake(t, target.directory);
+    if (descriptor) writeDescriptor(target, fake.endpoint);
+    const websocket = fake.endpoint.replace("http:", "ws:") + "/ws";
+    const writeLegacy = () =>
+      writeFileSync(
+        join(target.dataDir, "settings.json"),
+        JSON.stringify({
+          t3code: { endpoint: websocket, bearer: "synthetic-legacy-bearer" },
+        }),
+      );
+    writeLegacy();
+    const status = await runCli(target, statusArgs(target));
+    assert.equal(status.code, 0, status.stderr);
+    assert.equal(JSON.parse(status.stdout).bearer.valid, true);
+    const install = await runCli(target, installArgs(target));
+    assert.equal(install.code, 0, install.stderr);
+    writeLegacy();
+    const uninstall = await runCli(target, uninstallArgs(target));
+    assert.equal(uninstall.code, 0, uninstall.stderr);
+    assert.equal(settingsFile(target).t3code, undefined);
+    assert.equal(fake.controls.providerInstances?.nucleus, undefined);
+  }
+});
+
+test("WebSocket origin normalization preserves secure transport, host and port", () => {
+  assert.equal(t3HttpOrigin("ws://localhost:3773/ws"), "http://localhost:3773");
+  assert.equal(
+    t3HttpOrigin("wss://localhost:3773/ws"),
+    "https://localhost:3773",
+  );
+  assert.equal(t3HttpOrigin("wss://localhost:443/ws"), "https://localhost");
+  assert.notEqual(
+    t3HttpOrigin("wss://localhost:3773/ws"),
+    t3HttpOrigin("http://localhost:3773"),
+  );
+  assert.notEqual(
+    t3HttpOrigin("ws://localhost:3773/ws"),
+    t3HttpOrigin("http://localhost:3774"),
+  );
+  assert.throws(() => t3HttpOrigin("ws://user:pass@localhost/ws"));
 });
