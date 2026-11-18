@@ -83,28 +83,32 @@ export class RunLaunchSource {
       }
       // Spec 052 (Tom, 2026-11-17): an applied changes-required review authorizes
       // one climb. The next worker run moves one tier above the retained worker's
-      // actual profile, capped at the task's requested tier, on a fresh worker
+      // actual profile, capped at the task's requested tier, on a fresh revision
       // agent (the retained thread's profile cannot change). The climb is recorded
-      // before the replacement sweep so its tier stays permitted, and a later
-      // selection inside the same review round never climbs again. An explicit
-      // owner route above it already returned above; no eligible profile at the
-      // target tier leaves the retained worker continuing.
+      // before the launch so its tier stays permitted, the retained worker joins
+      // `retiredWorkers` for the ordinary archive sweep, and the revision launch
+      // below creates its own run on the climbed profile. A later selection inside
+      // the same review round never climbs again; an explicit owner route above
+      // it already returned above, and no eligible profile at the target tier
+      // leaves the retained worker continuing.
       const climb = workerClimbTarget(t, this.store.pool(), this.store.usageLevel());
-      if (climb && t.agentId) {
-        const unavailable = new Set(this.store.db.prepare('SELECT data FROM availability').all().flatMap(row => {
+      if (climb && t.agentId && t.profile) {
+        const unavailable = new Set(this.store.db.prepare("SELECT data FROM availability").all().flatMap(row => {
           const state = JSON.parse(String((row as { data: string }).data)); return groupIsUnavailable(state) ? [state.group as string] : [];
         }));
-        const workerProfiles = this.resolution.profiles().filter(profile => !workerProfileIsExcluded(t, profile.id) && profile.model !== 'default'
+        const workerProfiles = this.resolution.profiles().filter(profile => !workerProfileIsExcluded(t, profile.id) && profile.model !== "default"
           && !reviewerFiltersWorker(t.resolution.reviewerProfile, profile));
-        const selected = chooseProfile(t, workerProfiles, this.store.pool(), this.store.counts(), unavailable, 'worker',
+        const selected = chooseProfile(t, workerProfiles, this.store.pool(), this.store.counts(), unavailable, "worker",
           this.store.recentCounts(), this.store.usageLevel(), this.store.demandRoleOffsets(), false);
         const to = selected?.entry.capability ?? null;
         if (selected && to && demandRank(to) > demandRank(climb.from)) {
-          const reason = `Spec 052 step-up after review ${climb.reviewRunId} asked for changes: the worker climbs from ${climb.from} to ${to} (${selected.profile.provider}/${selected.profile.model}). Continue the existing task: ${this.resolution.workerContinuation(t)}`.slice(0, 2000);
-          this.resolution.update(t, { workerClimb: { reviewRunId: climb.reviewRunId, from: climb.from, to, profileId: selected.profile.id, at: new Date().toISOString() } },
-            { failoverReason: reason, replacementProfile: { profileId: selected.profile.id, reason: `Spec 052 step-up: review changes climb the worker from ${climb.from} to ${to}` } },
-            'worker_climb_armed', selected.profile.id);
-          return;
+          const reason = `Spec 052 step-up after review ${climb.reviewRunId} asked for changes: the worker climbs from ${climb.from} to ${to} (${selected.profile.provider}/${selected.profile.model})`;
+          const previous = t.profile;
+          t = this.resolution.update(t, { workerClimb: { reviewRunId: climb.reviewRunId, from: climb.from, to, profileId: selected.profile.id, at: new Date().toISOString() } }, {
+            retiredWorkers: [...t.retiredWorkers, { agentId: t.agentId, runId: t.runId ?? "", profile: previous, reason }],
+            agentId: null, runId: null, profile: selected.profile, profileGroup: selected.entry.group,
+            workerModel: null, workerModels: [...new Set([...t.workerModels, previous.model].filter(Boolean))],
+          }, "worker_climb_armed", selected.profile.id);
         }
       }
     }

@@ -119,9 +119,10 @@ tiers" are `frontier` (Opus-class) and `very_high` (Sol extra-high-class).
   phase), and one climb is recorded per review run
   (`resolution.workerClimb`). A retained worker thread cannot change profile, so
   the climb is the one automatic worker replacement: the ordinary revision
-  launch arms the next tier's profile and the replacement sweep retires the
-  retained worker and continues the task on a fresh agent, recording the climb
-  before the sweep so its tier stays permitted. Climbing back to the requested
+  launch records the climb, retires the retained worker (for the archive sweep),
+  and continues as its usual revision run on a fresh agent at the climbed
+  profile. The climb is recorded before the launch so its tier stays permitted,
+  and the `changes_requested` phase alone never authorizes it. Climbing back to the requested
   tier never needs permission; going above it is an explicit planner or
   operator route.
 - **Automatic selection stays at or below the requested tier.** The run's tier

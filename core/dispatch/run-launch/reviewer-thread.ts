@@ -27,6 +27,20 @@ export async function retainReviewerThread(ctx: LaunchThreadContext, t: Task, ro
   if (role !== 'reviewer') return { kind: 'binding', binding, replacingReviewer: false };
   let { agentId, profile, group } = binding;
   let replacingReviewer = false;
+  // A retained reviewer profile below the worker's actual tier is replaced even
+  // when no reviewer agent is retained (Spec 052, Tom 2026-11-17): "at least the
+  // worker's capability" is a floor on the profile, not only on the agent.
+  if (!agentId && profile) {
+    const profileIssue = ctx.retainedProfileIssue(profile) ?? ctx.reviewerCapabilityIssue(t, profile);
+    if (profileIssue) {
+      const selection = ctx.select(t, 'reviewer');
+      if (!selection) {
+        ctx.waiting(t, `Retained reviewer is unavailable (${profileIssue}); no eligible independent reviewer profile${ctx.requiredRouteNote(t, 'reviewer') || ctx.usageCeilingNote(t, 'reviewer')}`, 'route_unavailable');
+        return { kind: 'handled' };
+      }
+      profile = selection.profile; group = selection.entry.group;
+    }
+  }
   // Task 515: the same general rule as the worker and coordinator yields
   // here too: a required honoured reviewer route supersedes the retained
   // selection, so the next reviewer run is selected instead of reusing a

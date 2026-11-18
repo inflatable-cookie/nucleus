@@ -4,7 +4,7 @@ import { authorModelKey, queueAuthorModelKey, taskAuthorModelKeys } from "../../
 import {activeGroupLimit,demandRank,unavailableGroupNames,workerThinking} from '../../shared/pool';
 export {workerThinking};
 import {automaticSelection, requestOnly, describeRoutePolicy, honouredRequest, requestReaches, groupIsUnavailable, topTier} from '../../shared/pool';
-import {DEMAND_ROLE_OFFSETS, climbedTier, effectiveWeight, requestedTier, runDemand, selectionTier, workerActualTier, workerClimbTarget, workerStartTier, workerStepLabel, workerStepUp} from '../../shared/demand';
+import {DEMAND_ROLE_OFFSETS, climbedTier, effectiveWeight, requestedTier, runDemand, selectionTier, usageCeiling, workerActualTier, workerClimbTarget, workerStartTier, workerStepLabel, workerStepUp} from '../../shared/demand';
 type Role = "worker"|"reviewer"|"coordinator";
 /**
  * Spec 050: whether the task's recorded reviewer request is an owner `route`
@@ -287,7 +287,13 @@ export function chooseProfile(task: Task, profiles: Profile[], pool: PoolEntry[]
   // tier, a climbed or routed worker never falls back below its actual profile,
   // and a reviewer is floored at the same actual profile.
   const demand = role === "worker" ? (climb ? climb.to : raised) : role === "reviewer" ? raised : fullDemand;
-  const { tier } = selectionTier(demand, eligible.map(candidate => candidate.entry), usage, requested);
+  // A reviewer must at least match the worker's actual capability, so its
+  // ceiling rises to that tier even when the worker sits above the task's own
+  // requested tier; a worker never exceeds the requested tier automatically.
+  const ceiling = usage === "maximum" ? "frontier"
+    : role === "reviewer" && demandRank(demand) > demandRank(requested) ? demand
+    : usageCeiling(usage, requested);
+  const { tier } = selectionTier(demand, eligible.map(candidate => candidate.entry), usage, ceiling);
   const inTier = new Set(tier.map(entry => entry.profileId));
   const ranked = eligible.filter(candidate => inTier.has(candidate.entry.profileId));
   const share = (candidate: typeof ranked[number]) => effectiveWeight(candidate.entry.weight, candidate.entry.cost);
@@ -354,7 +360,7 @@ export function workerSelectionExplanation(task: Task, pool: readonly PoolEntry[
   const demand = climb ? climb.to : runDemand(complexity, "worker", usage, offsets);
   const eligible = pool.filter(entry => entry.enabled && !unavailableGroups.has(entry.group) && requestReaches(entry, usage, null, requested, climbTier)
     && profiles.some(profile => profile.id === entry.profileId && profile.available));
-  const { tier, shortfall } = selectionTier(demand, eligible, usage, requested);
+  const { tier, shortfall } = selectionTier(demand, eligible, usage, usageCeiling(usage, requested));
   const nameOf = (id: string) => profiles.find(profile => profile.id === id)?.name ?? id;
   const met = tier.map(entry => ({ profileId: entry.profileId, name: nameOf(entry.profileId), capability: entry.capability ?? null, cost: entry.cost ?? null,
     weight: entry.weight, effectiveWeight: effectiveWeight(entry.weight, entry.cost), recent: recent[`profile:${entry.profileId}`] ?? 0 }))

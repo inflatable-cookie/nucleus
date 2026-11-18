@@ -59,8 +59,8 @@ demand = clamp(start + role offset, very_low..frontier)
 - **Step-up after review changes** (Tom, 2026-11-17, replacing the 2026-11-01
   first-worker step): an applied `changes_required` review authorizes one climb
   for the next worker run, one tier from the worker's actual tier and capped at
-  the task's requested tier. The ordinary revision launch arms it on a fresh
-  worker agent and records it once per review run. An honoured profile request
+  the task's requested tier. The ordinary revision launch records it once per
+  review run and continues on a fresh revision agent at the climbed profile. An honoured profile request
   still replaces automatic selection.
 - **Worker selection after review** (Spec 058 cutover 3): review history never
   adds demand or automatically replaces the author. A stronger worker model is

@@ -267,12 +267,12 @@ test('052: the Low gate is decided at admission, so a level change never holds w
   try {
     store.setMeta('usageLevel', { level: 'normal', until: null, setAt: '2026-11-17T00:00:00.000Z' });
     const submitted = store.insert(submissionSchema.parse({ submissionId: 'before-low', title: 'Before low', repoPath: '/repo', planningCommit: 'a'.repeat(40), handoffPath: 'h.md', originAgentId: 'origin', complexity: 'high' }), 'host', 'handoff', 'a'.repeat(40));
-    assert.equal(submitted.usageGate, null, 'a submission made under Normal carries no gate');
+    assert.equal(submitted.usageGate ?? null, null, 'a submission made under Normal carries no gate');
     store.setMeta('usageLevel', { level: 'low', until: null, setAt: '2026-11-17T01:00:00.000Z' });
     const decisions = new Decisions(store);
     reconcileUsageGate(store, decisions, submitted.id);
     const after = store.task(submitted.id);
-    assert.equal(after.usageGate, null, 'the level change never retroactively gates accepted work');
+    assert.equal(after.usageGate ?? null, null, 'the level change never retroactively gates accepted work');
     assert.equal(after.holds.dispatch, undefined);
     assert.equal(usageGateBlocked(after, 'low'), false);
 
