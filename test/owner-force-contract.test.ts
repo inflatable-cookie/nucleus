@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { taskControlInputSchema } from '../shared/contracts';
+import { coordinatorActionSchema, taskControlInputSchema } from '../shared/contracts';
 
 test('force is retained for a reasoned owner move and effect settlement', () => {
   for (const control of [
@@ -17,6 +17,14 @@ test('forced settlement names its effect and force is limited to the two owner v
   assert.equal(taskControlInputSchema.safeParse({ ...base, action: 'retry_effect' }).success, false);
   assert.equal(taskControlInputSchema.safeParse({ ...base, action: 'stop' }).success, false);
   assert.equal(taskControlInputSchema.safeParse({ ...base, action: 'move', to: 'work', reason: '' }).success, false);
+});
+
+test('a recovery report can carry an offered forced effect retry', () => {
+  const action = coordinatorActionSchema.parse({ verb: 'retry_effect', effect: 'owned_tool.run', force: true, reason: 'The tool is idle' });
+  assert.equal(action.verb, 'retry_effect');
+  if (action.verb !== 'retry_effect') throw Error('Expected a retry action');
+  assert.equal(action.force, true);
+  assert.equal(coordinatorActionSchema.safeParse({ verb: 'restart', force: true, reason: 'not offered' }).success, false);
 });
 
 import { mkdtempSync } from 'node:fs';

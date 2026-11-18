@@ -1,6 +1,24 @@
 import type { Task, TaskControlInput } from '../../../shared/contracts';
 import type { Ladder } from './ladder';
 import { plannerEscalations } from './records';
+import type { Store } from '../../store/store';
+
+/** Retire every recorded refusal follow-up once its escalation has settled. */
+export function closeEscalationFollowups(store: Store, taskId: string, escalationId: string): void {
+  const offers = store.eventsAll(taskId).filter(event => event.kind === 'planner_escalation_followup_offered'
+    && event.detail.startsWith(`${escalationId}: `));
+  for (const offer of offers) {
+    let id: unknown;
+    try { id = (JSON.parse(offer.detail.slice(escalationId.length + 2)) as { questionId?: unknown }).questionId; }
+    catch { continue; }
+    if (typeof id !== 'string' || !id.startsWith(`ns-escalation-refusal-${escalationId}`)) continue;
+    for (const questionId of [id, `${id}-project`]) {
+      const key = `delegation:${questionId}`, events = store.eventsAll(key);
+      if (events.length && !events.some(event => event.kind === 'delegated_closed'))
+        store.event(key, 'delegated_closed', 'The escalation settled; this follow-up is superseded');
+    }
+  }
+}
 
 /**
  * How the ladder ends: the same retained worker continues with the recorded
@@ -25,5 +43,6 @@ export function settleLadderControl(ladder: Ladder, before: Task, after: Task, a
   if (after.resolution.stop || !["move", "restart", "route", "retry_effect", "complete", "stop"].includes(action)) return;
   for (const escalation of plannerEscalations(ladder.store.eventsAll(before.id)).filter(item => !item.answered)) {
     ladder.store.event(before.id, "planner_escalation_answered", `${escalation.id}: answered by ordinary ${action}: task control moved the task`);
+    closeEscalationFollowups(ladder.store, before.id, escalation.id);
   }
 }

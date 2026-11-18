@@ -103,8 +103,9 @@ for (const shape of ['omitted','structured','blocked','move','missing','review-r
    await f.engine.wake();assert.equal(attempts,1);
    await f.engine.stop();const restarted=new Engine(f.store,f.adapter,0);restarted.profiles=f.profiles;restarted.resolution.worktreeValidationProbe=()=>({state:'absent'});
    try{await restarted.wake();assert.equal(attempts,1);assert.equal(f.current().resolution.currentRunId,runId)}finally{await restarted.stop()}
-  }else if(shape==='omitted'||shape==='structured'||shape==='blocked'||shape==='move'){
+  }else if(shape==='omitted'||shape==='structured'||shape==='blocked'||shape==='move'||shape==='missing'||shape==='receipt'||shape==='conflict'){
    assert.equal(f.current().prHead,'c'.repeat(40),f.current().reason);assert.equal(f.run().agentId,worker.agentId);
+   assert.notEqual(f.current().resolution.review?.head,'c'.repeat(40),'observing source does not create review credit');
   }else assert.notEqual(f.current().prHead,'c'.repeat(40),shape);
   assert.equal(f.store.run(old.id)?.completion?.status,'blocked');
  }finally{await f.close()}

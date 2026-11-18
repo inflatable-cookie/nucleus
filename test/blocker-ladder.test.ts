@@ -915,6 +915,79 @@ test("a refusal follow-up applies only the refreshed owner verb recorded for tha
   } finally { await f.close(); }
 });
 
+test("a later answer closes the pending refusal follow-up", async () => {
+  const f = fixture({ responsible: true });
+  try {
+    const task = f.current(), id = 'settled-followup', questionId = `ns-escalation-refusal-${id}`;
+    f.store.event(task.id, 'planner_escalation', `${id}: cause ${'c'.repeat(64)}; run worker; question pending`);
+    f.store.event(task.id, 'planner_escalation_followup_offered', `${id}: ${JSON.stringify({ questionId, choices: [], ownerChoices: [] })}`);
+    f.engine.resolution.openDelegatedQuestion(task, questionId, 'planner-1', 'Choose again', 30_000, 'planner', undefined, 'task');
+    f.engine.resolution.applyOperatorControl = async () => f.current();
+    const refusal = await f.engine.resolution.ladder.applyDelegatedEscalationAnswer(task.id, id, `ns-escalation-${id}`, 'Stop and keep the work', 'planner planner-1');
+    assert.equal(refusal, null);
+    assert.ok(f.store.eventsAll(`delegation:${questionId}`).some(event => event.kind === 'delegated_closed'));
+  } finally { await f.close(); }
+});
+
+test("reviewer-side free text and worker-labelled choices preserve the live reviewer", async () => {
+  for (const answer of ['Let the reviewer finish', 'Return to the worker with a new approach — Let the review finish']) {
+    const f = fixture({ responsible: true });
+    try {
+      await f.engine.wake();
+      const run = f.run(), task = f.current(), id = `review-stall-${answer.length}`;
+      assert.equal(run.role, 'reviewer');
+      f.store.event(task.id, 'planner_escalation', `${id}: cause ${'c'.repeat(64)}; run ${run.id}; question pending`);
+      f.store.event(task.id, 'planner_escalation_payload', `${id}: ${JSON.stringify({ runId: run.id, source: 'reviewer' })}`);
+      const controls: TaskControlInput[] = [];
+      f.engine.resolution.applyOperatorControl = async input => { controls.push(input); return f.current(); };
+      const refusal = await f.engine.resolution.ladder.applyDelegatedEscalationAnswer(task.id, id, `ns-escalation-${id}`, answer, 'planner planner-1');
+      assert.equal(refusal, null);
+      assert.deepEqual(controls, []);
+      assert.ok(f.prompts.some(prompt => prompt.agentId === run.agentId && prompt.messageId === `ns-escalation-direction-${id}` && prompt.text.includes(answer)), 'the direction reaches the reviewer');
+      assert.equal(f.store.run(run.id)?.released, false);
+      assert.equal(f.current().resolution.currentRunId, run.id);
+    } finally { await f.close(); }
+  }
+});
+
+test('reviewer escalation answers use the reviewer host rather than the planner host', async () => {
+  const f = fixture({ responsible: true });
+  try {
+    await f.engine.wake();
+    const run = f.run(), task = f.current(), id = 'cross-host-review', answer = 'Let the reviewer finish';
+    assert.equal(run.role, 'reviewer');
+    const delivered: string[] = [], wrongHost: string[] = [];
+    const reviewerAdapter = { ...f.adapter, steerOrNotify: async (agentId: string) => { delivered.push(agentId); } };
+    const plannerAdapter = { ...f.adapter, steerOrNotify: async (agentId: string) => { wrongHost.push(agentId); } };
+    f.engine.resolveHostAdapter = hostId => hostId === task.hostId ? reviewerAdapter : plannerAdapter;
+    f.store.event(task.id, 'planner_escalation', `${id}: cause ${'c'.repeat(64)}; run ${run.id}; question pending`);
+    f.store.event(task.id, 'planner_escalation_payload', `${id}: ${JSON.stringify({ runId: run.id, source: 'reviewer' })}`);
+    const refusal = await f.engine.withHost('planner-other-host', () => f.engine.resolution.ladder.applyDelegatedEscalationAnswer(task.id, id, `ns-escalation-${id}`, answer, 'planner planner-1'));
+    assert.equal(refusal, null);
+    assert.deepEqual(delivered, [run.agentId]);
+    assert.deepEqual(wrongHost, []);
+  } finally { await f.close(); }
+});
+
+test('a completed reviewer escalation queues its direction for the next reviewer role', async () => {
+  const f = fixture({ responsible: true });
+  try {
+    await f.engine.wake();
+    const run = f.run(), id = 'released-reviewer-direction', answer = 'Inspect the remaining tests';
+    f.store.putRun({ ...run, released: true, status: 'finished' });
+    f.store.event(f.current().id, 'planner_escalation', `${id}: cause ${'c'.repeat(64)}; run ${run.id}; question pending`);
+    f.store.event(f.current().id, 'planner_escalation_payload', `${id}: ${JSON.stringify({ runId: run.id, source: 'reviewer' })}`);
+    f.engine.resolution.applyOperatorControl = async input => {
+      const current = f.current();
+      return f.store.update(current.id, { resolution: { ...current.resolution, currentRunId: null, reviewerAgentId: 'new-reader', pendingReviewReason: input.reason! } });
+    };
+    const refusal = await f.engine.resolution.ladder.applyDelegatedEscalationAnswer(f.current().id, id, `ns-escalation-${id}`, answer, 'planner planner-1');
+    assert.equal(refusal, null);
+    assert.equal(f.current().resolution.pendingReviewReason, answer);
+    assert.ok(!f.prompts.some(prompt => prompt.messageId === `ns-escalation-direction-${id}`), 'no message goes to the historical reviewer');
+  } finally { await f.close(); }
+});
+
 test("a refusal follow-up answer is recovered across a service roll without resending its delivery", async () => {
   const f = fixture({ responsible: true });
   try {

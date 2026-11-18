@@ -9,8 +9,8 @@ import type { RecoverySettlementContext } from './coordinator-settlement';
 /**
  * Spec 058 slice 2: a responsible task's mechanical faults are settled by code
  * where it can, before a coordinator episode opens. A reviewer that stopped
- * without a verdict is replaced by the ordinary fresh-reviewer path on the same
- * task and exact head; one mechanical restart per stopped head. A repeat at that
+ * without a verdict is asked to resend its report, or replaced if it is gone;
+ * one mechanical recovery is attempted per stopped head. A repeat at that
  * head is a fault code cannot settle, so recovery keeps it and opens the one
  * retained recovery thread. A reviewer whose saved checkpoint Queue can still
  * continue itself is left to that continuation: a checkpoint is not a crash.
@@ -46,11 +46,17 @@ export async function settleResponsibleFault(engine: RecoverySettlementContext, 
   // task row, so even a refused restart leaves one recorded decision.
   engine.store.event(current.id, "responsible_fault_restart", identity);
   try {
-    await engine.performTaskControl(taskControlInputSchema.parse({
+    const request = {
       taskId: current.id, version: current.version, action: "restart", role: "reviewer", fresh: true, caller: "queue",
       reason: "Responsible task: the reviewer stopped without a result; Nucleus restarts it at the same exact head (Spec 058). "
-        + (shape === "checkpoint_reviewer" ? "Its saved checkpoint cannot receive a same-agent continuation because the agent is closed." : "The stopped reviewer run is replaced on the same task."),
-    }));
+        + (shape === "checkpoint_reviewer" ? "Its saved checkpoint cannot receive a same-agent continuation because the agent is closed." : "Recover the retained reviewer on the same task."),
+    };
+    try {
+      await engine.performTaskControl(taskControlInputSchema.parse(request));
+    } catch (error) {
+      if (!(error instanceof Error) || !error.message.includes('The retained reviewer is still live or its absence is unproven')) throw error;
+      await engine.performTaskControl(taskControlInputSchema.parse({ ...request, fresh: false }));
+    }
     return true;
   } catch (error) {
     engine.store.event(current.id, "responsible_fault_restart_refused", `${identity}: ${error instanceof Error ? error.message : String(error)}`);

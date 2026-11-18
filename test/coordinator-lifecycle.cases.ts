@@ -1088,7 +1088,7 @@ test('a delivered continuation whose retained run stopped is reported as a stopp
     // delivered checkpoint, the run and agent, and the ordinary exits.
     assert.doesNotMatch(f.current().reason, /Reviewer continuing from checkpoint/);
     assert.match(f.current().reason, /delivered continuation for checkpoint 1 .*stopped without a verdict or a new checkpoint/);
-    assert.match(f.current().reason, /route the reviewer to an available profile|fresh reviewer/);
+    assert.match(f.current().reason, /move to=review observes the retained reviewer/);
     assert.equal(f.current().resolution.stop?.reason, 'operator_needed');
     // The evidence is preserved: checkpoint, delivery and run identity are intact.
     assert.equal(f.run().reviewCheckpoints?.length, 1);
@@ -1726,6 +1726,22 @@ test('a refused retry effect returns the current choices to the coordinator', as
     f.engine.resolution.complete({eventId:randomUUID(),taskId:f.submitted.id,runId:second.id,status:'recovered',summary:'Resume sync',coordinatorAction:{verb:'restart',reason:'Retry synchronization'},coordinatorGeneration:second.generation},f.tokens.get(second.id)!);
     await f.engine.resolution.recovery.pass(f.submitted.id);
     assert.equal(f.events('coordinator_action_applied').length,1,JSON.stringify(f.current().resolution.recovery));
+  } finally { await f.close(); }
+});
+
+test('an authenticated coordinator report settles its offered forced effect', async () => {
+  const f = fixture(); try {
+    f.store.db.prepare('DELETE FROM runs WHERE id=?').run(f.reviewerRunId);
+    f.store.update(f.submitted.id, { phase: 'needs_attention', reason: 'Observed tool is idle',
+      resolution: { ...f.current().resolution, currentRunId: null, reviewerAgentId: null, attention: true } });
+    f.store.event(f.submitted.id, 'owned_tool_hold', JSON.stringify({ runId: 'lost-tool', reason: 'unknown tool' }));
+    f.engine.resolution.recordStop(f.current(), 'operator_needed', 'Observed tool is idle', ['retry_effect']);
+    await f.engine.resolution.recovery.route(f.current());
+    const coordinator = f.coordinatorRuns().at(-1)!;
+    assert.ok(coordinator);
+    await f.coordinatorReport({ verb: 'retry_effect', effect: 'owned_tool.lost-tool', force: true, reason: 'Observed idle with no live child' }, coordinator.id);
+    await f.engine.resolution.recovery.pass(f.submitted.id);
+    assert.ok(f.current().resolution.ownerSettlements.some(item => item.effect === 'owned_tool.lost-tool'));
   } finally { await f.close(); }
 });
 

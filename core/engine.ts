@@ -523,7 +523,7 @@ export class Engine {
     this.workerFailover = new WorkerFailover(enginePorts(this, ['activeHostId', 'adapter', 'host', 'launchAgent', 'note', 'profileCatalogKnown', 'profiles', 'workerProviderUnavailable', 'stopped', 'store', 'taskHostAvailable', 'withHost'], ['recordStop', 'resumeTransientProviderThread', 'resumeTransientWorker', 'retainedWorkerProfileIssue', 'suppressAutomaticRetry', 'transportDeferred', 'waiting']));
     this.retiredObservations = new RetiredObservations(portsContext(this, ['activeHostId', 'host', 'retiredObservationKey', 'store', 'taskHostAvailable']));
     this.taskControlDispatcher = new TaskControlDispatcher(this);
-    this.recoverySettlement = new RecoverySettlement(enginePorts(this, ['coordinatorActionRunId', 'host', 'onTaskHost', 'performTaskControl', 'store'], ['attention', 'recovery', 'update']));
+    this.recoverySettlement = new RecoverySettlement(enginePorts(this, ['coordinatorActionRunId', 'selfForceRunId', 'host', 'onTaskHost', 'performTaskControl', 'store'], ['attention', 'recovery', 'update']));
     this.pausedStops = new PausedStops(this);
     this.routeControls = new RouteControls(this);
     this.taskCompletion = new TaskCompletion(this);

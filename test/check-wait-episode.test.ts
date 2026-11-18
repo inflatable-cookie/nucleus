@@ -166,6 +166,19 @@ test('a green gate settles the escalation it raised for failed checks, matched b
   assert.deepEqual(legacyOther.writes, [], 'a pre-class escalation for another refusal is not a check escalation');
 });
 
+test('a passing check closes its escalation refusal follow-up', () => {
+  const id = 'escalation-check', questionId = `ns-escalation-refusal-${id}`;
+  const f = fakeStore({ task: task(), runs: { 'run-1': { id: 'run-1', role: 'revision', revisionCause: 'pre_merge', head } }, events: [
+    { id: 1, taskId: 'task-1', at: '', kind: 'unchanged_check_revision_refused', detail: 'refused' },
+    { id: 2, taskId: 'task-1', at: '', kind: 'planner_escalation', detail: `${id}: cause ${'d'.repeat(64)}; run run-1; question digest (1 chars); options move` },
+    { id: 3, taskId: 'task-1', at: '', kind: 'planner_escalation_payload', detail: `${id}: ${JSON.stringify({ id, runId: 'run-1', question: 'q', refusal: 'failed_checks' })}` },
+    { id: 4, taskId: 'task-1', at: '', kind: 'planner_escalation_followup_offered', detail: `${id}: ${JSON.stringify({ questionId })}` },
+    { id: 5, taskId: `delegation:${questionId}`, at: '', kind: 'delegated_sent', detail: 'sent' },
+  ] });
+  waitsFor(f.store).resolvePassedUnchangedCheckEscalation(task());
+  assert.ok(f.writes.some(write => write.kind === 'delegated_closed'));
+});
+
 test('a pre-class poll record adopts only the deadline wait it recorded, never an unrelated attention', () => {
   const prose = "Required check 'build' (queued, no runner yet) has been pending past its deadline (2h elapsed, bound 1h); job URL: https://example.test/job/1";
   const waiting = task({ reason: prose, resolution: { incident, attention: true } as Task['resolution'] });

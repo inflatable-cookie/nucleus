@@ -260,8 +260,49 @@ export class ExternalMerge {
       throw Error('Retained workspace does not match the recorded task source');
     return head;
   }
+  /** Re-prove the recorded source witness when acceptance kept a different merged head. */
+  async observeRecordedMerge(t: Task) {
+    if (!this.adapter.externalMerge) throw Error('External merge verification is unavailable');
+    // A never-dispatched review entry keeps its intake head in prHead but its
+    // checkout is at the merged head; it uses the ordinary merged-head witness.
+    const unrunReviewEntry = Boolean(t.reviewEntry && !t.agentIntent && !t.agentId);
+    const retained = Boolean(!unrunReviewEntry && t.prHead && t.resolution.mergeHead && t.prHead !== t.resolution.mergeHead
+      && t.resolution.ownerAcceptances.some(item => item.kind === 'operator_source' && item.head === t.resolution.mergeHead));
+    const witness = retained ? await this.proveRetainedExternalMergeSource(t) : null;
+    const observed = await this.adapter.externalMerge(t, true, retained);
+    if (retained && (await this.proveRetainedExternalMergeSource(t) !== witness
+      || !observed || gitAncestrySync(t.directory!, witness!, observed.head) !== 'ancestor'))
+      throw Error('Retained source or ancestry changed during merge observation');
+    return observed;
+  }
   async recoverExternalMerge(t: Task) {
-    if (this.resolution.paused() || !this.adapter.externalMerge || t.resolution.mergeIntent || !t.workspaceId || (!t.agentId&&!t.reviewEntry) || !(t.reviewEntry?.prNumber||t.completion?.prNumber || t.resumePrNumber) || ['done','cancelled','queued'].includes(t.phase)) return false;
+    if (this.resolution.paused() || !this.adapter.externalMerge || !t.workspaceId || (!t.agentId&&!t.reviewEntry) || !(t.reviewEntry?.prNumber||t.completion?.prNumber || t.resumePrNumber) || ['done','cancelled','queued'].includes(t.phase)) return false;
+    if (t.resolution.mergedCommit && !['syncing', 'closing'].includes(t.phase)) {
+      if (!this.externalMergeProbeDue(t) || this.store.runs(t.id).some(run => !run.released)) return false;
+      if (!await this.resolution.executionLease(t, undefined, false, true)) return false;
+      const runs = JSON.stringify(this.store.runs(t.id));
+      let observed: Awaited<ReturnType<NonNullable<typeof this.adapter.externalMerge>>>;
+      try { observed = await this.observeRecordedMerge(t); }
+      catch { this.noteExternalMergeProbe(t); return false; }
+      this.noteExternalMergeProbe(t);
+      if (!observed || observed.head !== t.resolution.mergeHead || observed.commit !== t.resolution.mergedCommit
+        || this.resolution.reviewRequired(t) && !mergeReviewEvidenceAt(t, observed.head)) return false;
+      const proven = observed;
+      if (!await this.resolution.executionLease(t, undefined, false, true) || this.resolution.paused()) return false;
+      return this.store.transaction(() => {
+        const current = this.store.task(t.id);
+        if (current.version !== t.version || JSON.stringify(this.store.runs(t.id)) !== runs) return false;
+        const latest = this.resolution.assignIntegrationTurn(current);
+        const waiting = this.resolution.hasEarlierIntegrationTurn(latest);
+        if (waiting && latest.phase === 'merging') return false;
+        const episode = this.resolution.recovery.settledEpisodeChanges(latest, 'Recorded merge re-observed at the forge');
+        this.resolution.update(latest, { currentRunId: null, attention: false, stop: null, ...(episode ?? {}) },
+          { phase: waiting ? 'merging' : 'syncing', reason: waiting ? 'Recorded merge re-observed; waiting for the integration turn' : 'Recorded merge re-observed; synchronizing main before closeout' },
+          'recorded_merge_phase_reconciled', JSON.stringify({ head: proven.head, commit: proven.commit }));
+        return true;
+      });
+    }
+    if (t.resolution.mergeIntent) return false;
     if (t.resolution.mergedCommit && (!t.resolution.externalMerge || t.resolution.syncedCommit)) return false;
     if (this.store.runs(t.id).some(r=>!r.released&&!r.agentId)) return false;
     /**

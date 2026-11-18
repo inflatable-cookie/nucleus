@@ -78,6 +78,64 @@ test('Queue asks once, and a board approval signs the request off', () => {
   } finally { f.close(); }
 });
 
+test('a required request-only preference opens a board decision and uses its answer', () => {
+  const f = fixture(); try {
+    const task = f.submit({ profileRequests: {}, preferredProfileId: 'opus', requirePreferred: true });
+    f.reconcile(task.id);
+    const request = f.store.task(task.id).profileRequests!.worker!;
+    assert.equal(request.profileId, 'opus');
+    assert.equal(request.signoff?.status, 'pending');
+    const decision = f.decisions.get({ id: request.signoff!.decisionId! });
+    f.reconcile(task.id);
+    assert.equal(f.decisions.list({ task: task.id }).length, 1);
+    f.answer(decision.id, signoffApprove('opus'));
+    f.reconcile(task.id);
+    assert.equal(chooseProfile(f.store.task(task.id), profiles, pool, {}, new Set(), 'worker')?.profile.id, 'opus');
+  } finally { f.close(); }
+});
+
+test('a missing required preference asks for a route without granting sign-off', () => {
+  const f = fixture(); try {
+    const task = f.submit({ profileRequests: {}, preferredProfileId: 'missing', requirePreferred: true });
+    f.reconcile(task.id);
+    const decision = f.decisions.list({ task: task.id })[0]!;
+    assert.match(decision.question, /missing, disabled or unavailable/);
+    f.reconcile(task.id);
+    assert.equal(f.decisions.list({ task: task.id }).length, 1);
+    f.answer(decision.id, signoffUse('cheap'));
+    f.reconcile(task.id);
+    const request = f.store.task(task.id).profileRequests!.worker!;
+    assert.equal(request.profileId, 'cheap');
+    assert.equal(request.signoff, undefined);
+  } finally { f.close(); }
+});
+
+test('a disabled required preference surfaces a routing decision', () => {
+  const f = fixture(); try {
+    f.store.setMeta('pool', pool.map(entry => entry.profileId === 'cheap' ? { ...entry, enabled: false } : entry));
+    const task = f.submit({ profileRequests: {}, preferredProfileId: 'cheap', requirePreferred: true });
+    f.reconcile(task.id);
+    assert.match(f.decisions.list({ task: task.id })[0]!.question, /missing, disabled or unavailable/);
+  } finally { f.close(); }
+});
+
+test('changing or clearing a required preference withdraws its old routing question', async () => {
+  for (const replacement of ['cheap', '']) {
+    const f = fixture(); const engine = new Engine(f.store, {} as Adapter, 0); engine.profiles = profiles;
+    try {
+      const task = f.submit({ profileRequests: {}, preferredProfileId: 'missing', requirePreferred: true, skipPRReview: true });
+      f.reconcile(task.id);
+      const decision = f.decisions.list({ task: task.id })[0]!;
+      await engine.performTaskControl(taskControlInputSchema.parse({ action: 'set_routing', taskId: task.id,
+        version: f.store.task(task.id).version, preferredProfileId: replacement, requirePreferred: Boolean(replacement),
+        reason: 'Change preference', caller: 'operator (board)' }));
+      f.reconcile(task.id);
+      assert.notEqual(f.decisions.get({ id: decision.id }).status, 'open');
+      assert.equal(f.store.task(task.id).preferredProfileId, replacement);
+    } finally { await engine.stop(); f.close(); }
+  }
+});
+
 test('the operator can pick another profile, decline, or answer by relay (which declines)', () => {
   const f = fixture(); try {
     const chosen = f.submit(); f.reconcile(chosen.id);

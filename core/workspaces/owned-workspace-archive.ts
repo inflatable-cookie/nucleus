@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { removeTree } from "./tree-removal";
 import type { Run, Task } from "../../shared/contracts";
+import { intakeOwnedReviewWorkspace } from "../../shared/workspace-ownership";
 import type { AgentObservation, OriginAgent } from "../host/adapter";
 import type { WorkspaceContinuationHost } from "./workspace-continuation";
 import type { TimelinePage } from "../recovery/stall";
@@ -243,7 +244,10 @@ export class OwnedWorkspaceArchive {
         if(cleanup===false)return false;
         if(cleanup==='run'){
           const placement=this.host.placement();
-          if(id===task.workspaceId&&placement&&directory===await this.host.ownedPathFor(task))placement.admit(directory);
+          if(id===task.workspaceId&&placement&&directory===await this.host.ownedPathFor(task)) {
+            if (intakeOwnedReviewWorkspace(task)) (placement.admitIntake ?? placement.admit)(directory);
+            else placement.admit(directory);
+          }
           const result=await removeBuildOutput(directory);
           buildOutputCleanup.observed(result);
           if(!result.safe)return false;

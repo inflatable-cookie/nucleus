@@ -84,7 +84,8 @@ function fixture(briefText?: string, submissionOverrides: Partial<Submission> = 
   const observations = new Map<string, AgentObservation>();
   const adapter = {
     profiles: async () => [workerProfile, reviewerProfile],
-    observe: async (id: string) => observations.get(id) ?? { id, workspaceId: null, status: 'idle', active: false, permissions: false, error: '' },
+    observe: async (id: string) => observations.get(id) ?? { id, workspaceId: id === 'worker-agent' ? 'workspace' : null, status: 'idle', active: false, permissions: false, error: '' },
+    verifyPr: async () => ({ url: 'https://github.com/example/repo/pull/7', head }),
     archiveAgent: async () => {}, notify: async () => {},
     findAgents: async () => [],
     findRunAgents: async () => [],
@@ -864,7 +865,7 @@ test('a checkpointed review: restart role=reviewer continues it; Queue derives t
   } finally { await f.close(); }
 });
 
-test('fresh review displaces a checkpoint wait with an existing result or another unreleased reviewer', async () => {
+test('an unsettled retained reviewer is not replaced by a fresh review', async () => {
   for (const fence of ['result', 'run'] as const) {
     const f = fixture(); try {
       const review = reviewing(f);
@@ -879,25 +880,12 @@ test('fresh review displaces a checkpoint wait with an existing result or anothe
         f.observations.set('other-review-agent', { id: 'other-review-agent', workspaceId: 'workspace', status: 'idle', active: false, permissions: false, error: '' });
       }
       const fresh = f.next().verbs.find(verb => verb.available && verb.args?.to === 'review' && verb.args?.fresh === true);
-      assert.ok(fresh, `${fence}: next offers the fresh-review exit`);
-      const outcome = await acceptControl(f, taskControlInputSchema.parse({ ...fresh.args,
-        reason: 'Replace the checkpointed round at the current head', caller: CALLER }));
-      assert.equal(outcome.state, 'succeeded', `${fence}: ${outcome.diagnostic}`);
-      assert.equal(f.task().phase, 'awaiting_review');
-      assert.equal(f.task().prHead, head);
-      assert.equal(f.task().resolution.currentRunId, null);
-      assert.equal(f.task().resolution.reviewerAgentId, null);
-      assert.equal(f.task().resolution.review, null);
-      assert.equal(review.deliveries.length, 0, 'replacement never sends a checkpoint continuation');
-      const displaced = f.store.run(review.runId)!;
-      assert.equal(displaced.status, 'superseded');
-      assert.ok(displaced.replacedAt);
-      assert.deepEqual(displaced.reviewCheckpoints, before.reviewCheckpoints, 'saved coverage remains history');
-      if (fence === 'result') assert.deepEqual(f.task().resolution.reviewSupersessions.at(-1)?.review, result);
-      else {
-        assert.equal(f.store.run('other-review-run')!.status, 'superseded');
-        assert.ok(f.store.run('other-review-run')!.replacedAt, 'every stopped reviewer becomes history');
-      }
+      assert.equal(fresh, undefined, `${fence}: next does not offer a replacement`);
+      await assert.rejects(f.engine.performTaskControl(taskControlInputSchema.parse({ action: 'move', to: 'review', fresh: true,
+        taskId: f.taskId, version: f.task().version, reason: 'Replace the retained reviewer', caller: CALLER })), /retained reviewer/);
+      assert.deepEqual(f.store.run(review.runId)!.reviewCheckpoints, before.reviewCheckpoints);
+      assert.equal(f.store.run(review.runId)!.released, false);
+      assert.equal(review.deliveries.length, 0);
     } finally { await f.close(); }
   }
 });

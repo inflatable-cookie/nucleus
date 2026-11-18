@@ -8,6 +8,7 @@ import { dispatchBlocked } from '../dispatch/capacity';
 import {escalationSummary} from './task-reasons';
 import {ACCEPTED_RECOVERY_NOT_APPLIED_PREFIX, cause, needsAttention, type CoordinatorEpisode, type RecoveryContext} from './coordinator-episode';
 import { plannerEscalations, type LadderEvent } from '../questions/ladder';
+import { closeEscalationFollowups } from '../questions/ladder/continuation';
 import {liveRecoveryWait,liveWorkingParticipant,observeRecoveryParticipants} from './live-noop';
 
 /**
@@ -100,7 +101,10 @@ export class CoordinatorPass {
            && current.resolution.incident?.id === fault.id && ['reconciling', 'escalated'].includes(current.resolution.incident.status)
            && !current.resolution.stalledTurnStop && (run ? current.resolution.currentRunId === run.id && latestRun && !latestRun.released && !latestRun.completion && latestRun.agentId === agentId && latestRun.workspaceId === workspaceId : current.runId === fault.runId && current.agentId === agentId && current.workspaceId === workspaceId && !current.completion)) {
         this.store.transaction(() => {
-         for (const escalation of escalations) this.store.event(t.id, 'planner_escalation_resolved', `${escalation.id}: stall ended before action`);
+         for (const escalation of escalations) {
+          this.store.event(t.id, 'planner_escalation_resolved', `${escalation.id}: stall ended before action`);
+          closeEscalationFollowups(this.store, t.id, escalation.id);
+         }
          this.resolution.update(current, { attention: false, recoveryActive: false, stop: null,
           recovery: { ...recovery, status: 'resolved', summary: 'Stall ended before recovery acted' },
           incident: { ...current.resolution.incident!, status: 'resolved', detail: 'Stall ended before recovery acted', updatedAt: now() } },

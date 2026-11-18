@@ -76,8 +76,10 @@ export const runSchema = z.object({
   reviewSourceView: reviewSourceViewSchema.optional(),
   ordinaryDetached: z.literal(true).optional(),
   priorRunId: z.string().optional(),
+  /** A retained reviewer's earlier same-head run whose report did not arrive. */
+  reviewReportRecovery: z.string().optional(),
   priorHead: z.string().regex(/^[a-f0-9]{40}$/).optional(),
-  retainedRounds: z.number().int().min(0).max(3).optional(),
+  retainedRounds: z.number().int().min(0).optional(),
   reviewDelta: z.string().optional(),
   /** Queue 524: bounded pointer to author evidence posted as PR issue comments (never bodies); rendered in the reviewer prompt. */
   authorEvidence: z.string().optional(),

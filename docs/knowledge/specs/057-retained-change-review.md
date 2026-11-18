@@ -46,16 +46,11 @@ sends the next review to the reviewer agent that issued it.
   earlier finding is fixed, reviews new and changed code, re-judges any verdict
   subject the delta touches, and reports a full verdict at the new head. It
   may read beyond the delta when the delta warrants it.
-- **When it is fresh instead.** Nucleus starts a fresh reviewer when:
-  - the retained agent is closed, unobservable or not idle;
-  - its profile is disabled, unavailable or no longer independent of every
-    actual author (an author upgrade changes the author);
-  - an owner asks (`restart role=reviewer fresh`, or `move to=review` with no
-    continuable reader);
-  - three consecutive rounds were retained (the independence check: the fourth
-    is fresh, then the count restarts). Tom kept this rotation when workers
-    became single-thread (Spec 058, task 577): "Keep the rotation" (2026-11-02);
-  - the provider reports the reviewer out of context.
+- **When it is fresh instead.** Tom's 2026-11-17 ruling supersedes the former
+  three-round rotation: one reviewer stays with the task. A replacement is for
+  a reader proved gone or ruled out by its model, independence or exhausted
+  context. A temporarily unavailable, busy or unobservable reader is held,
+  and a missing report is recovered from that same reader.
   A swap by any of these conditions records which one failed — `round`,
   `participant`, `runtime`, `context` or `error` — with the observed evidence in
   its `reviewer_fresh_agent` event, and `task.next` reports the same
@@ -185,8 +180,9 @@ instructions, the joint operator question and the decider context.
 The shared checkout detaches only after custody and source checks, and returns to
 its recorded author branch after release; dirty, moved or still-owned source refuses.
 A bound ordinary reader is not archived just because its verdict was applied.
-A closed reader gets a fresh replacement, and an errored reader with no active turn and no pending permission gets one too: it cannot receive the round, so custody admits it like a closed participant and the round goes fresh. These rules replace the old archive-after-
-verdict and closed-agent reuse expectations.
+A positively closed reader gets a fresh replacement. An errored reader is held
+until its availability is known. These rules replace the old archive-after-verdict
+and closed-agent reuse expectations.
 
 In-process launches keep ownership of their reserved run until preflight and the
 native response settle; a concurrent observation cannot mistake that interval for
@@ -213,8 +209,8 @@ Isolated scenarios, never a live consumer:
    the first reviewer's agent, carries `priorHead` H1, and its prompt holds
    the earlier findings, the exact H1/H2 SHAs and the git commands to read
    the H1..H2 delta, with no diff text inlined.
-2. A closed reviewer agent, a planner-routed worker replacement, a fourth consecutive round and
-   an owner fresh restart each produce a fresh reviewer.
+2. A closed or otherwise ineligible reviewer can be replaced; a fourth round
+   and a missing report keep the same eligible reviewer.
 3. A rebase-only head move produces a confirmation turn for the unchanged
    series and a verdict at the new head.
 4. `blocked` with `sourceApproved` parks in `awaiting_proof` with one notice

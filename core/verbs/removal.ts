@@ -13,7 +13,7 @@ import { isAgentGoneRefusal } from "../host/errors";
 import { canRetireCancelledWorkspace } from "../workspaces/terminal-workspace-retirement";
 import { externalWorkspace } from "../../shared/workspace-ownership";
 import { archiveUnusedWorkspace } from "../workspaces/unused-workspace";
-import { buildOutputCheckoutMismatch, removeBuildOutput, type BuildOutputCleanupResult } from "../workspaces/worktree-cleanup";
+import { buildOutputCheckoutMismatch, buildOutputDirectoryAbsent, removeBuildOutput, type BuildOutputCleanupResult } from "../workspaces/worktree-cleanup";
 
 /**
  * Taking a task off the board and clearing what a finished run leaves in its
@@ -201,6 +201,45 @@ export class TaskRemoval {
       // checkout, so recheck synchronously at the removal boundary (review #564).
       const lateHostRun = this.store.hostRunHoldingWorkspace(record.directory);
       if (lateHostRun) { this.recordRunBuildOutputState(taskId, record, record.state, hostRunHoldReason(lateHostRun)); continue; }
+      if (await buildOutputDirectoryAbsent(record.directory)) {
+        if (!this.engine.adapter.preflightWorkspaceStorage || !this.engine.adapter.taskWorkspaceArchived) {
+          this.recordRunBuildOutputState(taskId, record, record.state, 'Workspace storage or archive availability cannot be proven');
+          continue;
+        }
+        try {
+          await this.engine.adapter.preflightWorkspaceStorage(task);
+          if (!await this.engine.adapter.taskWorkspaceArchived(record.workspaceId)) {
+            this.recordRunBuildOutputState(taskId, record, record.state, 'Workspace is still present in the host catalog');
+            continue;
+          }
+          await this.engine.adapter.preflightWorkspaceStorage(task);
+        }
+        catch (error) { this.recordRunBuildOutputState(taskId, record, record.state, `Workspace storage availability cannot be proven: ${String(error)}`); continue; }
+        if (!await buildOutputDirectoryAbsent(record.directory)) continue;
+        this.recordRunBuildOutputState(taskId, record, "complete", "directory absent; nothing to clean up");
+        continue;
+      }
+      // The directory may have appeared since the hold observation. Prove its
+      // identity before any removal, even when the earlier observation was absent.
+      const identity = await buildOutputCheckoutMismatch(task.repoPath, record.directory);
+      if (identity) { this.recordRunBuildOutputState(taskId, record, record.state, identity); continue; }
+      // The identity lookup awaits Git. Recheck ownership synchronously after it,
+      // immediately before starting the destructive effect.
+      if (this.engine.stopped || this.store.getMeta('paused')) return;
+      const latest = this.store.task(taskId);
+      const latestRecord = latest.resolution.buildOutputCleanups.find(item => item.runId === record.runId && item.workspaceId === record.workspaceId);
+      if (latest.removedAt || isDispositionActive(latest) || !latestRecord || !['intent', 'uncertain'].includes(latestRecord.state)
+        || latestRecord.directory !== record.directory) continue;
+      const boundaryHostRun = this.store.hostRunHoldingWorkspace(record.directory);
+      if (boundaryHostRun) { this.recordRunBuildOutputState(taskId, record, record.state, hostRunHoldReason(boundaryHostRun)); continue; }
+      const boundaryRun = this.engine.unreleasedRunIn(record.workspaceId);
+      if (boundaryRun) { this.recordRunBuildOutputState(taskId, record, record.state, boundaryRun); continue; }
+      if (this.store.workspaceUsedByOtherTaskRun(taskId, record.workspaceId) || this.store.tasks().some(other => other.id !== taskId
+        && (other.workspaceId === record.workspaceId || other.directory === record.directory
+          || other.resolution.coordinatorWorkspaceId === record.workspaceId || other.resolution.closeoutWorkspaceId === record.workspaceId))) {
+        this.recordRunBuildOutputState(taskId, record, record.state, 'workspace is referenced by another task');
+        continue;
+      }
       let result: BuildOutputCleanupResult;
       // Queue #342 (node_modules superseded, 2026-10-20): run-bound settlement never removes installed dependencies; terminal cleanup does.
       try { result = await removeBuildOutput(record.directory, { keepDependencies: true }); }
@@ -255,14 +294,21 @@ export class TaskRemoval {
         && isDeepStrictEqual(revision.completion, completion) && receipt?.hash === digest(JSON.stringify(completion));
       if (!applied && !superseded && !laterApplied) return `author result ${runId} is not applied yet`;
     }
+    // A released run whose workspace is gone owes no destructive cleanup. The
+    // host catalog and storage preflight distinguish absence from an unmounted
+    // volume or an inaccessible workspace; no live thread is treated as gone.
+    if (await buildOutputDirectoryAbsent(record.directory)) {
+      if (!this.engine.adapter.preflightWorkspaceStorage || !this.engine.adapter.taskWorkspaceArchived)
+        return 'Workspace storage or archive availability cannot be proven';
+      await this.engine.adapter.preflightWorkspaceStorage(task);
+      if (await this.engine.adapter.taskWorkspaceArchived(record.workspaceId) && await buildOutputDirectoryAbsent(record.directory)) return null;
+    }
     const busy = this.engine.unreleasedRunIn(record.workspaceId);
     if (busy) return busy;
     const hostRun = this.store.hostRunHoldingWorkspace(record.directory);
     if (hostRun) return hostRunHoldReason(hostRun);
     const agentId = run?.agentId ?? record.agentId ?? null;
     if (!agentId) return "no agent is bound to the run";
-    const identity = await buildOutputCheckoutMismatch(task.repoPath, record.directory);
-    if (identity) return identity;
     const fence = await this.engine.supersededIdleFence({ id: runId, taskId: task.id, agentId, workspaceId: record.workspaceId } as Run);
     if (fence) return fence;
     try { await this.engine.workspaceParticipantsIdle(task, record.workspaceId); }
@@ -271,6 +317,12 @@ export class TaskRemoval {
       && (other.workspaceId === record.workspaceId || other.directory === record.directory
         || other.resolution.coordinatorWorkspaceId === record.workspaceId || other.resolution.closeoutWorkspaceId === record.workspaceId)))
       return 'workspace is referenced by another task';
+    // A missing checkout has no output to remove. Still prove the participants
+    // idle first, and recheck absence in removeBuildOutput at the effect boundary.
+    if (!await buildOutputDirectoryAbsent(record.directory)) {
+      const identity = await buildOutputCheckoutMismatch(task.repoPath, record.directory);
+      if (identity) return identity;
+    }
     const lateHostRun = this.store.hostRunHoldingWorkspace(record.directory);
     if (lateHostRun) return hostRunHoldReason(lateHostRun);
     return this.engine.unreleasedRunIn(record.workspaceId);

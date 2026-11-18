@@ -4,6 +4,8 @@ import { Decisions } from '../planning/decisions';
 import type { Resolution } from '../resolution';
 import { collectOwnerVerbFacts, ownerVerbViews } from '../verbs/owner-verbs';
 import { decodeEscalationChoice, escalationAnswerControl, escalationContinuationInstruction, escalationVerbChoices, extractDecisionIdCandidates, extractFirstIsoTimestamp, extractTaskReferenceCandidates, plannerEscalations, type EscalationVerbChoice, type LadderEvent } from './ladder';
+import { closeEscalationFollowups } from './ladder/continuation';
+import { ProvenPreSendRefusalError } from '../host/errors';
 
 type Answerer = { role: 'planner' | 'decider'; agentId: string } | { role: 'operator' };
 
@@ -22,7 +24,11 @@ export class EscalationSettlement {
     const key = `${t.id}:${id}`;
     const existing = this.escalationSettlements.get(key);
     if (existing) return existing;
-    const settlement = this.settlePlannerEscalationOnce(t, id, answer, who, offered, questionId, answerer);
+    const settlement = this.settlePlannerEscalationOnce(t, id, answer, who, offered, questionId, answerer).then(result => {
+      if (!result && plannerEscalations(this.store.eventsAll(t.id)).some(item => item.id === id && item.answered))
+        closeEscalationFollowups(this.store, t.id, id);
+      return result;
+    });
     this.escalationSettlements.set(key, settlement);
     void settlement.finally(() => { if (this.escalationSettlements.get(key) === settlement) this.escalationSettlements.delete(key); });
     return settlement;
@@ -61,6 +67,75 @@ export class EscalationSettlement {
       : { caller: current.agentId ?? undefined, relayed: true, note: `The operator answered escalation ${id}: ${answer}`.slice(0, 4000) };
     try {
       if (!this.resolution.applyOperatorControl) throw Error('No control applier is bound');
+      const escalation = plannerEscalations(this.store.eventsAll(t.id)).find(item => item.id === id);
+      const namedSource = escalation?.runId ? this.store.run(escalation.runId) : null;
+      const reviewerIncident = current.resolution.incident;
+      const source = namedSource?.role === 'reviewer' ? namedSource
+        : (!namedSource || namedSource.role === 'recovery') && reviewerIncident?.role === 'reviewer' && reviewerIncident.status !== 'resolved' && reviewerIncident.runId
+          ? this.store.run(reviewerIncident.runId) : null;
+      const workerChoice = selected.kind === 'owner' && (selected.choice.verb === 'move' && selected.choice.args.to === 'work'
+        || (selected.choice.verb === 'restart' || selected.choice.verb === 'route') && selected.choice.args.role === 'worker');
+      if (source?.role === 'reviewer' && (workerChoice || selected.kind === 'other' && control.action === 'work')) {
+        const deliverDirection = async (agentId = source.agentId) => {
+          if (!agentId) throw Error('The reviewer direction has no recipient');
+          const prior = this.store.eventsAll(t.id).findLast(event => ['reviewer_escalation_direction_intent', 'reviewer_escalation_direction_sent', 'reviewer_escalation_direction_refused'].includes(event.kind) && event.detail.startsWith(`${id}:`));
+          if (prior && prior.kind !== 'reviewer_escalation_direction_refused')
+            throw Error('Reviewer direction delivery is already recorded or uncertain; inspect it before retrying');
+          this.store.event(t.id, 'reviewer_escalation_direction_intent', `${id}: ${agentId}`);
+          try {
+            await this.resolution.onTaskHost(current, () => {
+              const adapter = this.resolution.adapter;
+              const send = adapter.steerOrNotify ?? adapter.enqueueMessage;
+              if (!send) throw new ProvenPreSendRefusalError('This host cannot steer or queue the reviewer direction');
+              return send.call(adapter, agentId, `ns-escalation-direction-${id}`, `Owner direction for your review: ${answer}`);
+            });
+          } catch (error) {
+            if (error instanceof ProvenPreSendRefusalError) this.store.event(t.id, 'reviewer_escalation_direction_refused', `${id}: ${error.message}`);
+            throw error;
+          }
+          this.store.event(t.id, 'reviewer_escalation_direction_sent', `${id}: ${agentId}`);
+        };
+        if (source.released || source.completion) {
+          // The move persists its reason as the next reviewer run's prompt;
+          // bind the direction to that role, not to a historical agent ID.
+          const reviewerInput = taskControlInputSchema.parse({ taskId: current.id, version: current.version, action: 'move', to: 'review', reason: answer.slice(0, 4000), ...grant });
+          this.store.event(t.id, 'planner_escalation_answer_pending', `${id}: ${JSON.stringify({ questionId, who, answer, control: reviewerInput })}`);
+          await this.resolution.applyOperatorControl(reviewerInput);
+          const after = this.store.task(current.id);
+          const active = after.resolution.currentRunId ? this.store.run(after.resolution.currentRunId) : null;
+          const queued = after.resolution.pendingReviewReason === reviewerInput.reason
+            || after.resolution.deferredVerb?.input.reason === reviewerInput.reason
+            || active?.role === 'reviewer' && active.reviewReason === reviewerInput.reason;
+          if (!queued) {
+            if (!active || active.role !== 'reviewer' || active.released || active.completion) throw Error('No current reviewer is bound to receive the direction');
+            await deliverDirection(active.agentId);
+          }
+          this.store.event(t.id, 'planner_escalation_answered', `${id}: answered by ${who}: ${answer.slice(0, 4000)}`);
+          this.store.event(t.id, 'planner_escalation_applied', `${id}: returned to the retained reviewer`);
+          return null;
+        }
+        if (!source.agentId || !source.workspaceId)
+          throw Error('The reviewer binding cannot be observed; read next and choose a reviewer continuation');
+        const observed = await this.resolution.onTaskHost(current, () => this.resolution.host.observe(source.agentId!));
+        if (observed.id !== source.agentId || observed.workspaceId !== source.workspaceId)
+          throw Error('The reviewer identity cannot be observed; no instruction was sent');
+        if (this.store.task(current.id).version !== current.version || JSON.stringify(this.store.run(source.id)) !== JSON.stringify(source))
+          throw Error('Task or reviewer changed during escalation answer; read next again');
+        if (observed.active || observed.activeTurnId || observed.permissions) {
+          this.store.event(t.id, 'planner_escalation_answer_pending', `${id}: ${JSON.stringify({ questionId, who, answer, control: null })}`);
+          await deliverDirection();
+          this.store.event(t.id, 'planner_escalation_answered', `${id}: answered by ${who}: ${answer.slice(0, 4000)}`);
+          this.store.event(t.id, 'planner_escalation_applied', `${id}: direction delivered to the retained reviewer`);
+          return null;
+        }
+        const reviewerInput = taskControlInputSchema.parse({ taskId: current.id, version: current.version, action: 'restart', role: 'reviewer',
+          instruction: answer.slice(0, 12000), reason, ...grant });
+        this.store.event(t.id, 'planner_escalation_answer_pending', `${id}: ${JSON.stringify({ questionId, who, answer, control: reviewerInput })}`);
+        await this.resolution.applyOperatorControl(reviewerInput);
+        this.store.event(t.id, 'planner_escalation_answered', `${id}: answered by ${who}: ${answer.slice(0, 4000)}`);
+        this.store.event(t.id, 'planner_escalation_applied', `${id}: reviewer continuation requested`);
+        return null;
+      }
       if (selected.kind === 'owner') {
         const choice = selected.choice;
         // Re-read `next` and match the offered identity, never accepting new fields,
@@ -189,6 +264,7 @@ export class EscalationSettlement {
     if (!control && escalationOutlived(this.store.task(taskId))) {
       this.store.event(taskId, 'planner_escalation_answered', `${id}: answered by ${intent.who ?? 'delegated planner'}: the task ended before the answer action`);
       this.store.event(taskId, 'planner_escalation_applied', `${id}: nothing to apply; the task merged or ended first`);
+      closeEscalationFollowups(this.store, taskId, id);
       return 'applied';
     }
     if (control && !('action' in control)) {
@@ -207,6 +283,7 @@ export class EscalationSettlement {
         this.store.event(taskId, 'planner_escalation_answered', `${id}: answered by ${intent.who ?? 'delegated planner'}: recovered ${waitControl.kind} wait ${waitControl.target}`);
       if (!events.some(event => event.kind === 'planner_escalation_applied' && event.detail.startsWith(`${id}:`) && event.id > pending.id))
         this.store.event(taskId, 'planner_escalation_applied', `${id}: waiting for ${waitControl.kind} ${waitControl.target}`);
+      closeEscalationFollowups(this.store, taskId, id);
       return 'applied';
     }
     if (!control || !('action' in control)) return 'unknown';
@@ -230,6 +307,7 @@ export class EscalationSettlement {
       this.store.event(taskId, 'planner_escalation_answered', `${id}: answered by ${intent.who ?? 'delegated planner'}: reconciled from owner_control event ${recorded.id}`);
     if (!events.some(event => event.kind === 'planner_escalation_applied' && event.detail.startsWith(`${id}:`) && event.id > pending.id))
       this.store.event(taskId, 'planner_escalation_applied', `${id}: ${intent.label ?? expected.action} (recovered from owner_control event ${recorded.id})`);
+    closeEscalationFollowups(this.store, taskId, id);
     return 'applied';
   }
 }

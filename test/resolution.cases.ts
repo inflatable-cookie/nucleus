@@ -2703,7 +2703,7 @@ test('an operator accepts an external merge at a planner head built on the recor
   assert.ok(['syncing','merging'].includes(accepted.phase),accepted.phase);
   assert.ok(f.store.events(f.task.id).some(e=>e.kind==='external_merge_head_accepted'&&e.detail.includes('known gaps')&&e.detail.includes(planner)));
   assert.equal(f.counts().merges,0,'Queue never merges it again');
-  await assert.rejects(f.engine.performTaskControl({taskId:f.task.id,version:f.current().version,action:'move',to:'closeout',reason:'again'}),/unmerged dispatched task/);
+  await assert.rejects(f.engine.performTaskControl({taskId:f.task.id,version:f.current().version,action:'move',to:'closeout',reason:'again'}),/no recorded exact-head review or operator source acceptance/);
  }finally{await f.close()}
 });
 
@@ -4124,11 +4124,9 @@ test('instruction-free revise stays valid and clears only a pending scoped instr
   assert.equal(f.sends.filter(r=>r.role==='revision').length,1);
  }finally{await f.close()}
 });
-test('scoped revise fails closed on empty instructions, unsupported phases, merged PRs and absent PR identity',async()=>{
+test('scoped revise fails closed on empty instructions, merged PRs and absent PR identity',async()=>{
  const f=fixture();try{
   assert.throws(()=>f.engine.resolution.retry(f.current(),true,undefined,true,false,false,'   '),/must not be empty/);
-  f.store.update(f.task.id,{phase:'working'});
-  assert.throws(()=>f.engine.resolution.retry(f.current(),true,undefined,true,false,false,'Rebase the PR'),/not valid from phase working/);
   f.store.update(f.task.id,{phase:'awaiting_review',resolution:{...f.current().resolution,mergedCommit:merged}});
   assert.throws(()=>f.engine.resolution.retry(f.current(),true,undefined,true,false,false,'Rebase the PR'),/unmerged task PR/);
   f.store.update(f.task.id,{resolution:{...f.current().resolution,mergedCommit:null}});

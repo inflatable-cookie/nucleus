@@ -2092,10 +2092,10 @@ reports, grants or spends that history.
   the canonical project, or a project rooted at the checkout). Cleanliness is
   proved, then the task/run/workspace binding and the checkout's Git source
   are re-proved as the last awaited proof before send.
-- The continuation ends for good when the budget is spent or the reviewer's
-  agent is positively observed closed (`retainedAgentClosedAt`, nothing else
-  changed). `next` then offers `restart role=reviewer fresh` or `route
-  role=reviewer now`; `move to=review` refuses and names that exit.
+- A spent checkpoint allowance ends automatic checkpoint continuation. The
+  owner can ask the same idle reviewer to finish or redeliver its report after
+  the PR head and thread are observed. A positively closed reviewer may be
+  replaced; a missing report alone never authorizes replacement.
 - A reader whose creation delivery stayed uncertain is continuable on the exact
   authenticated checkpoint evidence that proves creation reached it.
 - Refusals before the adapter's send are definite failures. After the adapter
@@ -2110,13 +2110,12 @@ reports, grants or spends that history.
 
 ### Retained and replaced readers
 
-- By default, `move to=review` preserves what it can continue (Tom, 2026-10-27): a valid
-  retained reader at the exact current head is never replaced; an awaiting
-  checkpoint continues through the ordinary retained-restart path. With no
-  continuable reader at that head, it starts a fresh reviewer. Explicit
-  `fresh: true` deliberately displaces a reader whose binding is proven, even
-  when a checkpointed round already holds a result; its result and checkpoints
-  remain history. It still refuses a reader whose binding cannot be proven.
+- Tom's 2026-11-17 ruling keeps one retained reviewer per task. `move to=review`
+  preserves a live reader and asks an idle, unreported reader to resend its
+  result on the same run and credential. A released reportless round resumes
+  the same reviewer with a report-recovery instruction. Unknown delivery is
+  observed before any retry. A new reviewer is for a reader proved gone or
+  ruled out by its model or independence, not a missing report or a round count.
 - One identity derivation separates an absent reader (none, or another head), a
   valid one and a refused one (binding unprovable). A refused reader is never
   read as absent or displaced; the move refuses and names the deliberate
@@ -2673,6 +2672,21 @@ movement invalidates source approval and preserves the normal readiness gates.
 
 ### Verbs
 
+- The owner verbs and reconciliation act on current forge, checkout,
+  integration and participant observations. Exact-head review or operator
+  source acceptance, preservation of uncommitted work, exclusive writers,
+  callback authentication, unknown delivery and routing sign-off remain real
+  invariants. A stale phase or absent internal record is not itself an invariant.
+- A recorded merge is re-observed at its exact head and commit before returning
+  to the ordinary integration synchronization and closeout gates. An ambiguous
+  observation changes nothing. An absent terminal cleanup target is settled
+  only when storage and the host archive are observed; this claims no removal.
+- A settled escalation closes its refusal follow-up. Reviewer-side answers
+  stay with the reviewer, and a coordinator may report an offered forced move
+  or effect retry under its own authenticated recovery binding.
+- A required worker preference needing board sign-off enters the same routing
+  request and decision lifecycle as an explicit role request; unsigned requests
+  use automatic selection until the decision is answered.
 - Owner task controls are the verbs ([Spec 050](../specs/050-owner-task-controls.md)):
   `next` (read), `route`, `restart`, `move`, `stop`, `complete`, `retry_effect`
   and `proof`. Every verb derives its identities from the task, writes one

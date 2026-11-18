@@ -1137,6 +1137,7 @@ test('a stopped reviewer restart refuses a finished recovery run whose agent is 
     f.observations.set('coord-agent', { id: 'coord-agent', workspaceId: 'workspace', status: 'running', active: true, permissions: false, error: '' });
 
     const before = f.current();
+    f.observations.set('review-agent', { id: 'review-agent', workspaceId: 'workspace', status: 'closed', active: false, permissions: false, error: '' });
     const restarted = await f.control({ fresh: true, instruction: 'Start a fresh reviewer' });
     assert.notEqual(restarted.version, before.version, 'the restart applied');
     assert.equal(f.store.run('recovery-run')!.released, true, 'the reported run settled from its report');
@@ -1161,6 +1162,7 @@ for (const fresh of [false, true]) {
       f.store.putRun(run);
       f.store.update(f.taskId, { resolution: { ...f.current().resolution, reviewerAgentId: 'review-agent', reviewerProfile: f.profiles.reviewer } });
 
+      if (fresh) f.observations.set('review-agent', { id: 'review-agent', workspaceId: 'workspace', status: 'closed', active: false, permissions: false, error: '' });
       const task = await f.control({ fresh, instruction: 'Review the current head' });
       assert.equal(task.phase, 'awaiting_review');
       assert.equal(task.resolution.reviewerAgentId, fresh ? null : 'review-agent');
@@ -1295,6 +1297,7 @@ for (const fresh of [false, true]) {
         f.store.db.prepare('INSERT INTO receipts(id,task,run,hash,response) VALUES(?,?,?,?,?)').run('ckpt-event', f.taskId, run.id, callbackDigest, JSON.stringify(response));
       });
 
+      if (fresh) f.observations.set('review-agent', { id: 'review-agent', workspaceId: 'workspace', status: 'closed', active: false, permissions: false, error: '' });
       const task = await f.control({ fresh, instruction: 'Finish the remaining reading and report' });
       assert.equal(task.resolution.incident?.status, 'resolved');
       assert.equal(task.resolution.recovery?.status, 'resolved');
@@ -1342,6 +1345,7 @@ test('checkpointed reviewer: a fresh restart supersedes the lease without a verd
     f.store.putRun(run);
     f.store.update(f.taskId, { resolution: { ...f.current().resolution, currentRunId: run.id, reviewerAgentId: 'review-agent', reviewerProfile: f.profiles.reviewer } });
 
+    f.observations.set('review-agent', { id: 'review-agent', workspaceId: 'workspace', status: 'closed', active: false, permissions: false, error: '' });
     const task = await f.control({ fresh: true });
     assert.equal(f.store.run(run.id)!.released, true, 'archived replacement releases ownership');
     assert.ok(f.store.run(run.id)!.replacedAt);
@@ -1924,6 +1928,11 @@ for (const fresh of [false, true]) {
         incident: { id: 'review-stall', role: 'reviewer', runId: run.id, turnId: 'review-turn', fingerprint: 'review-stall', attempt: 0, cause: 'stalled_turn', detail: 'looks stalled', action: '', status: 'reconciling', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
       } });
       f.observations.set('review-agent', { id: 'review-agent', workspaceId: 'workspace', status: 'running', active: true, permissions: false, error: '', provider: 'codex', model: f.profiles.reviewer.model, activeTurnId: 'review-turn' });
+      if (fresh) {
+        await assert.rejects(f.control({ role: 'reviewer', fresh, instruction: 'Finish the review' }), /retained reviewer is still live/);
+        assert.equal(f.store.run(run.id)!.released, false);
+        return;
+      }
       const stopped = await f.control({ role: 'reviewer', fresh, instruction: 'Finish the review' });
       assert.equal(stopped.resolution.stalledTurnStop?.restartFresh, fresh);
       assert.equal(f.observations.get('review-agent')!.activeTurnId, undefined, 'the confirmed ended turn has no live turn ID');
@@ -1959,8 +1968,8 @@ test('a live healthy reviewer run is not a restart target and is never released'
     f.store.update(f.taskId, { resolution: { ...f.current().resolution, currentRunId: run.id, reviewerAgentId: 'review-agent', reviewerProfile: f.profiles.reviewer } });
     f.observations.set('review-agent', { id: 'review-agent', workspaceId: 'workspace', status: 'running', active: true, permissions: false, error: '' });
 
-    assert.equal(f.next().verbs.find(verb => verb.verb === 'restart')!.available, false, 'a live healthy reviewer is not listed');
-    await assert.rejects(f.control({ role: 'reviewer', fresh: true }), /needs a restart/);
+    assert.equal(f.next().verbs.find(verb => verb.verb === 'restart')!.available, true, 'restart rechecks the reviewer before requesting a report');
+    await assert.rejects(f.control({ role: 'reviewer', fresh: true }), /still live/);
     assert.equal(f.store.run(run.id)!.released, false, 'the live run was not released');
     assert.equal(f.observations.get('review-agent')!.active, true);
 

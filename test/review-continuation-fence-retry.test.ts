@@ -1,8 +1,99 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { fixture } from './support/review-continuation-fixture';
+import { holdPatch, releasePatch } from '../core/merge/merge-hold';
+import { ProvenPreSendRefusalError } from '../core/host/errors';
 
-test('fresh review launches at the current head over either checkpoint fence', async () => {
+test('report recovery waits for a dispatch hold and sends after release', async () => {
+  const f = fixture(); try {
+    await f.report({ covered: ['Diff'], remaining: ['Tests'] }, 'held-recovery');
+    f.store.putRun({ ...f.run(), reviewBudgetExhaustedAt: new Date().toISOString() });
+    f.store.update(f.submitted.id, holdPatch(f.current(), 'dispatch', 'operator', 'Wait for capacity'));
+    const sent: string[] = [];
+    f.adapter.notify = async (_agent, _id, text) => { sent.push(text); };
+    await f.engine.performTaskControl({ action: 'restart', role: 'reviewer', taskId: f.submitted.id, version: f.current().version, reason: 'Recover review' });
+    assert.equal(sent.length, 0);
+    assert.equal(f.current().resolution.deferredVerb?.target?.runId, f.runId);
+    f.store.update(f.submitted.id, releasePatch(f.current(), 'dispatch'));
+    await f.engine.applyDeferredOwnerVerbs();
+    assert.equal(sent.length, 1);
+  } finally { await f.close(); }
+});
+
+test('a proven unsent report request can be retried but unknown delivery remains fenced', async () => {
+  for (const known of [true, false]) {
+    const f = fixture(); try {
+      await f.report({ covered: ['Diff'], remaining: ['Tests'] }, `send-${known}`);
+      f.store.putRun({ ...f.run(), reviewBudgetExhaustedAt: new Date().toISOString() });
+      let calls = 0;
+      f.adapter.notify = async () => { calls++; if (calls === 1) throw known ? new ProvenPreSendRefusalError('reviewer was not idle') : Error('connection lost'); };
+      const restart = () => f.engine.performTaskControl({ action: 'restart', role: 'reviewer', taskId: f.submitted.id, version: f.current().version, reason: 'Recover review' });
+      await assert.rejects(restart(), /before send|unknown/);
+      if (known) await restart(); else await assert.rejects(restart(), /unknown delivery/);
+      assert.equal(calls, known ? 2 : 1);
+    } finally { await f.close(); }
+  }
+});
+
+test('an idle reviewer with a delivered checkpoint can redeliver its report on the same run', async () => {
+  const f = fixture(); try {
+    await f.report({ covered: ['Diff'], remaining: ['Tests'] }, 'report-lost');
+    await f.engine.wake();
+    assert.equal(f.reviewerDeliveries.length, 1);
+    f.store.putRun({ ...f.run(), active: false, lastObservedAt: new Date(Date.now() + 1000).toISOString() });
+    const sent: { id: string; text: string }[] = [];
+    f.adapter.notify = async (_agent, id, text) => { sent.push({ id, text }); };
+    const task = f.current();
+    await f.engine.performTaskControl({ action: 'move', to: 'review', taskId: task.id, version: task.version, reason: 'Recover the lost report' });
+    assert.equal(sent.length, 1);
+    assert.match(sent[0]!.id, /^ns-reviewer-report-/);
+    assert.equal(f.current().resolution.currentRunId, f.runId);
+    assert.equal(f.createdRuns.length, 0);
+  } finally { await f.close(); }
+});
+
+test('a missing task-level binding does not allow replacing its current reviewer', async () => {
+  const f = fixture(); try {
+    const task = f.current();
+    f.store.update(task.id, { resolution: { ...task.resolution, reviewerAgentId: null } });
+    await assert.rejects(f.engine.performTaskControl({ action: 'move', to: 'review', fresh: true, taskId: task.id,
+      version: f.current().version, reason: 'Replace the reviewer' }), /retained reviewer/);
+    assert.equal(f.createdRuns.length, 0);
+  } finally { await f.close(); }
+});
+
+test('an owner restarts an exhausted checkpoint through the retained reviewer', async () => {
+  const f = fixture(); try {
+    await f.report({ covered: ['Diff'], remaining: ['Tests'] }, 'exhausted');
+    f.store.putRun({ ...f.run(), reviewBudgetExhaustedAt: new Date().toISOString() });
+    const sent: string[] = [];
+    f.adapter.notify = async (_agent, _id, text) => { sent.push(text); };
+    const task = f.current();
+    await f.engine.performTaskControl({ action: 'restart', role: 'reviewer', taskId: task.id, version: task.version,
+      reason: 'Finish the review', instruction: 'Check the outstanding tests' });
+    assert.equal(sent.length, 1);
+    assert.match(sent[0]!, /Check the outstanding tests/);
+    assert.equal(f.current().resolution.currentRunId, f.runId);
+    assert.equal(f.createdRuns.length, 0);
+  } finally { await f.close(); }
+});
+
+test('a prior result fence does not force a fresh reviewer when the retained reader is idle', async () => {
+  const f = fixture(); try {
+    await f.report({ covered: ['Diff'], remaining: ['Tests'] }, 'result-fence');
+    const task = f.current();
+    f.store.update(task.id, { resolution: { ...task.resolution, review: { eventId: 'saved', taskId: task.id, runId: f.runId,
+      status: 'blocked', summary: 'Prior environment fault', head: f.run().head, reviewResponsibility: 'environment' } } });
+    const sent: string[] = [];
+    f.adapter.notify = async (_agent, _id, text) => { sent.push(text); };
+    await f.engine.performTaskControl({ action: 'move', to: 'review', taskId: task.id, version: f.current().version, reason: 'Recover review' });
+    assert.equal(sent.length, 1);
+    assert.equal(f.current().resolution.currentRunId, f.runId);
+    assert.equal(f.createdRuns.length, 0);
+  } finally { await f.close(); }
+});
+
+test('checkpoint fences do not authorize replacing an available reviewer', async () => {
   for (const shape of ['result', 'run'] as const) {
     const f = fixture(); try {
       await f.report({ covered: ['Diff'], remaining: ['Tests'] }, `fresh-${shape}`);
@@ -11,20 +102,11 @@ test('fresh review launches at the current head over either checkpoint fence', a
         review: { eventId: 'saved-block', taskId: f.submitted.id, runId: f.runId, status: 'blocked',
           summary: 'No findings; environment unavailable', head: f.run().head, reviewResponsibility: 'environment' } } });
       else f.store.putRun({ ...f.run(), id: 'other-reader', agentId: 'other-reader', reviewCheckpoints: [] });
-      await f.engine.performTaskControl({ action: 'move', to: 'review', fresh: true, taskId: f.submitted.id,
-        version: f.current().version, reason: 'Start a fresh independent review at this head' });
-      await f.engine.resolution.remindStoppedRun(f.current(), f.run());
-      assert.equal(f.store.events(f.submitted.id).filter(event => event.kind === 'callback_reminder').length, 0,
-        'a superseded reviewer gets no callback reminder');
-      assert.notEqual(f.current().resolution.incident?.runId, f.runId, 'a superseded reviewer creates no missing-callback incident');
-      f.store.setMeta('paused', false);
-      await f.engine.wake(); await f.engine.wake();
-      const replacement = f.store.run(f.current().resolution.currentRunId!);
-      assert.ok(replacement && replacement.id !== f.runId, shape);
-      assert.equal(replacement.role, 'reviewer');
-      assert.equal(replacement.head, f.run().head);
-      assert.notEqual(replacement.agentId, f.run().agentId);
-      assert.equal(f.createdRuns.length, 1);
+      await assert.rejects(f.engine.performTaskControl({ action: 'move', to: 'review', fresh: true, taskId: f.submitted.id,
+        version: f.current().version, reason: 'Start a fresh independent review at this head' }), /retained reviewer/);
+      assert.equal(f.current().resolution.currentRunId, f.runId, shape);
+      assert.equal(f.run().released, false);
+      assert.equal(f.createdRuns.length, 0);
       assert.equal(f.reviewerDeliveries.length, 0);
       assert.equal(f.run().reviewCheckpoints?.length, 1);
       assert.deepEqual(f.counts(), { merges: 0, syncs: 0 });

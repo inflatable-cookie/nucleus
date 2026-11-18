@@ -14,6 +14,7 @@ import type { OwnerVerbFacts } from './owner-facts';
 import { verbInput, restartRoles } from './owner-shared';
 import type { RestartRole, OwnerVerb, RestartShapeName } from './owner-shared';
 import { unreportedExecutorRun } from '../qa/proof-admission';
+import { unreportedReviewer } from './reviewer-report';
 
 /**
  * Round 4 (Tom, 2026-10-19): what `restart` does when no run of the role needs
@@ -291,15 +292,15 @@ export function retainedContinuationPlan(facts: OwnerVerbFacts): RetainedContinu
   if (incidentBindsCurrentWork(task, runs) && task.resolution.incident?.status === "reconciling")
     return { kind: "refused", refusal: "Automatic reconciliation still owns the task incident; continue the review after it settles" };
   if (reviewResultFencesRun(facts.store, task, current))
-    return { kind: "fresh_only", note: `A recorded ${task.resolution.review?.status} result at ${task.resolution.review?.head ?? "an unproved head"} fences checkpoint ${checkpoint.ordinal} on run ${current.id}; continue with restart role=reviewer fresh or move to=review fresh.` };
+    return { kind: "refused", refusal: `A recorded result fences checkpoint ${checkpoint.ordinal}; move to=review re-observes the head and asks the retained reviewer to report.` };
   // Two established causes make the retained-agent continuation impossible: the
   // checkpoint budget is spent, or the reviewer's own agent was positively
   // observed closed. Both keep the lease and the saved progress, and both are
   // recovered by the existing fresh-review verbs at the same exact head.
-  if (current.reviewBudgetExhaustedAt || current.retainedAgentClosedAt)
-    return { kind: "fresh_only", note: `${current.reviewBudgetExhaustedAt
-      ? "The reviewer spent its checkpoint budget and stopped"
-      : `The reviewer's agent was observed closed${current.retainedAgentClosedAt ? ` at ${current.retainedAgentClosedAt}` : ""}`} with checkpoint ${checkpoint.ordinal} at ${current.head} still saved on run ${current.id} (agent ${current.agentId ?? "unknown"}). A same-agent continuation cannot land; this restarts with a fresh reviewer at the same recorded head. move to=review preserves the readers it can continue, so it refuses this one and names this restart; route role=reviewer with now also replaces it deliberately.${rejectedReadingNote(current)}` };
+  if (current.reviewBudgetExhaustedAt && !current.retainedAgentClosedAt)
+    return { kind: "refused", refusal: `The checkpoint allowance is spent; restart role=reviewer or move to=review asks the retained reviewer to finish or redeliver its report.${rejectedReadingNote(current)}` };
+  if (current.retainedAgentClosedAt)
+    return { kind: "fresh_only", note: `The reviewer's agent was observed closed at ${current.retainedAgentClosedAt}; a fresh reviewer can continue at the same recorded head.${rejectedReadingNote(current)}` };
   // The handler records the continuation while a dispatch hold stands. The
   // owner's own stop hold yields to that owner's restart
   // (`dispatchWaitsFor`): in the yielding case `continueRetainedReviewer` runs
@@ -367,6 +368,18 @@ export const restart: OwnerVerb = {
     }
     const role = deriveRestartRole(task, runs);
     const shape = restartShape(task, runs, role, facts.events);
+    const candidate = role === 'reviewer' && shape !== 'stalled_run' ? unreportedReviewer(task, runs) : null;
+    const reviewer = candidate && !candidate.retainedAgentClosedAt
+      && (!(candidate.reviewCheckpoints?.length) || candidate.reviewBudgetExhaustedAt) ? candidate : null;
+    if (reviewer) {
+      const last = facts.events.findLast(event => ['reviewer_report_request_sent', 'reviewer_report_request_intent', 'reviewer_report_request_refused'].includes(event.kind)
+        && event.detail.startsWith(`${reviewer.id}:`));
+      const requested = last?.kind === 'reviewer_report_request_sent' || last?.kind === 'reviewer_report_request_intent';
+      return requested
+        ? { available: false, refusal: `Reviewer ${reviewer.id} already has a report request or unknown delivery; inspect its thread` }
+        : { available: true, fill: ['reason'], args: { taskId: task.id, version: task.version, role: 'reviewer' },
+          note: `Asks retained reviewer ${reviewer.agentId} to resend the report on run ${reviewer.id} after observing it idle; no new review starts.${rejectedReadingNote(reviewer)}` };
+    }
     // nucleus#1195: one bounded continuation asks a live proof executor whose
     // result never arrived to resend that report on its existing run and
     // credential. It re-runs no selector and starts no run, so the view names the

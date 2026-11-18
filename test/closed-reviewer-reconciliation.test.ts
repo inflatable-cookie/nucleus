@@ -295,7 +295,7 @@ for (const variant of ['unavailable', 'active', 'permission', 'idle', 'error', '
   });
 }
 
-test('an exhausted checkpoint budget keeps its own stop and offers the fresh recovery', async () => {
+test('an exhausted checkpoint budget keeps its own stop and offers retained recovery', async () => {
   const f = fixture(); try {
     const run = checkpointedReview(f);
     f.store.putRun({ ...f.store.run(run.id)!, reviewBudgetExhaustedAt: new Date().toISOString() });
@@ -309,8 +309,8 @@ test('an exhausted checkpoint budget keeps its own stop and offers the fresh rec
     assert.deepEqual(f.current().resolution.stop, stop, 'the exhausted-budget stop is preserved verbatim');
     assert.equal(f.current().reason, REVIEW_BUDGET_EXHAUSTED);
     const restart = f.restartView();
-    assert.deepEqual(restart.args, { action: 'restart', taskId: f.taskId, version: f.current().version, role: 'reviewer', fresh: true },
-      'the spent budget recovers with a fresh reviewer, exactly as its own stop says');
+    assert.deepEqual(restart.args, { action: 'restart', taskId: f.taskId, version: f.current().version, role: 'reviewer' },
+      'the spent budget first re-observes the retained reviewer');
     assert.equal(f.createdRuns.length, 0);
   } finally { await f.close(); }
 });

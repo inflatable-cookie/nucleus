@@ -58,6 +58,11 @@ export async function retainReviewerThread(ctx: LaunchThreadContext, t: Task, ro
       const issue = ctx.retainedProfileIssue(profile) ?? ctx.signoffIssue(t, profile, 'reviewer')
         ?? (supersedingReviewer ? `a required reviewer route names ${supersedingReviewer}, superseding the retained reviewer` : null);
       if (issue) {
+        const prior = ctx.store.runs(t.id).findLast(run => run.role === 'reviewer' && run.agentId === agentId);
+        if (!supersedingReviewer && prior && !prior.completion && prior.head === t.prHead) {
+          ctx.waiting(t, `Retained reviewer ${agentId} cannot continue yet (${issue}); its binding is preserved`, 'route_unavailable');
+          return { kind: 'handled' };
+        }
         if (reviewerThreadDecision({ stage: 'issue', issue: true, atLimit: t.resolution.roleReplacements >= 8, selected: false }) === 'attention') {
           ctx.attention(t, 'Role replacement limit reached; operator attention required');
           return { kind: 'handled' };
@@ -79,17 +84,23 @@ export async function retainReviewerThread(ctx: LaunchThreadContext, t: Task, ro
     let participant = true;
     let runtime = true;
     let context = true;
+    let gone = false;
+    let identity = false;
+    let notIndependent = false;
     const swapDetail: Partial<Record<ReviewerSwapCondition, string>> = {};
     if (!round) swapDetail.round = `its prior reviewer round at ${prior?.head ?? 'no head'} is not settled for another round at ${t.prHead ?? 'no head'}`;
     try {
       const consultBound = !prior && ctx.store.eventsAll(t.id).some(event => event.kind === 'reviewer_consult_reviewer' && event.detail.endsWith(`: ${agentId}`));
       const state = await ctx.host.observe(agentId);
-      if (consultBound && profile) {
+      identity = state.id === agentId && state.workspaceId === (prior?.workspaceId ?? t.workspaceId);
+      gone = identity && state.status === 'closed' && !state.active && !state.activeTurnId && !state.permissions;
+      if ((!prior || consultBound) && profile) {
         // A consult-bound reviewer is judged by independence and its inactive
         // participant state, not by a prior review round it never ran.
         round = true;
         const authors = taskAuthorModelKeys(t, ctx.store.runs(t.id).filter(run => run.role === 'revision'));
         const independent = reviewerIndependence({ site: 'consult', authors, reviewerModel: authorModelKey(profile.model) }) === 'independent';
+        notIndependent = !independent;
         const inactive = state.workspaceId === t.workspaceId && state.status === 'idle' && !state.active && !state.permissions;
         participant = independent && inactive;
         if (!independent) swapDetail.participant = 'its model is not independent of the task authors';
@@ -106,10 +117,18 @@ export async function retainReviewerThread(ctx: LaunchThreadContext, t: Task, ro
     } catch (error) {
       participant = false;
       delete swapDetail.participant;
-      swapDetail.error = message(error);
-      ctx.store.event(t.id, 'reviewer_retention_refused', message(error));
+      const detail = message(error);
+      if (detail === 'Original reviewer model is not independent of actual task authors') {
+        notIndependent = true;
+        swapDetail.participant = detail;
+      } else swapDetail.error = detail;
+      ctx.store.event(t.id, 'reviewer_retention_refused', detail);
     }
     const eligible = round && participant && runtime && context && !swapDetail.error;
+    if (!eligible && !gone && !notIndependent && (!identity || runtime && context)) {
+      ctx.waiting(t, `Retained reviewer ${agentId} cannot continue yet: ${swapDetail.round ?? swapDetail.participant ?? swapDetail.error ?? 'its identity or activity is not settled'}`, 'operator_needed');
+      return { kind: 'handled' };
+    }
     if (reviewerThreadDecision({ stage: 'round', eligible }) === 'fresh') {
       const swap = !round && swapDetail.round ? { condition: 'round' as const, detail: swapDetail.round }
         : swapDetail.participant ? { condition: 'participant' as const, detail: swapDetail.participant }

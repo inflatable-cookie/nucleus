@@ -76,7 +76,12 @@ function fixture() {
     findWorkspaces: async () => [], findAgents: async () => [], findRunAgents: async () => [],
     createAgent: async () => { throw new Error('fixtures do not create agents'); },
     observe: async (id: string) => states.get(id) ?? { id, workspaceId: 'workspace', status: 'idle', active: false, permissions: false, error: '' },
-    archiveAgent: async () => {}, notify: async () => {},
+    archiveAgent: async () => {}, notify: async (id: string, messageId: string) => {
+      if (messageId.startsWith('ns-reviewer-report-')) {
+        const state = states.get(id);
+        if (state) states.set(id, { ...state, active: true, status: 'running' });
+      }
+    },
     originAgent: async (id: string) => ({ id, workspaceId: 'workspace', title: id, archived: false }),
     stopAgentTurn: async (id: string) => {
       const state = states.get(id);
@@ -552,8 +557,10 @@ test('a fenced restart hold does not keep the slot', async () => {
       reason: 'Owner restart of the idle reviewer', caller: 'owner-thread',
     }));
     const restarted = f.store.task(holding.id);
-    assert.ok(restarted.resolution.restartSlotHold, 'restart wrote a slot hold');
     assert.equal(occupiesSlot(restarted, f.store.runs(restarted.id)), true);
+    // The report request continues the current run; once its turn is observed
+    // idle, a dispatch hold must not reserve a slot for an unstarted run.
+    f.store.putRun({ ...f.store.run('review-run')!, active: false });
     f.store.update(restarted.id, {
       held: true,
       holds: { dispatch: { owner: 'operator', reason: 'Dispatch held', at: lastActivity, generation: 1, until: null } },

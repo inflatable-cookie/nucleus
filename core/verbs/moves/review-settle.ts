@@ -91,12 +91,9 @@ export function commitReviewMove(engine: Engine, taskId: string, current: Task, 
   const lastRetainedRun = retainedAgent
     ? store.runs(settledTask.id).filter(run => run.role === "reviewer" && run.agentId === retainedAgent).at(-1) ?? null
     : null;
-  const retainedClosed = Boolean(lastRetainedRun?.retainedAgentClosedAt || lastRetainedRun?.reviewBudgetExhaustedAt
+  const retainedClosed = Boolean(lastRetainedRun?.retainedAgentClosedAt
     || (retainedAgent && move.observedRetained?.id === retainedAgent && move.retainedClosedAtObserve));
-  const retainedUnavailable = !retainedAgent || !retainedProfile
-    || Boolean(engine.resolution.retainedProfileIssue(retainedProfile))
-    || Boolean(engine.resolution.signoffIssue(settledTask, retainedProfile, "reviewer"))
-    || engine.resolution.authorAgentIds(settledTask).has(retainedAgent);
+  const retainedUnavailable = !retainedAgent || engine.resolution.authorAgentIds(settledTask).has(retainedAgent);
   const keepReviewer = keepRetainedReviewer(move.freshAsked, retainedClosed, retainedUnavailable);
   store.update(settledTask.id, {
     ...move.binding, profileRequests: requests, phase: "awaiting_review",

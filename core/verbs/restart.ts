@@ -10,6 +10,8 @@ import { DurableFenceRefusal } from "../intake/run-settlement";
 import { digest, now } from "../store/store";
 import type { Engine } from "../engine";
 import { resendExecutorReport } from "./executor-report";
+import { requestReviewerReport, requireReviewerReplacement, unreportedReviewer } from './reviewer-report';
+import { verifyEnclosingOperation } from '../planning/enclosing-operation';
 import type { RestartRequest } from "./owner-shared";
 
 /** Raised after read-only verification or the parked transaction has refused. */
@@ -133,7 +135,12 @@ export class RestartControls {
     if (isDispositionActive(task)) throw Error(DISPOSITION_CONTROL_REFUSAL);
     // Round 4: a restart applies while paused; what it would start waits (deferOwnerVerb).
     const role = (input.role as RestartRole | undefined) ?? deriveRestartRole(task, this.store.runs(task.id));
+    const unreported = role === 'reviewer' ? unreportedReviewer(task, this.store.runs(task.id)) : null;
+    if (role === 'reviewer' && fresh) await requireReviewerReplacement(this.engine, task, input.version);
     if (["done", "cancelled"].includes(task.phase) || task.resolution.mergedCommit) {
+      if (task.resolution.mergedCommit && !['done', 'cancelled', 'syncing', 'closing', 'closeout'].includes(task.phase))
+        return this.engine.moveToCloseout({ taskId: task.id, version: task.version, reason, caller: input.caller,
+          enclosing: () => verifyEnclosingOperation(this.store, input, operationId) });
       // A finished or merged task restarts no run; a merged one still re-runs its
       // parked step (a closeout resynchronization), and either answers an escalation.
       const parked = parkedRestart(collectOwnerVerbFacts(this.store, task, operationId, this.engine.coordinatorActionRunId.getStore()));
@@ -179,6 +186,11 @@ export class RestartControls {
       }
       if (["owner_stopped_worker", "stopped_revision"].includes(shape ?? ""))
         return this.engine.deferOwnerVerb(task, input, "held", { runId: targetRunId });
+    }
+    if (unreported && !fresh && shape !== 'stalled_run' && (!(unreported.reviewCheckpoints?.length) || unreported.reviewBudgetExhaustedAt)) {
+      const wait = this.engine.dispatchWaitsFor(task, this.engine.isOwnerCall(), true);
+      if (wait) return this.engine.deferOwnerVerb(task, input, wait, { runId: unreported.id, head: unreported.head });
+      return requestReviewerReport(this.engine, task, unreported, input.version, reason, input.instruction);
     }
     // The ceiling remains the automatic loop breaker. Only a deliberate
     // operator-relayed fresh worker restart can pass it.

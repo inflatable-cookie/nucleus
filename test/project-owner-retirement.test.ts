@@ -356,6 +356,7 @@ function escalationFixture(
       error: "",
     });
   idle("review-agent");
+  idle("reviewer");
   const asks: Array<{ planner: string; prompt: string }> = [];
   const adapter = fakeAdapter({
     hostId: "host",

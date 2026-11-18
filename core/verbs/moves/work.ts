@@ -2,7 +2,7 @@ import type { Run, Task } from "../../../shared/contracts";
 import { TaskChangedRefusal } from "../../../shared/task-version";
 import type { Engine } from "../../engine";
 import { DurableFenceRefusal } from "../../intake/run-settlement";
-import { evidenceOnlyPr, ForeignPrIdentity, taskHasPr } from "../../forge/index";
+import { evidenceOnlyPr, ForeignPrIdentity, taskHasPr, taskPrNumber } from "../../forge/index";
 import { runsUnchangedSince } from "../../recovery/observation-advance";
 import { blockingRecoveryEffectsRefusal } from "../../recovery/recovery-effects";
 import { OPERATOR_WORKER_REMAP_REASON, operatorReplacementPending } from "../../recovery/task-reasons";
@@ -11,6 +11,7 @@ import { currentRouteProfile } from "../owner-verbs";
 import { MOVE_WORK_AUTHOR_REFUSAL, MOVE_WORK_REPLACEMENT_REFUSAL, moveStateRefusal, REMOVED_TASK_REFUSAL } from "../control-refusals";
 import { RETAINED_PREREQUISITE_REFUSAL } from "../verb-refusal-text";
 import { cancelDisplacedReviewers, observeReviewerDisplacement } from "./review-displacement";
+import { interactiveSessionOpen } from '../../dispatch/interactive';
 
 /** The owner `move to=work` request, after the verb has parsed it. */
 export type WorkMoveInput = {
@@ -44,6 +45,7 @@ export async function moveToWork(engine: Engine, input: WorkMoveInput): Promise<
   engine.requireOwnerControlCurrent(task, input.version, 'Task changed; refresh before retrying');
   const stateRefusal = moveStateRefusal(task, "work");
   if (stateRefusal) throw Error(stateRefusal);
+  if (interactiveSessionOpen(task, store.runs(task.id))) throw Error('The interactive worker session is still open; continue it in its thread');
   // Spec 050 (#3569): finished runs settle by observation before the run
   // fence — including a completed reviewer run, whose verdict the task already
   // carries; one that cannot settle refuses here, with nothing written.
@@ -67,6 +69,20 @@ export async function moveToWork(engine: Engine, input: WorkMoveInput): Promise<
   let continuedPr: ContinuedPrBinding | null = null;
   let foreignCompletion: string | null = null;
   if (task.agentId) {
+    const observed = await engine.onTaskHost(task, () => engine.host.observe(task.agentId!));
+    if (observed.id !== task.agentId || observed.workspaceId !== task.workspaceId || observed.active || observed.activeTurnId
+      || observed.permissions || !['idle', 'error'].includes(observed.status))
+      throw Error('The retained worker is not positively idle in its workspace; no continuation was sent');
+    if (taskHasPr(task) && !evidenceOnlyPr(task)) {
+      const pr = engine.adapter.verifyPrIdentity
+        ? await engine.adapter.verifyPrIdentity(task, taskPrNumber(task), { allowDraft: true })
+        : await engine.adapter.verifyPr(task, taskPrNumber(task));
+      if (engine.adapter.verifyResume) await engine.adapter.verifyResume(task);
+      if (task.prHead && pr.head !== task.prHead) {
+        const clean = await engine.adapter.verifyPr(task, taskPrNumber(task));
+        if (clean.head !== pr.head) throw Error('The PR head changed during worker continuation proof; no continuation was sent');
+      }
+    }
     try { continuedPr = await engine.resolution.verifyContinuedPr(task); }
     catch (error) {
       if (error instanceof ForeignPrIdentity && task.completion && evidenceOnlyPr(task)) foreignCompletion = task.completion.eventId;

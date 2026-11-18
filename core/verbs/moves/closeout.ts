@@ -1,7 +1,9 @@
-import type { Task } from "../../../shared/contracts";
+import { mergeReviewEvidenceAt, type Task } from "../../../shared/contracts";
 import type { Engine } from "../../engine";
 import type { VerifiedEnclosingOperation } from "../../planning/enclosing-operation";
 import { moveStateRefusal, REMOVED_TASK_REFUSAL } from "../control-refusals";
+import { settleSupersededFencesInTx } from "../../recovery/fence-settlement";
+import { now } from "../../store/store";
 
 /** The owner `move to=closeout` request, after the verb has parsed it. */
 export type CloseoutMoveInput = {
@@ -32,8 +34,10 @@ export async function moveToCloseout(engine: Engine, input: CloseoutMoveInput): 
   const task = store.task(input.taskId);
   if (task.removedAt) throw Error(REMOVED_TASK_REFUSAL);
   engine.requireOwnerControlCurrent(task, input.version, 'Task changed; refresh before retrying');
+  if (['done', 'cancelled'].includes(task.phase)) return task;
   const stateRefusal = moveStateRefusal(task, "closeout");
   if (stateRefusal) throw Error(stateRefusal);
+  if (task.resolution.mergedCommit) return resumeRecordedMerge(engine, task, input);
   // Task 408: the never-dispatched review-entry boundary. It is read fresh from
   // the same store fact the dependency correction uses, and only through the
   // authenticated durable invocation executing this move: a direct engine call
@@ -55,4 +59,36 @@ export async function moveToCloseout(engine: Engine, input: CloseoutMoveInput): 
   // its transaction.
   await engine.resolution.acceptExternalMerge(store.task(task.id), input.reason, `move closeout: ${input.reason}`, engine.coordinatorActionRunId.getStore(), undefined, undefined, input.enclosing);
   return store.task(task.id);
+}
+
+/** Re-observe an already recorded merge, then re-enter the normal sync gate. */
+async function resumeRecordedMerge(engine: Engine, task: Task, input: CloseoutMoveInput): Promise<Task> {
+  if (input.head || input.qualification) throw Error('The recorded merge already has its source disposition; omit head and qualification');
+  if (!engine.resolution.adapter.externalMerge) throw Error('External merge verification is unavailable');
+  const store = engine.store, runs = store.runs(task.id), runIdentity = JSON.stringify(runs);
+  const finished = await engine.collectVerbFinishedRuns(task.id, () => false, { displace: true, settlesEpisode: true });
+  if (finished.fenced.length) throw Error(engine.displaceRefusal(finished.fenced[0]!));
+  if (finished.live.length) throw Error('A participant still has a live turn; stop it before closeout');
+  const enclosing = input.enclosing?.();
+  const quiet = () => engine.resolution.executionLease(task, enclosing, false, true);
+  if (!await quiet()) throw Error('Task participants or effects are not settled; no closeout was started');
+  const observed = await engine.resolution.externalMerge.observeRecordedMerge(task);
+  const head = task.resolution.mergeHead;
+  if (!observed || !head || observed.head !== head || observed.commit !== task.resolution.mergedCommit)
+    throw Error('The forge merge does not match the recorded head and commit');
+  if (engine.resolution.reviewRequired(task) && !mergeReviewEvidenceAt(task, head))
+    throw Error('The merged head has no recorded exact-head review or operator source acceptance');
+  if (!await quiet()) throw Error('Task participants or effects changed while observing the merge');
+  return store.transaction(() => {
+    const current = store.task(task.id);
+    engine.requireOwnerControlCurrent(current, task.version, 'Task changed during merge observation; refresh before retrying');
+    if (JSON.stringify(store.runs(task.id)) !== runIdentity) throw Error('Task or run changed during merge observation');
+    engine.releaseDisplacedRunsInTx(task.id, finished.settleable.map(run => run.id), `move closeout: ${input.reason}`);
+    settleSupersededFencesInTx(store, task.id, `move closeout: ${input.reason}`, now(), engine.coordinatorActionRunId.getStore());
+    const latest = engine.resolution.assignIntegrationTurn(store.task(task.id));
+    const waiting = engine.resolution.hasEarlierIntegrationTurn(latest);
+    return engine.resolution.update(latest, { currentRunId: null, attention: false },
+      { phase: waiting ? 'merging' : 'syncing', reason: waiting ? 'Recorded merge re-observed; waiting for the integration turn' : 'Recorded merge re-observed; synchronizing main before closeout' },
+      'owner_closeout_merge_observed', JSON.stringify({ head, commit: observed.commit, reason: input.reason }));
+  });
 }

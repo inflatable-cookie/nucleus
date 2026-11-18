@@ -41,6 +41,19 @@ test('authenticated move records the observed descendant and preserves the dispa
   }finally{await f.close();}
 });
 
+test('a recorded retained-source merge re-enters sync after a stop', {timeout:90000}, async()=>{
+  const f=await fixture(true,true); try {
+    await f.runtime.taskControl(f.control());
+    const store=f.runtime.store, task=store.task(f.taskId);
+    store.update(task.id,{phase:'blocked',reason:'Integration interrupted'});
+    const stopped=store.task(task.id);
+    const result=await f.runtime.taskControl(f.control({version:stopped.version,head:undefined,qualification:undefined,reason:'Resume integration'})) as Task;
+    assert.equal(result.phase,'syncing');
+    assert.equal(result.resolution.mergeHead,f.final);
+    assert.equal(result.prHead,f.head);
+  } finally { await f.close(); }
+});
+
 test('the planning thread is not polled during retained closeout', {timeout:90000}, async()=>{
   const f=await fixture(true,true); try{
     const adapter=f.adapter, observe=adapter.observe.bind(adapter), timeline=adapter.agentTimelinePage;
