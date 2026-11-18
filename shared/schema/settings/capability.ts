@@ -51,13 +51,23 @@ export type ProfileCapability = (typeof profileCapabilityLevels)[number];
 /** A run's demand: a task complexity moved by role and usage; only Maximum may reach `frontier` (Spec 053). */
 export type DemandLevel = CapabilityLevel | "frontier";
 
-/**
- * Spec 052: the operator's overall usage level, a five-stop slider. `normal` is
- * the selection Queue always made; higher levels let automatic selection use
- * and prefer costlier profiles, lower levels hold it to cheaper ones.
- */
-export const usageLevels = ["minimal", "low", "normal", "high", "maximum"] as const;
+/** The demand scale on one list, for the schemas that carry a tier (Spec 052, Spec 053). */
+export const demandLevelSchema = z.enum(["very_low", "low", "medium", "high", "very_high", "frontier"]);
 
-export const usageLevelSchema = z.enum(usageLevels);
+/**
+ * Spec 052: the operator's overall usage level, a five-stop slider (Tom,
+ * 2026-11-17). Each level says plainly where a task's worker starts on the
+ * capability scale, whether climbing back to the task's own requested tier is
+ * allowed, and which runs need the operator's sign-off. `normal` is the default.
+ */
+export const usageLevels = ["low", "normal", "high", "extra_high", "maximum"] as const;
+
+/**
+ * Spec 052 naming migration (Tom, 2026-11-17): `minimal` is removed and its
+ * stored value reads as `low`; `normal`, `high` and `maximum` keep their names,
+ * and `extra_high` joins between `high` and `maximum`. The preprocess reads a
+ * stale writer's value at the wire boundary exactly as a stored row reads it.
+ */
+export const usageLevelSchema = z.preprocess(value => value === "minimal" ? "low" : value, z.enum(usageLevels));
 
 export type UsageLevel = z.infer<typeof usageLevelSchema>;

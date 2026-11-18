@@ -478,7 +478,7 @@ test('Spec 052: the usage slider lives under Dispatch limits, and saves a level 
   }
   assert.ok(ui.ofType('View').filter(node => node.props.style?.flexWrap === 'wrap' && node.props.style?.columnGap === 12).length >= 4, 'every section header row wraps');
   ui.press('Usage Maximum');
-  await settle(() => /Runs need two extra capability steps/.test(ui.get('Usage level help').props.accessibilityHint));
+  await settle(() => /Workers and reviewers run on frontier or very-high models/.test(ui.get('Usage level help').props.accessibilityHint));
   await waitFor(() => sent.length === 1, 'the level to save on press');
   assert.deepEqual(sent[0], { level: 'maximum', until: null });
   ui.press('Return to Normal: No end');
@@ -527,7 +527,7 @@ test('Dispatch limits keeps explanations behind (?): hidden until hovered or pre
   const ui = mount(screenTree(board({ profiles: [profile('live', 'Live model')], pool: [entry('live')] })));
   await settle(() => ui.query('Role demand help') !== undefined);
   // The descriptions are no longer on the page.
-  for (const text of ["Each run needs the task's complexity", 'Parked tasks hold no slot', "A project's own slot limit", 'Runs need what the task needs'])
+  for (const text of ["Each run starts at the usage level's tier", 'Parked tasks hold no slot', "A project's own slot limit", 'Runs need what the task needs'])
     assert.ok(!ui.text().includes(text), `"${text}" sits behind its (?)`);
   for (const title of ['Usage level', 'Role demand', 'Task slots', 'Project overrides']) {
     const help = ui.get(`${title} help`);
@@ -582,7 +582,7 @@ test('Spec 052: a usage expiry projected while the end-time picker is open keeps
   while (!ui.text().includes('Normal in force') && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 100));
   assert.match(ui.text(), /Normal in force/, 'the header shows the expiry');
   assert.match(ui.text(), /In 1 week/, 'the picker stays open');
-  assert.match(ui.get('Usage level help').props.accessibilityHint, /Runs need one extra capability step/, 'the edited level draft survives');
+  assert.match(ui.get('Usage level help').props.accessibilityHint, /Frontier profiles need permission/, 'the edited level draft survives');
   unmount(ui);
 });
 
@@ -646,7 +646,7 @@ test('Spec 052: a profile row shows a status only for a problem; a frontier prof
       ui.press('Edit Frontier Opus with a long profile name');
       await settle(() => Boolean(ui.query('Capability help')));
       assert.equal(ui.query('Selection by request'), undefined, 'By request is retired (Tom, 2026-11-09)');
-      assert.match(ui.get('Capability help').props.accessibilityHint, /Frontier runs only on request below Maximum/);
+      assert.match(ui.get('Capability help').props.accessibilityHint, /The top two tiers need permission at Low and Normal, frontier at High/);
       assert.match(ui.get('Cost help').props.accessibilityHint, /Unset ranks as medium and is never cost-gated/);
       assert.doesNotMatch(ui.text(), /Each cost step down|Each run needs the task's complexity|Weight 2 receives|By request/);
       assert.equal(ui.query('Save Frontier Opus with a long profile name'), undefined);
@@ -916,7 +916,7 @@ test('Cost and Capability are sliders with the chosen value beside the label, no
     await waitFor(() => saved.some(value => (value as { capability?: string })?.capability === 'frontier'), 'the frontier stop to autosave');
     await settle(() => ui.get('Capability value').children.join('') === 'Frontier');
     assert.equal(ui.get('Capability value').children.join(''), 'Frontier', 'the chosen value shows at the right of the label');
-    assert.match(ui.get('Capability help').props.accessibilityHint, /Frontier runs only on request below Maximum/);
+    assert.match(ui.get('Capability help').props.accessibilityHint, /The top two tiers need permission at Low and Normal, frontier at High/);
     ui.press('Cost very low');
     await waitFor(() => saved.some(value => (value as { cost?: string })?.cost === 'very_low'), 'a stop press to autosave');
   } finally { unmount(ui); }

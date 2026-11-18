@@ -25,7 +25,10 @@ export type HostCallerIdentity = {
   participantTicket?: string;
 };
 
-export type HostCallerObserve = (hostId: string, nativeAgentId: string) => Promise<{ id: string; status: string } | null | undefined>;
+export type HostCallerObserve = (
+  hostId: string,
+  nativeAgentId: string,
+) => Promise<{ id: string; status: string } | null | undefined>;
 
 export interface HostCallerPorts {
   onlineIds(): string[];
@@ -35,13 +38,23 @@ export interface HostCallerPorts {
   participantTicket?(caller: string): Promise<string | undefined>;
 }
 
-function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  message: string,
+): Promise<T> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(message)), ms);
     timer.unref?.();
     promise.then(
-      value => { clearTimeout(timer); resolve(value); },
-      error => { clearTimeout(timer); reject(error); },
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
     );
   });
 }
@@ -57,7 +70,11 @@ async function observeThread(
   nativeAgentId: string,
 ): Promise<{ id: string; status: string } | null> {
   try {
-    const observation = await withTimeout(Promise.resolve(observe(hostId, nativeAgentId)), HOST_CALLER_OBSERVE_MS, HOST_SLOW_RETRY);
+    const observation = await withTimeout(
+      Promise.resolve(observe(hostId, nativeAgentId)),
+      HOST_CALLER_OBSERVE_MS,
+      HOST_SLOW_RETRY,
+    );
     return observation ?? null;
   } catch (error) {
     if (isSlow(error)) throw new Error(HOST_SLOW_RETRY);
@@ -65,7 +82,11 @@ async function observeThread(
   }
 }
 
-function currentRunTicket(ports: HostCallerPorts, caller: string, hostId: string): string | undefined {
+function currentRunTicket(
+  ports: HostCallerPorts,
+  caller: string,
+  hostId: string,
+): string | undefined {
   if (!ports.unreleasedRuns || !ports.helperPath) return undefined;
   const runs = ports.unreleasedRuns(caller, hostId);
   const current = runs.at(-1);
@@ -82,15 +103,25 @@ export async function resolveHostCallerIdentity(
   ports: HostCallerPorts,
   input: { hostKind: HostKind; nativeAgentId: string; hostScope?: string },
 ): Promise<HostCallerIdentity> {
-  const hosts = ports.onlineIds().filter(id => hostKindOf(id) === input.hostKind);
+  const hosts = ports
+    .onlineIds()
+    .filter((id) => hostKindOf(id) === input.hostKind);
   let hostId: string;
   if (input.hostKind === "t3code") {
     const owners: string[] = [];
     let slow = false;
     for (const candidate of hosts) {
       try {
-        const observation = await observeThread(ports.observe, candidate, input.nativeAgentId);
-        if (observation?.id === input.nativeAgentId && observation.status !== "gone") owners.push(candidate);
+        const observation = await observeThread(
+          ports.observe,
+          candidate,
+          input.nativeAgentId,
+        );
+        if (
+          observation?.id === input.nativeAgentId &&
+          observation.status !== "gone"
+        )
+          owners.push(candidate);
       } catch (error) {
         if (isSlow(error)) slow = true;
         /* A host that cannot verify this thread is not an owner. */
@@ -99,17 +130,63 @@ export async function resolveHostCallerIdentity(
     if (owners.length !== 1) {
       if (slow && owners.length === 0) throw new Error(HOST_SLOW_RETRY);
       const online = hosts.length ? hosts.join(", ") : "(none)";
-      const reason = owners.length > 1 ? "is ambiguous" : "is not owned by any online host";
-      throw new Error(`T3Code thread ${input.nativeAgentId} ${reason}; online T3 hosts: ${online}`);
+      const reason =
+        owners.length > 1 ? "is ambiguous" : "is not owned by any online host";
+      throw new Error(
+        `T3Code thread ${input.nativeAgentId} ${reason}; online T3 hosts: ${online}`,
+      );
+    }
+    hostId = owners[0]!;
+  } else if (input.hostKind === "bb") {
+    const owners: string[] = [];
+    let slow = false;
+    for (const candidate of hosts) {
+      try {
+        const observation = await observeThread(
+          ports.observe,
+          candidate,
+          input.nativeAgentId,
+        );
+        if (
+          observation?.id === input.nativeAgentId &&
+          observation.status !== "gone"
+        )
+          owners.push(candidate);
+      } catch (error) {
+        if (isSlow(error)) slow = true;
+        /* A host that cannot verify this thread is not an owner. */
+      }
+    }
+    if (owners.length !== 1) {
+      if (slow && owners.length === 0) throw new Error(HOST_SLOW_RETRY);
+      const online = hosts.length ? hosts.join(", ") : "(none)";
+      const reason =
+        owners.length > 1 ? "is ambiguous" : "is not owned by any online host";
+      throw new Error(
+        `BB thread ${input.nativeAgentId} ${reason}; online BB hosts: ${online}`,
+      );
     }
     hostId = owners[0]!;
   } else {
-    if (hosts.length !== 1) throw new Error(`Calling host identity is unavailable or ambiguous for ${input.hostKind}`);
+    if (hosts.length !== 1)
+      throw new Error(
+        `Calling host identity is unavailable or ambiguous for ${input.hostKind}`,
+      );
     hostId = hosts[0]!;
     try {
-      const observation = await observeThread(ports.observe, hostId, input.nativeAgentId);
-      if (observation && (observation.id !== input.nativeAgentId || observation.status === "gone"))
-        throw new Error(`Calling thread ${input.nativeAgentId} is not owned by any online host`);
+      const observation = await observeThread(
+        ports.observe,
+        hostId,
+        input.nativeAgentId,
+      );
+      if (
+        observation &&
+        (observation.id !== input.nativeAgentId ||
+          observation.status === "gone")
+      )
+        throw new Error(
+          `Calling thread ${input.nativeAgentId} is not owned by any online host`,
+        );
     } catch (error) {
       if (isSlow(error)) throw new Error(HOST_SLOW_RETRY);
       const message = error instanceof Error ? error.message : String(error);

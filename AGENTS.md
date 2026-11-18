@@ -87,10 +87,10 @@ all fragments into the changelog and removes the folded files.
   supersede.
 - No release mutations, CI workflow edits or live acceptance runs that create
   GitHub or native application resources without operator authorization.
-- Frontier and above-ceiling profiles need an explicit per-role request, a reason
-  and the operator's board sign-off, unless the operator's usage level (Spec
-  052) puts them in automatic selection. An unsigned request runs on automatic
-  selection.
+- Frontier and other profiles the usage level's permission rule holds (Spec 052)
+  need an explicit per-role request, a reason and the operator's board sign-off,
+  unless the level puts them in automatic selection. An unsigned request runs on
+  automatic selection.
 - When a change alters what is true, update the owning knowledge file in the
   same PR. An operator ruling given in conversation goes into its owning file
   before the thread ends.

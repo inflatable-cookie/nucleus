@@ -64,6 +64,7 @@ import { pipelineBoard, pipelineColumn } from "../shared/pipeline-board";
 import { REPOSITORY_CONTENTION_GRACE_MS } from "../core/scheduling/repository-contention";
 import { Decisions } from "../core/planning/decisions";
 import { chooseProfile } from "../core/dispatch/routing";
+import { resolveNonDeliveryRoute } from "../core/dispatch/run-launch/non-delivery-route";
 import {
   reconcileRoutingSignoffs,
   signoffApprove,
@@ -84,6 +85,7 @@ import {
   WorkerSourceRefusal,
 } from "../core/git/index";
 import { DEFAULT_UNCERTAIN_MERGE_RETRY_MS } from "../shared/contracts";
+
 
 test("local Git status timeout classification requires the child timeout witness", () => {
   const timeout = gitReadTimeoutFailure(["status", "--porcelain"], 600000, {
@@ -1980,19 +1982,90 @@ test("changes return to the same worker and re-review resumes the same reviewer"
   try {
     await f.engine.wake();
     const reviewer = f.run().agentId;
+    const workerCharges = f.store.counts()["author"] ?? 0;
     await f.report("changes_required");
     await f.engine.wake();
     assert.equal(f.run().role, "revision");
     assert.equal(f.run().agentId, "worker");
+    assert.equal(f.store.counts()["author"] ?? 0, workerCharges, "a retained revision does not charge the group again");
+    const reviewCharges = f.store.counts()["review"] ?? 0;
     f.setHead("d".repeat(40));
     await f.report("ready_for_review");
     await f.engine.wake();
     assert.equal(f.run().role, "reviewer");
     assert.equal(f.run().agentId, reviewer);
     assert.equal(f.creates.length, 1);
+    assert.equal(f.store.counts()["review"] ?? 0, reviewCharges, "a retained re-review does not charge the group again");
   } finally {
     await f.close();
   }
+});
+test('Spec 052: an applied changes-required review climbs the next worker run one tier, and a retained reviewer below the climbed worker is replaced',async()=>{
+ const f=fixture(false,false,undefined,true);try{
+  f.adapter.verifyResume=async()=>{};
+  let created=0;
+  f.adapter.createAgent=async t=>{created++;const id=`agent-worker-${created}`;f.states.set(id,{id,workspaceId:t.workspaceId??'workspace',status:'running',active:true,permissions:false,error:''});return{id,workspaceId:t.workspaceId??'workspace'}};
+  f.store.update(f.task.id,{complexity:'high'});
+  const highWorker=profile('worker-high','test/worker-high');
+  f.engine.profiles=[...f.engine.profiles,highWorker];
+  f.store.setMeta('pool',[...f.store.pool(),
+   {profileId:highWorker.id,enabled:true,group:'worker-high',roles:['worker'],weight:1,scopes:['general'],capability:'high',cost:'low'}]);
+  await f.engine.wake();
+  assert.equal(f.run().role,'reviewer');
+  await f.report('changes_required');
+  // The ordinary revision launch reads the applied review outcome and continues
+  // on the climbed tier, on a fresh revision agent: a retained thread cannot
+  // change profile. The retained worker joins retiredWorkers for the archive sweep.
+  await f.engine.resolution.launch(f.current(),'revision');
+  const revision=f.run();
+  const climbed=f.current();
+  assert.equal(revision.role,'revision','the climbed run is the ordinary revision run');
+  assert.equal(revision.profile?.id,highWorker.id,'the revision runs on the high profile');
+  assert.notEqual(revision.agentId,'worker','the climb starts a fresh revision agent');
+  assert.equal(climbed.retiredWorkers.length,1,'the retained worker is retired for the archive sweep');
+  assert.equal(climbed.agentId,revision.agentId,'the fresh revision agent is bound as the task\'s retained worker');
+  assert.equal(revision.profileGroup,'worker-high','the revision run carries the selected subscription group');
+  assert.equal(climbed.profileGroup,'worker-high','the task keeps the selected subscription group');
+  assert.ok((f.store.counts()['worker-high'] ?? 0) >= 1,'the assignment is charged to the selected group');
+  assert.equal(climbed.runId,revision.id,'the revision run is the task\'s current worker run');
+  assert.equal(climbed.resolution.workerClimb?.to,'high');
+  assert.equal(climbed.resolution.workerClimb?.from,'medium');
+  assert.ok(f.store.events(f.task.id).some(event=>event.kind==='worker_climb_armed'));
+  // A later review round does not climb again: the worker already sits at the requested tier.
+  // The higher reviewer profile exists before the re-review is requested, so the
+  // retained medium reviewer is replaced by the profile selection itself.
+  const highReviewer=profile('reviewer-high','test/reviewer-high');
+  f.engine.profiles=[...f.engine.profiles,highReviewer];
+  f.store.setMeta('pool',[...f.store.pool(),
+   {profileId:highReviewer.id,enabled:true,group:'reviewer-high',roles:['reviewer'],weight:1,scopes:['general'],capability:'high',cost:'medium'}]);
+  f.store.update(f.task.id,{profile:highWorker,profileGroup:'worker-high',resolution:{...f.current().resolution,reviewerProfile:profile('reviewer')}});
+  assert.match(String(f.engine.resolution.reviewerCapabilityIssue(f.current(),profile('reviewer'))),/reviewer profile reviewer is rated medium/,'the retained reviewer reads below the tier this run needs');
+  f.setHead('d'.repeat(40));
+  await f.report('ready_for_review');
+  assert.equal(f.run().role,'reviewer');
+  assert.equal(f.run().profile?.id,highReviewer.id,'the retained medium reviewer is replaced above the climbed worker');
+  // Maximum raises the retained reviewer floor to the top two tiers as well.
+  f.store.setMeta('usageLevel',{level:'maximum',until:null,setAt:new Date().toISOString()});
+  assert.match(String(f.engine.resolution.reviewerCapabilityIssue(f.current(),highReviewer)),/top two tiers Maximum/,'a retained reviewer below Maximum\'s tiers is replaced');
+  const unrated=profile('reviewer-unrated','test/reviewer-unrated');
+  f.engine.profiles=[...f.engine.profiles,unrated];
+  f.store.setMeta('pool',[...f.store.pool(),{profileId:unrated.id,enabled:true,group:'reviewer-unrated',roles:['reviewer'],weight:1,scopes:['general'],cost:'medium'}]);
+  assert.match(String(f.engine.resolution.reviewerCapabilityIssue(f.current(),unrated)),/unrated.*top two tiers Maximum/,'an unrated retained reviewer is below Maximum\'s floor');
+  const topReviewer=profile('reviewer-top','test/reviewer-top');
+  f.engine.profiles=[...f.engine.profiles,topReviewer];
+  f.store.setMeta('pool',[...f.store.pool(),{profileId:topReviewer.id,enabled:true,group:'reviewer-top',roles:['reviewer'],weight:1,scopes:['general'],capability:'very_high',cost:'medium'}]);
+  assert.equal(f.engine.resolution.select({...f.current(),profile:highWorker,profileGroup:'worker-high'},'reviewer')?.profile.id,topReviewer.id,'Maximum selects a top-tier reviewer');
+  f.store.setMeta('usageLevel',{level:'normal',until:null,setAt:new Date().toISOString()});
+  const climbedCharges=f.store.counts()['worker-high']??0;
+  await f.report('changes_required');
+  await f.engine.resolution.launch(f.current(),'revision');
+  const second=f.run();
+  assert.equal(second.role,'revision');
+  assert.equal(second.profile?.id,highWorker.id,'the second revision stays at the requested tier');
+  assert.ok(f.store.events(f.task.id).filter(event=>event.kind==='worker_climb_armed').length===1,'only the first review round climbs');
+  assert.equal(f.store.counts()['worker-high']??0,climbedCharges,'the retained second revision does not charge the group again');
+  assert.equal(second.agentId,revision.agentId,'the next same-tier revision continues the worker the climb bound');
+ }finally{await f.close()}
 });
 test("re-review replaces a closed reviewer while preserving the ordinary source workspace", async () => {
   const f = fixture(false, false, undefined, true);
@@ -2803,8 +2876,11 @@ test("responsible non-delivery gets one retained pushback, one same-capability p
         cost: "very_high",
       },
     ]);
+    // Spec 052 (Tom, 2026-11-17): Maximum reserves workers for the top two tiers;
+    // this non-delivery behaviour is about provider spreading, so High keeps the
+    // medium capability ladder in play.
     f.store.setMeta("usageLevel", {
-      level: "maximum",
+      level: "high",
       until: null,
       setAt: new Date().toISOString(),
     });
@@ -2946,6 +3022,35 @@ test("responsible non-delivery gets one retained pushback, one same-capability p
   } finally {
     await f.close();
   }
+});
+test('Spec 052: a non-delivery alternate keeps the climbed tier in its permission filter', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ns-nondelivery-climb-'));
+  const store = new Store(join(dir, 'queue.sqlite'));
+  try {
+    const task = store.insert(submissionSchema.parse({ submissionId: 'nondelivery-climb', title: 'Non-delivery climb', repoPath: '/repo',
+      planningCommit: base, handoffPath: 'h', originAgentId: 'origin', complexity: 'very_high' }), 'host', 'handoff', base);
+    const top = profile('top', 'test/top');
+    const alt = { ...profile('alt', 'test/alt'), provider: 'other' };
+    store.setMeta('pool', [
+      { profileId: top.id, enabled: true, group: 'top', roles: ['worker'], weight: 1, scopes: ['general'], capability: 'very_high', cost: 'high' },
+      { profileId: alt.id, enabled: true, group: 'alt', roles: ['worker'], weight: 1, scopes: ['general'], capability: 'very_high', cost: 'high' },
+    ]);
+    store.setMeta('usageLevel', { level: 'normal', until: null, setAt: new Date().toISOString() });
+    const taskWith = (climb: boolean) => store.update(task.id, { profile: top, profileGroup: 'top', agentId: 'worker', runId: 'run',
+      workspaceId: 'workspace', directory: '/worktree',
+      resolution: { ...store.task(task.id).resolution, nonDeliveryRoutePending: true, currentRunId: null,
+        workerClimb: climb ? { reviewRunId: 'review-1', from: 'high' as const, to: 'very_high' as const, profileId: top.id, at: '2026-11-17T00:00:00.000Z' } : null } });
+    const ctx = () => ({ store, profiles: () => [top, alt], counts: () => store.counts(),
+      recentCounts: () => store.counts(), availability: () => [], update: () => {},
+      waiting: () => {}, openPlannerEscalation: () => {},
+      host: { observe: async (id: string) => ({ id, workspaceId: 'workspace', status: 'idle', active: false, permissions: false, error: '' }) } } as never);
+    const withClimb = taskWith(true);
+    const climbed = await resolveNonDeliveryRoute(ctx(), withClimb, 'revision');
+    assert.equal(climbed.kind, 'alternate', 'the very-high alternate is eligible on the climbed tier');
+    assert.equal(climbed.kind === 'alternate' ? climbed.profile.id : null, alt.id);
+    const beforeClimb = await resolveNonDeliveryRoute(ctx(), taskWith(false), 'revision');
+    assert.equal(beforeClimb.kind, 'handled', 'without the recorded climb the very-high alternate is filtered out');
+  } finally { store.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
 test("a pending non-delivery replacement with no eligible provider escalates once to the planner", async () => {

@@ -233,11 +233,11 @@ Direct submission.
   assert.ok(f.runtime.store.operations().every(operation => !operation.taskId));
 });
 
-test('an unrequested very_high-cost reviewer is no independent route at preflight, as at selection (papercut 09748034)', () => {
-  // Only Luna and an unflagged very_high Sol can review: Sol is by-request by rule.
+test('an unrequested frontier reviewer is no independent route at preflight, as at selection (papercut 09748034)', () => {
+  // Only Luna and an unflagged frontier Sol can review: Sol is by-request by rule.
   const frontierOnly = [
     entry('luna', ['worker', 'reviewer']),
-    entry('sol', ['reviewer'], { cost: 'very_high' }),
+    entry('sol', ['reviewer'], { cost: 'very_high', capability: 'frontier' }),
     entry('muse', ['worker'], { enabled: false }),
     entry('opaque', ['worker']),
   ];

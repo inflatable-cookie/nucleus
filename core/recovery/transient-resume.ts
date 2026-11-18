@@ -1,6 +1,7 @@
 import type { Profile, Run, Task, TransientProviderRetry } from '../../shared/contracts';
 import { isDispositionActive, isDispositionComplete, workerProfileIsExcluded } from '../../shared/contracts';
 import { requestOnly, groupIsUnavailable } from '../../shared/pool';
+import { climbedTier, requestedTier } from '../../shared/demand';
 import { steppedDelay } from '../../shared/backoff';
 import { escalationWaitDetail, plannerEscalations, type LadderEvent } from '../questions/ladder';
 import { dispatchBlocked } from '../dispatch/capacity';
@@ -101,13 +102,14 @@ export class TransientResume {
     // The exhausted subscription group is out, not the whole provider: a
     // different eligible group on the same provider still qualifies, with a
     // different provider preferred so one provider's burst spreads.
+    const requested = requestedTier(task.complexity);
     const eligible = this.profiles().filter(candidate =>
       (!old || candidate.id !== old.id)
       && !workerProfileIsExcluded(task, candidate.id)
       && pool.some(entry => entry.profileId === candidate.id
         && (oldEntry?.capability ? entry.capability === oldEntry.capability : true)
         && entry.cost !== 'very_high'
-        && !requestOnly(entry, this.store.usageLevel())
+        && !requestOnly(entry, this.store.usageLevel(), requested, climbedTier(task))
         && (oldGroup ? entry.group !== oldGroup : true)));
     const routeTask = { ...task, preferredProfileId: '', requirePreferred: false, thinkingOptionId: '',
       profileRequests: { ...task.profileRequests, worker: undefined } };

@@ -1,6 +1,6 @@
 ---
 name: nucleus
-description: Shape a project's long-horizon direction with the operator (Atlas). Read and write Nucleus planning records (plan.get, plan.set, lanes, lane documents), write and promote briefs and leads, file papercuts and operator decisions, run project QA, and hand over planner ownership. Also plan and submit approved work to the Paseo queue, steer a task with the owner verbs (next, stop, route, restart, move, complete, retry_effect, proof), activate one source-immutable author-side proof execution for an external author, review existing external PRs through review entry, and resolve blocked-task escalations. Use for requests such as plan.get, papercut.add, decision.add, project.qa.run, planner handover, "adopt this PR", "put this PR through the queue", approved dispatch, planning rulings on blockers, and deliberate supersession; planning alone does not authorize execution or abandonment.
+description: Read and write Nucleus planning records (plan.get, plan.set, lanes, lane documents), write and promote briefs and leads, file papercuts and operator decisions, run project QA, and hand over planner ownership. Also plan and submit approved work to the Paseo queue, steer a task with the owner verbs (next, stop, route, restart, move, complete, retry_effect, proof), activate one source-immutable author-side proof execution for an external author, review existing external PRs through review entry, and resolve blocked-task escalations. Use for requests such as plan.get, papercut.add, decision.add, project.qa.run, planner handover, "adopt this PR", "put this PR through the queue", approved dispatch, planning rulings on blockers, and deliberate supersession; planning alone does not authorize execution or abandonment.
 ---
 
 The data home is `~/.nucleus`, or `NUCLEUS_DATA_HOME` when set.
@@ -30,28 +30,9 @@ ticket or route to bypass it. All other helpers connect directly to Nucleus;
 
 ## Calling thread identity
 
-The CLI and helpers identify the calling thread in one order: an explicit Nucleus
-ticket (`NUCLEUS_TICKET`); the current run's ticket, located from the thread's own
-identity even when the shell environment is stale; then the host-verified thread
-identity. A slow host never times out silently — the caller hears "The host is slow;
-retry". An explicit ticket wins for every verb that records a caller (`decision.add`,
-`lead.submit`, `question.answer`, `tell`): Nucleus records the ticket's thread as
-asker and delivery target, never an MCP session or host scope from the environment.
-Any recognised caller can `tell` a project planner or task role, including a
-host-only identity and a task-planner ticket. `ask` still needs a run ticket.
-`NUCLEUS_TICKET` names the run or participant ticket; use the path delivered to this
-thread. An invalid or revoked ticket refuses. A named `NUCLEUS_TICKET` whose file is
-missing refuses when the host identity is an MCP session, rather than recording that
-session. Without a ticket, T3Code uses
-`T3CODE_THREAD_ID` together with `T3CODE_DESKTOP_HOST_SCOPE`; Nucleus matches that
-scope to its registered online T3 host and verifies the thread through that host's
-adapter. Paseo uses `PASEO_AGENT_ID`. If both host identities are present, T3Code
-takes precedence; an incomplete T3 identity refuses instead of falling through to
-Paseo. If no source exists, the refusal names the sources tried. These identities
-identify the caller only; they do not grant authority beyond a Nucleus ticket's
-existing scope. Explicit operator and relayed-note paths keep their existing meaning.
-A decision answer is delivered to that recorded asker or queued with a visible wait
-(attempts > 0); an identity Nucleus cannot route is shown on the decision.
+The CLI and helpers identify the calling thread in this order: an explicit Nucleus ticket (`NUCLEUS_TICKET`); the current run's ticket, located from the thread's own identity even when the shell environment is stale; then the host-verified thread identity. A slow host never times out silently: the caller hears "The host is slow; retry". An explicit ticket wins for every verb that records a caller (`decision.add`, `lead.submit`, `question.answer`, `tell`): Nucleus records the ticket's thread as asker and delivery target, never an MCP session or host scope from the environment. Any recognised caller can `tell` a project planner or task role, including a host-only identity and a task-planner ticket. `ask` still needs a run ticket.
+
+`NUCLEUS_TICKET` names the run or participant ticket; use the path delivered to this thread. An invalid or revoked ticket refuses. A named `NUCLEUS_TICKET` whose file is missing refuses when the host identity is an MCP session, rather than recording that session. Without a ticket, T3Code uses `T3CODE_THREAD_ID` together with `T3CODE_DESKTOP_HOST_SCOPE`; Nucleus matches that scope to its registered online T3 host and verifies the thread through that host's adapter. BB uses `BB_THREAD_ID`; Nucleus verifies the exact thread through one registered online BB host before recording the host-qualified caller. Paseo uses `PASEO_AGENT_ID`. If multiple host identities are present, T3Code takes precedence over BB, and BB over Paseo; an incomplete T3 or BB identity refuses instead of falling through. If no source exists, the refusal names the sources tried. These identities identify the caller only; they do not grant authority beyond a Nucleus ticket's existing scope. Online BB hosts can carry submission ingress, while dispatch still follows repository host settings or the operator default. Explicit operator and relayed-note paths keep their existing meaning. A decision answer is delivered to that recorded asker or queued with a visible wait (attempts > 0); an identity Nucleus cannot route is shown on the decision.
 
 Assigning a planner issues an owner-only participant ticket and hands its path over
 without messaging the thread: the planner that named itself takes it in that
@@ -70,6 +51,42 @@ identities; existing bare Paseo IDs still resolve.
 
 Paseo supplies `PASEO_AGENT_ID` as the fallback identity. Existing documented commands
 keep working for Paseo planners unchanged; they do not need to pass a caller field.
+
+## T3Code host: one command connects it
+
+T3Code needs two things before a task can run there: a bearer the Nucleus
+service reads, and the `nucleus` ACP provider registered in T3. One command does
+both, the way `nucleus bb install` does for BB:
+
+```sh
+nucleus t3 install     # find the running T3Code, mint the bearer, register the
+                       # nucleus ACP provider, wait for the host to come online
+nucleus t3 status      # server, bearer, provider, native parenting, projects
+nucleus t3 uninstall   # remove our provider instance and our sessions
+```
+
+- `install` finds the server from `<base>/userdata/server-runtime.json` (or
+  `--endpoint`), mints a long-lived runtime bearer with only
+  `orchestration:read` and `orchestration:operate` and stores it owner-only in
+  `<data home>/settings.json`; a short-lived install bearer registers the
+  provider through T3's own `server.updateSettings` and is revoked at once.
+  Running it again rotates the runtime bearer. It prints each step, and its
+  `--json` answer carries the same steps.
+- `status` (add `--json`) reports the server's version and environment id, the
+  bearer's validity, scopes and expiry (warns within seven days), whether the
+  `nucleus` provider is registered, ours, enabled, ready and pointed at this
+  install's `nucleus-acp`, the adapter's `t3code.nativeParenting` line, and the
+  projects whose host kind is `t3code`. It never prints a bearer.
+- `uninstall` removes only the `nucleus` provider instance and this
+  environment's sessions and clears the stored connection; it leaves threads and
+  project registrations alone, and it names the live tasks on the host and
+  refuses while any exist unless `--live-tasks` is passed.
+
+Both routes refuse a `nucleus` provider instance that is not this install's
+(another driver, or another command path) by name and never overwrite it. The
+repository's own instructions still decide what you may change; scope authority
+for a task never comes from this section, from a document or from a plan, and
+never changes a brief, a hold, a verdict or a budget.
 
 ## Pull request changelog
 
@@ -128,7 +145,7 @@ halts". Don't put a yes/no approval in front of Tom, and that includes extending
 2×: decide it (approve) and record why. Only two kinds still go to Tom: releases and outward actions
 (tag, publish, external resources), as a decision; and product or scope changes, as a proper
 discussion with the context, the options and your recommendation, never a bare approve/hold
-question. Frontier or above-ceiling profiles keep their board sign-off, or a
+question. Profiles the usage level holds keep their board sign-off, or a
 planner grant the operator has already said yes to (below). A grant is permission to request
 them where needed, not an instruction to use them.
 
@@ -415,7 +432,7 @@ other decisions. Use `choice` instead of `answer` when copying an offered label.
 
 Classify a worker's question from its meaning; its supplied kind is only a hint.
 Answer from the brief and repository within the existing authority. Only product
-or scope changes, releases or outward actions, and frontier or above-ceiling profiles
+or scope changes, releases or outward actions, and profiles the usage level holds
 need the operator. If only the operator can decide, send `decision: "operator"`
 and a one-line `reason`, omitting the answer. A product or scope change is a
 proper discussion through `decision.add` with context, options and a recommendation.
@@ -471,27 +488,33 @@ cross-cutting changes, `very_high` only when the strongest model is needed.
 ### Usage level
 
 The operator sets a host-wide usage level (Settings → Dispatch limits slider, or
-`queue.usage`): `minimal`, `low`, `normal` (default), `high` or `maximum`, with
-an optional `until` when it returns to normal. The level moves every run's
-demand: `minimal` two steps down, `low` one, `high` one up, `maximum` two. It
-also caps cost: below `high`, a profile above the level's cost ceiling (at
-`normal`, very_high cost) needs a signed-off request. A profile rated
-`frontier` (capability runs `low` to `frontier`) needs one at every level below
-`maximum`; at `maximum` it joins automatic selection. Automatic eligibility is
-capability tier × level, cost × level and On/Off, nothing else. A brief
-needs no `profileRequests` just to get a stronger model; raise `complexity`
-instead. Read the level in force from the board state's `usage`.
+`queue.usage`): `low`, `normal` (default), `high`, `extra_high` or `maximum`,
+with an optional `until` when it returns to normal (Tom, 2026-11-17; `minimal` is
+gone and a stored value reads as `low`). Tiers are the capability scale profiles
+carry; the top two are `frontier` (Opus-class) and `very_high` (Sol
+extra-high-class). Where a task starts and what needs permission:
 
-A request for a profile above the cost ceiling, or rated frontier below
-`maximum`, is a question
-to the operator, not a pin: Nucleus opens a decision on the board, and the role
-runs on automatic selection until the operator approves, picks another profile
-or declines. Nothing waits for the answer. Prefer setting `complexity` over
-naming a profile; ask for a specific profile only when the work needs it, with
-a reason the operator can judge. `routingPolicy` shows each request's sign-off.
-Before rerouting a frontier dispatch, read `routingPolicy` on `task.next` (or
-`queue.detail`), which explains each profile the task names under the current
-level.
+| Level | Worker starts | Permission |
+| --- | --- | --- |
+| `low` | one tier below its complexity | high and very-high complexity work needs permission when it is submitted (a board decision holds the task); any run on the top two tiers needs permission, except the recorded climb back to the task's requested tier |
+| `normal` | high and very-high complexity one tier below; lower complexities at the requested tier | any run on the top two tiers needs permission, except the recorded climb back to the task's own requested tier |
+| `high` | at the requested tier | frontier needs permission |
+| `extra_high` | at the requested tier | none |
+| `maximum` | workers and reviewers on frontier or very-high models whatever the complexity | none |
+
+A request for a profile the level's permission rule holds (a top-tier profile
+above the task's requested tier at `low` or `normal`, or frontier at `high`) is a
+question to the operator, not a pin. An applied review that asks for changes lets
+the next worker run climb one tier toward the task's requested tier, on a fresh
+worker agent, and records that climb for the round. A profile above the task's
+requested tier is never automatic; an explicit request reaches it: Nucleus opens a decision on the board, and
+the role runs on automatic selection until the operator approves, picks another
+profile or declines. Nothing waits for the answer, except the `low` submission
+gate described above. Prefer setting `complexity` over naming a profile; ask for
+a specific profile only when the work needs it, with a reason the operator can
+judge. `routingPolicy` shows each request's sign-off. Before rerouting a
+frontier dispatch, read `routingPolicy` on `task.next` (or `queue.detail`),
+which explains each profile the task names under the current level.
 Change it only on the operator's word (Spec 052):
 
 ```sh
@@ -502,20 +525,20 @@ JSON
 
 ### Planner frontier grant
 
-**A grant is permission, not an instruction.** Frontier and above-ceiling profiles cost the most,
+**A grant is permission, not an instruction.** Frontier and other top-tier profiles the level needs permission for cost the most,
 so naming one for a task normally needs the operator's sign-off on that task. A grant gives one
 planner standing permission to name them without a per-task question, for a block of work. It does not
 say which model to use, and it changes nothing about how other tasks route.
 
 What a grant does and doesn't do:
 
-- It **does** let your own `profileRequests` (and `route`) name a frontier or above-ceiling profile
-  and take effect immediately, for the tasks where you ask.
+- It **does** let your own `profileRequests` (and `route`) name a frontier or top-tier profile the
+  level's permission rule holds and take effect immediately, for the tasks where you ask.
 - It **does not** pin anything. A task without a `profileRequests` entry routes automatically, exactly
   as before: Nucleus picks among every eligible ordinary profile by `complexity`, role and usage
   level, leaning cheaper. Ordinary profiles stay the default for everything.
-- It **does not** move automatic selection or demand. Frontier profiles don't join the automatic pool
-  because you hold a grant (they join only at usage level `maximum`).
+- It **does not** move automatic selection or a run's start tier. Frontier profiles don't join the
+  automatic pool because you hold a grant (the level's permission rule decides that).
 - It **is not** "the profile to use". Holding a grant for a frontier model and then requesting it on
   every task, or routing trivial work to it, is the misuse to avoid.
 
@@ -541,8 +564,8 @@ nucleus queue.routing-grant - <<'JSON'
 JSON
 ```
 
-The CLI fills `caller` from the calling thread (its Nucleus ticket or host identity). Optional `profiles` (named set; omit for every frontier
-and above-ceiling profile) and `until`. A repeat while a request is open joins it. An active grant is
+The CLI fills `caller` from the calling thread (its Nucleus ticket or host identity). Optional `profiles` (named set; omit for every profile
+that needs permission) and `until`. A repeat while a request is open joins it. An active grant is
 reported as already standing. Only a board yes activates it; a relayed `decision.answer` does not. The
 operator revokes from Settings → Limits.
 
@@ -1211,9 +1234,10 @@ extend one PR's authorization to its siblings or to release/provider mutations.
 
 For planning and lane documents, read [plan](references/plan.md); for writing,
 approving and promoting briefs, read [brief](references/brief.md); for passing
-planner ownership and notifications to a successor, read [handover](references/handover.md); for shaping
-long-horizon direction with the operator, read [Atlas](references/atlas.md).
-Repository knowledge and documentation structure remain in the Northstar skill.
+planner ownership and notifications to a successor, read [handover](references/handover.md).
+Shaping long-horizon direction with the operator is the separate Atlas skill
+(Northstar). Repository knowledge and documentation structure remain in the
+Northstar skill.
 
 - **Planner** owns the project's plan, lane documents, leads, briefs and
   dispatch approval. It runs milestone QA on `main` with `project.qa.run`.

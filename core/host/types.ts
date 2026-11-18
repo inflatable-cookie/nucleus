@@ -1,5 +1,12 @@
-import type { BuildOutputObservation, Task, TaskNext, TaskNextReviewOutcome, TaskNextVerb, TaskRegistrationBinding } from '../../shared/contracts';
-import type { AgentObservation } from './index';
+import type {
+  BuildOutputObservation,
+  Task,
+  TaskNext,
+  TaskNextReviewOutcome,
+  TaskNextVerb,
+  TaskRegistrationBinding,
+} from "../../shared/contracts";
+import type { AgentObservation } from "./index";
 
 /**
  * Spec 058 slice 4: any thread registers itself as a responsible task.
@@ -19,7 +26,10 @@ export interface RegistrationAdapter {
    * thread and answer its reporting binding: this thread was not launched by
    * Nucleus, so the response is where it first learns its run and ticket.
    */
-  prepareRegistration?(task: Task, token: string): TaskRegistrationBinding | void;
+  prepareRegistration?(
+    task: Task,
+    token: string,
+  ): TaskRegistrationBinding | void;
   observe(agentId: string): Promise<AgentObservation>;
   /**
    * Prove the calling thread is live and resolve the worktree it is already
@@ -27,10 +37,20 @@ export interface RegistrationAdapter {
    * workspace belongs to. Throws with the reason when the caller cannot be
    * identified reliably.
    */
-  inspectRegistration(callerAgentId: string): Promise<{ workspaceId: string; directory: string; repoPath: string; observation: AgentObservation }>;
+  inspectRegistration(callerAgentId: string): Promise<{
+    workspaceId: string;
+    directory: string;
+    repoPath: string;
+    observation: AgentObservation;
+  }>;
 }
 
-export interface OrphanWorkspace { directory: string | null; branch: string; head: string; lockReason: string }
+export interface OrphanWorkspace {
+  directory: string | null;
+  branch: string;
+  head: string;
+  lockReason: string;
+}
 
 export type WorkspaceCreationState =
   | { kind: "found_done"; directory: string }
@@ -100,7 +120,10 @@ export type WorktreeValidationScan =
  * What a host scan for one identity token found: the pid carrying it, proof
  * that no live process carries it, or a scan this host could not complete.
  */
-export type ProcessSearch = { state: "found"; pid: number } | { state: "absent" } | { state: "unknown" };
+export type ProcessSearch =
+  | { state: "found"; pid: number }
+  | { state: "absent" }
+  | { state: "unknown" };
 
 /** Token counts a provider reports on a turn; any field may be absent. */
 export interface ProviderUsageReport {
@@ -117,11 +140,17 @@ export interface RunUsageStreamEvent {
 }
 
 /** A live stream handle: callable to unsubscribe, `subscriptionId` is null once the daemon released it. */
-export type RunUsageStream = (() => void) & { readonly ready: Promise<void>; readonly subscriptionId: string | null };
+export type RunUsageStream = (() => void) & {
+  readonly ready: Promise<void>;
+  readonly subscriptionId: string | null;
+};
 
 /** The one Paseo call the tracker needs; absent on an adapter with no stream, which leaves runs partial. */
 export interface RunUsageSource {
-  subscribeRunUsage?(agentId: string, handler: (event: RunUsageStreamEvent) => void): Promise<RunUsageStream>;
+  subscribeRunUsage?(
+    agentId: string,
+    handler: (event: RunUsageStreamEvent) => void,
+  ): Promise<RunUsageStream>;
 }
 
 export type LiveRunLabelColor = "amber" | "violet";
@@ -175,24 +204,40 @@ export interface RunPresenceTerminal {
 
 /** An observation for the replacement reader, never a control or a proof. */
 export type OwnerReviewContext = {
-  state: 'compatible' | 'historical' | 'unknown';
+  state: "compatible" | "historical" | "unknown";
   detail: string;
-  source?: { operationId: string; caller: string; runId: string; head: string; briefVersion: number; briefDigest: string; text: string };
+  source?: {
+    operationId: string;
+    caller: string;
+    runId: string;
+    head: string;
+    briefVersion: number;
+    briefDigest: string;
+    text: string;
+  };
 };
 
 export interface RecoveryDispatchSnapshot {
   why: { cause: string | null; target: string; recoveryRunId: string };
   phase: string;
   reason: string | null;
-  stop: { kind: string; reason: string; owner: string | null; evidence: string | null; detail: string | null } | null;
+  stop: {
+    kind: string;
+    reason: string;
+    owner: string | null;
+    evidence: string | null;
+    detail: string | null;
+  } | null;
   /**
    * The participant actually holding the task: the recorded current run, the
    * task's own worker binding, or a run that has neither reported nor been
    * released. A finished or released run is history and is never presented as
    * an active participant (Queue #477).
    */
-  activeRun: (NonNullable<TaskNext['activeRun']> & { workspaceId: string | null }) | null;
-  holds: TaskNext['holds'];
+  activeRun:
+    | (NonNullable<TaskNext["activeRun"]> & { workspaceId: string | null })
+    | null;
+  holds: TaskNext["holds"];
   /**
    * The current review outcome, its exact source and the decision still
    * outstanding, from the same derivation `next` reports. It is observation:
@@ -201,33 +246,66 @@ export interface RecoveryDispatchSnapshot {
    */
   outcome: TaskNextReviewOutcome;
   /** The retained reviewer's newest checkpoint: its coverage is what a continuation keeps, separately from any verdict. */
-  checkpoint: { runId: string; workspaceId: string | null; ordinal: number; head: string; covered: string[]; remaining: string[]; notes: string | null } | null;
+  checkpoint: {
+    runId: string;
+    workspaceId: string | null;
+    ordinal: number;
+    head: string;
+    covered: string[];
+    remaining: string[];
+    notes: string | null;
+  } | null;
   /**
    * The author's latest recorded result: recorded fact, never a verdict, and
    * named apart from the accepted review. A result recorded after the newest
    * applied verdict at the current head is what the outstanding review covers.
    */
-  authorResult: TaskNextReviewOutcome['authorResult'];
+  authorResult: TaskNextReviewOutcome["authorResult"];
   /**
    * Spec 050: the worker retirement count, the ordinary ceiling and the one
    * extra-replacement authorization, from the same `next` derivation — so a
    * coordinator reads the real count and state, and still cannot grant one.
    */
-  replacement?: TaskNext['replacement'];
-  verbs: Array<Pick<TaskNextVerb, 'verb' | 'available'> & { args?: Record<string, unknown>; fill?: string[]; refusal?: string; note?: string }>;
+  replacement?: TaskNext["replacement"];
+  verbs: Array<
+    Pick<TaskNextVerb, "verb" | "available"> & {
+      args?: Record<string, unknown>;
+      fill?: string[];
+      refusal?: string;
+      note?: string;
+    }
+  >;
 }
 
 /** Structural slice of a Paseo timeline entry; shell detail is normalized by Paseo across providers. */
-export interface TimelineEntry { timestamp: string; turnId?: string; item: { type: string; status?: string; name?: string; detail?: { type?: string; command?: string } & Record<string, unknown> } & Record<string, unknown> }
+export interface TimelineEntry {
+  timestamp: string;
+  turnId?: string;
+  item: {
+    type: string;
+    status?: string;
+    name?: string;
+    detail?: { type?: string; command?: string } & Record<string, unknown>;
+  } & Record<string, unknown>;
+}
 
 /** A bounded tail and the provider's positive coverage evidence; omission is unknown. */
-export interface TimelineCursor { epoch: string; seq: number }
+export interface TimelineCursor {
+  epoch: string;
+  seq: number;
+}
 
 export interface TimelinePage {
   entries: TimelineEntry[];
-  hasOlder?: boolean; gap?: boolean; hasNewer?: boolean; staleCursor?: boolean; reset?: boolean;
-  epoch?: string; startCursor?: TimelineCursor | null; endCursor?: TimelineCursor | null;
-  projection?: 'projected' | 'canonical' | 'bounded';
+  hasOlder?: boolean;
+  gap?: boolean;
+  hasNewer?: boolean;
+  staleCursor?: boolean;
+  reset?: boolean;
+  epoch?: string;
+  startCursor?: TimelineCursor | null;
+  endCursor?: TimelineCursor | null;
+  projection?: "projected" | "canonical" | "bounded";
   pendingBackgroundTasks?: string[];
 }
 
@@ -248,6 +326,8 @@ export interface CreationOwner {
    * attempt carries an empty environment and the prompt names the helper and ticket.
    */
   readonly perThreadEnvironment?: boolean;
+  /** Some hosts cannot inject TMPDIR but still require Nucleus to create the recorded run scratch before launch. */
+  readonly prepareRunScratch?: boolean;
   scratchPlacement(task: Task): RunScratchPlacement;
 }
 
@@ -274,7 +354,14 @@ export interface RunScratchPlacement {
 export interface HostWorktreeWorkspaceSpec {
   title: string;
   requestId: string;
-  source: { kind: "worktree"; cwd: string; action: "branch-off"; baseBranch: string; branchName: string; worktreeSlug: string };
+  source: {
+    kind: "worktree";
+    cwd: string;
+    action: "branch-off";
+    baseBranch: string;
+    branchName: string;
+    worktreeSlug: string;
+  };
 }
 
 /**
@@ -283,7 +370,13 @@ export interface HostWorktreeWorkspaceSpec {
  * that fork was deleted) and `crossRepository` GitHub's own cross-repository
  * flag where the lookup reports it. Only the PR-binding sites read them.
  */
-export type VerifiedPr = { url: string; head: string; repository?: string; headRepository?: string | null; crossRepository?: boolean };
+export type VerifiedPr = {
+  url: string;
+  head: string;
+  repository?: string;
+  headRepository?: string | null;
+  crossRepository?: boolean;
+};
 
 export type ReviewerSetting = { login: string };
 
@@ -319,8 +412,18 @@ export type ReviewerSetting = { login: string };
  * refused before the call; a missing, owned or inconsistent placement is never
  * guessed, and an unexpected removal is never accepted as a side effect.
  */
-export type ExternalWorkspaceCatalogView = {
-  workspaceDirectory?: string | null; workspaceKind?: string | null;
-  project?: { checkout?: { cwd?: string; isPaseoOwnedWorktree?: boolean; mainRepoRoot?: string | null } | null } | null;
-  gitRuntime?: { isPaseoOwnedWorktree?: boolean } | null;
-} | null | undefined;
+export type ExternalWorkspaceCatalogView =
+  | {
+      workspaceDirectory?: string | null;
+      workspaceKind?: string | null;
+      project?: {
+        checkout?: {
+          cwd?: string;
+          isPaseoOwnedWorktree?: boolean;
+          mainRepoRoot?: string | null;
+        } | null;
+      } | null;
+      gitRuntime?: { isPaseoOwnedWorktree?: boolean } | null;
+    }
+  | null
+  | undefined;

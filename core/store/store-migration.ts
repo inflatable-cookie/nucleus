@@ -29,6 +29,18 @@ export class StoreMigration {
     if (cleaned.some((entry, index) => entry !== stored[index])) this.core.setMeta("pool", cleaned);
   }
 
+  /**
+   * Spec 052 naming (Tom, 2026-11-17): `minimal` is removed and a stored value
+   * reads as `low`. Runs on every open, so the one-time backlog and a row an
+   * older build wrote during its window are one rule; `normal`, `high` and
+   * `maximum` are untouched.
+   */
+  migrateUsageLevelName(): void {
+    const stored = this.core.getMeta<Record<string, unknown>>("usageLevel");
+    if (!stored || stored.level !== "minimal") return;
+    this.core.setMeta("usageLevel", { ...stored, level: "low" });
+  }
+
   /** Schema 59 (task 1302): subscription usage readings now belong to host apps and plugins. */
   dropSubscriptionUsageStorage(): void {
     this.db.exec("DROP TABLE IF EXISTS usage_samples; DROP TABLE IF EXISTS usage_read_state;");

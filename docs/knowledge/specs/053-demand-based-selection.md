@@ -33,8 +33,9 @@ Tom, 2026-11-04, the selection order (relayed by the Nucleus planner): "It shoul
 Each run gets a **demand**: the capability level it needs.
 
 ```
-demand = clamp(task complexity + role offset + slider offset, very_low..very_high)
-       # at Maximum the top of the clamp is frontier
+start  = the usage level's start tier for the task's complexity (Spec 052)
+demand = clamp(start + role offset, very_low..frontier)
+         # a reviewer's demand never sits below the worker's
 ```
 
 - **Task complexity** is the task's `complexity` (`very_low`..`very_high`). An
@@ -44,19 +45,24 @@ demand = clamp(task complexity + role offset + slider offset, very_low..very_hig
   Dispatch limits → Role demand changes them host-wide, each from −4 to +4
   (`queue.demand-offsets`; Decision 6). Selection and the board read the stored
   values; an invalid stored value falls back to the defaults.
-- **Slider offset:** Minimal −2, Low −1, Normal 0, High +1, Maximum +2. The
-  cost ceiling of [Spec 052](052-usage-level.md) still applies at every level.
-  Below Maximum demand stays within `very_high`; at Maximum it may reach
-  `frontier` (Tom, 2026-11-09).
+- **Start tier:** the usage level sets where a run's demand starts
+  ([Spec 052](052-usage-level.md), Tom 2026-11-17): Low one tier below every
+  complexity, Normal one below high and very-high complexity only, High and
+  Extra high at the requested tier, Maximum at the very-high tier. A worker run
+  after review changes climbs one tier toward the requested tier. The level's
+  permission rule gates the top tiers at Low, Normal and High; cost is only the
+  rotation lean.
 - **Profile capability** runs `low, medium, high, very_high, frontier` (Tom,
   2026-11-09: "get rid of very low, and instead add `frontier` to the other end
-  of the scale"). A `frontier` profile meets any demand when the level allows
-  it, which is only at Maximum ([Spec 052](052-usage-level.md)).
-- **First worker step** (Tom, 2026-11-01): at Normal usage, the first worker
-  selection starts one step below full demand, with a floor at `low`. After an
-  applied substantive author-change review, later worker selections use full
-  demand. Other usage levels use full demand; an honoured profile request still
-  replaces automatic selection.
+  of the scale"). A `frontier` profile meets any demand when the level's
+  permission rule allows it ([Spec 052](052-usage-level.md)).
+- **Step-up after review changes** (Tom, 2026-11-17, replacing the 2026-11-01
+  first-worker step): an applied `changes_required` review authorizes one climb
+  for the next worker run, one tier from the tier the worker actually ran on
+  (a shortfall start climbs to the missing intermediate tier) and capped at the
+  task's requested tier. The ordinary revision launch records it once per
+  review run and continues on a fresh revision agent at the climbed profile. An honoured profile request
+  still replaces automatic selection.
 - **Worker selection after review** (Spec 058 cutover 3): review history never
   adds demand or automatically replaces the author. A stronger worker model is
   selected only by an effective `route role=worker` or ordinary provider-failure
@@ -65,13 +71,21 @@ demand = clamp(task complexity + role offset + slider offset, very_low..very_hig
 Selection for a run then:
 
 1. Starts from the enabled pool profiles whose subscription group is
-   available, which the slider's cost ceiling and frontier tier allow (or a
+   available, which the level's permission rule allows (or a
    request signed off on the board), and which pass review independence for a
    reviewer. A
    profile with no cost is never cost-gated ([Spec 052](052-usage-level.md));
    the board's preview applies the same gate.
-2. Keeps every one whose `capability` is at least the demand, whatever its cost.
-   An unrated capability counts as `medium`.
+2. Keeps every profile at the run's own tier (the demand), whatever its cost; the
+   nearest tier above is the bail-out when none carries it, and a shortfall takes
+   the most capable profile at or below the task's requested tier. A profile
+   above the requested tier is never automatic (Maximum's rule is the top two
+   tiers for workers and reviewers only; a coordinator keeps its offset). A
+   reviewer is not capped at the requested tier and has no absolute floor: its
+   demand is the worker's actual tier moved by the reviewer offset, and it takes
+   the nearest permitted tier above or the most capable permitted profile rather
+   than wait ([Spec 052](052-usage-level.md)). An unrated capability counts as
+   `medium`.
 3. Weights each kept profile by its **effective weight**: the configured
    `weight` times the **cost lean**. The lean is `COST_LEAN` (2) for each cost
    step below `very_high`: very_low ×16, low ×8, medium ×4, high ×2, very_high
@@ -156,7 +170,7 @@ after the switch is live (the "operator UI before agent rollout" rule).
 | 3 | Complexity high, coordinator | Demand medium: every profile rated ≥ medium rotates with the lean |
 | 4 | Complexity very_high, Normal | Opus (frontier) and Sol (very_high cost) need a request: best available, shortfall shown |
 | 5 | Same task at Maximum | Demand reaches frontier: Opus |
-| 6 | Same task at Minimal | Demand two steps lower, within the low cost ceiling |
+| 6 | Same task at Low after an approved submission | Starts one tier below its complexity and can climb back |
 | 7 | Reviewer shares the author's model | Excluded, as today |
 | 8 | Author escalation history (rows stripped 2026-11-09, task 989) | No demand change |
 | 9 | Signed-off request | Used for that role whatever the demand |

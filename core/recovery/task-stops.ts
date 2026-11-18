@@ -122,23 +122,43 @@ export class TaskStops {
     });
   }
   /**
-   * Clear one task's host wait when its host is back (Tom, 2026-11-14; T3 lane
-   * v18, host dropout option 1: wait). Nothing about the task's identity, host or
-   * threads changes; the next pass re-proves each retained thread and the task
-   * continues where it was. The independent wait is always cleared; the stop is
-   * cleared only when the wait wrote it, so an owner-facing stop keeps its
-   * question and its bookkeeping.
+   * Spec 066 C2 (R1/R3/R6): the one settlement of a task's host-scoped wait.
+   *
+   * A host outage and a transport deferral are the same wait — the task's host did
+   * not answer — so the pass that observes the host answer settles both, from that
+   * observation alone. Nothing here reads the stop's text or a reason prefix: the
+   * #1321 daemon-wait prefix test is retired. The caller asks only after it observed
+   * the host answer, so a host that did not answer (or another host's failure)
+   * settles nothing.
+   *
+   * Only the wait's own stop is cleared. An owner stop recorded beside it keeps its
+   * question and its bookkeeping (the outage preserves those stops and records the
+   * wait independently), and the settlement is as independent as the wait. The cause
+   * stays in history (`host_outage_wait`, `transport_deferred`, the outage record);
+   * this one event says what answered it.
    */
-  clearHostWait(task: Task): Task {
-    const current = this.store.task(task.id);
+  private settleHostWait(taskId: string): Task {
+    const current = this.store.task(taskId);
     const hadWait = Boolean(current.resolution.hostWait);
     const hostStop = current.resolution.stop?.reason === 'host_unavailable';
     if (!hadWait && !hostStop) return current;
+    const detail = `Host ${current.hostId ?? 'unknown'} answered; the wait it wrote cannot hold and the task's next step is decided afresh`;
     const reason = hostStop ? current.phase === 'queued' ? DISPATCH_WAIT_REASON : TASK_PROGRESSING_REASON : current.reason;
-    const detail = `Host ${current.hostId ?? 'unknown'} is back; the task resumes on the same host and threads`;
     return this.resolution.update(current, { hostWait: null, ...(hostStop ? { stop: null } : {}) },
-      hostStop ? { reason } : {}, 'host_outage_resumed', detail);
+      hostStop ? { reason } : {}, 'host_wait_cleared', detail);
   }
+  /**
+   * The host answered this pass: settle the wait it wrote. Nothing about the task's
+   * identity, host or threads changes; the next pass re-proves each retained thread
+   * and the task continues where it was.
+   */
+  clearHostWait(task: Task): Task { return this.settleHostWait(task.id); }
+  /**
+   * The transport answered this pass: the same settlement, because a transport
+   * deferral is a host-scoped wait. It keeps its own entry for the failover re-read,
+   * which is where the retired prefix test used to live.
+   */
+  clearTransportWait(t: Task): Task { return this.settleHostWait(t.id); }
   /**
    * Spec 058 budgets (nucleus#1187): a recorded `budget` stop is a fence like any
    * other, so it may only stand while the measurement it names still shows the
@@ -386,16 +406,6 @@ export class TaskStops {
     if (!this.store.events(current.id).some(event => event.kind === kind && event.detail === detail)) this.store.event(current.id, kind, detail);
     return true;
   }
-  /**
-   * A transport wait is a reading of the host at one moment. Once the host is
-   * back, the pass that sees it clears it, so the task's next step is decided
-   * afresh rather than shown under a stale "Daemon transport unavailable" reason.
-   */
-  clearTransportWait(t: Task): Task {
-    const current = this.store.task(t.id);
-    if (current.resolution.stop?.reason !== 'external_unavailable' || !current.reason.startsWith('Daemon transport unavailable')) return current;
-    return this.resolution.update(current, { stop: null }, { reason: TASK_PROGRESSING_REASON }, 'transport_wait_cleared', `Host ${current.hostId ?? 'unknown'} is back; the wait is re-evaluated`);
-  }
   /** A host outage must not replace a retained task decision with a retry instruction. */
   transportDeferred(t: Task, error: unknown) {
     // A stopping owner closes its own Paseo client before its in-flight work quiesces
@@ -406,12 +416,18 @@ export class TaskStops {
     const current = this.store.task(t.id);
     const detail = `Daemon transport unavailable; retrying on the next pass: ${String(error instanceof Error ? error.message : error).slice(0, 160)}`;
     if (this.recordDeferredDuringPrerequisiteWait(current, 'transport_deferred', detail)) return;
-    if (['needs_attention', 'blocked', 'error'].includes(current.phase) || current.resolution.attention || current.resolution.recovery?.status === 'escalated') {
-      if (this.store.events(t.id).find(event => event.kind === 'transport_deferred')?.detail !== detail)
-        this.store.event(t.id, 'transport_deferred', detail);
-      return;
-    }
-    this.resolution.waiting(current, detail, 'external_unavailable');
+    // The cause is durable in every case (Spec 066 R2): the stop that projects it can
+    // be rewritten by the host's own outage record, and an owner-facing stop is never
+    // replaced. One reading, one record.
+    if (this.store.events(t.id).find(event => event.kind === 'transport_deferred')?.detail !== detail)
+      this.store.event(t.id, 'transport_deferred', detail);
+    if (['needs_attention', 'blocked', 'error'].includes(current.phase) || current.resolution.attention || current.resolution.recovery?.status === 'escalated') return;
+    // Spec 066 C2 (R1/R3/R6): a transport failure is the task's own host not answering,
+    // so the wait records the host-scoped wait a host outage records, and the pass that
+    // observes the host answer settles it through `clearHostWait`. A task with no host
+    // identity has no host observation to settle it, so its wait stays the lifecycle
+    // wait its next step rewrites.
+    this.resolution.waiting(current, detail, current.hostId ? 'host_unavailable' : 'lifecycle');
   }
   /** A dead login session is a host fault: drain/replace the service, never park the task. */
   environmentDeferred(t: Task, error: unknown) {

@@ -55,6 +55,26 @@ test('an unsigned request for a frontier profile pins nothing and never waits; a
   } finally { f.close(); }
 });
 
+test('Spec 052: a recorded climb carries the tier exception into request reconciliation', () => {
+  const f = fixture(); try {
+    const wide = profile('wide');
+    f.store.setMeta('pool', [...pool, poolSchema.parse({ profileId: 'wide', enabled: true, group: 'wide', roles: ['worker', 'reviewer'], weight: 1, scopes: ['general'], cost: 'medium', capability: 'very_high' })]);
+    const reconcile = (id: string) => reconcileRoutingSignoffs(f.store, f.decisions, id, [...profiles, wide]);
+    const task = f.submit({ complexity: 'very_high', profileRequests: { worker: { profileId: 'wide', reason: 'The next round needs it', required: false } } });
+    reconcile(task.id);
+    assert.equal(f.store.task(task.id).profileRequests?.worker?.signoff?.status, 'pending', 'without a climb the very-high tier needs the board');
+    // The recorded climb covers the task's own requested very-high tier: a fresh
+    // request for it needs no question and no pending sign-off.
+    const current = f.store.task(task.id);
+    f.store.update(task.id, { profileRequests: { worker: { profileId: 'wide', reason: 'The climbed tier', required: false } },
+      resolution: { ...current.resolution, workerClimb: { reviewRunId: 'review-1', from: 'high', to: 'very_high', profileId: 'wide', at: '2026-11-17T00:00:00.000Z' } } });
+    reconcile(task.id);
+    const settled = f.store.task(task.id).profileRequests?.worker;
+    assert.equal(settled?.signoff, undefined, 'the recorded climb needs no second sign-off');
+    assert.equal(f.store.events(task.id).filter(event => event.kind === 'routing_signoff_requested').length, 1, 'only the pre-climb request asked');
+  } finally { f.close(); }
+});
+
 test('Queue asks once, and a board approval signs the request off', () => {
   const f = fixture(); try {
     const task = f.submit();
@@ -64,7 +84,7 @@ test('Queue asks once, and a board approval signs the request off', () => {
     const decision = f.decisions.get({ id: pending.decisionId! });
     assert.equal(decision.askedBy.agentId, 'planner', 'the question is asked on the requester\'s behalf');
     assert.deepEqual(decision.links.tasks, [task.id]);
-    assert.match(decision.question, /reviewer: use Sol oracle\? It is rated frontier, which is request-only below Maximum\./);
+    assert.match(decision.question, /reviewer: use Sol oracle\? It is rated frontier, which needs the operator's permission at the Normal usage level\./);
     assert.deepEqual(decision.options, [signoffApprove('Sol oracle'), SIGNOFF_DECLINE, signoffUse('cheap'), signoffUse('opus')]);
     assert.match(decision.context ?? '', /Independent complete review/);
     f.reconcile(task.id);

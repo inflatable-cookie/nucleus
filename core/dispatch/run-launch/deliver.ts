@@ -184,6 +184,14 @@ export class RunLaunchDeliver {
             'non_delivery_worker_routed', `${profile!.provider}/${profile!.model}; same capability as ${previous[0]?.profile.provider ?? 'prior provider'}`);
         }
         else if(role==='revision'&&firstReviewEntryWorker)this.store.update(t.id,{agentId,runId:run.id,profile,profileGroup:group,workerModel:profile!.model,workerModels:[...new Set([...t.workerModels,profile!.model])]},'review_entry_worker_bound',agentId);
+        else if (role === 'revision' && !t.agentId && t.profile) {
+          // Spec 052 (Tom, 2026-11-17): the climb retired the previous worker
+          // before this revision. The fresh revision agent becomes the task's
+          // retained worker, so the next same-tier revision continues it.
+          this.store.update(t.id, { agentId, runId: run.id, profile, profileGroup: group ?? t.profileGroup ?? null,
+            workerModel: profile!.model, workerModels: [...new Set([...t.workerModels, profile!.model])] },
+            'worker_climb_bound', agentId);
+        }
         else if (role === 'revision' && t.agentId && t.agentId !== agentId) {
           const latest = this.store.task(t.id);
           const previous = latest.agentId && latest.runId && latest.profile

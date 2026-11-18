@@ -3,7 +3,7 @@ import { usageLevelSchema } from "./capability";
 
 /**
  * Spec 052: the operator's stored usage setting and the view the board shows,
- * plus the standing planner grants that let one planner reach above-ceiling
+ * plus the standing planner grants that let one planner reach held
  * profiles for a block of work. This is the operator authority over cost; the
  * routing rows in `./routing.ts` explain what selection did with it.
  */
@@ -26,7 +26,7 @@ export type UsageView = z.infer<typeof usageViewSchema>;
 
 /**
  * Spec 052 planner grant (Tom, 2026-11-06): standing permission for one planner
- * to use frontier and above-ceiling profiles for a block of work. Stored in meta.
+ * to use profiles the level holds for a block of work. Stored in meta.
  */
 export const routingGrantStatuses = ["pending", "active", "ended", "revoked", "expired", "archived", "declined"] as const;
 

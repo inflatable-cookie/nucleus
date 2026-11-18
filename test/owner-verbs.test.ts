@@ -423,7 +423,7 @@ test('a fresh queued task lists routing and the stop that can park its dispatch'
   const f = fixture(); try {
     const view = f.next();
     assert.equal(view.phase, 'queued');
-    assert.equal(view.workerDemandStep, 'first attempt: one step down (normal usage level)');
+    assert.equal(view.workerDemandStep, 'first attempt: at the Normal start tier');
     assert.equal(view.stop?.kind, 'wait');
     assert.equal(view.stop?.reason, 'capacity');
     assert.equal(view.stop?.detail, 'Waiting for dispatch');

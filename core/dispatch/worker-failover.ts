@@ -4,7 +4,7 @@ import type { Profile, Task } from "../../shared/contracts";
 import { WORKER_REPLACEMENT_CEILING, workerExclusionFor, workerProfileIsExcluded } from "../../shared/contracts";
 import { isTransportFailure } from "../../shared/transport";
 import { demandRank, groupIsUnavailable, honouredWorkerThinking, unavailableGroupNames } from "../../shared/pool";
-import { runDemand } from "../../shared/demand";
+import { climbedTier, requestedTier, runDemand } from "../../shared/demand";
 import type { Engine } from "../engine";
 import { isQuotaExhaustion, isRateLimitError, providerRetryAt, rateLimitCooldownData } from "../recovery/exhaustion";
 import type { Adapter, AgentObservation } from "../host/adapter";
@@ -122,7 +122,7 @@ function planWorkerFailover(task: Task, state: AgentObservation, erroredWithoutT
   // The replaced worker request keeps the worker's effective thinking level (review #547).
   // A pin on the worker's own requested profile keeps that request (its owner reason and thinking level).
   const ownRequest=requested&&task.profileRequests?.worker?.profileId===requested.profileId?task.profileRequests.worker:undefined;
-  const replacementTask=requested?{...task,thinkingOptionId:honouredWorkerThinking(task,store.pool(),store.usageLevel()),preferredProfileId:requested.profileId,requirePreferred:true,profileRequests:{...task.profileRequests,worker:ownRequest?{...ownRequest,required:true}:{profileId:requested.profileId,reason:requested.reason,required:true}}}:task;
+  const replacementTask=requested?{...task,thinkingOptionId:honouredWorkerThinking(task,store.pool(),store.usageLevel(),requestedTier(task.complexity),climbedTier(task)),preferredProfileId:requested.profileId,requirePreferred:true,profileRequests:{...task.profileRequests,worker:ownRequest?{...ownRequest,required:true}:{profileId:requested.profileId,reason:requested.reason,required:true}}}:task;
   const pool=store.pool();
   const assignedGroup=task.profileGroup ?? pool.find(entry=>entry.profileId===task.profile?.id)?.group;
   const catalogOutage=facts.providerUnavailable();

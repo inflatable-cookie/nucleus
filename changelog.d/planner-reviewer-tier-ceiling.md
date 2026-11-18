@@ -1,0 +1,1 @@
+- The reviewer offset now applies: a reviewer's tier is the worker's tier moved by the offset, so a negative offset reviews on a lower tier. No reviewer floor parks review any more; when no independent profile sits at the reviewer's tier, the nearest permitted tier above serves, or the most capable permitted profile.

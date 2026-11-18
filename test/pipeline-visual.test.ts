@@ -960,7 +960,7 @@ test('030-7 bundled dark-theme task detail offers routing before dispatch with e
       await settleUntil(ui,()=>ui.query('Change routing')!==undefined,'the queued task detail never loaded its routing control');
       assert.ok(ui.get('Change routing'));
       ui.press('Change routing');
-      assert.ok(ui.get('Strong · frontier'));
+      assert.ok(ui.get('Strong · request only'));
       assertDarkTheme(ui);
       // The required reason gates the save, including a whitespace-only entry.
       assert.equal(ui.get('Save routing').props.accessibilityState?.disabled,true);

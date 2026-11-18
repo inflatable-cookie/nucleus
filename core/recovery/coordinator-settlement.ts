@@ -138,6 +138,7 @@ export class RecoverySettlement {
       const plan = coordinatorActionPlan({ action, views: ownerVerbViews(facts), stopReason: stop?.reason,
         routeCost: action.verb === "route" ? this.store.pool().find(entry => entry.profileId === action.profileId)?.cost ?? null : null,
         routeCapability: action.verb === "route" ? this.store.pool().find(entry => entry.profileId === action.profileId)?.capability ?? null : null,
+        complexity: current.complexity ?? null,
         usage: this.store.usageLevel(), verbRegistered: Boolean(verb) });
       if (!plan.ok) throw new Error(plan.refusal);
       const args = plan.args;

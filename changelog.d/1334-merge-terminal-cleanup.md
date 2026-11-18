@@ -1,0 +1,1 @@
+A verified merge stuck in `syncing` on retry-text or a stale recovery episode continues under ordinary sweep to synchronization and closeout. A failed workspace archive is observed again and completes when the host answers; a gone cleanup target settles without a resend.

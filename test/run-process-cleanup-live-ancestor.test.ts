@@ -231,19 +231,18 @@ test("a process this run lost to a stop, respawned at once, is recorded once and
     const leftAlone = f.store
       .events(f.task.id)
       .filter((event) => event.kind === "run_process_cleanup_left_alone");
-    // The respawn is recorded once and never chased. A sweep round that lands in
-    // the moment between the host losing its tool and starting the next one has
-    // no owned target, so it records the host's own live-ancestor reason instead:
-    // a distinct fact, recorded once while the host stands, never a repeat.
-    const respawnRecords = leftAlone.filter((event) =>
-      event.detail.includes("respawned-after-stop"),
+    // A host may also be observed between losing one tool and starting the next.
+    // Keep that distinct live-ancestor fact while asserting this respawn precisely.
+    const respawnRecords = leftAlone.filter(
+      (event) =>
+        event.detail.includes('"reason":"respawned-after-stop"') &&
+        event.detail.includes(`"pid":${respawned}`),
     );
     assert.equal(
       respawnRecords.length,
       1,
       JSON.stringify(leftAlone.map((event) => event.detail)),
     );
-    assert.match(respawnRecords[0]!.detail, /respawned-after-stop/);
     assert.ok(
       leftAlone.every((event) =>
         /respawned-after-stop|live-ancestor/.test(event.detail),
