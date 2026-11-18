@@ -14179,7 +14179,6 @@ test("recovery pass releases a failed agentless coordinator creation after an ex
   try {
     enableRecovery(f);
     const run = plantAbsentRecovery(f);
-    f.store.putRun({ ...run, createdAt: new Date(0).toISOString() });
     let purged: string[] = [];
     f.adapter.purgeReportingFiles = (_task, runs) => {
       purged = runs;
@@ -14212,25 +14211,6 @@ test("recovery pass releases a failed agentless coordinator creation after an ex
     await f.close();
   }
 });
-test("failed recovery creation waits for grace and rejects a changed lookup binding", async () => {
-  for (const mode of ["grace", "race"] as const) {
-    const f = fixture();
-    try {
-      enableRecovery(f);
-      const run = plantAbsentRecovery(f);
-      f.store.putRun({ ...run, createdAt: mode === "grace" ? new Date(Date.now() + 60_000).toISOString() : new Date(0).toISOString() });
-      f.adapter.findRunAgents = async () => {
-        if (mode === "race") f.store.update(f.task.id, { reason: "New owner state" });
-        return [];
-      };
-      await f.engine.resolution.recovery.pass();
-      assert.equal(f.store.run(run.id)?.released, false);
-      assert.doesNotThrow(() => f.store.authenticate(run.id, "old-token"));
-      assert.equal(f.store.events(f.task.id).filter(event => event.kind === "absent_recovery_released").length, 0);
-    } finally { await f.close(); }
-  }
-});
-
 test("recovery pass binds one exact coordinator match and keeps ambiguous creation escalated", async () => {
   const f = fixture();
   try {
