@@ -139,7 +139,7 @@ export class AbsentRestarts {
       this.settleAbsentProof(current, run);
       return;
     }
-    if (found.length > 1) {
+    if (found.length > 0) {
       this.resolution.attention(current, `${run.role} creation lookup is ambiguous (${found.length} matching agents); no resource was created`);
       return;
     }

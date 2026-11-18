@@ -442,6 +442,20 @@ test('an exact single worker match binds the creation without a replacement', as
   } finally { await f.close(); }
 });
 
+test('a worker found outside its workspace is not replaced', async () => {
+  const f = fixture(); try {
+    const runId = f.current().runId!;
+    f.store.update(f.task.id, { agentId: null, prUrl: null, prHead: null });
+    f.foundAgents.set(runId, [{ id: 'misplaced', workspaceId: 'other-workspace' }]);
+    await f.engine.recover(f.current());
+    await f.engine.recover(f.current());
+    assert.equal(f.current().agentId, null);
+    assert.equal(f.current().runId, runId);
+    assert.equal(f.current().agentIntent, true);
+    assert.equal(f.events('absent_worker_retry').length, 0);
+  } finally { await f.close(); }
+});
+
 test('an ambiguous worker lookup creates nothing and reaches the coordinator first', async () => {
   const f = fixture(); try {
     enableRecovery(f);

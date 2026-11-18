@@ -83,7 +83,10 @@ export class CreationRecovery {
         this.store.update(task.id, { agentId: found[0].id, phase: "working", reason: "Recovered worker identity" }, "agent_recovered", found[0].id);
         return;
       }
-      await this.engine.reconcileAbsentWorker(this.store.task(task.id), found.length);
+      const latest = this.store.task(task.id);
+      if (latest.version !== task.version || !latest.agentIntent || latest.agentId || latest.runId !== task.runId || latest.workspaceId !== task.workspaceId) return;
+      // A match in a different workspace is unknown placement, not absence.
+      await this.engine.reconcileAbsentWorker(latest, found.length === 1 ? 2 : found.length);
     }
   }
   /** Reconcile a proof-only provisioning intent and resume only its proof route. */
