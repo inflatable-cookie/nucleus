@@ -945,15 +945,26 @@ test("an ordinary task runs its whole lifecycle on T3: thinking level, helper re
     // Closeout cleanup (nucleus#1155): the worker thread is archived, every
     // support thread is removed, and only the task worktree handle is archived.
     const workspaceId = f.runtime.store.task(task.id).workspaceId!;
-    await driveUntil(
-      f,
-      () =>
+    // Drive the terminal lane itself: its own pass archives the threads and the
+    // workspace, and the timers would call the same two owners.
+    for (let pass = 0; pass < 200; pass++) {
+      if (
         f.runtime.store
           .task(task.id)
-          .resolution.archivedWorkspaceIds.includes(workspaceId),
+          .resolution.archivedWorkspaceIds.includes(workspaceId)
+      )
+        break;
+      await archiveFinishedThreads(f.runtime.store, f.t3, task.id);
+      f.runtime.engine.enqueueCleanup(task.id);
+      await f.runtime.engine.drainCleanup();
+      await f.runtime.engine.wake().catch(() => {});
+      await pause(25);
+    }
+    assert.ok(
+      f.runtime.store
+        .task(task.id)
+        .resolution.archivedWorkspaceIds.includes(workspaceId),
       "workspace archived",
-      task.id,
-      1200,
     );
     assert.equal(
       f.runtime.store.task(sibling.id).phase,

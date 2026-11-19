@@ -398,6 +398,25 @@ export class T3Nesting {
     if (!taskId) return;
     const parent = this.parentOf(taskId);
     if (!parent) return;
+    // T3 started a new delegated task under the dispatch's own command id, so the
+    // follow-up has its own child thread in the task's workspace. Record its
+    // identity (labels of the role it continues) so the closeout participant proof
+    // reads the task's own idle thread, not a foreign reader (nucleus#1366).
+    const followUpId = childThreadId(commandId);
+    const role = this.core.state.read().agents[threadId];
+    if (role && followUpId !== threadId) {
+      this.core.state.update((state) => {
+        if (state.agents[followUpId] || state.followUps?.[followUpId]) return;
+        state.followUps = {
+          ...state.followUps,
+          [followUpId]: {
+            workspaceId: role.workspaceId,
+            labels: role.labels,
+            parentThreadId: parent.threadId,
+          },
+        };
+      });
+    }
     await this.dispose(parent, childTaskId(commandId)).catch(() => undefined);
   }
 
@@ -419,8 +438,10 @@ export class T3Nesting {
       ) {
         // A finished task creates no further child, so its held turn is released at
         // once — the create grace window is for live work and must never keep a
-        // terminal thread busy against the closeout lane (nucleus#1366).
-        await this.releaseIfLive(parent).catch((error) => {
+        // terminal thread busy against the closeout lane (nucleus#1366). The
+        // release is a local ACP call, so a thread that left observation is still
+        // released: the workspace archive proof reads its run state.
+        await this.release(parent).catch((error) => {
           if (isHostOperationTimeout(error)) throw error;
         });
         await this.archiveParent(parent).catch((error) => {
@@ -709,22 +730,6 @@ export class T3Nesting {
       if (Date.now() >= deadline) return null;
       await new Promise((resolve) => setTimeout(resolve, REENTRY_POLL_MS));
     }
-  }
-
-  /** Release the held turn when the parent still has a live run to release. */
-  private async releaseIfLive(parent: ParentThread): Promise<void> {
-    if (!this.core.reads.observes(parent.threadId)) return;
-    let projection: Projection;
-    try {
-      projection = await this.core.reads.readProjection(
-        parent.threadId,
-        "observation",
-      );
-    } catch {
-      return;
-    }
-    if (!projection.runs.some((run) => activeStatuses.has(run.status))) return;
-    await this.release(parent);
   }
 
   private async release(parent: ParentThread): Promise<void> {

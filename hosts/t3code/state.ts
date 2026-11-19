@@ -192,6 +192,24 @@ const schema = z.object({
    */
   supportCurrent: z.record(z.string(), z.string()).optional(),
   /**
+   * The delegated child T3 mints for a follow-up dispatch, by native thread id.
+   * T3 starts a new delegated task under the dispatch's own command id, so the
+   * thread is real and shares the task's workspace, but it is nobody's recorded
+   * agent: the task's role keeps the thread it already had. Recording its identity
+   * and labels keeps the closeout participant proof able to read it as the task's
+   * own idle thread rather than a foreign reader (nucleus#1366).
+   */
+  followUps: z
+    .record(
+      z.string(),
+      z.object({
+        workspaceId: z.string(),
+        labels: z.record(z.string(), z.string()),
+        parentThreadId: z.string(),
+      }),
+    )
+    .optional(),
+  /**
    * The task row this host snoozed, by native thread id: the horizon it asked for
    * and read back, and the deterministic command that sent it. A row an operator
    * snoozed by hand has no record here, so this host leaves it alone.
@@ -228,11 +246,23 @@ export type T3RetiredAgent = z.infer<typeof retiredAgent>;
  * task and role, and the workspace it was launched into. A retired thread answers an
  * exact lookup from this record alone, without a native read.
  */
+/** The identity a thread's launch or follow-up recorded: what its labels and row read. */
+export type T3ThreadIdentity = {
+  workspaceId: string;
+  labels: Record<string, string>;
+  parentThreadId?: string;
+  title?: string;
+};
+
 export function agentRecord(
   state: T3State,
   threadId: string,
-): T3AgentRecord | T3RetiredAgent | undefined {
-  return state.agents[threadId] ?? state.retiredAgents?.[threadId];
+): T3ThreadIdentity | undefined {
+  return (
+    state.agents[threadId] ??
+    state.retiredAgents?.[threadId] ??
+    state.followUps?.[threadId]
+  );
 }
 
 /**
