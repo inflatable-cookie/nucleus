@@ -2777,7 +2777,8 @@ test("recovery coordinator prompt carries the launch snapshot and the one refres
 
 test("worker rules distinguish blockers from unfinished work", () => {
   const ctx = buildRunContext(handoffTask, { id: 'r', role: 'worker', head: 'a'.repeat(40) });
-  assert.match(ctx.rules, /concrete impediment/); assert.match(ctx.rules, /not unfinished work or context pressure/);
+  assert.match(ctx.rules, /hit a concrete impediment/);
+  assert.match(ctx.rules, /Unfinished work and context pressure call for continued work or a checkpoint/);
 });
 
 test("retired verification runs cannot produce a closeout prompt", () => {

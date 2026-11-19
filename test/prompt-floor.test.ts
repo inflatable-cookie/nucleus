@@ -94,7 +94,7 @@ test('rules read from each role’s run context match the skill and preserve cal
     const { rules } = buildRunContext(task, { id: `${role}-run`, role, head });
     assert.ok(skill.includes(`## ${floors[role].rule} rules\n\n${rules}\n`));
     assert.match(rules, /\{kind: 'external', name: '[^']+'\}.*\{kind: 'internal'\}.*\{kind: 'unfinished'\}/);
-    assert.match(rules, /`impediment` with the failed command or observed provider message/);
+    assert.match(rules, /`impediment` with the failed command(?: or|,) observed provider message/);
     if (role !== 'recovery') {
       assert.match(rules, /stdin to `nucleus ask -`/);
       assert.match(rules, /and `nucleus tell -`/);

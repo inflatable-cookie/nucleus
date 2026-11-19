@@ -377,10 +377,13 @@ test("the reviewer at B sees latest author-run proof stored under A with its rec
       agentId: "reviewer", workspaceId: "workspace", profile: null, createdAt: "2026-11-12T00:00:00.000Z",
       lastObservedAt: null, active: false, idleSince: null, released: false, status: "running" };
     const prompt = runPrompt(f.task(), reviewerRun as never, "/helper", "/ticket", true);
-    assert.ok(prompt.includes(oldRecord.path));
-    assert.ok(prompt.includes("recorded head " + base));
-    assert.ok(prompt.includes("Earlier revision screenshot"));
-    assert.match(prompt, /never relabel earlier-head evidence as delivered for the current head/);
+    assert.match(prompt, /Judge each file at its recorded head/);
+    assert.ok(!prompt.includes(oldRecord.path));
+    const { proofs } = buildRunContext(f.task(), reviewerRun);
+    assert.ok(proofs.includes(oldRecord.path));
+    assert.ok(proofs.includes("recorded head " + base));
+    assert.ok(proofs.includes("Earlier revision screenshot"));
+    assert.match(proofs, /never relabel earlier-head evidence as delivered for the current head/);
   } finally { await f.close(); }
 });
 
