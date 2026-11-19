@@ -39,8 +39,10 @@ setup = "npm ci"
 # nucleus#1330's operator install route against a private T3Code server: install,
 # status, a thread launched on the registered provider, uninstall, status.
 "proof:t3:install" = "node --import tsx scripts/proof-t3-install.ts {args}"
-# nucleus#1377's private proof: the task parent's nucleus-acp process is the
-# participant's runtime on a private T3Code server with a real native child.
+# nucleus#1377's and nucleus#1397's private proof: the task parent's nucleus-acp
+# process and the shared provider app-server's standing helpers are the
+# participant's runtime on a private T3Code server, with real native children and
+# the negative cases that still hold.
 "proof:t3:runtime" = "node --import tsx scripts/proof-t3-runtime.ts {args}"
 # The BB host phase-0 spike: an isolated BB server, the reverse host-operation channel
 # and the five-step lifecycle. Opt-in and private; refuses the live BB data directory.

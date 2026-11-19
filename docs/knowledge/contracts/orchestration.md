@@ -3623,6 +3623,25 @@ after the task finishes.
   read — and lets the owned-tool proof, review and closeout workspace proof pass
   while the task is idle (nucleus#1343's host-qualified runtime set, extended per
   host rather than a second path).
+  The provider app-servers that same server hosts are runtime with the standing
+  helpers each keeps (nucleus#1397). T3 starts a thread's provider as
+  `<provider> app-server …` — a subcommand in position, never a path operand — as
+  a direct child of the connected server, and one such app-server can serve
+  several threads. That app-server starts its sessions' own standing helpers — an
+  MCP server in its `mcp` server mode (`cua-driver mcp`), or the provider's
+  code-mode runtime host (`node_repl`, `*-host`) — as its direct children, and
+  they inherit the thread's workspace as their cwd. They belong to no task and
+  outlive every turn, so a cwd-rooted proof read them as work in whichever
+  worktree they were started for and refused review. The evidence is the chain
+  and the helper's own shape together: the live connected server, its live
+  `app-server`-mode child, and that app-server's live non-shell MCP-server or
+  runtime-host child. A basename alone proves nothing, anything below those
+  direct children is a command, and a same-shaped app-server whose parent is not
+  the connected server — another daemon's, or a shell's own — holds. These
+  processes are never a released run's tool either: run cleanup preserves any
+  live `app-server`-mode process whose own parent is a live non-shell program,
+  with the standing helpers it keeps, so a terminal host-process sweep leaves
+  them alone in a worktree they merely inherited.
   Those runtimes take two facts from the listing, never a provider
   name list: the program is one the provider ships (inside an application bundle
   such as `Foo.app/Contents/…`, or beside the provider's own executable under

@@ -1650,3 +1650,72 @@ test(
     }
   },
 );
+
+test("a task sweep never stops a provider app-server's standing helpers in the worktree", async () => {
+  // nucleus#1397's shape: T3's connected server keeps a shared provider
+  // app-server, and that app-server starts each session's standing helpers
+  // (`cua-driver mcp`, the provider's `node_repl`) with the thread's workspace as
+  // cwd. A terminal sweep of a worktree those helpers were started for must not
+  // stop them — while a command a helper started, and a shell's own app-server,
+  // stay targets.
+  const root = await mkdtemp(join(tmpdir(), "nsq-reap-app-server-"));
+  try {
+    const fact = (
+      pid: number,
+      ppid: number,
+      command: string,
+      cwd: string | null = root,
+    ): HostProcessFact => ({
+      pid,
+      ppid,
+      pgid: pid,
+      uid: 501,
+      startIdentity: `${pid}@a`,
+      command,
+      cwd,
+    });
+    const facts: HostProcessFact[] = [
+      fact(
+        200,
+        1,
+        "/Applications/T3 Code (Nightly).app/Contents/MacOS/T3 Code",
+        "/",
+      ),
+      fact(
+        201,
+        200,
+        "/provider/.local/bin/codex app-server -c thread_unload_delay_secs=0",
+      ),
+      fact(202, 201, "/provider/.local/bin/cua-driver mcp"),
+      fact(
+        203,
+        201,
+        "/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node_repl",
+      ),
+      fact(
+        204,
+        201,
+        "/provider/.codex/packages/standalone/bin/codex-code-mode-host --listen grpc+stdio://",
+      ),
+      // A command a helper started is real work, whatever its cwd.
+      fact(205, 202, "node build.mjs"),
+      // A shell's own app-server is a tool chain, not T3's provider host.
+      fact(206, 200, "/bin/zsh -lc 'codex app-server'"),
+      fact(207, 206, "/usr/local/bin/codex app-server"),
+      fact(208, 207, "/usr/local/bin/cua-driver mcp"),
+    ];
+    const result = await reapHostProcesses({
+      directory: root,
+      processes: facts,
+      identityLiveness: () => "unknown",
+      graceMs: 0,
+    });
+    assert.deepEqual(
+      result.failed.map((target) => target.pid),
+      [205, 206, 207, 208],
+    );
+    assert.deepEqual(result.terminated, []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

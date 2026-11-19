@@ -1004,6 +1004,22 @@ same recognition protects these processes from run cleanup and lets the
 owned-tool, review and closeout workspace proofs pass while the task is idle. The
 private proof is `effigy proof:t3:runtime`.
 
+**A shared provider app-server's helpers are runtime too.** T3 starts each
+thread's provider as `<provider> app-server …` directly under the connected
+server, and one app-server can serve several threads (nucleus#1397). That
+app-server starts the session's own standing helpers — `cua-driver mcp`, the
+provider's code-mode runtime host such as `node_repl` — as its direct children,
+with the thread's workspace as their cwd, so a cwd-rooted proof read them as work
+in whichever worktree they were started for and refused review. One recognition
+owns them with the ACP parent set ([orchestration
+contract](../contracts/orchestration.md), the owned-tool process proof): a live
+`app-server`-mode child of the connected server is runtime, and so is each of its
+live, non-shell, `mcp`-mode or runtime-host direct children. A basename alone,
+anything below those direct children and a same-shaped app-server whose parent is
+a shell or another daemon all stay tools, and a terminal host-process sweep
+leaves the helpers alone in a worktree they only inherited. The private proof
+covers both shapes.
+
 ## One row per task
 
 One task reads as one row (Tom, 2026-11-15; nucleus#1366): the task's parent thread
