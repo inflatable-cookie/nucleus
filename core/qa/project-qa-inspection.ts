@@ -7,16 +7,18 @@ import { normalizeRepositoryOrigin } from "../../shared/lanes";
 import { repositoryOrigin } from "../planning/lanes";
 import type { Store } from "../store/store";
 import type { HostRunScheduler } from "../host-runs/host-run-scheduler";
-import type { ProjectQaRun, HostRunResult, HostRunEscapedDescendant } from "../../shared/contracts";
+import type { ProjectQaRun, HostRunResult, HostRunEscapedDescendant, ProjectQaStepName } from "../../shared/contracts";
 import {
   readQaSupervisionPlanFile,
   readQaSupervisionStateFile,
   readQaHeartbeat,
   readHostRunResult,
+  readQaStepExit,
   qaSupervisionPaths,
   type QaFileRead,
   type QaSupervisionState,
   type QaSupervisionPlan,
+  type QaStepExit,
 } from "./project-qa-supervision-files";
 import { supervisorLivenessAsync } from "../machine/start-identity";
 import { findProcessByCommandTokenAsync } from "../machine/process-identity";
@@ -24,6 +26,16 @@ import { processGroupEmpty } from "../machine/process-group";
 import { processesForStartIdentity, processStartIdentityLiveness } from "../machine/process-identity-search";
 import { confirmStaleSupervisorHeartbeat, SUPERVISOR_STUCK_CONFIRMATION_MS } from "../machine/supervisor-watchdog";
 import { stopDetachedSupervisor } from "./supervisor-process";
+
+/**
+ * #1393: how long the service lets a supervisor keep a run it has not settled
+ * after the step's process group was observed empty. The supervisor settles in
+ * milliseconds once the group empties; this bound is the point where that
+ * settlement is visibly not coming and the record it should have written is
+ * taken from the run's own evidence instead of waiting for the 30-minute
+ * capacity deadline or the three-minute heartbeat watchdog.
+ */
+export const QA_STEP_EXIT_SETTLE_BOUND_MS = 30_000;
 
 /**
  * What one running row's durable evidence says about its supervisor. A `running`
@@ -38,6 +50,16 @@ export type SupervisorInspection =
     kind: "dead"; state: QaSupervisionState | null; reason: string; escapedDescendants?: HostRunEscapedDescendant[];
     /** Set when this verdict followed stopping a stale supervisor, so a late result is re-read. */
     staleStop?: true;
+  }
+  | {
+    /**
+     * #1393: the step's process group is gone, the supervisor is alive and it
+     * has not settled inside the bound. `exit` is the step's own recorded exit
+     * when the supervisor got that far; the settlement is a failure either way,
+     * never an unexplained `lost`.
+     */
+    kind: "step_ended"; state: QaSupervisionState; step: ProjectQaStepName;
+    exit: QaStepExit | null; emptyForMs: number; reason: string;
   };
 
 /** Why one supervision-file read was refused, or null when it was the record or a proven absence. */
@@ -86,7 +108,10 @@ async function reconcileBestEffort(context: QaRunReadContext, key: string, reque
 
 export class ProjectQaInspection {
   private readonly staleSupervisorObservations = new Map<string, { heartbeatAt: string; firstObservedAt: number }>();
-  constructor(readonly hostRuns: Pick<HostRunScheduler, "get">, readonly qaRepositoryRootPath: (key: string) => string, readonly serviceHistory?: Pick<Store, "getMeta">) {}
+  /** #1393: when this service first saw each run's recorded step group empty. */
+  private readonly endedStepObservations = new Map<string, { processGroupId: number; firstObservedAt: number }>();
+  constructor(readonly hostRuns: Pick<HostRunScheduler, "get">, readonly qaRepositoryRootPath: (key: string) => string,
+    readonly serviceHistory?: Pick<Store, "getMeta">, readonly limits: { stepSettleBoundMs?: number } = {}) {}
 
   /**
    * Classify a running row's supervisor from its durable evidence. The
@@ -101,7 +126,7 @@ export class ProjectQaInspection {
 
   async inspectSupervisor(run: ProjectQaRun): Promise<SupervisorInspection> {
     const attempt = run.teardownRetryAttempt ?? 0;
-    const { statePath, planPath, resultPath, heartbeatPath } = qaSupervisionPaths(this.qaRepositoryRootPath(run.key), run.id, attempt);
+    const { statePath, planPath, resultPath, heartbeatPath, stepExitPath } = qaSupervisionPaths(this.qaRepositoryRootPath(run.key), run.id, attempt);
     const stateRead = this.supervisionFacts.read(statePath);
     const planRead = this.supervisionPlans.read(planPath);
     // A record this process cannot read is evidence that is missing, not evidence
@@ -167,6 +192,12 @@ export class ProjectQaInspection {
           if (escaped.state !== "absent") return { kind: "running", state };
           return { kind: "dead", state, reason: liveness.reason, escapedDescendants: [] };
         }
+        // #1393: the supervisor is alive, so a run it has not settled is not
+        // lost. When the step it says it is running has no process group left,
+        // give it the short bound to write the settlement it owes; past that,
+        // take the run over from the step's own exit rather than from nothing.
+        const ended = await this.endedStep(state, run, attempt, stepExitPath, resultPath);
+        if (ended) return ended;
         return { kind: "running", state };
       }
       if (!validPlan) return { kind: "dead", state: null, reason: "no supervisor was started for this run" };
@@ -217,6 +248,52 @@ export class ProjectQaInspection {
       return { kind: "running", state: observedState.kind === "present"
         ? { ...observedState.value, heartbeatAt: readQaHeartbeat(heartbeatPath, observedState.value) } : null };
     return inspection;
+  }
+
+  /**
+   * #1393: the step whose group is gone, once the supervisor has had its bound
+   * to settle. The empty group must be observed for the whole bound rather than
+   * inferred from one read, and only while the step the state names is still
+   * the one in flight: an empty group between steps is not an ended run.
+   *
+   * Only a supervisor that is provably stopped hands the run over. A stop that
+   * cannot be proved keeps the run held, exactly like the stale-heartbeat rule,
+   * and a result that lands during the stop is settled from instead.
+   */
+  private async endedStep(
+    state: QaSupervisionState, run: ProjectQaRun, attempt: number, stepExitPath: string, resultPath: string,
+  ): Promise<SupervisorInspection | null> {
+    const active = state.activeProcess;
+    const observationKey = `${run.id}:${attempt}`;
+    if (!active || state.inFlight !== active.step || !processGroupEmpty(active.processGroupId)) {
+      this.endedStepObservations.delete(observationKey);
+      return null;
+    }
+    const observedAt = Date.now();
+    const previous = this.endedStepObservations.get(observationKey);
+    const firstObservedAt = previous?.processGroupId === active.processGroupId ? previous.firstObservedAt : observedAt;
+    this.endedStepObservations.set(observationKey, { processGroupId: active.processGroupId, firstObservedAt });
+    const emptyForMs = observedAt - firstObservedAt;
+    const boundMs = this.limits.stepSettleBoundMs ?? QA_STEP_EXIT_SETTLE_BOUND_MS;
+    if (emptyForMs < boundMs) return null;
+    const exit = readQaStepExit(stepExitPath, { runId: run.id, step: active.step, pid: active.pid });
+    const stopped = await stopDetachedSupervisor({
+      supervisorPid: state.pid,
+      ...(state.supervisorStartIdentity ? { supervisorStartIdentity: state.supervisorStartIdentity } : {}),
+      identityToken: state.identityToken, activeProcess: active,
+    });
+    if (!stopped) return { kind: "running", state };
+    this.endedStepObservations.delete(observationKey);
+    // A result written during the stop is the run's own settlement; use it.
+    const lateResult = readHostRunResult(resultPath, run.id);
+    if (lateResult) return { kind: "settled", state, hostResult: lateResult };
+    const ended = exit
+      ? `${active.step} ended ${exit.signal ? `by ${exit.signal}` : `with exit code ${exit.exitCode}`} at ${exit.exitedAt}`
+      : `${active.step} left no process group and recorded no exit`;
+    return {
+      kind: "step_ended", state, step: active.step, exit, emptyForMs,
+      reason: `${ended}; its process group ${active.processGroupId} was empty for ${emptyForMs}ms and the supervisor settled nothing within ${boundMs}ms, so it was stopped and the run settles from that step`,
+    };
   }
 
 }

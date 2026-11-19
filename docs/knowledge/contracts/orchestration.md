@@ -135,6 +135,26 @@ last heartbeat, pre-stop supervisor liveness, in-flight step and process-group
 state, plus starts and rolls in the heartbeat gap; incomplete service history
 is reported as unknown.
 
+The executor publishes the direct child's exit the moment the kernel reports it
+(`onChildExit`), and `project-qa-detached-io.ts` writes that step's exit code or
+terminating signal, time, pid and group to its own `<run>.stepexit.json` ahead of
+the step log, the lifecycle state and the result. That record is how a run names
+how its command ended when the supervisor's own settlement never lands: the
+executor's seam owns the exit fact, and the supervision file owns keeping it
+beside the run. A stage that ends by a signal is a settled `failed` step, not an
+uncertain hold.
+
+When the supervisor is alive and the step it says is in flight has no process
+group left, `project-qa-inspection.ts` watches that emptiness for a short bound
+(`QA_STEP_EXIT_SETTLE_BOUND_MS`), then stops the supervisor under the same proof
+as the stale-heartbeat rule and hands the run to `project-qa-recovery.ts`. With a
+recorded exit the run settles `failed` from the step's exit code or signal, with
+the step named as `interruptedStep`/`failedStep` and the live output log's path,
+byte offset and last lines in its detail; with no recorded exit the outcome is
+genuinely unobservable and the run settles `lost`, carrying the same step and
+output pointer. `lost` therefore means a dead supervisor or an unobservable
+outcome, never a run that simply waited for its capacity deadline.
+
 `supervisor-process.ts` owns the detached supervisor's own process lifecycle — the
 launch shape and the stale stop with its proof — for milestone QA, project
 validation and the host-run endpoint alike, so neither family keeps its own copy.

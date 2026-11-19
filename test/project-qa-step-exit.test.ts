@@ -1,0 +1,333 @@
+/**
+ * #1393: a host run whose process group exits records its exit code or signal
+ * and its output tail, and settles promptly, never as an unexplained `lost`.
+ *
+ * The executor publishes the direct child's exit the moment the kernel reports
+ * it, the supervisor keeps that record beside the run ahead of its own step log,
+ * and the service settles a run whose step group is empty but whose supervisor
+ * wrote no settlement from that record — never from "nothing happened".
+ */
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { execFileSync, spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { executeHookProgram, type ChildExitFacts } from "../core/machine/process-exec";
+import { minimalHookEnvironment } from "../core/hooks/hook-result";
+import { hostRunProcessStartIdentity } from "../core/machine/start-identity";
+import { overrideIdentityListing } from "../core/machine/process-identity-search";
+import {
+  qaRunLiveOutputPath,
+  qaStepExitSchema,
+  qaSupervisionPaths,
+  qaSupervisionPlanSchema,
+  readQaStepExit,
+  readQaSupervision,
+  writeQaSupervision,
+  writeQaSupervisionPlan,
+  type QaStepExit,
+} from "../core/qa/project-qa-supervision-files";
+import { writeQaJsonAsync } from "../core/qa/project-qa-async-io";
+import { detachedSupervisorIo } from "../core/qa/project-qa-detached-io";
+import { runProjectQaPipeline, type QaPipelineRun } from "../core/qa/project-qa-pipeline";
+import { ProjectQaInspection } from "../core/qa/project-qa-inspection";
+import { projectQaRecovery, qaOutputPointerDetail } from "../core/qa/project-qa-recovery";
+import { noCpuReads } from "./support/scoped-identity";
+
+const executorEnv = () => minimalHookEnvironment("project-qa:step-exit");
+
+test("the executor publishes the direct child's exit code and time before the step settles", { skip: process.platform === "win32" }, async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "qa-step-exit-code-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const exits: ChildExitFacts[] = [];
+  const outcome = await executeHookProgram({
+    root, executable: "/bin/sh", argv: ["-c", "printf 'some output\\n'; exit 7"],
+    stdin: Buffer.alloc(0), timeoutMs: 10_000, maxOutputBytes: 4096, overflow: "tail",
+    env: executorEnv(), settleOnProcessGroup: true, onChildExit: exit => exits.push(exit),
+  });
+  assert.equal(outcome.code, 7);
+  assert.equal(exits.length, 1, "the exit is published exactly once");
+  assert.equal(exits[0].exitCode, 7);
+  assert.equal(exits[0].signal, null);
+  assert.equal(exits[0].pid, outcome.pid);
+  assert.ok(Number.isFinite(Date.parse(exits[0].exitedAt)), "the exit time is recorded");
+});
+
+test("a step group killed from outside publishes the signal that ended it", { skip: process.platform === "win32" }, async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "qa-step-exit-signal-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const exits: ChildExitFacts[] = [];
+  let group: number | null = null;
+  const running = executeHookProgram({
+    root, executable: "/bin/sh", argv: ["-c", "printf 'stage output\\n'; sleep 30"],
+    stdin: Buffer.alloc(0), timeoutMs: 60_000, maxOutputBytes: 4096, overflow: "tail",
+    env: executorEnv(), settleOnProcessGroup: true, onChildExit: exit => exits.push(exit),
+    onSpawn: (pid, processGroupId) => { group = processGroupId ?? pid; },
+  });
+  t.after(() => { if (group) try { process.kill(-group, "SIGKILL"); } catch { /* already gone */ } });
+  while (!group) await new Promise(resolve => setTimeout(resolve, 20));
+  process.kill(-group, "SIGKILL");
+  const outcome = await running;
+  assert.equal(outcome.code, null);
+  assert.equal(outcome.signal, "SIGKILL");
+  assert.equal(exits.length, 1);
+  assert.equal(exits[0].signal, "SIGKILL");
+  assert.equal(exits[0].exitCode, null);
+  assert.equal(outcome.stdout.toString("utf8").includes("stage output"), true, "output before the kill is kept");
+});
+
+/** One committed repository for the pipeline's checkout, under the test's own scratch. */
+async function pipelineFixture(t: { after(fn: () => unknown): void }, stageArgv: string[]) {
+  const root = await mkdtemp(join(tmpdir(), "qa-step-exit-pipeline-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const repo = join(root, "registered");
+  await mkdir(repo);
+  const git = (...argv: string[]) => execFileSync("git", argv, { cwd: repo, encoding: "utf8" }).trim();
+  git("init", "-q");
+  await writeFile(join(repo, "README.md"), "fixture\n");
+  git("add", ".");
+  git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "fixture");
+  const runRoot = join(root, "runs");
+  await mkdir(runRoot);
+  const runId = randomUUID();
+  const identityToken = randomUUID();
+  const run: QaPipelineRun = {
+    runId, key: "fixture", caller: "fixture", base: git("rev-parse", "HEAD"), baseBranch: "main",
+    startedAt: new Date().toISOString(), startedAtMs: Date.now(),
+    checkoutPath: join(runRoot, runId), registeredPath: repo, runRoot,
+    argv: stageArgv,
+    stages: [{ name: "qa", argv: stageArgv, timeoutMs: 30_000 }],
+    timeoutMs: 60_000, maxOutputBytes: 4096, terminationGraceMs: 100, epoch: 1, links: [],
+    hostRunToken: "synthetic-token", temporaryDirectory: root,
+  };
+  const plan = qaSupervisionPlanSchema.parse({
+    ...run, schema: "queue.project-qa.plan.v1", schema_version: 1, identityToken,
+    hookTimeoutMs: 10_000, hookMaxOutputBytes: 1024,
+  });
+  const paths = qaSupervisionPaths(runRoot, runId);
+  return { run, plan, paths, io: detachedSupervisorIo(plan, paths.statePath, run, noCpuReads) };
+}
+
+test("a step exiting non-zero records its exit code on the step and on its own exit record", { skip: process.platform === "win32" }, async (t) => {
+  const f = await pipelineFixture(t, ["/bin/sh", "-c", "printf 'some output\\n'; exit 7"]);
+  const outcome = await runProjectQaPipeline({ pid: process.pid, identityToken: f.plan.identityToken }, f.run, f.io);
+  assert.equal(outcome.state, "failed");
+  assert.equal(outcome.steps.find(step => step.name === "qa")!.exitCode, 7);
+  const exit = readQaStepExit(f.paths.stepExitPath, { runId: f.run.runId, step: "qa" });
+  assert.ok(exit, "the supervisor keeps the step's own exit beside the run");
+  assert.equal(qaStepExitSchema.safeParse(exit).success, true);
+  assert.equal(exit!.exitCode, 7);
+  assert.equal(exit!.signal, null);
+  assert.equal(exit!.processGroupId, exit!.pid, "a detached step leader's pid is its group id");
+  assert.ok(Number.isFinite(Date.parse(exit!.exitedAt)));
+});
+
+test("a step group killed from outside settles the run failed with that signal and its output", { skip: process.platform === "win32" }, async (t) => {
+  const f = await pipelineFixture(t, ["/bin/sh", "-c", "printf 'build output line\\n'; sleep 30"]);
+  const running = runProjectQaPipeline({ pid: process.pid, identityToken: f.plan.identityToken }, f.run, f.io);
+  // Kill the step's own process group once its output is being produced, so the
+  // run's retained output and the settlement can be checked against real bytes.
+  let group: number | null = null;
+  const deadline = Date.now() + 20_000;
+  while (!group && Date.now() < deadline) {
+    group = readQaSupervision(f.paths.statePath)?.activeProcess?.processGroupId ?? null;
+    if (!group) await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  assert.ok(group, "the supervisor publishes the step's process group before it ends");
+  await new Promise(resolve => setTimeout(resolve, 300));
+  process.kill(-group, "SIGKILL");
+  const outcome = await running;
+  assert.equal(outcome.state, "failed", outcome.detail);
+  const exited = outcome.steps.find(step => step.name === "qa")!;
+  assert.equal(exited.signal, "SIGKILL");
+  assert.equal(exited.exitCode, null);
+  assert.equal(exited.processGroupId, group);
+  assert.match(outcome.detail, /qa terminated by SIGKILL/);
+  assert.match(`${exited.stdoutHead}${exited.stdoutTail}`, /build output line/, "the output produced before the kill is kept");
+  const exit = readQaStepExit(f.paths.stepExitPath, { runId: f.run.runId, step: "qa" })!;
+  assert.equal(exit.signal, "SIGKILL");
+});
+
+test("a supervisor that settles nothing after its step's group emptied hands the run over past the bound", { skip: process.platform === "win32" }, async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "qa-step-exit-inspection-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const runRoot = join(root, "runs");
+  await mkdir(runRoot);
+  const runId = randomUUID();
+  const identityToken = randomUUID();
+  // A live process carrying the run's token is this run's supervisor.
+  const supervisor = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)", identityToken],
+    { detached: true, stdio: "ignore" });
+  t.after(() => { try { process.kill(-supervisor.pid!, "SIGKILL"); } catch { /* already stopped */ } });
+  overrideIdentityListing(identity => identity === identityToken ? { state: "absent" } : { state: "unknown" });
+  t.after(() => overrideIdentityListing(null));
+  // A pid whose process group is already gone is the step's own ended group.
+  const finished = spawn("/bin/sh", ["-c", "exit 0"], { stdio: "ignore" });
+  await new Promise(resolve => finished.on("exit", resolve));
+  const endedGroup = finished.pid!;
+  const startedAt = new Date(Date.now() - 60_000).toISOString();
+  const paths = qaSupervisionPaths(runRoot, runId);
+  writeQaSupervisionPlan(paths.planPath, qaSupervisionPlanSchema.parse({
+    schema: "queue.project-qa.plan.v1", schema_version: 1, runId, key: "fixture", caller: "fixture",
+    base: "a".repeat(40), baseBranch: "main", startedAt, startedAtMs: Date.parse(startedAt),
+    checkoutPath: join(runRoot, runId), registeredPath: join(root, "registered"), runRoot,
+    argv: ["true"], timeoutMs: 60_000, epoch: 1, runClass: "heavy", maxOutputBytes: 1024,
+    terminationGraceMs: 1000, hookTimeoutMs: 1000, hookMaxOutputBytes: 1024,
+    identityToken, links: [], mode: "full", attempt: 0, retry: null,
+  }));
+  writeQaSupervision(paths.statePath, {
+    schema: "queue.project-qa.supervisor.v1", schema_version: 1, runId, key: "fixture",
+    pid: supervisor.pid!, supervisorStartIdentity: hostRunProcessStartIdentity(supervisor.pid!),
+    identityToken, startedAt, heartbeatAt: new Date().toISOString(),
+    inFlight: "qa", pendingProcessIdentity: null, steps: [], failedStep: null, logWriteErrors: [],
+    activeProcess: {
+      step: "qa", pid: endedGroup, processGroupId: endedGroup,
+      startIdentity: hostRunProcessStartIdentity(endedGroup), leaderStartIdentity: identityToken,
+      startedAt: new Date(Date.now() - 45_000).toISOString(),
+    },
+    detail: "build output line", failuresLog: "", failureIndexes: [], escapedDescendants: [],
+    cancelReason: null, result: null,
+  });
+  const exit: QaStepExit = {
+    schema: "queue.project-qa.step-exit.v1", schema_version: 1, runId, step: "qa",
+    pid: endedGroup, processGroupId: endedGroup, exitCode: null, signal: "SIGKILL",
+    exitedAt: new Date(Date.now() - 40_000).toISOString(),
+  };
+  await writeQaJsonAsync(paths.stepExitPath, exit, { durable: false });
+  await writeFile(qaRunLiveOutputPath(runRoot, runId), "first line\nbuild output line\n");
+  const inspection = new ProjectQaInspection({ get: () => null }, () => runRoot, undefined, { stepSettleBoundMs: 100 });
+  const run = { id: runId, key: "fixture", startedAt, argv: ["true"] } as any;
+
+  assert.equal((await inspection.inspectSupervisor(run)).kind, "running", "the first observation only starts the bound");
+  let verdict = await inspection.inspectSupervisor(run);
+  for (let attempt = 0; verdict.kind === "running" && attempt < 40; attempt++) {
+    await new Promise(resolve => setTimeout(resolve, 50));
+    verdict = await inspection.inspectSupervisor(run);
+  }
+  assert.equal(verdict.kind, "step_ended", JSON.stringify(verdict));
+  if (verdict.kind !== "step_ended") return;
+  assert.equal(verdict.step, "qa");
+  assert.equal(verdict.exit?.signal, "SIGKILL");
+  assert.match(verdict.reason, /process group \d+ was empty for \d+ms/);
+  assert.throws(() => process.kill(supervisor.pid!, 0), /ESRCH/, "the unresponsive supervisor was stopped with proof");
+  assert.equal(readQaStepExit(paths.stepExitPath, { runId, step: "qa" })?.signal, "SIGKILL");
+});
+
+/** The recovery context the settlement needs, with the store and settle owner recorded instead of run. */
+function recoveryFixture(run: any, state: any, runRoot: string) {
+  const settled: any[] = [];
+  const records: any[] = [];
+  const context = {
+    store: {
+      qaRun: () => ({ ...run, state: "running" }),
+      putQaRun: (record: any) => { records.push(record); return record; },
+      transaction: (fn: () => void) => fn(),
+    },
+    qaRepositoryRootPath: () => runRoot,
+    checkoutForRun: () => join(runRoot, "missing-checkout"),
+    admitCheckout: () => {},
+    retainedCheckoutIdentity: async () => {},
+    runWorktreeHook: async () => { throw new Error("no teardown in this fixture"); },
+    settle: async (_run: any, outcome: any) => { settled.push(outcome); return { ...run, ...outcome }; },
+    applyTeardownRetry: () => run,
+  } as any;
+  // The runner's own members delegate through `this`, exactly as the service does.
+  context.reconcileLostRun = (target: any, targetState: any, reason: string, escaped?: any) =>
+    projectQaRecovery.reconcileLostRun.call(context, target, targetState, reason, escaped);
+  context.settleAbandoned = (target: any, targetState: any, settlement: any, escaped?: any) =>
+    projectQaRecovery.settleAbandoned.call(context, target, targetState, settlement, escaped);
+  context.appendSettledOutputPointer = (target: any, output: string) =>
+    projectQaRecovery.appendSettledOutputPointer.call(context, target, output);
+  return { context, settled, records };
+}
+
+test("an ended step settles failed from its own exit, with the step, the signal and where output ended", { skip: process.platform === "win32" }, async (t) => {
+  const runRoot = await mkdtemp(join(tmpdir(), "qa-step-exit-settle-"));
+  t.after(() => rm(runRoot, { recursive: true, force: true }));
+  const runId = randomUUID();
+  const startedAt = new Date(Date.now() - 120_000).toISOString();
+  await writeFile(qaRunLiveOutputPath(runRoot, runId), "setup output\nstage line one\nstage line two");
+  const run = {
+    id: runId, key: "fixture", state: "running", startedAt, argv: ["effigy", "qa"],
+    hostRunEpoch: 2, steps: [], failedStep: null, escapedDescendants: [], terminationGraceMs: 30_000,
+    repository: { origin: null, path: runRoot }, outputTail: "", logWriteErrors: [],
+    findings: undefined, checkoutPath: undefined,
+  };
+  const state = {
+    activeProcess: {
+      step: "qa", pid: 4242, processGroupId: 4242, startIdentity: "4242@2026-11-19T19:30:00Z",
+      leaderStartIdentity: "a".repeat(32), startedAt: new Date(Date.now() - 90_000).toISOString(),
+    },
+    inFlight: "qa", steps: [], failedStep: null, logWriteErrors: [], escapedDescendants: [],
+    detail: "setup output", escapedDescendantsOld: undefined, cancelReason: null,
+  };
+  const { context, settled } = recoveryFixture(run, state, runRoot);
+  await projectQaRecovery.settleEndedStep.call(context as any, run as any, {
+    kind: "step_ended", state: state as any, step: "qa", emptyForMs: 31_000, reason: "qa ended by SIGTERM",
+    exit: { schema: "queue.project-qa.step-exit.v1", schema_version: 1, runId, step: "qa",
+      pid: 4242, processGroupId: 4242, exitCode: null, signal: "SIGTERM",
+      exitedAt: new Date(Date.now() - 30_000).toISOString() },
+  });
+  assert.equal(settled.length, 1);
+  const outcome = settled[0];
+  assert.equal(outcome.state, "failed");
+  assert.equal(outcome.exitCode, null, "a signalled step has no exit code");
+  assert.equal(outcome.interruptedStep, "qa");
+  assert.equal(outcome.failedStep, "qa");
+  assert.equal(outcome.hostResult.signal, "SIGTERM");
+  assert.equal(outcome.hostResult.exitCode, null);
+  assert.equal(outcome.hostResult.pgid, 4242);
+  assert.match(outcome.detail, /qa ended by SIGTERM/);
+  assert.match(outcome.detail, /Live output log: .*\.live\.log at byte \d+/);
+  assert.match(outcome.detail, /stage line two/, "the last output lines travel with the settlement");
+  assert.match(outcome.detail, /settled this run failed/);
+  assert.doesNotMatch(outcome.detail, /lost this QA run/);
+  assert.equal(outcome.steps.find((step: any) => step.name === "qa")?.signal, "SIGTERM");
+});
+
+test("an ended group with no recorded exit is lost with its step and output pointer, never as nothing", { skip: process.platform === "win32" }, async (t) => {
+  const runRoot = await mkdtemp(join(tmpdir(), "qa-step-exit-lost-"));
+  t.after(() => rm(runRoot, { recursive: true, force: true }));
+  const runId = randomUUID();
+  await writeFile(qaRunLiveOutputPath(runRoot, runId), "last line before the fault");
+  const run = {
+    id: runId, key: "fixture", state: "running", startedAt: new Date(Date.now() - 120_000).toISOString(),
+    argv: ["effigy", "qa"], steps: [], failedStep: null, escapedDescendants: [], logWriteErrors: [],
+    repository: { origin: null, path: runRoot }, outputTail: "",
+  };
+  const state = {
+    activeProcess: { step: "qa", pid: 4243, processGroupId: 4243, startIdentity: "4243@2026-11-19T19:30:00Z",
+      leaderStartIdentity: "b".repeat(32), startedAt: new Date(Date.now() - 90_000).toISOString() },
+    inFlight: "qa", steps: [], failedStep: null, logWriteErrors: [], escapedDescendants: [],
+    detail: "", cancelReason: null,
+  };
+  const { context, settled, records } = recoveryFixture(run, state, runRoot);
+  await projectQaRecovery.settleEndedStep.call(context as any, run as any, {
+    kind: "step_ended", state: state as any, step: "qa", exit: null,
+    emptyForMs: 45_000, reason: "qa left no process group and recorded no exit",
+  });
+  assert.equal(settled.length, 1);
+  assert.equal(settled[0].state, "lost");
+  assert.match(settled[0].detail, /qa left no process group and recorded no exit/);
+  assert.match(settled[0].detail, /lost this QA run/);
+  assert.ok(records.length >= 1, "the output pointer is added to the settled record");
+  assert.ok(records.some(record => record.outputTail.includes("Live output log:")),
+    "project.qa.get carries the pointer even when the outcome is genuinely unobservable");
+});
+
+test("the output pointer names the live log's byte offset and its last lines", { skip: process.platform === "win32" }, async (t) => {
+  const runRoot = await mkdtemp(join(tmpdir(), "qa-step-exit-pointer-"));
+  t.after(() => rm(runRoot, { recursive: true, force: true }));
+  const runId = randomUUID();
+  const text = "one\ntwo\nthree\n";
+  await writeFile(qaRunLiveOutputPath(runRoot, runId), text);
+  const detail = qaOutputPointerDetail(runRoot, runId, "qa");
+  assert.match(detail, new RegExp(`at byte ${Buffer.byteLength(text)}`));
+  assert.match(detail, /three/);
+  assert.match(detail, /No step log for qa was written/);
+  await rm(qaRunLiveOutputPath(runRoot, runId));
+  assert.match(qaOutputPointerDetail(runRoot, runId, "qa"), /no readable live log/,
+    "a missing log is not reported as zero bytes of output");
+});

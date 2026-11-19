@@ -69,6 +69,22 @@ export interface ExecutionRequest {
    * failure block stays visible even when the retained window evicts it.
    */
   onOutput?: (stream: "stdout" | "stderr", chunk: Buffer) => void;
+  /**
+   * #1393: the direct child's own exit, observed when the kernel reports it —
+   * before the step settles, before its group is proven empty and before the
+   * caller writes any step record. A caller that records it here can still name
+   * the exit code, the terminating signal and the time when its own settlement
+   * never lands, and can say where each stream's output ended.
+   */
+  onChildExit?: (exit: ChildExitFacts) => void;
+}
+
+/** The direct child's exit, as the executor observed it. */
+export interface ChildExitFacts {
+  pid: number;
+  exitCode: number | null;
+  signal: string | null;
+  exitedAt: string;
 }
 
 /** Spawn one pinned regular executable directly with literal argv. No shell is involved. */
@@ -302,6 +318,16 @@ export function executeHookProgram(request: ExecutionRequest): Promise<Execution
       outcome.code = code;
       outcome.signal = signal;
       leaderExited = true;
+      // #1393: the direct child's exit is the earliest fact this step can
+      // record. It travels before the group proof, the pipe flush and the
+      // caller's step log, so a supervisor whose own settlement is delayed or
+      // hung still leaves the exit code, the signal and the time for whoever
+      // has to settle the run.
+      if (child.pid) {
+        try {
+          request.onChildExit?.({ pid: child.pid, exitCode: code, signal, exitedAt: new Date().toISOString() });
+        } catch { /* a record can never change how a step ends */ }
+      }
       void finishWhenGroupIsEmpty();
     });
     child.on("close", () => { pipesClosed = true; void finishWhenGroupIsEmpty(); });

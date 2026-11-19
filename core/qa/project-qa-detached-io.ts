@@ -22,10 +22,14 @@ import { issueHostRunToken } from "../host-runs/host-run-token";
 import {
   qaSupervisionPaths,
   readQaCancelRequest,
+  QA_STEP_EXIT_SCHEMA,
+  QA_SUPERVISION_SCHEMA_VERSION,
   type QaSupervisionPlan,
   type QaSupervisionState,
+  type QaStepExit,
 } from "./project-qa-supervision-files";
 import type { QaPipelineIo, QaSpawnedProcess } from "./project-qa-pipeline";
+import type { ChildExitFacts } from "../machine/process-exec";
 
 /** How often a live supervisor refreshes its independent heartbeat file. */
 export const SUPERVISOR_HEARTBEAT_MS = 2_000;
@@ -50,7 +54,7 @@ export function detachedSupervisorIo(
       (entry): entry is [string, string] => typeof entry[1] === "string",
     ),
   );
-  const { resultPath, cancelPath, planPath, cpuCoveragePath, heartbeatPath } =
+  const { resultPath, cancelPath, planPath, cpuCoveragePath, heartbeatPath, stepExitPath } =
     qaSupervisionPaths(plan.runRoot, plan.runId, plan.attempt);
   let current: QaSupervisionState | null = null;
   let timer: NodeJS.Timeout | null = null;
@@ -88,6 +92,25 @@ export function detachedSupervisorIo(
     cancelReason: cancelable
       ? () => readQaCancelRequest(cancelPath, plan.runId)?.reason ?? null
       : undefined,
+    /**
+     * #1393: publish the direct child's exit the moment the executor sees it, on
+     * its own small record ahead of the step log, the lifecycle state and the
+     * result. The step is the one this pipeline has in flight, so the record
+     * always names the command it belongs to. A write that cannot land is not
+     * retried here: the step's own settlement and the service's inspection both
+     * fall back to what they can observe.
+     */
+    onChildExit: (exit: ChildExitFacts) => {
+      const active = current?.activeProcess;
+      if (!active) return;
+      const record: QaStepExit = {
+        schema: QA_STEP_EXIT_SCHEMA, schema_version: QA_SUPERVISION_SCHEMA_VERSION,
+        runId: plan.runId, step: active.step, pid: exit.pid, processGroupId: active.processGroupId,
+        exitCode: exit.exitCode, signal: exit.signal, exitedAt: exit.exitedAt,
+      };
+      void writeQaJsonAsync(stepExitPath, record, { durable: false })
+        .catch(() => { /* the exit facts are best effort; settlement never waits on them */ });
+    },
     onSpawn: (
       pid: number,
       processGroupId?: number,
