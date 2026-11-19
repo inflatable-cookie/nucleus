@@ -480,7 +480,7 @@ test("terminal operation pages advance past an unprovable submission", async (t)
   assert.ok(
     hostDependents(f.store, { id: HOST, kind: "paseo", primary: true })
       .find((item) => item.kind === "effect")
-      ?.names.includes("submit"),
+      ?.names.some((name) => name.startsWith("submit:")),
   );
 });
 
