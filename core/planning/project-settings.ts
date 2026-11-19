@@ -26,12 +26,6 @@ export function projectSettingsProblems(input: {
   latestQaFailed: boolean;
 }): ProjectSettingsProblem[] {
   const problems: ProjectSettingsProblem[] = [];
-  if (input.plannerRoutingIssue) problems.push(input.plannerRoutingIssue);
-  else if (input.plannerId && input.plannerLive === false)
-    problems.push(PROJECT_SETTINGS_PROBLEMS.plannerGone);
-  else if (!input.plannerId) problems.push(PROJECT_SETTINGS_PROBLEMS.noPlanner);
-  if (input.plannerId && input.plannerTicketPending)
-    problems.push(PROJECT_SETTINGS_PROBLEMS.plannerTicketPending);
   if (input.latestQaFailed) problems.push(PROJECT_SETTINGS_PROBLEMS.qaFailed);
   return problems;
 }
@@ -90,6 +84,7 @@ function anyLatestQaFailed(project: Project, runs: ProjectQaRun[]): boolean {
 
 export function buildProjectSettings(input: {
   projects: Project[];
+  responsibleThreads?: Record<string, { thread: import("../questions/responsible-thread-cache").ResponsibleThread | null; cacheAgeMs: number } | undefined>;
   repositories: RepositorySettings[];
   overrides: Record<string, number>;
   defaultSlots: number;
@@ -142,6 +137,7 @@ export function buildProjectSettings(input: {
         })),
         slots: { value: override ?? input.defaultSlots, override },
         plannerLive,
+        ...(input.responsibleThreads?.[project.key] ? { responsibleThread: input.responsibleThreads[project.key] } : {}),
         agents: input.agents?.[project.key] ?? [],
         plannerTicket: !plannerId
           ? null

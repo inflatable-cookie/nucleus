@@ -448,6 +448,24 @@ export function composeBbAdapter(input: {
     archivedThreads() {
       return threads.archivedThreads();
     }
+    async listLiveAgents() {
+      const rows = await threads.inventoryRows();
+      const known = threads.agents();
+      const workspaces = Object.values(input.records());
+      return rows.filter(row => row.archivedAt === null && row.status !== "closed")
+        .map(row => {
+          const workspace = workspaces.find(w => w.environmentId === row.environmentId && w.directory === row.environmentPath);
+          return {
+            id: row.threadId,
+            title: row.title ?? "",
+            workspaceId: workspace?.id ?? null,
+            directory: row.environmentPath,
+            repositoryRoot: workspace?.repositoryRoot ?? null,
+            updatedAt: Number.isFinite(row.updatedAt) ? new Date(row.updatedAt).toISOString() : null,
+            labels: known.find(agent => agent.id === row.threadId)?.labels,
+          };
+        });
+    }
     observe(id: string) {
       return threads.observe(id);
     }

@@ -186,10 +186,17 @@ function OpenedProject({ c, compact, entry, data, error, refetch, actions, back,
     <Pair>
       <Field c={c} label="Name" a11yLabel="Project name" value={name} disabled={disabled} onChange={rename} onBlur={saves.flush} />
       <View style={{ gap: space.xs }}>
-        <DropdownSelect c={c} label="Planner" value={planner ?? NONE} disabled={disabled} options={plannerOptions(entry, candidates.data, planner)} onChange={choosePlanner} />
+        <DropdownSelect c={c} label="Preferred thread" value={planner ?? NONE} disabled={disabled} options={plannerOptions(entry, candidates.data, planner)} onChange={choosePlanner} />
         {Boolean(candidates.error) && <Text style={{ color: r.warning, fontSize: type.metadata.fontSize, lineHeight: type.metadata.lineHeight }}>Couldn't load threads</Text>}
       </View>
     </Pair>
+    {entry.responsibleThread && <View style={{ gap: space.xxs }}>
+      <FieldCaption c={c} text="Responsible thread" />
+      <Text style={muted(c)}>{entry.responsibleThread.thread
+        ? `${entry.responsibleThread.thread.agentId} · ${entry.responsibleThread.thread.hostId} · last interaction ${entry.responsibleThread.thread.lastInteraction ?? "unknown"}`
+        : "No live responsible thread"}</Text>
+      <Text style={muted(c)}>Cache age: {Math.floor(entry.responsibleThread.cacheAgeMs / 1000)}s</Text>
+    </View>}
     <View style={{ gap: space.xxs }}>
       <FieldCaption c={c} text="Slots" help={SLOTS_HELP} />
       <View style={{ flexDirection: "row" }}>

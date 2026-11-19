@@ -9,6 +9,11 @@ import {
 import { CriticalReviewFallback } from "./dispatch/critical-review-fallback";
 import { ValidationRetry } from "./qa/validation-retry";
 import { PlannerPresence } from "./questions/planner-presence";
+import { ResponsibleThreadResolver } from "./questions/responsible-thread-resolver";
+import type { ResponsibleShortlist, ResponsibleThread } from "./questions/responsible-thread-cache";
+import { observationTimeout } from "./recovery/observation-timeout";
+import type { Project } from "../shared/contracts";
+import { sameCallerIdentity } from "../shared/agent-identity";
 import { OrphanRuns } from "./recovery/orphan-runs";
 import { ProgressContinuation } from "./review/progress-continuation";
 import { SchedulingLifecycle } from "./scheduling/lifecycle";
@@ -372,6 +377,72 @@ export class Resolution {
   readonly validationRetry = new ValidationRetry(
     portsContext(this, ["store", "update"]),
   );
+
+  readonly responsibleThreads = new ResponsibleThreadResolver({
+    hostIds: () => {
+      const ids = this.hostPorts.ids?.() ?? [];
+      const ambient = (this.adapter as { hostId?: string }).hostId;
+      return [...new Set([...ids, ...(ambient ? [ambient] : [])])];
+    },
+    hostOnline: id => this.hostPorts.online(id),
+    inventory: id => this.withHost(id, () => this.host.listLiveAgents()),
+    tasks: () => this.store.allTasks(),
+    runs: () => this.store.runs(),
+    projectKeyResolver: projects => this.store.projectKeyResolver(projects),
+  });
+
+  private readonly confirmedResponsible = new WeakMap<ResponsibleShortlist, ResponsibleThread[]>();
+  private readonly responsibleObservations = new WeakMap<ResponsibleShortlist, Promise<{
+    shortlist: ResponsibleShortlist;
+    threads: ResponsibleThread[];
+  } | null>>();
+
+  cachedResponsible(projectKey: string): string | null {
+    const cached = this.responsibleThreads.cache.peek(projectKey);
+    return cached ? this.confirmedResponsible.get(cached)?.[0]?.agentId ?? null : null;
+  }
+
+  async responsibleThread(project: Project, exclude?: { agentId: string; hostId?: string | null },
+    excludedHosts?: ReadonlySet<string>, taskIndex?: ReturnType<ResponsibleThreadResolver["taskIndex"]>) {
+    // An invalidation can land during inventory or observation. Retry with
+    // current registry facts once, then return no verified recipient for this call.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const shortlist = await this.responsibleThreads.resolve(project, excludedHosts, attempt === 0 ? taskIndex : undefined);
+      if (!shortlist) continue;
+      const confirmed = await this.observeResponsible(project.key, shortlist);
+      if (!confirmed || this.responsibleThreads.cache.peek(project.key) !== confirmed.shortlist) continue;
+      const thread = confirmed.threads.find(candidate => !exclude || !sameCallerIdentity(candidate.agentId, exclude.agentId, candidate.hostId, exclude.hostId));
+      return { thread: thread ?? null, observedAt: confirmed.shortlist.observedAt };
+    }
+    return { thread: null, observedAt: Date.now() };
+  }
+
+  async refreshResponsibleThreads(projects: Project[], excludedHosts?: ReadonlySet<string>) {
+    if (!projects.length) return [];
+    const index = this.responsibleThreads.taskIndex(projects);
+    return Promise.all(projects.map(project => this.responsibleThread(project, undefined, excludedHosts, index)));
+  }
+
+  private observeResponsible(projectKey: string, shortlist: ResponsibleShortlist) {
+    const pending = this.responsibleObservations.get(shortlist);
+    if (pending) return pending;
+    const cache = this.responsibleThreads.cache;
+    const read = Promise.all(shortlist.threads.map(async thread => {
+      try {
+        return (await observationTimeout(this.plannerPresence.threadRoute(thread.agentId, thread.hostId),
+          'Responsible thread observation timed out', 2000)).kind;
+      } catch { return 'unroutable' as const; }
+    })).then(states => {
+      if (cache.peek(projectKey) !== shortlist) return null;
+      const closed = new Set(shortlist.threads.filter((_, index) => states[index] === 'gone').map(thread => thread.agentId));
+      const threads = shortlist.threads.filter((_, index) => states[index] === 'routable');
+      const current = closed.size ? cache.discardClosed(projectKey, shortlist, closed) : shortlist;
+      this.confirmedResponsible.set(current, threads);
+      return { shortlist: current, threads };
+    }).finally(() => this.responsibleObservations.delete(shortlist));
+    this.responsibleObservations.set(shortlist, read);
+    return read;
+  }
 
   readonly plannerPresence = new PlannerPresence(
     portsContext(this, [

@@ -73,16 +73,27 @@ describe, is `unknown` and is never read as `gone`. `lastSeen` is the host's
 activity stamp for the thread, null when it could not be read. A registered
 thread on a host this process is not connected to is `unknown`.
 
-### 3. Project fallback
+### 3. Responsible threads
 
-`project.set-planner` marks a registered agent as the project's fallback
-planner — the thread `to: {project}` resolves to. It keeps working for existing
-callers: a thread that is not registered yet is registered under the default
-name `planner`, and a planner named before the registry existed gains that entry
-on the next startup reconciliation. Reassigning the planner moves the name to
-the new thread, so the name survives rotation and the old thread stays dead.
-Clearing the fallback leaves the thread registered. Any registered agent may be
-a task's planner; the submitting thread may be its own.
+Cross-project messages use a short-lived project shortlist from every active
+host. A candidate is live, works in a project checkout or worktree or has
+owned or dispatched project tasks, and is not a task-role thread. Nucleus ranks
+candidates by the most recent host activity or Nucleus call. A live
+`project.set-planner` registration ranks first as a compatibility hint; it
+still registers an unknown thread under a free default name and retains its
+participant-ticket rules. Clearing the hint leaves the named agent registered.
+
+Nucleus checks liveness before delivery. It clears the affected cache on delivery
+failure, host loss or a new dispatching thread. A closed observation discards
+the shortlist that contained it and prompts a fresh inventory on the next
+lookup. Verified survivors remain available to notice producers during that
+refresh. A thread or host that does not answer within its bound drops out of
+that pass. When no candidate
+is live, `ask` and `tell` record and return that the sender should handle the
+matter; planning questions do not start a decider. Operator-only matters go to
+the board. A task's own dispatching planner remains its first rung. `project.get`
+and the project settings view show the resolved thread, host, last interaction
+and cache age. Explicit named addressing remains independent of this resolver.
 
 ### 4. Addressing by name
 
@@ -104,4 +115,6 @@ rotates the name, keeps a cleared fallback registered, gives a taken default nam
 a free one, and returns the stored project. `test/registration.test.ts` covers
 the self handover, the board handover, unknown delivery and offline hosts.
 `test/planner-participant-tickets.test.ts` proves the ticket handover model the
-registry reuses. `test/settings-project-editor.test.ts` renders the board list.
+registry reuses. `test/settings-project-editor.test.ts` renders the board list. The resolver,
+cache and routing cases are in `test/responsible-thread-resolver.test.ts`,
+`test/responsible-thread-cache.test.ts` and `test/responsible-thread-routing.test.ts`.

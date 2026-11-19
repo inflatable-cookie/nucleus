@@ -22,6 +22,8 @@ export interface HostPorts {
   withHost<T>(hostId: string, fn: () => T): T;
   /** Registered and connected, read independent of the ambient host context. */
   online(hostId: string): boolean;
+  /** Hosts registered with the runtime; absent only for older synthetic ports. */
+  ids?(): readonly string[];
   inventoryMatches(hostId: string): boolean;
   originAvailable(hostId: string): boolean;
   /** Bounded wait for the plugin bridge after a roll; null refuses at once. */

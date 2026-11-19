@@ -243,6 +243,7 @@ export class Engine {
       "host",
       "store",
       "plannerTicketPending",
+      "resolution",
     ]),
   );
 
@@ -541,6 +542,7 @@ export class Engine {
           "recovery",
           "resumeAskQuestions",
           "resumeResponsibleAnsweredQuestions",
+          "refreshResponsibleThreads",
           "settleBudgetClock",
         ],
       ),
@@ -924,6 +926,7 @@ export class Engine {
     // The registry's answers, wired as one set (`core/host/host-ports.ts`): every
     // host question this root asks is answered here or nowhere, so no question
     // stays on the ambient default because its own assignment was forgotten.
+    this.store.responsibleRecipient = key => this.resolution.cachedResponsible(key);
     this.resolution.hostPorts = {
       taskAvailable: (task, run) =>
         this.taskHostAvailable(task) && (!run || run.hostId === task.hostId),
@@ -931,6 +934,7 @@ export class Engine {
       workerProviderUnavailable: (task) => this.workerProviderUnavailable(task),
       withHost: (id, fn) => this.withHost(id, fn),
       online: (id) => this.hostOnline(id),
+      ids: () => this.hostIds(),
       inventoryMatches: (id) => this.inventoryHostMatches(id),
       originAvailable: (id) => this.hostAvailable(id),
       // A host-dependent call arriving just after a roll waits out the runtime's
@@ -1076,6 +1080,8 @@ export class Engine {
           "extendCallbackReminder",
           "heavyRunAlive",
           "identifyOriginHost",
+          "plannerRungsFor",
+          "responsibleThreads",
           "withHost",
           "reconcileStalledTurnStop",
           "recovery",

@@ -1,3 +1,4 @@
+import { formatAgentId } from "../shared/agent-identity";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
@@ -67,6 +68,7 @@ async function fixture(origin = QUEUE_REPOSITORY_ORIGIN) {
   });
   let sends = 0;
   const adapter = {
+    hostId: "host",
     merged: async () => ({ merged: true, commit, head, base: "main" }),
     observe: async () => {
       sends++;
@@ -273,7 +275,7 @@ test("queue project lookup accepts the renamed repository origin", async () => {
   }
 });
 
-test("Queue's own project keyed like production (repo-<hash>, real origin) authorizes force, notice fallback and reparent", async () => {
+test("Queue's own project keyed like production (repo-<hash>, real origin) authorizes force and reparent while notices stay in the affected project", async () => {
   const f = await fixture();
   try {
     assert.equal(QUEUE_LIVE_KEY, "repo-997ec7dcf45ce2ed9ca3");
@@ -303,7 +305,13 @@ test("Queue's own project keyed like production (repo-<hash>, real origin) autho
       "handoff",
       commit,
     );
-    assert.equal(originRecipient(f.store, f.store.task(noticeTask.id)), "queue-planner");
+    assert.equal(originRecipient(f.store, f.store.task(noticeTask.id)), null);
+    f.engine.adapter.listLiveAgents = async () => [
+      { id: "checkout-thread", title: "Checkout", workspaceId: null, directory: "/repo" },
+      { id: "queue-planner", title: "Queue", workspaceId: null, directory: "/queue" },
+    ];
+    await f.engine.resolution.responsibleThread(f.store.projectByKey("app")!);
+    assert.equal(originRecipient(f.store, f.store.task(noticeTask.id)), formatAgentId("host", "checkout-thread"));
     await f.engine.reparent({
       toAgentId: "successor",
       caller: "queue-planner",

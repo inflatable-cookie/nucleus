@@ -2,6 +2,7 @@ export interface AgentObservation {
   id: string;
   workspaceId: string | null;
   status: string;
+  archived?: boolean;
   active: boolean;
   permissions: boolean;
   error: string;
@@ -53,6 +54,10 @@ export interface HostObservation {
       title: string;
       workspaceId: string | null;
       labels?: Record<string, string>;
+      /** Native working directory and repository root, when the host reports them. */
+      directory?: string | null;
+      repositoryRoot?: string | null;
+      updatedAt?: string | null;
     }>
   >;
   /** One newest page of the agent's timeline, or null when the read fails; a failed read is never evidence. */

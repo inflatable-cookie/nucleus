@@ -8,4 +8,4 @@ import type { Engine } from '../../engine';
  * replace the adapter).
  */
 export type WorkerReconcileContext = Pick<Engine, 'adapter' | 'admission' | 'compareSiblings' | 'hooks' | 'host' | 'idleGraceMs' | 'note' | 'onTaskHost' | 'stopped' | 'store' | 'updateAfterOperatorRemap'>
-  & { readonly resolution: Pick<Resolution, 'adoptReplacementPr' | 'attention' | 'extendCallbackReminder' | 'heavyRunAlive' | 'identifyOriginHost' | 'withHost' | 'reconcileStalledTurnStop' | 'recovery' | 'remindStoppedWorker' | 'resolveIncident' | 'responsiblePrReportRefused' | 'settleAutomaticReplayHold' | 'stalls' | 'suppressAutomaticRetry' | 'update' | 'waiting'> };
+  & { readonly resolution: Pick<Resolution, 'adoptReplacementPr' | 'attention' | 'extendCallbackReminder' | 'heavyRunAlive' | 'identifyOriginHost' | 'plannerRungsFor' | 'responsibleThreads' | 'withHost' | 'reconcileStalledTurnStop' | 'recovery' | 'remindStoppedWorker' | 'resolveIncident' | 'responsiblePrReportRefused' | 'settleAutomaticReplayHold' | 'stalls' | 'suppressAutomaticRetry' | 'update' | 'waiting'> };

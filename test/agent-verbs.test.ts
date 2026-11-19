@@ -61,6 +61,7 @@ async function verbFixture(options: { askWaitMs?: number } = {}) {
       model: author.model,
       updatedAt: "2026-11-11T10:00:00.000Z",
     }),
+    listLiveAgents: async () => archived.has('planner-1') ? [] : [{ id: 'planner-1', title: 'planner-1', workspaceId: null }],
     originAgent: async (id: string) => ({
       id,
       workspaceId: "ws",
@@ -850,7 +851,7 @@ test("MCP run: ask to the reviewer with no retained reviewer falls through to th
   }
 });
 
-test("MCP run: ask to a project by key is answered by that project's fallback planner", async () => {
+test("MCP run: ask to a project by key reaches its preferred live thread", async () => {
   const f = await verbFixture();
   try {
     const receipt = await f.ask({
@@ -858,18 +859,13 @@ test("MCP run: ask to a project by key is answered by that project's fallback pl
       to: { project: "app" },
     });
     assert.equal(receipt.json?.status, "answered");
-    assert.equal(receipt.json?.answeredBy, "planner planner-1");
+    assert.match(String(receipt.json?.answeredBy), /planner.*planner-1/);
     assert.deepEqual(
       f.asked.map((item) => item.planner),
       ["planner-1"],
       "the asking task's own ladder is not asked",
     );
-    assert.deepEqual(
-      f
-        .eventsOf(f.sender.id, "agent_ask_delegated")
-        .map((event) => event.detail.slice(event.detail.indexOf(": ") + 2)),
-      ["project planner planner-1; asked"],
-    );
+    assert.match(f.eventsOf(f.sender.id, "agent_ask_delegated")[0]!.detail, /project planner.*planner-1.*asked/);
   } finally {
     await f.close();
   }
@@ -930,7 +926,7 @@ test("MCP run: ask to another task's planner routes to that task's own ladder", 
   }
 });
 
-test("an ask whose project fallback is archived moves on: no archived thread is asked and the skip is recorded", async () => {
+test("an ask with no live responsible thread leaves the sender to handle it", async () => {
   const f = await verbFixture({ askWaitMs: 1_500 });
   try {
     f.archived.add("planner-1");
@@ -941,7 +937,7 @@ test("an ask whose project fallback is archived moves on: no archived thread is 
     assert.equal(
       receipt.json?.status,
       "pending",
-      "with no live rung and no decider the ask waits on the board",
+      "with no live rung the sender handles the matter",
     );
     assert.equal(
       f.asked.some((item) => item.planner === "planner-1"),
@@ -949,7 +945,7 @@ test("an ask whose project fallback is archived moves on: no archived thread is 
       "an archived planner is never sent to",
     );
     assert.equal(
-      f.eventsOf(f.sender.id, "agent_ask_delegation_skipped").length,
+      f.eventsOf(f.sender.id, "agent_ask_self_handle").length,
       1,
     );
   } finally {
@@ -1067,42 +1063,18 @@ test("MCP run: tell to planner reaches the task's live planner over the host cha
   }
 });
 
-test("a tell to a project with no live planner waits in its inbox, is never sent to an archived thread, and reaches the next live planner", async () => {
+test("a tell with no live responsible thread is recorded for the sender to handle", async () => {
   const f = await verbFixture();
   try {
     f.archived.add("origin");
     f.archived.add("planner-1");
-    const receipt = await f.tell({
-      to: { project: "app" },
-      text: "Need a ruling on the cache key.",
-    });
-    assert.equal(receipt.json?.status, "queued");
-    assert.match(String(receipt.json?.detail), /inbox/);
+    const receipt = await f.tell({ to: { project: "app" }, text: "Need a ruling on the cache key." });
+    assert.equal(receipt.json?.status, "expired");
+    assert.match(String(receipt.json?.detail), /no live responsible thread for app; handle it yourself/i);
     await f.engine.resolution.deliverQueuedMessages();
-    assert.equal(
-      f.notified.length,
-      0,
-      "the sweep does not revive an archived planner",
-    );
-    const queued = f.store
-      .queuedMessages()
-      .filter((record) => record.toProjectKey === "app");
-    assert.equal(queued.length, 1, "the message waits in the project inbox");
-    f.archived.delete("planner-1");
-    await f.engine.resolution.deliverQueuedMessages();
-    assert.deepEqual(
-      f.notified.map((item) => item.agentId),
-      ["planner-1"],
-      "the next live planner receives it",
-    );
-    assert.equal(
-      f.store.queuedMessages().filter((record) => record.toProjectKey === "app")
-        .length,
-      0,
-    );
-  } finally {
-    await f.close();
-  }
+    assert.equal(f.notified.length, 0);
+    assert.equal(f.store.queuedMessages().filter(record => record.toProjectKey === "app").length, 0);
+  } finally { await f.close(); }
 });
 
 test("tell to a named project agent that is archived is refused with its state and never queued", async () => {

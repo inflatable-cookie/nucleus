@@ -105,6 +105,7 @@ export type SweepContext = Pick<
     | "recovery"
     | "resumeAskQuestions"
     | "resumeResponsibleAnsweredQuestions"
+    | "refreshResponsibleThreads"
     | "settleBudgetClock"
   >;
 };
@@ -379,13 +380,13 @@ export class Sweep {
       let covered = false;
       // The hourly and daily store chores and the periodic owner/lane passes
       // keep their own cadence; the sweep runs one maintenance pass.
-      await this.maintenance.run();
       // Audit A6: one bounded labelled inventory answers every identity this
       // pass observes, and retired workers are re-read on their own slow cadence.
       // A list that cannot be walked to its end answers nothing, so every
       // identity falls back to the narrow read and no inactivity is inferred.
       let inventory: ReadonlyMap<string, AgentObservation> | null = null;
       const finishedCatchUp = new Map<string, Task>();
+      const unavailableHosts = new Set<string>();
       const allTasks = this.engine.store.tasks();
       const hosts = new Set([
         ...this.engine.hostIds(),
@@ -410,11 +411,13 @@ export class Sweep {
           // Keep this host's tasks on the existing outage wait for this pass, and
           // continue the fleet sweep without turning the host loss into engineError.
           recordHostFailure(this.engine.adapter, host, error);
+          unavailableHosts.add(host);
           continue;
         }
         // Nothing is read from a host that is away: the wait itself is the stop.
         if (!passed) {
           recordHostFailure(this.engine.adapter, host, undefined);
+          unavailableHosts.add(host);
           continue;
         }
         // Spec 066 R1/R6 (C2): the pass's reading of one host, shared with that
@@ -423,6 +426,7 @@ export class Sweep {
         // the reading is the failure, not the claim. So this host's tasks keep their
         // host-scoped wait for the pass, and no other host's visit sees it.
         if (!passed.transportAnswered) {
+          unavailableHosts.add(host);
           recordHostFailure(
             this.engine.adapter,
             host,
@@ -445,6 +449,10 @@ export class Sweep {
         for (const [id, task] of passed.finishedCatchUp)
           finishedCatchUp.set(id, task);
       }
+      // A failed host already spent its per-pass observation budget; do not
+      // query it again while refreshing project notice recipients.
+      await this.engine.resolution.refreshResponsibleThreads(this.engine.store.projects(), unavailableHosts);
+      await this.maintenance.run();
       this.engine.clearRetiredInvalidations();
       // Engine restart scans incomplete dispositions before normal task
       // resolution. The fence persists across restarts; retry reconciles the

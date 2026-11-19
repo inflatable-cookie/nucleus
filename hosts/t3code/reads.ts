@@ -696,12 +696,16 @@ export class T3Reads {
     };
   }
   async listLiveAgents() {
-    return (await this.inventory()).threads
+    const { threads, projects } = await this.inventory();
+    return threads
       .filter((t) => !t.archivedAt && !t.deletedAt)
       .map((t) => ({
         id: t.id,
         title: t.title,
         workspaceId: this.workspaceFor(t),
+        directory: t.worktreePath ?? projects.find(p => p.id === t.projectId)?.workspaceRoot ?? null,
+        repositoryRoot: projects.find(p => p.id === t.projectId)?.workspaceRoot ?? null,
+        updatedAt: t.updatedAt,
         labels: agentRecord(this.core.state.read(), t.id)?.labels ?? {},
       }));
   }

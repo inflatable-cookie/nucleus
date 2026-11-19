@@ -61,6 +61,11 @@ export type ProjectSettingsRepository = z.infer<
   typeof projectSettingsRepositorySchema
 >;
 
+export const responsibleThreadViewSchema = z.object({
+  thread: z.object({ agentId: z.string(), hostId: z.string(), lastInteraction: z.string().nullable() }).strict().nullable(),
+  cacheAgeMs: z.number().nonnegative(),
+}).strict();
+
 export const projectSettingsRowSchema = z
   .object({
     project: projectSchema,
@@ -71,6 +76,7 @@ export const projectSettingsRowSchema = z
         override: z.number().int().min(0).max(64).nullable(),
       })
       .strict(),
+    responsibleThread: responsibleThreadViewSchema.optional(),
     plannerLive: z.boolean().nullable(),
     /** Whether the project's planner thread holds its participant identity ticket yet. */
     plannerTicket: z.enum(["pending", "issued"]).nullable(),

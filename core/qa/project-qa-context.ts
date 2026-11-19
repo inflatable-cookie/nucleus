@@ -63,4 +63,5 @@ export interface ProjectQaOptions {
   /** Detached supervisor entry override; tests and fixtures only. */
   supervisorEntry?: string;
   notify?: (agentId: string, messageId: string, text: string) => Promise<void>;
+  responsibleThread?: (project: import("../../shared/contracts").Project) => Promise<string | null>;
 }

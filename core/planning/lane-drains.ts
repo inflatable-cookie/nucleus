@@ -57,9 +57,9 @@ export class LaneDrainPass {
     const projectKey = this.store.projectKeyResolver(registered);
     const byProject = new Map(registered.map(project => [project.key, project]));
     const all = registered.filter(project => project.visibility === "active");
-    // Spec 042, re-derived for the planner (Spec 058 cutover 5): a project with no planner and no
-    // live owner record is silent, and an owner id not yet resolved from its seed prefix is not routable.
-    const projects = all.filter(projectOwnerRoutable);
+    const recipients = new Map(all.map(project => [project.key, this.store.projectPlannerRecipient(project)]));
+    // A live responsible thread can receive prompts for a saved plan without a registration.
+    const projects = all.filter(project => recipients.get(project.key) || projectOwnerRoutable(project));
     if (!all.length) return;
     this.store.transaction(() => {
       const tasks = this.store.uiTasks();
@@ -128,7 +128,7 @@ export class LaneDrainPass {
             key: view.key, title: view.title, aim: view.aim, drain: view.drain, status: view.status, lastActivityAt: view.lastActivityAt ?? view.updatedAt, keptAt: view.keep?.at ?? null,
             liveTasks: Object.values(view.liveByPhase).reduce((sum, count) => sum + count, 0),
             openLeads: leads.filter(lead => lead.lanes.includes(entry.lane)).length,
-            plan: { project: project.key, projectName: project.name, owner: this.store.projectPlannerRecipient(project) ?? "", doneWhen: entry.doneWhen ?? "" },
+            plan: { project: project.key, projectName: project.name, owner: recipients.get(project.key) ?? "", doneWhen: entry.doneWhen ?? "" },
             outcomes: view.recentOutcomes.map(outcome => ({ title: outcome.title, outcome: outcome.outcome, prNumber: outcome.prNumber, finishedAt: outcome.finishedAt })),
           });
         }
@@ -147,7 +147,7 @@ export class LaneDrainPass {
           } : null,
           firstNext: firstNext && firstNextEntry ? { lane: firstNextEntry.lane, title: firstNext.title, aim: firstNext.aim } : null,
           openLeads: topNowEntry ? leads.filter(lead => lead.lanes.includes(topNowEntry.lane)).map(lead => ({ id: lead.id, title: lead.title })) : [],
-          owner: this.store.projectPlannerRecipient(project) ?? "",
+          owner: recipients.get(project.key) ?? "",
         });
       }
       // A lane no active project's saved plan names any more ends any open episode.

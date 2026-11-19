@@ -113,8 +113,8 @@ export function askLifecycles(events: ReadonlyArray<{ kind: string; detail: stri
         ask.decisionId = /decision ([^;\s]+)/.exec(fact.body)?.[1] ?? ask.decisionId;
         break;
       case "agent_ask_delegated": {
-        const reviewer = /reviewer (\S+);/.exec(fact.body)?.[1];
-        const planner = /planner (\S+);/.exec(fact.body)?.[1];
+        const reviewer = /reviewer (.+?);/.exec(fact.body)?.[1];
+        const planner = /planner (.+?);/.exec(fact.body)?.[1];
         if (reviewer) ask.reviewer = reviewer;
         else if (planner) ask.planner = { agentId: planner,
           rung: fact.body.startsWith(" task planner ") ? "task" : fact.body.startsWith(" project planner ") ? "project" : "planner" };

@@ -350,12 +350,11 @@ export async function startCallbacks(
   const routes: Record<string, CallbackRoute> = {
     "/caller": {
       bodyBytes: SMALL_CALLBACK_BODY_BYTES,
-      handle: (input, token) =>
-        resolveTicketCaller(
-          engine.store,
-          callerTicketSchema.parse(input),
-          token,
-        ),
+      handle: (input, token) => {
+        const caller = resolveTicketCaller(engine.store, callerTicketSchema.parse(input), token);
+        engine.resolution.responsibleThreads.recordActivity(caller.caller);
+        return caller;
+      },
     },
     "/report": {
       bodyBytes: LARGE_CALLBACK_BODY_BYTES,

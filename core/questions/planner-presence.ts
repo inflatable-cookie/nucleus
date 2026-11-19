@@ -85,7 +85,7 @@ export class PlannerPresence {
           return unroutable("the host returned a different thread");
         return {
           kind:
-            observed.archived || observed.status === "gone"
+            observed.archived || observed.status === "gone" || observed.status === "closed"
               ? "gone"
               : "routable",
         };
