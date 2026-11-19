@@ -1,10 +1,17 @@
 import type { Task } from "../../../shared/contracts";
 import type { Engine } from "../../engine";
 import type { VerifiedEnclosingOperation } from "../../planning/enclosing-operation";
-import { closeoutMoveStateRefusal, moveStateRefusal, recordedCloseoutRefusal, REMOVED_TASK_REFUSAL } from "../control-refusals";
+import {
+  closeoutEffectRefusal,
+  closeoutMoveStateRefusal,
+  moveStateRefusal,
+  recordedCloseoutRefusal,
+  REMOVED_TASK_REFUSAL,
+} from "../control-refusals";
 import { settleSupersededFencesInTx } from "../../recovery/fence-settlement";
 import { prIdentity } from "../owner-facts";
 import { now } from "../../store/store";
+import { DurableFenceRefusal } from "../../intake/run-settlement";
 
 /** The owner `move to=closeout` request, after the verb has parsed it. */
 export type CloseoutMoveInput = {
@@ -56,8 +63,17 @@ export async function moveToCloseout(engine: Engine, input: CloseoutMoveInput): 
     head: input.head, relayed: input.relayed, relayNote: input.relayNote, enclosing: input.enclosing ?? (() => undefined),
   };
   if (boundary) return engine.reconcileReviewEntryExternalMerge(merge);
-  if (input.qualification) return engine.reconcileRetainedExternalMerge({ ...merge, qualification: input.qualification });
-  if (input.head) throw Error('A head is only named by a move to merge with an owner acceptance; closeout proves the PR merged at the forge');
+  if (input.qualification)
+    return engine.reconcileRetainedExternalMerge({
+      ...merge,
+      qualification: input.qualification,
+    });
+  if (input.head)
+    throw Error(
+      "A head is only named by a move to merge with an owner acceptance; closeout proves the PR merged at the forge",
+    );
+  const effects = closeoutEffectRefusal(store, task, enclosing);
+  if (effects) throw new DurableFenceRefusal(effects);
   // Round 4: a move applies while paused; only dispatch waits for unpause.
   // Spec 050 atomic verbs: nothing settles before the merge is proven —
   // acceptExternalMerge refuses an unmerged PR or an active thread before it

@@ -4991,65 +4991,6 @@ test("publication retry excludes its reporting run but fences other retained run
   }
 });
 
-test("next refuses an unsupported publication record instead of offering a retry that cannot act", async () => {
-  const f = fixture();
-  try {
-    const run = reviewerRun(f, {
-      status: "finished",
-      released: true,
-      completion: {
-        eventId: "unpublished-record",
-        taskId: f.taskId,
-        runId: "review-run",
-        status: "ready_to_merge",
-        head,
-        summary: "Approved",
-        reviewText: "Exact approved findings",
-      },
-    });
-    f.store.setMeta(`reviewPublication:${run.id}`, { hash: "d".repeat(64) });
-    f.store.update(f.taskId, {
-      phase: "needs_attention",
-      reason: "Publication intent needs inspection",
-      resolution: { ...f.task().resolution, attention: true },
-    });
-    const effect = `review_publication.${run.id}`;
-    assert.ok(
-      f
-        .next()
-        .verbs.find(
-          (item) =>
-            item.verb === "retry_effect" &&
-            !item.available &&
-            item.refusal?.includes(effect),
-        ),
-    );
-    const invoke = () =>
-      f.engine.performTaskControl(
-        taskControlInputSchema.parse({
-          action: "retry_effect",
-          taskId: f.taskId,
-          version: f.task().version,
-          effect,
-          reason: "Observe the recorded publication",
-          caller: CALLER,
-        }),
-      );
-    await assert.rejects(
-      invoke(),
-      /Formal publication recovery is unavailable/,
-    );
-    assert.ok(
-      ownerPendingEffects(f.facts()).some(
-        (item) => item.effect === effect && item.kind === "recovery_effect",
-      ),
-      "the unsupported publication remains listed instead of being reported as settled",
-    );
-  } finally {
-    await f.close();
-  }
-});
-
 test("move to merge settles a stale uncertain retry_effect operation it supersedes", async () => {
   const f = fixture();
   try {

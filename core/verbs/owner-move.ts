@@ -7,7 +7,12 @@ import {
 } from "./control-refusals";
 import { RETAINED_PREREQUISITE_REFUSAL } from "./verb-refusal-text";
 import { readyReviewAtHead } from "../recovery/task-reasons";
-import { closeoutMoveStateRefusal, moveStateRefusal, recordedCloseoutRefusal } from "./control-refusals";
+import {
+  closeoutEffectRefusal,
+  closeoutMoveStateRefusal,
+  moveStateRefusal,
+  recordedCloseoutRefusal,
+} from "./control-refusals";
 import {
   DISPOSITION_CONTROL_REFUSAL,
   REMOVED_TASK_REFUSAL,
@@ -466,17 +471,7 @@ function moveViews(facts: OwnerVerbFacts): TaskNextVerb[] {
       const evidence = recordedCloseoutRefusal(task, reviewRequiredForTask(facts.store, task));
       if (evidence) return { available: false, refusal: evidence };
       const refusal =
-        durableRunFence(facts) ??
-        blockingRecoveryEffectsRefusal(facts.store, task, {
-          kinds: [
-            "operation",
-            "hook",
-            "run-delivery",
-            "review-delivery",
-            "publication",
-            "attention-notice",
-          ],
-        });
+        durableRunFence(facts) ?? closeoutEffectRefusal(facts.store, task);
       return refusal
         ? { available: false, refusal }
         : {
@@ -490,6 +485,10 @@ function moveViews(facts: OwnerVerbFacts): TaskNextVerb[] {
         available: false,
         refusal: `Run ${live.id} delivery is unknown; reconcile it before accepting the external merge`,
       };
+    if (!neverDispatchedReviewEntry) {
+      const refusal = closeoutEffectRefusal(facts.store, task);
+      if (refusal) return { available: false, refusal };
+    }
     const fence = durableRunFence(facts);
     const effects = blockingRecoveryEffectsRefusal(facts.store, task, {
       noticeKinds: "all",

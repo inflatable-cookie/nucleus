@@ -35,18 +35,35 @@ test('a task binding changed during the forge read is refused', {timeout:90000},
   }finally{await f.close();}
 });
 
-test('an unresolved hook effect refuses before the forge read', {timeout:90000}, async()=>{
-  const f=await fixture();try{
-    const store=f.runtime.store, task=store.task(f.taskId);
-    store.putHookEvent(ownerEffectHook(task,'uncertain'));
-    const before=store.task(task.id), reads=f.counts().sourceReads;
-    const view=ownerTaskNext(collectOwnerVerbFacts(store,before)).verbs.find(v=>v.verb==='move' && v.refusal?.startsWith('move closeout:'));
-    assert.equal(view?.available,false);
-    assert.match(view?.refusal??'',/hook.*uncertain/i);
-    await assert.rejects(f.runtime.taskControl(f.control()),/hook.*uncertain/i);
-    assert.equal(f.counts().sourceReads,reads);assert.deepEqual(store.task(task.id),before);
-  }finally{await f.close();}
-});
+test(
+  "an unresolved hook effect refuses before the forge read",
+  { timeout: 90000 },
+  async () => {
+    const f = await fixture();
+    try {
+      const store = f.runtime.store,
+        task = store.task(f.taskId);
+      store.putHookEvent(ownerEffectHook(task, "uncertain"));
+      const before = store.task(task.id),
+        reads = f.counts().sourceReads;
+      const view = ownerTaskNext(
+        collectOwnerVerbFacts(store, before),
+      ).verbs.find(
+        (v) => v.verb === "move" && v.refusal?.startsWith("move closeout:"),
+      );
+      assert.equal(view?.available, false);
+      assert.match(view?.refusal ?? "", /hook.*uncertain/i);
+      const refusal = view!.refusal!.replace("move closeout: ", "");
+      for (const input of [f.control(), f.control({ qualification: undefined, head: undefined })])
+        await assert.rejects(f.runtime.taskControl(input), (error) =>
+          error instanceof Error && error.message === refusal);
+      assert.equal(f.counts().sourceReads, reads);
+      assert.deepEqual(store.task(task.id), before);
+    } finally {
+      await f.close();
+    }
+  },
+);
 
 test('a participant that cannot be observed refuses the source acceptance with the host error', {timeout:90000}, async()=>{
   const f=await fixture();try{

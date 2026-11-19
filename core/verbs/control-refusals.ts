@@ -1,5 +1,13 @@
-import { mergeReviewEvidenceAt, isDispositionActive, type Task, type Run } from '../../shared/contracts';
-import { taskNeverDispatched } from '../task-decision-rules';
+import {
+  mergeReviewEvidenceAt,
+  isDispositionActive,
+  type Task,
+  type Run,
+} from "../../shared/contracts";
+import { taskNeverDispatched } from "../task-decision-rules";
+import type { Store } from "../store/store";
+import type { VerifiedEnclosingOperation } from "../planning/enclosing-operation";
+import { blockingRecoveryEffectsRefusal } from "../recovery/recovery-effects";
 
 export const REMOVED_TASK_REFUSAL = 'Task was removed from the queue';
 export const DISPOSITION_CONTROL_REFUSAL = 'A cancel or supersede disposition owns this task';
@@ -52,6 +60,25 @@ export const EXTERNAL_MERGE_STATE_REFUSAL = 'Only an unmerged dispatched task ca
 export function externalMergeStateRefusal(task: Task, reviewEntryBoundary: boolean): string | null {
   return (!reviewEntryBoundary && ['done', 'cancelled', 'queued'].includes(task.phase))
     || task.resolution.mergeIntent || task.resolution.mergedCommit ? EXTERNAL_MERGE_STATE_REFUSAL : null;
+}
+
+/** Durable execution effects that fence both dispatched closeout routes. */
+export function closeoutEffectRefusal(
+  store: Store,
+  task: Task,
+  enclosing?: VerifiedEnclosingOperation,
+): string | null {
+  return blockingRecoveryEffectsRefusal(store, task, {
+    enclosing,
+    kinds: [
+      "operation",
+      "hook",
+      "run-delivery",
+      "review-delivery",
+      "publication",
+      "attention-notice",
+    ],
+  });
 }
 
 /** Recorded merges use synchronization. A still-pending merge owns its own outcome. */
