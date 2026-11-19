@@ -8,7 +8,6 @@ import {
 } from "../../shared/contracts";
 import { occupiesSlot } from "../dispatch/capacity";
 import {
-  CLOSEOUT_BASE_REFRESH_REASON,
   RetainedRunRefusal,
   ACCEPTED_PR_RECONCILIATION_REASON,
   NO_RESOLUTION_ACTION,
@@ -41,6 +40,7 @@ import {
 export type RetryRoutesContext = Pick<
   Resolution,
   | "adapter"
+  | "closeout"
   | "operatorReturn"
   | "retainedWorkerProfileIssue"
   | "retry"
@@ -211,6 +211,12 @@ export class RetryRoutes {
           scopedInstruction,
           reviewerInstruction,
         );
+    }
+    if (t.resolution.mergedCommit) {
+      if (revise || instruction !== undefined || reviewerInstruction !== undefined)
+        throw new Error('The task PR has merged; there is no worker or reviewer instruction to deliver');
+      const refresh = retryRoute(t, runs, false) === 'closeout';
+      return () => this.resolution.closeout.continueRecordedMerge(this.store.task(t.id), { kind: 'retry', refresh });
     }
     if (reviewerInstruction !== undefined) {
       const refusal = retryAdmission(t, {
@@ -535,14 +541,6 @@ export class RetryRoutes {
       };
     }
     if (route === "no-action") throw new Error(NO_RESOLUTION_ACTION);
-    if (route === "closeout")
-      return () =>
-        this.resolution.update(
-          t,
-          { currentRunId: null, attention: false },
-          { phase: "syncing", reason: CLOSEOUT_BASE_REFRESH_REASON },
-          "resolution_retry",
-        );
     // A held project validation is a failure to run, not a verdict. The gate reuses a settled
     // result for the same candidate so automatic passes never loop; an operator retry clears a
     // hold so the validation actually runs again.
@@ -562,7 +560,7 @@ export class RetryRoutes {
         {
           attention: false,
           ...(rerunHeldValidation ? { projectValidation: null } : {}),
-          ...(t.resolution.mergeIntent && !t.resolution.mergedCommit
+          ...(t.resolution.mergeIntent
             ? {}
             : { integrationTurn: null }),
         },

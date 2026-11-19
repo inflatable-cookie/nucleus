@@ -793,27 +793,15 @@ export class MergeGates {
   async advanceMerging(t: Task): Promise<void> {
     if (!this.resolution.claimIntegrationTurn(t)) return;
     t = this.store.task(t.id);
+    // The recorded-merge reconciliation owns the handoff to synchronization.
+    if (t.resolution.mergedCommit) return;
     if (
-      ((t.resolution.mergedCommit || t.resolution.mergeIntent) &&
+      (t.resolution.mergeIntent &&
         !(await this.resolution.executionLease(t))) ||
       this.resolution.paused()
     )
       return;
     admitPhaseFacts(this.store, t.id);
-    if (t.resolution.mergedCommit && !t.resolution.syncedCommit) {
-      this.resolution.update(
-        t,
-        { currentRunId: null, attention: false },
-        {
-          phase: "syncing",
-          coordinatorGeneration: t.coordinatorGeneration + 1,
-          reason:
-            "External merge verified; synchronizing main before coordinator closeout",
-        },
-        "external_merge_observed",
-      );
-      return;
-    }
     if (t.resolution.mergeIntent) {
       const mergeCheckStarted = Date.now();
       await this.resolution.reconcileMergeIntent(t);
