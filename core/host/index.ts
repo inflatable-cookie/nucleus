@@ -5,6 +5,7 @@ export type { HostPolicyPort, HostPolicyConstructor } from "./policy";
 export {
   ArchiveNotDeliveredError,
   ProvenPreSendRefusalError,
+  HostSnapshotPendingError,
   HostUnknownDeliveryError,
   HostCallAbandonedError,
   SAFE_REMOTE_TAGS,

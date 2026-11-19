@@ -14,7 +14,7 @@ import { isPromptTooLargeError, redactDiagnostic } from '../../recovery/provider
 import { BlockingRecoveryEffectsError, blockingRecoveryEffects, blockingRecoveryEffectsRefusal, recoveryEffectsRefusal } from '../../recovery/recovery-effects';
 import { settleObservedHostEffectOperations } from '../../recovery/effect-gates';
 import { assertReviewEntryWriterYielded, reviewEntryInputForTask, type ReviewEntryAdapter } from '../../review/review-entry';
-import { ABSENT_RESOLUTION_REASON, ProvenPreSendRefusalError, coordinative, message, proofExecutor } from '../../recovery/task-reasons';
+import { ABSENT_RESOLUTION_REASON, HostSnapshotPendingError, ProvenPreSendRefusalError, coordinative, message, proofExecutor } from '../../recovery/task-reasons';
 import { isDispositionActive, type Profile, type Run, type Task } from '../../../shared/contracts';
 import { threadRunningReason } from '../../intake/thread-waits';
 import { declaredLaneDocumentKeys } from '../../planning/brief-lane-documents';
@@ -222,6 +222,23 @@ export class RunLaunchDeliver {
             {phase:role==='reviewer'?'reviewing':latest.phase},'review_waiting_on_effects',recoveryEffectsRefusal(error.effects)??'');
         });
         this.resolution.waiting(this.store.task(t.id),waitReason,'lifecycle');
+        return;
+      }
+      // A host that has not settled its model options has not refused this run:
+      // nothing crossed the send boundary, so the run is released and the task
+      // waits for the next pass to read a settled snapshot (nucleus#1375).
+      if (error instanceof HostSnapshotPendingError) {
+        this.store.transaction(() => {
+          const latestRun = this.store.run(run.id);
+          if (latestRun && !latestRun.released)
+            this.store.putRun({ ...latestRun, status: 'superseded', released: true, active: false });
+          if (!agentId) this.store.deleteCredential(run.id);
+          const latest = this.store.task(t.id);
+          if (latest.resolution.currentRunId === run.id)
+            this.resolution.update(latest, { currentRunId: null, attention: false },
+              { phase: role === 'reviewer' ? 'reviewing' : latest.phase }, 'review_waiting_on_host_snapshot', error.detail);
+        });
+        this.resolution.waiting(this.store.task(t.id), `Waiting for T3Code to settle the host catalogue: ${error.detail}`, 'lifecycle');
         return;
       }
       // A provider size rejection proves the prompt was refused before send:

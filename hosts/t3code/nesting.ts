@@ -123,6 +123,7 @@ export interface T3NestingContext {
   /** The profile's model options, from the launch's own config read (the host's fence). */
   modelSelectionOptions(
     profile: Profile,
+    provider: ConfigProvider | undefined,
     model: ConfigModel | undefined,
   ): Array<{ id: string; value: string | boolean }>;
   /** The profile's runtime mode as one provider offers it (the host's fence). */
@@ -232,6 +233,27 @@ export class T3Nesting {
       );
     const provider = this.parentProvider(input.observed);
     if (!provider.ok) return this.degrade(taskId, provider.reason);
+    // The child carries the role profile's provider and model, so its options are
+    // resolved against that provider's model entry — never the parent provider's.
+    // Judging a codex profile by the Nucleus ACP parent model (which reports no
+    // options at all) refused every nested role launch (nucleus#1375). The fence
+    // runs before anything is sent, so a pending or refused carrier leaves no
+    // parent thread holding a turn.
+    const roleProvider = input.observed.providers.find(
+      (candidate) => candidate.instanceId === input.profile.provider,
+    );
+    const roleModel = roleProvider?.models.find(
+      (candidate) => candidate.slug === input.profile.model,
+    );
+    const options = this.core.modelSelectionOptions(
+      input.profile,
+      roleProvider,
+      roleModel,
+    );
+    const runtimeMode = this.core.runtimeMode(
+      input.profile,
+      roleProvider?.supportedRuntimeModes,
+    );
     const existing = this.parentOf(taskId);
     if (existing) {
       // A role whose run needs another checkout cannot be a child: a child with no
@@ -270,14 +292,6 @@ export class T3Nesting {
     );
     if (!live)
       return this.park(taskId, "the parent thread did not reach a live run");
-    const options = this.core.modelSelectionOptions(
-      input.profile,
-      provider.model,
-    );
-    const runtimeMode = this.core.runtimeMode(
-      input.profile,
-      provider.supportedRuntimeModes,
-    );
     const payload = {
       type: "delegated_task.request",
       createdBy: "user",

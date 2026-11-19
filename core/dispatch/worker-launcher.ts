@@ -16,6 +16,7 @@ import { workerPrompt } from "./prompts";
 import { runTicketPath } from "./agent-creation";
 import {
   ABSENT_WORKER_REASON,
+  HostSnapshotPendingError,
   PRE_AGENT_LAUNCH_FAILURE_REASON,
   PROFILE_CATALOG_PENDING_REASON,
   ProvenPreSendRefusalError,
@@ -321,6 +322,44 @@ export class WorkerLauncher {
             );
           });
         throw error;
+      }
+      // A host whose catalogue has not settled this model's options has not
+      // refused the profile: nothing was sent, so the creation is released and the
+      // next pass reads a settled snapshot and retries (nucleus#1375). This is the
+      // host wait, not the pre-send refusal below.
+      if (error instanceof HostSnapshotPendingError) {
+        const current = this.store.task(task.id);
+        if (
+          current.agentIntent &&
+          !current.agentId &&
+          current.runId === runId
+        ) {
+          this.store.transaction(() => {
+            this.store.deleteCredential(runId);
+            this.store.update(
+              task.id,
+              {
+                agentIntent: false,
+                restartRunId: runId,
+                runId: null,
+                briefRuns: current.briefRuns.filter(
+                  (item) => item.runId !== runId,
+                ),
+                laneDocumentRuns: (current.laneDocumentRuns ?? []).filter(
+                  (item) => item.runId !== runId,
+                ),
+              },
+              "agent_create_snapshot_pending",
+              error.detail,
+            );
+          });
+          this.resolution.waiting(
+            this.store.task(task.id),
+            `Waiting for T3Code to settle the host catalogue: ${error.detail}`,
+            "lifecycle",
+          );
+          return;
+        }
       }
       // A proven pre-send refusal is not an absent creation: nothing was sent,
       // so there is nothing for exact-lookup reconciliation to find and a

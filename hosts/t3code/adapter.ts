@@ -1,4 +1,4 @@
-import { realpath } from "node:fs/promises";
+import { realpath, writeFile } from "node:fs/promises";
 import { basename } from "node:path";
 import { z } from "zod";
 import type {
@@ -19,6 +19,7 @@ import type { Task, Profile } from "../../shared/contracts";
 import { WIRE_LABEL_KEYS } from "../../shared/wire-labels";
 import {
   ArchiveNotDeliveredError,
+  HostSnapshotPendingError,
   ProvenPreSendRefusalError,
 } from "../../core/host";
 import { isHostOperationTimeout } from "../../core/host";
@@ -31,6 +32,18 @@ import {
   type ThinkingLevel,
 } from "../../shared/profile-vocabulary";
 import { t3codeTranslation, t3codeVocabulary } from "./vocabulary";
+import {
+  descriptorSummary,
+  modelDescriptors,
+  providerModelShapes,
+  providerReportsOptions,
+  tableThinkingOptions,
+  t3ModelThinking,
+  type ConfigModel,
+  type ConfigProvider,
+  type Descriptor,
+  type ModelThinking,
+} from "./thinking";
 import { T3StateFile, canonical, retiredRecord, restoredRecord } from "./state";
 import {
   decode,
@@ -72,27 +85,12 @@ export interface T3CodeConfig extends T3ConnectionConfig {
    * the product bound; a test drives a short one (nucleus#1305).
    */
   reentryTimeoutMs?: number;
+  /** Opt-in path for a bounded capture of the existing config read. */
+  modelCapturePath?: string;
 }
 const unsupported = (capability: string): never => {
   throw new ProvenPreSendRefusalError(`T3Code does not support ${capability}`);
 };
-/**
- * The option descriptor a model's thinking level rides: the nightly marks a
- * provider's own thought-level control `role: "reasoning"`, and every stock
- * driver (Codex, Grok, Muse, Kiro) names its reasoning select `reasoningEffort`.
- * The same id is what the nightly reads back out of `modelSelection.options`.
- * The ids come from this host's table (`thinkingSelects`), so the catalog and
- * the profile editor agree on which option carries the level.
- */
-const isReasoningDescriptor = (
-  descriptor: z.infer<typeof optionDescriptor>,
-): descriptor is Extract<
-  z.infer<typeof optionDescriptor>,
-  { type: "select" }
-> =>
-  descriptor.type === "select" &&
-  (descriptor.role === "reasoning" ||
-    (t3codeVocabulary.thinkingSelects ?? []).includes(descriptor.id));
 /**
  * The nightly's own wording for the four runtime modes (installed bundle, client
  * `runtimeModes` table): `Supervised`, `Auto-accept edits`, `Auto`, `Full access`.
@@ -132,10 +130,7 @@ const providerRuntimeModes = (
 ): readonly RuntimeMode[] =>
   supported && supported.length ? supported : runtimeModes;
 type OptionSelection = { id: string; value: string | boolean };
-/** One model of `server.getConfig`'s provider snapshot. */
-type ConfigModel = z.infer<
-  typeof config
->["providers"][number]["models"][number];
+/** One model of `server.getConfig`'s provider snapshot (the shared thinking decision's own types). */
 /**
  * The model's real option descriptors from `server.getConfig`, read at launch:
  * a value T3 does not report for that model is refused before send, never
@@ -165,18 +160,24 @@ const thinkingLevelFor = (
     : null;
 };
 /**
- * The model's real option descriptors from `server.getConfig`, read at launch:
- * an option T3 does not report for that model is refused before send, never
- * dropped silently and never invented.
+ * The refusal for a profile option the model does not report. A model whose
+ * options are all missing (`descriptors` given) names what it really reports, so
+ * the operator sees the real shape instead of the placeholder "reasoning option"
+ * (nucleus#1375).
  */
 const optionRefusal = (
   model: string,
   option: string,
   value?: string,
-): string =>
-  value === undefined
-    ? `T3Code model ${model} has no "${option}" option`
-    : `T3Code model ${model} has no ${option} "${value}"`;
+  descriptors?: readonly Descriptor[],
+): string => {
+  const reported = descriptors
+    ? `; its option descriptors are ${descriptorSummary(descriptors)}`
+    : "";
+  return value === undefined
+    ? `T3Code model ${model} has no "${option}" option${reported}`
+    : `T3Code model ${model} has no ${option} "${value}"${reported}`;
+};
 /**
  * The manual fix names the repository path in full. The path comes from
  * Nucleus's own record, not from T3, so it is not secret and is never
@@ -207,8 +208,10 @@ export class T3CodeHost implements Host {
   version = "";
   private ready = false;
   private readonly probeThreadId?: string;
+  private readonly modelCapturePath?: string;
   constructor(options: T3CodeConfig) {
     this.probeThreadId = options.probeThreadId;
+    this.modelCapturePath = options.modelCapturePath ?? process.env.NUCLEUS_T3_MODEL_CAPTURE;
     this.rpc = new T3RpcClient(options);
     this.state = new T3StateFile(options.statePath);
     this.reads = new T3Reads({
@@ -246,8 +249,8 @@ export class T3CodeHost implements Host {
       ...(options.reentryTimeoutMs === undefined
         ? {}
         : { reentryTimeoutMs: options.reentryTimeoutMs }),
-      modelSelectionOptions: (profile, model) =>
-        this.modelSelectionOptions(profile, model),
+      modelSelectionOptions: (profile, provider, model) =>
+        this.modelSelectionOptions(profile, provider, model),
       runtimeMode: (profile, supported) =>
         this.launchRuntimeMode(profile, supported),
     });
@@ -288,6 +291,57 @@ export class T3CodeHost implements Host {
   get nativeParentingStatus(): string {
     return this.nesting.statusLine();
   }
+  /**
+   * Each provider instance's models with the real option descriptors (id, type,
+   * role) the last `server.getConfig` read reported, as `service.health`'s
+   * `t3code.modelShapes` line (nucleus#1375). It is a bounded summary of a read the
+   * adapter already made — no call of its own — so a refusal names the shape the
+   * snapshot really carried.
+   */
+  get modelShapes(): string {
+    return this.modelShapeSummary;
+  }
+  private modelShapeSummary = "";
+  /**
+   * Keep the last read's model shapes, bounded: providers report at most a few
+   * dozen models, and the line is a diagnostic, not a catalogue. Everything is
+   * T3's own provider/model/option vocabulary — no endpoint, credential or
+   * environment identity.
+   */
+  private async retainModelShapes(observed: z.infer<typeof config>): Promise<void> {
+    const line = observed.providers
+      .filter((provider) => provider.enabled && provider.models.length)
+      .slice(0, 12)
+      .map(providerModelShapes)
+      .join(" | ");
+    this.modelShapeSummary =
+      line.length > 4_000 ? `${line.slice(0, 4_000)}…` : line;
+    if (this.modelCapturePath) {
+      // Only model entries from the already decoded read; never settings, credentials
+      // or environment identity. Bound both the number of entries and output bytes.
+      const piFixtureModels = new Set([
+        "default",
+        "opencode-go/deepseek-v4.1-flash",
+        "opencode-go/muse-spark-1.3-contributor",
+      ]);
+      const providers = observed.providers
+        .filter((provider) => ["codex", "pi", "claudeAgent"].includes(provider.instanceId))
+        .slice(0, 3)
+        .map(({ instanceId, status, models }) => ({
+          instanceId, status,
+          models: instanceId === "codex"
+            ? models.filter((model) => ["gpt-6.1-terra", "gpt-6-luna"].includes(model.slug))
+            : instanceId === "pi"
+              ? [...models.filter((model) => piFixtureModels.has(model.slug)),
+                  ...models.filter((model) => !piFixtureModels.has(model.slug))].slice(0, 16)
+              : models.slice(0, 16),
+        }));
+      const capture = JSON.stringify({ providers }, null, 2);
+      if (Buffer.byteLength(capture) > 256 * 1024)
+        throw new Error("T3Code model capture exceeds 256 KiB");
+      await writeFile(this.modelCapturePath, capture + "\n", { mode: 0o600 });
+    }
+  }
   capabilities() {
     return {
       reportingViaMcp: false,
@@ -309,6 +363,7 @@ export class T3CodeHost implements Host {
         await this.rpc.call("server.getConfig", {}),
         "server.getConfig",
       );
+      await this.retainModelShapes(observed);
       const hostId = `t3code:${observed.environment.environmentId}`;
       const previous = this.state.read();
       if (previous.hostId && previous.hostId !== hostId)
@@ -561,6 +616,7 @@ export class T3CodeHost implements Host {
       await this.rpc.call("server.getConfig", {}),
       "server.getConfig",
     );
+    await this.retainModelShapes(value);
     return {
       providers: value.providers.map((p) => ({
         key: p.instanceId,
@@ -571,8 +627,20 @@ export class T3CodeHost implements Host {
             ? ""
             : "T3Code provider is unavailable",
         models: p.models.map((m) => {
-          const descriptors = m.capabilities?.optionDescriptors ?? [];
-          const reasoning = descriptors.find(isReasoningDescriptor);
+          const translation = t3codeTranslation(p.instanceId);
+          // One decision, shared with the launch fence: the same model entry says
+          // which option carries the level (or that the snapshot cannot answer
+          // yet). Selection publishes exactly what the fence will send.
+          const thinking = t3ModelThinking(p, m, translation);
+          // A carrier the table names for the provider (`thinking` for Pi, `effort`
+          // for Claude and FX) stays a catalog feature the way it always was; only
+          // a generic reasoning select is published as the model's thinking options.
+          const reasoning =
+            thinking.state === "carrier" &&
+            thinking.carrier.id !== translation?.thinkingOption
+              ? thinking.carrier
+              : undefined;
+          const descriptors = modelDescriptors(m);
           const feature = (descriptor: z.infer<typeof optionDescriptor>) =>
             descriptor.type === "boolean"
               ? {
@@ -605,6 +673,10 @@ export class T3CodeHost implements Host {
             id: m.slug,
             label: m.name,
             aliases: m.aliases ?? [],
+            // A settled carrier publishes its own choices; a snapshot that cannot
+            // answer yet publishes the table's levels (for a provider whose level
+            // rides the generic reasoning select) and says it is unsettled, so
+            // selection keeps the profile the fence will wait for.
             thinkingOptions: reasoning
               ? reasoning.options.map((c) => ({
                   id: c.id,
@@ -613,7 +685,10 @@ export class T3CodeHost implements Host {
                     ? {}
                     : { isDefault: c.isDefault }),
                 }))
-              : [],
+              : thinking.state === "unsettled" && !translation?.thinkingOption
+                ? tableThinkingOptions(translation)
+                : [],
+            ...(thinking.state === "unsettled" ? { unsettled: true } : {}),
             defaultThinkingOptionId:
               reasoning?.options.find((c) => c.isDefault)?.id ??
               (reasoning?.currentValue &&
@@ -851,20 +926,18 @@ export class T3CodeHost implements Host {
       await this.rpc.call("server.getConfig", {}),
       "server.getConfig",
     );
+    await this.retainModelShapes(observed);
     const provider = observed.providers.find(
       (p) => p.instanceId === spec.profile.provider,
     );
-    if (!provider?.models.some((m) => m.slug === spec.profile.model))
-      throw new ProvenPreSendRefusalError(
-        `T3Code provider ${spec.profile.provider} does not report model ${spec.profile.model}`,
-      );
     const options = this.modelSelectionOptions(
       spec.profile,
-      provider.models.find((m) => m.slug === spec.profile.model)!,
+      provider,
+      provider?.models.find((m) => m.slug === spec.profile.model),
     );
     const runtimeMode = this.launchRuntimeMode(
       spec.profile,
-      provider.supportedRuntimeModes,
+      provider?.supportedRuntimeModes,
     );
     const title = this.presentation.numberedThreadTitle(
       spec.taskNumber,
@@ -1009,28 +1082,44 @@ export class T3CodeHost implements Host {
    * read the launch already made.
    *
    * The canonical thinking level reaches the model's thinking carrier whichever
-   * way the host carries it (Tom, 2026-11-12): the reasoning select T3 marks
-   * `role: "reasoning"` (Codex, Grok, Muse, Kiro), or the option this adapter's
+   * way the host carries it (Tom, 2026-11-12): the reasoning select T3 reports
+   * under its own ids (Codex, Grok, Muse, Kiro), or the option this adapter's
    * table names for the provider (`thinking` for Pi, `effort` for Claude and FX).
    * A level stored as `thinkingOptionId` and a level a translated feature carries
    * (`translated: ["thinking"]`) are the same fact, so both resolve here.
    *
-   * A canonical level this model does not report is settled to the nearest level
-   * its carrier offers by the vocabulary's own rule, so a catalog that dropped a
-   * level costs the level, never the launch. A model that reports no carrier at
-   * all is refused before send with the option named: nothing is sent to be
-   * dropped remotely, and selection keeps such a profile out of a T3 task
-   * through the host catalog; that refusal is the drift fence.
+   * This is the pre-send fence, and it decides with `t3ModelThinking` — the same
+   * function `catalog()` publishes from, over the same model entry — so a profile
+   * selection kept is never refused here. A canonical level this model does not
+   * report is settled to the nearest level its carrier offers by the vocabulary's
+   * own rule, so a catalog that dropped a level costs the level, never the launch.
+   * A settled model that reports no carrier is refused before send, naming the
+   * option and the model's real descriptors. A snapshot that cannot answer yet
+   * (the provider is probing, or it reports no model options at all) is a host
+   * wait, not a refusal: the next pass reads again.
    */
   modelSelectionOptions(
     profile: Profile,
+    provider: ConfigProvider | undefined,
     model: ConfigModel | undefined,
   ): OptionSelection[] {
     const translation = t3codeTranslation(profile.provider);
     const features = Object.entries(profile.featureValues ?? {});
     const requested = thinkingLevelFor(profile, translation);
+    if (!provider || !model) {
+      if (provider && (provider.status !== "ready" || !providerReportsOptions(provider)))
+        throw new HostSnapshotPendingError(
+          `T3Code reports no ${profile.provider} model ${profile.model} yet`,
+        );
+      throw new ProvenPreSendRefusalError(
+        `T3Code provider ${profile.provider} does not report model ${profile.model}`,
+      );
+    }
     if (!requested && !features.length) return [];
-    const descriptors = model?.capabilities?.optionDescriptors ?? [];
+    const thinking = t3ModelThinking(provider, model, translation);
+    if (thinking.state === "unsettled")
+      throw new HostSnapshotPendingError(thinking.detail);
+    const descriptors = modelDescriptors(model);
     const options: OptionSelection[] = [];
     const consumed = new Set<string>();
     if (requested) {
@@ -1038,7 +1127,7 @@ export class T3CodeHost implements Host {
         profile,
         requested,
         translation,
-        descriptors,
+        thinking,
       );
       if (translation?.thinkingOption) consumed.add(translation.thinkingOption);
       options.push({ id: descriptor, value: level });
@@ -1048,7 +1137,7 @@ export class T3CodeHost implements Host {
       const descriptor = descriptors.find((d) => d.id === option);
       if (!descriptor)
         throw new ProvenPreSendRefusalError(
-          optionRefusal(profile.model, option),
+          optionRefusal(profile.model, option, undefined, descriptors),
         );
       const shown =
         typeof feature === "string" ? feature : JSON.stringify(feature);
@@ -1072,37 +1161,31 @@ export class T3CodeHost implements Host {
 
   /**
    * The descriptor and native value one canonical thinking level rides on this
-   * model: the table's carrier option when the model reports it, else the
-   * reasoning select. The value is the exact level the carrier offers, or the
-   * nearest one the vocabulary rule settles on. A model that reports no carrier
-   * at all is refused here, before send, naming the option.
+   * model: the carrier `t3ModelThinking` found, which is the table's option when
+   * the model reports it and T3's own reasoning select otherwise. The value is
+   * the exact level the carrier offers, or the nearest one the vocabulary rule
+   * settles on; a settled carrier that offers no canonical level at all is
+   * refused naming the carrier and the level.
    */
   private thinkingSelection(
     profile: Profile,
     requested: ThinkingLevel,
     translation: ProviderTranslation | undefined,
-    descriptors: ReadonlyArray<z.infer<typeof optionDescriptor>>,
+    thinking: ModelThinking,
   ): { descriptor: string; level: string } {
     const carrierName = translation?.thinkingOption ?? "reasoning option";
-    const carrier =
-      (translation?.thinkingOption
-        ? descriptors.find((d) => d.id === translation.thinkingOption)
-        : undefined) ?? descriptors.find(isReasoningDescriptor);
-    // No carrier at all is the drift fence: the option itself is missing from
-    // this snapshot, which is what the pilot's launch read during a provider
-    // re-probe. Nothing is sent to be dropped, and the message names the option.
-    if (!carrier || carrier.type !== "select")
+    if (thinking.state === "absent")
       throw new ProvenPreSendRefusalError(
-        optionRefusal(profile.model, carrierName),
+        optionRefusal(
+          profile.model,
+          carrierName,
+          undefined,
+          thinking.descriptors,
+        ),
       );
-    const offered = carrier.options.flatMap((choice) => {
-      const level = translation
-        ? canonicalThinkingValue(translation, choice.id)
-        : isThinkingLevel(choice.id)
-          ? choice.id
-          : null;
-      return level ? [{ level, value: choice.id }] : [];
-    });
+    if (thinking.state === "unsettled")
+      throw new HostSnapshotPendingError(thinking.detail);
+    const { carrier, offered } = thinking;
     const nearest = nearestThinkingLevel(
       offered.map((option) => option.level),
       requested,

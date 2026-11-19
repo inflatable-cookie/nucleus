@@ -281,8 +281,10 @@ const hasOption = (feature: HostFeature | undefined, value: string) =>
  * The canonical thinking levels one provider's model on this host can express:
  * the table's level for it and the host's own option for it. A provider whose
  * table carries its thinking as an option value (T3's claude `effort`) reports
- * them from that option, so a caller that only reads the routing snapshot still
- * sees the levels this host really runs (nucleus#1169).
+ * them from that option when the host publishes it as a feature, and from the
+ * model's own thinking options when the host publishes that same option as the
+ * reasoning carrier (nucleus#1375); either way a caller that only reads the
+ * routing snapshot sees the levels this host really runs (nucleus#1169).
  */
 export function canonicalThinkingLevels(
   entry: ProviderTranslation,
@@ -295,7 +297,7 @@ export function canonicalThinkingLevels(
     const value = entry.thinking[level];
     return (
       value !== undefined &&
-      (entry.thinkingOption
+      (carrier
         ? hasOption(carrier, value)
         : model.thinkingOptions.some((option) => option.id === value))
     );
@@ -438,6 +440,9 @@ export function canonicalCatalog(
             ...RUNTIME_MODE_LABELS[mode],
           })),
           features: model.features.filter((feature) => !owned.has(feature.id)),
+          // A model whose options the host has not settled keeps that fact: its
+          // levels are the table's, not a report of absence (nucleus#1375).
+          ...(model.unsettled === true ? { unsettled: true } : {}),
         };
       }),
     });
@@ -486,6 +491,10 @@ export function mergeCanonicalCatalogs(
             model.thinkingOptions.some((option) => option.id === level),
         ).map((level) => ({ id: level, label: THINKING_LABELS[level] }));
         known.defaultThinkingOptionId ??= model.defaultThinkingOptionId;
+        // A model is unsettled only while every host that reports it is: one
+        // host's settled report answers for this entry (nucleus#1375).
+        if (known.unsettled === true && model.unsettled !== true)
+          delete known.unsettled;
         known.modes = RUNTIME_MODES.filter(
           (mode) =>
             known.modes.some((item) => item.id === mode) ||

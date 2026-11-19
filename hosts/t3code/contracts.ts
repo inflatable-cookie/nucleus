@@ -56,6 +56,14 @@ export const defaultRuntimeMode: RuntimeMode = "full-access";
 export const modelCapabilities = z.object({
   optionDescriptors: z.array(optionDescriptor).optional(),
 });
+/**
+ * The nightly's `ServerProviderModel.capabilities` is `NullOr(ModelCapabilities)`:
+ * a model T3 has not probed yet reports `null`, which reads as no options here
+ * rather than failing the whole `server.getConfig` decode. Whether that absence
+ * is a settled fact or a provider mid-probe is the thinking carrier's decision
+ * (`. /thinking`), never this schema's.
+ */
+export const modelCapabilitiesOrNull = modelCapabilities.nullable();
 export const modelSelection = z.object({ instanceId: id, model: id });
 export const threadRecord = z.object({
   id,
@@ -312,7 +320,7 @@ export const config = z.object({
           slug: id,
           name: z.string(),
           aliases: z.array(z.string()).optional(),
-          capabilities: modelCapabilities.optional(),
+          capabilities: modelCapabilitiesOrNull.optional(),
         }),
       ),
     }),
