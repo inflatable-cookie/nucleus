@@ -177,7 +177,7 @@ export function createTaskDetailCache(
         ...entry.value,
         task: currentTask,
         dependencies: dependencyIds.map((id) => store.taskReference(id)),
-        routingPolicy: { ...store.routingPolicy(options.hosts && task.entrypoint === "worker" && task.hostSelection?.basis !== "worker_profile" && taskNeverDispatched(task, entry.evidence.runs) ? { ...task, hostId: "" } : task, now(), options.profiles?.(task) ?? []),
+        routingPolicy: { ...store.routingPolicy(options.hosts && task.entrypoint === "worker" && task.hostSelection?.basis !== "worker_profile" && !task.profile && taskNeverDispatched(task, entry.evidence.runs) ? { ...task, hostId: "" } : task, now(), options.profiles?.(task) ?? []),
           ...(options.hosts ? { hosts: options.hosts(task) } : {}),
           ...(task.hostSelection?.basis === "worker_profile" && task.hostSelection.reason ? { hostSelection: { hostId: task.hostSelection.hostId, reason: task.hostSelection.reason } } : {}),
         },

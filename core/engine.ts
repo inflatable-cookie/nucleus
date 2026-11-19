@@ -1312,7 +1312,7 @@ export class Engine {
   /** A queued first worker has a preference, not a workspace host yet. */
   firstWorkerUnbound(task: Task): boolean {
     return task.entrypoint !== "review" && task.entrypoint !== "proof" && task.phase === "queued" &&
-      task.hostSelection?.basis !== "worker_profile" && taskNeverDispatched(task, this.store.runs(task.id));
+      task.hostSelection?.basis !== "worker_profile" && !task.profile && taskNeverDispatched(task, this.store.runs(task.id));
   }
   workerHostCatalogs(task: { hostId?: string | null }) {
     const ids = [...new Set([...this.hostIds(), ...(task.hostId ? [task.hostId] : [])])];

@@ -337,7 +337,7 @@ export function summarizeTask(task: Task, includeRepository = false, hasUnreleas
     id: task.id, title: task.title, repoPath: task.repoPath, ...(includeRepository ? { repository: task.repository || task.repoPath } : {}), version: task.version, number: task.number, reference: task.reference, entrypoint:task.entrypoint,
     ...(defaultHostId && task.hostId === defaultHostId ? {} : { hostId: task.hostId }),
     ...(task.hostSelection?.basis === "worker_profile" && task.hostSelection.reason ? { hostReason: task.hostSelection.reason } : {}),
-    ...(task.entrypoint === "worker" && task.phase === "queued" && !task.workspaceIntent && !task.workspaceId && !task.agentId && !task.runId && !taskRuns.length && task.hostSelection?.basis !== "worker_profile" ? { hostPending: true as const } : {}),
+    ...(task.entrypoint === "worker" && task.phase === "queued" && !task.workspaceIntent && !task.workspaceId && !task.agentId && !task.runId && !task.profile && !taskRuns.length && task.hostSelection?.basis !== "worker_profile" ? { hostPending: true as const } : {}),
     ...((() => { const ids = [...new Set([task.agentId, ...taskRuns.filter(run => !run.released && run.role === "reviewer" && (!run.hostId || run.hostId === task.hostId)).map(run => run.agentId)].filter((id): id is string => Boolean(id)))]; return ids.length ? { questionAgentIds: ids } : {}; })()),
     ...(task.interactive ? { interactive: true as const } : {}),
     phase: task.phase, reason: reason.slice(0, 160), held: task.held,

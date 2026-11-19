@@ -26,6 +26,10 @@ test('first dispatch binds the selected profile host before workspace creation',
   engine.launchAgent = async () => {};
   engine.enqueueTitle = () => {};
   try {
+    const legacy = store.insert(submission({ repoPath: '/synthetic/legacy' }), 'paseo:one', 'handoff', 'a'.repeat(40));
+    const legacyRetry = store.update(legacy.id, { profile: profiles[0]!, profileGroup: 'paseo-only' });
+    assert.equal(engine.firstWorkerUnbound(legacyRetry), false, 'a previously selected legacy profile keeps its host');
+    store.update(legacy.id, { phase: 'done' });
     store.chargeAssignment('paseo-only', 'paseo-only');
     store.chargeAssignment('both', 'both');
     const rotated = store.insert(submission({ repoPath: '/synthetic/rotation' }), 'paseo:one', 'handoff', 'a'.repeat(40));

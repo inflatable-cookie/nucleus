@@ -536,7 +536,7 @@ export function assembleOwnerTaskNext(
         }
       : {}),
     ...(reviewerSwap ? { reviewerSwap } : {}),
-    routingPolicy: { ...facts.store.routingPolicy(facts.hostViews && task.entrypoint === "worker" && task.hostSelection?.basis !== "worker_profile" && taskNeverDispatched(task, facts.runs) ? { ...task, hostId: "" } : task, Date.now(), facts.hostProfiles ?? []),
+    routingPolicy: { ...facts.store.routingPolicy(facts.hostViews && task.entrypoint === "worker" && task.hostSelection?.basis !== "worker_profile" && !task.profile && taskNeverDispatched(task, facts.runs) ? { ...task, hostId: "" } : task, Date.now(), facts.hostProfiles ?? []),
       ...(facts.hostViews ? { hosts: facts.hostViews } : {}),
       ...(task.hostSelection?.basis === "worker_profile" && task.hostSelection.reason ? { hostSelection: { hostId: task.hostSelection.hostId, reason: task.hostSelection.reason } } : {}),
     },
@@ -552,7 +552,7 @@ export function assembleOwnerTaskNext(
     ...(task.retiredWorkers.length
       ? { replacement: taskNextReplacementView(task) }
       : {}),
-    ...(task.hostId ? (task.entrypoint === "worker" && task.hostSelection?.basis !== "worker_profile" && taskNeverDispatched(task, facts.runs)
+    ...(task.hostId ? (task.entrypoint === "worker" && task.hostSelection?.basis !== "worker_profile" && !task.profile && taskNeverDispatched(task, facts.runs)
       ? { hostPreference: task.hostId } : { host: task.hostId }) : {}),
     ...(task.worktreeLinks ? { worktreeLinks: task.worktreeLinks } : {}),
   };

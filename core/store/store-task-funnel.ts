@@ -567,7 +567,7 @@ export class StoreTaskFunnel {
       );
     // First dispatch binds the chosen worker host together with its workspace intent.
     // Once any run or workspace intent exists, no ordinary update can move it.
-    const bindsWorkerHost = kind === "dispatch_intent" && task.phase === "queued" && task.hostSelection?.basis !== "worker_profile" &&
+    const bindsWorkerHost = kind === "dispatch_intent" && task.phase === "queued" && task.hostSelection?.basis !== "worker_profile" && !task.profile &&
       change.phase === "dispatching" && !task.workspaceId && !task.workspaceIntent && !task.directory &&
       !task.agentIntent && !task.agentId && !task.runId && !task.completion && !task.prUrl && !task.prHead &&
       !task.resumePrNumber && !task.retiredWorkers.length && !task.resolution.currentRunId &&
