@@ -5,7 +5,7 @@ import { profile } from './support/fakes';
 import { poolSchema, submissionSchema, type Task } from '../shared/contracts';
 import { DEMAND_ROLE_OFFSETS } from '../shared/demand';
 
-const task = submissionSchema.parse({ submissionId: 's', title: 't', repoPath: '/repo', planningCommit: 'a'.repeat(40), handoffPath: 'h', originAgentId: 'o', complexity: 'medium', hostId: 'paseo' }) as Task;
+const task = { ...submissionSchema.parse({ submissionId: 's', title: 't', repoPath: '/repo', planningCommit: 'a'.repeat(40), handoffPath: 'h', originAgentId: 'o', complexity: 'medium', hostId: 'paseo' }), workerExclusions: [] } as unknown as Task;
 const paseo = profile('paseo-only'), t3 = profile('t3-only'), both = profile('both');
 const pool = [paseo, t3, both].map(p => poolSchema.parse({ profileId: p.id, enabled: true, group: p.id, weight: 1, scopes: ['general'], capability: 'medium', cost: 'medium' }));
 const hosts = [{ hostId: 'paseo', profiles: [paseo, both] }, { hostId: 't3', profiles: [t3, both] }];
