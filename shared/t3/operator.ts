@@ -458,6 +458,7 @@ export interface T3StatusInput {
       hostId: string;
       supported: boolean;
       at: string | null;
+      checkedAt?: string | null;
       deleted: number;
       remaining: number;
       error: string;
@@ -475,6 +476,8 @@ export interface T3RetentionFacts {
   days: number;
   supported: boolean;
   lastRunAt: string | null;
+  /** When a pass last looked at this host, read or away; null before the first pass. */
+  checkedAt: string | null;
   deleted: number;
   remaining: number;
   error: string;
@@ -514,6 +517,7 @@ export function retentionFacts(
           hostId: string;
           supported: boolean;
           at: string | null;
+          checkedAt?: string | null;
           deleted: number;
           remaining: number;
           error: string;
@@ -530,6 +534,7 @@ export function retentionFacts(
     days: health?.days ?? DEFAULT_THREAD_RETENTION_DAYS,
     supported: fact?.supported ?? false,
     lastRunAt: fact?.at ?? null,
+    checkedAt: fact?.checkedAt ?? null,
     deleted: fact?.deleted ?? 0,
     remaining: fact?.remaining ?? 0,
     error:

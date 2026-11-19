@@ -346,6 +346,7 @@ interface ServiceRead {
       hostId: string;
       supported: boolean;
       at: string | null;
+      checkedAt?: string | null;
       deleted: number;
       remaining: number;
       error: string;
@@ -823,8 +824,8 @@ async function status(
     `  Projects opted into T3Code: ${report.projects.length ? report.projects.map((project) => project.name).join(", ") : "(none)"}`,
     `  Archived thread retention: ${report.retention.days} day(s)${
       report.retention.supported
-        ? `; last pass ${report.retention.lastRunAt ?? "(not yet run)"}, removed ${report.retention.deleted}, ${report.retention.remaining} remaining${report.retention.error ? ` — ${report.retention.error}` : ""}`
-        : `; this host cannot prune archived threads${report.retention.error ? ` — ${report.retention.error}` : ""}`
+        ? `; last pass ${report.retention.lastRunAt ?? "(not yet run)"}, removed ${report.retention.deleted}, ${report.retention.remaining} remaining${report.retention.error ? ` — ${report.retention.error}${report.retention.checkedAt ? `; last checked ${report.retention.checkedAt}` : ""}` : ""}`
+        : `; this host cannot prune archived threads${report.retention.error ? ` — ${report.retention.error}${report.retention.checkedAt ? `; last checked ${report.retention.checkedAt}` : ""}` : ""}`
     }`,
   ];
   return lines.join("\n");

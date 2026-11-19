@@ -142,6 +142,7 @@ export class Sweep {
           "hostIds",
           "migrateProjectOwnersToPlanners",
           "removeSiblings",
+          "stopped",
           "store",
           "withHost",
         ],

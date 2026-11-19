@@ -1,7 +1,10 @@
 import { z } from "zod";
 import type { Task } from "../../shared/contracts";
 import type { HostThread, HostTimelinePage } from "../../shared/host";
-import { ProvenPreSendRefusalError } from "../../core/host";
+import {
+  ProvenPreSendRefusalError,
+  type ArchivedThread,
+} from "../../core/host";
 import type { T3RpcClient } from "./rpc";
 import { agentRecord, canonical, type T3StateFile } from "./state";
 import { labelTask } from "./one-row";
@@ -593,6 +596,49 @@ export class T3Reads {
         hostConfirmed: !!thread,
       };
     });
+  }
+
+  /**
+   * The retention pass's archived inventory (orchestration contract, "Archived
+   * thread retention"): every archived thread this host holds that Nucleus
+   * created, read from one synchronized inventory, which is a complete positive
+   * answer. A row without a launch record is not Nucleus's and is never listed.
+   */
+  async archivedThreads(): Promise<ArchivedThread[]> {
+    const state = this.core.state.read();
+    const { threads } = await this.inventory();
+    // T3 reports an archived thread in both the shell list and the archived snapshot;
+    // one row per thread is the answer.
+    const archived: ArchivedThread[] = [];
+    const seen = new Set<string>();
+    for (const row of threads) {
+      if (!row.archivedAt || row.deletedAt || seen.has(row.id)) continue;
+      seen.add(row.id);
+      const record = agentRecord(state, row.id);
+      if (!record) continue;
+      archived.push({
+        id: row.id,
+        workspaceId: this.workspaceFor(row),
+        archivedAt: row.archivedAt,
+        labels: record.labels,
+      });
+    }
+    return archived;
+  }
+
+  /**
+   * One thread's fresh archive fact, read immediately before the retention pass
+   * removes it. The inventory is read again rather than reused, so the stamp is
+   * never older than the removal decision. A thread absent from both lists is
+   * the host's own absent answer (`null`), and a row the host still lists as
+   * deleted reads as removed.
+   */
+  async threadArchiveState(
+    id: string,
+  ): Promise<{ archivedAt: string | null; deleted: boolean } | null> {
+    const row = (await this.readInventory()).threads.find((t) => t.id === id);
+    if (!row) return null;
+    return { archivedAt: row.archivedAt ?? null, deleted: !!row.deletedAt };
   }
 
   async observe(id: string): Promise<T3ThreadObservation> {

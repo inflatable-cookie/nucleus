@@ -20,6 +20,7 @@ export type SweepMaintenanceContext = Pick<
   | "hostIds"
   | "migrateProjectOwnersToPlanners"
   | "removeSiblings"
+  | "stopped"
   | "store"
   | "withHost"
 >;
@@ -38,9 +39,42 @@ export type SweepMaintenanceContext = Pick<
 export class SweepMaintenance {
   /** Last hourly hook-checkout and data-home retention pass. */
   lastHookCleanupAt = 0;
+  /** The archived-thread pass in flight, if any: at most one runs at a time. */
+  threadRetentionRun: Promise<void> | null = null;
   constructor(readonly context: SweepMaintenanceContext) {}
   private get store() {
     return this.context.store;
+  }
+
+  /**
+   * Start the archived-thread pass without awaiting it. Its outcome is recorded
+   * under `threadRetentionError` (cleared on success) and per host under
+   * `threadRetention`, so `service.health` shows a failed or stalled pass; nothing
+   * waits on it, so a long walk never holds the audit drain or a service start.
+   */
+  private startThreadRetention(at: number): void {
+    this.threadRetentionRun = runThreadRetention({
+      store: this.store,
+      hostIds: this.context.hostIds(),
+      hostAvailable: (hostId) => this.context.hostAvailable(hostId),
+      withHost: (hostId, work) => this.context.withHost(hostId, work),
+      adapter: this.context.adapter,
+      at,
+      stopped: () => Boolean(this.context.stopped),
+    })
+      .then(() => {
+        this.store.setMeta("threadRetentionError", "");
+      })
+      .catch((error) => {
+        try {
+          this.store.setMeta("threadRetentionError", String(error));
+        } catch {
+          /* the store is closed: the next service start reads the pass again */
+        }
+      })
+      .finally(() => {
+        this.threadRetentionRun = null;
+      });
   }
 
   async run(at = Date.now()): Promise<void> {
@@ -93,27 +127,16 @@ export class SweepMaintenance {
     // Orchestration contract, "Archived thread retention": the service schedules
     // one retention pass itself, never a system job (Tom, 2026-11-19). Hourly, with
     // a batch cap per host, so the archived backlog drains over sweeps instead of
-    // in one burst against a host. The pass records every host's outcome under
-    // `threadRetention`, which `service.health` reads; a paused store pauses it
-    // with the other destructive chores.
+    // in one burst against a host. It runs detached (see `startThreadRetention`):
+    // the first pass walks every archived thread on every host, and the audit pass
+    // this maintenance sits in is what the bootstrap's reconciliation waits on.
     if (
       !paused &&
+      !this.threadRetentionRun &&
       at - (this.store.getMeta<number>("lastThreadRetentionAt") ?? 0) >= HOUR_MS
     ) {
       this.store.setMeta("lastThreadRetentionAt", at);
-      try {
-        await runThreadRetention({
-          store: this.store,
-          hostIds: this.context.hostIds(),
-          hostAvailable: (hostId) => this.context.hostAvailable(hostId),
-          withHost: (hostId, work) => this.context.withHost(hostId, work),
-          adapter: this.context.adapter,
-          at,
-        });
-        this.store.setMeta("threadRetentionError", "");
-      } catch (error) {
-        this.store.setMeta("threadRetentionError", String(error));
-      }
+      this.startThreadRetention(at);
     }
     // Lean store 4 (task 989): freed pages are released on every maintenance tick, not only
     // after a prune, while free pages exceed the drain threshold — one bounded pass per tick

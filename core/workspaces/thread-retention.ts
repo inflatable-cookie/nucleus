@@ -53,8 +53,19 @@ export interface ThreadRetentionHostFact {
   hostId: string;
   /** Whether this host can prune at all: it must list archived threads and remove one. */
   supported: boolean;
-  /** When this host's last pass finished; null before the first one. */
+  /**
+   * When this host's last pass read it: the archived walk ran and was kept.
+   * Null before the first one. A pass that found the host away leaves this at the
+   * last real read, so a stale read stays visible; `checkedAt` says when a pass
+   * last looked.
+   */
   at: string | null;
+  /**
+   * When a pass last checked this host, whether it read the host or found it away;
+   * null before the first pass. An away host therefore always carries the timestamp
+   * of the pass that found it away.
+   */
+  checkedAt: string | null;
   /** Archived Nucleus-created threads the pass read. */
   scanned: number;
   /** Threads in the scanned set that passed every scope rule. */
@@ -199,11 +210,17 @@ export interface ThreadRetentionPassInput {
   at?: number;
   days?: number;
   batch?: number;
+  /** Read between rows: a drain or a stopped engine ends the pass before its next host call. */
+  stopped?: () => boolean;
 }
 
 /**
  * One host's retention pass. It never throws: a walk, read or removal that fails
  * is this host's recorded failure for the pass, and the other hosts still run.
+ *
+ * A host that lists its archived threads but cannot remove one (BB, until its
+ * own delete proof lands) is read and counted, never reported as clean: its
+ * `supported` stays false and its `error` names the missing removal.
  */
 export async function runThreadRetentionPass(
   input: ThreadRetentionPassInput,
@@ -216,6 +233,7 @@ export async function runThreadRetentionPass(
     hostId,
     supported: false,
     at: null,
+    checkedAt: null,
     scanned: 0,
     eligible: 0,
     deleted: 0,
@@ -228,18 +246,22 @@ export async function runThreadRetentionPass(
   const list = adapter.archivedThreads,
     freshRead = adapter.threadArchiveState,
     remove = adapter.deleteAgent;
-  if (!list || !freshRead || !remove) return fact;
-  fact.supported = true;
+  if (!list) {
+    fact.at = fact.checkedAt = new Date(at).toISOString();
+    fact.error =
+      "This host does not list its archived threads, so none were read or pruned";
+    return fact;
+  }
   let rows: ArchivedThread[] | null;
   try {
     rows = await list.call(adapter);
   } catch (error) {
-    fact.at = new Date(at).toISOString();
+    fact.at = fact.checkedAt = new Date(at).toISOString();
     fact.error = `The archived thread walk failed: ${message(error)}`;
     return fact;
   }
   if (rows === null) {
-    fact.at = new Date(at).toISOString();
+    fact.at = fact.checkedAt = new Date(at).toISOString();
     fact.truncated = true;
     fact.error =
       "The archived thread walk did not reach its end; nothing was pruned";
@@ -256,6 +278,12 @@ export async function runThreadRetentionPass(
       candidates.push(row);
   fact.scanned = rows.length;
   fact.eligible = candidates.length;
+  fact.at = fact.checkedAt = new Date(at).toISOString();
+  if (!freshRead || !remove) {
+    fact.error = `This host cannot remove an archived thread, so ${candidates.length} eligible thread(s) were counted and none were removed`;
+    return fact;
+  }
+  fact.supported = true;
   // Oldest first, so a backlog drains from its far end and a bounded pass is fairly shared.
   candidates.sort((left, right) =>
     left.archivedAt.localeCompare(right.archivedAt),
@@ -277,7 +305,7 @@ export async function runThreadRetentionPass(
   const left: ArchivedThread[] = [];
   let intentsChanged = false;
   for (const row of candidates) {
-    if (fact.deleted >= batch) {
+    if (fact.deleted >= batch || input.stopped?.()) {
       left.push(row);
       continue;
     }
@@ -398,7 +426,7 @@ export async function runThreadRetentionPass(
     }
   }
   fact.remaining = left.length;
-  fact.at = new Date(at).toISOString();
+  fact.at = fact.checkedAt = new Date(at).toISOString();
   return fact;
 }
 
@@ -406,12 +434,18 @@ export async function runThreadRetentionPass(
 export interface ThreadRetentionRunInput {
   store: Store;
   hostIds: readonly string[];
+  /**
+   * Whether a host is online, read in that host's own context: the engine's
+   * availability answer depends on the ambient host, so an unscoped read calls a
+   * secondary host away even while it is connected.
+   */
   hostAvailable: (hostId: string) => boolean;
   withHost: <T>(hostId: string, work: () => T) => T;
   adapter: Adapter;
   at?: number;
   days?: number;
   batch?: number;
+  stopped?: () => boolean;
 }
 
 /**
@@ -433,7 +467,9 @@ export async function runThreadRetention(
     (previous?.hosts ?? []).map((fact) => [fact.hostId, fact]),
   );
   for (const hostId of input.hostIds) {
-    if (!input.hostAvailable(hostId)) {
+    if (input.stopped?.()) break;
+    const online = input.withHost(hostId, () => input.hostAvailable(hostId));
+    if (!online) {
       // An away host is not read. The last real pass stays as it ran — its `at`
       // makes the staleness visible — and this pass's reason is the one thing
       // that changes, so a skipped pass never reads as a clean empty one.
@@ -443,6 +479,7 @@ export async function runThreadRetention(
           hostId,
           supported: false,
           at: null,
+          checkedAt: null,
           scanned: 0,
           eligible: 0,
           deleted: 0,
@@ -453,6 +490,7 @@ export async function runThreadRetention(
           error: "",
         }),
         hostId,
+        checkedAt: new Date(at).toISOString(),
         error: "The host is away; its archived threads were not read",
       });
       continue;
@@ -465,6 +503,7 @@ export async function runThreadRetention(
         at,
         days,
         batch,
+        stopped: input.stopped,
       }),
     );
     known.set(hostId, fact);
