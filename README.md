@@ -122,7 +122,7 @@ gauge; its Usage level setting controls dispatch routing only.
 
 ## Where to read more
 
-- [docs/README.md](docs/README.md) — the project's current state and front door.
+- [docs/README.md](docs/README.md) — the entry point to the project's docs.
 - [Knowledge index](docs/knowledge/README.md) — one owning file per topic:
   [vision](docs/knowledge/vision.md),
   [architecture](docs/knowledge/architecture.md),
