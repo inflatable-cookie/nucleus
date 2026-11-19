@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 import { Icon } from "./shell";
+import { Popover } from "./popover";
 import type { LeadListFacts, Project, TaskSummary } from "../shared/contracts";
 import type { PlanningStep } from "../shared/planning-tab";
 import { projectSelectorRows, readProjectScope, selectionLabel, toggleProject, writeProjectScope, type ProjectScope } from "../shared/project-scope";
@@ -44,6 +45,20 @@ export function ProjectFilterSwitch({ value, onChange, c }: { value: boolean; on
     <View style={{ width: 30, height: 18, borderRadius: radius.control, padding: space.xxs / 2, backgroundColor: value ? c.accent : c.surface2, alignItems: value ? "flex-end" : "flex-start" }}><View style={{ width: 14, height: 14, borderRadius: radius.control, backgroundColor: value ? c.accentForeground : c.foregroundMuted }} /></View>
     <Text style={{ color: c.foreground, fontSize: typeScale.body.fontSize }}>Enabled</Text></Pressable>;
 }
+/** Hosts with a DOM (the Paseo settings page, the web board) dismiss an open chooser on an outside press or Escape; native hosts skip the listeners. */
+type DocumentHost = {
+  addEventListener: (type: string, listener: (event: { key?: string; target?: unknown }) => void) => void;
+  removeEventListener: (type: string, listener: (event: { key?: string; target?: unknown }) => void) => void;
+};
+/** True when a press landed inside one of these boxes (the trigger's or its popover's). Hosts without a DOM report false. */
+function withinBoxes(boxes: React.RefObject<View | null>[], target: unknown) {
+  return boxes.some(box => {
+    try {
+      const node = box.current as unknown as { contains?: (target: unknown) => boolean } | null;
+      return Boolean(node && node.contains && node.contains(target));
+    } catch { return false; }
+  });
+}
 /** Kept for callers written before the 2026-09-27 board retirement. */
 
 /** Spec 026 Board "Scope": the header's multi-project selector. A popover at the
@@ -53,6 +68,24 @@ export function ProjectFilterSwitch({ value, onChange, c }: { value: boolean; on
 export function ProjectSelector({ projects, tasks, leads, value, onChange, onOpenChange, compact, c, enabled = true, onEnabledChange, onSettings }: { projects: Project[]; tasks: TaskSummary[]; leads: readonly LeadListFacts[]; value: string[]; onChange: (keys: string[]) => void; enabled?: boolean; onEnabledChange?: (enabled: boolean) => void; /** Opens Settings at Projects; absent on a host without Settings. */ onSettings?: () => void; onOpenChange: (open: boolean) => void; compact: boolean; c: Colors }) {
   const [open, setOpenState] = useState(false), [search, setSearch] = useState("");
   const setOpen = (next: boolean) => { setOpenState(next); onOpenChange(next); };
+  const trigger = useRef<View | null>(null), menu = useRef<View | null>(null);
+  // Escape and outside presses close the popover on hosts with a DOM. The pointer
+  // listener checks the press landed outside the trigger and the popover first, so
+  // choosing a project still reaches its own press; guarded like the header menus,
+  // so native hosts keep toggle dismissal only.
+  useEffect(() => {
+    if (!open || compact) return;
+    const documentHost = (globalThis as { document?: DocumentHost }).document;
+    if (!documentHost) return;
+    const onPointer = (event: { target?: unknown }) => { if (!withinBoxes([trigger, menu], event?.target)) setOpen(false); };
+    const onKey = (event: { key?: string }) => { if (event?.key === "Escape") setOpen(false); };
+    documentHost.addEventListener("pointerdown", onPointer);
+    documentHost.addEventListener("keydown", onKey);
+    return () => {
+      documentHost.removeEventListener("pointerdown", onPointer);
+      documentHost.removeEventListener("keydown", onKey);
+    };
+  }, [open, compact]);
   const filtering = enabled && value.length > 0;
   const label = enabled || !value.length ? selectionLabel(projects, value) : `${selectionLabel(projects, value)} · filter off`;
   const rows = projectSelectorRows(projects, value, search, tasks, leads);
@@ -74,15 +107,21 @@ export function ProjectSelector({ projects, tasks, leads, value, onChange, onOpe
       {Boolean(projects.length) && !rows.length && <Text style={muted(c)}>No projects match this filter.</Text>}
     </ScrollView>
   </View>;
+  // The open panel renders in the shell's popover layer, above the board columns:
+  // an anchored dropdown inside this row is painted over by the column cards that
+  // follow it, and no zIndex leaves this row's stacking context (Tom, 2026-11-19).
+  // Outside a host it renders in place, positioned as before.
   return <View style={{ minWidth: 210, maxWidth: "100%", position: "relative", zIndex: open ? 20 : 0 }}>
-    <Pressable accessibilityRole="button" accessibilityLabel={`Projects, ${label}`} accessibilityState={{ expanded: open }} onPress={() => setOpen(!open)}
+    <Pressable ref={trigger} accessibilityRole="button" accessibilityLabel={`Projects, ${label}`} accessibilityState={{ expanded: open }} onPress={() => setOpen(!open)}
       style={{ ...controlFrame(c, { focused: open }), flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: space.xs }}>
       <View style={{ flexDirection: "row", alignItems: "center", gap: space.xs, minWidth: 0 }}><Icon name="Folder" size={14} color={filtering ? c.accent : c.foregroundMuted} />
         <Text numberOfLines={1} style={{ ...controlText(c), flexShrink: 1 }}>{label}</Text></View>
       <Icon name={open ? "ChevronUp" : "ChevronDown"} size={14} color={c.foregroundMuted} />
     </Pressable>
-    {open && !compact && <View style={{ position: "absolute", top: control.height + space.xxs, right: 0, width: 420, borderWidth: 1, borderColor: c.border, borderRadius: radius.panel, backgroundColor: c.surface1,
-      shadowColor: overlay.shadow, shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.38, shadowRadius: 14, elevation: 12 }}>{panel}</View>}
+    {open && !compact && <Popover anchor={trigger} contentRef={menu} align="end" inlineStyle={{ top: control.height + space.xxs, right: 0, width: 420 }}>
+      <View style={{ width: 420, borderWidth: 1, borderColor: c.border, borderRadius: radius.panel, backgroundColor: c.surface1,
+        shadowColor: overlay.shadow, shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.38, shadowRadius: 14, elevation: 12 }}>{panel}</View>
+    </Popover>}
     {open && compact && <Modal visible transparent animationType="fade" onRequestClose={() => setOpen(false)}><View style={{ flex: 1, justifyContent: "center", padding: space.md, backgroundColor: overlay.scrim }}>
       <View accessibilityViewIsModal style={{ flexShrink: 1, maxHeight: "90%", width: "100%", maxWidth: 560, alignSelf: "center", borderRadius: radius.panel, borderWidth: 1, borderColor: c.border, backgroundColor: c.surface1 }}>
         <View style={{ ...row, justifyContent: "space-between", paddingHorizontal: space.sm, paddingTop: space.sm }}><Text accessibilityRole="header" style={{ color: c.foreground, fontSize: typeScale.section.fontSize, fontWeight: "600" }}>Projects</Text><ActionButton c={c} action="close" label="Close project selector" onPress={() => setOpen(false)} /></View>
