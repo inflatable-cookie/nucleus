@@ -138,10 +138,10 @@ export function operatorReviewContinuationPrompt(
   callback?: { helper: string; ticket: string },
 ) {
   const covered = JSON.stringify(checkpoint.checkpoint.covered);
-  // At the last allowed checkpoint Nucleus refuses another review_in_progress report, so the turn must end with a verdict.
+  // The last checkpoint has one final turn. Any remaining reading is preserved for the owner.
   const finalAllowance =
     checkpoint.ordinal >= limit
-      ? "This is the final checkpoint allowance: a further review_in_progress checkpoint is refused, so this turn must end with the verdict callback."
+      ? "This is the final checkpoint allowance: a further review_in_progress checkpoint is refused as a continuation. Send the verdict if the review is complete. If you cannot finish, report the remaining reading with checkpoint.exhausted set to true."
       : "A new review_in_progress checkpoint ends this turn and Nucleus continues you from it.";
   const remaining = JSON.stringify(checkpoint.checkpoint.remaining);
   const notes = JSON.stringify(checkpoint.checkpoint.notes?.trim() || "");

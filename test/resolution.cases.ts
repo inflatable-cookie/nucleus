@@ -17,6 +17,7 @@ import { taskControlOperation } from "../core/verbs/task-control-key";
 import {
   creationProducerId,
   readCreationAttempt,
+  settleCreationAttempt,
 } from "../core/store/store-task-funnel";
 import { Admission, admitAdapter } from "../core/host/admission";
 import { briefDigest } from "../core/planning/brief";
@@ -12466,25 +12467,34 @@ test("coordinator resume replaces a freshly verified absent initial worker witho
   try {
     enableRecovery(f);
     const oldRun = "timed-out-run";
-    let purged: string[] = [];
-    f.adapter.purgeReportingFiles = (_task, runs) => {
-      purged = runs;
-    };
-    f.store.update(f.task.id, {
-      phase: "needs_attention",
-      reason: ABSENT_WORKER_REASON,
-      agentId: null,
-      agentIntent: true,
-      runId: oldRun,
-      completion: null,
-      prHead: null,
-      prUrl: null,
-      resolution: {
-        ...f.current().resolution,
-        currentRunId: null,
-        attention: true,
+    const task = f.store.update(
+      f.task.id,
+      {
+        phase: "needs_attention",
+        reason: ABSENT_WORKER_REASON,
+        agentId: null,
+        agentIntent: true,
+        runId: oldRun,
+        completion: null,
+        prHead: null,
+        prUrl: null,
+        resolution: {
+          ...f.current().resolution,
+          currentRunId: null,
+          attention: true,
+        },
       },
-    });
+      "agent_intent",
+      oldRun,
+    );
+    const attempt = readCreationAttempt(f.store, {
+      id: oldRun,
+      taskId: task.id,
+      hostId: task.hostId,
+      workspaceId: task.workspaceId,
+      role: "worker",
+    })!;
+    settleCreationAttempt(f.store, attempt, "threw");
     f.store.setCredential(oldRun, "old-token");
     await f.engine.resolution.recovery.route(f.current());
     const recovery = f.store.run(f.current().resolution.recovery!.runId!)!;
@@ -12506,14 +12516,13 @@ test("coordinator resume replaces a freshly verified absent initial worker witho
     );
     await f.engine.resolution.recovery.pass();
     const ready = f.current();
-    assert.equal(ready.phase, "dispatching");
+    assert.equal(ready.phase, "queued");
     assert.equal(ready.workspaceId, "workspace");
     assert.equal(ready.profile?.id, "author");
     assert.equal(ready.agentIntent, false);
     assert.equal(ready.agentId, null);
-    assert.equal(ready.runId, oldRun);
-    assert.equal(ready.restartRunId, oldRun);
-    assert.deepEqual(purged, [oldRun]);
+    assert.equal(ready.runId, null);
+    assert.equal(ready.restartRunId, null);
     assert.throws(
       () => f.store.authenticate(oldRun, "old-token"),
       /Unauthorized/,
@@ -14654,8 +14663,12 @@ test("C4 sweep releases the settled agentless recovery after reopen and permits 
     resumed.lastHookCleanupAt = Date.now();
     let readStarted!: () => void;
     let releaseRead!: () => void;
-    const reading = new Promise<void>(resolve => { readStarted = resolve; });
-    const gated = new Promise<null>(resolve => { releaseRead = () => resolve(null); });
+    const reading = new Promise<void>((resolve) => {
+      readStarted = resolve;
+    });
+    const gated = new Promise<null>((resolve) => {
+      releaseRead = () => resolve(null);
+    });
     const list = f.adapter.hostProcessListing!;
     try {
       assert.equal(
@@ -14695,7 +14708,11 @@ test("C4 sweep releases the settled agentless recovery after reopen and permits 
       const [, pass] = await Promise.race([
         Promise.all([reading, audit]),
         new Promise<never>((_, reject) => {
-          timeout.addEventListener("abort", () => reject(Error("recovery waited for process cleanup")), { once: true });
+          timeout.addEventListener(
+            "abort",
+            () => reject(Error("recovery waited for process cleanup")),
+            { once: true },
+          );
         }),
       ]);
       assert.equal(pass.fault, null);
@@ -18491,6 +18508,59 @@ test("overlapping blocked results do not clear the successor run", async () => {
   }
 });
 
+test("C4 route now releases only the exact absent recovery and leaves ordinary review available", async () => {
+  const f = fixture();
+  const launch = startC4(f);
+  try {
+    const { run, token } = await launch.started;
+    await f.engine.resolution.recovery.pass(f.task.id);
+    const route = () =>
+      f.engine.performTaskControl({
+        taskId: f.task.id,
+        version: f.current().version,
+        action: "route",
+        role: "coordinator",
+        now: true,
+        profileId: run.profile!.id,
+        reason: "Select the recovery route",
+      });
+    await assert.rejects(route(), /Recovery creation is still owned/);
+    assert.doesNotThrow(() => f.store.authenticate(run.id, token));
+    assert.equal(nextC4Move(f.store, f.task.id)?.available, false);
+
+    launch.finish();
+    await launch.route;
+    f.adapter.findRunAgents = async () => [
+      {
+        id: "partial-recovery",
+        workspaceId: run.workspaceId,
+        hostConfirmed: false,
+      },
+    ];
+    await assert.rejects(route(), /Recovery creation is still owned/);
+    assert.equal(f.store.run(run.id)?.released, false);
+
+    f.adapter.findRunAgents = async () => [];
+    await route();
+    assert.equal(f.store.run(run.id)?.released, true);
+    assert.equal(f.store.run(run.id)?.status, "superseded");
+    assert.throws(() => f.store.authenticate(run.id, token), /Unauthorized/);
+    assert.equal(f.current().resolution.recovery?.status, "resolved");
+    assert.equal(nextC4Move(f.store, f.task.id)?.available, true);
+    await f.engine.resolution.recovery.pass(f.task.id);
+    assert.equal(
+      f.store
+        .eventsAll(f.task.id)
+        .filter((event) => event.kind === "absent_recovery_released").length,
+      1,
+    );
+  } finally {
+    launch.finish();
+    await launch.route;
+    await f.close();
+  }
+});
+
 function c5Prerequisite(f: ReturnType<typeof fixture>): Task {
   return f.store.insert(
     submissionSchema.parse({
@@ -18718,7 +18788,8 @@ test("C5 finds a committed release after restart and waits for the uncertain rev
       next().verbs.find(
         (view) =>
           view.verb === "retry_effect" &&
-          view.args?.effect === `operation.${uncertain.id}`,
+          (view.args?.effect === `operation.${uncertain.id}` ||
+            view.refusal?.includes(uncertain.id)),
       );
     try {
       for (let pass = 0; pass < 2; pass++) {
@@ -18728,7 +18799,9 @@ test("C5 finds a committed release after restart and waits for the uncertain rev
         assert.equal(events("operation_superseded").length, 0);
         assert.equal(events("prerequisite_wait_resumed").length, 0);
         assert.equal(next().activeRun?.runId, oldReviewer.id);
-        assert.match(String(restartEffect()?.args?.summary ?? ""), /Transport/);
+        const effect = restartEffect();
+        assert.equal(effect?.available, false);
+        assert.match(effect?.refusal ?? "", /Transport.*Waiting for the sweep/);
         assert.equal(
           f.creates.length + f.sends.length + f.continuations.length,
           0,

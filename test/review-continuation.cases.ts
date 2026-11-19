@@ -33,7 +33,7 @@ import {
   reviewAuthorizationRequired,
   reviewCheckpointPathFor,
   REVIEW_AUTHORIZATION_REQUIRED,
-  REVIEW_BUDGET_EXHAUSTED,
+  REVIEW_READER_EXHAUSTED,
   writeReviewCheckpoint,
 } from "../core/review/review-continuation";
 import { briefDigest } from "../core/planning/brief";
@@ -3866,7 +3866,7 @@ weighted(1)(
         "the over-budget checkpoint is not saved",
       );
       assert.ok(f.run().reviewBudgetExhaustedAt);
-      assert.equal(f.current().reason, REVIEW_BUDGET_EXHAUSTED);
+      assert.equal(f.current().reason, REVIEW_READER_EXHAUSTED);
       assert.equal(f.current().resolution.stop?.reason, "operator_needed");
       // Cutover 7 (PR 850): the spent budget parks on the owner stop alone — no
       // recovery episode is opened; the planner ladder owns it if it ever blocks.

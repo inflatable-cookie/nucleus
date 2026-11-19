@@ -147,6 +147,7 @@ export {
 import { TaskControlDispatcher } from "./verbs/dispatcher";
 
 import { ReviewerControls } from "./verbs/reviewer";
+import type { ExhaustedReviewerReplacement } from "./verbs/reviewer-report";
 import { TaskCompletion } from "./verbs/complete";
 import { SettingsControls } from "./verbs/settings";
 import { ForceVerbs } from "./verbs/force";
@@ -1029,7 +1030,6 @@ export class Engine {
         [
           "ensureIncident",
           "resolveIncident",
-          "resumeAbsentWorker",
           "returnToDispatch",
           "saveIncident",
         ],
@@ -1153,6 +1153,7 @@ export class Engine {
         [
           "activeHostId",
           "adapter",
+          "control",
           "host",
           "launchAgent",
           "note",
@@ -2002,7 +2003,7 @@ export class Engine {
       runIds: string[];
       displacedRunIds?: string[];
     };
-  }): Promise<() => Task> {
+  }): Promise<Task | (() => Task)> {
     return this.workerRestarts.prepareWorkerResume(input);
   }
   repinInstruction(input: { taskId: string; version: number }): Promise<Task> {
@@ -2446,12 +2447,14 @@ export class Engine {
     reason: string,
     instruction: string,
     fresh = true,
+    replacement?: ExhaustedReviewerReplacement,
   ): Promise<Task> {
     return this.reviewerControls.restartReview(
       taskId,
       reason,
       instruction,
       fresh,
+      replacement,
     );
   }
 

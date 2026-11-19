@@ -60,7 +60,7 @@ import { repositoryIdentity, type StoreTasks } from "./store-tasks";
 export const creationProducerId = randomUUID();
 const creationReserved = "creation_attempt_reserved";
 const creationSettled = "creation_attempt_settled";
-type CreationBinding = Pick<Run, "id" | "taskId" | "hostId"> & {
+export type CreationBinding = Pick<Run, "id" | "taskId" | "hostId"> & {
   workspaceId: string | null;
   role: Run["role"] | "worker";
 };
@@ -141,6 +141,25 @@ export function readCreationAttempt(
       reservation.attemptId,
     ),
   };
+}
+
+/** Capture termination before starting the inventory read that can prove absence. */
+export function creationTermination(
+  store: Pick<CreationJournal, "db">,
+  binding: CreationBinding,
+  graceMs: number,
+) {
+  const attempt = readCreationAttempt(store, binding);
+  if (!attempt) return null;
+  const terminatedBy = attempt.settlement
+    ? "call_settled"
+    : attempt.producerId !== creationProducerId
+      ? "service_replaced"
+      : null;
+  const since = Date.parse(attempt.settlement?.at ?? attempt.reservedAt);
+  return terminatedBy && Date.now() - since >= graceMs
+    ? { attemptId: attempt.attemptId, terminatedBy }
+    : null;
 }
 
 export function settleCreationAttempt(

@@ -1852,21 +1852,23 @@ review or merge credit; live participants and unsettled effects remain fences.
 - A single exact match binds in the sweep. An incomplete, unavailable or
   ambiguous reading holds the reservation. Release keeps the original task stop
   and recovery allowance. Ordinary admission gives any later launch a fresh run.
-- Worker and other resolution sweeps retain agentless creations on empty
-  inventory. Their owner-control cutover is tracked in
-  [Spec 066](../specs/066-one-reconciler.md).
-- `route role=reviewer now` on a proven-absent run releases it without an archive
-  wait: its credential is revoked and its incident resolves. The reviewer then
-  launches one fresh run on the named profile. A creation not yet proven absent
-  is refused, and route never stops or replaces it.
-- `restart` on a proven-absent resolution run releases it and launches a fresh
-  run from the role's current route. Its profile and provider come from the live
-  catalog, never the recorded creation payload. The new run has a new run ID and
-  creation intent.
-- A stale worker creation intent (no agent, no PR, no accepted result) with a
-  route or restart armed is settled by exact lookup first. Zero matches releases
-  the intent, and the armed replacement launches from the current route. One
-  matching agent binds to the task. Anything else waits for the operator.
+- Worker restart, immediate routing and an armed worker failover use the
+  recorded producer and the same exact lookup. One exact match binds to the
+  original run and credential. Pending, incomplete or ambiguous observations
+  keep the intent owned. After proven absence, release revokes the old
+  credential and returns the existing work to ordinary dispatch. The live
+  route and its sign-off, capacity and availability determine admission.
+- An authorized worker restart keeps its direction on the deferred verb while
+  creation or another run is settling. An exact match keeps the original run and
+  callback credential. Ordinary admission and an idle observation allow one
+  delivery to that worker. If notifications are unavailable, the host operator
+  can restore support and the sweep rechecks admission. After an uncertain send,
+  only exact receipt evidence settles delivery. Proven creation absence transfers
+  the direction to the fresh dispatch.
+- Restart and immediate route can replace an agentless resolution run after
+  the exact lookup proves absence following producer termination. Release
+  revokes its credential and re-enters the role's ordinary admission on a fresh
+  run ID. An agentless recovery also settles its bound episode.
 - A host-unavailable transport wait is re-evaluated by the first pass that sees
   the host back.
 
@@ -2181,8 +2183,8 @@ reports, grants or spends that history.
   never a checkpoint, never a continuation.
 - The continuation prompt and `next` show the allowance used of allowed
   (`2 of 6 checkpoints used`). The continuation for the last allowed checkpoint
-  says `6 of 6: this turn must end with a verdict`, because Nucleus refuses a
-  further `review_in_progress` report there.
+  says `6 of 6: final continuation`. A further progress report there
+  records unread items for the owner.
 - An open incident fences a retained continuation only while it binds the
   current work; an incident recorded against a released run cannot hold the
   reader.
@@ -2204,10 +2206,10 @@ reports, grants or spends that history.
   the canonical project, or a project rooted at the checkout). Cleanliness is
   proved, then the task/run/workspace binding and the checkout's Git source
   are re-proved as the last awaited proof before send.
-- A spent checkpoint allowance ends automatic checkpoint continuation. The
-  owner can ask the same idle reviewer to finish or redeliver its report after
-  the PR head and thread are observed. A positively closed reviewer may be
-  replaced; a missing report alone never authorizes replacement.
+- An authenticated report that lists unread items after the final allowance, or
+  marks them with `checkpoint.exhausted: true`, ends retained continuation.
+  Nucleus keeps the evidence on the original run. An owner can authorize a new
+  independent reader under [the fresh restart rule](../specs/050-owner-task-controls.md#a-checkpointed-reviewer-that-cannot-be-continued).
 - A reader whose creation delivery stayed uncertain is continuable on the exact
   authenticated checkpoint evidence that proves creation reached it.
 - Refusals before the adapter's send are definite failures. After the adapter
@@ -2226,8 +2228,8 @@ reports, grants or spends that history.
   preserves a live reader and asks an idle, unreported reader to resend its
   result on the same run and credential. A released reportless round resumes
   the same reviewer with a report-recovery instruction. Unknown delivery is
-  observed before any retry. A new reviewer is for a reader proved gone or
-  ruled out by its model or independence, not a missing report or a round count.
+  observed before any retry. A new reviewer requires evidence of inability
+  to finish, loss of the thread, or model or independence ineligibility.
 - One identity derivation separates an absent reader (none, or another head), a
   valid one and a refused one (binding unprovable). A refused reader is never
   read as absent or displaced; the move refuses and names the deliberate

@@ -686,7 +686,7 @@ test("the replay refuses once a worker creation is in flight", async () => {
           action: "restart",
           reason: "Replay the pre-dispatch validation",
         }),
-      /Absent-worker retry requires a retained creation intent with no worker/,
+      /Worker creation recovery requires a retained run, host, workspace and route/,
     );
     assert.equal(f.store.task(task.id).workspaceIntent, true);
   } finally {

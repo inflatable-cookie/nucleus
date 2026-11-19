@@ -1,3 +1,7 @@
+import {
+  deferredWorkerCreationRestart,
+  staleWorkerIntent,
+} from "../recovery/absent-creation/stale-worker";
 import { recordedSlotWait } from "../recovery/wait-context";
 import { TASK_PROGRESSING_REASON } from "../../shared/task-detail-summary";
 import {
@@ -305,6 +309,9 @@ export class TaskQuantum {
           task.resolution.stop!.detail,
         );
       }
+      // The sweep owns discovery for an accepted worker creation restart.
+      if (staleWorkerIntent(task) && deferredWorkerCreationRestart(task))
+        return;
       // Project-a #1837: a restart can leave the flag cleared on a recorded pre-attention
       // state. Restore it so the ordinary resolution path advances instead of idling.
       const resumed = this.context.resolution.resumeClearedAttention(task);

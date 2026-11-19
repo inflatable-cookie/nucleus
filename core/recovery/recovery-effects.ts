@@ -905,6 +905,30 @@ export function blockingRecoveryEffectsRefusal(
   return recoveryEffectsRefusal(relevant);
 }
 
+/** A still-current uncertain control cannot be replayed by a new owner action. */
+export function unsettledControlRefusal(
+  store: Store,
+  task: Task,
+  observingOperationId?: string,
+): string | null {
+  return recoveryEffectsRefusal(
+    blockingRecoveryEffects(store, task, { kinds: ["operation"] }).filter(
+      (effect) => {
+        if (
+          effect.state !== "uncertain" ||
+          effect.identity === observingOperationId
+        )
+          return false;
+        const operation = store.operation(effect.identity);
+        return (
+          operation?.kind === "task_control" &&
+          ["restart", "route"].includes(operation.effect?.target ?? "")
+        );
+      },
+    ),
+  );
+}
+
 /** Format a selected blocking set without hiding secondary identities. */
 export function recoveryEffectsRefusal(
   effects: readonly RecoveryEffect[],

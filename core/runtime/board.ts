@@ -60,7 +60,8 @@ export interface BoardContext {
       resolution: Pick<
         Engine["resolution"],
         "slotAdmissionReason" | "slotAdmissionReader"
-      >;
+      > &
+        Partial<Pick<Engine["resolution"], "graceMs">>;
     };
   decisions: Decisions;
   cachedTaskDetail: ReturnType<typeof createTaskDetailCache>;
@@ -609,6 +610,7 @@ export class RuntimeBoard {
       const hostProfiles = this.context.engine.profilesFor?.(task.hostId);
       const facts = {
         ...this.ownerVerbFacts(task),
+        creationGraceMs: this.context.engine.resolution?.graceMs,
         operatorBoard: input.caller === "operator (board)",
         ...(hostProfiles ? { hostProfiles } : {}),
       };

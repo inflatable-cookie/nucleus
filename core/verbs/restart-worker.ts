@@ -28,8 +28,12 @@ import { taskHasPr } from "../forge/index";
 import { digest, now } from "../store/store";
 import { occupiesSlot } from "../dispatch/capacity";
 import {
+  bindWorkerCreation,
+  observeWorkerCreation,
   releaseStaleWorkerIntent,
-  staleWorkerIntent,
+  recordWorkerCreationRestart,
+  sameWorkerCreation,
+  workerCreationRefusal,
 } from "../recovery/absent-creation/stale-worker";
 import type { Engine } from "../engine";
 import { restartResumeChoice } from "../task-decision-rules";
@@ -142,7 +146,7 @@ export class WorkerRestarts {
       runIds: string[];
       displacedRunIds?: string[];
     };
-  }): Promise<() => Task> {
+  }): Promise<Task | (() => Task)> {
     const task = this.store.task(input.taskId),
       runs = this.store.runs(task.id);
     const check = () => {
@@ -168,127 +172,99 @@ export class WorkerRestarts {
           ...(input.settleFences.displacedRunIds ?? []),
         ]
       : [];
-    const absent = task.agentIntent && !task.agentId;
-    // A stale creation intent outside `needs_attention` has no admitted retry. Exact lookup
-    // decides it: no agent settles the intent and a fresh worker starts from the current route.
-    if (absent && task.phase !== "needs_attention") {
-      if (!staleWorkerIntent(task))
-        throw Error(
-          "Worker creation intent has no retained workspace or profile; inspect the task before restarting",
+    if (task.agentIntent && !task.agentId) {
+      const refusal = workerCreationRefusal(this.store, task, settling);
+      if (refusal) throw new RestartRefusal(refusal);
+      if (task.prerequisiteWait && !task.prerequisiteWait.releasedAt)
+        throw new RestartRefusal(RETAINED_PREREQUISITE_REFUSAL);
+      const observed = await observeWorkerCreation(
+        this.store,
+        this.adapter,
+        task,
+        this.resolution.graceMs,
+      );
+      const current = check();
+      if (current.resolution.deferredVerb)
+        throw new RestartRefusal(
+          "Another recorded direction already owns this task",
         );
-      const found = await this.adapter.findAgents(task);
-      if (found.length)
-        throw Error(
-          "Worker creation is no longer proven absent; inspect the matching agent before retrying",
+      if (!sameWorkerCreation(this.store, current, observed))
+        throw new TaskChangedRefusal(
+          "Worker creation changed during restart",
+          input.version,
+          current.version,
         );
-      await this.adapter.verifyWorkspace(task, task.directory!);
-      check();
-      return () => {
-        const current = check();
-        if (!staleWorkerIntent(current))
-          throw new TaskChangedRefusal(
-            "Worker creation changed during restart",
-            input.version,
-            current.version,
-          );
-        // The fresh creation takes the worker's current route, resolved from the live catalog: the recorded profile may name an old provider.
-        const routedId =
-          current.profileRequests?.worker?.profileId ?? current.profile!.id;
-        const profile =
-          this.engine
-            .profilesFor(current.hostId)
-            .find((candidate) => candidate.id === routedId) ?? current.profile!;
+      if (observed.kind !== "absent") {
+        // The direction remains owned while other runs settle through their
+        // ordinary lifecycle. Binding by itself authorizes no cancellation.
         return this.store.transaction(() => {
-          if (input.settleFences)
-            this.engine.settleVerbFences(task.id, input.settleFences);
-          releaseStaleWorkerIntent(
+          const recorded = recordWorkerCreationRestart(
             this.store,
             current,
-            `restart role=worker: ${input.instruction}`,
+            input.instruction,
           );
-          return this.store.update(
-            task.id,
-            {
-              phase: "dispatching",
-              profile,
-              workerModel: profile.model,
-              reason: `Owner restart: creating a fresh worker on ${profile.provider}/${profile.model}`,
-              resolution: {
-                ...current.resolution,
-                currentRunId: null,
-                attention: false,
-                recoveryActive: false,
-                recoveryAttempts: 0,
-                recovery: null,
-                stalledTurnStop: null,
-              },
-            },
-            "absent_worker_routed",
+          if (observed.kind === "bound")
+            return bindWorkerCreation(this.store, recorded, observed.agentId);
+          if (
+            !recorded.resolution.stop ||
+            ["lifecycle", "operator_needed"].includes(
+              recorded.resolution.stop.reason,
+            )
+          )
+            this.resolution.waiting(recorded, observed.detail, "lifecycle");
+          return this.store.task(task.id);
+        });
+      }
+      if (
+        this.adapter.workspaceAvailable &&
+        !(await this.adapter.workspaceAvailable(task.workspaceId!))
+      )
+        throw new RestartRefusal(
+          "Worker creation recovery requires the retained workspace online",
+        );
+      return () =>
+        this.store.transaction(() => {
+          const latest = check();
+          const refusal = workerCreationRefusal(this.store, latest, settling);
+          if (refusal) throw new RestartRefusal(refusal);
+          if (!sameWorkerCreation(this.store, latest, observed))
+            throw new TaskChangedRefusal(
+              "Worker creation changed during restart",
+              input.version,
+              latest.version,
+            );
+          if (input.settleFences)
+            this.engine.settleVerbFences(task.id, input.settleFences);
+          return releaseStaleWorkerIntent(
+            this.store,
+            this.store.task(task.id),
+            observed.proof,
             input.instruction,
           );
         });
-      };
     }
-    if (absent) {
-      this.resolution.admitAbsentWorker(
-        task,
-        input.instruction,
-        true,
-        settling,
-      );
-      const found = await this.adapter.findAgents(task);
-      if (found.length)
-        throw Error(
-          "Worker creation is no longer proven absent; inspect the matching agent before retrying",
-        );
-      await this.adapter.verifyWorkspace(task, task.directory!);
-      check();
-      this.resolution.admitAbsentWorker(
-        this.store.task(task.id),
-        input.instruction,
-        true,
-        settling,
-      );
-    } else
-      this.resolution.prepareResumeWorker(
-        task,
-        input.instruction,
-        true,
-        settling,
-      );
+    this.resolution.prepareResumeWorker(
+      task,
+      input.instruction,
+      true,
+      settling,
+    );
     return () => {
       const current = check();
-      // Actual guards re-run at the boundary, accounting only for the settlement
-      // this transaction owns. No observation is retained for deferred replay.
-      if (absent)
-        this.resolution.admitAbsentWorker(
-          current,
-          input.instruction,
-          true,
-          settling,
-        );
-      else
-        this.resolution.prepareResumeWorker(
-          current,
-          input.instruction,
-          true,
-          settling,
-        );
-      if (absent) this.adapter.purgeReportingFiles?.(task.id, [task.runId!]);
+      this.resolution.prepareResumeWorker(
+        current,
+        input.instruction,
+        true,
+        settling,
+      );
       return this.store.transaction(() => {
         if (input.settleFences)
           this.engine.settleVerbFences(task.id, input.settleFences);
-        return absent
-          ? this.resolution.resumeAbsentWorker(
-              this.store.task(task.id),
-              input.instruction,
-              true,
-            )
-          : this.resolution.resumeWorker(
-              this.store.task(task.id),
-              input.instruction,
-              true,
-            );
+        return this.resolution.resumeWorker(
+          this.store.task(task.id),
+          input.instruction,
+          true,
+        );
       });
     };
   }

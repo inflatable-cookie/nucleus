@@ -72,6 +72,7 @@ export interface OwnerVerbFacts {
    */
   planning?: boolean;
   operatorBoard?: boolean;
+  creationGraceMs?: number;
 }
 
 export function collectOwnerVerbFacts(

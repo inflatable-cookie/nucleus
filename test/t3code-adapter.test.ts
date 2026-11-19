@@ -317,8 +317,13 @@ test("real T3 creation recovery holds partial and wrong-run threads, then binds 
     adapter,
     stopped: false,
     note,
+    control: (operation: () => Promise<void>) => operation(),
     taskHostAvailable: () => true,
-    resolution: { graceMs: 0, clearTransportWait: () => {} },
+    resolution: {
+      graceMs: 0,
+      clearTransportWait: () => {},
+      waiting: (task: { id: string }, detail: string) => note(task.id, detail),
+    },
   } as unknown as WorkerFailoverContext);
   await failover.recoverExhaustedWorkers(wrong.hostId!);
   assert.equal(store.task(task.id).agentId, null);

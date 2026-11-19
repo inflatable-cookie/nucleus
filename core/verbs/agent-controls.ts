@@ -233,6 +233,7 @@ export class AgentControls {
     );
     return ownerTaskNext({
       ...collectOwnerVerbFacts(this.store, task, null, caller.runId),
+      creationGraceMs: this.engine.resolution.graceMs,
       waitTask: taskWithCurrentWait(this.store, task, wait, (candidate) =>
         this.engine.queuedExternalWait(candidate),
       ),

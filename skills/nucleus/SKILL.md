@@ -827,10 +827,13 @@ no matching owner stop keeps its ordinary handling. Releasing first leaves a pas
 that can act on the stale state. An active recovery run still fences the restart;
 let it finish or `stop` it. While the task is reviewing, `restart role=worker`
 doesn't apply; use `move to=work` under the hold instead, then release.
-A checkpointed reviewer has two ends to its retained-agent continuation: it spent
-its checkpoint budget, or its own agent was observed closed. `next` records that
-plainly, refuses the same-run continuation, and offers `fresh: true` there beside
-`move to=review`; the run, checkpoint and verdict history stay as evidence.
+If the reviewer cannot finish, report `review_in_progress` with
+`reviewResponsibility: "reviewer"`, `checkpoint.exhausted: true`, and the
+remaining items. An over-budget progress report also preserves unread items.
+`next` offers `restart role=reviewer fresh` once that reading is recorded.
+`route role=reviewer now` can also replace the reader on an authorized route.
+Nucleus verifies the exact head and observes the reviewer idle in its workspace
+before replacing it. The original reading and run stay as evidence.
 Nucleus revisits an unfinished checkpoint from current facts. Admission and the
 existing recovery bound decide whether it opens a coordinator episode; the
 coordinator can request retained continuation or another permitted verb. A
@@ -842,10 +845,10 @@ transition settles the reporting run and the episode it answers, and you are
 never asked to report `cannot` because of Nucleus's own bookkeeping.
 
 While a valid checkpoint, the exact head and the reviewer identity still hold,
-that retained continuation is the supported action: `move to=review` displaces
-the retained reviewer and discards its coverage, so use it only when a fresh
-review is what you intend (the budget is spent, the agent was observed closed,
-or the source at that head changed). Repeated coordinator work that moves no work
+that retained continuation is the supported action. `move to=review` preserves
+the current reader at the same head. Use the explicit fresh restart when the
+reader cannot finish or was proved closed; changed source follows ordinary
+review admission. Repeated coordinator work that moves no work
 is bounded: after three runs for the same work identity Nucleus escalates to the
 owner.
 
@@ -887,7 +890,8 @@ Tom's 2026-11-17 ruling keeps one retained reviewer per task. If its report is
 missing, use `move to=review` or `restart role=reviewer` to ask the same idle
 reviewer to redeliver; an active reviewer keeps its turn. A released reportless
 round returns to the same reviewer with a recovery request. A fresh reviewer is
-for one proved gone or ruled out by model or independence, not a missing report.
+for one proved gone, ruled out by model or independence, or unable to finish
+as shown by its authenticated report.
 Unknown delivery remains held until observed.
 
 Owner verbs use current forge, checkout, integration and participant facts.

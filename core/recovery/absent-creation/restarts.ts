@@ -1,9 +1,6 @@
 import { type Run, type Task } from "../../../shared/contracts";
 import { now } from "../../store/store";
 import {
-  ABSENT_WORKER_REASON,
-  PRE_AGENT_LAUNCH_FAILURE_REASON,
-  ABSENT_WORKER_REPLACEMENT_REASON,
   ABSENT_RESOLUTION_REASON,
   resolutionCreationRoles,
 } from "../task-reasons";
@@ -11,7 +8,6 @@ import {
   isDispositionActive,
   isDispositionComplete,
 } from "../../../shared/contracts";
-import { isPiSettingsLockFailure } from "../exhaustion";
 import { taskPrNumber } from "../../forge/index";
 import type { Resolution } from "../../resolution";
 import { absentReplacementRecord } from "./budget";
@@ -47,7 +43,6 @@ export type AbsentRestartsContext = Pick<
   | "paused"
   | "recordIncidentEvent"
   | "resolveIncident"
-  | "resumeWorkerContinuation"
   | "settleVerbFences"
   | "store"
   | "update"
@@ -70,109 +65,6 @@ export class AbsentRestarts {
   }
   get graceMs() {
     return this.resolution.graceMs;
-  }
-
-  /**
-   * Mint one worker in the retained workspace for a proven-absent creation.
-   *
-   * `authorized` is the operator path: it also accepts the post-replacement escalation the
-   * automatic budget writes, because the state is recoverable and only the automatic path's
-   * budget should stop it. Automatic and recovery callers keep the initial reason only, so
-   * the one-replacement budget stays exactly one and a later automatic absence still
-   * escalates. The event differs, so an operator replacement is visible as such and never
-   * counts as the automatic retry.
-   */
-  admitAbsentWorker(
-    t: Task,
-    instruction: string,
-    authorized = false,
-    settleRunIds: string[] = [],
-  ): string {
-    const retry = t.transientProviderRetry;
-    const preAgentFailure =
-      t.reason === PRE_AGENT_LAUNCH_FAILURE_REASON &&
-      retry?.runId === t.runId &&
-      retry.status === "waiting" &&
-      retry.resumes === 0 &&
-      isPiSettingsLockFailure(retry.error);
-    const accepted = authorized
-      ? [ABSENT_WORKER_REASON, ABSENT_WORKER_REPLACEMENT_REASON]
-      : [ABSENT_WORKER_REASON];
-    if (
-      t.phase !== "needs_attention" ||
-      (!accepted.includes(t.reason) && !preAgentFailure) ||
-      !t.agentIntent ||
-      t.agentId ||
-      !t.runId ||
-      !t.workspaceId ||
-      !t.directory ||
-      !t.profile
-    )
-      throw Error(
-        "Absent-worker retry requires a retained creation intent with no worker",
-      );
-    if (t.prerequisiteWait && !t.prerequisiteWait.releasedAt)
-      throw new Error(
-        "Task is waiting for its retained prerequisites; wait for the owner notice or clear the wait",
-      );
-    if (
-      t.completion ||
-      t.prUrl ||
-      t.prHead ||
-      t.resolution.currentRunId ||
-      t.resolution.mergeIntent ||
-      t.resolution.mergedCommit
-    )
-      throw Error(
-        "Absent-worker retry cannot replace accepted work, PR, resolution, or merge state",
-      );
-    if (
-      this.store
-        .runs(t.id)
-        .some(
-          (r) =>
-            r.role !== "recovery" &&
-            !r.released &&
-            !settleRunIds.includes(r.id),
-        )
-    )
-      throw Error("Absent-worker retry has an unresolved task run");
-    const action = instruction.trim();
-    if (!action) throw Error("Worker resume requires an explicit instruction");
-    return action;
-  }
-
-  resumeAbsentWorker(t: Task, instruction: string, authorized = false) {
-    const action = this.admitAbsentWorker(t, instruction, authorized);
-    return this.resolution.resumeWorkerContinuation(
-      t,
-      authorized,
-      (current) => {
-        this.store.deleteCredential(current.runId!);
-        // The owner-restart path retains its existing behavior pending the
-        // producer-proof cutover; the sweep never calls it from an empty lookup.
-        return this.store.update(
-          current.id,
-          {
-            agentIntent: false,
-            runId: current.runId,
-            restartRunId: current.runId,
-            transientProviderRetry: undefined,
-            phase: "dispatching",
-            reason:
-              "Confirmed absent worker; creating a worker in the retained workspace",
-            resolution: {
-              ...current.resolution,
-              pendingWorkerInstruction: action,
-            },
-          },
-          authorized
-            ? "absent_worker_operator_replacement"
-            : "absent_worker_retry",
-          action,
-        );
-      },
-    );
   }
 
   absentResolutionRun(t: Task) {

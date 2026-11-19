@@ -14,6 +14,7 @@ import { startsNoRuns } from "../../closeout/queue-drain";
 import { ABSENT_WORKER_REASON } from "../task-reasons";
 import { workspaceReplayAllowed } from "./decisions";
 import { creationLookup } from "./restarts";
+import { staleWorkerIntent } from "./stale-worker";
 
 export type CreationRecoveryContext = Pick<
   Engine,
@@ -29,11 +30,7 @@ export type CreationRecoveryContext = Pick<
 > & {
   readonly resolution: Pick<
     Resolution,
-    | "ensureIncident"
-    | "resolveIncident"
-    | "resumeAbsentWorker"
-    | "returnToDispatch"
-    | "saveIncident"
+    "ensureIncident" | "resolveIncident" | "returnToDispatch" | "saveIncident"
   >;
 };
 
@@ -178,6 +175,13 @@ export class CreationRecovery {
       );
       return;
     } else if (task.agentIntent && !task.agentId) {
+      // An armed route is observed by the failover pass.
+      if (
+        task.failoverReason &&
+        staleWorkerIntent(task) &&
+        task.resolution.stop?.reason === "lifecycle"
+      )
+        return;
       // Worker intents live on the task, but the host lookup must still carry
       // the exact run label. A task-only inventory can contain older threads.
       const lookup = this.adapter as typeof this.adapter &

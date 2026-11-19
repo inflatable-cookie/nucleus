@@ -737,6 +737,19 @@ function effectViews(facts: OwnerVerbFacts): TaskNextVerb[] {
         ...item,
         summary: `${item.summary}; ${matching.map((wait) => `thread ${wait.agentId}: ${wait.reason}`).join("; ")}`,
       };
+    const operationId = ownerEffectIdentity(item.effect, "operation");
+    const operation = operationId ? facts.store.operation(operationId) : null;
+    if (
+      operation?.kind === "task_control" &&
+      operation.state === "needs_attention" &&
+      ["restart", "route"].includes(operation.effect?.target ?? "")
+    )
+      return taskNextVerbSchema.parse({
+        verb: "retry_effect",
+        action: "retry_effect",
+        available: false,
+        refusal: `${item.summary}. Waiting for the sweep to observe its target.`,
+      });
     if (
       item.effect.startsWith("project-validation.") &&
       (task.resolution.projectValidation?.state === "running" ||
