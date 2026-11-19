@@ -1226,7 +1226,7 @@ const PARSED: ParsedText[] = [
     site: "blocked effect attention",
     reads: [
       "detail.startsWith(BLOCKED_EFFECT_ATTENTION_PREFIX)",
-      "stop.suggestedVerbs[0] === 'retry_effect'",
+      'stop.suggestedVerbs[0] === "retry_effect"',
     ],
     writers: [
       'BLOCKED_EFFECT_ATTENTION_PREFIX = "An uncertain side effect blocks review"',
