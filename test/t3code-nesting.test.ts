@@ -13,6 +13,7 @@ import {
   PARENT_PROVIDER,
   childTaskId,
   childThreadId,
+  parentPromptRules,
 } from "../hosts/t3code/nesting";
 import type { AcpSessionSurface } from "../shared/acp/surface";
 import {
@@ -266,7 +267,10 @@ test("the first role launches the task parent on the nucleus ACP provider and ru
   // agent's own configuration, never text it parses.
   assert.equal(acp.bindings.length, 1);
   assert.equal(acp.bindings[0]!.taskId, "synthetic-task");
-  assert.equal(acp.bindings[0]!.holdPattern, HOLD_MARKER);
+  // The hold rule is anchored and escaped, so it matches exactly the sentence this host sends.
+  assert.equal(acp.bindings[0]!.holdPattern, parentPromptRules().holdPattern);
+  assert.match(HOLD_MARKER, new RegExp(acp.bindings[0]!.holdPattern!));
+  assert.doesNotMatch(HOLD_MARKER, /nucleus-hold|task-/);
   assert.match(acp.bindings[0]!.ignorePattern!, /delegated-task/);
 
   // The role: a native child of that parent's live run, with the profile's own
@@ -325,6 +329,8 @@ test("a released parent is re-entered by message before the next child, and disp
   const { host, server, acp, spec } = await fixture(t);
   await host.createAgent(spec("worker-create", "Do the work"));
   const parent = parentOf(host)!;
+  // A parent persisted before the readable prompt has no holdText and an old binding.
+  host.state.update(state => { delete state.parents!["synthetic-task"]!.holdText; });
   // The worker finished: the sweep releases the held turn, as the ACP agent ends it.
   finishChildren(host, server);
   await host.reconcileThreadTitles([
@@ -344,7 +350,8 @@ test("a released parent is re-entered by message before the next child, and disp
     (command) => command.threadId === parent.threadId,
   )!;
   assert.ok(hold, "the parent is re-entered by a message");
-  assert.match(hold.text, new RegExp(HOLD_MARKER));
+  assert.equal(hold.text, HOLD_MARKER);
+  assert.doesNotMatch(hold.text, /nucleus-hold|synthetic-task/);
   const run = server.threads.get(parent.threadId)!.runs.at(-1)!;
   assert.equal(run.status, "running");
   const request = commandsOf(server, "delegated_task.request").at(-1)!;

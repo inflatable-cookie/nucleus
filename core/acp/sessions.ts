@@ -21,7 +21,7 @@ import type { Task } from "../../shared/contracts";
 import type { AgentMessageReceipt } from "../questions/agent-messages";
 import { verifyAcpSession, mintAcpSession } from "./binding";
 import type { AcpAnswerInput, AcpMessageInput, AcpSessionBinding, AcpSessionSurface, AcpTurnInput, AcpTurnReply } from "../../shared/acp/surface";
-import { acpFinishedLine, acpLifecycleLine, acpLifecycleSignature, acpTaskFinished, acpTaskName } from "./lifecycle";
+import { acpFinishedLine, acpLifecycleLine, acpLifecycleSignature, acpTaskFinished, acpTaskName, type AcpLineMemory } from "./lifecycle";
 import type { Engine } from "../engine";
 import { createHash } from "node:crypto";
 import { mintAcpInbox, verifyAcpInbox } from "./inbox-binding";
@@ -57,8 +57,11 @@ export function bindAcpSession(acp: AcpSessionSurface | null, input: { taskId: s
 }
 
 export class AcpSessions implements AcpSessionSurface {
-  /** The last lifecycle signature each session was shown, so a quiet task sends nothing. */
-  private readonly shown = new Map<string, string>();
+  /**
+   * What each session was last shown: the signature, so a quiet task sends nothing,
+   * and the reference and PR link already on screen, so a line does not repeat them.
+   */
+  private readonly shown = new Map<string, { signature: string; memory: AcpLineMemory }>();
   /** Release directives from a host adapter, consumed by the turn that acts on them. */
   private readonly shownDecisions = new Map<string, string>();
   private readonly releases = new Map<string, string>();
@@ -145,9 +148,12 @@ export class AcpSessions implements AcpSessionSurface {
       const decisionSignature = JSON.stringify(elicitations);
       const changedDecisions = this.shownDecisions.get(record.sessionId) !== decisionSignature;
       this.shownDecisions.set(record.sessionId, decisionSignature);
-      if (first || input.attach === true || this.shown.get(record.sessionId) !== signature) {
-        messages.push(acpTaskFinished(task) ? acpFinishedLine(task) : acpLifecycleLine(task));
-        this.remember(record.sessionId, signature);
+      const previous = this.shown.get(record.sessionId);
+      if (first || input.attach === true || previous?.signature !== signature) {
+        // A reattached session has nothing on screen to build on, so its line is whole.
+        const memory: AcpLineMemory = previous && input.attach !== true ? previous.memory : { named: false, prUrl: null };
+        messages.push(acpTaskFinished(task) ? acpFinishedLine(task) : acpLifecycleLine(task, memory));
+        this.remember(record.sessionId, signature, { named: true, prUrl: task.prUrl ?? null });
       }
       const release = this.releases.get(record.sessionId);
       if ((release !== undefined || acpTaskFinished(task)) && !this.pendingDecisionKey(task.id)) {
@@ -212,12 +218,12 @@ export class AcpSessions implements AcpSessionSurface {
   }
 
   /** Remember one session's last line without letting the map grow with every task ever seen. */
-  private remember(sessionId: string, signature: string): void {
+  private remember(sessionId: string, signature: string, memory: AcpLineMemory): void {
     if (this.shown.size >= ACP_SIGNATURE_MEMORY && !this.shown.has(sessionId)) {
       const oldest = this.shown.keys().next();
       if (!oldest.done) this.shown.delete(oldest.value);
     }
-    this.shown.set(sessionId, signature);
+    this.shown.set(sessionId, { signature, memory });
   }
 
   /** One bounded wait: a release directive wakes it, otherwise it checks again on the next tick. */

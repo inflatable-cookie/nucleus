@@ -129,7 +129,7 @@ export const FIXTURES: Record<string, {
 
 /** Bounded fixture-only debug surface: store methods plus runtime wake/bootstrap. */
 export async function handleDebug(runtime: QueueRuntime, op: unknown, state: FixtureState): Promise<unknown> {
-  const request = op as { target: "store" | "runtime" | "engine" | "fixture"; method?: string; args?: unknown[]; action?: string; value?: unknown };
+  const request = op as { target: "store" | "runtime" | "engine" | "acp" | "fixture"; method?: string; args?: unknown[]; action?: string; value?: unknown };
   if (request.target === "fixture") {
     if (request.action === "process-read-started") return Boolean(state.releaseProcessRead);
     if (request.action === "release-process-read") { state.releaseProcessRead?.(); return { ok: true }; }
@@ -167,6 +167,14 @@ export async function handleDebug(runtime: QueueRuntime, op: unknown, state: Fix
     // Arguments ride through so a fixture can drive one production method with its
     // own identity (for example the task whose siblings to remove).
     return (method as (...args: unknown[]) => unknown).apply(runtime, request.args ?? []);
+  }
+  // The held turn's own ACP surface: the one that holds the live session. A host adapter
+  // in this proof owns a separate surface over the same store, so a release must reach this one.
+  if (request.target === "acp") {
+    const acp = (runtime as unknown as { engine?: { acp?: Record<string, unknown> | null } }).engine?.acp;
+    const method = acp?.[request.method!];
+    if (typeof method !== "function") throw new Error(`The ACP surface has no method ${request.method}`);
+    return (method as (...args: unknown[]) => unknown).apply(acp, request.args ?? []);
   }
   if (request.target === "engine") {
     const engine = (runtime as unknown as Record<string, unknown>).engine as Record<string, unknown> | undefined;

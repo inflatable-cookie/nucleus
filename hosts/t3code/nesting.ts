@@ -31,6 +31,7 @@
  * or never resent.
  */
 import { z } from "zod";
+import { T3_HOLD_TEXT } from "../../shared/acp/t3-hold";
 import { isHostOperationTimeout } from "../../core/host";
 import type { HostAgentAttempt, HostAgentSpec } from "../../shared/host";
 import type { Profile, Task } from "../../shared/contracts";
@@ -54,11 +55,13 @@ export const PARENT_MODEL = "nucleus";
 export const PARENT_DRIVER = "acpRegistry";
 
 /**
- * The marker in every re-entry prompt this module sends. The binding's `holdPattern`
- * names it, so the ACP agent holds that turn and forwards nothing: exactly one place
- * decides what a person is, and it is configuration, never parsed remote text.
+ * The text of every re-entry prompt this module sends, and of the parent's opening
+ * prompt. T3 shows a prompt as a user bubble, so the text is a plain sentence with no
+ * internal marker or task id. The binding's `holdPattern` matches it exactly (see
+ * `parentPromptRules`), so the ACP agent holds that turn and forwards nothing. Exactly
+ * one place decides what a person is, and it is configuration, never parsed remote text.
  */
-export const HOLD_MARKER = "nucleus-hold-the-task-thread";
+export const HOLD_MARKER = T3_HOLD_TEXT;
 
 /**
  * T3's own wordings for text that is not a person speaking to a task: a delegated
@@ -82,7 +85,9 @@ export const parentPromptRules = (): {
   ignorePattern: T3_NOTICE_PHRASES.map((phrase) =>
     phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
   ).join("|"),
-  holdPattern: HOLD_MARKER,
+  // Anchored and escaped: only this exact sentence is a re-entry, never a message that
+  // merely contains it.
+  holdPattern: `^${HOLD_MARKER.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
 });
 
 /** The child thread a delegated-task command creates (nightly `idAllocator.derive`). */
@@ -562,6 +567,7 @@ export class T3Nesting {
     const record: ParentThread = {
       taskId,
       threadId,
+      holdText: HOLD_MARKER,
       sessionId: binding.sessionId,
       bindingPath: binding.bindingPath,
       workspaceId: input.workspace.id,
@@ -625,7 +631,7 @@ export class T3Nesting {
       // lifecycle rather than inventing anything of its own.
       initialMessage: {
         messageId: identity("message", commandId),
-        text: `${HOLD_MARKER}: ${taskId}`,
+        text: HOLD_MARKER,
         attachments: [],
       },
     };
@@ -721,7 +727,7 @@ export class T3Nesting {
       commandId,
       threadId: parent.threadId,
       messageId: identity("message", commandId),
-      text: `${HOLD_MARKER}: ${parent.taskId}`,
+      text: HOLD_MARKER,
       attachments: [],
       dispatchMode: { type: "queue_after_active" },
     });

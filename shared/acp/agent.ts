@@ -141,6 +141,8 @@ export class AcpAgent {
   private readonly work = new Set<Promise<unknown>>();
   private model: string = ACP_MODELS[0].modelId;
   private readonly elicitationReplies = new Map<Id, (response: Json) => void>();
+  /** The last line each session showed, so an identical line is never sent twice in a row. */
+  private readonly lastLine = new Map<string, string>();
 
   constructor(private readonly options: AcpAgentOptions) {}
 
@@ -578,7 +580,14 @@ export class AcpAgent {
     } });
   }
 
+  /**
+   * One lifecycle line on the wire. Clients join message chunks without a separator,
+   * so each line ends its own paragraph; a line identical to the one just shown is not
+   * sent again, whichever poll or attach asked for it.
+   */
   private emit(send: Send, sessionId: string, text: string): void {
+    if (this.lastLine.get(sessionId) === text) return;
+    this.lastLine.set(sessionId, text);
     send({
       jsonrpc: "2.0",
       method: "session/update",
@@ -586,7 +595,7 @@ export class AcpAgent {
         sessionId,
         update: {
           sessionUpdate: "agent_message_chunk",
-          content: { type: "text", text },
+          content: { type: "text", text: `${text}\n\n` },
         },
       },
     });

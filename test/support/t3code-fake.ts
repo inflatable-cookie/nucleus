@@ -1335,7 +1335,7 @@ export async function t3Fake(t: TestContext, directory: string) {
                     rootNodeId: `node:root:${payload.commandId}`,
                   }),
                 );
-              if (p.thread.providerInstanceId === "nucleus" && payload.text === "nucleus-hold-the-task-thread") {
+              if (p.thread.providerInstanceId === "nucleus" && /^(Nucleus keeps this task thread open for its next role\.|nucleus-hold-the-task-thread)/.test(payload.text)) {
                 const active = p.runs.find((run: Value) => ["preparing", "starting", "running", "waiting"].includes(run.status));
                 if (active) p.turnItems.push(syntheticTurnItem(payload.threadId, p.turnItems.length, { type: "user_message", messageId: payload.messageId, runId: active.id }));
               }

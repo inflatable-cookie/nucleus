@@ -17,6 +17,7 @@ import { isAbsolute, join } from "node:path";
 import { compiledIdentity } from "../runtime.mjs";
 import { dataHome } from "../data-home.mjs";
 import { AcpAgent } from "./agent";
+import { isLegacyT3Hold } from "./t3-hold";
 import { acpBindingPathFor, readAcpBinding } from "./binding";
 import { createAcpTransport } from "./transport";
 
@@ -73,7 +74,7 @@ export async function runAcpAgentFromEnvironment(options: AcpEntryOptions = {}):
     hold(text, binding) {
       const hostRule = hostRuleFor(binding.holdPattern ?? null);
       if (!hostRule.ok) { log(`the binding's holdPattern is not a usable regular expression: ${binding.holdPattern}`); return false; }
-      return (hold.rule?.(text) ?? false) || (hostRule.rule?.(text) ?? false);
+      return isLegacyT3Hold(binding.holdPattern, text) || (hold.rule?.(text) ?? false) || (hostRule.rule?.(text) ?? false);
     },
   });
   await agent.run(options.stdin ?? process.stdin, options.stdout ?? process.stdout);
