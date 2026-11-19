@@ -189,7 +189,20 @@ export class CoordinatorPass {
             // An unreadable lookup proves nothing: the creation stays owned.
             continue;
           }
-          if (this.resolution.startsNoRuns()) return;
+          if (this.resolution.stopped() || this.resolution.startsNoRuns())
+            return;
+          // A dispatch hold, a review fence or a disposition that landed while
+          // the host was read owns the task now, exactly as it does for the
+          // episode-bound creation below: this release waits for a later pass.
+          t = this.store.task(t.id);
+          if (
+            dispatchBlocked(t) ||
+            reviewFenceHoldsCoordinators(t, this.store) ||
+            isDispositionActive(t) ||
+            isDispositionComplete(t) ||
+            ["done", "cancelled"].includes(t.phase)
+          )
+            continue;
           if (this.episode.releaseOrphaned(observed)) released = true;
         }
         // A release is a task write: re-read before the episode path compares

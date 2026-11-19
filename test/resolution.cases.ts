@@ -14871,6 +14871,42 @@ test("C4 sweep releases a settled agentless creation its replaced episode no lon
       restartC4(f),
       /Resolve the other retained runs before restarting coordinator recovery/,
     );
+    // A dispatch hold that lands while the host is being read owns the task now:
+    // the lookup completes, and the release waits for a later pass.
+    let lookups = 0;
+    f.adapter.findRunAgents = async () => {
+      if (++lookups !== 1) return [];
+      f.store.update(f.task.id, {
+        held: true,
+        holds: {
+          dispatch: {
+            owner: "operator",
+            reason: "Operator hold: maintenance",
+            at: new Date().toISOString(),
+            generation: f.current().coordinatorGeneration,
+            until: null,
+          },
+        },
+      });
+      return [];
+    };
+    await f.engine.resolution.recovery.pass(f.task.id);
+    assert.deepEqual(
+      [
+        f.store.run(orphan.id)?.released,
+        f.store.run(replaced.id)?.released,
+      ],
+      [false, false],
+      "a dispatch hold that lands during the lookup keeps every creation owned",
+    );
+    assert.equal(
+      f.store
+        .eventsAll(f.task.id)
+        .some((event) => event.kind === "absent_recovery_released"),
+      false,
+    );
+    f.store.update(f.task.id, { held: false, holds: {} });
+    f.adapter.findRunAgents = async () => [];
     await f.engine.resolution.recovery.pass(f.task.id);
     assert.equal(f.store.run(replaced.id)?.released, true);
     assert.equal(
