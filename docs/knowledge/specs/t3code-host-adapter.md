@@ -24,11 +24,18 @@ fallback (Tom, 2026-11-19, on retiring it so the parent's is the only row rule:
 "Agreed, let's keep things simple").** When the provider is missing or not ready,
 the parent is archived or deleted, or a child can't be created, the task waits
 visibly with the reason and the fix (for example "T3 provider not ready: run
-`nucleus t3 install`"), or the operator moves it to another host. The task's one
-parent row is settled whenever the task waits on nothing Nucleus is running and
-needs no person, and unsettled only when a person must act, driven by the board's
-attention projection. The fallback paths and per-role row rules described below
-are retired (implementation: nucleus#1366). The adapter does not patch T3,
+`nucleus t3 install`"), or the operator moves it to another host. **Nucleus
+never settles a task thread; a waiting task is snoozed (Tom, 2026-11-19: "I use
+the settle list for longer running threads I want to come back to.. it would be
+great if we could keep Nucleus noise to a minimum in that list, snoozing seems
+ideal?").** The parent row has three states, driven by the board's attention
+projection: *active* while a role child runs or a person must act (Nucleus
+unsnoozes it then, and leaves a manual settle alone); *snoozed* while the task
+waits on nothing Nucleus is running and needs no one (held until something,
+prerequisite wait, queued for capacity, between roles), with the snooze renewed
+before it lapses; *archived* when the task finishes. The fallback paths and
+per-role settle rules described below are retired (implementation:
+nucleus#1366). The adapter does not patch T3,
 attach Nucleus MCP servers, raise Nucleus questions inside threads or contribute
 T3 UI. A T3 thread reports through the packaged nucleus helper with the run
 ticket named in its prompt. Nucleus-raised questions go to the web board and
