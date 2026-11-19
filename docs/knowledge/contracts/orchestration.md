@@ -2945,18 +2945,31 @@ movement invalidates source approval and preserves the normal readiness gates.
 
 - Nucleus records one current stop per task (`{reason, detail, since,
   suggestedVerbs}`). A coordinator returns one typed `coordinatorAction`
-  (`restart`, `route`, `move`, `retry_effect` or `cannot`) with its recovery run
-  identity; Nucleus applies it through the shared verb registry. A recovered
-  report with no action, or a blocked/error report on healthy work, settles as
-  a no-op when Nucleus observes an active turn, advancing activity, or a project
-  slot or prerequisite wait. The initial worker and resolution participants use
-  the same rule; the report's wording does not decide whether work is live.
-  The task keeps its phase and ordinary wait, and its timeline records
-  “recovery: task live, nothing to do”. No escalation opens and recovery does not
-  repeat while the work remains live. A genuine fault still takes the existing
-  escalation path, including a verified provider-exhaustion report.
-  A recovered report with no action and no live work is refused: the coordinator
-  must name an action or `cannot`.
+  (`restart`, `route`, `move`, `retry_effect`, `none` or `cannot`) with its
+  recovery run identity; Nucleus applies it through the shared verb registry. A
+  live participant is reported as `{verb: "none", reason: "no action: <who> is
+  live and progressing"}`, and a report that names no action at all means the
+  same thing. A recovered report with no action, or a blocked/error report on
+  healthy work, settles as a no-op when Nucleus observes an active turn,
+  advancing activity, or a project slot or prerequisite wait. The initial worker
+  and resolution participants use the same rule; the report's wording does not
+  decide whether work is live. The task keeps its phase and ordinary wait, and
+  its timeline records “recovery: task live, nothing to do”. No escalation opens
+  and recovery does not repeat while the work remains live. A genuine fault still
+  takes the existing escalation path, including a verified provider-exhaustion
+  report.
+- A report that names no owner verb and that Nucleus cannot see as live settles
+  the episode as an observation too (nucleus#1388): the episode resolves with the
+  report's own words (`observed: <status>, no action — <summary>`), nothing is
+  applied, and no refusal or attention notice is raised. The stop it answered and
+  its work identity are left as they were, so a later pass over the same unchanged
+  facts answers from the resolved episode and opens no new coordinator; the loop
+  breaker still bounds a report that does act. An escalating report keeps its
+  escalation. Only a stored narrow action shape is refused *as retired*, naming the
+  owner verb that replaced it: the Spec 049 `recoveryAction` values (`retry`,
+  `revise`, `resume_worker`, `reassign_origin`, `reconcile`) and the four narrow
+  task controls folded into the owner verbs on 2026-10-19 (`restart`,
+  `move to=work`, `restart role=reviewer` and `amend_brief` with no text).
 - A planner-selected time or task wait resumes ordinary work when its condition
   settles, even if the recovery run that raised the escalation has ended or is
   missing. Wake follows the available continuation from `next`; when no retained

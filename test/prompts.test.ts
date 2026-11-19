@@ -1,4 +1,4 @@
-import { buildRunContext } from '../core/dispatch/prompt-text/context-store';
+import { buildRunContext } from "../core/dispatch/prompt-text/context-store";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -203,7 +203,10 @@ test("proof-only receipt reviewer prompt explains that worker preferences do not
 // Spec 058 rollout step 3 (task 621): worker and reviewer prompts name nucleus_message in one line.
 test("role prompts direct standing guidance to the bound context", () => {
   assert.match(workerPrompt(handoffTask, true), /Worker rules.*context rules/);
-  assert.match(runPrompt(handoffTask, runs[1], '/helper', '/ticket', true), /Reviewer rules.*context rules/);
+  assert.match(
+    runPrompt(handoffTask, runs[1], "/helper", "/ticket", true),
+    /Reviewer rules.*context rules/,
+  );
 });
 
 test("worker startup pins the queue-owned branch through PR reporting", () => {
@@ -546,8 +549,21 @@ test("identity-confirmation continuation names the recorded PR even before a res
 test("scoped revision prompt keeps brief, review findings and the operator instruction as distinct sources", () => {
   const repairBrief = "Repair brief\n";
   const pinned = {
-    brief: { text: repairBrief, mediaType: "text/markdown", digest: briefDigest(repairBrief) },
-    briefVersions: [{ version: 1, digest: briefDigest(repairBrief), mediaType: "text/markdown", text: repairBrief, reason: "Submitted", pinnedAt: "2026-09-13T00:00:00.000Z" }],
+    brief: {
+      text: repairBrief,
+      mediaType: "text/markdown",
+      digest: briefDigest(repairBrief),
+    },
+    briefVersions: [
+      {
+        version: 1,
+        digest: briefDigest(repairBrief),
+        mediaType: "text/markdown",
+        text: repairBrief,
+        reason: "Submitted",
+        pinnedAt: "2026-09-13T00:00:00.000Z",
+      },
+    ],
     handoffText: repairBrief,
   };
   const task = {
@@ -901,11 +917,16 @@ test("coordinator recovery prompt reports one registered action for the current 
   assert.match(prompt, /Inspect queue and task evidence for the current task/);
   assert.match(
     prompt,
-    /Report exactly one coordinatorAction: restart, route, move, retry_effect, or cannot/,
+    /Report exactly one coordinatorAction: restart, route, move, retry_effect, none or cannot/,
   );
   assert.match(
     prompt,
-    /Use status recovered for restart, route, move or retry_effect, and blocked or error for cannot/,
+    /Use status recovered for restart, route, move, retry_effect or none, and blocked or error for cannot/,
+  );
+  assert.match(
+    prompt,
+    /report recovered with coordinatorAction \{verb: "none", reason: "no action: <who> is live and progressing"\}/,
+    "the no-action outcome is an explicit action the coordinator can report",
   );
   assert.match(prompt, /message the originating planning thread/);
   assert.match(prompt, /repeat an operator-gated action/);
@@ -1407,23 +1428,40 @@ test("every worktree-facing prompt forbids the repository-shared git stash", () 
 });
 
 test("extended validation retains execution detail", () => {
-  const text = buildRunContext(handoffTask, { id: 'r', role: 'worker', head: 'a'.repeat(40) }).validation;
-  assert.match(text, /Never kill processes by pattern/); assert.match(text, /foreground/);
+  const text = buildRunContext(handoffTask, {
+    id: "r",
+    role: "worker",
+    head: "a".repeat(40),
+  }).validation;
+  assert.match(text, /Never kill processes by pattern/);
+  assert.match(text, /foreground/);
 });
 
 test("author and reviewer validation points to repository authority", () => {
-  for (const prompt of [workerPrompt(handoffTask, true), runPrompt(handoffTask, runs[0], '/helper', '/ticket', true), runPrompt(handoffTask, runs[1], '/helper', '/ticket', true)]) assert.match(prompt, /AGENTS.md Validate section/);
+  for (const prompt of [
+    workerPrompt(handoffTask, true),
+    runPrompt(handoffTask, runs[0], "/helper", "/ticket", true),
+    runPrompt(handoffTask, runs[1], "/helper", "/ticket", true),
+  ])
+    assert.match(prompt, /AGENTS.md Validate section/);
 });
 
 test("worktree-facing prompts protect other worktrees and run scratch", () => {
-  assert.match(WORKSPACE_RULE, /Never use git stash or remove another worktree/);
-  assert.match(WORKSPACE_RULE, /Never remove the scratch root, its parent, or anything another run owns/);
+  assert.match(
+    WORKSPACE_RULE,
+    /Never use git stash or remove another worktree/,
+  );
+  assert.match(
+    WORKSPACE_RULE,
+    /Never remove the scratch root, its parent, or anything another run owns/,
+  );
 });
 
 test("run prompt names the current scratch and environment", () => {
-  const run = { ...runs[1], temporaryDirectory: '/scratch/current' };
-  const prompt = runPrompt(handoffTask, run, '/helper', '/ticket', true);
-  assert.match(prompt, /Run scratch: \/scratch\/current/); assert.match(prompt, /TMPDIR=/);
+  const run = { ...runs[1], temporaryDirectory: "/scratch/current" };
+  const prompt = runPrompt(handoffTask, run, "/helper", "/ticket", true);
+  assert.match(prompt, /Run scratch: \/scratch\/current/);
+  assert.match(prompt, /TMPDIR=/);
 });
 
 test("the first BB worker sees the browser-cache capability gap", () => {
@@ -1495,18 +1533,34 @@ test("the clean-environment retry defers to this run's temporary directory, neve
 });
 
 test("workspace safety and source immutability stay in prompts", () => {
-  assert.match(WORKSPACE_RULE, /Tests may remove only their own fixture directories/);
-  assert.match(runPrompt(handoffTask, runs[1], '/helper', '/ticket', true), /must never edit tracked files/);
+  assert.match(
+    WORKSPACE_RULE,
+    /Tests may remove only their own fixture directories/,
+  );
+  assert.match(
+    runPrompt(handoffTask, runs[1], "/helper", "/ticket", true),
+    /must never edit tracked files/,
+  );
 });
 
 test("validation detail remains available to the worker", () => {
-  const text = buildRunContext(handoffTask, { id: 'r', role: 'worker', head: 'a'.repeat(40) }).validation;
-  assert.match(text, /foreground/); assert.match(text, /Ending the turn while one runs/);
+  const text = buildRunContext(handoffTask, {
+    id: "r",
+    role: "worker",
+    head: "a".repeat(40),
+  }).validation;
+  assert.match(text, /foreground/);
+  assert.match(text, /Ending the turn while one runs/);
 });
 
 test("extended validation keeps the completion rule", () => {
-  const text = buildRunContext(handoffTask, { id: 'r', role: 'worker', head: 'a'.repeat(40) }).validation;
-  assert.match(text, /Run each covering check once/); assert.match(text, /Only a check you would add beyond the brief/);
+  const text = buildRunContext(handoffTask, {
+    id: "r",
+    role: "worker",
+    head: "a".repeat(40),
+  }).validation;
+  assert.match(text, /Run each covering check once/);
+  assert.match(text, /Only a check you would add beyond the brief/);
 });
 
 test("the reviewer must perform a brief-assigned reviewer proof or report blocked, never approve without it", () => {
@@ -2378,17 +2432,26 @@ const cleanupTask = (resolution: Record<string, unknown>) =>
   }) as unknown as Task;
 
 test("revision prompts direct cleanup history to run context", () => {
-  const text = runPrompt(handoffTask, runs[0], '/helper', '/ticket', true);
-  assert.match(text, /context/); assert.match(text, /Resume/);
+  const text = runPrompt(handoffTask, runs[0], "/helper", "/ticket", true);
+  assert.match(text, /context/);
+  assert.match(text, /Resume/);
 });
 
 test("build output history preserves recorded data in context", () => {
-  const ctx = buildRunContext(handoffTask, { id: 'r', role: 'revision', head: 'a'.repeat(40) });
+  const ctx = buildRunContext(handoffTask, {
+    id: "r",
+    role: "revision",
+    head: "a".repeat(40),
+  });
   assert.match(ctx.history, /buildOutputCleanups/);
 });
 
 test("reviewer can read cleanup history from context", () => {
-  const ctx = buildRunContext(handoffTask, { id: 'r', role: 'reviewer', head: 'a'.repeat(40) });
+  const ctx = buildRunContext(handoffTask, {
+    id: "r",
+    role: "reviewer",
+    head: "a".repeat(40),
+  });
   assert.match(ctx.history, /buildOutputCleanups/);
 });
 
@@ -2486,7 +2549,10 @@ test("the required-proof instruction is fixed prompt text, rendered outside the 
     REQUIRED_PROOF_AUTHOR_NOTE,
     /never waive a proof this brief names as required[\s\S]*through proofFiles[\s\S]*report it missing rather than claiming the work is complete/,
   );
-  assert.doesNotMatch(REQUIRED_PROOF_AUTHOR_NOTE, /exceeds the limits|subset the brief allows|reviewResponsibility/);
+  assert.doesNotMatch(
+    REQUIRED_PROOF_AUTHOR_NOTE,
+    /exceeds the limits|subset the brief allows|reviewResponsibility/,
+  );
 });
 
 test("brief-mode prompts and reviewer continuations carry the required-proof instruction", () => {
@@ -2655,7 +2721,10 @@ test("affected-test prompts are opt-in and use the repository command", () => {
     assert.doesNotMatch(prompt, /effigy test:baseline|effigy qa/);
   }
   for (const prompt of optedIn.slice(0, 2))
-    assert.match(prompt, /this repository configures its own affected-tests command/);
+    assert.match(
+      prompt,
+      /this repository configures its own affected-tests command/,
+    );
   assert.doesNotMatch(optedIn[2], /after you commit/);
   assert.match(
     optedIn[2],
@@ -2790,9 +2859,16 @@ test("recovery coordinator prompt carries the launch snapshot and the one refres
 });
 
 test("worker rules distinguish blockers from unfinished work", () => {
-  const ctx = buildRunContext(handoffTask, { id: 'r', role: 'worker', head: 'a'.repeat(40) });
+  const ctx = buildRunContext(handoffTask, {
+    id: "r",
+    role: "worker",
+    head: "a".repeat(40),
+  });
   assert.match(ctx.rules, /hit a concrete impediment/);
-  assert.match(ctx.rules, /Unfinished work and context pressure call for continued work or a checkpoint/);
+  assert.match(
+    ctx.rules,
+    /Unfinished work and context pressure call for continued work or a checkpoint/,
+  );
 });
 
 test("retired verification runs cannot produce a closeout prompt", () => {

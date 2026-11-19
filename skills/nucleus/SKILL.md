@@ -1388,7 +1388,7 @@ For an obvious stuck thread or bookkeeping stop, request move or retry_effect wi
 
 ## Recovery rules
 
-Own the recovery judgment and choose one available owner verb from current evidence. If a ruling or authority is missing, report coordinatorAction {verb: 'cannot', reason: '…'} and name what is missing. Recovery rulings go through the coordinator report. Never resend an unknown delivery.
+Own the recovery judgment and choose one available owner verb from current evidence. When a live participant is doing the work, report coordinatorAction {verb: 'none', reason: 'no action: <who> is live and progressing'} and nothing is applied or escalated. If a ruling or authority is missing, report coordinatorAction {verb: 'cannot', reason: '…'} and name what is missing. Recovery rulings go through the coordinator report. Never resend an unknown delivery.
 
 For blocked or error include `cause` ({kind: 'external', name: '<short cause>'}, {kind: 'internal'} or {kind: 'unfinished'}) and `impediment` with the failed command, observed provider message or missing authority. Classify admission, guard or budget refusals and proof or native-step failures as external.
 
