@@ -12,7 +12,7 @@ import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { chmodSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { executeHookProgram, type ChildExitFacts } from "../core/machine/process-exec";
@@ -125,6 +125,31 @@ test("a step exiting non-zero records its exit code on the step and on its own e
   assert.equal(exit!.signal, null);
   assert.equal(exit!.processGroupId, exit!.pid, "a detached step leader's pid is its group id");
   assert.ok(Number.isFinite(Date.parse(exit!.exitedAt)));
+});
+
+test("a detached staged supervisor publishes a result after a long final burst", { skip: process.platform === "win32", timeout: 60_000 }, async (t) => {
+  const f = await pipelineFixture(t, [process.execPath, "-e", "process.stdout.write('x'.repeat(1024 * 1024) + '\\nfinal burst complete\\n')"]);
+  f.plan.stages = [
+    { name: "first", argv: [process.execPath, "-e", "console.log('first stage')"], timeoutMs: 30_000 },
+    { name: "last", argv: f.run.argv, timeoutMs: 30_000 },
+  ];
+  writeQaSupervisionPlan(f.paths.planPath, f.plan);
+  const child = spawn(process.execPath, ["--import", "tsx", "bin/queue-qa-supervisor.mjs", f.paths.planPath, f.plan.identityToken],
+    { cwd: process.cwd(), env: process.env, stdio: ["ignore", "ignore", "pipe"] });
+  let stderr = "";
+  child.stderr!.setEncoding("utf8");
+  child.stderr!.on("data", chunk => { stderr += chunk; });
+  t.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL"); });
+  const exit = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
+    child.once("error", reject);
+    child.once("close", (code, signal) => resolve({ code, signal }));
+  });
+  assert.deepEqual(exit, { code: 0, signal: null }, stderr);
+  const state = readQaSupervision(f.paths.statePath);
+  assert.equal(state?.result?.state, "passed");
+  assert.deepEqual(state?.steps.map(step => step.name), ["first", "last"]);
+  const live = await readFile(qaRunLiveOutputPath(f.run.runRoot, f.run.runId), "utf8");
+  assert.match(live, /final burst complete\n$/);
 });
 
 test("a step group killed from outside settles the run failed with that signal and its output", { skip: process.platform === "win32" }, async (t) => {
