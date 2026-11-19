@@ -147,6 +147,7 @@ test("a detached staged supervisor publishes a result after a long final burst",
   assert.deepEqual(exit, { code: 0, signal: null }, stderr);
   const state = readQaSupervision(f.paths.statePath);
   assert.equal(state?.result?.state, "passed");
+  assert.equal(state?.phase, "live-output-close");
   assert.deepEqual(state?.steps.map(step => step.name), ["first", "last"]);
   const live = await readFile(qaRunLiveOutputPath(f.run.runRoot, f.run.runId), "utf8");
   assert.match(live, /final burst complete\n$/);
@@ -482,7 +483,7 @@ test("an ended step settles failed from its own exit, with the step, the signal 
       leaderStartIdentity: "a".repeat(32), startedAt: new Date(Date.now() - 90_000).toISOString(),
     },
     inFlight: "qa", steps: [], failedStep: null, logWriteErrors: [], escapedDescendants: [],
-    detail: "setup output", escapedDescendantsOld: undefined, cancelReason: null,
+    detail: "setup output", escapedDescendantsOld: undefined, cancelReason: null, phase: "step-logs",
   };
   const { context, settled } = recoveryFixture(run, state, runRoot);
   await projectQaRecovery.settleEndedStep.call(context as any, run as any, {
@@ -503,6 +504,8 @@ test("an ended step settles failed from its own exit, with the step, the signal 
   assert.match(outcome.detail, /qa ended by SIGTERM/);
   assert.match(outcome.detail, /Live output log: .*\.live\.log at byte \d+/);
   assert.match(outcome.detail, /stage line two/, "the last output lines travel with the settlement");
+  assert.match(outcome.detail, /Last supervisor phase: step-logs/);
+  assert.match(outcome.detail, /final bytes may have been withheld/);
   assert.match(outcome.detail, /settled this run failed/);
   assert.doesNotMatch(outcome.detail, /lost this QA run/);
   assert.equal(outcome.steps.find((step: any) => step.name === "qa")?.signal, "SIGTERM");

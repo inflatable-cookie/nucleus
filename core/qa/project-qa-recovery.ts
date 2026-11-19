@@ -86,6 +86,7 @@ export function qaOutputPointerDetail(runRoot: string, runId: string, step: Proj
   const live = readQaOutputPointer(qaRunLiveOutputPath(runRoot, runId));
   const lines = [`Live output log: ${qaRunLiveOutputPath(runRoot, runId)}${live ? ` at byte ${live.bytes}` : " (no readable live log)"}.`];
   if (live?.tail) lines.push(`Last output lines:\n${live.tail}`);
+  lines.push("The supervisor did not close the live log normally; up to the run token's length in final bytes may have been withheld by redaction.");
   lines.push(`No step log for ${step} was written; the live log is the run's output record.`);
   return lines.join("\n");
 }
@@ -108,7 +109,7 @@ export const projectQaRecovery = {
     const interruptedStep = state?.inFlight ?? null;
     await this.settleAbandoned(run, state, {
       state: "lost", exitCode: null, interruptedStep, hostResult: null,
-      account: interruptedStep ? `The ${interruptedStep} step was in flight when the supervisor died.` : "",
+      account: `${interruptedStep ? `The ${interruptedStep} step was in flight when the supervisor died. ` : ""}Last supervisor phase: ${state?.phase ?? "unknown"}; supervisor exit code or signal: unknown. The live log may be missing up to the run token's length in final bytes.`,
       closing: `Queue backend lost this QA run (${reason}).`,
     }, escapedDescendants);
   },
@@ -154,7 +155,7 @@ export const projectQaRecovery = {
       state: "failed", exitCode: exit.signal ? null : exit.exitCode,
       interruptedStep: exit.step, hostResult,
       ...(endedStep ? { steps: [...state.steps, endedStep], failedStep: exit.step } : { failedStep: state.failedStep ?? exit.step }),
-      account: `The supervisor left this run unsettled: ${reason}.\n${output}`,
+      account: `The supervisor left this run unsettled: ${reason}. Last supervisor phase: ${state.phase ?? "unknown"}; supervisor exit code or signal: unknown.\n${output}`,
       closing: "Queue settled this run failed from the step's own recorded exit; it is not lost, because the step's exit code or signal and its output were recorded.",
     }, state.escapedDescendants);
   },

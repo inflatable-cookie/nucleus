@@ -167,6 +167,8 @@ export const qaSupervisionStateSchema = z.object({
   identityToken: z.string().min(16).max(128),
   startedAt: z.string().min(1),
   heartbeatAt: z.string().min(1),
+  /** Last durable pipeline boundary, for diagnosing a supervisor that stops. */
+  phase: z.enum(["starting", "step-output", "step-logs", "tap-finalize", "teardown", "escapee-reap", "checkout-cleanup", "host-result", "result-publication", "live-output-close"]).optional(),
   /** The step currently running, so a proven-dead supervisor names what was in flight. */
   inFlight: projectQaStepNameSchema.nullable(),
   /** Published from the spawn event; pendingProcessIdentity covers the publication window. */

@@ -41,7 +41,7 @@ export async function openQaLiveOutput(path: string, secret?: LiveOutputSecret):
   let file;
   try {
     await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-    file = await open(path, "a", 0o600);
+    file = await open(path, "a+", 0o600);
   } catch { return null; }
   let pending = Buffer.alloc(0);
   let writing: Promise<void> | null = null;
@@ -51,11 +51,27 @@ export async function openQaLiveOutput(path: string, secret?: LiveOutputSecret):
   const marker = Buffer.from("\n[queue] live output truncated; the step logs beside the run keep the full record\n");
   const drain = async () => {
     while (pending.length) {
-      const bytes = pending; pending = Buffer.alloc(0);
-      const truncate = dropped || written + bytes.length > LIVE_OUTPUT_BYTES;
+      let bytes = pending; pending = Buffer.alloc(0);
+      const lostPending = dropped;
+      const truncate = lostPending || written + bytes.length > LIVE_OUTPUT_BYTES;
       dropped = false;
       try {
-        if (truncate) { await file.truncate(0); await file.writeFile(marker); written = marker.length; }
+        if (truncate) {
+          // Preserve the most recent already-written bytes as well as this
+          // chunk. In particular, a short redactor flush must not replace a
+          // whole full log with just the withheld token-length tail.
+          bytes = bytes.subarray(-Math.max(0, LIVE_OUTPUT_BYTES - marker.length));
+          const keep = lostPending ? 0 : Math.min(written, LIVE_OUTPUT_BYTES - marker.length - bytes.length);
+          const tail = Buffer.alloc(keep);
+          if (keep) {
+            const read = await file.read(tail, 0, keep, written - keep);
+            if (read.bytesRead !== keep) throw new Error("Could not read live output tail");
+          }
+          await file.truncate(0);
+          await file.writeFile(marker);
+          if (keep) await file.writeFile(tail);
+          written = marker.length + keep;
+        }
         await file.writeFile(bytes);
         written += bytes.length;
       } catch { /* the terminal projection is best effort */ }

@@ -1,1 +1,1 @@
-Add a detached staged QA supervisor regression case for a long final output burst.
+Keep the latest QA live output across truncation and record the supervisor's last pipeline phase for recovery diagnostics.

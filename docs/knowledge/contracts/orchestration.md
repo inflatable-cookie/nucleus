@@ -135,6 +135,15 @@ last heartbeat, pre-stop supervisor liveness, in-flight step and process-group
 state, plus starts and rolls in the heartbeat gap; incomplete service history
 is reported as unknown.
 
+The supervisor records its last pipeline phase around step output, step logs,
+TAP finalization, teardown, cleanup and result publication. Abandoned-run
+detail names the last recorded phase and says when the supervisor's own exit
+code or signal is unknown. The live-output projection keeps the newest bytes
+across truncation, including the redactor's final flush; if the supervisor dies
+before closing it, recovery warns that final bytes up to the token's length may
+have been withheld. A phase is diagnostic evidence, not proof that an operation
+completed or authority to retry it.
+
 The executor publishes the direct child's exit the moment the kernel reports it
 (`onChildExit`), and `project-qa-detached-io.ts` writes that step's exit code or
 terminating signal, time, pid and group to its own `<run>.stepexit.json` ahead of
