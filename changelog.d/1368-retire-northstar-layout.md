@@ -1,0 +1,1 @@
+Nucleus no longer knows the old Northstar layout. Committed handoffs are retired: `nucleus helper submit` and `queue.handoff` accept only Queue-held briefs (`--brief`), and `queue.submit-instruction` is refused. Closeout writes no files, so `docs/README.md`, `docs/logs`, `docs/roadmaps` and `docs/handoffs` get no special handling; a merged PR's files are ordinary source.

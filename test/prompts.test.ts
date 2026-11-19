@@ -27,7 +27,7 @@ import type {
 import { workerPrompt } from "../core/dispatch/prompts";
 import { briefDigest } from "../core/planning/brief";
 import { laneDocumentScratchPath } from "../core/planning/brief-lane-documents";
-import { parseNorthstarDocument } from "../core/planning/handoff";
+import { parseBriefDocument } from "../core/planning/handoff";
 import { handoffTask, runs, intent } from "./fixtures/handoff-prompt-cases";
 
 const messageRuleTask = {
@@ -324,7 +324,7 @@ test("report-only worker prompt ends with a lane artifact and no PR", () => {
 
 test("report-only prompt honours a lead-promoted brief that has no queue_approval", () => {
   const brief = `---\ntitle: Report\nqueue:\n  complexity: low\n  lanes: [web-health]\n  reportOnly: true\n  reportLane: web-health\n---\n\n## Outcome\nWrite a report.\n`;
-  assert.throws(() => parseNorthstarDocument(brief, "brief"), /queue_approval/);
+  assert.throws(() => parseBriefDocument(brief, "brief"), /queue_approval/);
   const task = {
     id: "task",
     runId: "initial",

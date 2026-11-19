@@ -145,14 +145,14 @@ process.on('SIGTERM', () => { void service.stop().then(() => process.exit(0)); }
     // rather than creating tasks or changing ownership.
     const helperEnv = { ...env, NUCLEUS_TICKET: identityTicket };
     for (const [helper, args] of [
-      ["submit", ["--dry-run", join(root, "repo/docs/handoffs/missing.md")]],
+      ["submit", ["--dry-run", "--brief", join(root, "repo/tasks/missing.md")]],
       ["reparent", ["fixture-owner", "--task", "missing-task", "--reason", "scratch proof"]],
     ] as const) {
       const failure = async (run: Promise<unknown>) => {
         try { await run; assert.fail("Missing fixture input must be refused"); }
         catch (error: any) {
           assert.equal(error.code, 1);
-          assert.doesNotMatch(error.stderr, /Cannot find (?:module|package)|Supply at least one handoff/);
+          assert.doesNotMatch(error.stderr, /Cannot find (?:module|package)|Supply at least one brief/);
           return { stdout: error.stdout, stderr: error.stderr, code: error.code };
         }
       };

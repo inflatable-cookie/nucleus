@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {stringify} from 'yaml';
-import {parseNorthstarDocument,submissionQueueFields} from '../core/planning/handoff';
+import {parseBriefDocument,submissionQueueFields} from '../core/planning/handoff';
 
 const work = {
   id:'prepare',kind:'work',subject:{head:'candidate',digests:[{path:'inputs/source.json'}]},
@@ -17,7 +17,7 @@ const brief = (stages?:unknown) => stringify({
   title:'Stage schema fixture',queue_approval:'Approved for schema test',
   ...(stages===undefined?{}:{queue:{stages:Array.isArray(stages)?stages.map(stage=>JSON.parse(JSON.stringify(stage))):stages}}),
 }).replace(/^/, '---\n').replace(/$/, '---\n\nA brief body.\n');
-const parsedBrief = (stages:unknown) => parseNorthstarDocument(brief(stages),'brief');
+const parsedBrief = (stages:unknown) => parseBriefDocument(brief(stages),'brief');
 const rejectedAs = (stages:unknown,message:string) => assert.throws(
   ()=>parsedBrief(stages),error=>{
     assert.equal((error as Error).message,`Invalid brief frontmatter: ${message}`);
@@ -45,7 +45,7 @@ test('Spec 043 brief stages stay in brief text and are omitted from submission q
   assert.equal(Object.hasOwn(submissionFields,'stages'),false);
   assert.match(brief([work,review]),/stages:/);
 
-  const legacy=parseNorthstarDocument(`---\n${stringify({title:'Legacy brief',queue_approval:'Approved',queue:{scope:'mechanical'}})}---\nBody.\n`,'brief');
+  const legacy=parseBriefDocument(`---\n${stringify({title:'Legacy brief',queue_approval:'Approved',queue:{scope:'mechanical'}})}---\nBody.\n`,'brief');
   assert.equal(Object.hasOwn(legacy.queue,'stages'),false);
   assert.deepEqual(submissionQueueFields(legacy.queue as unknown as Parameters<typeof submissionQueueFields>[0]),
     {dependsOn:[],scope:'mechanical',completionNotificationAgentIds:[],lanes:[]});
@@ -120,7 +120,7 @@ test('Spec 043 a stage profile is schema-checked and only review or verify stage
 });
 
 test('Spec 043 goal gate schema accepts named verdict ids or the terminal gate, and requires stages',()=>{
-  const briefWith=(queue:Record<string,unknown>)=>parseNorthstarDocument(
+  const briefWith=(queue:Record<string,unknown>)=>parseBriefDocument(
     `---\n${stringify({title:'Goal fixture',queue_approval:'Approved',queue})}---\n\nA brief body.\n`,'brief');
   assert.deepEqual(briefWith({stages:[work,review],goal:['source-check']}).queue.goal,['source-check']);
   assert.equal(briefWith({stages:[work,review],goal:true}).queue.goal,true);
@@ -133,7 +133,7 @@ test('Spec 043 goal gate schema accepts named verdict ids or the terminal gate, 
 });
 
 test('retired root review keys are refused on any brief, staged or not',()=>{
-  const briefWith=(queue:Record<string,unknown>)=>parseNorthstarDocument(
+  const briefWith=(queue:Record<string,unknown>)=>parseBriefDocument(
     `---\n${stringify({title:'Staged gate fixture',queue_approval:'Approved',queue})}---\n\nA brief body.\n`,'brief');
   assert.throws(()=>briefWith({stages:[work,review],reviewVerdicts:['source-check']}),
     /Invalid brief frontmatter: queue.reviewVerdicts: queue.reviewVerdicts is no longer available/);

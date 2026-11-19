@@ -119,7 +119,7 @@ the retained reviewer thread. No extra review workspace is created.
 Derive the canonical `submission` without dispatching a worker:
 
 ```sh
-nucleus helper submit --dry-run /absolute/repo/docs/handoffs/handoff.md
+nucleus helper submit --brief --dry-run --repo /absolute/repo /absolute/brief.md
 ```
 
 Copy its returned `submission` into a review-entry JSON file. Add:

@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { Store, digest } from '../core/store/store';
-import { git, command, queueCheckoutStatus, validateSubmission } from '../core/git/index';
+import { git, command, queueCheckoutStatus } from '../core/git/index';
 import {
   RepositoryHooks, blobDigest, discoverManifest, inspectChangedPaths, STDERR_EXCERPT_MAX_BYTES, HOOK_EVIDENCE_MAX_BYTES,
   parseHookResult, parseManifestBytes, parsePorcelain, pinInstruction, executeHookProgram,
@@ -90,7 +90,7 @@ async function hooksFixture(t: any, files: Record<string, { content: string; mod
 
 test('the generic hook core carries no document-system vocabulary', async () => {
   const generic = [await readFile(join(process.cwd(), 'shared', 'hooks.ts'), 'utf8'), await readFile(join(process.cwd(), 'core', 'hooks', 'hooks.ts'), 'utf8')].join('\n');
-  for (const forbidden of ['docs/handoffs', 'handoffPath', 'planningCommit', 'frontmatter', 'Northstar handoff file', 'g0', 'worker-pr-loop']) {
+  for (const forbidden of ['handoffPath', 'planningCommit', 'frontmatter', 'Northstar handoff file', 'g0', 'worker-pr-loop']) {
     assert.equal(generic.includes(forbidden), false, `generic hook core must not embed ${forbidden}`);
   }
   const parsed = parseManifestBytes(Buffer.from(manifest([manifestHook()])));
@@ -156,17 +156,6 @@ test('instruction identity is immutable and regular-blob only', async t => {
   assert.equal(blobDigest(Buffer.from('x')), 'sha256:' + (await import('node:crypto')).createHash('sha256').update('x').digest('hex'));
 });
 
-weighted(2)('generic instruction submission validates identity without parsing the document', async t => {
-  const f = await hooksFixture(t);
-  const bytes = await readFile(join(f.repo, 'docs/plan.json'));
-  const instruction = instructionArtifactSchema.parse({ path: 'docs/plan.json', commit: f.head, digest: blobDigest(bytes), mediaType: 'application/json' });
-  const submission = submissionSchema.parse({ submissionId: 'generic-1', title: 'Ledger', repoPath: f.repo, baseBranch: 'main', planningCommit: f.head, handoffPath: 'docs/plan.json', instruction, originAgentId: 'origin' });
-  assert.deepEqual((await validateSubmission(submission)).instruction, instruction);
-  await assert.rejects(validateSubmission({ ...submission, instruction: { ...instruction, digest: `sha256:${'0'.repeat(64)}` } }), /digest/);
-  // A legacy submission without the artifact still resolves the same immutable identity.
-  const legacy = (await validateSubmission({ ...submission, instruction: null })).instruction!;
-  assert.deepEqual({ path: legacy.path, commit: legacy.commit, digest: legacy.digest }, { path: instruction.path, commit: instruction.commit, digest: instruction.digest });
-});
 
 weighted(11)('read-only hook receives the event on stdin and preserves Git state', async t => {
   const { root, repo } = await makeRepo(t);

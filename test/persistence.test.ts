@@ -37,7 +37,7 @@ async function startService(fixture: string, fixtureState: Record<string, unknow
 
 const insert = (submissionId: string) => ({ target: 'store', method: 'insert', args: [submissionSchema.parse({
   submissionId, title: 'Asynchronous persistence', repoPath: '/fixture', planningCommit: base,
-  handoffPath: `docs/handoffs/${submissionId}.md`, originAgentId: 'origin',
+  handoffPath: `tasks/${submissionId}.md`, originAgentId: 'origin',
 }), 'fixture-host', 'Handoff', base] });
 
 test('a five-second database operation cannot delay service health or a cached board read', async () => {

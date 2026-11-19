@@ -1,3 +1,4 @@
+import { briefDigest } from '../core/planning/brief';
 import { fakeAdapter, observeIdle } from './support/fakes';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -411,26 +412,26 @@ test('Spec 021 #7 submission result and operation status carry number and refere
     await git(repo, 'checkout', '-b', 'main');
     await git(repo, 'config', 'user.name', 'Queue test');
     await git(repo, 'config', 'user.email', 'queue@example.invalid');
-    mkdirSync(join(repo, 'docs/handoffs'), { recursive: true });
-    writeFileSync(join(repo, 'docs/handoffs/test.md'), '# Handoff\n\nConcrete instructions.\n');
+    writeFileSync(join(repo, 'README.md'), 'Fixture\n');
     await git(repo, 'add', '.');
-    await git(repo, 'commit', '-m', 'Committed handoff');
+    await git(repo, 'commit', '-m', 'Fixture');
     await git(repo, 'push', 'origin', 'main');
     const commit = await git(repo, 'rev-parse', 'HEAD');
-    const base = { submissionId: 'sub-operation', title: 'Submitted', repoPath: repo, planningCommit: commit, originAgentId: 'origin' };
+    const OPS_BRIEF = '## Outcome\n\nConcrete instructions.\n';
+    const base = { submissionId: 'sub-operation', title: 'Submitted', repoPath: repo, planningCommit: commit, originAgentId: 'origin', brief: { text: OPS_BRIEF, mediaType: 'text/markdown', digest: briefDigest(OPS_BRIEF) } };
 
-    // A missing handoff blob is a deterministic local rejection: the operation
+    // A brief whose pinned digest does not match its text is a deterministic local rejection: the operation
     // is durable, records the failure, and creates no task.
-    const invalid = submissionSchema.parse({ ...base, handoffPath: 'docs/handoffs/missing.md' });
+    const invalid = submissionSchema.parse({ ...base, brief: { ...base.brief, digest: `sha256:${'0'.repeat(64)}` } });
     const rejected = await f.engine.startOperation({ key: `submit:${invalid.submissionId}`, kind: 'submit', payload: { type: 'submit', submission: invalid }, submissionId: invalid.submissionId, repoPath: invalid.repoPath });
     assert.ok('accepted' in rejected);
     assert.ok(f.store.operationForKey(`submit:${invalid.submissionId}`), 'acceptance is durable before remote validation');
     const missing = await f.engine.awaitOperation(opened(rejected).id);
     assert.equal(missing.state, 'failed');
-    assert.equal(f.store.tasks().length, 0, 'an invalid handoff still creates no task');
+    assert.equal(f.store.tasks().length, 0, 'an invalid brief still creates no task');
     assert.equal(f.store.db.prepare('SELECT COUNT(*) AS count FROM task_numbers').get()?.count, 0);
 
-    const submission = submissionSchema.parse({ ...base, submissionId: 'sub-valid', handoffPath: 'docs/handoffs/test.md' });
+    const submission = submissionSchema.parse({ ...base, submissionId: 'sub-valid' });
     const accepted = await f.engine.startOperation({ key: `submit:${submission.submissionId}`, kind: 'submit', payload: { type: 'submit', submission }, submissionId: submission.submissionId, repoPath: submission.repoPath });
     assert.ok('accepted' in accepted);
     const ok = await f.engine.awaitOperation(opened(accepted).id);
@@ -449,7 +450,7 @@ test('Spec 021 #7 submission result and operation status carry number and refere
 
     // The same submitted input can succeed once a definite recipient refusal
     // is repaired without changing the planning commit or submission ID.
-    const repairable = submissionSchema.parse({ ...base, submissionId: 'sub-repairable', handoffPath: 'docs/handoffs/test.md', notifyOriginOnCloseout: true });
+    const repairable = submissionSchema.parse({ ...base, submissionId: 'sub-repairable', notifyOriginOnCloseout: true });
     f.adapter.originAgent = async () => null;
     const repairRequest = { key: `submit:${repairable.submissionId}`, kind: 'submit' as const,
       payload: { type: 'submit', submission: repairable }, submissionId: repairable.submissionId, repoPath: repairable.repoPath };
@@ -469,7 +470,7 @@ test('Spec 021 #7 submission result and operation status carry number and refere
 
     // A lane attached at submission survives the pre-dispatch preview's throwaway store.
     f.store.upsertLane({ key: 'lean-northstar', title: 'Lean', aim: 'Move task state into Queue', repositories: [{ origin: 'example/repo', path: repo }] });
-    const laned = submissionSchema.parse({ ...base, submissionId: 'sub-laned', handoffPath: 'docs/handoffs/test.md', lanes: ['lean-northstar'] });
+    const laned = submissionSchema.parse({ ...base, submissionId: 'sub-laned', lanes: ['lean-northstar'] });
     const lanedAccepted = await f.engine.startOperation({ key: `submit:${laned.submissionId}`, kind: 'submit', payload: { type: 'submit', submission: laned }, submissionId: laned.submissionId, repoPath: laned.repoPath });
     assert.ok('accepted' in lanedAccepted);
     const lanedOk = await f.engine.awaitOperation(opened(lanedAccepted).id);

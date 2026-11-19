@@ -18,7 +18,8 @@ export const submissionSchema = z.object({
   hostId: z.string().trim().min(1).max(240).optional(),
   submissionId: z.string().min(1).max(160), title: taskTitleSchema,
   repoPath: z.string().min(1), baseBranch: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._/-]*$/).default("main"),
-  // Exactly one instruction source: a committed handoff path, or a brief held by Queue (Spec 020).
+  // The instruction source is a brief held by Queue (Spec 020). handoffPath is the stored
+  // legacy field of committed handoffs (nucleus#1368): stored rows keep parsing; no new submission carries it.
   planningCommit: z.string().regex(/^[a-f0-9]{40}$/), handoffPath: z.string().default(""),
   brief: briefInputSchema.nullable().default(null),
   draftProvenance: draftProvenanceSchema.nullable().default(null),

@@ -5,7 +5,7 @@ import { briefDigest, currentBrief, isBriefMode } from "../planning/brief";
 import { Decisions } from "../planning/decisions";
 import type { Engine } from "../engine";
 import { git } from "../git/index";
-import { parseNorthstarDocument } from "../planning/handoff";
+import { parseBriefDocument } from "../planning/handoff";
 import { instructionForCommit } from "../hooks/hooks";
 import { STEPS_RETIRED_REASON } from "../recovery/retired-steps";
 import { stageDeclarationFromBrief } from "../stages";
@@ -44,7 +44,7 @@ export class BriefControls {
       this.engine.requireOwnerControlCurrent(task,input.version,'Task changed; refresh before retrying');
       this.engine.rejectFenced(task, "instruction re-pin");
       if(isBriefMode(task))throw Error('Instruction re-pin does not apply to a Nucleus-held brief; use amend_brief with the new text and a reason');
-      if(this.engine.neverDispatched(task))throw Error('A submitted handoff is immutable before dispatch; resubmit the changed handoff and supersede this task');
+      if(this.engine.neverDispatched(task))throw Error('A submitted brief is immutable before dispatch; resubmit the changed brief and supersede this task');
       if(!task.instruction)throw Error('Instruction re-pin requires a pinned instruction artifact');
       if(["done","cancelled"].includes(task.phase))throw Error('Instruction re-pin requires a task that has not closed');
       if(task.resolution.mergedCommit)throw Error('Instruction re-pin requires an unmerged task');
@@ -84,7 +84,7 @@ export class BriefControls {
       if(task.removedAt)throw Error(REMOVED_TASK_REFUSAL);
       this.engine.requireOwnerControlCurrent(task,input.version,'Task changed; refresh before retrying');
       this.engine.rejectFenced(task, "brief amendment");
-      if(!isBriefMode(task))throw Error('Brief amendment requires a Nucleus-held brief; a committed handoff changes through planning, then amend_brief with no text re-pins it');
+      if(!isBriefMode(task))throw Error('Brief amendment requires a Nucleus-held brief');
       if(task.resolution.mergeIntent||task.resolution.mergedCommit||['merging','syncing','closing','done'].includes(task.phase))throw Error('Brief amendment is refused once merging has started or merge intent exists; it is also refused once the task has merged');
       if(task.phase==='cancelled')throw Error('Brief amendment requires a live task');
       const reason=input.reason.trim();
@@ -94,7 +94,7 @@ export class BriefControls {
       // Parse under the schema the task was created with: lead-promoted briefs carry approval in
       // provenance, not queue_approval; a directly submitted brief still requires it.
       const amendSchema=task.leadProvenance?'draft':'brief';
-      const document=input.brief.startsWith('---')?parseNorthstarDocument(input.brief,amendSchema):null;
+      const document=input.brief.startsWith('---')?parseBriefDocument(input.brief,amendSchema):null;
       const queue=document?.queue??null;
       // The retired-flag rule and its frontmatter wording are the schema owner's.
       const retired = retiredSubmissionRefusals({ responsible: queue?.responsible, manualVerification: queue?.manualVerification }, 'frontmatter')[0];
@@ -107,7 +107,7 @@ export class BriefControls {
       // back to the task's hold.
       let previousQueue:Record<string,unknown>|null=null;
       if(current.text.startsWith('---')){
-        try{previousQueue=parseNorthstarDocument(current.text,'draft').queue??null;}
+        try{previousQueue=parseBriefDocument(current.text,'draft').queue??null;}
         catch{previousQueue={mergeHold:task.mergeHold};}
       }
       const next={version:current.version+1,digest:briefDigest(input.brief),mediaType:current.mediaType,text:input.brief,reason,pinnedAt:new Date().toISOString()};

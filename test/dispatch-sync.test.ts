@@ -2244,9 +2244,9 @@ test("release forge gates retain clean, owned, origin and closeout publication b
   );
   await git(writer, "config", "user.name", "Queue test");
   await git(writer, "config", "user.email", "queue@example.invalid");
-  const published = await commit(writer, "canonical closeout", {
-    "docs/logs/closeout.md": "closed",
-  });
+  // Closeout publishes no files: the closeout commit is empty.
+  await git(writer, "commit", "--allow-empty", "-m", "canonical closeout");
+  const published = await git(writer, "rev-parse", "HEAD");
   await git(writer, "push", "origin", "release/v0.5");
   await git(repo, "fetch", "origin", "release/v0.5");
   await git(repo, "branch", "-f", "release/v0.5", published);
@@ -2265,7 +2265,7 @@ test("release forge gates retain clean, owned, origin and closeout publication b
       ...result,
       closeoutCommit: invalid,
     } as typeof result),
-    /outside canonical closeout/,
+    /changed files/,
   );
   assert.equal(await git(repo, "branch", "--show-current"), "main");
   assert.equal(await git(repo, "rev-parse", "HEAD"), main);

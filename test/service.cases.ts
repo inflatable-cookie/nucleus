@@ -107,7 +107,7 @@ test('live snapshot omits handoff text and completed tasks while detail retains 
     const handoffText = 'handoff '.repeat(125_000);
     const task = await service.debug({ target: 'store', method: 'insert', args: [submissionSchema.parse({
       submissionId: 'snapshot-1', title: 'Snapshot', repoPath: '/fixture', planningCommit: 'a'.repeat(40),
-      handoffPath: 'docs/handoffs/snapshot-1.md', originAgentId: 'origin', notifyOriginOnCloseout: true,
+      handoffPath: 'tasks/snapshot-1.md', originAgentId: 'origin', notifyOriginOnCloseout: true,
     }), 'fixture-host', handoffText, 'b'.repeat(40)] }) as { id: string; number: number; reference: string };
     assert.equal(task.number, 1);
     assert.equal(task.reference, 'fixture#001');
@@ -147,12 +147,12 @@ test('live snapshot omits handoff text and completed tasks while detail retains 
     assert.ok(notices.notices.some(notice => notice.recipientAgentId === 'origin' && notice.status === 'pending'));
     const dependent = await service.debug({ target: 'store', method: 'insert', args: [submissionSchema.parse({
       submissionId: 'dependent-1', title: 'Dependent', repoPath: '/fixture', planningCommit: 'a'.repeat(40),
-      handoffPath: 'docs/handoffs/dependent-1.md', originAgentId: 'origin', dependsOn: [task.id],
+      handoffPath: 'tasks/dependent-1.md', originAgentId: 'origin', dependsOn: [task.id],
     }), 'fixture-host', 'Dependent handoff', 'b'.repeat(40)] }) as { id: string };
     assert.ok(dependent.id);
     const duplicate = await service.debug({ target: 'store', method: 'insert', args: [submissionSchema.parse({
       submissionId: 'snapshot-1', title: 'Snapshot', repoPath: '/fixture', planningCommit: 'a'.repeat(40),
-      handoffPath: 'docs/handoffs/snapshot-1.md', originAgentId: 'origin', notifyOriginOnCloseout: true,
+      handoffPath: 'tasks/snapshot-1.md', originAgentId: 'origin', notifyOriginOnCloseout: true,
     }), 'fixture-host', handoffText, 'b'.repeat(40)] }) as { id: string };
     assert.equal(duplicate.id, task.id);
     const telemetry = await client.request('queue.telemetry', { window: 'all' }) as { matchingTasks: number; groups: { completedCount: number }[] };
@@ -177,7 +177,7 @@ test('live snapshot size stays flat across thousands of completed tasks at the 6
     for (let i = 0; i < 64; i++) {
       const task = store.insert(submissionSchema.parse({
         submissionId: `live-${i}`, title: `Live ${i}`, repoPath: `/fixture-${Math.floor(i / 32)}`, planningCommit: 'a'.repeat(40),
-        handoffPath: `docs/handoffs/live-${i}.md`, originAgentId: 'origin',
+        handoffPath: `tasks/live-${i}.md`, originAgentId: 'origin',
       }), 'fixture-host', 'handoff', 'b'.repeat(40));
       store.update(task.id, { phase: 'working', reason: 'r'.repeat(5_000) });
     }
@@ -313,7 +313,7 @@ test('oversize response leaves one bounded durable method and byte-count record'
   try {
     const task = await service.debug({ target: 'store', method: 'insert', args: [submissionSchema.parse({
       submissionId: 'oversize-1', title: 'Oversize', repoPath: '/fixture', planningCommit: 'a'.repeat(40),
-      handoffPath: 'docs/handoffs/oversize-1.md', originAgentId: 'origin',
+      handoffPath: 'tasks/oversize-1.md', originAgentId: 'origin',
     }), 'fixture-host', 'Handoff', 'b'.repeat(40)] }) as { id: string };
     await service.debug({ target: 'store', method: 'update', args: [task.id, { reason: 'x'.repeat(MAX_FRAME_BYTES) }] });
     await assert.rejects(() => client.request('queue.snapshot', {}), (error: unknown) => {
@@ -588,7 +588,7 @@ test('rollback: after a durable drain the prior backend takes the lease and iden
   await service.start();
   const submission = submissionSchema.parse({
     submissionId: 'rollback-1', title: 'Rollback identity', repoPath: '/fixture', planningCommit: 'a'.repeat(40),
-    handoffPath: 'docs/handoffs/rollback-1.md', originAgentId: 'origin',
+    handoffPath: 'tasks/rollback-1.md', originAgentId: 'origin',
   });
   const task = await service.debug({ target: 'store', method: 'insert', args: [submission, 'fixture-host', 'Handoff for the rollback fixture', 'b'.repeat(40)] }) as { id: string; version: number };
   const info = readServiceInfo(dataDir)!;
@@ -617,7 +617,7 @@ test('unknown delivery: a lost response reconciles the same durable operation wi
   try {
     const task = await service.debug({ target: 'store', method: 'insert', args: [submissionSchema.parse({
       submissionId: 'unknown-1', title: 'Unknown delivery', repoPath: '/fixture', planningCommit: 'a'.repeat(40),
-      handoffPath: 'docs/handoffs/unknown-1.md', originAgentId: 'origin',
+      handoffPath: 'tasks/unknown-1.md', originAgentId: 'origin',
     }), 'fixture-host', 'Handoff', 'b'.repeat(40)] }) as { id: string; version: number };
     const key = 'unknown-delivery-1';
     const request = { key, kind: 'task_control', payload: { type: 'task_control', control: { taskId: task.id, version: task.version, action:'hold',reason:'Test hold' } }, taskId: task.id, expectedVersion: task.version };
@@ -842,7 +842,7 @@ test('service transport coverage: every catalogue method answers with a validate
   try {
     const task = await service.debug({ target: 'store', method: 'insert', args: [submissionSchema.parse({
       submissionId: 'coverage-1', title: 'Coverage', repoPath: '/fixture', planningCommit: 'a'.repeat(40),
-      handoffPath: 'docs/handoffs/coverage-1.md', originAgentId: 'origin',
+      handoffPath: 'tasks/coverage-1.md', originAgentId: 'origin',
     }), 'fixture-host', 'Handoff', 'b'.repeat(40)] }) as { id: string; version: number };
     const cases: [string, unknown][] = [
       ['queue.snapshot', {}],
@@ -871,9 +871,9 @@ test('service transport coverage: every catalogue method answers with a validate
       ['queue.capacity', { globalLimit: 4, projectLimit: 2 }],
       ['queue.capacity-state', {}],
       ['repository.set', { repository: 'acme/retired', validationPolicy: 'Run compile only. No tests.' }],
-      ['queue.submit', { submissionId: 'coverage-submit', title: 'Coverage submit', repoPath: '/fixture', planningCommit: 'a'.repeat(40), handoffPath: 'docs/handoffs/coverage-submit.md', originAgentId: 'origin', baseBranch: 'main' }],
-      ['queue.submit-instruction', { submissionId: 'coverage-instr', title: 'Coverage instruction', repoPath: '/fixture', planningCommit: 'a'.repeat(40), originAgentId: 'origin', instruction: { path: 'docs/handoffs/coverage-instr.md', content: 'Instruction', at: new Date().toISOString() } }],
-      ['queue.handoff', { handoffPath: 'docs/handoffs/absent-handoff.md', originAgentId: 'origin', dryRun: true, baseBranch: 'main' }],
+      ['queue.submit', { submissionId: 'coverage-submit', title: 'Coverage submit', repoPath: '/fixture', planningCommit: 'a'.repeat(40), handoffPath: 'tasks/coverage-submit.md', originAgentId: 'origin', baseBranch: 'main' }],
+      ['queue.submit-instruction', { submissionId: 'coverage-instr', title: 'Coverage instruction', repoPath: '/fixture', planningCommit: 'a'.repeat(40), originAgentId: 'origin', instruction: { path: 'tasks/coverage-instr.md', content: 'Instruction', at: new Date().toISOString() } }],
+      ['queue.handoff', { handoffPath: 'tasks/absent-handoff.md', originAgentId: 'origin', dryRun: true, baseBranch: 'main' }],
     ];
     for (const [method, input] of cases) {
       const outcome = await client.request(method, input, 30_000).then(
@@ -932,7 +932,7 @@ test('a transient daemon outage at startup self-heals and resumes accepted durab
     // run it yet beyond durable acceptance.
     const task = owner.store.insert(submissionSchema.parse({
       submissionId: 'outage-1', title: 'Outage recovery', repoPath: '/fixture', planningCommit: 'a'.repeat(40),
-      handoffPath: 'docs/handoffs/outage-1.md', originAgentId: 'origin',
+      handoffPath: 'tasks/outage-1.md', originAgentId: 'origin',
     }), 'fixture-host', 'Handoff', 'b'.repeat(40));
     const control = { taskId: task.id, version: task.version, action:'hold' as const,reason:'Test hold' };
     const acceptance = owner.store.acceptOperation({
@@ -1123,7 +1123,7 @@ test('local CLI reaches Queue without Paseo and fences only a different method c
     assert.equal(JSON.parse(cli.stdout).service, 'nucleus');
     const task = await service.debug({ target: 'store', method: 'insert', args: [submissionSchema.parse({
       submissionId: 'cli-controls', title: 'CLI controls', repoPath: '/fixture', planningCommit: 'a'.repeat(40),
-      handoffPath: 'docs/handoffs/cli.md', originAgentId: 'origin',
+      handoffPath: 'tasks/cli.md', originAgentId: 'origin',
     }), 'fixture-host', 'handoff', 'a'.repeat(40)] }) as { id: string };
     // The three legacy task-control helpers were copies of one versioned owner
     // verb each and sent no caller; they were removed, so these operations are

@@ -58,8 +58,6 @@ all fragments into the changelog and removes the folded files.
   The worker owns its blockers with the retained reviewer as its second opinion,
   the planner ladder takes planning rulings, and one retained recovery thread
   handles operational faults.
-- Nucleus implements the legacy handoff protocol for consumer repositories; in
-  this repository's code, tests, specs and skill those paths are product.
 
 ## Guardrails
 

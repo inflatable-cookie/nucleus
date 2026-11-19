@@ -208,23 +208,16 @@ If delivery is lost, inspect `lead.list` for that repository and title, then
 available below.
 
 Require execution authorization already in the conversation; do not treat a
-promoted document as execution approval. A committed handoff needs
-`kind: northstar-handoff`, `handoff_mode: worker-pr-loop`, `worker_mode:
-implementation`, `dispatch_authority: orchestrator`, `status: ready-to-launch`,
-`base_required: pushed-main`, a title, `queue_dispatch: nucleus` and
-`queue_approval` naming the authorization, with no template placeholders.
-
-```sh
-nucleus helper submit /absolute/repository/docs/handoffs/worker.md
-```
-
-When the repository's `.paseo/queue.json` is v5 or absent (or the brief is
-Nucleus-held), submit brief mode instead; its frontmatter needs only `title`,
-`queue_approval` and optional `queue:` routing, and the file is never committed:
+promoted document as execution approval. A brief's frontmatter needs `title`,
+`queue_approval` naming the authorization, and optional `queue:` routing, with
+no template placeholders. The file is never committed. Committed handoffs are
+retired: a submission with a committed path is refused.
 
 ```sh
 nucleus helper submit --brief --repo /absolute/repository /absolute/brief.md
 ```
+
+The repository's `.paseo/queue.json` must be v5 or absent for brief mode.
 
 Add `--dry-run` to validate and print the derived submission. `--coordinator`
 assigns an existing coordinator; omission lets Nucleus select one. `--base`

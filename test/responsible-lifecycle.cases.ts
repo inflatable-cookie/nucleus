@@ -12,7 +12,7 @@ import { Leads } from '../core/planning/leads';
 import { Papercuts } from '../core/planning/papercut-operations';
 import { briefDigest } from '../core/planning/brief';
 import { runPrompt } from '../core/dispatch/prompts';
-import { parseNorthstarDocument } from '../core/planning/handoff';
+import { parseBriefDocument } from '../core/planning/handoff';
 import { submissionQueueFields } from '../core/planning/handoff';
 import { completionSchema, holdsOf, OPERATOR_BOARD_CALLER, proofExecutionRecordSchema, QUEUE_REPOSITORY_ORIGIN, runSchema, submissionSchema, taskControlInputSchema, taskSchema, type Completion, type PoolEntry, type Profile, type Run } from '../shared/contracts';
 import type { Adapter, AgentObservation } from '../core/host';
@@ -40,12 +40,12 @@ import { base, fixture, head, profile, tick } from './support/responsible-lifecy
 
 
 test('queue.responsible is absent by default and explicit false is refused', () => {
-  const explicit = parseNorthstarDocument('---\ntitle: Responsible\nqueue_approval: "Approved (Tom, 2026-11-02)"\nqueue:\n  responsible: true\n---\n\nBody\n', 'brief');
+  const explicit = parseBriefDocument('---\ntitle: Responsible\nqueue_approval: "Approved (Tom, 2026-11-02)"\nqueue:\n  responsible: true\n---\n\nBody\n', 'brief');
   assert.equal(submissionQueueFields(explicit.queue).responsible, true);
-  const ordinary = parseNorthstarDocument('---\ntitle: Ordinary\nqueue_approval: "Approved (Tom, 2026-11-02)"\n---\n\nBody\n', 'brief');
+  const ordinary = parseBriefDocument('---\ntitle: Ordinary\nqueue_approval: "Approved (Tom, 2026-11-02)"\n---\n\nBody\n', 'brief');
   assert.equal(submissionQueueFields(ordinary.queue).responsible, undefined);
-  assert.throws(() => parseNorthstarDocument('---\ntitle: Opted out\nqueue_approval: "Approved (Tom, 2026-11-02)"\nqueue:\n  responsible: false\n---\n\nBody\n', 'brief'), /responsible: false is no longer supported/);
-  assert.throws(() => parseNorthstarDocument('---\ntitle: Wrong\nqueue_approval: "Approved"\nqueue:\n  responsible: "yes"\n---\n\nBody\n', 'brief'), /responsible/);
+  assert.throws(() => parseBriefDocument('---\ntitle: Opted out\nqueue_approval: "Approved (Tom, 2026-11-02)"\nqueue:\n  responsible: false\n---\n\nBody\n', 'brief'), /responsible: false is no longer supported/);
+  assert.throws(() => parseBriefDocument('---\ntitle: Wrong\nqueue_approval: "Approved"\nqueue:\n  responsible: "yes"\n---\n\nBody\n', 'brief'), /responsible/);
 });
 
 test('a new task without the flag is responsible; manual verification cannot select the old lifecycle', () => {

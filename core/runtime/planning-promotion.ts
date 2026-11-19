@@ -7,7 +7,7 @@ import { COMPLEXITY_REQUIRED } from "../../shared/demand";
 import { MAX_TITLE_LENGTH, parseHoldUntil, sourcePromotionInputSchema, sourcePromotionOperationPayloadSchema, sourcePromotionOutputSchema } from "../../shared/contracts";
 import { holdPatch, OPERATOR_HOLD_OWNER } from "../merge/merge-hold";
 import { briefDigest, hasBriefFrontmatter } from "../planning/brief";
-import { parseNorthstarDocument } from "../planning/handoff";
+import { parseBriefDocument } from "../planning/handoff";
 import { laneListsRepository } from "../../shared/lanes";
 import type { Store } from "../store/store";
 import type { PlanningContext, RuntimePlanning } from "./planning";
@@ -71,7 +71,7 @@ export class PlanningPromotion {
     if (existing) return {...this.promotionReply(existing.taskId!),reference:existing.reference!};
     if (lead) {
       if (!hasBriefFrontmatter(lead.body)) throw new Error("Lead has no brief to promote");
-      parseNorthstarDocument(lead.body,"draft");
+      parseBriefDocument(lead.body,"draft");
       const digest=briefDigest(lead.body);
       if (request.board && !this.leadApprovalMatches(lead,digest))
         throw new Error("Approve this lead before promotion");
@@ -102,7 +102,7 @@ export class PlanningPromotion {
     // a lead in its brief). It is refused before any operation exists, so a retry
     // that names one is a fresh attempt; an operation already accepted replays.
     if (!existingOperation) {
-      const named=lead ? parseNorthstarDocument(lead.body,"draft").queue.complexity : request.complexity;
+      const named=lead ? parseBriefDocument(lead.body,"draft").queue.complexity : request.complexity;
       if (!named) throw new Error(lead ? `Lead brief: ${COMPLEXITY_REQUIRED}` : COMPLEXITY_REQUIRED);
     }
     const payload=existingOperation?this.context.store.operationPayload(existingOperation.id):operationPayload;
@@ -138,7 +138,7 @@ export class PlanningPromotion {
       throw new Error("Lead approval changed while promotion was queued; reload");
     if (lead) {
       if (!hasBriefFrontmatter(lead.body)) throw new Error("Lead has no brief to promote");
-      parseNorthstarDocument(lead.body,"draft");
+      parseBriefDocument(lead.body,"draft");
     }
     else if (cut!.title.length > MAX_TITLE_LENGTH) throw new Error("Task title must be 200 characters or fewer");
     const sourceLanes=(lead??cut)!.lanes;
@@ -197,7 +197,7 @@ ${cut!.impact}${cut!.fix?`\n\n## Fix\n\n${cut!.fix}`:""}
       ...(input.identitySource?{originIdentity:input.identitySource}:{})},false);
     if (lead) this.context.store.recordLeadCheck(lead.id,lead.version,{...checked.check,baseBranch:lead.baseBranch});
     if (!checked.check.ok) throw new Error(`Promotion check failed: ${checked.check.message}`);
-    const promotedDeclaration=parseNorthstarDocument(text,"draft").queue;
+    const promotedDeclaration=parseBriefDocument(text,"draft").queue;
     if(promotedDeclaration.proofOnly){
       const commit=promotedDeclaration.proofOnly.commit;
       const baseBranch=lead?.baseBranch??"main";

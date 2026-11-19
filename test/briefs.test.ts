@@ -15,7 +15,7 @@ import { workerPrompt } from '../core/dispatch/prompts';
 import { STEPS_RETIRED_REASON } from '../core/recovery/retired-steps';
 import { runPrompt, checkpointPrompt } from '../core/dispatch/prompts';
 import { briefDigest } from '../core/planning/brief';
-import { parseNorthstarDocument, prepareHandoff, submissionQueueFields } from '../core/planning/handoff';
+import { parseBriefDocument, prepareHandoff, submissionQueueFields } from '../core/planning/handoff';
 import { command, git, validateSubmission, validateDispatch, verifyPublishedPlanning, verifyWorkspace, verifyResume, verifyCheckpoint } from '../core/git/index';
 import { submissionSchema, summarizeTask, taskControlInputSchema, type Profile, type Run, type Submission, type Task } from '../shared/contracts';
 import type { Adapter } from '../core/host';
@@ -25,13 +25,6 @@ import { renderHandoffPrompts } from './fixtures/render-handoff-prompts';
 const sections = ['What This Thread Was Doing', 'Why It Matters', 'Current State', 'Boundaries', 'Important Context', 'Suggested Next Move', 'Completion Protocol'];
 const briefText = `---
 title: Queue-held brief
-kind: northstar-handoff
-handoff_mode: worker-pr-loop
-worker_mode: implementation
-dispatch_authority: orchestrator
-status: ready-to-launch
-base_required: pushed-main
-queue_dispatch: northstar-queue
 queue_approval: Operator approved this disposable brief
 queue:
   scope: mechanical
@@ -147,7 +140,7 @@ test('Spec 043 retired: a declared-stage brief stays parseable history and submi
   const e=engineFixture();
   try{
     // Retired (Spec 043, 2026-10-06): the declaration still reads as history but admits no execution.
-    assert.deepEqual(parseNorthstarDocument(stagedText,'brief').queue.stages?.map(stage=>stage.id),['final-review']);
+    assert.deepEqual(parseBriefDocument(stagedText,'brief').queue.stages?.map(stage=>stage.id),['final-review']);
     const operation=await submit(e.engine,prepared.submission);
     assert.equal(operation.state,'failed');
     assert.match(operation.diagnostic??'',/Declared steps are retired/);
@@ -246,19 +239,19 @@ test('2. brief submission to a v1–v4 repository is refused at dry run and at s
   }
 });
 
-test('3. a submission with both brief and handoffPath, or neither, is refused', async t => {
+test('3. a submission with a committed handoffPath, or neither, is refused', async t => {
   const f = await repoFixture(t, 'v5');
-  const both = briefSubmission(f.repo, f.planning, { handoffPath: 'docs/handoffs/x.md' });
-  await assert.rejects(validateSubmission(both), /exactly one of handoffPath or brief/);
+  const both = briefSubmission(f.repo, f.planning, { handoffPath: 'tasks/x.md' });
+  await assert.rejects(validateSubmission(both), /Committed handoffs are retired/);
   const neither = { ...briefSubmission(f.repo, f.planning), brief: null };
-  await assert.rejects(validateSubmission(neither), /exactly one of handoffPath or brief/);
+  await assert.rejects(validateSubmission(neither), /carries a Queue-held brief/);
   const e = engineFixture();
   try {
     assert.equal((await submit(e.engine, both)).state, 'failed');
     assert.equal((await submit(e.engine, neither)).state, 'failed');
     assert.equal(e.store.tasks().length, 0);
   } finally { await e.close(); }
-  await assert.rejects(prepareHandoff({ briefPath: f.briefPath, handoffPath: join(f.repo, 'docs/handoffs/x.md'), repoPath: f.repo, originAgentId: 'origin', baseBranch: 'main', dryRun: true }), /exactly one/);
+  await assert.rejects(prepareHandoff({ briefPath: f.briefPath, handoffPath: join(f.repo, 'tasks/x.md'), repoPath: f.repo, originAgentId: 'origin', baseBranch: 'main', dryRun: true }), /Committed handoffs are retired/);
   // A mismatched caller digest is refused too.
   await assert.rejects(validateSubmission(briefSubmission(f.repo, f.planning, { brief: { text: briefText, mediaType: 'text/markdown', digest: `sha256:${'0'.repeat(64)}` } })), /digest does not match/);
 });
@@ -298,7 +291,7 @@ test('5b. an unreadable published-planning ancestry is named, not reported as an
   await assert.rejects(verifyPublishedPlanning(briefSubmission(f.repo, 'f'.repeat(40))), /Git ancestry is unreadable/);
 });
 
-test('6. worker, revision and reviewer prompts carry the brief; handoff-mode prompts match the reviewed snapshot', () => {
+test('6. worker, revision and reviewer prompts carry the brief; brief-mode prompts match the reviewed snapshot', () => {
   const store = new Store(':memory:');
   try {
     const inserted = store.insert(briefSubmission('/repo', 'a'.repeat(40)), 'host', briefText, 'a'.repeat(40));
@@ -320,8 +313,8 @@ test('6. worker, revision and reviewer prompts carry the brief; handoff-mode pro
     assert.match(prompts[2], /Review findings: Fix links/, 'review findings are unchanged');
   } finally { store.close(); }
   const frozen = JSON.parse(readFileSync(join(import.meta.dirname, 'fixtures/handoff-prompts.json'), 'utf8')) as Record<string, string>;
-  // This is the reviewed canonical handoff-mode baseline, not a historical pre-brief snapshot.
-  assert.deepEqual(renderHandoffPrompts(), frozen, 'handoff-mode prompts match the reviewed canonical snapshot');
+  // This is the reviewed canonical brief-mode baseline.
+  assert.deepEqual(renderHandoffPrompts(), frozen, 'brief-mode prompts match the reviewed canonical snapshot');
 });
 
 test('7. continuation after a stopped worker passes on ancestry and keeps dirty work', async t => {
@@ -443,7 +436,7 @@ test('8. amend_brief pins a new version for the next run before merge and is ref
     const merged = e.store.update(amended.id, { resolution: { ...amended.resolution, mergedCommit: 'b'.repeat(40) } });
     await assert.rejects(e.engine.performTaskControl({ taskId: merged.id, version: merged.version, action: 'amend_brief', brief: 'late', reason: 'too late' }), /refused once the task has merged/);
     assert.equal(e.store.task(merged.id).briefVersions.length, 2);
-    const handoffTask = e.store.insert(submissionSchema.parse({ submissionId: 'handoff', title: 'H', repoPath: '/repo', planningCommit: 'a'.repeat(40), handoffPath: 'docs/handoffs/h.md', originAgentId: 'origin' }), 'host', 'plan', 'a'.repeat(40));
+    const handoffTask = e.store.insert(submissionSchema.parse({ submissionId: 'handoff', title: 'H', repoPath: '/repo', planningCommit: 'a'.repeat(40), handoffPath: 'tasks/h.md', originAgentId: 'origin' }), 'host', 'plan', 'a'.repeat(40));
     await assert.rejects(e.engine.performTaskControl({ taskId: handoffTask.id, version: handoffTask.version, action: 'amend_brief', brief: 'x', reason: 'y' }), /requires a Nucleus-held brief/);
   } finally { await e.close(); }
 });
@@ -607,10 +600,10 @@ test('9. the outcome row holds the final brief text, its digest and earlier dige
   } finally { await e.close(); }
 });
 
-test('10. handoff-mode tasks keep their identity hash, records and outcome shape', () => {
+test('10. stored legacy committed-handoff rows keep their identity hash, records and outcome shape', () => {
   const store = new Store(':memory:');
   try {
-    const submission = submissionSchema.parse({ submissionId: 'legacy', title: 'Legacy', repoPath: '/repo', planningCommit: 'a'.repeat(40), handoffPath: 'docs/handoffs/l.md', originAgentId: 'origin' });
+    const submission = submissionSchema.parse({ submissionId: 'legacy', title: 'Legacy', repoPath: '/repo', planningCommit: 'a'.repeat(40), handoffPath: 'tasks/l.md', originAgentId: 'origin' });
     const task = store.insert(submission, 'host', 'handoff bytes', 'a'.repeat(40));
     // The submission hash formula, applied to the same handoff submission:
     // absent responsible materializes to its default at its schema position.
@@ -636,7 +629,7 @@ test('11. restart keeps pinned brief versions and old stores migrate unchanged',
     const inserted = e.store.insert(briefSubmission('/repo', 'a'.repeat(40)), 'host', briefText, 'a'.repeat(40));
     await e.engine.performTaskControl({ taskId: inserted.id, version: inserted.version, action: 'amend_brief', brief: `${briefText}\nv2\n`, reason: 'Second' });
     // An old-store row: a handoff task written before brief mode, without the new fields.
-    const legacy = e.store.insert(submissionSchema.parse({ submissionId: 'old', title: 'Old', repoPath: '/repo', planningCommit: 'a'.repeat(40), handoffPath: 'docs/handoffs/o.md', originAgentId: 'origin' }), 'host', 'old bytes', 'a'.repeat(40));
+    const legacy = e.store.insert(submissionSchema.parse({ submissionId: 'old', title: 'Old', repoPath: '/repo', planningCommit: 'a'.repeat(40), handoffPath: 'tasks/o.md', originAgentId: 'origin' }), 'host', 'old bytes', 'a'.repeat(40));
     const { brief: _b, briefVersions: _v, briefRuns: _r, ...oldShape } = e.store.task(legacy.id);
     e.store.db.prepare('UPDATE tasks SET data=? WHERE id=?').run(JSON.stringify(oldShape), legacy.id);
     await e.close();
@@ -648,7 +641,7 @@ test('11. restart keeps pinned brief versions and old stores migrate unchanged',
       const migrated = e.store.task(legacy.id);
       assert.equal(migrated.brief, null);
       assert.deepEqual(migrated.briefVersions, []);
-      assert.equal(migrated.handoffPath, 'docs/handoffs/o.md');
+      assert.equal(migrated.handoffPath, 'tasks/o.md');
       assert.equal(migrated.handoffText, 'old bytes');
     } finally { await e.close(); }
   } finally { rmSync(dir, { recursive: true, force: true }); }
@@ -688,7 +681,7 @@ How a reviewer knows.
 
 test('brief frontmatter maps queue.mergeHold to an initially held but dispatchable task', () => {
   const withHold=briefText.replace('scope: mechanical','scope: mechanical\n  mergeHold: true\n  mergeHoldReason: Waiting on an external receipt');
-  const metadata=parseNorthstarDocument(withHold,'brief');
+  const metadata=parseBriefDocument(withHold,'brief');
   const submission=submissionSchema.parse({submissionId:'merge-hold',title:metadata.title,repoPath:'/repo',planningCommit:'a'.repeat(40),brief:{text:withHold},originAgentId:'origin',...submissionQueueFields(metadata.queue)});
   const store=new Store(':memory:');
   try {
@@ -701,8 +694,8 @@ test('brief frontmatter maps queue.mergeHold to an initially held but dispatchab
 
 test('Spec 040 row 2: a brief with queue.mergeHold and no mergeHoldReason is refused at check and submit', async t => {
   const noReason=briefText.replace('scope: mechanical','scope: mechanical\n  mergeHold: true');
-  assert.throws(()=>parseNorthstarDocument(noReason,'brief'),/mergeHoldReason/);
-  assert.throws(()=>parseNorthstarDocument(noReason,'draft'),/mergeHoldReason/);
+  assert.throws(()=>parseBriefDocument(noReason,'brief'),/mergeHoldReason/);
+  assert.throws(()=>parseBriefDocument(noReason,'draft'),/mergeHoldReason/);
   const f=await repoFixture(t);
   await writeFile(f.briefPath,noReason);
   await assert.rejects(prepareHandoff({ briefPath: f.briefPath, repoPath: f.repo, originAgentId: 'origin', baseBranch: 'main', dryRun: true }), /mergeHoldReason/);
@@ -800,7 +793,7 @@ test('Spec 051: queue.interactive in a brief reaches the task, its worker prompt
   const e = engineFixture();
   try {
     const interactiveText = briefText.replace('scope: mechanical', 'scope: mechanical\n  interactive: true');
-    const fields = submissionQueueFields(parseNorthstarDocument(interactiveText, 'brief').queue!);
+    const fields = submissionQueueFields(parseBriefDocument(interactiveText, 'brief').queue!);
     assert.equal(fields.interactive, true);
     const task = e.store.insert(briefSubmission('/repo', 'a'.repeat(40), { brief: { text: interactiveText, mediaType: 'text/markdown' }, ...fields } as Partial<Submission>), 'host', interactiveText, 'a'.repeat(40));
     assert.equal(task.interactive, true);

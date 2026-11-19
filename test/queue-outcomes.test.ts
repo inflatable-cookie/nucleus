@@ -437,7 +437,7 @@ function storeFixture() {
       title: id,
       repoPath: "/repo",
       planningCommit: "a".repeat(40),
-      handoffPath: "docs/handoffs/task.md",
+      handoffPath: "tasks/task.md",
       originAgentId: "origin",
     });
   const add = (id: string, handoff = "pinned brief text") =>

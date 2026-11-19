@@ -51,7 +51,7 @@ test('availability removal over RPC preserves active settings and history, is id
 
     const task = await service.debug({ target: 'store', method: 'insert', args: [submissionSchema.parse({
       submissionId: 'availability', title: 'Availability fixture', repoPath: '/fixture', planningCommit: 'a'.repeat(40),
-      handoffPath: 'docs/handoffs/fixture.md', originAgentId: 'origin',
+      handoffPath: 'tasks/fixture.md', originAgentId: 'origin',
     }), 'fixture-host', 'Fixture', 'b'.repeat(40)] }) as { id: string };
     await service.debug({ target: 'store', method: 'update', args: [task.id, { profileGroup: 'obsolete' }] });
     await assert.rejects(client!.request('queue.availability', { action: 'remove', group: 'obsolete' }), /unfinished task/,

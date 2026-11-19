@@ -58,8 +58,8 @@ ${pin.text}
 }
 
 /**
- * Spec 020: a brief-mode task carries its pinned brief inline, labelled as held
- * by Nucleus. Handoff-mode tasks get an empty block and keep their exact prompts.
+ * Spec 020: a task carries its pinned brief inline, labelled as held by Nucleus.
+ * A task with no pinned brief gets an empty block.
  */
 export function queueBriefBlock(
   task: Pick<Task, "briefVersions" | "planningCommit">,
@@ -71,7 +71,7 @@ export function queueBriefBlock(
       ? `This brief was amended to version ${current.version}. Amendment reason: ${current.reason}\nEarlier versions are superseded; follow this version.\n`
       : "";
   return `Nucleus-held brief: version ${current.version}, ${current.digest}, written against planning ${task.planningCommit}.
-Nucleus holds this brief. It is not a repository file: do not commit it, copy it into the repository, or look for it under docs/handoffs.
+Nucleus holds this brief. It is not a repository file: do not commit it or copy it into the repository.
 ${amended}----- BEGIN QUEUE-HELD BRIEF -----
 ${current.text}
 ----- END QUEUE-HELD BRIEF -----
@@ -164,8 +164,3 @@ export function queueBuildOutputBlock(
   return disclosure ? `${disclosure.text}\n` : "";
 }
 
-/** The line naming the instruction source: the committed handoff, or the Nucleus-held brief. */
-export const sourceLine = (task: Task) =>
-  currentBrief(task)
-    ? ""
-    : `Committed handoff: ${task.handoffPath} at ${task.planningCommit}\n`;

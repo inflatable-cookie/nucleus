@@ -18,29 +18,16 @@ import { formatAgentId } from "../shared/agent-identity";
 import { isUnchangedBoard, submitHandoff } from "../shared/contracts";
 import type { Adapter } from "../core/host";
 
-const sections = [
-  "What This Thread Was Doing",
-  "Why It Matters",
-  "Current State",
-  "Boundaries",
-  "Important Context",
-  "Suggested Next Move",
-  "Completion Protocol",
-];
 const content = `---
 title: Acceptance fixture
-kind: northstar-handoff
-handoff_mode: worker-pr-loop
-worker_mode: implementation
-dispatch_authority: orchestrator
-status: ready-to-launch
-base_required: pushed-main
-queue_dispatch: northstar-queue
 queue_approval: Operator approved fixture work
 queue:
   complexity: medium
 ---
-${sections.map((s) => `## ${s}\n\nCommitted instructions.\n`).join("\n")}`;
+## Outcome
+
+Brief instructions.
+`;
 function gate() {
   let open!: () => void;
   const promise = new Promise<void>((resolve) => {
@@ -62,19 +49,16 @@ async function fixture(
   await git(repo, "checkout", "-b", "main");
   await git(repo, "config", "user.name", "Queue test");
   await git(repo, "config", "user.email", "queue@example.invalid");
-  await mkdir(join(repo, "docs/handoffs"), { recursive: true });
-  const path = join(repo, "docs/handoffs/test.md");
+  const path = join(dir, "brief.md");
   const text = notify
     ? content.replace(
         "queue:\n  complexity: medium",
         "queue:\n  complexity: medium\n  notifyOriginOnCloseout: true",
       )
     : content;
+  // A brief is Queue-held content: the file is never committed to the repository.
   const publish = async (next = text) => {
     await writeFile(path, next);
-    await git(repo, "add", ".");
-    await git(repo, "commit", "-m", "Fixture");
-    await git(repo, "push", "origin", "main");
   };
   await publish();
   let available = !offline,
@@ -132,7 +116,8 @@ async function fixture(
     text,
     input: {
       hostId: "fixture-host",
-      handoffPath: path,
+      briefPath: path,
+      repoPath: repo,
       originAgentId: "origin",
       baseBranch: "main",
       dryRun: false,

@@ -948,9 +948,9 @@ confident, for a later pass:
 
 ### Submission and instruction source
 
-- A submission pins its committed handoff identity and originating thread, and
-  carries exactly one instruction source: a committed `handoffPath` or a `brief`
-  held by Nucleus ([Spec 020](../specs/020-briefs-stored-in-queue.md)).
+- A submission pins its brief identity and originating thread. Its instruction
+  source is a `brief` held by Nucleus ([Spec 020](../specs/020-briefs-stored-in-queue.md));
+  a committed `handoffPath` is retired and refused (nucleus#1368).
 - Nucleus pins a brief by digest within 128 KB and writes nothing to the
   repository. Brief mode needs a v5 control manifest at the planning commit, or
   none; v1–v4 are refused because their hooks read committed handoffs.
@@ -2637,10 +2637,12 @@ movement invalidates source approval and preserves the normal readiness gates.
   `repository_settings` ([Spec 022](../specs/022-queue-projects-without-manifests.md)).
 - Nucleus closeout writes the outcome row and moves to `done` in one transaction,
   with no run, workspace, hook, commit or push.
-- Hook closeout, for consumers on the legacy Northstar layout, publishes
-  Markdown under `docs/logs`, `docs/roadmaps` and `docs/handoffs` plus the root
-  `docs/README.md`, then verifies pushed state. Agent closeout is the manifest
-  fallback when no closeout hook is bound.
+- Hook closeout runs the repository's `task.closeout` hook, which may publish
+  the integration writes its manifest allows, then verifies pushed state. Agent
+  closeout is the manifest fallback when no closeout hook is bound; it publishes
+  nothing, so any file change on the integration head after the merge is refused.
+  Closeout admits no path of its own: a merged PR's files are ordinary source
+  (nucleus#1368).
 - Every terminal path writes one host-neutral outcome row in the terminal
   transaction. Outcome rows are permanent; completed live-task history expires
   after 4 days (Tom, 2026-10-20) with unresolved effects protected.
