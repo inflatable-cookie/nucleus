@@ -1,6 +1,6 @@
 /**
  * The pre-PR implementation worker's prompt: the task and branch identity, the
- * brief or handoff it implements, every recorded context block, the fixed rules
+ * brief it implements, every recorded context block, the fixed rules
  * it conducts itself by, and the report it ends with. A brief whose report-only
  * policy cannot be read says so rather than silently delivering a PR.
  */

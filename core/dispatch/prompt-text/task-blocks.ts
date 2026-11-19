@@ -24,7 +24,7 @@ export function queueLaneBlock(task: Pick<Task, "lanes" | "laneContext">) {
       Boolean(context),
     );
   if (!contexts.length) return "";
-  return `${contexts.map((context) => `Lane context — not scope authority: ${context.title}\n${context.aim}\n`).join("")}The handoff or brief still governs this task's scope. The lane aim grants no additional authority.\n`;
+  return `${contexts.map((context) => `Lane context — not scope authority: ${context.title}\n${context.aim}\n`).join("")}The brief still governs this task's scope. The lane aim grants no additional authority.\n`;
 }
 
 /**

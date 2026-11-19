@@ -51,7 +51,7 @@ completion or hold is not the thing's role or status.
 Small planning edits (plan, spec or contract wording) are committed straight to
 `main` once `effigy qa:docs` passes; code and anything needing review goes
 through a Nucleus task and its PR. Briefs start as checked, approved leads. Never
-edit a submitted handoff: clarify in the owning spec, or resubmit and supersede
+edit a submitted brief: clarify in the owning spec, or resubmit and supersede
 the task.
 
 Record recurring solvable friction as a Nucleus papercut (`papercut.add`) without

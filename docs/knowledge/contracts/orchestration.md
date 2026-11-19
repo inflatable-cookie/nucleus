@@ -1027,7 +1027,7 @@ through its recorded `northstar.*` labels wherever an archived or terminal
 record is inspected, and a split identity is refused rather than guessed.
 Callback environments carry only `NUCLEUS_*`; a ticket authenticates its run, and a helper refuses a report whose explicit task or run identity differs from that ticket. Worker readiness verifies the PR identity before recording a completion and refuses a foreign queue branch named in the report. A move to work clears an unbound result only when the forge positively identifies a different branch; unknown or unavailable evidence remains held, and the cleared event remains history.
 Agents report only through their own run's binding; they never read or use another ticket under the data home. A refused report is reported as blocked through the same binding, not bypassed through another ticket or route; if that also refuses, the agent states the refusal. Retained threads keep their original MCP binding path. Before a new run's continuation is sent, Nucleus atomically rebinds that path to the new run; releasing an earlier run deletes the path only while its contents still name that released run. A confirmed dispatched run whose stopped thread has a missing known local MCP binding records a named report failure after the reporting grace and follows the existing recovery path, without reading another ticket. Uncertain dispatches keep their existing hold. Historical events,
-request identities and submitted handoffs are not rewritten.
+request identities and stored committed-handoff rows are not rewritten.
 
 - Completion authentication binds task and run. One worker creation mints
   exactly one run identity, shared by the task, the callback credential and the
@@ -1649,7 +1649,7 @@ request identities and submitted handoffs are not rewritten.
   2026-10-23): findings and review references render only for a recorded review
   summary with text. A restart's reason stays audit text, never instruction.
 - `move to=work` may carry one operator-approved `instruction` for an open
-  unmerged PR; it binds to exactly one revision run beside the handoff and
+  unmerged PR; it binds to exactly one revision run beside the brief and
   findings and is never replayed. Without one, the worker gets the pending
   instruction or the review findings.
 - Lane, sibling, link and cleanup disclosures in prompts are context, not
