@@ -868,7 +868,11 @@ async function advanceViaRevision(
     ["awaiting_review", "reviewing"].includes(f.current().phase),
     "the authenticated result advanced the task to review",
   );
-  assert.equal(f.current().prHead, head, "review remains bound to the verified PR head");
+  assert.equal(
+    f.current().prHead,
+    head,
+    "review remains bound to the verified PR head",
+  );
   release();
 }
 

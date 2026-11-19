@@ -2399,7 +2399,9 @@ weighted(12)(
       assert.equal(
         f.store
           .events(f.taskId)
-          .filter((event) => event.kind === "integration_checkout_fast_forwarded").length,
+          .filter(
+            (event) => event.kind === "integration_checkout_fast_forwarded",
+          ).length,
         1,
       );
       await stepEngine(f.engine);
@@ -2430,9 +2432,21 @@ weighted(12)(
       // The checkout now fast-forwards before each read. Movement during the
       // candidate invalidates it, and one rebuild is allowed per pass (Spec 015).
       assert.equal(parked.resolution.attention, true, parked.reason);
-      assert.match(parked.reason, /candidate did not settle.*integration base moved/);
-      assert.equal(f.store.events(f.taskId).filter(event => event.kind === "pre_merge_candidate_stale").length, 2);
-      assert.equal(pushes, 4, "two candidates were each checked before and after");
+      assert.match(
+        parked.reason,
+        /candidate did not settle.*integration base moved/,
+      );
+      assert.equal(
+        f.store
+          .events(f.taskId)
+          .filter((event) => event.kind === "pre_merge_candidate_stale").length,
+        2,
+      );
+      assert.equal(
+        pushes,
+        4,
+        "two candidates were each checked before and after",
+      );
       assert.equal(f.mergeCount(), 0);
     } finally {
       await f.close();
@@ -2495,7 +2509,10 @@ weighted(6)(
       assert.equal(parked.phase, "verifying", parked.reason);
       // Unpushed local commits are repository contention: they wait out the grace instead of parking for attention.
       assert.equal(parked.resolution.attention, false, parked.reason);
-      assert.match(parked.reason, /Local integration branch differs from origin/);
+      assert.match(
+        parked.reason,
+        /Local integration branch differs from origin/,
+      );
       assert.equal(
         await git(f.repo, "rev-parse", "HEAD"),
         localHead,
@@ -2504,8 +2521,9 @@ weighted(6)(
       assert.equal(
         f.store
           .events(f.taskId)
-          .filter((event) => event.kind === "integration_checkout_fast_forwarded")
-          .length,
+          .filter(
+            (event) => event.kind === "integration_checkout_fast_forwarded",
+          ).length,
         0,
       );
       assert.equal(
@@ -3463,21 +3481,42 @@ weighted(8)(
   },
 );
 
-weighted(1)("a stale-base hook refusal renews no more than three times per pass", async (t) => {
-  const f = await resolutionFixture(t);
-  try {
-    const hooks = f.engine.resolution.hooks!;
-    let reads = 0, renewals = 0;
-    hooks.prospectiveMergeGate = async () => {
-      reads++;
-      return { kind: "hold", detail: "Local integration base differs from origin", records: [] };
-    };
-    hooks.renewIntegrationBase = async () => { renewals++; return f.base; };
-    await stepEngine(f.engine);
-    assert.equal(reads, 4);
-    assert.equal(renewals, 3);
-    assert.equal(f.store.events(f.taskId).filter(event => event.kind === "integration_base_renewed").length, 3);
-    assert.equal(f.mergeCount(), 0);
-    assert.match(f.current().reason, /Local integration base differs from origin/);
-  } finally { await f.close(); }
-});
+weighted(1)(
+  "a stale-base hook refusal renews no more than three times per pass",
+  async (t) => {
+    const f = await resolutionFixture(t);
+    try {
+      const hooks = f.engine.resolution.hooks!;
+      let reads = 0,
+        renewals = 0;
+      hooks.prospectiveMergeGate = async () => {
+        reads++;
+        return {
+          kind: "hold",
+          detail: "Local integration base differs from origin",
+          records: [],
+        };
+      };
+      hooks.renewIntegrationBase = async () => {
+        renewals++;
+        return f.base;
+      };
+      await stepEngine(f.engine);
+      assert.equal(reads, 4);
+      assert.equal(renewals, 3);
+      assert.equal(
+        f.store
+          .events(f.taskId)
+          .filter((event) => event.kind === "integration_base_renewed").length,
+        3,
+      );
+      assert.equal(f.mergeCount(), 0);
+      assert.match(
+        f.current().reason,
+        /Local integration base differs from origin/,
+      );
+    } finally {
+      await f.close();
+    }
+  },
+);

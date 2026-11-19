@@ -2184,9 +2184,14 @@ weighted(1)(
       const requireCurrent = f.engine.requireOwnerControlCurrent.bind(f.engine);
       f.engine.requireOwnerControlCurrent = (task, version, message) => {
         requireCurrent(task, version, message);
-        if (message === "Task changed during PR head verification; refresh before retrying") {
+        if (
+          message ===
+          "Task changed during PR head verification; refresh before retrying"
+        ) {
           queueMicrotask(() => {
-            f.store.update(blocked.id, { reason: "Concurrent observation after verification" });
+            f.store.update(blocked.id, {
+              reason: "Concurrent observation after verification",
+            });
             observationApplied = true;
           });
         }
@@ -2516,7 +2521,11 @@ weighted(1)(
       };
       // Keep the reporting turn live until the duplicate receipt is read;
       // release revokes its credential (orchestration contract, run identity).
-      f.states.set("review-agent", { ...f.states.get("review-agent")!, status: "running", active: true });
+      f.states.set("review-agent", {
+        ...f.states.get("review-agent")!,
+        status: "running",
+        active: true,
+      });
       const receipt = await f.engine.complete(report, "token");
       assert.deepEqual(f.run().completion, report);
       assert.deepEqual(await f.engine.complete(report, "token"), receipt);
