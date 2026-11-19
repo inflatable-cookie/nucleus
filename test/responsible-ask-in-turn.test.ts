@@ -24,61 +24,14 @@ function promptTask(responsible?: boolean) {
   } as unknown as Parameters<typeof workerPrompt>[0];
 }
 
-test('worker and reviewer prompts carry the ask-in-turn rule on the one lifecycle (PR 850 collapsed the responsible branches)', () => {
+test('each role points to its own standing guidance', () => {
   const worker = workerPrompt(promptTask(true), true);
-  assert.ok(worker.includes(RESPONSIBLE_OWNERSHIP_RULE), 'responsible worker owns its decisions');
-  assert.match(worker, /You own this task end to end/);
-  assert.match(worker, /Record each material decision and why in the PR body as a short Decisions list so the reviewer can check it/);
-  assert.match(worker, /When the brief is ambiguous, pick the reading that best serves its stated outcome, say so in the PR, and carry on/);
-  assert.match(worker, /stop that specific risky action and choose a safe alternative within scope; it does not mean end your turn and ask/);
-  assert.match(worker, /Ask through the ask tool only when a product or scope change or a release or outward action would change what the task delivers; budget extensions, including past 2x, are delegated under approve by default, Tom 2026-11-03/);
-  assert.match(worker, /Do not seek approval for binary choices; approve by default, proceed and record the decision/);
-  assert.match(worker, /A product or scope change is a discussion: raise it once with decision.add, including context, options and a recommendation/);
-  assert.match(worker, /Do not report blocked for a decision you could make: report blocked only for something outside your control/);
-  assert.ok(worker.includes(RESPONSIBLE_ASK_IN_TURN_RULE), 'responsible worker asks in-turn');
-  assert.match(worker, /retained Nucleus reviewer is the independent review, including security review/);
-  assert.match(worker, /In-session sub-agents are allowed/);
-  assert.match(worker, /ask the retained reviewer only when you cannot settle the question yourself/);
-  assert.match(worker, /A recommendation is a decision/);
-  assert.match(worker, /a bounded diagnostic you recommend is yours to run/);
-  assert.match(worker, /A 5xx or short forge failure is transient: wait and retry it yourself/);
-  assert.match(worker, /back off from 5 seconds up to 60 seconds for about 15 minutes/);
-  assert.match(worker, /Observe the remote branch or existing PR before every retry/);
-  assert.doesNotMatch(worker, /Before you report blocked.*ask the retained reviewer/);
-  assert.match(worker, /call the ask MCP tool once inside the current turn/);
-  assert.doesNotMatch(RESPONSIBLE_ASK_IN_TURN_RULE, /retained reviewer first|Decision: operator|planner or decider/);
-  assert.match(worker, /Use kind: scope only when changing what the task delivers/);
-  assert.match(worker, /Report blocked or error only if the task genuinely cannot proceed after the answer/);
-
-  const revision = runPrompt(
-    { ...promptTask(true), resolution: { revisionPrRepair: false, review: null } } as never,
-    { id: 'run', role: 'revision', generation: 1, head } as Run,
-    '/helper', '/ticket', true,
-  );
-  assert.ok(revision.includes(RESPONSIBLE_ASK_IN_TURN_RULE), 'responsible revision asks in-turn');
-  assert.ok(revision.includes(RESPONSIBLE_OWNERSHIP_RULE), 'responsible revision owns its decisions');
-
-  const reviewer = runPrompt(
-    { ...promptTask(true), resolution: { review: null } } as never,
-    { id: 'rev', role: 'reviewer', generation: 1, head } as Run,
-    '/helper', '/ticket', true,
-  );
-  assert.ok(reviewer.includes(RESPONSIBLE_ASK_IN_TURN_RULE), 'responsible reviewer asks in-turn');
-  assert.ok(reviewer.includes(RESPONSIBLE_OWNERSHIP_RULE), 'responsible reviewer owns its decisions');
-  assert.match(reviewer, /You own this task end to end/);
-
-  // Cutover 7 (PR 850): one lifecycle. A stored row without the responsible flag
-  // runs the same prompts, so its worker and reviewer carry the rules too.
-  const ordinaryWorker = workerPrompt(promptTask(false), true);
-  assert.ok(ordinaryWorker.includes(RESPONSIBLE_ASK_IN_TURN_RULE), 'every worker asks in-turn');
-  assert.match(ordinaryWorker, /You own this task end to end/, 'every worker owns its decisions');
-  const ordinaryReviewer = runPrompt(
-    { ...promptTask(false), resolution: { review: null } } as never,
-    { id: 'rev', role: 'reviewer', generation: 1, head } as Run,
-    '/helper', '/ticket', true,
-  );
-  assert.ok(ordinaryReviewer.includes(RESPONSIBLE_ASK_IN_TURN_RULE), 'every reviewer asks in-turn');
-  assert.match(ordinaryReviewer, /You own this task end to end/, 'every reviewer owns its decisions');
+  const revision = runPrompt(promptTask(true), { id: 'run', role: 'revision', generation: 1, head } as Run, '/helper', '/ticket', true);
+  const reviewer = runPrompt(promptTask(true), { id: 'rev', role: 'reviewer', generation: 1, head } as Run, '/helper', '/ticket', true);
+  assert.match(worker, /Worker rules/); assert.match(revision, /Worker rules/);
+  assert.match(reviewer, /Reviewer rules/);
+  assert.doesNotMatch(reviewer, /how to fix what the reviewer found/);
+  for (const prompt of [worker, revision, reviewer]) assert.match(prompt, /Never resend an unknown delivery/);
 });
 
 function blockedWorkerStore() {

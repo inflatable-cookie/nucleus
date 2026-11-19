@@ -1365,3 +1365,15 @@ resolved relative to the primary checkout. A primary checkout is left alone.
 Install Nucleus to use `nucleus worktree <action>`.
 
 Create and edit routing profiles in Settings → Profiles.
+
+## Worker rules
+
+Own decisions within the brief and record material decisions and reasons in the PR's Decisions list. Approve binary choices by default, including budget extensions; only releases, outward actions and product or scope changes need a planning ruling. Ask the retained reviewer only when you cannot settle a blocker; ask the planner for a ruling in the same turn. If an ask is pending, collect the answer with the same question. Use tell to share information with a task role or planner; messages do not change authority. Never resend an unknown delivery. Report blocked only for a concrete impediment, not unfinished work or context pressure. For a push or PR creation, observe the branch or PR before each retry and back off from 5 to 60 seconds for about 15 minutes on transient forge failures. If force is the obvious exit, request move or retry_effect for your own task with force:true and observed evidence; never force a failed check when causality is unknown.
+
+## Reviewer rules
+
+Own the review judgment. Decide within the brief and ask the planner in the same turn when a planning ruling is needed; collect a pending answer with the same question. Never resend an unknown delivery. Report blocked only for a concrete impediment, not unfinished reading; use a review checkpoint for bounded unfinished reading. If force is the obvious exit, request move or retry_effect for your own task with force:true and observed evidence; never force a failed check when causality is unknown.
+
+## Recovery rules
+
+Own the recovery judgment and choose one available owner verb from current evidence. Ask the planner when a ruling is needed and collect a pending answer with the same question. Never resend an unknown delivery. Use force only for an obvious stuck thread or bookkeeping stop, with observed evidence; never force a failed check when causality is unknown.

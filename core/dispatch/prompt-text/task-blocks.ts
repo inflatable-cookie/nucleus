@@ -164,3 +164,10 @@ export function queueBuildOutputBlock(
   return disclosure ? `${disclosure.text}\n` : "";
 }
 
+
+/** A short reminder; the detailed cleanup history is available in the run context. */
+export function queueBuildOutputSummary(task: Pick<Task, "resolution" | "workspaceId">, subjectRunId?: string | null) {
+  return queueBuildOutputBlock(task, subjectRunId)
+    ? 'Prior build outputs are not proof of present artifacts. Re-run commands whose output you rely on; read cleanup history with `nucleus helper report context history`. Do not remove another run’s files.\n'
+    : '';
+}

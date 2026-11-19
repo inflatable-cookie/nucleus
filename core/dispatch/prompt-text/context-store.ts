@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import type { Run, Task } from '../../../shared/contracts';
 import { writeOwnedJson } from '../../machine/owned-file.mjs';
 import { proofFilesBlock } from './proof-rules';
-import { operatorValidationBlock } from './validation';
+import { operatorValidationBlock, VALIDATION_RUN_RULE } from './validation';
 import { roleRules } from './standing-rules';
 
 export const CONTEXT_SECTIONS = ['rules', 'validation', 'proofs', 'history'] as const;
@@ -14,9 +14,9 @@ export type RunContext = Record<ContextSection, string>;
 export function buildRunContext(task: Task, run: { id: string; role: Run['role'] | 'worker'; head: string }, mcp: boolean, affectedTestsCommand?: string): RunContext {
   return {
     rules: roleRules(run.role),
-    validation: operatorValidationBlock(affectedTestsCommand),
+    validation: `${operatorValidationBlock(affectedTestsCommand, run.role === 'reviewer')}\n${VALIDATION_RUN_RULE}`,
     proofs: proofFilesBlock(task, run.head),
-    history: JSON.stringify({ checkpoints: task.checkpoints ?? null, reviews: task.resolution?.reviews ?? [], review: task.resolution?.review ?? null }, null, 2),
+    history: JSON.stringify({ checkpoints: task.checkpoints ?? null, reviews: task.resolution?.reviews ?? [], review: task.resolution?.review ?? null, buildOutputCleanups: task.resolution?.buildOutputCleanups ?? [] }, null, 2),
   };
 }
 
