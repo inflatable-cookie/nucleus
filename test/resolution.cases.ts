@@ -151,7 +151,11 @@ function fixture(
   // at High, where the reviewer shares the worker's bracket, so each role keeps
   // its own profile: worker the author, reviewer the reviewer, coordinator the
   // Mechanical one.
-  store.setMeta("usageLevel", { level: "high", until: null, setAt: new Date().toISOString() });
+  store.setMeta("usageLevel", {
+    level: "high",
+    until: null,
+    setAt: new Date().toISOString(),
+  });
   // These fixtures exercise the coordinator closeout on a repository with no manifest;
   // the project override pins agent closeout (Spec 022's Queue closeout is the default).
   store.putRepository(
@@ -2043,7 +2047,11 @@ test("Spec 052: an applied changes-required review climbs a high task from Worke
       return { id, workspaceId: t.workspaceId ?? "workspace" };
     };
     // Normal starts a high task on Worker; the step-up may climb it once to Heavyweight.
-    f.store.setMeta("usageLevel", { level: "normal", until: null, setAt: new Date().toISOString() });
+    f.store.setMeta("usageLevel", {
+      level: "normal",
+      until: null,
+      setAt: new Date().toISOString(),
+    });
     f.store.update(f.task.id, { complexity: "high" });
     const highWorker = profile("worker-high", "test/worker-high");
     f.engine.profiles = [...f.engine.profiles, highWorker];
@@ -2138,7 +2146,11 @@ test("Spec 052: an applied changes-required review climbs a high task from Worke
         cost: "medium",
       },
     ]);
-    f.store.setMeta("usageLevel", { level: "high", until: null, setAt: new Date().toISOString() });
+    f.store.setMeta("usageLevel", {
+      level: "high",
+      until: null,
+      setAt: new Date().toISOString(),
+    });
     f.store.update(f.task.id, {
       profile: highWorker,
       profileGroup: "worker-high",
@@ -2173,7 +2185,10 @@ test("Spec 052: an applied changes-required review climbs a high task from Worke
     });
     assert.match(
       String(
-        f.engine.resolution.reviewerCapabilityIssue(f.current(), profile("reviewer")),
+        f.engine.resolution.reviewerCapabilityIssue(
+          f.current(),
+          profile("reviewer"),
+        ),
       ),
       /below Heavyweight and Frontier, which Maximum reserves/,
       "a retained reviewer below Maximum's tiers is replaced",
