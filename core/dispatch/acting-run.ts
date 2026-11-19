@@ -220,7 +220,9 @@ function refuse(
 ): Error {
   // A ticket issued for another task names no thread of this one, whatever agent
   // and host it shares with the task's current run.
-  const foreign = presented ? presented.taskId !== task.id : runId !== task.runId;
+  const foreign = presented
+    ? presented.taskId !== task.id
+    : runId !== task.runId;
   const named = foreign
     ? `run ${runId} of another task, not ${label(task)}`
     : `run ${runId} of thread ${threadOf(presented ?? workerThread(task)) ?? "an unproven thread"}`;

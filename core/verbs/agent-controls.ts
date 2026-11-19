@@ -169,7 +169,8 @@ export class AgentControls {
   }
   authenticateAgentControl(taskId: string, runId: string, token: string) {
     this.store.authenticate(runId, token);
-    const task = this.store.task(taskId), presented = this.store.run(runId);
+    const task = this.store.task(taskId),
+      presented = this.store.run(runId);
     if (presented ? presented.taskId !== task.id : task.runId !== runId)
       throw Error("Stale report: task and run identity do not match");
     // A retained thread's shell may still export an earlier run's ticket; this

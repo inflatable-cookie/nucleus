@@ -337,7 +337,8 @@ export class Store {
       completePapercutsForTask: (task) =>
         store.planningStore.completePapercutsForTask(task),
       noteGrantRun: (task, role) => store.noteGrantRun(task, role),
-      receipt: (input, token, credentialRunId) => store.receipt(input, token, credentialRunId),
+      receipt: (input, token, credentialRunId) =>
+        store.receipt(input, token, credentialRunId),
       setCompletionReceipt: (id, task, run, hash, response) =>
         store.setCompletionReceipt(id, task, run, hash, response),
       threadArchiveEffect: (agentId, hostId) =>

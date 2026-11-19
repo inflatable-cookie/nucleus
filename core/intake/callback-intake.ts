@@ -391,10 +391,7 @@ export class CallbackIntake {
         sourceRun.head,
         false,
       );
-    const runRoute = completionRoute(
-      input.status,
-      sourceRun,
-    );
+    const runRoute = completionRoute(input.status, sourceRun);
     if (runRoute === "run" || runRoute === "reviewer") {
       if (isDispositionActive(this.store.task(input.taskId))) {
         return recordLateCallbackEvidence(

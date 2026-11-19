@@ -426,7 +426,10 @@ test("a retained worker's stale initial-run ticket asks as the revision run curr
       kind: "process",
     });
     assert.equal(receipt.status, "answered");
-    assert.equal(receipt.answer, "Keep the public API — The brief fixes the public shape");
+    assert.equal(
+      receipt.answer,
+      "Keep the public API — The brief fixes the public shape",
+    );
     assert.match(
       f.events("agent_ask")[0]!.detail,
       /run run-revision \(revision\); agent worker/,
