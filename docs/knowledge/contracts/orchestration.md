@@ -1594,11 +1594,22 @@ request identities and stored committed-handoff rows are not rewritten.
   is ever signalled, whatever run identity it carries, and its scratch is kept
   until that owner exits (nucleus#1306). Only a process whose whole ancestry has
   exited is an orphan cleanup may stop; an ancestor this uid's table does not
-  list counts as live until the OS proves it exited. A process stopped for a run
-  and seen again under the same run inside a ten-minute window is recorded once
-  (`run_process_cleanup_left_alone`) and left alone, so a host that respawns a
-  helper is never chased; a process the same sweep did not see when it started is
-  the same evidence and is treated the same way. One sweep takes one process-table
+  list counts as live until the OS proves it exited. A provider host the host
+  daemon started and keeps — the provider's own `app-server` or tool-host shape,
+  whose parent carries none of the run's identity — is host infrastructure, not a
+  released run's live ancestor: it inherits the launching thread's ticket and
+  scratch in its environment, so it still names that run after the run released,
+  but it owns neither and neither holds the scratch nor repeats a record
+  (nucleus#1372). Its own run-owned children keep the protection above. A process
+  stopped for a run and seen again under the same run inside a ten-minute window
+  is recorded once (`run_process_cleanup_left_alone`) and left alone, so a host
+  that respawns a helper is never chased; a process the same sweep did not see
+  when it started is the same evidence and is treated the same way. A left-alone
+  decision is written once and again only when it changes — another reason, or an
+  added or replaced process — and re-queueing the same obligation on a release,
+  replacement or idle observation never erases the recorded decision, so a
+  settled run's timeline cannot grow a repeated record (nucleus#1358 wrote 770
+  identical ones). One sweep takes one process-table
   snapshot and one ownership-environment read for every run it settles, bounded so
   a read that never answers cannot hold it, and a run whose cleanup proved itself
   complete is never scanned again — hourly or per pass. Every liveness and

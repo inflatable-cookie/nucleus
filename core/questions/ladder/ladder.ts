@@ -1,16 +1,32 @@
-import type { Completion, Task, TaskControlInput } from '../../../shared/contracts';
-import type { Resolution } from '../../resolution';
-import { attentionUnknownEscalation } from './attention';
-import { continueWorkerAfterLadder, settleLadderControl } from './continuation';
-import { establishEscalationWait, type EscalationWait } from './hold';
-import { classifyEscalationToOperator, operatorDecisionApplied } from './operator';
+import type {
+  Completion,
+  Task,
+  TaskControlInput,
+} from "../../../shared/contracts";
+import type { Resolution } from "../../resolution";
+import { attentionUnknownEscalation } from "./attention";
+import { continueWorkerAfterLadder, settleLadderControl } from "./continuation";
+import { establishEscalationWait, type EscalationWait } from "./hold";
 import {
-  escalateRefusedCoordinator, holdProofOnlyGoWait, openReviewContinuationEscalation, responsibleBlockerLadder,
-  settleCompletedExecutorBlocker, suppressAutomaticRetry, type BlockerLadderInput,
-} from './park';
-import type { PlannerEscalation } from './records';
-import { resumeDelegations, resumeEscalationWaits } from './resume';
-import { openPlannerEscalation, routePlannerEscalation, type OpenEscalationInput } from './routing';
+  classifyEscalationToOperator,
+  operatorDecisionApplied,
+} from "./operator";
+import {
+  escalateRefusedCoordinator,
+  holdProofOnlyGoWait,
+  openReviewContinuationEscalation,
+  responsibleBlockerLadder,
+  settleCompletedExecutorBlocker,
+  suppressAutomaticRetry,
+  type BlockerLadderInput,
+} from "./park";
+import type { PlannerEscalation } from "./records";
+import { resumeDelegations, resumeEscalationWaits } from "./resume";
+import {
+  openPlannerEscalation,
+  routePlannerEscalation,
+  type OpenEscalationInput,
+} from "./routing";
 
 /**
  * The blocker ladder: worker, reviewer second opinion, planner, operator. Tom,
@@ -28,17 +44,36 @@ import { openPlannerEscalation, routePlannerEscalation, type OpenEscalationInput
  */
 export class Ladder {
   constructor(readonly resolution: Resolution) {}
-  get store() { return this.resolution.store; }
-  get adapter() { return this.resolution.adapter; }
+  get store() {
+    return this.resolution.store;
+  }
+  get adapter() {
+    return this.resolution.adapter;
+  }
   /** Spec 058 slice 17: the ladder sends this process is driving, so a rerun never double-sends. */
   readonly routingEscalations = new Set<string>();
   /** Escalations whose unknown-delivery attention is being delivered now, so a pass cannot double-send. */
   readonly attentioningEscalations = new Set<string>();
-  runReviewerConsult(t: Task, input: { id: string; reviewer: string | null; question: string }): Promise<void> {
+  runReviewerConsult(
+    t: Task,
+    input: { id: string; reviewer: string | null; question: string },
+  ): Promise<void> {
     return this.resolution.reviewerConsult.runReviewerConsult(t, input);
   }
-  applyDelegatedEscalationAnswer(taskId: string, id: string, questionId: string, answer: string, who: string): Promise<string | null> {
-    return this.resolution.escalationSettlement.applyDelegatedEscalationAnswer(taskId, id, questionId, answer, who);
+  applyDelegatedEscalationAnswer(
+    taskId: string,
+    id: string,
+    questionId: string,
+    answer: string,
+    who: string,
+  ): Promise<string | null> {
+    return this.resolution.escalationSettlement.applyDelegatedEscalationAnswer(
+      taskId,
+      id,
+      questionId,
+      answer,
+      who,
+    );
   }
   /**
    * Papercut 2ef86450: an escalation whose delivery is unknown is never resent, but
@@ -46,7 +81,10 @@ export class Ladder {
    * (owner, question, exits) and the project planner hears about it once on the
    * agent channel. The stop is re-asserted each ladder pass; the message is not.
    */
-  attentionUnknownEscalation(t: Task, escalation: Pick<PlannerEscalation, 'id' | 'question'>): void {
+  attentionUnknownEscalation(
+    t: Task,
+    escalation: Pick<PlannerEscalation, "id" | "question">,
+  ): void {
     return attentionUnknownEscalation(this, t, escalation);
   }
   resumeDelegations(task: Task): void {
@@ -56,7 +94,12 @@ export class Ladder {
     return resumeEscalationWaits(this, task);
   }
   /** The wait event and the actual task stop are one durable state transition. */
-  establishEscalationWait(taskId: string, id: string, wait: EscalationWait, afterEventId = 0): boolean {
+  establishEscalationWait(
+    taskId: string,
+    id: string,
+    wait: EscalationWait,
+    afterEventId = 0,
+  ): boolean {
     return establishEscalationWait(this, taskId, id, wait, afterEventId);
   }
   /**
@@ -64,7 +107,10 @@ export class Ladder {
    * Returns true when the ladder owns the park, so the caller writes no ordinary
    * blocked stop.
    */
-  responsibleBlockerLadder(t: Task, input: BlockerLadderInput): Promise<boolean> {
+  responsibleBlockerLadder(
+    t: Task,
+    input: BlockerLadderInput,
+  ): Promise<boolean> {
     return responsibleBlockerLadder(this, t, input);
   }
   /** effigy#697: while a proof-only release GO is open the task waits on the operator. */
@@ -76,12 +122,21 @@ export class Ladder {
     return settleCompletedExecutorBlocker(this, input);
   }
   /** Keep a completed result and hand a forbidden automatic relaunch to the planner. */
-  suppressAutomaticRetry(t: Task, site: string, evidence: string, runId: string | null = null): boolean {
+  suppressAutomaticRetry(
+    t: Task,
+    site: string,
+    evidence: string,
+    runId: string | null = null,
+  ): boolean {
     return suppressAutomaticRetry(this, t, site, evidence, runId);
   }
-  /** A reviewer-checkpoint stop escalates through the planner ladder, once per cause. */
-  openReviewContinuationEscalation(t: Task, state: 'exhausted' | 'closed'): string {
-    return openReviewContinuationEscalation(this, t, state);
+  /** A reviewer-checkpoint stop escalates through the planner ladder, once per reader. */
+  openReviewContinuationEscalation(
+    t: Task,
+    state: "exhausted" | "closed",
+    detail = "",
+  ): string {
+    return openReviewContinuationEscalation(this, t, state, detail);
   }
   /** A second refused coordinator choice reaches the existing planner ladder. */
   escalateRefusedCoordinator(t: Task, reason: string): void {
@@ -96,7 +151,12 @@ export class Ladder {
     return routePlannerEscalation(this, t, id, question);
   }
   /** A planner or decider that explicitly says it cannot decide reaches the operator. */
-  classifyEscalationToOperator(t: Task, id: string, reason: string, who: string): void {
+  classifyEscalationToOperator(
+    t: Task,
+    id: string,
+    reason: string,
+    who: string,
+  ): void {
     return classifyEscalationToOperator(this, t, id, reason, who);
   }
   /** Whether an escalation's operator decision is recorded, linked and holding the task. */
@@ -104,11 +164,23 @@ export class Ladder {
     return operatorDecisionApplied(this, taskId, id);
   }
   /** The one continuation shape both ladder exits use: the same retained worker continues. */
-  continueWorkerAfterLadder(t: Task, input: { instruction: string; event: string; reason: string; detail: string }): void {
+  continueWorkerAfterLadder(
+    t: Task,
+    input: {
+      instruction: string;
+      event: string;
+      reason: string;
+      detail: string;
+    },
+  ): void {
     return continueWorkerAfterLadder(this, t, input);
   }
   /** An ordinary owner control that moved a parked task answers the escalations it stepped over. */
-  settleLadderControl(before: Task, after: Task, action: TaskControlInput["action"]): void {
+  settleLadderControl(
+    before: Task,
+    after: Task,
+    action: TaskControlInput["action"],
+  ): void {
     return settleLadderControl(this, before, after, action);
   }
 }

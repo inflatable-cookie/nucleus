@@ -1139,7 +1139,13 @@ acceptance proof (a caller claiming it is refused like any other non-authority),
 `isProjectOwnerThread` and the audit line's owner bit, the Chatterbox inventory, validation and
 recovery discovery (`paseo.workspaceChatterboxes`), `project.assign-owner`, `project.claim`, and
 the board's owner picker and settings. A reviewer checkpoint stop (budget exhausted, agent closed)
-on a responsible task escalates through the planner ladder instead of an owner disposition.
+on a responsible task escalates through the planner ladder instead of an owner disposition. A
+reader that reported it cannot finish is first answered by the ordinary sweep, which performs the
+`restart role=reviewer fresh` the board offers once that reader is observed settled, and escalates
+with that verb in the question only when the replacement cannot act (nucleus#1372; the escalation
+belongs to the reader, so a later exhausted replacement is never silent). The recovery route leaves
+such a reader to that pass rather than escalating it before its turn ends, and a spent budget alone
+still escalates through the ladder.
 Notices that fell back to the project owner — origin fallbacks, proof-wait attention, scheduled
 milestone QA and the drain prompts — go to the project's planner (`project.set-planner`), then the
 Nucleus planner (the project that holds origin `inflatable-cookie/paseo-northstar-queue`), then the task's origin thread. Dormancy is re-derived: a
