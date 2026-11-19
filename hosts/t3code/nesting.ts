@@ -285,10 +285,10 @@ export class T3Nesting {
         taskId,
         "the task's parent thread could not be created; restart the task or move it to another host",
       );
-    const commandId = identity(
-      "child",
-      canonical([this.core.hostId(), input.attempt.requestId]),
-    );
+    // The launch's own request id is the child command's identity: one durable
+    // identity per launch, as the top-level launch used to carry, so a replay
+    // replays this exact child instead of minting a second one.
+    const commandId = input.attempt.requestId;
     const threadId = childThreadId(commandId);
     // A parent this launch just created starts its run asynchronously; one that
     // already existed and lost its turn needs the re-entry at once.

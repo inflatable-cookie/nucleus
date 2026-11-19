@@ -12,6 +12,7 @@ import { Store } from '../core/store/store';
 import { chooseProfile } from '../core/dispatch/routing';
 import { nucleusProfileSchema, routingProfiles } from '../shared/profiles';
 import { t3codeVocabulary } from '../hosts/t3code/vocabulary';
+import { acpStub, nucleusProvider } from './support/t3code-acp';
 import { poolSchema, submissionSchema, type PoolEntry, type Profile, type Task } from '../shared/contracts';
 import type { HostAgentSpec, HostCatalog } from '../shared/host';
 import { t3Fake } from './support/t3code-fake';
@@ -27,14 +28,15 @@ async function fixture(t: TestContext): Promise<Fixture> {
   const root = mkdtempSync(join(tmpdir(), 't3code-runtime-mode-'));
   const directory = await realpath(root);
   const server = await t3Fake(t, directory);
-  server.controls.providers = nightlyProviders();
-  const host = new T3CodeHost({ endpoint: server.endpoint, bearer: 'synthetic-bearer', statePath: join(root, 'state.json'), timeoutMs: 1_000, probeThreadId: 'synthetic-probe' });
+  server.controls.providers = [...nightlyProviders(), nucleusProvider];
+  const acp = acpStub(server.threads);
+  const host = new T3CodeHost({ endpoint: server.endpoint, bearer: 'synthetic-bearer', statePath: join(root, 'state.json'), timeoutMs: 1_000, probeThreadId: 'synthetic-probe', acp: () => acp.surface, reentryTimeoutMs: 200 });
   t.after(() => { host.close(); rmSync(root, { recursive: true, force: true }); });
   await host.connect();
   return { root, directory, host, catalog: await host.catalog(), server };
 }
 const launchSpec = (workspaceId: string, profile: Profile, requestId: string): HostAgentSpec => ({ workspaceId, profile, title: 'Synthetic role', mcpBindingPath: null,
-  attempt: () => ({ requestId, prompt: 'Synthetic prompt', labels: { task: 'synthetic-task', role: 'worker' }, environment: {} }) });
+  attempt: () => ({ requestId, prompt: 'Synthetic prompt', labels: { 'nucleus.task': 'synthetic-task' }, environment: {} }) });
 
 test('the T3 catalog reports the nightly reporting provider runtime modes, with the nightly labels', async t => {
   const { catalog } = await fixture(t);

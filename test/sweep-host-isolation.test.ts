@@ -143,7 +143,7 @@ test("a host transport failure waits only that host while the sweep processes he
 test("a host whose pass failed at the transport boundary keeps its own waits while the other host settles its own", async (t) => {
   // The registry claims both hosts are connected; only one client answers a step.
   const f = fixture(t, {
-    reconcileReportedSettlements: async () => {
+    reconcileTaskRow: async () => {
       const host = f.engine.activeHostId;
       if (host === OFFLINE_HOST)
         throw new Error(`Transport not connected: host ${host} is unavailable`);
@@ -168,7 +168,7 @@ test("a host whose pass failed at the transport boundary keeps its own waits whi
   assert.equal(f.store.getMeta("engineError"), "");
   assert.match(
     String(f.store.getMeta("hostPassError")),
-    /reconcileReportedSettlements: Transport not connected/,
+    /reconcileTaskRows: Transport not connected/,
   );
   assert.deepEqual(
     f.settled,
@@ -527,6 +527,9 @@ test("a T3 presentation timeout stops retained rows and the next host runs", asy
       first: { labels: labels("reviewer") },
       second: { labels: labels("recovery") },
     },
+    // The task's row is its parent thread; no recorded title means the step read
+    // is what this pass reaches first.
+    parents: { [taskId]: { taskId, threadId: "row", title: undefined } },
     intents: {},
     supportCurrent: {},
     rowTitles: {},
@@ -536,6 +539,7 @@ test("a T3 presentation timeout stops retained rows and the next host runs", asy
   const presentation = new T3Presentation({
     state: { read: () => state },
     intents: { confirmedDeletion: () => false },
+    parentThreadOf: () => "row",
     requireConnection: () => {},
     reads: {
       isObserved: async () => {
@@ -552,9 +556,12 @@ test("a T3 presentation timeout stops retained rows and the next host runs", asy
   presentation.retireDeletedPresentationIntents = () => {};
   const visited: string[] = [];
   const adapter = {
-    reconcileThreadTitles: async (tasks: any[]) => {
+    reconcileThreadTitles: async (_tasks: any[]) => {
       if (f.engine.activeHostId === OFFLINE_HOST)
-        await presentation.reconcileWorkerRows(tasks);
+        await presentation.reconcileTaskRow(f.offline.id, {
+          state: "waiting",
+          cause: "Waiting",
+        });
       else if (f.engine.activeHostId) visited.push(f.engine.activeHostId);
     },
   };

@@ -132,7 +132,11 @@ export class HostPass {
       try {
         await reconcile.call(this.adapter, task.id, attention);
       } catch (error) {
+        // A timeout or a transport-boundary failure is the host's own answer for
+        // this pass (Spec 066 R6): the step's own classification records it, so it
+        // must not be swallowed as one task's presentation warning.
         if (hostTimedOut(error)) throw error;
+        if (isTransportFailure(error)) throw error;
         this.store.event(
           task.id,
           "thread_row_warning",

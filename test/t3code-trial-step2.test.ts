@@ -18,6 +18,7 @@ import { observeIdle } from "./support/fakes";
 import { createHost, createAdapter } from "../hosts/t3code";
 import { canonical } from "../hosts/t3code/state";
 import { t3Fake, threadProjection } from "./support/t3code-fake";
+import { acpStub, serveNucleusProvider } from "./support/t3code-acp";
 import { command, git } from "../core/git/index";
 import { questionRoute } from "../core/questions/question-route";
 import { AGENT_ASK_WAIT_MS } from "../core/questions/agent-ask";
@@ -655,15 +656,21 @@ test("repository hostKind selects the online host of that kind; switching back l
 test("T3 Adapter enables lifecycleDispatch; the Host stays native-only; create without helper refuses", async (t: TestContext) => {
   const directory = realpathSync(mkdtempSync(join(tmpdir(), "t3-lifecycle-")));
   const server = await t3Fake(t, directory);
+  // Each test drives the role turns it reports; a created child is idle until then.
+  server.controls.childRunOnCreate = false;
+  const acp = acpStub(server.threads);
   const host = createHost({
     endpoint: server.endpoint,
     bearer: "synthetic-bearer",
     probeThreadId: "synthetic-probe",
     statePath: join(directory, "hosts", "t3code.json"),
     timeoutMs: 2_000,
+    acp: () => acp.surface,
+    reentryTimeoutMs: 200,
   });
   t.after(() => host.close());
   await host.connect();
+  await serveNucleusProvider(host, server);
   assert.equal(host.capabilities().lifecycleDispatch, false);
   const native = createAdapter(Policy, host);
   assert.equal(native.capabilities().lifecycleDispatch, true);
@@ -952,15 +959,21 @@ test("T3 adapter verifies reviews and continues retained threads without a fresh
     mkdtempSync(join(tmpdir(), "t3-review-continue-")),
   );
   const server = await t3Fake(t, directory);
+  // Each test drives the role turns it reports; a created child is idle until then.
+  server.controls.childRunOnCreate = false;
+  const acp = acpStub(server.threads);
   const host = createHost({
     endpoint: server.endpoint,
     bearer: "synthetic-bearer",
     probeThreadId: "synthetic-probe",
     statePath: join(directory, "hosts", "t3code.json"),
     timeoutMs: 2_000,
+    acp: () => acp.surface,
+    reentryTimeoutMs: 200,
   });
   t.after(() => host.close());
   await host.connect();
+  await serveNucleusProvider(host, server);
   const workspace = await host.createWorkspace({
     title: "Synthetic worktree",
     requestId: "workspace",
@@ -1088,15 +1101,21 @@ test("T3 adapter verifies reviews and continues retained threads without a fresh
 test("T3 adapter asks a retained reviewer and binds uncertain run creation", async (t: TestContext) => {
   const directory = realpathSync(mkdtempSync(join(tmpdir(), "t3-ask-bind-")));
   const server = await t3Fake(t, directory);
+  // Each test drives the role turns it reports; a created child is idle until then.
+  server.controls.childRunOnCreate = false;
+  const acp = acpStub(server.threads);
   const host = createHost({
     endpoint: server.endpoint,
     bearer: "synthetic-bearer",
     probeThreadId: "synthetic-probe",
     statePath: join(directory, "hosts", "t3code.json"),
     timeoutMs: 2_000,
+    acp: () => acp.surface,
+    reentryTimeoutMs: 200,
   });
   t.after(() => host.close());
   await host.connect();
+  await serveNucleusProvider(host, server);
   const workspace = await host.createWorkspace({
     title: "Synthetic worktree",
     requestId: "workspace",
@@ -1341,7 +1360,9 @@ test("T3 adapter asks a retained reviewer and binds uncertain run creation", asy
       answer?: string;
     };
     assert.equal(receipt.status, "answered");
-    assert.equal(receipt.answer, "Keep the current T3 approach.");
+    // T3 attributes a child's answer to its delegated-task node; the answer text is
+    // the tail of that record.
+    assert.match(receipt.answer ?? "", /Keep the current T3 approach\.$/);
   } finally {
     await engine.stop();
     await stop();
@@ -1354,15 +1375,21 @@ test("a T3 MCP planner classifies a reviewer consult; the worker helper receives
     mkdtempSync(join(tmpdir(), "t3-ask-planner-")),
   );
   const server = await t3Fake(t, directory);
+  // Each test drives the role turns it reports; a created child is idle until then.
+  server.controls.childRunOnCreate = false;
+  const acp = acpStub(server.threads);
   const host = createHost({
     endpoint: server.endpoint,
     bearer: "synthetic-bearer",
     probeThreadId: "synthetic-probe",
     statePath: join(directory, "hosts", "t3code.json"),
     timeoutMs: 2_000,
+    acp: () => acp.surface,
+    reentryTimeoutMs: 200,
   });
   t.after(() => host.close());
   await host.connect();
+  await serveNucleusProvider(host, server);
   const workspace = await host.createWorkspace({
     title: "Synthetic worktree",
     requestId: "workspace",
@@ -2077,6 +2104,7 @@ async function ownerRetryFixture(t: TestContext) {
   });
   t.after(() => host.close());
   await host.connect();
+  await serveNucleusProvider(host, server);
   const adapter = createAdapter(Policy, host, {
     socketPath: join(data, "callback.sock"),
     helperPath: join(data, "worker-report.mjs"),
