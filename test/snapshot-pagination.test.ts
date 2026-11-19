@@ -146,7 +146,7 @@ test('the CLI reports method, response size and bound when a response is oversiz
     await client.connect();
     const task = await service.debug({ target: 'store', method: 'insert', args: [submissionSchema.parse({
       submissionId: 'cli-oversize', title: 'CLI oversize', repoPath: '/fixture', planningCommit: 'a'.repeat(40),
-      handoffPath: 'docs/handoffs/cli-oversize.md', originAgentId: 'origin',
+      handoffPath: 'tasks/cli-oversize.md', originAgentId: 'origin',
     }), 'fixture-host', 'Handoff', 'b'.repeat(40)] }) as { id: string };
     await service.debug({ target: 'store', method: 'update', args: [task.id, { reason: 'x'.repeat(MAX_FRAME_BYTES) }] });
     const payload = join(dir, 'snapshot.json');
@@ -191,7 +191,7 @@ test('queue.snapshot paging is served over the socket with the same compact defa
     for (let i = 0; i < 3; i++) {
       await service.debug({ target: 'store', method: 'insert', args: [submissionSchema.parse({
         submissionId: `rpc-live-${i}`, title: `RPC ${i}`, repoPath: '/fixture', planningCommit: 'a'.repeat(40),
-        handoffPath: `docs/handoffs/rpc-${i}.md`, originAgentId: 'origin',
+        handoffPath: `tasks/rpc-${i}.md`, originAgentId: 'origin',
       }), 'fixture-host', 'Handoff', 'b'.repeat(40)] });
     }
     const first = await client.request('queue.snapshot', { limit: 2 }) as { tasks: { id: string }[]; cursor: string; hasMore: boolean };

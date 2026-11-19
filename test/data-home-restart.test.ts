@@ -182,7 +182,7 @@ test('the live leftover layout survives two service restarts through the post-mo
     seeding.setMeta('pool', POOL);
     const task = seeding.insert(submissionSchema.parse({
       submissionId: 'old-store-task', title: 'Recorded before the move', repoPath: '/fixture/repo',
-      planningCommit: base, handoffPath: 'docs/handoffs/old-store.md', originAgentId: 'origin',
+      planningCommit: base, handoffPath: 'tasks/old-store.md', originAgentId: 'origin',
     }), 'fixture-host', 'handoff', base);
     taskId = task.id;
     seeding.putRun(runSchema.parse({

@@ -353,8 +353,8 @@ owner to the rules it enforces.
   and nothing else: lanes, routing, worker exclusions, dependencies, notes and
   holds, completion subscriptions and the task's owner. Same-name `Engine` methods
   delegate to it.
-- `core/verbs/brief.ts` re-pins a committed handoff's instruction, amends a
-  Nucleus-held brief and refuses brief text that still declares a stage plan.
+- `core/verbs/brief.ts` amends a Nucleus-held brief and refuses brief text that
+  still declares a stage plan.
   Same-name `Engine` methods delegate to it.
 - `core/recovery/task-stops.ts` writes a task's stops, incidents and attention, and
   closes attention episodes and escalations. Same-name `Resolution` methods

@@ -83,7 +83,7 @@ function buildFixture(): Fixture {
       const created = index * 90_000;
       const task = taskSchema.parse({
         submissionId: `oracle-${index}`, title: `Oracle task ${index}`, repoPath, scope: (['general', 'mechanical', 'complex'] as const)[index % 3],
-        planningCommit: 'a'.repeat(40), handoffPath: `docs/handoffs/oracle-${index}.md`, originAgentId: 'oracle-origin',
+        planningCommit: 'a'.repeat(40), handoffPath: `tasks/oracle-${index}.md`, originAgentId: 'oracle-origin',
         id, hostId: 'oracle-host', hostSelection: { hostId: 'oracle-host', basis: 'sole_online_host' }, createdAt: iso(created), updatedAt: iso(created + 60_000), version: 2,
         phase: lane === 'active' ? 'working' : lane === 'queued' ? 'queued' : 'done',
         reason: lane === 'active' ? 'Worker running' : lane === 'queued' ? 'Waiting for dispatch' : 'Done',

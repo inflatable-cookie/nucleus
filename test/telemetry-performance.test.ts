@@ -48,7 +48,7 @@ function buildFixture(): Fixture {
       const id = `perf-task-${index}`;
       const task = taskSchema.parse({
         submissionId: `perf-${index}`, title: `perf task ${index}`, repoPath: REPOS[index % REPOS.length], scope: CAPABILITIES[index % 3],
-        planningCommit: "a".repeat(40), handoffPath: `docs/handoffs/perf-${index}.md`, originAgentId: "perf-origin",
+        planningCommit: "a".repeat(40), handoffPath: `tasks/perf-${index}.md`, originAgentId: "perf-origin",
         id, hostId: "perf-host", createdAt: iso(created), updatedAt: iso(created + 60_000), version: 3,
         phase: isAttention ? "needs_attention" : "done", reason: isAttention ? "Provider timeout during reviewer creation" : "Done",
         held: false, handoffText: filler(index * 7, TASK_PAYLOAD_BYTES), planningBase: "a".repeat(40),

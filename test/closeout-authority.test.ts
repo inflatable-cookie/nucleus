@@ -905,7 +905,6 @@ test("the closeout authority decision lives in the generic hook core without doc
     "utf8",
   );
   for (const forbidden of [
-    "docs/handoffs",
     "handoffPath",
     "planningCommit",
     "frontmatter",

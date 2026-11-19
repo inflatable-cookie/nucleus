@@ -131,8 +131,8 @@ durably reconstructible rebuilds them from Nucleus's own task, run, review,
 verification, merge, and closeout state; a missing or ambiguous fact is
 rejected and exposed in history rather than guessed.
 
-The current Northstar handoff submission is an adapter to the generic committed
-instruction artifact. Closeout authority is selected per repository from the
+Committed handoff and instruction submissions are retired (nucleus#1368); a
+Queue-held brief is the only submitted instruction source. Closeout authority is selected per repository from the
 manifest pinned at the synchronized integration commit. A required
 `integration_write` hook bound to `task.closeout` owns closeout: Nucleus emits the
 event without creating a closeout agent or workspace, and the hook result and
@@ -229,7 +229,7 @@ path-keyed predecessor.
   only gate for those repositories.
 - Brief capture records the fetched pushed integration head (`origin/<base>`)
   as the planning commit and checks manifest eligibility there, not at the
-  shared checkout's HEAD. Handoff capture keeps its committed-file rule.
+  shared checkout's HEAD.
 
 ## Automatic exact-identity replay
 

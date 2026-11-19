@@ -19,6 +19,8 @@ import { QueueService } from "../service/transport/server";
 import { ServiceClient } from "../shared/service/client";
 import { readServiceInfo } from "../service/transport/identity";
 import { git } from "../core/git/index";
+import { briefDigest } from "../core/planning/brief";
+const FAN_IN_BRIEF = "## Outcome\n\nFan-in fixture brief.\n";
 
 /**
  * Queue #486: a legitimate 13-dependency final-gate task joined every unfinished
@@ -50,7 +52,7 @@ function withStore(run: (store: Store, add: (submissionId: string, title: string
   try {
     run(store, (submissionId, title, dependsOn = []) => store.insert(submissionSchema.parse({
       submissionId, title, repoPath: "/repo", planningCommit: "a".repeat(40),
-      handoffPath: `docs/handoffs/${submissionId}.md`, originAgentId: "origin", dependsOn,
+      handoffPath: `tasks/${submissionId}.md`, originAgentId: "origin", dependsOn,
     }), "host", "handoff", "a".repeat(40)));
   } finally {
     store.close();
@@ -249,7 +251,7 @@ test("the engine refuses an otherwise dispatchable dependent while its fan-in is
     store.setMeta("paused", false);
     const add = (submissionId: string, title: string, dependsOn: string[] = []) => store.insert(submissionSchema.parse({
       submissionId, title, repoPath: "/repo", planningCommit: "a".repeat(40),
-      handoffPath: `docs/handoffs/${submissionId}.md`, originAgentId: "origin", dependsOn,
+      handoffPath: `tasks/${submissionId}.md`, originAgentId: "origin", dependsOn,
     }), "host", "handoff", "a".repeat(40));
     const prerequisites = Array.from({ length: 13 }, (_, index) => add(`gate-${index}`, `Gate prerequisite ${index}`));
     const dependent = add("gate-dependent", "Gate dependent", prerequisites.map(task => task.id));
@@ -300,8 +302,7 @@ test("the public service publishes a 13-prerequisite fan-in board, detail and he
   await git(repoPath, "checkout", "-b", "main");
   await git(repoPath, "config", "user.name", "Queue test");
   await git(repoPath, "config", "user.email", "queue@example.invalid");
-  mkdirSync(join(repoPath, "docs/handoffs"), { recursive: true });
-  writeFileSync(join(repoPath, "docs/handoffs/fan-in.md"), "Fan-in fixture handoff\n");
+  writeFileSync(join(repoPath, "README.md"), "Fan-in fixture\n");
   await git(repoPath, "add", ".");
   await git(repoPath, "commit", "-m", "Fan-in fixture");
   await git(repoPath, "push", "origin", "main");
@@ -315,7 +316,7 @@ test("the public service publishes a 13-prerequisite fan-in board, detail and he
   try {
     const submit = (submissionId: string, title: string, dependsOn: string[] = []) => client.request("queue.submit", {
       submissionId, title, repoPath, planningCommit, complexity: "low",
-      handoffPath: "docs/handoffs/fan-in.md", originAgentId: "origin", baseBranch: "main", dependsOn,
+      brief: { text: FAN_IN_BRIEF, mediaType: "text/markdown", digest: briefDigest(FAN_IN_BRIEF) }, originAgentId: "origin", baseBranch: "main", dependsOn,
     }) as Promise<{ id: string; dependsOn: string[]; phase: string }>;
     const prerequisites: Array<{ id: string }> = [];
     // Unpaused, so the service engine really considers each queued task rather than

@@ -34,7 +34,7 @@ import {
   proofOnlyGoQuestionText,
 } from "../core/questions/operator-question";
 import { digest } from "../core/store/store";
-import { parseNorthstarDocument } from "../core/planning/handoff";
+import { parseBriefDocument } from "../core/planning/handoff";
 import { shellCommandInvokesSelector } from "../core/qa/proof-selector-evidence";
 import { runPrompt } from "../core/dispatch/prompts";
 import type { TimelinePage } from "../core/recovery/stall";
@@ -315,12 +315,12 @@ async function lostReceiptReview(f: ReturnType<typeof fixture>) {
 
 test("proof-only brief schema requires one selector and only permits GO metadata with a merged commit", () => {
   const valid = `---\ntitle: Qualification\nqueue:\n  proofOnly:\n    commit: ${commit}\n  proofExecution:\n    selector: effigy check\n    inputs: []\n---\n\nRun it.\n`;
-  assert.deepEqual(parseNorthstarDocument(valid, "draft").queue.proofOnly, {
+  assert.deepEqual(parseBriefDocument(valid, "draft").queue.proofOnly, {
     commit,
   });
   assert.throws(
     () =>
-      parseNorthstarDocument(
+      parseBriefDocument(
         valid.replace(
           `  proofExecution:\n    selector: effigy check\n    inputs: []\n`,
           "",
@@ -331,7 +331,7 @@ test("proof-only brief schema requires one selector and only permits GO metadata
   );
   assert.throws(
     () =>
-      parseNorthstarDocument(
+      parseBriefDocument(
         valid
           .replace(`  proofOnly:\n    commit: ${commit}\n`, "")
           .replace(

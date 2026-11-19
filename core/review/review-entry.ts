@@ -313,20 +313,9 @@ export async function verifyReviewEntry(input:ReviewEntryInput,adapter:ReviewEnt
   if(baseAncestry==='unknown')
     reject("planning_invalid",`The planning commit ancestry could not be read (${s.planningCommit} vs ${base}); the source was not read and nothing was cleared`,true);
   if(baseAncestry==='diverged')throw Error("The integration base does not descend from the planning commit");
-  // A handoff is a committed artifact, so the reviewed head must contain its
-  // planning commit. Queue-held briefs live in Queue and need no such proof;
+  // Queue-held briefs live in Queue and need no committed planning-commit proof;
   // requiring it would force finished external PRs to merge current main.
-  if(!s.brief){
-    const headAncestry=await gitAncestry(directory,s.planningCommit,remoteHead);
-    if(headAncestry==='unknown')
-      reject("planning_invalid",`The reviewed head ancestry could not be read (${s.planningCommit} vs ${remoteHead}); the source was not read and nothing was cleared`,true);
-    if(headAncestry==='diverged')throw Error("The reviewed head does not descend from the planning commit");
-  }
   const validated=await validateSubmission(s);
-  if(!s.brief){
-    const publishedHandoff=await git(s.repoPath,"show",`${base}:${s.handoffPath}`);
-    if(publishedHandoff!==validated.handoffText)throw Error("Published handoff bytes differ from the pinned planning artifact");
-  }
   const remote=await git(s.repoPath,"config","--get","remote.origin.url"),repository=githubRepositoryFromRemote(remote);
   if(!repository)throw Error("Review entry requires the canonical GitHub origin");
   const github=adapter.reviewEntryGithubCommand??command;

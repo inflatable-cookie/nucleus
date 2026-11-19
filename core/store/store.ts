@@ -100,6 +100,7 @@ import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 
 import type { Completion, PoolEntry, Submission } from "../../shared/contracts";
+import type { HostVocabulary } from "../../shared/profile-vocabulary";
 import {
   availabilitySchema,
   compactLiveTask,
@@ -839,6 +840,14 @@ export class Store {
     onMigrationStart?: () => void,
   ) {
     this.admissionStore.initialize(path, backupDir, onMigrationStart);
+  }
+  /**
+   * Stored profiles' thinking in one canonical field, through every host's table
+   * (nucleus#1365). The service composes the tables, so core imports no host; it
+   * runs once per open, right after the store opens and before anything reads profiles.
+   */
+  migrateProfileThinking(vocabularies: readonly HostVocabulary[]): void {
+    this.migrationStore.migrateProfileThinking(vocabularies);
   }
   close() {
     this.taskChanged(null);

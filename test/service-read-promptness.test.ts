@@ -57,7 +57,7 @@ async function startService(): Promise<Fixture> {
 
 const insert = (submissionId: string) => ({ target: 'store', method: 'insert', args: [submissionSchema.parse({
   submissionId, title: 'A removal must not starve reads', repoPath: '/fixture', planningCommit,
-  handoffPath: `docs/handoffs/${submissionId}.md`, originAgentId: 'origin',
+  handoffPath: `tasks/${submissionId}.md`, originAgentId: 'origin',
 }), 'fixture-host', 'Handoff', planningCommit] });
 
 test('a long removal on the executor keeps every named read prompt while it walks the tree', async () => {
