@@ -318,13 +318,16 @@ async function psReadAsync(
   args: string[],
   maxBuffer: number,
   env: NodeJS.ProcessEnv = psEnv(),
+  signal?: AbortSignal,
 ): Promise<string | null> {
   try {
     const { stdout } = await execFileAsync("ps", args, {
       encoding: "utf8",
       timeout: PS_TIMEOUT_MS,
+      killSignal: "SIGKILL",
       maxBuffer,
       env,
+      signal,
     });
     return stdout?.trim() ? stdout : null;
   } catch {
@@ -341,6 +344,22 @@ async function psReadAsync(
  */
 export function darwinProcessReadsAsync() {
   return {
+    /** One bounded identity read for a chunk of signal targets. Missing rows prove nothing. */
+    async startIdentities(pids: readonly number[], signal?: AbortSignal): Promise<Map<number, string>> {
+      const identities = new Map<number, string>();
+      const pattern = new RegExp(`^\\s*(\\d+)\\s+(${DARWIN_START})\\s*$`);
+      for (let offset = 0; offset < pids.length && !signal?.aborted; offset += ENVIRONMENT_CHUNK) {
+        const chunk = pids.slice(offset, offset + ENVIRONMENT_CHUNK);
+        const stdout = await psReadAsync(["-p", chunk.join(","), "-o", "pid=,lstart="], 1024 * 1024, psEnv(), signal);
+        for (const line of stdout?.split("\n") ?? []) {
+          const match = pattern.exec(line);
+          if (!match) continue;
+          const pid = Number(match[1]);
+          if (chunk.includes(pid)) identities.set(pid, macStartIdentity(pid, match[2]!));
+        }
+      }
+      return identities;
+    },
     /** `ps -ww -A -o pid=,ppid=,pgid=,lstart=`; null on any failure. */
     async processListing(): Promise<HostProcessLine[] | null> {
       const stdout = await psReadAsync(

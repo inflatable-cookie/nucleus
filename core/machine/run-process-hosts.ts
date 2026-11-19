@@ -1,13 +1,7 @@
 import type { Store } from "../store/store";
 import type { HostProcessFact } from "../host/types";
-import {
-  bbThreadForAgent,
-  orphanedRunHelperPids,
-  providerRuntimePids,
-  runInfrastructurePids,
-  runProviderBindings,
-} from "./owned-tool-process-proof";
-import { startIdentityMatches } from "./start-identity";
+import { bbThreadForAgent, RunProcessTable } from "./owned-tool-process-proof";
+import { startIdentityMatches, startIdentityProves } from "./start-identity";
 
 export interface ProcessRunIdentity {
   id: string;
@@ -27,22 +21,24 @@ export function rememberRunProcessHosts(
   store: Store,
   runs: ProcessRunIdentity[],
   facts: HostProcessFact[],
-): void {
-  for (const binding of runProviderBindings(facts)) {
-    const owner = runs.find((run) => run.id === binding.runId);
-    if (
-      !owner ||
-      !startIdentityMatches(
-        binding.provider.startIdentity,
-        binding.provider.startIdentity,
-      )
-    )
-      continue;
-    for (const run of runs.filter(
-      (run) =>
-        run.id === owner.id || (owner.agentId && run.agentId === owner.agentId),
-    )) {
-      const previous = store.getMeta<RunProcessHost>(key(run.id));
+  table = new RunProcessTable(facts),
+): Map<string, RunProcessHost> {
+  const byId = new Map(runs.map(run => [run.id, run]));
+  const byAgent = new Map<string, ProcessRunIdentity[]>();
+  const records = new Map<string, RunProcessHost>();
+  for (const run of runs) {
+    const record = store.getMeta<RunProcessHost>(key(run.id));
+    if (record) records.set(run.id, record);
+    if (!run.agentId) continue;
+    const related = byAgent.get(run.agentId);
+    if (related) related.push(run);
+    else byAgent.set(run.agentId, [run]);
+  }
+  for (const binding of table.providerBindings()) {
+    const owner = byId.get(binding.runId);
+    if (!owner || !startIdentityProves(binding.provider.startIdentity)) continue;
+    for (const run of owner.agentId ? byAgent.get(owner.agentId)! : [owner]) {
+      const previous = records.get(run.id);
       const infrastructure = new Map(
         (previous?.infrastructure ?? []).map((identity) => [
           `${identity.pid}:${identity.startIdentity}`,
@@ -50,7 +46,7 @@ export function rememberRunProcessHosts(
         ]),
       );
       for (const fact of binding.infrastructure)
-        if (startIdentityMatches(fact.startIdentity, fact.startIdentity))
+        if (startIdentityProves(fact.startIdentity))
           infrastructure.set(`${fact.pid}:${fact.startIdentity}`, {
             pid: fact.pid,
             startIdentity: fact.startIdentity,
@@ -63,48 +59,41 @@ export function rememberRunProcessHosts(
         },
         infrastructure: [...infrastructure.values()],
       };
-      if (JSON.stringify(previous) !== JSON.stringify(record))
+      if (JSON.stringify(previous) !== JSON.stringify(record)) {
         store.setMeta(key(run.id), record);
+        records.set(run.id, record);
+      }
     }
   }
   // A retained provider can start another standing runtime after its helper
   // exits. Preserve that positive observation before the provider can exit too.
   for (const run of runs) {
-    const record = store.getMeta<RunProcessHost>(key(run.id));
-    const provider =
-      record &&
-      facts.find(
-        (fact) =>
-          fact.pid === record.provider.pid &&
-          startIdentityMatches(
-            record.provider.startIdentity,
-            fact.startIdentity,
-          ),
-      );
-    if (!record || !provider) continue;
-    const runtimes = providerRuntimePids(provider, facts);
-    const additions = facts.filter(
-      (fact) =>
-        runtimes.has(fact.pid) &&
-        startIdentityMatches(fact.startIdentity, fact.startIdentity) &&
-        !record.infrastructure.some(
-          (identity) =>
-            identity.pid === fact.pid &&
-            startIdentityMatches(identity.startIdentity, fact.startIdentity),
-        ),
-    );
-    if (additions.length)
-      store.setMeta(key(run.id), {
+    const record = records.get(run.id);
+    const provider = record && table.byPid.get(record.provider.pid);
+    if (!record || !provider || !startIdentityMatches(record.provider.startIdentity, provider.startIdentity)) continue;
+    const saved = matchingInfrastructure(record, table);
+    const additions = [...table.runtimePids(provider)].flatMap(pid => {
+      const fact = table.byPid.get(pid)!;
+      return !saved.has(pid) && startIdentityProves(fact.startIdentity)
+        ? [{ pid, startIdentity: fact.startIdentity }] : [];
+    });
+    if (additions.length) {
+      const updated = {
         ...record,
-        infrastructure: [
-          ...record.infrastructure,
-          ...additions.map((fact) => ({
-            pid: fact.pid,
-            startIdentity: fact.startIdentity,
-          })),
-        ],
-      });
+        infrastructure: [...record.infrastructure, ...additions],
+      };
+      store.setMeta(key(run.id), updated);
+      records.set(run.id, updated);
+    }
   }
+  return records;
+}
+
+function matchingInfrastructure(record: RunProcessHost, table: RunProcessTable): Set<number> {
+  return new Set(record.infrastructure.flatMap(identity => {
+    const fact = table.byPid.get(identity.pid);
+    return fact && startIdentityMatches(identity.startIdentity, fact.startIdentity) ? [fact.pid] : [];
+  }));
 }
 
 /** A saved identity excludes exactly that host incarnation, never a recycled PID. */
@@ -112,45 +101,36 @@ export function protectedRunInfrastructure(
   store: Store,
   runs: ProcessRunIdentity[],
   facts: HostProcessFact[],
+  table = new RunProcessTable(facts),
+  records?: ReadonlyMap<string, RunProcessHost>,
 ): Set<number> {
   const bbThreads = runs
     .map((run) => bbThreadForAgent(run.agentId, run.hostId))
     .filter((thread): thread is string => Boolean(thread));
-  const protectedPids = runInfrastructurePids(facts, bbThreads);
+  const protectedPids = table.infrastructurePids(bbThreads);
   // A saved record outlives the helper it was written with. A bridge whose
   // provider has since exited keeps no exclusion: its identity is the run's own
   // leftover, and the sweep's cleanup reaps it by that identity (nucleus#1329).
-  const orphaned = orphanedRunHelperPids(facts);
+  const seenRuntimes = new Set<ReadonlySet<number>>();
   for (const run of runs) {
-    const record = store.getMeta<RunProcessHost>(key(run.id));
+    const record = records ? records.get(run.id) : store.getMeta<RunProcessHost>(key(run.id));
     if (!record) continue;
-    for (const fact of facts)
-      if (
-        !orphaned.has(fact.pid) &&
-        record.infrastructure.some(
-          (identity) =>
-            identity.pid === fact.pid &&
-            startIdentityMatches(identity.startIdentity, fact.startIdentity),
-        )
-      )
-        protectedPids.add(fact.pid);
-    const provider = facts.find((fact) => fact.pid === record.provider.pid);
+    for (const pid of matchingInfrastructure(record, table))
+      if (!table.orphanedHelpers.has(pid)) protectedPids.add(pid);
+    const provider = table.byPid.get(record.provider.pid);
     if (
       provider &&
       startIdentityMatches(
         record.provider.startIdentity,
         provider.startIdentity,
       )
-    )
-      for (const pid of providerRuntimePids(provider, facts))
-        protectedPids.add(pid);
+    ) {
+      const runtimes = table.runtimePids(provider);
+      if (!seenRuntimes.has(runtimes)) {
+        seenRuntimes.add(runtimes);
+        for (const pid of runtimes) protectedPids.add(pid);
+      }
+    }
   }
   return protectedPids;
-}
-
-export function hasRunProcessHost(
-  store: Store,
-  run: ProcessRunIdentity,
-): boolean {
-  return Boolean(store.getMeta<RunProcessHost>(key(run.id)));
 }

@@ -52,15 +52,18 @@ export type ProcCommandLine =
  */
 export function linuxProcCommandLine(pid: number): ProcCommandLine {
   try {
-    const text = readFileSync(`/proc/${pid}/cmdline`, "utf8");
-    const line = text.split("\0").filter(Boolean).join(" ").trim();
-    return line ? { state: "read", line } : { state: "empty" };
+    return parseProcCommandLine(readFileSync(`/proc/${pid}/cmdline`, "utf8"));
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
     return code === "ENOENT" || code === "ESRCH"
       ? { state: "gone" }
       : { state: "unreadable" };
   }
+}
+
+export function parseProcCommandLine(text: string): ProcCommandLine {
+  const line = text.split("\0").filter(Boolean).join(" ").trim();
+  return line ? { state: "read", line } : { state: "empty" };
 }
 
 /** `/proc/<pid>/cmdline` is NUL-separated argv; null when it is empty or unreadable. */

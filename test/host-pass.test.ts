@@ -50,6 +50,8 @@ function fixture(t: TestContext, adapter: Loose) {
         "observeRetiredWorkers",
         "retiredObservationKey",
         "retiredObservationPlan",
+        "scheduleLane",
+        "stopped",
         "store",
       ],
       ["observationTargets"],
@@ -988,6 +990,7 @@ test("engine sweep settles live-shaped terminal and retained operations past his
     f.store.putOperation(op, payload);
   }
   await f.engine.sweepOnce();
+  await f.engine.quiesce();
   assert.equal(
     f.store
       .eventsAll(initial.id)
@@ -1026,6 +1029,7 @@ test("engine sweep settles live-shaped terminal and retained operations past his
     false,
   );
   await f.engine.sweepOnce();
+  await f.engine.quiesce();
   assert.equal(
     f.store
       .eventsAll(initial.id)
@@ -1105,6 +1109,7 @@ test("sweep leaves conflicting tombstone and unreadable process ownership visibl
   });
   f.store.putOperation(op, payload);
   await f.engine.sweepOnce();
+  await f.engine.quiesce();
   const names = hostDependents(f.store, {
     id: HOST,
     kind: "paseo",
@@ -1124,6 +1129,7 @@ test("sweep leaves conflicting tombstone and unreadable process ownership visibl
   );
   assert.equal(f.store.operation(op.id)?.taskId, null);
   await f.engine.sweepOnce();
+  await f.engine.quiesce();
   assert.equal(
     f.store
       .eventsAll(removedTask.id)
@@ -1164,6 +1170,7 @@ test("a restart without a recorded start time remains visible with its missing p
   });
   f.store.putOperation(op, payload);
   await f.engine.sweepOnce();
+  await f.engine.quiesce();
   assert.equal(f.store.operation(op.id)?.settlement, undefined);
   assert.ok(
     hostDependents(f.store, { id: HOST, kind: "paseo", primary: true })
@@ -1191,6 +1198,7 @@ test("a reasonless scratch cleanup records the retirement guard on the engine sw
     pending: true,
   });
   await f.engine.sweepOnce();
+  await f.engine.quiesce();
   const names = hostDependents(f.store, {
     id: HOST,
     kind: "paseo",
@@ -1221,6 +1229,7 @@ test("a reasonless scratch cleanup records the retirement guard on the engine sw
     .eventsAll(task.id)
     .filter((x) => x.kind === "run_process_cleanup_deferred").length;
   await f.engine.sweepOnce();
+  await f.engine.quiesce();
   assert.equal(
     f.store
       .eventsAll(task.id)
@@ -1231,6 +1240,7 @@ test("a reasonless scratch cleanup records the retirement guard on the engine sw
     f.store as unknown as { runScratchRemover: (path: string) => boolean }
   ).runScratchRemover = () => true;
   await f.engine.sweepOnce();
+  await f.engine.quiesce();
   assert.equal(
     f.store.getMeta<{ pending: boolean }>("runProcessCleanup:guarded-run")
       ?.pending,
@@ -1262,6 +1272,7 @@ test("a control without a task identity names the missing binding", async (t) =>
   });
   f.store.putOperation(op, payload);
   await f.engine.sweepOnce();
+  await f.engine.quiesce();
   assert.equal(f.store.operation(op.id)?.settlement, undefined);
   assert.ok(
     hostDependents(f.store, { id: HOST, kind: "paseo", primary: true })
@@ -1292,11 +1303,13 @@ test("a bound submission stays settled after its task is retained", async (t) =>
   });
   f.store.putOperation(op, payload);
   await f.engine.sweepOnce();
+  await f.engine.quiesce();
   assert.equal(f.engine.operationStatus(op.id).settlement?.kind, "superseded");
   assert.ok(
     f.store.purgeOldTasks(Date.now() + 15 * 86400000).includes(task.id),
   );
   await f.engine.sweepOnce();
+  await f.engine.quiesce();
   assert.equal(f.engine.operationStatus(op.id).settlement?.kind, "superseded");
   assert.equal(
     hostDependents(f.store, { id: HOST, kind: "paseo", primary: true }).some(
@@ -1334,6 +1347,7 @@ test("settled submission stops blocking project removal but mismatched proof sta
   });
   f.store.putOperation(op, payload);
   await f.engine.sweepOnce();
+  await f.engine.quiesce();
   const settled = f.store.operation(op.id)!;
   assert.equal(operationStateLabel(settled), "Submission superseded");
   assert.ok(
@@ -1383,6 +1397,7 @@ test("an unavailable process table does not create cleanup intents for unrecorde
     .run("historical-run", task.id);
   assert.equal(f.store.getMeta("runProcessCleanup:historical-run"), undefined);
   await f.engine.sweepOnce();
+  await f.engine.quiesce();
   assert.equal(f.store.getMeta("runProcessCleanup:historical-run"), undefined);
   assert.equal(
     f.store

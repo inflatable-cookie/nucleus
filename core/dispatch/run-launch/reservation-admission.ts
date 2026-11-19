@@ -5,11 +5,7 @@ import {
   isDispositionActive,
   workerExclusionRefusal,
 } from "../../../shared/contracts";
-import {
-  consumeRestartSlotHold,
-  dispatchBlocked,
-  DISPATCH_HELD_REASON,
-} from "../capacity";
+import { dispatchBlocked, DISPATCH_HELD_REASON } from "../capacity";
 import { blockingRecoveryEffectsRefusal } from "../../recovery/recovery-effects";
 import {
   proofSingleFlightRefusal,
@@ -210,7 +206,7 @@ export class RunReservationAdmission {
         {
           currentRunId: run.id,
           stalledTurnStop: null,
-          ...(consumeRestartSlotHold(latest) ? { restartSlotHold: null } : {}),
+          restartSlotHold: null,
           ...(role === "reviewer" && run.reviewReason
             ? { pendingReviewReason: null }
             : {}),
