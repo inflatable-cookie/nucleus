@@ -5,6 +5,9 @@ import { Engine } from "../core/engine";
 import { enginePorts } from "../core/port-context";
 import { SweepMaintenance } from "../core/scheduling/sweep-maintenance";
 import type { Adapter } from "../core/host";
+import { randomUUID } from "node:crypto";
+import { submissionSchema } from "../shared/contracts";
+import { wireLabels } from "../shared/wire-labels";
 
 /**
  * nucleus#1257: the sweep's periodic chores are their own owner. Each pass is
@@ -38,6 +41,7 @@ function fixture(t: TestContext) {
         "hostIds",
         "migrateProjectOwnersToPlanners",
         "removeSiblings",
+        "stopped",
         "store",
         "withHost",
       ],
@@ -140,4 +144,63 @@ test("pausing skips the store chores but never the hourly hook pass", async (t) 
     "no idle-lane pass runs while paused",
   );
   assert.equal(f.migrations.count, 0, "no owner migration runs while paused");
+});
+
+// nucleus#1369: the archived-thread pass is detached, so a backlog that never finishes
+// (the first pass over ~12k archived threads on a busy host) never holds the audit drain
+// that post-bootstrap reconciliation waits on, and a service start stays settled.
+test("a 12k-thread retention backlog with a removal that never returns does not hold the maintenance pass", async (t) => {
+  const store = new Store(":memory:");
+  t.after(() => store.close());
+  store.setMeta("paused", false);
+  const NOON = Date.parse("2026-11-19T12:00:00.000Z");
+  const OLD_STAMP = new Date(NOON - 9 * 86_400_000).toISOString();
+  const submitted = store.insert(
+    submissionSchema.parse({
+      submissionId: randomUUID(),
+      title: "Finished task",
+      repoPath: "/repo",
+      planningCommit: "a".repeat(40),
+      handoffPath: "handoff.md",
+      originAgentId: "origin",
+    }),
+    "paseo:fixture",
+    "handoff",
+    "a".repeat(40),
+  );
+  const task = store.update(submitted.id, { phase: "done" });
+  const labels = wireLabels({ task: task.id, role: "worker" });
+  const rows = Array.from({ length: 12_000 }, (_, index) => ({
+    id: `worker-${index}`,
+    workspaceId: null,
+    archivedAt: OLD_STAMP,
+    labels,
+  }));
+  let removals = 0;
+  const adapter = {
+    archivedThreads: async () => rows,
+    threadArchiveState: async () => ({ archivedAt: OLD_STAMP, deleted: false }),
+    deleteAgent: () => {
+      removals++;
+      return new Promise<void>(() => {});
+    },
+  } as unknown as Adapter;
+  const maintenance = new SweepMaintenance({
+    adapter,
+    hostAvailable: () => true,
+    hostIds: () => ["paseo:fixture"],
+    migrateProjectOwnersToPlanners: async () => {},
+    removeSiblings: async () => {},
+    stopped: false,
+    store,
+    withHost: (_hostId: string, work: () => unknown) => work(),
+  } as unknown as ConstructorParameters<typeof SweepMaintenance>[0]);
+
+  await maintenance.run(NOON);
+
+  assert.ok(maintenance.threadRetentionRun, "the backlog is in flight, not awaited");
+  assert.equal(removals, 1, "the first removal is the one the pass is held on");
+  await maintenance.run(NOON + HOUR);
+  assert.equal(removals, 1, "one pass at a time: the next hour starts no second walk");
+  assert.equal(store.getMeta("threadRetentionError"), undefined);
 });

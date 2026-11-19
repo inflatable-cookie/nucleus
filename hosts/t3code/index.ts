@@ -252,6 +252,12 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
     deleteAgent(id: string) {
       return this.native.deleteAgent(id);
     }
+    archivedThreads() {
+      return this.native.archivedThreads();
+    }
+    threadArchiveState(id: string) {
+      return this.native.threadArchiveState(id);
+    }
     settleWorkerThread(id: string, runId: string) {
       return this.native.settleWorkerThread(id, runId);
     }

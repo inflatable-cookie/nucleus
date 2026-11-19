@@ -444,6 +444,10 @@ export function composeBbAdapter(input: {
     findRunAgents(run: Run) {
       return threads.findAgents(run.taskId, run.id);
     }
+    /** Listing only: BB has no thread removal yet, so the retention pass counts these and prunes none. */
+    archivedThreads() {
+      return threads.archivedThreads();
+    }
     observe(id: string) {
       return threads.observe(id);
     }

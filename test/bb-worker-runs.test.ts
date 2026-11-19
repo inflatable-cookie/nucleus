@@ -6,7 +6,7 @@ import {
   type BbThreadState,
   type BbWorkspaceRecord,
 } from "../hosts/bb/threads";
-import { bbFake, bbWire, assertBbWire } from "./support/bb-fake";
+import { bbFake, bbWire, assertBbWire, BB_STAMP } from "./support/bb-fake";
 import { wireLabels } from "../shared/wire-labels";
 import type { HostAgentSpec } from "../shared/host";
 import { HostUnknownDeliveryError } from "../core/host/errors";
@@ -526,5 +526,31 @@ test("a timed-out send keeps its intent and a late reply settles that same write
   assert.equal(
     f.calls.filter((call) => call.method === "threads.send").length,
     1,
+  );
+});
+
+// nucleus#1369: the retention pass lists a BB host's archived Nucleus threads from
+// BB's own complete inventory. BB has no removal, so the pass counts these and prunes none.
+test("the retention pass lists a BB host's archived Nucleus threads from the complete inventory", async () => {
+  const f = fixture();
+  const agent = await f.native.createAgent(f.spec());
+  assert.deepEqual(
+    await f.native.archivedThreads(),
+    [],
+    "a live thread is not in the archived set",
+  );
+
+  f.cascades.set(agent.id, []);
+  await f.native.archiveAgent(agent.id);
+  const listed = await f.native.archivedThreads();
+  assert.equal(listed?.length, 1);
+  assert.equal(listed![0]!.id, agent.id);
+  assert.equal(listed![0]!.archivedAt, new Date(BB_STAMP).toISOString());
+  assert.deepEqual(listed![0]!.labels, f.state().agents[agent.id]!.labels);
+  assert.ok(
+    f.calls.some(
+      (c) => c.method === "threads.list" && c.args.archived === true && c.args.originPluginId === "nucleus",
+    ),
+    "the walk asks BB for the archived Nucleus threads",
   );
 });

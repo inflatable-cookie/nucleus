@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { Store } from "../core/store/store";
 import {
   THREAD_RETENTION_BATCH,
@@ -571,4 +572,117 @@ test("the service pass records each host's last run, count and failures for serv
     "the record is the one service.health reads",
   );
   assert.deepEqual(f.store.getMeta(THREAD_RETENTION_META_KEY), health);
+});
+
+// nucleus#1369: a connected secondary host is read in its own host context, a host
+// that returns is read on the next pass, and a host that lists but cannot remove a
+// thread is counted and named, never pruned or reported clean.
+test("a secondary host is read in its own host context and is scanned on the first pass after it returns", async (t) => {
+  const f = fixture(t);
+  const SECOND = "t3code:fixture";
+  const primary = hostFixture(),
+    secondary = hostFixture();
+  const task = f.create("Finished task", "done");
+  secondary.add(
+    "worker-b",
+    f.taskLabels(task.id, "worker"),
+    new Date(NOW - 9 * DAY).toISOString(),
+  );
+  // The engine's routing: each adapter call runs against the host the async context names.
+  const context = new AsyncLocalStorage<string>();
+  const online = new Set<string>([HOST]);
+  const byHost: Record<string, ReturnType<typeof hostFixture>> = {
+    [HOST]: primary,
+    [SECOND]: secondary,
+  };
+  const routed = new Proxy(
+    {},
+    {
+      get: (_target, property) => {
+        const host = byHost[context.getStore() ?? ""];
+        if (!host) return undefined;
+        const value = (host.adapter as unknown as Record<PropertyKey, unknown>)[
+          property
+        ];
+        return typeof value === "function" ? value.bind(host.adapter) : value;
+      },
+    },
+  ) as unknown as Adapter;
+  const pass = () =>
+    runThreadRetention({
+      store: f.store,
+      hostIds: [HOST, SECOND],
+      // The engine's answer depends on the ambient host: unscoped, a secondary host reads away.
+      hostAvailable: (hostId) =>
+        context.getStore() === hostId && online.has(hostId),
+      withHost: (hostId, work) => context.run(hostId, work),
+      adapter: routed,
+      at: NOW,
+    });
+
+  online.delete(SECOND);
+  const away = (await pass()).hosts.find((fact) => fact.hostId === SECOND)!;
+  assert.match(away.error, /away/);
+  assert.equal(away.at, null, "a host never read has no pass time");
+  assert.equal(secondary.calls.listed, 0, "an away host is never read");
+
+  online.add(SECOND);
+  const back = (await pass()).hosts.find((fact) => fact.hostId === SECOND)!;
+  assert.equal(back.error, "");
+  assert.equal(back.supported, true);
+  assert.equal(back.at, new Date(NOW).toISOString());
+  assert.equal(back.scanned, 1);
+  assert.equal(back.deleted, 1);
+  assert.equal(secondary.calls.listed, 1);
+  assert.deepEqual(secondary.calls.deleted, ["worker-b"]);
+});
+
+test("a host that lists archived threads but cannot remove one is counted at its pass and never pruned", async (t) => {
+  const f = fixture(t);
+  const task = f.create("Finished task", "done");
+  const row = {
+    id: "bb-worker",
+    workspaceId: null,
+    archivedAt: new Date(NOW - 9 * DAY).toISOString(),
+    labels: f.taskLabels(task.id, "worker"),
+  };
+  const adapter = {
+    archivedThreads: async () => [row],
+  } as unknown as Adapter;
+
+  const fact = await runThreadRetentionPass({
+    store: f.store,
+    adapter,
+    hostId: "bb:fixture",
+    at: NOW,
+  });
+
+  assert.equal(fact.supported, false);
+  assert.equal(fact.at, new Date(NOW).toISOString());
+  assert.equal(fact.scanned, 1);
+  assert.equal(fact.eligible, 1);
+  assert.equal(fact.deleted, 0);
+  assert.match(
+    fact.error,
+    /cannot remove an archived thread, so 1 eligible thread\(s\) were counted and none were removed/,
+  );
+});
+
+test("a stopped engine ends the pass before its next removal", async (t) => {
+  const f = fixture(t);
+  const host = hostFixture();
+  const task = f.create("Finished task", "done");
+  host.add("worker-1", f.taskLabels(task.id, "worker"), new Date(NOW - 9 * DAY).toISOString());
+
+  const fact = await runThreadRetentionPass({
+    store: f.store,
+    adapter: host.adapter,
+    hostId: HOST,
+    at: NOW,
+    stopped: () => true,
+  });
+
+  assert.equal(fact.deleted, 0);
+  assert.deepEqual(host.calls.deleted, [], "no removal is sent after a stop");
+  assert.equal(fact.remaining, 1, "the eligible thread is left for the next pass");
 });

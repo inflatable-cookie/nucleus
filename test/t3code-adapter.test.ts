@@ -3637,3 +3637,40 @@ test("a stale settle bind retires and the current latest run is settled under a 
   assert.notEqual(settlements[0]!.commandId, settlements[1]!.commandId);
   assert.equal(projection.thread.settledOverride, "settled");
 });
+
+// Orchestration contract, "Archived thread retention" (nucleus#1369): the retention pass
+// reads a T3 host's archived Nucleus threads from T3's own inventory, and reads one
+// thread's fresh archive stamp before it removes it.
+test("the retention pass lists a T3 host's archived Nucleus threads and reads each one's fresh archive stamp", async (t) => {
+  const { host, server, spec } = await fixture(t);
+  const created = await host.createAgent(spec());
+  assert.deepEqual(
+    await host.archivedThreads(),
+    [],
+    "a live thread is not in the archived set",
+  );
+  assert.equal((await host.threadArchiveState(created.id))?.archivedAt, null);
+
+  await host.archiveAgent(created.id);
+  const listed = await host.archivedThreads();
+  assert.equal(listed.length, 1);
+  assert.equal(listed[0]!.id, created.id);
+  assert.equal(listed[0]!.archivedAt, "2026-01-01T00:00:00.000Z");
+  assert.deepEqual(listed[0]!.labels, host.state.read().agents[created.id]!.labels);
+  assert.deepEqual(await host.threadArchiveState(created.id), {
+    archivedAt: "2026-01-01T00:00:00.000Z",
+    deleted: false,
+  });
+
+  await host.deleteAgent(created.id);
+  assert.equal(
+    await host.threadArchiveState(created.id),
+    null,
+    "a removed thread is absent from T3's complete inventory, so it reads as gone",
+  );
+  assert.deepEqual(await host.archivedThreads(), []);
+  assert.equal(
+    server.commands.filter((command) => command.type === "thread.delete").length,
+    1,
+  );
+});
