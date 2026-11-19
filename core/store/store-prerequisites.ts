@@ -3,7 +3,22 @@ import type { Task } from "../../shared/contracts";
 import { DISPATCH_WAIT_REASON } from "../../shared/task-stop";
 import { taskOwner } from "../../shared/contracts";
 import { now } from "./store-core";
-import { reviewEntryBeforeFirstRun,type ReviewEntryFacts } from "./review-entry-eligibility";
+import type { ReviewEntryFacts } from "./review-entry-eligibility";
+
+/** Only an unconsumed instruction owned by this phase can carry an author wake. */
+export function retainedPrerequisiteRevision(task: Task): boolean {
+  if (task.phase !== "changes_requested" || !task.prerequisiteWait?.releasedAt) return false;
+  const state = task.resolution;
+  if (state.revisionInstruction?.runId === null) return true;
+  return Boolean(state.prePrResumeInstruction && task.agentId && task.runId && task.workspaceId && task.profile
+    && !task.prUrl && !task.prHead && !task.resumePrNumber && !task.completion?.prNumber && !task.reviewEntry);
+}
+
+/** An open wait parks new work. A released author wait still needs authority. */
+export function prerequisiteWaitBlocksPhase(task: Task): boolean {
+  return Boolean(task.prerequisiteWait && (!task.prerequisiteWait.releasedAt
+    || task.phase === "changes_requested" && !retainedPrerequisiteRevision(task)));
+}
 
 /** The store services the prerequisite bounds call; none of them starts another write funnel. */
 export interface PrerequisiteServices extends ReviewEntryFacts {
@@ -96,13 +111,15 @@ export class StorePrerequisites {
         this.services.putNotice({ id, taskId: task.id, agentId: owner, recipientAgentId: owner,
           workspaceId: task.originWorkspaceId, sources: [], originEntry: true, kind: "prerequisite",
           status: "pending", error: "",
-          text: `Nucleus prerequisite wait cleared\nTask: ${task.title} (${task.id})\nReason: ${wait.reason}\nPrerequisites complete: ${wait.waitsFor.join(", ")}\nThe task is back in normal handling. Nucleus will not revise it automatically.`,
+          text: `Nucleus prerequisite wait cleared\nTask: ${task.title} (${task.id})\nReason: ${wait.reason}\nPrerequisites complete: ${wait.waitsFor.join(", ")}\nThe task is back in normal handling. A revision needs its own authorization.`,
         });
       }
       // The release is the producer's clear: its prerequisite stop goes with it.
       const stop = task.resolution.stop?.reason === "prerequisite" ? { resolution: { ...task.resolution, stop: null } } : {};
+      // The retained row stays in the operational index across a restart.
+      // The next phase (or its owner) consumes its continuation separately.
       this.services.update(task.id, { prerequisiteWait: { ...wait, releasedAt: now() }, ...stop }, "prerequisite_wait_released",
-        JSON.stringify({ waitId: wait.id, waitsFor: wait.waitsFor, reason: wait.reason }));
+        JSON.stringify({ waitId: wait.id, waitsFor: wait.waitsFor, reason: wait.reason }), task.version);
       return "released";
     });
   }

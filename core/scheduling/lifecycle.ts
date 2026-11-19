@@ -106,7 +106,7 @@ export class SchedulingLifecycle {
 
   pauseForPrerequisiteWait(t: Task): boolean {
     if (!t.prerequisiteWait || t.prerequisiteWait.releasedAt) return false;
-    return this.context.store.reconcilePrerequisiteWait(t.id) !== "none";
+    return this.context.store.reconcilePrerequisiteWait(t.id) === "waiting";
   }
 
   async advance(original: Task) {
@@ -338,8 +338,11 @@ export class SchedulingLifecycle {
     }
     // A wait recorded while a run was live takes effect here, after that run's
     // result is applied and before the next reviewer, revision, skip-review or
-    // dispatch. The same-pass release still waits for a later pass.
-    if (this.context.pauseForPrerequisiteWait(t)) return;
+    // dispatch. Continue with the committed row if this check releases it.
+    if (t.prerequisiteWait && !t.prerequisiteWait.releasedAt) {
+      if (this.context.pauseForPrerequisiteWait(t)) return;
+      t = this.context.store.task(t.id);
+    }
     if (t.phase === "awaiting_review" && t.skipPRReview) {
       this.context.advanceSkippedReview(t);
     } else if (t.phase === "awaiting_review" || t.phase === "reviewing") {

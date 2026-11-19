@@ -12,6 +12,9 @@ import { operatorReplacementPending } from '../recovery/task-reasons';
 import { awaitingProofMatchesSelector, declaredProofSelectors } from '../qa/proof-wait';
 import type { Adapter } from '../host/adapter';
 import type { TaskStops } from '../recovery/task-stops';
+import { slotRequestFenced } from '../dispatch/capacity';
+import { blockingRecoveryEffectsRefusal } from '../recovery/recovery-effects';
+import { prerequisiteWaitBlocksPhase } from '../store/store-prerequisites';
 
 export interface ReviewAdvancesContext {
   readonly store: Store;
@@ -58,9 +61,10 @@ export class ReviewAdvances {
   }
 
   async advanceChangesRequested(t:Task): Promise<void> {
-    // A retained prerequisite wait resumes only after explicit owner action;
-    // completing the source task must not automatically revise the PR.
-    if (t.prerequisiteWait?.releasedAt) return;
+    if (prerequisiteWaitBlocksPhase(t)) return;
+    // Keep the released wait and its instruction discoverable while another
+    // owner stop or effect still owns the task. The reservation rechecks both.
+    if (t.prerequisiteWait && (slotRequestFenced(t) || blockingRecoveryEffectsRefusal(this.context.store, t))) return;
     // An operator-approved replacement owns the next worker. Resuming the retained thread here
     // raced the replacement live (nucleus#033, 2026-09-27) and prompted the excluded worker.
     if (operatorReplacementPending(t)) return;
