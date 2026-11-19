@@ -146,11 +146,12 @@ test("a revision starting at A records two proof files under its reported PR hea
       idleSince: null, released: false, status: "running",
     };
     const prompt = runPrompt(f.task(), reviewerRun as never, "/helper", "/ticket", true);
-    assert.match(prompt, /2 proof files recorded[\s\S]*context proofs/);
+    // nucleus#1392: the reviewer's prompt floor lists each recorded file inline, so brief-required proof is never store-only.
+    assert.match(prompt, /Proof files recorded for exact head/);
     const { proofs } = buildRunContext(f.task(), reviewerRun);
     for (const record of recorded) {
-      assert.ok(!prompt.includes(record.path));
-      assert.ok(!prompt.includes(record.sha256));
+      assert.ok(prompt.includes(record.path));
+      assert.ok(prompt.includes(record.sha256));
       assert.ok(proofs.includes(record.path), `the run context names ${record.label}'s local copy`);
       assert.ok(proofs.includes(record.sha256), `the run context carries ${record.label}'s hash`);
       assert.ok(proofs.includes(record.label));
@@ -205,7 +206,8 @@ test("an executor proof delivers retained evidence beside its run scratch for th
       agentId: "reviewer", workspaceId: "workspace", profile: null, createdAt: new Date().toISOString(),
       lastObservedAt: null, active: false, idleSince: null, released: false, status: "running" };
     const prompt = runPrompt(f.task(), reviewerRun as never, "/helper", "/ticket", true);
-    assert.match(prompt, /1 proof file recorded[\s\S]*context proofs/);
+    assert.match(prompt, /Proof files recorded for exact head/);
+    assert.ok(prompt.includes(record.path));
     const { proofs } = buildRunContext(f.task(), reviewerRun);
     assert.ok(proofs.includes(record.path));
     assert.ok(proofs.includes(record.sourcePath!));
@@ -377,8 +379,9 @@ test("the reviewer at B sees latest author-run proof stored under A with its rec
       agentId: "reviewer", workspaceId: "workspace", profile: null, createdAt: "2026-11-12T00:00:00.000Z",
       lastObservedAt: null, active: false, idleSince: null, released: false, status: "running" };
     const prompt = runPrompt(f.task(), reviewerRun as never, "/helper", "/ticket", true);
-    assert.match(prompt, /Judge each file at its recorded head/);
-    assert.ok(!prompt.includes(oldRecord.path));
+    assert.match(prompt, /Judge each file against its recorded head/);
+    assert.ok(prompt.includes(oldRecord.path));
+    assert.ok(prompt.includes("recorded head " + base));
     const { proofs } = buildRunContext(f.task(), reviewerRun);
     assert.ok(proofs.includes(oldRecord.path));
     assert.ok(proofs.includes("recorded head " + base));

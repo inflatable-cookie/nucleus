@@ -2,7 +2,7 @@ import { lstatSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Run, Task } from '../../../shared/contracts';
 import { writeOwnedJson } from '../../machine/owned-file.mjs';
-import { PROOF_FILES_REVIEWER_RULE, proofFilesBlock } from './proof-rules';
+import { proofFilesBlock, reviewerProofInventory } from './proof-rules';
 import { operatorValidationBlock, VALIDATION_RUN_RULE } from './validation';
 import { roleRules } from './standing-rules';
 
@@ -12,11 +12,11 @@ export type RunContext = Record<ContextSection, string>;
 
 /** Extended text is advisory data. Safety and authority remain in the prompt and gates. */
 export function buildRunContext(task: Task, run: { id: string; role: Run['role'] | 'worker'; head: string }, affectedTestsCommand?: string): RunContext {
-  const inventory = proofFilesBlock(task, run.head);
   return {
     rules: roleRules(run.role),
     validation: `${operatorValidationBlock(affectedTestsCommand, run.role === 'reviewer')}\n${VALIDATION_RUN_RULE}`,
-    proofs: run.role === 'reviewer' && inventory ? `${PROOF_FILES_REVIEWER_RULE}\n${inventory}` : inventory,
+    // A reviewer's inventory is also inline in its prompt floor (nucleus#1392); this copy stays readable on demand.
+    proofs: run.role === 'reviewer' ? reviewerProofInventory(task, run.head) : proofFilesBlock(task, run.head),
     history: JSON.stringify({ checkpoints: task.checkpoints ?? null, reviews: task.resolution?.reviews ?? [], review: task.resolution?.review ?? null, buildOutputCleanups: task.resolution?.buildOutputCleanups ?? [] }, null, 2),
   };
 }
