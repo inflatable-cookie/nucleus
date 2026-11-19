@@ -202,3 +202,51 @@ test("a stored level outside this model's list shows as unavailable in the one T
   assert.ok(ui.query("Thinking: ultracode · unavailable"));
   assert.ok(ui.query("Thinking: Medium"));
 });
+
+test("a saved model no host reports keeps its retained thinking shown and repairable through the one Thinking control", async () => {
+  // The migration kept this clash; its model is retired, so no catalog lists it.
+  const calls: Array<{ method: string; input: any }> = [];
+  const ui = await editor(
+    canonicalCatalog(paseoVocabulary, paseoCatalog()),
+    {
+      id: "synthetic-retired",
+      name: "Retired",
+      provider: "pi",
+      model: "opencode-go/retired-model",
+      thinkingOptionId: "low",
+      featureValues: { thinking: "max", extra: true },
+    },
+    calls,
+  );
+  assert.equal(controls(ui, "Thinking").length, 1, "one Thinking control");
+  assert.equal(controls(ui, "Mode").length, 1, "one Mode control");
+  assert.match(
+    ui.get("Stored thinking option").children.join(""),
+    /Also stored: thinking max/,
+  );
+  ui.press("Thinking, Low");
+  ui.press("Thinking: High");
+  await waitFor(
+    () => calls.some((call) => call.method === "profile.update"),
+    HOST_RUN_FIXTURE_EVENT_TIMEOUT_MS,
+    "the edit to save",
+  );
+  const update = calls.find((call) => call.method === "profile.update")!.input;
+  assert.deepEqual(
+    [update.model, update.thinkingOptionId, update.featureValues],
+    ["opencode-go/retired-model", "high", { extra: true }],
+    "the model and other options stay; the carrier goes",
+  );
+  // An unmapped stored level on a retired model shows too, and another level replaces it.
+  const odd = await editor(canonicalCatalog(paseoVocabulary, paseoCatalog()), {
+    id: "synthetic-odd-retired",
+    name: "Odd retired",
+    provider: "claude",
+    model: "claude-retired",
+    thinkingOptionId: "ultracode",
+  });
+  assert.equal(controls(odd, "Thinking").length, 1);
+  odd.press(/^Thinking, /);
+  assert.ok(odd.query("Thinking: ultracode · unavailable"));
+  assert.ok(odd.query("Thinking: Medium"));
+});

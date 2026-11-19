@@ -26,6 +26,12 @@ import {
   type NucleusProfile,
 } from "../shared/profiles";
 import { PROFILE_CAPABILITY_LEVELS } from "../shared/pool";
+import {
+  RUNTIME_MODES,
+  RUNTIME_MODE_LABELS,
+  THINKING_LABELS,
+  THINKING_LEVELS,
+} from "../shared/profile-vocabulary";
 import type {
   HostCatalog,
   HostFeature,
@@ -438,13 +444,39 @@ export function ProfileEditor({
   // A thinking carrier the migration kept (no canonical match, or a clash) is not
   // a feature the catalog shows; it is shown under Thinking, and choosing any
   // Thinking option replaces it, keeping every other feature value (nucleus#1365).
-  const hiddenThinking = model
-    ? hiddenThinkingValues(draft.provider, draft.featureValues, model.features)
+  // A saved model no host reports now (retired, or its provider unavailable) keeps
+  // its one Mode and one Thinking control in canonical values and no features, so a
+  // retained value stays shown and repairable without resetting the other feature
+  // values a model change would (nucleus#1365).
+  const optionModel: Pick<
+    HostModel,
+    "modes" | "thinkingOptions" | "features"
+  > | null =
+    model ??
+    (draft.provider && draft.model
+      ? {
+          modes: RUNTIME_MODES.map((mode) => ({
+            id: mode,
+            ...RUNTIME_MODE_LABELS[mode],
+          })),
+          thinkingOptions: THINKING_LEVELS.map((level) => ({
+            id: level,
+            label: THINKING_LABELS[level],
+          })),
+          features: [],
+        }
+      : null);
+  const hiddenThinking = optionModel
+    ? hiddenThinkingValues(
+        draft.provider,
+        draft.featureValues,
+        optionModel.features,
+      )
     : [];
   const unlistedThinking = Boolean(
-    model &&
+    optionModel &&
       draft.thinkingOptionId &&
-      !model.thinkingOptions.some(
+      !optionModel.thinkingOptions.some(
         (option) => option.id === draft.thinkingOptionId,
       ),
   );
@@ -530,17 +562,17 @@ export function ProfileEditor({
       </View>
     </View>
   );
-  const options: { key: string; node: React.ReactNode }[] = model
+  const options: { key: string; node: React.ReactNode }[] = optionModel
     ? [
         {
           key: "mode",
-          node: model.modes.length ? (
+          node: optionModel.modes.length ? (
             <DropdownSelect
               label="Mode"
               value={draft.modeId ?? ""}
               options={[
                 HOST_DEFAULT,
-                ...model.modes.map((mode) => ({
+                ...optionModel.modes.map((mode) => ({
                   value: mode.id,
                   label: plainWords(mode.label, mode.id),
                 })),
@@ -556,7 +588,7 @@ export function ProfileEditor({
         {
           key: "thinking",
           node:
-            model.thinkingOptions.length ||
+            optionModel.thinkingOptions.length ||
             hiddenThinking.length ||
             unlistedThinking ? (
               <View style={{ gap: space.xxs }}>
@@ -565,7 +597,7 @@ export function ProfileEditor({
                   value={draft.thinkingOptionId ?? ""}
                   options={[
                     HOST_DEFAULT,
-                    ...model.thinkingOptions.map((option) => ({
+                    ...optionModel.thinkingOptions.map((option) => ({
                       value: option.id,
                       label: plainWords(option.label, option.id),
                     })),
@@ -606,7 +638,7 @@ export function ProfileEditor({
               hostDefault("Thinking")
             ),
         },
-        ...model.features.map((feature) => ({
+        ...optionModel.features.map((feature) => ({
           key: `feature:${feature.id}`,
           node:
             feature.type === "toggle" ? (
