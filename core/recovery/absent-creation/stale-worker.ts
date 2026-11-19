@@ -178,6 +178,8 @@ export function workerCreationRestartWait(
   const delivery = workerCreationRestartDelivery(store, task, deferred.at);
   if (delivery.state === "uncertain")
     return "Delivery of the recorded restart instruction is unknown. Nucleus checks the original worker timeline.";
+  if (deferred.notificationUnavailable)
+    return `Worker notifications are unavailable on host ${task.hostId}. The host operator can restore notification support. Nucleus will recheck the recorded restart automatically.`;
   return task.agentId
     ? "A restart instruction is recorded. Nucleus waits for the retained worker and ordinary admission."
     : `A restart instruction is recorded. ${workerLookupWait(task) ?? workerCreationWait}`;

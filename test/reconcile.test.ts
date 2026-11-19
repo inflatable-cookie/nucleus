@@ -1964,7 +1964,7 @@ for (const foundImmediately of [true, false]) {
       const instruction =
         "Preserve the existing checkout and finish the recorded validation";
       const deliveries: string[] = [];
-      f.adapter.notify = async (recipient, messageId, text) => {
+      const notify: NonNullable<Adapter["notify"]> = async (recipient, messageId, text) => {
         if (!messageId.startsWith("ns-worker-creation-restart-")) return;
         assert.equal(recipient, agentId);
         assert.ok(text.includes(instruction));
@@ -1975,6 +1975,7 @@ for (const foundImmediately of [true, false]) {
         );
         deliveries.push(messageId);
       };
+      f.adapter.notify = foundImmediately ? undefined : notify;
       await f.engine.performTaskControl({
         taskId: f.task.id,
         version: f.current().version,
@@ -2004,9 +2005,19 @@ for (const foundImmediately of [true, false]) {
         ownerVerbViews(collectOwnerVerbFacts(f.store, f.current())).find(
           (view) => view.verb === "restart",
         );
-      assert.match(next()?.refusal ?? "", /restart instruction is recorded/);
       f.idle(agentId);
+      if (foundImmediately) {
+        const wait = /notifications are unavailable on host host.*host operator.*recheck/i;
+        assert.match(next()?.refusal ?? "", wait);
+        await f.engine.wake();
+        assert.match(next()?.refusal ?? "", wait);
+        assert.equal(f.events("worker_restart_notification_capability").length, 1);
+        assert.equal(f.events("owner_restart_instruction_intent").length, 0);
+        assert.equal(f.current().resolution.deferredVerb?.input.instruction, instruction);
+        f.adapter.notify = notify;
+      } else assert.match(next()?.refusal ?? "", /restart instruction is recorded/);
       await f.engine.wake();
+      assert.equal(f.events("worker_restart_notification_capability").length, foundImmediately ? 2 : 0);
       assert.equal(deliveries.length, 1);
       assert.equal(f.current().resolution.deferredVerb, null);
       assert.equal(f.events("owner_restart_instruction_sent").length, 1);

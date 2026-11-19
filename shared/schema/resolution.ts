@@ -307,6 +307,7 @@ export const resolutionSchema = z.object({
       input: z.record(z.string(), z.unknown()),
       at: z.string(),
       why: z.enum(["paused", "held", "worker_creation"]),
+      notificationUnavailable: z.literal(true).optional(),
       /** The exact run (and checkpoint) the recorded verb was for; replay refuses if it changed. */
       target: z
         .object({

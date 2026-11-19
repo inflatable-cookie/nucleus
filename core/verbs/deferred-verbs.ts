@@ -204,7 +204,7 @@ export class DeferredOwnerVerbs {
 
   /** A creation restart either transfers to a fresh launch or delivers on the original binding. */
   private async applyWorkerCreationRestart(taskId: string) {
-    const task = this.store.task(taskId);
+    let task = this.store.task(taskId);
     const deferred = deferredWorkerCreationRestart(task);
     if (!deferred) return;
     const target = deferred.target;
@@ -227,7 +227,8 @@ export class DeferredOwnerVerbs {
       );
       return;
     }
-    if (!task.agentId) return; // Exact creation settlement still owns the discovery.
+    const agentId = task.agentId;
+    if (!agentId) return; // Exact creation settlement still owns the discovery.
     const {
       messageId,
       state,
@@ -258,10 +259,15 @@ export class DeferredOwnerVerbs {
       );
       return;
     }
-    if (state === "ready" && (blocked(task) || !this.engine.adapter.notify))
-      return;
+    if (state === "ready") {
+      const notificationUnavailable = !this.engine.adapter.notify || undefined;
+      if (notificationUnavailable !== deferred.notificationUnavailable)
+        task = this.store.update(taskId, {
+          resolution: { ...task.resolution, deferredVerb: { ...deferred, notificationUnavailable } },
+        }, "worker_restart_notification_capability", notificationUnavailable ? "Unavailable" : "Restored");
+      if (notificationUnavailable || blocked(task)) return;
+    }
 
-    const agentId = task.agentId;
     const binding = JSON.stringify({
       runId: task.runId,
       agentId,
@@ -306,9 +312,13 @@ export class DeferredOwnerVerbs {
       return; // An unavailable read leaves the recorded instruction owned.
     }
 
+    const adapter = this.engine.adapter;
+    const notify = adapter.notify;
+    if (!notify) return;
     this.store.event(taskId, "owner_restart_instruction_intent", binding);
     try {
-      await this.engine.adapter.notify!(
+      await notify.call(
+        adapter,
         agentId,
         messageId,
         `Owner restart instruction for the existing task run ${task.runId}: ${String(deferred.input.instruction)}`,
