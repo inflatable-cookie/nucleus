@@ -5,6 +5,9 @@ import * as api from "../../shared/contracts";
 import type { Run, Task } from "../../shared/contracts";
 import { eventActorFact, eventDetailSummary, eventKindLabel } from "../../shared/task-events";
 import { radius, space, type as typeScale } from "../design";
+import { launchThinkingLevel } from "../../shared/profile-vocabulary";
+import { hostKindOf } from "../../shared/host-kind";
+import { HOST_VOCABULARIES } from "../../hosts/vocabularies";
 
 /**
  * Task 538 (papercut 90104e7f): one collapsed group in the task detail. The
@@ -21,13 +24,23 @@ export function CollapsibleSection({ title, hint, open, onToggle, c, children }:
 }
 /** One row of task identity. Raw rows (IDs, commits, host) sit behind a disclosure; the rest are facts an operator reads. */
 type IdentityField = { label: string; value: string; raw: boolean };
+/**
+ * The canonical level a task's routing snapshot launches with, read back through
+ * its host's table (nucleus#1365): T3 carries Pi's level as its `thinking` option
+ * and Claude's `ultra` as `ultrathink`, so the snapshot's own spelling is not what
+ * the operator chose.
+ */
+function profileThinking(task: Task): string {
+  const profile = task.profile!;
+  return launchThinkingLevel(HOST_VOCABULARIES[hostKindOf(task.hostId)], profile) ?? profile.thinkingOptionId ?? "provider default";
+}
 export function taskIdentityFields(task: Task): IdentityField[] {
   const fields: IdentityField[] = [
     { label: "Repository", value: task.repoPath, raw: false },
     { label: "Lanes", value: task.laneContext.length ? task.laneContext.map((context) => `${context.title} (${context.key})`).join(", ") : "None", raw: false },
     { label: "Project queue", value: task.queuePriority ? "Promoted" : "Normal order", raw: false },
     { label: "Branch", value: task.branch, raw: false },
-    { label: "Profile", value: task.profile ? `${task.profile.name} · ${task.profile.thinkingOptionId ?? "provider default"}` : "Not assigned", raw: false },
+    { label: "Profile", value: task.profile ? `${task.profile.name} · ${profileThinking(task)}` : "Not assigned", raw: false },
     { label: "Worker request", value: task.profileRequests?.worker ? `${task.profileRequests.worker.profileId} · ${task.profileRequests.worker.reason}` : "Automatic", raw: false },
     { label: "Reviewer request", value: task.profileRequests?.reviewer ? `${task.profileRequests.reviewer.profileId} · ${task.profileRequests.reviewer.reason}` : "Automatic", raw: false },
     { label: "Pull request", value: task.prUrl ?? "Not created", raw: false },

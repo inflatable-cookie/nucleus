@@ -81,6 +81,8 @@ const unsupported = (capability: string): never => {
  * provider's own thought-level control `role: "reasoning"`, and every stock
  * driver (Codex, Grok, Muse, Kiro) names its reasoning select `reasoningEffort`.
  * The same id is what the nightly reads back out of `modelSelection.options`.
+ * The ids come from this host's table (`thinkingSelects`), so the catalog and
+ * the profile editor agree on which option carries the level.
  */
 const isReasoningDescriptor = (
   descriptor: z.infer<typeof optionDescriptor>,
@@ -89,7 +91,8 @@ const isReasoningDescriptor = (
   { type: "select" }
 > =>
   descriptor.type === "select" &&
-  (descriptor.role === "reasoning" || descriptor.id === "reasoningEffort");
+  (descriptor.role === "reasoning" ||
+    (t3codeVocabulary.thinkingSelects ?? []).includes(descriptor.id));
 /**
  * The nightly's own wording for the four runtime modes (installed bundle, client
  * `runtimeModes` table): `Supervised`, `Auto-accept edits`, `Auto`, `Full access`.

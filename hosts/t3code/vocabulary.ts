@@ -6,6 +6,8 @@ import type { CanonicalProvider } from '../../shared/profile-vocabulary';
  * the nightly's `server.getConfig`. T3 names Claude's instance `claudeAgent`; it
  * carries Claude's thinking as the `effort` option (its top level `ultrathink`),
  * Pi's as `thinking` and FX's as `effort`; the rest ride the reasoning option.
+ * The reasoning select is `reasoningEffort` on every stock driver (`reasoning`
+ * on older ones); those ids carry the level and never show as a feature.
  * Its four runtime modes are the same for every provider; a provider that reports
  * a subset narrows them through the catalog.
  */
@@ -31,6 +33,7 @@ export const t3codeProviderOf = (key: string): CanonicalProvider | null =>
 export const t3codeVocabulary: HostVocabulary = {
   kind: 't3code',
   label: 'T3Code',
+  thinkingSelects: ['reasoningEffort', 'reasoning'],
   providers: {
     codex: reasoning('codex'),
     claude: {

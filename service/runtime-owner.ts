@@ -205,6 +205,7 @@ import {
 } from "../core/qa/effigy-admission";
 import { hostRunAdmissionSocketPath } from "../core/host-runs/host-run-paths";
 import type { Papercut } from "../shared/contracts";
+import { HOST_VOCABULARIES } from "../hosts/vocabularies";
 
 /**
  * Sweep cadence. Every step of a task's tail that has no callback of its own waits
@@ -510,6 +511,9 @@ export class QueueRuntime {
         migrationStartedAt,
       );
     });
+    // nucleus#1365: stored profiles carry thinking in one canonical field, mapped
+    // back through every host's table before anything reads them.
+    this.store.migrateProfileThinking(Object.values(HOST_VOCABULARIES));
     this.capacityChanges = new CapacityChangeJournal(this.store);
     // Keyed mutations are journaled around their handlers so a replacement can
     // answer a response lost mid-roll (request ledger, service-boundary contract).

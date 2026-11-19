@@ -155,12 +155,18 @@ export function ProfileEditor({ c, catalog, catalogs, directory, projects, repos
   const name = initial?.name ?? "profile";
   // Every model option the host offers, in a stable order: Mode, Thinking, then features.
   // They flow two to a row; an odd last one spans the row (Tom, 2026-11-08).
+  // Mode and Thinking are one control each, in canonical values (nucleus#1365): the
+  // catalog already leaves out every option a host uses to carry either, so neither
+  // shows again as a feature. A list with nothing but Host default is plain text.
+  const hostDefault = (label: string) => <View style={{ gap: space.xxs }}><FieldCaption c={c} text={label} /><View style={{ minHeight: control.height, justifyContent: "center" }}><Text accessibilityLabel={`${label}, Host default`} style={controlText(c)}>Host default</Text></View></View>;
   const options: { key: string; node: React.ReactNode }[] = model ? [
-    ...(model.modes.length > 0 ? [{ key: "mode", node: <DropdownSelect label="Mode" value={draft.modeId ?? ""} options={[HOST_DEFAULT, ...model.modes.map(mode => ({ value: mode.id, label: plainWords(mode.label, mode.id) }))]} onChange={value => applyIdentity({ modeId: value || null })} c={c} disabled={busy} /> }] : []),
+    { key: "mode", node: model.modes.length
+      ? <DropdownSelect label="Mode" value={draft.modeId ?? ""} options={[HOST_DEFAULT, ...model.modes.map(mode => ({ value: mode.id, label: plainWords(mode.label, mode.id) }))]} onChange={value => applyIdentity({ modeId: value || null })} c={c} disabled={busy} />
+      : hostDefault("Mode") },
     { key: "thinking", node: model.thinkingOptions.length
       ? <DropdownSelect label="Thinking" value={draft.thinkingOptionId ?? ""} options={[HOST_DEFAULT, ...model.thinkingOptions.map(option => ({ value: option.id, label: plainWords(option.label, option.id) }))]}
           onChange={value => applyIdentity({ thinkingOptionId: value || null })} c={c} disabled={busy} />
-      : <View style={{ gap: space.xxs }}><FieldCaption c={c} text="Thinking" /><View style={{ minHeight: control.height, justifyContent: "center" }}><Text style={controlText(c)}>Host default</Text></View></View> },
+      : hostDefault("Thinking") },
     ...model.features.map(feature => ({ key: `feature:${feature.id}`, node: feature.type === "toggle"
       ? <View style={{ gap: space.xxs }}>
           <FieldCaption c={c} text={feature.label} />

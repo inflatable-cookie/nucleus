@@ -67,6 +67,22 @@ export interface HostVocabulary {
   kind: HostKind;
   label: string;
   providers: Partial<Record<CanonicalProvider, ProviderTranslation>>;
+  /**
+   * Option ids this host uses as a model's own thinking select when a provider
+   * names no `thinkingOption` (T3's `reasoningEffort`). Like a `thinkingOption`,
+   * they carry the thinking level: a profile never sets them and the editor never
+   * shows them as a feature (nucleus#1365).
+   */
+  thinkingSelects?: readonly string[];
+}
+
+/**
+ * The option ids that carry one provider's thinking level on one host: the
+ * table's `thinkingOption`, else the host's own thinking selects. A profile
+ * stores the level once, as `thinkingOptionId`; these never appear as features.
+ */
+export function thinkingCarriers(vocabulary: HostVocabulary, entry: ProviderTranslation): readonly string[] {
+  return entry.thinkingOption ? [entry.thinkingOption] : vocabulary.thinkingSelects ?? [];
 }
 
 /** The canonical fields a profile carries. */
@@ -91,10 +107,9 @@ export type Translation =
   | { ok: true; launch: LaunchValues; translated: string[] }
   | { ok: false; reason: string; launch: LaunchValues };
 
-/** Option ids the table itself uses for one provider; a profile can't set them directly. */
-function ownedOptions(entry: ProviderTranslation): Set<string> {
-  const owned = new Set<string>();
-  if (entry.thinkingOption) owned.add(entry.thinkingOption);
+/** Option ids the table itself uses for one provider's thinking or mode; a profile can't set them directly. */
+export function ownedOptions(vocabulary: HostVocabulary, entry: ProviderTranslation): Set<string> {
+  const owned = new Set<string>(thinkingCarriers(vocabulary, entry));
   for (const mode of Object.values(entry.modes)) if (mode && "featureValues" in mode) for (const key of Object.keys(mode.featureValues)) owned.add(key);
   return owned;
 }
@@ -120,7 +135,7 @@ export function translateProfile(vocabulary: HostVocabulary, profile: CanonicalV
   const launch: LaunchValues = { provider: entry.key, model: profile.model };
   if (entry.key !== profile.provider) translated.push("provider");
   const features: Record<string, unknown> = {};
-  const owned = ownedOptions(entry);
+  const owned = ownedOptions(vocabulary, entry);
   for (const [option, value] of Object.entries(profile.featureValues ?? {})) {
     if (owned.has(option)) return refuse(`Option ${option} is how ${label} carries a thinking level or mode; set those instead`);
     features[option] = value;
@@ -173,6 +188,23 @@ export function canonicalThinkingValue(entry: ProviderTranslation, value: string
 }
 
 /**
+ * The canonical level one host's launch values carry, read back through that
+ * host's table: the level a routing snapshot or a host read spells its own way
+ * (T3's claude `effort: ultrathink`, BB's `none`), for display. `null` when the
+ * launch carries no level, or one the table has no level for.
+ */
+export function launchThinkingLevel(vocabulary: HostVocabulary, launch: Pick<LaunchValues, "provider" | "thinkingOptionId" | "featureValues">): ThinkingLevel | null {
+  const entry = Object.values(vocabulary.providers).find(candidate => candidate?.key === launch.provider);
+  if (!entry) return launch.thinkingOptionId && isThinkingLevel(launch.thinkingOptionId) ? launch.thinkingOptionId : null;
+  if (launch.thinkingOptionId) return canonicalThinkingValue(entry, launch.thinkingOptionId);
+  for (const carrier of thinkingCarriers(vocabulary, entry)) {
+    const value = launch.featureValues?.[carrier];
+    if (typeof value === "string") return canonicalThinkingValue(entry, value);
+  }
+  return null;
+}
+
+/**
  * The nearest level of one ordered scale (Tom, 2026-11-04/12: a host translates
  * the canonical vocabulary in code, so a level a model does not report is
  * settled here instead of at the send). Distance decides; a tie takes the lower
@@ -205,7 +237,7 @@ export function canonicalCatalog(vocabulary: HostVocabulary, catalog: HostCatalo
     const entry = vocabulary.providers[canonical];
     const native = entry && catalog.providers.find(candidate => candidate.key === entry.key);
     if (!entry || !native) continue;
-    const owned = ownedOptions(entry);
+    const owned = ownedOptions(vocabulary, entry);
     providers.push({
       key: canonical, label: PROVIDER_LABELS[canonical], available: native.available, problem: native.problem,
       models: native.models.map((model): HostModel => {

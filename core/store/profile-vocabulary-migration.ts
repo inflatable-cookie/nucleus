@@ -1,4 +1,4 @@
-import { isCanonicalProvider, isRuntimeMode, isThinkingLevel } from "../../shared/profile-vocabulary";
+import { canonicalThinkingValue, isCanonicalProvider, isRuntimeMode, isThinkingLevel, thinkingCarriers, type HostVocabulary, type ThinkingLevel } from "../../shared/profile-vocabulary";
 
 /**
  * The one-time move of stored profiles to Nucleus's canonical vocabulary (Tom,
@@ -63,6 +63,73 @@ export function migrateProfileVocabulary(stored: readonly unknown[], at = new Da
   const profiles = stored.map(raw => {
     if (!raw || typeof raw !== "object") return raw;
     const answer = canonicalProfile(raw as Raw);
+    record.changes.push(...answer.changes);
+    record.unknown.push(...answer.unknown);
+    return answer.profile;
+  });
+  return { profiles, record };
+}
+
+/**
+ * One stored profile with its thinking level in one canonical field (nucleus#1365).
+ * Profiles reached the store with the level in a host's own carrier option
+ * (`featureValues.thinking` on T3's Pi, `effort` on its Claude, a `reasoning`
+ * select) or as a host's own spelling in `thinkingOptionId` (`ultrathink`, BB's
+ * `none`). Each value is mapped back through every host table that carries it
+ * for this provider, so its meaning is kept: the level moves to
+ * `thinkingOptionId` and the carrier option goes. A value no table maps, a value
+ * two tables read as different levels, or a carrier that disagrees with the
+ * stored level leaves the profile exactly as stored and is reported.
+ */
+export function canonicalThinkingProfile(raw: Raw, vocabularies: readonly HostVocabulary[]): { profile: Raw; changes: ProfileVocabularyChange[]; unknown: ProfileVocabularyUnknown[] } {
+  const profileId = typeof raw.id === "string" ? raw.id : "";
+  const provider = raw.provider;
+  if (typeof provider !== "string" || !isCanonicalProvider(provider)) return { profile: raw, changes: [], unknown: [] };
+  const hosts = vocabularies.flatMap(vocabulary => { const entry = vocabulary.providers[provider]; return entry ? [{ vocabulary, entry }] : []; });
+  const unknown: ProfileVocabularyUnknown[] = [];
+  /** The one level every host that reads this value agrees on, else null. */
+  const levelOf = (value: unknown, readers: typeof hosts): ThinkingLevel | null => {
+    if (typeof value !== "string") return null;
+    const levels = new Set(readers.map(({ entry }) => canonicalThinkingValue(entry, value)).filter((level): level is ThinkingLevel => level !== null));
+    return levels.size === 1 ? [...levels][0]! : null;
+  };
+  const levels: ThinkingLevel[] = [];
+  const stored = raw.thinkingOptionId;
+  if (typeof stored === "string") {
+    const level = isThinkingLevel(stored) ? stored : levelOf(stored, hosts);
+    if (level) levels.push(level);
+    else unknown.push({ profileId, field: "thinkingOptionId", value: stored });
+  }
+  const features = raw.featureValues && typeof raw.featureValues === "object" && !Array.isArray(raw.featureValues) ? raw.featureValues as Raw : {};
+  const carried: string[] = [];
+  for (const [option, value] of Object.entries(features)) {
+    const readers = hosts.filter(({ vocabulary, entry }) => thinkingCarriers(vocabulary, entry).includes(option));
+    if (!readers.length) continue;
+    const level = levelOf(value, readers);
+    if (level) { levels.push(level); carried.push(option); }
+    else unknown.push({ profileId, field: `featureValues.${option}`, value });
+  }
+  if (new Set(levels).size > 1) unknown.push({ profileId, field: "thinkingOptionId", value: { stored: stored ?? null, carried: Object.fromEntries(carried.map(option => [option, features[option]])) } });
+  if (unknown.length) return { profile: raw, changes: [], unknown };
+  const level = levels[0];
+  const changes: ProfileVocabularyChange[] = [];
+  const next: Raw = { ...raw };
+  if (level && stored !== level) { changes.push({ profileId, field: "thinkingOptionId", from: stored, to: level }); next.thinkingOptionId = level; }
+  if (carried.length) {
+    const rest = Object.fromEntries(Object.entries(features).filter(([option]) => !carried.includes(option)));
+    const to = Object.keys(rest).length ? rest : undefined;
+    changes.push({ profileId, field: "featureValues", from: raw.featureValues, to });
+    if (to) next.featureValues = to; else delete next.featureValues;
+  }
+  return { profile: changes.length ? next : raw, changes, unknown };
+}
+
+/** Every stored profile's thinking in one canonical field, and the record of the run. */
+export function migrateProfileThinking(stored: readonly unknown[], vocabularies: readonly HostVocabulary[], at = new Date().toISOString()): { profiles: unknown[]; record: ProfileVocabularyMigration } {
+  const record: ProfileVocabularyMigration = { at, changes: [], unknown: [] };
+  const profiles = stored.map(raw => {
+    if (!raw || typeof raw !== "object") return raw;
+    const answer = canonicalThinkingProfile(raw as Raw, vocabularies);
     record.changes.push(...answer.changes);
     record.unknown.push(...answer.unknown);
     return answer.profile;

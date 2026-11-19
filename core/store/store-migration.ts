@@ -1,9 +1,12 @@
 import { withoutRetiredPoolFields } from "../../shared/contracts";
 import { qualifiedThreadArchiveEffectKey, StoreCore } from "./store-core";
-import { migrateProfileVocabulary } from "./profile-vocabulary-migration";
+import { migrateProfileThinking, migrateProfileVocabulary } from "./profile-vocabulary-migration";
+import type { HostVocabulary } from "../../shared/profile-vocabulary";
 
 /** The record that the one-time canonical profile migration ran (task 1158). */
 export const PROFILE_VOCABULARY_MIGRATION_KEY = "profileVocabularyMigration";
+/** The record of the canonical thinking migration's first run and of every run that changed a profile (nucleus#1365). */
+export const PROFILE_THINKING_MIGRATION_KEY = "profileThinkingMigration";
 
 /** The archive-key facts a migration reads and prunes; retention owns them. */
 export interface MigrationHooks {
@@ -153,5 +156,23 @@ export class StoreMigration {
     this.core.setMeta(PROFILE_VOCABULARY_MIGRATION_KEY, record);
     for (const item of record.unknown)
       console.warn(`[nucleus] profile ${item.profileId} keeps ${item.field} ${JSON.stringify(item.value)}: not in Nucleus's vocabulary, left as stored`);
+  }
+
+  /**
+   * Stored profiles' thinking in one canonical field (nucleus#1365), mapped back
+   * through every host's table. Idempotent, so it runs on every open: a profile a
+   * rolled-back build wrote during its window moves too, and a clean store is read
+   * and left as it was. The record is written on the first run and on any run that
+   * changes a profile; a value no table maps stays as stored and is reported.
+   */
+  migrateProfileThinking(vocabularies: readonly HostVocabulary[]): void {
+    const stored = this.core.getMeta<unknown[]>("profiles");
+    const { profiles, record } = migrateProfileThinking(Array.isArray(stored) ? stored : [], vocabularies);
+    const first = this.core.getMeta<unknown>(PROFILE_THINKING_MIGRATION_KEY) === undefined;
+    if (record.changes.length) this.core.setMeta("profiles", profiles);
+    if (!first && !record.changes.length) return;
+    this.core.setMeta(PROFILE_THINKING_MIGRATION_KEY, record);
+    for (const item of record.unknown)
+      console.warn(`[nucleus] profile ${item.profileId} keeps ${item.field} ${JSON.stringify(item.value)}: no host table maps it to one canonical thinking level, left as stored`);
   }
 }
