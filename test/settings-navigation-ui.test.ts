@@ -126,6 +126,69 @@ test('projects distinguish loading, failure and empty results', async () => {
   ui.update(h('View'));
 });
 
+test('the raw QueueSettingsScreen embed keeps no standalone framing or Back control, while StandaloneSettingsScreen adds responsive insets, readable width and a themed Back control', async () => {
+  const { QueueSettingsScreen, StandaloneSettingsScreen } = await import('../client/settings-screen');
+  const { hintSettingsSection } = await import('../client/settings-hint');
+  const { space } = await import('../client/design');
+  const themeColors = {
+    surface0: '#111318', surface1: '#1a1d24', surface2: '#252932', border: '#39404b',
+    foreground: '#f1f3f5', foregroundMuted: '#a5acb8', accent: '#8caaff', accentForeground: '#101521',
+    statusSuccess: '#71c99a', statusWarning: '#e9bc68', statusDanger: '#ef8282',
+  };
+
+  // Raw embed (Paseo / BB settingsSection) stays free of standalone framing and Back controls.
+  const embeddedClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const embedded = mount(h(QueryClientProvider, {
+    client: embeddedClient,
+    children: h(PluginRpcProvider, {
+      invoke: invokeBoard as never,
+      children: h(QueueSettingsScreen as never, { theme: { colors: themeColors }, layout: { compact: false } }),
+    }),
+  }));
+  embedded.get('Nucleus settings').props.onLayout({ nativeEvent: { layout: { width: 1024 } } });
+  await settle(() => embedded.text().includes('Usage level'));
+  assert.equal(embedded.query('Standalone Nucleus settings'), undefined);
+  assert.equal(embedded.query('Back to board'), undefined);
+  assert.equal(embedded.get('Nucleus settings').props.style.paddingHorizontal ?? 0, 0);
+  embedded.update(h('View'));
+
+  // Standalone layout (T3 web / BB panel Settings route) adds responsive horizontal insets,
+  // readable content width, deep-section hints, and a compact theme-aware Back control.
+  hintSettingsSection('projects');
+  let backCalls = 0;
+  const standaloneClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const standalone = mount(h(QueryClientProvider, {
+    client: standaloneClient,
+    children: h(PluginRpcProvider, {
+      invoke: invokeBoard as never,
+      children: h(StandaloneSettingsScreen as never, {
+        theme: { colors: themeColors },
+        layout: { compact: false },
+        onBack: () => { backCalls++; },
+      }),
+    }),
+  }));
+  await settle(() => standalone.get('Projects').props.accessibilityState.selected === true);
+
+  standalone.get('Standalone Nucleus settings').props.onLayout({ nativeEvent: { layout: { width: 390 } } });
+  assert.equal(standalone.get('Standalone Nucleus settings').props.style.paddingHorizontal, space.md, 'narrow width uses compact horizontal inset');
+  standalone.get('Standalone Nucleus settings').props.onLayout({ nativeEvent: { layout: { width: 1280 } } });
+  assert.equal(standalone.get('Standalone Nucleus settings').props.style.paddingHorizontal, space.lg, 'wide width uses standard horizontal inset');
+  assert.equal(standalone.get('Standalone Nucleus settings').props.style.backgroundColor, themeColors.surface0);
+
+  const column = standalone.get('Nucleus settings column') as Node;
+  assert.equal(column.props.style.maxWidth, 780, 'standalone layout constrains content to a readable width');
+  assert.equal(column.props.style.alignSelf, 'center');
+
+  const back = standalone.get('Back to board') as Node;
+  assert.equal(back.props.accessibilityRole, 'button');
+  assert.equal(back.props.style.backgroundColor, themeColors.surface2, 'Back control paints with the active theme');
+  assert.equal(back.props.style.flex, undefined, 'Back control fits its label instead of stretching');
+  standalone.press('Back to board');
+  assert.equal(backCalls, 1, 'pressing Back returns via onBack');
+  standalone.update(h('View'));
+});
+
 test('telemetry distinguishes loading, failed, stale and empty reads and keeps long filter values accessible', async () => {
   const { SettingsTelemetry } = await import('../client/settings-telemetry');
   const { telemetrySnapshotSchema } = await import('../shared/telemetry');

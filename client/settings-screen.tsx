@@ -151,6 +151,56 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
   </View></PopoverHost>;
 }
 
+export type StandaloneSettingsScreenProps = BoardSurfaceProps & {
+  onBack: () => void;
+  backLabel?: string;
+};
+
+/**
+ * Standalone Settings layout for route mounts that own the full viewport or
+ * panel (T3's web board and BB's board-panel Settings route). Paseo and BB's
+ * host-owned `settingsSection` mount `QueueSettingsScreen` directly without
+ * standalone framing or a Back control.
+ */
+export function StandaloneSettingsScreen({ theme, layout, navigation, onBack, backLabel = "Back to board" }: StandaloneSettingsScreenProps) {
+  const c = theme.colors;
+  const [width, setWidth] = useState(0);
+  const compact = width > 0 ? width < 700 : layout.compact;
+  const inset = compact ? space.md : space.lg;
+  return (
+    <View
+      accessibilityLabel="Standalone Nucleus settings"
+      onLayout={event => setWidth(event.nativeEvent.layout.width)}
+      style={{
+        flex: 1,
+        width: "100%",
+        minWidth: 0,
+        minHeight: 0,
+        backgroundColor: c.surface0,
+        paddingHorizontal: inset,
+        paddingTop: inset,
+      }}
+    >
+      <View
+        accessibilityLabel="Nucleus settings column"
+        style={{
+          flex: 1,
+          width: "100%",
+          maxWidth: 780,
+          alignSelf: "center",
+          minWidth: 0,
+          minHeight: 0,
+        }}
+      >
+        <View style={{ ...row, flexWrap: "nowrap", justifyContent: "flex-start" }}>
+          <Button small c={c} icon="ChevronLeft" text="Back to board" label={backLabel} onPress={onBack} />
+        </View>
+        <QueueSettingsScreen theme={theme} layout={{ compact }} navigation={navigation} />
+      </View>
+    </View>
+  );
+}
+
 /* ------------------------------------------------------------------------- */
 /* Spec 052 / nucleus#934: one Profiles page for stored records and dispatch  */
 /* ------------------------------------------------------------------------- */

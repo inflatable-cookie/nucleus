@@ -473,7 +473,11 @@ The runtime build packages both bundles together.
     every 15 seconds, and at most eight streams stay open. The web client suspends
     snapshot polling while this channel is connected and resumes it after a
     disconnect; an unavailable event still triggers a read to expose the failure.
-- **Surface.** Web calls carry `via: "web"`. The Settings writes (`queue.capacity`,
+- **Surface.** Web calls carry `via: "web"`. The web board mounts Settings through
+  `StandaloneSettingsScreen` (responsive horizontal insets, readable content width,
+  and a leading theme-aware Back control to return to the board), while Paseo's
+  native plugin Settings container and BB's `settingsSection` mount
+  `QueueSettingsScreen` directly. The Settings writes (`queue.capacity`,
   `queue.pool`, `queue.profile`, `queue.availability`,
   `queue.usage`, `queue.project-dispatch-limit`,
   `queue.routing-grant`, `repository.set`, `backup.now`,

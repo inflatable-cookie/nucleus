@@ -22,7 +22,7 @@ import { z } from "zod";
 import { bindBoardShell } from "../../../client/shell";
 import type { BoardHost, BoardSurfaceProps } from "../../../client/shell/types";
 import { MainSurface, registerSettingsOpener } from "../../../client/queue";
-import { QueueSettingsScreen } from "../../../client/settings-screen";
+import { QueueSettingsScreen, StandaloneSettingsScreen } from "../../../client/settings-screen";
 import { TaskDetailPanel } from "../../../client/task/task-panel";
 import { useBoardState, BOARD_STATE_KEY } from "../../../client/board-state";
 import { registerDecisionPills } from "../../../client/decision-pill";
@@ -141,28 +141,41 @@ export function createBoardRuntime(sdk: BbBoardSdk, options: { refreshMs?: numbe
     return null;
   }
   const surfaceProps = (compact: boolean): BoardSurfaceProps => ({ theme: BB_THEME, layout: { compact } });
+  let settingsReturnSubPath: string | undefined;
 
   /** The board's Settings button, wherever it is pressed, opens the panel's Settings route. */
-  function useSettingsOpener() {
+  function useSettingsOpener(returnSubPath?: string) {
     const navigate = sdk.useBbNavigate();
-    const latest = useRef(navigate);
-    latest.current = navigate;
+    const latest = useRef({ navigate, returnSubPath });
+    latest.current = { navigate, returnSubPath };
     useEffect(() => {
       registerSettingsOpener(section => {
         if (section) hintSettingsSection(section);
-        latest.current.toPluginPanel(BOARD_PANEL_PATH, { subPath: SETTINGS_SEGMENT });
+        settingsReturnSubPath = latest.current.returnSubPath;
+        latest.current.navigate.toPluginPanel(BOARD_PANEL_PATH, { subPath: SETTINGS_SEGMENT });
       });
     }, []);
   }
 
   /** The `navPanel` (decision 5c): the global board, a project's board, or Settings. */
   function BoardPanel({ subPath }: { subPath: string }) {
-    useSettingsOpener();
     const route = parseBoardSubPath(subPath);
+    const navigate = sdk.useBbNavigate();
+    const returnSubPath = route.kind === "project" ? projectSubPath(route.key) : undefined;
+    useSettingsOpener(returnSubPath);
+    useEffect(() => {
+      if (route.kind === "board" || route.kind === "project") settingsReturnSubPath = undefined;
+    }, [route.kind, subPath]);
+    const backToBoard = () => {
+      const target = settingsReturnSubPath;
+      settingsReturnSubPath = undefined;
+      if (target) navigate.toPluginPanel(BOARD_PANEL_PATH, { subPath: target });
+      else navigate.toPluginPanel(BOARD_PANEL_PATH);
+    };
     return <Surface>
       {route.kind === "board" && <MainSurface {...surfaceProps(false)} />}
       {route.kind === "project" && <ProjectBoard projectKey={route.key} compact={false} />}
-      {route.kind === "settings" && <QueueSettingsScreen {...surfaceProps(false)} />}
+      {route.kind === "settings" && <StandaloneSettingsScreen {...surfaceProps(false)} onBack={backToBoard} />}
       {route.kind === "unknown" && <Notice text="This board link does not name a Nucleus board." />}
     </Surface>;
   }
@@ -182,8 +195,8 @@ export function createBoardRuntime(sdk: BbBoardSdk, options: { refreshMs?: numbe
 
   /** The fixed per-project tab: the project board on its planner and named-agent threads. */
   function ProjectBoardTab({ threadId }: { threadId: string }) {
-    useSettingsOpener();
     const project = useSidebarIndex().projectForThread(threadId);
+    useSettingsOpener(project ? projectSubPath(project.key) : undefined);
     return <Surface>{project ? <ProjectBoard projectKey={project.key} compact /> : <Notice text="This thread is not a Nucleus project's planner or agent." />}</Surface>;
   }
 
@@ -194,9 +207,8 @@ export function createBoardRuntime(sdk: BbBoardSdk, options: { refreshMs?: numbe
     return <Surface>{task ? <TaskDetailPanel {...surfaceProps(true)} taskId={task.taskId} /> : <Notice text="This thread is not a Nucleus task's thread." />}</Surface>;
   }
 
-  /** The `settingsSection`: the board's own Settings screen. */
+  /** The `settingsSection`: the board's own Settings screen, framed and navigated by BB itself. */
   function SettingsSection() {
-    useSettingsOpener();
     return <Surface><View style={{ minHeight: 480 }}><QueueSettingsScreen {...surfaceProps(false)} /></View></Surface>;
   }
 

@@ -2,7 +2,7 @@ import { BoardLiveContext } from "../board-live";
 import { useEffect, useMemo, useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MainSurface, registerSettingsOpener } from "../queue";
-import { QueueSettingsScreen } from "../settings-screen";
+import { StandaloneSettingsScreen } from "../settings-screen";
 import { hintSettingsSection } from "../settings-hint";
 import { WebContext } from "./shell";
 import { WebQuestions } from "./questions";
@@ -56,10 +56,9 @@ export function WebApp() {
     return () => controller.abort();
   }, [query, transport]);
   return <QueryClientProvider client={query}><WebContext.Provider value={context}><BoardLiveContext.Provider value={live}>
-    <WebQuestions /><div data-live-channel={live ? "connected" : "disconnected"} style={{ display: "flex", flexDirection: "column", height: "100vh", background: theme.colors.surface0, color: theme.colors.foreground }}>
+    <WebQuestions /><div data-live-channel={live ? "connected" : "disconnected"} style={{ display: "flex", flexDirection: "column", height: "100vh", width: "100%", overflowX: "auto", background: theme.colors.surface0, color: theme.colors.foreground }}>
       {liveError && <p role="alert" data-live-error style={{ margin: 0, padding: "6px 12px", background: theme.colors.surface2, color: theme.colors.statusWarning }}>{`Live channel: ${liveError}. Retrying.`}</p>}
-      {settings && <button onClick={() => setSettings(false)}>Back to board</button>}
-      <div style={{ display: "flex", flex: 1, minHeight: 0 }}>{settings ? <QueueSettingsScreen theme={theme} layout={{ compact: false }} /> : <MainSurface theme={theme} layout={{ compact: false }} />}</div>
+      <div style={{ display: "flex", flex: 1, minHeight: 0 }}>{settings ? <StandaloneSettingsScreen theme={theme} layout={{ compact: false }} onBack={() => setSettings(false)} /> : <MainSurface theme={theme} layout={{ compact: false }} />}</div>
     </div>
   </BoardLiveContext.Provider></WebContext.Provider></QueryClientProvider>;
 }

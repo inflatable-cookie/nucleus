@@ -52,5 +52,23 @@ test("web bundle renders the board against the daemon protocol without Paseo", a
     assert.equal(calls.filter(method => method === "queue.ui-snapshot").length, reads, "the connected live channel suppresses snapshot interval polling");
     assert.equal(dom.window.location.hash, "", "token was removed from the address");
     assert.match(dom.window.document.body.textContent ?? "", /Queue|Nucleus/);
+
+    // Standalone Settings route in T3 web: opens in standalone layout with a themed, keyboard-accessible Back control and returns to the board.
+    const settingsBtn = dom.window.document.querySelector('[aria-label="Settings"]') as HTMLElement | null;
+    assert.ok(settingsBtn, "board header exposes Settings");
+    settingsBtn.click();
+    for (let i = 0; i < 200 && !dom.window.document.querySelector('[aria-label="Standalone Nucleus settings"]'); i++) await new Promise(resolve => setTimeout(resolve, 10));
+    const standalone = dom.window.document.querySelector('[aria-label="Standalone Nucleus settings"]') as HTMLElement | null;
+    assert.ok(standalone, "web Settings mounts in the standalone layout");
+    const back = dom.window.document.querySelector('[aria-label="Back to board"]') as HTMLElement | null;
+    assert.ok(back, "standalone Settings renders the Back control");
+    assert.equal(back.getAttribute("role"), "button");
+    assert.equal(back.getAttribute("tabindex"), "0", "Back control is keyboard focusable");
+    assert.equal(dom.window.getComputedStyle(back).backgroundColor, "rgb(37, 41, 50)", "Back control uses the active dark surface2 theme colour");
+    assert.equal(dom.window.getComputedStyle(standalone).paddingLeft, "24px", "wide standalone Settings adds horizontal inset");
+    back.click();
+    for (let i = 0; i < 200 && !dom.window.document.querySelector('[aria-label="Settings"]'); i++) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.ok(dom.window.document.querySelector('[aria-label="Settings"]'), "Back returns to the board");
+    assert.equal(dom.window.document.querySelector('[aria-label="Standalone Nucleus settings"]'), null);
   } finally { dom.window.close(); await server.close(); }
 });
