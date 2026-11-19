@@ -715,6 +715,47 @@ test("a service that is unreachable mid-turn holds the turn quietly: one fault l
   await client.closed();
 });
 
+test("each outage shows its own fault line, even when the failure reads the same as the last", async () => {
+  let polls = 0;
+  const transport: AcpSessionTransport = {
+    turn: async (input: AcpTurnRequest) => {
+      if (input.waitMs === 0) return reply("hold", ["nucleus#1304 · Working"]);
+      polls += 1;
+      // Two outages of three failed polls each, separated by one answered poll, then release.
+      if ((polls >= 1 && polls <= 3) || (polls >= 5 && polls <= 7))
+        throw new Error("connect ENOENT /nonexistent/callback.sock");
+      if (polls === 4 || polls === 8) return reply("hold");
+      return reply("release", ["nucleus#1304 · Done"]);
+    },
+    message: async () => ({ receipt: { status: "delivered" } }),
+  };
+  const client = harness({
+    agent: {
+      faultLineAfter: 3,
+      retryDelayMs: 1,
+      retryMaxDelayMs: 2,
+      async resolve() {
+        return { binding, transport };
+      },
+    },
+  });
+  await client.lines.untilResult(
+    client.request("session/new", { cwd: "/fixture/checkout" }),
+  );
+  const prompt = client.request("session/prompt", {
+    sessionId: binding.sessionId,
+    prompt: [{ type: "text", text: "opening" }],
+  });
+  const { updates, result } = await client.lines.untilResult(prompt);
+  assert.deepEqual(result.result, { stopReason: "end_turn" });
+  assert.equal(
+    faultLines(updates),
+    2,
+    "a repeated identical outage is shown again, not suppressed as a repeat of the last line",
+  );
+  await client.closed();
+});
+
 test("a socket replaced while the turn is held resumes the same session, with an open decision still one card", async () => {
   const question = {
     id: "decision-1",

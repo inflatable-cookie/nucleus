@@ -591,7 +591,7 @@ export class AcpAgent {
         );
         if (!faultShown && failures >= this.faultLineAfter) {
           faultShown = true;
-          this.emit(
+          this.emitFault(
             send,
             session.sessionId,
             `Nucleus is unreachable (${reasonOf(error)}); this turn stays open and resumes when Nucleus answers.`,
@@ -714,6 +714,19 @@ export class AcpAgent {
   private emit(send: Send, sessionId: string, text: string): void {
     if (this.lastLine.get(sessionId) === text) return;
     this.lastLine.set(sessionId, text);
+    this.chunk(send, sessionId, text);
+  }
+
+  /**
+   * One outage's fault line. It is never suppressed as a repeat: each outage shows its
+   * own line even when the failure reads the same as the last one, and it does not
+   * become the line a lifecycle update is compared against.
+   */
+  private emitFault(send: Send, sessionId: string, text: string): void {
+    this.chunk(send, sessionId, text);
+  }
+
+  private chunk(send: Send, sessionId: string, text: string): void {
     send({
       jsonrpc: "2.0",
       method: "session/update",
