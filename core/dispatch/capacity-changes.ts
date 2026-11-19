@@ -27,14 +27,27 @@
  * later authorized change.
  */
 import {
-  CAPACITY_CHANGE_LOG_LIMIT, DEFAULT_GLOBAL_LIMIT, DEFAULT_HOLD_ESCALATION_MINUTES, DEFAULT_HOLD_REMINDER_MINUTES,
+  CAPACITY_CHANGE_LOG_LIMIT,
+  DEFAULT_GLOBAL_LIMIT,
+  DEFAULT_HOLD_ESCALATION_MINUTES,
+  DEFAULT_HOLD_REMINDER_MINUTES,
   DEFAULT_HOST_OUTAGE_NOTICE_MINUTES,
-  DEFAULT_LANE_DRAIN_ESCALATION_MINUTES, DEFAULT_LANE_DRAIN_MINUTES, DEFAULT_PAPERCUT_PROJECT_LIMIT,
-  DEFAULT_PROJECT_LIMIT, DEFAULT_STALL_THRESHOLD_MINUTES,
-  capacityAuthorityValuesSchema, capacityChangeSchema,
-  type CapacityAuthorityState, type CapacityAuthorityValues, type CapacityChange,
+  DEFAULT_LANE_DRAIN_ESCALATION_MINUTES,
+  DEFAULT_LANE_DRAIN_MINUTES,
+  DEFAULT_PAPERCUT_PROJECT_LIMIT,
+  DEFAULT_PROJECT_LIMIT,
+  DEFAULT_STALL_THRESHOLD_MINUTES,
+  DEFAULT_THREAD_RETENTION_DAYS,
+  capacityAuthorityValuesSchema,
+  capacityChangeSchema,
+  type CapacityAuthorityState,
+  type CapacityAuthorityValues,
+  type CapacityChange,
 } from "../../shared/contracts";
-import { CAPACITY_WRITE_SURFACE, type CapacityWriteSurface } from "../../shared/capacity-authority";
+import {
+  CAPACITY_WRITE_SURFACE,
+  type CapacityWriteSurface,
+} from "../../shared/capacity-authority";
 import type { Store } from "../store/store";
 
 /** The durable record of applied changes; Queue-internal meta, never exported. */
@@ -42,25 +55,60 @@ export const CAPACITY_CHANGE_LOG_META_KEY = "capacityChanges";
 
 /** The capacity meta keys, in the order every reader and record names them. */
 export const CAPACITY_AUTHORITY_KEYS = [
-  "globalLimit", "projectLimit", "papercutProjectLimit", "paseoCallLimit", "stallThresholdMinutes",
-  "holdReminderMinutes", "holdEscalationMinutes", "laneDrainMinutes", "laneDrainEscalationMinutes",
-  "hostOutageNoticeMinutes", "operatorDefaultHostKind",
+  "globalLimit",
+  "projectLimit",
+  "papercutProjectLimit",
+  "paseoCallLimit",
+  "stallThresholdMinutes",
+  "holdReminderMinutes",
+  "holdEscalationMinutes",
+  "laneDrainMinutes",
+  "laneDrainEscalationMinutes",
+  "hostOutageNoticeMinutes",
+  "operatorDefaultHostKind",
+  "threadRetentionDays",
 ] as const satisfies readonly (keyof CapacityAuthorityValues)[];
 
 /** The current state, with the defaults every live reader uses on a store that never set one. */
-export function capacityAuthorityEffective(store: Store): CapacityAuthorityValues {
+export function capacityAuthorityEffective(
+  store: Store,
+): CapacityAuthorityValues {
   return {
     globalLimit: store.getMeta<number>("globalLimit") ?? DEFAULT_GLOBAL_LIMIT,
-    projectLimit: store.getMeta<number>("projectLimit") ?? DEFAULT_PROJECT_LIMIT,
-    papercutProjectLimit: store.getMeta<number>("papercutProjectLimit") ?? DEFAULT_PAPERCUT_PROJECT_LIMIT,
+    projectLimit:
+      store.getMeta<number>("projectLimit") ?? DEFAULT_PROJECT_LIMIT,
+    papercutProjectLimit:
+      store.getMeta<number>("papercutProjectLimit") ??
+      DEFAULT_PAPERCUT_PROJECT_LIMIT,
     paseoCallLimit: store.configuredPaseoCallLimit(),
-    stallThresholdMinutes: store.getMeta<number>("stallThresholdMinutes") ?? DEFAULT_STALL_THRESHOLD_MINUTES,
-    holdReminderMinutes: store.getMeta<number>("holdReminderMinutes") ?? DEFAULT_HOLD_REMINDER_MINUTES,
-    holdEscalationMinutes: store.getMeta<number>("holdEscalationMinutes") ?? DEFAULT_HOLD_ESCALATION_MINUTES,
-    laneDrainMinutes: store.getMeta<number>("laneDrainMinutes") ?? DEFAULT_LANE_DRAIN_MINUTES,
-    laneDrainEscalationMinutes: store.getMeta<number>("laneDrainEscalationMinutes") ?? DEFAULT_LANE_DRAIN_ESCALATION_MINUTES,
-    hostOutageNoticeMinutes: store.getMeta<number>("hostOutageNoticeMinutes") ?? DEFAULT_HOST_OUTAGE_NOTICE_MINUTES,
-    operatorDefaultHostKind: store.getMeta<import("../../shared/host-kind").HostKind | null>("operatorDefaultHostKind") === undefined ? "paseo" : store.getMeta<import("../../shared/host-kind").HostKind | null>("operatorDefaultHostKind")!,
+    stallThresholdMinutes:
+      store.getMeta<number>("stallThresholdMinutes") ??
+      DEFAULT_STALL_THRESHOLD_MINUTES,
+    holdReminderMinutes:
+      store.getMeta<number>("holdReminderMinutes") ??
+      DEFAULT_HOLD_REMINDER_MINUTES,
+    holdEscalationMinutes:
+      store.getMeta<number>("holdEscalationMinutes") ??
+      DEFAULT_HOLD_ESCALATION_MINUTES,
+    laneDrainMinutes:
+      store.getMeta<number>("laneDrainMinutes") ?? DEFAULT_LANE_DRAIN_MINUTES,
+    laneDrainEscalationMinutes:
+      store.getMeta<number>("laneDrainEscalationMinutes") ??
+      DEFAULT_LANE_DRAIN_ESCALATION_MINUTES,
+    hostOutageNoticeMinutes:
+      store.getMeta<number>("hostOutageNoticeMinutes") ??
+      DEFAULT_HOST_OUTAGE_NOTICE_MINUTES,
+    operatorDefaultHostKind:
+      store.getMeta<import("../../shared/host-kind").HostKind | null>(
+        "operatorDefaultHostKind",
+      ) === undefined
+        ? "paseo"
+        : store.getMeta<import("../../shared/host-kind").HostKind | null>(
+            "operatorDefaultHostKind",
+          )!,
+    threadRetentionDays:
+      store.getMeta<number>("threadRetentionDays") ??
+      DEFAULT_THREAD_RETENTION_DAYS,
   };
 }
 
@@ -77,7 +125,10 @@ export interface CapacityWriteResult {
 export class CapacityChangeJournal {
   private readonly clock: () => string;
 
-  constructor(private readonly store: Store, options: { clock?: () => string } = {}) {
+  constructor(
+    private readonly store: Store,
+    options: { clock?: () => string } = {},
+  ) {
     this.clock = options.clock ?? (() => new Date().toISOString());
   }
 
@@ -86,16 +137,28 @@ export class CapacityChangeJournal {
    * a field the caller supplied; an omitted field keeps the value in force, so an
    * older caller never resets a limit it does not know about.
    */
-  apply(input: Partial<CapacityAuthorityValues>, surface: CapacityWriteSurface = CAPACITY_WRITE_SURFACE): CapacityWriteResult {
-    const supplied = Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined));
+  apply(
+    input: Partial<CapacityAuthorityValues>,
+    surface: CapacityWriteSurface = CAPACITY_WRITE_SURFACE,
+  ): CapacityWriteResult {
+    const supplied = Object.fromEntries(
+      Object.entries(input).filter(([, value]) => value !== undefined),
+    );
     for (const key of Object.keys(supplied)) {
       if (!(CAPACITY_AUTHORITY_KEYS as readonly string[]).includes(key))
-        throw new Error(`Unknown capacity field ${key}; a change names only the limits`);
+        throw new Error(
+          `Unknown capacity field ${key}; a change names only the limits`,
+        );
     }
     const at = this.clock();
     const before = capacityAuthorityEffective(this.store);
-    const after = capacityAuthorityValuesSchema.parse({ ...before, ...supplied });
-    const fields = CAPACITY_AUTHORITY_KEYS.filter(key => after[key] !== before[key]);
+    const after = capacityAuthorityValuesSchema.parse({
+      ...before,
+      ...supplied,
+    });
+    const fields = CAPACITY_AUTHORITY_KEYS.filter(
+      (key) => after[key] !== before[key],
+    );
     // No-op: the values in force were saved again. Nothing durable changes, and
     // nothing pretends it did.
     if (!fields.length) return { changed: false, version: null, fields: [] };
@@ -103,9 +166,19 @@ export class CapacityChangeJournal {
     this.store.transaction(() => {
       const log = this.readLog();
       version = (log.at(-1)?.version ?? 0) + 1;
-      const change = capacityChangeSchema.parse({ version, at, surface, before, after });
-      for (const key of CAPACITY_AUTHORITY_KEYS) this.store.setMeta(key, after[key]);
-      this.store.setMeta(CAPACITY_CHANGE_LOG_META_KEY, [...log, change].slice(-CAPACITY_CHANGE_LOG_LIMIT));
+      const change = capacityChangeSchema.parse({
+        version,
+        at,
+        surface,
+        before,
+        after,
+      });
+      for (const key of CAPACITY_AUTHORITY_KEYS)
+        this.store.setMeta(key, after[key]);
+      this.store.setMeta(
+        CAPACITY_CHANGE_LOG_META_KEY,
+        [...log, change].slice(-CAPACITY_CHANGE_LOG_LIMIT),
+      );
       this.store.advanceRevision();
     });
     return { changed: true, version, fields };
@@ -113,7 +186,10 @@ export class CapacityChangeJournal {
 
   /** The `queue.capacity-state` read: the values in force and the applied changes. */
   state(): CapacityAuthorityState {
-    return { effective: capacityAuthorityEffective(this.store), changes: this.readLog() };
+    return {
+      effective: capacityAuthorityEffective(this.store),
+      changes: this.readLog(),
+    };
   }
 
   /**

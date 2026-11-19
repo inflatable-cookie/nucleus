@@ -30,6 +30,7 @@ import { serviceHasSession, t3HttpOrigin } from "../bin/t3-install";
 import {
   liveTaskNames,
   liveTaskRefusal,
+  retentionFacts,
   t3StatusReport,
 } from "../shared/t3/operator";
 
@@ -698,6 +699,65 @@ test("the status report carries the adapter native-parenting line and the projec
     { name: "github.com/synthetic/opted-in" },
   ]);
   assert.equal(report.ok, false);
+  // Orchestration contract, "Archived thread retention": a service that reported no
+  // pass says so for this host instead of reading as a clean zero.
+  assert.equal(report.retention.days, 3);
+  assert.equal(report.retention.supported, false);
+  assert.match(report.retention.error, /service is not running/);
+});
+
+test("the retention line names this host's last pass, or why it could not run", () => {
+  const hostId = "t3code:synthetic-environment";
+  const passed = retentionFacts(
+    {
+      days: 4,
+      hosts: [
+        {
+          hostId,
+          supported: true,
+          at: "2026-11-19T09:00:00.000Z",
+          deleted: 200,
+          remaining: 11,
+          error: "",
+        },
+      ],
+    },
+    hostId,
+  );
+  assert.deepEqual(passed, {
+    days: 4,
+    supported: true,
+    lastRunAt: "2026-11-19T09:00:00.000Z",
+    deleted: 200,
+    remaining: 11,
+    error: "",
+  });
+  const skipped = retentionFacts(
+    {
+      days: 4,
+      hosts: [
+        {
+          hostId,
+          supported: true,
+          at: null,
+          deleted: 0,
+          remaining: 0,
+          error: "The host is away",
+        },
+      ],
+    },
+    hostId,
+  );
+  assert.match(skipped.error, /away/);
+  const unsupported = retentionFacts({ days: 3, hosts: [] }, hostId);
+  assert.equal(unsupported.supported, false);
+  assert.match(unsupported.error, /no retention pass has recorded this host/);
+  assert.match(retentionFacts(null, hostId).error, /service is not running/);
+  assert.equal(
+    retentionFacts({ days: 5, hosts: [] }, null).days,
+    5,
+    "the window is the service's, whatever the host answered",
+  );
 });
 
 test("an unmarked executable is refused before any write", async (t) => {

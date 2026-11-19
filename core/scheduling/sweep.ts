@@ -138,9 +138,12 @@ export class Sweep {
         this.engine,
         [
           "adapter",
+          "hostAvailable",
+          "hostIds",
           "migrateProjectOwnersToPlanners",
           "removeSiblings",
           "store",
+          "withHost",
         ],
         [],
       ),
