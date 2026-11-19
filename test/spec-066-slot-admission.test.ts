@@ -10,6 +10,7 @@ import { Store } from '../core/store/store';
 import { createTaskDetailCache } from '../core/telemetry/task-detail';
 import { createUiSnapshotFactsCache } from '../core/telemetry/ui-snapshot';
 import { formatTaskNumber, runSchema, type Task } from '../shared/contracts';
+import { TASK_PROGRESSING_REASON } from '../shared/task-detail-summary';
 import { fakeAdapter, profile, submission } from './support/fakes';
 
 function fixture(validate?: (task: Task) => Promise<string>) {
@@ -126,6 +127,10 @@ test('C3 sweep drops finished occupants and reuses the first free slot once', as
     assert.equal(f.store.task(first.id).resolution.stop, null);
     assert.equal(f.next(first).stop, null);
     assert.equal(f.store.task(mechanical.id).resolution.stop, null);
+    const settledNext = f.next(mechanical);
+    assert.equal(settledNext.phase, 'verifying');
+    assert.equal(settledNext.stop, null);
+    assert.equal(settledNext.reason, TASK_PROGRESSING_REASON);
     assert.equal(f.store.eventsAll(mechanical.id).filter(event => event.kind === 'slot_wait_settled').length, 1);
     assert.match(f.next(second).stop?.detail ?? '', /1\/1 occupied/);
     assert.ok(f.next(second).reason.includes(label(first)));
@@ -139,6 +144,9 @@ test('C3 sweep drops finished occupants and reuses the first free slot once', as
     assert.deepEqual(f.starts, [first.id]);
     assert.equal(intents(), 1);
     assert.deepEqual(f.store.notices(first.id), notices);
+    const replayedNext = f.next(mechanical);
+    assert.equal(replayedNext.stop, null);
+    assert.equal(replayedNext.reason, settledNext.reason);
     assert.equal(f.store.eventsAll(mechanical.id).filter(event => event.kind === 'slot_wait_settled').length, 1);
   } finally { await f.close(); }
 });
