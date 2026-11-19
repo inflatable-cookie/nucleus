@@ -85,10 +85,8 @@ async function resumeRecordedMerge(engine: Engine, task: Task, input: CloseoutMo
     if (JSON.stringify(store.runs(task.id)) !== runIdentity) throw Error('Task or run changed during merge observation');
     engine.releaseDisplacedRunsInTx(task.id, finished.settleable.map(run => run.id), `move closeout: ${input.reason}`);
     settleSupersededFencesInTx(store, task.id, `move closeout: ${input.reason}`, now(), engine.coordinatorActionRunId.getStore());
-    const latest = engine.resolution.assignIntegrationTurn(store.task(task.id));
-    const waiting = engine.resolution.hasEarlierIntegrationTurn(latest);
-    return engine.resolution.update(latest, { currentRunId: null, attention: false },
-      { phase: waiting ? 'merging' : 'syncing', reason: waiting ? 'Recorded merge re-observed; waiting for the integration turn' : 'Recorded merge re-observed; synchronizing main before closeout' },
-      'owner_closeout_merge_observed', JSON.stringify({ head, commit: observed.commit, reason: input.reason }));
+    return engine.resolution.closeout.continueRecordedMerge(store.task(task.id), {
+      kind: 'owner', reason: input.reason, refresh: Boolean(task.resolution.syncedCommit),
+    });
   });
 }

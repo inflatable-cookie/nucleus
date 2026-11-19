@@ -175,14 +175,14 @@ export async function exactIntendedMerge(t: Pick<Task,'repoPath'|'baseBranch'|'r
   if(matches.length>1)throw Error('Multiple exact merge commits match the recorded merge intent');
   return matches[0]?.split(' ')[0]??null;
 }
-export async function syncMain(t: Task, allowed: () => boolean = () => true, observeFastForward?: IntegrationFastForwardObserver) {
-  const commit = await withIntegrationCheckout(t, (checkout, unchanged) => syncIntegrationCheckout({...t, repoPath: checkout}, allowed, unchanged, observeFastForward));
+export async function syncMain(t: Task, allowed: () => boolean = () => true, observeFastForward?: IntegrationFastForwardObserver, beforeFastForward?: IntegrationFastForwardObserver) {
+  const commit = await withIntegrationCheckout(t, (checkout, unchanged) => syncIntegrationCheckout({...t, repoPath: checkout}, allowed, unchanged, observeFastForward, beforeFastForward));
   if (await git(t.repoPath, 'branch', '--show-current') === t.baseBranch) {
     requestServiceRollAfterRepositorySync(t.repoPath);
   }
   return commit;
 }
-async function syncIntegrationCheckout(t: Task, allowed: () => boolean, unchanged: () => Promise<void>, observeFastForward?: IntegrationFastForwardObserver) {
+async function syncIntegrationCheckout(t: Task, allowed: () => boolean, unchanged: () => Promise<void>, observeFastForward?: IntegrationFastForwardObserver, beforeFastForward?: IntegrationFastForwardObserver) {
   if (!t.resolution.mergedCommit) throw new Error('Merge has not been verified');
   if (await git(t.repoPath, 'branch', '--show-current') !== t.baseBranch || await gitStatus(t.repoPath, 'status', '--porcelain')) throw new Error('Preserving dirty or switched integration checkout after merge');
   await git(t.repoPath, 'fetch', 'origin', t.baseBranch);
@@ -199,10 +199,14 @@ async function syncIntegrationCheckout(t: Task, allowed: () => boolean, unchange
   }
   if (await git(t.repoPath, 'branch', '--show-current') !== t.baseBranch || await gitStatus(t.repoPath, 'status', '--porcelain')) throw new Error('Integration checkout changed while fetching');
   await unchanged();
-  if (!allowed()) throw new Error('Paused before local main update');
   const from = await git(t.repoPath, 'rev-parse', 'HEAD');
-  await gitFastForward(t.repoPath, remote);
-  if (from !== remote) observeFastForward?.({ from, to: remote });
+  if (!allowed()) throw new Error('Paused or task changed before local main update');
+  if (from !== remote) {
+    const move = { from, to: remote };
+    beforeFastForward?.(move);
+    await gitFastForward(t.repoPath, remote);
+    observeFastForward?.(move);
+  }
   if (await git(t.repoPath, 'rev-parse', 'HEAD') !== remote || await gitStatus(t.repoPath, 'status', '--porcelain')) throw new Error('Integration synchronization did not leave a clean expected head');
   return remote;
 }

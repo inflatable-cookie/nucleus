@@ -329,6 +329,7 @@ export interface ResolutionAdapter {
     task: Task,
     allowed?: () => boolean,
     observeFastForward?: IntegrationFastForwardObserver,
+    beforeFastForward?: IntegrationFastForwardObserver,
   ): Promise<string>;
   verifyCloseout(task: Task, result?: Completion): Promise<string | void>;
   notify(
@@ -697,6 +698,7 @@ export class Resolution {
   readonly retryRoutes = new RetryRoutes(
     portsContext(this, [
       "adapter",
+      "closeout",
       "operatorReturn",
       "retainedWorkerProfileIssue",
       "retry",
@@ -714,6 +716,7 @@ export class Resolution {
         "adapter",
         "assignIntegrationTurn",
         "attention",
+        "closeout",
         "environmentDeferred",
         "executionLease",
         "gitTransientFailure",
@@ -888,6 +891,7 @@ export class Resolution {
   readonly closeout = new Closeout(
     portsContext(this, [
       "adapter",
+      "assignIntegrationTurn",
       "attention",
       "claimIntegrationTurn",
       "closeoutAuthority",
@@ -898,6 +902,10 @@ export class Resolution {
       "launch",
       "paused",
       "queueCloseout",
+      "recovery",
+      "recordIncidentEvent",
+      "refreshingCloseoutHook",
+      "settleAttentionEpisode",
       "settleAutomaticReplayHold",
       "stopped",
       "store",
