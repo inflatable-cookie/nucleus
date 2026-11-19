@@ -1,9 +1,15 @@
 import { withoutRetiredPoolFields } from "../../shared/contracts";
 import { qualifiedThreadArchiveEffectKey, StoreCore } from "./store-core";
-import { migrateProfileVocabulary } from "./profile-vocabulary-migration";
+import {
+  migrateProfileThinking,
+  migrateProfileVocabulary,
+} from "./profile-vocabulary-migration";
+import type { HostVocabulary } from "../../shared/profile-vocabulary";
 
 /** The record that the one-time canonical profile migration ran (task 1158). */
 export const PROFILE_VOCABULARY_MIGRATION_KEY = "profileVocabularyMigration";
+/** The record of the canonical thinking migration's first run and of every run that changed a profile (nucleus#1365). */
+export const PROFILE_THINKING_MIGRATION_KEY = "profileThinkingMigration";
 
 /** The archive-key facts a migration reads and prunes; retention owns them. */
 export interface MigrationHooks {
@@ -18,15 +24,25 @@ export interface MigrationHooks {
  * clean store is scanned and left byte-identical.
  */
 export class StoreMigration {
-  constructor(private readonly core: StoreCore, private readonly hooks: MigrationHooks) {}
-  private get db() { return this.core.db; }
+  constructor(
+    private readonly core: StoreCore,
+    private readonly hooks: MigrationHooks,
+  ) {}
+  private get db() {
+    return this.core.db;
+  }
 
   /** Task 1002: rewrite the stored pool without retired fields; a no-op once clean. */
   stripRetiredPoolFields(): void {
     const stored = this.core.getMeta<unknown[]>("pool");
     if (!Array.isArray(stored)) return;
-    const cleaned = stored.map(entry => entry && typeof entry === "object" && !Array.isArray(entry) ? withoutRetiredPoolFields(entry as Record<string, unknown>) : entry);
-    if (cleaned.some((entry, index) => entry !== stored[index])) this.core.setMeta("pool", cleaned);
+    const cleaned = stored.map((entry) =>
+      entry && typeof entry === "object" && !Array.isArray(entry)
+        ? withoutRetiredPoolFields(entry as Record<string, unknown>)
+        : entry,
+    );
+    if (cleaned.some((entry, index) => entry !== stored[index]))
+      this.core.setMeta("pool", cleaned);
   }
 
   /**
@@ -43,7 +59,9 @@ export class StoreMigration {
 
   /** Schema 59 (task 1302): subscription usage readings now belong to host apps and plugins. */
   dropSubscriptionUsageStorage(): void {
-    this.db.exec("DROP TABLE IF EXISTS usage_samples; DROP TABLE IF EXISTS usage_read_state;");
+    this.db.exec(
+      "DROP TABLE IF EXISTS usage_samples; DROP TABLE IF EXISTS usage_read_state;",
+    );
   }
 
   /**
@@ -56,7 +74,8 @@ export class StoreMigration {
    * Planned rows never carry that event.
    */
   markRegisteredExternalWorkspaces(): void {
-    this.db.exec(`UPDATE tasks SET data=json_set(data,'$.workspaceOwnership','external')
+    this.db
+      .exec(`UPDATE tasks SET data=json_set(data,'$.workspaceOwnership','external')
       WHERE json_type(data,'$.workspaceOwnership') IS NULL
         AND json_extract(data,'$.directory') IS NOT NULL
         AND EXISTS (SELECT 1 FROM events e WHERE e.taskId=tasks.id AND e.kind='registered')`);
@@ -68,7 +87,9 @@ export class StoreMigration {
    * build parse the current schema, and drop the retired Nucleus-wide default.
    */
   stripRetiredRepositoryPolicy(): void {
-    this.db.exec("UPDATE repository_settings SET data=json_remove(data,'$.validationPolicy') WHERE json_type(data,'$.validationPolicy') IS NOT NULL");
+    this.db.exec(
+      "UPDATE repository_settings SET data=json_remove(data,'$.validationPolicy') WHERE json_type(data,'$.validationPolicy') IS NOT NULL",
+    );
     this.db.exec("DELETE FROM meta WHERE key='defaultValidationPolicy'");
   }
 
@@ -82,17 +103,37 @@ export class StoreMigration {
    * outcome `routing.capability` → `scope` rewrite below is the last legacy reader.
    */
   stripRetiredRowFields(): void {
-    this.db.exec("UPDATE outcomes SET data=json_remove(json_set(data,'$.routing.scope',json_extract(data,'$.routing.capability')),'$.routing.capability')\n      WHERE json_type(data,'$.routing.capability') IS NOT NULL");
-    this.db.exec("UPDATE outcomes SET data=json_remove(data,'$.stageRuns') WHERE json_type(data,'$.stageRuns') IS NOT NULL");
-    this.db.exec("UPDATE tasks SET data=json_remove(data,'$.extraReplacements','$.resolution.mechanicalReviewCarry','$.resolution.authorEscalations')\n      WHERE json_type(data,'$.extraReplacements') IS NOT NULL OR json_type(data,'$.resolution.mechanicalReviewCarry') IS NOT NULL OR json_type(data,'$.resolution.authorEscalations') IS NOT NULL");
-    this.db.exec("UPDATE runs SET data=json_remove(data,'$.reviewScopeDigest','$.formalReviewerLogin')\n      WHERE json_type(data,'$.reviewScopeDigest') IS NOT NULL OR json_type(data,'$.formalReviewerLogin') IS NOT NULL");
-    this.db.exec("UPDATE project_qa_runs SET data=json_remove(data,'$.queueCapacityDeadlineAt') WHERE json_type(data,'$.queueCapacityDeadlineAt') IS NOT NULL");
-    this.db.exec("DELETE FROM events WHERE kind GLOB 'workspace_creation_step_*'");
+    this.db.exec(
+      "UPDATE outcomes SET data=json_remove(json_set(data,'$.routing.scope',json_extract(data,'$.routing.capability')),'$.routing.capability')\n      WHERE json_type(data,'$.routing.capability') IS NOT NULL",
+    );
+    this.db.exec(
+      "UPDATE outcomes SET data=json_remove(data,'$.stageRuns') WHERE json_type(data,'$.stageRuns') IS NOT NULL",
+    );
+    this.db.exec(
+      "UPDATE tasks SET data=json_remove(data,'$.extraReplacements','$.resolution.mechanicalReviewCarry','$.resolution.authorEscalations')\n      WHERE json_type(data,'$.extraReplacements') IS NOT NULL OR json_type(data,'$.resolution.mechanicalReviewCarry') IS NOT NULL OR json_type(data,'$.resolution.authorEscalations') IS NOT NULL",
+    );
+    this.db.exec(
+      "UPDATE runs SET data=json_remove(data,'$.reviewScopeDigest','$.formalReviewerLogin')\n      WHERE json_type(data,'$.reviewScopeDigest') IS NOT NULL OR json_type(data,'$.formalReviewerLogin') IS NOT NULL",
+    );
+    this.db.exec(
+      "UPDATE project_qa_runs SET data=json_remove(data,'$.queueCapacityDeadlineAt') WHERE json_type(data,'$.queueCapacityDeadlineAt') IS NOT NULL",
+    );
+    this.db.exec(
+      "DELETE FROM events WHERE kind GLOB 'workspace_creation_step_*'",
+    );
   }
 
   migrateRevocableCredentials(): void {
-    const columns = new Set(this.db.prepare('PRAGMA table_info(credentials)').all().map(row => String(row.name)));
-    if (!columns.has('revoked')) this.db.exec('ALTER TABLE credentials ADD COLUMN revoked INTEGER NOT NULL DEFAULT 0');
+    const columns = new Set(
+      this.db
+        .prepare("PRAGMA table_info(credentials)")
+        .all()
+        .map((row) => String(row.name)),
+    );
+    if (!columns.has("revoked"))
+      this.db.exec(
+        "ALTER TABLE credentials ADD COLUMN revoked INTEGER NOT NULL DEFAULT 0",
+      );
   }
 
   /**
@@ -102,7 +143,8 @@ export class StoreMigration {
    */
   fenceLegacyMessageDelivery(): void {
     this.core.transaction(() => {
-      this.db.exec(`UPDATE task_messages SET data=json_patch(json_set(data,'$.status','uncertain',
+      this.db
+        .exec(`UPDATE task_messages SET data=json_patch(json_set(data,'$.status','uncertain',
         '$.deliveryIntentAt',json_extract(data,'$.createdAt'),'$.deliveryIntentState','intent'),
         CASE WHEN EXISTS (SELECT 1 FROM tasks WHERE tasks.id=task_messages.toTaskId AND length(json_extract(tasks.data,'$.hostId'))>0)
           THEN json_object('deliveryHostId',(SELECT json_extract(tasks.data,'$.hostId') FROM tasks WHERE tasks.id=task_messages.toTaskId))
@@ -115,43 +157,112 @@ export class StoreMigration {
   }
 
   migrateLeanReceiptsAndArchives(): void {
-    const columns = new Set(this.db.prepare('PRAGMA table_info(receipts)').all().map(row => String(row.name)));
-    if (!columns.has('report_hash')) this.db.exec('ALTER TABLE receipts ADD COLUMN report_hash TEXT');
-    if (!columns.has('report_response')) this.db.exec('ALTER TABLE receipts ADD COLUMN report_response TEXT');
-    const intent = this.db.prepare("INSERT INTO receipts(id,task,run,hash,response,report_hash) VALUES(?,?,'', '','',?) ON CONFLICT(id) DO UPDATE SET report_hash=excluded.report_hash");
-    for (const row of this.db.prepare("SELECT key,value FROM meta WHERE key GLOB 'mcpReportIntent:*'").all()) {
+    const columns = new Set(
+      this.db
+        .prepare("PRAGMA table_info(receipts)")
+        .all()
+        .map((row) => String(row.name)),
+    );
+    if (!columns.has("report_hash"))
+      this.db.exec("ALTER TABLE receipts ADD COLUMN report_hash TEXT");
+    if (!columns.has("report_response"))
+      this.db.exec("ALTER TABLE receipts ADD COLUMN report_response TEXT");
+    const intent = this.db.prepare(
+      "INSERT INTO receipts(id,task,run,hash,response,report_hash) VALUES(?,?,'', '','',?) ON CONFLICT(id) DO UPDATE SET report_hash=excluded.report_hash",
+    );
+    for (const row of this.db
+      .prepare("SELECT key,value FROM meta WHERE key GLOB 'mcpReportIntent:*'")
+      .all()) {
       const value = JSON.parse(String(row.value));
-      const hash = typeof value === 'string' ? value : value?.hash;
-      if (hash) intent.run(String(row.key).slice('mcpReportIntent:'.length), typeof value === 'string' ? '' : value.taskId ?? '', hash);
+      const hash = typeof value === "string" ? value : value?.hash;
+      if (hash)
+        intent.run(
+          String(row.key).slice("mcpReportIntent:".length),
+          typeof value === "string" ? "" : (value.taskId ?? ""),
+          hash,
+        );
     }
-    const report = this.db.prepare("INSERT INTO receipts(id,task,run,hash,response,report_hash,report_response) VALUES(?,'','','','',?,?) ON CONFLICT(id) DO UPDATE SET report_hash=coalesce(receipts.report_hash,excluded.report_hash),report_response=excluded.report_response");
-    for (const row of this.db.prepare("SELECT key,value FROM meta WHERE key GLOB 'mcpReport:*'").all()) {
+    const report = this.db.prepare(
+      "INSERT INTO receipts(id,task,run,hash,response,report_hash,report_response) VALUES(?,'','','','',?,?) ON CONFLICT(id) DO UPDATE SET report_hash=coalesce(receipts.report_hash,excluded.report_hash),report_response=excluded.report_response",
+    );
+    for (const row of this.db
+      .prepare("SELECT key,value FROM meta WHERE key GLOB 'mcpReport:*'")
+      .all()) {
       const value = JSON.parse(String(row.value));
-      report.run(String(row.key).slice('mcpReport:'.length), value.hash, JSON.stringify({hash:value.hash,response:value.response}));
+      report.run(
+        String(row.key).slice("mcpReport:".length),
+        value.hash,
+        JSON.stringify({ hash: value.hash, response: value.response }),
+      );
     }
     const retained = this.hooks.retainedArchiveKeys();
-    const host = this.core.getMeta<string>('hostId');
-    if (host && !(this.core.getMeta<Array<{id:string}>>('hostRegistry') ?? []).length) this.core.setMeta('hostRegistry', [{id:host,endpoint:''}]);
+    const host = this.core.getMeta<string>("hostId");
+    if (
+      host &&
+      !(this.core.getMeta<Array<{ id: string }>>("hostRegistry") ?? []).length
+    )
+      this.core.setMeta("hostRegistry", [{ id: host, endpoint: "" }]);
     if (host) {
-      const write = this.db.prepare('INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)');
-      for (const row of this.db.prepare("SELECT key,value FROM meta WHERE key GLOB 'threadArchive:*'").all()) {
-        const key = qualifiedThreadArchiveEffectKey(host, String(row.key).slice('threadArchive:'.length));
+      const write = this.db.prepare(
+        "INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)",
+      );
+      for (const row of this.db
+        .prepare("SELECT key,value FROM meta WHERE key GLOB 'threadArchive:*'")
+        .all()) {
+        const key = qualifiedThreadArchiveEffectKey(
+          host,
+          String(row.key).slice("threadArchive:".length),
+        );
         const value = JSON.parse(String(row.value));
-        if (retained.has(key) && !value?.qualifiedFence) write.run(key, row.value);
+        if (retained.has(key) && !value?.qualifiedFence)
+          write.run(key, row.value);
       }
     }
-    this.db.exec("DELETE FROM meta WHERE key GLOB 'threadArchive:*' OR key GLOB 'mcpReport:*' OR key GLOB 'mcpReportIntent:*' OR key='hostId'");
+    this.db.exec(
+      "DELETE FROM meta WHERE key GLOB 'threadArchive:*' OR key GLOB 'mcpReport:*' OR key GLOB 'mcpReportIntent:*' OR key='hostId'",
+    );
     this.hooks.pruneThreadArchiveKeys();
   }
 
   /** The one-time canonical profile migration (task 1158), recorded under its meta key. */
   migrateProfileVocabulary(): void {
-    if (this.core.getMeta<unknown>(PROFILE_VOCABULARY_MIGRATION_KEY) !== undefined) return;
+    if (
+      this.core.getMeta<unknown>(PROFILE_VOCABULARY_MIGRATION_KEY) !== undefined
+    )
+      return;
     const stored = this.core.getMeta<unknown[]>("profiles");
-    const { profiles, record } = migrateProfileVocabulary(Array.isArray(stored) ? stored : []);
+    const { profiles, record } = migrateProfileVocabulary(
+      Array.isArray(stored) ? stored : [],
+    );
     if (record.changes.length) this.core.setMeta("profiles", profiles);
     this.core.setMeta(PROFILE_VOCABULARY_MIGRATION_KEY, record);
     for (const item of record.unknown)
-      console.warn(`[nucleus] profile ${item.profileId} keeps ${item.field} ${JSON.stringify(item.value)}: not in Nucleus's vocabulary, left as stored`);
+      console.warn(
+        `[nucleus] profile ${item.profileId} keeps ${item.field} ${JSON.stringify(item.value)}: not in Nucleus's vocabulary, left as stored`,
+      );
+  }
+
+  /**
+   * Stored profiles' thinking in one canonical field (nucleus#1365), mapped back
+   * through every host's table. Idempotent, so it runs on every open: a profile a
+   * rolled-back build wrote during its window moves too, and a clean store is read
+   * and left as it was. The record is written on the first run and on any run that
+   * changes a profile; a value no table maps stays as stored and is reported.
+   */
+  migrateProfileThinking(vocabularies: readonly HostVocabulary[]): void {
+    const stored = this.core.getMeta<unknown[]>("profiles");
+    const { profiles, record } = migrateProfileThinking(
+      Array.isArray(stored) ? stored : [],
+      vocabularies,
+    );
+    const first =
+      this.core.getMeta<unknown>(PROFILE_THINKING_MIGRATION_KEY) === undefined;
+    if (record.changes.length) this.core.setMeta("profiles", profiles);
+    if (!first && !record.changes.length) return;
+    this.core.setMeta(PROFILE_THINKING_MIGRATION_KEY, record);
+    for (const item of record.unknown)
+      console.warn(
+        `[nucleus] profile ${item.profileId} keeps ${item.field} ${JSON.stringify(item.value)}: no host table maps it to one canonical thinking level, left as stored`,
+      );
   }
 }
