@@ -1,0 +1,1 @@
+The pinned T3 "Nucleus" inbox is idle between operator decisions: its turn is held only while a decision is open for it, and it is released once its cards are settled on T3, so it no longer shows as Working. Its T3 project is named "Nucleus Inbox" instead of the repository folder's name; an existing inbox registration is renamed in place.

@@ -598,8 +598,12 @@ export class T3CodeHost implements Host {
       await this.inbox.reconcile();
       const state = this.state.read();
       if (state.inbox) {
-        await this.decisionCards.reconcile(state.inbox.threadId, state.inbox.workspaceId);
-        await this.decisionHold.reconcile(state.inbox.threadId);
+        // The inbox is idle between decisions (nucleus#1384): re-enter it only while an
+        // offer is open, and release it only once its own cards are settled on T3.
+        const cards = await this.decisionCards.reconcile(state.inbox.threadId, state.inbox.workspaceId);
+        const acp = this.acp();
+        if (acp?.pendingInboxDecisionKey?.(this.hostId)) await this.decisionHold.reconcile(state.inbox.threadId);
+        else if (cards.settled) acp?.release(state.inbox.sessionId, "no operator decision is open for the inbox");
       }
       for (const parent of Object.values(state.parents ?? {})) {
         if (!parent.archivedAt) {

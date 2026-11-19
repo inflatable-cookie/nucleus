@@ -58,6 +58,8 @@ export interface AcpSessionSurface {
   bindInbox?(input: { hostId: string } & AcpBindingRules): { sessionId: string; hostId: string; directory: string; bindingPath: string };
   /** Read-only projection used by a host to hold and settle native cards. */
   pendingDecisionKey?(taskId: string): string | null;
+  /** The host inbox's offer, cap applied: a host re-enters the inbox only while this is non-null. */
+  pendingInboxDecisionKey?(hostId: string): string | null;
   decisionSettlement?(id: string, version: number): { state: "open" | "answered" | "cancelled"; answer?: string };
   /** Ask whether to keep holding this turn, and which lifecycle lines to show. */
   turn(input: AcpTurnInput, token: string): Promise<AcpTurnReply>;

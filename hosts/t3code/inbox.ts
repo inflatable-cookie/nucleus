@@ -7,6 +7,9 @@ import type { T3RpcClient } from "./rpc";
 import type { AcpSessionSurface } from "../../shared/acp/surface";
 import { HOLD_MARKER, parentPromptRules, PARENT_MODEL, PARENT_PROVIDER } from "./nesting";
 
+/** The T3 project name of the inbox's dedicated registration (nucleus#1384). */
+export const INBOX_PROJECT_TITLE = "Nucleus Inbox";
+
 interface InboxContext {
   hostId(): string;
   acp(): AcpSessionSurface | null;
@@ -61,6 +64,7 @@ export class T3Inbox {
       this.previewAttempted = true;
       await this.core.rpc.call("preview.open", { threadId: inbox.threadId, url, reveal: true });
     }
+    await this.nameProject(inbox.projectId);
     if (thread.pinnedAt === undefined) throw new T3CompatibilityError("inbox thread pinnedAt");
     if (thread.pinnedAt === null) {
       const generation = inbox.pinGeneration;
@@ -73,5 +77,20 @@ export class T3Inbox {
       }
       await this.core.intents.effect(commandId, "orchestration.dispatchCommand", { type: "thread.pin", commandId, threadId: inbox.threadId });
     }
+  }
+
+  /**
+   * The inbox's registration keeps its identity; only its readable name changes. A new
+   * registration is named in the same pass that creates it, and an owned registration from
+   * before is renamed with T3's native project update, so the pinned thread, binding and
+   * directory survive.
+   */
+  private async nameProject(projectId: string): Promise<void> {
+    const project = (await this.core.reads.inventory()).projects.find(row => row.id === projectId);
+    if (!project || project.archivedAt || project.title === INBOX_PROJECT_TITLE) return;
+    const commandId = identity("project-title", canonical([this.core.hostId(), projectId, INBOX_PROJECT_TITLE]));
+    await this.core.intents.effect(commandId, "projects.mutate", {
+      type: "project.update", commandId, projectId, title: INBOX_PROJECT_TITLE,
+    }, undefined, undefined, { resendUnknownAfterRead: true });
   }
 }

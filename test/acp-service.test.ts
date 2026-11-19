@@ -462,6 +462,36 @@ test("an inbox session can hold its own turn but cannot use a task's message aut
 });
 
 
+test("an inbox turn is released only when nothing is offered and the adapter has released it", async () => {
+  const fixture = await acpFixture("t3code:synthetic");
+  try {
+    const stamp = new Date().toISOString();
+    const decision = (id: string) => decisionSchema.parse({ id, version: 1, question: `Question ${id}?`,
+      choices: [{ label: "Yes", consequence: "Proceed" }, { label: "No", consequence: "Hold" }],
+      askedBy: { agentId: "synthetic" }, links: { tasks: [] }, status: "open", createdAt: stamp, updatedAt: stamp });
+    const inbox = fixture.acp.bindInbox({ hostId: "t3code:synthetic" });
+    const binding = readAcpBinding(inbox.bindingPath);
+    const caller = { kind: "inbox" as const, hostId: inbox.hostId, sessionId: inbox.sessionId };
+    const turn = async () => (await callbackRequest(binding, "/acp-turn", { ...caller, waitMs: 0 })) as { state: string; elicitations?: Array<{ id: string }> };
+    // Nothing is offered and nothing has released it yet: the turn is held, not released.
+    assert.equal((await turn()).state, "hold");
+    fixture.acp.release(inbox.sessionId, "no operator decision is open for the inbox");
+    assert.equal((await turn()).state, "release");
+    // The directive is consumed by its release; the next turn holds again.
+    assert.equal((await turn()).state, "hold");
+    // An offer holds the inbox, and it cancels a directive that arrives before the offer is answered.
+    fixture.store.addDecision(decision("inbox-open"));
+    fixture.acp.release(inbox.sessionId, "no operator decision is open for the inbox");
+    const offered = await turn();
+    assert.equal(offered.state, "hold");
+    assert.deepEqual(offered.elicitations?.map(row => row.id), ["inbox-open"]);
+    await fixture.acp.answer({ ...caller, id: "inbox-open", version: 1, action: "accept", answer: "Yes" }, binding.token);
+    assert.equal((await turn()).state, "hold");
+    // The pending-offer key the host gates re-entry on follows the same offer.
+    assert.equal(fixture.acp.pendingInboxDecisionKey?.(inbox.hostId), null);
+  } finally { await fixture.close(); }
+});
+
 test("task and inbox cards have distinct scopes and a versioned operator answer", async () => {
   const fixture = await acpFixture("t3code:synthetic");
   try {

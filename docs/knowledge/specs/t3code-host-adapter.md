@@ -46,8 +46,9 @@ could also manage loading the board UI in the browser in that workspace?").** A
 task-scoped question is raised by the Nucleus ACP agent on that task's parent
 thread as an ACP form elicitation, and the row unsnoozes. Every other decision
 goes to one pinned "Nucleus" inbox thread per T3 environment, a permanent
-`nucleus` ACP session the adapter creates, pins, holds and re-enters. It is never
-pruned or archived, and it opens the board in T3's browser pane. Planners don't
+`nucleus` ACP session the adapter creates and pins. It holds its turn only while a
+decision is open for it and is idle otherwise (nucleus#1384). It is never pruned or
+archived, and it opens the board in T3's browser pane. Planners don't
 raise native questions themselves. An answer given anywhere settles the T3 card
 exactly once (implementation: nucleus#1371). The adapter does not patch T3,
 attach Nucleus MCP servers, raise Nucleus questions inside threads or contribute
@@ -821,7 +822,21 @@ message continuation. On load the agent does not treat that text as an answer;
 it reads open decisions again. The adapter clears stale cards from the service's
 record. Re-entry uses a durable occurrence generation: an uncertain send is read
 before another occurrence is considered, and a later confirmed restart uses a
-new command identity. The same rule holds the permanent inbox open.
+new command identity. The same rule governs the inbox's re-entry.
+
+**The inbox is idle between decisions (nucleus#1384).** Its ACP turn holds only
+while an operator decision is offered: the same host-scoped projection that raises
+the forms, with the operator-cancel re-offer cap applied (`pendingInboxDecisionKey`).
+The ordinary sweep re-enters the inbox with its marked message only while that offer
+is open and no inbox run is live. It releases the turn only once nothing is offered
+and every Nucleus card on the inbox thread is answered or cancelled on T3 (the card
+settlement runs first, and its result gates the release), so no card is left
+pending behind an ended turn. A release directive is cancelled by an offer that
+arrives before the release. An empty inbox is released by the first sweep after
+startup or a T3 restart. The inbox's T3 project is named "Nucleus Inbox"; its thread
+is "Nucleus". A registration made before this change is renamed with T3's native
+`project.update` title, so its project id, pinned thread, binding and directory
+survive. Other repository projects keep their folder names.
 
 The service mints a fresh one-time board link for `preview.open` on the inbox
 thread. It sends the link only in that WebSocket call, never in an ACP prompt or
