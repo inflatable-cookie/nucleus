@@ -1,3 +1,4 @@
+import { CONTEXT_SECTIONS, readRunContext } from '../../core/dispatch/prompt-text/context-store';
 import { resolveTicketCaller } from "../../core/dispatch/participant-tickets";
 import { createServer, type IncomingMessage } from "node:http";
 import {
@@ -233,6 +234,7 @@ async function deliver(route,payload,options){
 }
 // The next argument reads the task-scoped plan the recovery coordinator launched with; it sends no report and takes no stdin.
 const command=process.argv[3];
+if(command==='context'){const section=process.argv[4];const result=await deliver('/run-context',{callerTaskId:taskId,callerRunId:runId,...(section?{section}:{})});console.log(typeof result==='string'?result:JSON.stringify(result,null,2));return;}
 if(command==='next'){const plan=await deliver('/task-next',{callerTaskId:taskId,callerRunId:runId},{timeoutMs:45000,timeoutMessage:'Callback timed out; retry next'});console.log(JSON.stringify(plan));return;}
 const route=command==='ask'?'/ask':command==='message'?'/message':command==='answer'?'/answer':'/complete';
 let text='',bytes=0;
@@ -433,6 +435,18 @@ export async function startCallbacks(
           asCaller(request, token),
           request.taskId,
         );
+      },
+    },
+    "/run-context": {
+      bodyBytes: SMALL_CALLBACK_BODY_BYTES,
+      handle: (input, token) => {
+        const request = dependencyCallerSchema.extend({ section: z.enum(CONTEXT_SECTIONS).optional() }).strict().parse(input);
+        engine.authenticateAgentControl(request.callerTaskId, request.callerRunId, token);
+        const task = engine.store.task(request.callerTaskId);
+        const run = engine.store.run(request.callerRunId);
+        const directory = run?.temporaryDirectory ?? (task.runId === request.callerRunId ? task.temporaryDirectory : null);
+        if (!directory) throw new Error('Run context scratch is unavailable');
+        return readRunContext(directory, request.callerRunId, request.section);
       },
     },
     "/task-next": {

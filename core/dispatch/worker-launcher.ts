@@ -1,3 +1,4 @@
+import { measureRunPrompt, recordPromptSize } from './prompt-text/measure';
 import { randomBytes, randomUUID } from "node:crypto";
 import { workerProfileIsExcluded } from "../../shared/contracts";
 import type { Task } from "../../shared/contracts";
@@ -275,30 +276,17 @@ export class WorkerLauncher {
         helper && prepared.runId
           ? runTicketPath({ helperPath: helper }, prepared.runId)
           : undefined;
-      const agent = await this.adapter.createAgent(
-        prepared,
-        token,
-        workerPrompt(
-          prepared,
-          Boolean(this.adapter.reportingViaMcp),
-          this.store.runs(prepared.id),
-          worktreeLinkRecordFailure,
-          helper,
-          ticket,
-          this.store.canonicalRepository(prepared.repoPath, prepared.repository)
-            ?.affectedTests?.command,
-        ),
-        workerPrompt(
-          prepared,
-          false,
-          this.store.runs(prepared.id),
-          worktreeLinkRecordFailure,
-          helper,
-          ticket,
-          this.store.canonicalRepository(prepared.repoPath, prepared.repository)
-            ?.affectedTests?.command,
-        ),
-      );
+      const runs = this.store.runs(prepared.id);
+      const affectedTestsCommand = this.store.canonicalRepository(prepared.repoPath, prepared.repository)
+        ?.affectedTests?.command;
+      const render = (mcp: boolean) => measureRunPrompt(section =>
+        workerPrompt(prepared, mcp, runs, worktreeLinkRecordFailure, helper, ticket, affectedTestsCommand, section));
+      const primary = render(Boolean(this.adapter.reportingViaMcp));
+      const fallback = this.adapter.reportingViaMcp ? render(false) : primary;
+      const agent = await this.adapter.createAgent(prepared, token, primary.prompt, fallback.prompt, {
+        primary: primary.size, fallback: fallback.size, affectedTestsCommand,
+      });
+      recordPromptSize(this.store, task.id, runId, prepared.temporaryDirectory);
       this.store.update(
         task.id,
         { agentId: agent.id },

@@ -2,6 +2,8 @@ import { wireLabel } from "../../../shared/wire-labels";
 import type { Run, Task } from '../../../shared/contracts';
 import type { HostRetainedAgentRef } from '../../../shared/host';
 import { runPrompt } from '../prompts';
+import { measureRunPrompt, writePromptSize } from '../prompt-text/measure';
+import { buildRunContext, materializeRunContext } from '../prompt-text/context-store';
 import { runTemporaryEnvironment, type RunScratchPlacement } from '../../workspaces/run-scratch';
 import { materializeLaneDocuments } from '../../planning/brief-lane-documents';
 import { ProvenPreSendRefusalError } from '../../recovery/task-reasons';
@@ -26,7 +28,11 @@ export async function sendRunVia(owner: RunSendOwner, task: Task, run: Run, toke
     const key=wireLabel(agent.current()?.labels, "mcpBinding");
     if(key && !run.ordinaryDetached)owner.binding(key,task,run.id,token);
     const effectiveRun = { ...run, temporaryDirectory: temporary.TMPDIR };
-    const prompt = runPrompt(task, effectiveRun, owner.helperPath, owner.ticket(task, run, token),Boolean(key), context, ownerContext, affectedTestsCommand);
+    materializeRunContext(temporary.TMPDIR, run.id, buildRunContext(task, effectiveRun, affectedTestsCommand));
+    const ticket = owner.ticket(task, run, token);
+    const { prompt, size } = measureRunPrompt(section =>
+      runPrompt(task, effectiveRun, owner.helperPath, ticket, Boolean(key), context, ownerContext, affectedTestsCommand, section));
+    try { writePromptSize(temporary.TMPDIR, run.id, run.role, size); } catch { /* telemetry cannot prevent delivery */ }
     if (run.ordinaryDetached) {
       if (!guard) throw Error('Ordinary retained round requires a live Nucleus custody guard');
       const sent = await owner.continueReviewer(task, run, `ns-run-${run.id}`, prompt, guard.allowed, guard.stillAllowed, () => { if(key)owner.binding(key,task,run.id,token); });

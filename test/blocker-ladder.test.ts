@@ -28,8 +28,8 @@ import { deriveTaskTelemetry } from "../core/telemetry/telemetry";
 import {
   workerPrompt,
   runPrompt,
-  RESPONSIBLE_BLOCKER_LADDER_RULE,
 } from "../core/dispatch/prompts";
+import { buildRunContext } from "../core/dispatch/prompt-text/context-store";
 import { Decisions } from "../core/planning/decisions";
 import { collectOwnerVerbFacts, ownerVerbViews } from "../core/verbs/owner-verbs";
 import { Store, digest } from "../core/store/store";
@@ -318,7 +318,7 @@ test("a recorded recovery escalation keeps its incident cause, and a repeat is i
   } finally { await f.close(); }
 });
 
-test("worker and revision prompts name the ladder and the reviewer ask target", () => {
+test("worker and revision context rules expose the blocker ladder", () => {
   const store = new Store(":memory:");
   try {
     const responsible = store.update(store.insert(
@@ -349,35 +349,14 @@ test("worker and revision prompts name the ladder and the reviewer ask target", 
         createdAt: "2026-11-02T00:00:00Z",
         instruction: "Continue",
       }) as unknown as Run;
-    const worker = workerPrompt(responsible, true);
-    assert.ok(
-      worker.includes(RESPONSIBLE_BLOCKER_LADDER_RULE),
-      "the worker prompt names the ladder",
-    );
-    assert.match(worker, /Blocker ladder \(Spec 058\)/);
-    assert.match(worker, /to: "reviewer"/, "the ladder names the ask verb's reviewer recipient (task 1108 renamed target to to)");
-    const revision = runPrompt(
-      responsible,
-      runOf(responsible, "revision"),
-      "/helper",
-      "/ticket",
-      true,
-    );
-    assert.ok(
-      revision.includes(RESPONSIBLE_BLOCKER_LADDER_RULE),
-      "the revision prompt names the ladder",
-    );
-    const reviewer = runPrompt(
-      responsible,
-      runOf(responsible, "reviewer"),
-      "/helper",
-      "/ticket",
-      true,
-    );
-    assert.ok(
-      !reviewer.includes(RESPONSIBLE_BLOCKER_LADDER_RULE),
-      "the reviewer prompt carries the ladder through the ask rule only",
-    );
+    assert.match(workerPrompt(responsible, true), /Follow 'Worker rules'/);
+    for (const role of ["revision", "reviewer"] as const) {
+      const run = runOf(responsible, role);
+      assert.ok(runPrompt(responsible, run, "/helper", "/ticket", true).includes("context rules"));
+      const rules = buildRunContext(responsible, run).rules;
+      if (role === "revision") assert.match(rules, /ask the retained reviewer[\s\S]*escalates once per cause/);
+      else assert.doesNotMatch(rules, /ask the retained reviewer/);
+    }
   } finally {
     store.close();
   }

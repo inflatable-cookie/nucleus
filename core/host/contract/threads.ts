@@ -1,3 +1,4 @@
+import type { WorkerPromptMeasurement } from '../../dispatch/prompt-text/measure';
 import type { Task } from "../../../shared/contracts";
 
 /**
@@ -22,6 +23,7 @@ export interface HostThreads {
     token: string,
     prompt: string,
     legacyPrompt?: string,
+    measurement?: WorkerPromptMeasurement,
   ): Promise<{ id: string; workspaceId: string | null }>;
   findAgents(task: Task): Promise<{ id: string; workspaceId: string | null }[]>;
   /** Stop the assigned agent's current turn without delivering a follow-up message. */

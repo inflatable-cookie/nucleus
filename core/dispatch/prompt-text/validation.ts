@@ -40,6 +40,6 @@ export function affectedRunReviewerNote(command: string) {
   return `Affected tests: judge the author's \`${command}\` at this exact head from its reported command and file count. If that evidence is missing or names another head, run it once yourself. If the affected run fails, read the printed \`$TMPDIR/queue-test-failures-<pid>-<ts>.txt\` summary rather than rerunning to recover failure names. For each failing affected file, use the repository's supported baseline route (in Nucleus, \`effigy test:baseline <file>\`) to rerun it alone on \`origin/main\`; if it fails there too, it was already broken, so list the file and failing test in your report rather than requiring a fix. Only failures unique to the branch block review. Anything wider than the affected set never is.`;
 }
 
-export function operatorValidationBlock(affectedTestsCommand?: string) {
-  return `${VALIDATION_RULE_HEADING}\n${VALIDATION_AUTHORITY_RULE}\n${VALIDATION_RUN_RULE}\n${affectedTestsCommand ? `${affectedRunRule(affectedTestsCommand)}\n` : ''}`;
+export function operatorValidationBlock(affectedTestsCommand?: string, reviewer = false) {
+  return `${VALIDATION_RULE_HEADING}\n${VALIDATION_AUTHORITY_RULE}\nRun checks through Effigy once to completion; do not kill other processes or repeat a passing check.\n${affectedTestsCommand ? `${reviewer ? affectedRunReviewerNote(affectedTestsCommand) : affectedRunRule(affectedTestsCommand)}\n` : ''}`;
 }

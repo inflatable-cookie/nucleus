@@ -1653,6 +1653,9 @@ request identities and stored committed-handoff rows are not rewritten.
 
 ### Prompts and instructions
 
+- Run prompts retain identity, brief, exact head and base, role duties, scratch and own report binding, named-proof and affected-test policy, and safety instructions. Nucleus counts characters where the renderers emit each section. The prompt-size event records totals and section counts, including the standing-rules pointer and proof summary when present.
+- Extended rules, validation, proof inventory and history live in the run's scratch. `nucleus helper report context [rules|validation|proofs|history]` reads the run's own snapshot over its authenticated callback; a different or stale binding is refused. The snapshot cannot grant authority or replace inline safety rules. Worker, reviewer and recovery standing guidance is shared with the corresponding Nucleus skill section. The rules include the blocked-report `cause` and `impediment` fields and, where the role can ask and tell, the CLI forms for hosts without MCP.
+
 - Worker prompts separate action from status. Revision and resume requests
   store their text as `pendingWorkerInstruction`; dispatch copies it onto
   immutable `run.instruction` and clears it. `task.reason` stays status.

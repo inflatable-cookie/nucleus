@@ -82,11 +82,11 @@ test('a sandboxed thread report reaches the callback socket with the ticket cred
 
 test('the relay answers every route a packaged helper uses and no other route', async (t: TestContext) => {
   const fixture = await callbackSocket(t);
-  assert.deepEqual([...REPORT_RELAY_ROUTES], ['/complete', '/ask', '/message', '/answer', '/task-next']);
+  assert.deepEqual([...REPORT_RELAY_ROUTES], ['/complete', '/ask', '/message', '/answer', '/task-next', '/run-context']);
   for (const [index, route] of REPORT_RELAY_ROUTES.entries()) {
     const runId = `run-${index}`;
     writeTicket(fixture, runId);
-    const payload = route === '/task-next'
+    const payload = (route === '/task-next' || route === '/run-context')
       ? { callerTaskId: 'task-1', callerRunId: runId }
       : { taskId: 'task-1', runId, summary: route };
     await relayRunReport({ dataDir: fixture.dataDir, body: { route, taskId: 'task-1', runId, token: 'run-secret', payload } });
@@ -112,6 +112,7 @@ test('the relay refuses anything that does not prove this run and this data home
     ['another task', { ...report('run-1'), taskId: 'task-2' }, /another task/],
     ['a payload naming another run', { ...report('run-1'), payload: { ...report('run-1').payload, runId: 'run-9' } }, /another task or run/],
     ['another caller for next', { ...report('run-1'), route: '/task-next', payload: { callerTaskId: 'task-2', callerRunId: 'run-1' } }, /another caller/],
+    ['another caller for context', { ...report('run-1'), route: '/run-context', payload: { callerTaskId: 'task-1', callerRunId: 'run-2' } }, /another caller/],
     ['a non-object payload', { ...report('run-1'), payload: 'text' }, /payload is not an object/],
   ];
   for (const [label, body, reason] of refusals) {
