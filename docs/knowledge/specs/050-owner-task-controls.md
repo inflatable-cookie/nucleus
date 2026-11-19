@@ -474,6 +474,16 @@ offered the verb and nothing acted). The escalation is per reader: a
 replacement that later exhausts is its own cause, not a repeat of the answered
 escalation before it.
 
+A reader whose turn has not ended is not escalated ahead of that exit. The
+recovery route leaves a reader that reported it cannot finish to the lifecycle
+pass, which observes it settled first: escalating before then would park the
+planner on a reader that could simply be replaced, and would suppress that
+replacement. A turn that never ends is the ordinary stalled-run stop's business,
+and the reader keeps its visible `operator_needed` stop until it settles. A
+reader whose checkpoint budget is spent without a refused reading is different
+— it never reported that it cannot finish — so it still escalates through the
+ladder rather than being replaced automatically.
+
 A missing report keeps the retained reviewer. An idle reader can finish or
 redeliver on its existing credential. A fresh run earns its own verdict at the
 current head. The previous reader's progress stays with its run.

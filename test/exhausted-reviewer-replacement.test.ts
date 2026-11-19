@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { fixture } from "./support/review-continuation-fixture";
+import { fixture, profile } from "./support/review-continuation-fixture";
 import { plannerEscalations } from "../core/questions/ladder/records";
 import {
   reviewContinuationState,
@@ -211,6 +211,95 @@ test("each exhausted reader is its own escalation, so a later one is never silen
     assert.equal(
       plannerEscalations(f.store.eventsAll(f.current().id) as never).length,
       2,
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+/** A coordinator is available, so the recovery route is live for this task. */
+function withCoordinator(f: ReturnType<typeof fixture>) {
+  const coordinator = profile("coordinator", "test/coordinator");
+  f.store.setMeta("pool", [
+    ...f.store.pool(),
+    {
+      profileId: coordinator.id,
+      enabled: true,
+      group: "coordinate",
+      roles: ["coordinator"],
+      weight: 1,
+      scopes: ["general"],
+    },
+  ]);
+  f.engine.profiles = [...f.engine.profiles, coordinator];
+  (
+    f.adapter as unknown as { supportsCoordinatorRecovery?: boolean }
+  ).supportsCoordinatorRecovery = true;
+}
+
+test("a reader that reported it cannot finish is not escalated before its turn ends", async () => {
+  const f = fixture();
+  try {
+    withCoordinator(f);
+    await f.report(
+      { covered: ["Diff"], remaining: ["Tests"], exhausted: true },
+      "busy-exhausted",
+    );
+    // The report's own wake saw the reader inside its turn. The recovery route
+    // must not pre-empt the replacement the lifecycle pass owes once it settles.
+    assert.equal(
+      plannerEscalations(f.store.eventsAll(f.current().id) as never).length,
+      0,
+      "a working exhausted reader keeps its owner stop, not a planner escalation",
+    );
+    await f.engine.wake();
+    assert.equal(
+      plannerEscalations(f.store.eventsAll(f.current().id) as never).length,
+      0,
+    );
+    f.states.set("review-agent", {
+      ...f.states.get("review-agent")!,
+      status: "idle",
+      active: false,
+      permissions: false,
+    });
+    await f.engine.wake();
+    assert.equal(
+      f.store
+        .events(f.current().id)
+        .filter((event) => event.kind === "review_exhausted_replaced").length,
+      1,
+      "the settled reader is replaced on the pass that observes it",
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+test("a reader whose budget is spent without a refused reading still escalates through the route", async () => {
+  const f = fixture();
+  try {
+    withCoordinator(f);
+    await f.report({ covered: ["Diff"], remaining: ["Tests"] }, "spent-budget");
+    // No refused reading: the reader never reported it cannot finish, so the
+    // lifecycle owes it no automatic replacement and the ladder decides.
+    f.store.putRun({
+      ...f.run(),
+      reviewBudgetExhaustedAt: new Date().toISOString(),
+    });
+    assert.equal(reviewContinuationState(f.current(), f.store), "exhausted");
+    assert.equal(reviewerCannotFinish(f.run()), false);
+    await f.engine.wake();
+    assert.equal(
+      plannerEscalations(f.store.eventsAll(f.current().id) as never).length,
+      1,
+      "a spent budget still reaches the planner",
+    );
+    assert.equal(
+      f.store
+        .events(f.current().id)
+        .filter((event) => event.kind === "review_exhausted_replaced").length,
+      0,
     );
   } finally {
     await f.close();

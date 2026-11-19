@@ -1143,7 +1143,9 @@ on a responsible task escalates through the planner ladder instead of an owner d
 reader that reported it cannot finish is first answered by the ordinary sweep, which performs the
 `restart role=reviewer fresh` the board offers once that reader is observed settled, and escalates
 with that verb in the question only when the replacement cannot act (nucleus#1372; the escalation
-belongs to the reader, so a later exhausted replacement is never silent).
+belongs to the reader, so a later exhausted replacement is never silent). The recovery route leaves
+such a reader to that pass rather than escalating it before its turn ends, and a spent budget alone
+still escalates through the ladder.
 Notices that fell back to the project owner — origin fallbacks, proof-wait attention, scheduled
 milestone QA and the drain prompts — go to the project's planner (`project.set-planner`), then the
 Nucleus planner (the project that holds origin `inflatable-cookie/paseo-northstar-queue`), then the task's origin thread. Dormancy is re-derived: a

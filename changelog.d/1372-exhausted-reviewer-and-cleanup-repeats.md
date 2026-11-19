@@ -22,3 +22,10 @@ once and again only when it changes, and re-queueing the same cleanup obligation
 (a release, a replacement or an idle observation of the run) no longer erases the
 recorded decision — the shape that wrote 770 identical records for one archived
 reviewer run in six hours.
+
+A reader whose turn has not ended keeps its visible `operator_needed` stop and is
+never escalated ahead of that exit: the recovery route leaves a reader that
+reported it cannot finish to the pass that observes it settled, so a replacement
+is not pre-empted by a planner escalation. A checkpoint budget spent without a
+refused reading still escalates through the ladder, because no automatic
+replacement is owed for it.
