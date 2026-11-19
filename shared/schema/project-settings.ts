@@ -11,7 +11,10 @@ export const projectQaStateSchema = z.enum(["queued", "running", "passed", "fail
 
 export type ProjectQaState = z.infer<typeof projectQaStateSchema>;
 
-export const projectSettingsProblemSchema = z.enum(["Planner thread is gone", "No planner", "Planner ticket pending", "Last QA failed"]);
+export const projectSettingsProblemSchema = z.union([
+  z.enum(["Planner thread is gone", "No planner", "Planner ticket pending", "Last QA failed"]),
+  z.string().startsWith("Planner unroutable: "),
+]);
 
 export type ProjectSettingsProblem = z.infer<typeof projectSettingsProblemSchema>;
 

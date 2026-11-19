@@ -1,9 +1,10 @@
+import { nativeAgentId } from "../../shared/agent-identity";
 import { normalizeRepositoryOrigin } from '../../shared/lanes';
 import { holdsOf, type Task } from '../../shared/contracts';
 import { Decisions } from '../planning/decisions';
 import type { Resolution } from '../resolution';
 import { digest } from '../store/store';
-import { delegateQuestion } from './planner-delegation';
+import { delegateQuestion, plannerWindows } from './planner-delegation';
 import { DelegatedHostUnavailable } from './delegation';
 import { isDelegableQuestionKind, operatorQuestionFor, type OperatorQuestionKind } from './operator-question';
 import { DELEGATED_ANSWER_TIMEOUT_MS, applyBinaryApproval, delegatedDecisionText, nativeDelegationPrompt, parseDelegatedAnswer, parseNativeDelegatedReply, type DelegatedAnswer } from './question-delegation';
@@ -38,8 +39,14 @@ export class OperatorDelegation {
     const ask = { question: prompt, choices: decision.options, context: this.resolution.decisionContext(task) };
     let answer: DelegatedAnswer | null = null;
     // Task 1109: the task's own planner first, then the project's, then the decider.
-    const { rungs, projectFailed } = await this.resolution.plannerRungsFor(task);
-    const planners = rungs.map(item => ({ ...item, messageId: `queue-delegate-${decision.id}${item.rung === 'project' ? '-project' : ''}` }));
+    const { rungs, projectFailed, issue } = await this.resolution.plannerRungsFor(task);
+    const planners = plannerWindows(this.resolution, `queue-delegate-${decision.id}`, rungs);
+    if (issue) {
+      const detail = `${decision.id}: ${issue}`;
+      if (!this.store.eventsAll(taskId).some(event => event.kind === 'operator_question_delegation_wait' && event.detail === detail))
+        this.store.event(taskId, 'operator_question_delegation_wait', detail);
+      if (!planners.length && !this.resolution.delegatedDelivery(`ns-decider-${decision.id}`)) return false;
+    }
     let unknown = false;
     let result;
     try {
@@ -127,7 +134,7 @@ export class OperatorDelegation {
       const registered = await this.resolution.host.originAgent(plannerId);
       if (!registered || registered.archived) return;
       const observation = await this.resolution.host.observe(plannerId);
-      if (observation.id !== plannerId || observation.status === 'closed') return;
+      if (observation.id !== nativeAgentId(plannerId, scopedHost) || observation.status === 'closed') return;
     } catch { return; }
     const project = this.store.projectByKey(projectKey);
     if (!project || project.planner?.agentId !== plannerId) return;
@@ -147,7 +154,7 @@ export class OperatorDelegation {
       let text: string | null = null;
       try {
         text = await this.resolution.askBound(task, plannerId, { prompt: nativeDelegationPrompt('planner', ask), signal: new AbortController().signal,
-          timeoutMs: DELEGATED_ANSWER_TIMEOUT_MS, messageId: `queue-planner-reask-${requestId}` }, 'planner');
+          timeoutMs: DELEGATED_ANSWER_TIMEOUT_MS, messageId: `queue-planner-reask-${requestId}`, choices: ask.choices }, 'planner');
       } catch (error) {
         this.store.event(task.id, 'operator_question_reasked_missed', `${requestId}: planner ${plannerId}: ${error instanceof Error ? error.message : String(error)}`.slice(0, 4000));
         continue;

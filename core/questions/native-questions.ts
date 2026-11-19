@@ -1,4 +1,4 @@
-import { delegateQuestion } from './planner-delegation';
+import { delegateQuestion, plannerWindows } from './planner-delegation';
 import { taskControlInputSchema } from '../../shared/contracts';
 import { Decisions } from '../planning/decisions';
 import { applyBinaryApproval,parseNativeDelegatedReply } from './question-delegation';
@@ -102,15 +102,22 @@ export class NativeQuestions {
     request: { requestId: string; questions: Array<{ header: string; question: string; options: string[] }> }, signal: AbortSignal): Promise<void> {
     const task = this.store.task(taskId);
     // Task 1109: the task's own planner is asked first; the project planner is the fallback rung.
-    const { rungs } = await this.resolution.plannerRungsFor(task);
+    const { rungs, issue } = await this.resolution.plannerRungsFor(task);
     const answers: Record<string, string> = {};
     const records: string[] = [];
     const plannerOvertakes: Array<{ ids: string[]; label: string }> = [];
     for (const [index, question] of request.questions.entries()) {
+      const planners = plannerWindows(this.resolution, `queue-native-${id}-${index}`, rungs);
+      if (issue) {
+        const detail = `${id}: ${issue}`;
+        if (!this.store.eventsAll(taskId).some(event => event.kind === 'native_question_delegate_wait' && event.detail === detail))
+          this.store.event(taskId, 'native_question_delegate_wait', detail);
+        if (!planners.length && !this.resolution.delegatedDelivery(`ns-decider-${id}-${index}`)) return;
+      }
       const input = { question: question.question, choices: question.options, context: this.resolution.decisionContext(task) };
       let unknown = false;
       const result = await delegateQuestion(this.resolution, task, {
-        planners: rungs.map(item => ({ ...item, messageId: `queue-native-${id}-${index}${item.rung === 'project' ? '-project' : ''}` })),
+        planners,
         decisionId: `${id}-${index}`,
         context: input, signal, parse: parseNativeDelegatedReply,
         onIntent: (role, recipient, rung) => this.store.event(taskId, 'native_question_delegate_intent', `${id}: ${role}${role === 'planner' ? ` (${rung ?? 'project'} rung)` : ''} ${recipient ?? 'requested'}; question ${index}`),

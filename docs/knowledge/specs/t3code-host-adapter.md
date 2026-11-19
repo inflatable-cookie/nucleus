@@ -48,9 +48,9 @@ a supported mapping to an environment. This is caller attribution only and follo
 the same command permissions as a Paseo caller.
 
 Source precedence is Nucleus ticket, T3Code identity, then Paseo's
-`PASEO_AGENT_ID`. A ticket refusal never falls through: a named `NUCLEUS_TICKET`
-that is missing, invalid or revoked refuses rather than recording an `mcp:`
-session as the caller; an unset ticket still uses the T3 host identity. When T3
+`PASEO_AGENT_ID`. An invalid or revoked ticket refuses. An absent ticket file
+uses the host check above, which refuses a bare MCP session with no exact thread.
+When T3
 and Paseo environment values coexist, T3 wins; a partial T3 identity refuses
 rather than using Paseo. An explicit planner ticket still wins when
 `T3CODE_THREAD_ID` is an `mcp:` session: the ticket's thread is the recorded
@@ -980,16 +980,12 @@ endpoint. A proven caller that already holds its participant ticket (project
 planner, named agent, task planner) receives that same ticket's path on every
 `caller.resolve`; a second ticket is never minted, and a credential file that
 is gone is revoked and reissued on that caller's own next call (nucleus#1128).
-A T3-hosted planner has no calling-thread identity of its own, so its
-participant ticket is delivered by one message, and only after the thread is
-observed live; assignment from the board or the thread's own call is the trigger,
-and an archived, gone or unreadable thread is left ticket pending instead. A task's
-own planner follows the same rule: before a question names a T3-hosted task planner,
-Nucleus issues its ticket by that one message, and only while the thread is
-observed live. Uncertain reviewer or
-coordinator creation can bind. T3-hosted planners are out of trial: missing
-`askPlanner` becomes an answerable board decision with the planner message,
-never a silently pending ask. Production planners stay Paseo threads. `host.permission-answer` still grants no
+A T3-hosted planner can answer from its participant ticket or its exact,
+host-verified caller identity. Nucleus queues both planner questions and reviewer
+consults after any active T3 turn. If a recorded planner ID has no matching thread
+and the host has supplied no deletion or archive evidence, the ladder shows it as
+unroutable. Uncertain reviewer or coordinator creation can bind.
+`host.permission-answer` still grants no
 task lifecycle dispatch. An unconfigured T3 adapter changes no default route. A
 configured second host never causes implicit rerouting of a live task, origin
 notice or pending question.

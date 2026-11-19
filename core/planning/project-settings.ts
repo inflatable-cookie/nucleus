@@ -21,11 +21,13 @@ export const PROJECT_SETTINGS_PROBLEMS = {
 export function projectSettingsProblems(input: {
   plannerId: string | undefined;
   plannerLive: boolean | null;
+  plannerRoutingIssue?: string;
   plannerTicketPending?: boolean;
   latestQaFailed: boolean;
 }): ProjectSettingsProblem[] {
   const problems: ProjectSettingsProblem[] = [];
-  if (input.plannerId && input.plannerLive === false) problems.push(PROJECT_SETTINGS_PROBLEMS.plannerGone);
+  if (input.plannerRoutingIssue) problems.push(input.plannerRoutingIssue);
+  else if (input.plannerId && input.plannerLive === false) problems.push(PROJECT_SETTINGS_PROBLEMS.plannerGone);
   else if (!input.plannerId) problems.push(PROJECT_SETTINGS_PROBLEMS.noPlanner);
   if (input.plannerId && input.plannerTicketPending) problems.push(PROJECT_SETTINGS_PROBLEMS.plannerTicketPending);
   if (input.latestQaFailed) problems.push(PROJECT_SETTINGS_PROBLEMS.qaFailed);
@@ -83,6 +85,7 @@ export function buildProjectSettings(input: {
   latestQaRuns: ProjectQaRun[];
   /** Projects whose planner has no usable participant ticket yet. */
   plannerTicketPending?: ReadonlySet<string>;
+  plannerRoutingIssues?: ReadonlyMap<string, string | undefined>;
 }): ProjectSettings {
   return projectSettingsSchema.parse({
     defaultSlots: input.defaultSlots,
@@ -93,7 +96,8 @@ export function buildProjectSettings(input: {
       const plannerHost = plannerId ? parseAgentId(plannerId)?.hostId : undefined;
       const plannerObserved = plannerHost ? input.observedHostId === plannerHost
         : !input.observedHostId || hostKindOf(input.observedHostId) === 'paseo';
-      const plannerLive = !plannerId ? null : input.liveAgentIds.has(plannerId) ? true
+      const plannerRoutingIssue = input.plannerRoutingIssues?.get(project.key);
+      const plannerLive = !plannerId || plannerRoutingIssue ? null : input.liveAgentIds.has(plannerId) ? true
         : input.liveKnown && plannerObserved ? false : null;
       const latestQa = latestQaFor(project, input.latestQaRuns);
       return {
@@ -115,6 +119,7 @@ export function buildProjectSettings(input: {
         problems: projectSettingsProblems({
           plannerId,
           plannerLive,
+          plannerRoutingIssue,
           plannerTicketPending: Boolean(plannerId) && Boolean(input.plannerTicketPending?.has(project.key)),
           latestQaFailed: anyLatestQaFailed(project, input.latestQaRuns),
         }),

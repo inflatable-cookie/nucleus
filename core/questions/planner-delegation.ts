@@ -1,5 +1,6 @@
+import { sameCallerIdentity } from '../../shared/agent-identity';
 import type { Task } from '../../shared/contracts';
-import { DelegatedHostUnavailable, NO_COMMAND_ANSWER_IN_WINDOW, type PlannerRungName } from './delegation';
+import { DelegatedHostUnavailable, NO_COMMAND_ANSWER_IN_WINDOW, type PlannerRung, type PlannerRungName } from './delegation';
 import { DELEGATED_ANSWER_TIMEOUT_MS, nativeDelegationPrompt, type DelegateRole, type DelegationContext } from './question-delegation';
 import type { Resolution } from '../resolution';
 
@@ -13,6 +14,18 @@ export interface PlannerWindow {
   agentId: string;
   messageId: string;
   rung: PlannerRungName;
+}
+
+/** Retain the recorded recipient when an assignment changes during a question. */
+export function plannerWindows(resolution: Resolution, baseId: string, rungs: PlannerRung[]): PlannerWindow[] {
+  return (['task', 'project'] as const).flatMap(rung => {
+    const messageId = rung === 'task' ? baseId : `${baseId}-project`;
+    const delivery = resolution.delegatedDelivery(messageId);
+    const current = rungs.find(item => item.rung === rung)?.agentId;
+    const recipient = delivery?.recipientRef ?? delivery?.recipient;
+    const agentId = recipient && (!current || !sameCallerIdentity(current, recipient, delivery?.hostId)) ? recipient : current;
+    return agentId ? [{ agentId, messageId, rung }] : [];
+  });
 }
 
 export async function delegateQuestion<T>(resolution: Resolution, task: Task, input: {
@@ -77,12 +90,13 @@ export async function delegateQuestion<T>(resolution: Resolution, task: Task, in
         throw error;
       }
     }
-    input.onIntent('planner', window.agentId, window.rung);
+    if (window.delivery) input.onIntent('planner', window.agentId, window.rung);
     let text: string | null;
     try {
       text = await resolution.askBound(task, window.agentId, {
         prompt: nativeDelegationPrompt('planner', input.context, window.rung), signal: input.signal,
         timeoutMs: DELEGATED_ANSWER_TIMEOUT_MS, messageId: window.messageId, sourceAgentId: input.sourceAgentId, rung: window.rung,
+        choices: input.context.choices, onIntent: () => input.onIntent('planner', window.agentId, window.rung),
       }, 'planner');
     } catch (error) {
       if (error instanceof DelegatedHostUnavailable && !window.delivery && skipToNextRung(error.message)) continue;
@@ -119,7 +133,7 @@ export async function delegateQuestion<T>(resolution: Resolution, task: Task, in
   try {
     decided = await resolution.deciderBound(task, {
       prompt: nativeDelegationPrompt('decider', input.context), profile, signal: input.signal,
-      timeoutMs: DELEGATED_ANSWER_TIMEOUT_MS, decisionId: input.decisionId, sourceAgentId: input.sourceAgentId,
+      timeoutMs: DELEGATED_ANSWER_TIMEOUT_MS, decisionId: input.decisionId, sourceAgentId: input.sourceAgentId, choices: input.context.choices,
     });
   } catch (error) {
     if (error instanceof DelegatedHostUnavailable) throw error;

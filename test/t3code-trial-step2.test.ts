@@ -17,7 +17,7 @@ import { spawn } from "node:child_process";
 import { observeIdle } from "./support/fakes";
 import { createHost, createAdapter } from "../hosts/t3code";
 import { canonical } from "../hosts/t3code/state";
-import { t3Fake } from "./support/t3code-fake";
+import { t3Fake, threadProjection } from "./support/t3code-fake";
 import { command, git } from "../core/git/index";
 import { questionRoute } from "../core/questions/question-route";
 import { AGENT_ASK_WAIT_MS } from "../core/questions/agent-ask";
@@ -52,6 +52,8 @@ import {
   type Task,
 } from "../shared/contracts";
 import type { Adapter as HostAdapter } from "../core/host/adapter";
+import { formatAgentId } from "../shared/agent-identity";
+import { resolveHostCallerIdentity } from "../core/dispatch/caller-resolution";
 import { Decisions } from "../core/planning/decisions";
 
 const Policy = HostPolicies as unknown as HostPolicyConstructor;
@@ -1347,7 +1349,7 @@ test("T3 adapter asks a retained reviewer and binds uncertain run creation", asy
   }
 });
 
-test("a T3 planner ask becomes a board decision; the worker helper receives the board answer", async (t: TestContext) => {
+test("a T3 MCP planner classifies a reviewer consult; the worker helper receives the board answer", async (t: TestContext) => {
   const directory = realpathSync(
     mkdtempSync(join(tmpdir(), "t3-ask-planner-")),
   );
@@ -1405,22 +1407,22 @@ test("a T3 planner ask becomes a board decision; the worker helper receives the 
       environment: {},
     }),
   });
-  const planner = await host.createAgent({
-    workspaceId: workspace.id,
-    title: "Synthetic planner",
-    mcpBindingPath: null,
-    profile,
-    attempt: () => ({
-      requestId: "create-planner",
-      prompt: "plan",
-      labels: { "nucleus.role": "planner" },
-      environment: {},
-    }),
-  });
+  const planner = { id: "mcp:launch:synthetic-planner" };
+  const projection = threadProjection(planner.id, directory);
+  projection.thread.creationSource = "mcp";
+  server.threads.set(planner.id, projection);
+  const callerPorts = { onlineIds: () => [host.hostId], observe: (_host: string, id: string) => host.observe(id) };
+  const callerSource = { hostKind: "t3code" as const, hostScope: "synthetic-desktop-scope" };
+  const caller = await resolveHostCallerIdentity(callerPorts, { ...callerSource, nativeAgentId: planner.id });
+  assert.equal(caller.caller, formatAgentId(host.hostId, planner.id));
+  await assert.rejects(
+    resolveHostCallerIdentity(callerPorts, { ...callerSource, nativeAgentId: "mcp:bare-session" }),
+    /is not owned by any online host/,
+  );
   const helperPath = join(directory, "worker-report.mjs");
   const socketPath = join(directory, "callback.sock");
   const adapter = createAdapter(Policy, host, { socketPath, helperPath });
-  assert.equal(adapter.askPlanner, undefined);
+  assert.equal(typeof adapter.askPlanner, "function");
 
   const store = new Store(join(directory, "queue.sqlite"));
   store.setMeta("paused", false);
@@ -1432,8 +1434,8 @@ test("a T3 planner ask becomes a board decision; the worker helper receives the 
   });
   store.setProjectPlanner({
     key: "t3-trial",
-    agentId: planner.id,
-    setBy: "test",
+    agentId: caller.caller,
+    setBy: caller.caller,
   });
   const engine = new Engine(store, adapter, 0);
   engine.resolution.agentAskWaitMs = 12_000;
@@ -1520,6 +1522,13 @@ test("a T3 planner ask becomes a board decision; the worker helper receives the 
       ["answer"],
     );
     assert.equal(helperAnswer.code, 0, helperAnswer.err);
+    const questionId = `ns-agent-ask-${askId}-project`;
+    await waitUntil(() => server.commands.some(command =>
+      command.type === "message.dispatch" && command.threadId === planner.id && command.commandId === questionId,
+    ), "MCP-created project planner received the question");
+    await engine.resolution.answerDelegatedQuestionFromHost({
+      questionId, decision: "operator", reason: "Changing the approved scope requires operator authority.",
+    }, caller.caller);
     const decisions = new Decisions(store);
     await waitUntil(
       () => decisions.list({ status: "open", task: task.id }).length === 1,
@@ -1549,18 +1558,10 @@ test("a T3 planner ask becomes a board decision; the worker helper receives the 
         .some((event) => event.kind === "agent_ask_delegation_missed"),
       false,
     );
-    assert.equal(
-      server.commands.some(
-        (command) =>
-          command.type === "message.dispatch" &&
-          command.threadId === planner.id,
-      ),
-      false,
-    );
     const open = decisions.list({ status: "open", task: task.id })[0]!;
     assert.match(
       `${open.details ?? ""}\n${open.context ?? ""}`,
-      /cannot be asked on its host/,
+      /Changing the approved scope requires operator authority/,
     );
     const view = decisions.answer({
       id: open.id,

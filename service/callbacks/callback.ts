@@ -44,6 +44,7 @@ const helperAnswerSchema = z.object({
   reason: z.string().trim().min(1).max(500).regex(/^[^\r\n]*$/),
   overtakes: z.array(z.string().trim().min(1).max(160)).max(100).optional(),
   decision: z.literal("operator").optional(),
+  dryRun: z.boolean().optional(),
 }).strict().refine(value => Number(Boolean(value.answer)) + Number(Boolean(value.choice)) + Number(Boolean(value.decision)) === 1, { message: "Provide exactly one of answer, choice or decision" });
 
 // Spec 065: an ACP session names the task and session its minted binding carries.

@@ -1,3 +1,4 @@
+import { projectPlannerRoutingIssue } from "../questions/planner-presence";
 import { parseAgentId } from "../../shared/agent-identity";
 import { qaFenceStatus, writeQaFence } from "../qa/qa-fence";
 import type { ProjectQaFenceInput } from "../../shared/contracts";
@@ -8,7 +9,7 @@ import { repositoryOrigin } from "../planning/lanes";
 import { requiredCheckPolicyCapability, type CheckRequirementTransport } from "../forge/index";
 import { realpath } from "node:fs/promises";
 import { normalizeRepositoryOrigin } from "../../shared/lanes";
-import type { HostRunAccountingDisposeInput, RepositorySetInput, RepositorySettings, ProjectUpsertInput, Task, RepositoryRekeyInput, RepositoryRekeyOutput, RepositoryRekeyPreviewInput, RepositoryRekeyReceiptQuery, AgentRegisterInput, AgentUnregisterInput } from "../../shared/contracts";
+import type { Project, HostRunAccountingDisposeInput, RepositorySetInput, RepositorySettings, ProjectUpsertInput, Task, RepositoryRekeyInput, RepositoryRekeyOutput, RepositoryRekeyPreviewInput, RepositoryRekeyReceiptQuery, AgentRegisterInput, AgentUnregisterInput } from "../../shared/contracts";
 import type { ProjectQaRunner } from '../qa/project-qa';
 import type { HostRunScheduler } from '../host-runs/host-run-scheduler';
 import { publicHostRunRecord } from '../host-runs/host-run-identity';
@@ -240,12 +241,19 @@ export class RuntimeRepositories {
     return this.context.store.upsertProject({ ...input, repositories, primary: input.primary ? repositories[primaryIndex] : undefined });
   }
 
-  async getProject(input: { key: string } | { repository: { origin: string | null; path: string } | string }) {
+  async getProject(
+    input: { key: string } | { repository: { origin: string | null; path: string } | string },
+  ): Promise<(Project & { plannerRoutingIssue?: string }) | null> {
     this.context.markStoreAccess();
-    if ("key" in input) return this.context.store.projectByKey(input.key);
-    if (typeof input.repository === "string") throw new Error("Old project.get repository settings call; use repository.get");
-    const repo = input.repository;
-    return this.context.store.projectFor(repo.path, repo.origin);
+    const { store } = this.context;
+    const project = "key" in input ? store.projectByKey(input.key) : (() => {
+      const repo = input.repository;
+      if (typeof repo === "string") throw new Error("Old project.get repository settings call; use repository.get");
+      return store.projectFor(repo.path, repo.origin);
+    })();
+    if (!project) return null;
+    const plannerRoutingIssue = projectPlannerRoutingIssue(this.context.store, project);
+    return plannerRoutingIssue ? { ...project, plannerRoutingIssue } : project;
   }
 
   listProjects() { this.context.markStoreAccess(); return this.context.store.projects(); }

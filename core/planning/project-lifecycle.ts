@@ -2,6 +2,7 @@ import { formatAgentId, parseAgentId } from "../../shared/agent-identity";
 import { hostKindOf } from "../../shared/host-kind";
 import { observationTimeout } from '../recovery/observation-timeout';
 import { DEFAULT_PROJECT_LIMIT, ownerCandidateKind, UNRESOLVED_OWNER_SEED } from "../../shared/contracts";
+import { projectPlannerRoutingIssue } from "../questions/planner-presence";
 import { buildProjectSettings, projectSettingsQaKeys } from "./project-settings";
 import { legacyIdentityObservedOn, observedHostIdOf, projectAgentViews } from "./project-agents";
 import type { Engine } from '../engine';
@@ -46,6 +47,7 @@ export class ProjectLifecycle {
         : [agent.id])),
       liveKnown, observedHostId: hostId ?? undefined,
       plannerTicketPending: this.context.plannerTicketPending?.() ?? new Set(),
+      plannerRoutingIssues: new Map(projects.map(project => [project.key, projectPlannerRoutingIssue(this.context.store, project)])),
       agents,
       latestQaRuns: this.context.store.latestQaRunsFor(projectSettingsQaKeys(projects)),
     });

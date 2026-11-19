@@ -168,13 +168,9 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
         [WIRE_LABEL_KEYS.task]: run.taskId,
       });
     }
-    /**
-     * T3 has no Paseo identity. Core's consult prompt names `question.answer`
-     * with the reissued run ticket; this send does not rewrite it. T3-hosted
-     * planners are out of trial; missing `askPlanner` becomes a board decision.
-     */
-    async askReviewer(
-      reviewer: string,
+    /** T3 queues a consult after any active turn. Core records the command answer. */
+    async askPlanner(
+      recipient: string,
       input: {
         prompt: string;
         signal: AbortSignal;
@@ -183,11 +179,14 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
         sourceAgentId?: string;
       },
     ) {
-      await this.native.sendMessage(reviewer, {
+      await this.native.sendMessage(recipient, {
         messageId: input.messageId,
         text: input.prompt,
       });
       return null;
+    }
+    askReviewer(...args: Parameters<T3Adapter["askPlanner"]>) {
+      return this.askPlanner(...args);
     }
     observe(id: string) {
       return this.native.observe(id);

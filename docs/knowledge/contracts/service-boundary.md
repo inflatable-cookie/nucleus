@@ -228,10 +228,10 @@ participant ticket first, then a host-supplied identity; caller records are
 host-qualified and existing bare Paseo IDs retain their legacy interpretation.
 An explicit ticket is the asker and delivery target for every verb that records a
 caller (`decision.add`, `lead.submit`, `question.answer`, `tell`); Nucleus records
-the ticket's thread, never an MCP session or host scope from the environment. A
-named ticket whose file is missing refuses when the host identity is an MCP
-session, rather than recording that session. A
-decision answer is delivered to that recorded asker or queued with a visible wait
+the ticket's thread. A missing ticket file uses host verification. A T3
+`mcp:` identity must match an exact thread on one registered online host.
+`project.set-planner` on the CLI defaults its omitted `agentId` to the verified
+caller. A decision answer is delivered to that recorded asker or queued with a visible wait
 (attempts > 0); an identity Nucleus cannot route is shown on the decision.
 Planner assignment issues an owner-only participant ticket that reaches the thread
 in the response to its own next authenticated call, or in the response to the

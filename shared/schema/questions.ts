@@ -10,6 +10,7 @@ const questionAnswerFields = {
   reason: z.string().trim().min(1).max(500).regex(/^[^\r\n]*$/),
   overtakes: z.array(z.string().trim().min(1).max(160)).max(100).optional(),
   decision: z.literal("operator").optional(),
+  dryRun: z.boolean().optional(),
 };
 const answerShape = <T extends {answer?: string; choice?: string; decision?: string}>(value:T) => Number(Boolean(value.answer)) + Number(Boolean(value.choice)) + Number(Boolean(value.decision)) === 1;
 export const questionAnswerInputSchema = z.object(questionAnswerFields).strict().refine(answerShape,

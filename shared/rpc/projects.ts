@@ -35,6 +35,8 @@ export const projectSetPlanner = defineRpc({ name: "project.set-planner", input:
 
 export const projectOwnerCandidates = defineRpc({ name: "project.owner-candidates", input: z.object({}).strict(), output: z.array(projectOwnerCandidateSchema) });
 
-export const projectGet = defineRpc({ name: "project.get", input: projectQuerySchema, output: projectSchema.nullable() });
+export const projectGet = defineRpc({ name: "project.get", input: projectQuerySchema, output: projectSchema.extend({
+  plannerRoutingIssue: z.string().optional(),
+}).nullable() });
 
 export const projects = defineRpc({ name: "projects", input: z.object({}).strict(), output: z.array(projectSchema) });

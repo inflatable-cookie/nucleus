@@ -240,7 +240,7 @@ function registerPlanner(
 function eligibleDecider(f: Awaited<ReturnType<typeof askFixture>>): void {
   const coordinator = profile("coordinator", "glm-4.7", "pi");
   f.engine.profiles = [f.author, coordinator];
-  f.store.setMeta("pool", [{ profileId: coordinator.id, enabled: true, group: "coordinate", roles: ["coordinator"], scopes: ["general"], weight: 1, capability: "low", cost: "very_low" }]);
+  f.store.setMeta("pool", [{ profileId: coordinator.id, enabled: true, group: "coordinate", roles: ["coordinator"], scopes: ["general"], weight: 1, capability: "medium", cost: "very_low" }]);
 }
 
 /** A second MCP client bound to its own binding file, for transport-classification proofs. */
@@ -557,7 +557,7 @@ test("a decider timeout after a scope hint leaves it pending without an operator
     registerPlanner(f, null);
     const coordinator = profile("coordinator", "glm-4.7", "pi");
     f.engine.profiles = [f.author, coordinator];
-    f.store.setMeta("pool", [{ profileId: coordinator.id, enabled: true, group: "coordinate", roles: ["coordinator"], scopes: ["general"], weight: 1, capability: "low", cost: "very_low" }]);
+    f.store.setMeta("pool", [{ profileId: coordinator.id, enabled: true, group: "coordinate", roles: ["coordinator"], scopes: ["general"], weight: 1, capability: "medium", cost: "very_low" }]);
     const adapter = f.engine.adapter as unknown as { runDecider: (task: unknown, input: { profile: Profile }) => Promise<never> };
     adapter.runDecider = async (_task, input) => { f.delegated.deciders.push({ prompt: "", profile: input.profile.id }); throw Error("decider timed out"); };
     const receipt = await f.receipt({ question: "Should the task change what it delivers?", kind: "scope" });

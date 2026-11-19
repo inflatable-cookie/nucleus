@@ -169,9 +169,9 @@ test("CLI question.answer with a missing run ticket does not fail as ENOENT", ()
   assert.doesNotMatch(result.stderr, /ENOENT|no such file/i);
 });
 
-test("CLI question.answer with a run ticket posts to the ticket-bound answer route", async () => {
+test("CLI question.answer dry run with a run ticket posts to the ticket-bound answer route", async () => {
   const dir = mkdtempSync(join(tmpdir(), "question-answer-ticket-"));
-  const requests: { path: string | undefined; body: { taskId?: string; runId?: string; caller?: string; questionId?: string } }[] = [];
+  const requests: { path: string | undefined; body: { taskId?: string; runId?: string; caller?: string; questionId?: string; dryRun?: boolean } }[] = [];
   const server = createServer((req, res) => {
     let body = "";
     req.on("data", chunk => { body += chunk; });
@@ -186,7 +186,7 @@ test("CLI question.answer with a run ticket posts to the ticket-bound answer rou
   writeFileSync(ticket, JSON.stringify({ socketPath, token: "fixture-secret", taskId: "task-1", runId: "run-1" }));
   try {
     const result = await new Promise<{ code: number | null; stdout: string; stderr: string }>(resolve => {
-      const child = spawn(process.execPath, [new URL("../bin/queue-cli.mjs", import.meta.url).pathname, "question.answer", "-"], {
+      const child = spawn(process.execPath, [new URL("../bin/queue-cli.mjs", import.meta.url).pathname, "question.answer", "--dry-run", "-"], {
         env: { PATH: process.env.PATH, HOME: process.env.HOME, TMPDIR: tmpdir(), TMP: tmpdir(), TEMP: tmpdir(), NUCLEUS_TICKET: ticket },
       });
       let stdout = "", stderr = "";
@@ -202,6 +202,7 @@ test("CLI question.answer with a run ticket posts to the ticket-bound answer rou
     assert.equal(requests[0]!.body.runId, "run-1");
     assert.equal(requests[0]!.body.questionId, answer.questionId);
     assert.equal(requests[0]!.body.caller, undefined);
+    assert.equal(requests[0]!.body.dryRun, true);
   } finally {
     server.closeAllConnections();
     await new Promise<void>(resolve => server.close(() => resolve()));

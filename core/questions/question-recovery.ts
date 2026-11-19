@@ -97,7 +97,8 @@ export class QuestionRecovery {
           || recorded?.noAnswerMissed
           || (recorded?.delegationUnknown
             && !this.resolution.recoverableDelegation([`queue-delegate-${decision.id}`, `queue-delegate-${decision.id}-project`, `ns-decider-${decision.id}`], false))
-          || !this.resolution.recoverableDelegation([`queue-delegate-${decision.id}`, `queue-delegate-${decision.id}-project`, `ns-decider-${decision.id}`])) continue;
+          || (!recorded?.kinds.has('operator_question_delegation_wait')
+            && !this.resolution.recoverableDelegation([`queue-delegate-${decision.id}`, `queue-delegate-${decision.id}-project`, `ns-decider-${decision.id}`]))) continue;
         if (request && recorded?.kinds.has('operator_question_decided')) continue;
         this.resolution.recoveringQueueAsks.add(decision.id);
         void this.resolution.delegateDecision(task.id, decision, request, new AbortController().signal, async (fresh, answer) => {

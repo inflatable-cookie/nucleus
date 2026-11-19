@@ -340,27 +340,20 @@ test("a T3 planner ticket records the ticket thread as asker and an answer deliv
   } finally { f.store.close(); }
 });
 
-test("a missing explicit ticket never records an MCP session as asker", async () => {
-  const mcpSession = "mcp:b619ccc9-a078-49f6-b80f-6bececcfa6ca";
-  const desktopScope = "e3587e2bcde8d42fdde2f3615032716c";
-  const mcpCaller = formatAgentId("t3code:32be2844-7204-4edc-a95a-35b05e42ded4", mcpSession);
-  const gone = join(tmpdir(), "missing-nucleus-ticket.json");
-  assert.throws(
-    () => callerSource({
-      NUCLEUS_TICKET: gone, T3CODE_THREAD_ID: mcpSession, T3CODE_DESKTOP_HOST_SCOPE: desktopScope,
-    }, hostCallerIdentity),
-    /NUCLEUS_TICKET names a missing file; refusing it never falls through to an MCP session/,
-  );
-
+test("project.set-planner defaults to the verified T3 caller when its ticket file is missing", async () => {
+  const thread = "mcp:launch:synthetic-planner";
+  const hostScope = "synthetic-desktop-scope";
+  const hostId = "t3code:32be2844-7204-4edc-a95a-35b05e42ded4";
+  const caller = formatAgentId(hostId, thread);
   const cli = await callerCliFixture();
   try {
-    const result = await cli.invoke("none", "queue-cli.mjs", ["decision.add", "-"],
-      { question: "Which planning lane?", options: ["A", "B"], recommendation: "A" },
-      { NUCLEUS_TICKET: join(cli.dir, "gone.json"), T3CODE_THREAD_ID: mcpSession, T3CODE_DESKTOP_HOST_SCOPE: desktopScope });
-    assert.notEqual(result.code, 0, result.stderr);
-    assert.match(result.stderr, /NUCLEUS_TICKET names a missing file; refusing it never falls through to an MCP session/);
-    assert.equal(cli.hostResolutions.length, 0, "a missing explicit ticket never consults the T3 host identity");
-    assert.equal(cli.calls.some(call => call.method === "decision.add"), false);
-    assert.notEqual(cli.calls.at(-1)?.input.askedBy, mcpCaller);
+    const env = { NUCLEUS_TICKET: join(cli.dir, "gone.json"), T3CODE_THREAD_ID: thread, T3CODE_DESKTOP_HOST_SCOPE: hostScope };
+    assert.deepEqual(callerSource(env, hostCallerIdentity), { source: "host", hostKind: "t3code", nativeAgentId: thread, hostScope });
+    const result = await cli.invoke("none", "queue-cli.mjs", ["project.set-planner", "-"], { key: "example" }, env);
+    assert.match(result.stderr, /Synthetic caller payload received/);
+    assert.deepEqual(cli.hostResolutions, [{ hostKind: "t3code", nativeAgentId: thread, hostScope }]);
+    assert.deepEqual(cli.calls.at(-1), {
+      method: "project.set-planner", input: { key: "example", agentId: caller, setBy: caller },
+    });
   } finally { await cli.close(); }
 });

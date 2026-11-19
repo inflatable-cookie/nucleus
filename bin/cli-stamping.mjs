@@ -190,8 +190,10 @@ export const STAMPING_RULES = [
   {
     matches: method => method === 'project.set-planner',
     apply: async (input, context) => {
-      requireRecord(input, 'project.set-planner', '{key, agentId}');
-      return stamp(input, 'setBy', context);
+      requireRecord(input, 'project.set-planner', '{key, agentId?}');
+      await stamp(input, 'setBy', context);
+      if (input.agentId === undefined) input.agentId = input.setBy;
+      return input;
     },
   },
   // lead.check resolves its origin host from the calling thread's proven identity, as lead.submit does.
@@ -251,7 +253,7 @@ async function answerQuestion(input, context) {
   const payload = {
     taskId: ticket.taskId, runId: ticket.runId, questionId: input.questionId,
     answer: input.answer, choice: input.choice, reason: input.reason,
-    decision: input.decision, overtakes: input.overtakes,
+    decision: input.decision, overtakes: input.overtakes, dryRun: input.dryRun,
   };
   for (const key of Object.keys(payload)) if (payload[key] === undefined) delete payload[key];
   return { early: await context.answerThroughTicket(ticket, payload) };

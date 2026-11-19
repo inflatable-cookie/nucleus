@@ -129,6 +129,25 @@ export class CoordinatorPass {
      const ownerWaitActive = Boolean(t.resolution.stop && isWaitingTaskStop(t.resolution.stop.reason));
      if (incident && pendingSince && !this.resolution.startsNoRuns() && !dispatchBlocked(t)
        && !ownerWaitActive && Date.now() - Date.parse(pendingSince) >= this.context.pendingBoundMs()) {
+       // Check the exact owner again before timing out a pending recovery.
+       // A cached running flag alone also describes stalled turns.
+       const owner = t.resolution.currentRunId ? this.store.run(t.resolution.currentRunId) : null;
+       const candidate = owner && (owner.role === 'reviewer' || owner.role === 'revision') &&
+         !owner.released && !owner.completion ? owner : null;
+       const initialWorker = !t.resolution.currentRunId && !t.completion;
+       const agentId = candidate?.agentId ?? (initialWorker ? t.agentId : null);
+       if (agentId && !t.resolution.stalledTurnStop) {
+         try {
+           const state = await this.resolution.onTaskHost(candidate ?? t, () => this.resolution.host.observe(agentId));
+           if (state.id === agentId && state.workspaceId === (candidate ?? t).workspaceId
+             && !['gone', 'closed', 'error'].includes(state.status)
+             && await this.resolution.stalls.hasActivity(t, candidate, state)) continue;
+         } catch { /* A failed read does not prove progress. */ }
+         // A report or owner action may have landed while the host was queried.
+         if (this.resolution.stopped() || this.resolution.startsNoRuns() || this.store.task(t.id).version !== t.version) continue;
+         const latest = candidate ? this.store.run(candidate.id) : null;
+         if (candidate && (!latest || latest.released || latest.completion || latest.agentId !== candidate.agentId)) continue;
+       }
        const summary = recoveryPendingEscalation(t);
        this.episode.escalate(t, summary);
        this.resolution.openPlannerEscalation(this.store.task(t.id), {

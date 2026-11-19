@@ -1,17 +1,65 @@
-import { type Task } from '../../shared/contracts';
+import { type Project, type Task } from '../../shared/contracts';
+import type { Store } from '../store/store';
+import { hostKindOf } from '../../shared/host-kind';
+import { nativeAgentId } from '../../shared/agent-identity';
 import type { Resolution } from '../resolution';
 
 export type PlannerPresenceContext = Pick<Resolution, 'adapter' | 'host' | 'identifyOriginHost' | 'originHostAvailable' | 'plannerThreadGone' | 'projectPlannerFor' | 'taskPlannerFor' | 'store' | 'withHost'>;
 
+export type PlannerThreadRoute = { kind: 'routable' | 'gone' } | { kind: 'unroutable'; detail: string };
+
+export function unroutablePlannerDetail(agentId: string, cause: string): string {
+  return `Planner unroutable: ${agentId} (${cause}). Re-run project.set-planner.`;
+}
+
+/** The latest routing observation belongs to the current assignment only. */
+export function projectPlannerRoutingIssue(store: Pick<Store, 'eventsAll'>, project: Project): string | undefined {
+  const latest = store.eventsAll(`project:${project.key}`).findLast(event =>
+    ['project_planner_unroutable', 'project_planner_routable', 'project_planner_set', 'project_planner_cleared'].includes(event.kind));
+  return project.planner && latest?.kind === 'project_planner_unroutable' ? latest.detail : undefined;
+}
+
 export class PlannerPresence {
   constructor(readonly context: PlannerPresenceContext) {}
   async plannerThreadGone(agentId: string): Promise<boolean> {
-    const hostId = await this.context.identifyOriginHost(agentId);
-    if (!hostId || !this.context.withHost(hostId, () => this.context.originHostAvailable(hostId))) return false;
+    return (await this.threadRoute(agentId)).kind === 'gone';
+  }
+
+  async threadRoute(agentId: string): Promise<PlannerThreadRoute> {
+    const unroutable = (cause: string): PlannerThreadRoute => ({ kind: 'unroutable', detail: unroutablePlannerDetail(agentId, cause) });
     try {
+      const hostId = await this.context.identifyOriginHost(agentId);
+      if (!hostId || !this.context.withHost(hostId, () => this.context.originHostAvailable(hostId)))
+        return unroutable("waiting for the planner's proven host to be available");
       const registered = await this.context.withHost(hostId, () => this.context.host.originAgent(agentId));
-      return !registered || registered.archived;
-    } catch { return false; }
+      if (registered?.archived || registered?.deleted) return { kind: 'gone' };
+      // On T3 the recorded ID can name a thread or an unrelated session. Only a
+      // tombstone proves that an identity previously had a thread.
+      if (!registered)
+        return hostKindOf(hostId) === 't3code'
+          ? unroutable('no matching thread on its T3 host')
+          : { kind: 'gone' };
+      if (registered.id !== nativeAgentId(agentId, hostId))
+        return unroutable('the host returned a different thread');
+      return { kind: 'routable' };
+    } catch {
+      return unroutable('the host could not verify the thread');
+    }
+  }
+
+  async observeProjectPlanner(project: Project | null): Promise<{ agentId: string; state: PlannerThreadRoute } | null> {
+    const planner = project?.planner;
+    if (!project || !planner) return null;
+    const { store } = this.context;
+    const state = await this.threadRoute(planner.agentId);
+    const latest = store.projectByKey(project.key)?.planner;
+    if (latest?.agentId !== planner.agentId || latest.setAt !== planner.setAt) return null;
+    const previousIssue = projectPlannerRoutingIssue(store, project);
+    if (state.kind === 'unroutable' && previousIssue !== state.detail)
+      store.event(`project:${project.key}`, 'project_planner_unroutable', state.detail);
+    if (state.kind === 'routable' && previousIssue)
+      store.event(`project:${project.key}`, 'project_planner_routable', planner.agentId);
+    return { agentId: planner.agentId, state };
   }
 
   async escalationRecipient(task: Task): Promise<string | null> {

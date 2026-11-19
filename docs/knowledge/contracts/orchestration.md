@@ -1789,7 +1789,9 @@ review or merge credit; live participants and unsettled effects remain fences.
   run, unless its own recorded foreground tool or run-owned child in the task
   tree is still live. Observation time and each run’s activity stamp are stored
   separately. If that stall ends before recovery acts, its pending episode and
-  planner escalation close automatically. A permission pending past that threshold is
+  planner escalation close automatically. A pending recovery without a coordinator
+  checks the current participant's exact thread for progress before escalating.
+  A permission pending past that threshold is
   the same stall: it raises owner attention and names the request. Nothing is
   auto-approved or auto-denied. Nucleus doesn't interrupt it and the lease holds
   until it stops. A missing activity timestamp is never stale. Merge lease wait
@@ -2003,14 +2005,22 @@ the thread a brief named with `queue.planner`, else the task's owner — the thr
 that submitted or promoted it — so reparenting moves it. A rung whose thread is
 observed archived or gone is skipped at once; a live but silent rung still times
 out, and an unknown send never advances. A project with no planner falls from the
-task planner to the decider. The project planner keeps project-level matters:
+task planner to the decider. An unverifiable planner stays assigned. Project
+settings and the task show the cause and the question waits for a routable planner.
+A worker's local review consult starts with the retained reviewer and stays
+answerable there while the reviewer is available.
+The project planner keeps project-level matters:
 lane drains, the plan and project notices. `task.next`, the board and the durable
 question records name the rung that asked and the thread that answered.
 
 Delegated agent asks, blocker escalations, reviewer consults and operator-question
 delegations all use `nucleus question.answer`, authenticated to the calling thread
 as owner verbs are. The payload carries the question ID, answer or choice, one-line
-reason and optional exact `overtakes` IDs; repeat answers return the recorded answer.
+reason and optional exact `overtakes` IDs. Repeat answers return the recorded
+answer. `--dry-run` validates the authenticated answer during the same window
+without recording or applying it. A choice must match an offer, and deciders
+must provide a substantive free answer and a distinct reason. Automatic decider
+selection enforces the task's requested tier and usage permissions.
 Only an explicit `decision: "operator"` classification forwards a delegable question
 to the operator, and operator-only questions keep their existing surfaces and authority.
 A blocker escalation offers safe ordinary controls from the current `next` view, alongside
