@@ -885,9 +885,20 @@ offer. A held poll raises the cards once the host has confirmed their absence.
 A T3 restart cancels the held run but can leave an old card answerable through a
 message continuation. On load the agent does not treat that text as an answer;
 it reads open decisions again. The adapter clears stale cards from the service's
-record. Re-entry uses a durable occurrence generation: an uncertain send is read
-before another occurrence is considered, and a later confirmed restart uses a
-new command identity. The same rule governs the inbox's re-entry.
+record. Re-entry uses a durable occurrence generation, and a later confirmed
+restart uses a new command identity. The same rule governs the inbox's re-entry.
+How the previous occurrence is judged depends on its send (nucleus#1407):
+
+- An acknowledged receipt (settled) is final. The fresh observation that shows no
+  live or queued run is enough for the next occurrence, however far the old one
+  has moved out of T3's window. No history read is made for it.
+- An unsettled occurrence (unknown, refused or timed out) is decided from the
+  newest window's own user message. Finding it there is exact. A timed-out send
+  waits for its late reply. Absence proves non-delivery only when the window is
+  the whole history, so a bounded window never proves absence.
+- An unsettled occurrence the window cannot show, because it is older than the
+  window, is raised as an incompatibility. Nothing is resent, and re-entry waits.
+  The sweep reports it after its nesting pass runs, not as a silent skip.
 
 **The inbox is idle between decisions (nucleus#1384).** Its ACP turn holds only
 while an operator decision is offered: the same host-scoped projection that raises

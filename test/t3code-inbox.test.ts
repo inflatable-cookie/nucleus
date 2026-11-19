@@ -7,12 +7,14 @@ import { T3CodeHost } from "../hosts/t3code/adapter";
 import { HOLD_MARKER } from "../hosts/t3code/nesting";
 import { inboxTitle } from "../hosts/t3code/inbox";
 import { T3DecisionCards } from "../hosts/t3code/decision-cards";
+import { T3CompatibilityError } from "../hosts/t3code/contracts";
 import type { TestContext } from "node:test";
 import type { AcpSessionSurface } from "../shared/acp/surface";
 import {
   t3Fake,
   syntheticRun,
   syntheticRuntimeRequest,
+  syntheticTurnItem,
 } from "./support/t3code-fake";
 
 test("one host inbox is launched once and pinned outside task retention", async (t) => {
@@ -563,4 +565,90 @@ test("the card T3 shows pending is the presence the sweep reports, and a live ca
   // A held turn is already live: no release, and no second re-entry.
   assert.equal(released.length, 0);
   assert.equal(holdPosts(fake, inbox.threadId).length, 0);
+});
+
+/**
+ * Quiet completed turns after a wake: a bounded window of the default twenty rows
+ * no longer holds the wake's own row, so only the transcript could show it (nucleus#1407).
+ */
+function quietTurns(projection: Record<string, any>, threadId: string, count: number) {
+  const runId: string = projection.runs.at(-1)!.id;
+  for (let i = 0; i < count; i++)
+    projection.turnItems.push(
+      syntheticTurnItem(threadId, projection.turnItems.length, {
+        type: "assistant_message",
+        runId,
+      }),
+    );
+}
+
+test("a settled wake outside the snapshot window does not suppress the next decision's wake (nucleus#1407)", async (t) => {
+  const { fake, host, offered } = await idleInbox(t);
+  await host.reconcileThreadTitles([]);
+  const inbox = host.state.read().inbox!;
+  const projection = fake.threads.get(inbox.threadId)!;
+  // The launch turn has ended: an idle inbox is re-entered only by an offer.
+  for (const run of projection.runs) run.status = "completed";
+  offered.push("decision-a");
+  await host.reconcileThreadTitles([]);
+  assert.equal(holdPosts(fake, inbox.threadId).length, 1);
+  const first = host.state.read().decisionHolds![inbox.threadId]!;
+  // The first decision's turn ends, its wake is acknowledged, and quiet turns push it out of the window.
+  for (const run of projection.runs) run.status = "completed";
+  quietTurns(projection, inbox.threadId, 25);
+  offered.length = 0;
+  await host.reconcileThreadTitles([]);
+  // A fresh decision is offered: the settled wake is re-entered once, with a new occurrence.
+  offered.push("decision-b");
+  await host.reconcileThreadTitles([]);
+  const posts = holdPosts(fake, inbox.threadId);
+  assert.equal(posts.length, 2, "one new wake for the offerable version");
+  const second = host.state.read().decisionHolds![inbox.threadId]!;
+  assert.equal(second.generation, 1);
+  assert.notEqual(second.commandId, first.commandId);
+  // The new occurrence is active: the next sweeps neither duplicate it nor replay the settled one.
+  await host.reconcileThreadTitles([]);
+  await host.reconcileThreadTitles([]);
+  assert.equal(holdPosts(fake, inbox.threadId).length, 2);
+});
+
+test("an unsettled wake that landed inside the window is re-entered once, and an unknown one outside it is raised", async (t) => {
+  const { fake, host, offered } = await idleInbox(t);
+  await host.reconcileThreadTitles([]);
+  const inbox = host.state.read().inbox!;
+  const projection = fake.threads.get(inbox.threadId)!;
+  // The launch turn has ended: an idle inbox is re-entered only by an offer.
+  for (const run of projection.runs) run.status = "completed";
+  offered.push("decision-a");
+  await host.reconcileThreadTitles([]);
+  const first = host.state.read().decisionHolds![inbox.threadId]!;
+  // The send timed out, but its own user message is still in the window: the outcome is exact.
+  for (const run of projection.runs) run.status = "completed";
+  host.state.update((state) => {
+    state.intents[first.commandId]!.status = "unknown";
+    state.intents[first.commandId]!.timedOut = true;
+  });
+  offered.length = 0;
+  await host.reconcileThreadTitles([]);
+  offered.push("decision-b");
+  await host.reconcileThreadTitles([]);
+  assert.equal(holdPosts(fake, inbox.threadId).length, 2);
+  assert.equal(host.state.read().intents[first.commandId]!.status, "settled");
+  // The same wake, unknown and pushed out of the window, is not resent: absence is unproven.
+  const second = host.state.read().decisionHolds![inbox.threadId]!;
+  for (const run of projection.runs) run.status = "completed";
+  host.state.update((state) => {
+    state.intents[second.commandId]!.status = "unknown";
+    state.intents[second.commandId]!.timedOut = false;
+  });
+  quietTurns(projection, inbox.threadId, 25);
+  offered.push("decision-c");
+  await assert.rejects(
+    host.reconcileThreadTitles([]),
+    (error: unknown) =>
+      error instanceof T3CompatibilityError &&
+      /snapshot window/.test(error.message),
+    "the unproven occurrence is raised as evidence, not silently skipped",
+  );
+  assert.equal(holdPosts(fake, inbox.threadId).length, 2, "nothing is replayed");
 });

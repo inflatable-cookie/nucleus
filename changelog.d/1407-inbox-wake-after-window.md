@@ -1,0 +1,1 @@
+The T3 Inbox wakes for a new decision after its history grows past T3's snapshot window, so the decision appears as one native card. A settled earlier wake no longer blocks the next one, and a wake whose outcome the window cannot show is reported on the host pass instead of being skipped silently.

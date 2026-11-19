@@ -648,6 +648,9 @@ export class T3CodeHost implements Host {
   /** The ordinary host sweep's nesting pass: dispose owed wakes, hold or release the parent's turn, archive a finished task's parent. */
   async reconcileThreadTitles(tasks: readonly Task[]): Promise<void> {
     if (!this.connected) return;
+    // An incompatibility is evidence the operator needs, so it is raised after the nesting
+    // pass runs. Other faults still retry on the next pass, as before (nucleus#1407).
+    let incompatible: T3CompatibilityError | null = null;
     try {
       await this.inbox.reconcile();
       const state = this.state.read();
@@ -681,11 +684,18 @@ export class T3CodeHost implements Host {
             await this.decisionHold.reconcile(parent.threadId);
         }
       }
+    } catch (error) {
+      if (isHostOperationTimeout(error)) throw error; /* retry other faults next pass */
+      if (error instanceof T3CompatibilityError) incompatible = error;
+      else return;
+    }
+    try {
       await this.nesting.reconcile(tasks);
     } catch (error) {
-      if (isHostOperationTimeout(error))
-        throw error; /* retry other faults next pass */
+      if (isHostOperationTimeout(error)) throw error; /* retry other faults next pass */
+      if (error instanceof T3CompatibilityError) incompatible ??= error;
     }
+    if (incompatible) throw incompatible;
   }
 
   async catalog(): Promise<HostCatalog> {
