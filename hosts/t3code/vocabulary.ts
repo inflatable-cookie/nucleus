@@ -22,6 +22,11 @@ import type { CanonicalProvider } from "../../shared/profile-vocabulary";
  * feature.
  * Its four runtime modes are the same for every provider; a provider that reports
  * a subset narrows them through the catalog.
+ *
+ * Speed (nucleus#1386) is Codex's `serviceTier` select (`default`, `priority`;
+ * the nightly offers no ultrafast tier) and Claude's `fastMode` boolean, as
+ * `server.getConfig` reports them. Cyber access is Codex's `cyberAccessProgram`
+ * and ultracode is Claude's `ultracode` boolean.
  */
 const t3Modes: Partial<Record<RuntimeMode, NativeMode>> = {
   supervised: { modeId: "approval-required" },
@@ -76,7 +81,19 @@ export const t3codeVocabulary: HostVocabulary = {
     "thinking",
   ],
   providers: {
-    codex: reasoning("codex"),
+    codex: {
+      ...reasoning("codex"),
+      options: {
+        speed: {
+          id: "serviceTier",
+          values: { default: "default", priority: "priority" },
+        },
+        "cyber-access": {
+          id: "cyberAccessProgram",
+          values: { standard: "standard" },
+        },
+      },
+    },
     claude: {
       key: "claudeAgent",
       thinkingOption: "effort",
@@ -85,6 +102,10 @@ export const t3codeVocabulary: HostVocabulary = {
         ultra: "ultrathink",
       },
       modes: t3Modes,
+      options: {
+        speed: { id: "fastMode", values: { default: false, priority: true } },
+        ultracode: { id: "ultracode", values: { off: false, on: true } },
+      },
     },
     pi: {
       key: "pi",

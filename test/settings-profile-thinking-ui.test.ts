@@ -125,11 +125,13 @@ test("a model whose host carries thinking as a feature shows exactly one Thinkin
   assert.equal(controls(codex, "Thinking").length, 1);
   assert.equal(controls(codex, "Mode").length, 1);
   assert.equal(codex.all(/^Reasoning, /).length, 0);
+  // T3's `serviceTier` is the one canonical Speed control (nucleus#1386).
   assert.equal(
-    codex.all(/^Service Tier, /).length,
+    codex.all(/^Speed, /).length,
     1,
-    "other provider features still show",
+    "other provider options still show, once, under their canonical name",
   );
+  assert.equal(codex.all(/^Service Tier, /).length, 0);
 });
 
 test("a model with no modes still shows its one Mode control, as Host default", async () => {

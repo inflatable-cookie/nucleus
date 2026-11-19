@@ -850,6 +850,10 @@ export class Store {
   migrateProfileThinking(vocabularies: readonly HostVocabulary[]): void {
     this.migrationStore.migrateProfileThinking(vocabularies);
   }
+  /** Stored profiles' shared provider options under canonical keys, through every host's table (nucleus#1386). */
+  migrateProfileOptions(vocabularies: readonly HostVocabulary[]): void {
+    this.migrationStore.migrateProfileOptions(vocabularies);
+  }
   close() {
     this.taskChanged(null);
     this.taskChangeListeners.clear();

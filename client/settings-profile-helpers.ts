@@ -19,6 +19,7 @@ import type {
 } from "../shared/host";
 import * as api from "../shared/contracts";
 import {
+  isCanonicalOption,
   isCanonicalProvider,
   thinkingCarriers,
 } from "../shared/profile-vocabulary";
@@ -164,6 +165,33 @@ export function hiddenThinkingValues(
     ([option]) =>
       carriers.has(option) && !shown.some((feature) => feature.id === option),
   );
+}
+
+/**
+ * Feature values with one canonical option set (nucleus#1386): any host's own
+ * spelling of that option for this provider (`service_tier`, `serviceTier`) a
+ * migration left behind goes, so the editor's one control is the only value.
+ */
+export function withCanonicalOption(
+  provider: string,
+  featureValues: Record<string, unknown>,
+  option: string,
+  value: unknown,
+): Record<string, unknown> {
+  if (!isCanonicalOption(option) || !isCanonicalProvider(provider))
+    return { ...featureValues, [option]: value };
+  const carriers = new Set(
+    Object.values(HOST_VOCABULARIES).flatMap((vocabulary) => {
+      const carrier = vocabulary.providers[provider]?.options?.[option];
+      return carrier ? [carrier.id] : [];
+    }),
+  );
+  return {
+    ...Object.fromEntries(
+      Object.entries(featureValues).filter(([id]) => !carriers.has(id)),
+    ),
+    [option]: value,
+  };
 }
 
 /**

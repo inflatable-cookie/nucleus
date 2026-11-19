@@ -57,7 +57,20 @@ profiles.
   `bypassPermissions` and `supervised` as `default`, and carries Grok's
   `full-access` as its `auto_accept` option; T3Code names Claude `claudeAgent`
   and carries its thinking as the `effort` option (`ultra` is `ultrathink`) and
-  Pi's as `thinking`. A value a host's table can't express makes the profile
+  Pi's as `thinking`. Provider options also have canonical keys (nucleus#1386,
+  Tom 2026-11-19: the Astra profile's `service_tier` "is the same setting as
+  'speed' in paseo"), stored in `featureValues`: `speed` (`default`, `priority`,
+  `ultrafast`) is Paseo's codex `service_tier` and claude `fast_mode`, and T3's
+  codex `serviceTier` and claude `fastMode`; `plan-mode` (Paseo codex
+  `plan_mode`), `cyber-access` (T3 codex `cyberAccessProgram`) and `ultracode`
+  (T3 claude `ultracode`) are single-host options kept for their defaults. Each
+  table's `options` spell them; the editor shows one canonical control per option
+  and none of the host spellings. A canonical option at its default is the
+  provider's own default and is never sent, so it runs on every host; a
+  non-default value a host's table can't spell (T3 has no ultrafast tier) or a
+  model doesn't offer makes the profile unavailable there with the reason
+  (`T3Code can't express speed Ultrafast for codex`), so selection excludes it
+  and the pre-send check stays drift protection only. A value a host's table can't express makes the profile
   unavailable on that host with the reason computed (`T3Code can't run codex in
   mode plan`); nothing is configured per profile. Selection marks a profile
   unavailable when its requested thinking level is absent from the host catalog.
@@ -85,7 +98,10 @@ profiles.
   `reasoning`) or a host spelling in `thinkingOptionId` (`ultrathink`, BB's
   `none`) to the canonical level, read back through every host table
   (`hosts/vocabularies.ts`); `profileThinkingMigration` records the first run and
-  any run that changed a profile. A value no table maps, or two values that
+  any run that changed a profile. The same way, host spellings of a canonical
+  option (`service_tier`, `serviceTier`, `fast_mode`, `fastMode`, `plan_mode`,
+  `cyberAccessProgram`, a boolean `ultracode`) move to the canonical key, keeping
+  their meaning; `profileOptionMigration` records it. A value no table maps, or two values that
   disagree, stays as stored and reported, and shows on the profile as that host's
   reason. The task card reads a routing snapshot's level back through its host's
   table, so it shows the canonical level, not the host's spelling. The per-profile host setting (nucleus#1151) and the provider map
