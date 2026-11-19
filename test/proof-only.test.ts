@@ -101,7 +101,7 @@ function fixture(requiresOperatorGo = false) {
   return { root, repo, directory, head, store, engine, adapter, task, created, states, report, settle,
     failProvisioningOnce: () => { provisioningFailures = 1; },
     showWorkspace: () => { visibleWorkspaces = [{ id: 'proof-workspace', directory }]; },
-    close: () => { store.close(); rmSync(root, { recursive: true, force: true }); } };
+    close: async () => { await engine.stop(); store.close(); rmSync(root, { recursive: true, force: true }); } };
 }
 
 /** Settled failed receipt, blocked reviewer, no closeout verdict — the lost-review shape. */
@@ -129,11 +129,11 @@ test('proof-only brief schema requires one selector and only permits GO metadata
   assert.throws(() => parseNorthstarDocument(valid.replace(`  proofOnly:\n    commit: ${commit}\n`, '').replace('  proofExecution:', '  requiresOperatorGo: live system\n  proofExecution:'), 'draft'), /requiresOperatorGo is only valid with queue\.proofOnly/);
 });
 
-test('proof-only checkout target is the immutable proof commit even when the planning base advances', () => {
+test('proof-only checkout target is the immutable proof commit even when the planning base advances', async () => {
   const f = fixture();
   try {
     assert.equal(taskCheckoutTarget({ ...f.task(), planningBase: 'b'.repeat(40) }), f.head);
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 /** Advance the integration base past the proof commit and leave the checkout at the new base tip. */
@@ -159,7 +159,7 @@ test('initial dispatch provisions a checkout left at the base tip at the proof c
     assert.ok(executor, `executor admitted: ${f.task().phase}: ${f.task().reason}`);
     assert.equal(executor!.head, f.head);
     assert.deepEqual(f.created.map(run => run.role), ['executor']);
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 test('owner restart re-detaches a retained checkout left at the base tip and admits its executor', async () => {
@@ -178,7 +178,7 @@ test('owner restart re-detaches a retained checkout left at the base tip and adm
     const executor = f.store.runs(f.task().id).find(run => run.role === 'executor');
     assert.ok(executor, `executor admitted after restart: ${f.task().phase}: ${f.task().reason}`);
     assert.equal(executor!.head, f.head);
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 test('recovery re-provisions a bound checkout left at the base tip and admits its executor', async () => {
@@ -194,7 +194,7 @@ test('recovery re-provisions a bound checkout left at the base tip and admits it
     const executor = f.store.runs(f.task().id).find(run => run.role === 'executor');
     assert.ok(executor, `executor admitted after recovery: ${f.task().phase}: ${f.task().reason}`);
     assert.equal(executor!.head, f.head);
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 test('every task checkout-target call site resolves through taskCheckoutTarget', () => {
@@ -280,7 +280,7 @@ test('proof-only provisioning retries a transport interruption and launches only
     assert.equal(runGit(f.directory, 'branch', '--show-current'), '', 'the proof checkout remains detached');
     assert.deepEqual(f.created.map(run => run.role), ['executor']);
     assert.equal(f.created[0]!.head, f.head);
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 test('a proof-only qualification runs once at a detached merged commit and closes on retained reviewer pass', async () => {
@@ -344,7 +344,7 @@ test('a proof-only qualification runs once at a detached merged commit and close
     assert.deepEqual(terminalArchiveWorkspaces(accepted, f.store.runs(task.id))[0], {
       id: 'proof-workspace', directory: f.directory, head: f.head, reportSource: false,
     }, 'an accepted proof-only task archives its commit, never as a report-only source');
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 test('two connections interleaving before a proof-only verdict applies close it once (task 740)', async () => {
@@ -391,7 +391,7 @@ test('two connections interleaving before a proof-only verdict applies close it 
     assert.equal(closes(), 1);
     assert.equal(f.task().version, closed.version, 'a later application writes nothing');
     await otherEngine.stop();
-  } finally { other.close(); f.close(); }
+  } finally { other.close(); await f.close(); }
 });
 
 test('proof-only provisioning refuses to move a dirty checkout from the required commit', async () => {
@@ -405,7 +405,7 @@ test('proof-only provisioning refuses to move a dirty checkout from the required
     await assert.rejects(populateOwnedWorktree({ task: f.task(), ownedPath: f.directory, scan: () => ({ state: 'absent' }) }), /dirty; refusing to change/);
     assert.equal(runGit(f.directory, 'rev-parse', 'HEAD'), baseTip);
     assert.equal(readFileSync(join(f.directory, 'README.md'), 'utf8'), 'operator changes stay intact\n');
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 test('release-kind GO holds a live proof and a failed receipt closes with its failing evidence', async () => {
@@ -481,7 +481,7 @@ test('release-kind GO holds a live proof and a failed receipt closes with its fa
       "a closed proof-only task never gains a second execution",
     );
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
@@ -508,7 +508,7 @@ test('a proof-only qualification parked on its release GO waits on the operator,
       role: 'reviewer', profileId: reviewerProfile.id, reason: 'Try a fresh reviewer', caller: 'operator (board)' })), /release GO/);
     assert.equal(f.store.runs(task.id).filter(run => run.role === 'reviewer').length, 1, 'no second reviewer run starts');
     assert.equal(f.store.runs(task.id).filter(run => run.role === 'executor').length, 0, 'no executor starts before the GO');
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 test('a proof-only task without requiresOperatorGo demands no GO evidence and runs its selector (574)', async () => {
@@ -535,7 +535,7 @@ test('a proof-only task without requiresOperatorGo demands no GO evidence and ru
     assert.equal(f.task().proofOnlyResult?.status, 'passed');
     assert.equal(f.task().proofOnlyResult?.commit, f.head);
     assert.equal(f.store.runs(f.task().id).filter(run => run.role === 'executor').length, 1);
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 test('a blocked executor without start evidence stays unknown and spends its allowance', async () => {
@@ -550,7 +550,7 @@ test('a blocked executor without start evidence stays unknown and spends its all
     assert.equal(receipt.refusedBeforeSelector, false);
     const proof = ownerTaskNext(collectOwnerVerbFacts(f.store, f.task())).verbs.find(verb => verb.verb === 'proof');
     assert.equal(proof?.available, false);
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 test('a killed executor retains positive selector-start timeline evidence', async () => {
@@ -567,7 +567,7 @@ test('a killed executor retains positive selector-start timeline evidence', asyn
     assert.equal(receipt.selectorStart, 'started');
     assert.match(receipt.selectorStartEvidence ?? '', /Tool timeline/);
     assert.equal(receipt.refusedBeforeSelector, false);
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 test('a matching Effigy admission establishes selector start when the timeline is unavailable', async () => {
@@ -589,7 +589,7 @@ test('a matching Effigy admission establishes selector start when the timeline i
     assert.equal(receipt.selectorStart, 'started');
     assert.match(receipt.selectorStartEvidence ?? '', /Effigy admission admission/);
     assert.equal(receipt.status, 'unknown');
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 test('a lost native release question is restored as one board decision and its answer authorizes proof-only GO', async () => {
@@ -656,7 +656,7 @@ test('a lost native release question is restored as one board decision and its a
     await f.engine.resolution.raiseOperatorQuestions();
     assert.equal(f.store.eventsAll(f.task().id).filter(event => event.kind === 'operator_question_decision').length, 1,
       'the decision is raised once');
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 test('proof-only GO stays on the board, links its project, and retries a busy answer when the task is free', async () => {
@@ -708,7 +708,7 @@ test('proof-only GO stays on the board, links its project, and retries a busy an
     assert.equal(quote.answer, 'GO — run the qualification', 'the board answer is preserved verbatim');
     assert.equal(quote.answeredBy, 'operator (board)');
     assert.equal(quote.answeredAt, answered.answer!.answeredAt);
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 test('concurrent proof dispatch triggers produce exactly one executor and one allowance (task 560)', async () => {
@@ -733,7 +733,7 @@ test('concurrent proof dispatch triggers produce exactly one executor and one al
       authorizedBy: { role: 'queue_dispatch', caller: null, note: 'late sequential trigger' }, operationId: null }),
       /already dispatched and unreleased|already spent its one execution|already reserved at/);
     assert.equal(f.store.runs(f.task().id).filter(run => run.role === 'executor').length, 1);
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 test('a released superseded executor refuses late evidence without spending another allowance (task 1005)', async () => {
@@ -769,7 +769,7 @@ test('a released superseded executor refuses late evidence without spending anot
     await assert.rejects(f.engine.resolution.proofExecution(f.task(), {
       authorizedBy: { role: 'queue_dispatch', caller: null, note: 'repeat after historical settlement' }, operationId: null }),
       /already spent its one execution/);
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 test('a superseded run historical passed report never satisfies proof-only closeout (task 560)', async () => {
@@ -812,7 +812,7 @@ test('a superseded run historical passed report never satisfies proof-only close
       proofResult: { status: 'failed', selector, exitCode: 2, evidence: 'a later claim' } }), /Unauthorized callback/);
     assert.equal(f.task().proofExecutions.find(item => item.runId === first.id)!.evidence.includes('claims all cases passed'), true,
       'the first settled history stands');
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 test('timeline-only evidence settles a released superseded run and its credential stays revoked (tasks 560, 1005)', async () => {
@@ -867,7 +867,7 @@ test('timeline-only evidence settles a released superseded run and its credentia
     assert.equal(record.historical, true);
     assert.equal(f.store.run(first.id)!.completion, null);
     assert.equal(f.task().proofExecutions.length, 1, 'no second allowance is spent');
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 test('timeline settlement requires an invocation of the selector, not a textual mention (task 560)', () => {
@@ -938,7 +938,7 @@ test('operator accepts a passing receipt after an unrelated reviewer finding, re
     assert.equal(f.task().version, accepted.version);
     assert.equal(f.store.eventsAll(before.id).length, events);
     assert.ok(f.store.eventsAll(before.id).some(event => event.kind === 'proof_receipt_accepted' && event.detail.includes('profile preference')));
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 test('receipt acceptance explains missing, historical, failed and mismatched evidence', async () => {
@@ -958,7 +958,7 @@ test('receipt acceptance explains missing, historical, failed and mismatched evi
     assert.match(receiptAcceptanceRefusal(withReceipt({ head: 'b'.repeat(40) }))!, /commit/);
     assert.match(receiptAcceptanceRefusal(withReceipt({ selector: 'other' }))!, /selector/);
     assert.match(receiptAcceptanceRefusal(withReceipt({ inputs: [] }))!, /inputs/);
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 test('a proof-only task whose receipt review was lost gets a fresh receipt reviewer from move to=review, and next stops offering the spent proof', async () => {
@@ -1001,7 +1001,7 @@ test('a proof-only task whose receipt review was lost gets a fresh receipt revie
     assert.equal(f.store.runs(f.task().id).find(run => run.role === 'executor')!.id, executor.id);
     assert.equal(f.task().proofOnlyResult, null);
     assert.equal(f.task().phase, 'reviewing');
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 test('route role=reviewer starts a fresh receipt reviewer for a proof-only task waiting on a lost receipt review', async () => {
@@ -1020,5 +1020,5 @@ test('route role=reviewer starts a fresh receipt reviewer for a proof-only task 
     assert.equal(f.store.runs(f.task().id).filter(run => run.role === 'executor').length, 1);
     assert.equal(f.store.runs(f.task().id).find(run => run.role === 'executor')!.id, executor.id);
     assert.equal(f.task().proofOnlyResult, null);
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });

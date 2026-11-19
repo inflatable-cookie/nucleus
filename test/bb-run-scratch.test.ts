@@ -125,6 +125,6 @@ test('a BB role thread is attached only after its owner-only run scratch exists'
 
 test('a BB launch whose run scratch cannot be proved refuses before any attach', async (t: TestContext) => {
   const f = fixture(t, { scratchFails: true });
-  await assert.rejects(f.adapter().createAgent(f.store.task(f.taskId), 'run-token', 'work'), /BB run scratch is unavailable: .*the scratch volume is absent/);
+  await assert.rejects(f.adapter().createAgent(f.store.task(f.taskId), 'run-token', 'work'), /Queue checkout storage unavailable: the scratch volume is absent/);
   assert.deepEqual(f.attachObserved, [], 'nothing was attached');
 });

@@ -347,7 +347,7 @@ test('Spec 052: bundled dark task detail explains each named profile\'s usage po
         if (method === 'task.next') return ownerTaskNext(collectOwnerVerbFacts(store, store.task(task.id)));
         if (method === 'project.qa.list' || method === 'host.run.list' || method === 'host.run.board') return [];
         if (method === 'lead.board') return { cards: [], links: [] };
-        if (method === 'plans' || method === 'papercut.list' || method === 'draft.list' || method === 'decision.list' || method === 'project.owner-candidates') return [];
+        if (method === 'queue.plans' || method === 'papercut.list' || method === 'draft.list' || method === 'decision.list' || method === 'project.owner-candidates') return [];
         if (method !== 'queue.backup-list') writes.push(method);
         return {};
       };
@@ -424,7 +424,7 @@ test('Spec 052: bundled dark choosers name an unavailable subscription group ins
         if (method === 'task.next') return ownerTaskNext(collectOwnerVerbFacts(store, store.task(task.id)));
         if (method === 'project.qa.list' || method === 'host.run.list' || method === 'host.run.board') return [];
         if (method === 'lead.board') return { cards: [], links: [] };
-        if (method === 'plans' || method === 'papercut.list' || method === 'draft.list' || method === 'decision.list' || method === 'project.owner-candidates') return [];
+        if (method === 'queue.plans' || method === 'papercut.list' || method === 'draft.list' || method === 'decision.list' || method === 'project.owner-candidates') return [];
         if (method !== 'queue.backup-list') writes.push(method);
         return {};
       };

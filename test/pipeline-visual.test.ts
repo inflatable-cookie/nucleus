@@ -146,12 +146,12 @@ const invoke = async (method: string, input: unknown): Promise<unknown> => {
       const detail = { ...lead, versions: [{ version: 1, title: lead.title, body: lead.body, author: lead.author, createdAt: lead.createdAt, check: lead.check }] };
       return { ...detail, actions: leadActions(detail as unknown as LeadStatusFacts) };
     }
-  if (method === 'plans') return [plan];
+  if (method === 'queue.plans') return [{ ...plan, savedEntries: plan.entries }];
   if (method === 'plan.get') return plan;
   return {};
 };
 
-const tick = () => new Promise(resolve => setImmediate(resolve));
+const tick = () => new Promise(resolve => setTimeout(resolve, 5));
 
 function hostRunFixture(id: string, overrides: Record<string, unknown> = {}) {
   const submittedAt = new Date(Date.now() - 30 * 60_000).toISOString();

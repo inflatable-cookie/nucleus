@@ -425,6 +425,13 @@ function auditSpies(f: ReturnType<typeof fixture>, overrides: { observe?: (...ar
   e.adapter.findOpenBranchPr = async () => null;
   spy(log, e, 'dispositionDeps', () => ({}), 'resumeDispositions');
   for (const name of AUDIT_RECOVERY) spy(log, e, name);
+  // The host-isolated archive runs once per active host through fleetStep,
+  // rather than through the old unscoped engine method.
+  const fleetStep = e.sweep.fleetStep.bind(e.sweep);
+  e.sweep.fleetStep = (name: string, run: () => unknown) => {
+    if (name === 'archiveRetiredErroredAgents') { log.push(name); return Promise.resolve(); }
+    return fleetStep(name, run);
+  };
   spy(log, e, 'applyDeferredOwnerVerbs');
   spy(log, r.origins, 'pass', undefined, 'origins.pass');
   spy(log, r.checkpoints, 'pass', undefined, 'checkpoints.pass');
@@ -441,7 +448,7 @@ function auditSpies(f: ReturnType<typeof fixture>, overrides: { observe?: (...ar
 
 test('auditPass: maintenance, observation, recovery, replay, enqueue, quanta, notices, dispatch, titles', async t => {
   const f = fixture(t);
-  f.add({ phase: 'working', agentId: 'agent', agentActive: true, workspaceId: 'ws' });
+  f.add({ phase: 'working', agentId: 'agent', agentActive: true, workspaceId: 'ws', hostId: 'host' });
   const log = auditSpies(f);
   const pass = await f.internals.auditPass(false);
   assert.equal(pass.fault, null);

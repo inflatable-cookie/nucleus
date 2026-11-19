@@ -10,7 +10,7 @@ test('review admission records a recoverable wait for an unavailable origin host
     await engine.dispatchOwner.performReviewEntryAdmission(store.task(task.id));
     const waiting = store.task(task.id);
     assert.match(waiting.reason, /Waiting for origin host host/);
-    assert.equal(waiting.resolution.stop?.reason, 'lifecycle');
+    assert.equal(waiting.resolution.stop?.reason, 'origin_busy');
     assert.notEqual(waiting.phase, 'needs_attention');
     assert.equal(f.creates.length, 0);
     await engine.stop();
