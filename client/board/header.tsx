@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { Pressable, ScrollView, Text, View, useWindowDimensions } from "react-native";
 import { useQuery } from "@tanstack/react-query";
 import * as api from "../../shared/contracts";
 import type { UiQueueState } from "../../shared/contracts";
@@ -55,6 +55,7 @@ export type BoardHeaderProps = {
  */
 export function BoardHeader({ c, workspaceName, state, refetchState, busy, act, error, onDismissError, readError, staleRead, inset, settingsOpener, navigation, children }: BoardHeaderProps) {
   const workspacePanel = workspaceName !== undefined;
+  const { height: viewportHeight } = useWindowDimensions();
   const setQueue = useRpc(api.queueControl);
   const stopThreadsRpc = useRpc(api.stopThreads);
   const refresh = useRpc(api.refreshCatalog);
@@ -197,13 +198,8 @@ export function BoardHeader({ c, workspaceName, state, refetchState, busy, act, 
                       <Icon name={queueMenuOpen ? "ChevronUp" : "ChevronDown"} size={16} color={c.foreground} />
                     </Pressable>
                   </View>
-                  {queueMenuOpen && <View accessibilityRole="menu" accessibilityLabel="Queue controls" style={{ position: "absolute", top: controlSize.height + space.xxs / 2, right: 0, width: 260, borderWidth: 1, borderColor: c.border, borderRadius: radius.panel, backgroundColor: c.surface1,
+                  {queueMenuOpen && <View accessibilityRole="menu" accessibilityLabel="Queue controls" style={{ position: "absolute", top: controlSize.height + space.xxs / 2, right: 0, width: 260, maxHeight: Math.max(0, viewportHeight - inset - controlSize.height - space.lg), borderWidth: 1, borderColor: c.border, borderRadius: radius.panel, backgroundColor: c.surface1,
                     shadowColor: overlay.shadow, shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.38, shadowRadius: 14, elevation: 12 }}>
-                    {state && <View accessibilityRole="text" accessibilityLabel={state.drained ? "Drained" : `${state.boundRuns.length} bound run${state.boundRuns.length === 1 ? "" : "s"}`} style={{ paddingHorizontal: space.sm, paddingVertical: space.xs, borderBottomWidth: 1, borderBottomColor: c.border, gap: space.xxs }}>
-                      <Text style={{ color: c.foreground, fontSize: typeScale.metadata.fontSize, fontWeight: "600" }}>{state.drained ? "Drained" : `${state.boundRuns.length} bound run${state.boundRuns.length === 1 ? "" : "s"}`}</Text>
-                      {!state.drained && state.boundRuns.slice(0, 8).map(run =>
-                        <Text key={run.runId} numberOfLines={1} style={{ color: c.foregroundMuted, fontSize: typeScale.metadata.fontSize }}>{`${run.reference ?? run.taskId} · ${run.role}`}</Text>)}
-                    </View>}
                     {([
                       { key: "pause", icon: control.icon, label: state?.paused ? "Resume" : "Pause", run: () => { if (state) void act(() => setQueue({ paused: !state.paused })); } },
                       { key: "hold", icon: "Pause", label: state?.dispatchHeld ? "Release dispatch hold" : "Dispatch hold", run: () => { if (state) void act(() => setQueue({ dispatchHeld: !state.dispatchHeld })); } },
@@ -218,6 +214,11 @@ export function BoardHeader({ c, workspaceName, state, refetchState, busy, act, 
                       <Icon name={item.icon} size={14} color={c.foreground} />
                       <Text numberOfLines={1} style={{ color: c.foreground, fontSize: typeScale.body.fontSize }}>{item.label}</Text>
                     </Pressable>)}
+                    {state && <ScrollView accessibilityRole="text" accessibilityLabel={state.drained ? "Drained" : `${state.boundRuns.length} bound run${state.boundRuns.length === 1 ? "" : "s"}`} nestedScrollEnabled contentContainerStyle={{ gap: space.xxs }} style={{ paddingHorizontal: space.sm, paddingVertical: space.xs, borderTopWidth: 1, borderTopColor: c.border, flexShrink: 1, minHeight: 0, maxHeight: 320 }}>
+                      <Text style={{ color: c.foreground, fontSize: typeScale.metadata.fontSize, fontWeight: "600" }}>{state.drained ? "Drained" : `${state.boundRuns.length} bound run${state.boundRuns.length === 1 ? "" : "s"}`}</Text>
+                      {!state.drained && state.boundRuns.slice(0, 8).map(run =>
+                        <Text key={run.runId} numberOfLines={1} style={{ color: c.foregroundMuted, fontSize: typeScale.metadata.fontSize }}>{`${run.reference ?? run.taskId} · ${run.role}`}</Text>)}
+                    </ScrollView>}
                   </View>}
                 </View>
               ) : (

@@ -1113,8 +1113,8 @@ request identities and stored committed-handoff rows are not rewritten.
   icons beside it, with a chevron attached that opens a menu of Pause or Resume,
   Dispatch hold or Release dispatch hold, and Stop (Tom, 2026-11-05). Selecting a
   row performs that action immediately and closes the menu. The pause menu shows
-  how many runs are still bound and a `drained` flag; nothing new is added to the
-  header. Stop pauses, then stops active threads through `queue.stop-threads`.
+  how many runs are still bound and a `drained` flag below the actions, in a
+  scrollable list constrained to the viewport; nothing new is added to the header. Stop pauses, then stops active threads through `queue.stop-threads`.
   Pause and dispatch hold have separate one-click release controls and may both
   be on; pause wins.
 - Board dispatch hold is an operator-only persisted setting beside pause, read
