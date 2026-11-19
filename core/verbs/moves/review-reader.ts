@@ -136,15 +136,22 @@ export async function moveRetainedReader(
     delivery &&
     stoppedDeliveryResume(store, latestTask, reading, delivery).kind === "none";
   const reportRuns = store.runs(task.id);
-  const resultFenced = state === "awaiting" &&
-    reviewResultFencesRun(store, latestTask, reading);
+  const resultFenced =
+    state === "awaiting" && reviewResultFencesRun(store, latestTask, reading);
   if (resultFenced || state === "exhausted") {
-    const refusal = reviewerReportBindingRefusal(latestTask, reportRuns, reading);
+    const refusal = reviewerReportBindingRefusal(
+      latestTask,
+      reportRuns,
+      reading,
+    );
     if (refusal) throw new RestartRefusal(refusal);
   }
   if (
     !busy &&
-    (!reader || stoppedAfterDelivery || state === "exhausted" || resultFenced) &&
+    (!reader ||
+      stoppedAfterDelivery ||
+      state === "exhausted" ||
+      resultFenced) &&
     unreportedReviewer(latestTask, reportRuns)?.id === reading.id
   ) {
     const wait = engine.dispatchWaitsFor(

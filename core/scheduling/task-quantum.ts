@@ -24,7 +24,7 @@ import { startsNoRuns } from "../closeout/queue-drain";
 import { isDispositionActive } from "../../shared/contracts";
 import type { Resolution } from "../resolution";
 import { participantToolRunIds } from "../recovery/task-reasons";
-import { releasedRunDeliveryEvidence } from '../recovery/recovery-effects';
+import { releasedRunDeliveryEvidence } from "../recovery/recovery-effects";
 import { proofExecutionRunning } from "../qa/proof-admission";
 import { hookHoldReason } from "../hooks/hooks";
 import type { Engine } from "../engine";
@@ -85,10 +85,19 @@ export class TaskQuantum {
     const { adapter, resolution, store } = this.context;
     if (!adapter.originAgent || !adapter.agentTimelinePage) return;
     for (const run of store.runs(taskId)) {
-      if (!run.released || run.status !== 'uncertain' || !run.agentId || !run.workspaceId
-        || releasedRunDeliveryEvidence(store, run)) continue;
-      try { await resolution.reconcileUncertainRunDelivery(taskId, run.id); }
-      catch { /* An unreadable or changed timeline leaves this occurrence unknown. */ }
+      if (
+        !run.released ||
+        run.status !== "uncertain" ||
+        !run.agentId ||
+        !run.workspaceId ||
+        releasedRunDeliveryEvidence(store, run)
+      )
+        continue;
+      try {
+        await resolution.reconcileUncertainRunDelivery(taskId, run.id);
+      } catch {
+        /* An unreadable or changed timeline leaves this occurrence unknown. */
+      }
     }
   }
 

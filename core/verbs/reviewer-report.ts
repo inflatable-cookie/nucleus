@@ -180,7 +180,11 @@ export function unreportedReviewer(task: Task, runs: Run[]): Run | null {
 }
 
 /** A recorded result can lead to a report request only on a bound, reportable run. */
-export function reviewerReportBindingRefusal(task: Task, runs: Run[], run: Run): string | null {
+export function reviewerReportBindingRefusal(
+  task: Task,
+  runs: Run[],
+  run: Run,
+): string | null {
   return unreportedReviewer(task, runs)?.id === run.id
     ? null
     : `The retained reviewer report cannot be requested on run ${run.id} with its current status or binding`;

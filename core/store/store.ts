@@ -2294,7 +2294,9 @@ export class Store {
     project: Pick<Project, "planner"> | null | undefined,
   ): string | null {
     if (this.responsibleRecipient) {
-      return project && 'key' in project && typeof project.key === 'string' ? this.responsibleRecipient(project.key) : null;
+      return project && "key" in project && typeof project.key === "string"
+        ? this.responsibleRecipient(project.key)
+        : null;
     }
     return this.projectRegistry.projectPlannerRecipient(project);
   }
@@ -2485,16 +2487,25 @@ export class Store {
   }
   settleTaskPreSendReceipts(taskId: string): void {
     this.transaction(() => {
-      const rows = this.db.prepare(`SELECT id FROM operations WHERE taskId=? AND kind='task_control'
-        AND state='needs_attention' AND json_type(data,'$.preSendReceipt')='object'`).all(taskId);
-      for (const row of rows) this.preSendStore.settleTaskControlPreSend(String(row.id), taskId);
+      const rows = this.db
+        .prepare(
+          `SELECT id FROM operations WHERE taskId=? AND kind='task_control'
+        AND state='needs_attention' AND json_type(data,'$.preSendReceipt')='object'`,
+        )
+        .all(taskId);
+      for (const row of rows)
+        this.preSendStore.settleTaskControlPreSend(String(row.id), taskId);
     });
   }
   taskIdsWithPreSendReceipts(after: string, limit: number): string[] {
-    const rows = this.db.prepare(`SELECT DISTINCT taskId FROM operations
+    const rows = this.db
+      .prepare(
+        `SELECT DISTINCT taskId FROM operations
       WHERE kind='task_control' AND state='needs_attention' AND taskId>?
-        AND json_type(data,'$.preSendReceipt')='object' ORDER BY taskId LIMIT ?`).all(after, limit);
-    return rows.map(row => String(row.taskId));
+        AND json_type(data,'$.preSendReceipt')='object' ORDER BY taskId LIMIT ?`,
+      )
+      .all(after, limit);
+    return rows.map((row) => String(row.taskId));
   }
   operations(
     filter: {

@@ -34,21 +34,44 @@ function settleDroppedDeferredVerbStop(store: Store, taskId: string): void {
   const stop = task.resolution.stop;
   if (!stop?.detail.startsWith("Owner ") || stop.detail !== task.reason) return;
   const events = store.eventsAll(taskId);
-  const deferred = events.findLast(event => event.kind === "owner_verb_deferred");
+  const deferred = events.findLast(
+    (event) => event.kind === "owner_verb_deferred",
+  );
   if (!deferred) return;
   let recorded: { action?: string; why?: string };
-  try { recorded = JSON.parse(deferred.detail); } catch { return; }
-  if (!recorded.action || !recorded.why || deferredVerbReason(recorded.action, recorded.why) !== stop.detail) return;
-  const settled = events.find(event => event.id > deferred.id && event.at >= stop.since &&
-    (event.kind === "deferred_verb_refused" && event.detail.startsWith(`${recorded.action}: `)
-      || event.kind === "owner_verb_applied" && event.detail === recorded.action));
+  try {
+    recorded = JSON.parse(deferred.detail);
+  } catch {
+    return;
+  }
+  if (
+    !recorded.action ||
+    !recorded.why ||
+    deferredVerbReason(recorded.action, recorded.why) !== stop.detail
+  )
+    return;
+  const settled = events.find(
+    (event) =>
+      event.id > deferred.id &&
+      event.at >= stop.since &&
+      ((event.kind === "deferred_verb_refused" &&
+        event.detail.startsWith(`${recorded.action}: `)) ||
+        (event.kind === "owner_verb_applied" &&
+          event.detail === recorded.action)),
+  );
   if (!settled) return;
-  store.update(task.id, {
-    reason: settled.kind === "deferred_verb_refused"
-      ? `Recorded owner action is no longer applicable: ${settled.detail.slice(0, 1200)}`
-      : TASK_PROGRESSING_REASON,
-    resolution: { ...task.resolution, stop: null },
-  }, "deferred_verb_stop_cleared", String(settled.id));
+  store.update(
+    task.id,
+    {
+      reason:
+        settled.kind === "deferred_verb_refused"
+          ? `Recorded owner action is no longer applicable: ${settled.detail.slice(0, 1200)}`
+          : TASK_PROGRESSING_REASON,
+      resolution: { ...task.resolution, stop: null },
+    },
+    "deferred_verb_stop_cleared",
+    String(settled.id),
+  );
 }
 
 /**
@@ -156,14 +179,23 @@ export class DeferredOwnerVerbs {
       const oldReason = deferredVerbReason(deferred.input.action, deferred.why);
       const oldStop = current.resolution.stop;
       const ownsStop = oldStop?.detail === oldReason;
-      const reason = current.reason === oldReason
-        ? (!ownsStop && oldStop?.detail) || (kind === "deferred_verb_refused"
-          ? `Recorded owner action is no longer applicable: ${detail.slice(0, 1200)}`
-          : TASK_PROGRESSING_REASON)
-        : current.reason;
+      const reason =
+        current.reason === oldReason
+          ? (!ownsStop && oldStop?.detail) ||
+            (kind === "deferred_verb_refused"
+              ? `Recorded owner action is no longer applicable: ${detail.slice(0, 1200)}`
+              : TASK_PROGRESSING_REASON)
+          : current.reason;
       this.store.update(
         taskId,
-        { reason, resolution: { ...current.resolution, deferredVerb: null, ...(ownsStop ? { stop: null } : {}) } },
+        {
+          reason,
+          resolution: {
+            ...current.resolution,
+            deferredVerb: null,
+            ...(ownsStop ? { stop: null } : {}),
+          },
+        },
         kind,
         detail.slice(0, 2000),
       );
@@ -178,7 +210,8 @@ export class DeferredOwnerVerbs {
 
   /** Why a recorded verb's target no longer holds, or null. */
   private targetChanged(task: Task, target: DeferredVerbTarget): string | null {
-    if (["done", "cancelled"].includes(task.phase)) return `the task is ${task.phase}`;
+    if (["done", "cancelled"].includes(task.phase))
+      return `the task is ${task.phase}`;
     if (!target) return null;
     if (
       task.runId === target.runId &&
@@ -195,7 +228,10 @@ export class DeferredOwnerVerbs {
       run.reviewCheckpoints?.at(-1)?.ordinal !== target.checkpointOrdinal
     )
       return `checkpoint ${target.checkpointOrdinal} is no longer the latest`;
-    if (target.head !== undefined && (run.head !== target.head || task.prHead !== target.head))
+    if (
+      target.head !== undefined &&
+      (run.head !== target.head || task.prHead !== target.head)
+    )
       return `its head ${target.head} changed`;
     return null;
   }
@@ -423,8 +459,11 @@ export class DeferredOwnerVerbs {
         continue;
       }
       if (!deferred) {
-        await this.engine.scheduleLane(`task:${id}`, LANE_PRIORITY_TASK, async () =>
-          settleDroppedDeferredVerbStop(this.store, id));
+        await this.engine.scheduleLane(
+          `task:${id}`,
+          LANE_PRIORITY_TASK,
+          async () => settleDroppedDeferredVerbStop(this.store, id),
+        );
         continue;
       }
       if (

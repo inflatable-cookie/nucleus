@@ -37,12 +37,19 @@ export type CloseoutMoveInput = {
  * only with an explicit exact-final-head owner source acceptance; without that
  * acceptance the task stays held exactly as it is.
  */
-export async function moveToCloseout(engine: Engine, input: CloseoutMoveInput): Promise<Task> {
+export async function moveToCloseout(
+  engine: Engine,
+  input: CloseoutMoveInput,
+): Promise<Task> {
   const store = engine.store;
   const task = store.task(input.taskId);
   if (task.removedAt) throw Error(REMOVED_TASK_REFUSAL);
-  engine.requireOwnerControlCurrent(task, input.version, 'Task changed; refresh before retrying');
-  if (['done', 'cancelled'].includes(task.phase)) return task;
+  engine.requireOwnerControlCurrent(
+    task,
+    input.version,
+    "Task changed; refresh before retrying",
+  );
+  if (["done", "cancelled"].includes(task.phase)) return task;
   const stateRefusal = moveStateRefusal(task, "closeout");
   if (stateRefusal) throw Error(stateRefusal);
   // Task 408: the never-dispatched review-entry boundary. It is read fresh from
@@ -51,16 +58,29 @@ export async function moveToCloseout(engine: Engine, input: CloseoutMoveInput): 
   // carries no verified invocation identity and keeps the parent refusal without
   // allowing a forged exemption (task 404).
   const enclosing = input.enclosing?.();
-  const boundary = enclosing ? store.reviewEntryUnrunBeforeFirstRun(task, enclosing) : false;
+  const boundary = enclosing
+    ? store.reviewEntryUnrunBeforeFirstRun(task, enclosing)
+    : false;
   // An unverified caller gets the existing review-entry refusal at its
   // authorization boundary. The preview cannot grant that exemption.
   const reviewEntry = boundary || store.reviewEntryUnrunBeforeFirstRun(task);
-  const closeoutRefusal = closeoutMoveStateRefusal(task, reviewEntry, prIdentity(task));
+  const closeoutRefusal = closeoutMoveStateRefusal(
+    task,
+    reviewEntry,
+    prIdentity(task),
+  );
   if (closeoutRefusal) throw Error(closeoutRefusal);
-  if (task.resolution.mergedCommit) return resumeRecordedMerge(engine, task, input);
+  if (task.resolution.mergedCommit)
+    return resumeRecordedMerge(engine, task, input);
   const merge = {
-    task, reason: input.reason, caller: input.caller, qualification: input.qualification,
-    head: input.head, relayed: input.relayed, relayNote: input.relayNote, enclosing: input.enclosing ?? (() => undefined),
+    task,
+    reason: input.reason,
+    caller: input.caller,
+    qualification: input.qualification,
+    head: input.head,
+    relayed: input.relayed,
+    relayNote: input.relayNote,
+    enclosing: input.enclosing ?? (() => undefined),
   };
   if (boundary) return engine.reconcileReviewEntryExternalMerge(merge);
   if (input.qualification)
@@ -79,36 +99,95 @@ export async function moveToCloseout(engine: Engine, input: CloseoutMoveInput): 
   // acceptExternalMerge refuses an unmerged PR or an active thread before it
   // writes anything, and the fence settlement rides the accepted merge inside
   // its transaction.
-  await engine.resolution.acceptExternalMerge(store.task(task.id), input.reason, `move closeout: ${input.reason}`, engine.coordinatorActionRunId.getStore(), undefined, undefined, input.enclosing);
+  await engine.resolution.acceptExternalMerge(
+    store.task(task.id),
+    input.reason,
+    `move closeout: ${input.reason}`,
+    engine.coordinatorActionRunId.getStore(),
+    undefined,
+    undefined,
+    input.enclosing,
+  );
   return store.task(task.id);
 }
 
 /** Re-observe an already recorded merge, then re-enter the normal sync gate. */
-async function resumeRecordedMerge(engine: Engine, task: Task, input: CloseoutMoveInput): Promise<Task> {
-  if (input.head || input.qualification) throw Error('The recorded merge already has its source disposition; omit head and qualification');
-  const refusal = recordedCloseoutRefusal(task, engine.resolution.reviewRequired(task));
+async function resumeRecordedMerge(
+  engine: Engine,
+  task: Task,
+  input: CloseoutMoveInput,
+): Promise<Task> {
+  if (input.head || input.qualification)
+    throw Error(
+      "The recorded merge already has its source disposition; omit head and qualification",
+    );
+  const refusal = recordedCloseoutRefusal(
+    task,
+    engine.resolution.reviewRequired(task),
+  );
   if (refusal) throw Error(refusal);
-  if (!engine.resolution.adapter.externalMerge) throw Error('External merge verification is unavailable');
-  const store = engine.store, runs = store.runs(task.id), runIdentity = JSON.stringify(runs);
-  const finished = await engine.collectVerbFinishedRuns(task.id, () => false, { displace: true, settlesEpisode: true });
-  if (finished.fenced.length) throw Error(engine.displaceRefusal(finished.fenced[0]!));
-  if (finished.live.length) throw Error('A participant still has a live turn; stop it before closeout');
+  if (!engine.resolution.adapter.externalMerge)
+    throw Error("External merge verification is unavailable");
+  const store = engine.store,
+    runs = store.runs(task.id),
+    runIdentity = JSON.stringify(runs);
+  const finished = await engine.collectVerbFinishedRuns(task.id, () => false, {
+    displace: true,
+    settlesEpisode: true,
+  });
+  if (finished.fenced.length)
+    throw Error(engine.displaceRefusal(finished.fenced[0]!));
+  if (finished.live.length)
+    throw Error("A participant still has a live turn; stop it before closeout");
   const enclosing = input.enclosing?.();
-  const quiet = () => engine.resolution.executionLease(task, enclosing, false, true);
-  if (!await quiet()) throw Error('Task participants or effects are not settled; no closeout was started');
-  const observed = await engine.resolution.externalMerge.observeRecordedMerge(task);
+  const quiet = () =>
+    engine.resolution.executionLease(task, enclosing, false, true);
+  if (!(await quiet()))
+    throw Error(
+      "Task participants or effects are not settled; no closeout was started",
+    );
+  const observed =
+    await engine.resolution.externalMerge.observeRecordedMerge(task);
   const head = task.resolution.mergeHead;
-  if (!observed || !head || observed.head !== head || observed.commit !== task.resolution.mergedCommit)
-    throw Error('The forge merge does not match the recorded head and commit');
-  if (!await quiet()) throw Error('Task participants or effects changed while observing the merge');
+  if (
+    !observed ||
+    !head ||
+    observed.head !== head ||
+    observed.commit !== task.resolution.mergedCommit
+  )
+    throw Error("The forge merge does not match the recorded head and commit");
+  if (!(await quiet()))
+    throw Error(
+      "Task participants or effects changed while observing the merge",
+    );
   return store.transaction(() => {
     const current = store.task(task.id);
-    engine.requireOwnerControlCurrent(current, task.version, 'Task changed during merge observation; refresh before retrying');
-    if (JSON.stringify(store.runs(task.id)) !== runIdentity) throw Error('Task or run changed during merge observation');
-    engine.releaseDisplacedRunsInTx(task.id, finished.settleable.map(run => run.id), `move closeout: ${input.reason}`);
-    settleSupersededFencesInTx(store, task.id, `move closeout: ${input.reason}`, now(), engine.coordinatorActionRunId.getStore());
-    return engine.resolution.closeout.continueRecordedMerge(store.task(task.id), {
-      kind: 'owner', reason: input.reason, refresh: Boolean(task.resolution.syncedCommit),
-    });
+    engine.requireOwnerControlCurrent(
+      current,
+      task.version,
+      "Task changed during merge observation; refresh before retrying",
+    );
+    if (JSON.stringify(store.runs(task.id)) !== runIdentity)
+      throw Error("Task or run changed during merge observation");
+    engine.releaseDisplacedRunsInTx(
+      task.id,
+      finished.settleable.map((run) => run.id),
+      `move closeout: ${input.reason}`,
+    );
+    settleSupersededFencesInTx(
+      store,
+      task.id,
+      `move closeout: ${input.reason}`,
+      now(),
+      engine.coordinatorActionRunId.getStore(),
+    );
+    return engine.resolution.closeout.continueRecordedMerge(
+      store.task(task.id),
+      {
+        kind: "owner",
+        reason: input.reason,
+        refresh: Boolean(task.resolution.syncedCommit),
+      },
+    );
   });
 }

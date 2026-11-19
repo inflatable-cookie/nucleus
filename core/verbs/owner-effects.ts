@@ -646,9 +646,21 @@ export function ownerPendingEffects(facts: OwnerVerbFacts): OwnerEffect[] {
             ? null
             : `${blocking.kind}.${blocking.identity}`;
     if (!key || effects.some((item) => item.effect === key)) continue;
-    const operation = blocking.kind === "operation" ? store.operation(blocking.identity) : null;
-    const refusal = operation && !(operation.result && operation.effect?.status === "reconciled" && operation.state === "needs_attention")
-      ? uncertainOperationRetryRefusal(blocking.identity, blocking.state, blocking.reason) : null;
+    const operation =
+      blocking.kind === "operation" ? store.operation(blocking.identity) : null;
+    const refusal =
+      operation &&
+      !(
+        operation.result &&
+        operation.effect?.status === "reconciled" &&
+        operation.state === "needs_attention"
+      )
+        ? uncertainOperationRetryRefusal(
+            blocking.identity,
+            blocking.state,
+            blocking.reason,
+          )
+        : null;
     effects.push({
       effect: key,
       kind: "recovery_effect",
@@ -698,7 +710,10 @@ export function ownerPendingEffects(facts: OwnerVerbFacts): OwnerEffect[] {
 }
 
 /** Stored applicability shared by the read view and the ordinary retry. */
-export function ownerEffectRetryRefusal(facts: OwnerVerbFacts, item: OwnerEffect): string | null {
+export function ownerEffectRetryRefusal(
+  facts: OwnerVerbFacts,
+  item: OwnerEffect,
+): string | null {
   const { task, runs } = facts;
   if (item.refusal) return item.refusal;
   const operationId = ownerEffectIdentity(item.effect, "operation");
@@ -711,22 +726,32 @@ export function ownerEffectRetryRefusal(facts: OwnerVerbFacts, item: OwnerEffect
     return `${item.summary}. Waiting for the sweep to observe its target.`;
 
   const runId = ownerEffectIdentity(item.effect, "run-delivery");
-  if (runId && runs.some(run => run.id === runId && run.released))
+  if (runId && runs.some((run) => run.id === runId && run.released))
     return `run-delivery ${runId} remains uncertain. Nucleus checks the released run's exact timeline on a sweep`;
-  if (runId && !runs.some(run => run.id === runId && run.agentId && run.workspaceId))
+  if (
+    runId &&
+    !runs.some((run) => run.id === runId && run.agentId && run.workspaceId)
+  )
     return `run-delivery ${runId}: the original agent and workspace are unknown; Nucleus rechecks creation on a sweep`;
-  if (item.effect.startsWith("project-validation.") &&
-    (task.resolution.projectValidation?.state === "running" || !task.resolution.attention))
+  if (
+    item.effect.startsWith("project-validation.") &&
+    (task.resolution.projectValidation?.state === "running" ||
+      !task.resolution.attention)
+  )
     return `${item.effect}: validation is still running; a planner or operator can force settlement with a reason`;
   if (!item.effect.startsWith("review_publication.")) return null;
-  const refusal = item.kind !== "review_publication"
-    ? "no released accepted ordinary verdict at the current PR head can be published"
-    : runs.some(run => !run.released && run.id !== facts.reportingRunId)
-      ? "a retained run must finish and release before publication"
-      : ["done", "cancelled"].includes(task.phase) || task.resolution.mergeIntent ||
-        task.resolution.mergedCommit || isDispositionActive(task) || task.removedAt
-        ? "the task is terminal, merging, removed or under disposition"
-        : null;
+  const refusal =
+    item.kind !== "review_publication"
+      ? "no released accepted ordinary verdict at the current PR head can be published"
+      : runs.some((run) => !run.released && run.id !== facts.reportingRunId)
+        ? "a retained run must finish and release before publication"
+        : ["done", "cancelled"].includes(task.phase) ||
+            task.resolution.mergeIntent ||
+            task.resolution.mergedCommit ||
+            isDispositionActive(task) ||
+            task.removedAt
+          ? "the task is terminal, merging, removed or under disposition"
+          : null;
   return refusal ? `${item.effect}: ${item.summary}; ${refusal}` : null;
 }
 
@@ -778,9 +803,13 @@ function effectViews(facts: OwnerVerbFacts): TaskNextVerb[] {
         summary: `${item.summary}; ${matching.map((wait) => `thread ${wait.agentId}: ${wait.reason}`).join("; ")}`,
       };
     const refusal = ownerEffectRetryRefusal(facts, item);
-    if (refusal) return taskNextVerbSchema.parse({
-      verb: "retry_effect", action: "retry_effect", available: false, refusal,
-    });
+    if (refusal)
+      return taskNextVerbSchema.parse({
+        verb: "retry_effect",
+        action: "retry_effect",
+        available: false,
+        refusal,
+      });
     const held =
       item.kind === "hook" &&
       facts.hookRecords.find(
@@ -838,9 +867,16 @@ export const retryEffect: OwnerVerb = {
   }),
   applicable: (facts) => {
     const pending = ownerPendingEffects(facts);
-    const effects = pending.filter(item => !ownerEffectRetryRefusal(facts, item));
+    const effects = pending.filter(
+      (item) => !ownerEffectRetryRefusal(facts, item),
+    );
     if (!effects.length)
-      return { available: false, refusal: pending.length ? ownerEffectRetryRefusal(facts, pending[0]!)! : NO_PENDING_EFFECT_REFUSAL };
+      return {
+        available: false,
+        refusal: pending.length
+          ? ownerEffectRetryRefusal(facts, pending[0]!)!
+          : NO_PENDING_EFFECT_REFUSAL,
+      };
     if (effects.length === 1)
       return { available: true, args: { effect: effects[0].effect } };
     return { available: true, fill: ["effect"], args: {} };

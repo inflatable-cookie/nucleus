@@ -518,7 +518,11 @@ export function ownerTaskStop(facts: OwnerVerbFacts): TaskNextStop | null {
       evidence: "Board dispatch hold",
       since: task.updatedAt,
     };
-  const wait = taskDetailView(task, taskWaitStateContext(facts.store, task, null), runs).waitState;
+  const wait = taskDetailView(
+    task,
+    taskWaitStateContext(facts.store, task, null),
+    runs,
+  ).waitState;
   const kind = taskStopKind(task, runs, budget, wait);
   if (!kind) return null;
   const stored = currentTaskStop(task, budget);

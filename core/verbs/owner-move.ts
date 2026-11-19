@@ -1,4 +1,7 @@
-import { reviewerReportBindingRefusal, reviewerReportRequestRefusal } from "./reviewer-report";
+import {
+  reviewerReportBindingRefusal,
+  reviewerReportRequestRefusal,
+} from "./reviewer-report";
 import {
   MOVE_WORK_AUTHOR_REFUSAL,
   MOVE_WORK_REPLACEMENT_REFUSAL,
@@ -314,8 +317,9 @@ function moveViews(facts: OwnerVerbFacts): TaskNextVerb[] {
         (state === "awaiting" &&
           reviewResultFencesRun(facts.store, task, reader))
       ) {
-        const reportRefusal = reviewerReportBindingRefusal(task, runs, reader)
-          ?? reviewerReportRequestRefusal(reader, facts.events);
+        const reportRefusal =
+          reviewerReportBindingRefusal(task, runs, reader) ??
+          reviewerReportRequestRefusal(reader, facts.events);
         return reportRefusal
           ? { available: false, refusal: reportRefusal }
           : {
@@ -456,10 +460,18 @@ function moveViews(facts: OwnerVerbFacts): TaskNextVerb[] {
   // store-only fact is the one the dependency correction reads; the applied
   // move still proves the merge, the descendant heads, the
   // accepting authority and fresh inactivity.
-  const neverDispatchedReviewEntry = task.phase === "queued" && Boolean(task.reviewEntry) && facts.store.reviewEntryUnrunBeforeFirstRun(task);
-  const closeout = ((): (OwnerVerbApplicability & { note?: string }) => {
-    const shared = gate("closeout"); if (shared) return shared;
-    const stored = closeoutMoveStateRefusal(task, neverDispatchedReviewEntry, prIdentity(task));
+  const neverDispatchedReviewEntry =
+    task.phase === "queued" &&
+    Boolean(task.reviewEntry) &&
+    facts.store.reviewEntryUnrunBeforeFirstRun(task);
+  const closeout = ((): OwnerVerbApplicability & { note?: string } => {
+    const shared = gate("closeout");
+    if (shared) return shared;
+    const stored = closeoutMoveStateRefusal(
+      task,
+      neverDispatchedReviewEntry,
+      prIdentity(task),
+    );
     if (stored) return { available: false, refusal: stored };
     if (neverDispatchedReviewEntry)
       return {
@@ -468,7 +480,10 @@ function moveViews(facts: OwnerVerbFacts): TaskNextVerb[] {
         note: "This task never dispatched and its PR merged outside Nucleus: no reviewer, review, verification or proof exists at the merged head, and the merge is an observed fact, never acceptance. move closeout observes the merged head, branch and merge commit at the forge, proves the merged head descends from the intake and recorded source heads, and records your explicit operator source acceptance (qualification) of that exact head with the missing evidence; without it the task stays held.",
       };
     if (task.resolution.mergedCommit) {
-      const evidence = recordedCloseoutRefusal(task, reviewRequiredForTask(facts.store, task));
+      const evidence = recordedCloseoutRefusal(
+        task,
+        reviewRequiredForTask(facts.store, task),
+      );
       if (evidence) return { available: false, refusal: evidence };
       const refusal =
         durableRunFence(facts) ?? closeoutEffectRefusal(facts.store, task);

@@ -1,7 +1,29 @@
-import { DEFAULT_PASEO_CALL_LIMIT, MAX_PASEO_CALL_LIMIT, type Run } from "../../shared/contracts";
-import { queueOperationSchema, DEFAULT_OPERATION_LIMIT, MAX_OPERATION_LIMIT, OPERATION_BACKPRESSURE_RETRY_MS, type OperationAcceptance, type QueueOperation } from "../../shared/operations";
-import { StoreCore, now, operationIdForKey, operationInputHash } from "./store-core";
-import { hasReviewerDelivery, operationIdMatchesKey, payloadMatchesInputHash, preSendSettlementIdentity, provedPreSendHistory } from "./store-pre-send";
+import {
+  DEFAULT_PASEO_CALL_LIMIT,
+  MAX_PASEO_CALL_LIMIT,
+  type Run,
+} from "../../shared/contracts";
+import {
+  queueOperationSchema,
+  DEFAULT_OPERATION_LIMIT,
+  MAX_OPERATION_LIMIT,
+  OPERATION_BACKPRESSURE_RETRY_MS,
+  type OperationAcceptance,
+  type QueueOperation,
+} from "../../shared/operations";
+import {
+  StoreCore,
+  now,
+  operationIdForKey,
+  operationInputHash,
+} from "./store-core";
+import {
+  hasReviewerDelivery,
+  operationIdMatchesKey,
+  payloadMatchesInputHash,
+  preSendSettlementIdentity,
+  provedPreSendHistory,
+} from "./store-pre-send";
 
 interface OperationTaskAccess {
   taskChanged(taskId: string): void;
@@ -16,58 +38,103 @@ interface OperationTaskAccess {
  * `StorePendingSubmissions`.
  */
 export class StoreOperations {
-  constructor(private readonly core: StoreCore, private readonly access: OperationTaskAccess) {}
+  constructor(
+    private readonly core: StoreCore,
+    private readonly access: OperationTaskAccess,
+  ) {}
 
   /** The stored row with its task's current number attached; a row without a task is returned as stored. */
   numberedOperation(data: string): QueueOperation {
     const operation = queueOperationSchema.parse(JSON.parse(data));
     if (!operation.result?.taskId) return operation;
     const number = this.access.numberForCached(operation.result.taskId);
-    return number ? { ...operation, result: { ...operation.result, ...number } } : operation;
+    return number
+      ? { ...operation, result: { ...operation.result, ...number } }
+      : operation;
   }
 
   operationForKey(key: string): QueueOperation | null {
-    const row = this.core.db.prepare("SELECT data FROM operations WHERE key=?").get(key);
+    const row = this.core.db
+      .prepare("SELECT data FROM operations WHERE key=?")
+      .get(key);
     return row ? this.numberedOperation(String(row.data)) : null;
   }
 
   operation(id: string): QueueOperation | null {
-    const row = this.core.db.prepare("SELECT data FROM operations WHERE id=?").get(id);
+    const row = this.core.db
+      .prepare("SELECT data FROM operations WHERE id=?")
+      .get(id);
     return row ? this.numberedOperation(String(row.data)) : null;
   }
 
   /** Stored command payload for an accepted operation; never leaves the server boundary. */
   operationPayload(id: string): unknown {
-    const row = this.core.db.prepare("SELECT payload FROM operations WHERE id=?").get(id);
+    const row = this.core.db
+      .prepare("SELECT payload FROM operations WHERE id=?")
+      .get(id);
     return row ? JSON.parse(String(row.payload)) : null;
   }
 
   /** Bounded operation reads; only unfinished work is scanned by default. */
-  operations(filter: { states?: QueueOperation["state"][]; taskId?: string; limit?: number } = {}): QueueOperation[] {
+  operations(
+    filter: {
+      states?: QueueOperation["state"][];
+      taskId?: string;
+      limit?: number;
+    } = {},
+  ): QueueOperation[] {
     const limit = Math.min(Math.max(filter.limit ?? 200, 1), 1000);
-    const clauses: string[] = []; const params: string[] = [];
-    if (filter.states?.length) { clauses.push(`state IN (${filter.states.map(() => "?").join(",")})`); params.push(...filter.states); }
-    if (filter.taskId) { clauses.push("taskId=?"); params.push(filter.taskId); }
+    const clauses: string[] = [];
+    const params: string[] = [];
+    if (filter.states?.length) {
+      clauses.push(`state IN (${filter.states.map(() => "?").join(",")})`);
+      params.push(...filter.states);
+    }
+    if (filter.taskId) {
+      clauses.push("taskId=?");
+      params.push(filter.taskId);
+    }
     const where = clauses.length ? ` WHERE ${clauses.join(" AND ")}` : "";
-    return this.core.db.prepare(`SELECT data FROM operations${where} ORDER BY rowid LIMIT ?`).all(...params, limit)
-      .map(row => this.numberedOperation(String(row.data)));
+    return this.core.db
+      .prepare(`SELECT data FROM operations${where} ORDER BY rowid LIMIT ?`)
+      .all(...params, limit)
+      .map((row) => this.numberedOperation(String(row.data)));
   }
 
   /** Exact source lookup must not lose unknown delivery behind the bounded inspection page. */
-  unfinishedSourcePromotion(source: { kind: "lead" | "papercut"; id: string; repository: string; version: number | null; digest: string }): QueueOperation | null {
-    const row = this.core.db.prepare(`SELECT data FROM operations WHERE kind='source_promote'
+  unfinishedSourcePromotion(source: {
+    kind: "lead" | "papercut";
+    id: string;
+    repository: string;
+    version: number | null;
+    digest: string;
+  }): QueueOperation | null {
+    const row = this.core.db
+      .prepare(
+        `SELECT data FROM operations WHERE kind='source_promote'
       AND state IN ('pending','running','needs_attention')
       AND json_extract(payload,'$.source.kind')=? AND json_extract(payload,'$.source.id')=?
       AND json_extract(payload,'$.source.repository')=? AND json_extract(payload,'$.source.version') IS ?
-      AND json_extract(payload,'$.source.digest')=? ORDER BY rowid LIMIT 1`)
-      .get(source.kind, source.id, source.repository, source.version, source.digest);
+      AND json_extract(payload,'$.source.digest')=? ORDER BY rowid LIMIT 1`,
+      )
+      .get(
+        source.kind,
+        source.id,
+        source.repository,
+        source.version,
+        source.digest,
+      );
     return row ? this.numberedOperation(String(row.data)) : null;
   }
 
   /** Source promotions whose running delivery was interrupted and needs store-based reconciliation. */
   sourcePromotionsForReconciliation(): QueueOperation[] {
-    return this.core.db.prepare("SELECT data FROM operations WHERE kind='source_promote' AND state IN ('running','needs_attention') ORDER BY rowid")
-      .all().map(row => this.numberedOperation(String(row.data)));
+    return this.core.db
+      .prepare(
+        "SELECT data FROM operations WHERE kind='source_promote' AND state IN ('running','needs_attention') ORDER BY rowid",
+      )
+      .all()
+      .map((row) => this.numberedOperation(String(row.data)));
   }
 
   /**
@@ -80,18 +147,30 @@ export class StoreOperations {
     // the two OR branches with MULTI-INDEX OR (`operations_submission` and `operations_state`)
     // instead of scanning every retained operation. Settled history for any other submission
     // is never read, and the rows returned are exactly the pre-change query's rows.
-    return this.core.db.prepare("SELECT data FROM operations WHERE state != 'failed' AND (json_extract(data,'$.submissionId')=? OR state IN ('pending','running','needs_attention')) ORDER BY rowid")
-      .all(submissionId).map(row => this.numberedOperation(String(row.data)));
+    return this.core.db
+      .prepare(
+        "SELECT data FROM operations WHERE state != 'failed' AND (json_extract(data,'$.submissionId')=? OR state IN ('pending','running','needs_attention')) ORDER BY rowid",
+      )
+      .all(submissionId)
+      .map((row) => this.numberedOperation(String(row.data)));
   }
 
   /** Unfinished operation count used for admission and compact UI state. */
   operationBacklog(): number {
-    return Number(this.core.db.prepare("SELECT COUNT(*) AS n FROM operations WHERE state IN ('pending','running')").get()!.n);
+    return Number(
+      this.core.db
+        .prepare(
+          "SELECT COUNT(*) AS n FROM operations WHERE state IN ('pending','running')",
+        )
+        .get()!.n,
+    );
   }
 
   configuredOperationLimit(): number {
     const configured = this.core.getMeta<number>("operationLimit");
-    return configured === undefined ? DEFAULT_OPERATION_LIMIT : Math.min(Math.max(configured, 1), MAX_OPERATION_LIMIT);
+    return configured === undefined
+      ? DEFAULT_OPERATION_LIMIT
+      : Math.min(Math.max(configured, 1), MAX_OPERATION_LIMIT);
   }
 
   /**
@@ -101,27 +180,57 @@ export class StoreOperations {
    */
   configuredPaseoCallLimit(): number {
     const configured = this.core.getMeta<number>("paseoCallLimit");
-    if (configured === undefined || !Number.isFinite(configured)) return DEFAULT_PASEO_CALL_LIMIT;
+    if (configured === undefined || !Number.isFinite(configured))
+      return DEFAULT_PASEO_CALL_LIMIT;
     return Math.min(Math.max(Math.trunc(configured), 1), MAX_PASEO_CALL_LIMIT);
   }
 
   putOperation(operation: QueueOperation, payload?: unknown): QueueOperation {
     let next = queueOperationSchema.parse(operation);
-    const previous = this.core.db.prepare("SELECT taskId,data FROM operations WHERE id=?").get(next.id);
+    const previous = this.core.db
+      .prepare("SELECT taskId,data FROM operations WHERE id=?")
+      .get(next.id);
     const previousTaskId = previous?.taskId;
-    const previousData = previous ? JSON.parse(String(previous.data)) as {hostId?: unknown; hostSelection?: QueueOperation['hostSelection']} : undefined;
+    const previousData = previous
+      ? (JSON.parse(String(previous.data)) as {
+          hostId?: unknown;
+          hostSelection?: QueueOperation["hostSelection"];
+        })
+      : undefined;
     const previousHost: unknown = previousData?.hostId;
-    if (typeof previousHost === "string" && previousHost) next = { ...next, hostId: previousHost };
-    else if (previous && next.hostId) throw new Error("Operation host cannot be assigned by an ordinary update");
-    if (previousData?.hostSelection) next = { ...next, hostSelection: previousData.hostSelection };
-    else if (previous && next.hostSelection) throw new Error('Operation host selection cannot be assigned by an ordinary update');
+    if (typeof previousHost === "string" && previousHost)
+      next = { ...next, hostId: previousHost };
+    else if (previous && next.hostId)
+      throw new Error(
+        "Operation host cannot be assigned by an ordinary update",
+      );
+    if (previousData?.hostSelection)
+      next = { ...next, hostSelection: previousData.hostSelection };
+    else if (previous && next.hostSelection)
+      throw new Error(
+        "Operation host selection cannot be assigned by an ordinary update",
+      );
     const stored = payload === undefined ? null : JSON.stringify(payload);
-    this.core.db.prepare(`INSERT INTO operations(id,key,kind,inputHash,state,taskId,createdAt,payload,data) VALUES(?,?,?,?,?,?,?,?,?)
-      ON CONFLICT(id) DO UPDATE SET state=excluded.state,taskId=excluded.taskId,data=excluded.data${payload === undefined ? "" : ",payload=excluded.payload"}`)
-      .run(next.id, next.key, next.kind, next.inputHash, next.state, next.taskId, next.createdAt, stored ?? "null", JSON.stringify(next));
+    this.core.db
+      .prepare(
+        `INSERT INTO operations(id,key,kind,inputHash,state,taskId,createdAt,payload,data) VALUES(?,?,?,?,?,?,?,?,?)
+      ON CONFLICT(id) DO UPDATE SET state=excluded.state,taskId=excluded.taskId,data=excluded.data${payload === undefined ? "" : ",payload=excluded.payload"}`,
+      )
+      .run(
+        next.id,
+        next.key,
+        next.kind,
+        next.inputHash,
+        next.state,
+        next.taskId,
+        next.createdAt,
+        stored ?? "null",
+        JSON.stringify(next),
+      );
     this.core.advanceRevision();
     if (previousTaskId) this.access.taskChanged(String(previousTaskId));
-    if (next.taskId && next.taskId !== previousTaskId) this.access.taskChanged(next.taskId);
+    if (next.taskId && next.taskId !== previousTaskId)
+      this.access.taskChanged(next.taskId);
     return next;
   }
 
@@ -131,42 +240,106 @@ export class StoreOperations {
    * reusing the key with different input fails closed before any remote work.
    * Saturation returns typed backpressure instead of storing an unserviceable operation.
    */
-  acceptOperation(input: { key: string; kind: QueueOperation["kind"]; inputHash: string; taskId?: string | null; expectedVersion?: number | null; repoPath?: string | null; submissionId?: string | null; hostId?: string; hostSelection?: QueueOperation['hostSelection']; payload: unknown }, at = now()): OperationAcceptance {
+  acceptOperation(
+    input: {
+      key: string;
+      kind: QueueOperation["kind"];
+      inputHash: string;
+      taskId?: string | null;
+      expectedVersion?: number | null;
+      repoPath?: string | null;
+      submissionId?: string | null;
+      hostId?: string;
+      hostSelection?: QueueOperation["hostSelection"];
+      payload: unknown;
+    },
+    at = now(),
+  ): OperationAcceptance {
     const id = operationIdForKey(input.key);
     return this.core.transaction(() => {
-      const row = this.core.db.prepare("SELECT data FROM operations WHERE key=?").get(input.key);
+      const row = this.core.db
+        .prepare("SELECT data FROM operations WHERE key=?")
+        .get(input.key);
       if (row) {
         const existing = this.numberedOperation(String(row.data));
-        if (existing.inputHash !== input.inputHash) throw new Error("Operation key already used with different input");
-        if (existing.state !== "failed") return { accepted: true as const, operation: existing };
-        if (existing.preSendReceipt && existing.preSendReconciledAt && this.core.db.prepare(
-          "SELECT 1 FROM events WHERE taskId=? AND kind='operation_pre_send_refused' AND detail=? LIMIT 1",
-        ).get(existing.taskId, preSendSettlementIdentity(existing)))
+        if (existing.inputHash !== input.inputHash)
+          throw new Error("Operation key already used with different input");
+        if (existing.state !== "failed")
+          return { accepted: true as const, operation: existing };
+        if (
+          existing.preSendReceipt &&
+          existing.preSendReconciledAt &&
+          this.core.db
+            .prepare(
+              "SELECT 1 FROM events WHERE taskId=? AND kind='operation_pre_send_refused' AND detail=? LIMIT 1",
+            )
+            .get(existing.taskId, preSendSettlementIdentity(existing))
+        )
           return { accepted: true as const, operation: existing };
         const saturated = this.backpressure();
         if (saturated) return saturated;
-        const history = existing.preSendReceipt ? [...(existing.preSendHistory ?? []), {
-          receipt: existing.preSendReceipt, effect: existing.effect, diagnostic: existing.diagnostic,
-          settledAt: existing.settledAt, reconciledAt: existing.preSendReconciledAt ?? null,
-        }] : existing.preSendHistory;
-        if (existing.preSendReceipt && (!provedPreSendHistory({ ...existing, preSendHistory: history }, existing.attempts)
-            || !operationIdMatchesKey(existing) || operationInputHash(input.payload) !== existing.inputHash
-            || !payloadMatchesInputHash(this.operationPayload(existing.id), existing.inputHash)
-            || hasReviewerDelivery(this.access.runs(existing.taskId!), existing.id)))
-          throw new Error("The previous pre-send receipt or delivery evidence conflicts; no retry was admitted");
-        const reopened = this.putOperation({ ...existing, state: "pending", startedAt: null, settledAt: null,
-          diagnostic: "", result: null, effect: null, preSendBoundaryStartedAt: null,
-          preSendReceipt: null, preSendReconciledAt: null, ...(history ? { preSendHistory: history } : {}) });
+        const history = existing.preSendReceipt
+          ? [
+              ...(existing.preSendHistory ?? []),
+              {
+                receipt: existing.preSendReceipt,
+                effect: existing.effect,
+                diagnostic: existing.diagnostic,
+                settledAt: existing.settledAt,
+                reconciledAt: existing.preSendReconciledAt ?? null,
+              },
+            ]
+          : existing.preSendHistory;
+        if (
+          existing.preSendReceipt &&
+          (!provedPreSendHistory(
+            { ...existing, preSendHistory: history },
+            existing.attempts,
+          ) ||
+            !operationIdMatchesKey(existing) ||
+            operationInputHash(input.payload) !== existing.inputHash ||
+            !payloadMatchesInputHash(
+              this.operationPayload(existing.id),
+              existing.inputHash,
+            ) ||
+            hasReviewerDelivery(
+              this.access.runs(existing.taskId!),
+              existing.id,
+            ))
+        )
+          throw new Error(
+            "The previous pre-send receipt or delivery evidence conflicts; no retry was admitted",
+          );
+        const reopened = this.putOperation({
+          ...existing,
+          state: "pending",
+          startedAt: null,
+          settledAt: null,
+          diagnostic: "",
+          result: null,
+          effect: null,
+          preSendBoundaryStartedAt: null,
+          preSendReceipt: null,
+          preSendReconciledAt: null,
+          ...(history ? { preSendHistory: history } : {}),
+        });
         return { accepted: true as const, operation: reopened };
       }
       const saturated = this.backpressure();
       if (saturated) return saturated;
       const operation = queueOperationSchema.parse({
-        id, key: input.key, kind: input.kind, inputHash: input.inputHash, state: "pending",
+        id,
+        key: input.key,
+        kind: input.kind,
+        inputHash: input.inputHash,
+        state: "pending",
         ...(input.hostId ? { hostId: input.hostId } : {}),
         ...(input.hostSelection ? { hostSelection: input.hostSelection } : {}),
-        taskId: input.taskId ?? null, expectedVersion: input.expectedVersion ?? null,
-        repoPath: input.repoPath ?? null, submissionId: input.submissionId ?? null, createdAt: at,
+        taskId: input.taskId ?? null,
+        expectedVersion: input.expectedVersion ?? null,
+        repoPath: input.repoPath ?? null,
+        submissionId: input.submissionId ?? null,
+        createdAt: at,
       });
       this.putOperation(operation, input.payload);
       return { accepted: true as const, operation };
@@ -178,6 +351,11 @@ export class StoreOperations {
     const limit = this.configuredOperationLimit();
     const backlog = this.operationBacklog();
     if (backlog < limit) return null;
-    return { backpressured: true as const, pending: backlog, retryAfterMs: OPERATION_BACKPRESSURE_RETRY_MS, reason: `Queue operation backlog ${backlog} reached the configured bound of ${limit}; retry after the queue drains` };
+    return {
+      backpressured: true as const,
+      pending: backlog,
+      retryAfterMs: OPERATION_BACKPRESSURE_RETRY_MS,
+      reason: `Queue operation backlog ${backlog} reached the configured bound of ${limit}; retry after the queue drains`,
+    };
   }
 }

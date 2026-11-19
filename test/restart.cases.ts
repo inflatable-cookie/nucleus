@@ -371,7 +371,8 @@ async function parkedRestartEvidence(f: ReturnType<typeof fixture>) {
 test("a parked restart refusal keeps its execution proof and reconciles only that unchanged occurrence", async () => {
   const f = fixture();
   try {
-    const { before, runs, control, key, payload, failed, at } = await parkedRestartEvidence(f);
+    const { before, runs, control, key, payload, failed, at } =
+      await parkedRestartEvidence(f);
     const input = operationStatus.input.parse({
       operationId: failed.id,
       reconcilePreSendInputHash: failed.inputHash,
@@ -521,45 +522,78 @@ test("a parked restart refusal keeps its execution proof and reconciles only tha
   }
 });
 
-for (const variant of ["unchanged", "changed run", "changed caller", "changed head", "missing receipt"] as const) {
+for (const variant of [
+  "unchanged",
+  "changed run",
+  "changed caller",
+  "changed head",
+  "missing receipt",
+] as const) {
   test(`sweep settles a parked restart receipt only with its exact evidence (${variant})`, async () => {
     const f = fixture();
     try {
-      const { runs, control, key, payload, failed } = await parkedRestartEvidence(f);
+      const { runs, control, key, payload, failed } =
+        await parkedRestartEvidence(f);
       const proof = failed.preSendReceipt!;
-      f.store.putOperation({ ...failed, state: "running", settledAt: null, diagnostic: "", effect: proof.effect,
-        ...(variant === "missing receipt" ? { preSendReceipt: null } : {}) });
+      f.store.putOperation({
+        ...failed,
+        state: "running",
+        settledAt: null,
+        diagnostic: "",
+        effect: proof.effect,
+        ...(variant === "missing receipt" ? { preSendReceipt: null } : {}),
+      });
       f.engine.resumeOperations();
       const held = await f.engine.awaitOperation(failed.id);
       assert.equal(held.state, "needs_attention");
       if (variant === "changed caller")
-        f.store.putOperation(held, { ...payload, control: { ...control, caller: "another-thread" } });
-      if (variant === "changed run") f.store.putRun({ ...runs[0]!, active: false });
-      if (variant === "changed head") f.store.update(f.taskId, { prHead: "d".repeat(40) });
+        f.store.putOperation(held, {
+          ...payload,
+          control: { ...control, caller: "another-thread" },
+        });
+      if (variant === "changed run")
+        f.store.putRun({ ...runs[0]!, active: false });
+      if (variant === "changed head")
+        f.store.update(f.taskId, { prHead: "d".repeat(40) });
 
       f.engine.hostAvailable = () => false;
       assert.equal((await f.engine.auditPass(true)).fault, null);
       const swept = f.store.operation(held.id)!;
-      assert.equal(swept.state, variant === "unchanged" ? "failed" : "needs_attention");
+      assert.equal(
+        swept.state,
+        variant === "unchanged" ? "failed" : "needs_attention",
+      );
       assert.deepEqual(swept.effect, held.effect);
       assert.equal(swept.result, null);
-      assert.equal(f.next().verbs.some(verb => verb.refusal?.includes(held.id)), variant !== "unchanged");
-      assert.equal(f.events("operation_pre_send_refused").length, variant === "unchanged" ? 1 : 0);
+      assert.equal(
+        f.next().verbs.some((verb) => verb.refusal?.includes(held.id)),
+        variant !== "unchanged",
+      );
+      assert.equal(
+        f.events("operation_pre_send_refused").length,
+        variant === "unchanged" ? 1 : 0,
+      );
       if (variant === "unchanged") {
-        const replay = await f.engine.startOperation({ key, kind: "task_control", payload });
+        const replay = await f.engine.startOperation({
+          key,
+          kind: "task_control",
+          payload,
+        });
         assert.ok("accepted" in replay);
         assert.deepEqual(replay.operation, swept);
       }
       assert.equal((await f.engine.auditPass(true)).fault, null);
       assert.deepEqual(f.store.operation(held.id), swept);
       assert.equal(f.createdRuns.length, 0);
-      assert.equal(f.events("operation_pre_send_refused").length, variant === "unchanged" ? 1 : 0);
+      assert.equal(
+        f.events("operation_pre_send_refused").length,
+        variant === "unchanged" ? 1 : 0,
+      );
     } finally {
       await f.close();
     }
   });
 }
-
 
 test("a durable parked restart records wrong-role instructions as a definite refusal", async () => {
   const f = fixture();
@@ -2607,10 +2641,21 @@ test("uncertain revision delivery is refused in next and control without releasi
 test("a parked absence without a creation intent offers ordinary admission", async () => {
   const f = fixture();
   try {
-    const parked = f.engine.resolution.recordStop(f.current(), "operator_needed", ABSENT_WORKER_REASON, undefined, "needs_attention");
-    const restart = f.next().verbs.find(verb => verb.verb === "restart" && verb.available);
+    const parked = f.engine.resolution.recordStop(
+      f.current(),
+      "operator_needed",
+      ABSENT_WORKER_REASON,
+      undefined,
+      "needs_attention",
+    );
+    const restart = f
+      .next()
+      .verbs.find((verb) => verb.verb === "restart" && verb.available);
     assert.ok(restart?.args);
-    const resumed = await f.control({ ...restart.args, reason: "Run ordinary admission" });
+    const resumed = await f.control({
+      ...restart.args,
+      reason: "Run ordinary admission",
+    });
     assert.equal(resumed.phase, "queued");
     assert.equal(resumed.runId, null);
     assert.equal(resumed.agentIntent, false);

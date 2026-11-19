@@ -11,7 +11,9 @@ import { normalizeRepositoryOrigin } from "../../shared/lanes";
 import { demandRank, unavailableGroupNames } from "../../shared/pool";
 import { currentBrief } from "../planning/brief";
 import {
-  offeredChoice, parseNativeDelegatedReply } from "./question-delegation";
+  offeredChoice,
+  parseNativeDelegatedReply,
+} from "./question-delegation";
 import { plannerEscalations, type LadderEvent } from "./ladder";
 import { askLifecycle } from "./agent-ask-events";
 import type { Resolution } from "../resolution";
@@ -540,10 +542,16 @@ export class Delegation {
         .filter((line) => line.startsWith("- "))
         .map((line) => line.slice(2));
     const submittedAnswer = (input.answer ?? input.choice)?.trim();
-    const answer = (submittedAnswer && offeredChoice(choices, submittedAnswer, isEscalation)) ?? submittedAnswer;
-    const normalizedInput = answer === submittedAnswer
-      ? input
-      : input.choice ? { ...input, choice: answer } : { ...input, answer };
+    const answer =
+      (submittedAnswer &&
+        offeredChoice(choices, submittedAnswer, isEscalation)) ??
+      submittedAnswer;
+    const normalizedInput =
+      answer === submittedAnswer
+        ? input
+        : input.choice
+          ? { ...input, choice: answer }
+          : { ...input, answer };
     const recorded = events.findLast(
       (event) => event.kind === "delegated_answer",
     );

@@ -76,7 +76,8 @@ export function reviewContinuationLocalRefusal(
   const legacyStopped = run?.status === "stopped";
   const knownCreation =
     run?.status === "running" ||
-    ((run?.status === "uncertain" || legacyStopped) && (run.reviewCheckpoints?.length ?? 0) > 0);
+    ((run?.status === "uncertain" || legacyStopped) &&
+      (run.reviewCheckpoints?.length ?? 0) > 0);
   if (
     task.resolution.currentRunId !== input.runId ||
     !run ||
@@ -105,7 +106,9 @@ export function reviewContinuationLocalRefusal(
       "A reviewer result already exists; checkpoints cannot authorize another review turn",
     );
   if (legacyStopped && resultFence !== "prior_impediment")
-    return refuse("The current reviewer run is completed, released, replaced or unavailable");
+    return refuse(
+      "The current reviewer run is completed, released, replaced or unavailable",
+    );
   // A reader is bound to its own recorded run workspace, which the pre-send
   // observation then proves is still the agent's workspace. A task-workspace
   // substitution is never read into that binding.
