@@ -67,10 +67,12 @@ While a test, QA or proof run is live the operator sees it where they work
 the run (`QA · qa:stage:rust`, `Testing · qa:changed`), in the workspace that
 owns it: a task run in the task's workspace, a milestone QA run in the project's
 main checkout workspace, because its private QA checkout is not a sidebar
-workspace. When no workspace on that checkout is open, Nucleus opens one on it —
-a Paseo workspace entry only, never a worktree — and it stays afterwards like
-any workspace the operator opened (Tom, 2026-11-01: "Open one"). A task run
-never opens a workspace: the task's own workspace is the only place it belongs.
+workspace. Nucleus places a tab only in a workspace that is already open and
+not archived. It never opens or unarchives a workspace for one. When no such
+workspace exists, the run still goes ahead and its live output stays on the board
+(Tom, 2026-11-19, agreeing to stop reopening an archived checkout workspace for
+every QA run; this replaces the 2026-11-01 "Open one" rule). A task run never
+opens a workspace either: the task's own workspace is the only place it belongs.
 The tab runs `bin/queue-run-terminal.mjs` against a pointer file
 Nucleus writes under `<dataDir>/run-terminal/`. Nucleus launches it through
 `/usr/bin/env` with `ELECTRON_RUN_AS_NODE=1`, so it also runs under Paseo's
@@ -2930,7 +2932,7 @@ output retention, run token, supervisor), not Nucleus's admission.
 | 16 | A launched admission's producer reports its own run's `checkout-journal` cleanup complete while a Retained environment container is still running | The reservation's accounting is retired once, with the producer record and the 2026-10-25 policy ruling recorded and no operator acceptance invented; the pinned contract 010 row is unchanged, and no result, settlement, escaped-descendant or container inventory, process-group claim or settlement-based release is written. A cleanup that is incomplete, absent, unknown, foreground-only, another run's or another runtime's holds the slot and records its cause; a failed durable write or an unreadable stored retirement keeps the charge with its reason |
 | 17 | A v2 hook-admitted heavy foreground run settles and the producer's bound bytes report its own `foreground-terminal-record.v1` with `cleanup: complete`, a workload verdict, `checkout_id` and a `boot` matching the acknowledged custodians | The reservation's accounting is retired once as producer closure in the foreground-terminal basis's own private format, with the record, the cross-check state and the policy ruling in the sidecar and no operator acceptance invented, while `#417`'s stored record schema stays unchanged; `succeeded`/0 reads passed and every other verdict reads failed on the producer's own numeric exit code or signal. `cleanup` absent, incomplete or unknown, a non-verdict state, another run id or selector, another runtime or a differing `boot` holds the slot with its own recorded cause, and no result, settlement, inventory, process-group claim or capacity release is written |
 | 18 | A v2 hook-admitted run's hook is dead, its recorded coverage is the acknowledged prefix with all custodians and every workload group, no terminal record exists inside the record's retention window, every reported identity is proven dead and every reported group proves `ESRCH` | The reservation's accounting is retired once as `no_terminal_coverage`, recording the producer's own `not-recorded` answer, every identity and group proof, `residualRisk: { escapedProcessPossible: true }` and no terminal outcome, cleanup, custody, container, escaped-descendant, headroom or capacity-release claim; a missing or unacknowledged report, a live or unknown identity, a non-empty or unreadable group, a group another reservation claims, a recorded terminal report, an exhausted retention window or a hook of unknown liveness holds the slot with its recorded cause and releases nothing |
-| 19 | A live task test run, and a live milestone QA run with no workspace open on the registered checkout | One terminal tab per workspace and selector follows the run's live output and the workspace carries "Testing" or "QA running", with the missing QA workspace opened on that checkout as an entry only; settling clears the label and leaves the tab on the final status line; a restart restores live runs and clears settled ones; a failed daemon call changes nothing about the run |
+| 19 | A live task test run, and a live milestone QA run with no workspace open on the registered checkout | One terminal tab per workspace and selector follows the run's live output and the workspace carries "Testing" or "QA running", placed only in an open, unarchived workspace (none is opened or unarchived for it); settling clears the label and leaves the tab on the final status line; a restart restores live runs and clears settled ones; a failed daemon call changes nothing about the run |
 
 
 ### Retained output completeness (Nucleus #158, 2026-10-08)
