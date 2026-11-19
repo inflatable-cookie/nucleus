@@ -972,6 +972,11 @@ the transport: the parent row reads Nucleus role activity (running, needs a pers
 or truly waiting), so a gap changes neither the row nor a live child's hold. An
 authenticated answer or report whose delivery is unknown is still reconciled, never
 resent. Only a refused credential (401) ends the turn, because no retry can succeed.
+On the installed nightly `0.1.11-nightly.20261119.4941`, `effigy proof:t3code:reoffer -- --expect=held`
+proves the Inbox's open decision through a roll and a 40-second sustained outage: the
+same live card, a live run, the same binding, session and pin, and one fault line for
+the outage. The task parent's own cases (a child running and resuming, and a roll while
+a parent with a live child is held) are not yet proven on private T3.
 
 **Completion wakes never reach the parent.** Every child is created with
 `completionWake: "settled_only"` and its delivery is disposed
