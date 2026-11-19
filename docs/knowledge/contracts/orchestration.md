@@ -213,7 +213,15 @@ Delegates remain on Engine.
 
 **TaskWakes** (`core/scheduling/task-wakes.ts`). Owns what a task's quantum owes after it
 runs: lifecycle, completion and terminal-archive follow-ups, their bounded
-retry timers, the git-transient backoff, and the scheduled task quantum.
+retry timers, the git-transient backoff, and the scheduled task quantum. Reported
+threads keep a task-lane observation follow-up at most 16 seconds apart until
+released; active run observations are refreshed on the same cadence. A timer
+only requests observation and never proves a thread idle. Accepted callbacks,
+released results and freed capacity keep their latency facts until a dispatch or
+run intent, or the next mechanical step, is admitted; `phase_latency` events
+record the elapsed time.
+`service.health` names overdue Nucleus waits separately from a reported thread
+that has been observed running.
 Enforces the follow-up cadence in [Durable effects](#durable-effects-and-unknown-delivery)
 and the git-transient episode close on a successful retry of the failed
 resolution operation. Pures: `quantumFollowUps`, `gitTransientPlan`,
@@ -1444,9 +1452,23 @@ request identities and submitted handoffs are not rewritten.
   written once and never re-armed; failures and conflicts are non-blocking
   findings. A record that cannot be written stays `pending` and the prompt says
   links may be missing.
-- Links resolve through configured primary checkouts, live and unpinned, are
+- On other hosts links resolve through configured primary checkouts, live and unpinned, are
   shared by the repository's tasks and are never removed by Nucleus. The worker
   prompt, task detail and `next` disclose the record.
+- New BB worktrees have task-owned parents, so each declared source with a task
+  sibling pin links to that task's recorded copy without colliding with another
+  task's links. Existing workspace bindings retain their original paths. A
+  missing or changed copy or a conflicting link is a named wait before the
+  worker or reviewer; review checks the current binding, declaration and pins
+  from the filesystem, so an absent or stale provisioning record does not hide
+  a correct retained workspace. It never replaces an occupied path. A shared
+  dependency link at the repository worktree root still triggers a private npm
+  install for a task nested under its own parent.
+  BB does not run `worktree.setup`.
+  BB cannot inject a per-thread environment, so visibility of Paseo's Playwright
+  browser cache is a named capability gap until observed in the BB thread.
+  Retained BB run prompts bind the helper to the current run's ticket explicitly,
+  including after a plugin roll.
 - Manual preparation stays per brief: a brief may authorise exactly one `effigy
   bundle sync --json` and one read-only `effigy bundle inspect --json` in the
   checkout, naming the installed tool. A missing or unreadable result is a
@@ -1993,6 +2015,15 @@ the refusal; the wake never replaces the reviewer with a fresh agent. Unknown wa
 delivery remains visible and is not replayed. The question,
 answer and action are activity events. A coordinator refreshes its plan and retries an explicit
 stale-version refusal once, with the original report binding rechecked.
+
+When the retained worker's own in-turn ask holds its turn, an escalation's
+worker direction is recorded once and the ask returns pending without being
+answered or cancelled. Nucleus revisits the same worker and applies the recorded
+direction only after a fresh idle observation; a later answer to the original
+ask retains its own delivery route, including through the owner-control replay.
+The escalation stays open while the direction waits. A changed worker binding or
+refused control records the refusal against that escalation, rather than sending
+the direction to a replacement or marking it applied.
 
 Nucleus sends one short agent message naming the task, question,
 choices and exact command. The recipient runs the command and writes nothing else

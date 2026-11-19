@@ -961,6 +961,9 @@ export class Engine {
     // through the ordinary owner controls, with that answer as the authority.
     this.resolution.applyOperatorControl = (input) =>
       this.performTaskControl(input);
+    this.resolution.wakeDeferredDirection = (taskId) => {
+      void this.cleanContext(() => this.wakeTask(taskId));
+    };
     this.signoffDecisions = new Decisions(store);
     this.resolution.recovery.setCoordinatorActionHandler((task, run, action) =>
       this.applyCoordinatorAction(task, run, action),

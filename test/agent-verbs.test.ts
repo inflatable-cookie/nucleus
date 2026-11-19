@@ -22,6 +22,7 @@ import {
   normalizeTellTarget,
 } from "../shared/agent-verbs.mjs";
 import { callerCliFixture } from "./support/caller-cli-fixture";
+import { agentAskSchema } from "../core/questions/agent-ask";
 
 /**
  * Task 1108: `ask` and `tell`, the two agent verbs, on both kinds of run. The MCP
@@ -264,6 +265,488 @@ async function verbFixture(options: { askWaitMs?: number } = {}) {
     },
   };
 }
+
+test("an escalation direction yields the worker ask and waits for the same worker to become idle", async () => {
+  const f = await verbFixture();
+  try {
+    let busy = true;
+    f.adapter.observe = async (id) => ({
+      id,
+      workspaceId: "ws",
+      status: busy ? "running" : "idle",
+      active: busy,
+      permissions: false,
+      error: "",
+    });
+    const task = f.store.task(f.sender.id);
+    const askId = "fixture-ask";
+    f.store.event(
+      task.id,
+      "agent_ask",
+      `${askId}: kind process; run run-1 (revision); agent worker; question digest (1 chars); choices none`,
+    );
+    f.engine.resolution.agentAsks.inTurnAsks.set(task.id, {
+      askId,
+      runId: "run-1",
+      agentId: "worker",
+    });
+    f.engine.resolution.wakeDeferredDirection = () => {};
+    let applied = 0;
+    f.engine.performTaskControl = async () => {
+      applied++;
+      return f.store.task(task.id);
+    };
+    const result = await f.engine.resolution.settlePlannerEscalation(
+      task,
+      "escalation",
+      "Work: Continue the task",
+      "operator",
+    );
+    assert.equal(result, null);
+    assert.ok(f.store.task(task.id).resolution.deferredVerb);
+    assert.ok(f.eventsOf(task.id, "agent_ask_yield").length);
+    assert.equal(
+      (await f.engine.resolution.awaitAgentAsk(task.id, askId, null)).status,
+      "pending",
+    );
+    await f.engine.applyDeferredOwnerVerbs();
+    assert.equal(
+      applied,
+      0,
+      "a live turn cannot receive a second continuation",
+    );
+    busy = false;
+    await f.engine.applyDeferredOwnerVerbs();
+    assert.equal(applied, 1);
+    assert.equal(f.store.task(task.id).resolution.deferredVerb, null);
+  } finally {
+    await f.close();
+  }
+});
+
+test("a worker replacement during deferred direction observation receives nothing", async () => {
+  const f = await verbFixture();
+  try {
+    const task = f.store.task(f.sender.id);
+    f.store.event(
+      task.id,
+      "planner_escalation",
+      `escalation: cause ${"b".repeat(64)}; run run-1; question digest (1 chars); options Work`,
+    );
+    f.store.update(task.id, {
+      resolution: {
+        ...task.resolution,
+        deferredVerb: {
+          input: {
+            taskId: task.id,
+            action: "move",
+            to: "work",
+            reason: "Recorded direction",
+            __workerAsk: {
+              askId: "ask",
+              runId: "run-1",
+              agentId: "worker",
+              workspaceId: "ws",
+              escalationId: "escalation",
+            },
+          },
+          at: new Date().toISOString(),
+          why: "held",
+          target: null,
+        },
+      },
+    });
+    f.adapter.observe = async (id) => {
+      f.store.update(task.id, { agentId: "replacement" });
+      return {
+        id,
+        workspaceId: "ws",
+        status: "idle",
+        active: false,
+        permissions: false,
+        error: "",
+      };
+    };
+    let applied = 0;
+    f.engine.performTaskControl = async () => {
+      applied++;
+      return f.store.task(task.id);
+    };
+    await f.engine.applyDeferredOwnerVerbs();
+    assert.equal(applied, 0);
+    assert.equal(f.store.task(task.id).resolution.deferredVerb, null);
+    assert.match(
+      f.eventsOf(task.id, "deferred_verb_refused").at(-1)?.detail ?? "",
+      /identity changed during observation/,
+    );
+    assert.match(
+      f.eventsOf(task.id, "planner_escalation_refused").at(-1)?.detail ?? "",
+      /identity changed during observation/,
+    );
+    const { plannerEscalations } = await import("../core/questions/ladder");
+    assert.equal(
+      plannerEscalations(f.store.eventsAll(task.id))[0]?.answered,
+      false,
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+for (const answerFirst of [false, true])
+  test(`real deferred direction preserves the worker ask (answer first: ${answerFirst})`, async () => {
+    const f = await verbFixture();
+    try {
+      f.replies["planner-1"] = "";
+      f.replies.origin = "";
+      f.engine.resolution.delegatedAnswerWaitMs = 10_000;
+      let busy = true;
+      f.adapter.observe = async (id) => ({
+        id,
+        workspaceId: "ws",
+        status: busy ? "running" : "idle",
+        active: busy,
+        permissions: false,
+        error: "",
+      });
+      f.engine.resolution.wakeDeferredDirection = () => {};
+      const input = agentAskSchema.parse({
+        eventId: "a".repeat(64),
+        taskId: f.sender.id,
+        runId: "run-1",
+        question: "Which approach?",
+        to: "planner",
+      });
+      const ask = f.engine.resolution.agentAsk(input, "run-1-token");
+      for (
+        let i = 0;
+        i < 200 && !f.engine.resolution.agentAsks.inTurnAsks.has(f.sender.id);
+        i++
+      )
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      const waiting = f.engine.resolution.agentAsks.inTurnAsks.get(
+        f.sender.id,
+      )!;
+      assert.ok(waiting);
+      for (let i = 0; i < 200 && !f.asked.length; i++)
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      assert.ok(f.asked.length, "the real delegation reached its recipient");
+      const answer = async () => {
+        const delivery = f.asked[0]!;
+        await answerFixturePrompt(
+          f.engine.resolution,
+          delivery.planner,
+          delivery.prompt,
+          "Answer: Use A\nReason: Fixture ruling",
+        );
+        for (
+          let i = 0;
+          i < 200 &&
+          !f.engine.resolution.recordedAnswer(f.sender.id, waiting.askId);
+          i++
+        )
+          await new Promise((resolve) => setTimeout(resolve, 5));
+      };
+      if (answerFirst) await answer();
+      f.store.event(
+        f.sender.id,
+        "planner_escalation",
+        `escalation: cause ${"b".repeat(64)}; run run-1; question digest (1 chars); options Work`,
+      );
+      const result = await f.engine.resolution.settlePlannerEscalation(
+        f.store.task(f.sender.id),
+        "escalation",
+        "Work: Continue the task",
+        "operator",
+      );
+      assert.equal(result, null);
+      const { plannerEscalations } = await import("../core/questions/ladder");
+      assert.equal(
+        plannerEscalations(f.store.eventsAll(f.sender.id))[0]?.answered,
+        false,
+      );
+      const receipt = await ask;
+      assert.equal(receipt.status, answerFirst ? "answered" : "pending");
+      assert.equal(
+        f.eventsOf(f.sender.id, "planner_escalation_applied").length,
+        0,
+      );
+      busy = false;
+      await f.engine.applyDeferredOwnerVerbs();
+      assert.equal(
+        f.eventsOf(f.sender.id, "owner_verb_applied").length,
+        1,
+        JSON.stringify(f.eventsOf(f.sender.id, "deferred_verb_refused")),
+      );
+      assert.equal(f.eventsOf(f.sender.id, "agent_ask_superseded").length, 0);
+      if (!answerFirst) await answer();
+      const recorded = f.engine.resolution.recordedAnswer(
+        f.sender.id,
+        waiting.askId,
+      );
+      assert.equal(recorded?.status, "answered");
+      assert.equal(
+        recorded?.status === "answered" ? recorded.answer : null,
+        "Use A — Fixture ruling",
+      );
+      assert.equal(
+        f.eventsOf(f.sender.id, "planner_escalation_applied").length,
+        1,
+      );
+      assert.equal(
+        plannerEscalations(f.store.eventsAll(f.sender.id))[0]?.answered,
+        true,
+      );
+    } finally {
+      await f.close();
+    }
+  });
+
+test("a deferred delegated escalation reports replay refusal and accepts a correction", async () => {
+  const f = await verbFixture();
+  try {
+    f.replies["planner-1"] = "";
+    f.engine.resolution.delegatedAnswerWaitMs = 10_000;
+    f.adapter.observe = async (id) => ({
+      id,
+      workspaceId: "ws",
+      status: "running",
+      active: true,
+      permissions: false,
+      error: "",
+    });
+    f.engine.resolution.wakeDeferredDirection = () => {};
+    const ask = f.engine.resolution.agentAsk(
+      agentAskSchema.parse({
+        eventId: "a".repeat(64),
+        taskId: f.sender.id,
+        runId: "run-1",
+        question: "Which approach?",
+        to: "planner",
+      }),
+      "run-1-token",
+    );
+    for (
+      let i = 0;
+      i < 200 && !f.engine.resolution.agentAsks.inTurnAsks.has(f.sender.id);
+      i++
+    )
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.ok(f.engine.resolution.agentAsks.inTurnAsks.has(f.sender.id));
+    f.store.event(
+      f.sender.id,
+      "planner_escalation",
+      `escalation: cause ${"b".repeat(64)}; run run-1; question digest (1 chars); options Work`,
+    );
+    const questionId = "ns-escalation-escalation";
+    f.engine.resolution.openDelegatedQuestion(
+      f.store.task(f.sender.id),
+      questionId,
+      "planner-1",
+      "Question: What next?",
+      10_000,
+      "planner",
+      "host",
+    );
+    const answer = {
+      questionId,
+      answer: "Continue the task",
+      reason: "First direction",
+    };
+    const pending = await f.engine.resolution.answerDelegatedQuestion(
+      answer,
+      "planner-1",
+    );
+    assert.equal((pending as { status?: string }).status, "pending");
+    assert.equal(
+      (
+        (await f.engine.resolution.answerDelegatedQuestion(
+          answer,
+          "planner-1",
+        )) as { status?: string }
+      ).status,
+      "pending",
+    );
+    assert.equal(
+      f.store
+        .eventsAll(`delegation:${questionId}`)
+        .filter((e) => e.kind === "delegated_command_applied").length,
+      0,
+    );
+    await ask;
+    f.store.update(f.sender.id, { agentId: "replacement" });
+    await f.engine.applyDeferredOwnerVerbs();
+    assert.ok(
+      f.store
+        .eventsAll(`delegation:${questionId}`)
+        .some((e) => e.kind === "delegated_command_refused"),
+    );
+    await assert.rejects(
+      () =>
+        Promise.resolve(
+          f.engine.resolution.answerDelegatedQuestion(answer, "planner-1"),
+        ),
+      /identity changed/,
+    );
+    const corrected = {
+      questionId,
+      decision: "operator" as const,
+      reason: "Needs operator direction",
+    };
+    const receipt = await f.engine.resolution.answerDelegatedQuestion(
+      corrected,
+      "planner-1",
+    );
+    assert.equal(receipt.decision, "operator");
+    assert.ok(
+      f.store
+        .eventsAll(`delegation:${questionId}`)
+        .some((e) => e.kind === "delegated_command_applied"),
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+test("an uncertain delegated owner action cannot be corrected as a definite refusal", async () => {
+  const f = await verbFixture();
+  try {
+    const id = "ns-escalation-uncertain";
+    const key = `delegation:${id}`;
+    f.engine.resolution.openDelegatedQuestion(
+      f.store.task(f.sender.id),
+      id,
+      "planner-1",
+      "Question: What next?",
+      10_000,
+      "planner",
+      "host",
+    );
+    f.store.event(
+      key,
+      "delegated_answer",
+      JSON.stringify({
+        questionId: id,
+        caller: "planner-1",
+        answer: "Continue",
+        reason: "First",
+      }),
+    );
+    f.store.event(
+      f.sender.id,
+      "planner_escalation_action_uncertain",
+      "uncertain: owner action outcome is unknown",
+    );
+    f.store.event(
+      key,
+      "delegated_command_refused",
+      "uncertain: owner action outcome is unknown",
+    );
+    await assert.rejects(
+      () =>
+        Promise.resolve(
+          f.engine.resolution.answerDelegatedQuestion(
+            {
+              questionId: id,
+              answer: "Another direction",
+              reason: "Correction",
+            },
+            "planner-1",
+          ),
+        ),
+      /outcome is unknown/,
+    );
+    assert.equal(
+      f.store
+        .eventsAll(key)
+        .filter((event) => event.kind === "delegated_answer").length,
+      1,
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+test("the live planner ladder does not resubmit a deferred escalation", async () => {
+  const f = await verbFixture();
+  try {
+    f.replies["planner-1"] = "";
+    f.replies.origin = "";
+    f.engine.resolution.delegatedAnswerWaitMs = 10_000;
+    f.engine.resolution.wakeDeferredDirection = () => {};
+    let busy = true;
+    f.adapter.observe = async (id) => ({
+      id,
+      workspaceId: "ws",
+      status: busy ? "running" : "idle",
+      active: busy,
+      permissions: false,
+      error: "",
+    });
+    const ask = f.engine.resolution.agentAsk(
+      agentAskSchema.parse({
+        eventId: "a".repeat(64),
+        taskId: f.sender.id,
+        runId: "run-1",
+        question: "Which approach?",
+        to: "planner",
+      }),
+      "run-1-token",
+    );
+    for (
+      let i = 0;
+      i < 200 && !f.engine.resolution.agentAsks.inTurnAsks.has(f.sender.id);
+      i++
+    )
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.ok(f.engine.resolution.agentAsks.inTurnAsks.has(f.sender.id));
+    const id = "live-escalation";
+    f.store.event(
+      f.sender.id,
+      "planner_escalation",
+      `${id}: cause ${"b".repeat(64)}; run run-1; question digest (1 chars); options Work`,
+    );
+    const route = f.engine.resolution.routePlannerEscalation(
+      f.store.task(f.sender.id),
+      id,
+      "How should the worker continue?",
+    );
+    const questionId = `ns-escalation-${id}`;
+    for (
+      let i = 0;
+      i < 200 && !f.engine.resolution.delegation.delegatedDelivery(questionId);
+      i++
+    )
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    const delivery =
+      f.engine.resolution.delegation.delegatedDelivery(questionId);
+    assert.ok(delivery);
+    const receipt = await f.engine.resolution.answerDelegatedQuestion(
+      { questionId, answer: "Continue the task", reason: "Planner direction" },
+      delivery.recipient,
+    );
+    assert.equal((receipt as { status?: string }).status, "pending");
+    await route;
+    await ask;
+    assert.equal(f.eventsOf(f.sender.id, "owner_verb_deferred").length, 1);
+    assert.equal(
+      f.eventsOf(f.sender.id, "planner_escalation_answer_refused").length,
+      0,
+    );
+    assert.equal(
+      f.eventsOf(f.sender.id, "planner_escalation_followup_offered").length,
+      0,
+    );
+    busy = false;
+    await f.engine.applyDeferredOwnerVerbs();
+    assert.equal(
+      f.eventsOf(f.sender.id, "planner_escalation_applied").length,
+      1,
+    );
+  } finally {
+    await f.close();
+  }
+});
 
 test("the verb targets normalise to one route each and refuse what they cannot address", () => {
   assert.deepEqual(normalizeAskTarget(undefined), { kind: "default" });

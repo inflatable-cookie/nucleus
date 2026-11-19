@@ -1,0 +1,1 @@
+BB task worktrees use pinned sibling copies for declared links, report missing or conflicting copies before review, and bind retained callbacks to the current run. Recovery runs now record their temporary directory at launch. BB browser-cache visibility remains a named capability gap.

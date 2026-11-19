@@ -134,7 +134,7 @@ export class Observation {
     onReleased?: (taskId: string) => void,
     scopedHost?: string,
   ) {
-    // A callback wake observes only this task’s reported, unreleased runs.
+    // A task wake observes its reported runs and active runs with stale observations.
     // The ordinary inventory pass retains its broader recovery responsibilities.
     const candidates = completedTaskId
       ? this.store
@@ -143,7 +143,11 @@ export class Observation {
             (run) =>
               run.role !== "recovery" &&
               !run.released &&
-              run.completion &&
+              (run.completion ||
+                (run.active &&
+                  Date.now() -
+                    Date.parse(run.lastObservedAt ?? run.createdAt) >=
+                    16000)) &&
               !this.resolution.launchingRuns.has(run.id),
           )
       : this.observationRuns();

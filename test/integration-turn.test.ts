@@ -29,6 +29,8 @@ import { ownerRevisionFixture } from "./support/review-entry-fixture";
 import { observedParticipantTimeline } from "./support/tool-timeline";
 import { waitFor } from "./support/budgets";
 import { readProcessSubset } from "../core/machine/host-process-listing";
+import { markPhaseFact, phaseLatency } from "../core/scheduling/phase-latency";
+import { slowPhaseWaits } from "../service/runtime-health";
 
 const head = "a".repeat(40),
   base = "b".repeat(40),
@@ -524,6 +526,174 @@ test("a merge-held reviewed task does not keep the integration turn from later t
     await f.close();
   }
 });
+test("health excludes a held review release until the operator releases the merge", async (t) => {
+  const f = fixture();
+  try {
+    const task = f.add();
+    await f.engine.wake();
+    await f.engine.performTaskControl({
+      taskId: task.id,
+      version: f.current(task.id).version,
+      action: "hold",
+      kind: "merge",
+      reason: "Operator review",
+    });
+    t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
+    const reviewer = f.run(task.id);
+    f.idle(reviewer.agentId!, reviewer.workspaceId);
+    await f.engine.complete(
+      {
+        eventId: "held-review-result",
+        taskId: task.id,
+        runId: reviewer.id,
+        status: "ready_to_merge",
+        summary: "Approved",
+        head: reviewer.head,
+        reviewCommentId: 1,
+      },
+      f.tokens.get(reviewer.id)!,
+    );
+    await f.engine.quiesce();
+    assert.equal(f.current(task.id).phase, "verifying");
+    assert.ok(
+      phaseLatency(f.store, task.id).pending.some((wait) =>
+        wait.key.startsWith("release:"),
+      ),
+    );
+    t.mock.timers.tick(31_000);
+    assert.deepEqual(
+      slowPhaseWaits(f.store).filter((wait) => wait.taskId === task.id),
+      [],
+    );
+    await f.engine.performTaskControl({
+      taskId: task.id,
+      version: f.current(task.id).version,
+      action: "release",
+      kind: "merge",
+    });
+    assert.equal(
+      slowPhaseWaits(f.store).filter((wait) => wait.taskId === task.id).length,
+      0,
+    );
+    await f.engine.wakeTask(task.id);
+    assert.ok(
+      phaseLatency(f.store, task.id).samples.some((wait) =>
+        wait.key.startsWith("release:"),
+      ),
+    );
+  } finally {
+    t.mock.timers.reset();
+    await f.close();
+  }
+});
+
+test("health recognizes a sweep-released reviewer through an automatically lifted hold", async (t) => {
+  const f = fixture();
+  try {
+    const task = f.add();
+    await f.engine.wake();
+    t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
+    await f.engine.performTaskControl({
+      taskId: task.id,
+      version: f.current(task.id).version,
+      action: "hold",
+      kind: "merge",
+      reason: "Wait for review",
+      until: new Date(Date.now() + 35_000).toISOString(),
+    });
+    markPhaseFact(
+      f.store,
+      task.id,
+      "callback:sweep-result",
+      "Accepted result awaiting task admission",
+    );
+    await f.report(task.id, "ready_to_merge");
+    assert.equal(f.current(task.id).phase, "verifying");
+    assert.ok(
+      f.store
+        .runs(task.id)
+        .some(
+          (run) =>
+            run.role === "reviewer" &&
+            run.released &&
+            run.completion?.status === "ready_to_merge",
+        ),
+    );
+    assert.ok(
+      !phaseLatency(f.store, task.id).pending.some((wait) =>
+        wait.key.startsWith("release:"),
+      ),
+    );
+    t.mock.timers.tick(31_000);
+    assert.deepEqual(
+      slowPhaseWaits(f.store).filter((wait) => wait.taskId === task.id),
+      [],
+    );
+    t.mock.timers.tick(4_000);
+    assert.equal(
+      f.engine.resolution.reconcileHoldUntil(task.id),
+      "auto_released",
+    );
+    assert.deepEqual(
+      slowPhaseWaits(f.store).filter((wait) => wait.taskId === task.id),
+      [],
+    );
+    t.mock.timers.tick(30_001);
+    assert.ok(
+      slowPhaseWaits(f.store).some(
+        (wait) => wait.taskId === task.id && wait.elapsedMs === 30_001,
+      ),
+    );
+  } finally {
+    t.mock.timers.reset();
+    await f.close();
+  }
+});
+
+test("health excludes a held skip-review integration wait until release", async (t) => {
+  const f = fixture();
+  try {
+    const task = f.add();
+    f.store.update(task.id, { skipPRReview: true });
+    t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
+    await f.engine.performTaskControl({
+      taskId: task.id,
+      version: f.current(task.id).version,
+      action: "hold",
+      kind: "merge",
+      reason: "Operator review",
+    });
+    await f.engine.wakeTask(task.id);
+    await f.engine.quiesce();
+    assert.equal(f.current(task.id).phase, "merging");
+    assert.equal(
+      f.store.runs(task.id).filter((run) => run.role === "reviewer").length,
+      0,
+    );
+    assert.ok(phaseLatency(f.store, task.id).pending.length > 0);
+    t.mock.timers.tick(31_000);
+    assert.deepEqual(
+      slowPhaseWaits(f.store).filter((wait) => wait.taskId === task.id),
+      [],
+    );
+    await f.engine.performTaskControl({
+      taskId: task.id,
+      version: f.current(task.id).version,
+      action: "release",
+      kind: "merge",
+    });
+    assert.deepEqual(
+      slowPhaseWaits(f.store).filter((wait) => wait.taskId === task.id),
+      [],
+    );
+    await f.engine.wakeTask(task.id);
+    assert.ok(phaseLatency(f.store, task.id).samples.length > 0);
+  } finally {
+    t.mock.timers.reset();
+    await f.close();
+  }
+});
+
 test("a reviewed task merges while live agents fill every project slot", async () => {
   const f = fixture();
   try {
@@ -560,6 +730,12 @@ test("two reviewed tasks keep FIFO turns; the newer task cannot merge during the
     await f.report(first.id, "ready_to_merge");
     await f.engine.wake();
     await f.report(second.id, "ready_to_merge");
+    markPhaseFact(
+      f.store,
+      second.id,
+      "integration-test",
+      "Waiting for integration admission",
+    );
     assert.ok(f.current(first.id).resolution.integrationTurn);
     assert.ok(f.current(second.id).resolution.integrationTurn);
     assert.ok(
@@ -571,10 +747,20 @@ test("two reviewed tasks keep FIFO turns; the newer task cannot merge during the
     assert.equal(f.current(second.id).phase, "verifying");
     assert.equal(f.current(second.id).resolution.currentRunId, null);
     assert.match(f.current(second.id).reason, /integration turn/);
+    assert.ok(
+      phaseLatency(f.store, second.id).pending.some(
+        (wait) => wait.key === "integration-test",
+      ),
+    );
     await f.engine.wake();
     await f.engine.wake();
     await f.report(first.id, "closed");
     assert.equal(f.current(first.id).phase, "done");
+    assert.ok(
+      phaseLatency(f.store, second.id).samples.some(
+        (wait) => wait.key === "integration-test",
+      ),
+    );
     // Commit acdc1380 completes mechanical verify, merge, synchronize and closeout in
     // one drain once the older turn is released, so the newer task lands and dispatches
     // closeout without stopping at a transient `merging` phase.
