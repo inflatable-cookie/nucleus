@@ -18,6 +18,7 @@ import { executeHookProgram, type ChildExitFacts } from "../core/machine/process
 import { minimalHookEnvironment } from "../core/hooks/hook-result";
 import { hostRunProcessStartIdentity } from "../core/machine/start-identity";
 import { overrideIdentityListing } from "../core/machine/process-identity-search";
+import { processGroupEmpty } from "../core/machine/process-group";
 import {
   qaRunLiveOutputPath,
   qaStepExitSchema,
@@ -150,24 +151,33 @@ test("a step group killed from outside settles the run failed with that signal a
   assert.equal(exit.signal, "SIGKILL");
 });
 
-test("a supervisor that settles nothing after its step's group emptied hands the run over past the bound", { skip: process.platform === "win32" }, async (t) => {
+/**
+ * One supervision record for the inspection decisions: a live process carrying
+ * the run token is the supervisor, a pid whose group is already gone is the
+ * step's own ended group, and a step-exit record names that exit.
+ */
+async function inspectionFixture(t: any, options: {
+  /** Written to both the state and the separate heartbeat file; absent is fresh. */
+  heartbeatAt?: string;
+  boundMs?: number;
+  beforeStepStop?: (statePath: string) => void | Promise<void>;
+} = {}) {
   const root = await mkdtemp(join(tmpdir(), "qa-step-exit-inspection-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   const runRoot = join(root, "runs");
   await mkdir(runRoot);
   const runId = randomUUID();
   const identityToken = randomUUID();
-  // A live process carrying the run's token is this run's supervisor.
-  const supervisor = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)", identityToken],
+  const supervisor = spawn(process.execPath, ["-e", "setTimeout(() => {}, 120000)", identityToken],
     { detached: true, stdio: "ignore" });
   t.after(() => { try { process.kill(-supervisor.pid!, "SIGKILL"); } catch { /* already stopped */ } });
   overrideIdentityListing(identity => identity === identityToken ? { state: "absent" } : { state: "unknown" });
   t.after(() => overrideIdentityListing(null));
-  // A pid whose process group is already gone is the step's own ended group.
   const finished = spawn("/bin/sh", ["-c", "exit 0"], { stdio: "ignore" });
   await new Promise(resolve => finished.on("exit", resolve));
   const endedGroup = finished.pid!;
   const startedAt = new Date(Date.now() - 60_000).toISOString();
+  const heartbeatAt = options.heartbeatAt ?? new Date().toISOString();
   const paths = qaSupervisionPaths(runRoot, runId);
   writeQaSupervisionPlan(paths.planPath, qaSupervisionPlanSchema.parse({
     schema: "queue.project-qa.plan.v1", schema_version: 1, runId, key: "fixture", caller: "fixture",
@@ -177,11 +187,11 @@ test("a supervisor that settles nothing after its step's group emptied hands the
     terminationGraceMs: 1000, hookTimeoutMs: 1000, hookMaxOutputBytes: 1024,
     identityToken, links: [], mode: "full", attempt: 0, retry: null,
   }));
-  writeQaSupervision(paths.statePath, {
-    schema: "queue.project-qa.supervisor.v1", schema_version: 1, runId, key: "fixture",
+  const state = {
+    schema: "queue.project-qa.supervisor.v1" as const, schema_version: 1 as const, runId, key: "fixture",
     pid: supervisor.pid!, supervisorStartIdentity: hostRunProcessStartIdentity(supervisor.pid!),
-    identityToken, startedAt, heartbeatAt: new Date().toISOString(),
-    inFlight: "qa", pendingProcessIdentity: null, steps: [], failedStep: null, logWriteErrors: [],
+    identityToken, startedAt, heartbeatAt,
+    inFlight: "qa" as const, pendingProcessIdentity: null, steps: [], failedStep: null, logWriteErrors: [],
     activeProcess: {
       step: "qa", pid: endedGroup, processGroupId: endedGroup,
       startIdentity: hostRunProcessStartIdentity(endedGroup), leaderStartIdentity: identityToken,
@@ -189,7 +199,11 @@ test("a supervisor that settles nothing after its step's group emptied hands the
     },
     detail: "build output line", failuresLog: "", failureIndexes: [], escapedDescendants: [],
     cancelReason: null, result: null,
-  });
+  };
+  writeQaSupervision(paths.statePath, state);
+  if (options.heartbeatAt)
+    await writeQaJsonAsync(paths.heartbeatPath,
+      { runId, pid: supervisor.pid!, identityToken, heartbeatAt: options.heartbeatAt }, { durable: false });
   const exit: QaStepExit = {
     schema: "queue.project-qa.step-exit.v1", schema_version: 1, runId, step: "qa",
     pid: endedGroup, processGroupId: endedGroup, exitCode: null, signal: "SIGKILL",
@@ -197,22 +211,80 @@ test("a supervisor that settles nothing after its step's group emptied hands the
   };
   await writeQaJsonAsync(paths.stepExitPath, exit, { durable: false });
   await writeFile(qaRunLiveOutputPath(runRoot, runId), "first line\nbuild output line\n");
-  const inspection = new ProjectQaInspection({ get: () => null }, () => runRoot, undefined, { stepSettleBoundMs: 100 });
+  const inspection = new ProjectQaInspection({ get: () => null }, () => runRoot, undefined, {
+    ...(options.boundMs !== undefined ? { stepSettleBoundMs: options.boundMs } : {}),
+    ...(options.beforeStepStop ? { beforeStepStop: options.beforeStepStop } : {}),
+  });
   const run = { id: runId, key: "fixture", startedAt, argv: ["true"] } as any;
+  return { root, runRoot, runId, identityToken, supervisor, endedGroup, startedAt, heartbeatAt, state, paths, run, inspection };
+}
 
-  assert.equal((await inspection.inspectSupervisor(run)).kind, "running", "the first observation only starts the bound");
-  let verdict = await inspection.inspectSupervisor(run);
+test("a supervisor that settles nothing after its step's group emptied hands the run over past the bound", { skip: process.platform === "win32" }, async (t) => {
+  const f = await inspectionFixture(t, { boundMs: 100 });
+  assert.equal((await f.inspection.inspectSupervisor(f.run)).kind, "running", "the first observation only starts the bound");
+  let verdict = await f.inspection.inspectSupervisor(f.run);
   for (let attempt = 0; verdict.kind === "running" && attempt < 40; attempt++) {
     await new Promise(resolve => setTimeout(resolve, 50));
-    verdict = await inspection.inspectSupervisor(run);
+    verdict = await f.inspection.inspectSupervisor(f.run);
   }
   assert.equal(verdict.kind, "step_ended", JSON.stringify(verdict));
   if (verdict.kind !== "step_ended") return;
   assert.equal(verdict.step, "qa");
   assert.equal(verdict.exit?.signal, "SIGKILL");
   assert.match(verdict.reason, /process group \d+ was empty for \d+ms/);
-  assert.throws(() => process.kill(supervisor.pid!, 0), /ESRCH/, "the unresponsive supervisor was stopped with proof");
-  assert.equal(readQaStepExit(paths.stepExitPath, { runId, step: "qa" })?.signal, "SIGKILL");
+  assert.throws(() => process.kill(f.supervisor.pid!, 0), /ESRCH/, "the unresponsive supervisor was stopped with proof");
+  assert.equal(readQaStepExit(f.paths.stepExitPath, { runId: f.runId, step: "qa" })?.signal, "SIGKILL");
+});
+
+test("a stale heartbeat does not discard a recorded step exit: the run settles from it instead of lost", { skip: process.platform === "win32" }, async (t) => {
+  // The supervisor froze with a heartbeat older than the watchdog's threshold.
+  const f = await inspectionFixture(t, { heartbeatAt: new Date(Date.now() - 240_000).toISOString() });
+  assert.equal((await f.inspection.inspectSupervisor(f.run)).kind, "running", "the first stale observation only records a candidate");
+  // The watchdog requires the same stale heartbeat across two checks 5s apart.
+  await new Promise(resolve => setTimeout(resolve, 5_200));
+  let verdict = await f.inspection.inspectSupervisor(f.run);
+  for (let attempt = 0; verdict.kind === "running" && attempt < 40; attempt++) {
+    await new Promise(resolve => setTimeout(resolve, 100));
+    verdict = await f.inspection.inspectSupervisor(f.run);
+  }
+  assert.equal(verdict.kind, "step_ended", `a recorded exit is never settled as lost: ${JSON.stringify(verdict)}`);
+  if (verdict.kind !== "step_ended") return;
+  assert.equal(verdict.exit?.signal, "SIGKILL");
+  assert.match(verdict.reason, /heartbeat was stale for \d+ms/, "the stale stop is still named");
+  assert.match(verdict.reason, /SIGKILL/, "and the step's own recorded exit travels with it");
+  assert.throws(() => process.kill(f.supervisor.pid!, 0), /ESRCH/, "the stale supervisor was stopped");
+});
+
+test("an outdated record never stops the later step the supervisor moved on to", { skip: process.platform === "win32" }, async (t) => {
+  // A later step's process group that is genuinely live, so a stop would kill it.
+  const later = spawn("/bin/sh", ["-c", "sleep 120"], { detached: true, stdio: "ignore" });
+  t.after(() => { try { process.kill(-later.pid!, "SIGKILL"); } catch { /* already gone */ } });
+  let advanced = 0;
+  const f = await inspectionFixture(t, {
+    boundMs: 0,
+    beforeStepStop: statePath => {
+      // The supervisor wrote its next step between this inspection's read and
+      // its stop decision: the record on disk now names a different group.
+      advanced++;
+      writeQaSupervision(statePath, {
+        ...f.state,
+        heartbeatAt: new Date().toISOString(),
+        inFlight: "lint",
+        activeProcess: {
+          ...f.state.activeProcess, step: "lint", pid: later.pid!, processGroupId: later.pid!,
+          startIdentity: hostRunProcessStartIdentity(later.pid!),
+          startedAt: new Date().toISOString(),
+        },
+      });
+    },
+  });
+  const verdict = await f.inspection.inspectSupervisor(f.run);
+  assert.equal(advanced, 1, "the seam ran before the stop decision");
+  assert.equal(verdict.kind, "running", `an advanced record cancels the verdict: ${JSON.stringify(verdict)}`);
+  assert.equal(process.kill(f.supervisor.pid!, 0), true, "the supervisor is still alive");
+  assert.equal(processGroupEmpty(later.pid!), false, "the later step's group was not signalled");
+  // The next inspection reads the advance itself and starts the later step's bound.
+  assert.equal((await f.inspection.inspectSupervisor(f.run)).kind, "running");
 });
 
 /** The recovery context the settlement needs, with the store and settle owner recorded instead of run. */

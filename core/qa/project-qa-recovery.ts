@@ -154,7 +154,7 @@ export const projectQaRecovery = {
       state: "failed", exitCode: exit.signal ? null : exit.exitCode,
       interruptedStep: exit.step, hostResult,
       ...(endedStep ? { steps: [...state.steps, endedStep], failedStep: exit.step } : { failedStep: state.failedStep ?? exit.step }),
-      account: `${exit.step} ended ${exit.signal ? `by ${exit.signal}` : `with exit code ${exit.exitCode}`} at ${exit.exitedAt}, and the supervisor settled nothing inside its ${inspection.emptyForMs}ms empty-group bound.\n${output}`,
+      account: `The supervisor left this run unsettled: ${reason}.\n${output}`,
       closing: "Queue settled this run failed from the step's own recorded exit; it is not lost, because the step's exit code or signal and its output were recorded.",
     }, state.escapedDescendants);
   },

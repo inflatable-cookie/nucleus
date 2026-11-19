@@ -147,13 +147,18 @@ uncertain hold.
 When the supervisor is alive and the step it says is in flight has no process
 group left, `project-qa-inspection.ts` watches that emptiness for a short bound
 (`QA_STEP_EXIT_SETTLE_BOUND_MS`), then stops the supervisor under the same proof
-as the stale-heartbeat rule and hands the run to `project-qa-recovery.ts`. With a
-recorded exit the run settles `failed` from the step's exit code or signal, with
-the step named as `interruptedStep`/`failedStep` and the live output log's path,
-byte offset and last lines in its detail; with no recorded exit the outcome is
-genuinely unobservable and the run settles `lost`, carrying the same step and
-output pointer. `lost` therefore means a dead supervisor or an unobservable
-outcome, never a run that simply waited for its capacity deadline.
+as the stale-heartbeat rule and hands the run to `project-qa-recovery.ts`. The
+stale-heartbeat stop reaches the same settlement: it also reads the step's
+recorded exit after the stop, so a hung supervisor never discards an outcome it
+had already written. With a recorded exit the run settles `failed` from the
+step's exit code or signal, with the step named as
+`interruptedStep`/`failedStep` and the live output log's path, byte offset and
+last lines in its detail; with no recorded exit the outcome is genuinely
+unobservable and the run settles `lost`, carrying the same step and output
+pointer. `lost` therefore means a dead supervisor or an unobservable outcome,
+never a run that simply waited for its capacity deadline. Both stops re-read the
+record first, so a step the supervisor has already moved past is never the group
+a stop is decided on.
 
 `supervisor-process.ts` owns the detached supervisor's own process lifecycle — the
 launch shape and the stale stop with its proof — for milestone QA, project
