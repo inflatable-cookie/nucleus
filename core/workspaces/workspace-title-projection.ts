@@ -1,7 +1,9 @@
 import type { Task } from "../../shared/contracts";
+import type { TaskAttentionState } from "../../shared/task-attention";
 import { doublingDelay } from "../../shared/backoff";
 import type { Engine } from "../engine";
 import { ProjectionOccurrences, titleOccurrenceKey } from "../scheduling/projection-occurrences";
+import { taskRowAttention } from "./task-row-attention";
 import { taskReferenceLabel, taskWorkspaceTitle, type TitleReferenceLookup } from "./workspace-title";
 
 /**
@@ -35,6 +37,7 @@ export class WorkspaceTitleProjection {
   /** One latest title intent per task; a re-enqueue coalesces onto the queued entry. */
   queue = new Set<string>();
   draining: Promise<void> | null = null;
+  private readonly reconciledRowStates = new Map<string, TaskAttentionState>();
   constructor(readonly engine: Engine, private readonly occurrences: ProjectionOccurrences) {}
   private get store() { return this.engine.store; }
   private get adapter() { return this.engine.adapter; }
@@ -60,7 +63,27 @@ export class WorkspaceTitleProjection {
           // A purged task owes no title: the row that would carry the intent is gone too.
           const task = this.store.taskOrNull(taskId);
           if (task?.hostId) await this.engine.withHost(task.hostId, async () => {
-            if (this.engine.taskHostAvailable(task)) await this.engine.syncWorkspaceTitle(task);
+            if (!this.engine.taskHostAvailable(task)) return;
+            try {
+              await this.engine.syncWorkspaceTitle(task);
+            } catch {
+              /* the durable title intent records its own failure and backoff */
+            }
+            const current = this.store.taskOrNull(taskId);
+            if (!current || current.removedAt != null) {
+              this.reconciledRowStates.delete(taskId);
+              return;
+            }
+            if (!current.hostId || !this.adapter.reconcileTaskRow) return;
+            if (!this.engine.taskHostAvailable(current)) return;
+            const attention = taskRowAttention(this.store, current);
+            if (attention.state === "waiting" && this.reconciledRowStates.get(current.id) === "waiting") return;
+            try {
+              await this.adapter.reconcileTaskRow(current.id, attention);
+              this.reconciledRowStates.set(current.id, attention.state);
+            } catch {
+              /* HostPass records transport/pass failures; presentation warnings never block title drain */
+            }
           });
         }
         // A send refusal is recorded by `sync` on the durable intent, which is also the

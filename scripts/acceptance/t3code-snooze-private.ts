@@ -43,11 +43,18 @@ import { createServer } from "node:net";
 import { join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
-import { T3RpcClient } from "../../hosts/t3code/rpc";
-import { createHost } from "../../hosts/t3code";
+import { T3RpcClient, T3RpcError } from "../../hosts/t3code/rpc";
+import { createAdapter, createHost } from "../../hosts/t3code";
 import { canonical } from "../../hosts/t3code/state";
 import { pipelineBoard } from "../../shared/pipeline-board";
-import type { Task, TaskSummary } from "../../shared/contracts";
+import { submissionSchema, type Task, type TaskSummary } from "../../shared/contracts";
+import { HostPolicies } from "../../core/host/host-policies";
+import type { HostPolicyConstructor } from "../../core/host";
+import { Store } from "../../core/store/store";
+import { Engine } from "../../core/engine";
+import { AcpSessions } from "../../core/acp/sessions";
+import { QueueService } from "../../service/transport/server";
+import { storedT3Labels } from "../../test/support/t3code-labels";
 
 /** The nightly line this proof reads; the exact installed build is recorded, never pinned. */
 const NIGHTLY_LINE = /^0\.1\.11-nightly\.\d+\.\d+$/;
@@ -213,9 +220,10 @@ async function main() {
 
   const privateHome = join(root, "home");
   const data = join(root, "t3-data");
+  const nucleusData = join(root, "nucleus-data");
   const repository = join(root, "synthetic-repository");
   const worktree = join(root, "synthetic-worktree");
-  for (const path of [privateHome, data, join(data, "userdata"), repository])
+  for (const path of [privateHome, data, join(data, "userdata"), nucleusData, repository])
     mkdirSync(path, { recursive: true });
   const environment: NodeJS.ProcessEnv = {
     PATH: process.env.PATH,
@@ -230,6 +238,7 @@ async function main() {
     T3CODE_NO_BROWSER: "true",
     T3CODE_LOG_LEVEL: "Warn",
     T3CODE_TRACE_TIMING_ENABLED: "false",
+    NUCLEUS_DATA_HOME: nucleusData,
   };
   await run(["git", "init", "--quiet", "--initial-branch=main"], repository, environment);
   await run(["git", "config", "user.email", "fixture@example.invalid"], repository, environment);
@@ -254,6 +263,14 @@ async function main() {
     `#!/bin/sh\nexec ${shellQuote(process.execPath)} ${shellQuote(peer)} "$@"\n`,
     { mode: 0o700 },
   );
+  const checkout = fileURLToPath(new URL("../..", import.meta.url));
+  const acpLauncher = join(root, "synthetic-nucleus-acp");
+  writeFileSync(
+    acpLauncher,
+    `#!/bin/sh\n# nucleus-owned-command-v1\nexec ${shellQuote(process.execPath)} --import ${shellQuote(join(checkout, "node_modules/tsx/dist/loader.mjs"))} ${shellQuote(join(checkout, "bin/nucleus-acp.mjs"))} "$@"\n`,
+    { mode: 0o700 },
+  );
+  writeFileSync(join(nucleusData, "settings.json"), JSON.stringify({ daemonUrl: "ws://127.0.0.1:6767/ws" }, null, 2), { mode: 0o600 });
   writeFileSync(
     join(data, "userdata/settings.json"),
     JSON.stringify({
@@ -262,6 +279,12 @@ async function main() {
           driver: "codex",
           enabled: true,
           config: { binaryPath: provider, homePath: codexHome, setupMode: "existing" },
+        },
+        nucleus: {
+          driver: "acpRegistry",
+          displayName: "Nucleus",
+          enabled: true,
+          config: { source: "local", commandPath: acpLauncher },
         },
       },
       notifications: { enabled: false },
@@ -296,6 +319,10 @@ async function main() {
   let server: ChildProcess | undefined;
   let rpc: T3RpcClient | undefined;
   let host: ReturnType<typeof createHost> | undefined;
+  let service: QueueService | undefined;
+  let acpEngine: Engine | undefined;
+  let acpStore: Store | undefined;
+  let acpHost: ReturnType<typeof createHost> | undefined;
   const startServer = async () => {
     const log = openSync(join(root, "server.log"), "a", 0o600);
     server = spawn(
@@ -730,12 +757,318 @@ async function main() {
       counts: board.counts,
     });
 
+    // 9. Delayed apply, unapplied ack retry as a new occurrence, stale pass snapshot,
+    //    unknown delivery and operator snooze (<24h) on the real private T3 wire.
+    await rpc.call("orchestration.dispatchCommand", {
+      type: "runtime-request.respond",
+      commandId: `proof-resolve-approval-${crypto.randomUUID()}`,
+      threadId: seedThreadId,
+      requestId: pendingApproval.id,
+      decision: "accept",
+    });
+    await until(
+      async () => {
+        const projection = await host!.readProjection(seedThreadId, "observation");
+        return projection.runtimeRequests.every((request) => request.status !== "pending");
+      },
+      "approval resolved",
+    );
+    // Clear the refused snooze record from step 6 before driving step 9 on the same thread.
+    host.state.update((state) => {
+      if (state.snoozes) delete state.snoozes[seedThreadId];
+    });
+    await host.reconcileTaskRow(TASK_ID, { state: "waiting", cause: "Delayed apply wait" });
+    const delayedUntil = await until(
+      async () => (await readThread()).snoozedUntil,
+      "step 9 snooze",
+    );
+    const nativeCall = host.rpc.call.bind(host.rpc);
+    let dropUnsnoozeAck = true;
+    host.rpc.call = async (method, payload) => {
+      if (
+        dropUnsnoozeAck &&
+        method === "orchestration.dispatchCommand" &&
+        (payload as { type?: string }).type === "thread.unsnooze"
+      ) {
+        return { ok: true };
+      }
+      return nativeCall(method, payload);
+    };
+    await host.reconcileTaskRow(TASK_ID, { state: "active" });
+    assert.equal((await readThread()).snoozedUntil, delayedUntil, "T3 still shows snoozedUntil");
+    assert.ok(host.state.read().snoozes?.[seedThreadId], "snooze record retained until read-back clears");
+
+    // Delayed apply lands before the next pass: re-observe retires the snooze without resending.
+    await rpc.call("orchestration.dispatchCommand", {
+      type: "thread.unsnooze",
+      commandId: `proof-delayed-apply-${crypto.randomUUID()}`,
+      threadId: seedThreadId,
+      reason: "user",
+    });
+    await until(async () => (await readThread()).snoozedUntil === null, "delayed unsnooze landed");
+    await host.reconcileTaskRow(TASK_ID, { state: "active" });
+    assert.equal(host.state.read().snoozes?.[seedThreadId], undefined, "delayed apply retired snooze on re-observe");
+
+    // Unapplied ack: settled unsnooze that did not clear retries as a new occurrence.
+    await host.reconcileTaskRow(TASK_ID, { state: "waiting", cause: "Retry occurrence wait" });
+    await until(async () => (await readThread()).snoozedUntil !== null, "second snooze landed");
+    await host.reconcileTaskRow(TASK_ID, { state: "active" });
+    assert.ok(host.state.read().snoozes?.[seedThreadId], "snooze record kept while still snoozed");
+    dropUnsnoozeAck = false;
+    await host.reconcileTaskRow(TASK_ID, { state: "active" });
+    await until(async () => (await readThread()).snoozedUntil === null, "retried unsnooze cleared");
+    assert.equal(host.state.read().snoozes?.[seedThreadId], undefined, "snooze retired after read-back");
+
+    // Stale pass snapshot inside beginHostPass: unsnoozeRow bypasses held cache and clears.
+    const staleTask = { id: TASK_ID, number: 1399, title: "Stale snapshot", phase: "working", hostId: host.hostId, removedAt: null } as unknown as Task;
+    await host.beginHostPass([staleTask]);
+    const heldRead = await host.readProjection(seedThreadId, "observation");
+    assert.equal(heldRead.thread.snoozedUntil, null);
+    const staleUntil = new Date(Date.now() + SNOOZE_HORIZON_MS).toISOString();
+    await rpc.call("orchestration.dispatchCommand", {
+      type: "thread.snooze",
+      commandId: `proof-stale-snooze-${crypto.randomUUID()}`,
+      threadId: seedThreadId,
+      snoozedUntil: staleUntil,
+    });
+    await until(async () => (await readThread()).snoozedUntil === staleUntil, "snooze set during pass");
+    host.state.update((state) => {
+      state.snoozes = {
+        ...state.snoozes,
+        [seedThreadId]: { episode: 0, commandId: "stale-pass-snooze", until: staleUntil, state: "snoozed", recordedAt: new Date().toISOString() },
+      };
+    });
+    await host.reconcileTaskRow(TASK_ID, { state: "active" });
+    host.endHostPass();
+    await until(async () => (await readThread()).snoozedUntil === null, "stale pass cleared");
+    assert.equal(host.state.read().snoozes?.[seedThreadId], undefined);
+
+    // Unknown delivery (timeout): never resent blindly while unknown, settles once cleared.
+    await host.reconcileTaskRow(TASK_ID, { state: "waiting", cause: "Unknown timeout wait" });
+    await until(async () => (await readThread()).snoozedUntil !== null, "unknown timeout snooze");
+    let timeoutAttempts = 0;
+    host.rpc.call = async (method, payload) => {
+      if (method === "orchestration.dispatchCommand" && (payload as { type?: string }).type === "thread.unsnooze") {
+        timeoutAttempts++;
+        throw new T3RpcError("timeout", method);
+      }
+      return nativeCall(method, payload);
+    };
+    await assert.rejects(host.reconcileTaskRow(TASK_ID, { state: "active" }), /Host delivery is unknown/i);
+    await host.reconcileTaskRow(TASK_ID, { state: "active" });
+    assert.equal(timeoutAttempts, 1, "unknown unsnooze is never resent blindly");
+    assert.ok(host.state.read().snoozes?.[seedThreadId], "snooze retained while unknown");
+    host.rpc.call = nativeCall;
+    await rpc.call("orchestration.dispatchCommand", {
+      type: "thread.unsnooze",
+      commandId: `proof-clear-unknown-${crypto.randomUUID()}`,
+      threadId: seedThreadId,
+      reason: "user",
+    });
+    await until(async () => (await readThread()).snoozedUntil === null, "unknown cleared externally");
+    await host.reconcileTaskRow(TASK_ID, { state: "active" });
+    assert.equal(host.state.read().snoozes?.[seedThreadId], undefined);
+
+    // Operator snooze (<24h): left untouched.
+    const opUntil = new Date(Date.now() + 60 * 60_000).toISOString();
+    await rpc.call("orchestration.dispatchCommand", {
+      type: "thread.snooze",
+      commandId: `proof-operator-snooze-${crypto.randomUUID()}`,
+      threadId: seedThreadId,
+      snoozedUntil: opUntil,
+    });
+    await until(async () => (await readThread()).snoozedUntil === opUntil, "operator snooze set");
+    await host.reconcileTaskRow(TASK_ID, { state: "waiting", cause: "Operator snooze check" });
+    await host.reconcileTaskRow(TASK_ID, { state: "active" });
+    assert.equal((await readThread()).snoozedUntil, opUntil, "operator snooze untouched");
+    steps.push({ step: "readback-delayed-stale-unknown-operator", result: "passed" });
+
+    // 10. Real ACP parent + same native child going idle and resuming on the real wire,
+    //     measuring the reconcile path from role going active to the row showing.
+    service = new QueueService({ owner: { dataDir: nucleusData, timers: false }, fixture: "fake", debug: true });
+    await service.start();
+    const acpWorktree = join(root, "acp-worktree");
+    await run(["git", "worktree", "add", "--quiet", "-b", "proof-acp-worktree", acpWorktree], repository, environment);
+    acpStore = new Store(join(nucleusData, "queue.sqlite"));
+    acpStore.setMeta("paused", false);
+    const acpSessions = new AcpSessions({ store: acpStore } as unknown as Engine, {
+      dataHome: nucleusData,
+      socketPath: join(nucleusData, "callback.sock"),
+    });
+    acpHost = createHost({
+      endpoint,
+      bearer,
+      statePath: join(root, "hosts", "t3code-acp.json"),
+      timeoutMs: 30_000,
+      probeThreadId: seedThreadId,
+      acp: () => acpSessions,
+    });
+    await acpHost.connect();
+    const acpAdapter = createAdapter(HostPolicies as unknown as HostPolicyConstructor, acpHost);
+    const liveEngine = new Engine(acpStore, acpAdapter, 60_000);
+    acpEngine = liveEngine;
+
+    const planning = "a".repeat(40);
+    const acpTask = acpStore.insert(
+      submissionSchema.parse({
+        submissionId: "proof-same-child-resume",
+        title: "Same native child resume",
+        repoPath: repository,
+        planningCommit: planning,
+        brief: { text: "Synthetic snooze resume proof" },
+        originAgentId: "proof-origin",
+      }),
+      acpHost.hostId,
+      "handoff",
+      planning,
+    );
+    const acpWs = await acpHost.createWorkspace({
+      title: "Same child worktree",
+      requestId: "acp-ws",
+      directory: acpWorktree,
+      project: { projectId, workspaceRoot: repository },
+    });
+    acpStore.update(acpTask.id, {
+      directory: acpWorktree,
+      workspaceId: acpWs.id,
+      phase: "working",
+    });
+    const prereqTask = acpStore.insert(
+      submissionSchema.parse({
+        submissionId: "proof-same-child-prereq",
+        title: "Prereq task",
+        repoPath: repository,
+        planningCommit: planning,
+        brief: { text: "Prereq" },
+        originAgentId: "proof-origin",
+      }),
+      acpHost.hostId,
+      "handoff",
+      planning,
+    );
+    const codexReady = await until(
+      async () => {
+        const cfg = (await acpHost!.rpc.call("server.getConfig", {})) as {
+          providers: Array<{ instanceId: string; status: string; models: Array<{ slug: string }> }>;
+        };
+        const codex = cfg.providers.find(
+          (providerEntry) =>
+            providerEntry.instanceId === "codex" &&
+            providerEntry.status === "ready" &&
+            providerEntry.models.length > 0,
+        );
+        return codex ?? null;
+      },
+      "codex provider models ready",
+    );
+    const acpProfile = {
+      id: "proof-codex",
+      name: "Codex",
+      provider: "codex",
+      model: codexReady.models[0]!.slug,
+      available: true,
+      problem: "",
+      notes: "",
+      supportedThinking: [],
+    };
+    const workerChild = await acpHost.createAgent({
+      workspaceId: acpWs.id,
+      profile: acpProfile,
+      title: "Same child worker",
+      taskNumber: acpTask.number,
+      mcpBindingPath: null,
+      attempt: () => ({
+        requestId: "proof-same-child-launch",
+        prompt: "Initial worker turn",
+        labels: storedT3Labels("worker", { taskId: acpTask.id, runId: "proof-run-1" }),
+        environment: {},
+      }),
+    });
+    const parentRecord = acpHost.nesting.parentOf(acpTask.id)!;
+    assert.ok(parentRecord, "real ACP parent created");
+    const readParent = async () => {
+      const value = (await rpc!.readStream(
+        "orchestration.subscribeThread",
+        { threadId: parentRecord.threadId },
+        (chunk) => (chunk as { kind?: string }).kind === "snapshot",
+      )) as { projection: { thread: { snoozedUntil: string | null; settledOverride: string | null } } };
+      return value.projection.thread;
+    };
+    // Wait for initial child turn to go idle.
+    await until(
+      async () => {
+        const obs = await acpHost!.observe(workerChild.id);
+        return !obs.active && obs.status === "idle" ? true : null;
+      },
+      "worker child turn goes idle",
+    );
+    acpStore.update(acpTask.id, {
+      phase: "working",
+      workspaceId: acpWs.id,
+      directory: acpWorktree,
+      agentId: workerChild.id,
+      agentIntent: true,
+      agentActive: false,
+      idleSince: new Date().toISOString(),
+      runId: "proof-run-1",
+      prerequisiteWait: {
+        id: prereqTask.id,
+        waitsFor: [prereqTask.id],
+        reason: "Waiting on prerequisite before resuming",
+        releasedAt: null,
+      },
+    });
+    await liveEngine.auditPass(false);
+    const snoozedParentUntil = await until(
+      async () => (await readParent()).snoozedUntil,
+      "real ACP parent snoozed while waiting",
+    );
+    assert.ok(snoozedParentUntil);
+
+    // Resume in the same native child ("proof-hold" keeps the resumed turn active), clear the wait,
+    // and measure how long the immediate reconcile path takes until the parent row is visible on T3.
+    await acpHost.sendMessage(workerChild.id, {
+      messageId: `proof-resume-${crypto.randomUUID()}`,
+      text: "proof-hold resume same native child",
+    });
+    await until(
+      async () => {
+        const obs = await acpHost!.observe(workerChild.id);
+        return obs.active ? true : null;
+      },
+      "same native child resumed active",
+    );
+    acpStore.update(acpTask.id, {
+      prerequisiteWait: null,
+      agentActive: true,
+      idleSince: null,
+    });
+    const activatedAt = Date.now();
+    acpEngine.enqueueTitle(acpTask.id);
+    await acpEngine.drainProjections({ cleanup: false });
+    const reconcileMs = Date.now() - activatedAt;
+    const afterResume = await readParent();
+    assert.equal(afterResume.snoozedUntil, null, "real ACP parent unsnoozed promptly on role resume");
+    assert.equal(afterResume.settledOverride, null, "never settled");
+    assert.equal(acpHost.state.read().snoozes?.[parentRecord.threadId], undefined);
+    steps.push({
+      step: "same-native-child-idle-resume-reconcile",
+      result: "passed",
+      workerThreadId: workerChild.id,
+      parentThreadId: parentRecord.threadId,
+      reconcileMs,
+    });
+
     evidence.result = "passed";
   } catch (error) {
     evidence.result = "failed";
     evidence.failure = error instanceof Error ? error.message : String(error);
     process.exitCode = 1;
   } finally {
+    await acpEngine?.stop().catch(() => undefined);
+    acpHost?.close();
+    acpStore?.close();
+    await service?.stop().catch(() => undefined);
     host?.close();
     rpc?.close();
     await stopServer();

@@ -340,7 +340,7 @@ already present.
 | Archive | `thread.archive` through dispatch | Receipt followed by archived-state observation |
 | Remove | `thread.delete` through dispatch at closeout, never `onlyIfUnused` | Durable intent, then `deletedAt` or absence from a complete inventory proves removal; an unknown outcome is never resent |
 | Snooze a waiting row | `thread.snooze` through dispatch with `snoozedUntil` in the future | One bounded horizon, read back from `snoozedUntil`; deterministic command identity per wait episode and horizon; a refusal is "stay active" for that episode, never a retry loop |
-| Show a row again | `thread.unsnooze` through dispatch with `reason: "user"` | Only a row this host snoozed; a person who must act or a running role gets the row back. A manual settle is never touched |
+| Show a row again | `thread.unsnooze` through dispatch with `reason: "user"` | Only a row this host snoozed; a person who must act or a running role gets the row back immediately through the title/row projection drain and the host pass. The snooze record stays until a fresh T3 read proves `snoozedUntil` is cleared; a settled unsnooze that still reads snoozed is re-observed and retried as a new occurrence, while an unknown delivery is never resent blindly. Operator snoozes and manual settles are never touched |
 | Continue a manually settled thread | Refuse before sending | The operator must unsettle the thread in T3 before a follow-up or re-entry can start a run |
 | Archive workspace | Mark the task's T3 worktree handle archived in adapter state | Observation reads the handle's `archivedAt`; the shared project registration remains registered and available |
 | Atomic interrupt and continue | `message.dispatch` `steer_active` with the live run's `targetRunId` | The message injects into the active turn; with no active run the refusal is proven before send |
@@ -385,7 +385,11 @@ task's parent row is driven by the one attention projection the board and
 `task.next` read (`shared/task-attention.ts`):
 
 - *attention* or *active* — a person must act, or a role child is running: the
-  row is shown, and a row this host snoozed is unsnoozed.
+  row is shown, and a row this host snoozed is unsnoozed. Task-level title and
+  row reconciliation (`WorkspaceTitleProjection` draining `enqueueTitle`) runs
+  `reconcileTaskRow` right alongside title updates when a role goes active or
+  attention changes, instead of waiting for the next periodic sweep; `HostPass`
+  also reconciles active and attention rows ahead of waiting and finished rows.
 - *waiting* — the task waits on nothing Nucleus is running and needs no one: the
   row is snoozed. An owner hold with a release condition and an unresolved
   completable prerequisite wait are waiting with their named cause. An operator-owned
@@ -394,16 +398,32 @@ task's parent row is driven by the one attention projection the board and
 
 The horizon is bounded (48 hours) and the ordinary sweep renews it with 24 hours
 left, so the row never wakes itself while the task still waits. The command
-identity is deterministic per wait episode and horizon, so a returning identical
-wish never reuses a spent command. Like every presentation write, the effect is
-recorded before the send and the adapter reads `snoozedUntil` back afterwards. An
-unknown delivery retains its identity and is never blindly resent. A later read
-that finds the requested horizon establishes ownership; a different snooze is left
-alone. A refusal stays active for that wait and is never retried. If the task becomes
-active before an unknown send is resolved, a later wait can snooze after the old
-horizon expires, when a late delivery can no longer hide the row. A row
-an operator settled by hand is left exactly as it is — no snooze, no unsettle —
-and a repeated pass inside the horizon writes nothing.
+identity is deterministic per wait episode and horizon (advancing on a new
+occurrence after a spent receipt), so a returning identical wish never reuses a
+spent command. Like every presentation write, the effect is recorded before the
+send and the adapter reads `snoozedUntil` back afterwards — both on snooze and
+on unsnooze. For a snooze, an unknown delivery retains its identity and is never
+blindly resent; a later read that finds the requested horizon establishes
+ownership, a different snooze is left alone, a refusal stays active for that
+wait without retrying, and if the task becomes active before an unknown snooze
+resolves, a later wait can snooze after the old horizon expires.
+
+Unsnoozing never forgets this host's snooze record on the command
+acknowledgement alone: the record stays until a fresh T3 read (dropping any
+cached snapshot held earlier in the pass) proves `snoozedUntil` is `null` or
+`undefined`. If a `thread.unsnooze` command settles yet T3 still reports
+`snoozedUntil` (a delayed apply, a stale observation or an ack that did not
+take), the next pass re-observes the thread fresh: if `snoozedUntil` has since
+cleared, the snooze record is retired without sending again; if it is still set,
+the host retries `thread.unsnooze` as a new occurrence under the next
+deterministic command identity. An unknown delivery (`timeout`, in-flight late
+reply or remote failure) retains its command identity and is never resent
+blindly while delivery is unknown; once a fresh read confirms `snoozedUntil`
+cleared, the unknown unsnooze intent settles and the snooze record is retired.
+
+An operator snooze (any live snooze not recorded by this host) and a row an
+operator settled by hand are left exactly as they are — no snooze, no
+unsnooze, no unsettle — and a repeated pass inside the horizon writes nothing.
 
 A settled thread starts no run, and T3 does not clear a manual settle on
 `message.dispatch`. Re-entry and follow-up refuse before sending until the operator
