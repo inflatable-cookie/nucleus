@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { Engine } from '../core/engine';
 import { Store } from '../core/store/store';
 import type { Adapter } from '../core/host';
+import { formatAgentId } from '../shared/agent-identity';
 import { submissionSchema, type Run } from '../shared/contracts';
 import { answerFixturePrompt } from './support/delegated-reply';
 import { agentAskSchema } from '../core/questions/agent-ask';
@@ -120,20 +121,56 @@ test('ask planner reaches the task planner first, then a live project thread aft
 });
 
 
-test('an invalidation during live observation fences the stale recipient', async () => {
+test('project.get refreshes an invalidated observation before showing a recipient', async () => {
   const f = fixture();
   try {
+    const { RuntimeRepositories } = await import('../core/runtime/repositories');
+    const repositories = new RuntimeRepositories({ store: f.store, engine: f.engine, markStoreAccess() {} } as never);
     let release!: () => void;
     const gate = new Promise<void>(resolve => { release = resolve; });
     const original = f.engine.resolution.plannerPresence.threadRoute.bind(f.engine.resolution.plannerPresence);
     let observing!: () => void;
     const started = new Promise<void>(resolve => { observing = resolve; });
-    f.engine.resolution.plannerPresence.threadRoute = async (...args) => { observing(); await gate; return original(...args); };
-    const pending = f.engine.resolution.responsibleThread(f.store.projectByKey('example')!);
+    let first = true;
+    f.engine.resolution.plannerPresence.threadRoute = async (...args) => {
+      if (first) {
+        first = false;
+        observing();
+        await gate;
+        return { kind: 'routable' }; // The former observation finishes after invalidation.
+      }
+      return original(...args);
+    };
+    const pending = repositories.getProject({ key: 'example' });
     await started;
+    f.archived.add('other');
     f.engine.resolution.responsibleThreads.cache.invalidate('example');
     release();
-    await assert.rejects(pending, /invalidated during observation/);
-    assert.deepEqual(f.sent, []);
+    assert.equal((await pending)?.responsibleThread?.thread?.agentId, formatAgentId('paseo-synthetic', 'own'));
+    assert.equal(f.inventories(), 2);
+  } finally { f.store.close(); }
+});
+
+test('an unreadable candidate leaves a verified recipient available to synchronous notice producers', async () => {
+  const f = fixture();
+  try {
+    const resolution = f.engine.resolution, project = f.store.projectByKey('example')!;
+    const original = resolution.plannerPresence.threadRoute.bind(resolution.plannerPresence);
+    resolution.plannerPresence.threadRoute = async (id, hostId) =>
+      id === formatAgentId('paseo-synthetic', 'other') ? { kind: 'unroutable', detail: 'Host observation failed' } : original(id, hostId);
+    const own = formatAgentId('paseo-synthetic', 'own');
+    for (let i = 0; i < 2; i++) {
+      assert.equal((await resolution.responsibleThread(project)).thread?.agentId, own);
+      assert.equal(f.store.projectPlannerRecipient(project), own);
+    }
+    assert.equal(f.inventories(), 1);
+    resolution.plannerPresence.threadRoute = original;
+    f.archived.add('other');
+    assert.equal((await resolution.responsibleThread(project)).thread?.agentId, own);
+    assert.deepEqual(resolution.responsibleThreads.cache.peek(project.key)?.threads.map(thread => thread.agentId), [own]);
+    assert.equal(f.store.projectPlannerRecipient(project), own);
+    await resolution.responsibleThread(project);
+    assert.equal(f.inventories(), 2);
+
   } finally { f.store.close(); }
 });

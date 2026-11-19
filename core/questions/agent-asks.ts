@@ -467,7 +467,7 @@ export class AgentAsks {
     let unavailable = false;
     let result;
     try {
-      // Task 1109: the task's own planner first, then the project planner, then the decider.
+      // The task's own planner is first, followed by a live project thread.
       const { rungs, issue } = await this.askRungs(task, ask);
       if (!rungs.length && !issue && !this.resolution.delegatedDelivery(`ns-agent-ask-${ask.id}`) && !this.resolution.delegatedDelivery(`ns-agent-ask-${ask.id}-project`) && !this.resolution.delegatedDelivery(`ns-decider-${ask.id}`)) {
         if (isOperatorOnlyAsk(ask.kind)) {

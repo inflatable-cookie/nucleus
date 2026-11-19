@@ -150,14 +150,15 @@ test('definite admission refusal stays diagnosed; a changed config can admit onc
 test('owner delivery respects idle, pause, transfer and uncertain delivery fences',async t=>{
   const f=await fixture(t);f.merge();f.run('failed');await f.schedules.tick();
   let active=true,sends=0;const targets:string[]=[];
-  const adapter={observe:async(id:string)=>({id,status:active?'running':'idle',active,permissions:false,error:''}),
+  const adapter={hostId:'host',
+    listLiveAgents:async()=>[{id:f.store.projectByKey(f.project.key)!.planner!.agentId,title:'Planner',workspaceId:null}],
+    observe:async(id:string)=>({id,status:active?'running':'idle',active,permissions:false,error:''}),
     notify:async(id:string)=>{sends++;targets.push(id);},profiles:async()=>[]} as unknown as Adapter;
   // Queue #912: planner notices route to the one registered host, which this fixture names.
   f.store.setMeta('hostId','host');
   const engine=new Engine(f.store,adapter,0);t.after(()=>engine.stop());
   await engine.resolution.deliverDrainNotices();assert.equal(sends,0);
   f.store.setProjectPlanner({key:f.project.key,agentId:'new-planner',setBy:'test'});active=false;
-  await engine.resolution.deliverDrainNotices();assert.equal(sends,0); // Refresh routing first.
   f.store.setMeta('paused',true);await engine.resolution.deliverDrainNotices();assert.equal(sends,0);
   f.store.setMeta('paused',false);await engine.resolution.deliverDrainNotices();assert.deepEqual(targets,['new-planner']);
   await engine.resolution.deliverDrainNotices();assert.equal(sends,1);
@@ -200,7 +201,10 @@ test('schema 50 upgrade preserves QA schedule and retained outcomes',async t=>{
 test('owner changes while observe awaits cannot deliver to the old owner; uncertain send is never replayed',async t=>{
   const f=await fixture(t);f.merge();f.run('failed');await f.schedules.tick();
   let release!:()=>void,sends=0;let first=true;
-  const adapter={observe:async(id:string)=>{if(first){first=false;await new Promise<void>(r=>{release=r;});}return {id,status:'idle',active:false,permissions:false,error:''};},
+  const adapter={hostId:'host',
+    listLiveAgents:async()=>[{id:f.store.projectByKey(f.project.key)!.planner!.agentId,title:'Planner',workspaceId:null}],
+    originAgent:async(id:string)=>({id,title:'Planner',workspaceId:null}),
+    observe:async(id:string)=>{if(first){first=false;await new Promise<void>(r=>{release=r;});}return {id,status:'idle',active:false,permissions:false,error:''};},
     notify:async()=>{sends++;throw Error('transport lost after send');},profiles:async()=>[]} as unknown as Adapter;
   // Queue #912: planner notices route to the one registered host, which this fixture names.
   f.store.setMeta('hostId','host');

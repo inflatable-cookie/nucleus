@@ -19,18 +19,18 @@ test('resolves project checkout and task owners, excluding task roles across hos
       { id: 'reviewer', title: '', workspaceId: null, directory: '/synthetic/repo', labels: { 'nucleus.role': 'reviewer' } },
       { id: 'outsider', title: '', workspaceId: null },
     ],
-    tasks: () => [task], runs: () => [] as Run[], projectFor: () => project,
+    tasks: () => [task], runs: () => [] as Run[], projectKeyResolver: () => () => project.key,
   });
   const result = await resolver.resolve(project);
-  assert.deepEqual(result.threads.map(thread => thread.agentId), [formatAgentId('bb:two', 'local'), formatAgentId('t3code:one', 'owner')]);
-  assert.equal(result.threads[1]?.lastInteraction, '2026-01-03T00:00:00Z');
+  assert.deepEqual(result!.threads.map(thread => thread.agentId), [formatAgentId('bb:two', 'local'), formatAgentId('t3code:one', 'owner')]);
+  assert.equal(result!.threads[1]?.lastInteraction, '2026-01-03T00:00:00Z');
 });
 
 test('does not match a similarly named directory as a checkout', async () => {
   const resolver = new ResponsibleThreadResolver({ hostIds: () => ['bb:two'], hostOnline: () => true,
     inventory: async () => [{ id: 'outside', title: '', workspaceId: null, directory: '/synthetic/repository' }],
-    tasks: () => [], runs: () => [], projectFor: () => null });
-  assert.deepEqual((await resolver.resolve(project)).threads, []);
+    tasks: () => [], runs: () => [], projectKeyResolver: () => () => null });
+  assert.deepEqual((await resolver.resolve(project))!.threads, []);
 });
 
 test('a recent verified Nucleus call changes the ranking and host loss drops cached candidates', async () => {
@@ -39,23 +39,30 @@ test('a recent verified Nucleus call changes the ranking and host loss drops cac
     inventory: async () => [
       { id: 'first', title: '', workspaceId: null, directory: '/synthetic/repo', updatedAt: '2020-01-01T00:00:00Z' },
       { id: 'second', title: '', workspaceId: null, directory: '/synthetic/repo', updatedAt: '2021-01-01T00:00:00Z' },
-    ], tasks: () => [], runs: () => [], projectFor: () => project });
-  assert.equal((await resolver.resolve(project)).threads[0]?.agentId, formatAgentId('t3code:one', 'second'));
+    ], tasks: () => [], runs: () => [], projectKeyResolver: () => () => project.key });
+  assert.equal((await resolver.resolve(project))!.threads[0]?.agentId, formatAgentId('t3code:one', 'second'));
   resolver.recordActivity(formatAgentId('t3code:one', 'first'));
-  assert.equal((await resolver.resolve(project)).threads[0]?.agentId, formatAgentId('t3code:one', 'first'));
+  assert.equal((await resolver.resolve(project))!.threads[0]?.agentId, formatAgentId('t3code:one', 'first'));
   online = false;
-  assert.deepEqual((await resolver.resolve(project)).threads, []);
+  assert.deepEqual((await resolver.resolve(project))!.threads, []);
 });
 
 
-test('concurrent project resolution shares a single host inventory', async () => {
-  let calls = 0, release!: () => void;
+test('a batch shares one task and project lookup and one concurrent host inventory', async () => {
+  let calls = 0, taskReads = 0, projectReads = 0, release!: () => void;
   const gate = new Promise<void>(resolve => { release = resolve; });
   const resolver = new ResponsibleThreadResolver({ hostIds: () => ['t3code:one'], hostOnline: () => true,
-    inventory: async () => { calls++; await gate; return []; }, tasks: () => [], runs: () => [], projectFor: () => null });
+    inventory: async () => { calls++; await gate; return []; },
+    tasks: () => { taskReads++; return [task]; },
+    runs: () => [],
+    projectKeyResolver: () => { projectReads++; return () => project.key; },
+  });
   const other = { ...project, key: 'other' };
-  const first = resolver.resolve(project), second = resolver.resolve(other);
+  const index = resolver.taskIndex([project, other]);
+  const first = resolver.resolve(project, undefined, index), second = resolver.resolve(other, undefined, index);
   release();
   await Promise.all([first, second]);
   assert.equal(calls, 1);
+  assert.equal(taskReads, 1);
+  assert.equal(projectReads, 1);
 });

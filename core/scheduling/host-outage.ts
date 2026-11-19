@@ -24,7 +24,7 @@ const isLive = (task: Task) => !task.removedAt && task.phase !== "done" && task.
  * during the outage.
  */
 export class HostOutages {
-  constructor(private readonly store: Store, private readonly responsible?: (project: import("../../shared/contracts").Project) => Promise<string | null>) {}
+  constructor(private readonly store: Store) {}
 
   private read(): HostOutageRecord {
     try {
@@ -73,8 +73,7 @@ export class HostOutages {
    *
    * - a project that becomes affected after an earlier project was told still
    *   hears once for the same outage;
-   * - a project whose planner was not resolvable at an earlier pass is retried on
-   *   later ones instead of being marked as told;
+   * - a notice with no live recipient stays pending for delivery on a later pass;
    * - the same project never hears twice for one outage, and the notice itself is
    *   never resent after an uncertain delivery (its recorded intent covers that).
    *
@@ -82,7 +81,7 @@ export class HostOutages {
    * carries: an owner-facing stop does not stop the host from being the reason
    * nothing moves.
    */
-  async raiseNotices(at = Date.now()): Promise<string[]> {
+  raiseNotices(at = Date.now()): string[] {
     const boundMs = (this.store.getMeta<number>("hostOutageNoticeMinutes") ?? DEFAULT_HOST_OUTAGE_NOTICE_MINUTES) * 60_000;
     const record = this.read();
     const due = Object.entries(record).filter(([, outage]) => {
@@ -91,13 +90,6 @@ export class HostOutages {
     });
     if (!due.length) return [];
     const created: string[] = [];
-    const recipients = new Map<string, string | null>();
-    for (const [, outage] of due) {
-      void outage;
-      for (const project of this.store.projects()) {
-        if (!recipients.has(project.key)) recipients.set(project.key, this.responsible ? await this.responsible(project) : this.store.projectPlannerRecipient(project));
-      }
-    }
     this.store.transaction(() => {
       const latest = this.read();
       for (const [hostId, outage] of due) {
@@ -109,7 +101,7 @@ export class HostOutages {
           if (current.notifiedProjects[projectKey]) continue;
           const project = this.store.projectByKey(projectKey);
           // Keep a visible pending notice when no live thread exists yet.
-          const planner = recipients.get(projectKey) ?? `project:${projectKey}`;
+          const planner = this.store.projectPlannerRecipient(project) ?? `project:${projectKey}`;
           const id = hostOutageNoticeId(hostId, projectKey, outage.since);
           this.store.putNotice({
             id, taskId: `project:${projectKey}`, agentId: planner, recipientAgentId: planner,

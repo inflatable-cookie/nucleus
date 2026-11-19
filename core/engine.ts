@@ -541,7 +541,7 @@ export class Engine {
           "recovery",
           "resumeAskQuestions",
           "resumeResponsibleAnsweredQuestions",
-          "responsibleThread",
+          "refreshResponsibleThreads",
           "settleBudgetClock",
         ],
       ),
@@ -885,7 +885,7 @@ export class Engine {
     readonly uncertainMergeRetryMs = DEFAULT_UNCERTAIN_MERGE_RETRY_MS,
     hostRunStateDir?: string,
   ) {
-    this.hostOutages = new HostOutages(store, async project => (await this.resolution.responsibleThread(project)).thread?.agentId ?? null);
+    this.hostOutages = new HostOutages(store);
     this.primaryAdapter = adapter;
     this.resolveHostAdapter = () => adapter;
     this.adapter = routeHostAdapter(this, adapter);
@@ -1079,6 +1079,8 @@ export class Engine {
           "extendCallbackReminder",
           "heavyRunAlive",
           "identifyOriginHost",
+          "plannerRungsFor",
+          "responsibleThreads",
           "withHost",
           "reconcileStalledTurnStop",
           "recovery",

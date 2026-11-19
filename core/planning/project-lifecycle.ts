@@ -70,6 +70,7 @@ export class ProjectLifecycle {
         ),
       ),
     );
+    const responsible = await this.context.resolution?.refreshResponsibleThreads(projects);
     return buildProjectSettings({
       projects,
       repositories: this.context.store.repositories(),
@@ -97,10 +98,10 @@ export class ProjectLifecycle {
         ]),
       ),
       agents,
-      responsibleThreads: Object.fromEntries(await Promise.all(projects.map(async project => {
-        const result = await this.context.resolution?.responsibleThread(project);
+      responsibleThreads: Object.fromEntries(projects.map((project, index) => {
+        const result = responsible?.[index];
         return [project.key, result ? { thread: result.thread, cacheAgeMs: Math.max(0, Date.now() - result.observedAt) } : undefined];
-      }))),
+      })),
       latestQaRuns: this.context.store.latestQaRunsFor(
         projectSettingsQaKeys(projects),
       ),

@@ -32,13 +32,13 @@ const DEFAULT_HOST_TIMEOUT_MS = 2_000;
 
 /**
  * The cache owns no host state. Callers invalidate on delivery failure, a closed
- * observation, host loss, or a new dispatching thread. A generation fence keeps
+ * observation, host loss, or a new dispatching thread. An identity fence keeps
  * an older in-flight inventory from restoring an invalidated entry.
  */
 export class ResponsibleThreadCache {
   private readonly entries = new Map<string, ResponsibleShortlist>();
-  private readonly generations = new Map<string, number>();
-  private readonly pending = new Map<string, Promise<ResponsibleShortlist>>();
+  private readonly pending = new Map<string, Promise<ResponsibleShortlist | null>>();
+  private readonly needsInventory = new WeakSet<ResponsibleShortlist>();
 
   constructor(
     private readonly ttlMs = DEFAULT_TTL_MS,
@@ -54,22 +54,29 @@ export class ResponsibleThreadCache {
   invalidate(projectKey: string): void {
     this.entries.delete(projectKey);
     this.pending.delete(projectKey);
-    this.generations.set(projectKey, (this.generations.get(projectKey) ?? 0) + 1);
   }
 
-  invalidateAll(): void {
-    for (const key of new Set([...this.entries.keys(), ...this.pending.keys()])) this.invalidate(key);
+  invalidateMatching(agentId: string): void {
+    for (const [key, shortlist] of this.entries) {
+      if (shortlist.threads.some(thread => thread.agentId === agentId)) this.invalidate(key);
+    }
   }
 
-  async resolve(projectKey: string, hosts: readonly ResponsibleHost[]): Promise<ResponsibleShortlist> {
-    const cached = this.entries.get(projectKey);
-    if (cached && this.clock() - cached.observedAt < this.ttlMs) return cached;
+  /** Retain the survivors for synchronous readers while requiring a new inventory. */
+  discardClosed(projectKey: string, shortlist: ResponsibleShortlist, closed: ReadonlySet<string>): ResponsibleShortlist {
+    const replacement = { ...shortlist, threads: shortlist.threads.filter(thread => !closed.has(thread.agentId)) };
+    this.needsInventory.add(replacement);
+    this.entries.set(projectKey, replacement);
+    return replacement;
+  }
+
+  async resolve(projectKey: string, hosts: readonly ResponsibleHost[]): Promise<ResponsibleShortlist | null> {
+    const cached = this.peek(projectKey);
+    if (cached && !this.needsInventory.has(cached)) return cached;
     const current = this.pending.get(projectKey);
     if (current) return current;
-    const generation = this.generations.get(projectKey) ?? 0;
     const read = this.collect(hosts).then(result => {
-      if ((this.generations.get(projectKey) ?? 0) !== generation)
-        throw new Error('Responsible thread inventory was invalidated');
+      if (this.pending.get(projectKey) !== read) return null;
       this.entries.set(projectKey, result);
       return result;
     }).finally(() => {

@@ -943,7 +943,10 @@ export class QueueRuntime {
           this.scheduledQa ??= new ProjectQaSchedules(
             this.store,
             this.projectQaRunner(),
-            { canAdmit: () => !this.closing && this.anyHostConnected() },
+            {
+              canAdmit: () => !this.closing && this.anyHostConnected(),
+              refreshResponsibleThread: project => this.engine.resolution.responsibleThread(project),
+            },
           );
           void this.scheduledQa.tick();
         }

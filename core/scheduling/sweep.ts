@@ -104,7 +104,7 @@ export type SweepContext = Pick<
     | "recovery"
     | "resumeAskQuestions"
     | "resumeResponsibleAnsweredQuestions"
-    | "responsibleThread"
+    | "refreshResponsibleThreads"
     | "settleBudgetClock"
   >;
 };
@@ -450,8 +450,7 @@ export class Sweep {
       }
       // A failed host already spent its per-pass observation budget; do not
       // query it again while refreshing project notice recipients.
-      await Promise.all(this.engine.store.projects().map(project =>
-        this.engine.resolution.responsibleThread(project, undefined, unavailableHosts).catch(() => null)));
+      await this.engine.resolution.refreshResponsibleThreads(this.engine.store.projects(), unavailableHosts);
       await this.maintenance.run();
       this.engine.clearRetiredInvalidations();
       // Engine restart scans incomplete dispositions before normal task
@@ -728,7 +727,7 @@ export class Sweep {
       );
       // The one long-outage notice: raised once per outage past the dispatch-limits
       // bound, then delivered through the durable notice path.
-      await this.engine.hostOutages.raiseNotices();
+      this.engine.hostOutages.raiseNotices();
       await this.fleetStep("deliverHostOutageNotices", () =>
         this.engine.resolution.deliverHostOutageNotices(),
       );

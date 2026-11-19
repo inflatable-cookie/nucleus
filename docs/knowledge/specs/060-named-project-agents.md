@@ -73,9 +73,12 @@ candidates by the most recent host activity or Nucleus call. A live
 still registers an unknown thread under a free default name and retains its
 participant-ticket rules. Clearing the hint leaves the named agent registered.
 
-Nucleus checks liveness before delivery and invalidates the cache on delivery
-failure, a closed observation, host loss or a new dispatching thread. A host
-that does not answer within its bound drops out of that pass. When no candidate
+Nucleus checks liveness before delivery. It clears the affected cache on delivery
+failure, host loss or a new dispatching thread. A closed observation discards
+the shortlist that contained it and prompts a fresh inventory on the next
+lookup. Verified survivors remain available to notice producers during that
+refresh. A thread or host that does not answer within its bound drops out of
+that pass. When no candidate
 is live, `ask` and `tell` record and return that the sender should handle the
 matter; planning questions do not start a decider. Operator-only matters go to
 the board. A task's own dispatching planner remains its first rung. `project.get`

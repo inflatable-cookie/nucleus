@@ -316,25 +316,24 @@ export class HostConnections {
     const at = new Date().toISOString();
     this.owner.store.setMeta("pluginPresenceFault", { at, message });
     this.owner.store.advanceRevision();
-    const planner = this.owner.store.projectPlannerRecipient(
-      this.owner.store.queueProject(),
-    );
-    if (!planner || !this.owner.adapter.notify) return;
+    const project = this.owner.store.queueProject();
+    if (!project || !this.owner.adapter.notify) return;
     try {
-      const hostId = await this.owner.engine.identifyOriginHost(planner);
-      if (!hostId) return;
+      const { thread } = await this.owner.engine.resolution.responsibleThread(project);
+      if (!thread || epoch !== this.pluginPresenceEpoch || this.owner.closing) return;
       const reload = commands.length
         ? commands
             .map((command) => `Reload the plugin with: ${command}`)
             .join("\n")
         : `Reload the plugin with: ${HOST_PLUGIN_RELOAD_COMMANDS.paseo}`;
-      await this.owner.engine.withHost(hostId, () =>
-        this.owner.engine.host.sendMessage(planner, {
+      await this.owner.engine.withHost(thread.hostId, () =>
+        this.owner.engine.host.sendMessage(thread.agentId, {
           messageId: `ns-plugin-presence-${at}`,
           text: `Nucleus: ${message}\n${reload}`,
         }),
       );
     } catch {
+      this.owner.engine.resolution.responsibleThreads.cache.invalidate(project.key);
       /* the board error is the operator-visible surface */
     }
   }

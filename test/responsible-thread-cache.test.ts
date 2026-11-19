@@ -12,7 +12,7 @@ test('ranks eligible host-qualified candidates by hint and recent interaction', 
     { id: 't3code:one', inventory: async () => [fact('mcp:opaque', '2026-01-02'), fact('worker', '2026-01-04', { taskRole: true })] },
     { id: 'paseo:two', inventory: async () => [fact('hint', '2026-01-01', { registeredHint: true }), fact('closed', '2026-01-05', { closed: true }), fact('other', '2026-01-06', { belongsToProject: false })] },
   ]);
-  assert.deepEqual(result.threads.map(thread => thread.agentId), [formatAgentId('paseo:two', 'hint'), formatAgentId('t3code:one', 'mcp:opaque')]);
+  assert.deepEqual(result?.threads.map(thread => thread.agentId), [formatAgentId('paseo:two', 'hint'), formatAgentId('t3code:one', 'mcp:opaque')]);
 });
 
 test('caches briefly, invalidates, and prevents an old inventory restoring the cache', async () => {
@@ -24,7 +24,7 @@ test('caches briefly, invalidates, and prevents an old inventory restoring the c
   cache.invalidate('project');
   const fresh = await cache.resolve('project', [host]);
   finish([fact('old', '2026-01-01')]);
-  await assert.rejects(old, /inventory was invalidated/);
+  assert.equal(await old, null);
   assert.deepEqual(await cache.resolve('project', [host]), fresh);
   assert.equal(calls, 2);
   now = 101;
@@ -39,5 +39,5 @@ test('an offline or slow host does not block another host', async () => {
     { id: 'bb:offline', inventory: async () => { throw new Error('offline'); } },
     { id: 'paseo:live', inventory: async () => [fact('live', '2026-01-01')] },
   ]);
-  assert.deepEqual(result.threads.map(thread => thread.agentId), [formatAgentId('paseo:live', 'live')]);
+  assert.deepEqual(result?.threads.map(thread => thread.agentId), [formatAgentId('paseo:live', 'live')]);
 });

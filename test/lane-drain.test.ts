@@ -226,6 +226,22 @@ test('Spec 042: a lane that leaves the plan ends its episode, and a project with
   } finally { void f.close(); }
 });
 
+test('a saved plan can drain to a live responsible thread without a planner registration', async () => {
+  const f = fixture();
+  try {
+    planFixture(f);
+    f.store.setProjectPlanner({ key: 'app', agentId: null, setBy: 'test' });
+    f.engine.adapter.listLiveAgents = async () => [{ id: 'checkout-thread', title: '', workspaceId: 'ws', directory: repoA.path }];
+    f.store.responsibleRecipient = key => f.engine.resolution.cachedResponsible(key);
+    backdate(f, 200);
+    await f.engine.resolution.refreshResponsibleThreads(f.store.projects());
+    f.store.evaluateLaneDrains();
+    await f.engine.resolution.deliverDrainNotices();
+    assert.equal(laneNotices(f)[0]?.status, 'delivered');
+    assert.equal(f.notified[0]?.agentId, 'checkout-thread');
+  } finally { await f.close(); }
+});
+
 test('Spec 042: an owner thread still on an unresolved seed id is not routable, so no episode opens', () => {
   const f = fixture();
   try {

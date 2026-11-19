@@ -16,7 +16,14 @@ export interface ResponsibleThreadResolverPorts {
   inventory(hostId: string): Promise<HostLiveAgent[]>;
   tasks(): Task[];
   runs(): Run[];
-  projectFor(path: string, origin: string | null): Project | null;
+  projectKeyResolver(projects?: Project[]): (task: Task) => string | null;
+}
+
+interface ResponsibleTaskIndex {
+  tasks: Task[];
+  runs: Run[];
+  byProject: ReadonlyMap<string, Task[]>;
+  gitRoots: Map<string, Promise<string | null>>;
 }
 
 function inDirectory(directory: string, root: string): boolean {
@@ -48,18 +55,31 @@ export class ResponsibleThreadResolver {
   recordActivity(agentId: string): void {
     this.activity.set(agentId, new Date().toISOString());
     if (this.activity.size > 10_000) this.activity.delete(this.activity.keys().next().value!);
-    this.cache.invalidateAll();
+    this.cache.invalidateMatching(agentId);
   }
   constructor(private readonly ports: ResponsibleThreadResolverPorts) {}
 
-  async resolve(project: Project, excludedHosts: ReadonlySet<string> = new Set()): Promise<ResponsibleShortlist> {
+  taskIndex(projects?: Project[]): ResponsibleTaskIndex {
     const tasks = this.ports.tasks();
-    const runs = this.ports.runs();
-    const projectTasks = tasks.filter(task => this.ports.projectFor(task.repoPath, task.repository ?? null)?.key === project.key);
-    const online = this.ports.hostIds().filter(id => !excludedHosts.has(id) && this.ports.hostOnline(id)).sort();
+    const keyOf = this.ports.projectKeyResolver(projects);
+    const byProject = new Map<string, Task[]>();
+    for (const task of tasks) {
+      const key = keyOf(task);
+      if (!key) continue;
+      const group = byProject.get(key);
+      if (group) group.push(task);
+      else byProject.set(key, [task]);
+    }
+    return { tasks, runs: this.ports.runs(), byProject, gitRoots: new Map() };
+  }
+
+  async resolve(project: Project, excludedHosts?: ReadonlySet<string>, index = this.taskIndex()): Promise<ResponsibleShortlist | null> {
+    const { tasks, runs, gitRoots } = index;
+    const projectTasks = index.byProject.get(project.key) ?? [];
+    const online = this.ports.hostIds().filter(id => !excludedHosts?.has(id) && this.ports.hostOnline(id)).sort();
     // A host leaving or a new dispatching/owning thread changes the shortlist
     // immediately, including when an earlier host pass is still in flight.
-    const fingerprint = JSON.stringify([online, project.planner?.agentId,
+    const fingerprint = JSON.stringify([online, project.repositories, project.planner?.agentId,
       projectTasks.map(task => [task.id, task.plannerAgentId, task.originAgentId, task.notificationAgentId, task.originHostId])]);
     if (this.membership.has(project.key) && this.membership.get(project.key) !== fingerprint)
       this.cache.invalidate(project.key);
@@ -69,10 +89,9 @@ export class ResponsibleThreadResolver {
       inventory: async () => {
         const agents = await this.inventory(id);
         const roots = project.repositories.map(repo => repo.path).filter(Boolean);
-        const common = new Map<string, Promise<string | null>>();
         const gitRoot = (path: string) => {
-          let result = common.get(path);
-          if (!result) { result = commonDirectory(path); common.set(path, result); }
+          let result = gitRoots.get(path);
+          if (!result) { result = commonDirectory(path); gitRoots.set(path, result); }
           return result;
         };
         return Promise.all(agents.map(async (agent): Promise<ResponsibleThreadFact> => {
