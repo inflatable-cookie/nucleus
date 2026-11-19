@@ -248,6 +248,9 @@ test("a dead admission hook's sweep settlement releases the workspace and the wa
     runTimeoutMs: 24 * 60 * 60_000,
   }, { launch: item => { scheduler.markLaunched(item.id); } });
   scheduler.bindProcess(run.id, { pid: deadPid, processGroupId: deadPid, startIdentity: `${deadPid}@2026-11-19T14:51:11Z` });
+  // The endpoint watch read the producer and got a hold: the sweep no longer
+  // waits for another read, so the hook's absence decides on this pass.
+  scheduler.note(run.id, "effigy_observation_retained", { kind: "live-foreground", reason: "a foreground holder still holds the producer's gate" });
   assert.equal(f.store.hostRun(run.id)?.state, "running");
   const engine = new Engine(f.store, settlingAdapter(f, { active: false }), 0);
   try {

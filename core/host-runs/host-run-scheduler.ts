@@ -31,7 +31,8 @@ export { defaultBudgetFallback, HISTORY_MEMORY_SHARE_CAP, NO_HISTORY_CPU_SHARE, 
 export type { HostRunEvent, HostRunHandler, HostRunSchedulerOptions, HostRunSubmission } from "./host-run-scheduler-types";
 export {
   HOST_RUN_ABANDONED_RELEASE_REASON, HOST_RUN_EXPIRED_RELEASE_REASON, HOST_RUN_HOOK_DIED_BEFORE_ADMIT_REASON,
-  HOST_RUN_LIVENESS_UNKNOWN_EVENT, HOST_RUN_SETTLEMENT_IDENTITY_READS_PER_SWEEP, type HostRunHookLiveness,
+  HOST_RUN_HOOK_GONE_PENDING_EVENT, HOST_RUN_LIVENESS_UNKNOWN_EVENT, HOST_RUN_SETTLEMENT_IDENTITY_READS_PER_SWEEP,
+  HOST_RUN_WATCH_EVIDENCE_WINDOW_MS, type HostRunHookLiveness,
 } from "./host-run-settlement";
 
 export const HOST_RUN_CAPACITY_DEADLINE_MS = 30 * 60_000;
@@ -433,8 +434,11 @@ export class HostRunScheduler {
    * settles once, and the freed capacity is offered to the queue.
    *
    * The hook's own liveness, by pid and contract 010 start identity, is the whole
-   * question, so the sweep asks no producer and needs no second opinion. A row
-   * whose hook is alive, unreadable, unbound or unread this pass holds and
+   * question, so the sweep asks no producer and needs no second opinion. What it
+   * does not do is settle a row before a live endpoint watch has read that run's
+   * producer answer: the pass that proves the hook gone holds one bounded window
+   * for it, and the next pass settles the row whether the answer arrived or not.
+   * A row whose hook is alive, unreadable, unbound or unread this pass holds and
    * records why. A bounded page of start-identity reads keeps a busy pass from
    * stalling the service; anything it leaves unproven waits for the next tick,
    * and a dead pid costs no read at all.

@@ -973,11 +973,11 @@ the Effigy planner that Nucleus releases capacity from its own side after a
 crash, by the hook process's liveness and start identity; it did not happen.
 
 The rule: the sweep proves every admitted or running admission reservation's
-recorded process on its own evidence, and settles it once when that process is
-gone. The hook is the reservation's whole foreground, so its absence is the end
-of the reservation whatever a producer last said. This supersedes the earlier
-"a producer that still says the run is live keeps the slot" hold for a hook
-that is provably dead.
+recorded process on its own evidence, and settles it once that process is gone.
+The hook is the reservation's whole foreground, so its absence is the end of the
+reservation whatever a producer last said. This supersedes the earlier "a
+producer that still says the run is live keeps the slot" hold for a hook that is
+provably dead.
 
 - **What the sweep decides.** A dead pid is gone. A live pid is alive only when
   its start identity still matches the recorded one; a different identity is a
@@ -985,11 +985,26 @@ that is provably dead.
   the row holds, and one `hook_liveness_unknown` journal fact per distinct
   observation names why, so the hold has a visible cause instead of a silent
   wait for the deadline.
+- **The watch reads the producer first, inside one window.** The endpoint watch
+  is the only reader of the producer, and a settled row stops being watched, so
+  a settlement written before that read discards the closure, hold or refusal
+  the producer alone can give. The pass that proves a running reservation's hook
+  gone therefore records `hook_gone_pending` with its proof and settles nothing,
+  and the next pass settles the row whether an answer arrived or not — fifteen
+  seconds later at the twenty-second sweep, which is about fifteen watch ticks
+  of one-second cadence against an eight-second status call. A row that already
+  carries the answer (any `effigy_observation`, `effigy_observation_retained` or
+  `effigy_observation_refused` fact, or an accounting retirement) settles on the
+  proving pass, and a reservation past its own run timeout settles on it too:
+  the deadline is its own final answer. The window is a bound, never a hold: a
+  service with no watch attached, a watch that died and a producer that never
+  answers all clear on the next pass.
 - **What it writes.** A running reservation settles `lost` through the one
   settlement writer above, which releases its capacity and stops holding its
   workspace (`hostRunHoldingWorkspace` holds only queued, admitted, running and
-  still-charged rows). An admitted one never launched a command, so it settles
-  `cancelled` before launch with one `hook_gone` fact naming the dead hook and the
+  still-charged rows). An admitted one never launched a command and has no
+  producer answer to lose, so it settles `cancelled` before launch on the
+  proving pass, with one `hook_gone` fact naming the dead hook and the
   observation, and releases the same way. The archive and capacity admission
   then proceed on their own ordinary passes.
 - **Accepted risk.** A dead hook can leave a workload running — a sentinel may

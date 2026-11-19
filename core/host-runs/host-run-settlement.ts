@@ -69,6 +69,33 @@ export const HOST_RUN_HOOK_DIED_BEFORE_ADMIT_REASON = "admission hook died befor
  */
 export const HOST_RUN_LIVENESS_UNKNOWN_EVENT = "hook_liveness_unknown";
 /**
+ * The one journal event that says the sweep has proven a reservation's hook gone
+ * and is holding one bounded window for the endpoint watch to read the producer's
+ * answer first (Spec 035, "The sweep proves every reservation's holder"). It
+ * records the observation and the instant, so a row that settles after that
+ * window names what it waited for.
+ */
+export const HOST_RUN_HOOK_GONE_PENDING_EVENT = "hook_gone_pending";
+/**
+ * How long a proven-gone reservation waits for a live endpoint watch to read its
+ * producer answer before the sweep settles it on its own proof.
+ *
+ * The watch is the only reader of the producer: its `run status` answer (a
+ * closure, a retained hold or a refusal) is evidence about the run that the sweep
+ * cannot get for itself, and a settled row stops being watched. One sweep
+ * interval already gives the watch about twenty one-second ticks, each bounded by
+ * an eight-second status call, so this window is enough for at least one read and
+ * short enough that no reservation waits for a second sweep to be settled.
+ */
+export const HOST_RUN_WATCH_EVIDENCE_WINDOW_MS = 15_000;
+/**
+ * Journal events that mean an endpoint watch has read this reservation's producer
+ * answer. Any one of them is the evidence the sweep's own window is waiting for.
+ */
+const HOST_RUN_PRODUCER_OBSERVATION_EVENTS: readonly string[] = [
+  "effigy_observation", "effigy_observation_retained", "effigy_observation_refused",
+];
+/**
  * Start-identity reads one settlement sweep may spend. A dead pid needs none, so
  * the leaked public records cost nothing here; a live pid that may be a reused
  * number needs one `ps`, and that work is bounded per pass instead of stalling
@@ -276,11 +303,14 @@ export class HostRunSettlementOwner {
    *
    * The sweep asks no producer anything and needs no second opinion: the hook's
    * own liveness, by pid and contract 010 start identity, is the whole question,
-   * because the hook is the reservation's entire foreground. A row whose hook is
-   * alive, unreadable, unbound or unread this pass holds and records why. A
-   * bounded page of start-identity reads keeps a busy pass from stalling the
-   * service; anything it leaves unproven waits for the next tick, and a dead pid
-   * costs no read at all.
+   * because the hook is the reservation's entire foreground. What it does not do
+   * is settle a row before a live endpoint watch has read that run's producer
+   * answer: the pass that proves the hook gone holds one bounded window for it
+   * (see `deferToWatchEvidence`), and the next pass settles the row whether or
+   * not the answer arrived. A row whose hook is alive, unreadable, unbound or
+   * unread this pass holds and records why. A bounded page of start-identity
+   * reads keeps a busy pass from stalling the service; anything it leaves
+   * unproven waits for the next tick, and a dead pid costs no read at all.
    */
   sweepAbandonedAdmissions(): HostRunInternalRecord[] {
     const budget = { identityReads: 0 };
@@ -313,7 +343,8 @@ export class HostRunSettlementOwner {
     if (run.submissionSource !== "admission") return null;
     if (run.state === "admitted") {
       // The watch owns a reservation it is still observing and cancels it there;
-      // the sweep is the path for a row no watch covers.
+      // the sweep is the path for a row no watch covers. Nothing ran for an
+      // admitted reservation, so there is no producer answer to wait for.
       if (scope !== "sweep") return null;
       const admitted = this.admissionHookState(run, budget);
       if (admitted.state === "unknown") { this.recordUnknownProof(run, admitted); return null; }
@@ -325,9 +356,50 @@ export class HostRunSettlementOwner {
     const proof = this.admissionHookState(run, budget);
     if (proof.state === "unknown") { this.recordUnknownProof(run, proof); return null; }
     if (proof.state !== "gone") return null;
+    // Inside its own timeout the sweep gives a live watch the one chance to read
+    // this run's producer answer that a settled row would lose. The watch path
+    // has just read it, and an overdue row's deadline is its own final answer.
+    if (scope === "sweep" && !overdue && this.deferToWatchEvidence(run, proof.reason)) return null;
     return overdue
       ? this.context.writeSettlement(run, "expiry", HOST_RUN_EXPIRED_RELEASE_REASON)
       : this.context.writeSettlement(run, "hook_gone", HOST_RUN_ABANDONED_RELEASE_REASON);
+  }
+
+  /**
+   * Hold one bounded window for the endpoint watch to read this reservation's
+   * producer answer, and say whether this pass deferred to it.
+   *
+   * The watch is the only reader of the producer, and a settled row stops being
+   * watched, so a settlement written before that read discards evidence about the
+   * run the producer alone can give. A row that already carries the answer — a
+   * closure, a retained hold, a refusal, or an accounting retirement — has
+   * nothing left to wait for and settles on this pass. Otherwise the first pass
+   * to prove the hook gone records `hook_gone_pending` with that proof, and the
+   * next pass settles the row whether the watch answered in the window or not, so
+   * a service with no watch attached, a crashed watch and a watch that cannot
+   * reach the producer all still clear inside one window.
+   */
+  deferToWatchEvidence(run: HostRunInternalRecord, observation: string): boolean {
+    const journal = this.context.store.hostRunJournal(run.id);
+    const answered = hostRunAccountingRetirementOf(this.context.store, run) !== undefined
+      || journal.some(entry => HOST_RUN_PRODUCER_OBSERVATION_EVENTS.includes(entry.event));
+    if (answered) return false;
+    const pending = journal.filter(entry => entry.event === HOST_RUN_HOOK_GONE_PENDING_EVENT).at(-1);
+    // The proof instant is the scheduler's own clock, recorded in the fact: the
+    // journal's `at` is the store's wall clock, and only this one is comparable
+    // with `nowMs()`.
+    const provenAt = pending ? Date.parse(String((pending.data as { provenAt?: unknown } | null)?.provenAt)) : Number.NaN;
+    if (Number.isFinite(provenAt) && this.context.nowMs() - provenAt >= HOST_RUN_WATCH_EVIDENCE_WINDOW_MS) return false;
+    if (!pending) {
+      const provenAtIso = new Date(this.context.nowMs()).toISOString();
+      try {
+        this.context.store.appendHostRunJournal(run.id, HOST_RUN_HOOK_GONE_PENDING_EVENT, {
+          runId: run.id, observation, windowMs: HOST_RUN_WATCH_EVIDENCE_WINDOW_MS,
+          hook: { pid: run.pid, startIdentity: run.startIdentity }, provenAt: provenAtIso,
+        }, provenAtIso);
+      } catch { /* the next pass records it again before settling */ }
+    }
+    return true;
   }
 
   /**
