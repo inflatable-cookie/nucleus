@@ -1,0 +1,22 @@
+A milestone QA run whose step process group ends now settles from the step's own
+exit instead of an unexplained `lost`. The supervisor records the direct child's
+exit code or terminating signal and the time beside the run as soon as the kernel
+reports it, before its step log or result. When the step's group is empty and the
+supervisor has not settled inside a short bound, the service stops it under the
+same proof as the stale-heartbeat rule and settles the run `failed` with that exit
+code or signal, the step named as the interrupted step, and the live output log's
+path, byte offset and last lines. A stage ended by a signal is now a failed step
+rather than a hold.
+
+The stale-heartbeat stop reads that recorded exit too, so a hung supervisor never
+discards an outcome its child had already reported: the run settles `failed` from
+the exit instead of `lost`. A takeover stops the supervisor first and alone, then
+the step group the supervision record still names, and only after that sweeps the
+processes still carrying the run token — a pending step whose record never landed,
+an escaped descendant, a group the record does not describe. It re-reads the
+record before each decision and requires the answer to be positive: a record that
+advanced or cannot be read holds the run, and so does a sweep that cannot prove
+the run token gone, rather than settling while the run's own work may still be
+live. Every sweep read is spawned, not synchronous, and spaced by a waiting
+cadence, so a takeover never holds the service's event loop. `lost` is reserved for a supervisor that died or an outcome that is
+genuinely unobservable — which still names the step and where its output ended.

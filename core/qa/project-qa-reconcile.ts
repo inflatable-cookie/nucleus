@@ -39,6 +39,8 @@ export interface QaReconcileContext {
   watchEscapedDescendants(runId: string): void;
   settle(run: ProjectQaRun, outcome: QaPipelineOutcome & { interruptedStep: ProjectQaStepName | null }): Promise<ProjectQaRun>;
   settleFromSupervisor(run: ProjectQaRun, state: QaSupervisionState | null, hostResult: HostRunResult | null): Promise<ProjectQaRun>;
+  /** #1393: settle a run whose step's group ended and whose supervisor never settled. */
+  settleEndedStep(run: ProjectQaRun, inspection: Extract<SupervisorInspection, { kind: "step_ended" }>): Promise<void>;
   reconcileLostRun(run: ProjectQaRun, state: QaSupervisionState | null, reason: string, escapedDescendants?: HostRunEscapedDescendant[]): Promise<void>;
   noteCheckoutWait(run: ProjectQaRun, error: unknown): void;
   watchSupervisor(runId: string, key: string, unstartedResumes?: number): Promise<void>;
@@ -67,10 +69,12 @@ export const projectQaReconcile = {
     const inspection = await this.inspectSupervisor(latest);
     if (JSON.stringify(this.store.qaRun(latest.id)) !== JSON.stringify(latest)) return;
     if (alreadyWatching) {
-      if (inspection.kind !== "dead") return;
+      if (inspection.kind !== "dead" && inspection.kind !== "step_ended") return;
       const activeRecovery = qaRecoveries.get(key);
       if (activeRecovery) return activeRecovery as Promise<void>;
-      const settling = this.reconcileLostRun(latest, inspection.state, inspection.reason, inspection.escapedDescendants)
+      const settling = (inspection.kind === "step_ended"
+        ? this.settleEndedStep(latest, inspection)
+        : this.reconcileLostRun(latest, inspection.state, inspection.reason, inspection.escapedDescendants))
         .finally(() => qaRecoveries.delete(key));
       qaRecoveries.set(key, settling);
       return settling;
@@ -80,6 +84,16 @@ export const projectQaReconcile = {
     if (inspection.kind === "settled") {
       const settling = this.settleFromSupervisor(latest, inspection.state, inspection.hostResult)
         .then(() => {}).finally(() => qaRecoveries.delete(key));
+      qaRecoveries.set(key, settling);
+      return settling;
+    }
+    // #1393: a step whose group ended and a supervisor that never settled is a
+    // run with a known cause, not an unexplained loss. It is settled from the
+    // step's own evidence instead of waiting for the capacity deadline.
+    if (inspection.kind === "step_ended") {
+      const recovery = qaRecoveries.get(key);
+      if (recovery) return recovery as Promise<void>;
+      const settling = this.settleEndedStep(latest, inspection).finally(() => qaRecoveries.delete(key));
       qaRecoveries.set(key, settling);
       return settling;
     }
@@ -170,6 +184,14 @@ export const projectQaReconcile = {
       this.publishCommandLaunchIdentity(current, inspection.state,
         inspection.kind === "settled" ? inspection.hostResult : null);
       if (inspection.kind === "settled") { await this.settleFromSupervisor(current, inspection.state, inspection.hostResult); return; }
+      if (inspection.kind === "step_ended") {
+        const recovery = qaRecoveries.get(key);
+        if (recovery) { await recovery; return; }
+        const settling = this.settleEndedStep(current, inspection).finally(() => qaRecoveries.delete(key));
+        qaRecoveries.set(key, settling);
+        await settling;
+        return;
+      }
       if (inspection.kind === "dead") {
         const recovery = qaRecoveries.get(key);
         if (recovery) { await recovery; return; }

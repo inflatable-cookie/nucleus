@@ -46,8 +46,10 @@ import {
   readQaCancelRequest,
   readQaHeartbeat,
   readHostRunResult,
+  readQaStepExit,
   readQaSupervision,
   readQaSupervisionPlan,
+  qaRunLiveOutputPath,
   writeHostRunResult,
   writeQaSupervision,
   writeQaSupervisionPlan,
@@ -3413,6 +3415,109 @@ test("a live supervisor with a stale heartbeat is terminated only after unchange
     "the settled run removes its supervision file",
   );
   await runner.attachSupervisor(started.id, started.key);
+});
+
+test("#1393: a staged QA step whose group is killed from outside settles failed with its signal and output, never lost", async (t) => {
+  const f = await fixture(t);
+  const scope = scopedQaFixture(t, [f.root, f.dataDir]);
+  await setWorktreeHooks(f, {
+    setup: "echo setup-done",
+    teardown: "echo teardown-done",
+  });
+  f.store.putRepository({ origin: null, path: f.repo }, null, "", null, null, {
+    stages: [
+      {
+        name: "build",
+        argv: [
+          "/bin/sh",
+          "-c",
+          "printf 'build output line\\n'; sleep 60",
+        ],
+        timeoutMs: 120_000,
+      },
+    ],
+    maxOutputBytes: 4096,
+    terminationGraceMs: 30_000,
+  });
+  const runner = new ProjectQaRunner(f.store, {
+    dataDir: f.dataDir,
+    supervisionPollMs: 50,
+  });
+  scope(runner);
+  const started = await runner.run({ repository: f.repo });
+  const runRoot = join(
+    await realpath(f.dataDir),
+    "project-qa",
+    digest(started.key).slice(0, 24),
+  );
+  const paths = qaSupervisionPaths(runRoot, started.id);
+  await waitFor(
+    () => readQaSupervision(paths.statePath)?.activeProcess?.step === "build",
+    60_000,
+    "the supervisor to publish the staged build step's group",
+  );
+  const active = readQaSupervision(paths.statePath)!.activeProcess!;
+  t.after(() => {
+    try {
+      process.kill(-active.processGroupId, "SIGKILL");
+    } catch {
+      /* the group already ended */
+    }
+  });
+  // Let the step produce output, then end its process group from outside as
+  // the reported milestone runs did.
+  await waitFor(
+    () => existsSync(qaRunLiveOutputPath(runRoot, started.id)),
+    20_000,
+    "the live output projection",
+  );
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  process.kill(-active.processGroupId, "SIGKILL");
+  await waitFor(
+    () => !["queued", "running"].includes(f.store.qaRun(started.id)?.state ?? ""),
+    60_000,
+    "the externally killed run to settle",
+  );
+  const settled = f.store.qaRun(started.id)!;
+  const build = settled.steps.find((step) => step.name === "build")!;
+  assert.equal(settled.state, "failed", settled.outputTail);
+  assert.equal(settled.failedStep, "build", "the step that ended is named");
+  assert.equal(build.signal, "SIGKILL");
+  assert.equal(build.exitCode, null);
+  assert.match(
+    `${build.stdoutHead}${build.stdoutTail}`,
+    /build output line/,
+    "the output produced before the kill is kept",
+  );
+  assert.equal(
+    settled.hostSettlement?.outcome,
+    "failed",
+    "the host settlement records the step's own failure, not an unknown outcome",
+  );
+  assert.equal(settled.hostSettlement?.result?.signal, "SIGKILL");
+  assert.equal(settled.hostSettlement?.result?.pgid, active.processGroupId);
+  assert.doesNotMatch(settled.outputTail, /lost/i);
+  assert.match(settled.outputTail, /build terminated by SIGKILL/);
+  const hostRun = runner.hostRuns.get(started.id)!;
+  assert.equal(hostRun.state, "settled", "capacity is released by the settlement");
+  assert.equal(hostRun.settlement?.outcome, "failed");
+  assert.equal(hostRun.settlement?.result?.signal, "SIGKILL");
+  // project.qa.get carries the same cause without another reconciliation.
+  const read = await runner.get({ id: started.id });
+  assert.equal(read!.state, "failed");
+  assert.equal(read!.failedStep, "build");
+  assert.equal(
+    read!.steps.find((step) => step.name === "teardown")?.exitCode,
+    0,
+    "teardown still runs after an externally killed step",
+  );
+  assert.equal(
+    existsSync(join(runRoot, started.id)),
+    false,
+    "the Queue-owned checkout is released",
+  );
+  assert.equal(readQaStepExit(paths.stepExitPath, { runId: started.id, step: "build" }), null,
+    "the settled run removes its per-step exit record with its other supervision files");
 });
 
 test("stale heartbeat ages under the watchdog threshold and heartbeat progress do not confirm a hung supervisor", () => {

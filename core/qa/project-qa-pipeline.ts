@@ -394,7 +394,7 @@ export async function runProjectQaPipeline(base: QaPipelineIdentity, run: QaPipe
           if (output) state.detail = `${state.detail}${state.detail ? "\n" : ""}${output}`;
           if (execution.cancelled || await updateCancellation()) { stateName = "cancelled"; }
           else if (execution.timedOut) { stateName = "timed_out"; state.detail = `${stage.name} timed out: ${state.detail}`; }
-          else if (execution.signal) { stateName = "hold"; state.detail = `${stage.name} terminated by ${execution.signal}: ${state.detail}`; }
+          else if (execution.signal) { stateName = "failed"; state.detail = `${stage.name} terminated by ${execution.signal}: ${state.detail}`; }
           else if (execution.terminationError || execution.processGroupEmpty === false) stateName = "hold";
           else if (execution.code !== 0) stateName = "failed";
           else stateName = "passed";
