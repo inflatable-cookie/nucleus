@@ -1,4 +1,5 @@
 import type { Notice } from '../../shared/contracts';
+import { parseAgentId } from '../../shared/agent-identity';
 import { TASK_OWNER_HOLD, episodeBindsCurrentWork, isDispositionActive, isDispositionComplete, isRetainedProfileReason, taskOwner } from '../../shared/contracts';
 import { normalizeRepositoryOrigin } from '../../shared/lanes';
 import { isSshAuthExhausted } from '../../shared/ssh-auth';
@@ -119,6 +120,7 @@ export class Notices {
       return 'done';
     }
     if (!state) return 'done';
+    if (state.archived || state.status === 'closed' || state.status === 'gone') { this.resolution.responsibleThreads.cache.invalidateAll(); d.gone?.(); return 'done'; }
     if (!(d.ready ? d.ready(state) : !active(state))) { d.wait(d.busyWait(state)); return 'done'; }
     if (this.paused()) return 'paused';
     const record = d.confirm();
@@ -126,7 +128,7 @@ export class Notices {
     const target = d.target(record);
     d.mark(record, 'intent', '');
     try { await this.resolution.host.sendMessage(target.agentId, { messageId: target.id, text: target.text, sourceAgentId: target.sourceAgentId }); d.mark(record, 'delivered', ''); }
-    catch (error) { d.mark(record, 'uncertain', String(error)); }
+    catch (error) { this.resolution.responsibleThreads.cache.invalidateAll(); d.mark(record, 'uncertain', String(error)); }
     return 'done';
   }
   /**
@@ -145,7 +147,7 @@ export class Notices {
    */
   async deliverHostOutageNotices() {
     if (!this.adapter.notify || this.paused()) return;
-    for (const n of this.store.pendingNotices()) {
+    for (let n of this.store.pendingNotices()) {
       if (this.paused()) return;
       if (n.kind !== 'host_outage') continue;
       // Durable intent first (planner ruling, 2026-11-14; nucleus#1198 review):
@@ -162,7 +164,11 @@ export class Notices {
         this.store.putNotice({ ...n, status: 'superseded', error: ended });
         continue;
       }
-      const recipientHost = await this.resolution.identifyOriginHost(n.agentId);
+      const project = this.store.projectByKey(n.taskId.replace(/^project:/, ''));
+      const resolved = project ? (await this.resolution.responsibleThread(project)).thread : null;
+      if (!resolved) { if (project) this.store.putNotice({ ...n, error: `No live responsible thread for ${project.key}` }); continue; }
+      if (n.agentId !== resolved.agentId) { n = { ...n, agentId: resolved.agentId, recipientAgentId: resolved.agentId }; this.store.putNotice(n); }
+      const recipientHost = parseAgentId(n.agentId)?.hostId ?? await this.resolution.identifyOriginHost(n.agentId);
       if (!recipientHost) {
         if (n.error !== 'Waiting for a proven planner host') this.store.putNotice({ ...n, error: 'Waiting for a proven planner host' });
         continue;
@@ -202,7 +208,7 @@ export class Notices {
    */
   async deliverDrainNotices() {
     if (!this.adapter.notify || this.paused()) return;
-    for (const n of this.store.pendingNotices()) {
+    for (let n of this.store.pendingNotices()) {
       if (this.paused()) return;
       if (n.kind !== 'lane_drain' && n.kind !== 'next_aim' && n.kind !== 'qa') continue;
       const [scope, key, ...rest] = n.id.split(':');
@@ -223,8 +229,17 @@ export class Notices {
         }
       }
       if (!live) { this.store.putNotice({ ...n, status: 'superseded', error: 'The drain episode ended before the prompt was delivered' }); continue; }
+      if (n.status === 'pending' && n.kind !== 'qa') {
+        const project = n.kind === 'next_aim' ? this.store.projectByKey(key) : this.store.projects().find(candidate => {
+          try { return this.store.plan({ project: candidate.key }).entries.some(entry => entry.lane === key); }
+          catch { return false; }
+        });
+        const thread = project ? (await this.resolution.responsibleThread(project)).thread : null;
+        if (!thread) { if (n.error !== 'No live responsible thread') this.store.putNotice({ ...n, error: 'No live responsible thread' }); continue; }
+        if (n.agentId !== thread.agentId) { n = { ...n, agentId: thread.agentId, recipientAgentId: thread.agentId, error: '' }; this.store.putNotice(n); }
+      }
       if (n.status === 'intent') { this.store.putNotice({ ...n, status: 'uncertain', error: 'Restart during delivery; inspect the owner thread before resending' }); continue; }
-      const recipientHost = await this.resolution.identifyOriginHost(n.agentId);
+      const recipientHost = parseAgentId(n.agentId)?.hostId ?? await this.resolution.identifyOriginHost(n.agentId);
       if (!recipientHost || !this.resolution.withHost(recipientHost, () => this.resolution.originHostAvailable(recipientHost))) continue;
       const sent = await this.resolution.withHost(recipientHost, () => this.sendDurably({
         recipient: n.agentId,

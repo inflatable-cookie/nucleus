@@ -33,12 +33,16 @@ function fixture() {
   const notified: Array<{ agentId: string; noticeId: string; text: string }> = [];
   const store = new Store(':memory:');
   const adapter = {
-    profiles: async () => [profile], findAgents: async () => [],
+    hostId: 'fixture-host', profiles: async () => [profile], findAgents: async () => [],
+    listLiveAgents: async () => store.projects().flatMap(project => project.planner ? [{ id: project.planner.agentId, title: '', workspaceId: 'ws' }] : []),
     observe: observeIdle('ws'),
     notify: async (agentId: string, noticeId: string, text: string) => { notified.push({ agentId, noticeId, text }); },
   } as unknown as Adapter;
   const engine = new Engine(store, adapter, 0); engine.profiles = [profile];
   engine.identifyOriginHost = async () => 'fixture-host';
+  // These synchronous drain-evaluation tests supply their recorded fixture owner;
+  // delivery still goes through the live responsible-thread resolver.
+  store.responsibleRecipient = key => store.projectByKey(key)?.planner?.agentId ?? null;
   return { store, engine, leads: new Leads(store), notified, close: async () => { await engine.stop(); store.close(); } };
 }
 
@@ -382,7 +386,7 @@ test('Spec 041: the drain prompt is delivered to the owner thread once, and a go
       assert.equal(f2.notified.length, 0);
       assert.equal(f2.store.notices('lane:alpha')[0]!.status, 'superseded');
     } finally { await f2.close(); }
-    // A vanished owner thread is superseded; the escalation timer still reaches the operator.
+    // A vanished thread leaves the notice visible for a later responsible thread.
     const f3 = fixture();
     try {
       f3.store.setMeta('paused', false);
@@ -393,8 +397,8 @@ test('Spec 041: the drain prompt is delivered to the owner thread once, and a go
       (f3.engine.resolution as unknown as { adapter: Adapter }).adapter.observe = async () => { throw new Error('Agent was not found'); };
       await f3.engine.resolution.deliverDrainNotices();
       const notice = f3.store.notices('lane:alpha')[0]!;
-      assert.equal(notice.status, 'superseded');
-      assert.match(notice.error, /no longer available/);
+      assert.equal(notice.status, 'pending');
+      assert.match(notice.error, /No live responsible thread/);
       f3.store.setMeta('laneDrainEscalationMinutes', 90);
       const lane = f3.store.laneByKey('alpha')!;
       f3.store.db.prepare('UPDATE lanes SET data=? WHERE key=?').run(JSON.stringify({ ...lane, drain: { ...lane.drain!, since: minutesAgo(91) } }), 'alpha');

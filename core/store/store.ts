@@ -2293,9 +2293,14 @@ export class Store {
    * Queue planner (the project that holds origin `inflatable-cookie/paseo-northstar-queue`),
    * else null. The retired owner field is never read.
    */
+  /** Runtime supplies the live resolved recipient; standalone stores keep legacy fixtures. */
+  responsibleRecipient?: (projectKey: string) => string | null;
   projectPlannerRecipient(
     project: Pick<Project, "planner"> | null | undefined,
   ): string | null {
+    if (this.responsibleRecipient) {
+      return project && 'key' in project && typeof project.key === 'string' ? this.responsibleRecipient(project.key) : null;
+    }
     return this.projectRegistry.projectPlannerRecipient(project);
   }
   /** One read of the project table for many lookups; `projectFor` re-reads it per call. */

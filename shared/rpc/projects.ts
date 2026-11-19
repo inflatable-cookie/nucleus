@@ -11,6 +11,7 @@ import {
   repositorySettingsSchema,
 } from "../schema/projects";
 import { z } from "zod";
+import { responsibleThreadViewSchema } from "../schema/project-settings";
 import {
   repositoryRekeyInputSchema,
   repositoryRekeyOutputSchema,
@@ -104,6 +105,7 @@ export const projectGet = defineRpc({
   output: projectSchema
     .extend({
       plannerRoutingIssue: z.string().optional(),
+      responsibleThread: responsibleThreadViewSchema.optional(),
     })
     .nullable(),
 });

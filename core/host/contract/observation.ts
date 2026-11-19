@@ -2,6 +2,7 @@ export interface AgentObservation {
   id: string;
   workspaceId: string | null;
   status: string;
+  archived?: boolean;
   active: boolean;
   permissions: boolean;
   error: string;

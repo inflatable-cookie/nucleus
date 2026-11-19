@@ -46,6 +46,11 @@ export class ResponsibleThreadCache {
     private readonly clock: () => number = Date.now,
   ) {}
 
+  peek(projectKey: string): ResponsibleShortlist | null {
+    const cached = this.entries.get(projectKey);
+    return cached && this.clock() - cached.observedAt < this.ttlMs ? cached : null;
+  }
+
   invalidate(projectKey: string): void {
     this.entries.delete(projectKey);
     this.pending.delete(projectKey);

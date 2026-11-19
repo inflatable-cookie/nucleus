@@ -143,11 +143,11 @@ test('project.settings inherits slots, flags planner and QA problems, and matche
   const goneRow = row.projects[1];
   assert.deepEqual(goneRow.slots, { value: 2, override: 2 });
   assert.equal(goneRow.plannerLive, false);
-  assert.deepEqual(goneRow.problems, [PROJECT_SETTINGS_PROBLEMS.plannerGone]);
+  assert.deepEqual(goneRow.problems, []);
 
   const emptyRow = row.projects[2];
   assert.equal(emptyRow.plannerLive, null);
-  assert.deepEqual(emptyRow.problems, [PROJECT_SETTINGS_PROBLEMS.noPlanner, PROJECT_SETTINGS_PROBLEMS.qaFailed]);
+  assert.deepEqual(emptyRow.problems, [PROJECT_SETTINGS_PROBLEMS.qaFailed]);
   assert.deepEqual(emptyRow.latestQa, {
     key: alpha.origin, state: 'passed', startedAt: '2026-11-08T02:00:00.000Z', finishedAt: '2026-11-08T02:00:00.000Z',
   });
@@ -308,7 +308,7 @@ test('project.settings keeps a project latest QA when 250 newer other-repository
     assert.ok(suite);
     assert.equal(suite.latestQa?.key, alpha.origin);
     assert.equal(suite.latestQa?.state, 'failed');
-    assert.deepEqual(suite.problems, [PROJECT_SETTINGS_PROBLEMS.noPlanner, PROJECT_SETTINGS_PROBLEMS.qaFailed]);
+    assert.deepEqual(suite.problems, [PROJECT_SETTINGS_PROBLEMS.qaFailed]);
   } finally { await runtime.stop(); }
 });
 

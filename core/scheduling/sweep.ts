@@ -104,6 +104,7 @@ export type SweepContext = Pick<
     | "recovery"
     | "resumeAskQuestions"
     | "resumeResponsibleAnsweredQuestions"
+    | "responsibleThread"
     | "settleBudgetClock"
   >;
 };
@@ -378,6 +379,9 @@ export class Sweep {
       let covered = false;
       // The hourly and daily store chores and the periodic owner/lane passes
       // keep their own cadence; the sweep runs one maintenance pass.
+      // Synchronous notice producers read only verified entries from this pass.
+      await Promise.all(this.engine.store.projects().map(project =>
+        this.engine.resolution.responsibleThread(project).catch(() => null)));
       await this.maintenance.run();
       // Audit A6: one bounded labelled inventory answers every identity this
       // pass observes, and retired workers are re-read on their own slow cadence.
@@ -719,7 +723,7 @@ export class Sweep {
       );
       // The one long-outage notice: raised once per outage past the dispatch-limits
       // bound, then delivered through the durable notice path.
-      this.engine.hostOutages.raiseNotices();
+      await this.engine.hostOutages.raiseNotices();
       await this.fleetStep("deliverHostOutageNotices", () =>
         this.engine.resolution.deliverHostOutageNotices(),
       );

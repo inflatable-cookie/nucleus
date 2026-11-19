@@ -5,7 +5,7 @@ import { formatAgentId } from '../shared/agent-identity';
 import type { Project, Task, Run } from '../shared/contracts';
 
 const project = { key: 'example', repositories: [{ path: '/synthetic/repo', origin: 'synthetic/repo' }], planner: null } as unknown as Project;
-const task = { repoPath: '/synthetic/repo', repository: 'synthetic/repo', plannerAgentId: formatAgentId('t3code:one', 'owner'), originHostId: 't3code:one', notificationAgentId: null, originAgentId: 'operator', agentId: 'worker', hostId: 't3code:one', updatedAt: '2026-01-03T00:00:00Z' } as unknown as Task;
+const task = { repoPath: '/synthetic/repo', repository: 'synthetic/repo', plannerAgentId: formatAgentId('t3code:one', 'owner'), originHostId: 't3code:one', notificationAgentId: null, originAgentId: 'operator', agentId: 'worker', hostId: 't3code:one', createdAt: '2026-01-03T00:00:00Z' } as unknown as Task;
 
 test('resolves project checkout and task owners, excluding task roles across hosts', async () => {
   const resolver = new ResponsibleThreadResolver({
@@ -30,5 +30,19 @@ test('does not match a similarly named directory as a checkout', async () => {
   const resolver = new ResponsibleThreadResolver({ hostIds: () => ['bb:two'], hostOnline: () => true,
     inventory: async () => [{ id: 'outside', title: '', workspaceId: null, directory: '/synthetic/repository' }],
     tasks: () => [], runs: () => [], projectFor: () => null });
+  assert.deepEqual((await resolver.resolve(project)).threads, []);
+});
+
+test('a recent verified Nucleus call changes the ranking and host loss drops cached candidates', async () => {
+  let online = true;
+  const resolver = new ResponsibleThreadResolver({ hostIds: () => ['t3code:one'], hostOnline: () => online,
+    inventory: async () => [
+      { id: 'first', title: '', workspaceId: null, directory: '/synthetic/repo', updatedAt: '2020-01-01T00:00:00Z' },
+      { id: 'second', title: '', workspaceId: null, directory: '/synthetic/repo', updatedAt: '2021-01-01T00:00:00Z' },
+    ], tasks: () => [], runs: () => [], projectFor: () => project });
+  assert.equal((await resolver.resolve(project)).threads[0]?.agentId, formatAgentId('t3code:one', 'second'));
+  resolver.recordActivity(formatAgentId('t3code:one', 'first'));
+  assert.equal((await resolver.resolve(project)).threads[0]?.agentId, formatAgentId('t3code:one', 'first'));
+  online = false;
   assert.deepEqual((await resolver.resolve(project)).threads, []);
 });

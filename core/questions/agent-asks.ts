@@ -32,6 +32,7 @@ import {
   type PlannerRung,
 } from "./delegation";
 import { digest, type Store } from "../store/store";
+import { normalizeRepositoryOrigin } from "../../shared/lanes";
 import { taskByReference, projectOfTarget } from "./agent-targets";
 import { askLifecycle, askLifecycles } from "./agent-ask-events";
 import {
@@ -219,29 +220,18 @@ export class AgentAsks {
    */
   async askRungs(
     task: Task,
-    ask: Pick<AgentAskShape, "id" | "route">,
+    ask: Pick<AgentAskShape, "id" | "route" | "sourceAgentId">,
   ): Promise<{ rungs: PlannerRung[]; issue?: string }> {
     if (!ask.route) return this.resolution.plannerRungsFor(task);
     if (ask.route.kind === "task")
       return this.resolution.plannerRungsFor(this.store.task(ask.route.taskId));
     try {
-      const target = await this.resolution.resolveProjectAgentTarget(
-        ask.route.project,
-        ask.route.agent,
-      );
       if (ask.route.agent === null) {
-        const state = (
-          await this.resolution.plannerPresence.observeProjectPlanner(
-            this.store.projectByKey(ask.route.project),
-          )
-        )?.state;
-        if (state?.kind === "unroutable")
-          return { rungs: [], issue: state.detail };
-        if (state?.kind === "gone")
-          throw Error(
-            `the fallback planner ${target.agentId} is archived or gone`,
-          );
+        const project = this.store.projectByKey(ask.route.project);
+        const thread = project && (await this.resolution.responsibleThread(project, ask.sourceAgentId ? { agentId: ask.sourceAgentId, hostId: task.hostId } : undefined)).thread;
+        return { rungs: thread ? [{ agentId: thread.agentId, rung: "project" }] : [] };
       }
+      const target = await this.resolution.resolveProjectAgentTarget(ask.route.project, ask.route.agent);
       return { rungs: [{ agentId: target.agentId, rung: "project" }] };
     } catch (error) {
       this.store.event(
@@ -369,7 +359,7 @@ export class AgentAsks {
     if (this.routingAgentAsks.has(ask.id)) return;
     const events = this.store.eventsAll(task.id);
     const state = askLifecycle(events, ask.id);
-    if (state?.noClassification) return;
+    if (state?.noClassification || events.some(event => event.kind === "agent_ask_self_handle" && event.detail.startsWith(`${ask.id}:`))) return;
     const windows = [
       `ns-agent-ask-reviewer-${ask.id}`,
       `ns-agent-ask-${ask.id}`,
@@ -479,6 +469,15 @@ export class AgentAsks {
     try {
       // Task 1109: the task's own planner first, then the project planner, then the decider.
       const { rungs, issue } = await this.askRungs(task, ask);
+      if (!rungs.length && !issue && !this.resolution.delegatedDelivery(`ns-agent-ask-${ask.id}`) && !this.resolution.delegatedDelivery(`ns-agent-ask-${ask.id}-project`) && !this.resolution.delegatedDelivery(`ns-decider-${ask.id}`)) {
+        if (isOperatorOnlyAsk(ask.kind)) {
+          this.resolution.askOperatorDecision(task, ask, 'No live responsible thread is available');
+          return;
+        }
+        const project = ask.route?.kind === 'project' ? ask.route.project : this.store.projectFor(task.repoPath, normalizeRepositoryOrigin(task.repository ?? ''))?.key ?? 'this project';
+        this.store.event(task.id, 'agent_ask_self_handle', `${ask.id}: No live responsible thread for ${project}; handle it yourself.`);
+        return;
+      }
       const planners = plannerWindows(
         this.resolution,
         `ns-agent-ask-${ask.id}`,
@@ -503,6 +502,7 @@ export class AgentAsks {
       }
       result = await delegateQuestion(this.resolution, task, {
         planners,
+        allowDecider: isOperatorOnlyAsk(ask.kind),
         decisionId: ask.id,
         context,
         signal: new AbortController().signal,
@@ -530,6 +530,8 @@ export class AgentAsks {
             `${ask.id}: ${detail}`,
           ),
         onUnknown: (role, agentId, error) => {
+          const key = ask.route?.kind === 'project' ? ask.route.project : this.store.projectFor(task.repoPath, normalizeRepositoryOrigin(task.repository ?? ''))?.key;
+          if (key) this.resolution.responsibleThreads.cache.invalidate(key);
           unknown = true;
           this.store.event(
             task.id,
@@ -542,11 +544,10 @@ export class AgentAsks {
         },
         onUnavailable: (planner) => {
           unavailable = true;
-          this.resolution.askOperatorDecision(
-            task,
-            ask,
-            `Selected planner ${planner} cannot be asked on its host; the planner message is on the board.`,
-          );
+          const key = ask.route?.kind === 'project' ? ask.route.project : this.store.projectFor(task.repoPath, normalizeRepositoryOrigin(task.repository ?? ''))?.key;
+          if (key) this.resolution.responsibleThreads.cache.invalidate(key);
+          if (isOperatorOnlyAsk(ask.kind)) this.resolution.askOperatorDecision(task, ask, `Selected planner ${planner} cannot be asked on its host.`);
+          else this.store.event(task.id, 'agent_ask_self_handle', `${ask.id}: No live responsible thread for ${key ?? 'this project'}; handle it yourself.`);
         },
       });
     } catch (error) {
@@ -579,12 +580,11 @@ export class AgentAsks {
         ask,
         `${result.role === "planner" ? "Planner" : "Decider"}'s one-line reason: ${result.reply.reason}`,
       );
-    else if (!unknown && !unavailable && !this.stopped())
-      this.store.event(
-        task.id,
-        "agent_ask_delegation_missed",
-        `${ask.id}: no planner or decider classification was produced; awaiting an explicit classification`,
-      );
+    else if (!unknown && !unavailable && !this.stopped()) {
+      if (!isOperatorOnlyAsk(ask.kind))
+        this.store.event(task.id, 'agent_ask_self_handle', `${ask.id}: No responsible thread answered; handle it yourself.`);
+      else this.store.event(task.id, "agent_ask_delegation_missed", `${ask.id}: no planner classification was produced; awaiting an explicit classification`);
+    }
   }
 
   /**
@@ -993,6 +993,8 @@ export class AgentAsks {
           return { status: "answered", askId, answer, answeredBy: who };
         }
       }
+      const selfHandle = this.store.eventsAll(taskId).find(event => event.kind === 'agent_ask_self_handle' && event.detail.startsWith(`${askId}:`));
+      if (selfHandle) return { status: 'pending', askId, detail: selfHandle.detail.slice(askId.length + 2) };
       // A recorded owner direction needs the agent's turn to finish. Yield the
       // tool call without answering or cancelling its independently routed ask.
       if (

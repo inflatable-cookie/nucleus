@@ -34,6 +34,12 @@ async function commonDirectory(directory: string): Promise<string | null> {
 export class ResponsibleThreadResolver {
   readonly cache = new ResponsibleThreadCache();
   private readonly membership = new Map<string, string>();
+  private readonly activity = new Map<string, string>();
+  recordActivity(agentId: string): void {
+    this.activity.set(agentId, new Date().toISOString());
+    if (this.activity.size > 10_000) this.activity.delete(this.activity.keys().next().value!);
+    this.cache.invalidateAll();
+  }
   constructor(private readonly ports: ResponsibleThreadResolverPorts) {}
 
   async resolve(project: Project): Promise<ResponsibleShortlist> {
@@ -75,7 +81,8 @@ export class ResponsibleThreadResolver {
             const [candidate, ...repositories] = await Promise.all([gitRoot(agent.directory), ...roots.map(gitRoot)]);
             linked = !!candidate && repositories.includes(candidate);
           }
-          const lastInteraction = [agent.updatedAt, ...owned.map(task => task.updatedAt)].filter((date): date is string => !!date).sort().at(-1) ?? null;
+          const calls = [...this.activity].filter(([caller]) => matches(caller, null)).map(([, at]) => at);
+          const lastInteraction = [agent.updatedAt, ...calls, ...owned.map(task => task.createdAt)].filter((date): date is string => !!date).sort().at(-1) ?? null;
           return { nativeId: agent.id, belongsToProject: Boolean(direct || linked || owned.length || hint), taskRole, closed: false, registeredHint: hint, lastInteraction };
         }));
       },

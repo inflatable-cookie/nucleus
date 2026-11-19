@@ -1356,6 +1356,7 @@ export class Delegation {
     task: Task,
   ): Promise<{ rungs: PlannerRung[]; projectFailed: boolean; issue?: string }> {
     const own = await this.taskPlannerRoute(task);
+    if (own.issue) return { rungs: [], projectFailed: false, issue: own.issue };
     const { planner, failed, issue } = await this.projectPlannerFor(task);
     const rungs = own.rung ? [own.rung] : [];
     if (
@@ -1378,69 +1379,11 @@ export class Delegation {
       task.repoPath,
       normalizeRepositoryOrigin(task.repository ?? ""),
     );
-    const queue = this.store.queueProject();
-    const presence = this.resolution.plannerPresence;
-    const assigned = await presence.observeProjectPlanner(project);
-    if (assigned?.state.kind === "routable")
-      return { planner: assigned.agentId, failed: false };
-    const missing = assigned?.state.kind === "gone" ? assigned.agentId : null;
-    if (project && missing) {
-      this.store.setProjectPlanner({
-        key: project.key,
-        agentId: null,
-        setBy: "Queue",
-        note: `Planner ${missing} is missing or archived; delegated questions fall back to the Nucleus planner`,
-      });
-    }
-    const fallback =
-      queue?.key === project?.key
-        ? null
-        : await presence.observeProjectPlanner(queue);
-    const planner =
-      fallback?.state.kind === "routable" ? fallback.agentId : null;
-    const issue =
-      [assigned?.state, fallback?.state]
-        .flatMap((state) =>
-          state?.kind === "unroutable" ? [state.detail] : [],
-        )
-        .join(" ") || undefined;
-    if (!project || !missing) return { planner, failed: false, issue };
-    const notices = this.store.eventsAll(`project:${project.key}`);
-    if (
-      planner &&
-      !notices.some(
-        (event) =>
-          event.kind === "project_planner_missing_notified" &&
-          event.detail.startsWith(`${missing}:`),
-      )
-    ) {
-      const host = await this.resolution.identifyOriginHost(planner);
-      if (
-        host &&
-        this.resolution.withHost(host, () =>
-          this.resolution.originHostAvailable(host),
-        )
-      ) {
-        this.store.event(
-          `project:${project.key}`,
-          "project_planner_missing_notified",
-          `${missing}: notifying Nucleus planner ${planner} on host ${host}`,
-        );
-        await this.resolution.withHost(host, async () => {
-          if (this.adapter.notify)
-            try {
-              await this.resolution.host.sendMessage(planner, {
-                messageId: `ns-project-planner-missing-${project.key}`,
-                text: `Project ${project.name} has no live planner (${missing} is missing or archived). Nucleus is routing its delegated questions here until a live project planner is registered.`,
-              });
-            } catch {
-              /* the durable notice record prevents repeated notifications */
-            }
-        });
-      }
-    }
-    return { planner, failed: true, issue };
+    if (!project) return { planner: null, failed: false };
+    const { thread } = await this.resolution.responsibleThread(project);
+    return { planner: thread?.agentId ?? null, failed: false };
   }
+
   /**
    * Deciders use automatic selection at the task's requested tier. Ordinary
    * coordinator offsets cannot authorize a weaker decider. Availability is the store's typed rows through the

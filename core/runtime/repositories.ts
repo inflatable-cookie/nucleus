@@ -42,7 +42,7 @@ export interface RepositoriesContext {
     | "projectSettings"
     | "projectAgents"
   > & {
-    resolution: Pick<Engine["resolution"], "projectPlannerRegistered">;
+    resolution: Pick<Engine["resolution"], "projectPlannerRegistered"> & Partial<Pick<Engine["resolution"], "responsibleThread">>;
   };
   requiredCheckTransport: CheckRequirementTransport | undefined;
   readonly started: Promise<void>;
@@ -399,7 +399,7 @@ export class RuntimeRepositories {
     input:
       | { key: string }
       | { repository: { origin: string | null; path: string } | string },
-  ): Promise<(Project & { plannerRoutingIssue?: string }) | null> {
+  ): Promise<(Project & { plannerRoutingIssue?: string; responsibleThread?: { thread: import("../questions/responsible-thread-cache").ResponsibleThread | null; cacheAgeMs: number } }) | null> {
     this.context.markStoreAccess();
     const { store } = this.context;
     const project =
@@ -418,7 +418,9 @@ export class RuntimeRepositories {
       this.context.store,
       project,
     );
-    return plannerRoutingIssue ? { ...project, plannerRoutingIssue } : project;
+    const resolved = await this.context.engine.resolution.responsibleThread?.(project);
+    return { ...project, ...(plannerRoutingIssue ? { plannerRoutingIssue } : {}),
+      ...(resolved ? { responsibleThread: { thread: resolved.thread, cacheAgeMs: Math.max(0, Date.now() - resolved.observedAt) } } : {}) };
   }
 
   listProjects() {

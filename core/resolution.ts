@@ -10,6 +10,9 @@ import { CriticalReviewFallback } from "./dispatch/critical-review-fallback";
 import { ValidationRetry } from "./qa/validation-retry";
 import { PlannerPresence } from "./questions/planner-presence";
 import { ResponsibleThreadResolver } from "./questions/responsible-thread-resolver";
+import { observationTimeout } from "./recovery/observation-timeout";
+import type { Project } from "../shared/contracts";
+import { sameCallerIdentity } from "../shared/agent-identity";
 import { normalizeRepositoryOrigin } from "../shared/lanes";
 import { OrphanRuns } from "./recovery/orphan-runs";
 import { ProgressContinuation } from "./review/progress-continuation";
@@ -387,6 +390,33 @@ export class Resolution {
     runs: () => this.store.runs(),
     projectFor: (path, origin) => this.store.projectFor(path, normalizeRepositoryOrigin(origin ?? '')),
   });
+
+  private readonly confirmedResponsible = new Map<string, { agentId: string; observedAt: number }>();
+  cachedResponsible(projectKey: string): string | null {
+    const cached = this.responsibleThreads.cache.peek(projectKey);
+    const confirmed = this.confirmedResponsible.get(projectKey);
+    return cached && confirmed?.observedAt === cached.observedAt ? confirmed.agentId : null;
+  }
+
+  /** Re-observe cached candidates before use; an old inventory cannot revive a closed thread. */
+  async responsibleThread(project: Project, exclude?: { agentId: string; hostId?: string | null }) {
+    const shortlist = await this.responsibleThreads.resolve(project);
+    const candidates = shortlist.threads.filter(thread => !exclude || !sameCallerIdentity(thread.agentId, exclude.agentId, thread.hostId, exclude.hostId));
+    const states = await Promise.all(candidates.map(async thread => {
+      try {
+        return await observationTimeout(this.plannerPresence.threadRoute(thread.agentId, thread.hostId),
+          'Responsible thread observation timed out', 2000);
+      } catch { return { kind: 'unroutable' as const, detail: 'Host observation timed out' }; }
+    }));
+    if (states.some(state => state.kind !== 'routable')) this.responsibleThreads.cache.invalidate(project.key);
+    const index = states.findIndex(state => state.kind === 'routable');
+    const thread = index < 0 ? null : candidates[index]!;
+    if (!exclude) {
+      if (thread) this.confirmedResponsible.set(project.key, { agentId: thread.agentId, observedAt: shortlist.observedAt });
+      else this.confirmedResponsible.delete(project.key);
+    }
+    return { thread, observedAt: shortlist.observedAt };
+  }
 
   readonly plannerPresence = new PlannerPresence(
     portsContext(this, [

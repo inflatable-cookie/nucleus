@@ -28,7 +28,7 @@ import type { ProjectQaOptions } from "./project-qa-context";
 export interface QaSettleContext {
   store: Store;
   hostRuns: HostRunScheduler;
-  options: Pick<ProjectQaOptions, "notify">;
+  options: Pick<ProjectQaOptions, "notify" | "responsibleThread">;
   qaRepositoryRootPath(key: string): string;
   watchEscapedDescendants(runId: string): void;
   releaseRunScratch(run: ProjectQaRun, checkoutRetained: boolean): void;
@@ -126,7 +126,10 @@ export const projectQaSettlement = {
     if (!saved.finishedAt || !this.options.notify) return saved;
     const faults: string[] = [];
     let planner: string | null = null;
-    try { planner = this.store.projectPlannerRecipient(this.store.projectFor(saved.repository.path, saved.repository.origin)); }
+    try {
+      const project = this.store.projectFor(saved.repository.path, saved.repository.origin);
+      planner = project && this.options.responsibleThread ? await this.options.responsibleThread(project) : this.store.projectPlannerRecipient(project);
+    }
     catch (error) { faults.push(`the project planner recipient could not be read: ${error instanceof Error ? error.message : String(error)}`); }
     const recipients = uniqueProjectQaRecipients([planner ?? undefined, saved.submitterAgentId]);
     const message = projectQaNotice(saved);

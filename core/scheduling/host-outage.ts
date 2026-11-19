@@ -24,7 +24,7 @@ const isLive = (task: Task) => !task.removedAt && task.phase !== "done" && task.
  * during the outage.
  */
 export class HostOutages {
-  constructor(private readonly store: Store) {}
+  constructor(private readonly store: Store, private readonly responsible?: (project: import("../../shared/contracts").Project) => Promise<string | null>) {}
 
   private read(): HostOutageRecord {
     try {
@@ -82,7 +82,7 @@ export class HostOutages {
    * carries: an owner-facing stop does not stop the host from being the reason
    * nothing moves.
    */
-  raiseNotices(at = Date.now()): string[] {
+  async raiseNotices(at = Date.now()): Promise<string[]> {
     const boundMs = (this.store.getMeta<number>("hostOutageNoticeMinutes") ?? DEFAULT_HOST_OUTAGE_NOTICE_MINUTES) * 60_000;
     const record = this.read();
     const due = Object.entries(record).filter(([, outage]) => {
@@ -91,6 +91,13 @@ export class HostOutages {
     });
     if (!due.length) return [];
     const created: string[] = [];
+    const recipients = new Map<string, string | null>();
+    for (const [, outage] of due) {
+      void outage;
+      for (const project of this.store.projects()) {
+        if (!recipients.has(project.key)) recipients.set(project.key, this.responsible ? await this.responsible(project) : this.store.projectPlannerRecipient(project));
+      }
+    }
     this.store.transaction(() => {
       const latest = this.read();
       for (const [hostId, outage] of due) {
@@ -101,10 +108,8 @@ export class HostOutages {
         for (const [projectKey, tasks] of this.groupByProject(waiting)) {
           if (current.notifiedProjects[projectKey]) continue;
           const project = this.store.projectByKey(projectKey);
-          const planner = this.store.projectPlannerRecipient(project);
-          // No recipient yet: retry next pass, so a project that gains a planner
-          // during the same outage still hears once.
-          if (!planner) continue;
+          // Keep a visible pending notice when no live thread exists yet.
+          const planner = recipients.get(projectKey) ?? `project:${projectKey}`;
           const id = hostOutageNoticeId(hostId, projectKey, outage.since);
           this.store.putNotice({
             id, taskId: `project:${projectKey}`, agentId: planner, recipientAgentId: planner,

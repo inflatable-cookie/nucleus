@@ -243,6 +243,7 @@ export class Engine {
       "host",
       "store",
       "plannerTicketPending",
+      "resolution",
     ]),
   );
 
@@ -540,6 +541,7 @@ export class Engine {
           "recovery",
           "resumeAskQuestions",
           "resumeResponsibleAnsweredQuestions",
+          "responsibleThread",
           "settleBudgetClock",
         ],
       ),
@@ -883,7 +885,7 @@ export class Engine {
     readonly uncertainMergeRetryMs = DEFAULT_UNCERTAIN_MERGE_RETRY_MS,
     hostRunStateDir?: string,
   ) {
-    this.hostOutages = new HostOutages(store);
+    this.hostOutages = new HostOutages(store, async project => (await this.resolution.responsibleThread(project)).thread?.agentId ?? null);
     this.primaryAdapter = adapter;
     this.resolveHostAdapter = () => adapter;
     this.adapter = routeHostAdapter(this, adapter);
@@ -923,6 +925,7 @@ export class Engine {
     // The registry's answers, wired as one set (`core/host/host-ports.ts`): every
     // host question this root asks is answered here or nowhere, so no question
     // stays on the ambient default because its own assignment was forgotten.
+    this.store.responsibleRecipient = key => this.resolution.cachedResponsible(key);
     this.resolution.hostPorts = {
       taskAvailable: (task, run) =>
         this.taskHostAvailable(task) && (!run || run.hostId === task.hostId),

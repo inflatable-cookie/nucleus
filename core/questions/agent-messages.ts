@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { formatAgentId, parseAgentId } from "../../shared/agent-identity";
+import { observationTimeout } from "../recovery/observation-timeout";
 import { digest, now } from "../store/store";
 import {
   agentMessageRecordSchema,
@@ -246,6 +248,7 @@ export class AgentMessages {
       input.participantId !== undefined
         ? this.participantSender(input.participantId, token)
         : this.runSender(input.taskId!, input.runId!, token);
+    if (sender.agentId && sender.hostId) this.resolution.responsibleThreads.recordActivity(parseAgentId(sender.agentId) ? sender.agentId : formatAgentId(sender.hostId, sender.agentId));
     const target = normalizeTellTarget(input.to, input.role);
     if (target.kind === "counterpart" && !sender.task)
       throw Error(
@@ -1053,15 +1056,24 @@ export class AgentMessages {
         candidate.agentId,
         candidate.hostId,
       );
-      if (!hostId) continue;
+      if (!hostId) {
+        if (current.toProjectKey) this.resolution.responsibleThreads.cache.invalidate(current.toProjectKey);
+        continue;
+      }
       return this.notifyThread(current, candidate.agentId, hostId, label);
     }
-    const detail =
-      current.toRole === "agent"
-        ? `Agent ${current.toAgentName ?? "unknown"} is not live on its host; the message waits until it is reachable.`
-        : `No live planner for project ${current.toProjectKey}; the message waits in its inbox for the next live planner.`;
+    const detail = current.toRole === "agent"
+      ? `Agent ${current.toAgentName ?? "unknown"} is not live on its host; the message waits until it is reachable.`
+      : `No live responsible thread for ${current.toProjectKey}; handle it yourself.`;
+    if (current.toRole !== "agent") {
+      store.transaction(() => {
+        store.putMessage({ ...current, status: "expired", error: detail });
+        store.event(current.fromTaskId, "agent_message_expired", `${current.id}: ${detail}`);
+        store.event(current.toTaskId, "agent_message_expired", `${current.id}: ${detail}`);
+      });
+    }
     return {
-      status: "queued",
+      status: current.toRole === "agent" ? "queued" : "expired",
       messageId: current.id,
       to: label,
       role,
@@ -1092,14 +1104,10 @@ export class AgentMessages {
         /* the ladder's task is gone; the project's planner still answers */
       }
     }
-    try {
-      const fallback = await this.resolution.resolveProjectAgentTarget(
-        key,
-        null,
-      );
-      candidates.push({ agentId: fallback.agentId, hostId: fallback.hostId });
-    } catch {
-      /* no fallback planner is registered */
+    const project = this.store.projectByKey(key);
+    if (project) {
+      const { thread } = await this.resolution.responsibleThread(project, record.fromAgentId ? { agentId: record.fromAgentId, hostId: record.fromHostId } : undefined);
+      if (thread) candidates.push({ agentId: thread.agentId, hostId: thread.hostId });
     }
     return candidates.filter(
       (candidate, index) =>
@@ -1114,7 +1122,7 @@ export class AgentMessages {
     hintHostId?: string,
   ): Promise<string | null> {
     const hostId =
-      hintHostId ?? (await this.resolution.identifyOriginHost(agentId));
+      hintHostId ?? parseAgentId(agentId)?.hostId ?? (await this.resolution.identifyOriginHost(agentId));
     if (
       !hostId ||
       !this.resolution.withHost(hostId, () =>
@@ -1122,8 +1130,10 @@ export class AgentMessages {
       )
     )
       return null;
-    if (await this.resolution.plannerThreadGone(agentId)) return null;
-    return hostId;
+    try {
+      const state = await observationTimeout(this.resolution.plannerPresence.threadRoute(agentId, hostId), 'Thread observation timed out', 2000);
+      return state.kind === "routable" ? hostId : null;
+    } catch { return null; }
   }
 
   /** One planner or agent delivery, fenced by an intent record so an unknown outcome is never resent. */
@@ -1186,6 +1196,7 @@ export class AgentMessages {
         deliveredAt: delivered.deliveredAt!,
       };
     } catch (error) {
+      if (record.toProjectKey) this.resolution.responsibleThreads.cache.invalidate(record.toProjectKey);
       this.settleLateMessage(intent, agentId, error);
       return this.failedSend(intent, label, record.toRole, error);
     } finally {
