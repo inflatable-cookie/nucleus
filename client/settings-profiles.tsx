@@ -7,11 +7,34 @@ import { space, type as typeScale, radius } from "./design";
 import * as api from "../shared/contracts";
 import { errorText as failureText } from "./error-text";
 import { activeGroupLimit, removePoolEntry, stalePoolEntries } from "../shared/pool";
-import type { PoolEntry, Profile, Project, RepositorySettings, UiQueueState } from "../shared/contracts";
+import { profileCapabilityLevels, type PoolEntry, type Profile, type Project, type RepositorySettings, type UiQueueState } from "../shared/contracts";
 import { hostModelFor, type NucleusProfile } from "../shared/profiles";
 import type { HostCatalog } from "../shared/host";
 import { ProfileEditor, ProfileRow, quietSaveStatus } from "./settings-profile-editor";
 import { catalogAge, defaultPoolEntry, modelWords, profileRowStatus, type CatalogRead } from "./settings-profile-helpers";
+
+/**
+ * Display order for the Settings Profiles list: capability-bracket order
+ * (`profileCapabilityLevels`: Mechanical, Worker, Heavyweight, Frontier), with
+ * profiles that have no or an unknown bracket last, keeping the current
+ * relative order within each bracket (nucleus#1398).
+ */
+export function orderProfilesByBracket<T extends { id: string }>(
+  profiles: readonly T[],
+  pool: readonly Pick<PoolEntry, "profileId" | "capability">[],
+): T[] {
+  const brackets = new Map(pool.map(entry => [entry.profileId, entry.capability]));
+  const rank = (id: string) => {
+    const capability = brackets.get(id);
+    if (typeof capability !== "string") return profileCapabilityLevels.length;
+    const index = (profileCapabilityLevels as readonly string[]).indexOf(capability);
+    return index === -1 ? profileCapabilityLevels.length : index;
+  };
+  return profiles
+    .map((profile, index) => ({ profile, rank: rank(profile.id), index }))
+    .sort((a, b) => a.rank - b.rank || a.index - b.index)
+    .map(item => item.profile);
+}
 
 export function ProfilesPanel({ c, compact, inset, state, repositories, busy, savePool, savePoolList, saveAvailability }: {
   c: Colors; compact: boolean; inset: number; state: UiQueueState | null; repositories: RepositorySettings[];
@@ -56,7 +79,7 @@ export function ProfilesPanel({ c, compact, inset, state, repositories, busy, sa
       else map.set(profile.id, { id: profile.id, name: profile.name, stored: profile, board: null });
     }
     if (created && !map.has(created.id)) map.set(created.id, { id: created.id, name: created.name, stored: created, board: null });
-    return [...map.values()];
+    return orderProfilesByBracket([...map.values()], state?.pool ?? []);
   })();
   useEffect(() => {
     if (created && profilesQuery.data?.profiles.some(profile => profile.id === created.id)) setCreated(null);

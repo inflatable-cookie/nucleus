@@ -1,0 +1,1 @@
+The Profiles list in Settings now orders profiles by capability bracket (Mechanical, Worker, Heavyweight, Frontier), preserving relative order within each bracket and placing profiles with no or an unknown bracket last.
