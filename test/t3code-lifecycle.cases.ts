@@ -954,10 +954,12 @@ test("an ordinary task runs its whole lifecycle on T3: thinking level, helper re
           .resolution.archivedWorkspaceIds.includes(workspaceId)
       )
         break;
+      // The host sweep releases the finished parent's held turn first: the
+      // workspace proof reads that run, and a refused attempt backs off.
+      await f.runtime.engine.wake().catch(() => {});
       await archiveFinishedThreads(f.runtime.store, f.t3, task.id);
       f.runtime.engine.enqueueCleanup(task.id);
       await f.runtime.engine.drainCleanup();
-      await f.runtime.engine.wake().catch(() => {});
       await pause(25);
     }
     assert.ok(
