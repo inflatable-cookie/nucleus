@@ -1,8 +1,7 @@
 import { z } from "zod";
 import type { Task } from "../../shared/contracts";
 import type { HostThread, HostTimelinePage } from "../../shared/host";
-import { ProvenPreSendRefusalError } from "../../core/host";
-import type { ArchivedThread } from "../../core/host/adapter";
+import { ProvenPreSendRefusalError, type ArchivedThread } from "../../core/host";
 import type { T3RpcClient } from "./rpc";
 import { agentRecord, canonical, type T3StateFile } from "./state";
 import { labelTask } from "./one-row";
@@ -605,9 +604,13 @@ export class T3Reads {
   async archivedThreads(): Promise<ArchivedThread[]> {
     const state = this.core.state.read();
     const { threads } = await this.inventory();
+    // T3 reports an archived thread in both the shell list and the archived snapshot;
+    // one row per thread is the answer.
     const archived: ArchivedThread[] = [];
+    const seen = new Set<string>();
     for (const row of threads) {
-      if (!row.archivedAt || row.deletedAt) continue;
+      if (!row.archivedAt || row.deletedAt || seen.has(row.id)) continue;
+      seen.add(row.id);
       const record = agentRecord(state, row.id);
       if (!record) continue;
       archived.push({
