@@ -1,9 +1,13 @@
 import {
+  CANONICAL_OPTION_DEFINITIONS,
+  CANONICAL_OPTIONS,
+  canonicalOptionValue,
   canonicalThinkingValue,
   isCanonicalProvider,
   isRuntimeMode,
   isThinkingLevel,
   thinkingCarriers,
+  type CanonicalOption,
   type HostVocabulary,
   type ThinkingLevel,
 } from "../../shared/profile-vocabulary";
@@ -232,6 +236,106 @@ export function migrateProfileThinking(
   const profiles = stored.map((raw) => {
     if (!raw || typeof raw !== "object") return raw;
     const answer = canonicalThinkingProfile(raw as Raw, vocabularies);
+    record.changes.push(...answer.changes);
+    record.unknown.push(...answer.unknown);
+    return answer.profile;
+  });
+  return { profiles, record };
+}
+
+/**
+ * One stored profile with each shared provider option under its canonical key
+ * (nucleus#1386). Profiles stored a host's own spelling (`service_tier` from
+ * Paseo's codex, `serviceTier` from T3's, `fast_mode` or `fastMode` for Claude);
+ * each value is read back through every host table that carries that option for
+ * this provider, so its meaning is kept, and moves to the canonical key. A value
+ * no table maps, two tables reading it differently, or a disagreement with a
+ * canonical value already stored leaves the profile exactly as stored, reported.
+ * A profile with no host spelling left is unchanged, so the move is idempotent.
+ */
+export function canonicalOptionProfile(
+  raw: Raw,
+  vocabularies: readonly HostVocabulary[],
+): {
+  profile: Raw;
+  changes: ProfileVocabularyChange[];
+  unknown: ProfileVocabularyUnknown[];
+} {
+  const profileId = typeof raw.id === "string" ? raw.id : "";
+  const provider = raw.provider;
+  const features =
+    raw.featureValues &&
+    typeof raw.featureValues === "object" &&
+    !Array.isArray(raw.featureValues)
+      ? (raw.featureValues as Raw)
+      : null;
+  if (typeof provider !== "string" || !isCanonicalProvider(provider) || !features)
+    return { profile: raw, changes: [], unknown: [] };
+  const unknown: ProfileVocabularyUnknown[] = [];
+  const moved: Partial<Record<CanonicalOption, string>> = {};
+  const carried: string[] = [];
+  /** A canonical value already stored under the canonical key (a host may spell the option with that same id, as T3's `ultracode`). */
+  const canonicalStored = (option: CanonicalOption): string | undefined => {
+    const value = features[option];
+    return typeof value === "string" &&
+      CANONICAL_OPTION_DEFINITIONS[option].values.includes(value)
+      ? value
+      : undefined;
+  };
+  for (const [id, value] of Object.entries(features)) {
+    for (const option of CANONICAL_OPTIONS) {
+      // The canonical key holding a canonical value is already moved.
+      if (id === option && canonicalStored(option) !== undefined) continue;
+      const readers = vocabularies.flatMap((vocabulary) => {
+        const carrier = vocabulary.providers[provider]?.options?.[option];
+        return carrier && carrier.id === id ? [carrier] : [];
+      });
+      if (!readers.length) continue;
+      const values = new Set(
+        readers.map((carrier) => canonicalOptionValue(carrier, option, value)),
+      );
+      const canonical = values.size === 1 ? [...values][0] : null;
+      const stored = canonicalStored(option) ?? moved[option];
+      if (!canonical || (stored !== undefined && stored !== canonical))
+        unknown.push({ profileId, field: `featureValues.${id}`, value });
+      else {
+        moved[option] = canonical;
+        carried.push(id);
+      }
+    }
+  }
+  for (const option of CANONICAL_OPTIONS) {
+    const stored = features[option];
+    if (
+      !carried.includes(option) &&
+      stored != null &&
+      (typeof stored !== "string" ||
+        !CANONICAL_OPTION_DEFINITIONS[option].values.includes(stored))
+    )
+      unknown.push({ profileId, field: `featureValues.${option}`, value: stored });
+  }
+  if (unknown.length) return { profile: raw, changes: [], unknown };
+  if (!carried.length) return { profile: raw, changes: [], unknown: [] };
+  const to: Raw = { ...features };
+  for (const id of carried) delete to[id];
+  Object.assign(to, moved);
+  return {
+    profile: { ...raw, featureValues: to },
+    changes: [{ profileId, field: "featureValues", from: raw.featureValues, to }],
+    unknown: [],
+  };
+}
+
+/** Every stored profile's shared options under their canonical keys, and the record of the run. */
+export function migrateProfileOptions(
+  stored: readonly unknown[],
+  vocabularies: readonly HostVocabulary[],
+  at = new Date().toISOString(),
+): { profiles: unknown[]; record: ProfileVocabularyMigration } {
+  const record: ProfileVocabularyMigration = { at, changes: [], unknown: [] };
+  const profiles = stored.map((raw) => {
+    if (!raw || typeof raw !== "object") return raw;
+    const answer = canonicalOptionProfile(raw as Raw, vocabularies);
     record.changes.push(...answer.changes);
     record.unknown.push(...answer.unknown);
     return answer.profile;

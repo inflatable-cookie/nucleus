@@ -7,6 +7,10 @@ import { sameLevels, type HostVocabulary, type ProviderTranslation } from '../..
  * `bypassPermissions` and supervised `default`; Codex names its own three; Grok
  * carries full access as its `auto_accept` option; Pi reports no modes. Claude's
  * `ultracode` level has no canonical twin, so it is not offered.
+ *
+ * Speed (nucleus#1386) is Codex's `service_tier` select (`default`, `priority`,
+ * `ultrafast`, labelled Speed) and Claude's `fast_mode` toggle, as the daemon's
+ * own feature read reports them; plan mode is Codex's `plan_mode` toggle.
  */
 const allLevels = sameLevels('off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra');
 const plain = (key: string): ProviderTranslation => ({ key, thinking: allLevels, modes: {} });
@@ -22,10 +26,15 @@ export const paseoVocabulary: HostVocabulary = {
         plan: { modeId: 'plan' }, supervised: { modeId: 'default' }, 'accept-edits': { modeId: 'acceptEdits' },
         auto: { modeId: 'auto' }, 'full-access': { modeId: 'bypassPermissions' },
       },
+      options: { speed: { id: 'fast_mode', values: { default: false, priority: true } } },
     },
     codex: {
       key: 'codex', thinking: allLevels,
       modes: { auto: { modeId: 'auto' }, 'auto-review': { modeId: 'auto-review' }, 'full-access': { modeId: 'full-access' } },
+      options: {
+        speed: { id: 'service_tier', values: { default: 'default', priority: 'priority', ultrafast: 'ultrafast' } },
+        'plan-mode': { id: 'plan_mode', values: { off: false, on: true } },
+      },
     },
     pi: plain('pi'),
     grok: {

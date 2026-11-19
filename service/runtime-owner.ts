@@ -514,6 +514,8 @@ export class QueueRuntime {
     // nucleus#1365: stored profiles carry thinking in one canonical field, mapped
     // back through every host's table before anything reads them.
     this.store.migrateProfileThinking(Object.values(HOST_VOCABULARIES));
+    // nucleus#1386: shared provider options (speed) move to their canonical keys.
+    this.store.migrateProfileOptions(Object.values(HOST_VOCABULARIES));
     this.capacityChanges = new CapacityChangeJournal(this.store);
     // Keyed mutations are journaled around their handlers so a replacement can
     // answer a response lost mid-roll (request ledger, service-boundary contract).

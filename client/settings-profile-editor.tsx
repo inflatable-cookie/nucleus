@@ -56,6 +56,7 @@ import {
   identityCreateInput,
   hiddenThinkingValues,
   identityValid,
+  withCanonicalOption,
   levelLabel,
   modelWords,
   namedProvider,
@@ -500,7 +501,12 @@ export function ProfileEditor({
       : feature.value;
   const setFeature = (feature: HostFeature, value: unknown) =>
     applyIdentity({
-      featureValues: { ...draft.featureValues, [feature.id]: value },
+      featureValues: withCanonicalOption(
+        draft.provider,
+        draft.featureValues,
+        feature.id,
+        value,
+      ),
     });
   const differing =
     catalogs.length > 1

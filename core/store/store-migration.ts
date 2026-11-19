@@ -1,6 +1,7 @@
 import { withoutRetiredPoolFields } from "../../shared/contracts";
 import { qualifiedThreadArchiveEffectKey, StoreCore } from "./store-core";
 import {
+  migrateProfileOptions,
   migrateProfileThinking,
   migrateProfileVocabulary,
 } from "./profile-vocabulary-migration";
@@ -10,6 +11,8 @@ import type { HostVocabulary } from "../../shared/profile-vocabulary";
 export const PROFILE_VOCABULARY_MIGRATION_KEY = "profileVocabularyMigration";
 /** The record of the canonical thinking migration's first run and of every run that changed a profile (nucleus#1365). */
 export const PROFILE_THINKING_MIGRATION_KEY = "profileThinkingMigration";
+/** The record of the canonical option migration's first run and of every run that changed a profile (nucleus#1386). */
+export const PROFILE_OPTION_MIGRATION_KEY = "profileOptionMigration";
 
 /** The archive-key facts a migration reads and prunes; retention owns them. */
 export interface MigrationHooks {
@@ -263,6 +266,30 @@ export class StoreMigration {
     for (const item of record.unknown)
       console.warn(
         `[nucleus] profile ${item.profileId} keeps ${item.field} ${JSON.stringify(item.value)}: no host table maps it to one canonical thinking level, left as stored`,
+      );
+  }
+
+  /**
+   * Stored profiles' shared provider options under their canonical keys
+   * (nucleus#1386): `service_tier` and its other spellings move to `speed`
+   * through every host's table. Idempotent like the thinking move, recorded on
+   * the first run and on any run that changes a profile; a value no table maps
+   * stays as stored and is reported.
+   */
+  migrateProfileOptions(vocabularies: readonly HostVocabulary[]): void {
+    const stored = this.core.getMeta<unknown[]>("profiles");
+    const { profiles, record } = migrateProfileOptions(
+      Array.isArray(stored) ? stored : [],
+      vocabularies,
+    );
+    const first =
+      this.core.getMeta<unknown>(PROFILE_OPTION_MIGRATION_KEY) === undefined;
+    if (record.changes.length) this.core.setMeta("profiles", profiles);
+    if (!first && !record.changes.length) return;
+    this.core.setMeta(PROFILE_OPTION_MIGRATION_KEY, record);
+    for (const item of record.unknown)
+      console.warn(
+        `[nucleus] profile ${item.profileId} keeps ${item.field} ${JSON.stringify(item.value)}: no host table maps it to one canonical option value, left as stored`,
       );
   }
 }

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { HostCatalog, HostProvider } from "./host";
-import { isCanonicalProvider, isRuntimeMode, isThinkingLevel, canonicalThinkingLevels, translateProfile, type HostVocabulary, type LaunchValues } from "./profile-vocabulary";
+import { CANONICAL_OPTION_DEFINITIONS, canonicalOptionValue, canonicalOptionValueLabel, isCanonicalOption, isCanonicalProvider, isRuntimeMode, isThinkingLevel, canonicalThinkingLevels, optionCarriedBy, translateProfile, type HostVocabulary, type LaunchValues } from "./profile-vocabulary";
 
 /**
  * A Nucleus-owned profile record. Nucleus keeps its own list; the host only
@@ -190,6 +190,10 @@ function availabilityOn(
   // holds for a model option report the host has not settled yet.
   if (catalog.featuresDeferred !== true && !unsettled)
     for (const [option, value] of Object.entries(profile.featureValues ?? {})) {
+      // A canonical option at the provider's default is never sent, so a model
+      // without the control still runs it (nucleus#1386). Launch values carry
+      // host spellings; only a canonical catalog read sees the canonical key.
+      if (isCanonicalOption(option) && (value == null || value === CANONICAL_OPTION_DEFINITIONS[option].defaultValue)) continue;
       const feature = model.features.find((candidate) => candidate.id === option);
       if (!feature)
         return {
@@ -280,12 +284,22 @@ export function profileCompatibility(
   // The option this host's table uses to carry a thinking level is not a plain
   // feature: a value it does not offer is a thinking level the host lacks, and
   // the reason names the level rather than the carrier's spelling (nucleus#1364).
-  const carrier = isCanonicalProvider(profile.provider)
-    ? vocabulary.providers[profile.provider]?.thinkingOption
-    : undefined;
+  const entry = isCanonicalProvider(profile.provider) ? vocabulary.providers[profile.provider] : undefined;
+  const carrier = entry?.thinkingOption;
+  // An option the table uses to carry a canonical option (speed): a value the
+  // model does not offer, or a model without the option, is that canonical value
+  // the host lacks, named in the operator's words on the profile (nucleus#1386).
+  const optionProblem = !answer.available && entry
+    ? /^Configured option (\S+) (?:is not supported|does not offer that value)$/.exec(answer.problem)
+    : null;
+  const carried = optionProblem && entry ? optionCarriedBy(entry, optionProblem[1]!) : null;
+  const optionReason = carried && entry && optionProblem
+    ? `${vocabulary.label}'s ${launch.model} has no ${CANONICAL_OPTION_DEFINITIONS[carried].label.toLowerCase()} ${canonicalOptionValueLabel(carried,
+      canonicalOptionValue(entry.options![carried]!, carried, launch.featureValues?.[optionProblem[1]!]) ?? launch.featureValues?.[optionProblem[1]!])}`
+    : null;
   const reason = answer.available
     ? ""
-    : hostReason(answer.problem, vocabulary.label, launch.provider, launch, carrier, profile.thinkingOptionId);
+    : optionReason ?? hostReason(answer.problem, vocabulary.label, launch.provider, launch, carrier, profile.thinkingOptionId);
   // The two shapes a thinking level takes an unavailable answer in: the level
   // field itself, and the table carrier that holds it as a feature value.
   const thinkingProblem =
@@ -302,7 +316,7 @@ export function profileCompatibility(
     // A level the carrier does not offer is reported as the thinking level the
     // host lacks, on the profile the board and selection read, not only on the
     // compatibility row.
-    problem: !answer.available && thinkingProblem ? reason : answer.problem,
+    problem: !answer.available && (thinkingProblem || optionReason) ? reason : answer.problem,
     reason,
     translated: translation.translated,
     launch,

@@ -10,7 +10,8 @@ import type { HostKind } from "./host-kind";
  *
  * Models are the provider's own model ids, which hosts share. Feature values are
  * the provider's own option ids, passed through unchanged, except the options a
- * host table uses to carry a thinking level or a runtime mode.
+ * host table uses to carry a thinking level, a runtime mode or a canonical
+ * option (`speed`, nucleus#1386).
  */
 export const CANONICAL_PROVIDERS = [
   "codex",
@@ -105,6 +106,82 @@ export const RUNTIME_MODE_LABELS: Record<
   },
 };
 
+/**
+ * Provider options under one canonical key and value set (nucleus#1386). A
+ * profile stores the canonical key in `featureValues`; each host table spells it
+ * its own way, or not at all. The default value is the provider's own default,
+ * so a profile at the default sends nothing and runs on any host; a non-default
+ * value runs only on a host whose table carries it.
+ *
+ * - `speed`: Paseo's codex `service_tier` and claude `fast_mode`, T3's codex
+ *   `serviceTier` and claude `fastMode` — one setting under four names.
+ * - `plan-mode`: Paseo's codex `plan_mode` toggle; T3 has no such option.
+ * - `cyber-access`: T3's codex `cyberAccessProgram`; Paseo has no such option.
+ * - `ultracode`: T3's claude `ultracode` toggle; Paseo has no such option.
+ *
+ * The host-only options are here for their defaults: a profile written on one
+ * host stores every option that host offers, and its defaults must not make the
+ * profile ineligible on a host that lacks the option.
+ */
+export const CANONICAL_OPTIONS = [
+  "speed",
+  "plan-mode",
+  "cyber-access",
+  "ultracode",
+] as const;
+export type CanonicalOption = (typeof CANONICAL_OPTIONS)[number];
+
+export interface CanonicalOptionDefinition {
+  label: string;
+  description: string;
+  /** The canonical values, in display order. */
+  values: readonly string[];
+  /** The provider's own default: never sent, and every host can run it. */
+  defaultValue: string;
+  valueLabels: Record<string, string>;
+}
+
+const onOff = (label: string, description: string): CanonicalOptionDefinition => ({
+  label,
+  description,
+  values: ["off", "on"],
+  defaultValue: "off",
+  valueLabels: { off: "Off", on: "On" },
+});
+
+export const CANONICAL_OPTION_DEFINITIONS: Record<
+  CanonicalOption,
+  CanonicalOptionDefinition
+> = {
+  speed: {
+    label: "Speed",
+    description: "Processing speed. Faster tiers use more of the subscription.",
+    values: ["default", "priority", "ultrafast"],
+    defaultValue: "default",
+    valueLabels: { default: "Normal", priority: "Fast", ultrafast: "Ultrafast" },
+  },
+  "plan-mode": onOff("Plan mode", "Planning-only collaboration mode."),
+  "cyber-access": {
+    label: "Cyber access",
+    description: "The provider's cyber access program.",
+    values: ["standard"],
+    defaultValue: "standard",
+    valueLabels: { standard: "Standard" },
+  },
+  ultracode: onOff("Ultracode", "The provider's extended coding mode."),
+};
+
+export const isCanonicalOption = (value: string): value is CanonicalOption =>
+  (CANONICAL_OPTIONS as readonly string[]).includes(value);
+
+/** A canonical option value in the operator's words. */
+export const canonicalOptionValueLabel = (
+  option: CanonicalOption,
+  value: unknown,
+): string =>
+  CANONICAL_OPTION_DEFINITIONS[option].valueLabels[String(value)] ??
+  String(value);
+
 export const isCanonicalProvider = (
   value: string,
 ): value is CanonicalProvider =>
@@ -119,6 +196,16 @@ export type NativeMode =
   | { modeId: string }
   | { featureValues: Record<string, unknown> };
 
+/**
+ * How one host carries one canonical option for one provider: its own option id,
+ * and each canonical value's spelling there (a select's choice id, or a toggle's
+ * boolean). A value with no entry can't be expressed on this host.
+ */
+export interface OptionTranslation {
+  id: string;
+  values: Partial<Record<string, string | boolean>>;
+}
+
 /** One canonical provider on one host. */
 export interface ProviderTranslation {
   /** The host's own provider key. */
@@ -129,6 +216,8 @@ export interface ProviderTranslation {
   thinking: Partial<Record<ThinkingLevel, string>>;
   /** Canonical mode → how the host carries it. A mode with no entry can't be expressed here. */
   modes: Partial<Record<RuntimeMode, NativeMode>>;
+  /** Canonical option → how the host carries it. An option with no entry runs only at its default here. */
+  options?: Partial<Record<CanonicalOption, OptionTranslation>>;
 }
 
 /** One host kind's translation table, owned by that host's adapter code. */
@@ -181,7 +270,7 @@ export type Translation =
   | { ok: true; launch: LaunchValues; translated: string[] }
   | { ok: false; reason: string; launch: LaunchValues };
 
-/** Option ids the table itself uses for one provider's thinking or mode; a profile can't set them directly. */
+/** Option ids the table itself uses for one provider's thinking, mode or canonical options; a profile can't set them directly. */
 export function ownedOptions(
   vocabulary: HostVocabulary,
   entry: ProviderTranslation,
@@ -190,7 +279,36 @@ export function ownedOptions(
   for (const mode of Object.values(entry.modes))
     if (mode && "featureValues" in mode)
       for (const key of Object.keys(mode.featureValues)) owned.add(key);
+  for (const carrier of Object.values(entry.options ?? {}))
+    if (carrier) owned.add(carrier.id);
   return owned;
+}
+
+/** The canonical option one host option id carries for this provider, or null. */
+export function optionCarriedBy(
+  entry: ProviderTranslation,
+  id: string,
+): CanonicalOption | null {
+  return (
+    CANONICAL_OPTIONS.find((option) => entry.options?.[option]?.id === id) ??
+    null
+  );
+}
+
+/**
+ * The canonical value one host's own value spells for one option, read from the
+ * table's inverse entry; `null` when the table carries no value for it.
+ */
+export function canonicalOptionValue(
+  carrier: OptionTranslation,
+  option: CanonicalOption,
+  value: unknown,
+): string | null {
+  return (
+    CANONICAL_OPTION_DEFINITIONS[option].values.find(
+      (candidate) => carrier.values[candidate] === value,
+    ) ?? null
+  );
 }
 
 /**
@@ -231,10 +349,35 @@ export function translateProfile(
   const features: Record<string, unknown> = {};
   const owned = ownedOptions(vocabulary, entry);
   for (const [option, value] of Object.entries(profile.featureValues ?? {})) {
-    if (owned.has(option))
+    if (isCanonicalOption(option)) {
+      const definition = CANONICAL_OPTION_DEFINITIONS[option];
+      // Unset (the editor's Host default) is the provider's default too.
+      if (value === null || value === undefined) continue;
+      if (typeof value !== "string" || !definition.values.includes(value))
+        return refuse(
+          `${definition.label} ${String(value)} is not in Nucleus's vocabulary`,
+        );
+      // The provider's default needs no option: it is never sent, so a host
+      // that lacks the option still runs the profile (nucleus#1386).
+      if (value === definition.defaultValue) continue;
+      const carrier = entry.options?.[option];
+      const native = carrier?.values[value];
+      if (!carrier || native === undefined)
+        return refuse(
+          `${label} can't express ${definition.label.toLowerCase()} ${canonicalOptionValueLabel(option, value)} for ${profile.provider}`,
+        );
+      features[carrier.id] = native;
+      translated.push(option);
+      continue;
+    }
+    if (owned.has(option)) {
+      const carried = optionCarriedBy(entry, option);
       return refuse(
-        `Option ${option} is how ${label} carries a thinking level or mode; set those instead`,
+        carried
+          ? `Option ${option} is how ${label} carries ${CANONICAL_OPTION_DEFINITIONS[carried].label}; set ${CANONICAL_OPTION_DEFINITIONS[carried].label} instead`
+          : `Option ${option} is how ${label} carries a thinking level or mode; set those instead`,
       );
+    }
     features[option] = value;
   }
   if (profile.thinkingOptionId) {
@@ -439,7 +582,18 @@ export function canonicalCatalog(
             id: mode,
             ...RUNTIME_MODE_LABELS[mode],
           })),
-          features: model.features.filter((feature) => !owned.has(feature.id)),
+          features: model.features.flatMap((feature) => {
+            const carried = optionCarriedBy(entry, feature.id);
+            if (carried) {
+              const control = canonicalOptionFeature(
+                carried,
+                entry.options![carried]!,
+                feature,
+              );
+              return control ? [control] : [];
+            }
+            return owned.has(feature.id) ? [] : [feature];
+          }),
           // A model whose options the host has not settled keeps that fact: its
           // levels are the table's, not a report of absence (nucleus#1375).
           ...(model.unsettled === true ? { unsettled: true } : {}),
@@ -450,6 +604,67 @@ export function canonicalCatalog(
   return {
     providers,
     ...(catalog.featuresDeferred ? { featuresDeferred: true } : {}),
+  };
+}
+
+/**
+ * One host feature that carries a canonical option, as the canonical control:
+ * the canonical key and label, and only the values the table spells and the
+ * host offers for this model (nucleus#1386). `null` when it offers none.
+ */
+function canonicalOptionFeature(
+  option: CanonicalOption,
+  carrier: OptionTranslation,
+  feature: HostFeature,
+): HostFeature | null {
+  const definition = CANONICAL_OPTION_DEFINITIONS[option];
+  const values = definition.values.filter((value) => {
+    const native = carrier.values[value];
+    if (native === undefined) return false;
+    return feature.type === "toggle"
+      ? typeof native === "boolean"
+      : typeof native === "string" &&
+          feature.options.some((choice) => choice.id === native);
+  });
+  if (!values.length) return null;
+  const current = canonicalOptionValue(carrier, option, feature.value);
+  return {
+    type: "select",
+    id: option,
+    label: definition.label,
+    description: definition.description,
+    value:
+      current && values.includes(current) ? current : definition.defaultValue,
+    options: values.map((value) => ({
+      id: value,
+      label: definition.valueLabels[value] ?? value,
+      ...(value === definition.defaultValue ? { isDefault: true } : {}),
+    })),
+  };
+}
+
+/** One canonical option control from several hosts: every value at least one host offers. */
+function mergeOptionFeature(known: HostFeature, other: HostFeature): HostFeature {
+  if (
+    !isCanonicalOption(known.id) ||
+    known.type !== "select" ||
+    other.type !== "select"
+  )
+    return known;
+  const definition = CANONICAL_OPTION_DEFINITIONS[known.id];
+  const ids = new Set([
+    ...known.options.map((choice) => choice.id),
+    ...other.options.map((choice) => choice.id),
+  ]);
+  return {
+    ...known,
+    options: definition.values
+      .filter((value) => ids.has(value))
+      .map((value) => ({
+        id: value,
+        label: definition.valueLabels[value] ?? value,
+        ...(value === definition.defaultValue ? { isDefault: true } : {}),
+      })),
   };
 }
 
@@ -501,7 +716,10 @@ export function mergeCanonicalCatalogs(
             model.modes.some((item) => item.id === mode),
         ).map((mode) => ({ id: mode, ...RUNTIME_MODE_LABELS[mode] }));
         known.features = [
-          ...known.features,
+          ...known.features.map((feature) => {
+            const other = model.features.find((item) => item.id === feature.id);
+            return other ? mergeOptionFeature(feature, other) : feature;
+          }),
           ...model.features.filter(
             (feature) => !known.features.some((item) => item.id === feature.id),
           ),
