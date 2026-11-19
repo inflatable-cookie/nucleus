@@ -198,9 +198,16 @@ test("a 12k-thread retention backlog with a removal that never returns does not 
 
   await maintenance.run(NOON);
 
-  assert.ok(maintenance.threadRetentionRun, "the backlog is in flight, not awaited");
+  assert.ok(
+    maintenance.threadRetentionRun,
+    "the backlog is in flight, not awaited",
+  );
   assert.equal(removals, 1, "the first removal is the one the pass is held on");
   await maintenance.run(NOON + HOUR);
-  assert.equal(removals, 1, "one pass at a time: the next hour starts no second walk");
+  assert.equal(
+    removals,
+    1,
+    "one pass at a time: the next hour starts no second walk",
+  );
   assert.equal(store.getMeta("threadRetentionError"), undefined);
 });

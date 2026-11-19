@@ -53,8 +53,19 @@ export interface ThreadRetentionHostFact {
   hostId: string;
   /** Whether this host can prune at all: it must list archived threads and remove one. */
   supported: boolean;
-  /** When this host's last pass finished; null before the first one. */
+  /**
+   * When this host's last pass read it: the archived walk ran and was kept.
+   * Null before the first one. A pass that found the host away leaves this at the
+   * last real read, so a stale read stays visible; `checkedAt` says when a pass
+   * last looked.
+   */
   at: string | null;
+  /**
+   * When a pass last checked this host, whether it read the host or found it away;
+   * null before the first pass. An away host therefore always carries the timestamp
+   * of the pass that found it away.
+   */
+  checkedAt: string | null;
   /** Archived Nucleus-created threads the pass read. */
   scanned: number;
   /** Threads in the scanned set that passed every scope rule. */
@@ -222,6 +233,7 @@ export async function runThreadRetentionPass(
     hostId,
     supported: false,
     at: null,
+    checkedAt: null,
     scanned: 0,
     eligible: 0,
     deleted: 0,
@@ -235,7 +247,7 @@ export async function runThreadRetentionPass(
     freshRead = adapter.threadArchiveState,
     remove = adapter.deleteAgent;
   if (!list) {
-    fact.at = new Date(at).toISOString();
+    fact.at = fact.checkedAt = new Date(at).toISOString();
     fact.error =
       "This host does not list its archived threads, so none were read or pruned";
     return fact;
@@ -244,12 +256,12 @@ export async function runThreadRetentionPass(
   try {
     rows = await list.call(adapter);
   } catch (error) {
-    fact.at = new Date(at).toISOString();
+    fact.at = fact.checkedAt = new Date(at).toISOString();
     fact.error = `The archived thread walk failed: ${message(error)}`;
     return fact;
   }
   if (rows === null) {
-    fact.at = new Date(at).toISOString();
+    fact.at = fact.checkedAt = new Date(at).toISOString();
     fact.truncated = true;
     fact.error =
       "The archived thread walk did not reach its end; nothing was pruned";
@@ -266,7 +278,7 @@ export async function runThreadRetentionPass(
       candidates.push(row);
   fact.scanned = rows.length;
   fact.eligible = candidates.length;
-  fact.at = new Date(at).toISOString();
+  fact.at = fact.checkedAt = new Date(at).toISOString();
   if (!freshRead || !remove) {
     fact.error = `This host cannot remove an archived thread, so ${candidates.length} eligible thread(s) were counted and none were removed`;
     return fact;
@@ -414,7 +426,7 @@ export async function runThreadRetentionPass(
     }
   }
   fact.remaining = left.length;
-  fact.at = new Date(at).toISOString();
+  fact.at = fact.checkedAt = new Date(at).toISOString();
   return fact;
 }
 
@@ -467,6 +479,7 @@ export async function runThreadRetention(
           hostId,
           supported: false,
           at: null,
+          checkedAt: null,
           scanned: 0,
           eligible: 0,
           deleted: 0,
@@ -477,6 +490,7 @@ export async function runThreadRetention(
           error: "",
         }),
         hostId,
+        checkedAt: new Date(at).toISOString(),
         error: "The host is away; its archived threads were not read",
       });
       continue;

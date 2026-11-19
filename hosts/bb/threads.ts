@@ -539,7 +539,12 @@ export class BbThreads {
     for (let offset = 0; offset < 100_000; offset += 200) {
       const page = await this.read<{ complete: boolean; rows: BbRow[] }>(
         "thread.inventory",
-        { originPluginId: "nucleus", includeHidden: true, archived: true, offset },
+        {
+          originPluginId: "nucleus",
+          includeHidden: true,
+          archived: true,
+          offset,
+        },
       );
       if (page.complete !== page.rows.length < 200) return null;
       for (const row of page.rows) {

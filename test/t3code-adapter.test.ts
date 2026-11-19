@@ -1,6 +1,7 @@
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, readFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -34,6 +35,7 @@ import {
 } from "../shared/contracts";
 import { Store, qualifiedThreadArchiveEffectKey } from "../core/store/store";
 import { archiveFinishedThreads } from "../core/workspaces/thread-archive";
+import { runThreadRetentionPass } from "../core/workspaces/thread-retention";
 import type { Adapter } from "../core/host";
 import { taskWorkspaceTitle } from "../core/workspaces/workspace-title";
 import {
@@ -3656,7 +3658,10 @@ test("the retention pass lists a T3 host's archived Nucleus threads and reads ea
   assert.equal(listed.length, 1);
   assert.equal(listed[0]!.id, created.id);
   assert.equal(listed[0]!.archivedAt, "2026-01-01T00:00:00.000Z");
-  assert.deepEqual(listed[0]!.labels, host.state.read().agents[created.id]!.labels);
+  assert.deepEqual(
+    listed[0]!.labels,
+    host.state.read().agents[created.id]!.labels,
+  );
   assert.deepEqual(await host.threadArchiveState(created.id), {
     archivedAt: "2026-01-01T00:00:00.000Z",
     deleted: false,
@@ -3670,7 +3675,79 @@ test("the retention pass lists a T3 host's archived Nucleus threads and reads ea
   );
   assert.deepEqual(await host.archivedThreads(), []);
   assert.equal(
-    server.commands.filter((command) => command.type === "thread.delete").length,
+    server.commands.filter((command) => command.type === "thread.delete")
+      .length,
+    1,
+  );
+});
+
+// nucleus#1369: one whole retention pass over the T3 adapter (the real adapter over
+// the T3 fake, not the surface alone): the archived worker of a finished task is
+// removed, the live thread of the same task is never scanned, and the row carries
+// `at`, `checkedAt` and counts.
+test("one retention pass over a T3 host removes a finished task's archived worker and records its row (#1369)", async (t) => {
+  const { host, server, spec } = await fixture(t);
+  const store = new Store(":memory:");
+  t.after(() => store.close());
+  store.setMeta("paused", false);
+  const submitted = store.insert(
+    submissionSchema.parse({
+      submissionId: randomUUID(),
+      title: "Finished task",
+      repoPath: "/repo",
+      planningCommit: "a".repeat(40),
+      handoffPath: "handoff.md",
+      originAgentId: "origin",
+    }),
+    host.hostId,
+    "handoff",
+    "a".repeat(40),
+  );
+  const task = store.update(submitted.id, { phase: "done" });
+  const launch = (requestId: string, runId: string) => ({
+    ...spec(),
+    attempt: () => ({
+      requestId,
+      prompt: "Synthetic prompt",
+      labels: storedT3Labels("worker", { taskId: task.id, runId }),
+      environment: {},
+    }),
+  });
+  const finished = await host.createAgent(
+    launch("retention-finished", "finished-run"),
+  );
+  await host.archiveAgent(finished.id);
+  const live = await host.createAgent(launch("retention-live", "live-run"));
+
+  const at = Date.parse(STAMP) + 9 * 86_400_000;
+  const fact = await runThreadRetentionPass({
+    store,
+    adapter: host as unknown as Adapter,
+    hostId: host.hostId,
+    at,
+    days: 3,
+  });
+
+  assert.equal(fact.supported, true, fact.error);
+  assert.equal(fact.error, "");
+  assert.equal(fact.at, new Date(at).toISOString());
+  assert.equal(fact.checkedAt, fact.at);
+  assert.equal(
+    fact.scanned,
+    1,
+    "only the archived thread is in the archived set",
+  );
+  assert.equal(fact.eligible, 1);
+  assert.equal(fact.deleted, 1);
+  assert.equal(await host.threadArchiveState(finished.id), null);
+  assert.deepEqual(
+    (await host.threadArchiveState(live.id))?.archivedAt,
+    null,
+    "the live thread is untouched",
+  );
+  assert.equal(
+    server.commands.filter((command) => command.type === "thread.delete")
+      .length,
     1,
   );
 });

@@ -3782,9 +3782,11 @@ the next pass reads the thread fresh, and only a thread the host still reports
 archived is retried, at most three times.
 
 `service.health.threadRetention` carries the window, the batch cap and one fact
-per host (`at`, `scanned`, `eligible`, `deleted`, `absent`, `failed`,
-`remaining`, `truncated`, `error`); a host that is away keeps its last real pass
-and names why this one skipped it. `nucleus t3 status` prints the window with
+per host (`at`, `checkedAt`, `scanned`, `eligible`, `deleted`, `absent`, `failed`,
+`remaining`, `truncated`, `error`). `at` is the last pass that read the host;
+`checkedAt` is the last pass that looked at it, read or away. A host that is away
+keeps its last real read in `at`, names why this pass skipped it, and carries that
+pass's time in `checkedAt` (nucleus#1369). `nucleus t3 status` prints the window with
 that host's last pass.
 
 Provider sessions are not part of this pass. A Paseo thread's provider session

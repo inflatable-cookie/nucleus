@@ -728,6 +728,7 @@ test("the retention line names this host's last pass, or why it could not run", 
     days: 4,
     supported: true,
     lastRunAt: "2026-11-19T09:00:00.000Z",
+    checkedAt: null,
     deleted: 200,
     remaining: 11,
     error: "",
@@ -740,6 +741,7 @@ test("the retention line names this host's last pass, or why it could not run", 
           hostId,
           supported: true,
           at: null,
+          checkedAt: "2026-11-19T10:00:00.000Z",
           deleted: 0,
           remaining: 0,
           error: "The host is away",
@@ -749,6 +751,12 @@ test("the retention line names this host's last pass, or why it could not run", 
     hostId,
   );
   assert.match(skipped.error, /away/);
+  assert.equal(
+    skipped.checkedAt,
+    "2026-11-19T10:00:00.000Z",
+    "an away host carries the timestamp of the pass that found it away",
+  );
+  assert.equal(skipped.lastRunAt, null, "the last real read is still null");
   const unsupported = retentionFacts({ days: 3, hosts: [] }, hostId);
   assert.equal(unsupported.supported, false);
   assert.match(unsupported.error, /no retention pass has recorded this host/);

@@ -623,7 +623,12 @@ test("a secondary host is read in its own host context and is scanned on the fir
   online.delete(SECOND);
   const away = (await pass()).hosts.find((fact) => fact.hostId === SECOND)!;
   assert.match(away.error, /away/);
-  assert.equal(away.at, null, "a host never read has no pass time");
+  assert.equal(away.at, null, "a host never read keeps no read time");
+  assert.equal(
+    away.checkedAt,
+    new Date(NOW).toISOString(),
+    "an away host carries the timestamp of the pass that found it away",
+  );
   assert.equal(secondary.calls.listed, 0, "an away host is never read");
 
   online.add(SECOND);
@@ -672,7 +677,11 @@ test("a stopped engine ends the pass before its next removal", async (t) => {
   const f = fixture(t);
   const host = hostFixture();
   const task = f.create("Finished task", "done");
-  host.add("worker-1", f.taskLabels(task.id, "worker"), new Date(NOW - 9 * DAY).toISOString());
+  host.add(
+    "worker-1",
+    f.taskLabels(task.id, "worker"),
+    new Date(NOW - 9 * DAY).toISOString(),
+  );
 
   const fact = await runThreadRetentionPass({
     store: f.store,
@@ -684,5 +693,9 @@ test("a stopped engine ends the pass before its next removal", async (t) => {
 
   assert.equal(fact.deleted, 0);
   assert.deepEqual(host.calls.deleted, [], "no removal is sent after a stop");
-  assert.equal(fact.remaining, 1, "the eligible thread is left for the next pass");
+  assert.equal(
+    fact.remaining,
+    1,
+    "the eligible thread is left for the next pass",
+  );
 });

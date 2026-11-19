@@ -10,6 +10,11 @@ import { bbFake, bbWire, assertBbWire, BB_STAMP } from "./support/bb-fake";
 import { wireLabels } from "../shared/wire-labels";
 import type { HostAgentSpec } from "../shared/host";
 import { HostUnknownDeliveryError } from "../core/host/errors";
+import { randomUUID } from "node:crypto";
+import { Store } from "../core/store/store";
+import { runThreadRetentionPass } from "../core/workspaces/thread-retention";
+import { submissionSchema } from "../shared/contracts";
+import type { Adapter } from "../core/host";
 
 const hostId = "bb:0123456789abcdef0123456789abcdef";
 function fixture() {
@@ -549,8 +554,77 @@ test("the retention pass lists a BB host's archived Nucleus threads from the com
   assert.deepEqual(listed![0]!.labels, f.state().agents[agent.id]!.labels);
   assert.ok(
     f.calls.some(
-      (c) => c.method === "threads.list" && c.args.archived === true && c.args.originPluginId === "nucleus",
+      (c) =>
+        c.method === "threads.list" &&
+        c.args.archived === true &&
+        c.args.originPluginId === "nucleus",
     ),
     "the walk asks BB for the archived Nucleus threads",
   );
+});
+
+// nucleus#1369: one retention pass over the BB host's real archived shape: the pass
+// reads the archived Nucleus threads from BB's inventory and records `at`, `checkedAt`
+// and counts. BB has no removal, so the row says so and nothing is pruned.
+test("one retention pass over a BB host reads its archived threads and records a counted, unpruned row (#1369)", async () => {
+  const f = fixture();
+  const store = new Store(":memory:");
+  try {
+    const submitted = store.insert(
+      submissionSchema.parse({
+        submissionId: randomUUID(),
+        title: "Finished task",
+        repoPath: "/repo",
+        planningCommit: "a".repeat(40),
+        handoffPath: "handoff.md",
+        originAgentId: "origin",
+      }),
+      hostId,
+      "handoff",
+      "a".repeat(40),
+    );
+    const task = store.update(submitted.id, { phase: "done" });
+    const agent = await f.native.createAgent({
+      ...f.spec(),
+      attempt: () => ({
+        requestId: "ns-retention-finished",
+        labels: wireLabels({
+          task: task.id,
+          run: "run_retention",
+          role: "worker",
+        }),
+        environment: {},
+        prompt: "Synthetic task prompt.",
+      }),
+    });
+    f.cascades.set(agent.id, []);
+    await f.native.archiveAgent(agent.id);
+
+    // The service adapter lists through the same call; BB has no thread delete, so the
+    // pass sees a listing-only host.
+    const adapter = {
+      archivedThreads: () => f.native.archivedThreads(),
+    } as unknown as Adapter;
+    const at = BB_STAMP + 9 * 86_400_000;
+    const fact = await runThreadRetentionPass({
+      store,
+      adapter,
+      hostId,
+      at,
+      days: 3,
+    });
+
+    assert.equal(fact.supported, false);
+    assert.equal(fact.at, new Date(at).toISOString());
+    assert.equal(fact.checkedAt, fact.at);
+    assert.equal(fact.scanned, 1);
+    assert.equal(fact.eligible, 1);
+    assert.equal(fact.deleted, 0);
+    assert.match(
+      fact.error,
+      /cannot remove an archived thread, so 1 eligible thread\(s\) were counted and none were removed/,
+    );
+  } finally {
+    store.close();
+  }
 });

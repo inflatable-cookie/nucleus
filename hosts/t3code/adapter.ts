@@ -151,9 +151,9 @@ const thinkingLevelFor = (
   if (profile.thinkingOptionId)
     return isThinkingLevel(profile.thinkingOptionId)
       ? profile.thinkingOptionId
-      : (translation
-          ? canonicalThinkingValue(translation, profile.thinkingOptionId)
-          : null);
+      : translation
+        ? canonicalThinkingValue(translation, profile.thinkingOptionId)
+        : null;
   const carrier = translation?.thinkingOption
     ? profile.featureValues?.[translation.thinkingOption]
     : undefined;
@@ -1031,7 +1031,12 @@ export class T3CodeHost implements Host {
     const options: OptionSelection[] = [];
     const consumed = new Set<string>();
     if (requested) {
-      const { level, descriptor } = this.thinkingSelection(profile, requested, translation, descriptors);
+      const { level, descriptor } = this.thinkingSelection(
+        profile,
+        requested,
+        translation,
+        descriptors,
+      );
       if (translation?.thinkingOption) consumed.add(translation.thinkingOption);
       options.push({ id: descriptor, value: level });
     }
@@ -1090,7 +1095,9 @@ export class T3CodeHost implements Host {
     const offered = carrier.options.flatMap((choice) => {
       const level = translation
         ? canonicalThinkingValue(translation, choice.id)
-        : (isThinkingLevel(choice.id) ? choice.id : null);
+        : isThinkingLevel(choice.id)
+          ? choice.id
+          : null;
       return level ? [{ level, value: choice.id }] : [];
     });
     const nearest = nearestThinkingLevel(
