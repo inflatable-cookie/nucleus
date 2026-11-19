@@ -46,6 +46,8 @@ const TRANSPORT_RETRY_DELAY_MS = 1_000;
 const TRANSPORT_RETRY_MAX_MS = 30_000;
 /** Consecutive transport failures before the one fault line is shown. The turn stays held. */
 const TRANSPORT_FAULT_AFTER = 3;
+/** Attach calls a session open makes while the service is unreachable before it refuses (about 30 s of backoff). */
+const TRANSPORT_ATTACH_ATTEMPTS = 6;
 /** The callback socket's answer to a credential it does not hold: no retry can ever succeed. */
 const CREDENTIAL_REFUSED_STATUS = 401;
 
@@ -107,6 +109,8 @@ export interface AcpAgentOptions {
   retryDelayMs?: number;
   /** The longest wait between retries while the service is unreachable. */
   retryMaxDelayMs?: number;
+  /** Attach calls a session open makes before it refuses; a refused credential refuses at once. */
+  attachAttempts?: number;
   /** Consecutive transport failures before the one fault line is shown. The held turn is never ended by them. */
   faultLineAfter?: number;
   version?: string;
@@ -176,6 +180,9 @@ export class AcpAgent {
   }
   private get retryMaxDelayMs(): number {
     return this.options.retryMaxDelayMs ?? TRANSPORT_RETRY_MAX_MS;
+  }
+  private get attachAttempts(): number {
+    return this.options.attachAttempts ?? TRANSPORT_ATTACH_ATTEMPTS;
   }
   private get faultLineAfter(): number {
     return this.options.faultLineAfter ?? TRANSPORT_FAULT_AFTER;
@@ -425,20 +432,31 @@ export class AcpAgent {
    */
   private async attach(source: AcpSessionSource): Promise<AcpTurnReply> {
     const { binding, transport } = source;
-    try {
-      return await transport.turn(
-        {
-          ...callerFor(binding),
-          waitMs: 0,
-          attach: true,
-        },
-        new AbortController().signal,
-      );
-    } catch (error) {
-      throw new AcpRefusal(
-        -32000,
-        `Nucleus is unreachable for this session: ${reasonOf(error)}`,
-      );
+    // A session open that meets a socket gap (a roll, or a socket being replaced) waits on the
+    // same bounded backoff a held turn does, so the provider's first turn does not fail on the
+    // gap. A refused credential is permanent and refuses at once.
+    const signal = new AbortController().signal;
+    for (let failures = 1; ; failures++) {
+      try {
+        return await transport.turn(
+          {
+            ...callerFor(binding),
+            waitMs: 0,
+            attach: true,
+          },
+          signal,
+        );
+      } catch (error) {
+        if (refusedCredential(error) || failures >= this.attachAttempts)
+          throw new AcpRefusal(
+            -32000,
+            `Nucleus is unreachable for this session: ${reasonOf(error)}`,
+          );
+        this.options.log?.(
+          `attach for ${binding.sessionId} failed (${failures}): ${reasonOf(error)}`,
+        );
+        await delay(this.retryWait(failures), signal);
+      }
     }
   }
 

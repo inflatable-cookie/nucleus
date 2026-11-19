@@ -167,8 +167,11 @@ ends the turn with the reason rather than resending.
 
 ## Failure behaviour
 
-- The service unreachable at `session/new`/`session/load` refuses the session
-  with the reason: no session id is invented.
+- The service unreachable at `session/new`/`session/load` waits on the same
+  bounded backoff as a held turn: six attach calls, about thirty seconds, so a
+  session open that meets a socket gap does not fail the provider's first turn. Then
+  it refuses with the reason: no session id is invented. A refused credential refuses
+  at once.
 - The service unreachable mid-turn (a Nucleus roll, or a callback socket being
   replaced) does not end a held turn. The same session keeps polling after a
   bounded, doubling wait (one second, capped at thirty), with no re-minted

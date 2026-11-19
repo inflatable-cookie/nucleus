@@ -935,6 +935,65 @@ test("the callback socket's refusal reaches the agent with its status, and a soc
   );
 });
 
+test("a session open that meets a socket gap waits on the same backoff, and a refused credential refuses at once", async () => {
+  let attaches = 0;
+  const transport: AcpSessionTransport = {
+    turn: async (input: AcpTurnRequest) => {
+      if (input.waitMs === 0) {
+        attaches += 1;
+        // The first two attaches meet the gap; the third reaches the socket again.
+        if (attaches <= 2) throw new Error("connect ENOENT /nonexistent/callback.sock");
+        return reply("hold", ["nucleus#1304 · Working"]);
+      }
+      return reply("release", ["nucleus#1304 · Done"]);
+    },
+    message: async () => ({ receipt: { status: "delivered" } }),
+  };
+  const client = harness({
+    agent: {
+      retryDelayMs: 1,
+      async resolve() {
+        return { binding, transport };
+      },
+    },
+  });
+  const opened = await client.lines.untilResult(
+    client.request("session/new", { cwd: "/fixture/checkout" }),
+  );
+  assert.equal(
+    (opened.result.result as Json).sessionId,
+    binding.sessionId,
+    "the session opens on the same binding once the socket answers",
+  );
+  assert.equal(attaches, 3, "two gap attaches, then the answered one");
+  await client.closed();
+
+  let refusedAttaches = 0;
+  const refused = harness({
+    agent: {
+      retryDelayMs: 1,
+      async resolve() {
+        return {
+          binding,
+          transport: {
+            turn: async () => {
+              refusedAttaches += 1;
+              throw Object.assign(new Error("unauthorized"), { status: 401 });
+            },
+            message: async () => ({ receipt: { status: "delivered" } }),
+          } satisfies AcpSessionTransport,
+        };
+      },
+    },
+  });
+  const rejected = await refused.lines.untilResult(
+    refused.request("session/new", { cwd: "/fixture/checkout" }),
+  );
+  assert.match(String((rejected.result.error as Json).message), /Nucleus is unreachable/);
+  assert.equal(refusedAttaches, 1, "a refused credential is not retried");
+  await refused.closed();
+});
+
 test("a service that cannot be reached at session/new refuses the session instead of inventing one", async () => {
   const client = harness({
     agent: {

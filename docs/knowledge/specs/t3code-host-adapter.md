@@ -975,8 +975,14 @@ resent. Only a refused credential (401) ends the turn, because no retry can succ
 On the installed nightly `0.1.11-nightly.20261119.4941`, `effigy proof:t3code:reoffer -- --expect=held`
 proves the Inbox's open decision through a roll and a 40-second sustained outage: the
 same live card, a live run, the same binding, session and pin, and one fault line for
-the outage. The task parent's own cases (a child running and resuming, and a roll while
-a parent with a live child is held) are not yet proven on private T3.
+the outage. `effigy proof:t3code:parent-gap` proves the task parent: a reviewer child
+running under a held parent through a 4-second roll, a 40-second sustained outage (one
+fault line), and a second child created under the same held parent after the first is
+interrupted, with the same binding and session. One run of that proof failed the
+sustained step on the fault count (no new line), and two earlier runs did the same;
+the passing run's agent log shows one fault line per outage. That failure is not
+explained yet. The parent's own open decision is not proven on private T3: the decision
+card is raised by the service's own adapter, which the proof does not reach.
 
 **Completion wakes never reach the parent.** Every child is created with
 `completionWake: "settled_only"` and its delivery is disposed
