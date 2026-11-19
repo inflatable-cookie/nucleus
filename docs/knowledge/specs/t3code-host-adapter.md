@@ -115,7 +115,7 @@ Connection order:
    the repository; expose no bearer in settings responses, diagnostics or logs.
 2. Exchange the bearer at `/api/auth/websocket-ticket/rpc`, then open `/ws` with
    the short-lived ticket and the supported orchestration protocol. The client needs
-   `orchestration:read` and `orchestration:operate`; missing scopes fail closed.
+   `orchestration:read`, `orchestration:operate` and `preview:operate`; missing scopes fail closed.
 3. Read `server.getConfig` through the authenticated socket. Validate
    `environment.environmentId`, `serverVersion` and
    `orchestrationProtocolVersion`, then strictly decode a full shell snapshot.
@@ -1061,7 +1061,7 @@ refuses clearly when nothing answers. The environment id in that descriptor is
 the host id the service must come online as, `t3code:<environmentId>`.
 
 **Bearers.** Two sessions, split by scope. The service's **runtime** bearer has
-`orchestration:read` and `orchestration:operate` only, with a long TTL
+`orchestration:read`, `orchestration:operate` and `preview:operate`, with a long TTL
 (`--ttl`, default 365 days), label and subject `nucleus`; it is stored owner-only
 in `<data home>/settings.json` as `t3code: { endpoint, bearer, sessionId, environmentId, baseDir,
 expiresAt, probeThreadId? }`, and is never printed, reported or logged. The

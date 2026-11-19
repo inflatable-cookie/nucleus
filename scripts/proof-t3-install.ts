@@ -393,8 +393,10 @@ async function main() {
         commandMatchesInstalled: boolean;
       };
       service: { nativeParenting: string };
+      bearer: { scopes: string[] };
     };
     assert.equal(status.ok, true, "status reports a usable connection");
+    assert.ok(status.bearer.scopes.includes("preview:operate"), "runtime bearer can open previews");
     assert.equal(
       status.provider.registered &&
         status.provider.ours &&
@@ -409,11 +411,13 @@ async function main() {
     );
     evidence.status = {
       ok: status.ok,
+      scopes: status.bearer.scopes,
       provider: status.provider,
       nativeParenting: status.service.nativeParenting,
     };
     note("status", {
       ok: status.ok,
+      scopes: status.bearer.scopes,
       provider: status.provider,
       nativeParenting: status.service.nativeParenting,
     });

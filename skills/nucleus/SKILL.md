@@ -67,7 +67,7 @@ nucleus t3 uninstall   # remove our provider instance and our sessions
 
 - `install` finds the server from `<base>/userdata/server-runtime.json` (or
   `--endpoint`), mints a long-lived runtime bearer with only
-  `orchestration:read` and `orchestration:operate` and stores it owner-only in
+  `orchestration:read`, `orchestration:operate` and `preview:operate` and stores it owner-only in
   `<data home>/settings.json`; a short-lived install bearer registers the
   provider through T3's own `server.updateSettings` and is revoked at once.
   Running it again rotates the runtime bearer. It prints each step, and its
