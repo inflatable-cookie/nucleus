@@ -962,6 +962,17 @@ rule as well. A manually settled parent is woken first: the re-entry message goe
 delivery gate, which unsettles it and reads it back before sending. A parent T3 will
 not run leaves the task waiting with a reason.
 
+**A callback-socket gap never ends the parent's turn (nucleus#1400).** A temporary
+gap or replacement of the callback socket (a Nucleus roll or restart) leaves the
+held parent's turn, binding, ACP session and native children as they are. The
+agent keeps polling the same session on a bounded, doubling wait and resumes once
+the socket answers, with no re-minting and no manual restart. A sustained outage
+shows one fault line, not a line per failed call. The row's state never comes from
+the transport: the parent row reads Nucleus role activity (running, needs a person,
+or truly waiting), so a gap changes neither the row nor a live child's hold. An
+authenticated answer or report whose delivery is unknown is still reconciled, never
+resent. Only a refused credential (401) ends the turn, because no retry can succeed.
+
 **Completion wakes never reach the parent.** Every child is created with
 `completionWake: "settled_only"` and its delivery is disposed
 (`delegated_task.completion-delivery.dispose`) right after the create. A follow-up

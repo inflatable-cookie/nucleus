@@ -40,8 +40,14 @@ type Send = (message: Json) => void;
 export const ACP_PROTOCOL_VERSION = 1;
 /** One long-poll's wait. The service's own bound is 25 s; the transport adds a socket margin. */
 export const ACP_TURN_WAIT_MS = 20_000;
+/** The first retry's delay after a failed service call; each further failure doubles it. */
 const TRANSPORT_RETRY_DELAY_MS = 1_000;
-const TRANSPORT_FAILURE_LIMIT = 3;
+/** The longest a held turn waits between retries while the service is unreachable. */
+const TRANSPORT_RETRY_MAX_MS = 30_000;
+/** Consecutive transport failures before the one fault line is shown. The turn stays held. */
+const TRANSPORT_FAULT_AFTER = 3;
+/** The callback socket's answer to a credential it does not hold: no retry can ever succeed. */
+const CREDENTIAL_REFUSED_STATUS = 401;
 
 /**
  * ACP clients may require a model list, and T3 wants at least two entries. There is
@@ -97,10 +103,12 @@ export interface AcpAgentOptions {
   hold?(text: string, binding: AcpBinding): boolean;
   /** One long-poll's wait; the tests use a short one. */
   turnWaitMs?: number;
-  /** Delay before retrying a service call that failed for transport reasons. */
+  /** Delay before retrying a service call that failed for transport reasons; doubles per failure. */
   retryDelayMs?: number;
-  /** Consecutive transport failures before the turn ends with an explanation. */
-  maxTransportFailures?: number;
+  /** The longest wait between retries while the service is unreachable. */
+  retryMaxDelayMs?: number;
+  /** Consecutive transport failures before the one fault line is shown. The held turn is never ended by them. */
+  faultLineAfter?: number;
   version?: string;
   log?(line: string): void;
 }
@@ -166,8 +174,18 @@ export class AcpAgent {
   private get retryDelayMs(): number {
     return this.options.retryDelayMs ?? TRANSPORT_RETRY_DELAY_MS;
   }
-  private get failureLimit(): number {
-    return this.options.maxTransportFailures ?? TRANSPORT_FAILURE_LIMIT;
+  private get retryMaxDelayMs(): number {
+    return this.options.retryMaxDelayMs ?? TRANSPORT_RETRY_MAX_MS;
+  }
+  private get faultLineAfter(): number {
+    return this.options.faultLineAfter ?? TRANSPORT_FAULT_AFTER;
+  }
+  /** The wait before the next retry: doubling from the first delay, bounded, so an outage never spins. */
+  private retryWait(failures: number): number {
+    return Math.min(
+      this.retryMaxDelayMs,
+      this.retryDelayMs * 2 ** Math.max(0, failures - 1),
+    );
   }
 
   /** Read ACP traffic from `input`, answer on `output`, until the input closes. */
@@ -525,11 +543,18 @@ export class AcpAgent {
   /**
    * Hold the turn while the service says to. The service answers with `release` when
    * the task finished or a host adapter released it, and with lifecycle lines when
-   * something worth showing changed. A service that stays unreachable ends the turn
-   * after a bounded number of failures instead of holding a thread nobody can settle.
+   * something worth showing changed.
+   *
+   * An unreachable service (a roll, or a callback socket being replaced) never ends a
+   * held turn: the same session keeps polling after a bounded, doubling wait, so the
+   * turn resumes on the same binding once the socket answers, with no re-minting and no
+   * manual restart. After `faultLineAfter` consecutive failures the turn shows one fault
+   * line for the outage. The turn ends only on `release`, on `session/cancel`, or when
+   * the client's stdin closes.
    */
   private async hold(session: SessionState, send: Send): Promise<string> {
     let failures = 0;
+    let faultShown = false;
     for (;;) {
       if (session.cancelled) return "cancelled";
       try {
@@ -541,6 +566,7 @@ export class AcpAgent {
           session.controller.signal,
         );
         failures = 0;
+        faultShown = false;
         for (const question of reply.elicitations ?? [])
           this.elicit(session, question, send);
         for (const line of reply.messages)
@@ -551,19 +577,27 @@ export class AcpAgent {
         await yieldToEventLoop();
       } catch (error) {
         if (session.cancelled || session.controller.signal.aborted) continue;
+        if (refusedCredential(error)) {
+          this.emit(
+            send,
+            session.sessionId,
+            `Nucleus refused this session's credential (${reasonOf(error)}); ending this turn.`,
+          );
+          return "end_turn";
+        }
         failures += 1;
         this.options.log?.(
           `turn for ${session.sessionId} failed (${failures}): ${reasonOf(error)}`,
         );
-        if (failures >= this.failureLimit) {
+        if (!faultShown && failures >= this.faultLineAfter) {
+          faultShown = true;
           this.emit(
             send,
             session.sessionId,
-            `Nucleus is unreachable (${reasonOf(error)}); ending this turn.`,
+            `Nucleus is unreachable (${reasonOf(error)}); this turn stays open and resumes when Nucleus answers.`,
           );
-          return "end_turn";
         }
-        await delay(this.retryDelayMs);
+        await delay(this.retryWait(failures), session.controller.signal);
       }
     }
   }
@@ -709,10 +743,27 @@ function promptText(prompt: unknown): string {
     .trim();
 }
 
-const delay = (ms: number): Promise<void> =>
+/** Only a refused credential is permanent: every other failure is a service that may answer again. */
+function refusedCredential(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (error as { status?: unknown }).status === CREDENTIAL_REFUSED_STATUS
+  );
+}
+
+/** A bounded wait that `session/cancel` ends at once: a backoff never holds up a cancel. */
+const delay = (ms: number, signal: AbortSignal): Promise<void> =>
   new Promise((resolve) => {
-    const timer = setTimeout(resolve, Math.max(0, ms));
+    if (signal.aborted) return resolve();
+    const done = () => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", done);
+      resolve();
+    };
+    const timer = setTimeout(done, Math.max(0, ms));
     timer.unref?.();
+    signal.addEventListener("abort", done, { once: true });
   });
 const yieldToEventLoop = (): Promise<void> =>
   new Promise((resolve) => {

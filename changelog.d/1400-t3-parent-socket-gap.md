@@ -1,0 +1,1 @@
+A held task parent on T3 keeps its turn through a callback-socket gap or replacement, such as a Nucleus roll. The turn waits quietly with a bounded backoff and resumes on the same ACP session, and a sustained outage shows one fault line instead of ending the turn. A refused credential still ends the turn with its reason.

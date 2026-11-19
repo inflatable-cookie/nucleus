@@ -45,7 +45,8 @@ function post<T>(binding: AcpBinding, path: string, body: unknown, options: { si
       response.on("error", reject);
       response.on("end", () => {
         if (response.statusCode !== 200) {
-          reject(new Error(text.trim() || `Nucleus answered ${response.statusCode ?? "no status"}`));
+          // The status rides on the error: a refused credential is permanent, never an outage.
+          reject(Object.assign(new Error(text.trim() || `Nucleus answered ${response.statusCode ?? "no status"}`), { status: response.statusCode }));
           return;
         }
         try { resolve(JSON.parse(text) as T); }
