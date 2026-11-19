@@ -226,6 +226,19 @@ export class ProjectQaRunner {
   reconcileLostRun(run: ProjectQaRun, state: QaSupervisionState | null, reason: string, escapedDescendants: HostRunEscapedDescendant[] = []): Promise<void> {
     return projectQaRecovery.reconcileLostRun.call(this, run, state, reason, escapedDescendants);
   }
+  /** Internal to the QA owners: settle a run whose step's group ended and whose supervisor never settled. */
+  settleEndedStep(run: ProjectQaRun, inspection: Extract<SupervisorInspection, { kind: "step_ended" }>): Promise<void> {
+    return projectQaRecovery.settleEndedStep.call(this, run, inspection);
+  }
+  /** Internal to the QA owners: teardown, checkout release and settlement for an abandoned run. */
+  settleAbandoned(run: ProjectQaRun, state: QaSupervisionState | null,
+    settlement: import("./project-qa-recovery").QaAbandonedSettlement, escapedDescendants: HostRunEscapedDescendant[] = []): Promise<void> {
+    return projectQaRecovery.settleAbandoned.call(this, run, state, settlement, escapedDescendants);
+  }
+  /** Internal to the QA owners: keep an output pointer on the settled record. */
+  appendSettledOutputPointer(run: ProjectQaRun, output: string): Promise<void> {
+    return projectQaRecovery.appendSettledOutputPointer.call(this, run, output);
+  }
   /** Internal to the QA owners: true while any recorded supervisor for the run is still alive. */
   liveSupervisorFor(run: ProjectQaRun): boolean { return projectQaRecovery.liveSupervisorFor.call(this, run); }
   /** Internal to the QA owners: re-attach to an escaped-descendant watcher. */

@@ -135,6 +135,45 @@ last heartbeat, pre-stop supervisor liveness, in-flight step and process-group
 state, plus starts and rolls in the heartbeat gap; incomplete service history
 is reported as unknown.
 
+The executor publishes the direct child's exit the moment the kernel reports it
+(`onChildExit`), and `project-qa-detached-io.ts` writes that step's exit code or
+terminating signal, time, pid and group to its own `<run>.stepexit.json` ahead of
+the step log, the lifecycle state and the result. That record is how a run names
+how its command ended when the supervisor's own settlement never lands: the
+executor's seam owns the exit fact, and the supervision file owns keeping it
+beside the run. A stage that ends by a signal is a settled `failed` step, not an
+uncertain hold.
+
+When the supervisor is alive and the step it says is in flight has no process
+group left, `project-qa-inspection.ts` watches that emptiness for a short bound
+(`QA_STEP_EXIT_SETTLE_BOUND_MS`), then hands the run to
+`project-qa-recovery.ts`. The stale-heartbeat stop reaches the same settlement:
+it also reads the step's recorded exit after the stop, so a hung supervisor never
+discards an outcome it had already written. With a recorded exit the run settles
+`failed` from the step's exit code or signal, with the step named as
+`interruptedStep`/`failedStep` and the live output log's path, byte offset and
+last lines in its detail; with no recorded exit the outcome is genuinely
+unobservable and the run settles `lost`, carrying the same step and output
+pointer. `lost` therefore means a dead supervisor or an unobservable outcome,
+never a run that simply waited for its capacity deadline.
+
+A takeover is ordered so it can only ever stop what its own proof names.
+`supervisor-process.ts` stops the supervisor first and alone
+(`stopSupervisorProcess`); nothing can start a step after that. Only then is the
+step group the record still names stopped (`stopRecordedProcessGroup`, which
+signals nothing outside that group), and only then is the rest of the run's own
+tree swept (`stopRunTokenProcesses`): with the supervisor dead, a process still
+carrying the run token is a leftover of this run — a pending step whose record
+never landed, an escaped descendant, a group the record does not describe — and
+never a step the run would describe later. The record is re-read before each
+decision and the answer must be positive: a record that advanced or cannot be
+read holds the run and the next poll re-inspects. A sweep that cannot prove the
+token gone is not proof either, so it holds the run rather than settling while
+work of the run's own may still be live. Every read the sweep makes is the
+spawned listing owner rather than the synchronous one, spaced by a waiting
+cadence, because a takeover runs on the service's own loop: a polling loop of
+host-wide environment scans would hold the accepting loop for seconds under load.
+
 `supervisor-process.ts` owns the detached supervisor's own process lifecycle — the
 launch shape and the stale stop with its proof — for milestone QA, project
 validation and the host-run endpoint alike, so neither family keeps its own copy.

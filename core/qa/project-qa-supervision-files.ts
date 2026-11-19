@@ -1,7 +1,7 @@
 import type { Store } from "../store/store";
 import type { HostRunScheduler } from "../host-runs/host-run-scheduler";
 import type { ProjectQaRun } from "../../shared/contracts";
-import { chmodSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, constants, fstatSync, openSync, readFileSync, readSync, rmSync, writeFileSync } from "node:fs";
 import { readdir, lstat, unlink } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
@@ -128,6 +128,32 @@ export const qaCancelRequestSchema = z.object({
 }).strict();
 export type QaCancelRequest = z.infer<typeof qaCancelRequestSchema>;
 
+/**
+ * #1393: one step's direct child exit, published the moment the executor sees it
+ * and kept beside the run until the run settles. It is the supervisor's own
+ * record of how the command it started ended, so a settlement that never lands
+ * still leaves the exit code or signal, the time and the output offset behind.
+ * The heartbeat is deliberately separate from it: a step that ended is not a
+ * supervisor that is alive.
+ */
+export const QA_STEP_EXIT_SCHEMA = "queue.project-qa.step-exit.v1";
+
+export const qaStepExitSchema = z.object({
+  schema: z.literal(QA_STEP_EXIT_SCHEMA),
+  schema_version: z.literal(QA_SUPERVISION_SCHEMA_VERSION),
+  runId: z.string().min(1).max(160),
+  step: projectQaStepNameSchema,
+  /** The direct child's pid; for a detached step leader it is also its group id. */
+  pid: z.number().int().positive(),
+  processGroupId: z.number().int().positive(),
+  exitCode: z.number().int().nullable(),
+  signal: z.string().min(1).max(64).nullable(),
+  exitedAt: z.string().datetime(),
+}).strict().refine(exit => (exit.exitCode === null) !== (exit.signal === null), {
+  message: "Exactly one of exitCode and signal must be non-null",
+});
+export type QaStepExit = z.infer<typeof qaStepExitSchema>;
+
 export const qaSupervisionStateSchema = z.object({
   schema: z.literal(QA_SUPERVISION_SCHEMA),
   schema_version: z.literal(QA_SUPERVISION_SCHEMA_VERSION),
@@ -178,7 +204,7 @@ export function qaRunRootPath(dataDir: string, key: string): string {
 }
 
 /** The per-run supervision and plan paths under one repository's QA root. A retry attempt uses its own file names. */
-export function qaSupervisionPaths(runRoot: string, runId: string, attempt = 0): { statePath: string; planPath: string; resultPath: string; cancelPath: string; cpuCoveragePath: string; heartbeatPath: string } {
+export function qaSupervisionPaths(runRoot: string, runId: string, attempt = 0): { statePath: string; planPath: string; resultPath: string; cancelPath: string; cpuCoveragePath: string; heartbeatPath: string; stepExitPath: string } {
   const stem = attempt > 0 ? `${runId}.retry-${attempt}` : runId;
   return {
     heartbeatPath: join(runRoot, `${stem}.heartbeat.json`),
@@ -187,6 +213,7 @@ export function qaSupervisionPaths(runRoot: string, runId: string, attempt = 0):
     planPath: join(runRoot, `${stem}.plan.json`),
     resultPath: join(runRoot, `${stem}.result.json`),
     cancelPath: join(runRoot, `${stem}.cancel.json`),
+    stepExitPath: join(runRoot, `${stem}.stepexit.json`),
   };
 }
 
@@ -283,6 +310,21 @@ export function readQaSupervision(path: string): QaSupervisionState | null {
   return readOwnerOnlyJson(path, value => qaSupervisionStateSchema.parse(value));
 }
 
+/**
+ * #1393: one step's recorded exit, or null when nothing was written for it. The
+ * caller names the step and pid it is asking about, so a record left by an
+ * earlier step is never read as the current one's.
+ */
+export function readQaStepExit(path: string, match?: { runId?: string; step?: string; pid?: number }): QaStepExit | null {
+  return readOwnerOnlyJson(path, value => {
+    const exit = qaStepExitSchema.parse(value);
+    if (match?.runId && exit.runId !== match.runId) throw new Error("Step-exit runId mismatch");
+    if (match?.step && exit.step !== match.step) throw new Error("Step-exit step mismatch");
+    if (match?.pid && exit.pid !== match.pid) throw new Error("Step-exit pid mismatch");
+    return exit;
+  });
+}
+
 /** The heartbeat this run's supervisor published, keeping absence apart from an unreadable file. */
 export function readQaSupervisionStateFile(path: string): QaFileRead<QaSupervisionState> {
   return readOwnedJson(path, value => qaSupervisionStateSchema.parse(value));
@@ -302,6 +344,35 @@ export function qaRunLiveOutputPath(runRoot: string, runId: string): string {
   return join(runRoot, `${runId}.live.log`);
 }
 
+/** Where one live projection's output ended: its path, its byte count and its last lines. */
+export interface QaOutputPointer { path: string; bytes: number; tail: string }
+
+/** Bytes read from the end of an output log; enough for a handful of lines, never the whole log. */
+const QA_OUTPUT_POINTER_BYTES = 16_384;
+const QA_OUTPUT_POINTER_LINES = 12;
+
+/**
+ * #1393: read where a projected output log ended — its path, its byte offset and
+ * its last lines — so a settled run names the output it stopped at instead of
+ * only describing it. A missing or unreadable log is no pointer at all: absence
+ * is never reported as zero bytes of output.
+ */
+export function readQaOutputPointer(path: string, lines = QA_OUTPUT_POINTER_LINES): QaOutputPointer | null {
+  let fd: number | null = null;
+  try {
+    fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    const info = fstatSync(fd);
+    if (!info.isFile() || info.size <= 0) return null;
+    const start = Math.max(0, info.size - QA_OUTPUT_POINTER_BYTES);
+    const buffer = Buffer.alloc(Math.min(info.size, QA_OUTPUT_POINTER_BYTES));
+    const read = readSync(fd, buffer, 0, buffer.length, start);
+    const text = buffer.subarray(0, read).toString("utf8");
+    const kept = text.split("\n").slice(-Math.max(1, lines)).join("\n").trimEnd();
+    return { path, bytes: info.size, tail: kept };
+  } catch { return null; }
+  finally { if (fd !== null) closeSync(fd); }
+}
+
 /**
  * Write one stream's full output — the executor already capped it at the step's
  * maxOutputBytes and kept the tail past the cap — to a mode-0600 log beside the
@@ -316,8 +387,8 @@ export function writeQaStepLog(path: string, buffer: Buffer): { bytes: number | 
 
 /** Remove a settled run's per-run plan and supervision files; the store owns the record now. */
 export function removeQaSupervisionFiles(runRoot: string, runId: string, attempt = 0): void {
-  const { statePath, planPath, cancelPath, cpuCoveragePath, heartbeatPath } = qaSupervisionPaths(runRoot, runId, attempt);
-  for (const path of [statePath, planPath, cancelPath, cpuCoveragePath, heartbeatPath]) rmSync(path, { force: true });
+  const { statePath, planPath, cancelPath, cpuCoveragePath, heartbeatPath, stepExitPath } = qaSupervisionPaths(runRoot, runId, attempt);
+  for (const path of [statePath, planPath, cancelPath, cpuCoveragePath, heartbeatPath, stepExitPath]) rmSync(path, { force: true });
 }
 
 export interface QaFilePruningContext {
