@@ -25,26 +25,11 @@ import {
 import { submissionSchema } from "../../shared/contracts";
 import { submissionRecordFromLegacy } from "../../shared/schema/settings/legacy";
 import { LANE_PRIORITY_AUDIT } from "./lane-priorities";
+import { taskAttention } from "../../shared/task-attention";
+import { holdsOf, taskHoldKind } from "../../shared/holds";
+import { taskHasUnreleasedRun } from "../../shared/task-view";
 
-const REVIEW_PHASES = new Set([
-  "awaiting_review",
-  "report_ready",
-  "reviewing",
-  "changes_requested",
-  "verifying",
-  "merging",
-  "syncing",
-  "closing",
-  "done",
-]);
-const SUPPORT_ROLES = new Set([
-  "reviewer",
-  "recovery",
-  "coordinator",
-  "decider",
-  "executor",
-]);
-const ATTENTION_PHASES = ["blocked", "error", "needs_attention"];
+const ROW_FAILURE_LABEL = "task row presentation";
 
 function threadSettlementFailureReason(error: unknown): string {
   if (!(error instanceof Error)) return "unknown error";
@@ -118,137 +103,40 @@ export class HostPass {
   private readonly transportFailures = new Set<string>();
 
   /**
-   * Thread settlement is a sweep invariant, not a callback side effect. Reports
-   * are only one way a run finishes; recorded-completion release and other
-   * owner paths must settle the same retained T3 thread too.
+   * The task's one row, from the one attention projection (nucleus#1366): a person
+   * who must act unsnoozes it, a task that waits on nothing Nucleus runs snoozes it,
+   * and a running role leaves it alone. A host without the presentation method
+   * (Paseo) keeps its own behaviour. Presentation only: a warning here never
+   * changes a task.
    */
-  private async settleFinishedT3Threads(hostId: string): Promise<void> {
-    const adapter = this.adapter;
-    const settleSupport = adapter.settleReportedThread;
-    const settleWorker = adapter.settleWorkerThread;
-    if (!settleSupport && !settleWorker) return;
+  private async reconcileTaskRows(hostId: string): Promise<void> {
+    const reconcile = this.adapter.reconcileTaskRow;
+    if (!reconcile) return;
     for (const task of this.store.tasks()) {
       if (task.hostId !== hostId || task.removedAt != null) continue;
-      // While attention is active the worker thread stays surfaced: settling
-      // it here would only make the attention pass unsettle it again, one
-      // settle/unsettle pair per sweep. The ordinary settle resumes when
-      // attention clears (nucleus#1181 review).
-      const attentionActive =
-        task.resolution.attention || ATTENTION_PHASES.includes(task.phase);
       const runs = this.store.runs(task.id);
-      // One row per task (Tom, 2026-11-15): while any of the task's agents is
-      // still working, the worker row is the task's one visible row and it stays
-      // unsettled. It settles only when the task waits on nothing Nucleus runs.
-      const liveWork = runs.some((run) => !run.released && !run.completion);
-      for (const run of runs) {
-        if (
-          run.hostId !== hostId ||
-          !run.agentId ||
-          (!run.released && !run.completion)
-        )
-          continue;
-        // The terminal lane's confirmed effect covers this thread, even when
-        // settling it previously needed no native receipt. An unresolved effect
-        // still needs observation and settlement on the next pass.
-        if (
-          this.store.threadArchiveEffect(run.agentId, hostId)?.status ===
-          "archived"
-        )
-          continue;
-        const settle =
-          run.role === "revision" &&
-          REVIEW_PHASES.has(task.phase) &&
-          !attentionActive &&
-          !liveWork
-            ? settleWorker
-            : SUPPORT_ROLES.has(run.role)
-              ? settleSupport
-              : undefined;
-        if (!settle) continue;
-        try {
-          await settle.call(adapter, run.agentId, run.id);
-        } catch (error) {
-          if (hostTimedOut(error)) throw error;
-          this.store.event(
-            task.id,
-            "thread_settlement_warning",
-            `${run.role} thread ${run.agentId} settle for run ${run.id} failed: ${threadSettlementFailureReason(error)}`.slice(
-              0,
-              4000,
-            ),
-          );
-        }
-      }
-      // The initial worker run predates the role run ledger on legacy tasks.
-      // The task only reaches these phases after its handover was accepted.
-      if (
-        settleWorker &&
-        !attentionActive &&
-        !liveWork &&
-        REVIEW_PHASES.has(task.phase) &&
-        task.agentId &&
-        task.runId &&
-        !runs.some((run) => run.id === task.runId) &&
-        this.store.threadArchiveEffect(task.agentId, hostId)?.status !==
-          "archived"
-      ) {
-        try {
-          await settleWorker.call(adapter, task.agentId, task.runId);
-        } catch (error) {
-          if (hostTimedOut(error)) throw error;
-          this.store.event(
-            task.id,
-            "thread_settlement_warning",
-            `worker thread ${task.agentId} settle for run ${task.runId} failed: ${threadSettlementFailureReason(error)}`.slice(
-              0,
-              4000,
-            ),
-          );
-        }
-      }
-    }
-  }
-
-  /**
-   * The worker row surfaces (nucleus#1181, one row per task Tom 2026-11-15): while
-   * a T3-bound task is blocked, errored, needs attention or carries an attention
-   * flag (planner or operator escalation), or while any of its agents is still
-   * working, its worker thread is unsettled so it stays in T3's main list instead
-   * of the settled list. Only the worker thread surfaces, never support threads.
-   * When the task waits on nothing Nucleus is running the ordinary settlement
-   * sweep puts the thread back; this pass sends nothing more. A host without the
-   * presentation method (Paseo) keeps its behaviour.
-   */
-  private async surfaceWorkerRows(hostId: string): Promise<void> {
-    const adapter = this.adapter;
-    const unsettle = adapter.unsettleWorkerThread;
-    if (!unsettle) return;
-    for (const task of this.store.tasks()) {
-      if (task.hostId !== hostId || task.removedAt != null) continue;
-      if (!task.agentId || ["done", "cancelled"].includes(task.phase)) continue;
-      const liveWork = this.store
-        .runs(task.id)
-        .some((run) => !run.released && !run.completion);
-      if (
-        !liveWork &&
-        !ATTENTION_PHASES.includes(task.phase) &&
-        !task.resolution.attention
-      )
-        continue;
-      // The terminal lane owns archived threads; support threads never surface.
-      if (
-        this.store.threadArchiveEffect(task.agentId, hostId)?.status ===
-        "archived"
-      )
-        continue;
+      const attention = taskAttention({
+        phase: task.phase,
+        held: task.held,
+        holds: holdsOf(task),
+        holdKind: taskHoldKind(task),
+        attention: task.resolution.attention,
+        originFault: Boolean(task.originError || task.originLookupError),
+        prerequisiteWait: Boolean(
+          task.prerequisiteWait && !task.prerequisiteWait.releasedAt,
+        ),
+        liveRun:
+          runs.some((run) => !run.released && !run.completion) ||
+          taskHasUnreleasedRun(task),
+      });
       try {
-        await unsettle.call(adapter, task.agentId, task.id);
+        await reconcile.call(this.adapter, task.id, attention);
       } catch (error) {
         if (hostTimedOut(error)) throw error;
         this.store.event(
           task.id,
-          "thread_attention_warning",
-          `worker thread ${task.agentId} attention surfacing failed: ${threadSettlementFailureReason(error)}`.slice(
+          "thread_row_warning",
+          `${ROW_FAILURE_LABEL} for ${task.id} failed: ${threadSettlementFailureReason(error)}`.slice(
             0,
             4000,
           ),
@@ -557,14 +445,8 @@ export class HostPass {
           );
         });
     });
-    await this.step(host, "reconcileReportedSettlements", () =>
-      this.adapter.reconcileReportedSettlements?.(),
-    );
-    await this.step(host, "settleFinishedT3Threads", () =>
-      this.settleFinishedT3Threads(host),
-    );
-    await this.step(host, "surfaceWorkerRows", () =>
-      this.surfaceWorkerRows(host),
+    await this.step(host, "reconcileTaskRows", () =>
+      this.reconcileTaskRows(host),
     );
     await this.step(host, "reconcileThreadTitles", () =>
       this.adapter.reconcileThreadTitles?.(tasks),
@@ -598,11 +480,6 @@ export class HostPass {
         this.context.retiredObservationKey(host),
         retired.observations,
       );
-    // A handover settle recorded for a thread whose turn was still ending is
-    // retried on this host's pass. Presentation only: it never changes a task.
-    await this.step(host, "reconcileSettledThreads", () =>
-      this.adapter.reconcileSettledThreads?.(),
-    );
     // Select directly from finished history, but never await cleanup in the
     // shared host pass. These tasks join the rotating, bounded task window.
     if (!this.store.getMeta("paused"))

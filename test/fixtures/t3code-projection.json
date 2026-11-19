@@ -10,6 +10,7 @@
     },
     "settledOverride": null,
     "settledAt": null,
+    "snoozedUntil": null,
     "worktreePath": "/synthetic/worktree",
     "branch": "synthetic",
     "archivedAt": null,

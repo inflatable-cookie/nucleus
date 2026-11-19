@@ -1,6 +1,7 @@
 import type { BoardLead, BoardLeadLink, BoardQaRun, DecisionView, PendingSubmission, Project, TaskSummary } from './contracts';
 import type { LaneView } from './contracts';
 import { effectiveSelection } from './project-scope';
+import { taskAttention } from './task-attention';
 
 /** Spec 026 Board columns as of 87555f7: Attention sits before Queued so it is
  * visible without scrolling when the view opens. Spec 032 adds the Decisions
@@ -143,6 +144,26 @@ export function phaseNeedsAttention(phase: TaskSummary['phase']): boolean {
   return pipelinePhaseColumn(phase) === 'Attention';
 }
 
+/**
+ * The column a task card belongs to, from the one attention projection
+ * (nucleus#1366): a task that waits with a named cause is open work, not
+ * attention, so it sits with the work rather than in the Attention column. Its
+ * own phase column is kept when that column already says the same thing or the
+ * task is further along the lane.
+ */
+function taskCardColumn(task: TaskSummary): PipelineColumn {
+  const column = pipelinePhaseColumn(task.phase);
+  if (column !== 'Attention') return column;
+  const projection = taskAttention({
+    phase: task.phase, held: task.held, holds: task.holds, holdKind: task.holdKind,
+    attention: task.resolution?.attention,
+    originFault: Boolean(task.originError || task.originLookupError),
+    prerequisiteWait: task.waitState?.state === 'waiting_prerequisite' && task.waitState.owner !== 'operator',
+    waitingOn: task.waitingOn, reason: task.reason,
+  });
+  return projection.state === 'attention' ? 'Attention' : 'Working';
+}
+
 export function pipelineColumn(card: PipelineCard): PipelineColumn {
   if (card.kind === 'lead') return 'Triage';
   // Spec 032: the Decisions column holds agent decisions and Queue-raised work.
@@ -153,8 +174,13 @@ export function pipelineColumn(card: PipelineCard): PipelineColumn {
   // Milestone QA (Tom, 2026-11-01): queued waits in Queued, running works in Working, a passing run
   // finishes in Closing until it fades, and any other finished run needs attention.
   if (card.kind === 'qa') return card.value.state === 'queued' ? 'Queued' : card.value.state === 'running' ? 'Working' : card.value.state === 'passed' ? 'Closing' : 'Attention';
+  // A plain task card sits where the one attention projection says it does.
+  if (card.kind === 'task') return taskCardColumn(card.value);
   // Untyped fixtures may omit the phase; live summaries always carry one.
-  return pipelinePhaseColumn(card.value.phase ?? 'working');
+  return pipelinePhaseColumn(
+    (card as { value: { phase?: TaskSummary['phase'] } }).value.phase ??
+      'working',
+  );
 }
 
 export type PipelineScope = {

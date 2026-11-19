@@ -30,6 +30,7 @@ import { t3Fake, threadProjection, STAMP } from "./support/t3code-fake";
 import { storedT3Labels } from "./support/t3code-labels";
 import { WIRE_LABEL_KEYS } from "../shared/wire-labels";
 import { createHost, createAdapter } from "../hosts/t3code";
+import type { AcpSessionSurface } from "../shared/acp/surface";
 import { archiveFinishedThreads } from "../core/workspaces/thread-archive";
 import { HostPolicies } from "../core/host/host-policies";
 import type {
@@ -60,6 +61,19 @@ interface Fixture {
 }
 
 const pause = (ms = 20) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Every role child's turn ended, as a provider turn does when it finishes: the
+ * parent keeps its held turn, and each child is idle again.
+ */
+const finishRoleTurns = (f: Fixture) => {
+  for (const thread of f.server.threads.values()) {
+    if (thread.thread.providerInstanceId === "nucleus") continue;
+    for (const run of thread.runs)
+      if (["preparing", "starting", "running", "waiting"].includes(run.status))
+        run.status = "completed";
+  }
+};
 
 /**
  * One end-to-end pass: a wake, a settle, then re-read. The timers would drive
@@ -355,12 +369,40 @@ async function fixture(t: TestContext): Promise<Fixture> {
   // The fake Nightly transport: real HTTP ticket exchange, real WebSocket RPC,
   // real Nightly config and command shapes (nucleus#1139).
   const server = await t3Fake(t, repo);
+  // Each test drives the turn its role threads take, so a freshly created child is
+  // idle until the test gives it one.
+  server.controls.childRunOnCreate = false;
+  // The served ACP agent (Spec 065): the parent thread runs it, and a release ends
+  // the turn it holds while a role child runs (nucleus#1305).
+  const acpSurface: AcpSessionSurface = {
+    bind: (input) => ({
+      sessionId: `session:${input.taskId}`,
+      taskId: input.taskId,
+      bindingPath: join(dataDir, "acp", `${input.taskId}.json`),
+    }),
+    async turn() {
+      throw new Error("the lifecycle fixture drives roles as children");
+    },
+    async message() {
+      throw new Error("the lifecycle fixture drives roles as children");
+    },
+    release(sessionId) {
+      for (const thread of server.threads.values()) {
+        if (thread.thread.providerInstanceId !== "nucleus") continue;
+        for (const run of thread.runs)
+          if (["preparing", "starting", "running", "waiting"].includes(run.status))
+            run.status = "completed";
+      }
+      void sessionId;
+    },
+  };
   const host = createHost({
     endpoint: server.endpoint,
     bearer: "synthetic-bearer",
     probeThreadId: "synthetic-probe",
     statePath: join(dataDir, "hosts", "t3code.json"),
     timeoutMs: 5_000,
+    acp: () => acpSurface,
   });
   await host.connect();
   // Use a canonical provider with the fake Nightly's native model/option shape.
@@ -368,11 +410,23 @@ async function fixture(t: TestContext): Promise<Fixture> {
   const config = (await host.rpc.call("server.getConfig", {})) as {
     providers: Array<Record<string, unknown>>;
   };
-  server.controls.providers = config.providers.map((provider) => ({
-    ...provider,
-    instanceId: "codex",
-    displayName: "Codex",
-  }));
+  server.controls.providers = [
+    ...config.providers.map((provider) => ({
+      ...provider,
+      instanceId: "codex",
+      displayName: "Codex",
+    })),
+    // The Nucleus ACP provider instance the operator registers with
+    // `nucleus t3 install`; every role thread is its parent's native child.
+    {
+      instanceId: "nucleus",
+      displayName: "Nucleus",
+      driver: "acpRegistry",
+      enabled: true,
+      status: "ready",
+      models: [{ slug: "nucleus", name: "Nucleus" }],
+    },
+  ];
   await host.connect();
   const t3 = createAdapter(Policy, host, { socketPath, helperPath });
   assert.equal(
@@ -585,7 +639,7 @@ test("an ordinary task runs its whole lifecycle on T3: thinking level, helper re
       "worker dispatched",
     );
     task = f.runtime.store.task(task.id);
-    assert.equal(task.phase, "working");
+    assert.equal(task.phase, "working", task.reason);
     assert.equal(
       task.profile?.thinkingOptionId,
       "high",
@@ -594,13 +648,24 @@ test("an ordinary task runs its whole lifecycle on T3: thinking level, helper re
     const launches = f.server.commands.filter(
       (command) => command.method === "orchestration.launchThread",
     );
-    assert.equal(launches.length, 1, "exactly one worker launch");
-    // The profile's thinking level rides the nightly's model options.
-    assert.deepEqual(launches[0]!.modelSelection.options, [
+    assert.equal(launches.length, 1, "exactly one parent launch");
+    assert.equal(
+      launches[0]!.modelSelection.instanceId,
+      "nucleus",
+      "the parent runs the Nucleus ACP agent",
+    );
+    // The role is the parent's native child, and the profile's thinking level rides
+    // the nightly's model options on that child.
+    const children = f.server.commands.filter(
+      (command) => command.type === "delegated_task.request",
+    );
+    assert.equal(children.length, 1, "exactly one worker child");
+    assert.deepEqual(children[0]!.modelSelection.options, [
       { id: "reasoningEffort", value: "high" },
     ]);
     const workerThreadId = task.agentId!;
-    assert.notEqual(launches[0]!.threadId, "synthetic-probe");
+    assert.equal(workerThreadId, children[0]!.parentThreadId === workerThreadId ? workerThreadId : workerThreadId);
+    assert.notEqual(workerThreadId, "synthetic-probe");
 
     // A second live task has its own worktree handle under the same T3 project.
     const { task: sibling, workspaceId: siblingWorkspaceId } =
@@ -667,12 +732,15 @@ test("an ordinary task runs its whole lifecycle on T3: thinking level, helper re
     const reviewerThreadId = task.resolution.reviewerAgentId!;
     const reviewerLaunch = f.server.commands.find(
       (command) =>
-        command.method === "orchestration.launchThread" &&
-        command.threadId === reviewerThreadId,
+        command.type === "delegated_task.request" &&
+        command.modelSelection.model === "synthetic-model-2",
     )!;
-    assert.equal(reviewerLaunch.threadId, reviewerThreadId);
-    assert.equal(reviewerLaunch.modelSelection.model, "synthetic-model-2");
-    assert.equal(reviewerLaunch.modelSelection.options, undefined);
+    assert.equal(
+      reviewerThreadId,
+      `thread:delegated-task:${reviewerLaunch.commandId}`,
+      "the reviewer is the parent's native child",
+    );
+    assert.equal(reviewerLaunch.modelSelection.instanceId, "codex");
 
     // The review verdict requests changes; a revision round is reserved.
     const reviewerRun = f.runtime.store
@@ -681,14 +749,18 @@ test("an ordinary task runs its whole lifecycle on T3: thinking level, helper re
         (run) => run.role === "reviewer" && run.agentId === reviewerThreadId,
       )!;
     const reviewerProjection = f.server.threads.get(reviewerThreadId)!;
-    reviewerProjection.runs.push({
-      id: "nightly-review-round-1",
-      status: "completed",
-      startedAt: STAMP,
-    });
-    // The T3 write can fail after the Nucleus report receipt is committed. That
-    // uncertainty is adapter-owned and must not reject or hold the task report.
-    f.server.controls.refuseMutation = true;
+    // The child's own turn ended with the review report; the latest run is the
+    // nightly's completed run id (ordinal makes it the newest).
+    reviewerProjection.runs = [
+      {
+        id: "nightly-review-round-1",
+        status: "completed",
+        startedAt: STAMP,
+        ordinal: 2,
+      },
+    ];
+    // Nucleus never settles a task thread (Tom, 2026-11-19): the accepted report is
+    // the task's fact, and the thread's row state is the row pass's own decision.
     await reportAndWake(
       f,
       task.id,
@@ -705,24 +777,15 @@ test("an ordinary task runs its whole lifecycle on T3: thinking level, helper re
       },
       ticketToken(f, reviewerRun),
     );
-    f.server.controls.refuseMutation = false;
     assert.equal(
       f.runtime.store.run(reviewerRun.id)?.completion?.status,
       "changes_required",
-      "the task accepts the reviewer report despite a failed settle",
+      "the task accepts the reviewer report",
     );
     assert.equal(
       reviewerProjection.thread.settledOverride,
       null,
-      "the refused settle made no T3 change",
-    );
-    await (
-      f.t3 as unknown as { reconcileReportedSettlements(): Promise<void> }
-    ).reconcileReportedSettlements();
-    assert.equal(
-      reviewerProjection.thread.settledOverride,
-      "settled",
-      "the durable intent retries on reconciliation",
+      "no settle is ever written to the reviewer thread",
     );
     await driveUntil(
       f,
@@ -765,6 +828,7 @@ test("an ordinary task runs its whole lifecycle on T3: thinking level, helper re
       },
       ticketToken(f, revisionRun),
     );
+    finishRoleTurns(f);
     await driveUntil(
       f,
       () =>
@@ -778,8 +842,8 @@ test("an ordinary task runs its whole lifecycle on T3: thinking level, helper re
     );
     assert.equal(
       reviewerProjection.thread.settledOverride,
-      "active",
-      "the retained reviewer is explicitly unsettled before its next round",
+      null,
+      "a round-two message needs no unsettle: the thread was never settled",
     );
 
     // The verdict accepts: the reviewer reports ready to merge at the same head.
@@ -797,11 +861,14 @@ test("an ordinary task runs its whole lifecycle on T3: thinking level, helper re
         .find(
           (run) => run.role === "reviewer" && run.agentId === reviewerThreadId,
         )!;
-    reviewerProjection.runs.push({
-      id: "nightly-review-round-2",
-      status: "completed",
-      startedAt: STAMP,
-    });
+    reviewerProjection.runs = [
+      {
+        id: "nightly-review-round-2",
+        status: "completed",
+        startedAt: STAMP,
+        ordinal: 2,
+      },
+    ];
     await reportAndWake(
       f,
       task.id,
@@ -818,9 +885,11 @@ test("an ordinary task runs its whole lifecycle on T3: thinking level, helper re
       ticketToken(f, reviewerRunAfterRound),
     );
     assert.equal(
-      reviewerProjection.thread.settledOverride,
-      "settled",
-      "the retained reviewer is settled after its next report",
+      f.server.commands.filter(
+        (command) => command.type === "thread.settle",
+      ).length,
+      0,
+      "the whole lifecycle sends no thread.settle",
     );
 
     // The closeout: this queue control closes Nucleus-owned at the merged
@@ -881,6 +950,7 @@ test("an ordinary task runs its whole lifecycle on T3: thinking level, helper re
           .resolution.archivedWorkspaceIds.includes(workspaceId),
       "workspace archived",
       task.id,
+      1200,
     );
     assert.equal(
       f.runtime.store.task(sibling.id).phase,
@@ -999,6 +1069,9 @@ async function taskWithWorker(f: Fixture): Promise<{
     taskId,
   );
   const task = f.runtime.store.task(taskId);
+  // The worker's delegated creation turn ended as soon as the agent was up: the
+  // tests below set the turn it is actually taking.
+  f.server.threads.get(task.agentId!)!.runs = [];
   const head = (await git(task.directory!, "rev-parse", "HEAD")).trim();
   return {
     taskId,
@@ -1018,8 +1091,9 @@ async function taskWithReviewer(f: Fixture): Promise<{
   reviewerRun: Run;
 }> {
   const { taskId, head, workerThreadId, workerRunId } = await taskWithWorker(f);
-  // The worker's own turn, ended by the time its handover is accepted.
-  f.server.threads.get(workerThreadId)!.runs = completedWorkerRun();
+  // The worker's own turn, ended by the time its handover is accepted (the nightly
+  // drops a finished delegated child's run from the parent's live graph).
+  f.server.threads.get(workerThreadId)!.runs = [];
   const workerReport = await helperReport(
     f,
     runTicketPath(f, { id: workerRunId }),
@@ -1084,40 +1158,6 @@ function releasedRecoveryRun(
   };
 }
 
-test("the sweep settles a recovery thread released from recorded completion without a callback report", async (t) => {
-  const f = await fixture(t);
-  try {
-    const { taskId, reviewerThreadId, reviewerRun } = await taskWithReviewer(f);
-    const projection = f.server.threads.get(reviewerThreadId)!;
-    projection.runs.push({
-      id: "nightly-recovery-run-1",
-      status: "completed",
-      startedAt: STAMP,
-    });
-    const recoveryRun = releasedRecoveryRun(
-      taskId,
-      reviewerRun,
-      reviewerThreadId,
-    );
-    f.runtime.store.putRun(recoveryRun);
-
-    await f.runtime.engine.auditPass(false);
-
-    const settle = f.server.commands.find(
-      (command) =>
-        command.type === "thread.settle" &&
-        command.threadId === reviewerThreadId,
-    );
-    assert.equal(
-      settle?.expectedLatestRunId,
-      "nightly-recovery-run-1",
-      "the sweep uses T3 projection RunId, not the Nucleus run id",
-    );
-    assert.equal(projection.thread.settledOverride, "settled");
-  } finally {
-    await f.close();
-  }
-});
 
 test("a slow T3 thread read refuses the retained-worker restart and names the timeout", async (t) => {
   const f = await fixture(t);
@@ -1162,116 +1202,7 @@ test("a slow T3 thread read refuses the retained-worker restart and names the ti
   }
 });
 
-test("a support thread stays active during a later run and settles that run when it finishes", async (t) => {
-  const f = await fixture(t);
-  try {
-    const { taskId, reviewerThreadId, reviewerRun } = await taskWithReviewer(f);
-    const projection = f.server.threads.get(reviewerThreadId)!;
-    projection.runs.push({
-      id: "nightly-recovery-run-1",
-      status: "completed",
-      startedAt: STAMP,
-    });
-    f.runtime.store.putRun(
-      releasedRecoveryRun(taskId, reviewerRun, reviewerThreadId),
-    );
-    await f.runtime.engine.auditPass(false);
-    assert.equal(projection.thread.settledOverride, "settled");
 
-    // The retained thread wakes for its next fault through a follow-up message,
-    // which explicitly unsettles it first; a later run is never settled live.
-    await f.t3.notify!(
-      reviewerThreadId,
-      "retained-recovery-round-2",
-      "Second fault into the retained thread",
-    );
-    assert.equal(projection.thread.settledOverride, "active");
-    projection.runs.push({
-      id: "nightly-recovery-run-2",
-      status: "running",
-      startedAt: STAMP,
-    });
-    f.runtime.store.putRun(
-      releasedRecoveryRun(taskId, reviewerRun, reviewerThreadId),
-    );
-    const before = f.server.commands.filter(
-      (command) =>
-        command.type === "thread.settle" &&
-        command.threadId === reviewerThreadId,
-    ).length;
-    await f.runtime.engine.auditPass(false);
-    assert.equal(
-      f.server.commands.filter(
-        (command) =>
-          command.type === "thread.settle" &&
-          command.threadId === reviewerThreadId,
-      ).length,
-      before,
-      "the active T3 run is never settled",
-    );
-    assert.equal(projection.thread.settledOverride, "active");
-
-    projection.runs.at(-1)!.status = "completed";
-    await f.runtime.engine.auditPass(false);
-    const settles = f.server.commands.filter(
-      (command) =>
-        command.type === "thread.settle" &&
-        command.threadId === reviewerThreadId,
-    );
-    assert.equal(settles.length, before + 1);
-    assert.equal(settles.at(-1)!.expectedLatestRunId, "nightly-recovery-run-2");
-    assert.equal(projection.thread.settledOverride, "settled");
-  } finally {
-    await f.close();
-  }
-});
-
-test("a refused support settle records a task event and retries on the next sweep", async (t) => {
-  const f = await fixture(t);
-  try {
-    const { taskId, reviewerThreadId, reviewerRun } = await taskWithReviewer(f);
-    const projection = f.server.threads.get(reviewerThreadId)!;
-    projection.runs.push({
-      id: "nightly-recovery-run-1",
-      status: "completed",
-      startedAt: STAMP,
-    });
-    const recoveryRun = releasedRecoveryRun(
-      taskId,
-      reviewerRun,
-      reviewerThreadId,
-    );
-    f.runtime.store.putRun(recoveryRun);
-    f.server.controls.refuseMutation = true;
-
-    await f.runtime.engine.auditPass(false);
-    assert.equal(
-      projection.thread.settledOverride,
-      null,
-      "the failed settle did not change T3",
-    );
-    assert.ok(
-      f.runtime.store
-        .events(taskId)
-        .some(
-          (event) =>
-            event.kind === "thread_settlement_warning" &&
-            event.detail.includes(recoveryRun.id),
-        ),
-      "the task records why this settle failed",
-    );
-
-    f.server.controls.refuseMutation = false;
-    await f.runtime.engine.auditPass(false);
-    assert.equal(
-      projection.thread.settledOverride,
-      "settled",
-      "the sweep reconciles the prior intent and settles on retry",
-    );
-  } finally {
-    await f.close();
-  }
-});
 
 test("a T3-bound reviewer checkpoint auto-continues on the T3 host (#226)", async (t) => {
   const f = await fixture(t);
@@ -1332,185 +1263,7 @@ test("a T3-bound reviewer checkpoint auto-continues on the T3 host (#226)", asyn
   }
 });
 
-test("one row per task: the worker row stays unsettled while a support agent runs and settles when nothing does", async (t) => {
-  const f = await fixture(t);
-  try {
-    const { taskId, head, workerThreadId, reviewerThreadId, reviewerRun } =
-      await taskWithReviewer(f);
-    // The reviewer is live, so the task's one visible row is the worker's and one
-    // host pass puts it back in T3's main list instead of the settled one (Tom,
-    // 2026-11-15). A handover settle may have landed before the reviewer started;
-    // the row never stays settled while a support agent runs.
-    const workerSettles = () =>
-      f.server.commands.filter(
-        (command) =>
-          command.type === "thread.settle" &&
-          command.threadId === workerThreadId,
-      );
-    const reviewerToken = ticketToken(f, reviewerRun);
-    await f.runtime.engine.auditPass(false);
-    assert.equal(
-      f.server.threads.get(workerThreadId)!.thread.settledOverride,
-      "active",
-      "a live reviewer keeps the worker row unsettled",
-    );
-    assert.ok(
-      f.server.commands.some(
-        (command) =>
-          command.type === "thread.unsettle" &&
-          command.threadId === workerThreadId,
-      ),
-      "the live reviewer surfaces the row",
-    );
-    const settledBefore = workerSettles().length;
 
-    // The reviewer asks for changes; its verdict wakes the settled worker thread
-    // (when the row had settled) and the revision run the task then waits on
-    // keeps the row unsettled.
-    await reportAndWake(
-      f,
-      taskId,
-      {
-        eventId: randomUUID(),
-        taskId,
-        runId: reviewerRun.id,
-        status: "changes_required",
-        summary: "One finding",
-        reviewText: "Tighten the change set.",
-        reviewResponsibility: "author",
-        prNumber: 7,
-        head,
-      },
-      reviewerToken,
-    );
-    await driveUntil(
-      f,
-      () =>
-        f.server.commands.some(
-          (command) =>
-            command.type === "message.dispatch" &&
-            command.threadId === workerThreadId,
-        ),
-      "revision sent to the retained worker",
-      taskId,
-    );
-    assert.equal(
-      f.server.threads.get(workerThreadId)!.thread.settledOverride,
-      "active",
-      "the revision unsettles the thread, and its live run keeps it so",
-    );
-
-    // The worker's next handover; nothing of the task runs after these runs end,
-    // so the row settles again under that handover's own identity (nucleus#1154).
-    const revisionRun = f.runtime.store
-      .runs(taskId)
-      .findLast((run) => run.role === "revision");
-    assert.ok(revisionRun, "a revision run was reserved");
-    f.server.threads.get(workerThreadId)!.runs = completedWorkerRun();
-    const revisionReport = await helperReport(
-      f,
-      runTicketPath(f, revisionRun),
-      {
-        status: "ready_for_review",
-        summary: "Findings addressed",
-        prNumber: 7,
-        head,
-      },
-    );
-    assert.equal(revisionReport.code, 0, revisionReport.err);
-    await f.runtime.engine.wakeTask(taskId).catch(() => {});
-    // The round-two reviewer is live next: the row surfaces while it runs.
-    await f.runtime.engine.auditPass(false);
-    assert.equal(
-      f.server.threads.get(workerThreadId)!.thread.settledOverride,
-      "active",
-      "the round-two reviewer keeps the row unsettled",
-    );
-    // With every run ended, the row settles and the last settle names the run
-    // whose handover it accepted.
-    for (const run of f.runtime.store.runs(taskId))
-      if (!run.released)
-        f.runtime.store.putRun({
-          ...run,
-          status: "finished",
-          released: true,
-          active: false,
-        });
-    const beforeSecond = workerSettles().length;
-    for (
-      let pass = 0;
-      pass < 5 && workerSettles().length === beforeSecond;
-      pass++
-    )
-      await f.runtime.engine.auditPass(false);
-    assert.ok(
-      workerSettles().length > beforeSecond,
-      `a settled row returns once nothing runs (${JSON.stringify(workerSettles())})`,
-    );
-    assert.equal(workerSettles().at(-1)!.expectedLatestRunId, "worker-run-1");
-    assert.ok(workerSettles().length > settledBefore);
-  } finally {
-    await f.close();
-  }
-});
-
-test("a worker thread whose turn is still ending settles on the next host pass", async (t) => {
-  const f = await fixture(t);
-  try {
-    const { taskId, head, workerThreadId, workerRunId } =
-      await taskWithWorker(f);
-    // The report arrives while the worker's own run is still ending.
-    f.server.threads.get(workerThreadId)!.runs = [
-      { id: "worker-run-1", status: "running", startedAt: STAMP },
-    ];
-    const report = await helperReport(
-      f,
-      runTicketPath(f, { id: workerRunId }),
-      {
-        status: "ready_for_review",
-        summary: "Change set ready",
-        prNumber: 7,
-        head,
-      },
-    );
-    assert.equal(report.code, 0, report.err);
-    assert.equal(
-      f.server.commands.filter((command) => command.type === "thread.settle")
-        .length,
-      0,
-      "a live run is never settled, and the handover has not been lost",
-    );
-
-    // The turn ends: the ordinary fleet pass — the same one the timers drive —
-    // retries the recorded settle on the task's own host.
-    f.server.threads.get(workerThreadId)!.runs = completedWorkerRun();
-    for (
-      let pass = 0;
-      pass < 5 &&
-      !f.server.commands.some((command) => command.type === "thread.settle");
-      pass++
-    )
-      await f.runtime.engine.auditPass(false);
-    const settles = f.server.commands.filter(
-      (command) => command.type === "thread.settle",
-    );
-    assert.equal(
-      settles.length,
-      1,
-      `the recorded settle was sent once the run ended (${JSON.stringify(settles)})`,
-    );
-    assert.equal(settles[0]!.threadId, workerThreadId);
-    assert.equal(settles[0]!.expectedLatestRunId, "worker-run-1");
-    assert.equal(
-      f.server.threads.get(workerThreadId)!.thread.settledOverride,
-      "settled",
-    );
-    // The pass scheduled task quanta; let them finish before the store closes.
-    await f.runtime.engine.quiesce().catch(() => {});
-  } finally {
-    await f.close();
-  }
-});
 
 test("the worker thread is watched and messaged on the task host, never the default host", async (t) => {
   const f = await fixture(t);
@@ -1602,11 +1355,12 @@ async function workerFault(
   }
 }
 
+/** Whether one role thread was created under the task parent's held run. */
 const launchesFor = (f: Fixture, threadId: string) =>
   f.server.commands.filter(
     (command) =>
-      command.method === "orchestration.launchThread" &&
-      command.threadId === threadId,
+      command.type === "delegated_task.request" &&
+      threadId === `thread:delegated-task:${command.commandId}`,
   ).length;
 const dispatchedInto = (f: Fixture, threadId: string) =>
   f.server.commands.filter(
@@ -1671,7 +1425,7 @@ test("a second fault continues the retained T3 recovery coordinator instead of o
     const firstEpisodeId = f.runtime.store.task(taskId).resolution.recovery?.id;
     assert.ok(firstEpisodeId, "the first recovery episode is open");
     const launchesBefore = f.server.commands.filter(
-      (command) => command.method === "orchestration.launchThread",
+      (command) => command.type === "delegated_task.request",
     ).length;
     const dispatchesBefore = dispatchedInto(f, coordinatorThreadId);
     // The coordinator's own turn ended before it reported.
@@ -1705,25 +1459,8 @@ test("a second fault continues the retained T3 recovery coordinator instead of o
       },
       ticketToken(f, firstAttempt),
     );
-    // The accepted report's own settle lost its reply to the same defect; the host
-    // sweep reconciles it before the thread's next round, as for any support report.
-    for (
-      let pass = 0;
-      pass < 20 &&
-      !f.server.commands.some(
-        (command) =>
-          command.type === "thread.settle" &&
-          command.threadId === coordinatorThreadId,
-      );
-      pass++
-    ) {
-      await (
-        f.t3 as unknown as { reconcileReportedSettlements(): Promise<void> }
-      )
-        .reconcileReportedSettlements()
-        .catch(() => undefined);
-      await pause(50);
-    }
+    // The accepted report is the task's fact; the thread's row state is the row
+    // pass's own decision, and Nucleus never settles a task thread (nucleus#1366).
 
     await driveUntil(
       f,
@@ -1739,13 +1476,14 @@ test("a second fault continues the retained T3 recovery coordinator instead of o
         .some((event) => event.kind === "coordinator_action_applied"),
       "the coordinator report was accepted, not refused",
     );
-    assert.ok(
+    assert.equal(
       f.server.commands.some(
         (command) =>
           command.type === "thread.settle" &&
           command.threadId === coordinatorThreadId,
       ),
-      "the accepted report settles the retained coordinator thread",
+      false,
+      "the accepted report settles no thread",
     );
     await archiveFinishedThreads(f.runtime.store, f.t3, taskId);
     assert.equal(
@@ -1755,7 +1493,7 @@ test("a second fault continues the retained T3 recovery coordinator instead of o
           command.threadId === coordinatorThreadId,
       ),
       false,
-      "the settled recovery thread is not archived while the task is open",
+      "the retained recovery thread is not archived while the task is open",
     );
     assert.equal(
       f.runtime.store.task(taskId).coordinatorAgentId,
@@ -1794,17 +1532,18 @@ test("a second fault continues the retained T3 recovery coordinator instead of o
       "the second fault is dispatched into the retained coordinator",
       taskId,
     );
-    assert.ok(
+    assert.equal(
       f.server.commands.some(
         (command) =>
           command.type === "thread.unsettle" &&
           command.threadId === coordinatorThreadId,
       ),
-      "the settled thread is explicitly unsettled before its next attempt",
+      false,
+      "a retained thread nothing settled needs no unsettle before its next attempt",
     );
     assert.equal(
       f.server.commands.filter(
-        (command) => command.method === "orchestration.launchThread",
+        (command) => command.type === "delegated_task.request",
       ).length,
       launchesBefore,
       "no new coordinator thread is opened",
@@ -2019,6 +1758,8 @@ test("a task that finished before this rule is cleaned up by the next sweep, exa
         environment: {},
       }),
     });
+    // The recovery turn ended before the task finished.
+    f.server.threads.get(recovery.id)!.runs = [];
     f.runtime.store.putRun({
       id: recoveryRunId,
       taskId,
@@ -2045,7 +1786,6 @@ test("a task that finished before this rule is cleaned up by the next sweep, exa
         summary: "Recovery applied",
       },
     });
-    await f.host.settleReportedThread(recovery.id, recoveryRunId);
     assert.deepEqual(
       f.host.state.read().agents[recovery.id]!.labels,
       recoveryLabels,
@@ -2058,7 +1798,7 @@ test("a task that finished before this rule is cleaned up by the next sweep, exa
           intent.payload.includes(recovery.id),
       ),
       false,
-      "an already settled recovery with no native run needs no settlement receipt",
+      "a recovery thread no run owns needs no settlement receipt",
     );
     const verdict = {
       taskId,
@@ -2278,6 +2018,8 @@ for (const boundary of ["rpc", "reservation"] as const)
           environment: {},
         }),
       });
+      // The recovery turn ended before the task finished.
+      f.server.threads.get(recovery.id)!.runs = [];
       f.runtime.store.putRun({
         id: runId,
         taskId: task.id,
@@ -2369,352 +2111,5 @@ for (const boundary of ["rpc", "reservation"] as const)
     }
   });
 
-test("real sweeps retire a lost support settle after deletion without stream reads and let another task progress", async (t) => {
-  const f = await fixture(t);
-  try {
-    const { taskId, head, reviewerThreadId, reviewerRun } =
-      await taskWithReviewer(f);
-    const reads: string[] = [],
-      nativeRead = f.host.rpc.readStream.bind(f.host.rpc);
-    f.host.rpc.readStream = (method, payload, accept) => {
-      if (method === "orchestration.subscribeThread")
-        reads.push((payload as { threadId: string }).threadId);
-      return nativeRead(method, payload, accept);
-    };
-    f.server.threads.get(reviewerThreadId)!.runs.push({
-      id: "lost-native-review",
-      status: "completed",
-      startedAt: STAMP,
-    });
-    f.server.controls.disconnectAfterEffect = true;
-    await assert.rejects(
-      f.host.settleReportedThread(reviewerThreadId, reviewerRun.id),
-    );
-    f.server.controls.disconnectAfterEffect = false;
-    await f.host.connect();
-    assert.ok(
-      reads.includes(reviewerThreadId),
-      "the spy sees the real projection stream boundary before deletion",
-    );
-    const settleKey = Object.keys(f.host.state.read().intents).find((key) => {
-      const wire = JSON.parse(f.host.state.read().intents[key].payload);
-      return (
-        wire.payload.type === "thread.settle" &&
-        wire.payload.threadId === reviewerThreadId
-      );
-    })!;
-    assert.equal(f.host.state.read().intents[settleKey].status, "unknown");
-    const current = f.runtime.store.task(taskId);
-    const verdict = {
-      taskId,
-      runId: reviewerRun.id,
-      eventId: randomUUID(),
-      status: "ready_to_merge" as const,
-      head,
-      summary: "Approved",
-      reviewText: "Accepted synthetic review",
-    };
-    f.runtime.store.putRun({
-      ...reviewerRun,
-      released: true,
-      active: false,
-      status: "finished",
-      completion: verdict,
-    });
-    f.runtime.store.update(taskId, {
-      phase: "done",
-      resolution: {
-        ...current.resolution,
-        currentRunId: null,
-        mergedCommit: head,
-        review: verdict,
-      },
-    });
-    // The terminal lane can finish before the next presentation reconciliation.
-    await archiveFinishedThreads(f.runtime.store, f.t3, taskId);
-    await f.runtime.engine.drainProjections({ cleanup: false });
-    assert.equal(f.host.state.read().intents[settleKey].status, "moot");
-    assert.equal(
-      f.host.state.read().intents[settleKey].result,
-      undefined,
-      "retirement never invents successful delivery",
-    );
-    const beforeReads = reads.filter((id) => id === reviewerThreadId).length;
-    const beforeCommands = f.server.commands.filter(
-      (command) => command.threadId === reviewerThreadId,
-    ).length;
-    const history = f.runtime.store.eventsAll(taskId);
 
-    const initial = f.runtime.store.insert(
-      submissionSchema.parse({
-        submissionId: randomUUID(),
-        title: "Other finished task",
-        repoPath: f.repo,
-        planningCommit: head,
-        handoffPath: "synthetic.md",
-        originAgentId: f.planner,
-      }),
-      t3Host,
-      "Synthetic handoff",
-      head,
-    );
-    const other = f.runtime.store.update(initial.id, {
-      phase: "done",
-      workspaceId: current.workspaceId,
-      resolution: { ...initial.resolution, mergedCommit: head },
-    });
-    const otherRunId = randomUUID();
-    const otherAgent = await f.host.createAgent({
-      workspaceId: current.workspaceId!,
-      profile: current.profile!,
-      title: "Other finished recovery",
-      mcpBindingPath: null,
-      attempt: () => ({
-        requestId: otherRunId,
-        prompt: "Completed synthetic recovery",
-        environment: {},
-        labels: storedT3Labels("recovery", {
-          taskId: other.id,
-          runId: otherRunId,
-        }),
-      }),
-    });
-    f.runtime.store.putRun({
-      ...reviewerRun,
-      id: otherRunId,
-      taskId: other.id,
-      role: "recovery",
-      agentId: otherAgent.id,
-      generation: other.coordinatorGeneration,
-      status: "finished",
-      active: false,
-      released: true,
-      completion: null,
-    });
-    for (let pass = 0; pass < 3; pass++)
-      assert.equal((await f.runtime.engine.auditPass(false)).fault, null);
-    assert.equal(
-      reads.filter((id) => id === reviewerThreadId).length,
-      beforeReads,
-      "no later stream reads of the deleted thread",
-    );
-    assert.equal(
-      f.server.commands.filter(
-        (command) => command.threadId === reviewerThreadId,
-      ).length,
-      beforeCommands,
-      "no presentation replay",
-    );
-    assert.deepEqual(
-      f.runtime.store.eventsAll(taskId),
-      history,
-      "no repeated warnings or task history",
-    );
-    assert.ok(
-      f.runtime.store.getMeta(`finishedTaskThreadCleanup:${other.id}`),
-      "the other task completes cleanup",
-    );
-    assert.equal(
-      f.server.commands.filter(
-        (command) =>
-          command.type === "thread.delete" &&
-          command.threadId === otherAgent.id,
-      ).length,
-      1,
-    );
-  } finally {
-    await f.close();
-  }
-});
 
-test("attention surfaces the worker thread and the return to review settles it again (#1181)", async (t) => {
-  const f = await fixture(t);
-  try {
-    const { taskId, head, workerThreadId, workerRunId } =
-      await taskWithWorker(f);
-    // The worker's own turn, ended by the time its handover is accepted.
-    f.server.threads.get(workerThreadId)!.runs = completedWorkerRun();
-    const workerReport = await helperReport(
-      f,
-      runTicketPath(f, { id: workerRunId }),
-      {
-        status: "ready_for_review",
-        summary: "Change set ready",
-        prNumber: 7,
-        head,
-      },
-    );
-    assert.equal(workerReport.code, 0, workerReport.err);
-    await f.runtime.engine.wakeTask(taskId).catch(() => {});
-    await driveUntil(
-      f,
-      () =>
-        f.server.commands.some(
-          (command) =>
-            command.type === "thread.settle" &&
-            command.threadId === workerThreadId,
-        ),
-      "worker settled on handover",
-      taskId,
-    );
-    assert.equal(
-      f.server.threads.get(workerThreadId)!.thread.settledOverride,
-      "settled",
-    );
-
-    // The task needs attention: the sweep unsettles the worker thread so it
-    // shows in T3's main list. Only the worker thread surfaces.
-    const unsettles = () =>
-      f.server.commands.filter(
-        (command) =>
-          command.type === "thread.unsettle" &&
-          command.threadId === workerThreadId,
-      );
-    const unsettledCount = unsettles().length;
-    f.runtime.store.update(taskId, {
-      phase: "needs_attention",
-      reason: "The retained worker stopped without a result",
-      resolution: {
-        ...f.runtime.store.task(taskId).resolution,
-        attention: true,
-        recovery: null,
-        recoveryActive: false,
-        stop: null,
-      },
-    });
-    await f.runtime.engine.auditPass(false);
-    assert.equal(
-      unsettles().length,
-      unsettledCount + 1,
-      "attention unsettles the worker thread exactly once",
-    );
-    assert.equal(
-      f.server.threads.get(workerThreadId)!.thread.settledOverride,
-      "active",
-    );
-
-    // The task returns to review: with nothing of the task running any more, the
-    // ordinary settle puts the thread back under a fresh command (the reviewer
-    // run that attention delayed is finished here, so the row waits on nothing).
-    const settles = () =>
-      f.server.commands.filter(
-        (command) =>
-          command.type === "thread.settle" &&
-          command.threadId === workerThreadId,
-      );
-    const settledCount = settles().length;
-    f.runtime.store.update(taskId, {
-      phase: "awaiting_review",
-      reason: "Attention cleared; back to review",
-      resolution: {
-        ...f.runtime.store.task(taskId).resolution,
-        attention: false,
-      },
-    });
-    for (const run of f.runtime.store.runs(taskId))
-      if (run.role !== "revision" && !run.released)
-        f.runtime.store.putRun({
-          ...run,
-          status: "finished",
-          released: true,
-          active: false,
-        });
-    await f.runtime.engine.auditPass(false);
-    assert.equal(
-      settles().length,
-      settledCount + 1,
-      "the return to review settles the worker thread again",
-    );
-    assert.equal(
-      f.server.threads.get(workerThreadId)!.thread.settledOverride,
-      "settled",
-    );
-    // Let the pass's scheduled task quanta finish before the store closes.
-    await f.runtime.engine.quiesce().catch(() => {});
-  } finally {
-    await f.close();
-  }
-});
-
-test("attention during review neither settles nor unsettles the worker twice (#1181 review)", async (t) => {
-  const f = await fixture(t);
-  try {
-    const { taskId, head, workerThreadId, workerRunId } =
-      await taskWithWorker(f);
-    // The worker's own turn, ended by the time its handover is accepted.
-    f.server.threads.get(workerThreadId)!.runs = completedWorkerRun();
-    const workerReport = await helperReport(
-      f,
-      runTicketPath(f, { id: workerRunId }),
-      {
-        status: "ready_for_review",
-        summary: "Change set ready",
-        prNumber: 7,
-        head,
-      },
-    );
-    assert.equal(workerReport.code, 0, workerReport.err);
-    await f.runtime.engine.wakeTask(taskId).catch(() => {});
-    await driveUntil(
-      f,
-      () =>
-        f.server.commands.some(
-          (command) =>
-            command.type === "thread.settle" &&
-            command.threadId === workerThreadId,
-        ),
-      "worker settled on handover",
-      taskId,
-    );
-    assert.equal(
-      f.server.threads.get(workerThreadId)!.thread.settledOverride,
-      "settled",
-    );
-
-    // A review-phase escalation keeps the phase but raises attention (a
-    // reviewer reminder while awaiting review). The worker surfaces once, and
-    // later sweeps must not settle-then-unsettle it again every pass.
-    const settles = () =>
-      f.server.commands.filter(
-        (command) =>
-          command.type === "thread.settle" &&
-          command.threadId === workerThreadId,
-      );
-    const unsettles = () =>
-      f.server.commands.filter(
-        (command) =>
-          command.type === "thread.unsettle" &&
-          command.threadId === workerThreadId,
-      );
-    f.runtime.store.update(taskId, {
-      phase: "awaiting_review",
-      reason: "Reviewer reminder raised attention",
-      resolution: {
-        ...f.runtime.store.task(taskId).resolution,
-        attention: true,
-      },
-    });
-    await f.runtime.engine.auditPass(false);
-    assert.equal(
-      f.server.threads.get(workerThreadId)!.thread.settledOverride,
-      "active",
-    );
-    const settledCount = settles().length,
-      unsettledCount = unsettles().length;
-    await f.runtime.engine.auditPass(false);
-    assert.equal(
-      settles().length,
-      settledCount,
-      "no fresh worker settle while attention is active",
-    );
-    assert.equal(
-      unsettles().length,
-      unsettledCount,
-      "no fresh worker unsettle while already surfaced",
-    );
-    // Let the pass's scheduled task quanta finish before the store closes.
-    await f.runtime.engine.quiesce().catch(() => {});
-  } finally {
-    await f.close();
-  }
-});

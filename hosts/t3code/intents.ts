@@ -94,6 +94,8 @@ export function presentationThread(
   if (
     kind !== "thread.settle" &&
     kind !== "thread.unsettle" &&
+    kind !== "thread.snooze" &&
+    kind !== "thread.unsnooze" &&
     kind !== "thread.metadata.update"
   )
     return undefined;

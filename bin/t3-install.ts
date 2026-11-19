@@ -371,7 +371,7 @@ async function readService(dataDir: string): Promise<ServiceRead> {
         error?: string;
         version?: string;
         nativeParenting?: string;
-        supportThreads?: string;
+
       };
     };
     const hostList = (await client
@@ -394,7 +394,6 @@ async function readService(dataDir: string): Promise<ServiceRead> {
             error: t3.error ?? "",
             version: t3.version ?? "",
             nativeParenting: t3.nativeParenting ?? "",
-            supportThreads: t3.supportThreads ?? "",
           }
         : null,
       hosts,
@@ -788,7 +787,6 @@ async function status(
           hostId: null,
           error: "",
           nativeParenting: "",
-          supportThreads: "",
         })
       : null,
     projects:

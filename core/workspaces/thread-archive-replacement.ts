@@ -44,8 +44,6 @@ export async function archiveReplacedReviewer(store: Store, adapter: Adapter, ru
       store.putThreadArchiveEffect(key, run.agentId, { status: 'ready', at: now() } satisfies ArchiveEffect);
     try {
       if (!await stoppedAndIdle()) return false;
-      // Presentation only: the thread stays visible and settled until closeout.
-      await adapter.settleReportedThread?.(run.agentId, run.id).catch(() => undefined);
       if (store.getMeta<ArchiveEffect>(key)?.status === 'ready') store.deleteMeta(key);
       return true;
     } catch { return false; }

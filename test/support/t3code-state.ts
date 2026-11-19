@@ -17,7 +17,7 @@ import { storedT3Labels } from './t3code-labels';
  */
 const shape = JSON.parse(readFileSync(new URL('../fixtures/t3code-host-state.json', import.meta.url), 'utf8')) as {
   shapeOf: string; topLevel: string[]; agent: string[]; workspace: string[];
-  intent: string[]; settleIntent: string[]; retiredAgent: string[];
+  intent: string[]; retiredAgent: string[];
 };
 export const storedHostStateShape = shape;
 
@@ -35,23 +35,11 @@ export interface StoredThread {
   title?: string;
 }
 
-/** One recorded settle the state carries, by thread. */
-export interface StoredSettle { threadId: string; runId: string; commandId?: string }
-
 export interface StoredHostStateInput {
   directory: string;
   hostId?: string;
   projectId?: string;
   threads: readonly StoredThread[];
-  /** Threads whose worker settle succeeded: the durable marker an exact settle reads. */
-  settled?: readonly StoredSettle[];
-  /** Threads whose handover settle was recorded and never completed. */
-  pendingSettles?: readonly StoredSettle[];
-  /**
-   * A settle whose delivery is unknown, exactly as an interrupted send leaves it: the
-   * entry keeps its recorded status and result, and nothing may turn it into a receipt.
-   */
-  unknownSettles?: readonly StoredSettle[];
   /** Threads whose presentation intents are settled, so a title already landed. */
   rowTitles?: readonly { threadId: string; title: string }[];
   /** A settled deletion intent per thread, as a confirmed removal leaves it. */
@@ -74,8 +62,6 @@ export function storedHostState(input: StoredHostStateInput) {
   const workspaces: Record<string, unknown> = {};
   const agents: Record<string, unknown> = {};
   const intents: Record<string, unknown> = {};
-  const settledThreads: Record<string, string> = {};
-  const pendingSettles: Record<string, unknown> = {};
   const rowTitles: Record<string, string> = {};
   const command = (purpose: string, value: unknown) => identity(purpose, canonical(value));
   for (const thread of input.threads) {
@@ -89,25 +75,6 @@ export function storedHostState(input: StoredHostStateInput) {
     const launch = command('thread', thread.id);
     intents[launch] = { payload: JSON.stringify({ method: 'orchestration.launchThread', payload: { threadId: thread.id } }),
       status: 'settled', result: { threadId: thread.id }, kind: 'launchThread', threadId: thread.id };
-  }
-  for (const settle of input.settled ?? []) {
-    const commandId = settle.commandId ?? identity('settle', canonical([hostId, settle.threadId, settle.runId]));
-    intents[commandId] = { payload: JSON.stringify({ method: 'orchestration.dispatchCommand',
-      payload: { type: 'thread.settle', commandId, threadId: settle.threadId, expectedLatestRunId: settle.runId } }),
-      status: 'settled', kind: 'thread.settle', threadId: settle.threadId };
-    settledThreads[settle.threadId] = commandId;
-  }
-  for (const pending of input.pendingSettles ?? []) {
-    const commandId = pending.commandId ?? identity('settle', canonical([hostId, pending.threadId, pending.runId]));
-    // A settle that is still waiting, not one past its own TTL: the record's timestamp
-    // is the handover's, and an old one is retired on age before anything reads it.
-    pendingSettles[commandId] = { agentId: pending.threadId, runId: pending.runId, commandId, recordedAt: new Date().toISOString() };
-  }
-  for (const unknown of input.unknownSettles ?? []) {
-    const commandId = unknown.commandId ?? identity('settle', canonical([hostId, unknown.threadId, unknown.runId]));
-    intents[commandId] = { payload: JSON.stringify({ method: 'orchestration.dispatchCommand',
-      payload: { type: 'thread.settle', commandId, threadId: unknown.threadId, expectedLatestRunId: unknown.runId } }),
-      status: 'unknown', kind: 'thread.settle', threadId: unknown.threadId };
   }
   for (const row of input.rowTitles ?? []) rowTitles[row.threadId] = row.title;
   for (const threadId of input.deleted ?? []) {
@@ -127,11 +94,8 @@ export function storedHostState(input: StoredHostStateInput) {
     ...(parent.title === undefined ? {} : { title: parent.title }) };
   return { version: 1 as const, hostId, lastPassedVersion: 'nightly-synthetic',
     ...(input.parents?.length ? { parents } : {}),
-    workspaces, agents, intents, pendingSettles, settledThreads,
-    workerSettles: {}, rowTitles,
-    // The client's own hide switch, read once at connect and never written.
-    supportThreads: 'setting_off',
-    nesting: { state: 'fallback', reason: 'T3Code has no nucleus ACP provider instance', at: stamp } };
+    workspaces, agents, intents, rowTitles,
+    nesting: { state: 'unavailable', reason: 'T3Code has no nucleus ACP provider instance', at: stamp } };
 }
 
 /** The task fact one stored thread's launch names, as a `Task`'s phase reads it. */

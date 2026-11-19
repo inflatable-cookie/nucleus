@@ -129,6 +129,7 @@ async function fixture(
       },
     ];
   server.controls.runOnLaunch = options.runOnLaunch !== false;
+  server.controls.parentHeldTurn = options.runOnLaunch !== false;
   const acp = acpStub(server);
   const host = new T3CodeHost({
     endpoint: server.endpoint,
@@ -204,14 +205,14 @@ test("the connect probe records whether the nucleus ACP provider is there, befor
     "a read-only probe records no parent thread",
   );
   const missing = await fixture(t, { provider: false });
-  assert.equal(missing.host.state.read().nesting?.state, "fallback");
+  assert.equal(missing.host.state.read().nesting?.state, "unavailable");
   assert.match(
     missing.host.state.read().nesting!.reason,
-    /register the installed nucleus-acp command/,
+    /T3 provider not ready: T3Code has no nucleus ACP provider instance; run `nucleus t3 install`/,
   );
   assert.match(
     missing.host.nativeParentingStatus,
-    /native parenting off.*no nucleus ACP provider/,
+    /native parenting unavailable.*no nucleus ACP provider/,
   );
   const pending = await fixture(t, { provider: false });
   pending.server.controls.providerInstances = {
@@ -496,157 +497,23 @@ test("a reconnect re-enters the same parent thread rather than launching another
   assert.notEqual(reviewer.id, first.id);
 });
 
-test("without the nucleus provider the task keeps top-level role threads and says why", async (t) => {
+test("without the nucleus provider the role refuses before the send and names the fix", async (t) => {
   const { host, server, spec } = await fixture(t, { provider: false });
-  const created = await host.createAgent(spec("worker-create", "Do the work"));
+  await assert.rejects(
+    () => host.createAgent(spec("worker-create", "Do the work")),
+    (error: unknown) =>
+      error instanceof ProvenPreSendRefusalError &&
+      /T3 provider not ready: T3Code has no nucleus ACP provider instance; run `nucleus t3 install`/.test(
+        error.reason,
+      ),
+  );
+  // Nothing is launched at all: no parent and no top-level role thread. The task
+  // waits visibly with the reason and the fix (nucleus#1366).
   assert.equal(commandOf(server, "delegated_task.request"), undefined);
-  const launch = server.commands[0]!;
-  assert.equal(launch.method, "orchestration.launchThread");
-  assert.equal(launch.threadId, created.id);
-  assert.deepEqual(launch.modelSelection, {
-    instanceId: "synthetic-provider",
-    model: "synthetic-model",
-  });
+  assert.equal(commandOf(server, "orchestration.launchThread"), undefined);
   assert.equal(host.state.read().parents, undefined);
-  assert.equal(host.state.read().nesting?.state, "fallback");
-  assert.match(host.state.read().nesting!.reason, /nucleus/);
-  assert.match(host.nativeParentingStatus, /native parenting off/);
-});
-
-test("a fallback role of a parented task is a top-level thread: tagged, settled, never disposed", async (t) => {
-  const { host, server, spec } = await fixture(t);
-  await host.createAgent(spec("worker-create", "Do the work"));
-  // A review checkout gives the reviewer its own workspace, which cannot be a child:
-  // it is a top-level thread of a task that still has a parent.
-  const other = await host.createWorkspace({
-    title: "Review checkout",
-    requestId: "review-workspace",
-    directory: await realpath(
-      mkdtempSync(join(tmpdir(), "t3code-nesting-review-")),
-    ),
-    project: { projectId: "synthetic-project" },
-  });
-  const reviewer = await host.createAgent({
-    ...spec("review-run", "Review it", "reviewer"),
-    workspaceId: other.id,
-  });
-  assert.equal(
-    host.state.read().agents[reviewer.id]!.parentThreadId,
-    undefined,
-    "a fallback thread is not recorded as a child",
-  );
-  // The one-row fallback still applies to it: the tag is set and it settles on a report.
-  await new Promise((resolve) => setTimeout(resolve, 10));
-  assert.ok(
-    commandsOf(server, "thread.tag.set").some(
-      (command) =>
-        command.threadId === reviewer.id && command.tag === "nucleus-support",
-    ),
-    "a fallback support thread is tagged",
-  );
-  for (const run of server.threads.get(reviewer.id)!.runs)
-    run.status = "completed";
-  await host.settleReportedThread(reviewer.id, "review-run");
-  assert.ok(
-    commandsOf(server, "thread.settle").some(
-      (command) => command.threadId === reviewer.id,
-    ),
-    "a fallback support thread settles like a top-level one",
-  );
-  // And its follow-ups are not delegated tasks, so nothing disposes them as children.
-  const before = commandsOf(
-    server,
-    "delegated_task.completion-delivery.dispose",
-  ).length;
-  await host.sendMessage(reviewer.id, {
-    messageId: "review-followup",
-    text: "One more look",
-  });
-  assert.equal(
-    commandsOf(server, "delegated_task.completion-delivery.dispose").length,
-    before,
-    "a fallback thread sends no child dispose",
-  );
-});
-
-test("a worker that fell back to a top-level thread keeps its own title, settle and unsettle", async (t) => {
-  // The parent launches and is recorded, but its turn never starts, so the worker
-  // falls back: this is the shape the review named, a task with a parent and a
-  // top-level worker. The worker's own presentation must not be written to the parent.
-  const { host, server, spec } = await fixture(t, { runOnLaunch: false });
-  const worker = await host.createAgent(spec("worker-create", "Do the work"));
-  const parent = parentOf(host)!;
-  assert.ok(parent, "the parent record stays after the fallback");
-  assert.equal(
-    host.state.read().agents[worker.id]!.parentThreadId,
-    undefined,
-    "the worker is not a child",
-  );
-
-  await host.setTaskWorkspaceTitle(
-    {
-      id: "synthetic-task",
-      number: 1305,
-      title: "Synthetic task",
-      phase: "working",
-      agentId: worker.id,
-      runId: "worker-run",
-    } as Task,
-    "Synthetic task",
-    "title-intent",
-    false,
-  );
-  assert.ok(
-    commandsOf(server, "thread.metadata.update").some(
-      (command) =>
-        command.threadId === worker.id && command.title === "Synthetic task",
-    ),
-    "the worker row is titled on its own thread",
-  );
-  assert.equal(
-    commandsOf(server, "thread.metadata.update").some(
-      (command) => command.threadId === parent.threadId,
-    ),
-    false,
-    "the parent row is not titled for a fallback worker",
-  );
-
-  // The fallback launch ran no provider turn in this fixture, so give the worker one
-  // recorded run that has ended, as a real handover would have.
-  server.threads.get(worker.id)!.runs.push({
-    id: "run:worker",
-    status: "completed",
-    startedAt: STAMP,
-    ordinal: 1,
-    rootNodeId: "node:root:worker",
-  });
-  await host.settleWorkerThread(worker.id, "worker-run");
-  assert.ok(
-    commandsOf(server, "thread.settle").some(
-      (command) => command.threadId === worker.id,
-    ),
-    "the worker settles on its own thread",
-  );
-  assert.equal(
-    commandsOf(server, "thread.settle").some(
-      (command) => command.threadId === parent.threadId,
-    ),
-    false,
-  );
-
-  await host.unsettleWorkerThread(worker.id, "synthetic-task");
-  assert.ok(
-    commandsOf(server, "thread.unsettle").some(
-      (command) => command.threadId === worker.id,
-    ),
-    "the worker surfaces on its own thread",
-  );
-  assert.equal(
-    commandsOf(server, "thread.unsettle").some(
-      (command) => command.threadId === parent.threadId,
-    ),
-    false,
-  );
+  assert.equal(host.state.read().nesting?.state, "unavailable");
+  assert.match(host.nativeParentingStatus, /native parenting unavailable/);
 });
 
 test("a deleted child does not hold the parent turn", async (t) => {
@@ -692,21 +559,23 @@ test("a deletedAt tombstone in the inventory counts as deleted for a child and f
     "the fake served the removed child as a tombstone row",
   );
 
-  // The parent itself as a tombstone: the next role falls back instead of sending to it.
+  // The parent itself as a tombstone: the next role refuses instead of sending to it
+  // (there is no top-level fallback any more, nucleus#1366).
   server.threads.get(parent.threadId)!.thread.deletedAt = STAMP;
   const sentBefore = server.commands.length;
-  const reviewer = await host.createAgent(
-    spec("review-run", "Review it", "reviewer"),
+  await assert.rejects(
+    () => host.createAgent(spec("review-run", "Review it", "reviewer")),
+    (error: unknown) =>
+      error instanceof ProvenPreSendRefusalError &&
+      /parent thread is deleted; move the task to another host/.test(
+        error.reason,
+      ),
   );
   assert.ok(
     server.shells.some((snapshot) =>
       snapshot.threads.includes(parent.threadId),
     ),
     "the fake served the removed parent as a tombstone row",
-  );
-  assert.equal(
-    commandsOf(server, "orchestration.launchThread").at(-1)!.threadId,
-    reviewer.id,
   );
   assert.equal(
     server.commands
@@ -722,50 +591,45 @@ test("a deletedAt tombstone in the inventory counts as deleted for a child and f
   );
 });
 
-test("a role launched after its parent was archived falls back instead of re-launching it", async (t) => {
+test("a role launched after its parent was archived refuses instead of re-launching it", async (t) => {
   const { host, server, spec } = await fixture(t);
   await host.createAgent(spec("worker-create", "Do the work"));
   const parent = parentOf(host)!;
   server.threads.get(parent.threadId)!.thread.archivedAt = STAMP;
-  const reviewer = await host.createAgent(
-    spec("review-run", "Review it", "reviewer"),
+  const launches = () => commandsOf(server, "orchestration.launchThread").length;
+  const before = launches();
+  await assert.rejects(
+    () => host.createAgent(spec("review-run", "Review it", "reviewer")),
+    (error: unknown) =>
+      error instanceof ProvenPreSendRefusalError &&
+      /parent thread is archived; move the task to another host/.test(
+        error.reason,
+      ),
   );
+  assert.equal(launches(), before, "the archived parent is not launched again");
   assert.equal(
-    commandsOf(server, "orchestration.launchThread").length,
-    2,
-    "the archived parent is not launched again",
-  );
-  assert.equal(
-    commandsOf(server, "orchestration.launchThread").at(-1)!.threadId,
-    reviewer.id,
-  );
-  assert.deepEqual(
-    commandsOf(server, "orchestration.launchThread").at(-1)!.modelSelection,
-    { instanceId: "synthetic-provider", model: "synthetic-model" },
-  );
-  assert.equal(
-    commandOf(server, "delegated_task.request")!.parentThreadId,
-    parent.threadId,
+    commandsOf(server, "delegated_task.request").length,
+    1,
     "only the worker became a child",
   );
   assert.notEqual(
     host.state.read().parents!["synthetic-task"]!.archivedAt,
     undefined,
   );
-  assert.match(host.state.read().nesting!.reason, /parent thread is archived/);
 });
 
-test("a parent gone from the complete inventory also falls back, without a refused command", async (t) => {
+test("a parent gone from the complete inventory refuses without sending anything", async (t) => {
   const { host, server, spec } = await fixture(t);
   await host.createAgent(spec("worker-create", "Do the work"));
   const parent = parentOf(host)!;
   server.threads.delete(parent.threadId);
-  const reviewer = await host.createAgent(
-    spec("review-run", "Review it", "reviewer"),
-  );
-  assert.equal(
-    commandsOf(server, "orchestration.launchThread").at(-1)!.threadId,
-    reviewer.id,
+  await assert.rejects(
+    () => host.createAgent(spec("review-run", "Review it", "reviewer")),
+    (error: unknown) =>
+      error instanceof ProvenPreSendRefusalError &&
+      /parent thread is deleted; move the task to another host/.test(
+        error.reason,
+      ),
   );
   assert.equal(
     commandsOf(server, "message.dispatch").some(
@@ -774,10 +638,14 @@ test("a parent gone from the complete inventory also falls back, without a refus
     false,
     "nothing is sent to a parent that no longer exists",
   );
-  assert.match(host.state.read().nesting!.reason, /parent thread is deleted/);
+  assert.equal(
+    commandsOf(server, "delegated_task.request").length,
+    1,
+    "no second child is created",
+  );
 });
 
-test("a nucleus provider that is not an ACP driver falls back with guidance before any send", async (t) => {
+test("a nucleus provider that is not an ACP driver refuses with guidance before any send", async (t) => {
   const { host, server, spec } = await fixture(t);
   server.controls.providers = [
     { ...nucleusProvider, driver: "codex" },
@@ -789,73 +657,47 @@ test("a nucleus provider that is not an ACP driver falls back with guidance befo
       models: [{ slug: "synthetic-model", name: "Synthetic" }],
     },
   ];
-  const created = await host.createAgent(spec("worker-create", "Do the work"));
+  await assert.rejects(
+    () => host.createAgent(spec("worker-create", "Do the work")),
+    (error: unknown) =>
+      error instanceof ProvenPreSendRefusalError &&
+      /not an ACP provider \(the acpRegistry driver\); run `nucleus t3 install`/.test(
+        error.reason,
+      ),
+  );
+  assert.equal(commandOf(server, "delegated_task.request"), undefined);
+  assert.equal(
+    commandOf(server, "orchestration.launchThread"),
+    undefined,
+    "no top-level role thread is launched",
+  );
+});
+
+test("a parent thread T3 will not run refuses the role instead of launching a top-level thread", async (t) => {
+  const { host, server, spec } = await fixture(t, { runOnLaunch: false });
+  // The parent launches, but its turn never starts: the bounded re-entry wait proves
+  // it, and the role refuses with the reason instead of landing on a top-level thread.
+  server.controls.runOnLaunch = false;
+  const started = Date.now();
+  await assert.rejects(
+    () => host.createAgent(spec("worker-create", "Do the work")),
+    (error: unknown) =>
+      error instanceof ProvenPreSendRefusalError &&
+      /parent thread did not reach a live run; restart the task or move it to another host/.test(
+        error.reason,
+      ),
+  );
+  assert.ok(Date.now() - started >= 300, "the re-entry wait is bounded, not skipped");
   assert.equal(commandOf(server, "delegated_task.request"), undefined);
   assert.equal(
     commandsOf(server, "orchestration.launchThread").length,
     1,
-    "only the top-level role thread is launched",
+    "only the parent was launched, never a top-level role thread",
   );
-  assert.equal(
-    commandsOf(server, "orchestration.launchThread")[0]!.threadId,
-    created.id,
-  );
-  assert.match(host.state.read().nesting!.reason, /acpRegistry/);
-});
-
-test("a role that runs in another checkout stays a top-level thread", async (t) => {
-  const { host, server, spec, acp } = await fixture(t);
-  await host.createAgent(spec("worker-create", "Do the work"));
-  const other = await host.createWorkspace({
-    title: "Review checkout",
-    requestId: "other-workspace",
-    directory: (await realpath(
-      mkdtempSync(join(tmpdir(), "t3code-nesting-other-")),
-    )) as string,
-    project: { projectId: "synthetic-project" },
-  });
-  const reviewSpec: HostAgentSpec = {
-    ...spec("review-run", "Review it", "reviewer"),
-    workspaceId: other.id,
-  };
-  const reviewer = await host.createAgent(reviewSpec);
-  assert.equal(
-    commandsOf(server, "delegated_task.request").length,
-    1,
-    "only the worker became a child",
-  );
-  const launched = commandsOf(server, "orchestration.launchThread").at(-1)!;
-  assert.equal(launched.threadId, reviewer.id);
-  assert.equal(launched.modelSelection.instanceId, "synthetic-provider");
-  assert.equal(
-    acp.released.length,
-    0,
-    "the parent keeps its held turn for the other role",
-  );
-});
-
-test("a parent thread T3 will not run is a proven fallback, not an unknown delivery", async (t) => {
-  const { host, server, spec } = await fixture(t, { runOnLaunch: false });
-  // The parent launches, but its turn never starts: the re-entry message must time out
-  // and the role must land on a top-level thread with its own command identity.
-  server.controls.runOnLaunch = false;
-  const created = await host.createAgent(spec("worker-create", "Do the work"));
-  assert.equal(commandOf(server, "delegated_task.request"), undefined);
-  assert.equal(
-    commandsOf(server, "orchestration.launchThread").at(-1)!.threadId,
-    created.id,
-  );
-  assert.equal(host.state.read().nesting?.state, "fallback");
-  // Parked: the next role in the same task goes straight to the fallback instead of
-  // paying the re-entry wait again.
-  const started = Date.now();
-  const reviewer = await host.createAgent(
-    spec("review-run", "Review it", "reviewer"),
-  );
-  assert.ok(Date.now() - started < 5_000);
-  assert.equal(
-    commandsOf(server, "orchestration.launchThread").at(-1)!.threadId,
-    reviewer.id,
+  assert.deepEqual(
+    Object.keys(host.state.read().agents),
+    [],
+    "no role thread is recorded for a refused create",
   );
 });
 

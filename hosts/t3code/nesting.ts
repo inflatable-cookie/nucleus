@@ -15,8 +15,9 @@
  *   agent holds it and forwards nothing, so a re-entry is never mistaken for a person
  *   speaking to the task. See `docs/knowledge/specs/t3code-host-adapter.md`.
  * - A child is created with no `workspaceStrategy`, so T3 builds it from the parent
- *   and starts it at once. That is why a role whose run needs a *different* checkout
- *   stays a top-level thread: the fallback, never a silent re-home.
+ *   and starts it at once. A role that cannot be a child — no provider, a finished
+ *   parent, a different checkout — refuses before the send with the reason and the
+ *   fix; there is no top-level fallback (Tom, 2026-11-19).
  * - Completion delivery is disposed for every child Nucleus creates and every
  *   follow-up it sends, so a child's result never wakes the parent agent. The nightly's
  *   own wake wordings are also ignored by the agent's binding, so even a lost dispose
@@ -36,7 +37,7 @@ import type { Profile, Task } from "../../shared/contracts";
 import type { AcpSessionSurface } from "../../shared/acp/surface";
 import { ProvenPreSendRefusalError } from "../../core/host";
 import type { T3RpcClient } from "./rpc";
-import { config, type RuntimeMode } from "./contracts";
+import { config, T3CompatibilityError, type RuntimeMode } from "./contracts";
 import { activeStatuses, type Projection, type T3Reads } from "./reads";
 import { identity, type T3IntentLedger } from "./intents";
 import { canonical, type T3State, type T3StateFile } from "./state";
@@ -91,15 +92,13 @@ export const childThreadId = (commandId: string): string =>
 export const childTaskId = (commandId: string): string =>
   `node:delegated-task:${commandId}`;
 
-/** How long a re-entry waits for the parent's run to appear before the path falls back. */
+/** How long a re-entry waits for the parent's run to appear before the create refuses. */
 export const REENTRY_TIMEOUT_MS = 20_000;
 /** How long a just-launched parent gets to show its run before it counts as released. */
 const LAUNCH_RUN_TIMEOUT_MS = 5_000;
 const REENTRY_POLL_MS = 500;
 /** A child create right after a re-entry is protected from a concurrent release sweep. */
 const HOLD_GRACE_MS = 60_000;
-/** After a child this host could not create, the task's next roles go straight to the fallback. */
-const FALLBACK_PARK_MS = 10 * 60_000;
 
 type ConfigModel = z.infer<
   typeof config
@@ -120,25 +119,41 @@ export interface T3NestingContext {
   requireConnection(): void;
   /** The service's ACP session surface; absent in a process that serves no ACP sessions. */
   acp(): AcpSessionSurface | null;
-  /** The profile's model options, from the launch's own config read (the host's fence). */
-  modelSelectionOptions(
+  /**
+   * The role's own model options, from the launch's config read. Computed by the
+   * host against the role's model, never the parent provider's (the parent carries
+   * the Nucleus ACP agent's model and no thinking carrier).
+   */
+  modelSelectionOptionsFor(
     profile: Profile,
     model: ConfigModel | undefined,
   ): Array<{ id: string; value: string | boolean }>;
-  /** The profile's runtime mode as one provider offers it (the host's fence). */
-  runtimeMode(
+  /** The role's runtime mode as the role's provider offers it. */
+  roleRuntimeMode(
+    provider: z.infer<typeof config>["providers"][number],
     profile: Profile,
-    supported: readonly RuntimeMode[] | undefined,
   ): RuntimeMode;
   /** A re-entry's bounded wait for the parent's run; the product default unless overridden. */
   reentryTimeoutMs?: number;
 }
+
+/**
+ * The answer one role create gives (nucleus#1366). It either names the child it
+ * created, or refuses before the send with the reason and the fix the task shows;
+ * there is no third answer that launches a top-level role thread.
+ */
+export type NestedCreateResult =
+  | { ok: true; id: string; workspaceId: string }
+  | { ok: false; reason: string };
 
 /** One create this module may own: everything the launch already read, plus the child's identity. */
 export interface NestedCreateInput {
   spec: HostAgentSpec;
   attempt: HostAgentAttempt;
   profile: Profile;
+  /** The role's own provider entry and model from the launch's config read. */
+  roleProvider: ConfigProvider;
+  roleModel: ConfigModel | undefined;
   workspace: { id: string; projectId: string; directory: string };
   /** The launch's one `server.getConfig` read. */
   observed: z.infer<typeof config>;
@@ -177,13 +192,13 @@ export class T3Nesting {
       : undefined;
   }
 
-  /** What the host status reports: whether this host is nesting, or why it is not. */
+  /** What the host status reports: whether this host can nest roles, or why it cannot. */
   statusLine(): string {
     const nesting = this.core.state.read().nesting;
     if (!nesting) return "native parenting not used yet";
     return nesting.state === "nested"
       ? "native parenting on the nucleus ACP provider"
-      : `native parenting off: ${nesting.reason}`;
+      : `native parenting unavailable: ${nesting.reason}`;
   }
 
   /**
@@ -197,7 +212,7 @@ export class T3Nesting {
     if (!this.core.acp()) {
       this.core.state.update((state) => {
         state.nesting = {
-          state: "fallback",
+          state: "unavailable",
           reason: "this process serves no ACP sessions",
           at,
         };
@@ -208,44 +223,54 @@ export class T3Nesting {
     this.core.state.update((state) => {
       state.nesting = provider.ok
         ? { state: "nested", reason: "", at }
-        : { state: "fallback", reason: provider.reason, at };
+        : { state: "unavailable", reason: provider.reason, at };
     });
   }
 
   /**
-   * Create one role thread as a child of the task's parent, or answer null when this
-   * task must fall back to a top-level role thread. A null answer means *nothing was
-   * sent*: every reason is proven before the child command, and a child command whose
+   * Create one role thread as a child of the task's parent, or refuse before the
+   * send with the reason and the fix (nucleus#1366). A refusal is *nothing sent*:
+   * every reason is proven before the child command, and a child command whose
    * outcome is unknown is resolved by reading the deterministic child id first.
    */
-  async create(
-    input: NestedCreateInput,
-  ): Promise<{ id: string; workspaceId: string } | null> {
+  async create(input: NestedCreateInput): Promise<NestedCreateResult> {
     const taskId = labelTask(input.attempt.labels);
-    if (!taskId) return this.degrade("", "the launch names no task");
-    if (this.parked(taskId)) return null;
+    if (!taskId)
+      return this.unavailable("", "the launch names no task");
     const acp = this.core.acp();
     if (!acp)
-      return this.degrade(
+      return this.unavailable(
         taskId,
-        `this process serves no ACP sessions, so the ${PARENT_PROVIDER} provider has nothing to run`,
+        `T3 provider not ready: this process serves no ACP sessions, so the ${PARENT_PROVIDER} provider has nothing to run; run \`nucleus t3 install\` on an ACP-capable host, or move the task to another host`,
       );
     const provider = this.parentProvider(input.observed);
-    if (!provider.ok) return this.degrade(taskId, provider.reason);
+    if (!provider.ok) return this.unavailable(taskId, provider.reason);
     const existing = this.parentOf(taskId);
     if (existing) {
-      // A role whose run needs another checkout cannot be a child: a child with no
-      // workspace strategy inherits the parent's worktree, and one with a strategy never
-      // starts outside T3's own MCP handler. Such a role stays a top-level thread.
-      if (existing.workspaceId !== input.workspace.id) return null;
-      // A parent that is finished (archived, or gone from a complete inventory) is not
-      // re-launched: its task works the rest of its roles as top-level threads. A
-      // second parent thread would orphan this task's children and re-mint its binding.
-      if (existing.archivedAt) return null;
+      // A child with no workspace strategy inherits the parent's checkout, and one
+      // with a strategy never starts outside T3's own MCP handler. A role whose run
+      // needs another checkout therefore cannot be a child, and there is no
+      // top-level fallback any more: the task waits visibly instead.
+      if (existing.workspaceId !== input.workspace.id)
+        return this.unavailable(
+          taskId,
+          `the task's parent thread is bound to another checkout (${existing.workspaceId}, this run uses ${input.workspace.id}); move the task to another host or restart it on a new workspace`,
+        );
+      // A parent that is finished (archived, or gone from a complete inventory) is
+      // not re-launched: a second parent thread would orphan this task's children
+      // and re-mint its binding under a thread nothing runs.
+      if (existing.archivedAt)
+        return this.unavailable(
+          taskId,
+          "the task's parent thread is archived; move the task to another host or restart it",
+        );
       const gone = await this.parentGone(existing).catch(() => null);
       if (gone) {
         this.finishParent(taskId, gone);
-        return null;
+        return this.unavailable(
+          taskId,
+          `the task's parent thread is ${gone}; move the task to another host or restart it`,
+        );
       }
       // The create owns the turn from here: a concurrent sweep must not release it
       // between the parent-run read and the child command.
@@ -255,7 +280,11 @@ export class T3Nesting {
       });
     }
     const parent = existing ?? (await this.launchParent(input, provider, acp));
-    if (!parent) return null;
+    if (!parent)
+      return this.unavailable(
+        taskId,
+        "the task's parent thread could not be created; restart the task or move it to another host",
+      );
     const commandId = identity(
       "child",
       canonical([this.core.hostId(), input.attempt.requestId]),
@@ -269,14 +298,17 @@ export class T3Nesting {
       existing ? 0 : LAUNCH_RUN_TIMEOUT_MS,
     );
     if (!live)
-      return this.park(taskId, "the parent thread did not reach a live run");
-    const options = this.core.modelSelectionOptions(
+      return this.unavailable(
+        taskId,
+        "the task's parent thread did not reach a live run; restart the task or move it to another host",
+      );
+    const options = this.core.modelSelectionOptionsFor(
       input.profile,
-      provider.model,
+      input.roleModel,
     );
-    const runtimeMode = this.core.runtimeMode(
+    const runtimeMode = this.core.roleRuntimeMode(
+      input.roleProvider,
       input.profile,
-      provider.supportedRuntimeModes,
     );
     const payload = {
       type: "delegated_task.request",
@@ -338,24 +370,22 @@ export class T3Nesting {
       );
     } catch (error) {
       if (await this.adoptChild(parent, commandId))
-        return { id: threadId, workspaceId: input.workspace.id };
-      if (!(error instanceof ProvenPreSendRefusalError)) {
-        this.core.state.update((state) => {
-          delete state.agents[threadId];
-        });
-        throw error;
-      }
+        return { ok: true, id: threadId, workspaceId: input.workspace.id };
       this.core.state.update((state) => {
         delete state.agents[threadId];
       });
-      return this.park(taskId, "the child was refused before delivery");
+      if (!(error instanceof ProvenPreSendRefusalError)) throw error;
+      return this.unavailable(
+        taskId,
+        `the role child was refused before delivery: ${error.reason}; restart the task or move it to another host`,
+      );
     }
     this.core.state.update((state) => {
       const record = state.parents?.[taskId];
       if (record) delete record.releasedAt;
     });
     await this.dispose(parent, childTaskId(commandId)).catch(() => undefined);
-    return { id: threadId, workspaceId: input.workspace.id };
+    return { ok: true, id: threadId, workspaceId: input.workspace.id };
   }
 
   /**
@@ -387,6 +417,12 @@ export class T3Nesting {
         task.phase === "done" ||
         task.phase === "cancelled"
       ) {
+        // A finished task creates no further child, so its held turn is released at
+        // once — the create grace window is for live work and must never keep a
+        // terminal thread busy against the closeout lane (nucleus#1366).
+        await this.releaseIfLive(parent).catch((error) => {
+          if (isHostOperationTimeout(error)) throw error;
+        });
         await this.archiveParent(parent).catch((error) => {
           if (isHostOperationTimeout(error)) throw error;
         });
@@ -432,33 +468,34 @@ export class T3Nesting {
     const provider: ConfigProvider | undefined = observed.providers.find(
       (candidate) => candidate.instanceId === PARENT_PROVIDER,
     );
+    const install = `run \`nucleus t3 install\``;
     if (!provider) {
       const stored = observed.settings?.providerInstances?.[PARENT_PROVIDER];
       if (stored) {
         if (stored.driver !== undefined && stored.driver !== PARENT_DRIVER)
           return {
             ok: false,
-            reason: `T3Code provider ${PARENT_PROVIDER} is not an ACP provider (the ${PARENT_DRIVER} driver)`,
+            reason: `T3 provider not ready: T3Code provider ${PARENT_PROVIDER} is not an ACP provider (the ${PARENT_DRIVER} driver); ${install}`,
           };
         return {
           ok: false,
-          reason: `T3Code provider ${PARENT_PROVIDER} is registered but not ready (${stored.enabled === false ? "disabled" : "status unknown; T3Code has not reported a probe result"})`,
+          reason: `T3 provider not ready: T3Code provider ${PARENT_PROVIDER} is registered but not ready (${stored.enabled === false ? "disabled" : "status unknown; T3Code has not reported a probe result"}); ${install}`,
         };
       }
       return {
         ok: false,
-        reason: `T3Code has no ${PARENT_PROVIDER} ACP provider instance; register the installed nucleus-acp command as an ACP provider named ${PARENT_PROVIDER}`,
+        reason: `T3 provider not ready: T3Code has no ${PARENT_PROVIDER} ACP provider instance; ${install}`,
       };
     }
     if (provider.driver !== undefined && provider.driver !== PARENT_DRIVER)
       return {
         ok: false,
-        reason: `T3Code provider ${PARENT_PROVIDER} is not an ACP provider (the ${PARENT_DRIVER} driver)`,
+        reason: `T3 provider not ready: T3Code provider ${PARENT_PROVIDER} is not an ACP provider (the ${PARENT_DRIVER} driver); ${install}`,
       };
     if (!provider.enabled || provider.status !== "ready")
       return {
         ok: false,
-        reason: `T3Code provider ${PARENT_PROVIDER} is registered but not ready (${provider.enabled ? provider.status : "disabled"})${provider.message ? `: ${provider.message}` : ""}`,
+        reason: `T3 provider not ready: T3Code provider ${PARENT_PROVIDER} is registered but not ready (${provider.enabled ? provider.status : "disabled"})${provider.message ? `: ${provider.message}` : ""}; ${install}`,
       };
     const model =
       provider.models.find((candidate) => candidate.slug === PARENT_MODEL) ??
@@ -466,7 +503,7 @@ export class T3Nesting {
     if (!model)
       return {
         ok: false,
-        reason: `T3Code provider ${PARENT_PROVIDER} reports no model; the Nucleus ACP agent advertises ${PARENT_MODEL}`,
+        reason: `T3 provider not ready: T3Code provider ${PARENT_PROVIDER} reports no model; the Nucleus ACP agent advertises ${PARENT_MODEL}; ${install}`,
       };
     return {
       ok: true,
@@ -571,14 +608,27 @@ export class T3Nesting {
       commandId,
       "orchestration.launchThread",
       payload,
-      undefined,
+      () => {
+        // The launch guard is a synchronous pre-send fence: a guard that turned false
+        // refuses before the parent thread is created, so a refused role leaves no
+        // thread behind.
+        if (input.spec.guard && !input.spec.guard.stillAllowed())
+          throw new ProvenPreSendRefusalError("T3Code launch guard changed");
+      },
       undefined,
       { resendUnknownAfterRead: true },
     );
-    if (this.core.reads.threadShapePending)
-      await this.core.reads
-        .readProjection(threadId, "observation")
-        .catch(() => undefined);
+    if (this.core.reads.threadShapePending) {
+      // The first created thread is the shape this connection proves. A
+      // compatibility failure must surface (the host goes offline with the field
+      // named); a thread T3 has not listed yet is a transient read the next pass
+      // owns, and must not fail the launch.
+      try {
+        await this.core.reads.readProjection(threadId, "observation");
+      } catch (error) {
+        if (error instanceof T3CompatibilityError) throw error;
+      }
+    }
     return this.parentOf(taskId) ?? record;
   }
 
@@ -659,6 +709,22 @@ export class T3Nesting {
       if (Date.now() >= deadline) return null;
       await new Promise((resolve) => setTimeout(resolve, REENTRY_POLL_MS));
     }
+  }
+
+  /** Release the held turn when the parent still has a live run to release. */
+  private async releaseIfLive(parent: ParentThread): Promise<void> {
+    if (!this.core.reads.observes(parent.threadId)) return;
+    let projection: Projection;
+    try {
+      projection = await this.core.reads.readProjection(
+        parent.threadId,
+        "observation",
+      );
+    } catch {
+      return;
+    }
+    if (!projection.runs.some((run) => activeStatuses.has(run.status))) return;
+    await this.release(parent);
   }
 
   private async release(parent: ParentThread): Promise<void> {
@@ -831,62 +897,37 @@ export class T3Nesting {
   }
 
   /**
-   * Record a parent this task will not use again, so later roles fall back at once and
-   * the sweep leaves it alone. The record stays: it is how the host remembers that a
-   * role of this task is a fallback thread rather than a child.
+   * Record a parent this task will not use again, so the sweep leaves it alone and
+   * later roles refuse with the reason instead of re-launching a parent that would
+   * orphan this task's children.
    */
   private finishParent(taskId: string, why: "archived" | "deleted"): void {
     this.core.state.update((state) => {
       const current = state.parents?.[taskId];
       if (current) current.archivedAt ??= new Date().toISOString();
       state.nesting = {
-        state: "fallback",
-        reason: `the task parent thread is ${why}`,
+        state: "unavailable",
+        reason: `the task's parent thread is ${why}`,
         at: new Date().toISOString(),
       };
     });
   }
 
-  // ---------------------------------------------------------------------- fallbacks
+  // ---------------------------------------------------------------------- refusals
 
-  /** Enough of the fallback to be visible on the host status, without touching the task. */
-  private degrade(taskId: string, reason: string): null {
+  /**
+   * One role create this host cannot make: record why on the host status and answer
+   * the reason the task shows. Nothing was sent and nothing is launched — the task
+   * waits visibly with the reason and the fix (nucleus#1366).
+   */
+  private unavailable(taskId: string, reason: string): NestedCreateResult {
     this.core.state.update((state) => {
       state.nesting = {
-        state: "fallback",
+        state: "unavailable",
         reason,
         at: new Date().toISOString(),
       };
     });
-    if (taskId) this.parkUntil(taskId);
-    return null;
-  }
-
-  /** Park the native path for this task after a child this host could not complete. */
-  private park(taskId: string, reason: string): null {
-    this.core.state.update((state) => {
-      state.nesting = {
-        state: "fallback",
-        reason,
-        at: new Date().toISOString(),
-      };
-    });
-    this.parkUntil(taskId);
-    return null;
-  }
-
-  private parkUntil(taskId: string): void {
-    this.core.state.update((state) => {
-      const parent = state.parents?.[taskId];
-      if (parent)
-        parent.fallbackUntil = new Date(
-          Date.now() + FALLBACK_PARK_MS,
-        ).toISOString();
-    });
-  }
-
-  private parked(taskId: string): boolean {
-    const until = this.parentOf(taskId)?.fallbackUntil;
-    return until !== undefined && Date.parse(until) > Date.now();
+    return { ok: false, reason };
   }
 }

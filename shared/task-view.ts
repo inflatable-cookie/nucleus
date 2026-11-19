@@ -228,12 +228,15 @@ export function taskStopKind(task: Task, runs: Run[] = [], budget?: TaskBudgetVi
   }
   if (incidentBindsCurrentWork(task, runs)) return "incident";
   if (episodeBindsCurrentWork(task)) return "recovery";
+  // A prerequisite wait names what the task waits for, so a task parked in an
+  // attention phase by it is waiting, not attention (the one attention
+  // projection, nucleus#1366). The operator-correctable cases stay attention.
+  if (task.prerequisiteWait && !task.prerequisiteWait.releasedAt) return "wait";
   if (task.phase === "needs_attention") return "attention";
   // A checkpointed reviewer or a reported block is the stop even before any
   // incident bookkeeping exists; the runs are the evidence, never a flag pair.
   if (runs.some(run => run.role === "reviewer" && !run.released && !run.completion && (run.reviewCheckpoints?.length ?? 0) > 0)) return "run";
   if (["blocked", "error"].includes(task.phase) && task.completion) return "run";
-  if (task.prerequisiteWait && !task.prerequisiteWait.releasedAt) return "wait";
   if (task.phase === "queued") return "wait";
   return null;
 }

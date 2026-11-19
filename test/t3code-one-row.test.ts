@@ -6,29 +6,59 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { T3CodeHost } from '../hosts/t3code/adapter';
 import { taskWorkspaceTitle } from '../core/workspaces/workspace-title';
+import { PARENT_MODEL, PARENT_PROVIDER } from '../hosts/t3code/nesting';
+import { SNOOZE_HORIZON_MS, SNOOZE_RENEW_BEFORE_MS } from '../hosts/t3code/presentation';
+import type { AcpSessionSurface } from '../shared/acp/surface';
 import type { HostAgentSpec } from '../shared/host';
 import type { Profile, Task } from '../shared/contracts';
-import { SUPPORT_THREAD_TAG } from '../hosts/t3code/one-row';
+import type { TaskAttention } from '../shared/task-attention';
 import { t3Fake, STAMP, syntheticRun, syntheticRuntimeRequest } from './support/t3code-fake';
 import { storedT3Labels } from './support/t3code-labels';
 
 /**
- * One row per task on T3 (Tom, 2026-11-15): support threads are tagged and
- * linked from the worker's conversation, the worker row carries the task's step,
- * and none of it needs T3's hide setting. Every record here is a synthetic
- * Nightly shape served by the fake transport; no live T3 is touched.
+ * A task's one row on T3 (Tom, 2026-11-15; nucleus#1366): the parent thread is the
+ * row, it names the step its role children are doing, and it is snoozed — never
+ * settled — while the task waits on nothing Nucleus runs and needs no one. Every
+ * record here is a synthetic Nightly shape served by the fake transport; no live T3
+ * is touched.
  */
 
 const profile: Profile = { id: 'synthetic-profile', name: 'Synthetic', provider: 'synthetic-provider', model: 'synthetic-model',
   available: true, problem: '', notes: '', supportedThinking: [] };
 const taskId = 'synthetic-task';
 
+const nucleusProvider = {
+  instanceId: PARENT_PROVIDER, displayName: 'Nucleus', driver: 'acpRegistry', enabled: true, status: 'ready',
+  models: [{ slug: PARENT_MODEL, name: 'Nucleus' }],
+};
+
+/** The ACP surface: the parent's held turn ends when the service releases it. */
+function acpStub(server: Awaited<ReturnType<typeof t3Fake>>) {
+  const released: string[] = [];
+  const surface: AcpSessionSurface = {
+    bind: input => ({ sessionId: `session:${input.taskId}`, taskId: input.taskId, bindingPath: `/synthetic/acp/sessions/${input.taskId}.json` }),
+    async turn() { throw new Error('the agent is not driven in this test'); },
+    async message() { throw new Error('the agent is not driven in this test'); },
+    release(sessionId) {
+      released.push(sessionId);
+      for (const thread of server.threads.values()) {
+        if (thread.thread.providerInstanceId !== PARENT_PROVIDER) continue;
+        for (const run of thread.runs) if (['preparing', 'starting', 'running', 'waiting'].includes(run.status)) run.status = 'completed';
+      }
+    },
+  };
+  return { surface, released };
+}
+
 async function fixture(t: TestContext) {
   const root = mkdtempSync(join(tmpdir(), 't3code-one-row-'));
   const directory = await realpath(root);
   const server = await t3Fake(t, directory);
-  const options = { endpoint: server.endpoint, bearer: 'synthetic-bearer', statePath: join(root, 'state.json'), timeoutMs: 2_000, probeThreadId: 'synthetic-probe' };
-  const host = new T3CodeHost(options);
+  server.controls.providers = [nucleusProvider, { instanceId: 'synthetic-provider', displayName: 'Synthetic provider', driver: 'codex',
+    enabled: true, status: 'ready', models: [{ slug: 'synthetic-model', name: 'Synthetic model' }] }];
+  const acp = acpStub(server);
+  const host = new T3CodeHost({ endpoint: server.endpoint, bearer: 'synthetic-bearer', statePath: join(root, 'state.json'),
+    timeoutMs: 2_000, probeThreadId: 'synthetic-probe', acp: () => acp.surface, reentryTimeoutMs: 300 });
   t.after(() => host.close());
   await host.connect();
   const workspace = await host.createWorkspace({ title: 'Synthetic worktree', requestId: 'workspace-intent', directory, project: { projectId: 'synthetic-project' } });
@@ -39,221 +69,207 @@ async function fixture(t: TestContext) {
   /** The task record core hands the adapter with the shared title helper's answer. */
   const task = (overrides: Partial<Task> = {}): Task => ({ id: taskId, number: 225, title: 'Synthetic role', held: false,
     hostId: host.hostId, workspaceId: workspace.id, phase: 'awaiting_review', ...overrides }) as Task;
-  return { root, directory, server, options, host, workspace, spec, task };
+  const parentOf = () => Object.values(host.state.read().parents ?? {})[0];
+  return { root, directory, server, host, workspace, spec, task, acp, parentOf };
 }
 
-/** The worker's own ended run, with the root node a `thread.created.record` card must name. */
-const workerRun = (id = 'worker-run', rootNodeId: string | null = 'worker-root-node') => [syntheticRun(id, 1, { id, status: 'completed', rootNodeId })];
+/** One recorded command by dispatch type, or by method for a launch (which carries no `type`). */
+const commandsOf = (server: Awaited<ReturnType<typeof t3Fake>>, type: string) =>
+  server.commands.filter(command => (command.type ?? command.method) === type);
+const waiting = (cause = 'Waiting on nucleus#1364'): TaskAttention => ({ state: 'waiting', cause });
 
-test('a support thread is tagged and linked once from the worker conversation (acceptance 1)', async t => {
-  const { host, server, spec } = await fixture(t);
-  const worker = await host.createAgent(spec('worker-launch'));
-  server.threads.get(worker.id)!.runs = workerRun();
+test('the parent row names the step its role children are doing (acceptance 2)', async t => {
+  const { host, server, spec, task, parentOf } = await fixture(t);
+  await host.createAgent(spec('worker-launch'));
+  const parent = parentOf()!;
   const reviewer = await host.createAgent(spec('reviewer-launch', 'reviewer'));
-
-  const tag = server.commands.find(command => command.type === 'thread.tag.set');
-  assert.ok(tag, `the reviewer thread is tagged (${JSON.stringify(server.commands.map(command => command.type ?? command.method))})`);
-  assert.equal(tag!.threadId, reviewer.id);
-  assert.equal(tag!.tag, SUPPORT_THREAD_TAG);
-  assert.equal(tag!.tagged, true);
-  assert.deepEqual(server.threads.get(reviewer.id)!.thread.tags, [SUPPORT_THREAD_TAG]);
-  assert.equal(server.threads.get(worker.id)!.thread.tags, undefined, 'the worker row is never tagged');
-
-  const cards = () => server.commands.filter(command => command.type === 'thread.created.record');
-  assert.equal(cards().length, 1);
-  assert.deepEqual({ parentThreadId: cards()[0]!.parentThreadId, parentRunId: cards()[0]!.parentRunId,
-    parentNodeId: cards()[0]!.parentNodeId, targetThreadId: cards()[0]!.targetThreadId, targetRunId: cards()[0]!.targetRunId },
-  { parentThreadId: worker.id, parentRunId: 'worker-run', parentNodeId: 'worker-root-node',
-    targetThreadId: reviewer.id, targetRunId: null });
-  // The Nightly's own handler accepts the command, so the shape is real: one
-  // completed `thread_created` card on the worker's conversation.
-  const served = server.threads.get(worker.id)!.turnItems.filter((item: Record<string, unknown>) => item.type === 'thread_created');
-  assert.equal(served.length, 1);
-  assert.equal(served[0]!.targetThreadId, reviewer.id);
-  assert.equal(served[0]!.runId, 'worker-run');
-  assert.equal(served[0]!.title, server.threads.get(reviewer.id)!.thread.title, 'the card is titled with the thread it opens');
-
-  // Every later pass retries the recorded effects: nothing is sent twice.
-  const commands = server.commands.length;
-  for (let pass = 0; pass < 3; pass++) await host.reconcileThreadTitles([]);
-  assert.equal(server.commands.length, commands, 'a retry records no duplicate tag or card');
-  assert.deepEqual(host.state.read().supportRows, {}, 'a settled row keeps no pending record');
-});
-
-test('a card waits for the worker run that owns a root node, then records once (acceptance 1)', async t => {
-  const { host, server, spec } = await fixture(t);
-  const worker = await host.createAgent(spec('worker-launch'));
-  // The worker's run has not produced its root node yet: no card can name it.
-  server.threads.get(worker.id)!.runs = workerRun('worker-run', null);
-  const reviewer = await host.createAgent(spec('reviewer-launch', 'reviewer'));
-  assert.equal(server.commands.filter(command => command.type === 'thread.created.record').length, 0);
-  assert.ok(host.state.read().supportRows?.[reviewer.id], 'the pending card is recorded durably');
-
-  server.threads.get(worker.id)!.runs = workerRun();
-  await host.reconcileThreadTitles([]);
-  assert.equal(server.commands.filter(command => command.type === 'thread.created.record').length, 1);
-  assert.equal(server.threads.get(worker.id)!.turnItems.filter((item: Record<string, unknown>) => item.type === 'thread_created').length, 1);
-});
-
-test('the worker row names the step the task is on and the input a support thread needs (acceptance 2)', async t => {
-  const { host, server, spec, task } = await fixture(t);
-  const worker = await host.createAgent(spec('worker-launch'));
-  server.threads.get(worker.id)!.runs = workerRun();
-  const reviewer = await host.createAgent(spec('reviewer-launch', 'reviewer'));
-  const reviewerProjection = server.threads.get(reviewer.id)!;
-  reviewerProjection.runs = [syntheticRun('nightly-review-run', 1, { id: 'nightly-review-run', status: 'running', rootNodeId: 'review-node' })];
+  server.threads.get(reviewer.id)!.runs = [syntheticRun('nightly-review-run', 1, { id: 'nightly-review-run', status: 'running', rootNodeId: 'review-node' })];
 
   // The reviewer is running: the one row says so, on top of the task's own state title.
-  const state = task({ agentId: worker.id });
+  const state = task({ agentId: parent.threadId });
   await host.setTaskWorkspaceTitle(state, taskWorkspaceTitle(state), 'row-title-1', false);
-  const titles = () => server.commands.filter(command => command.type === 'thread.metadata.update' && command.threadId === worker.id);
+  const titles = () => commandsOf(server, 'thread.metadata.update').filter(command => command.threadId === parent.threadId);
   assert.equal(titles().at(-1)!.title, 'Review: 225 Synthetic role · reviewing');
-  assert.equal(server.threads.get(worker.id)!.thread.title, 'Review: 225 Synthetic role · reviewing');
+  assert.equal(server.threads.get(parent.threadId)!.thread.title, 'Review: 225 Synthetic role · reviewing');
 
-  // The reviewer asks its own question: the row names that instead, and the row
-  // is surfaced even when the reviewer's own run is not live, because a hidden
-  // thread's pending approval is T3's to show.
-  const workerProjection = server.threads.get(worker.id)!;
-  workerProjection.runs = workerRun();
-  await host.settleWorkerThread(worker.id, 'worker-run');
-  assert.equal(workerProjection.thread.settledOverride, 'settled');
+  // The reviewer asks its own question: the row names that instead.
+  const reviewerProjection = server.threads.get(reviewer.id)!;
   reviewerProjection.runs = [];
   reviewerProjection.runtimeRequests = [syntheticRuntimeRequest({ id: 'reviewer-question', status: 'pending', kind: 'user_input' })];
-  await host.reconcileThreadTitles([state]);
+  await host.reconcileTaskRow(taskId, waiting());
   assert.equal(titles().at(-1)!.title, 'Review: 225 Synthetic role · reviewer needs input');
-  assert.equal(workerProjection.thread.settledOverride, 'active', 'the pending question surfaces the worker row');
-  assert.equal(server.commands.filter(command => command.type === 'thread.unsettle' && command.threadId === worker.id).length, 1);
-
-  // Nothing changes: the sweep sends no second write.
-  const writes = titles().length;
-  await host.reconcileThreadTitles([state]);
-  await host.reconcileThreadTitles([state]);
-  assert.equal(titles().length, writes, 'an unchanged row sends nothing');
 
   // The question is answered and the reviewer ends: the row drops the step.
   reviewerProjection.runtimeRequests = [];
   reviewerProjection.runs = [syntheticRun('nightly-review-run', 1, { id: 'nightly-review-run', status: 'completed', rootNodeId: 'review-node' })];
-  await host.reconcileThreadTitles([state]);
+  await host.reconcileTaskRow(taskId, waiting());
   assert.equal(titles().at(-1)!.title, 'Review: 225 Synthetic role');
 });
 
 test('a later round writes the same step again under a fresh command identity (acceptance 2)', async t => {
-  const { host, server, spec, task } = await fixture(t);
-  const worker = await host.createAgent(spec('worker-launch'));
-  server.threads.get(worker.id)!.runs = workerRun();
+  const { host, server, spec, task, parentOf } = await fixture(t);
+  await host.createAgent(spec('worker-launch'));
+  const parent = parentOf()!;
   const reviewer = await host.createAgent(spec('reviewer-launch', 'reviewer'));
   const reviewerProjection = server.threads.get(reviewer.id)!;
-  const state = task({ agentId: worker.id });
-  const titles = () => server.commands.filter(command => command.type === 'thread.metadata.update' && command.threadId === worker.id);
+  const state = task({ agentId: parent.threadId });
+  const titles = () => commandsOf(server, 'thread.metadata.update').filter(command => command.threadId === parent.threadId);
   const running = [syntheticRun('nightly-review-run', 1, { id: 'nightly-review-run', status: 'running', rootNodeId: 'review-node' })];
   const ended = [syntheticRun('nightly-review-run', 1, { id: 'nightly-review-run', status: 'completed', rootNodeId: 'review-node' })];
 
-  // The task's own state title is the row's base, with no step while nothing runs.
   reviewerProjection.runs = ended;
   await host.setTaskWorkspaceTitle(state, taskWorkspaceTitle(state), 'row-base', false);
   assert.equal(titles().at(-1)!.title, 'Review: 225 Synthetic role');
 
-  // Round one: the reviewer runs and the row names it, then the reviewer ends
-  // and the row drops the step.
   reviewerProjection.runs = running;
-  await host.reconcileThreadTitles([state]);
+  await host.reconcileTaskRow(taskId, waiting());
   assert.equal(titles().at(-1)!.title, 'Review: 225 Synthetic role · reviewing');
   reviewerProjection.runs = ended;
-  await host.reconcileThreadTitles([state]);
+  await host.reconcileTaskRow(taskId, waiting());
   assert.equal(titles().at(-1)!.title, 'Review: 225 Synthetic role');
 
-  // Round two asks for the same step text again. The settled command from round
-  // one must not stand in for it: the row needs a fresh identity per round, so
-  // the previous title is never left on the row while the reviewer works.
+  // Round two asks for the same step text again: the row needs a fresh identity, so
+  // the previous title is never left on it while the reviewer works.
   reviewerProjection.runs = running;
-  await host.reconcileThreadTitles([state]);
-  assert.equal(titles().at(-1)!.title, 'Review: 225 Synthetic role · reviewing',
-    `round two names the step again (${JSON.stringify(titles().map(command => command.title))})`);
-  assert.equal(server.threads.get(worker.id)!.thread.title, 'Review: 225 Synthetic role · reviewing');
-  // A repeated input question is the same recurrence: it is written again too.
-  reviewerProjection.runs = [];
-  reviewerProjection.runtimeRequests = [syntheticRuntimeRequest({ id: 'reviewer-question-1', status: 'pending', kind: 'user_input' })];
-  await host.reconcileThreadTitles([state]);
-  reviewerProjection.runtimeRequests = [];
-  await host.reconcileThreadTitles([state]);
-  reviewerProjection.runtimeRequests = [syntheticRuntimeRequest({ id: 'reviewer-question-2', status: 'pending', kind: 'user_input' })];
-  await host.reconcileThreadTitles([state]);
-  assert.equal(titles().at(-1)!.title, 'Review: 225 Synthetic role · reviewer needs input');
-  assert.equal(server.threads.get(worker.id)!.thread.title, 'Review: 225 Synthetic role · reviewer needs input');
-  // One command identity per write, none reused.
+  await host.reconcileTaskRow(taskId, waiting());
+  assert.equal(titles().at(-1)!.title, 'Review: 225 Synthetic role · reviewing');
   assert.equal(new Set(titles().map(command => command.commandId)).size, titles().length);
 });
 
-test('a superseded support thread never leaves its fault on the row (acceptance 2)', async t => {
-  const { host, server, spec, task } = await fixture(t);
-  const worker = await host.createAgent(spec('worker-launch'));
-  server.threads.get(worker.id)!.runs = workerRun();
-  const state = task({ agentId: worker.id });
-  const titles = () => server.commands.filter(command => command.type === 'thread.metadata.update' && command.threadId === worker.id);
+test('a superseded role thread never leaves its fault on the row (acceptance 2)', async t => {
+  const { host, server, spec, task, parentOf } = await fixture(t);
+  await host.createAgent(spec('worker-launch'));
+  const parent = parentOf()!;
+  const state = task({ agentId: parent.threadId });
+  const titles = () => commandsOf(server, 'thread.metadata.update').filter(command => command.threadId === parent.threadId);
   await host.setTaskWorkspaceTitle(state, taskWorkspaceTitle(state), 'row-base', false);
 
-  // A recovery thread whose run failed names the fault on the row.
   const failedRecovery = await host.createAgent(spec('recovery-launch-1', 'recovery'));
   server.threads.get(failedRecovery.id)!.runs = [syntheticRun('recovery-run-1', 1, { id: 'recovery-run-1', status: 'failed', rootNodeId: 'recovery-node-1' })];
-  await host.reconcileThreadTitles([state]);
+  await host.reconcileTaskRow(taskId, waiting());
   assert.equal(titles().at(-1)!.title, 'Review: 225 Synthetic role · blocked: recovery');
 
-  // The replacement recovery thread runs and completes: the displaced thread's
-  // fault is history, so the row goes back to the task's own state title.
   const recovery = await host.createAgent(spec('recovery-launch-2', 'recovery'));
   server.threads.get(recovery.id)!.runs = [syntheticRun('recovery-run-2', 1, { id: 'recovery-run-2', status: 'completed', rootNodeId: 'recovery-node-2' })];
-  await host.reconcileThreadTitles([state]);
-  assert.equal(titles().at(-1)!.title, 'Review: 225 Synthetic role',
-    `the superseded thread's fault is dropped (${JSON.stringify(titles().map(command => command.title))})`);
-  assert.equal(server.threads.get(worker.id)!.thread.title, 'Review: 225 Synthetic role');
-  // The live replacement still names its own step.
+  await host.reconcileTaskRow(taskId, waiting());
+  assert.equal(titles().at(-1)!.title, 'Review: 225 Synthetic role', "the superseded thread's fault is dropped");
+
   server.threads.get(recovery.id)!.runs = [syntheticRun('recovery-run-3', 1, { id: 'recovery-run-3', status: 'running', rootNodeId: 'recovery-node-2' })];
-  await host.reconcileThreadTitles([state]);
+  await host.reconcileTaskRow(taskId, waiting());
   assert.equal(titles().at(-1)!.title, 'Review: 225 Synthetic role · recovery');
 });
 
-test('a task title already naming the step is not repeated on the row (acceptance 2)', async t => {
-  const { host, server, spec, task } = await fixture(t);
-  const worker = await host.createAgent(spec('worker-launch'));
-  server.threads.get(worker.id)!.runs = workerRun();
-  const reviewer = await host.createAgent(spec('reviewer-launch', 'reviewer'));
-  server.threads.get(reviewer.id)!.runs = [syntheticRun('nightly-review-run', 1, { id: 'nightly-review-run', status: 'running', rootNodeId: 'review-node' })];
-  const state = task({ agentId: worker.id, phase: 'reviewing' });
-  await host.setTaskWorkspaceTitle(state, taskWorkspaceTitle(state), 'row-title-reviewing', false);
-  assert.equal(server.threads.get(worker.id)!.thread.title, 'Reviewing: 225 Synthetic role');
+test('a waiting task snoozes its parent row once, reads the horizon back, and renews before it lapses', async t => {
+  const { host, server, spec, parentOf } = await fixture(t);
+  await host.createAgent(spec('worker-launch'));
+  const parent = parentOf()!;
+  const projection = server.threads.get(parent.threadId)!;
+
+  await host.reconcileTaskRow(taskId, waiting());
+  const snoozes = () => commandsOf(server, 'thread.snooze');
+  assert.equal(snoozes().length, 1, 'one snooze for one wait');
+  const [snooze] = snoozes();
+  assert.equal(snooze!.threadId, parent.threadId, 'the parent row is the task row');
+  assert.equal(projection.thread.snoozedUntil, snooze!.snoozedUntil, 'the horizon is read back from the thread');
+  assert.ok(Date.parse(snooze!.snoozedUntil) > Date.now(), 'the horizon is in the future');
+  const record = host.state.read().snoozes?.[parent.threadId];
+  assert.equal(record?.state, 'snoozed');
+  assert.equal(record?.until, snooze!.snoozedUntil);
+
+  // A repeated pass adds no write: the recorded row is inside its horizon.
+  const commands = server.commands.length;
+  await host.reconcileTaskRow(taskId, waiting());
+  await host.reconcileTaskRow(taskId, waiting());
+  assert.equal(server.commands.length, commands, 'an unchanged row sends nothing');
+  assert.equal(projection.thread.settledOverride, null, 'the row is never settled');
+
+  // The sweep renews before the horizon: a row inside the renew margin gets the
+  // next horizon under a fresh command, so the row never wakes itself while the
+  // task still waits.
+  projection.thread.snoozedUntil = new Date(Date.now() + SNOOZE_RENEW_BEFORE_MS / 2).toISOString();
+  await host.reconcileTaskRow(taskId, waiting());
+  assert.equal(snoozes().length, 2, 'the renewal is one more snooze');
+  const renewed = snoozes().at(-1)!;
+  assert.notEqual(renewed.commandId, snooze!.commandId);
+  assert.ok(Date.parse(renewed.snoozedUntil) - Date.now() > SNOOZE_HORIZON_MS / 2, 'the renewed horizon is a full one');
+  assert.equal(projection.thread.snoozedUntil, renewed.snoozedUntil);
 });
 
-test('without the hide setting everything works as today and the host status says so (acceptance 3)', async t => {
-  const { host, server, spec, options, task } = await fixture(t);
-  assert.match(host.supportThreadStatus, /^support threads visible: hide setting not enabled/);
-  assert.match(host.supportThreadStatus, /README: T3: one row per task/);
+test('a task that needs a person unsnoozes a row this host snoozed', async t => {
+  const { host, server, spec, parentOf } = await fixture(t);
+  await host.createAgent(spec('worker-launch'));
+  const parent = parentOf()!;
+  const projection = server.threads.get(parent.threadId)!;
+  await host.reconcileTaskRow(taskId, waiting());
+  assert.ok(projection.thread.snoozedUntil, 'the row starts snoozed');
 
-  // The default fixture reports T3's own defaults: switch off, no tags listed.
-  assert.equal(server.controls.settings.hideTaggedThreads, false);
-  const worker = await host.createAgent(spec('worker-launch'));
-  server.threads.get(worker.id)!.runs = workerRun();
+  await host.reconcileTaskRow(taskId, { state: 'attention', cause: 'Worker creation refused before send' });
+  assert.equal(commandsOf(server, 'thread.unsnooze').length, 1, 'a person who must act surfaces the row');
+  assert.equal(projection.thread.snoozedUntil, null);
+  assert.equal(projection.thread.settledOverride, null, 'the row is surfaced, never settled');
+  assert.equal(host.state.read().snoozes?.[parent.threadId], undefined, 'the snooze record is retired');
+
+  // Already shown: a repeated attention pass sends nothing.
+  const commands = server.commands.length;
+  await host.reconcileTaskRow(taskId, { state: 'attention', cause: 'Worker creation refused before send' });
+  assert.equal(server.commands.length, commands);
+});
+
+test("an operator's own settled row is left alone", async t => {
+  const { host, server, spec, parentOf } = await fixture(t);
+  await host.createAgent(spec('worker-launch'));
+  const parent = parentOf()!;
+  const projection = server.threads.get(parent.threadId)!;
+  projection.thread.settledOverride = 'settled';
+  projection.thread.settledAt = STAMP;
+  const commands = server.commands.length;
+  await host.reconcileTaskRow(taskId, waiting());
+  await host.reconcileTaskRow(taskId, { state: 'attention', cause: 'Needs a person' });
+  assert.equal(server.commands.length, commands, 'neither a snooze nor an unsettle is sent');
+  assert.equal(projection.thread.settledOverride, 'settled');
+  assert.equal(projection.thread.snoozedUntil, null);
+});
+
+test('a snooze refused for a pending approval stays active with no retry loop', async t => {
+  const { host, server, spec, parentOf } = await fixture(t);
+  await host.createAgent(spec('worker-launch'));
+  const parent = parentOf()!;
+  const projection = server.threads.get(parent.threadId)!;
+  projection.runtimeRequests = [syntheticRuntimeRequest({ id: 'parent-approval', status: 'pending', kind: 'permission' })];
+
+  await host.reconcileTaskRow(taskId, waiting());
+  assert.equal(commandsOf(server, 'thread.snooze').length, 1, 'the refused snooze was sent once');
+  assert.equal(projection.thread.snoozedUntil, null, 'the row stays active');
+  assert.equal(host.state.read().snoozes?.[parent.threadId]?.state, 'refused');
+
+  // The same wait keeps the row active: this episode never retries.
+  const commands = server.commands.length;
+  await host.reconcileTaskRow(taskId, waiting());
+  await host.reconcileTaskRow(taskId, waiting());
+  assert.equal(server.commands.length, commands, 'a refused snooze is not retried for the same wait');
+});
+
+test('Nucleus never settles a task thread, on any decision', async t => {
+  const { host, server, spec, parentOf } = await fixture(t);
+  await host.createAgent(spec('worker-launch'));
   const reviewer = await host.createAgent(spec('reviewer-launch', 'reviewer'));
-  server.threads.get(reviewer.id)!.runs = [syntheticRun('nightly-review-run', 1, { id: 'nightly-review-run', status: 'running', rootNodeId: 'review-node' })];
-  // Today's behaviour is unchanged: the support thread is a normal top-level
-  // thread (visible in the shell), the worker row still renames and settles.
-  const shell = await host.activeThreads();
-  assert.ok(shell.some(thread => thread.id === reviewer.id), 'the support thread is still served');
-  await host.setTaskWorkspaceTitle(task({ agentId: worker.id }), 'Working: 225 Synthetic role', 'no-hide-title', false);
-  assert.equal(server.threads.get(worker.id)!.thread.title, 'Working: 225 Synthetic role · reviewing');
-  await host.settleWorkerThread(worker.id, 'worker-run');
-  assert.equal(server.threads.get(worker.id)!.thread.settledOverride, 'settled');
+  assert.ok(parentOf());
+  for (const attention of [waiting(), { state: 'active' } as TaskAttention, { state: 'attention', cause: 'Needs a person' } as TaskAttention, { state: 'finished' } as TaskAttention])
+    await host.reconcileTaskRow(taskId, attention);
+  assert.equal(commandsOf(server, 'thread.settle').length, 0);
+  assert.equal(commandsOf(server, 'thread.snooze').length, 1, 'the waiting decision snoozed once');
+  assert.ok(reviewer.id);
+});
 
-  // The adapter only ever reads settings: no settings write, on any request.
-  const settingsWrites = () => [...server.requests, ...server.commands].filter(entry => JSON.stringify(entry).includes('updateSettings'));
-  assert.deepEqual(settingsWrites(), []);
-
-  // An enabled switch reads as hidden; a switch without our tag reads as visible.
-  server.controls.settings = { hideTaggedThreads: true, hiddenThreadTags: [SUPPORT_THREAD_TAG] };
-  await host.connect();
-  assert.equal(host.supportThreadStatus, `support threads hidden by tag ${SUPPORT_THREAD_TAG}`);
-  server.controls.settings = { hideTaggedThreads: true, hiddenThreadTags: ['someone-else'] };
-  await host.connect();
-  assert.match(host.supportThreadStatus, /support threads visible: nucleus-support is not in hiddenThreadTags/);
-  assert.deepEqual(settingsWrites(), []);
-  assert.ok(options.statePath, 'the durable record stays owner-only state');
+test('a role whose create refuses launches no top-level thread and names the fix', async t => {
+  const { host, server, parentOf, workspace } = await fixture(t);
+  server.controls.providers = [{ instanceId: 'synthetic-provider', displayName: 'Synthetic provider', driver: 'codex',
+    enabled: true, status: 'ready', models: [{ slug: 'synthetic-model', name: 'Synthetic model' }] }];
+  await assert.rejects(
+    () => host.createAgent({ workspaceId: workspace.id, profile, title: 'Synthetic role', taskNumber: 225, mcpBindingPath: null,
+      attempt: () => ({ requestId: 'refused-launch', prompt: 'Worker prompt', labels: storedT3Labels('worker', { taskId }), environment: {} }) }),
+    (error: unknown) => error instanceof Error && /T3 provider not ready: .*run `nucleus t3 install`/.test(error.message),
+  );
+  assert.equal(commandsOf(server, 'orchestration.launchThread').length, 0, 'nothing is launched');
+  assert.equal(parentOf(), undefined);
 });

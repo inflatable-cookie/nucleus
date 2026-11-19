@@ -1,5 +1,5 @@
 import { blockingHold, isTaskPhase, phaseStateLabel } from "../../shared/task-state";
-import { phaseNeedsAttention } from "../../shared/pipeline-board";
+import { taskAttention } from "../../shared/task-attention";
 import { prerequisiteReasonEntries } from "../../shared/wait-state";
 import React from "react";
 import type { HoldKind, Task, TaskDetail, TaskSummary } from "../../shared/contracts";
@@ -35,7 +35,18 @@ export const phaseIcon = (t: {held:boolean;phase:Task['phase'];holdKind?:HoldKin
   blocked:"CircleSlash",error:"TriangleAlert",needs_attention:"TriangleAlert",verifying:"BadgeCheck",merging:"GitMerge",syncing:"RefreshCw",closing:"Archive",done:"Check",cancelled:"X",
 } satisfies Record<Task['phase'],string>)[t.phase];
 export type DisplayTask = TaskSummary | TaskDetail;
-export const attention = (t: DisplayTask) => Boolean(t.originError||t.originLookupError) || t.resolution.attention || phaseNeedsAttention(t.phase);
+/**
+ * Whether a person must act now, from the one attention projection the board,
+ * `task.next` and a host's own row read (nucleus#1366). A hold that names its
+ * release condition is a wait, so it is never attention here.
+ */
+export const attention = (t: DisplayTask) => taskAttention({
+  phase: t.phase, held: t.held, holds: t.holds, holdKind: t.holdKind,
+  attention: t.resolution.attention,
+  originFault: Boolean(t.originError || t.originLookupError),
+  prerequisiteWait: t.waitState?.state === "waiting_prerequisite" && t.waitState.owner !== "operator",
+  waitingOn: (t as { waitingOn?: string | null }).waitingOn, reason: t.reason,
+}).state === "attention";
 export const holdKindLabel = (kind: HoldKind) => kind === "dispatch" ? "Dispatch held" : "Merge held";
 export function presentHoldKinds(task: { holdKind?: HoldKind; holds?: { dispatch?: unknown; merge?: unknown } }): HoldKind[] {
   const kinds: HoldKind[] = [];

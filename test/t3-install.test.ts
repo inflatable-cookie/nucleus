@@ -680,7 +680,6 @@ test("the status report carries the adapter native-parenting line and the projec
       hostId: "t3code:synthetic-environment",
       error: "",
       nativeParenting: "native parenting: nucleus provider ready",
-      supportThreads: "support threads hidden",
     },
     projects: [
       { name: "github.com/synthetic/opted-in", hostKind: "t3code" },

@@ -238,7 +238,7 @@ test("a queued call logs who holds the slot and for how long", async () => {
 /**
  * The bound is per effect, never per class (review 5889669364).
  *
- * `archiveAgent` and `reconcileSettledThreads` share the cleanup class with the
+ * `archiveAgent` and `reconcileTaskRow` share the cleanup class with the
  * minutes-long workspace archive; `recoverTaskWorkspace` and
  * `createCloseoutWorkspace` share the workspace class with creation. Only the
  * effects that legitimately run for minutes get the long bound; every other
@@ -256,7 +256,7 @@ function hangingAdapter(hang: ReadonlySet<string>): Adapter {
     };
   const adapter = {
     archiveAgent: method("archiveAgent"),
-    reconcileSettledThreads: method("reconcileSettledThreads"),
+    reconcileTaskRow: method("reconcileTaskRow"),
     recoverTaskWorkspace: method("recoverTaskWorkspace"),
     createCloseoutWorkspace: method("createCloseoutWorkspace"),
     createWorkspace: method("createWorkspace"),
@@ -272,7 +272,7 @@ test("cleanup-class callers that are not archives are abandoned at the ordinary 
     heldSlotWarnMs: 10,
   });
   const wrapped = admitAdapter(
-    hangingAdapter(new Set(["archiveAgent", "reconcileSettledThreads"])),
+    hangingAdapter(new Set(["archiveAgent", "reconcileTaskRow"])),
     admission,
   );
   const outcome = (call: Promise<unknown>) =>
@@ -285,7 +285,7 @@ test("cleanup-class callers that are not archives are abandoned at the ordinary 
     outcome(wrapped.archiveAgent!(`agent-${index}`)),
   );
   await sleep(20);
-  const queued = outcome(wrapped.reconcileSettledThreads!());
+  const queued = outcome(wrapped.reconcileTaskRow!("synthetic-task", { state: "waiting", cause: "Waiting" }));
   const results = await Promise.all([...held, queued]);
   for (const [index, error] of results.entries()) {
     assert.ok(

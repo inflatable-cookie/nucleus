@@ -436,7 +436,6 @@ export interface T3ServiceFacts {
   hostId: string | null;
   error: string;
   nativeParenting: string;
-  supportThreads: string;
 }
 
 export interface T3StatusInput {
@@ -514,7 +513,6 @@ export function t3StatusReport(input: T3StatusInput): T3StatusReport {
     hostId: null,
     error: "the Nucleus service is not running",
     nativeParenting: "",
-    supportThreads: "",
   };
   const problems = [
     serverProblem,

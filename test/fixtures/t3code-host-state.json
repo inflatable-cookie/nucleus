@@ -1,17 +1,13 @@
 {
-  "shapeOf": "the operator's stored T3Code host state (hosts/t3code.json under the Nucleus data home), read-only on 2026-11-18; ids, titles, directories, commands and timestamps here are synthetic",
+  "shapeOf": "the adapter's stored T3Code host state (hosts/t3code.json under the Nucleus data home), captured read-only on 2026-11-18 and updated for nucleus#1366 (no settle records; snoozes and parents are optional); ids, titles, directories, commands and timestamps here are synthetic",
   "topLevel": [
     "agents",
     "hostId",
     "intents",
     "lastPassedVersion",
     "nesting",
-    "pendingSettles",
     "rowTitles",
-    "settledThreads",
-    "supportThreads",
     "version",
-    "workerSettles",
     "workspaces"
   ],
   "agent": [
@@ -30,12 +26,6 @@
     "kind",
     "payload",
     "status"
-  ],
-  "settleIntent": [
-    "agentId",
-    "runId",
-    "commandId",
-    "recordedAt"
   ],
   "retiredAgent": [
     "deletedAt",
