@@ -8,6 +8,14 @@ import { creationLookup } from './restarts';
 import { unsettledControlRefusal } from '../recovery-effects';
 
 export const workerCreationWait = 'Worker creation remains uncertain; waiting for its recorded producer to stop and the lookup grace period to pass';
+const workerLookupUnavailable = 'Exact worker creation lookup is unavailable';
+const workerLookupPartial = 'Worker creation lookup is partial or ambiguous; the intent remains owned';
+
+export function workerLookupWait(task: Task): string | null {
+  const stop = task.resolution.stop;
+  return stop?.reason === 'lifecycle' && (stop.detail === workerLookupPartial || stop.detail.startsWith(workerLookupUnavailable))
+    ? stop.detail : null;
+}
 
 /** A current worker creation reservation with no competing source or accepted result. */
 export const staleWorkerIntent = (task: Task): boolean =>
@@ -43,7 +51,7 @@ export async function observeWorkerCreation(store: Store, adapter: Adapter & Par
   const attempt = readCreationAttempt(store, occurrence)?.attemptId ?? null;
   const proof = workerProducerStopped(store, task, graceMs);
   if (!adapter.findRunAgents)
-    return { kind: 'wait', detail: 'Exact worker creation lookup is unavailable; the intent remains owned' } as const;
+    return { kind: 'wait', detail: `${workerLookupUnavailable}; the intent remains owned` } as const;
   try {
     // Host adapters consume only the exact lookup identity for the initial worker.
     const found = await adapter.findRunAgents(occurrence as unknown as Run);
@@ -51,11 +59,11 @@ export async function observeWorkerCreation(store: Store, adapter: Adapter & Par
     if (lookup.kind === 'bound') return { ...lookup, attempt };
     if (lookup.kind === 'absent' && proof) return { kind: 'absent', proof } as const;
     const detail = lookup.kind === 'unknown'
-      ? 'Worker creation lookup is partial or ambiguous; the intent remains owned'
+      ? workerLookupPartial
       : workerCreationWait;
     return { kind: 'wait', detail } as const;
   } catch (error) {
-    return { kind: 'wait', detail: `Exact worker creation lookup is unavailable (${hostFailureRefusalDetail(error)}); the intent remains owned` } as const;
+    return { kind: 'wait', detail: `${workerLookupUnavailable} (${hostFailureRefusalDetail(error)}); the intent remains owned` } as const;
   }
 }
 

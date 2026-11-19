@@ -852,6 +852,13 @@ for (const action of ['restart', 'route'] as const) {
       const attempt = staleWorkerTask(f, false);
       const author2 = profile('author-2');
       addProfile(f, author2, 'author-2', 'worker');
+      const create = f.adapter.createAgent!;
+      f.adapter.createAgent = async (...args) => {
+        const created = await create(...args);
+        const state = f.states.get(created.id)!;
+        f.states.set(created.id, { ...state, active: true, status: 'running' });
+        return created;
+      };
       const nextRestart = () => ownerVerbViews(collectOwnerVerbFacts(f.store, f.current())).find(view => view.verb === 'restart');
       assert.match(nextRestart()?.refusal ?? '', /recorded producer/);
 
@@ -874,6 +881,7 @@ for (const action of ['restart', 'route'] as const) {
       settleCreationAttempt(f.store, attempt, 'threw');
       await f.engine.wake();
       assert.match(f.current().resolution.stop?.detail ?? '', /partial or ambiguous/);
+      assert.match(nextRestart()?.refusal ?? '', /partial or ambiguous/);
       assert.equal(f.events('absent_worker_released').length, 0);
       const waits = f.events('task_waiting').length;
       await f.engine.wake();

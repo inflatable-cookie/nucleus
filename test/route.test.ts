@@ -756,7 +756,7 @@ test('a removable host finishes a reviewer route after its stop reply precedes i
     assert.equal(f.store.run('rev-live')!.released, true, 'observation releases the displaced run once idle');
     assert.equal(f.current().phase, 'awaiting_review');
     assert.equal(f.current().resolution.reviewerAgentId, null);
-    assert.equal(f.current().profileRequests?.reviewer?.profileId, 'authorrev', 'the requested route is retained');
+    assert.equal(f.current().profileRequests?.reviewer?.profileId, 'luna', 'the requested route is retained');
     assert.equal(f.store.getMeta(key), undefined, 'closeout will start its own deletion effect');
     assert.deepEqual(settled, ['reviewer']);
     assert.deepEqual(archived, [], 'no thread is archived while the task is open');

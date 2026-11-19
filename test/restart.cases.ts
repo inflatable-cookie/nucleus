@@ -2756,7 +2756,7 @@ for (const [label, overrides] of [
           completion: null,
           released: false,
         });
-        f.store.putRun(run);
+        settledResolutionCreation(f, run);
         unrecoveredRecovery(
           f,
           { ...recoveredCompletion, taskId: f.taskId },

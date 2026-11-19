@@ -379,9 +379,12 @@ export class RouteControls {
       .flatMap(row => { try { const detail = JSON.parse(row.detail) as { effectId?: string; status?: string; turnId?: string | null }; return detail.effectId === intent.effectId ? [detail] : []; } catch { return []; } }) : [];
     const recordedTurn = prior.find(detail => detail.status === "intent");
     const alreadyStopped = prior.some(detail => detail.status === "sent" || detail.status === "inactive");
-    if (!alreadyStopped && recordedTurn && busy
-      && (!recordedTurn.turnId || !intent.turnId || recordedTurn.turnId === intent.turnId))
-      throw Error(`route now still has an unresolved stop for the ${role}; wait for observation to settle its delivery`);
+    if (!alreadyStopped && recordedTurn && busy) {
+      if (!recordedTurn.turnId || !intent.turnId)
+        throw new DurableFenceRefusal(`route now cannot prove the live ${role} turn is the one this operation stopped; wait for observation`);
+      if (recordedTurn.turnId === intent.turnId)
+        throw new DurableFenceRefusal(`route now still has an unresolved stop for the ${role}; wait for observation to settle its delivery`);
+    }
     if (alreadyStopped || (recordedTurn && recordedTurn.turnId !== intent.turnId)) {
       this.store.event(task.id, "route_stop_settled", JSON.stringify({ ...intent, turnId: recordedTurn?.turnId ?? intent.turnId, status: "replayed",
         ...(intent.turnId && recordedTurn?.turnId !== intent.turnId ? { untouchedTurnId: intent.turnId } : {}) }));

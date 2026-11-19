@@ -1790,15 +1790,16 @@ test('next drops a displaced restart after its old target is released', async ()
       effect: { kind: 'task_control', target: 'restart', intentAt: accepted, status: 'uncertain', result: null, resultAt: null } }), payload);
     f.store.update(f.taskId, { reason: 'New binding' });
     reviewerRun(f, { id: 'new-review', agentId: 'new-review-agent' });
-    const offered = () => f.next().verbs.some(view => view.verb === 'retry_effect' && JSON.stringify(view.args ?? {}).includes(`operation.${id}`));
-    assert.equal(offered(), true);
+    const waiting = () => f.next().verbs.some(view => view.verb === 'retry_effect' && !view.available
+      && view.refusal?.includes(id) && view.refusal.includes('sweep'));
+    assert.equal(waiting(), true);
     assert.equal(supersedeIdleRunInTx(f.store, f.taskId, run, 'Observed old reader idle'), true);
-    assert.equal(offered(), false);
+    assert.equal(waiting(), false);
     f.engine.reconcileBlockedEffects(f.taskId);
     assert.equal(f.events('operation_superseded').length, 1);
     f.engine.reconcileBlockedEffects(f.taskId);
     assert.equal(f.events('operation_superseded').length, 1);
-    assert.equal(offered(), false);
+    assert.equal(waiting(), false);
   } finally { await f.close(); }
 });
 
@@ -1816,7 +1817,8 @@ test('next retains an uncertain restart when a later workspace has no target evi
     f.store.putRun(runSchema.parse({ id: 'revision-after-restart', taskId: f.taskId, role: 'revision', generation: 1, head, base,
       agentId: 'revision-agent', workspaceId: 'workspace', profile: workerProfile, status: 'finished',
       createdAt: new Date().toISOString(), lastObservedAt: null, active: false, idleSince: null, completion: null, released: true }));
-    assert.ok(f.next().verbs.some(view => view.verb === 'retry_effect' && JSON.stringify(view.args ?? {}).includes(`operation.${id}`)));
+    assert.ok(f.next().verbs.some(view => view.verb === 'retry_effect' && !view.available
+      && view.refusal?.includes(id) && view.refusal.includes('sweep')));
     f.engine.reconcileBlockedEffects(f.taskId);
     assert.equal(f.store.operation(id)?.state, 'needs_attention');
     assert.equal(f.events('operation_superseded').length, 0);
@@ -1841,8 +1843,8 @@ test('retry_effect names what keeps an unanswered host-effect control uncertain 
       diagnostic: 'Host delivery is unknown; command was not resent; command thread.settle', result: null,
       effect: { kind: 'task_control', target: 'restart', intentAt: accepted, status: 'uncertain', result: null, resultAt: null } }), payload);
     // Nothing in the task's own record shows the unknown command landed.
-    assert.ok(f.next().verbs.some(view => view.verb === 'retry_effect' && JSON.stringify(view.args ?? {}).includes(`operation.${id}`)),
-      'an unanswered operation is still offered');
+    assert.ok(f.next().verbs.some(view => view.verb === 'retry_effect' && !view.available
+      && view.refusal?.includes(id) && view.refusal.includes('sweep')), 'next names the operation and its observation owner');
     await assert.rejects(f.engine.performTaskControl(taskControlInputSchema.parse({ action: 'retry_effect', taskId: f.taskId,
       version: f.task().version, effect: `operation.${id}`, reason: 'Observe the recorded host effect', caller: CALLER })),
       /no later task evidence answers its host effect yet/);

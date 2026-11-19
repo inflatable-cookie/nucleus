@@ -1,5 +1,5 @@
 import { unsettledControlRefusal } from '../recovery/recovery-effects';
-import { workerCreationWait, workerProducerStopped } from '../recovery/absent-creation/stale-worker';
+import { workerCreationWait, workerLookupWait, workerProducerStopped } from '../recovery/absent-creation/stale-worker';
 /** Owner verb registry; read-side admission lives under verbs/. */
 import { readyReviewAtHead } from "../recovery/task-reasons";
 import { completeStateRefusal, routeStateRefusal, stopStateRefusal } from "./control-refusals";
@@ -56,8 +56,9 @@ function routeViews(facts: OwnerVerbFacts): TaskNextVerb[] {
     const filterNote = role === "worker" ? workerRouteFilterNote(facts, current) : null;
     const profileId = filterNote ? "" : current;
     const replacementWait = unsettledControlRefusal(facts.store, task)
-      ?? (role === "worker" && task.agentIntent && !task.agentId && !workerProducerStopped(facts.store, task, facts.creationGraceMs ?? 0)
-        ? workerCreationWait : null);
+      ?? (role === "worker" && task.agentIntent && !task.agentId
+        ? workerLookupWait(task) ?? (workerProducerStopped(facts.store, task, facts.creationGraceMs ?? 0) ? null : workerCreationWait)
+        : null);
     const retainedReviewer = role === "reviewer" && task.resolution.reviewerAgentId
       ? "Immediate replacement requires proof that the retained reviewer is gone or ineligible." : null;
     const note = [role === "worker" ? workerNote : null, filterNote,

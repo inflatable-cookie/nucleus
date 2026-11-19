@@ -1,3 +1,4 @@
+import { readCreationAttempt, settleCreationAttempt } from '../core/store/store-task-funnel';
 import { formatAgentId } from '../shared/agent-identity';
 import { profile } from './support/fakes';
 import { settleSupersededFences } from '../core/recovery/fence-settlement';
@@ -1103,17 +1104,21 @@ test('a changed workerless review-entry head refuses; a same-head review move re
 
 test('an uncertain worker creation with no agent (#151): restart re-creates in the retained workspace', async () => {
   const f = fixture(); try {
-    f.store.update(f.taskId, {
+    const task = f.store.update(f.taskId, {
       phase: 'needs_attention', workspaceIntent: true, agentIntent: true, workspaceId: 'workspace', directory: '/worktree',
       agentId: null, runId: 'uncertain-run', profile: workerProfile, workerModel: workerProfile.model,
       reason: ABSENT_WORKER_REASON,
       resolution: { ...f.task().resolution, attention: true },
-    });
+    }, 'agent_intent', 'uncertain-run');
+    const attempt = readCreationAttempt(f.store, { id: task.runId!, taskId: task.id, hostId: task.hostId,
+      workspaceId: task.workspaceId, role: 'worker' })!;
+    settleCreationAttempt(f.store, attempt, 'threw');
     const verb = f.view('restart');
     assert.equal(verb.available, true, JSON.stringify(verb));
     const resumed = await f.engine.performTaskControl(taskControlInputSchema.parse({
       ...verb.args, reason: 'The creation was refused before send', instruction: 'Paseo refused the malformed workspace before send; create the worker now', caller: CALLER }));
-    assert.equal(resumed.phase, 'dispatching');
+    assert.equal(resumed.phase, 'queued');
+    assert.equal(resumed.runId, null);
     assert.equal(resumed.agentIntent, false, 'the old uncertain creation intent is revoked before the new one');
     assert.equal(JSON.parse(f.events('owner_control').at(-1)!.detail).verb, 'restart');
   } finally { await f.close(); }

@@ -179,7 +179,7 @@ export class CreationRecovery {
       return;
     } else if (task.agentIntent && !task.agentId) {
       // An armed route is observed by the failover pass.
-      if (task.failoverReason && staleWorkerIntent(task)) return;
+      if (task.failoverReason && staleWorkerIntent(task) && task.resolution.stop?.reason === 'lifecycle') return;
       // Worker intents live on the task, but the host lookup must still carry
       // the exact run label. A task-only inventory can contain older threads.
       const lookup = this.adapter as typeof this.adapter &

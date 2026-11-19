@@ -1,3 +1,4 @@
+import { creationTermination } from '../store/store-task-funnel';
 import { unsettledControlRefusal } from '../recovery/recovery-effects';
 import { RETAINED_PREREQUISITE_REFUSAL, NO_RESOLUTION_RUN_REFUSAL, restartTerminalRefusal } from "./verb-refusal-text";
 import { DISPOSITION_CONTROL_REFUSAL, parkedRestartRefusal } from "./control-refusals";
@@ -16,7 +17,7 @@ import { verbInput, restartRoles } from './owner-shared';
 import type { RestartRole, OwnerVerb, RestartShapeName } from './owner-shared';
 import { unreportedExecutorRun } from '../qa/proof-admission';
 import { reviewerReportPlan } from './reviewer-report';
-import { workerCreationRefusal, workerCreationWait, workerProducerStopped } from '../recovery/absent-creation/stale-worker';
+import { workerCreationRefusal, workerCreationWait, workerLookupWait, workerProducerStopped } from '../recovery/absent-creation/stale-worker';
 
 /**
  * Round 4 (Tom, 2026-10-19): what `restart` does when no run of the role needs
@@ -262,7 +263,7 @@ export function absentWorkerRestartRefusal(facts: OwnerVerbFacts): string | null
   if (task.prerequisiteWait && !task.prerequisiteWait.releasedAt) return RETAINED_PREREQUISITE_REFUSAL;
   const episodeId = task.resolution.recovery?.runId;
   const settling = runs.filter(run => run.id === episodeId || run.id === reportingRunId || run.completion).map(run => run.id);
-  return workerCreationRefusal(store, task, settling)
+  return workerCreationRefusal(store, task, settling) ?? workerLookupWait(task)
     ?? (workerProducerStopped(store, task, facts.creationGraceMs ?? 0) ? null : workerCreationWait);
 }
 
@@ -384,11 +385,18 @@ export const restart: OwnerVerb = {
       if ("refusal" in report) return { available: false, refusal: report.refusal };
       const reviewer = report.run;
       return { available: true, fill: ['reason'], args: { taskId: task.id, version: task.version, role: 'reviewer' },
-        note: `${reviewer.reviewBudgetExhaustedAt ? 'The checkpoint allowance is spent. ' : ''}Asks retained reviewer ${reviewer.agentId} to finish or redeliver the report on run ${reviewer.id} after observing it idle.${rejectedReadingNote(reviewer)}` };
+        note: `${reviewer.reviewBudgetExhaustedAt ? 'The checkpoint allowance is spent. ' : ''}Asks retained reviewer ${reviewer.agentId} to resend the report or finish the review on run ${reviewer.id} after observing it idle.${rejectedReadingNote(reviewer)}` };
     }
     if (shape === 'absent_worker') {
       const refusal = absentWorkerRestartRefusal(facts);
       if (refusal) return { available: false, refusal };
+    }
+    if (shape === 'absent_resolution') {
+      const run = runs.find(candidate => candidate.id === task.resolution.currentRunId && !candidate.released && !candidate.agentId);
+      if (!run || run.hostId !== task.hostId || run.workspaceId !== task.workspaceId)
+        return { available: false, refusal: 'The resolution creation needs its recorded run, host and workspace' };
+      if (!creationTermination(facts.store, run, facts.creationGraceMs ?? 0))
+        return { available: false, refusal: `The ${run.role} creation is waiting for its recorded producer and an exact lookup` };
     }
     // nucleus#1195: one bounded continuation asks a live proof executor whose
     // result never arrived to resend that report on its existing run and
