@@ -152,7 +152,10 @@ export class Delegation {
         provenHost,
       );
       if (participant) return { kind: "participant", ticketPath: participant };
-      if (this.adapter.reportingViaMcp === false && (!provenHost || hostKindOf(provenHost) !== "t3code"))
+      if (
+        this.adapter.reportingViaMcp === false &&
+        (!provenHost || hostKindOf(provenHost) !== "t3code")
+      )
         throw Error("Consult requires the recipient run ticket");
       return { kind: "clear" };
     }
@@ -529,10 +532,12 @@ export class Delegation {
     const isEscalation =
       input.questionId.startsWith("ns-escalation-") ||
       input.questionId.startsWith("ns-decider-");
-    const choices = authority.choices ?? authority.prompt
-      .split("\n")
-      .filter((line) => line.startsWith("- "))
-      .map((line) => line.slice(2));
+    const choices =
+      authority.choices ??
+      authority.prompt
+        .split("\n")
+        .filter((line) => line.startsWith("- "))
+        .map((line) => line.slice(2));
     const submittedAnswer = (input.answer ?? input.choice)?.trim();
     const shortWaitChoices =
       isEscalation && submittedAnswer
@@ -633,8 +638,16 @@ export class Delegation {
     }
     if (authority.retainAfterDeadline) {
       const task = this.store.task(authority.taskId);
-      const ask = askLifecycle(this.store.eventsAll(task.id), input.questionId.replace(/^ns-agent-ask-reviewer-/, ""));
-      if (task.removedAt || ["done", "cancelled"].includes(task.phase) || ask?.superseded || ask?.answered)
+      const ask = askLifecycle(
+        this.store.eventsAll(task.id),
+        input.questionId.replace(/^ns-agent-ask-reviewer-/, ""),
+      );
+      if (
+        task.removedAt ||
+        ["done", "cancelled"].includes(task.phase) ||
+        ask?.superseded ||
+        ask?.answered
+      )
         throw Error("This review consult is already settled");
     }
     if (
@@ -655,16 +668,36 @@ export class Delegation {
       );
     if (
       input.decision !== "operator" &&
-      (input.choice || (choices.length && input.questionId.startsWith("queue-delegate-"))) &&
-      !choices.includes(authority.role === "decider" && input.choice ? submittedAnswer! : answer!)
+      (input.choice ||
+        (choices.length && input.questionId.startsWith("queue-delegate-"))) &&
+      !choices.includes(
+        authority.role === "decider" && input.choice
+          ? submittedAnswer!
+          : answer!,
+      )
     )
-      throw Error("Choice must match an offered choice. Use answer for a free response and --dry-run to validate it.");
+      throw Error(
+        "Choice must match an offered choice. Use answer for a free response and --dry-run to validate it.",
+      );
     if (authority.role === "decider") {
-      const normalize = (value: string) => value.toLowerCase().replace(/\s+/g, " ").replace(/[.!?]+$/, "");
-      const placeholder = (value: string) => /^(?:test(?:ing)?(?: (?:answer|reason|this command))?|probe|placeholder|dummy|sample|example|todo|tbd|n\s*\/?\s*a|none|null|foo|bar|lorem ipsum|answer|reason|your answer|your reason|<[^>]+>)$/.test(normalize(value));
-      if (placeholder(reason) || (input.answer && answer &&
-        (placeholder(answer) || normalize(answer) === normalize(reason))))
-        throw Error("Give a substantive answer and a distinct one-line reason. Use question.answer --dry-run to validate without submitting.");
+      const normalize = (value: string) =>
+        value
+          .toLowerCase()
+          .replace(/\s+/g, " ")
+          .replace(/[.!?]+$/, "");
+      const placeholder = (value: string) =>
+        /^(?:test(?:ing)?(?: (?:answer|reason|this command))?|probe|placeholder|dummy|sample|example|todo|tbd|n\s*\/?\s*a|none|null|foo|bar|lorem ipsum|answer|reason|your answer|your reason|<[^>]+>)$/.test(
+          normalize(value),
+        );
+      if (
+        placeholder(reason) ||
+        (input.answer &&
+          answer &&
+          (placeholder(answer) || normalize(answer) === normalize(reason)))
+      )
+        throw Error(
+          "Give a substantive answer and a distinct one-line reason. Use question.answer --dry-run to validate without submitting.",
+        );
     }
     const escalationId = escalationIdForQuestion(input.questionId);
     const taskEvents = isEscalation
@@ -1102,7 +1135,12 @@ export class Delegation {
           if (!ref)
             throw Error("Delegated recipient identity was not recorded");
           const recipient = nativeAgentId(ref, hostId!);
-          const { onIntent: _onIntent, choices: _choices, retainAfterDeadline: _retain, ...sendInput } = input;
+          const {
+            onIntent: _onIntent,
+            choices: _choices,
+            retainAfterDeadline: _retain,
+            ...sendInput
+          } = input;
           return send.call(this.adapter, recipient, {
             ...sendInput,
             sourceAgentId:
@@ -1294,32 +1332,57 @@ export class Delegation {
     return (await this.taskPlannerRoute(task)).rung;
   }
 
-  private async taskPlannerRoute(task: Task): Promise<{ rung: PlannerRung | null; issue?: string }> {
+  private async taskPlannerRoute(
+    task: Task,
+  ): Promise<{ rung: PlannerRung | null; issue?: string }> {
     const planner = taskPlanner(task);
     if (!planner || isOperatorOrigin(planner)) return { rung: null };
-    const originHost = planner === task.originAgentId || planner === task.notificationAgentId
-      ? task.originHostId : undefined;
-    const state = await this.resolution.plannerPresence.threadRoute(planner, originHost);
+    const originHost =
+      planner === task.originAgentId || planner === task.notificationAgentId
+        ? task.originHostId
+        : undefined;
+    const state = await this.resolution.plannerPresence.threadRoute(
+      planner,
+      originHost,
+    );
     if (state.kind === "unroutable") return { rung: null, issue: state.detail };
-    return { rung: state.kind === "gone" ? null : { agentId: planner, rung: "task" } };
+    return {
+      rung: state.kind === "gone" ? null : { agentId: planner, rung: "task" },
+    };
   }
 
   /** An unresolved identity remains assigned and visible while the next planner is tried. */
-  async plannerRungsFor(task: Task): Promise<{ rungs: PlannerRung[]; projectFailed: boolean; issue?: string }> {
+  async plannerRungsFor(
+    task: Task,
+  ): Promise<{ rungs: PlannerRung[]; projectFailed: boolean; issue?: string }> {
     const own = await this.taskPlannerRoute(task);
     const { planner, failed, issue } = await this.projectPlannerFor(task);
     const rungs = own.rung ? [own.rung] : [];
-    if (planner && !rungs.some((rung) => sameCallerIdentity(rung.agentId, planner)))
+    if (
+      planner &&
+      !rungs.some((rung) => sameCallerIdentity(rung.agentId, planner))
+    )
       rungs.push({ agentId: planner, rung: "project" });
-    return { rungs, projectFailed: failed, issue: [...new Set([own.issue, issue].filter(Boolean))].join(" ") || undefined };
+    return {
+      rungs,
+      projectFailed: failed,
+      issue:
+        [...new Set([own.issue, issue].filter(Boolean))].join(" ") || undefined,
+    };
   }
 
-  async projectPlannerFor(task: Task): Promise<{ planner: string | null; failed: boolean; issue?: string }> {
-    const project = this.store.projectFor(task.repoPath, normalizeRepositoryOrigin(task.repository ?? ""));
+  async projectPlannerFor(
+    task: Task,
+  ): Promise<{ planner: string | null; failed: boolean; issue?: string }> {
+    const project = this.store.projectFor(
+      task.repoPath,
+      normalizeRepositoryOrigin(task.repository ?? ""),
+    );
     const queue = this.store.queueProject();
     const presence = this.resolution.plannerPresence;
     const assigned = await presence.observeProjectPlanner(project);
-    if (assigned?.state.kind === "routable") return { planner: assigned.agentId, failed: false };
+    if (assigned?.state.kind === "routable")
+      return { planner: assigned.agentId, failed: false };
     const missing = assigned?.state.kind === "gone" ? assigned.agentId : null;
     if (project && missing) {
       this.store.setProjectPlanner({
@@ -1329,9 +1392,18 @@ export class Delegation {
         note: `Planner ${missing} is missing or archived; delegated questions fall back to the Nucleus planner`,
       });
     }
-    const fallback = queue?.key === project?.key ? null : await presence.observeProjectPlanner(queue);
-    const planner = fallback?.state.kind === "routable" ? fallback.agentId : null;
-    const issue = [assigned?.state, fallback?.state].flatMap(state => state?.kind === "unroutable" ? [state.detail] : []).join(" ") || undefined;
+    const fallback =
+      queue?.key === project?.key
+        ? null
+        : await presence.observeProjectPlanner(queue);
+    const planner =
+      fallback?.state.kind === "routable" ? fallback.agentId : null;
+    const issue =
+      [assigned?.state, fallback?.state]
+        .flatMap((state) =>
+          state?.kind === "unroutable" ? [state.detail] : [],
+        )
+        .join(" ") || undefined;
     if (!project || !missing) return { planner, failed: false, issue };
     const notices = this.store.eventsAll(`project:${project.key}`);
     if (
@@ -1376,9 +1448,15 @@ export class Delegation {
    */
   deciderProfile(task: Task): Profile | null {
     const unavailable = unavailableGroupNames(this.store.availability());
-    const profiles = this.profiles().filter(profile => profile.model !== "default");
+    const profiles = this.profiles().filter(
+      (profile) => profile.model !== "default",
+    );
     const tier = requestedTier(task.complexity);
-    const pool = this.store.pool().filter(entry => demandRank(entry.capability ?? "medium") >= demandRank(tier));
+    const pool = this.store
+      .pool()
+      .filter(
+        (entry) => demandRank(entry.capability ?? "medium") >= demandRank(tier),
+      );
     return (
       chooseProfile(
         {

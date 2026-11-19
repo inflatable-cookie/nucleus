@@ -213,20 +213,40 @@ export async function routePlannerEscalation(
   let pending = false;
   // Task 1109: the task's own planner first, then the project planner, then the decider.
   const { rungs, issue } = await ladder.resolution.plannerRungsFor(t);
-  const planners = plannerWindows(ladder.resolution, `ns-escalation-${id}`, rungs);
-  if (ladder.resolution.stopped() || plannerEscalations(events()).find(item => item.id === id)?.answered) return;
+  const planners = plannerWindows(
+    ladder.resolution,
+    `ns-escalation-${id}`,
+    rungs,
+  );
+  if (
+    ladder.resolution.stopped() ||
+    plannerEscalations(events()).find((item) => item.id === id)?.answered
+  )
+    return;
   const recordRoutingWait = (detail: string, holderAgentId?: string) => {
-    const latest = events().findLast(event =>
-      event.kind === "planner_escalation_routing_wait" && event.detail.startsWith(`${id}: `));
+    const latest = events().findLast(
+      (event) =>
+        event.kind === "planner_escalation_routing_wait" &&
+        event.detail.startsWith(`${id}: `),
+    );
     const reason = issue ? `${detail}. ${issue}` : detail;
     const routed = issue ? { detail: reason, holderAgentId } : null;
     const entry = `${id}: ${JSON.stringify(routed)}`;
     if ((latest || routed) && latest?.detail !== entry)
       ladder.store.event(t.id, "planner_escalation_routing_wait", entry);
-    ladder.resolution.waiting(ladder.store.task(t.id), reason, "escalated", { holderAgentId });
+    ladder.resolution.waiting(ladder.store.task(t.id), reason, "escalated", {
+      holderAgentId,
+    });
   };
-  if (issue && !planners.length && !recoverable && !escalationOutlived(ladder.store.task(t.id))) {
-    recordRoutingWait(`Blocker escalation ${id} is waiting for a routable planner`);
+  if (
+    issue &&
+    !planners.length &&
+    !recoverable &&
+    !escalationOutlived(ladder.store.task(t.id))
+  ) {
+    recordRoutingWait(
+      `Blocker escalation ${id} is waiting for a routable planner`,
+    );
     return;
   }
   const delegated = await delegateQuestion(ladder.resolution, t, {
@@ -243,12 +263,24 @@ export async function routePlannerEscalation(
       )?.answered,
     canAdvance: () => !escalationOutlived(ladder.store.task(t.id)),
     onIntent: (role, agentId, rung) => {
-      if (!recoverable && !events().some(event => event.kind === "planner_escalation_sent" && event.detail.startsWith(`${id}:`)))
+      if (
+        !recoverable &&
+        !events().some(
+          (event) =>
+            event.kind === "planner_escalation_sent" &&
+            event.detail.startsWith(`${id}:`),
+        )
+      )
         ladder.store.event(t.id, "planner_escalation_sent", `${id}: sent`);
       if (role === "planner")
-        recordRoutingWait(`Waiting with the planner or task owner ${agentId}: blocker escalation ${id} (${rung === "task" ? "task planner" : "project planner"} rung) is open`, agentId);
+        recordRoutingWait(
+          `Waiting with the planner or task owner ${agentId}: blocker escalation ${id} (${rung === "task" ? "task planner" : "project planner"} rung) is open`,
+          agentId,
+        );
       else if (issue)
-        recordRoutingWait(`Waiting with a decider: blocker escalation ${id} is open`);
+        recordRoutingWait(
+          `Waiting with a decider: blocker escalation ${id} is open`,
+        );
       ladder.store.event(
         t.id,
         "planner_escalation_delegated",

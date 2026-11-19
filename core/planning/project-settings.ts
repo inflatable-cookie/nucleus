@@ -27,9 +27,11 @@ export function projectSettingsProblems(input: {
 }): ProjectSettingsProblem[] {
   const problems: ProjectSettingsProblem[] = [];
   if (input.plannerRoutingIssue) problems.push(input.plannerRoutingIssue);
-  else if (input.plannerId && input.plannerLive === false) problems.push(PROJECT_SETTINGS_PROBLEMS.plannerGone);
+  else if (input.plannerId && input.plannerLive === false)
+    problems.push(PROJECT_SETTINGS_PROBLEMS.plannerGone);
   else if (!input.plannerId) problems.push(PROJECT_SETTINGS_PROBLEMS.noPlanner);
-  if (input.plannerId && input.plannerTicketPending) problems.push(PROJECT_SETTINGS_PROBLEMS.plannerTicketPending);
+  if (input.plannerId && input.plannerTicketPending)
+    problems.push(PROJECT_SETTINGS_PROBLEMS.plannerTicketPending);
   if (input.latestQaFailed) problems.push(PROJECT_SETTINGS_PROBLEMS.qaFailed);
   return problems;
 }
@@ -39,8 +41,11 @@ function settingsForRepository(
   rows: RepositorySettings[],
 ): RepositorySettings | null {
   const ranked = rows
-    .map(row => ({ row, spec: repositoryMatchSpecificity(row, repo.path, repo.origin) }))
-    .filter(entry => entry.spec > 0)
+    .map((row) => ({
+      row,
+      spec: repositoryMatchSpecificity(row, repo.path, repo.origin),
+    }))
+    .filter((entry) => entry.spec > 0)
     .sort((a, b) => b.spec - a.spec || b.row.revision - a.row.revision);
   return ranked[0]?.row ?? null;
 }
@@ -57,19 +62,30 @@ function qaKeysFor(project: Project): Set<string> {
 /** Origins and paths Settings uses to look up each project's latest QA. */
 export function projectSettingsQaKeys(projects: readonly Project[]): string[] {
   const keys = new Set<string>();
-  for (const project of projects) for (const key of qaKeysFor(project)) keys.add(key);
+  for (const project of projects)
+    for (const key of qaKeysFor(project)) keys.add(key);
   return [...keys];
 }
 
-function latestQaFor(project: Project, runs: ProjectQaRun[]): ProjectSettingsQa | null {
+function latestQaFor(
+  project: Project,
+  runs: ProjectQaRun[],
+): ProjectSettingsQa | null {
   const keys = qaKeysFor(project);
-  const match = runs.find(run => keys.has(run.key));
-  return match ? { key: match.key, state: match.state, startedAt: match.startedAt, finishedAt: match.finishedAt } : null;
+  const match = runs.find((run) => keys.has(run.key));
+  return match
+    ? {
+        key: match.key,
+        state: match.state,
+        startedAt: match.startedAt,
+        finishedAt: match.finishedAt,
+      }
+    : null;
 }
 
 function anyLatestQaFailed(project: Project, runs: ProjectQaRun[]): boolean {
   const keys = qaKeysFor(project);
-  return runs.some(run => keys.has(run.key) && run.state === "failed");
+  return runs.some((run) => keys.has(run.key) && run.state === "failed");
 }
 
 export function buildProjectSettings(input: {
@@ -89,20 +105,33 @@ export function buildProjectSettings(input: {
 }): ProjectSettings {
   return projectSettingsSchema.parse({
     defaultSlots: input.defaultSlots,
-    projects: input.projects.map(project => {
-      const override = Object.prototype.hasOwnProperty.call(input.overrides, project.key)
-        ? input.overrides[project.key]! : null;
+    projects: input.projects.map((project) => {
+      const override = Object.prototype.hasOwnProperty.call(
+        input.overrides,
+        project.key,
+      )
+        ? input.overrides[project.key]!
+        : null;
       const plannerId = project.planner?.agentId;
-      const plannerHost = plannerId ? parseAgentId(plannerId)?.hostId : undefined;
-      const plannerObserved = plannerHost ? input.observedHostId === plannerHost
-        : !input.observedHostId || hostKindOf(input.observedHostId) === 'paseo';
+      const plannerHost = plannerId
+        ? parseAgentId(plannerId)?.hostId
+        : undefined;
+      const plannerObserved = plannerHost
+        ? input.observedHostId === plannerHost
+        : !input.observedHostId || hostKindOf(input.observedHostId) === "paseo";
       const plannerRoutingIssue = input.plannerRoutingIssues?.get(project.key);
-      const plannerLive = !plannerId || plannerRoutingIssue ? null : input.liveAgentIds.has(plannerId) ? true
-        : input.liveKnown && plannerObserved ? false : null;
+      const plannerLive =
+        !plannerId || plannerRoutingIssue
+          ? null
+          : input.liveAgentIds.has(plannerId)
+            ? true
+            : input.liveKnown && plannerObserved
+              ? false
+              : null;
       const latestQa = latestQaFor(project, input.latestQaRuns);
       return {
         project,
-        repositories: project.repositories.map(repo => ({
+        repositories: project.repositories.map((repo) => ({
           repository: repo,
           primary: Boolean(
             repo.origin && project.primary.origin
@@ -114,13 +143,19 @@ export function buildProjectSettings(input: {
         slots: { value: override ?? input.defaultSlots, override },
         plannerLive,
         agents: input.agents?.[project.key] ?? [],
-        plannerTicket: !plannerId ? null : input.plannerTicketPending?.has(project.key) ? 'pending' : 'issued',
+        plannerTicket: !plannerId
+          ? null
+          : input.plannerTicketPending?.has(project.key)
+            ? "pending"
+            : "issued",
         latestQa,
         problems: projectSettingsProblems({
           plannerId,
           plannerLive,
           plannerRoutingIssue,
-          plannerTicketPending: Boolean(plannerId) && Boolean(input.plannerTicketPending?.has(project.key)),
+          plannerTicketPending:
+            Boolean(plannerId) &&
+            Boolean(input.plannerTicketPending?.has(project.key)),
           latestQaFailed: anyLatestQaFailed(project, input.latestQaRuns),
         }),
       };

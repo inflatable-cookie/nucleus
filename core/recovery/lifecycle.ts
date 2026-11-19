@@ -1,18 +1,42 @@
-import type { Task } from '../../shared/contracts';
-import type { Resolution } from '../resolution';
-import { stages } from './task-reasons';
-import { now } from '../store/store';
-import { coordinatorReportMatches } from './coordinator-report';
-import { latestAuthorResult } from '../verbs/owner-verbs';
-import { blockerLadderStep as decideBlockerLadderStep, plannerEscalations, reviewerConsults, blockerCauseId, stalledUnknownEscalation, type LadderEvent } from '../questions/ladder';
-import { DEFAULT_STALL_THRESHOLD_MINUTES } from '../../shared/schema/settings';
-import { advanceFailureDisposition } from './resolution-decisions';
-import { isTransportFailure } from '../../shared/transport';
-import { classifyGitTransientFailure, classifyGitCommandFailure, ForgeOutageError } from '../forge/forge-health';
-import { GitReadTimeoutError } from '../git/index';
-import { LoginSessionFaultError, isLoginSessionFault } from '../../shared/session-fault';
+import type { Task } from "../../shared/contracts";
+import type { Resolution } from "../resolution";
+import { stages } from "./task-reasons";
+import { now } from "../store/store";
+import { coordinatorReportMatches } from "./coordinator-report";
+import { latestAuthorResult } from "../verbs/owner-verbs";
+import {
+  blockerLadderStep as decideBlockerLadderStep,
+  plannerEscalations,
+  reviewerConsults,
+  blockerCauseId,
+  stalledUnknownEscalation,
+  type LadderEvent,
+} from "../questions/ladder";
+import { DEFAULT_STALL_THRESHOLD_MINUTES } from "../../shared/schema/settings";
+import { advanceFailureDisposition } from "./resolution-decisions";
+import { isTransportFailure } from "../../shared/transport";
+import {
+  classifyGitTransientFailure,
+  classifyGitCommandFailure,
+  ForgeOutageError,
+} from "../forge/forge-health";
+import { GitReadTimeoutError } from "../git/index";
+import {
+  LoginSessionFaultError,
+  isLoginSessionFault,
+} from "../../shared/session-fault";
 
-export type RecoveryLifecycleContext = Pick<Resolution, 'attention' | 'attentionUnknownEscalation' | 'environmentDeferred' | 'gitTransientFailure' | 'responsibleBlockerLadder' | 'store' | 'update' | 'waiting'> & {
+export type RecoveryLifecycleContext = Pick<
+  Resolution,
+  | "attention"
+  | "attentionUnknownEscalation"
+  | "environmentDeferred"
+  | "gitTransientFailure"
+  | "responsibleBlockerLadder"
+  | "store"
+  | "update"
+  | "waiting"
+> & {
   replayHeldAttention(t: Task): Promise<Task | null>;
 };
 
@@ -22,14 +46,43 @@ export class RecoveryLifecycle {
     // Progress supersedes an old recovery episode once it no longer owns a
     // run or attention. Keep explicit planner and owner waits intact.
     const oldRecovery = t.resolution.recovery;
-    if (stages.includes(t.phase) && oldRecovery?.status === 'escalated'
-      && oldRecovery.progress && !coordinatorReportMatches(t) && !t.resolution.recoveryActive && !t.resolution.attention
-      && !['escalated', 'responsible_question', 'budget', 'paused_stop'].includes(t.resolution.stop?.reason ?? '')
-      && (!oldRecovery.runId || this.context.store.run(oldRecovery.runId)?.released)) {
+    if (
+      stages.includes(t.phase) &&
+      oldRecovery?.status === "escalated" &&
+      oldRecovery.progress &&
+      !coordinatorReportMatches(t) &&
+      !t.resolution.recoveryActive &&
+      !t.resolution.attention &&
+      !["escalated", "responsible_question", "budget", "paused_stop"].includes(
+        t.resolution.stop?.reason ?? "",
+      ) &&
+      (!oldRecovery.runId ||
+        this.context.store.run(oldRecovery.runId)?.released)
+    ) {
       const incident = t.resolution.incident;
-      t = this.context.update(t, { recovery: { ...oldRecovery, status: 'resolved', summary: 'Superseded by later task progress' },
-        ...(incident && incident.id === oldRecovery.incidentId ? { incident: { ...incident, status: 'resolved', detail: 'Superseded by later task progress', updatedAt: now() } } : {})
-      }, {}, 'recovery_episode_superseded', 'Later task progress superseded the earlier recovery');
+      t = this.context.update(
+        t,
+        {
+          recovery: {
+            ...oldRecovery,
+            status: "resolved",
+            summary: "Superseded by later task progress",
+          },
+          ...(incident && incident.id === oldRecovery.incidentId
+            ? {
+                incident: {
+                  ...incident,
+                  status: "resolved",
+                  detail: "Superseded by later task progress",
+                  updatedAt: now(),
+                },
+              }
+            : {}),
+        },
+        {},
+        "recovery_episode_superseded",
+        "Later task progress superseded the earlier recovery",
+      );
     }
     return t;
   }
@@ -41,12 +94,25 @@ export class RecoveryLifecycle {
     // proof wait's own episode.
     const completion = latestAuthorResult(t, this.context.store.runs(t.id));
     const events = this.context.store.eventsAll(t.id);
-    const classified = Boolean(completion && events.some(event => event.kind === 'blocker_ladder_classified' && event.detail.startsWith(`${completion.eventId}:`)));
+    const classified = Boolean(
+      completion &&
+        events.some(
+          (event) =>
+            event.kind === "blocker_ladder_classified" &&
+            event.detail.startsWith(`${completion.eventId}:`),
+        ),
+    );
     // Papercut 2ef86450: an escalation nobody observed delivering is never resent,
     // but past the stall threshold it must surface instead of waiting invisibly.
-    const thresholdMs = (this.context.store.getMeta<number>('stallThresholdMinutes') ?? DEFAULT_STALL_THRESHOLD_MINUTES) * 60_000;
+    const thresholdMs =
+      (this.context.store.getMeta<number>("stallThresholdMinutes") ??
+        DEFAULT_STALL_THRESHOLD_MINUTES) * 60_000;
     const escalations = plannerEscalations(events as LadderEvent[]);
-    const unknownStall = stalledUnknownEscalation({ escalations, now: Date.now(), thresholdMs });
+    const unknownStall = stalledUnknownEscalation({
+      escalations,
+      now: Date.now(),
+      thresholdMs,
+    });
     const first = decideBlockerLadderStep({
       classified,
       completion,
@@ -54,16 +120,28 @@ export class RecoveryLifecycle {
       consults: reviewerConsults(events as LadderEvent[]),
       unknownStall,
     });
-    if (first.kind === 'classify' && completion) {
-      this.context.store.event(t.id, 'blocker_ladder_classified', `${completion.eventId}: ${blockerCauseId(t.id, completion)}`);
-      if (await this.context.responsibleBlockerLadder(this.context.store.task(t.id), { source: 'worker', runId: completion.runId, completion })) return null;
-    } else if (first.kind === 'attention') {
+    if (first.kind === "classify" && completion) {
+      this.context.store.event(
+        t.id,
+        "blocker_ladder_classified",
+        `${completion.eventId}: ${blockerCauseId(t.id, completion)}`,
+      );
+      if (
+        await this.context.responsibleBlockerLadder(
+          this.context.store.task(t.id),
+          { source: "worker", runId: completion.runId, completion },
+        )
+      )
+        return null;
+    } else if (first.kind === "attention") {
       this.context.attentionUnknownEscalation(t, first.escalation);
       return null;
-    } else if (first.kind === 'wait') {
-      this.context.waiting(t, first.detail, 'escalated', { holderAgentId: first.holderAgentId });
+    } else if (first.kind === "wait") {
+      this.context.waiting(t, first.detail, "escalated", {
+        holderAgentId: first.holderAgentId,
+      });
       return null;
-    } else if (first.kind === 'continue') {
+    } else if (first.kind === "continue") {
       return t;
     }
     // The ladder's park is durable. While a consult or planner escalation is still
@@ -75,46 +153,109 @@ export class RecoveryLifecycle {
       completion,
       escalations: plannerEscalations(ladderEvents as LadderEvent[]),
       consults: reviewerConsults(ladderEvents as LadderEvent[]),
-      unknownStall: stalledUnknownEscalation({ escalations: plannerEscalations(ladderEvents as LadderEvent[]), now: Date.now(), thresholdMs }),
+      unknownStall: stalledUnknownEscalation({
+        escalations: plannerEscalations(ladderEvents as LadderEvent[]),
+        now: Date.now(),
+        thresholdMs,
+      }),
     });
-    if (after.kind === 'attention') { this.context.attentionUnknownEscalation(t, after.escalation); return null; }
-    if (after.kind === 'wait') { this.context.waiting(t, after.detail, 'escalated', { holderAgentId: after.holderAgentId }); return null; }
+    if (after.kind === "attention") {
+      this.context.attentionUnknownEscalation(t, after.escalation);
+      return null;
+    }
+    if (after.kind === "wait") {
+      this.context.waiting(t, after.detail, "escalated", {
+        holderAgentId: after.holderAgentId,
+      });
+      return null;
+    }
     return t;
   }
   attentionReplayApplies(t: Task): boolean {
-    return t.resolution.attention && !(t.resolution.mergeIntent && !t.resolution.mergedCommit);
+    return (
+      t.resolution.attention &&
+      !(t.resolution.mergeIntent && !t.resolution.mergedCommit)
+    );
   }
-  replayHeldAttention(t: Task): Promise<Task | null> { return this.context.replayHeldAttention(t); }
-  settleAdvanceFailure(t: Task, error: unknown, observedRunId: string | null, supersededBy: (current: Task) => string | null): void {
+  replayHeldAttention(t: Task): Promise<Task | null> {
+    return this.context.replayHeldAttention(t);
+  }
+  settleAdvanceFailure(
+    t: Task,
+    error: unknown,
+    observedRunId: string | null,
+    supersededBy: (current: Task) => string | null,
+  ): void {
     const current = this.context.store.task(t.id);
     const uncertainCurrentSend = current.resolution.currentRunId
-      ? this.context.store.run(current.resolution.currentRunId)?.status === 'uncertain'
+      ? this.context.store.run(current.resolution.currentRunId)?.status ===
+        "uncertain"
       : false;
-    const disposition = advanceFailureDisposition({
-      message: error instanceof Error ? error.message : String(error),
-      errorText: String(error),
-      successor: current.resolution.mergeIntent ? null : supersededBy(current),
-      mergeIntent: current.resolution.mergeIntent,
-      mergedCommit: current.resolution.mergedCommit,
-      mergeResponseOutcome: current.resolution.mergeResponseOutcome,
-      mergedIdentityDiffers: error instanceof Error && error.message === 'Merged PR identity differs from the approved task',
-      uncertainCurrentSend,
-      transientSendFault: isTransportFailure(error) || classifyGitTransientFailure(error) === 'network' || classifyGitCommandFailure(error) === 'network',
-      forgeOutage: error instanceof ForgeOutageError,
-      gitReadTimeout: error instanceof GitReadTimeoutError,
-      loginSessionFault: error instanceof LoginSessionFaultError || isLoginSessionFault(error),
-    }, () => Boolean(this.context.gitTransientFailure?.(current, error)));
+    const disposition = advanceFailureDisposition(
+      {
+        message: error instanceof Error ? error.message : String(error),
+        errorText: String(error),
+        successor: current.resolution.mergeIntent
+          ? null
+          : supersededBy(current),
+        mergeIntent: current.resolution.mergeIntent,
+        mergedCommit: current.resolution.mergedCommit,
+        mergeResponseOutcome: current.resolution.mergeResponseOutcome,
+        mergedIdentityDiffers:
+          error instanceof Error &&
+          error.message === "Merged PR identity differs from the approved task",
+        uncertainCurrentSend,
+        transientSendFault:
+          isTransportFailure(error) ||
+          classifyGitTransientFailure(error) === "network" ||
+          classifyGitCommandFailure(error) === "network",
+        forgeOutage: error instanceof ForgeOutageError,
+        gitReadTimeout: error instanceof GitReadTimeoutError,
+        loginSessionFault:
+          error instanceof LoginSessionFaultError || isLoginSessionFault(error),
+      },
+      () => Boolean(this.context.gitTransientFailure?.(current, error)),
+    );
     switch (disposition.kind) {
-      case 'superseded_attempt':
-        this.context.store.event(current.id, 'superseded_attempt_failure', JSON.stringify({ observedRunId, supersededBy: disposition.successor, currentRunId: current.resolution.currentRunId, error: (error instanceof Error ? error.message : String(error)).slice(0, 1500) }));
+      case "superseded_attempt":
+        this.context.store.event(
+          current.id,
+          "superseded_attempt_failure",
+          JSON.stringify({
+            observedRunId,
+            supersededBy: disposition.successor,
+            currentRunId: current.resolution.currentRunId,
+            error: (error instanceof Error
+              ? error.message
+              : String(error)
+            ).slice(0, 1500),
+          }),
+        );
         return;
-      case 'git_transient': return;
-      case 'wait': this.context.waiting(current, disposition.reason, disposition.stop); return;
-      case 'environment': this.context.environmentDeferred(current, error); return;
-      case 'attention': this.context.attention(current, disposition.reason); return;
-      case 'merge_response_uncertain':
-        this.context.update(current, { mergeResponseOutcome: 'uncertain' }, {}, 'merge_response_uncertain', disposition.detail);
-        this.context.waiting(this.context.store.task(current.id), 'Merge response is uncertain; checking GitHub before considering one guarded re-issue', 'lifecycle');
+      case "git_transient":
+        return;
+      case "wait":
+        this.context.waiting(current, disposition.reason, disposition.stop);
+        return;
+      case "environment":
+        this.context.environmentDeferred(current, error);
+        return;
+      case "attention":
+        this.context.attention(current, disposition.reason);
+        return;
+      case "merge_response_uncertain":
+        this.context.update(
+          current,
+          { mergeResponseOutcome: "uncertain" },
+          {},
+          "merge_response_uncertain",
+          disposition.detail,
+        );
+        this.context.waiting(
+          this.context.store.task(current.id),
+          "Merge response is uncertain; checking GitHub before considering one guarded re-issue",
+          "lifecycle",
+        );
         return;
     }
   }

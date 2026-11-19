@@ -2734,9 +2734,7 @@ export class Resolution {
     return this.delegation.taskPlannerFor(task);
   }
   /** Task 1109: the ordered planner rungs a task's questions climb — its own planner, then the project's. */
-  plannerRungsFor(
-    task: Task,
-  ): ReturnType<Delegation['plannerRungsFor']> {
+  plannerRungsFor(task: Task): ReturnType<Delegation["plannerRungsFor"]> {
     return this.delegation.plannerRungsFor(task);
   }
   /**
@@ -2747,9 +2745,7 @@ export class Resolution {
   ensurePlannerTicket:
     | ((agentId: string, hostId: string) => Promise<void>)
     | null = null;
-  projectPlannerFor(
-    task: Task,
-  ): ReturnType<Delegation['projectPlannerFor']> {
+  projectPlannerFor(task: Task): ReturnType<Delegation["projectPlannerFor"]> {
     return this.delegation.projectPlannerFor(task);
   }
   /** An escalation's rung: the task's own planner, then the project planner, the order task 1109 gives questions. */

@@ -1411,12 +1411,24 @@ test("a T3 MCP planner classifies a reviewer consult; the worker helper receives
   const projection = threadProjection(planner.id, directory);
   projection.thread.creationSource = "mcp";
   server.threads.set(planner.id, projection);
-  const callerPorts = { onlineIds: () => [host.hostId], observe: (_host: string, id: string) => host.observe(id) };
-  const callerSource = { hostKind: "t3code" as const, hostScope: "synthetic-desktop-scope" };
-  const caller = await resolveHostCallerIdentity(callerPorts, { ...callerSource, nativeAgentId: planner.id });
+  const callerPorts = {
+    onlineIds: () => [host.hostId],
+    observe: (_host: string, id: string) => host.observe(id),
+  };
+  const callerSource = {
+    hostKind: "t3code" as const,
+    hostScope: "synthetic-desktop-scope",
+  };
+  const caller = await resolveHostCallerIdentity(callerPorts, {
+    ...callerSource,
+    nativeAgentId: planner.id,
+  });
   assert.equal(caller.caller, formatAgentId(host.hostId, planner.id));
   await assert.rejects(
-    resolveHostCallerIdentity(callerPorts, { ...callerSource, nativeAgentId: "mcp:bare-session" }),
+    resolveHostCallerIdentity(callerPorts, {
+      ...callerSource,
+      nativeAgentId: "mcp:bare-session",
+    }),
     /is not owned by any online host/,
   );
   const helperPath = join(directory, "worker-report.mjs");
@@ -1523,12 +1535,24 @@ test("a T3 MCP planner classifies a reviewer consult; the worker helper receives
     );
     assert.equal(helperAnswer.code, 0, helperAnswer.err);
     const questionId = `ns-agent-ask-${askId}-project`;
-    await waitUntil(() => server.commands.some(command =>
-      command.type === "message.dispatch" && command.threadId === planner.id && command.commandId === questionId,
-    ), "MCP-created project planner received the question");
-    await engine.resolution.answerDelegatedQuestionFromHost({
-      questionId, decision: "operator", reason: "Changing the approved scope requires operator authority.",
-    }, caller.caller);
+    await waitUntil(
+      () =>
+        server.commands.some(
+          (command) =>
+            command.type === "message.dispatch" &&
+            command.threadId === planner.id &&
+            command.commandId === questionId,
+        ),
+      "MCP-created project planner received the question",
+    );
+    await engine.resolution.answerDelegatedQuestionFromHost(
+      {
+        questionId,
+        decision: "operator",
+        reason: "Changing the approved scope requires operator authority.",
+      },
+      caller.caller,
+    );
     const decisions = new Decisions(store);
     await waitUntil(
       () => decisions.list({ status: "open", task: task.id }).length === 1,
