@@ -30,7 +30,7 @@
  * or never resent.
  */
 import { z } from "zod";
-import { isHostOperationTimeout } from "../../core/host/errors";
+import { isHostOperationTimeout } from "../../core/host";
 import type { HostAgentAttempt, HostAgentSpec } from "../../shared/host";
 import type { Profile, Task } from "../../shared/contracts";
 import type { AcpSessionSurface } from "../../shared/acp/surface";

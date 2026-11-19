@@ -284,6 +284,10 @@ function fixture() {
   };
   return {
     ...f,
+    close: async () => {
+      await engine.stop();
+      f.close();
+    },
     get store() {
       return store;
     },
@@ -548,7 +552,7 @@ test("an ordinarily applied earlier review does not hold a displaced restart", a
     assert.equal(f.store.operation(id)?.effect?.status, "uncertain");
   } finally {
     await f.engine.stop();
-    f.close();
+    await f.close();
   }
 });
 
@@ -621,7 +625,7 @@ test("ordinary public changes-required lifecycle retains the reader with a new e
     assert.equal(runGit(f.workspace, "rev-parse", "HEAD"), head);
     assert.equal(f.store.run(first.id)!.completion!.head, first.head);
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
@@ -739,7 +743,7 @@ test("a released authenticated review with a lost application is reapplied once 
       1,
     );
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
@@ -871,7 +875,7 @@ test("a published verdict survives transient application failures and settles it
     );
     assert.ok(storedRun.released);
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
@@ -925,7 +929,7 @@ test("move to review applies a released pending verdict instead of accepting a n
     );
   } finally {
     await f.engine.stop();
-    f.close();
+    await f.close();
   }
 });
 
@@ -987,7 +991,7 @@ test("a changed PR head or fresh reviewer binding keeps the released verdict fro
       false,
     );
   } finally {
-    changedHead.f.close();
+    await changedHead.f.close();
   }
 
   const freshReviewer = await pending();
@@ -1021,7 +1025,7 @@ test("a changed PR head or fresh reviewer binding keeps the released verdict fro
       false,
     );
   } finally {
-    freshReviewer.f.close();
+    await freshReviewer.f.close();
   }
 });
 
@@ -1136,7 +1140,7 @@ test("retained verdicts replay after settled or refused recovery and only their 
         `${scenario.name}: the missing publication is sent once during replay`,
       );
     } finally {
-      f.close();
+      await f.close();
     }
   }
 });
@@ -1154,7 +1158,7 @@ test("uncertain publication, owner stop, later reviewer and unrelated planner es
       "blocked",
     );
   } finally {
-    uncertain.f.close();
+    await uncertain.f.close();
   }
 
   const ownerStopped = await pendingVerdict();
@@ -1171,7 +1175,7 @@ test("uncertain publication, owner stop, later reviewer and unrelated planner es
       "blocked",
     );
   } finally {
-    ownerStopped.f.close();
+    await ownerStopped.f.close();
   }
 
   const laterReviewer = await pendingVerdict();
@@ -1189,7 +1193,7 @@ test("uncertain publication, owner stop, later reviewer and unrelated planner es
       "none",
     );
   } finally {
-    laterReviewer.f.close();
+    await laterReviewer.f.close();
   }
 
   const otherEscalation = await pendingVerdict();
@@ -1207,7 +1211,7 @@ test("uncertain publication, owner stop, later reviewer and unrelated planner es
       "blocked",
     );
   } finally {
-    otherEscalation.f.close();
+    await otherEscalation.f.close();
   }
 });
 
@@ -1341,7 +1345,7 @@ test("a superseded uncertain publication merges through its ordinary turn; the o
     );
   } finally {
     await superseded.f.engine.stop();
-    superseded.f.close();
+    await superseded.f.close();
   }
 
   // Without a later applied verdict the uncertain publication keeps blocking:
@@ -1398,7 +1402,7 @@ test("a superseded uncertain publication merges through its ordinary turn; the o
     assert.equal(blocking[0]!.state, "uncertain");
   } finally {
     await parked.f.engine.stop();
-    parked.f.close();
+    await parked.f.close();
   }
 });
 
@@ -1450,7 +1454,7 @@ test("ordinary review custody ignores its concurrent dispatch hold and waiting w
     );
     assert.equal(f.store.task(f.task.id).resolution.attention, false);
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
@@ -1500,7 +1504,7 @@ test("ordinary review custody still refuses a concurrent PR head change", async 
       false,
     );
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
@@ -1546,7 +1550,7 @@ test("an ordinary review blocked by a late durable effect waits with its identit
       "unchanged effect does not create more reviewer runs",
     );
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
@@ -1584,7 +1588,7 @@ test("ordinary source approval parks once without a coordinator and duplicate re
     assert.equal(task.resolution.currentRunId, null);
   } finally {
     await f.engine.stop();
-    f.close();
+    await f.close();
   }
 });
 
@@ -1720,7 +1724,7 @@ test("a passed declared proof settles a prose proof wait, while failed and other
         .some((event) => event.kind === "proof_review_ready"),
     );
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
@@ -1821,7 +1825,7 @@ test("a review prompt of any delta size carries references and never diff text",
       "no generated content travels in the prompt",
     );
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
@@ -1851,7 +1855,7 @@ test("ordinary checkout refuses dirty source and detects a pure rebase from actu
       /dirty/,
     );
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
@@ -1946,7 +1950,7 @@ test("an owner-activated same-head executor settlement starts exactly one proof-
     assert.equal(f.store.run(first.id)!.completion!.sourceApproved, true);
   } finally {
     await f.engine.stop();
-    f.close();
+    await f.close();
   }
 });
 
@@ -2018,7 +2022,7 @@ test("a failed settled author proof returns the responsible task to its retained
     assert.match(revision.instruction!, /case beta failed/);
     assert.match(revision.instruction!, new RegExp(executor.id));
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
@@ -2120,7 +2124,7 @@ test("a detached reviewer redelivers an accepted verdict without reattaching the
     assert.equal(f.store.run(run.id)?.completion?.status, "ready_to_merge");
   } finally {
     process.env.PATH = oldPath;
-    f.close();
+    await f.close();
   }
 });
 
@@ -2158,7 +2162,7 @@ test("refusing a fresh reviewer preserves the active detached checkout", async (
     await f.report(run, "ready_to_merge");
     assert.equal(f.store.run(run.id)?.completion?.status, "ready_to_merge");
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
@@ -2184,7 +2188,7 @@ test("later rounds keep the retained reviewer without resetting the author budge
     assert.equal(f.store.task(f.task.id).resolution.revisionRuns, 4);
   } finally {
     await f.engine.stop();
-    f.close();
+    await f.close();
   }
 });
 
@@ -2204,7 +2208,7 @@ test("a closed reviewer falls back through the ordinary fresh factory and preser
     assert.equal(review.head, f.workspaceHead());
     assert.equal(f.store.run(first.id)!.head, f.oldHead);
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
@@ -2227,7 +2231,7 @@ test("an errored reviewer is held until its availability is known", async () => 
     assert.match(f.store.task(f.task.id).reason, /Retained reviewer/);
     assert.equal(f.store.run(first.id)!.head, f.oldHead);
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
@@ -2262,7 +2266,7 @@ for (const busy of ["permission", "active turn", "active flag"] as const) {
         busy,
       );
     } finally {
-      f.close();
+      await f.close();
     }
   });
 }
@@ -2331,7 +2335,7 @@ test("an ordinary review reservation race waits for the next pass without an inc
       "the retry does not leave an incident needing an owner",
     );
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
@@ -2356,7 +2360,7 @@ test("a checkout dirtied during an awaited observation refuses the new round wit
     assert.equal(runGit(f.workspace, "for-each-ref", "refs/stash"), "");
     assert.ok(!review || review.status !== "running");
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
@@ -2394,7 +2398,7 @@ test("head movement invalidates source approval and cannot turn arriving old-hea
     assert.notEqual(head, f.oldHead);
     assert.equal(task.resolution.mergedCommit, null);
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
@@ -2441,7 +2445,7 @@ test("a retained new-head round checkpoints and automatically continues the same
       "feature/external",
     );
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
@@ -2461,7 +2465,7 @@ test("unknown tools refuse the ordinary new-head send while preserving the earli
       "feature/external",
     );
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
@@ -2516,7 +2520,7 @@ test("a genuine rebase author report receives base movement and covering evidenc
     assert.equal(f.store.task(f.task.id).resolution.review?.head, head);
     assert.equal(f.store.task(f.task.id).resolution.mergedCommit, null);
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
@@ -2553,7 +2557,7 @@ test("a closed reviewer after a retained round permits a fresh reviewer", async 
       "feature/external",
     );
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
@@ -2599,7 +2603,7 @@ test("a launch owns its reservation across concurrent observation and released-r
       "historical resolved incidents remain; this launch opens none",
     );
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
@@ -2619,7 +2623,7 @@ test("covering evidence from the earlier head refuses a new-head round without g
     assert.equal(f.store.task(f.task.id).resolution.mergedCommit, null);
     assert.equal(f.store.run(first.id)!.completion!.head, first.head);
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
@@ -2659,7 +2663,7 @@ test("a subsequent round launches its reviewer while the merge gate still requir
       "covering evidence grants no merge credit",
     );
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
@@ -2710,7 +2714,7 @@ test("an owner return to the author supersedes the source-approval proof wait an
     );
     assert.equal(f.store.task(f.task.id).resolution.mergedCommit, null);
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
@@ -2756,7 +2760,7 @@ test("an operator source acceptance of the approved head supersedes the proof wa
       "the reviewer record stays as reported",
     );
   } finally {
-    f.close();
+    await f.close();
   }
 });
 
@@ -2841,6 +2845,6 @@ for (const action of [
         "an available retained reviewer is not archived",
       );
     } finally {
-      f.close();
+      await f.close();
     }
   });

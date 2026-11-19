@@ -4,6 +4,7 @@ import {
   Store,
   operationIdForKey,
   operationInputHash,
+  qualifiedThreadArchiveEffectKey,
 } from "../core/store/store";
 import { Engine } from "../core/engine";
 import { enginePorts } from "../core/port-context";
@@ -13,7 +14,10 @@ import { fakeAdapter, submission, observeIdle } from "./support/fakes";
 import { catchUpFinishedTaskThreads } from "../core/workspaces/thread-archive";
 import { archiveProbeKey } from "../core/workspaces/thread-archive-effect";
 import { hostDependents } from "../core/host/host-dependents";
-import { queueOperationSchema } from "../shared/operations";
+import {
+  operationStateLabel,
+  queueOperationSchema,
+} from "../shared/operations";
 import { recoveryEffects } from "../core/recovery/recovery-effects";
 import {
   collectOwnerVerbFacts,
@@ -346,11 +350,11 @@ test("terminal submit binds only its matching submission; cleanup controls stay 
       .filter((event) => event.kind === "operation_superseded").length,
     1,
   );
-  assert.deepEqual(
+  assert.match(
     hostDependents(f.store, { id: HOST, kind: "paseo", primary: true }).find(
       (item) => item.kind === "effect",
-    )?.names,
-    [`task control for ${f.store.numberFor(task.id)?.reference ?? task.id}`],
+    )!.names[0]!,
+    /task control.*settlement lacks proof/,
   );
   await pass();
   assert.equal(
@@ -482,7 +486,7 @@ test("terminal operation pages advance past an unprovable submission", async (t)
   assert.ok(
     hostDependents(f.store, { id: HOST, kind: "paseo", primary: true })
       .find((item) => item.kind === "effect")
-      ?.names.includes("submit"),
+      ?.names.some((name) => name.startsWith("submit:")),
   );
 });
 
@@ -846,6 +850,564 @@ test("a failed archive read after an idle observation shows its effect detail in
   assert.ok(
     !next().verbs.some((view) =>
       (view.refusal ?? "").includes("synthetic archive read unavailable"),
+    ),
+  );
+});
+
+test("engine sweep settles live-shaped terminal and retained operations past history", async (t) => {
+  const f = fixture(t, fakeAdapter({ hostProcessListing: async () => [] }));
+  const initial = f.store.insert(submission(), HOST, "handoff", "a".repeat(40));
+  for (let i = 0; i < 80; i++)
+    f.store.update(initial.id, { reason: `version ${i}` });
+  f.store.update(initial.id, {
+    phase: "done",
+    agentId: "legacy-worker",
+    runId: "legacy-run",
+  });
+  const at = "2026-11-18T05:09:58.694Z";
+  const end = "2026-11-18T05:10:04.311Z";
+  f.store.putThreadArchiveEffect(
+    qualifiedThreadArchiveEffectKey(HOST, "legacy-worker"),
+    "legacy-worker",
+    { status: "archived", at: end },
+  );
+  f.store.queueRunProcessCleanup({
+    id: "legacy-run",
+    taskId: initial.id,
+    hostId: HOST,
+  });
+  for (let i = 0; i < 75; i++) {
+    const key = `history-${i}`;
+    f.store.putOperation(
+      queueOperationSchema.parse({
+        id: operationIdForKey(key),
+        key,
+        kind: "submit",
+        inputHash: operationInputHash({}),
+        state: "succeeded",
+        hostId: HOST,
+        createdAt: at,
+      }),
+      {},
+    );
+  }
+  const payload = {
+    type: "task_control",
+    control: { action: "restart", taskId: initial.id, version: 77 },
+  };
+  const key = "old-restart";
+  const operation = queueOperationSchema.parse({
+    id: operationIdForKey(key),
+    key,
+    kind: "task_control",
+    inputHash: operationInputHash(payload),
+    state: "needs_attention",
+    taskId: initial.id,
+    expectedVersion: 77,
+    createdAt: at,
+    startedAt: at,
+    settledAt: end,
+    attempts: 1,
+    diagnostic: "Transport",
+    result: null,
+    hostId: HOST,
+    effect: {
+      kind: "task_control",
+      target: "restart",
+      intentAt: at,
+      status: "uncertain",
+      result: "Transport",
+    },
+  });
+  f.store.putOperation(operation, payload);
+  const ids: string[] = [];
+  for (const [i, kind, diagnostic] of [
+    [
+      0,
+      "task_control",
+      "Task execution participants or effects are not settled: publication is uncertain",
+    ],
+    [1, "submit", "Liveness check timed out (15000ms)"],
+    [2, "submit", "Transport not connected"],
+  ] as const) {
+    const input = submission();
+    const task = f.store.insert(input, HOST, "handoff", "a".repeat(40));
+    const row = f.store.db
+      .prepare("SELECT input_hash FROM tasks WHERE id=?")
+      .get(task.id)!;
+    f.store.db.prepare("INSERT INTO tombstones VALUES(?,?,?,?)").run(
+      task.id,
+      input.submissionId,
+      row.input_hash,
+      JSON.stringify({
+        id: task.id,
+        submissionId: input.submissionId,
+        phase: "done",
+      }),
+    );
+    f.store.db.prepare("DELETE FROM tasks WHERE id=?").run(task.id);
+    const payload =
+      kind === "submit"
+        ? { type: "submit", submission: input }
+        : {
+            type: "task_control",
+            control: {
+              taskId: task.id,
+              version: 88,
+              action: "move",
+              to: "closeout",
+            },
+          };
+    const key =
+      kind === "submit" ? `submit:${input.submissionId}` : `move-${i}`;
+    const op = queueOperationSchema.parse({
+      id: operationIdForKey(key),
+      key,
+      kind,
+      inputHash: operationInputHash(payload),
+      state: "needs_attention",
+      taskId: kind === "submit" ? null : task.id,
+      submissionId: kind === "submit" ? input.submissionId : null,
+      expectedVersion: kind === "submit" ? null : 88,
+      hostId: HOST,
+      createdAt: at,
+      startedAt: at,
+      settledAt: end,
+      attempts: 1,
+      diagnostic,
+      effect:
+        kind === "submit"
+          ? null
+          : {
+              kind: "task_control",
+              target: "move",
+              intentAt: at,
+              status: "uncertain",
+              result: diagnostic,
+            },
+    });
+    ids.push(op.id);
+    f.store.putOperation(op, payload);
+  }
+  await f.engine.sweepOnce();
+  await f.engine.quiesce();
+  assert.equal(
+    f.store
+      .eventsAll(initial.id)
+      .filter((e) => e.kind === "operation_superseded").length,
+    1,
+  );
+  const refused = f.store.operation(ids[0]!)!;
+  assert.equal(refused.settlement?.kind, "refused");
+  const repeated = f.store.acceptOperation({
+    key: refused.key,
+    kind: refused.kind,
+    inputHash: refused.inputHash,
+    payload: f.store.operationPayload(refused.id),
+  });
+  assert.ok("accepted" in repeated);
+  assert.deepEqual(repeated.operation, refused);
+  for (const id of ids.slice(1)) {
+    const op = f.store.operation(id)!;
+    assert.ok(op.taskId);
+    assert.equal(
+      f.store
+        .eventsAll(op.taskId!)
+        .filter((e) => e.kind === "operation_superseded").length,
+      1,
+    );
+  }
+  assert.equal(
+    f.store.getMeta<{ pending: boolean }>("runProcessCleanup:legacy-run")
+      ?.pending,
+    false,
+  );
+  assert.equal(
+    hostDependents(f.store, { id: HOST, kind: "paseo", primary: true }).some(
+      (x) => x.kind === "effect",
+    ),
+    false,
+  );
+  await f.engine.sweepOnce();
+  await f.engine.quiesce();
+  assert.equal(
+    f.store
+      .eventsAll(initial.id)
+      .filter((e) => e.kind === "operation_superseded").length,
+    1,
+  );
+  for (const id of ids.slice(1))
+    assert.equal(
+      f.store
+        .eventsAll(f.store.operation(id)!.taskId!)
+        .filter((e) => e.kind === "operation_superseded").length,
+      1,
+    );
+  // An older event-only settlement is migrated by ordinary retention too.
+  f.store.putOperation({
+    ...f.store.operation(operation.id)!,
+    settlement: undefined,
+  });
+  // Normal retention removes the task events, but never the operation's evidence.
+  assert.ok(
+    f.store.purgeOldTasks(Date.now() + 15 * 86400000).includes(initial.id),
+  );
+  assert.equal(f.store.eventsAll(initial.id).length, 0);
+  assert.equal(
+    f.engine.operationStatus(operation.id).settlement?.kind,
+    "superseded",
+  );
+  assert.equal(
+    hostDependents(f.store, { id: HOST, kind: "paseo", primary: true }).some(
+      (x) => x.kind === "effect",
+    ),
+    false,
+  );
+});
+
+test("sweep leaves conflicting tombstone and unreadable process ownership visible", async (t) => {
+  const f = fixture(t, fakeAdapter({ hostProcessListing: async () => null }));
+  const input = submission();
+  const task = f.store.insert(input, HOST, "handoff", "a".repeat(40));
+  f.store.update(task.id, { phase: "done", runId: "pending-run" });
+  f.store.setMeta("runProcessCleanup:pending-run", {
+    id: "pending-run",
+    taskId: task.id,
+    hostId: HOST,
+    pending: true,
+    uncertainty: JSON.stringify({
+      reason: "process environment ownership is unreadable",
+      processes: [],
+    }),
+  });
+  const removed = submission();
+  const removedTask = f.store.insert(removed, HOST, "handoff", "a".repeat(40));
+  f.store.db.prepare("INSERT INTO tombstones VALUES(?,?,?,?)").run(
+    removedTask.id,
+    removed.submissionId,
+    "conflicting-digest",
+    JSON.stringify({
+      id: removedTask.id,
+      submissionId: removed.submissionId,
+      phase: "done",
+    }),
+  );
+  f.store.db.prepare("DELETE FROM tasks WHERE id=?").run(removedTask.id);
+  const payload = { type: "submit", submission: removed };
+  const key = `submit:${removed.submissionId}`;
+  const op = queueOperationSchema.parse({
+    id: operationIdForKey(key),
+    key,
+    kind: "submit",
+    inputHash: operationInputHash(payload),
+    state: "needs_attention",
+    submissionId: removed.submissionId,
+    hostId: HOST,
+    createdAt: "2026-11-18T05:09:58.694Z",
+    attempts: 1,
+    diagnostic: "Transport not connected",
+  });
+  f.store.putOperation(op, payload);
+  await f.engine.sweepOnce();
+  await f.engine.quiesce();
+  const names = hostDependents(f.store, {
+    id: HOST,
+    kind: "paseo",
+    primary: true,
+  }).find((x) => x.kind === "effect")!.names;
+  assert.ok(
+    names.some(
+      (name) => name.includes("settlement lacks proof") && name.includes(op.id),
+    ),
+  );
+  assert.ok(
+    names.some(
+      (name) =>
+        name.includes("process table observation is unavailable") &&
+        name.includes("pending-run"),
+    ),
+  );
+  assert.equal(f.store.operation(op.id)?.taskId, null);
+  await f.engine.sweepOnce();
+  await f.engine.quiesce();
+  assert.equal(
+    f.store
+      .eventsAll(removedTask.id)
+      .filter((e) => e.kind === "operation_superseded").length,
+    0,
+  );
+});
+
+test("a restart without a recorded start time remains visible with its missing proof", async (t) => {
+  const f = fixture(t, fakeAdapter({}));
+  const task = f.store.insert(submission(), HOST, "handoff", "a".repeat(40));
+  f.store.update(task.id, { phase: "done" });
+  const payload = {
+    type: "task_control",
+    control: { action: "restart", taskId: task.id, version: task.version },
+  };
+  const key = "missing-start-time";
+  const op = queueOperationSchema.parse({
+    id: operationIdForKey(key),
+    key,
+    kind: "task_control",
+    inputHash: operationInputHash(payload),
+    state: "needs_attention",
+    taskId: task.id,
+    expectedVersion: task.version,
+    hostId: HOST,
+    createdAt: "2026-11-18T05:09:58.694Z",
+    settledAt: "2026-11-18T05:10:04.311Z",
+    attempts: 1,
+    diagnostic: "Transport",
+    effect: {
+      kind: "task_control",
+      target: "restart",
+      intentAt: "2026-11-18T05:09:58.694Z",
+      status: "uncertain",
+      result: "Transport",
+    },
+  });
+  f.store.putOperation(op, payload);
+  await f.engine.sweepOnce();
+  await f.engine.quiesce();
+  assert.equal(f.store.operation(op.id)?.settlement, undefined);
+  assert.ok(
+    hostDependents(f.store, { id: HOST, kind: "paseo", primary: true })
+      .find((x) => x.kind === "effect")
+      ?.names.some((x) => x.includes("operation start time is missing")),
+  );
+});
+
+test("a reasonless scratch cleanup records the retirement guard on the engine sweep", async (t) => {
+  const f = fixture(t, fakeAdapter({ hostProcessListing: async () => [] }));
+  const task = f.store.insert(submission(), HOST, "handoff", "a".repeat(40));
+  (
+    f.store as unknown as { runScratchRemover: (path: string) => boolean }
+  ).runScratchRemover = () => false;
+  f.store.update(task.id, {
+    phase: "done",
+    runId: "guarded-run",
+    temporaryDirectory: "/synthetic/guarded",
+  });
+  f.store.setMeta("runProcessCleanup:guarded-run", {
+    id: "guarded-run",
+    taskId: task.id,
+    hostId: HOST,
+    temporaryDirectory: "/synthetic/guarded",
+    pending: true,
+  });
+  await f.engine.sweepOnce();
+  await f.engine.quiesce();
+  const names = hostDependents(f.store, {
+    id: HOST,
+    kind: "paseo",
+    primary: true,
+  }).find((x) => x.kind === "effect")!.names;
+  assert.ok(
+    names.some(
+      (x) =>
+        x.includes("scratch retirement was refused") &&
+        x.includes("inspect the scratch retirement guard"),
+    ),
+  );
+  // The maintenance pass must preserve pending cleanup and its ownership facts.
+  assert.ok(
+    !f.store.purgeOldTasks(Date.now() + 15 * 86400000).includes(task.id),
+  );
+  assert.equal(
+    f.store.getMeta<{ pending: boolean }>("runProcessCleanup:guarded-run")
+      ?.pending,
+    true,
+  );
+  assert.ok(
+    hostDependents(f.store, { id: HOST, kind: "paseo", primary: true }).some(
+      (x) => x.kind === "effect",
+    ),
+  );
+  const before = f.store
+    .eventsAll(task.id)
+    .filter((x) => x.kind === "run_process_cleanup_deferred").length;
+  await f.engine.sweepOnce();
+  await f.engine.quiesce();
+  assert.equal(
+    f.store
+      .eventsAll(task.id)
+      .filter((x) => x.kind === "run_process_cleanup_deferred").length,
+    before,
+  );
+  (
+    f.store as unknown as { runScratchRemover: (path: string) => boolean }
+  ).runScratchRemover = () => true;
+  await f.engine.sweepOnce();
+  await f.engine.quiesce();
+  assert.equal(
+    f.store.getMeta<{ pending: boolean }>("runProcessCleanup:guarded-run")
+      ?.pending,
+    false,
+  );
+  assert.ok(
+    f.store.purgeOldTasks(Date.now() + 15 * 86400000).includes(task.id),
+  );
+});
+
+test("a control without a task identity names the missing binding", async (t) => {
+  const f = fixture(t, fakeAdapter({}));
+  f.store.insert(submission(), HOST, "handoff", "a".repeat(40));
+  const payload = {
+    type: "task_control",
+    control: { action: "move", taskId: "unknown", version: 88 },
+  };
+  const key = "unbound-control";
+  const op = queueOperationSchema.parse({
+    id: operationIdForKey(key),
+    key,
+    kind: "task_control",
+    inputHash: operationInputHash(payload),
+    state: "needs_attention",
+    hostId: HOST,
+    createdAt: "2026-11-18T05:09:58.694Z",
+    attempts: 1,
+    diagnostic: "Task execution participants or effects are not settled",
+  });
+  f.store.putOperation(op, payload);
+  await f.engine.sweepOnce();
+  await f.engine.quiesce();
+  assert.equal(f.store.operation(op.id)?.settlement, undefined);
+  assert.ok(
+    hostDependents(f.store, { id: HOST, kind: "paseo", primary: true })
+      .find((x) => x.kind === "effect")
+      ?.names.some((x) => x.includes("operation task identity is missing")),
+  );
+});
+
+test("a bound submission stays settled after its task is retained", async (t) => {
+  const f = fixture(t, fakeAdapter({}));
+  const input = submission();
+  const task = f.store.insert(input, HOST, "handoff", "a".repeat(40));
+  f.store.update(task.id, { phase: "done" });
+  const payload = { type: "submit", submission: input };
+  const key = `submit:${input.submissionId}`;
+  const op = queueOperationSchema.parse({
+    id: operationIdForKey(key),
+    key,
+    kind: "submit",
+    inputHash: operationInputHash(payload),
+    state: "needs_attention",
+    taskId: task.id,
+    submissionId: input.submissionId,
+    hostId: HOST,
+    createdAt: "2026-11-18T05:09:58.694Z",
+    attempts: 1,
+    diagnostic: "Transport",
+  });
+  f.store.putOperation(op, payload);
+  await f.engine.sweepOnce();
+  await f.engine.quiesce();
+  assert.equal(f.engine.operationStatus(op.id).settlement?.kind, "superseded");
+  assert.ok(
+    f.store.purgeOldTasks(Date.now() + 15 * 86400000).includes(task.id),
+  );
+  await f.engine.sweepOnce();
+  await f.engine.quiesce();
+  assert.equal(f.engine.operationStatus(op.id).settlement?.kind, "superseded");
+  assert.equal(
+    hostDependents(f.store, { id: HOST, kind: "paseo", primary: true }).some(
+      (x) => x.kind === "effect",
+    ),
+    false,
+  );
+});
+
+test("settled submission stops blocking project removal but mismatched proof stays a blocker", async (t) => {
+  const f = fixture(t, fakeAdapter({}));
+  const project = f.store.upsertProject({
+    key: "fixture-project",
+    name: "Fixture",
+    repositories: [{ path: "/repo", origin: null }],
+  });
+  const input = submission();
+  const task = f.store.insert(input, HOST, "handoff", "a".repeat(40));
+  f.store.update(task.id, { phase: "done" });
+  const payload = { type: "submit", submission: input };
+  const key = `submit:${input.submissionId}`;
+  const op = queueOperationSchema.parse({
+    id: operationIdForKey(key),
+    key,
+    kind: "submit",
+    inputHash: operationInputHash(payload),
+    state: "needs_attention",
+    taskId: task.id,
+    submissionId: input.submissionId,
+    repoPath: input.repoPath,
+    hostId: HOST,
+    createdAt: "2026-11-18T05:09:58.694Z",
+    attempts: 1,
+    diagnostic: "Transport",
+  });
+  f.store.putOperation(op, payload);
+  await f.engine.sweepOnce();
+  await f.engine.quiesce();
+  const settled = f.store.operation(op.id)!;
+  assert.equal(operationStateLabel(settled), "Submission superseded");
+  assert.ok(
+    !f.store
+      .projectManagementPreview({ key: project.key })
+      .items.some((x) => x.kind === "operation"),
+  );
+  f.store.putOperation({
+    ...settled,
+    settlement: { ...settled.settlement!, attempt: 2 },
+  });
+  const blocked = f.store.projectManagementPreview({ key: project.key });
+  assert.ok(
+    blocked.items.some((x) => x.kind === "operation" && x.id === op.id),
+  );
+  assert.equal(
+    operationStateLabel(f.store.operation(op.id)!),
+    "Submission needs attention",
+  );
+  assert.throws(
+    () =>
+      f.store.manageRemoveProject({
+        key: project.key,
+        version: project.version,
+        digest: blocked.digest,
+        reason: "fixture",
+      }),
+    /operations must settle/,
+  );
+  f.store.putOperation(settled);
+  const preview = f.store.projectManagementPreview({ key: project.key });
+  f.store.manageRemoveProject({
+    key: project.key,
+    version: project.version,
+    digest: preview.digest,
+    reason: "fixture",
+  });
+  assert.equal(f.store.projectByKey(project.key), null);
+});
+
+test("an unavailable process table does not create cleanup intents for unrecorded history", async (t) => {
+  const f = fixture(t, fakeAdapter({ hostProcessListing: async () => null }));
+  const task = f.store.insert(submission(), HOST, "handoff", "a".repeat(40));
+  f.store.update(task.id, { phase: "done" });
+  f.store.db
+    .prepare("UPDATE tasks SET data=json_set(data,'$.runId',?) WHERE id=?")
+    .run("historical-run", task.id);
+  assert.equal(f.store.getMeta("runProcessCleanup:historical-run"), undefined);
+  await f.engine.sweepOnce();
+  await f.engine.quiesce();
+  assert.equal(f.store.getMeta("runProcessCleanup:historical-run"), undefined);
+  assert.equal(
+    f.store
+      .eventsAll(task.id)
+      .filter((x) => x.kind === "run_process_cleanup_deferred").length,
+    0,
+  );
+  assert.ok(
+    !hostDependents(f.store, { id: HOST, kind: "paseo", primary: true }).some(
+      (x) => x.kind === "effect",
     ),
   );
 });

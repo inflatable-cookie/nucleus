@@ -13,9 +13,15 @@ import { sanitizeHostFailureDetail, sanitizeHostFailureReason } from "../host";
 import { isTransportFailure } from "../../shared/transport";
 import {
   hasRecordedOperationSettlement,
+  historicalFenceRefusal,
   observedHostEffectEvidence,
 } from "../recovery/recovery-effects";
 import { operationIdForKey, operationInputHash } from "../store/store";
+import {
+  submissionHash,
+  legacySubmissionHash,
+  explicitCriticalFalseSubmissionHash,
+} from "../store/store-submissions";
 import { submissionSchema } from "../../shared/contracts";
 import { submissionRecordFromLegacy } from "../../shared/schema/settings/legacy";
 import { LANE_PRIORITY_AUDIT } from "./lane-priorities";
@@ -291,27 +297,39 @@ export class HostPass {
       if (historical) this.lastRunProcessSweep.set(host, Date.now());
       // Process cleanup has its own durable intent and host lane. A slow
       // local probe says nothing about this host's transport or task visits.
-      void this.context.scheduleLane(`cleanup:${host}`, LANE_PRIORITY_AUDIT,
-        () => sweepSettledRunProcesses(this.store, host, {
-          pendingOnly: !historical,
-          readProcesses: () => this.adapter.hostProcessListing!(),
-        }),
-        { coalesce: historical ? "historical-run-process-cleanup" : "settled-run-process-cleanup" },
-      ).catch(error => {
-        if (this.context.stopped) return;
-        const detail = error instanceof Error ? error.message : String(error);
-        this.store.setMeta("hostPassError", `${host}/settledRunProcesses: ${detail}`.slice(0, 2000));
-      });
+      void this.context
+        .scheduleLane(
+          `cleanup:${host}`,
+          LANE_PRIORITY_AUDIT,
+          () =>
+            sweepSettledRunProcesses(this.store, host, {
+              pendingOnly: !historical,
+              readProcesses: () => this.adapter.hostProcessListing!(),
+            }),
+          {
+            coalesce: historical
+              ? "historical-run-process-cleanup"
+              : "settled-run-process-cleanup",
+          },
+        )
+        .catch((error) => {
+          if (this.context.stopped) return;
+          const detail = error instanceof Error ? error.message : String(error);
+          this.store.setMeta(
+            "hostPassError",
+            `${host}/settledRunProcesses: ${detail}`.slice(0, 2000),
+          );
+        });
     }
     // Read one rotating page, including unresolved rows, so an unprovable
     // submission cannot starve later work. Settled occurrences stay history.
     await this.step(host, "settleTerminalOperations", () => {
       const cursor = this.terminalOperationCursor.get(host) ?? 0;
-      // Page by SQLite rowid first. Filtering and event reads happen only
-      // after this bounded read, even when all old operations are settled.
+      // Page unresolved candidates, not the entire historical ledger. A fresh
+      // service must not spend thousands of passes walking settled operations.
       const candidates = this.store.db
         .prepare(
-          "SELECT rowid AS position, id FROM operations WHERE rowid>? ORDER BY rowid LIMIT 25",
+          "SELECT rowid AS position, id FROM operations WHERE rowid>? AND state='needs_attention' AND kind IN ('submit','task_control') AND NOT COALESCE(json_extract(data,'$.settlement.id')=id AND json_extract(data,'$.settlement.inputHash')=inputHash AND json_extract(data,'$.settlement.attempt')=json_extract(data,'$.attempts') AND json_extract(data,'$.settlement.intentAt') IS json_extract(data,'$.effect.intentAt') AND json_type(data,'$.settlement.evidence')='text',0) ORDER BY rowid LIMIT 25",
         )
         .all(cursor);
       this.terminalOperationCursor.set(
@@ -338,7 +356,116 @@ export class HostPass {
                   .prepare("SELECT id FROM tasks WHERE submission=?")
                   .get(operation.submissionId)
               : undefined;
-          if (!taskRow) return;
+          if (!taskRow) {
+            // Retention preserves submission identity and terminal state in a
+            // tombstone after removing the task and its run history. Never infer
+            // a result from absence alone or replay a command.
+            if (
+              operation.hostId !== host ||
+              operation.attempts !== 1 ||
+              operation.result ||
+              operation.id !== operationIdForKey(operation.key)
+            )
+              return;
+            const payload = this.store.operationPayload(operation.id) as {
+              type?: string;
+              submission?: unknown;
+              control?: { action?: string; taskId?: string; version?: number };
+            } | null;
+            if (!payload || operation.inputHash !== operationInputHash(payload))
+              return;
+            const tombstone =
+              operation.kind === "submit" && operation.submissionId
+                ? this.store.db
+                    .prepare(
+                      "SELECT id, input_hash, data FROM tombstones WHERE submission=?",
+                    )
+                    .get(operation.submissionId)
+                : operation.taskId
+                  ? this.store.db
+                      .prepare(
+                        "SELECT id, input_hash, data FROM tombstones WHERE id=?",
+                      )
+                      .get(operation.taskId)
+                  : undefined;
+            if (!tombstone) return;
+            const record = JSON.parse(String(tombstone.data)) as {
+              phase?: string;
+            };
+            if (!["done", "cancelled"].includes(record.phase ?? "")) return;
+            if (operation.kind === "task_control") {
+              // The same historical fence decision already used by recovery
+              // proves this execution refused before its effect.
+              if (
+                !historicalFenceRefusal(operation) ||
+                payload.type !== "task_control" ||
+                payload.control?.taskId !== operation.taskId ||
+                payload.control?.version !== operation.expectedVersion ||
+                operation.effect?.kind !== "task_control" ||
+                operation.effect.target !== payload.control?.action ||
+                operation.effect.status !== "uncertain" ||
+                operation.effect.result !== operation.diagnostic.slice(0, 2000)
+              )
+                return;
+              this.store.putOperation({
+                ...operation,
+                settlement: {
+                  id: operation.id,
+                  inputHash: operation.inputHash,
+                  attempt: operation.attempts,
+                  intentAt: operation.effect?.intentAt ?? null,
+                  evidence: operation.diagnostic,
+                  kind: "refused",
+                },
+              });
+              return;
+            }
+            let parsed: ReturnType<typeof submissionSchema.safeParse>;
+            try {
+              parsed = submissionSchema.safeParse(
+                submissionRecordFromLegacy(
+                  payload.submission,
+                  "submit operation",
+                ),
+              );
+            } catch {
+              return;
+            }
+            if (
+              payload.type !== "submit" ||
+              !parsed.success ||
+              operation.effect ||
+              (operation.taskId && operation.taskId !== String(tombstone.id)) ||
+              operation.key !== `submit:${parsed.data.submissionId}` ||
+              operation.submissionId !== parsed.data.submissionId ||
+              ![
+                submissionHash(parsed.data),
+                legacySubmissionHash(parsed.data),
+                explicitCriticalFalseSubmissionHash(parsed.data),
+              ].includes(String(tombstone.input_hash))
+            )
+              return;
+            const evidence = `matching submission belongs to retained terminal tombstone ${record.phase}`;
+            const settlement = {
+              id: operation.id,
+              inputHash: operation.inputHash,
+              attempt: operation.attempts,
+              intentAt: null,
+              evidence,
+              kind: "superseded" as const,
+            };
+            operation = this.store.putOperation({
+              ...operation,
+              taskId: String(tombstone.id),
+              settlement,
+            });
+            this.store.event(
+              String(tombstone.id),
+              "operation_superseded",
+              JSON.stringify(settlement),
+            );
+            return;
+          }
           const task = this.store.task(String(taskRow.id));
           if (
             task.hostId !== host ||
@@ -409,17 +536,23 @@ export class HostPass {
               ? observedHostEffectEvidence(this.store, task, operation)
               : null;
           if (operation.kind === "task_control" && !evidence) return;
+          const settlement = {
+            id: operation.id,
+            inputHash: operation.inputHash,
+            attempt: operation.attempts,
+            intentAt: operation.effect?.intentAt ?? null,
+            evidence:
+              evidence ??
+              `matching submission belongs to terminal task ${task.phase}`,
+            kind: "superseded" as const,
+          };
+          this.store.putOperation({ ...operation, settlement });
           this.store.event(
             task.id,
             "operation_superseded",
             JSON.stringify({
-              id: operation.id,
-              inputHash: operation.inputHash,
-              attempt: operation.attempts,
+              ...settlement,
               intentAt: operation.effect?.intentAt,
-              evidence:
-                evidence ??
-                `matching submission belongs to terminal task ${task.phase}`,
             }),
           );
         });

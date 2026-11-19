@@ -3095,9 +3095,10 @@ test("explicit resume replaces a definitively absent initial worker in the retai
     await f.close();
   }
 });
-test("Pi settings-lock launch failure retries once after backoff in the retained workspace", async () => {
+test("Pi settings-lock launch failure remains owned after backoff with an empty inventory", async () => {
   const f = fixture();
   try {
+    Object.assign(f.adapter, { findRunAgents: async () => [] });
     const original = f.add();
     let attempts = 0;
     const launchError =
@@ -3134,16 +3135,17 @@ test("Pi settings-lock launch failure retries once after backoff in the retained
     await f.engine.wake();
     await f.engine.wake();
     const retried = f.store.task(original.id);
-    assert.equal(attempts, 2);
-    assert.equal(retried.agentId, "retried-worker");
-    assert.equal(retried.phase, "working");
+    assert.equal(attempts, 1);
+    assert.equal(retried.agentId, null);
+    assert.equal(retried.phase, "needs_attention");
+    assert.match(retried.reason, /worker creation remains uncertain/i);
     assert.equal(retried.workspaceId, workspaceId);
     assert.equal(f.calls.workspaces, 1);
     assert.equal(
       f.store
         .events(original.id)
         .filter((event) => event.kind === "absent_worker_retry").length,
-      1,
+      0,
     );
   } finally {
     await f.close();
@@ -4431,7 +4433,7 @@ test("an exhausted worker with no profile eligible even after a reset gets owner
     await f.close();
   }
 });
-test("a lost replacement creation is retried once automatically, then escalates without launching blindly", async () => {
+test("a lost replacement creation stays owned without launching blindly", async () => {
   const f = fixture();
   try {
     const task = f.add();
@@ -4461,6 +4463,7 @@ test("a lost replacement creation is retried once automatically, then escalates 
       error: "usage_limit_reached",
       model: "author",
     });
+    Object.assign(f.adapter, { findRunAgents: async () => [] });
     let attempts = 0;
     f.adapter.createAgent = async () => {
       attempts++;
@@ -4468,15 +4471,17 @@ test("a lost replacement creation is retried once automatically, then escalates 
     };
     await f.engine.wake();
     await f.engine.wake();
-    // The proven-absent first creation was automatically replaced exactly once in the retained workspace.
-    assert.equal(attempts, 2);
+    // Empty inventory cannot prove that the original producer has stopped.
+    assert.equal(attempts, 1);
     assert.equal(f.calls.workspaces, 1);
     await f.engine.wake();
-    // The second absence escalates to the coordinator instead of another blind launch.
-    assert.equal(attempts, 2);
+    assert.equal(attempts, 1);
     assert.equal(f.store.task(task.id).agentId, null);
     assert.equal(f.store.task(task.id).agentIntent, true);
-    assert.match(f.store.task(task.id).reason, /also proved absent/);
+    assert.match(
+      f.store.task(task.id).reason,
+      /original create may still deliver/,
+    );
   } finally {
     await f.close();
   }
@@ -5644,14 +5649,17 @@ test("late worker lookup preserves a worker already bound while the lookup was i
       agentId: null,
       runId: "pending-run",
     });
-    f.adapter.findAgents = async () => {
-      f.store.update(task.id, {
-        agentId: "bound-worker",
-        phase: "working",
-        reason: "Worker running",
-      });
-      return [{ id: "bound-worker", workspaceId: "workspace" }];
-    };
+    Object.assign(f.adapter, {
+      findRunAgents: async (run: Run) => {
+        assert.equal(run.id, "pending-run");
+        f.store.update(task.id, {
+          agentId: "bound-worker",
+          phase: "working",
+          reason: "Worker running",
+        });
+        return [{ id: "bound-worker", workspaceId: "workspace" }];
+      },
+    });
     await (f.engine as any).recover(pending);
     assert.equal(f.store.task(task.id).phase, "working");
     assert.equal(f.store.task(task.id).agentId, "bound-worker");

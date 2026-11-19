@@ -2062,15 +2062,12 @@ test("the plan names fresh observation while execution keeps unrelated run and e
       released: true,
       status: "finished",
     });
-    // The fixture settles the first delivery episode before constructing a new
-    // live-participant fence. Its bound incident otherwise still owns recovery.
+    // Spec 066 I05: the released run no longer makes its incident current
+    // work. The owner can settle it; retain the record for this assertion.
     const incident = f.current().resolution.incident;
     assert.ok(incident);
     assert.equal(incident.status, "reconciling");
-    assert.match(
-      f.view("restart").refusal!,
-      /Automatic reconciliation still owns the task incident/,
-    );
+    assert.equal(f.view("restart").available, true);
     f.store.update(f.submitted.id, {
       resolution: {
         ...f.current().resolution,
