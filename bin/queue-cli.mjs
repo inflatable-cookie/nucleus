@@ -65,13 +65,20 @@ async function main() {
   // `ui` mints a board link (or revokes every link with --revoke) on the owner socket; its
   // flags are not a payload file. See the service-boundary contract, "Local web board".
   const uiCommand = requestedMethod === 'ui';
-  const file = uiCommand ? undefined : rest.find(arg => arg !== '--wait');
+  const file = uiCommand ? undefined : rest.find(arg => !['--wait', '--dry-run'].includes(arg));
   // Spec 050: the CLI verb name for the task.next read RPC.
   const method = uiCommand ? 'service.ui-link' : requestedMethod === 'next' ? 'task.next' : requestedMethod;
   const input = uiCommand ? { action: rest.includes('--revoke') ? 'revoke' : 'issue' } : readPayload(file);
   if (rest.includes('--wait')) {
     if (method !== 'project.qa.run') throw new Error('--wait is supported by project.qa.run; lead.submit always waits');
     input.wait = true;
+  }
+
+  if (rest.includes('--dry-run')) {
+    if (method !== 'question.answer') throw new Error('--dry-run is supported by question.answer');
+    if (!input || typeof input !== 'object' || Array.isArray(input))
+      throw new Error('question.answer --dry-run requires a JSON answer object');
+    input.dryRun = true;
   }
 
   // Self-force is authenticated by this run's ticket, never a typed caller. A

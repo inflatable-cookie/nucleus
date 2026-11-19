@@ -8,11 +8,13 @@ import {
 } from "../../shared/contracts";
 import { sameCallerIdentity } from "../../shared/agent-identity";
 import { normalizeRepositoryOrigin } from "../../shared/lanes";
-import { unavailableGroupNames } from "../../shared/pool";
+import { demandRank, unavailableGroupNames } from "../../shared/pool";
 import { currentBrief } from "../planning/brief";
 import { parseNativeDelegatedReply } from "./question-delegation";
 import { plannerEscalations, type LadderEvent } from "./ladder";
+import { askLifecycle } from "./agent-ask-events";
 import type { Resolution } from "../resolution";
+import { requestedTier } from "../../shared/demand";
 import { chooseProfile } from "../dispatch/routing";
 import { plannerParticipantTicketPath } from "../dispatch/participant-tickets";
 import { runTicketPath, writeRunTicket } from "../dispatch/agent-creation";
@@ -22,7 +24,7 @@ import {
   parseAgentId,
   qualifyLegacyAgentId,
 } from "../../shared/agent-identity";
-import type { IdentitySource } from "../../shared/host-kind";
+import { hostKindOf, type IdentitySource } from "../../shared/host-kind";
 import { onOwnerHost } from "../host/host-ports";
 
 /** The selection failed before an intent or host call was made. */
@@ -150,7 +152,10 @@ export class Delegation {
         provenHost,
       );
       if (participant) return { kind: "participant", ticketPath: participant };
-      if (this.adapter.reportingViaMcp === false)
+      if (
+        this.adapter.reportingViaMcp === false &&
+        (!provenHost || hostKindOf(provenHost) !== "t3code")
+      )
         throw Error("Consult requires the recipient run ticket");
       return { kind: "clear" };
     }
@@ -254,7 +259,7 @@ export class Delegation {
       route?.kind === "ticket" && this.adapter.reportingViaMcp === false
         ? `\nOn a host without per-thread MCP, the packaged nucleus helper with this run's ticket is the same command:\nNUCLEUS_TICKET=${this.quote(route.ticketPath)} NUCLEUS_CONTINUATION_TICKET= nucleus helper report answer <<'JSON'\n${json}\nJSON`
         : "";
-    return `Task: ${task.reference ?? task.id} — ${task.title}\nQuestion id: ${id}\n${prompt}\nAnswer with this command; write nothing else in this thread. For operator-only matters set "decision":"operator" instead of answer.\n${command} <<'JSON'\n${json}\nJSON${helper}`;
+    return `Task: ${task.reference ?? task.id} — ${task.title}\nQuestion id: ${id}\n${prompt}\nAnswer with this command; write nothing else in this thread. For operator-only matters set "decision":"operator" instead of answer.\n${command} <<'JSON'\n${json}\nJSON${helper}${provenHost ? "\nTo validate without recording an answer, add --dry-run to question.answer (or set dryRun: true in the helper JSON)." : ""}`;
   }
   openDelegatedQuestion(
     task: Task,
@@ -265,6 +270,8 @@ export class Delegation {
     role: string,
     hostId?: string,
     rung?: PlannerRungName,
+    choices?: readonly string[],
+    retainAfterDeadline?: boolean,
   ): void {
     const qualified = parseAgentId(recipient);
     if (qualified && hostId && qualified.hostId !== hostId)
@@ -282,6 +289,8 @@ export class Delegation {
           ? { hostId, recipientRef: qualifyLegacyAgentId(recipient, hostId) }
           : {}),
         ...(rung ? { rung } : {}),
+        ...(choices ? { choices } : {}),
+        ...(retainAfterDeadline ? { retainAfterDeadline } : {}),
         deadline: Date.now() + Math.min(timeoutMs, this.delegatedAnswerWaitMs),
       }),
     );
@@ -294,6 +303,7 @@ export class Delegation {
     deadline: number;
     hostId?: string;
     recipientRef?: string;
+    retainAfterDeadline?: boolean;
     rung?: PlannerRungName;
   } | null {
     const event = this.store
@@ -318,7 +328,7 @@ export class Delegation {
           (delivery.recipient === nativeCaller ||
             delivery.recipient === caller) &&
           (!identityCaller || delivery.hostId === identityCaller.hostId) &&
-          delivery.deadline >= Date.now() &&
+          (delivery.retainAfterDeadline || delivery.deadline >= Date.now()) &&
           !events.some((event) =>
             ["delegated_answer", "delegated_closed"].includes(event.kind),
           )
@@ -341,6 +351,7 @@ export class Delegation {
       reason: string;
       decision?: "operator";
       overtakes?: string[];
+      dryRun?: boolean;
     },
     caller: string,
     identitySource?: IdentitySource,
@@ -430,6 +441,7 @@ export class Delegation {
       reason: string;
       decision?: "operator";
       overtakes?: string[];
+      dryRun?: boolean;
     },
     token: string,
   ) {
@@ -470,6 +482,7 @@ export class Delegation {
         reason: input.reason,
         decision: input.decision,
         overtakes: input.overtakes,
+        dryRun: input.dryRun,
       },
       formatAgentId(runHost, caller),
     );
@@ -482,6 +495,7 @@ export class Delegation {
       reason: string;
       decision?: "operator";
       overtakes?: string[];
+      dryRun?: boolean;
     },
     caller: string,
   ) {
@@ -496,6 +510,8 @@ export class Delegation {
       recipient: string;
       role: string;
       prompt: string;
+      choices?: string[];
+      retainAfterDeadline?: boolean;
       deadline: number;
       hostId?: string;
     };
@@ -516,10 +532,12 @@ export class Delegation {
     const isEscalation =
       input.questionId.startsWith("ns-escalation-") ||
       input.questionId.startsWith("ns-decider-");
-    const choices = authority.prompt
-      .split("\n")
-      .filter((line) => line.startsWith("- "))
-      .map((line) => line.slice(2));
+    const choices =
+      authority.choices ??
+      authority.prompt
+        .split("\n")
+        .filter((line) => line.startsWith("- "))
+        .map((line) => line.slice(2));
     const submittedAnswer = (input.answer ?? input.choice)?.trim();
     const shortWaitChoices =
       isEscalation && submittedAnswer
@@ -561,6 +579,8 @@ export class Delegation {
           (event.kind === "delegated_command_applied" ||
             event.kind === "delegated_command_refused"),
       );
+      if (input.dryRun && outcome?.kind !== "delegated_command_refused")
+        throw Error("This question already has an answer");
       if (outcome?.kind === "delegated_command_applied") return receipt;
       if (outcome?.kind === "delegated_command_refused") {
         // An uncertain owner action is not a definite refusal: another answer
@@ -616,10 +636,24 @@ export class Delegation {
         );
       }
     }
+    if (authority.retainAfterDeadline) {
+      const task = this.store.task(authority.taskId);
+      const ask = askLifecycle(
+        this.store.eventsAll(task.id),
+        input.questionId.replace(/^ns-agent-ask-reviewer-/, ""),
+      );
+      if (
+        task.removedAt ||
+        ["done", "cancelled"].includes(task.phase) ||
+        ask?.superseded ||
+        ask?.answered
+      )
+        throw Error("This review consult is already settled");
+    }
     if (
       !correctingRefusal &&
       (events.some((event) => event.kind === "delegated_closed") ||
-        Date.now() > authority.deadline)
+        (!authority.retainAfterDeadline && Date.now() > authority.deadline))
     )
       throw Error("This delegated answer window has closed");
     const reason = input.reason?.trim();
@@ -634,11 +668,37 @@ export class Delegation {
       );
     if (
       input.decision !== "operator" &&
-      choices.length &&
-      (input.choice || input.questionId.startsWith("queue-delegate-")) &&
-      !choices.includes(answer!)
+      (input.choice ||
+        (choices.length && input.questionId.startsWith("queue-delegate-"))) &&
+      !choices.includes(
+        authority.role === "decider" && input.choice
+          ? submittedAnswer!
+          : answer!,
+      )
     )
-      throw Error("Choice must match an offered choice");
+      throw Error(
+        "Choice must match an offered choice. Use answer for a free response and --dry-run to validate it.",
+      );
+    if (authority.role === "decider") {
+      const normalize = (value: string) =>
+        value
+          .toLowerCase()
+          .replace(/\s+/g, " ")
+          .replace(/[.!?]+$/, "");
+      const placeholder = (value: string) =>
+        /^(?:test(?:ing)?(?: (?:answer|reason|this command))?|probe|placeholder|dummy|sample|example|todo|tbd|n\s*\/?\s*a|none|null|foo|bar|lorem ipsum|answer|reason|your answer|your reason|<[^>]+>)$/.test(
+          normalize(value),
+        );
+      if (
+        placeholder(reason) ||
+        (input.answer &&
+          answer &&
+          (placeholder(answer) || normalize(answer) === normalize(reason)))
+      )
+        throw Error(
+          "Give a substantive answer and a distinct one-line reason. Use question.answer --dry-run to validate without submitting.",
+        );
+    }
     const escalationId = escalationIdForQuestion(input.questionId);
     const taskEvents = isEscalation
       ? this.store.eventsAll(authority.taskId)
@@ -662,6 +722,7 @@ export class Delegation {
         ? { overtakes: [...new Set(input.overtakes)].slice(0, 100) }
         : {}),
     };
+    if (input.dryRun) return { ...receipt, status: "validated" as const };
     this.store.event(key, "delegated_answer", JSON.stringify(receipt));
     const receiptEventId = this.store
       .eventsAll(key)
@@ -997,7 +1058,8 @@ export class Delegation {
         setTimeout(resolve, Math.min(100, this.delegatedAnswerWaitMs)),
       );
     }
-    this.store.event(key, "delegated_closed", NO_COMMAND_ANSWER_IN_WINDOW);
+    if (!this.delegatedDelivery(id)?.retainAfterDeadline)
+      this.store.event(key, "delegated_closed", NO_COMMAND_ANSWER_IN_WINDOW);
     return null;
   }
   async askBound(
@@ -1011,6 +1073,8 @@ export class Delegation {
       sourceAgentId?: string;
       onIntent?: () => void;
       rung?: PlannerRungName;
+      choices?: readonly string[];
+      retainAfterDeadline?: boolean;
     },
     role: "planner" | "reviewer",
   ): Promise<string | null> {
@@ -1048,6 +1112,8 @@ export class Delegation {
         role,
         hostId,
         input.rung,
+        input.choices,
+        input.retainAfterDeadline,
       );
       input.onIntent?.();
     }
@@ -1069,7 +1135,12 @@ export class Delegation {
           if (!ref)
             throw Error("Delegated recipient identity was not recorded");
           const recipient = nativeAgentId(ref, hostId!);
-          const { onIntent: _onIntent, ...sendInput } = input;
+          const {
+            onIntent: _onIntent,
+            choices: _choices,
+            retainAfterDeadline: _retain,
+            ...sendInput
+          } = input;
           return send.call(this.adapter, recipient, {
             ...sendInput,
             sourceAgentId:
@@ -1178,6 +1249,7 @@ export class Delegation {
       timeoutMs: number;
       decisionId: string;
       sourceAgentId?: string;
+      choices?: readonly string[];
     },
   ): Promise<{ agentId: string; text: string | null }> {
     const id = `ns-decider-${input.decisionId}`;
@@ -1205,7 +1277,7 @@ export class Delegation {
         decisionId: input.decisionId,
       }),
     );
-    this.resolution.openDelegatedQuestion(
+    this.openDelegatedQuestion(
       task,
       id,
       created.agentId,
@@ -1213,6 +1285,8 @@ export class Delegation {
       input.timeoutMs,
       "decider",
       task.hostId,
+      undefined,
+      input.choices,
     );
     try {
       await this.resolution.withHost(task.hostId, () =>
@@ -1253,61 +1327,64 @@ export class Delegation {
       throw error;
     }
   }
-  /**
-   * Task 1109 (Tom, 2026-11-11): a task's own planner first — the thread a brief
-   * named, else its owner, the thread that submitted or promoted it. It is skipped
-   * at once when observed archived or gone, never cleared: the owner record still
-   * routes the task's origin notices.
-   */
+  /** A task's own planner is the thread its brief named or its owner. */
   async taskPlannerFor(task: Task): Promise<PlannerRung | null> {
-    const planner = taskPlanner(task);
-    if (
-      !planner ||
-      isOperatorOrigin(planner) ||
-      (await this.resolution.plannerThreadGone(planner))
-    )
-      return null;
-    return { agentId: planner, rung: "task" };
+    return (await this.taskPlannerRoute(task)).rung;
   }
 
-  /**
-   * The planner rungs one task's questions climb, in order: its own planner, then
-   * the project's planner when that is a different thread (Tom, 2026-11-11). A rung
-   * observed archived or gone is skipped here; a silent rung still times out in
-   * `delegateQuestion`, and the decider follows the rungs.
-   */
+  private async taskPlannerRoute(
+    task: Task,
+  ): Promise<{ rung: PlannerRung | null; issue?: string }> {
+    const planner = taskPlanner(task);
+    if (!planner || isOperatorOrigin(planner)) return { rung: null };
+    const originHost =
+      planner === task.originAgentId || planner === task.notificationAgentId
+        ? task.originHostId
+        : undefined;
+    const state = await this.resolution.plannerPresence.threadRoute(
+      planner,
+      originHost,
+    );
+    if (state.kind === "unroutable") return { rung: null, issue: state.detail };
+    return {
+      rung: state.kind === "gone" ? null : { agentId: planner, rung: "task" },
+    };
+  }
+
+  /** An unresolved identity remains assigned and visible while the next planner is tried. */
   async plannerRungsFor(
     task: Task,
-  ): Promise<{ rungs: PlannerRung[]; projectFailed: boolean }> {
-    const rungs: PlannerRung[] = [];
-    const own = await this.taskPlannerFor(task);
-    if (own) rungs.push(own);
-    const { planner, failed } = await this.projectPlannerFor(task);
+  ): Promise<{ rungs: PlannerRung[]; projectFailed: boolean; issue?: string }> {
+    const own = await this.taskPlannerRoute(task);
+    const { planner, failed, issue } = await this.projectPlannerFor(task);
+    const rungs = own.rung ? [own.rung] : [];
     if (
       planner &&
       !rungs.some((rung) => sameCallerIdentity(rung.agentId, planner))
     )
       rungs.push({ agentId: planner, rung: "project" });
-    return { rungs, projectFailed: failed };
+    return {
+      rungs,
+      projectFailed: failed,
+      issue:
+        [...new Set([own.issue, issue].filter(Boolean))].join(" ") || undefined,
+    };
   }
 
-  /**
-   * The one lookup every delegated route uses for the planner rung (Tom, 2026-11-06). A missing or archived
-   * registered planner becomes a visible project gap and routes to Queue's planner; with no live planner at
-   * all the result is null, so the route goes straight to its next rung instead of waiting on nobody. A closed
-   * thread stays registered and still receives the question.
-   */
   async projectPlannerFor(
     task: Task,
-  ): Promise<{ planner: string | null; failed: boolean }> {
+  ): Promise<{ planner: string | null; failed: boolean; issue?: string }> {
     const project = this.store.projectFor(
       task.repoPath,
       normalizeRepositoryOrigin(task.repository ?? ""),
     );
-    const missing = project?.planner?.agentId ?? null;
+    const queue = this.store.queueProject();
+    const presence = this.resolution.plannerPresence;
+    const assigned = await presence.observeProjectPlanner(project);
+    if (assigned?.state.kind === "routable")
+      return { planner: assigned.agentId, failed: false };
+    const missing = assigned?.state.kind === "gone" ? assigned.agentId : null;
     if (project && missing) {
-      if (!(await this.resolution.plannerThreadGone(missing)))
-        return { planner: missing, failed: false };
       this.store.setProjectPlanner({
         key: project.key,
         agentId: null,
@@ -1315,12 +1392,19 @@ export class Delegation {
         note: `Planner ${missing} is missing or archived; delegated questions fall back to the Nucleus planner`,
       });
     }
-    const queuePlanner = this.store.queueProject()?.planner?.agentId ?? null;
+    const fallback =
+      queue?.key === project?.key
+        ? null
+        : await presence.observeProjectPlanner(queue);
     const planner =
-      queuePlanner && !(await this.resolution.plannerThreadGone(queuePlanner))
-        ? queuePlanner
-        : null;
-    if (!project || !missing) return { planner, failed: false };
+      fallback?.state.kind === "routable" ? fallback.agentId : null;
+    const issue =
+      [assigned?.state, fallback?.state]
+        .flatMap((state) =>
+          state?.kind === "unroutable" ? [state.detail] : [],
+        )
+        .join(" ") || undefined;
+    if (!project || !missing) return { planner, failed: false, issue };
     const notices = this.store.eventsAll(`project:${project.key}`);
     if (
       planner &&
@@ -1355,11 +1439,11 @@ export class Delegation {
         });
       }
     }
-    return { planner, failed: true };
+    return { planner, failed: true, issue };
   }
   /**
-   * The profile a decider runs on: automatic selection, the cheapest eligible
-   * coordinator-class route. Availability is the store's typed rows through the
+   * Deciders use automatic selection at the task's requested tier. Ordinary
+   * coordinator offsets cannot authorize a weaker decider. Availability is the store's typed rows through the
    * shared group rule, never a decode of the durable table here.
    */
   deciderProfile(task: Task): Profile | null {
@@ -1367,16 +1451,23 @@ export class Delegation {
     const profiles = this.profiles().filter(
       (profile) => profile.model !== "default",
     );
+    const tier = requestedTier(task.complexity);
+    const pool = this.store
+      .pool()
+      .filter(
+        (entry) => demandRank(entry.capability ?? "medium") >= demandRank(tier),
+      );
     return (
       chooseProfile(
         {
           ...task,
           preferredProfileId: "",
           requirePreferred: false,
+          profileRequests: undefined,
           thinkingOptionId: "",
         },
         profiles,
-        this.store.pool(),
+        pool,
         this.store.counts(),
         unavailable,
         "coordinator",

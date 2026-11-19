@@ -47,7 +47,7 @@ export interface PlannerEscalation {
    * The refusal class this escalation answers, from the durable payload, when the
    * raiser recorded one. A reader matches this, never the refusal text.
    */
-  refusal: 'failed_checks' | 'pre_merge' | null;
+  refusal: "failed_checks" | "pre_merge" | null;
   answered: boolean;
   unknown: boolean;
   /** When the last unknown-delivery record was written; the stall threshold reads it. */
@@ -56,10 +56,14 @@ export interface PlannerEscalation {
   missed: boolean;
   /** The Spec 032 decision that carries it to the operator, when one was classified. */
   decisionId: string | null;
+  /** The visible wait while the ladder works around an unroutable planner. */
+  routingWait?: { detail: string; holderAgentId?: string };
 }
 
-const eventsOf = (events: readonly LadderEvent[], kind: string): LadderEvent[] =>
-  events.filter((event) => event.kind === kind);
+const eventsOf = (
+  events: readonly LadderEvent[],
+  kind: string,
+): LadderEvent[] => events.filter((event) => event.kind === kind);
 
 /** The typed payload recorded beside one intent, or null when it is absent or unreadable. */
 const payloadOf = (
@@ -152,6 +156,27 @@ export function reviewerConsults(events: LadderEvent[]): ReviewerConsult[] {
   });
 }
 
+function readRoutingWait(text: string): PlannerEscalation["routingWait"] {
+  try {
+    const wait: unknown = JSON.parse(text);
+    if (
+      wait &&
+      typeof wait === "object" &&
+      "detail" in wait &&
+      typeof wait.detail === "string"
+    )
+      return {
+        detail: wait.detail,
+        ...("holderAgentId" in wait && typeof wait.holderAgentId === "string"
+          ? { holderAgentId: wait.holderAgentId }
+          : {}),
+      };
+  } catch {
+    /* Unreadable display history cannot hold the ladder. */
+  }
+  return undefined;
+}
+
 /** The planner escalations recorded on a task, in order. */
 export function plannerEscalations(events: LadderEvent[]): PlannerEscalation[] {
   return eventsOf(events, "planner_escalation").map((intent) => {
@@ -171,6 +196,11 @@ export function plannerEscalations(events: LadderEvent[]): PlannerEscalation[] {
             kinds.includes(event.kind) && event.detail.startsWith(`${id}:`),
         )
         .at(-1)?.id ?? 0;
+    const routingWait = events.findLast(
+      (event) =>
+        event.kind === "planner_escalation_routing_wait" &&
+        event.detail.startsWith(`${id}: `),
+    );
     const pendingAt = latest([
       "planner_escalation_answer_pending",
       "planner_escalation_wake_intent",
@@ -186,15 +216,17 @@ export function plannerEscalations(events: LadderEvent[]): PlannerEscalation[] {
       events,
       "planner_escalation_decision_linked",
     ).find((event) => event.detail.startsWith(`${id}:`));
+    const wait = routingWait
+      ? readRoutingWait(routingWait.detail.slice(id.length + 2))
+      : null;
     return {
       id,
+      ...(wait ? { routingWait: wait } : {}),
       cause: lineCause(intent.detail),
       runId: intentRun(payload, intent.detail),
       question: payloadText(payload, "question"),
       refusal:
-        refusal === "failed_checks" || refusal === "pre_merge"
-          ? refusal
-          : null,
+        refusal === "failed_checks" || refusal === "pre_merge" ? refusal : null,
       answered:
         resolved ||
         (Boolean(answered) &&

@@ -1188,6 +1188,8 @@ export class Resolution {
     role: string;
     deadline: number;
     hostId?: string;
+    recipientRef?: string;
+    retainAfterDeadline?: boolean;
     rung?: "task" | "project";
   } | null {
     return this.delegation.delegatedDelivery(id);
@@ -1203,6 +1205,7 @@ export class Resolution {
       reason: string;
       decision?: "operator";
       overtakes?: string[];
+      dryRun?: boolean;
     },
     caller: string,
   ) {
@@ -1218,6 +1221,7 @@ export class Resolution {
       reason: string;
       decision?: "operator";
       overtakes?: string[];
+      dryRun?: boolean;
     },
     token: string,
   ) {
@@ -1234,6 +1238,7 @@ export class Resolution {
       reason: string;
       decision?: "operator";
       overtakes?: string[];
+      dryRun?: boolean;
     },
     caller: string,
     identitySource?: IdentitySource,
@@ -1254,6 +1259,8 @@ export class Resolution {
       sourceAgentId?: string;
       onIntent?: () => void;
       rung?: "task" | "project";
+      choices?: readonly string[];
+      retainAfterDeadline?: boolean;
     },
     role: "planner" | "reviewer",
   ): Promise<string | null> {
@@ -1268,6 +1275,7 @@ export class Resolution {
       timeoutMs: number;
       decisionId: string;
       sourceAgentId?: string;
+      choices?: readonly string[];
     },
   ): Promise<{ agentId: string; text: string | null }> {
     return this.delegation.deciderBound(task, input);
@@ -2726,9 +2734,7 @@ export class Resolution {
     return this.delegation.taskPlannerFor(task);
   }
   /** Task 1109: the ordered planner rungs a task's questions climb — its own planner, then the project's. */
-  plannerRungsFor(
-    task: Task,
-  ): Promise<{ rungs: PlannerRung[]; projectFailed: boolean }> {
+  plannerRungsFor(task: Task): ReturnType<Delegation["plannerRungsFor"]> {
     return this.delegation.plannerRungsFor(task);
   }
   /**
@@ -2739,9 +2745,7 @@ export class Resolution {
   ensurePlannerTicket:
     | ((agentId: string, hostId: string) => Promise<void>)
     | null = null;
-  projectPlannerFor(
-    task: Task,
-  ): Promise<{ planner: string | null; failed: boolean }> {
+  projectPlannerFor(task: Task): ReturnType<Delegation["projectPlannerFor"]> {
     return this.delegation.projectPlannerFor(task);
   }
   /** An escalation's rung: the task's own planner, then the project planner, the order task 1109 gives questions. */

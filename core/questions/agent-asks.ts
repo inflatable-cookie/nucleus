@@ -1,4 +1,4 @@
-import { delegateQuestion } from "./planner-delegation";
+import { delegateQuestion, plannerWindows } from "./planner-delegation";
 import type { Run, Task } from "../../shared/contracts";
 import {
   askBinding,
@@ -15,6 +15,7 @@ import {
   queueAskDeliveryId,
   type AgentAskReceipt,
   type AgentAskRequest,
+  type AgentAskKind,
   type AgentAskShape,
   type AskRoute,
 } from "./agent-ask";
@@ -25,7 +26,11 @@ import {
   parseNativeDelegatedReply,
 } from "./question-delegation";
 import type { Resolution } from "../resolution";
-import { DelegatedHostUnavailable, type PlannerRung } from "./delegation";
+import {
+  DelegatedHostUnavailable,
+  NO_COMMAND_ANSWER_IN_WINDOW,
+  type PlannerRung,
+} from "./delegation";
 import { digest, type Store } from "../store/store";
 import { taskByReference, projectOfTarget } from "./agent-targets";
 import { askLifecycle, askLifecycles } from "./agent-ask-events";
@@ -92,7 +97,7 @@ export class AgentAsks {
       task,
       run,
       normalizeAskTarget(input.to, input.target),
-      isOperatorOnlyAsk(kind),
+      kind,
     );
     const ask: AgentAskShape = {
       sourceAgentId: run.agentId ?? undefined,
@@ -164,12 +169,19 @@ export class AgentAsks {
     task: Task,
     run: Pick<Run, "role">,
     named: AskTarget,
-    operatorOnly: boolean,
+    kind: AgentAskKind,
   ): Promise<{
     target: "reviewer" | "planner";
     hint?: "reviewer" | "planner";
     route?: AskRoute;
   }> {
+    const operatorOnly = isOperatorOnlyAsk(kind);
+    if (
+      kind === "review" &&
+      run.role === "revision" &&
+      named.kind === "planner"
+    )
+      return { target: "reviewer", hint: "planner" };
     if (named.kind === "default")
       return {
         target:
@@ -208,25 +220,29 @@ export class AgentAsks {
   async askRungs(
     task: Task,
     ask: Pick<AgentAskShape, "id" | "route">,
-  ): Promise<PlannerRung[]> {
-    if (!ask.route) return (await this.resolution.plannerRungsFor(task)).rungs;
+  ): Promise<{ rungs: PlannerRung[]; issue?: string }> {
+    if (!ask.route) return this.resolution.plannerRungsFor(task);
     if (ask.route.kind === "task")
-      return (
-        await this.resolution.plannerRungsFor(this.store.task(ask.route.taskId))
-      ).rungs;
+      return this.resolution.plannerRungsFor(this.store.task(ask.route.taskId));
     try {
       const target = await this.resolution.resolveProjectAgentTarget(
         ask.route.project,
         ask.route.agent,
       );
-      if (
-        ask.route.agent === null &&
-        (await this.resolution.plannerThreadGone(target.agentId))
-      )
-        throw Error(
-          `the fallback planner ${target.agentId} is archived or gone`,
-        );
-      return [{ agentId: target.agentId, rung: "project" }];
+      if (ask.route.agent === null) {
+        const state = (
+          await this.resolution.plannerPresence.observeProjectPlanner(
+            this.store.projectByKey(ask.route.project),
+          )
+        )?.state;
+        if (state?.kind === "unroutable")
+          return { rungs: [], issue: state.detail };
+        if (state?.kind === "gone")
+          throw Error(
+            `the fallback planner ${target.agentId} is archived or gone`,
+          );
+      }
+      return { rungs: [{ agentId: target.agentId, rung: "project" }] };
     } catch (error) {
       this.store.event(
         task.id,
@@ -236,7 +252,7 @@ export class AgentAsks {
           4000,
         ),
       );
-      return [];
+      return { rungs: [] };
     }
   }
   recordedAnswer(taskId: string, askId: string): AgentAskReceipt | null {
@@ -414,7 +430,12 @@ export class AgentAsks {
     const planningRuling = Boolean(
       lifecycle?.planningRuling || lifecycle?.reviewerMissed,
     );
-    if (ask.target === "reviewer" && !planningRuling)
+    if (
+      ask.target === "reviewer" &&
+      !planningRuling &&
+      !lifecycle?.planner &&
+      !lifecycle?.deciderStarted
+    )
       return this.resolution.routeReviewerAsk(task, ask);
     // The worker-supplied kind is only a hint. Every worker question is
     // classified by a planner or decider before any operator decision exists.
@@ -457,12 +478,31 @@ export class AgentAsks {
     let result;
     try {
       // Task 1109: the task's own planner first, then the project planner, then the decider.
-      const rungs = await this.askRungs(task, ask);
+      const { rungs, issue } = await this.askRungs(task, ask);
+      const planners = plannerWindows(
+        this.resolution,
+        `ns-agent-ask-${ask.id}`,
+        rungs,
+      );
+      if (issue) {
+        const detail = `${ask.id}: ${issue}`;
+        if (
+          !this.store
+            .eventsAll(task.id)
+            .some(
+              (event) =>
+                event.kind === "agent_ask_host_wait" && event.detail === detail,
+            )
+        )
+          this.store.event(task.id, "agent_ask_host_wait", detail);
+        if (
+          !planners.length &&
+          !this.resolution.delegatedDelivery(`ns-decider-${ask.id}`)
+        )
+          return;
+      }
       result = await delegateQuestion(this.resolution, task, {
-        planners: rungs.map((item) => ({
-          ...item,
-          messageId: `ns-agent-ask-${ask.id}${item.rung === "project" ? "-project" : ""}`,
-        })),
+        planners,
         decisionId: ask.id,
         context,
         signal: new AbortController().signal,
@@ -555,6 +595,11 @@ export class AgentAsks {
    */
   async routeReviewerAsk(task: Task, ask: AgentAskShape): Promise<void> {
     if (
+      !task.resolution.reviewerAgentId &&
+      !this.resolution.delegatedDelivery(`ns-agent-ask-reviewer-${ask.id}`)
+    )
+      return this.resolution.routeAgentAsk(task, { ...ask, target: "planner" });
+    if (
       !task.hostId ||
       !this.resolution.withHost(task.hostId, () =>
         this.resolution.originHostAvailable(task.hostId),
@@ -569,9 +614,9 @@ export class AgentAsks {
     task: Task,
     ask: AgentAskShape,
   ): Promise<void> {
-    const reviewer =
-      this.resolution.delegatedDelivery(`ns-agent-ask-reviewer-${ask.id}`)
-        ?.recipient ?? task.resolution.reviewerAgentId;
+    const messageId = `ns-agent-ask-reviewer-${ask.id}`;
+    const delivery = this.resolution.delegatedDelivery(messageId);
+    const reviewer = delivery?.recipient ?? task.resolution.reviewerAgentId;
     if (reviewer && !this.adapter.askReviewer) {
       this.store.event(
         task.id,
@@ -581,26 +626,51 @@ export class AgentAsks {
       return;
     }
     if (reviewer && this.adapter.askReviewer) {
-      // Only a positive terminal observation skips the window. Observation failures
-      // retain the ordinary delivery and unknown-delivery fences.
+      const events = this.store.eventsAll(`delegation:${messageId}`);
+      const expiredConsult =
+        delivery?.retainAfterDeadline &&
+        Date.now() >= delivery.deadline &&
+        events.some((event) => event.kind === "delegated_sent") &&
+        !events.some((event) =>
+          ["delegated_answer", "delegated_closed"].includes(event.kind),
+        );
+      // Only a positive terminal observation skips a retained reviewer.
       let gone = false;
-      if (
-        !this.resolution.delegatedDelivery(`ns-agent-ask-reviewer-${ask.id}`)
-      ) {
+      if (!delivery || expiredConsult) {
         try {
           const identity = this.adapter.originAgent
             ? await this.resolution.host.originAgent(reviewer)
             : undefined;
-          gone = Boolean(identity?.archived);
+          gone =
+            identity === null ||
+            Boolean(identity?.archived || identity?.deleted);
           if (!gone) {
             const state = await this.resolution.host.observe(reviewer);
-            gone = state.id === reviewer && state.status === "closed";
+            gone =
+              state.id === reviewer &&
+              ["closed", "gone"].includes(state.status);
           }
         } catch {
           /* preserve the ordinary route */
         }
       }
-      if (gone) {
+      if (
+        !delivery &&
+        this.store.task(task.id).resolution.reviewerAgentId !== reviewer
+      )
+        return;
+      const receivedDuringRead =
+        expiredConsult &&
+        this.store
+          .eventsAll(`delegation:${messageId}`)
+          .some((event) => event.kind === "delegated_answer");
+      if (gone && !receivedDuringRead) {
+        if (delivery)
+          this.store.event(
+            `delegation:${messageId}`,
+            "delegated_closed",
+            NO_COMMAND_ANSWER_IN_WINDOW,
+          );
         this.store.event(
           task.id,
           "agent_ask_reviewer_missed",
@@ -611,11 +681,13 @@ export class AgentAsks {
           target: "planner",
         });
       }
-      this.store.event(
-        task.id,
-        "agent_ask_delegated",
-        `${ask.id}: reviewer ${reviewer}; consult`,
-      );
+      if (expiredConsult && !receivedDuringRead) return;
+      if (!delivery)
+        this.store.event(
+          task.id,
+          "agent_ask_delegated",
+          `${ask.id}: reviewer ${reviewer}; consult`,
+        );
       let text: string | null = null;
       try {
         text = await this.resolution.askBound(
@@ -629,7 +701,9 @@ export class AgentAsks {
             ),
             signal: new AbortController().signal,
             timeoutMs: REVIEWER_CONSULT_TIMEOUT_MS,
-            messageId: `ns-agent-ask-reviewer-${ask.id}`,
+            messageId,
+            choices: [],
+            retainAfterDeadline: ask.kind === "review",
             sourceAgentId: ask.sourceAgentId,
           },
           "reviewer",
@@ -665,6 +739,7 @@ export class AgentAsks {
         );
         return;
       } else {
+        if (ask.kind === "review") return;
         this.store.event(
           task.id,
           "agent_ask_reviewer_missed",
@@ -971,8 +1046,11 @@ export class AgentAsks {
           ? "project planner"
           : "planner";
     const reviewer = state?.reviewer ?? undefined;
-    if (!planner && !reviewer && state?.hostWait)
-      return `Recorded as question ${askId}; waiting for the planner's proven host to be available. You may continue other work or call again to collect the answer.`;
+    const routingIssue = state?.hostWait
+      ? linked(askId, "agent_ask_host_wait")
+      : "";
+    if (!planner && !deciderStarted && routingIssue)
+      return `Recorded as question ${askId}. ${routingIssue.replace(/[.]$/, "")}. You may continue other work or call again to collect the answer.`;
     if (planner && !deciderStarted && state?.delegationUnknown)
       return `Recorded as question ${askId}; delivery to planner ${planner} is uncertain. Nucleus will not re-ask or start a decider. The question remains with the planner.`;
     const holder = decision
@@ -984,6 +1062,6 @@ export class AgentAsks {
           : reviewer
             ? `reviewer ${reviewer}`
             : "a planner or a decider";
-    return `Recorded as question ${askId}; pending with ${holder}. You'll be resumed with the answer. You may continue other work or end your turn, and call your session's question tool again with the same question to collect the answer.`;
+    return `Recorded as question ${askId}; pending with ${holder}. ${routingIssue ? `${routingIssue} ` : ""}You'll be resumed with the answer. You may continue other work or end your turn, and call your session's question tool again with the same question to collect the answer.`;
   }
 }

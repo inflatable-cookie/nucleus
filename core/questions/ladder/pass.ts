@@ -1,7 +1,7 @@
-import type { Completion } from '../../../shared/contracts';
-import { isProviderFailure } from './causes';
-import type { PlannerEscalation, ReviewerConsult } from './records';
-import { escalationWaitDetail } from './waits';
+import type { Completion } from "../../../shared/contracts";
+import { isProviderFailure } from "./causes";
+import type { PlannerEscalation, ReviewerConsult } from "./records";
+import { escalationWaitDetail } from "./waits";
 
 /**
  * What one advance pass does with a ladder episode: classify a fresh blocked
@@ -13,7 +13,7 @@ import { escalationWaitDetail } from './waits';
 /** What a parked blocked or errored responsible task does on one advance pass. */
 export type BlockerLadderStep =
   | { kind: "classify" }
-  | { kind: "wait"; detail: string }
+  | { kind: "wait"; detail: string; holderAgentId?: string }
   /** An unknown-delivery escalation outlived the stall threshold: surface it, never resend it. */
   | { kind: "attention"; escalation: PlannerEscalation }
   | { kind: "continue" };
@@ -25,7 +25,10 @@ export type BlockerLadderStep =
  */
 export function blockerLadderStep(facts: {
   classified: boolean;
-  completion: Pick<Completion, "status" | "providerUnavailable"> | null | undefined;
+  completion:
+    | Pick<Completion, "status" | "providerUnavailable">
+    | null
+    | undefined;
   escalations: readonly PlannerEscalation[];
   consults: readonly ReviewerConsult[];
   /** An open escalation whose unknown delivery outlived the stall threshold, if any. */
@@ -38,7 +41,8 @@ export function blockerLadderStep(facts: {
     !facts.classified
   )
     return { kind: "classify" };
-  if (facts.unknownStall) return { kind: "attention", escalation: facts.unknownStall };
+  if (facts.unknownStall)
+    return { kind: "attention", escalation: facts.unknownStall };
   const openEscalations = facts.escalations.filter(
     (escalation) => !escalation.answered,
   );
@@ -46,6 +50,8 @@ export function blockerLadderStep(facts: {
     (consult) => !consult.answered && !consult.unknown,
   );
   const latest = openEscalations.at(-1);
+  if (latest?.routingWait && !latest.decisionId)
+    return { kind: "wait", ...latest.routingWait };
   const wait = latest
     ? latest.decisionId
       ? escalationWaitDetail.operator(latest.id, latest.decisionId)

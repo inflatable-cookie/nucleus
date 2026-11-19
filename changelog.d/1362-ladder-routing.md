@@ -1,0 +1,1 @@
+T3 planners can assign themselves and receive questions on MCP-created threads. Nucleus shows unreachable planners on the task and project, sends review consults to the retained reviewer, and checks for reviewer progress before escalating recovery. Deciders must meet the task's tier and can validate a substantive answer with `question.answer --dry-run`.

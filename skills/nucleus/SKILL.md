@@ -32,7 +32,7 @@ ticket or route to bypass it. All other helpers connect directly to Nucleus;
 
 The CLI and helpers identify the calling thread in this order: an explicit Nucleus ticket (`NUCLEUS_TICKET`); the current run's ticket, located from the thread's own identity even when the shell environment is stale; then the host-verified thread identity. A slow host never times out silently: the caller hears "The host is slow; retry". An explicit ticket wins for every verb that records a caller (`decision.add`, `lead.submit`, `question.answer`, `tell`): Nucleus records the ticket's thread as asker and delivery target, never an MCP session or host scope from the environment. Any recognised caller can `tell` a project planner or task role, including a host-only identity and a task-planner ticket. `ask` still needs a run ticket.
 
-`NUCLEUS_TICKET` names the run or participant ticket; use the path delivered to this thread. An invalid or revoked ticket refuses. A named `NUCLEUS_TICKET` whose file is missing refuses when the host identity is an MCP session, rather than recording that session. Without a ticket, T3Code uses `T3CODE_THREAD_ID` together with `T3CODE_DESKTOP_HOST_SCOPE`; Nucleus matches that scope to its registered online T3 host and verifies the thread through that host's adapter. BB uses `BB_THREAD_ID`; Nucleus verifies the exact thread through one registered online BB host before recording the host-qualified caller. Paseo uses `PASEO_AGENT_ID`. If multiple host identities are present, T3Code takes precedence over BB, and BB over Paseo; an incomplete T3 or BB identity refuses instead of falling through. If no source exists, the refusal names the sources tried. These identities identify the caller only; they do not grant authority beyond a Nucleus ticket's existing scope. Online BB hosts can carry submission ingress, while dispatch still follows repository host settings or the operator default. Explicit operator and relayed-note paths keep their existing meaning. A decision answer is delivered to that recorded asker or queued with a visible wait (attempts > 0); an identity Nucleus cannot route is shown on the decision.
+`NUCLEUS_TICKET` names the run or participant ticket; use the path delivered to this thread. An invalid or revoked ticket refuses. If the ticket file is missing, Nucleus verifies the calling thread on its host. T3Code supplies `T3CODE_THREAD_ID` and `T3CODE_DESKTOP_HOST_SCOPE`. The exact thread must exist on one online T3 host, including IDs starting with `mcp:`. A bare session with no thread is refused. Run `nucleus project.set-planner -` with just the project `key` to assign yourself from that same verified identity. BB uses `BB_THREAD_ID`; Nucleus verifies the exact thread through one registered online BB host before recording the host-qualified caller. Paseo uses `PASEO_AGENT_ID`. If multiple host identities are present, T3Code takes precedence over BB, and BB over Paseo; an incomplete T3 or BB identity refuses instead of falling through. If no source exists, the refusal names the sources tried. These identities identify the caller only; they do not grant authority beyond a Nucleus ticket's existing scope. Online BB hosts can carry submission ingress, while dispatch still follows repository host settings or the operator default. Explicit operator and relayed-note paths keep their existing meaning. A decision answer is delivered to that recorded asker or queued with a visible wait (attempts > 0); an identity Nucleus cannot route is shown on the decision.
 
 Assigning a planner issues an owner-only participant ticket and hands its path over
 without messaging the thread: the planner that named itself takes it in that
@@ -115,7 +115,8 @@ The two agent verbs (task 1108). Name recipients by role, task or project; never
 thread ID. `ask` is a question that waits for an answer and escalates; `tell` is information only.
 - `ask` `to`: `"reviewer"` (your task's retained reviewer; falls through to the planner ladder),
   `"planner"` (your task's planner ladder: planner, project planner, decider, then the board for
-  operator-only kinds), `{"project": "<key or name>"}` (that project's fallback planner),
+  operator-only kinds). A worker's local `kind: "review"` ask reaches its retained reviewer first,
+  including when it names `"planner"`. Other addresses include `{"project": "<key or name>"}` (that project's fallback planner),
   `{"project": "...", "agent": "<name>"}` (one named project agent; refused with its state if
   archived or gone), or `{"task": "<reference>", "role": "planner"}` (another task's planner ladder).
 - `tell` `to`: `"reviewer"` or `"worker"` (your task's counterpart), `"planner"`, `"executor"` (this
@@ -408,14 +409,21 @@ project planner when it is a different thread, then a short-lived decider, then 
 board for operator-only kinds. The task planner is the thread that submitted or
 promoted the task, or the one a brief named with `queue.planner`; the project
 planner keeps project-level matters and is the fallback rung. A rung observed
-archived or gone is skipped at once; a silent rung still times out.
+archived or gone is skipped at once. If a planner identity cannot be verified,
+the task and project show the cause and the next verified planner receives it.
+With no verified planner to try, the question waits. Re-run `project.set-planner`
+from the correct thread to restore routing.
 
-Nucleus sends a short `<nucleus-system>` message only when the planner is idle.
+Nucleus sends a short `<nucleus-system>` message to the planner. T3 queues it
+after an active turn.
 Answer by running the exact `nucleus question.answer` command in the message, then
 write nothing else in the thread. Chat output is never an answer. Busy time counts
 toward the ten-minute window; without an answer, the same question falls through
-to the next rung and then a short-lived decider. Reviewer consults use the same
-command.
+to the next rung and then a short-lived decider. Deciders must meet the task's
+requested tier and the usage level's permission rule. A worker's review consult uses
+the same command and stays with the retained reviewer while that thread is available.
+If there is no retained reviewer, the reviewer is confirmed gone or the reviewer
+requests a planning ruling, the question goes to the planner ladder.
 
 ```sh
 nucleus question.answer - <<'JSON'
@@ -429,7 +437,10 @@ or `reference` to answer the one open question delegated to your calling thread 
 that task. No match or several matches refuses; use the exact `questionId` for a
 retry or to select among several questions. A planner may add `overtakes: ["exact-decision-id"]` when the ruling
 settles those decisions; never infer IDs or match wording. A decider cannot overtake
-other decisions. Use `choice` instead of `answer` when copying an offered label.
+other decisions. Use `choice` with the exact offered label. A decider's free
+answer needs substantive text and a distinct one-line reason. Use
+`nucleus question.answer --dry-run -` with the same JSON to validate without
+recording an answer. The helper accepts `"dryRun": true` in its JSON.
 
 Classify a worker's question from its meaning; its supplied kind is only a hint.
 Answer from the brief and repository within the existing authority. Only product
