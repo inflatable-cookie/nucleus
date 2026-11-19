@@ -1188,8 +1188,8 @@ request identities and submitted handoffs are not rewritten.
   text is derived on read; waiting alone does not write a task or event.
 - The board carries up to five queued heads per repository and the total queued
   count. `queue.queued-page` reads the rest on demand. A completed mutation that
-  advances the board revision publishes before its reply; the timer budget applies
-  to periodic and unchanged publications.
+  advances the board revision publishes before its reply. The one-second tick
+  owns refreshes for read-only and unchanged replies and observes the publication budget.
 - The 20-second safety sweep handles active work and queued lifecycle obligations;
   it does not visit ordinary queued tasks. Its maintenance preflight still checks
   retained terminal and exceptional queued records, so its cost grows with those
@@ -1592,15 +1592,14 @@ request identities and submitted handoffs are not rewritten.
   a read that never answers cannot hold it, and a run whose cleanup proved itself
   complete is never scanned again — hourly or per pass. Every liveness and
   ownership check in that sweep reads the same snapshot, so a sweep spawns no
-  synchronous `ps` at all: the liveness frame that dominated the executor profile
-  is gone (nucleus#1329). Signalling still rests on the recorded birth identity at
-  the moment of the signal, from one bounded spawned identity read for exactly the
-  targets that run owns; a read that cannot be made leaves the snapshot's answer
-  standing rather than inventing one. A fact the kernel or the snapshot proves gone
+  synchronous `ps`. The sweep parses the table once, shares provider and ancestry
+  facts across runs, and reads executable paths off the executor loop. An actor
+  sending a signal checks the run's targets against a fresh, bounded birth identity
+  read. A timed-out read leaves a still-live target unknown. A fact the kernel or the snapshot proves gone
   is not an unread holder, so a process that died between the listing and its own
-  environment read cannot defer a cleanup the run no longer owes. Cleanup runs on its own
-  host lane (`cleanup:<host>`), one queued sweep per host, so it never holds a
-  task's exclusive lane and never starves an owner control behind it. That queued
+  environment read cannot defer a cleanup the run no longer owes. Audit and task
+  cleanup run on the host cleanup lane (`cleanup:<host>`), so process reads leave
+  transport observation, admission, and owner controls free to proceed. The queued
   sweep is host-scoped, never task-scoped: a burst of tasks on one host coalesces
   onto the sweep already waiting and it owes every run of the host, so no task's
   cleanup is dropped because another task asked first. Nothing is queued while the

@@ -1,0 +1,1 @@
+Process cleanup shares one parsed snapshot across runs and uses bounded asynchronous identity reads. A slow process reader leaves reconciliation and admission responsive, and read-only requests share the executor’s periodic snapshot refresh.

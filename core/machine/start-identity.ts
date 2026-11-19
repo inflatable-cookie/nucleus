@@ -20,6 +20,7 @@
  */
 import { spawn, spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { pidAlive, processCommandLine, processCommandLineAsync } from "./process-identity";
 
 const MAC_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -108,10 +109,10 @@ export async function readHostRunStartIdentity(pid: number, options: StartIdenti
     return readableIdentity(macStartIdentity(pid, read.line));
   }
   if (platform === "linux") {
-    const readFileText = options.readFileText ?? defaultReadFileText;
+    const readFileText = options.readFileText ?? ((path: string) => readFile(path, "utf8"));
     let stat: string;
     try {
-      stat = readFileText(`/proc/${pid}/stat`);
+      stat = await readFileText(`/proc/${pid}/stat`);
     } catch (error) {
       // Only a missing PID entry proves absence; any other read failure is
       // an unobserved identity.
@@ -120,7 +121,7 @@ export async function readHostRunStartIdentity(pid: number, options: StartIdenti
     }
     let bootId: string | null;
     try {
-      bootId = readFileText("/proc/sys/kernel/random/boot_id").trim() || null;
+      bootId = (await readFileText("/proc/sys/kernel/random/boot_id")).trim() || null;
     } catch {
       // Unrelated host metadata: a missing boot id never proves a PID gone
       // when that PID's own entry reads.

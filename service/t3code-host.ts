@@ -135,24 +135,18 @@ export class T3HostConnection {
     lastProtocolError: T3ProtocolError | null;
   } {
     this.retireDisconnected();
+    const connected = this.session !== null;
     return {
       lastDisconnectReason: this.lastDisconnectReason,
       lastProtocolError: this.lastProtocolError,
       id: this.lastIdentity,
-      connected: this.session !== null,
-      sessionId: this.session ? (this.#config.sessionId ?? null) : null,
+      connected,
+      sessionId: connected ? (this.#config.sessionId ?? null) : null,
       error: this.errorValue,
       version: this.versionValue,
-      threadShapePending:
-        this.session !== null && this.host?.threadShapePending === true,
-      supportThreads:
-        this.session !== null && this.host?.supportThreadStatus
-          ? this.host.supportThreadStatus
-          : "",
-      nativeParenting:
-        this.session !== null && this.host?.nativeParentingStatus
-          ? this.host.nativeParentingStatus
-          : "",
+      threadShapePending: connected && this.host?.threadShapePending === true,
+      supportThreads: connected ? (this.host?.supportThreadStatus ?? "") : "",
+      nativeParenting: connected ? (this.host?.nativeParentingStatus ?? "") : "",
     };
   }
 

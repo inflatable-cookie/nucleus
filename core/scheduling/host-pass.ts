@@ -18,6 +18,7 @@ import {
 import { operationIdForKey, operationInputHash } from "../store/store";
 import { submissionSchema } from "../../shared/contracts";
 import { submissionRecordFromLegacy } from "../../shared/schema/settings/legacy";
+import { LANE_PRIORITY_AUDIT } from "./lane-priorities";
 
 const REVIEW_PHASES = new Set([
   "awaiting_review",
@@ -64,6 +65,8 @@ export type HostPassContext = Pick<
   | "observeRetiredWorkers"
   | "retiredObservationKey"
   | "retiredObservationPlan"
+  | "scheduleLane"
+  | "stopped"
   | "store"
 > & { readonly resolution: Pick<Resolution, "observationTargets"> };
 
@@ -286,12 +289,19 @@ export class HostPass {
       const historical =
         Date.now() - (this.lastRunProcessSweep.get(host) ?? 0) >= 3_600_000;
       if (historical) this.lastRunProcessSweep.set(host, Date.now());
-      await this.step(host, "settledRunProcesses", () =>
-        sweepSettledRunProcesses(this.store, host, {
+      // Process cleanup has its own durable intent and host lane. A slow
+      // local probe says nothing about this host's transport or task visits.
+      void this.context.scheduleLane(`cleanup:${host}`, LANE_PRIORITY_AUDIT,
+        () => sweepSettledRunProcesses(this.store, host, {
           pendingOnly: !historical,
           readProcesses: () => this.adapter.hostProcessListing!(),
         }),
-      );
+        { coalesce: historical ? "historical-run-process-cleanup" : "settled-run-process-cleanup" },
+      ).catch(error => {
+        if (this.context.stopped) return;
+        const detail = error instanceof Error ? error.message : String(error);
+        this.store.setMeta("hostPassError", `${host}/settledRunProcesses: ${detail}`.slice(0, 2000));
+      });
     }
     // Read one rotating page, including unresolved rows, so an unprovable
     // submission cannot starve later work. Settled occurrences stay history.

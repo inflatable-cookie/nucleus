@@ -13,12 +13,12 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join } from "node:path";
-import { readFileSync, readdirSync, readlinkSync, realpathSync } from "node:fs";
+import { readFile, readdir, readlink, realpath } from "node:fs/promises";
 import {
   cwdMapFromLsof,
   type CwdState,
 } from "../workspaces/worktree-validation";
-import { linuxProcCommandLine, type ProcCommandLine } from "./process-identity";
+import { parseProcCommandLine, type ProcCommandLine } from "./process-identity";
 import { linuxStartIdentity, macStartIdentity } from "./start-identity";
 import {
   readHostRunStartIdentity,
@@ -78,6 +78,7 @@ async function processListing(
     const { stdout } = await execFileAsync(command, args, {
       encoding: "utf8",
       timeout: PS_TIMEOUT_MS,
+      killSignal: "SIGKILL",
       maxBuffer: 8 * 1024 * 1024,
       env,
     });
@@ -105,11 +106,11 @@ function uidOf(): number {
   return typeof process.getuid === "function" ? process.getuid() : -1;
 }
 
-function linuxCwd(pid: number): CwdState {
+async function linuxCwd(pid: number): Promise<CwdState> {
   try {
     return {
       state: "read",
-      path: realpathSync(readlinkSync(`/proc/${pid}/cwd`)),
+      path: await realpath(await readlink(`/proc/${pid}/cwd`)),
     };
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
@@ -119,10 +120,10 @@ function linuxCwd(pid: number): CwdState {
   }
 }
 
-function linuxUid(pid: number): number | null {
+async function linuxUid(pid: number): Promise<number | null> {
   try {
     const match = /^Uid:\s+(\d+)/m.exec(
-      readFileSync(`/proc/${pid}/status`, "utf8"),
+      await readFile(`/proc/${pid}/status`, "utf8"),
     );
     return match ? Number(match[1]) : null;
   } catch {
@@ -130,13 +131,13 @@ function linuxUid(pid: number): number | null {
   }
 }
 
-function linuxBootId(): string | null {
+async function linuxCommand(pid: number): Promise<ProcCommandLine> {
   try {
-    return (
-      readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim() || null
-    );
-  } catch {
-    return null;
+    return parseProcCommandLine(await readFile(`/proc/${pid}/cmdline`, "utf8"));
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    return code === "ENOENT" || code === "ESRCH"
+      ? { state: "gone" } : { state: "unreadable" };
   }
 }
 
@@ -146,28 +147,27 @@ async function linuxProcesses(
 ): Promise<HostProcessListRead> {
   let entries: string[];
   try {
-    entries = pids ? pids.map(String) : readdirSync("/proc");
+    entries = pids ? pids.map(String) : await readdir("/proc");
   } catch (error) {
     return {
       state: "unknown",
       reason: `the /proc listing is unreadable: ${String(error)}`,
     };
   }
-  const bootId = linuxBootId();
+  const bootId = await readFile("/proc/sys/kernel/random/boot_id", "utf8").then(value => value.trim() || null, () => null);
   const listed: HostProcessFact[] = [];
-  for (const entry of entries) {
-    if (!/^\d+$/.test(entry)) continue;
-    const pid = Number(entry);
-    if (linuxUid(pid) !== uid) continue;
-    try {
-      const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+  for (let offset = 0; offset < entries.length; offset += 64) {
+    const facts = await Promise.all(entries.slice(offset, offset + 64).map(async entry => {
+      if (!/^\d+$/.test(entry)) return null;
+      const pid = Number(entry);
+      if (await linuxUid(pid) !== uid) return null;
+      const stat = await readFile(`/proc/${pid}/stat`, "utf8").catch(() => null);
+      if (!stat) return null;
       const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
-      const command = linuxProcCommandLine(pid);
-      const cwd = linuxCwd(pid);
-      // Exited between the listing and its inspection: absence from the table
-      // is the truthful fact, never an unreadable cwd or command for a proof.
-      if (inspectedProcessGone(command, cwd)) continue;
-      listed.push({
+      const [command, cwd] = await Promise.all([linuxCommand(pid), linuxCwd(pid)]);
+      // Exits during the walk are absent. Other inspection failures stay unknown.
+      if (inspectedProcessGone(command, cwd)) return null;
+      return {
         pid,
         ppid: Number(fields[1]),
         state: fields[0] || null,
@@ -176,10 +176,9 @@ async function linuxProcesses(
         startIdentity: linuxStartIdentity(pid, stat, bootId),
         command: command.state === "read" ? truncateCommand(command.line) : "",
         cwd: cwd.state === "read" ? cwd.path : null,
-      });
-    } catch {
-      /* Exited during the walk. */
-    }
+      };
+    }));
+    for (const fact of facts) if (fact) listed.push(fact);
   }
   return { state: "listed", processes: listed };
 }
@@ -308,7 +307,7 @@ export async function loadedExecutablePaths(
   if (process.platform === "linux") {
     for (const pid of pids)
       try {
-        result.set(pid, readlinkSync(`/proc/${pid}/exe`));
+        result.set(pid, await readlink(`/proc/${pid}/exe`));
       } catch {
         /* Unknown. */
       }
@@ -355,7 +354,7 @@ export async function markTrustedCuaProcesses(
   for (const fact of facts) delete fact.trustedCuaExecutable;
   let trusted: string;
   try {
-    trusted = realpathSync(installed);
+    trusted = await realpath(installed);
   } catch {
     return;
   }
@@ -378,7 +377,7 @@ export async function markTrustedCuaProcesses(
         );
         if (
           image &&
-          realpathSync(image) === trusted &&
+          await realpath(image) === trusted &&
           identity.kind === "identity" &&
           startIdentityMatches(fact.startIdentity, identity.identity)
         )

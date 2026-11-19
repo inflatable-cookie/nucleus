@@ -14,6 +14,7 @@ export interface FixtureState {
   hostOffline?: boolean;
   /** The fixture host's catalog read never settles: the admission slot is held until its deadline. */
   hostHang?: boolean;
+  releaseProcessRead?: () => void;
 }
 
 const fixtureProfile: Profile = { id: "worker", name: "Worker", provider: "test", model: "test", notes: "", available: true, problem: "", supportedThinking: [] };
@@ -72,6 +73,16 @@ export const FIXTURES: Record<string, {
   bootCrash?: boolean;
 }> = {
   fake: { adapter: fakeAdapter },
+  "slow-process": {
+    adapter: (state, context) => ({
+      ...fakeAdapter(state, context),
+      hostProcessListing: async () => {
+        if (!state.releaseProcessRead)
+          await new Promise<void>(resolve => { state.releaseProcessRead = resolve; });
+        return null;
+      },
+    }),
+  },
   // Profiles come from the Queue store; the host catalog only says whether they route.
   rich: { adapter: (_state, context) => richAdapter(context), instrumentStore: (_state, store) => store.setProfiles([storedFixtureProfile]) },
   stall: {
@@ -120,6 +131,8 @@ export const FIXTURES: Record<string, {
 export async function handleDebug(runtime: QueueRuntime, op: unknown, state: FixtureState): Promise<unknown> {
   const request = op as { target: "store" | "runtime" | "engine" | "fixture"; method?: string; args?: unknown[]; action?: string; value?: unknown };
   if (request.target === "fixture") {
+    if (request.action === "process-read-started") return Boolean(state.releaseProcessRead);
+    if (request.action === "release-process-read") { state.releaseProcessRead?.(); return { ok: true }; }
     if (request.action === "set-stall") { state.stalled = Boolean(request.value); return { ok: true }; }
     if (request.action === "set-host-hang") { state.hostHang = Boolean(request.value); return { ok: true }; }
     if (request.action === "set-host-offline") { state.hostOffline = Boolean(request.value); return { ok: true }; }

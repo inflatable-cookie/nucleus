@@ -132,8 +132,6 @@ export async function processStartIdentityLivenessAsync(
     !startIdentity.startsWith(`${pid}@`)
   )
     return "unknown";
-  if (process.platform !== "darwin")
-    return processStartIdentityLiveness(pid, startIdentity);
   const read = await readHostRunStartIdentity(pid);
   if (read.kind === "gone") return "dead";
   if (read.kind === "unavailable") return pidAlive(pid) ? "unknown" : "dead";

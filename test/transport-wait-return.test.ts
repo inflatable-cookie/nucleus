@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { Store } from '../core/store/store';
 import { Engine } from '../core/engine';
 import type { Adapter } from '../core/host';
+import { collectOwnerVerbFacts, ownerTaskNext } from '../core/verbs/owner-verbs';
 import { submission } from './support/fakes';
 import { TASK_PROGRESSING_REASON } from '../shared/task-detail-summary';
 
@@ -23,9 +24,9 @@ const HOST_A = 't3code:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 const HOST_B = 't3code:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
 type Loose = Record<string, any>;
 
-function fixture(t: TestContext) {
+function fixture(t: TestContext, hostProcessListing?: Adapter['hostProcessListing']) {
   const store = new Store(':memory:');
-  const engine = new Engine(store, {} as unknown as Adapter, 60_000);
+  const engine = new Engine(store, { hostProcessListing } as Adapter, 60_000);
   t.after(async () => { await engine.stop(); store.close(); });
   store.setMeta('paused', false);
   store.setMeta('globalLimit', 0);
@@ -110,21 +111,46 @@ test('a transport wait clears on the pass that observes the host answer, and the
   assert.equal(f.store.task(task.id).resolution.stop, null);
 });
 
-test('another host that is still failing holds only its own tasks', async t => {
-  const f = fixture(t);
+test('a slow process reader and a still-failing host leave the returning host free to settle', async t => {
+  let readStarted!: () => void;
+  let releaseRead!: () => void;
+  const reading = new Promise<void>(resolve => { readStarted = resolve; });
+  const gated = new Promise<null>(resolve => { releaseRead = () => resolve(null); });
+  const f = fixture(t, () => { readStarted(); return gated; });
+  t.after(releaseRead);
   const ready = f.add(HOST_A, 'Ready task');
   const away = f.add(HOST_B, 'Away task');
+  const interactive = f.add(HOST_A, 'Operator stop');
+  const reason = "Interactive session: waiting for the operator in the worker's thread";
+  f.store.update(interactive.id, { interactive: true }, 'interactive');
+  f.engine.resolution.waiting(f.store.task(interactive.id), reason, 'interactive');
   f.engine.resolution.transportDeferred(f.store.task(ready.id), transportCause(HOST_A));
   f.engine.resolution.transportDeferred(f.store.task(away.id), transportCause(HOST_B));
   f.online[HOST_B] = false;
 
-  await f.pass();
+  const audit = f.pass();
+  try {
+    const timeout = AbortSignal.timeout(5_000);
+    await Promise.race([Promise.all([reading, audit]), new Promise<never>((_, reject) => {
+      timeout.addEventListener('abort', () => reject(Error('audit waited for process cleanup')), { once: true });
+    })]);
+  } finally {
+    releaseRead();
+  }
 
   assert.equal(f.store.task(ready.id).resolution.stop, null, 'the reachable host settles its own task');
   assert.equal(f.store.task(away.id).resolution.stop?.reason, 'host_unavailable', 'the failing host keeps its own task waiting');
-  assert.deepEqual(f.visited, [ready.id], 'the reachable host\'s task is visited and the failing host\'s is not');
+  assert.deepEqual(new Set(f.visited), new Set([ready.id, interactive.id]));
+  const next = (id: string) => ownerTaskNext(collectOwnerVerbFacts(f.store, f.store.task(id)));
+  assert.equal(next(ready.id).stop?.reason === 'host_unavailable', false);
+  assert.equal(next(away.id).stop?.reason, 'host_unavailable');
+  assert.equal(next(interactive.id).stop?.reason, 'interactive');
   assert.deepEqual(f.dispatched.filter(id => id === ready.id), [ready.id], 'and dispatch reads it as ready');
   assert.equal(f.store.getMeta('engineError'), '', 'one host\'s transport failure is not an engine fault');
+  const settled = f.kinds(ready.id).filter(kind => kind === 'host_wait_cleared');
+  assert.equal(settled.length, 1);
+  await f.pass();
+  assert.deepEqual(f.kinds(ready.id).filter(kind => kind === 'host_wait_cleared'), settled);
 });
 
 test('an owner stop beside the wait keeps its question when the host answers', async t => {

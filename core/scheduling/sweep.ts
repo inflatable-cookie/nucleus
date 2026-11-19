@@ -123,6 +123,8 @@ export class Sweep {
           "observeRetiredWorkers",
           "retiredObservationKey",
           "retiredObservationPlan",
+          "scheduleLane",
+          "stopped",
           "store",
         ],
         ["observationTargets"],
