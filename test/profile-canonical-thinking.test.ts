@@ -409,9 +409,10 @@ test("a host's thinking select is never a feature: T3's reasoning select, older 
     older.thinkingOptions.map((option) => option.id),
     ["low", "medium", "high"],
   );
+  // Its service tier is the canonical Speed control (nucleus#1386).
   assert.deepEqual(
     older.features.map((feature) => feature.id),
-    ["serviceTier"],
+    ["speed"],
   );
   for (const model of codex.models)
     assert.equal(
