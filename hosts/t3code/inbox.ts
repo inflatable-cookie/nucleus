@@ -10,8 +10,20 @@ import { HOLD_MARKER, parentPromptRules, PARENT_MODEL, PARENT_PROVIDER } from ".
 /** The T3 project name of the inbox's dedicated registration (nucleus#1384). */
 export const INBOX_PROJECT_TITLE = "Nucleus Inbox";
 
+/**
+ * The inbox thread's one live signal (nucleus#1384, v2): decisions to answer first, then
+ * tasks running on this host, otherwise "All quiet". Counts are the caller's facts.
+ */
+export function inboxTitle(decisions: number, runningTasks: number): string {
+  if (decisions > 0) return `${decisions} decision${decisions === 1 ? "" : "s"} to answer`;
+  if (runningTasks > 0) return `${runningTasks} task${runningTasks === 1 ? "" : "s"} running`;
+  return "All quiet";
+}
+
 interface InboxContext {
   hostId(): string;
+  /** Tasks whose attention is active on this host in the current pass (each task once). */
+  runningTasks(): number;
   acp(): AcpSessionSurface | null;
   state: T3StateFile;
   reads: T3Reads;
@@ -39,7 +51,7 @@ export class T3Inbox {
       const workspace = await this.core.workspace(binding.directory);
       inbox = { threadId: identity("thread", canonical([hostId, "inbox"])), sessionId: binding.sessionId,
         bindingPath: binding.bindingPath, directory: binding.directory, workspaceId: workspace.id,
-        projectId: workspace.projectId, createdAt: new Date().toISOString(), pinGeneration: 0 };
+        projectId: workspace.projectId, createdAt: new Date().toISOString(), pinGeneration: 0, titleGeneration: 0 };
       this.core.state.update(state => { if (!state.inbox) state.inbox = inbox; });
       inbox = this.core.state.read().inbox!;
     }
@@ -65,6 +77,7 @@ export class T3Inbox {
       await this.core.rpc.call("preview.open", { threadId: inbox.threadId, url, reveal: true });
     }
     await this.nameProject(inbox.projectId);
+    await this.retitle(inbox.threadId);
     if (thread.pinnedAt === undefined) throw new T3CompatibilityError("inbox thread pinnedAt");
     if (thread.pinnedAt === null) {
       const generation = inbox.pinGeneration;
@@ -77,6 +90,26 @@ export class T3Inbox {
       }
       await this.core.intents.effect(commandId, "orchestration.dispatchCommand", { type: "thread.pin", commandId, threadId: inbox.threadId });
     }
+  }
+
+  /**
+   * The thread's live title. It is written only when it differs from the thread's
+   * current title, and never wakes the inbox: a metadata update, not a turn. The
+   * generation makes a title that returns to an earlier value a new command.
+   */
+  private async retitle(threadId: string): Promise<void> {
+    const hostId = this.core.hostId();
+    const key = this.core.acp()?.pendingInboxDecisionKey?.(hostId) ?? null;
+    const decisions = key ? (JSON.parse(key) as unknown[]).length : 0;
+    const title = inboxTitle(decisions, this.core.runningTasks());
+    const thread = (await this.core.reads.inventory()).threads.find(row => row.id === threadId);
+    if (!thread || thread.title === title) return;
+    const generation = this.core.state.read().inbox?.titleGeneration ?? 0;
+    const commandId = identity("inbox-title", canonical([hostId, threadId, title, generation]));
+    await this.core.intents.effect(commandId, "orchestration.dispatchCommand", {
+      type: "thread.metadata.update", commandId, threadId, title,
+    }, undefined, undefined, { resendUnknownAfterRead: true });
+    this.core.state.update(state => { if (state.inbox) state.inbox.titleGeneration = generation + 1; });
   }
 
   /**

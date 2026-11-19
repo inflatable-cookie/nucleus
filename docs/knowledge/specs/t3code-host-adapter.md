@@ -831,12 +831,27 @@ The ordinary sweep re-enters the inbox with its marked message only while that o
 is open and no inbox run is live. It releases the turn only once nothing is offered
 and every Nucleus card on the inbox thread is answered or cancelled on T3 (the card
 settlement runs first, and its result gates the release), so no card is left
-pending behind an ended turn. A release directive is cancelled by an offer that
+pending behind an ended turn. A pending card older than the thread's window (the
+window keeps only the newest timeline suffix) is answered from the full transcript,
+so a card that survives a T3 restart is still settled. A release directive is
+cancelled by an offer that
 arrives before the release. An empty inbox is released by the first sweep after
 startup or a T3 restart. The inbox's T3 project is named "Nucleus Inbox"; its thread
 is "Nucleus". A registration made before this change is renamed with T3's native
 `project.update` title, so its project id, pinned thread, binding and directory
 survive. Other repository projects keep their folder names.
+
+**The inbox thread's title is its live signal (nucleus#1384, Tom 2026-11-19: "Perfect,
+let's do it").** The thread title shows one signal, in priority order: "N decisions to
+answer" (or "1 decision to answer"), counting decisions offered on this inbox by the
+same projection as the cards; otherwise "N tasks running" (or "1 task running"),
+counting each task once whose attention is active on this host in the pass (snoozed,
+waiting, attention and finished tasks are not counted); otherwise "All quiet". The
+title is written with `thread.metadata.update` only when the thread's current title
+differs, including while the inbox is idle, and the write never wakes the inbox. Each
+write has its own command identity by title and a title generation, so a title that
+returns to an earlier value is written again rather than replayed. The project name
+stays "Nucleus Inbox".
 
 The service mints a fresh one-time board link for `preview.open` on the inbox
 thread. It sends the link only in that WebSocket call, never in an ACP prompt or

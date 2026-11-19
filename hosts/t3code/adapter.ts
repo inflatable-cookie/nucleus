@@ -214,6 +214,8 @@ export class T3CodeHost implements Host {
   private readonly probeThreadId?: string;
   private readonly modelCapturePath?: string;
   private readonly acp: () => AcpSessionSurface | null;
+  /** Tasks whose attention is active in the current host pass; the inbox title counts them. */
+  private readonly activeTaskIds = new Set<string>();
   constructor(options: T3CodeConfig) {
     this.acp = options.acp ?? (() => null);
     this.probeThreadId = options.probeThreadId;
@@ -248,6 +250,7 @@ export class T3CodeHost implements Host {
     });
     this.inbox = new T3Inbox({
       hostId: () => this.hostId, acp: this.acp, state: this.state, reads: this.reads, rpc: this.rpc, intents: this.intents, boardLink: options.boardLink,
+      runningTasks: () => this.activeTaskIds.size,
       workspace: async directory => {
         const created = await this.createWorkspace({ title: "Nucleus", requestId: `inbox:${this.hostId}`, directory, project: { workspaceRoot: directory } });
         return { id: created.id, projectId: this.state.read().workspaces[created.id]!.projectId };
@@ -418,6 +421,7 @@ export class T3CodeHost implements Host {
    * is what an exact settle or lookup still reads. Nothing in T3 is touched.
    */
   async beginHostPass(tasks: readonly Task[]): Promise<void> {
+    this.activeTaskIds.clear();
     this.reads.beginPass(tasks);
     await this.reconcileObservation();
   }
@@ -589,7 +593,11 @@ export class T3CodeHost implements Host {
   ): Promise<void> {
     if (!this.connected) return;
     const pending = this.acp()?.pendingDecisionKey?.(taskId);
-    await this.presentation.reconcileTaskRow(taskId, pending ? { state: "attention", cause: "Decision needs an operator" } : attention);
+    const shown = pending ? { state: "attention" as const, cause: "Decision needs an operator" } : attention;
+    // The inbox's title counts tasks executing on this host: attention "active", once each.
+    if (shown.state === "active") this.activeTaskIds.add(taskId);
+    else this.activeTaskIds.delete(taskId);
+    await this.presentation.reconcileTaskRow(taskId, shown);
   }
   /** The ordinary host sweep's nesting pass: dispose owed wakes, hold or release the parent's turn, archive a finished task's parent. */
   async reconcileThreadTitles(tasks: readonly Task[]): Promise<void> {

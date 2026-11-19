@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { T3CodeHost } from "../hosts/t3code/adapter";
 import { HOLD_MARKER } from "../hosts/t3code/nesting";
+import { inboxTitle } from "../hosts/t3code/inbox";
+import { T3DecisionCards } from "../hosts/t3code/decision-cards";
 import type { TestContext } from "node:test";
 import type { AcpSessionSurface } from "../shared/acp/surface";
 import { t3Fake, syntheticRun, syntheticRuntimeRequest } from "./support/t3code-fake";
@@ -154,4 +156,57 @@ test("the inbox's project is named Nucleus Inbox and its registration is renamed
   // A later pass sees the readable name and sends no second rename.
   await host.reconcileThreadTitles([]);
   assert.equal(fake.commands.filter(command => command.type === "project.update").length, 1);
+});
+
+test("the inbox title names decisions, then running tasks, then All quiet", () => {
+  assert.equal(inboxTitle(1, 0), "1 decision to answer");
+  assert.equal(inboxTitle(3, 2), "3 decisions to answer");
+  assert.equal(inboxTitle(0, 1), "1 task running");
+  assert.equal(inboxTitle(0, 4), "4 tasks running");
+  assert.equal(inboxTitle(0, 0), "All quiet");
+});
+
+test("the inbox title follows the offered decisions, writes only on change, and returns to All quiet as a new write", async t => {
+  const { fake, host, offered } = await idleInbox(t);
+  const inbox = () => host.state.read().inbox!;
+  const titleWrites = () => fake.commands.filter(command => command.type === "thread.metadata.update" && command.threadId === inbox().threadId);
+  await host.reconcileThreadTitles([]);
+  assert.equal(fake.threads.get(inbox().threadId)!.thread.title, "All quiet");
+  assert.equal(titleWrites().length, 1);
+  // An unchanged title sends nothing on the next sweep.
+  await host.reconcileThreadTitles([]);
+  assert.equal(titleWrites().length, 1);
+  offered.push("decision-a");
+  await host.reconcileThreadTitles([]);
+  assert.equal(fake.threads.get(inbox().threadId)!.thread.title, "1 decision to answer");
+  offered.push("decision-b");
+  await host.reconcileThreadTitles([]);
+  assert.equal(fake.threads.get(inbox().threadId)!.thread.title, "2 decisions to answer");
+  offered.length = 0;
+  await host.reconcileThreadTitles([]);
+  // Returning to a title already written earlier is still a new write, not a replay.
+  assert.equal(fake.threads.get(inbox().threadId)!.thread.title, "All quiet");
+  assert.equal(titleWrites().length, 4);
+});
+
+test("a pending card older than the thread window is answered from the full transcript", async () => {
+  const id = "11111111-1111-4111-8111-111111111111";
+  const field = `nucleus_${id}_1`;
+  const pending = [{ id: "request-old", kind: "user_input", status: "pending", responseCapability: { type: "message" } }];
+  // The window keeps only the newest timeline suffix, so the old card's item is absent from it.
+  const reads = {
+    isObserved: async () => true,
+    readProjection: async (_threadId: string, kind: string) => kind === "transcript"
+      ? { runs: [], runtimeRequests: pending, turnItems: [{ type: "user_input_request", requestId: "request-old", runId: "run-old", questions: [{ id: field }] }] }
+      : { runs: [], runtimeRequests: pending, turnItems: [] },
+  };
+  const responses: unknown[] = [];
+  const cards = new T3DecisionCards({
+    acp: () => ({ decisionSettlement: () => ({ state: "answered", answer: "Yes" }) }) as never,
+    reads: reads as never,
+    respond: async (threadId, workspaceId, requestId, response) => { responses.push({ threadId, workspaceId, requestId, response }); },
+  });
+  const result = await cards.reconcile("thread-inbox", "workspace-inbox");
+  assert.deepEqual(responses, [{ threadId: "thread-inbox", workspaceId: "workspace-inbox", requestId: "request-old", response: { answers: { [field]: "Yes" } } }]);
+  assert.equal(result.settled, true);
 });
