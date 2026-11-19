@@ -12,6 +12,7 @@ import {
   decodeEscalationChoice,
   escalationAnswerControl,
   escalationContinuationInstruction,
+  escalationChoiceBinding,
   escalationVerbChoices,
   extractDecisionIdCandidates,
   extractFirstIsoTimestamp,
@@ -284,6 +285,10 @@ export class EscalationSettlement {
               reviewerIncident.runId
             ? this.store.run(reviewerIncident.runId)
             : null;
+      const choiceFacts = selected.kind === "owner" ? collectOwnerVerbFacts(this.store, current) : null;
+      if (selected.kind === "owner" && choiceFacts && selected.choice.binding !== undefined
+        && selected.choice.binding !== escalationChoiceBinding(choiceFacts))
+        throw Error("The task's run or PR binding changed after this escalation offer; read next again");
       const workerChoice =
         selected.kind === "owner" &&
         ((selected.choice.verb === "move" &&
@@ -474,7 +479,7 @@ export class EscalationSettlement {
             Object.entries(args).filter(([key]) => key !== "version"),
           );
         const fresh = escalationVerbChoices(
-          ownerVerbViews(collectOwnerVerbFacts(this.store, current)),
+          ownerVerbViews(choiceFacts!),
         ).find(
           (item) =>
             item.verb === choice.verb &&

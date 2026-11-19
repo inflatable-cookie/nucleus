@@ -1,3 +1,4 @@
+import { externalMergeStateRefusal } from "../verbs/control-refusals";
 import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { mergeReviewEvidenceAt, type OwnerAcceptanceRecord, type Run, type Task } from "../../shared/contracts";
@@ -87,7 +88,8 @@ export class ExternalMerge {
     const enclosing = reviewEntry?.enclosing();
     const boundary = enclosing ? this.store.reviewEntryUnrunBeforeFirstRun(t, enclosing) : false;
     if (reviewEntry && !boundary) throw new Error('The review-entry pre-first-run boundary changed before the external merge; nothing was written');
-    if ((!boundary && ['done','cancelled','queued'].includes(t.phase)) || t.resolution.mergeIntent || t.resolution.mergedCommit) throw new Error('Only an unmerged dispatched task can accept an external merge');
+    const refusal = externalMergeStateRefusal(t, boundary);
+    if (refusal) throw Error(refusal);
     const leases = () => this.store.runs(t.id).filter(r=>!r.released);
     const captured = leases();
     const allRunIdentity = JSON.stringify(this.store.runs(t.id));

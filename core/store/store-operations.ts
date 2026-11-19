@@ -1,7 +1,7 @@
 import { DEFAULT_PASEO_CALL_LIMIT, MAX_PASEO_CALL_LIMIT, type Run } from "../../shared/contracts";
 import { queueOperationSchema, DEFAULT_OPERATION_LIMIT, MAX_OPERATION_LIMIT, OPERATION_BACKPRESSURE_RETRY_MS, type OperationAcceptance, type QueueOperation } from "../../shared/operations";
 import { StoreCore, now, operationIdForKey, operationInputHash } from "./store-core";
-import { hasReviewerDelivery, operationIdMatchesKey, payloadMatchesInputHash, provedPreSendHistory } from "./store-pre-send";
+import { hasReviewerDelivery, operationIdMatchesKey, payloadMatchesInputHash, preSendSettlementIdentity, provedPreSendHistory } from "./store-pre-send";
 
 interface OperationTaskAccess {
   taskChanged(taskId: string): void;
@@ -139,6 +139,10 @@ export class StoreOperations {
         const existing = this.numberedOperation(String(row.data));
         if (existing.inputHash !== input.inputHash) throw new Error("Operation key already used with different input");
         if (existing.state !== "failed") return { accepted: true as const, operation: existing };
+        if (existing.preSendReceipt && existing.preSendReconciledAt && this.core.db.prepare(
+          "SELECT 1 FROM events WHERE taskId=? AND kind='operation_pre_send_refused' AND detail=? LIMIT 1",
+        ).get(existing.taskId, preSendSettlementIdentity(existing)))
+          return { accepted: true as const, operation: existing };
         const saturated = this.backpressure();
         if (saturated) return saturated;
         const history = existing.preSendReceipt ? [...(existing.preSendHistory ?? []), {

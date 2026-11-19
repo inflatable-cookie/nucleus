@@ -1,4 +1,4 @@
-import { isDispositionActive, type Task, type Run } from '../../shared/contracts';
+import { mergeReviewEvidenceAt, isDispositionActive, type Task, type Run } from '../../shared/contracts';
 import { taskNeverDispatched } from '../task-decision-rules';
 
 export const REMOVED_TASK_REFUSAL = 'Task was removed from the queue';
@@ -45,6 +45,28 @@ export function moveStateRefusal(task: Task, to: 'work' | 'review' | 'merge' | '
   if (to === 'review' && terminal) return moveTerminalRefusal(task, to);
   if (isDispositionActive(task)) return DISPOSITION_CONTROL_REFUSAL;
   return terminal ? moveTerminalRefusal(task, to) : null;
+}
+
+export const EXTERNAL_MERGE_STATE_REFUSAL = 'Only an unmerged dispatched task can accept an external merge';
+
+export function externalMergeStateRefusal(task: Task, reviewEntryBoundary: boolean): string | null {
+  return (!reviewEntryBoundary && ['done', 'cancelled', 'queued'].includes(task.phase))
+    || task.resolution.mergeIntent || task.resolution.mergedCommit ? EXTERNAL_MERGE_STATE_REFUSAL : null;
+}
+
+/** Recorded merges use synchronization. A still-pending merge owns its own outcome. */
+export function closeoutMoveStateRefusal(task: Task, reviewEntryBoundary: boolean, hasPr: boolean): string | null {
+  if (['done', 'cancelled'].includes(task.phase)) return `Move to closeout requires an unfinished task; this task is ${task.phase}`;
+  if (!hasPr || !reviewEntryBoundary && ['queued', 'dispatching'].includes(task.phase))
+    return 'Moving to closeout requires a dispatched task with a PR';
+  return task.resolution.mergedCommit ? null : externalMergeStateRefusal(task, reviewEntryBoundary);
+}
+
+export function recordedCloseoutRefusal(task: Task, reviewRequired: boolean): string | null {
+  const head = task.resolution.mergeHead;
+  if (!head) return 'The recorded merge has no exact head to verify';
+  return reviewRequired && !mergeReviewEvidenceAt(task, head)
+    ? 'The merged head has no recorded exact-head review or operator source acceptance' : null;
 }
 
 /** Stop may release an integration turn even after its work ended or was disposed. */

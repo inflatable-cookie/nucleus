@@ -10,7 +10,8 @@ import { sameCallerIdentity } from "../../shared/agent-identity";
 import { normalizeRepositoryOrigin } from "../../shared/lanes";
 import { demandRank, unavailableGroupNames } from "../../shared/pool";
 import { currentBrief } from "../planning/brief";
-import { parseNativeDelegatedReply } from "./question-delegation";
+import {
+  offeredChoice, parseNativeDelegatedReply } from "./question-delegation";
 import { plannerEscalations, type LadderEvent } from "./ladder";
 import { askLifecycle } from "./agent-ask-events";
 import type { Resolution } from "../resolution";
@@ -539,26 +540,10 @@ export class Delegation {
         .filter((line) => line.startsWith("- "))
         .map((line) => line.slice(2));
     const submittedAnswer = (input.answer ?? input.choice)?.trim();
-    const shortWaitChoices =
-      isEscalation && submittedAnswer
-        ? choices.filter((choice) => {
-            const shortLabel = choice.replace(/\s*\([^)]*\)$/, "");
-            return (
-              shortLabel === submittedAnswer &&
-              /^(?:Wait for a task|Wait until a time|Wait for an operator decision)$/.test(
-                shortLabel,
-              )
-            );
-          })
-        : [];
-    const answer =
-      shortWaitChoices.length === 1 ? shortWaitChoices[0] : submittedAnswer;
-    const normalizedInput =
-      shortWaitChoices.length === 1
-        ? input.choice
-          ? { ...input, choice: answer }
-          : { ...input, answer }
-        : input;
+    const answer = (submittedAnswer && offeredChoice(choices, submittedAnswer, isEscalation)) ?? submittedAnswer;
+    const normalizedInput = answer === submittedAnswer
+      ? input
+      : input.choice ? { ...input, choice: answer } : { ...input, answer };
     const recorded = events.findLast(
       (event) => event.kind === "delegated_answer",
     );

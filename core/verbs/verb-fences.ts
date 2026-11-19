@@ -11,6 +11,11 @@ import { DurableFenceRefusal, matchingInactiveParticipant, runFenceRefusal, runS
 import { digest, now } from "../store/store";
 import { TaskChangedRefusal } from "../../shared/task-version";
 
+/** An unanswered control has no effect-specific retry. Its own observer owns it. */
+export function uncertainOperationRetryRefusal(identity: string, state: string, reason: string): string {
+  return `operation ${identity} remains ${state}: ${reason}; no later task evidence answers its host effect yet. Nucleus rechecks it on a sweep`;
+}
+
 /** Classify a run using only facts already read; observation remains lazy. */
 export function classifyVerbRun(input: {
   settlement: ReturnType<typeof runSettlement>; episode: boolean; displace: boolean;

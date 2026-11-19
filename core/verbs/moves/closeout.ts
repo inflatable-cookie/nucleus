@@ -1,8 +1,9 @@
-import { mergeReviewEvidenceAt, type Task } from "../../../shared/contracts";
+import type { Task } from "../../../shared/contracts";
 import type { Engine } from "../../engine";
 import type { VerifiedEnclosingOperation } from "../../planning/enclosing-operation";
-import { moveStateRefusal, REMOVED_TASK_REFUSAL } from "../control-refusals";
+import { closeoutMoveStateRefusal, moveStateRefusal, recordedCloseoutRefusal, REMOVED_TASK_REFUSAL } from "../control-refusals";
 import { settleSupersededFencesInTx } from "../../recovery/fence-settlement";
+import { prIdentity } from "../owner-facts";
 import { now } from "../../store/store";
 
 /** The owner `move to=closeout` request, after the verb has parsed it. */
@@ -37,7 +38,6 @@ export async function moveToCloseout(engine: Engine, input: CloseoutMoveInput): 
   if (['done', 'cancelled'].includes(task.phase)) return task;
   const stateRefusal = moveStateRefusal(task, "closeout");
   if (stateRefusal) throw Error(stateRefusal);
-  if (task.resolution.mergedCommit) return resumeRecordedMerge(engine, task, input);
   // Task 408: the never-dispatched review-entry boundary. It is read fresh from
   // the same store fact the dependency correction uses, and only through the
   // authenticated durable invocation executing this move: a direct engine call
@@ -45,6 +45,12 @@ export async function moveToCloseout(engine: Engine, input: CloseoutMoveInput): 
   // allowing a forged exemption (task 404).
   const enclosing = input.enclosing?.();
   const boundary = enclosing ? store.reviewEntryUnrunBeforeFirstRun(task, enclosing) : false;
+  // An unverified caller gets the existing review-entry refusal at its
+  // authorization boundary. The preview cannot grant that exemption.
+  const reviewEntry = boundary || store.reviewEntryUnrunBeforeFirstRun(task);
+  const closeoutRefusal = closeoutMoveStateRefusal(task, reviewEntry, prIdentity(task));
+  if (closeoutRefusal) throw Error(closeoutRefusal);
+  if (task.resolution.mergedCommit) return resumeRecordedMerge(engine, task, input);
   const merge = {
     task, reason: input.reason, caller: input.caller, qualification: input.qualification,
     head: input.head, relayed: input.relayed, relayNote: input.relayNote, enclosing: input.enclosing ?? (() => undefined),
@@ -64,6 +70,8 @@ export async function moveToCloseout(engine: Engine, input: CloseoutMoveInput): 
 /** Re-observe an already recorded merge, then re-enter the normal sync gate. */
 async function resumeRecordedMerge(engine: Engine, task: Task, input: CloseoutMoveInput): Promise<Task> {
   if (input.head || input.qualification) throw Error('The recorded merge already has its source disposition; omit head and qualification');
+  const refusal = recordedCloseoutRefusal(task, engine.resolution.reviewRequired(task));
+  if (refusal) throw Error(refusal);
   if (!engine.resolution.adapter.externalMerge) throw Error('External merge verification is unavailable');
   const store = engine.store, runs = store.runs(task.id), runIdentity = JSON.stringify(runs);
   const finished = await engine.collectVerbFinishedRuns(task.id, () => false, { displace: true, settlesEpisode: true });
@@ -76,8 +84,6 @@ async function resumeRecordedMerge(engine: Engine, task: Task, input: CloseoutMo
   const head = task.resolution.mergeHead;
   if (!observed || !head || observed.head !== head || observed.commit !== task.resolution.mergedCommit)
     throw Error('The forge merge does not match the recorded head and commit');
-  if (engine.resolution.reviewRequired(task) && !mergeReviewEvidenceAt(task, head))
-    throw Error('The merged head has no recorded exact-head review or operator source acceptance');
   if (!await quiet()) throw Error('Task participants or effects changed while observing the merge');
   return store.transaction(() => {
     const current = store.task(task.id);

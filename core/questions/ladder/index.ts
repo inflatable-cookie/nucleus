@@ -10,7 +10,7 @@ export {
 } from './causes';
 export {
   PLANNER_ESCALATION_CHOICES, REVIEWER_CONSULT_TIMEOUT_MS, consultContinuationInstruction,
-  escalationContinuationInstruction, escalationVerbChoices, plannerEscalationChoicesFor,
+  escalationContinuationInstruction, escalationChoiceBinding, escalationVerbChoices, plannerEscalationChoicesFor,
   plannerEscalationQuestion, reviewContinuationEscalationQuestion, reviewerAskPrompt,
   reviewerConsultQuestion, revisionCapEscalationQuestion, type EscalationVerbChoice,
 } from './questions';

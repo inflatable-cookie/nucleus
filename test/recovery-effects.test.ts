@@ -523,7 +523,8 @@ test('an earlier released reviewer round does not hold a later displaced restart
     const offered = () => ownerTaskNext(collectOwnerVerbFacts(store, store.task(task.id))).verbs.some(view =>
       view.verb === 'retry_effect' && JSON.stringify(view.args ?? {}).includes(`operation.${id}`));
     assert.equal(blockingTaskOperations(store, store.task(task.id)).length, 1, 'the real target is still live');
-    assert.equal(offered(), true);
+    assert.equal(offered(), false);
+    assert.ok(ownerTaskNext(collectOwnerVerbFacts(store, store.task(task.id))).verbs.some(view => view.refusal?.includes(id)));
     assert.equal(supersedeIdleRunInTx(store, task.id, target, 'Observed target idle'), true);
     assert.equal(blockingTaskOperations(store, store.task(task.id)).length, 0);
     assert.equal(offered(), false);

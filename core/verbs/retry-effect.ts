@@ -3,7 +3,8 @@ import { REMOVED_TASK_REFUSAL } from './control-refusals';
 import { settleSupersededFences } from '../recovery/fence-settlement';
 import type { Task, TaskControlInput } from "../../shared/contracts";
 import { blockingRecoveryEffects } from '../recovery/recovery-effects';
-import { settleObservedHostEffectOperations } from '../recovery/effect-gates';
+import { ownerEffectRetryRefusal } from './owner-effects';
+import { uncertainOperationRetryRefusal } from './verb-fences';
 import { DurableFenceRefusal } from '../intake/run-settlement';
 import { now } from '../store/store';
 import type { Engine } from '../engine';
@@ -38,6 +39,14 @@ export class RetryEffectControls {
     const dispositionSettled = this.engine.replayedDispositionWorkspaceOutcome(task, input, operationId);
     if (dispositionSettled) return dispositionSettled;
     this.engine.requireOwnerControlCurrent(task, input.version, 'Task changed; refresh before retrying');
+    const facts = collectOwnerVerbFacts(this.store, task, operationId, this.engine.coordinatorActionRunId.getStore());
+    const requested = ownerPendingEffects(facts).filter(item => !input.effect || item.effect === input.effect);
+    const applicable = requested.filter(item => !ownerEffectRetryRefusal(facts, item));
+    if (requested.length && !applicable.length)
+      throw new DurableFenceRefusal(ownerEffectRetryRefusal(facts, requested[0]!)!);
+    if (!input.effect && applicable.length === 1) {
+      input = { ...input, effect: applicable[0]!.effect };
+    }
     const archiveId = input.effect ? ownerEffectIdentity(input.effect, 'workspace_archive') : null;
     if (archiveId && task.resolution.archivedWorkspaceIds.includes(archiveId)
       && terminalArchiveWorkspaces(task, this.store.runs(task.id)).some(workspace => workspace.id === archiveId && workspace.directory && workspace.head)) return task;
@@ -57,11 +66,16 @@ export class RetryEffectControls {
     // an idle never-reporting run cannot fence the retry it holds. A live agent
     // or an unobservable one still fences.
     await this.engine.settleObservedIdleRuns(task.id, `retry_effect ${input.effect ?? ''}`.trim());
-    const pending = ownerPendingEffects(collectOwnerVerbFacts(this.store, this.store.task(task.id)));
-    const matches = input.effect ? pending.filter(item => item.effect === input.effect) : pending;
+    const currentFacts = collectOwnerVerbFacts(this.store, this.store.task(task.id), operationId, this.engine.coordinatorActionRunId.getStore());
+    const pending = ownerPendingEffects(currentFacts);
+    const currentEffect = pending.find(item => item.effect === input.effect);
+    const refusal = currentEffect ? ownerEffectRetryRefusal(currentFacts, currentEffect) : null;
+    if (refusal) throw new DurableFenceRefusal(refusal);
+    const matches = input.effect ? pending.filter(item => item.effect === input.effect)
+      : pending.filter(item => !ownerEffectRetryRefusal(currentFacts, item));
     if (matches.length !== 1) throw Error(input.effect
       ? `No recorded side effect ${input.effect} is pending on this task${pending.length ? `; pending: ${pending.map(item => item.effect).join(', ')}` : ''}`
-      : pending.length > 1 ? `Name one pending effect: ${pending.map(item => item.effect).join(', ')}`
+      : matches.length > 1 ? `Name one pending effect: ${matches.map(item => item.effect).join(', ')}`
       : NO_PENDING_EFFECT_REFUSAL);
     const found = matches[0]!;
     if (found.kind === 'recovery_effect') return this.engine.retryRecoveryEffect(task, input, found);
@@ -110,20 +124,18 @@ export class RetryEffectControls {
 
   /**
    * The observation half of `retry_effect` for a named task operation: the owner
-   * names `operation.<id>`, and a later-evidence settlement is recorded and
-   * returned. An unanswered operation keeps its fence with the reason the
-   * projection gives, never a resend. Anything not named as an operation is left
-   * to the ordinary pending-effect list.
+   * names `operation.<id>`. Sweep records later evidence. This path returns the
+   * current task when the occurrence no longer blocks, or the same refusal as
+   * the read view while the delivery remains uncertain.
    */
   retryEffectByObservation(task: Task, input: TaskControlInput): Task | null {
     const named = input.effect ? ownerEffectIdentity(input.effect, 'operation') : null;
     const candidate = named ? this.store.operation(named) : null;
     if (!candidate || candidate.kind !== 'task_control' || candidate.taskId !== task.id || candidate.state !== 'needs_attention') return null;
-    const settled = settleObservedHostEffectOperations(this.store, task.id);
-    if (settled.some(operation => operation.id === candidate.id)) return this.store.task(task.id);
+    if (candidate.result && candidate.effect?.status === 'reconciled') return null;
     const blocked = blockingRecoveryEffects(this.store, this.store.task(task.id), { noticeKinds: 'all' })
       .find(effect => effect.kind === 'operation' && effect.identity === candidate.id);
     if (!blocked) return this.store.task(task.id);
-    throw new DurableFenceRefusal(`operation ${candidate.id} remains ${blocked.state}: ${blocked.reason}; no later task evidence answers its host effect yet`);
+    throw new DurableFenceRefusal(uncertainOperationRetryRefusal(candidate.id, blocked.state, blocked.reason));
   }
 }

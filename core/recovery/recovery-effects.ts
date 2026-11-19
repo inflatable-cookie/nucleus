@@ -13,6 +13,7 @@ import {
   operationInputHash,
   type Store,
 } from "../store/store";
+import { readCreationAttempt } from "../store/store-task-funnel";
 import { provenAbsentCreation } from "./absent-creation/decisions";
 
 /**
@@ -570,7 +571,8 @@ export function observedHostEffectEvidence(
   task: Task,
   operation: QueueOperation,
 ): string | null {
-  if (operation.taskId !== task.id || operation.state !== "needs_attention")
+  if (operation.taskId !== task.id || operation.state !== "needs_attention"
+    || (operation.hostId && operation.hostId !== task.hostId))
     return null;
   if (operation.kind === "submit")
     return hasRecordedOperationSettlement(store, task, operation)
@@ -744,6 +746,18 @@ export function observedHostEffectEvidence(
         (!control.role || control.role === "worker") &&
         task.runId &&
         !runs.some((run) => run.id === task.runId);
+      const absentRecoveryReleased = (run: Run): boolean => {
+        if (run.role !== "recovery" || run.agentId || !run.released || run.status !== "superseded"
+          || !(Date.parse(run.absentProvenAt ?? "") > boundary)) return false;
+        const attempt = readCreationAttempt(store, run);
+        return Boolean(attempt && events.some(event => {
+          if (event.kind !== "absent_recovery_released" || !(Date.parse(event.at) > boundary)) return false;
+          try {
+            const proof = JSON.parse(event.detail);
+            return proof.runId === run.id && proof.attemptId === attempt.attemptId;
+          } catch { return false; }
+        }));
+      };
       const released = (run: Run) =>
         run.released &&
         Boolean(run.agentId) &&
@@ -798,7 +812,7 @@ export function observedHostEffectEvidence(
         !untrackedWorker &&
         !incompleteHistory &&
         candidates.length &&
-        candidates.every(released) &&
+        candidates.every(run => absentRecoveryReleased(run) || released(run)) &&
         (laterMove || laterBinding)
       )
         return `restart role ${control.role ?? "implicit"} targets ${candidates.map((run) => run.id).join(", ")} were released; ${laterMove ? "a later owner move" : "a later isolated run binding"} advanced the task`;

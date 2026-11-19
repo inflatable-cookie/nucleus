@@ -1,0 +1,1 @@
+Nucleus now gives the same stored refusal in task next and owner controls, accepts unique short labels for escalation choices, and settles proved pre-send refusals without replay. A released hold or recovered BB connection clears its obsolete stop.

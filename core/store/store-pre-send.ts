@@ -28,10 +28,10 @@ export const payloadMatchesInputHash = (payload: unknown, inputHash: string) => 
 const hasReviewerDelivery = (runs: Run[], operationId: string) =>
   runs.some(run => run.reviewDeliveries?.some(delivery => delivery.operationId === operationId));
 
-/**
- * The pre-send receipt settlement for one task-control operation: it relabels only
- * an execution-authored no-send refusal as failed, and never re-runs the control.
- */
+/** Replay identity for the operation attempt the sweep refused. */
+export const preSendSettlementIdentity = (operation: QueueOperation): string =>
+  JSON.stringify([operation.id, operation.inputHash, operation.attempts, operation.effect?.intentAt]);
+
 interface PreSendAccess {
   operation(id: string): QueueOperation | null;
   operationPayload(id: string): unknown;
@@ -55,26 +55,55 @@ export class StorePreSend {
           throw new Error("Input or receipt identity does not match the already-failed operation");
         return operation;
       }
-      const payload = this.access.operationPayload(id) as { type?: unknown; control?: unknown } | null;
-      const parsed = taskControlInputSchema.safeParse(payload?.control);
-      const effect = operation.effect;
-      if (operation.state !== "needs_attention" || operation.result || !parsed.success || payload?.type !== "task_control"
-        || !operationIdMatchesKey(operation) || operation.inputHash !== inputHash || !payloadMatchesInputHash(payload, inputHash)
-        || proof.operationId !== id || proof.inputHash !== inputHash || proof.taskId !== operation.taskId
-        || proof.expectedVersion !== operation.expectedVersion || parsed.data.taskId !== operation.taskId
-        || parsed.data.version !== operation.expectedVersion || parsed.data.action !== "restart"
-        || proof.attempt !== operation.attempts || !provedPreSendHistory(operation, operation.attempts - 1)
-        || !effect || effect.kind !== "task_control" || effect.target !== parsed.data.action || effect.status !== "uncertain"
-        || proof.effect.kind !== effect.kind || proof.effect.target !== effect.target || proof.effect.intentAt !== effect.intentAt
-        || proof.effect.status !== "intent" || operation.diagnostic !== proof.diagnostic || effect.result !== proof.diagnostic.slice(0, 2000))
-        throw new Error("Operation, request, attempt or effect evidence conflicts; delivery remains uncertain");
-      if (hasReviewerDelivery(this.access.runs(operation.taskId!), id))
-        throw new Error("A reviewer delivery is bound to this operation; delivery remains uncertain");
-      if (digest(JSON.stringify(this.access.task(operation.taskId!))) !== proof.taskEvidenceHash
-        || digest(JSON.stringify(this.access.runs(operation.taskId!))) !== proof.runEvidenceHash)
-        throw new Error("Task or run evidence changed since the refusal; delivery remains uncertain");
-      return this.access.putOperation({ ...operation, state: "failed", preSendReconciledAt: now() });
+      const refusal = this.receiptRefusal(operation, inputHash);
+      if (refusal) throw Error(refusal);
+      return this.settleReceipt(operation);
     });
+  }
+
+  /** Consume a receipt under the task lane, without reopening the original request. */
+  settleTaskControlPreSend(id: string, taskId: string): QueueOperation | null {
+    if (!this.core.db.isTransaction) return this.core.transaction(() => this.settleTaskControlPreSend(id, taskId));
+    const operation = this.access.operation(id);
+    if (operation?.kind !== "task_control" || operation.state !== "needs_attention"
+      || operation.taskId !== taskId || !operation.preSendReceipt
+      || this.receiptRefusal(operation, operation.inputHash)) return null;
+    const settled = this.settleReceipt(operation);
+    this.core.event(taskId, "operation_pre_send_refused", preSendSettlementIdentity(operation));
+    return settled;
+  }
+
+  private settleReceipt(operation: QueueOperation): QueueOperation {
+    return this.access.putOperation({ ...operation, state: "failed", preSendReconciledAt: now() });
+  }
+
+  private receiptRefusal(operation: QueueOperation, inputHash: string): string | null {
+    const { id, preSendReceipt: proof } = operation;
+    if (!proof) return "No execution receipt; delivery remains uncertain";
+    const payload = this.access.operationPayload(id) as { type?: unknown; control?: unknown } | null;
+    const parsed = taskControlInputSchema.safeParse(payload?.control);
+    const effect = operation.effect;
+    if (operation.state !== "needs_attention" || operation.result || !parsed.success || payload?.type !== "task_control"
+      || !operationIdMatchesKey(operation) || operation.inputHash !== inputHash || !payloadMatchesInputHash(payload, inputHash)
+      || proof.operationId !== id || proof.inputHash !== inputHash || proof.taskId !== operation.taskId
+      || proof.expectedVersion !== operation.expectedVersion || parsed.data.taskId !== operation.taskId
+      || parsed.data.version !== operation.expectedVersion
+      || (proof.boundary === "parked-restart-rollback-v1"
+        ? parsed.data.action !== "restart" || !operation.preSendBoundaryStartedAt
+        : Boolean(operation.preSendBoundaryStartedAt))
+      || proof.attempt !== operation.attempts || !provedPreSendHistory(operation, operation.attempts - 1)
+      || !effect || effect.kind !== "task_control" || effect.target !== parsed.data.action || effect.status !== "uncertain"
+      || proof.effect.kind !== effect.kind || proof.effect.target !== effect.target || proof.effect.intentAt !== effect.intentAt
+      || proof.effect.status !== "intent" || operation.diagnostic !== proof.diagnostic || effect.result !== proof.diagnostic.slice(0, 2000))
+      return "Operation, request, attempt or effect evidence conflicts; delivery remains uncertain";
+    if (hasReviewerDelivery(this.access.runs(operation.taskId!), id))
+      return "A reviewer delivery is bound to this operation; delivery remains uncertain";
+    const task = this.access.task(operation.taskId!);
+    if ((operation.hostId && operation.hostId !== task.hostId)
+      || digest(JSON.stringify(task)) !== proof.taskEvidenceHash
+      || digest(JSON.stringify(this.access.runs(operation.taskId!))) !== proof.runEvidenceHash)
+      return "Task or run evidence changed since the refusal; delivery remains uncertain";
+    return null;
   }
 
   /**

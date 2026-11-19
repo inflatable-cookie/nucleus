@@ -35,6 +35,7 @@ import {
 } from "../../shared/hooks";
 import { isAcceptedReview } from "../recovery/task-reasons";
 import { blockingRecoveryEffects } from "../recovery/recovery-effects";
+import { uncertainOperationRetryRefusal } from "./verb-fences";
 import { classifyReviewPublication } from "../review/review-publication";
 import { prIdentity } from "./owner-facts";
 import type { OwnerVerbFacts } from "./owner-facts";
@@ -64,6 +65,8 @@ export type OwnerEffect = {
     | "recovery_effect"
     | "owned_tool";
   summary: string;
+  /** An effect can still hold the task while its observer owns settlement. */
+  refusal?: string;
 };
 
 /**
@@ -643,10 +646,14 @@ export function ownerPendingEffects(facts: OwnerVerbFacts): OwnerEffect[] {
             ? null
             : `${blocking.kind}.${blocking.identity}`;
     if (!key || effects.some((item) => item.effect === key)) continue;
+    const operation = blocking.kind === "operation" ? store.operation(blocking.identity) : null;
+    const refusal = operation && !(operation.result && operation.effect?.status === "reconciled" && operation.state === "needs_attention")
+      ? uncertainOperationRetryRefusal(blocking.identity, blocking.state, blocking.reason) : null;
     effects.push({
       effect: key,
       kind: "recovery_effect",
       summary: `${blocking.kind} ${blocking.identity} is ${blocking.state}: ${blocking.reason}`,
+      ...(refusal ? { refusal } : {}),
     });
   }
   // A settled archive intent may no longer be a cleanup candidate (its run's
@@ -688,6 +695,37 @@ export function ownerPendingEffects(facts: OwnerVerbFacts): OwnerEffect[] {
         ]
       : [];
   });
+}
+
+/** Stored applicability shared by the read view and the ordinary retry. */
+export function ownerEffectRetryRefusal(facts: OwnerVerbFacts, item: OwnerEffect): string | null {
+  const { task, runs } = facts;
+  if (item.refusal) return item.refusal;
+  const operationId = ownerEffectIdentity(item.effect, "operation");
+  const operation = operationId ? facts.store.operation(operationId) : null;
+  if (
+    operation?.kind === "task_control" &&
+    operation.state === "needs_attention" &&
+    ["restart", "route"].includes(operation.effect?.target ?? "")
+  )
+    return `${item.summary}. Waiting for the sweep to observe its target.`;
+
+  const runId = ownerEffectIdentity(item.effect, "run-delivery");
+  if (runId && !runs.some(run => run.id === runId && run.agentId && run.workspaceId))
+    return `run-delivery ${runId}: the original agent and workspace are unknown; Nucleus rechecks creation on a sweep`;
+  if (item.effect.startsWith("project-validation.") &&
+    (task.resolution.projectValidation?.state === "running" || !task.resolution.attention))
+    return `${item.effect}: validation is still running; a planner or operator can force settlement with a reason`;
+  if (!item.effect.startsWith("review_publication.")) return null;
+  const refusal = item.kind !== "review_publication"
+    ? "no released accepted ordinary verdict at the current PR head can be published"
+    : runs.some(run => !run.released && run.id !== facts.reportingRunId)
+      ? "a retained run must finish and release before publication"
+      : ["done", "cancelled"].includes(task.phase) || task.resolution.mergeIntent ||
+        task.resolution.mergedCommit || isDispositionActive(task) || task.removedAt
+        ? "the task is terminal, merging, removed or under disposition"
+        : null;
+  return refusal ? `${item.effect}: ${item.summary}; ${refusal}` : null;
 }
 
 function effectViews(facts: OwnerVerbFacts): TaskNextVerb[] {
@@ -737,54 +775,10 @@ function effectViews(facts: OwnerVerbFacts): TaskNextVerb[] {
         ...item,
         summary: `${item.summary}; ${matching.map((wait) => `thread ${wait.agentId}: ${wait.reason}`).join("; ")}`,
       };
-    const operationId = ownerEffectIdentity(item.effect, "operation");
-    const operation = operationId ? facts.store.operation(operationId) : null;
-    if (
-      operation?.kind === "task_control" &&
-      operation.state === "needs_attention" &&
-      ["restart", "route"].includes(operation.effect?.target ?? "")
-    )
-      return taskNextVerbSchema.parse({
-        verb: "retry_effect",
-        action: "retry_effect",
-        available: false,
-        refusal: `${item.summary}. Waiting for the sweep to observe its target.`,
-      });
-    if (
-      item.effect.startsWith("project-validation.") &&
-      (task.resolution.projectValidation?.state === "running" ||
-        !task.resolution.attention)
-    )
-      return taskNextVerbSchema.parse({
-        verb: "retry_effect",
-        action: "retry_effect",
-        available: false,
-        refusal: `${item.effect}: validation is still running; a planner or operator can force settlement with a reason`,
-      });
-    if (item.effect.startsWith("review_publication.")) {
-      // Round 4: a pause or dispatch hold records the retry for later, so neither refuses it here.
-      const refusal =
-        item.kind !== "review_publication"
-          ? "no released accepted ordinary verdict at the current PR head can be published"
-          : facts.runs.some(
-                (run) => !run.released && run.id !== facts.reportingRunId,
-              )
-            ? "a retained run must finish and release before publication"
-            : ["done", "cancelled"].includes(task.phase) ||
-                task.resolution.mergeIntent ||
-                task.resolution.mergedCommit ||
-                isDispositionActive(task) ||
-                task.removedAt
-              ? "the task is terminal, merging, removed or under disposition"
-              : null;
-      if (refusal)
-        return taskNextVerbSchema.parse({
-          verb: "retry_effect",
-          action: "retry_effect",
-          available: false,
-          refusal: `${item.effect}: ${item.summary}; ${refusal}`,
-        });
-    }
+    const refusal = ownerEffectRetryRefusal(facts, item);
+    if (refusal) return taskNextVerbSchema.parse({
+      verb: "retry_effect", action: "retry_effect", available: false, refusal,
+    });
     const held =
       item.kind === "hook" &&
       facts.hookRecords.find(
@@ -841,9 +835,10 @@ export const retryEffect: OwnerVerb = {
     note: z.string().trim().min(1).max(4000).optional(),
   }),
   applicable: (facts) => {
-    const effects = ownerPendingEffects(facts);
+    const pending = ownerPendingEffects(facts);
+    const effects = pending.filter(item => !ownerEffectRetryRefusal(facts, item));
     if (!effects.length)
-      return { available: false, refusal: NO_PENDING_EFFECT_REFUSAL };
+      return { available: false, refusal: pending.length ? ownerEffectRetryRefusal(facts, pending[0]!)! : NO_PENDING_EFFECT_REFUSAL };
     if (effects.length === 1)
       return { available: true, args: { effect: effects[0].effect } };
     return { available: true, fill: ["effect"], args: {} };

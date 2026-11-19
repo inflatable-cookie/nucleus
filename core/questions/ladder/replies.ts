@@ -55,9 +55,12 @@ export function decodeEscalationChoice(answer: string, offered: readonly Escalat
   | { kind: 'owner'; choice: EscalationVerbChoice; reason: string }
   | { kind: 'task' | 'time' | 'decision'; reason: string }
   | { kind: 'other'; reason: string } {
+  const choice = offered.find(item => answer === item.label)
+    ?? offered.filter(item => answer.startsWith(`${item.label} — `))
+      .reduce<EscalationVerbChoice | undefined>((longest, item) =>
+        !longest || item.label.length > longest.label.length ? item : longest, undefined);
+  if (choice) return { kind: 'owner', choice, reason: answer.slice(choice.label.length + 3).trim() || choice.label };
   const reason = answer.includes(' — ') ? answer.slice(answer.indexOf(' — ') + 3).trim() : answer.trim();
-  const choice = offered.find(item => answer === item.label || answer.startsWith(`${item.label} — `));
-  if (choice) return { kind: 'owner', choice, reason };
   if (answer.startsWith('Wait for a task (')) return { kind: 'task', reason };
   if (answer.startsWith('Wait until a time (')) return { kind: 'time', reason };
   if (answer.startsWith('Wait for an operator decision (')) return { kind: 'decision', reason };

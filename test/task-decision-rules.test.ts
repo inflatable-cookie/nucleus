@@ -97,7 +97,7 @@ test('move targets keep handler precedence across view, direct apply and offline
         const refusal = moveStateRefusal(current, to)!;
         assert.ok(refusal, `${state}/${to}`);
         const view = ownerTaskNext(facts).verbs.filter(verb => verb.verb === 'move').find(verb => verb.refusal?.startsWith(`move ${to}:`));
-        assert.equal(view?.refusal, `move ${to}: ${refusal}. A planner or operator can use force with a reason`);
+        assert.equal(view?.refusal, `move ${to}: ${refusal}`);
         const input = taskControlInputSchema.parse({ taskId: task.id, version: current.version, action: 'move', to, reason: 'Move' });
         assert.equal(hostIndependentControlRefusal(engine, input), refusal);
         const apply = to === 'review' ? engine.moveToReview.bind(engine) : to === 'work' ? engine.moveToWork.bind(engine) : engine.moveToMerge.bind(engine);

@@ -10,6 +10,7 @@ import { escalationOutlived } from "../../recovery/task-reasons";
 import { collectOwnerVerbFacts, ownerVerbViews } from "../../verbs/owner-verbs";
 import type { Ladder } from "./ladder";
 import {
+  escalationChoiceBinding,
   escalationVerbChoices,
   plannerEscalationChoicesFor,
   type EscalationVerbChoice,
@@ -179,15 +180,10 @@ export async function routePlannerEscalation(
       event.kind === "planner_escalation_offered" &&
       event.detail.startsWith(`${id}: `),
   );
+  const offerFacts = collectOwnerVerbFacts(ladder.store, ladder.store.task(t.id));
   const offered: EscalationVerbChoice[] = offerEvent
-    ? (JSON.parse(
-        offerEvent.detail.slice(id.length + 2),
-      ) as EscalationVerbChoice[])
-    : escalationVerbChoices(
-        ownerVerbViews(
-          collectOwnerVerbFacts(ladder.store, ladder.store.task(t.id)),
-        ),
-      );
+    ? (JSON.parse(offerEvent.detail.slice(id.length + 2)) as EscalationVerbChoice[])
+    : escalationVerbChoices(ownerVerbViews(offerFacts), escalationChoiceBinding(offerFacts));
   if (!offerEvent)
     ladder.store.event(
       t.id,
@@ -415,13 +411,9 @@ export async function routePlannerEscalation(
       : null;
     const followupQuestionId =
       followupOffer?.questionId ?? `ns-escalation-refusal-${id}`;
-    const currentOffers =
-      followupOffer?.ownerChoices ??
-      escalationVerbChoices(
-        ownerVerbViews(
-          collectOwnerVerbFacts(ladder.store, ladder.store.task(t.id)),
-        ),
-      );
+    const followupFacts = collectOwnerVerbFacts(ladder.store, ladder.store.task(t.id));
+    const currentOffers = followupOffer?.ownerChoices
+      ?? escalationVerbChoices(ownerVerbViews(followupFacts), escalationChoiceBinding(followupFacts));
     const retryChoices = followupOffer?.choices ?? [
       ...plannerEscalationChoicesFor(ladder.store.task(t.id)),
       ...currentOffers.map((item) => item.label),

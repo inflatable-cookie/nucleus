@@ -40,8 +40,9 @@ test('an unresolved hook effect refuses before the forge read', {timeout:90000},
     const store=f.runtime.store, task=store.task(f.taskId);
     store.putHookEvent(ownerEffectHook(task,'uncertain'));
     const before=store.task(task.id), reads=f.counts().sourceReads;
-    const view=ownerTaskNext(collectOwnerVerbFacts(store,before)).verbs.find(v=>v.verb==='move' && v.args?.to==='closeout');
-    assert.match(view?.note??'',/Descendant acceptance currently refuses:.*hook/i);
+    const view=ownerTaskNext(collectOwnerVerbFacts(store,before)).verbs.find(v=>v.verb==='move' && v.refusal?.startsWith('move closeout:'));
+    assert.equal(view?.available,false);
+    assert.match(view?.refusal??'',/hook.*uncertain/i);
     await assert.rejects(f.runtime.taskControl(f.control()),/hook.*uncertain/i);
     assert.equal(f.counts().sourceReads,reads);assert.deepEqual(store.task(task.id),before);
   }finally{await f.close();}

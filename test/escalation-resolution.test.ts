@@ -275,7 +275,8 @@ test('an unknown-delivery escalation past the stall threshold surfaces as attent
     assert.equal(next.stop?.kind, 'attention');
     assert.equal(next.stop?.owner, 'origin');
     assert.match(next.stop?.detail ?? '', /never resends it/);
-    assert.ok((next.stop?.suggestedVerbs ?? []).includes('move'), JSON.stringify(next.stop));
+    assert.equal(next.stop?.suggestedVerbs.includes('move'), false, 'a move still needs its own applicable step');
+    assert.ok(next.stop?.suggestedVerbs.every(verb => next.verbs.some(view => view.verb === verb && view.available)));
 
     assert.equal(sent.length, 1, 'exactly one agent-channel message reaches the project planner');
     assert.equal(sent[0]!.agentId, 'origin');

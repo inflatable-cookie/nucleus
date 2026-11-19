@@ -98,6 +98,15 @@ export type NativeDelegatedReply = { kind: 'answer'; answer: string; reason: str
 type DelegateReply = NativeDelegatedReply | { kind: 'choice'; choice: string; reason: string; overtakes?: string[] };
 
 /** One receipt reader; each surface retains its allowed reply shapes and precedence. */
+/** Resolve a displayed choice or its unique short label. */
+export function offeredChoice(choices: readonly string[], value: string, shortLabels: boolean): string | undefined {
+  if (!value) return undefined;
+  if (choices.includes(value)) return value;
+  if (!shortLabels) return undefined;
+  const matches = choices.filter(item => item.replace(/\s*\([^)]*\)$/, '') === value || item.startsWith(`${value}: `));
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
 export function parseDelegateReply(text: string | null | undefined, mode: 'native' | 'choice' | 'escalation', choices: readonly string[] = []): DelegateReply | null {
   if (!text) return null;
   const lines = text.split(/\r?\n/).map(line => line.trim());
@@ -109,16 +118,8 @@ export function parseDelegateReply(text: string | null | undefined, mode: 'nativ
   const overtakes = references?.length ? [...new Set(references)].slice(0, 100) : undefined;
   if (mode !== 'choice' && lines.some(line => /^decision:\s*operator\s*$/i.test(line))) return reason ? { kind: 'operator', reason } : null;
   if (mode === 'native') return answer && reason ? { kind: 'answer', answer, reason, ...(overtakes ? { overtakes } : {}) } : null;
-  const named = (value: string | undefined) => {
-    if (!value) return undefined;
-    if (choices.includes(value)) return value;
-    if (mode !== 'escalation') return undefined;
-    const shortLabels = choices.filter(item => item.replace(/\s*\([^)]*\)$/, '') === value);
-    if (shortLabels.length === 1) return shortLabels[0];
-    const matches = choices.filter(item => item.startsWith(`${value}: `));
-    return matches.length === 1 ? matches[0] : undefined;
-  };
-  const selected = named(choice) ?? (mode === 'escalation' ? named(answer) : undefined);
+  const selected = offeredChoice(choices, choice ?? '', mode === 'escalation')
+    ?? (mode === 'escalation' ? offeredChoice(choices, answer ?? '', true) : undefined);
   if (selected && reason) return { kind: 'choice', choice: selected, reason, ...(mode === 'choice' && overtakes ? { overtakes } : {}) };
   return mode === 'escalation' && answer && !/^(?:leave it waiting|wait|keep waiting)(?:\b|$)/i.test(answer)
     ? { kind: 'answer', answer, reason: reason ?? '' } : null;
