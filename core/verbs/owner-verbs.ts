@@ -43,6 +43,7 @@ import { buildOutputDisclosure } from "../../shared/build-output-disclosure";
 import { routeRoles, verbInput, applyMapped } from "./owner-shared";
 import type { RouteRole, OwnerVerb } from "./owner-shared";
 import { replacementAllowanceNote, durableRunFence } from "./owner-facts";
+import { hostKindOf, type HostKind } from "../../shared/host-kind";
 import type { OwnerVerbFacts } from "./owner-facts";
 import { assembleOwnerTaskNext } from "./task-next";
 import { restart } from "./owner-restart";
@@ -85,6 +86,67 @@ function workerRouteFilterNote(
     : null;
 }
 
+/** Evaluate whether a worker route profile can run on the task's host or moves to another online host. */
+function workerHostRouteView(
+  facts: OwnerVerbFacts,
+  profileId: string,
+): { clearProfile: boolean; note: string | null } {
+  if (!profileId || !facts.hostViews?.length)
+    return { clearProfile: false, note: null };
+  const task = facts.task;
+  const poolEntry = facts.store
+    .pool()
+    .find((entry) => entry.profileId === profileId);
+  if (poolEntry && !poolEntry.enabled)
+    return {
+      clearProfile: true,
+      note: `${profileId} is disabled in the pool; choose an available worker profile.`,
+    };
+  const currentView = facts.hostViews.find((h) => h.hostId === task.hostId);
+  const currentEntry = currentView?.profiles.find(
+    (entry) => entry.profileId === profileId,
+  );
+  if (currentView?.online && currentEntry?.eligible)
+    return { clearProfile: false, note: null };
+  const eligibleOtherHosts = facts.hostViews.filter(
+    (host) =>
+      host.hostId !== task.hostId &&
+      host.online &&
+      host.profiles.some(
+        (entry) => entry.profileId === profileId && entry.eligible,
+      ),
+  );
+  if (eligibleOtherHosts.length > 0) {
+    const preferredKinds = [
+      facts.store.repositoryFor(task.repoPath)?.hostKind,
+      facts.store.getMeta<HostKind | null>("operatorDefaultHostKind"),
+    ];
+    const targetHost =
+      preferredKinds.flatMap((kind) =>
+        kind
+          ? eligibleOtherHosts.filter((h) => hostKindOf(h.hostId) === kind)
+          : [],
+      )[0] ?? eligibleOtherHosts[0]!;
+    return {
+      clearProfile: false,
+      note: `Routing worker to ${profileId} moves this task from ${task.hostId} to ${targetHost.hostId}.`,
+    };
+  }
+  const reasons = facts.hostViews
+    .map((host) => {
+      const entry = host.profiles.find((item) => item.profileId === profileId);
+      const reason = !host.online
+        ? "Host offline"
+        : (entry?.reason ?? "Profile absent from host catalog");
+      return `${host.hostId}: ${reason}`;
+    })
+    .join("; ");
+  return {
+    clearProfile: true,
+    note: `${profileId} cannot launch on any online host for this task (${reasons}); choose an available worker profile.`,
+  };
+}
+
 /** Spec 050 `route`: one read view per role, each prefilled with that role's current profile. */
 function routeViews(facts: OwnerVerbFacts): TaskNextVerb[] {
   const task = facts.task;
@@ -99,7 +161,11 @@ function routeViews(facts: OwnerVerbFacts): TaskNextVerb[] {
     const current = currentRouteProfile(task, role) ?? "";
     const filterNote =
       role === "worker" ? workerRouteFilterNote(facts, current) : null;
-    const profileId = filterNote ? "" : current;
+    const hostRoute =
+      role === "worker" && !filterNote
+        ? workerHostRouteView(facts, current)
+        : { clearProfile: false, note: null };
+    const profileId = filterNote || hostRoute.clearProfile ? "" : current;
     const exhausted =
       role === "reviewer" ? exhaustedReviewer(task, facts.runs) : null;
     const replacementWait =
@@ -121,6 +187,7 @@ function routeViews(facts: OwnerVerbFacts): TaskNextVerb[] {
     const note = [
       role === "worker" ? workerNote : null,
       filterNote,
+      hostRoute.note,
       replacementWait
         ? `Immediate replacement waits. ${replacementWait}`
         : retainedReviewer,

@@ -590,20 +590,40 @@ export class StoreTaskFunnel {
         .get(id) === undefined &&
       change.hostSelection?.basis === "worker_profile" &&
       change.hostSelection.hostId === change.hostId;
+    const movesWorkerHost =
+      kind === "worker_host_moved" &&
+      Boolean(change.hostId) &&
+      change.hostId !== task.hostId &&
+      change.hostSelection?.basis === "worker_profile" &&
+      change.hostSelection.hostId === change.hostId &&
+      !change.agentId &&
+      !change.agentIntent &&
+      !change.workspaceId &&
+      !change.workspaceIntent &&
+      (this.services.db
+        .prepare("SELECT data FROM runs WHERE taskId=?")
+        .all(id) as Array<{ data: string }>).every((row) => {
+        try {
+          return JSON.parse(row.data).released === true;
+        } catch {
+          return false;
+        }
+      });
+    const allowHostChange = bindsWorkerHost || movesWorkerHost;
     if (
       change.hostId !== undefined &&
       change.hostId !== task.hostId &&
-      !bindsWorkerHost
+      !allowHostChange
     )
       throw new Error("Task host cannot be changed by an update");
     if (
       change.hostSelection !== undefined &&
       JSON.stringify(change.hostSelection) !==
         JSON.stringify(task.hostSelection) &&
-      !bindsWorkerHost
+      !allowHostChange
     )
       throw new Error("Task host selection cannot be changed by an update");
-    if (!bindsWorkerHost) {
+    if (!allowHostChange) {
       const { hostSelection: _selection, ...remainingChange } = change;
       change = remainingChange;
     }

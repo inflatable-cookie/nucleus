@@ -54,7 +54,14 @@ export class ArchiveScheduler {
       return;
     }
     for (const task of this.store.lifecycleTasks(true)) {
-      if (task.hostId !== scopedHost) continue;
+      const hasDisplacedForScoped =
+        task.resolution.displacedHostWorkspaces?.some(
+          (entry) => entry.hostId === scopedHost && entry.state !== 'archived',
+        ) ?? false;
+      if (task.hostId !== scopedHost) {
+        if (hasDisplacedForScoped && !this.paused()) this.context.enqueueCleanup(task.id);
+        continue;
+      }
       if (!this.context.taskHostAvailable(task)) continue;
       if (this.restoreDisposedTerminal(task)) continue;
       if (isDispositionActive(task)) continue;
@@ -78,7 +85,8 @@ export class ArchiveScheduler {
         // A cancelled task's stale episode is settled on the ordinary cleanup lane, so
         // the settlement needs no run and the pass that closes it ends the schedule.
         const staleEpisode = task.phase === 'cancelled' && task.resolution.recoveryActive && !runs.some(run => run.role === 'recovery' && !run.released);
-        if (staleEpisode || observationDue
+        const hasDisplaced = task.resolution.displacedHostWorkspaces?.some(entry => entry.state !== 'archived') ?? false;
+        if (staleEpisode || observationDue || hasDisplaced
           || Boolean(unreadable && !(unreadableRetry && Date.parse(unreadableRetry.nextAttemptAt) > Date.now()))) this.context.enqueueCleanup(task.id);
         try {
           await this.context.closeout.renewStaleCloseoutBase(task);

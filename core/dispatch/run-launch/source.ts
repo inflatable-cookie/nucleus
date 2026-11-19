@@ -4,6 +4,7 @@ import { git } from '../../git/index';
 import { readGitCheckout } from '../../git/git-identity';
 import { ordinaryReviewSource } from '../../review/ordinary-review';
 import { chooseProfile, reviewerFiltersWorker } from '../routing';
+import { combineWorkerHostProfiles, resolveWorkerHostForProfile } from '../first-host-selection';
 import { OPERATOR_WORKER_REMAP_REASON, proofExecutor } from '../../recovery/task-reasons';
 import { retainedProgressRun } from '../retained-work';
 import { assertCanonicalPrSource, evidenceOnlyPr, taskPrNumber } from '../../forge/index';
@@ -75,7 +76,19 @@ export class RunLaunchSource {
       // replacement machinery instead of launching another run on the stale
       // profile; an in-flight owner replacement keeps its own authority.
       const superseding = supersedingRouteProfile(t.profileRequests?.worker, t.profile?.id, this.store.pool(), this.store.usageLevel());
-      if (superseding && revisionRunPlan({ firstReviewEntryWorker: false, firstWorkerSelected: false, revision: true, retainedProfileIssue: false, superseding: true, hasAgent: Boolean(t.agentId), failoverArmed: Boolean(t.failoverReason), replacementMatches: t.replacementProfile?.profileId === superseding }) === 'reselect') {
+      const hostCatalogs = this.resolution.workerHostCatalogs?.(t) ?? [];
+      const supersedingHost = superseding && hostCatalogs.length > 0
+        ? resolveWorkerHostForProfile(
+            t,
+            hostCatalogs,
+            superseding,
+            t.profileRequests?.worker?.thinkingOptionId ?? t.thinkingOptionId,
+            this.resolution.preferredHostKindsForTask?.(t) ?? [],
+            true,
+          )
+        : null;
+      const supersedingMovesHost = Boolean(supersedingHost && supersedingHost.hostId !== t.hostId);
+      if (superseding && (revisionRunPlan({ firstReviewEntryWorker: false, firstWorkerSelected: false, revision: true, retainedProfileIssue: false, superseding: true, hasAgent: Boolean(t.agentId), failoverArmed: Boolean(t.failoverReason), replacementMatches: t.replacementProfile?.profileId === superseding }) === 'reselect' || (supersedingMovesHost && !t.failoverReason))) {
         const supersedingReason = (t.profileRequests?.worker?.reason ?? 'Operator-approved route').slice(0, 4000);
         t = this.resolution.update(t, {}, { failoverReason: `${OPERATOR_WORKER_REMAP_REASON}. ${supersedingReason}. Continue the existing task: ${this.resolution.workerContinuation(t)}`.slice(0, 2000),
           replacementProfile: { profileId: superseding, reason: supersedingReason } }, 'worker_route_honoured', superseding);
@@ -96,16 +109,34 @@ export class RunLaunchSource {
         const unavailable = new Set(this.store.db.prepare("SELECT data FROM availability").all().flatMap(row => {
           const state = JSON.parse(String((row as { data: string }).data)); return groupIsUnavailable(state) ? [state.group as string] : [];
         }));
-        const workerProfiles = this.resolution.profiles().filter(profile => !workerProfileIsExcluded(t, profile.id) && profile.model !== "default"
+        const allWorkerProfiles = hostCatalogs.length > 0 ? combineWorkerHostProfiles(hostCatalogs) : this.resolution.profiles();
+        const workerProfiles = allWorkerProfiles.filter(profile => !workerProfileIsExcluded(t, profile.id) && profile.model !== "default"
           && !reviewerFiltersWorker(t.resolution.reviewerProfile, profile));
         const selected = chooseProfile(t, workerProfiles, this.store.pool(), this.store.counts(), unavailable, "worker",
           this.store.recentCounts(), this.store.usageLevel(), false);
         const to = selected?.entry.capability ?? null;
         if (selected && to && demandRank(to) > demandRank(climb.from)) {
           const reason = `Spec 052 step-up after review ${climb.reviewRunId} asked for changes: the worker climbs from ${climb.from} to ${to} (${selected.profile.provider}/${selected.profile.model})`;
+          const climbHost = hostCatalogs.length > 0
+            ? resolveWorkerHostForProfile(
+                t,
+                hostCatalogs,
+                selected.profile.id,
+                selected.profile.thinkingOptionId,
+                this.resolution.preferredHostKindsForTask?.(t) ?? [],
+                true,
+              )
+            : null;
           const previous = t.profile;
+          if (climbHost && climbHost.hostId !== t.hostId) {
+            t = this.resolution.update(t, { workerClimb: { reviewRunId: climb.reviewRunId, from: climb.from, to, profileId: selected.profile.id, at: new Date().toISOString() } }, {
+              failoverReason: `${OPERATOR_WORKER_REMAP_REASON}. ${reason}. Continue the existing task: ${this.resolution.workerContinuation(t)}`.slice(0, 2000),
+              replacementProfile: { profileId: selected.profile.id, reason },
+            }, "worker_climb_armed", selected.profile.id);
+            return;
+          }
           t = this.resolution.update(t, { workerClimb: { reviewRunId: climb.reviewRunId, from: climb.from, to, profileId: selected.profile.id, at: new Date().toISOString() } }, {
-            retiredWorkers: [...t.retiredWorkers, { agentId: t.agentId, runId: t.runId ?? "", profile: previous, reason }],
+            retiredWorkers: [...t.retiredWorkers, { agentId: t.agentId, runId: t.runId ?? "", profile: previous, reason, ...(t.hostId ? { hostId: t.hostId } : {}) }],
             agentId: null, runId: null, profile: selected.profile, profileGroup: selected.entry.group,
             workerModel: null, workerModels: [...new Set([...t.workerModels, previous.model].filter(Boolean))],
           }, "worker_climb_armed", selected.profile.id);

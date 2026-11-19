@@ -49,11 +49,11 @@ export async function archiveRetiredErroredAgents(deps: RetiredArchiveContext, s
     for (const id of [task.agentId, task.resolution.reviewerAgentId, task.coordinatorAgentId]) if (id) referenced.add(id);
     const candidates: Array<{ agentId: string; why: string }> = [];
     for (const retired of task.retiredWorkers) {
-      if (!retired.agentId || referenced.has(retired.agentId)) continue;
+      if ((retired.hostId ?? task.hostId) !== task.hostId || !retired.agentId || referenced.has(retired.agentId)) continue;
       candidates.push({ agentId: retired.agentId, why: `retired worker ${retired.runId}` });
     }
     for (const run of runs) {
-      if (!run.released || run.status !== 'superseded' || !run.agentId || referenced.has(run.agentId)) continue;
+      if (run.hostId !== task.hostId || !run.released || run.status !== 'superseded' || !run.agentId || referenced.has(run.agentId)) continue;
       if (run.role === 'reviewer' && run.agentId === task.resolution.reviewerAgentId) continue;
       candidates.push({ agentId: run.agentId, why: `superseded ${run.role} run ${run.id}` });
     }

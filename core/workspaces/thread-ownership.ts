@@ -20,9 +20,13 @@ export function ownedByTask(labels: Record<string, string> | undefined, taskId: 
 
 /** Worker history also includes revision runs whose task pointer has moved on. */
 export function workerThreadIds(task: Task, runs: Run[]): Set<string> {
-  return new Set([task.agentId, ...task.retiredWorkers.map(worker => worker.agentId),
-    ...runs.filter(run => run.hostId === task.hostId && run.role === 'revision').map(run => run.agentId)]
-    .filter((agentId): agentId is string => Boolean(agentId)));
+  return new Set([
+    task.agentId,
+    ...task.retiredWorkers
+      .filter((worker) => (worker.hostId ?? task.hostId) === task.hostId)
+      .map((worker) => worker.agentId),
+    ...runs.filter(run => run.hostId === task.hostId && run.role === 'revision').map(run => run.agentId),
+  ].filter((agentId): agentId is string => Boolean(agentId)));
 }
 
 /** A run of this thread is still unreleased, so the thread still serves it. */

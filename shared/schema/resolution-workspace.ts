@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { buildOutputCleanupSchema, externalWorkspaceArchiveSchema, runtimeRetirementSchema, workspaceArchiveRetrySchema } from "./workspace";
+import { buildOutputCleanupSchema, displacedHostWorkspaceSchema, externalWorkspaceArchiveSchema, runtimeRetirementSchema, workspaceArchiveRetrySchema } from "./workspace";
 
 /**
  * The workspace a terminal task leaves behind: its cancellation or closeout cleanup
@@ -23,4 +23,5 @@ export const resolutionWorkspaceFields = {
   // Spec 017: preserved external workspaces whose Paseo sidebar entry is archived
   // while their folder is kept. Never an archive of the workspace's files.
   externalWorkspaceArchives: z.array(externalWorkspaceArchiveSchema).default([]),
+  displacedHostWorkspaces: z.array(displacedHostWorkspaceSchema).default([]),
 };

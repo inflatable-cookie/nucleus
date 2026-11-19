@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { isTransportFailure } from "../../shared/transport";
 import type { Resolution } from "../resolution";
 import {
   holdsOf,
@@ -6,6 +8,9 @@ import {
 } from "../../shared/contracts";
 import { OWNER_STOP_HOLD_PREFIX, releasePatch } from "../merge/merge-hold";
 import type { Engine } from "../engine";
+import { now } from "../store/store";
+import { settleArchive, type ArchiveEffect } from "../workspaces/thread-archive-effect";
+import { threadBoundToAnotherLiveTask } from "../workspaces/thread-ownership";
 import { portsContext } from "../port-context";
 import { CloseoutRecovery } from "./recovery";
 
@@ -48,6 +53,7 @@ export type LifecycleContext = Pick<
   | "enqueueCleanup"
   | "hooks"
   | "host"
+  | "hostAvailable"
   | "onTaskHost"
   | "removeSiblings"
   | "retirement"
@@ -59,6 +65,7 @@ export type LifecycleContext = Pick<
   | "stopped"
   | "store"
   | "taskHostAvailable"
+  | "wakeTask"
   | "withHost"
 > & {
   readonly resolution: Pick<
@@ -275,6 +282,12 @@ export class Lifecycle {
   private archiveWorkDue(task: Task, retryWorkspaceId?: string): boolean {
     if (task.resolution.finishedHook || task.resolution.hostProcessSweep)
       return true;
+    if (
+      task.resolution.displacedHostWorkspaces?.some(
+        (entry) => entry.state !== "archived",
+      )
+    )
+      return true;
     if (externalWorkspaceArchiveDue(task, retryWorkspaceId)) return true;
     const runs = this.store.runs(task.id);
     return terminalArchiveWorkspaces(task, runs).some((workspace) => {
@@ -421,6 +434,146 @@ export class Lifecycle {
       observations: [],
     });
   }
+  private updateDisplacedHostWorkspace(
+    taskId: string,
+    index: number,
+    patch: Partial<Task["resolution"]["displacedHostWorkspaces"][number]>,
+    extra?: { archivedWorkspaceId?: string | null; eventKind?: string; detail?: string },
+  ): void {
+    const latest = this.store.task(taskId);
+    const list = [...(latest.resolution.displacedHostWorkspaces ?? [])];
+    const current = list[index];
+    if (!current) return;
+    list[index] = { ...current, ...patch };
+    const archivedWorkspaceIds =
+      extra?.archivedWorkspaceId &&
+      !latest.resolution.archivedWorkspaceIds.includes(extra.archivedWorkspaceId)
+        ? [...latest.resolution.archivedWorkspaceIds, extra.archivedWorkspaceId]
+        : latest.resolution.archivedWorkspaceIds;
+    this.engine.resolution.update(
+      latest,
+      { displacedHostWorkspaces: list, archivedWorkspaceIds },
+      {},
+      extra?.eventKind ?? "displaced_host_workspace_updated",
+      extra?.detail ?? `${current.hostId}: ${patch.state ?? current.state}`,
+    );
+  }
+
+  /** Clean up old-host workspaces and threads displaced by a cross-host worker move. */
+  private async archiveDisplacedHostWorkspaces(taskId: string): Promise<void> {
+    if (this.paused()) return;
+    const initial = this.store.task(taskId);
+    const entries = initial.resolution.displacedHostWorkspaces ?? [];
+    for (let index = 0; index < entries.length; index++) {
+      const entry = this.store.task(taskId).resolution.displacedHostWorkspaces?.[index];
+      if (!entry || entry.state === "archived") continue;
+      if (this.paused()) return;
+      await this.engine.withHost(entry.hostId, async () => {
+        if (!this.engine.hostAvailable(entry.hostId) || this.paused()) return;
+        const currentTask = this.store.task(taskId);
+        const currentEntry = currentTask.resolution.displacedHostWorkspaces?.[index];
+        if (!currentEntry || currentEntry.state === "archived") return;
+        const adapter = this.adapter;
+        let finished = false;
+        try {
+          if (
+            !currentEntry.external &&
+            currentEntry.workspaceId &&
+            currentEntry.directory &&
+            adapter.archiveTaskWorkspace
+          ) {
+            if (currentEntry.state === "pending") {
+              this.updateDisplacedHostWorkspace(taskId, index, {
+                state: "intent",
+                intentAt: currentEntry.intentAt ?? now(),
+                detail: "",
+              });
+            }
+            const refreshed = this.store.task(taskId);
+            const result = await adapter.archiveTaskWorkspace(
+              refreshed,
+              currentEntry.workspaceId,
+              currentEntry.directory,
+              currentEntry.head ?? "",
+              () => !this.paused(),
+              currentEntry.state === "uncertain",
+              {
+                requirePublished: true,
+                requireDirectory: false,
+                attachedAgentIds: new Set(currentEntry.agentIds),
+                participantRuns: () => this.store.runs(taskId),
+                displacedBranch: currentEntry.branch,
+              },
+            );
+            if (result === false) return;
+          }
+          if (!currentEntry.external) {
+            for (const agentId of currentEntry.agentIds) {
+              if (this.paused()) return;
+              if (
+                this.store.unreleasedRunsForAgent(agentId, currentEntry.hostId)
+                  .length > 0 ||
+                threadBoundToAnotherLiveTask(this.store, this.store.task(taskId), agentId)
+              ) {
+                throw new Error(`Thread ${agentId} on ${currentEntry.hostId} still serves live work`);
+              }
+              const key = this.store.threadArchiveKey(agentId, currentEntry.hostId);
+              if (!key) continue;
+              const effect = this.store.getMeta<ArchiveEffect>(key);
+              if (effect?.status === "archived") continue;
+              if (adapter.originAgent) {
+                await settleArchive(
+                  this.store,
+                  adapter,
+                  taskId,
+                  agentId,
+                  key,
+                  !effect,
+                  effect ?? { status: "ready", at: now() },
+                );
+              } else if (adapter.archiveAgent) {
+                await adapter.archiveAgent(agentId);
+                this.store.putThreadArchiveEffect(key, agentId, {
+                  status: "archived",
+                  at: now(),
+                  detail: `Archived displaced host thread on ${currentEntry.hostId}`,
+                  op: "archive",
+                });
+              }
+            }
+          }
+          this.updateDisplacedHostWorkspace(
+            taskId,
+            index,
+            {
+              state: "archived",
+              archivedAt: now(),
+              detail: `Cleaned up on ${currentEntry.hostId}`,
+            },
+            {
+              archivedWorkspaceId: !currentEntry.external
+                ? currentEntry.workspaceId
+                : null,
+              eventKind: "displaced_host_workspace_archived",
+              detail: `${currentEntry.hostId} (${currentEntry.workspaceId ?? "no-workspace"})`,
+            },
+          );
+          finished = true;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          this.updateDisplacedHostWorkspace(taskId, index, {
+            state:
+              currentEntry.state === "intent" && isTransportFailure(error)
+                ? "uncertain"
+                : currentEntry.state,
+            detail: message.slice(0, 1500),
+          });
+        }
+        if (finished) void this.engine.wakeTask(taskId);
+      });
+    }
+  }
+
   async archive(task: Task, retryWorkspaceId?: string) {
     // A terminal task's stale recovery episode settles before any gate below can
     // return: a cancelled task never reaches the done-only archive, and a done task
@@ -432,6 +585,8 @@ export class Lifecycle {
       this.engine.settleTerminalRecoveryEpisode(task.id, "end-of-task cleanup");
       task = this.store.task(task.id);
     }
+    await this.archiveDisplacedHostWorkspaces(task.id);
+    task = this.store.task(task.id);
     if (
       task.phase !== "done" &&
       ((task.originError && !missingOriginHasPlanner(this.store, task)) ||

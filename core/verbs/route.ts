@@ -60,6 +60,15 @@ import {
 } from "../store/store-task-funnel";
 
 import {
+  combineWorkerHostProfiles,
+  resolveWorkerHostForProfile,
+} from "../dispatch/first-host-selection";
+import {
+  moveTaskToWorkerHost,
+  verifyMoveSourceClean,
+} from "../dispatch/worker-host-move";
+
+import {
   bindWorkerCreation,
   observeWorkerCreation,
   releaseStaleWorkerIntent,
@@ -288,13 +297,29 @@ export class RouteControls {
           : "") ??
         "";
       this.engine.requireProfileCatalog();
-      // The task's own host decides availability: a profile its catalog cannot
-      // run is refused here, before it is ever recorded (nucleus#1139 review).
+      const unbound = this.engine.firstWorkerUnbound(task);
+      const workerCatalogs =
+        role === "worker" ? this.engine.workerHostCatalogs(task) : [];
+      // Worker routes check every online host catalog so a profile only
+      // another online host can launch moves the task there instead of failing.
       const hostProfiles =
         role === "worker"
-          ? this.engine.workerRoutingProfiles(task)
+          ? unbound || workerCatalogs.length > 0
+            ? combineWorkerHostProfiles(workerCatalogs)
+            : this.engine.profilesFor(task.hostId)
           : this.engine.profilesFor(task.hostId);
-      if (!this.engine.firstWorkerUnbound(task)) {
+      const targetHostSelection =
+        role === "worker" && !unbound
+          ? resolveWorkerHostForProfile(
+              task,
+              workerCatalogs,
+              profileId,
+              thinking,
+              this.engine.preferredHostKindsForTask(task),
+              true,
+            )
+          : null;
+      if (!unbound) {
         const candidate = hostProfiles.find((item) => item.id === profileId);
         if (!candidate?.available)
           throw Error(
@@ -314,7 +339,11 @@ export class RouteControls {
         throw Error(
           `Profile ${profileId} does not support thinking option ${thinking}`,
         );
-      this.assertRouteGroupAvailable(profileId, role, task.hostId);
+      this.assertRouteGroupAvailable(
+        profileId,
+        role,
+        targetHostSelection?.hostId ?? task.hostId,
+      );
       // Worker selection always drops a profile on the retained reviewer's model
       // (no waiver), so a route it would drop is refused now, not recorded and
       // parked. The `next` route view reads the same rule.
@@ -595,6 +624,23 @@ export class RouteControls {
         },
       };
 
+      const hostMoveRequested = Boolean(
+        role === "worker" &&
+          !unsignedRoute &&
+          targetHostSelection &&
+          targetHostSelection.hostId !== task.hostId,
+      );
+      const willMoveDispatchedNow =
+        hostMoveRequested &&
+        !workerCreation &&
+        !archivePending &&
+        (replaceLive || !live) &&
+        !this.store.runs(task.id).some((run) => !run.released);
+      const moveSource = willMoveDispatchedNow
+        ? await verifyMoveSourceClean(task.directory)
+        : { head: null };
+      let movedHost = false;
+
       const updated = this.store.transaction(() => {
         let current = this.store.task(task.id);
         this.engine.requireOwnerControlCurrent(
@@ -674,12 +720,14 @@ export class RouteControls {
               task: current,
               requestedProfileId: profileId,
               requestedModel:
-                this.engine
-                  .profilesFor(current.hostId)
-                  .find((candidate) => candidate.id === profileId)?.model ??
-                null,
+                hostProfiles.find((candidate) => candidate.id === profileId)
+                  ?.model ?? null,
               currentModel: current.profile?.model ?? null,
               approved: !unsignedRoute,
+              hostChanges: Boolean(
+                targetHostSelection &&
+                  targetHostSelection.hostId !== current.hostId,
+              ),
               failure: retainedWorkerFailureCause({
                 task: current,
                 groupUnavailable:
@@ -741,30 +789,97 @@ export class RouteControls {
             "worker_replacement_refused",
             `${replacementRefusal.rule}: ${replacementRefusal.detail}`,
           );
-        const routed = this.store.update(
-          current.id,
-          archivePending
-            ? {
-                ...patch,
-                phase: current.phase,
-                reason:
-                  "Reviewer replacement archive is not confirmed; the launch waits until observation releases the retained reviewer, and it releases once that thread is proven archived, gone or closed",
-                resolution: current.resolution,
-              }
-            : patch,
-          "route_changed",
-          JSON.stringify({
-            role,
-            profileId,
-            thinkingOptionId: input.thinkingOptionId ?? null,
-            reason,
-            now: replaceNow,
-            phaseBefore: current.phase,
-            independenceWaived,
-            exclusionLifted,
-            before,
-          }),
-        );
+        const routeAuditDetail = JSON.stringify({
+          role,
+          profileId,
+          thinkingOptionId: input.thinkingOptionId ?? null,
+          reason,
+          now: replaceNow,
+          phaseBefore: current.phase,
+          independenceWaived,
+          exclusionLifted,
+          before,
+        });
+        const neverDispatched =
+          !current.workspaceId &&
+          !current.workspaceIntent &&
+          !current.directory &&
+          !current.agentId &&
+          !current.agentIntent &&
+          !current.runId &&
+          !current.completion &&
+          !current.retiredWorkers.length &&
+          this.store.runs(current.id).length === 0;
+        const canMoveDispatchedNow =
+          hostMoveRequested &&
+          targetHostSelection &&
+          targetHostSelection.hostId !== current.hostId &&
+          !workerCreation &&
+          !archivePending &&
+          !replacementRefusal &&
+          Boolean(patch.phase === "changes_requested" || !live) &&
+          !this.store.runs(current.id).some((run) => !run.released);
+        let routed: Task;
+        if (
+          hostMoveRequested &&
+          targetHostSelection &&
+          targetHostSelection.hostId !== current.hostId &&
+          neverDispatched
+        ) {
+          movedHost = true;
+          routed = this.store.update(
+            current.id,
+            {
+              ...patch,
+              hostId: targetHostSelection.hostId,
+              hostSelection: targetHostSelection.hostSelection,
+            },
+            "worker_host_moved",
+            `${current.hostId} → ${targetHostSelection.hostId} for ${profileId}: ${targetHostSelection.hostSelection.reason}`.slice(
+              0,
+              2000,
+            ),
+          );
+          this.store.event(current.id, "route_changed", routeAuditDetail);
+        } else if (canMoveDispatchedNow && targetHostSelection) {
+          movedHost = true;
+          const targetProfile = {
+            ...targetHostSelection.profile,
+            thinkingOptionId:
+              thinkingPatch ?? targetHostSelection.profile.thinkingOptionId,
+          };
+          routed = moveTaskToWorkerHost({
+            store: this.store,
+            taskId: current.id,
+            targetHostId: targetHostSelection.hostId,
+            hostSelection: targetHostSelection.hostSelection,
+            targetProfile,
+            targetGroup: routeEntry?.group ?? null,
+            oldHead: moveSource.head,
+            retireReason: `Worker routed to ${profileId} on ${targetHostSelection.hostId}: ${reason}`,
+            patch: {
+              ...patch,
+              replacementProfile: null,
+              failoverReason: "",
+            } as Partial<Task>,
+          });
+          this.store.event(current.id, "route_changed", routeAuditDetail);
+        } else {
+          routed = this.store.update(
+            current.id,
+            archivePending
+              ? {
+                  ...patch,
+                  phase: current.phase,
+                  reason:
+                    "Reviewer replacement archive is not confirmed; the launch waits until observation releases the retained reviewer, and it releases once that thread is proven archived, gone or closed",
+                  resolution: current.resolution,
+                }
+              : patch,
+            "route_changed",
+            routeAuditDetail,
+          );
+        }
         if (!workerCreation) return routed;
         if (workerCreation.kind === "absent")
           return releaseStaleWorkerIntent(
@@ -810,6 +925,10 @@ export class RouteControls {
         throw Error(
           `${profileId} needs the operator's board sign-off before a route can replace a live run; the request is recorded and this route left the retained run untouched until the operator approves it on the board`,
         );
+      }
+      if (movedHost) {
+        this.engine.enqueueCleanup(updated.id);
+        void this.engine.cleanContext(() => this.engine.wakeTask(updated.id));
       }
       return updated;
     }, `task:${input.taskId}`);

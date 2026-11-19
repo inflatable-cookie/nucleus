@@ -686,6 +686,12 @@ export class StoreTasks {
       )
         return true;
       if (archiveIntentOutstanding(task)) return true;
+      if (
+        task.resolution?.displacedHostWorkspaces?.some(
+          (entry) => entry.state !== "archived",
+        )
+      )
+        return true;
       // A cancelled task's stale recovery episode owes a sweep once no recovery run of its own is unreleased (Queue #680).
       if (task.phase === "cancelled" && task.resolution?.recoveryActive)
         return !this.runs(task.id).some(

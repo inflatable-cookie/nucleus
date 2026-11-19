@@ -55,9 +55,16 @@ export class CleanupLane {
           const work = Promise.resolve().then(async () => {
             try {
               const task = this.store.task(taskId);
+              const hasDisplaced =
+                task.resolution.displacedHostWorkspaces?.some(
+                  (entry) => entry.state !== "archived",
+                ) ?? false;
               if (task.hostId) await this.engine.withHost(task.hostId, async () => {
-                if (this.engine.taskHostAvailable(task)) await this.engine.lifecycle.archive(task, retryWorkspaceId);
+                if (this.engine.taskHostAvailable(task) || hasDisplaced) await this.engine.lifecycle.archive(task, retryWorkspaceId);
               });
+              else if (hasDisplaced) {
+                await this.engine.lifecycle.archive(task, retryWorkspaceId);
+              }
             }
             // The archive records its own refusal and retry on the task, which is what a
             // later sweep reads; a fault outside the archive names nothing to record here.

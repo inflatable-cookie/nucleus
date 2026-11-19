@@ -11,6 +11,76 @@ import { hostKindOf, type HostKind } from "../../shared/host-kind";
 /** A catalog snapshot from an online host. Unread and offline hosts must be omitted. */
 export type WorkerHostCatalog = { hostId: string; profiles: Profile[] };
 
+export function formatWorkerHostSelectionReason(
+  profileName: string,
+  hostId: string,
+  capableHostIds: readonly string[],
+  preferredHostId?: string | null,
+): string {
+  return capableHostIds.length === 1
+    ? `Profile ${profileName} can run only on online host ${hostId}`
+    : `Profile ${profileName} runs on ${capableHostIds.join(", ")}; selected ${hostId}${hostId === preferredHostId ? " by host preference" : ""}`;
+}
+
+export function resolveWorkerHostForProfile(
+  task: Pick<Task, "hostId" | "hostSelection">,
+  hosts: readonly WorkerHostCatalog[],
+  profileId: string,
+  thinkingOptionId = "",
+  preferredKinds: readonly (HostKind | null | undefined)[] = [],
+  preferCurrentHost = true,
+) {
+  const capable = hosts.filter((host) =>
+    host.profiles.some(
+      (profile) =>
+        profile.id === profileId &&
+        profile.available &&
+        (!thinkingOptionId || profile.supportedThinking.includes(thinkingOptionId)),
+    ),
+  );
+  if (!capable.length) return null;
+  const explicit =
+    task.hostSelection?.basis === "explicit"
+      ? capable.find((candidate) => candidate.hostId === task.hostId)
+      : undefined;
+  const current =
+    preferCurrentHost && task.hostId
+      ? capable.find((candidate) => candidate.hostId === task.hostId)
+      : undefined;
+  const host =
+    explicit ??
+    current ??
+    preferredKinds.flatMap((kind) =>
+      kind
+        ? capable.filter((candidate) => hostKindOf(candidate.hostId) === kind)
+        : [],
+    )[0] ??
+    capable.find((candidate) => candidate.hostId === task.hostId) ??
+    capable[0];
+  if (!host) return null;
+  const raw = host.profiles.find((candidate) => candidate.id === profileId)!;
+  const profile: Profile = {
+    ...raw,
+    thinkingOptionId: thinkingOptionId || raw.thinkingOptionId,
+  };
+  const capableHostIds = capable.map((candidate) => candidate.hostId);
+  return {
+    hostId: host.hostId,
+    profile,
+    capableHostIds,
+    hostSelection: {
+      hostId: host.hostId,
+      basis: "worker_profile" as const,
+      reason: formatWorkerHostSelectionReason(
+        profile.name,
+        host.hostId,
+        capableHostIds,
+        task.hostId,
+      ),
+    },
+  };
+}
+
 /**
  * Select once across profiles, not once per host: duplicate host routes must not
  * give a profile extra weight in rotation. Once the profile is chosen, prefer
@@ -41,42 +111,23 @@ export function chooseFirstWorkerHost(
     true,
   );
   if (!selected) return null;
-  const capable = hosts.filter((host) =>
-    host.profiles.some(
-      (profile) =>
-        profile.id === selected.profile.id &&
-        profile.available &&
-        (!selected.profile.thinkingOptionId ||
-          profile.supportedThinking.includes(
-            selected.profile.thinkingOptionId,
-          )),
-    ),
+  const resolved = resolveWorkerHostForProfile(
+    task,
+    hosts,
+    selected.profile.id,
+    selected.profile.thinkingOptionId,
+    preferredKinds,
+    false,
   );
-  const explicit =
-    task.hostSelection?.basis === "explicit"
-      ? capable.find((candidate) => candidate.hostId === task.hostId)
-      : undefined;
-  const host =
-    explicit ??
-    preferredKinds.flatMap((kind) =>
-      kind
-        ? capable.filter((candidate) => hostKindOf(candidate.hostId) === kind)
-        : [],
-    )[0] ??
-    capable.find((candidate) => candidate.hostId === task.hostId) ??
-    capable[0];
-  if (!host) return null;
-  const profile = host.profiles.find(
-    (candidate) => candidate.id === selected.profile.id,
-  )!;
+  if (!resolved) return null;
   return {
     ...selected,
     profile: {
-      ...profile,
+      ...resolved.profile,
       thinkingOptionId: selected.profile.thinkingOptionId,
     },
-    hostId: host.hostId,
-    capableHostIds: capable.map((candidate) => candidate.hostId),
+    hostId: resolved.hostId,
+    capableHostIds: resolved.capableHostIds,
   };
 }
 

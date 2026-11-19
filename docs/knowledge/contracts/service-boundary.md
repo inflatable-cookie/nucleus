@@ -134,8 +134,10 @@ retains transaction cleanup, listener notifications and dependency-control trans
   original selection; a control that is already invalid on stored facts refuses
   before that wait, so the wait holds only a control that would otherwise be
   accepted. The operation and task record whether selection was
-  explicit, sole-online or migrated; each run inherits that evidence with its
-  task host. Legacy runs inherit
+  explicit, sole-online, worker-profile, or migrated; each run inherits that
+  evidence with its task host (and historical released runs from an earlier host
+  on a `worker_host_moved` task retain their original `hostId` for thread
+  cleanup and audit). Legacy runs inherit
   it only where it is present, and historical events and intent IDs stay intact.
 - Origin threads have a separate host identity. The sole known online host or
   a unique complete host observation records it; incomplete or ambiguous

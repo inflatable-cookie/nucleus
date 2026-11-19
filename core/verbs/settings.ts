@@ -659,14 +659,20 @@ export class SettingsControls {
   reparent(input: ReparentInput) {
     return this.engine.control(async () => {
       const result = await this.resolution.origins.reparent(input);
-      if (this.engine.profileCatalogKnown()) {
-        for (const change of result.changed)
-          reconcileRoutingSignoffs(
-            this.store,
-            this.engine.signoffDecisions,
-            change.taskId,
-            this.engine.profiles,
-          );
+      for (const change of result.changed) {
+        const task = this.store.task(change.taskId);
+        const workerCatalogs = this.engine.workerHostCatalogs(task);
+        if (!this.engine.profileCatalogKnown() && !this.engine.profileCatalogKnownFor(task.hostId) && !workerCatalogs.length) continue;
+        reconcileRoutingSignoffs(
+          this.store,
+          this.engine.signoffDecisions,
+          change.taskId,
+          this.engine.profileCatalogKnownFor(task.hostId) ? this.engine.profilesFor(task.hostId) : this.engine.profiles,
+          {
+            workerProfiles: this.engine.workerRoutingProfiles(task),
+            workerCatalogPending: this.engine.workerHostCatalogPending(task),
+          },
+        );
       }
       return result;
     }, "control:origin");

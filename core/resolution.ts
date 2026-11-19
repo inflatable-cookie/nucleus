@@ -1200,6 +1200,12 @@ export class Resolution {
   workerProviderUnavailable(task: Task): boolean {
     return this.hostPorts.workerProviderUnavailable(task);
   }
+  workerHostCatalogs(task: Task) {
+    return this.hostPorts.workerCatalogs?.(task) ?? [];
+  }
+  preferredHostKindsForTask(task: Task) {
+    return this.hostPorts.preferredHostKinds?.(task) ?? [];
+  }
   withHost<T>(id: string, fn: () => T): T {
     return this.hostPorts.withHost(id, fn);
   }

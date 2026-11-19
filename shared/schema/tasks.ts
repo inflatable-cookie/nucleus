@@ -91,7 +91,7 @@ export const taskSchema = submissionSchema.extend({
     /** Spec 058 task 577: the arming restart carried an explicit operator-relayed reason, so the sweep may retire on it. */
     operatorRelayed:z.boolean().optional()}).nullable().default(null),
   workerExclusions: z.array(workerExclusionSchema).default([]),
-  retiredWorkers: z.array(z.object({agentId:z.string(),runId:z.string(),profile:profileSchema,reason:z.string()})).default([]),
+  retiredWorkers: z.array(z.object({agentId:z.string(),runId:z.string(),profile:profileSchema,reason:z.string(),hostId:z.string().optional()})).default([]),
   /** Legacy extra-replacement history went with schema 54 (task 989); the store strips retired copies from stored rows. */
   /** A replacement for a gone author continues the retained workspace: dispatch verifies it as a continuation, preserving its work, though no old agent was retired. */
   continuesWorkspace: z.boolean().optional(),

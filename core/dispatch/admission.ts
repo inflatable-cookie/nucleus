@@ -33,7 +33,7 @@ export class DispatchAdmission {
   queuedExternalWait(task: Task): string {
     if (task.phase !== "queued") return "";
     if (!task.hostId) return 'Waiting for a proven host identity';
-    if (this.store.runs(task.id).some(run => run.hostId !== task.hostId)) return 'Waiting for consistent run host identity';
+    if (this.store.runs(task.id).some(run => !run.released && run.hostId !== task.hostId)) return 'Waiting for consistent run host identity';
     if (!this.context.withHost(task.hostId, () => this.context.hostAvailable(task.hostId))) return `Waiting for host ${task.hostId}`;
     if (!this.context.profileCatalogKnown()) return PROFILE_CATALOG_PENDING_REASON;
     const pressure = this.context.workspacePressureWait(task);

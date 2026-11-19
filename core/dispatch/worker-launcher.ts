@@ -124,6 +124,7 @@ export class WorkerLauncher {
     }
     if (this.refuseExcludedWorker(task)) return;
     for (const old of task.retiredWorkers) {
+      if ((old.hostId ?? task.hostId) !== task.hostId) continue;
       const state = await this.engine.host.observe(old.agentId);
       if (state.workspaceId !== task.workspaceId || !agentSettled(state))
         throw new Error(

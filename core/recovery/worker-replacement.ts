@@ -112,6 +112,8 @@ export function decideWorkerReplacement(args: {
   approved: boolean;
   failure: WorkerReplacementFailure | null;
   explicitOperatorRelay: boolean;
+  /** True when the requested profile moves worker execution to another online host. */
+  hostChanges?: boolean;
   /** The caller shape, naming the refusal rule for a fresh restart. */
   freshRestart?: boolean;
 }): WorkerReplacementDecision {
@@ -130,6 +132,8 @@ export function decideWorkerReplacement(args: {
     };
   if (args.requestedProfileId && modelChanges && args.approved)
     return { allowed: true, cause: `approved_model_change: the worker route moves from ${current} to ${requested} on an approved route` };
+  if (args.requestedProfileId && args.hostChanges && args.approved)
+    return { allowed: true, cause: "approved_host_change: the worker route moves to another online host on an approved route" };
   if (args.freshRestart)
     return {
       allowed: false,

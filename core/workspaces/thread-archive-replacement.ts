@@ -170,6 +170,7 @@ export async function archiveSupersededWorkers(store: Store, adapter: Adapter, t
   const host = new HostFacade({ adapter });
   const live = new Set([task.agentId, task.coordinatorAgentId, task.resolution.reviewerAgentId].filter((id): id is string => Boolean(id)));
   for (const worker of task.retiredWorkers) {
+    if ((worker.hostId ?? task.hostId) !== task.hostId) continue;
     const agentId = worker.agentId;
     // The current worker, or a thread still serving an unreleased run, stays.
     if (!agentId || live.has(agentId)) continue;

@@ -27,6 +27,7 @@ import { OPERATOR_WORKER_REMAP_REASON } from "../recovery/task-reasons";
 import { taskHasPr } from "../forge/index";
 import { digest, now } from "../store/store";
 import { occupiesSlot } from "../dispatch/capacity";
+import { resolveWorkerHostForProfile } from "../dispatch/first-host-selection";
 import {
   bindWorkerCreation,
   observeWorkerCreation,
@@ -348,12 +349,22 @@ export class WorkerRestarts {
         const moveAvailability = moveAvailabilityRow
           ? JSON.parse(String((moveAvailabilityRow as { data: string }).data))
           : null;
+        const moveCatalogs = this.engine.workerHostCatalogs(revised);
+        const moveHostSelection = resolveWorkerHostForProfile(
+          revised,
+          moveCatalogs,
+          moveRoute,
+          revised.profile?.thinkingOptionId ?? "",
+          this.engine.preferredHostKindsForTask(revised),
+          true,
+        );
         const moveDecision = decideWorkerReplacement({
           task: revised,
           requestedProfileId: moveRoute,
           requestedModel:
-            this.engine.profiles.find((candidate) => candidate.id === moveRoute)
-              ?.model ??
+            this.engine
+              .workerRoutingProfiles(revised)
+              .find((candidate) => candidate.id === moveRoute)?.model ??
             revised.profile?.model ??
             null,
           currentModel: revised.profile?.model ?? null,
@@ -362,6 +373,9 @@ export class WorkerRestarts {
             moveRoute,
             this.store.pool(),
             this.store.usageLevel(),
+          ),
+          hostChanges: Boolean(
+            moveHostSelection && moveHostSelection.hostId !== revised.hostId,
           ),
           failure: retainedWorkerFailureCause({
             task: revised,
@@ -824,13 +838,23 @@ export class WorkerRestarts {
                         String((routeAvailabilityRow as { data: string }).data),
                       )
                     : null;
+                  const restartCatalogs = this.engine.workerHostCatalogs(latestTask);
+                  const restartHostSelection = resolveWorkerHostForProfile(
+                    latestTask,
+                    restartCatalogs,
+                    restartRoute,
+                    latestTask.profile?.thinkingOptionId ?? "",
+                    this.engine.preferredHostKindsForTask(latestTask),
+                    true,
+                  );
                   const decision = decideWorkerReplacement({
                     task: latestTask,
                     requestedProfileId: restartRoute,
                     requestedModel:
-                      this.engine.profiles.find(
-                        (candidate) => candidate.id === restartRoute,
-                      )?.model ??
+                      this.engine
+                        .workerRoutingProfiles(latestTask)
+                        .find((candidate) => candidate.id === restartRoute)
+                        ?.model ??
                       latestTask.profile?.model ??
                       null,
                     currentModel: latestTask.profile?.model ?? null,
@@ -839,6 +863,10 @@ export class WorkerRestarts {
                       restartRoute,
                       this.store.pool(),
                       this.store.usageLevel(),
+                    ),
+                    hostChanges: Boolean(
+                      restartHostSelection &&
+                        restartHostSelection.hostId !== latestTask.hostId,
                     ),
                     failure: retainedWorkerFailureCause({
                       task: latestTask,

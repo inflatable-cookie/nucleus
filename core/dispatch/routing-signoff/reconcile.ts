@@ -41,20 +41,32 @@ function closeOrphanedQuestions(store: Store, decisions: Decisions, task: Task):
   }
 }
 
-export function reconcileRoutingSignoffs(store: Store, decisions: Decisions, taskId: string, profiles: readonly Profile[]): ApprovedRoute[] {
+export type ReconcileRoutingSignoffsOptions = {
+  workerProfiles?: readonly Profile[];
+  workerCatalogPending?: boolean;
+};
+
+export function reconcileRoutingSignoffs(
+  store: Store,
+  decisions: Decisions,
+  taskId: string,
+  profiles: readonly Profile[],
+  options: ReconcileRoutingSignoffsOptions = {},
+): ApprovedRoute[] {
   const approvedRoutes: ApprovedRoute[] = [];
   let task: Task;
   try { task = store.task(taskId); } catch { return approvedRoutes; }
   if (task.removedAt) return approvedRoutes;
+  const workerProfiles = options.workerProfiles ?? profiles;
   // Expire and answered grants, never the queue-wide settle: this pass runs once
   // per task per sweep, and the task it is for settles below.
   reconcileGrantDecisions(store, decisions);
   // Spec 052 (Tom, 2026-11-17): the Low usage level's submission gate opens one
   // board decision and holds a high-complexity task until it is approved.
-  reconcileUsageGate(store, decisions, taskId, profiles);
+  reconcileUsageGate(store, decisions, taskId, workerProfiles);
   try { task = store.task(taskId); } catch { return approvedRoutes; }
   const finished = task.phase === "done" || task.phase === "cancelled";
-  task = reconcileUnavailablePreference(store, decisions, task, profiles, finished);
+  task = reconcileUnavailablePreference(store, decisions, task, workerProfiles, finished, Boolean(options.workerCatalogPending));
   // A required legacy preference is also a worker routing request. Materialize
   // it only when it needs board sign-off, so the same decision lifecycle can
   // surface and settle it instead of leaving an invisible required wait.
@@ -130,7 +142,8 @@ export function reconcileRoutingSignoffs(store: Store, decisions: Decisions, tas
         JSON.stringify({ role, requested: request.profileId, profileId: request.profileId, status: prior.status, decisionId: prior.decisionId, by: prior.by, note: prior.note }));
       continue;
     }
-    const question = signoffQuestion(store, profiles, task, role, request);
+    const roleProfiles = role === "worker" ? workerProfiles : profiles;
+    const question = signoffQuestion(store, roleProfiles, task, role, request);
     const origin = normalizeRepositoryOrigin(task.repository ?? "");
     const decision = decisions.add({
       // The submission's own request belongs to whoever owns the task now (Spec 040).
@@ -151,9 +164,17 @@ export function reconcileRoutingSignoffs(store: Store, decisions: Decisions, tas
 }
 
 /** An unavailable required preference needs a choice, not a profile sign-off. */
-function reconcileUnavailablePreference(store: Store, decisions: Decisions, task: Task, profiles: readonly Profile[], finished: boolean): Task {
+function reconcileUnavailablePreference(
+  store: Store,
+  decisions: Decisions,
+  task: Task,
+  profiles: readonly Profile[],
+  finished: boolean,
+  workerCatalogPending = false,
+): Task {
   const request = task.profileRequests?.worker;
   const profileId = request?.required ? request.profileId : !request && task.requirePreferred ? task.preferredProfileId : '';
+  const thinking = request?.required ? (request.thinkingOptionId || task.thinkingOptionId) : !request && task.requirePreferred ? task.thinkingOptionId : '';
   const events = store.eventsAll(task.id);
   // Reconcile all prior questions before consulting the current preference: a
   // changed or cleared request must not leave an answerable orphan behind.
@@ -173,9 +194,14 @@ function reconcileUnavailablePreference(store: Store, decisions: Decisions, task
   if (!profileId) return task;
   const entry = store.pool().find(item => item.profileId === profileId);
   const profile = profiles.find(item => item.id === profileId);
+  const availableOnAnyHost = Boolean(
+    entry?.enabled &&
+      profile?.available &&
+      (!thinking || profile.supportedThinking.includes(thinking)),
+  );
   const last = store.eventsAll(task.id).findLast(event => ['routing_unavailable_requested', 'routing_unavailable_resolved'].includes(event.kind) && event.detail.startsWith(`${profileId}: `));
   const prior = last?.kind === 'routing_unavailable_requested' ? last : undefined;
-  if (entry?.enabled && profile?.available || finished || task.agentIntent || task.agentId) {
+  if (availableOnAnyHost || finished || task.agentIntent || task.agentId) {
     if (prior) {
       try {
         const record = JSON.parse(prior.detail.slice(profileId.length + 2)) as { decisionId: string };
@@ -185,6 +211,7 @@ function reconcileUnavailablePreference(store: Store, decisions: Decisions, task
     }
     return task;
   }
+  if (entry?.enabled && !availableOnAnyHost && workerCatalogPending && !prior) return task;
   if (prior) {
     let record: { decisionId: string; choices: Record<string, string> };
     try { record = JSON.parse(prior.detail.slice(profileId.length + 2)); } catch { return task; }

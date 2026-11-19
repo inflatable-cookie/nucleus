@@ -279,3 +279,25 @@ export type PausedStop = z.infer<typeof pausedStopSchema>;
 /** The visible wait a deliberately stopped thread holds while Queue is paused (and until it resumes). */
 export const pausedStopWaitReason = (role: string) =>
   `The ${role} thread was stopped while Nucleus was paused; Nucleus resumes it in its own thread when the queue starts`;
+
+/**
+ * Nucleus #1397: one workspace (and any threads attached to it) displaced when a
+ * task moves its worker execution to a different host. The cleanup owner removes
+ * owned worktrees and archives the old host's threads before the destination host
+ * reuses the shared checkout path or branch, or independently once settled.
+ */
+export const displacedHostWorkspaceSchema = z.object({
+  hostId: z.string().min(1).max(160),
+  workspaceId: z.string().min(1).max(240).nullable().default(null),
+  directory: z.string().min(1).max(1024).nullable().default(null),
+  branch: z.string().min(1).max(400),
+  head: z.string().nullable().default(null),
+  agentIds: z.array(z.string().min(1).max(240)).default([]),
+  external: z.boolean().default(false),
+  state: z.enum(["pending", "intent", "uncertain", "archived"]).default("pending"),
+  intentAt: z.string().nullable().default(null),
+  archivedAt: z.string().nullable().default(null),
+  detail: z.string().max(2000).default(""),
+}).strict();
+
+export type DisplacedHostWorkspace = z.infer<typeof displacedHostWorkspaceSchema>;

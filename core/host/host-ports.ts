@@ -1,6 +1,7 @@
 import type { Run, Task } from '../../shared/contracts';
 import type { HostOutage } from '../../shared/host-outage';
-import type { IdentitySource } from '../../shared/host-kind';
+import type { HostKind, IdentitySource } from '../../shared/host-kind';
+import type { WorkerHostCatalog } from '../dispatch/first-host-selection';
 
 /**
  * Every host question a composition root answers (`nucleus#1232`). The runtime
@@ -32,6 +33,8 @@ export interface HostPorts {
   canReuseUnqualifiedOriginWorkspace(): boolean;
   identifyOriginHost(agentId: string, identitySource?: IdentitySource): Promise<string | undefined>;
   catalogKnown(): boolean;
+  workerCatalogs?(task: Task): WorkerHostCatalog[];
+  preferredHostKinds?(task: Task): (HostKind | null | undefined)[];
 }
 
 /**
