@@ -25,12 +25,20 @@ import type {
   AcpAnswerInput,
   AcpCaller,
   AcpElicitation,
+  AcpInboxUiInput,
+  AcpInboxUiReply,
   AcpMessageInput,
   AcpTurnInput,
   AcpTurnReply,
 } from "./surface";
 
-export type { AcpMessageInput, AcpTurnInput, AcpTurnReply };
+export type {
+  AcpInboxUiInput,
+  AcpInboxUiReply,
+  AcpMessageInput,
+  AcpTurnInput,
+  AcpTurnReply,
+};
 
 type Json = Record<string, unknown>;
 type Id = number | string;
@@ -72,6 +80,7 @@ export interface AcpSessionTransport {
   turn(input: AcpTurnRequest, signal: AbortSignal): Promise<AcpTurnReply>;
   message(input: AcpMessageRequest): Promise<AcpMessageReply>;
   answer?(input: AcpAnswerInput): Promise<unknown>;
+  openUi?(input: AcpInboxUiInput): Promise<AcpInboxUiReply>;
 }
 
 /** What a thread's working directory resolves to: Nucleus's binding and how to reach the service. */
@@ -476,7 +485,13 @@ export class AcpAgent {
         if (card.turn < session.turn) session.cards.delete(key);
       for (const line of session.pending.splice(0))
         this.emit(send, sessionId, line);
-      if (!opening && !holding && session.caller.kind !== "inbox") {
+      if (session.caller.kind === "inbox" && !holding && text === "ui") {
+        const hold = await this.openInboxUi(session, send);
+        if (!hold) {
+          this.result(send, id, { stopReason: "end_turn" });
+          return;
+        }
+      } else if (!opening && !holding && session.caller.kind !== "inbox") {
         const forwarded = await this.forward(session, text, send);
         if (!forwarded) {
           this.result(send, id, { stopReason: "end_turn" });
@@ -487,6 +502,66 @@ export class AcpAgent {
       this.result(send, id, { stopReason: outcome });
     } finally {
       session.inFlight = false;
+    }
+  }
+
+  /**
+   * Handle the inbox's exact `ui` command through its authenticated host binding.
+   * Pairing links never cross this boundary; when no decision is offerable once the
+   * open finishes, the turn ends at once so the inbox returns to idle.
+   */
+  private async openInboxUi(
+    session: SessionState,
+    send: Send,
+  ): Promise<boolean> {
+    if (session.caller.kind !== "inbox") return false;
+    if (!session.transport.openUi) {
+      this.emit(
+        send,
+        session.sessionId,
+        "Nucleus cannot open the board from this session.",
+        true,
+      );
+      return false;
+    }
+    try {
+      const reply = await session.transport.openUi({
+        kind: "inbox",
+        hostId: session.caller.hostId,
+        sessionId: session.sessionId,
+      });
+      if (reply.status === "opened") {
+        this.emit(send, session.sessionId, "Opened the Nucleus board.", true);
+      } else if (reply.status === "reused") {
+        this.emit(
+          send,
+          session.sessionId,
+          "The Nucleus board is already open.",
+          true,
+        );
+      } else {
+        const detail = sanitizeUiDetail(reply.detail);
+        this.emit(
+          send,
+          session.sessionId,
+          detail
+            ? `Nucleus could not open the board: ${detail}`
+            : "Nucleus could not open the board.",
+          true,
+        );
+      }
+      return reply.hold;
+    } catch (error) {
+      const detail = sanitizeUiDetail(reasonOf(error));
+      this.emit(
+        send,
+        session.sessionId,
+        detail
+          ? `Nucleus could not open the board: ${detail}`
+          : "Nucleus could not open the board.",
+        true,
+      );
+      return false;
     }
   }
 
@@ -677,8 +752,13 @@ export class AcpAgent {
    * so each line ends its own paragraph; a line identical to the one just shown is not
    * sent again, whichever poll or attach asked for it.
    */
-  private emit(send: Send, sessionId: string, text: string): void {
-    if (this.lastLine.get(sessionId) === text) return;
+  private emit(
+    send: Send,
+    sessionId: string,
+    text: string,
+    force = false,
+  ): void {
+    if (!force && this.lastLine.get(sessionId) === text) return;
     this.lastLine.set(sessionId, text);
     send({
       jsonrpc: "2.0",
@@ -692,6 +772,17 @@ export class AcpAgent {
       },
     });
   }
+}
+
+/** Strip any pairing URL or token fragment before showing an error in chat. */
+function sanitizeUiDetail(text: string | undefined): string {
+  if (!text) return "";
+  return text
+    .replace(
+      /pairingUrl:\S+|https?:\/\/\S*#token=\S+|#token=\S+/gi,
+      "[redacted]",
+    )
+    .trim();
 }
 
 /** The text of one ACP prompt: its text blocks, in order. Anything else is not text to forward. */

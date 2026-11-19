@@ -645,6 +645,12 @@ export class T3CodeHost implements Host {
     else this.activeTaskIds.delete(taskId);
     await this.presentation.reconcileTaskRow(taskId, shown);
   }
+  /** Open or reuse the board preview in the host's pinned inbox thread. */
+  async openInboxUi(): Promise<{ status: "opened" | "reused" }> {
+    this.requireConnection();
+    return await this.inbox.openBoard();
+  }
+
   /** The ordinary host sweep's nesting pass: dispose owed wakes, hold or release the parent's turn, archive a finished task's parent. */
   async reconcileThreadTitles(tasks: readonly Task[]): Promise<void> {
     if (!this.connected) return;

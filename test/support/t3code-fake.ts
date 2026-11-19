@@ -683,6 +683,9 @@ export async function t3Fake(t: TestContext, directory: string) {
     string,
     { type: string; projectId: string }
   >();
+  const previews = new Map<string, Value[]>();
+  let previewSequence = 0;
+  let previewRevision = 0;
   const sockets = new Set<Socket>();
   const controlFrames: Value[] = [];
   const frameBytes: number[] = [];
@@ -923,7 +926,48 @@ export async function t3Fake(t: TestContext, directory: string) {
       const marker = () =>
         controls.synchronized ? [{ kind: "synchronized", sequence: 1 }] : [];
       switch (request.tag) {
-        case "preview.open": return success({ threadId: payload.threadId, tabId: "synthetic-preview" });
+        case "preview.open": {
+          previewSequence += 1;
+          previewRevision += 1;
+          const tabId =
+            previewSequence === 1
+              ? "synthetic-preview"
+              : `synthetic-preview-${previewSequence}`;
+          const snapshot = {
+            threadId: payload.threadId,
+            tabId,
+            navStatus: payload.url
+              ? { _tag: "Loading", url: payload.url, title: "" }
+              : { _tag: "Idle" },
+            canGoBack: false,
+            canGoForward: false,
+            ...(payload.reveal === undefined ? {} : { reveal: payload.reveal }),
+            updatedAt: STAMP,
+          };
+          const list = previews.get(payload.threadId) ?? [];
+          list.push(snapshot);
+          previews.set(payload.threadId, list);
+          return success(snapshot);
+        }
+        case "preview.list":
+          return success({
+            sessions: [...(previews.get(payload.threadId) ?? [])],
+            serverEpoch: "synthetic-preview-epoch",
+            revision: previewRevision,
+          });
+        case "preview.close": {
+          previewRevision += 1;
+          const list = previews.get(payload.threadId) ?? [];
+          if (payload.tabId) {
+            previews.set(
+              payload.threadId,
+              list.filter((session) => session.tabId !== payload.tabId),
+            );
+          } else {
+            previews.delete(payload.threadId);
+          }
+          return success(null);
+        }
         case "server.getConfig": {
           const reasoning: Value = {
             id: "reasoningEffort",
@@ -1181,7 +1225,11 @@ export async function t3Fake(t: TestContext, directory: string) {
         case "orchestration.launchThread": {
           for (const field of contract.launchThread.required)
             assert.ok(Object.hasOwn(payload, field), `launchThread.${field}`);
-          assert.ok(["existing_worktree", "root"].includes(payload.workspaceStrategy.type));
+          assert.ok(
+            ["existing_worktree", "root"].includes(
+              payload.workspaceStrategy.type,
+            ),
+          );
           assert.ok(
             contract.launchThread.runtimeModes.includes(payload.runtimeMode),
           );
@@ -1226,10 +1274,18 @@ export async function t3Fake(t: TestContext, directory: string) {
           commands.push({ method: request.tag, ...payload });
           controls.mutationObserver();
           if (controls.disconnectMutation) return socket.destroy();
-          const root = projectRows.find(project => project.id === payload.projectId)?.workspaceRoot;
-          const p = threadProjection(payload.threadId, payload.workspaceStrategy.type === "root" ? root : payload.workspaceStrategy.worktreePath);
+          const root = projectRows.find(
+            (project) => project.id === payload.projectId,
+          )?.workspaceRoot;
+          const p = threadProjection(
+            payload.threadId,
+            payload.workspaceStrategy.type === "root"
+              ? root
+              : payload.workspaceStrategy.worktreePath,
+          );
           p.thread.projectId = payload.projectId;
-          if (payload.workspaceStrategy.type === "root") p.thread.worktreePath = null;
+          if (payload.workspaceStrategy.type === "root")
+            p.thread.worktreePath = null;
           p.thread.pinnedAt = null;
           p.thread.title = payload.title;
           p.thread.modelSelection = payload.modelSelection;
@@ -1297,7 +1353,10 @@ export async function t3Fake(t: TestContext, directory: string) {
             if (payload.answers)
               for (const answer of Object.values(payload.answers))
                 assert.ok(
-                  Array.isArray(answer) || (threads.get(payload.threadId)?.thread.providerInstanceId === "nucleus" && typeof answer === "string"),
+                  Array.isArray(answer) ||
+                    (threads.get(payload.threadId)?.thread
+                      .providerInstanceId === "nucleus" &&
+                      typeof answer === "string"),
                   "question answer uses the provider's answer shape",
                 );
           }
@@ -1345,9 +1404,25 @@ export async function t3Fake(t: TestContext, directory: string) {
                     rootNodeId: `node:root:${payload.commandId}`,
                   }),
                 );
-              if (p.thread.providerInstanceId === "nucleus" && /^(Nucleus keeps this task thread open for its next role\.|nucleus-hold-the-task-thread)/.test(payload.text)) {
-                const active = p.runs.find((run: Value) => ["preparing", "starting", "running", "waiting"].includes(run.status));
-                if (active) p.turnItems.push(syntheticTurnItem(payload.threadId, p.turnItems.length, { type: "user_message", messageId: payload.messageId, runId: active.id }));
+              if (
+                p.thread.providerInstanceId === "nucleus" &&
+                /^(Nucleus keeps this task thread open for its next role\.|nucleus-hold-the-task-thread)/.test(
+                  payload.text,
+                )
+              ) {
+                const active = p.runs.find((run: Value) =>
+                  ["preparing", "starting", "running", "waiting"].includes(
+                    run.status,
+                  ),
+                );
+                if (active)
+                  p.turnItems.push(
+                    syntheticTurnItem(payload.threadId, p.turnItems.length, {
+                      type: "user_message",
+                      messageId: payload.messageId,
+                      runId: active.id,
+                    }),
+                  );
               }
               if (payload.threadId.startsWith("thread:delegated-task:"))
                 recordFollowUp(payload);
@@ -1397,7 +1472,8 @@ export async function t3Fake(t: TestContext, directory: string) {
               // applies it; "lands" applies it and then loses the reply (unknown delivery).
               const fault = controls.unsettleFaults.shift();
               if (fault === "drops") return socket.destroy();
-              if (controls.unsettleLagReads > 0) p.unsettleLagReads = controls.unsettleLagReads;
+              if (controls.unsettleLagReads > 0)
+                p.unsettleLagReads = controls.unsettleLagReads;
               else {
                 p.thread.settledOverride = "active";
                 p.thread.settledAt = null;
@@ -1436,7 +1512,8 @@ export async function t3Fake(t: TestContext, directory: string) {
                   _tag: "Fail",
                   error: {
                     _tag: "OrchestrationV2DispatchCommandError",
-                    message: "Thread has a pending approval and cannot be snoozed.",
+                    message:
+                      "Thread has a pending approval and cannot be snoozed.",
                   },
                 });
               if (p.runs.some((run: Value) => run.status === "queued"))
@@ -1677,8 +1754,14 @@ export async function t3Fake(t: TestContext, directory: string) {
                 (r: Value) => r.id === payload.requestId,
               )!;
               item.status = "resolved";
-              if (item.kind === "user_input" && (payload.decision === "cancel" || payload.decision === "decline")) {
-                const card = p.turnItems.find((row: Value) => row.requestId === payload.requestId);
+              if (
+                item.kind === "user_input" &&
+                (payload.decision === "cancel" ||
+                  payload.decision === "decline")
+              ) {
+                const card = p.turnItems.find(
+                  (row: Value) => row.requestId === payload.requestId,
+                );
                 if (card) card.status = "cancelled";
               }
               if (payload.answers) item.answers = payload.answers;
@@ -1736,7 +1819,8 @@ export async function t3Fake(t: TestContext, directory: string) {
                   message: "Failed to mutate project.",
                 },
               });
-            if (typeof payload.title === "string") project.title = payload.title;
+            if (typeof payload.title === "string")
+              project.title = payload.title;
             if (payload.archived === true)
               archivedProjects.add(payload.projectId);
             else if (payload.archived === false)
@@ -1930,6 +2014,7 @@ export async function t3Fake(t: TestContext, directory: string) {
     endpoint: `http://127.0.0.1:${address.port}`,
     controls,
     threads,
+    previews,
     commands,
     requests,
     snapshots,
