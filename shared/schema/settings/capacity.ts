@@ -54,6 +54,13 @@ export const DEFAULT_LANE_DRAIN_MINUTES = 120;
 
 export const DEFAULT_LANE_DRAIN_ESCALATION_MINUTES = 1440;
 
+// Orchestration contract, "Archived thread retention": how long a finished task's
+// archived threads stay on the host before the service's retention pass removes
+// them (Tom, 2026-11-19: "Maybe three days?").
+export const DEFAULT_THREAD_RETENTION_DAYS = 3;
+
+export const MAX_THREAD_RETENTION_DAYS = 90;
+
 /** One bounded settings-only limit: its bounds and the default an absent field keeps. */
 interface CapacityBound {
   min: number;
@@ -71,6 +78,7 @@ export const capacityBounds = {
   laneDrainMinutes: { min: 1, max: MAX_HOLD_MINUTES, fallback: DEFAULT_LANE_DRAIN_MINUTES },
   laneDrainEscalationMinutes: { min: 1, max: MAX_HOLD_MINUTES, fallback: DEFAULT_LANE_DRAIN_ESCALATION_MINUTES },
   hostOutageNoticeMinutes: { min: 1, max: MAX_HOST_OUTAGE_NOTICE_MINUTES, fallback: DEFAULT_HOST_OUTAGE_NOTICE_MINUTES },
+  threadRetentionDays: { min: 1, max: MAX_THREAD_RETENTION_DAYS, fallback: DEFAULT_THREAD_RETENTION_DAYS },
 } as const satisfies Record<string, CapacityBound>;
 
 export type CapacityBoundField = keyof typeof capacityBounds;
@@ -90,6 +98,7 @@ export const capacitySchema = z.object({
   laneDrainMinutes: capacityValue("laneDrainMinutes").optional(),
   laneDrainEscalationMinutes: capacityValue("laneDrainEscalationMinutes").optional(),
   hostOutageNoticeMinutes: capacityValue("hostOutageNoticeMinutes").optional(),
+  threadRetentionDays: capacityValue("threadRetentionDays").optional(),
   operatorDefaultHostKind: hostKindSchema.nullable().optional(),
 }).strict();
 
@@ -108,6 +117,7 @@ export const capacityAuthorityValuesSchema = capacitySchema.extend({
   laneDrainMinutes: capacityValue("laneDrainMinutes"),
   laneDrainEscalationMinutes: capacityValue("laneDrainEscalationMinutes"),
   hostOutageNoticeMinutes: capacityValue("hostOutageNoticeMinutes"),
+  threadRetentionDays: capacityValue("threadRetentionDays"),
   operatorDefaultHostKind: hostKindSchema.nullable(),
 });
 
@@ -127,6 +137,7 @@ export const capacityStateFields = {
   laneDrainMinutes: capacityValue("laneDrainMinutes").default(capacityBounds.laneDrainMinutes.fallback),
   laneDrainEscalationMinutes: capacityValue("laneDrainEscalationMinutes").default(capacityBounds.laneDrainEscalationMinutes.fallback),
   hostOutageNoticeMinutes: capacityValue("hostOutageNoticeMinutes").default(capacityBounds.hostOutageNoticeMinutes.fallback),
+  threadRetentionDays: capacityValue("threadRetentionDays").default(capacityBounds.threadRetentionDays.fallback),
   operatorDefaultHostKind: hostKindSchema.nullable().default(DEFAULT_HOST_KIND),
 };
 

@@ -1,10 +1,10 @@
 import { ArchiveNotDeliveredError, ProvenPreSendRefusalError } from '../../../core/host';
-import type { HostPolicyConstructor, Adapter, AgentObservation, OriginAgent, ExternalWorkspaceArchiveInput, ExternalWorkspaceSourceExpectation, RunPresenceDaemon, RunUsageSource, RunUsageStream, RunUsageStreamEvent, ProcessSearch, WorkspaceCreationState } from '../../../core/host';
+import type { HostPolicyConstructor, Adapter, AgentObservation, ArchivedThread, OriginAgent, ExternalWorkspaceArchiveInput, ExternalWorkspaceSourceExpectation, RunPresenceDaemon, RunUsageSource, RunUsageStream, RunUsageStreamEvent, ProcessSearch, WorkspaceCreationState } from '../../../core/host';
 import { capPaseoTitle } from '../../../shared/paseo-title';
 import { mcpBindingPathFromHostRecord } from '../../../shared/report-binding';
 import { timedDaemonRequests } from './paseo-call-timing';
 import { paseoWorkspaceIdAccepted } from "./workspace-id";
-import { historicalWireLabel, validateWireLabels } from "../../../shared/wire-labels";
+import { historicalWireLabel, validateWireLabels, WIRE_PLUGIN_LABEL_KEY } from "../../../shared/wire-labels";
 
 import { createPaseoApi } from "@getpaseo/client";
 import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
@@ -417,6 +417,57 @@ return class PaseoAdapter extends Policy {
     if (!refreshed || agent.archivedAt) return;
     const result = await agent.archive();
     if (!result.archivedAt) throw new Error(`Agent archive was not confirmed for ${id}`);
+  }
+  /**
+   * Remove one archived thread at the service's retention pass (orchestration
+   * contract, "Archived thread retention"). The daemon's `delete_agent_request`
+   * takes no command id, so the deterministic identity is the retention pass's
+   * durable per-thread intent: an unknown outcome is never re-sent from here, and
+   * the caller only reaches this call after reading the thread's archive stamp.
+   * A failure is left unclassified; the pass records it as an unknown delivery and
+   * reads the thread again before it decides anything.
+   */
+  async deleteAgent(id: string): Promise<void> {
+    await this.client.deleteAgent(id);
+  }
+  /**
+   * The retention pass's archived inventory: every archived thread this daemon
+   * holds that Nucleus created, under the current labels and the pre-Nucleus ones
+   * (a thread created by the retired queue keeps `northstar.*`). `null` when the
+   * walk cannot be proved complete: a partial list is never read as the whole
+   * archived set, so no backlog is pruned from an unfinished read.
+   */
+  async archivedThreads(): Promise<ArchivedThread[] | null> {
+    let entries: Array<{ agent?: Record<string, unknown> }>;
+    try {
+      entries = await this.labelledAgents([{ [WIRE_PLUGIN_LABEL_KEY]: 'nucleus' }, { 'northstar.plugin': 'northstar-queue' }], true);
+    } catch (error) {
+      if (error instanceof AgentInventoryIncompleteError || error instanceof AgentInventoryConflictError || error instanceof AgentInventoryLabelsError) return null;
+      throw error;
+    }
+    const archived: Array<{ id: string; workspaceId: string | null; archivedAt: string; labels: Record<string, string> }> = [];
+    for (const entry of entries) {
+      const agent = entry.agent;
+      if (!agent || typeof agent.id !== 'string' || typeof agent.archivedAt !== 'string' || !agent.archivedAt) continue;
+      archived.push({
+        id: agent.id,
+        workspaceId: typeof agent.workspaceId === 'string' ? agent.workspaceId : null,
+        archivedAt: agent.archivedAt,
+        labels: (agent.labels && typeof agent.labels === 'object' ? agent.labels : {}) as Record<string, string>,
+      });
+    }
+    return archived;
+  }
+  /**
+   * One thread's fresh archive fact, read immediately before the retention pass
+   * removes it. `null` is the daemon's own absent answer (the same read
+   * `originAgent` accepts as gone); a thread the operator unarchived answers with
+   * a null stamp and is kept.
+   */
+  async threadArchiveState(id: string): Promise<{ archivedAt: string | null; deleted: boolean } | null> {
+    const agent = this.api.agents.ref(id);
+    if (!await agent.refresh()) return null;
+    return { archivedAt: agent.archivedAt ?? null, deleted: false };
   }
   async findRunAgents(run: Run) {
     // Archived history: a thread created before Nucleus still answers by its old task label.

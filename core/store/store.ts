@@ -694,6 +694,8 @@ export class Store {
   promoteQueuedTask(task:Task,actor="operator control"):Task { return this.submissionsStore.promoteQueuedTask(task, actor); }
   dependencyWait(task: Pick<Task,"dependsOn">): string { return this.tasksStore.dependencyWait(task); }
   taskOrNull(id: string): Task | null { return this.tasksStore.taskOrNull(id); }
+  /** Whether this identity's history was purged; see `StoreTasks.purgedTask`. */
+  purgedTask(id: string): boolean { return this.tasksStore.purgedTask(id); }
   purgeOldTasks(at=Date.now(),cleanupFiles?:(taskId:string,runIds:string[])=>void) { return this.retentionStore.purgeOldTasks(at, cleanupFiles); }
   /**
    * Audits B5: the tasks the next purge would delete, so the caller can reap their owned

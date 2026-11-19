@@ -26,6 +26,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, isAbsolute, join, resolve } from "node:path";
 import { z } from "zod";
+import { DEFAULT_THREAD_RETENTION_DAYS } from "../contracts";
 import type { T3ConnectionSettings } from "./settings";
 
 /** The one provider instance this route owns, and the label its sessions carry. */
@@ -450,7 +451,26 @@ export interface T3StatusInput {
   bearerAccepted: boolean | null;
   service: T3ServiceFacts | null;
   projects: Array<{ name: string; hostKind: string }> | null;
+  /** `service.health`'s retention record, when the service answered. */
+  retention?: {
+    days: number;
+    hosts: Array<{ hostId: string; supported: boolean; at: string | null; deleted: number; remaining: number; error: string }>;
+  } | null;
   now?: number;
+}
+
+/**
+ * Orchestration contract, "Archived thread retention": the window in force and
+ * this host's last pass, as `service.health` reports them. A host whose adapter
+ * cannot remove a thread says so instead of reading as a clean zero.
+ */
+export interface T3RetentionFacts {
+  days: number;
+  supported: boolean;
+  lastRunAt: string | null;
+  deleted: number;
+  remaining: number;
+  error: string;
 }
 
 export interface T3StatusReport {
@@ -470,6 +490,34 @@ export interface T3StatusReport {
   /** The repositories whose stored host kind is T3Code; empty when none opted in. */
   projects: Array<{ name: string }>;
   acp: { commandPath: string | null; owned: boolean };
+  /** Archived thread retention: one Nucleus-scheduled pass, per host. */
+  retention: T3RetentionFacts;
+}
+
+/**
+ * This host's retention facts from `service.health`. Nothing is inferred: a
+ * service that is not running, or one that has not run a pass yet, says which of
+ * the two it is, and a host the pass could not reach keeps its last real run.
+ */
+export function retentionFacts(
+  health: {
+    days: number;
+    hosts: Array<{ hostId: string; supported: boolean; at: string | null; deleted: number; remaining: number; error: string }>;
+  } | null | undefined,
+  hostId: string | null,
+): T3RetentionFacts {
+  const fact = hostId ? health?.hosts.find((entry) => entry.hostId === hostId) : undefined;
+  return {
+    days: health?.days ?? DEFAULT_THREAD_RETENTION_DAYS,
+    supported: fact?.supported ?? false,
+    lastRunAt: fact?.at ?? null,
+    deleted: fact?.deleted ?? 0,
+    remaining: fact?.remaining ?? 0,
+    error: fact?.error
+      ?? (health
+        ? (hostId ? "no retention pass has recorded this host yet" : "the service reports no T3Code host")
+        : "the Nucleus service is not running"),
+  };
 }
 
 /** Assemble the report once every fact is read; no I/O and no secret here. */
@@ -550,6 +598,7 @@ export function t3StatusReport(input: T3StatusInput): T3StatusReport {
       commandPath: input.acpCommand,
       owned: input.acpCommand !== null && isNucleusAcpCommand(input.acpCommand),
     },
+    retention: retentionFacts(input.retention, service.hostId),
   };
 }
 

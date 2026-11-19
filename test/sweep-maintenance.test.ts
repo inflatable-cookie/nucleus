@@ -25,7 +25,7 @@ function fixture(t: TestContext) {
   (engine as unknown as Loose).migrateProjectOwnersToPlanners = async () => { migrations.count++; };
   (engine as unknown as Loose).removeSiblings = async () => {};
   const maintenance = new SweepMaintenance(enginePorts(engine,
-    ['adapter', 'migrateProjectOwnersToPlanners', 'removeSiblings', 'store'], []));
+    ['adapter', 'hostAvailable', 'hostIds', 'migrateProjectOwnersToPlanners', 'removeSiblings', 'store', 'withHost'], []));
   return { store, engine, maintenance, migrations };
 }
 

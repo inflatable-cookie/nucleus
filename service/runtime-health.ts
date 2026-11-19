@@ -26,6 +26,8 @@ import type {
 } from "../core/telemetry/event-loop-delay";
 import type { Store } from "../core/store/store";
 import type { BoundRun } from "../shared/contracts";
+import { threadRetentionHealth } from "../core/workspaces/thread-retention";
+import type { ThreadRetentionHealth } from "../core/workspaces/thread-retention";
 import type { PaseoAdmission, ReconciliationSweep } from "../shared/telemetry";
 import type { HostRunEndpoint } from "./callbacks/host-run-endpoint";
 import type { RegisteredHost } from "./host-connections";
@@ -66,6 +68,15 @@ export interface RuntimeHealth {
   pluginPresenceError?: string;
   engineError: string;
   retentionError: string;
+  /**
+   * Orchestration contract, "Archived thread retention": the window in force and
+   * each host's last pass (when, how many removed, how many remain, and any
+   * failure), so a pass that stops running cannot go stale silently. Null before
+   * the first pass of this store.
+   */
+  threadRetention?: ThreadRetentionHealth | null;
+  /** Why the last retention pass could not run at all; empty when it did. */
+  threadRetentionError?: string;
   hookCleanup?: HookCleanupHealth | null;
   paused: boolean;
   drained: boolean;
@@ -411,6 +422,8 @@ export class RuntimeHealthProjection {
         this.context.pluginPresenceFaultMessage() || undefined,
       engineError: store.getMeta<string>("engineError") ?? "",
       retentionError: store.getMeta<string>("retentionError") ?? "",
+      threadRetention: threadRetentionHealth(store),
+      threadRetentionError: store.getMeta<string>("threadRetentionError") ?? "",
       hookCleanup: store.getMeta<HookCleanupHealth>("hookCleanup") ?? null,
       paused: store.getMeta<boolean>("paused") ?? true,
       ...this.context.drainProjection(),

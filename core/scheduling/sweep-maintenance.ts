@@ -4,11 +4,12 @@ import { reapHookCheckouts } from "../hooks/hook-cleanup";
 import { removeTaskProofFiles } from "../intake/proof-files";
 import { pruneLiveDataHomeBackupCopies } from "../store/data-home-retention";
 import { RECLAIM_DRAIN_BUDGET_MS, RECLAIM_DRAIN_FREE_PAGES, RECLAIM_DRAIN_MAX_PAGES } from "../store/store";
+import { runThreadRetention } from "../workspaces/thread-retention";
 
 const HOUR_MS = 3_600_000;
 const DAY_MS = 86_400_000;
 
-export type SweepMaintenanceContext = Pick<Engine, 'adapter' | 'migrateProjectOwnersToPlanners' | 'removeSiblings' | 'store'>;
+export type SweepMaintenanceContext = Pick<Engine, 'adapter' | 'hostAvailable' | 'hostIds' | 'migrateProjectOwnersToPlanners' | 'removeSiblings' | 'store' | 'withHost'>;
 
 /**
  * The audit pass's periodic maintenance: the hourly and daily store chores and
@@ -55,6 +56,26 @@ export class SweepMaintenance {
         this.store.transaction(() => this.store.pruneRetainedRows(at));
         this.store.setMeta('retentionError', '');
       } catch (error) { this.store.setMeta('retentionError', String(error)); this.store.setMeta('lastRetentionAt', at); }
+    }
+    // Orchestration contract, "Archived thread retention": the service schedules
+    // one retention pass itself, never a system job (Tom, 2026-11-19). Hourly, with
+    // a batch cap per host, so the archived backlog drains over sweeps instead of
+    // in one burst against a host. The pass records every host's outcome under
+    // `threadRetention`, which `service.health` reads; a paused store pauses it
+    // with the other destructive chores.
+    if (!paused && at - (this.store.getMeta<number>('lastThreadRetentionAt') ?? 0) >= HOUR_MS) {
+      this.store.setMeta('lastThreadRetentionAt', at);
+      try {
+        await runThreadRetention({
+          store: this.store,
+          hostIds: this.context.hostIds(),
+          hostAvailable: (hostId) => this.context.hostAvailable(hostId),
+          withHost: (hostId, work) => this.context.withHost(hostId, work),
+          adapter: this.context.adapter,
+          at,
+        });
+        this.store.setMeta('threadRetentionError', '');
+      } catch (error) { this.store.setMeta('threadRetentionError', String(error)); }
     }
     // Lean store 4 (task 989): freed pages are released on every maintenance tick, not only
     // after a prune, while free pages exceed the drain threshold — one bounded pass per tick

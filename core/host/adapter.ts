@@ -11,6 +11,7 @@ import type { HostForgeReads } from './contract/forge';
 import type { HostWorkspaceArchive } from './contract/workspace-archive';
 
 export type { OriginAgent } from './contract/identity';
+export type { ArchivedThread } from './contract/threads';
 export type { AgentObservation } from './contract/observation';
 export type { ExternalWorkspacePlacement, ExternalWorktreeSource, ExternalWorkspaceCatalogEntry, ExternalWorkspaceCatalog, ExternalWorkspaceSourceExpectation, ExternalWorkspaceArchiveInput, ExternalWorkspaceArchiveOutcome } from './contract/workspace-archive';
 

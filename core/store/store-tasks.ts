@@ -996,6 +996,16 @@ export class StoreTasks {
     return row ? this.hooks.numberedTask(String(row.data)) : null;
   }
   /**
+   * Whether this identity's history was purged, read from the tombstone the purge
+   * alone writes (orchestration contract, "History retention"). A purged task was
+   * finished when the purge took it, so the archived thread retention pass reads
+   * this as "done or cancelled" for a task it can no longer read in full. An
+   * identity with neither a task nor a tombstone answers false: never a guess.
+   */
+  purgedTask(id: string): boolean {
+    return Boolean(this.db.prepare("SELECT id FROM tombstones WHERE id=?").get(id));
+  }
+  /**
    * Bounded exact identity lookup for bridge lifecycle hints (Contract 007). It matches only
    * Queue identities the service already knows, materializes no fleet history and returns an
    * empty list for an unknown identity, so an unknown event schedules nothing.

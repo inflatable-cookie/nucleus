@@ -7,7 +7,7 @@ import { radius, roles, space, type } from "./design";
 import { DateTimeLink, formatLocalDateTime } from "./date-time-field";
 import { USAGE_LABELS } from "../shared/pool";
 import * as api from "../shared/contracts";
-import { MAX_HOLD_MINUTES, MAX_HOST_OUTAGE_NOTICE_MINUTES, MAX_PASEO_CALL_LIMIT, MAX_STALL_THRESHOLD_MINUTES, usageLevels, type UiQueueState, type UsageLevel } from "../shared/contracts";
+import { MAX_HOLD_MINUTES, MAX_HOST_OUTAGE_NOTICE_MINUTES, MAX_PASEO_CALL_LIMIT, MAX_STALL_THRESHOLD_MINUTES, MAX_THREAD_RETENTION_DAYS, usageLevels, type UiQueueState, type UsageLevel } from "../shared/contracts";
 
 /*
  * Settings → Dispatch limits. One place for what the host runs with: the usage
@@ -180,9 +180,10 @@ const CAPACITY_FIELD_LABELS: Record<keyof api.CapacityAuthorityValues, string> =
   holdReminderMinutes: "Hold reminder", holdEscalationMinutes: "Hold escalation",
   laneDrainMinutes: "Lane drain", laneDrainEscalationMinutes: "Lane drain escalation",
   hostOutageNoticeMinutes: "Host outage notice", operatorDefaultHostKind: "Default host",
+  threadRetentionDays: "Archived thread retention",
 };
 type CapacityKey = Exclude<keyof api.CapacityAuthorityValues, "operatorDefaultHostKind">;
-type LimitSpec = { key: CapacityKey; min: number; max: number; unit: "slots" | "calls" | "minutes"; advanced?: true };
+type LimitSpec = { key: CapacityKey; min: number; max: number; unit: "slots" | "calls" | "minutes" | "days"; advanced?: true };
 const CAPACITY_FIELDS: LimitSpec[] = [
   { key: "globalLimit", min: 1, max: 64, unit: "slots" },
   { key: "projectLimit", min: 1, max: 32, unit: "slots" },
@@ -194,8 +195,9 @@ const CAPACITY_FIELDS: LimitSpec[] = [
   { key: "laneDrainMinutes", min: 1, max: MAX_HOLD_MINUTES, unit: "minutes", advanced: true },
   { key: "laneDrainEscalationMinutes", min: 1, max: MAX_HOLD_MINUTES, unit: "minutes", advanced: true },
   { key: "hostOutageNoticeMinutes", min: 1, max: MAX_HOST_OUTAGE_NOTICE_MINUTES, unit: "minutes", advanced: true },
+  { key: "threadRetentionDays", min: 1, max: MAX_THREAD_RETENTION_DAYS, unit: "days", advanced: true },
 ];
-const UNIT_SHORT: Record<LimitSpec["unit"], string> = { slots: "slots", calls: "calls", minutes: "min" };
+const UNIT_SHORT: Record<LimitSpec["unit"], string> = { slots: "slots", calls: "calls", minutes: "min", days: "days" };
 
 /** A limits read that has not settled: loading, a failed first read, or a failed refresh. Nothing here writes, so Try again is always safe. */
 function ReadNotice({ c, hasValues, error, retry }: { c: Colors; hasValues: boolean; error: unknown; retry: () => void }) {

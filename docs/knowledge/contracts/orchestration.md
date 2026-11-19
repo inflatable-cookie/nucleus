@@ -3739,3 +3739,48 @@ can go stale, exactly like that. It needs to be managed by Nucleus scheduling").
   planner thread, a thread of an unfinished task or an open decision, or one the
   operator unarchived.
 - Implementation: nucleus#1367.
+
+The pass is `core/workspaces/thread-retention.ts`. `SweepMaintenance` runs it
+hourly, only while Nucleus is unpaused, and removes at most
+`THREAD_RETENTION_BATCH` (200) threads per host per pass, oldest archive stamp
+first, so the existing backlog drains over sweeps instead of in one burst. The
+window is the `threadRetentionDays` Settings value (Settings → Dispatch limits →
+Advanced, bounded 1–90, default 3) and is recorded with every write in the
+capacity change journal.
+
+A host prunes only when its adapter supplies the two optional reads beside
+`deleteAgent`: `archivedThreads` (one walk of every archived thread Nucleus
+created, under the current `nucleus.*` and the pre-Nucleus `northstar.*` labels,
+which answers `null` rather than a partial list) and `threadArchiveState` (one
+thread's fresh stamp, immediately before removal). A host without them is
+reported as unable to prune, never as a clean zero. After a removal the pass
+calls the adapter's optional `forgetThreads`, so a host's own state file drops
+the per-thread entries it no longer describes.
+
+The scope is read from the store: a task label naming a task in `done` or
+`cancelled`, or one whose history was purged (the purge tombstone is the proof a
+finished task leaves behind). A thread the walk lists is re-read first; an
+unarchived thread, a re-archived thread inside the window, an absent thread or an
+unreadable one removes nothing. Each removal has one durable intent keyed by host
+and thread, written before the call: an unknown delivery is never re-sent blind,
+the next pass reads the thread fresh, and only a thread the host still reports
+archived is retried, at most three times.
+
+`service.health.threadRetention` carries the window, the batch cap and one fact
+per host (`at`, `scanned`, `eligible`, `deleted`, `absent`, `failed`,
+`remaining`, `truncated`, `error`); a host that is away keeps its last real pass
+and names why this one skipped it. `nucleus t3 status` prints the window with
+that host's last pass.
+
+Provider sessions are not part of this pass. A Paseo thread's provider session
+(the agent run's own Codex session) is owned by the host's agent record, has no
+absence proof in the host contract, and can be resumed by a thread the operator
+keeps; removing one blind could lose a session that is still live. Deleting a
+thread leaves its provider session to the host's own retention.
+
+Paseo prunes through its adapter (`archivedThreads`, `threadArchiveState`,
+`deleteAgent`). T3 and BB are the next slices, split per host because each needs
+its own private-host proof: T3 already removes support threads at closeout and
+keeps only worker history archived, and BB's `threads.delete` needs a host
+operation and its own cascade proof before it may prune anything
+(nucleus#1367).
