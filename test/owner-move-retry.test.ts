@@ -4389,6 +4389,34 @@ test("next omits an overwritten released delivery after its real observer settle
   }
 });
 
+test('the sweep owns released-run delivery while an incomplete timeline proves nothing', async () => {
+  const f = fixture(); try {
+    dispatched(f);
+    const run = reviewerRun(f, { status: 'uncertain', released: true });
+    f.store.setMeta('paused', true);
+    let incomplete = true;
+    f.adapter.agentTimelinePage = async () => ({ ...toolTimelinePage(f.timelineEntries), hasOlder: incomplete });
+    const effect = `run-delivery.${run.id}`;
+    const wait = () => f.views('retry_effect').find(view => view.refusal?.includes(effect))?.refusal;
+    assert.match(wait() ?? '', /exact timeline on a sweep/);
+    assert.equal((await f.engine.auditPass(true)).fault, null);
+    assert.equal(f.store.run(run.id)?.status, 'uncertain');
+    assert.equal(f.events('run_delivery_not_delivered').length, 0);
+    assert.ok(wait());
+
+    incomplete = false;
+    assert.equal((await f.engine.auditPass(true)).fault, null);
+    assert.equal(f.store.run(run.id)?.status, 'superseded');
+    assert.equal(f.store.run(run.id)?.released, true);
+    assert.equal(f.events('run_delivery_not_delivered').length, 1);
+    assert.equal(f.events('run_delivery_superseded').length, 1);
+    assert.equal(wait(), undefined);
+    assert.equal((await f.engine.auditPass(true)).fault, null);
+    assert.equal(f.events('run_delivery_not_delivered').length, 1);
+    assert.equal(f.events('run_delivery_superseded').length, 1);
+  } finally { await f.close(); }
+});
+
 test("next lists and retry_effect reconciles an exact attention notice message", async () => {
   const f = fixture();
   try {

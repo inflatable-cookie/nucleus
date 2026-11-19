@@ -711,6 +711,8 @@ export function ownerEffectRetryRefusal(facts: OwnerVerbFacts, item: OwnerEffect
     return `${item.summary}. Waiting for the sweep to observe its target.`;
 
   const runId = ownerEffectIdentity(item.effect, "run-delivery");
+  if (runId && runs.some(run => run.id === runId && run.released))
+    return `run-delivery ${runId} remains uncertain. Nucleus checks the released run's exact timeline on a sweep`;
   if (runId && !runs.some(run => run.id === runId && run.agentId && run.workspaceId))
     return `run-delivery ${runId}: the original agent and workspace are unknown; Nucleus rechecks creation on a sweep`;
   if (item.effect.startsWith("project-validation.") &&

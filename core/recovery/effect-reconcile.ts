@@ -113,14 +113,22 @@ export class EffectReconcile {
     const latestTask = this.store.task(taskId), latestRun = this.store.run(runId);
     if (latestTask.version !== task.version || !latestRun || !isDeepStrictEqual(latestRun, run))
       throw new Error(`Run ${runId} changed during timeline reconciliation; refresh task detail`);
+    const detail = found ? `${runId}: exact creation message observed`
+      : `${runId}: agent ${run.agentId} ${archived ? 'archived' : 'closed'}; complete readable timeline has no ${messageId}`;
+    // A released run cannot become current again. The settlement pass uses
+    // this evidence to retire its delivery without changing callback custody.
+    if (run.released) {
+      this.store.event(taskId, found ? 'run_delivery_reconciled' : 'run_delivery_not_delivered', detail);
+      return true;
+    }
     if (found) {
       this.store.putRun({ ...run, status: 'running' });
-      this.store.event(taskId, 'run_delivery_reconciled', `${runId}: exact creation message observed`);
+      this.store.event(taskId, 'run_delivery_reconciled', detail);
       return true;
     }
     this.store.transaction(() => {
       this.store.putRun({ ...run, status: 'superseded', released: true, active: false });
-      this.store.event(taskId, 'run_delivery_not_delivered', `${runId}: agent ${run.agentId} ${archived ? 'archived' : 'closed'}; complete readable timeline has no ${messageId}`);
+      this.store.event(taskId, 'run_delivery_not_delivered', detail);
     });
     return true;
   }
