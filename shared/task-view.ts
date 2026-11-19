@@ -1,9 +1,10 @@
+import { taskAttention } from "./task-attention";
 import { sameCallerIdentity } from './agent-identity';
 import type { Task, Run, Project, RepositorySettings, TaskDetail, TaskSummary, Completion, CompletionPolicy, CompletionMembership, WorkerExclusion, OwnerAcceptanceRecord, HoldKind, UnchangedBoard, AwaitingProof, ProofRoute } from "./contracts";
 import type { Incident } from "./incident";
 import { isDispositionComplete } from "./disposition";
 import { holdsOf, syncHoldProjection, taskHoldKind, holdOwnerOf, taskOwner, holdFencesView, holdEscalated, isOperatorOrigin } from "./holds";
-import { deriveWaitState, prerequisiteReasonEntries, type WaitStateContext } from "./wait-state";
+import { deriveWaitState, prerequisiteReasonEntries, type WaitStateContext, type WaitStateView } from "./wait-state";
 import { taskBudget, taskBudgetBoardView, type BudgetEvent, type TaskBudgetView } from "./task-budget";
 import { reportHeadline, TASK_PROGRESSING_REASON } from "./task-detail-summary";
 import { taskSummarySchema } from "./schema/task-view";
@@ -217,9 +218,10 @@ export function episodeBindsCurrentWork(task: Task): boolean {
  * checkpointed run, then a wait. Null while the task progresses. The full
  * reason, owner and evidence live in `task.next`; this names the category.
  */
-export function taskStopKind(task: Task, runs: Run[] = [], budget?: TaskBudgetView | null): TaskStopKind | null {
+export function taskStopKind(task: Task, runs: Run[] = [], budget?: TaskBudgetView | null, waitState?: WaitStateView | null): TaskStopKind | null {
   const fences = holdsOf(task);
   if (fences.dispatch || fences.merge) return "hold";
+  if (waitState?.state === "waiting_prerequisite" && waitState.owner === "operator") return "attention";
   const stop = currentTaskStop(task, budget);
   if (stop) {
     if (stop.reason === "run_stalled") return "run";
@@ -231,7 +233,9 @@ export function taskStopKind(task: Task, runs: Run[] = [], budget?: TaskBudgetVi
   // A prerequisite wait names what the task waits for, so a task parked in an
   // attention phase by it is waiting, not attention (the one attention
   // projection, nucleus#1366). The operator-correctable cases stay attention.
-  if (task.prerequisiteWait && !task.prerequisiteWait.releasedAt) return "wait";
+  const prerequisiteWait = waitState?.state === "waiting_prerequisite" ||
+    (!waitState && Boolean(task.prerequisiteWait && !task.prerequisiteWait.releasedAt));
+  if (prerequisiteWait && taskAttention({ phase: task.phase, held: task.held, prerequisiteWait }).state === "waiting") return "wait";
   if (task.phase === "needs_attention") return "attention";
   // A checkpointed reviewer or a reported block is the stop even before any
   // incident bookkeeping exists; the runs are the evidence, never a flag pair.
@@ -313,7 +317,7 @@ export function summarizeTask(task: Task, includeRepository = false, hasUnreleas
   // The board reads the same derived facts, budget figure and wait the detail and
   // the gates read (nucleus#1187).
   const { budget, reason, holdKind, waitState } = taskDisplayFacts(task, waitContext, taskRuns, events, repository, now);
-  const stop = taskStopKind(task, taskRuns, budget), stopRecord = currentTaskStop(task, budget);
+  const stop = taskStopKind(task, taskRuns, budget, waitState), stopRecord = currentTaskStop(task, budget);
   // Keep a short board reason plus the wait label and actor class. Full stop,
   // hold and wait detail, prerequisite occupant lists and long instructions
   // remain available from task detail.

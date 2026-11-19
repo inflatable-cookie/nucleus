@@ -82,6 +82,9 @@ test("an unresolved prerequisite wait is waiting; an operator-correctable one is
   assert.equal(pipelineColumn({ kind: "task", id: waiting.id, lanes: [], value: waiting }), "Working");
   const correctable = task({ waitState: { state: "waiting_prerequisite", owner: "operator", nextAction: "Correct the list" } });
   assert.equal(attention(correctable), true);
+  assert.equal(taskStopKind({ phase: "needs_attention", held: false, resolution: {},
+    prerequisiteWait: { releasedAt: null } } as unknown as Task, [], null,
+    { state: "waiting_prerequisite", owner: "operator", nextAction: "Correct the list" }), "attention");
   assert.equal(
     taskStopKind({ phase: "needs_attention", held: false, resolution: {} } as unknown as Task),
     "attention",

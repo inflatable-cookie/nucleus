@@ -374,17 +374,20 @@ task's parent row is driven by the one attention projection the board and
   row is shown, and a row this host snoozed is unsnoozed.
 - *waiting* — the task waits on nothing Nucleus is running and needs no one: the
   row is snoozed. An owner hold with a release condition and an unresolved
-  prerequisite wait are waiting with their named cause, never attention.
+  completable prerequisite wait are waiting with their named cause. An operator-owned
+  prerequisite correction remains attention.
 - *finished* — the row's snooze is retired and the terminal lane archives it.
 
 The horizon is bounded (48 hours) and the ordinary sweep renews it with 24 hours
 left, so the row never wakes itself while the task still waits. The command
 identity is deterministic per wait episode and horizon, so a returning identical
 wish never reuses a spent command. Like every presentation write, the effect is
-recorded before the send and the adapter reads `snoozedUntil` back afterwards: a
+recorded before the send and the adapter reads `snoozedUntil` back afterwards. An
 unknown delivery retains its identity and is never blindly resent. A later read
-that finds the requested horizon establishes ownership; a different snooze is left alone. A refusal is "stay active" for that wait episode and is never retried;
-only a new episode (the row was shown again in between) may snooze again. A row
+that finds the requested horizon establishes ownership; a different snooze is left
+alone. A refusal stays active for that wait and is never retried. If the task becomes
+active before an unknown send is resolved, a later wait can snooze after the old
+horizon expires, when a late delivery can no longer hide the row. A row
 an operator settled by hand is left exactly as it is — no snooze, no unsettle —
 and a repeated pass inside the horizon writes nothing.
 
@@ -1052,8 +1055,8 @@ service.
 Readiness is T3's own verdict. The nightly probes an unbound directory; the
 agent opens an inert session advertising `nucleus` and `nucleus-quiet` without
 attaching to a task (Spec 065). A genuine probe warning remains installed but
-unready: install prints T3's note and says native parenting falls back to
-top-level role threads until the probe succeeds. Status reports readiness,
+unready: install prints T3's note and says role creation waits until the probe
+succeeds. Status reports readiness,
 usability and the probe note separately. Install waits for the service to adopt
 the newly issued session, not just an earlier connection to the same environment.
 
@@ -1144,8 +1147,7 @@ launch and verdict, a revision round addressed on the retained worker, the
 accepted round-two verdict, the merge, closeout, the worker thread's archive, the
 removal of every support thread and the archive of only that task's T3 worktree
 handle while its shared project registration remains registered (nucleus#1155).
-A second lifecycle test keeps a released recovery
-thread settled while the task is open and continues the same thread for the next
+A second lifecycle test continues the released recovery child for the next
 fault instead of opening another. The test fails on a tree
 without the model-option, archive and steering work.
 

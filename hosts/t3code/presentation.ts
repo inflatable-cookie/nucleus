@@ -512,9 +512,15 @@ export class T3Presentation {
     const wakeAt = projection.thread.snoozedUntil
       ? Date.parse(projection.thread.snoozedUntil)
       : Number.NaN;
-    const record = this.core.state.read().snoozes?.[threadId];
+    let record = this.core.state.read().snoozes?.[threadId];
     const snoozed = Number.isFinite(wakeAt) && wakeAt > now;
     if (record?.state === "refused") return;
+    if (record?.state === "unknown" && record.ended && Date.parse(record.until) <= now) {
+      // A late delivery cannot snooze beyond its own expired horizon. A later
+      // wait can now start a fresh episode without replaying the uncertain send.
+      this.forgetSnooze(threadId);
+      record = undefined;
+    }
     if (record?.state === "unknown") {
       if (snoozed && projection.thread.snoozedUntil === record.until)
         this.recordSnooze(threadId, { ...record, state: "snoozed" });
@@ -603,7 +609,10 @@ export class T3Presentation {
       "observation",
     );
     if (projection.thread.snoozedUntil === null || projection.thread.snoozedUntil === undefined) {
-      if (record.state !== "unknown") this.forgetSnooze(threadId);
+      if (record.state === "unknown") {
+        if (Date.parse(record.until) <= Date.now()) this.forgetSnooze(threadId);
+        else this.recordSnooze(threadId, { ...record, ended: true });
+      } else this.forgetSnooze(threadId);
       return;
     }
     if (record.state === "unknown" && projection.thread.snoozedUntil !== record.until) return;
@@ -639,7 +648,8 @@ export class T3Presentation {
       current.commandId === entry.commandId &&
       current.state === entry.state &&
       current.until === entry.until &&
-      current.episode === entry.episode
+      current.episode === entry.episode &&
+      current.ended === entry.ended
     )
       return;
     this.core.state.update((state) => {

@@ -139,6 +139,8 @@ const snooze = z.object({
   commandId: z.string(),
   until: z.string(),
   state: z.enum(["snoozed", "refused", "unknown"]),
+  /** The task became active after this uncertain send. */
+  ended: z.boolean().optional(),
   /** The named wait the row was snoozed for; diagnostic text only. */
   cause: z.string().optional(),
   recordedAt: z.string(),

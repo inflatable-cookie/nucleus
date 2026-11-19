@@ -1,3 +1,5 @@
+import { taskWaitStateContext } from "../recovery/wait-context";
+import { taskDetailView } from "../../shared/task-view";
 import { taskNeverDispatched, liveRun } from "../task-decision-rules";
 import {
   boardDispatchHoldApplies,
@@ -516,7 +518,8 @@ export function ownerTaskStop(facts: OwnerVerbFacts): TaskNextStop | null {
       evidence: "Board dispatch hold",
       since: task.updatedAt,
     };
-  const kind = taskStopKind(task, runs, budget);
+  const wait = taskDetailView(task, taskWaitStateContext(facts.store, task, null), runs).waitState;
+  const kind = taskStopKind(task, runs, budget, wait);
   if (!kind) return null;
   const stored = currentTaskStop(task, budget);
   // No recorded stop: type it from the stop kind. Only a queued task's reason is

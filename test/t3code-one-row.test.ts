@@ -251,11 +251,31 @@ test('unknown snooze delivery keeps its identity and a later landed snooze is un
   assert.equal(projection.thread.snoozedUntil, null);
 });
 
+test('a later wait can snooze after an unknown send and its horizon expire', async t => {
+  const { host, server, spec, parentOf } = await fixture(t);
+  await host.createAgent(spec('worker-launch'));
+  const parent = parentOf()!;
+  const until = new Date(Date.now() + SNOOZE_HORIZON_MS).toISOString();
+  host.state.update(state => {
+    state.snoozes = { ...state.snoozes, [parent.threadId]: {
+      episode: 0, commandId: 'uncertain-old-wait', until, state: 'unknown', recordedAt: STAMP,
+    } };
+  });
+  await host.reconcileTaskRow(taskId, { state: 'attention', cause: 'Needs a person' });
+  assert.equal(host.state.read().snoozes?.[parent.threadId]?.ended, true);
+  await host.reconcileTaskRow(taskId, waiting('A later wait'));
+  assert.equal(commandsOf(server, 'thread.snooze').length, 0, 'the old send can still land');
+  host.state.update(state => { state.snoozes![parent.threadId]!.until = STAMP; });
+  await host.reconcileTaskRow(taskId, waiting('A later wait'));
+  assert.equal(commandsOf(server, 'thread.snooze').length, 1);
+  assert.equal(host.state.read().snoozes?.[parent.threadId]?.state, 'snoozed');
+});
+
 test('re-entry leaves a manually settled parent untouched', async t => {
   const { host, server, spec, parentOf, acp } = await fixture(t);
   await host.createAgent(spec('worker-launch'));
   const parent = parentOf()!;
-  acp.surface.release(`session:${taskId}`);
+  acp.surface.release(`session:${taskId}`, "test");
   server.threads.get(parent.threadId)!.thread.settledOverride = 'settled';
   const before = server.commands.length;
   await assert.rejects(host.createAgent(spec('reviewer-launch', 'reviewer')), /settled/i);
