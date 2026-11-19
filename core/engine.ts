@@ -440,9 +440,16 @@ export class Engine {
       return null;
     // A never-dispatched worker has only a host preference. An offline
     // preference cannot fence selection on another online host.
-    if (this.firstWorkerUnbound(task) &&
-        this.hostIds().some(id => id !== hostId && !this.auditUnavailableHosts.has(id) &&
-          this.profileCatalogKnownFor(id) && this.withHost(id, () => this.hostAvailable(id)))) {
+    if (
+      this.firstWorkerUnbound(task) &&
+      this.hostIds().some(
+        (id) =>
+          id !== hostId &&
+          !this.auditUnavailableHosts.has(id) &&
+          this.profileCatalogKnownFor(id) &&
+          this.withHost(id, () => this.hostAvailable(id)),
+      )
+    ) {
       this.resolution.clearHostWait(task);
       return null;
     }
@@ -1311,39 +1318,98 @@ export class Engine {
   }
   /** A queued first worker has a preference, not a workspace host yet. */
   firstWorkerUnbound(task: Task): boolean {
-    return task.entrypoint !== "review" && task.entrypoint !== "proof" && task.phase === "queued" &&
-      task.hostSelection?.basis !== "worker_profile" && !task.profile && taskNeverDispatched(task, this.store.runs(task.id));
+    return (
+      task.entrypoint !== "review" &&
+      task.entrypoint !== "proof" &&
+      task.phase === "queued" &&
+      task.hostSelection?.basis !== "worker_profile" &&
+      !task.profile &&
+      taskNeverDispatched(task, this.store.runs(task.id))
+    );
   }
   workerHostCatalogs(task: { hostId?: string | null }) {
-    const ids = [...new Set([...this.hostIds(), ...(task.hostId ? [task.hostId] : [])])];
-    return ids.filter(id => !this.auditUnavailableHosts.has(id) && this.withHost(id, () => this.hostAvailable(id)) &&
-      this.profileCatalogKnownFor(id)).map(hostId => ({ hostId, profiles: this.profilesFor(hostId) }));
+    const ids = [
+      ...new Set([...this.hostIds(), ...(task.hostId ? [task.hostId] : [])]),
+    ];
+    return ids
+      .filter(
+        (id) =>
+          !this.auditUnavailableHosts.has(id) &&
+          this.withHost(id, () => this.hostAvailable(id)) &&
+          this.profileCatalogKnownFor(id),
+      )
+      .map((hostId) => ({ hostId, profiles: this.profilesFor(hostId) }));
   }
   workerRoutingProfiles(task: Task): Profile[] {
-    return this.firstWorkerUnbound(task) ? combineWorkerHostProfiles(this.workerHostCatalogs(task)) : this.profilesFor(task.hostId);
+    return this.firstWorkerUnbound(task)
+      ? combineWorkerHostProfiles(this.workerHostCatalogs(task))
+      : this.profilesFor(task.hostId);
   }
-  submissionRoutingRefusal(submission: import("../shared/contracts").Submission): string | null {
+  submissionRoutingRefusal(
+    submission: import("../shared/contracts").Submission,
+  ): string | null {
     const catalogs = this.workerHostCatalogs({ hostId: submission.hostId });
-    if (!catalogs.length) return this.independentReviewRoutingRefusal(submission);
-    return independentReviewRoutingConflict({ ...submission, usage: this.store.usageLevel() }, combineWorkerHostProfiles(catalogs), this.store.pool());
+    if (!catalogs.length)
+      return this.independentReviewRoutingRefusal(submission);
+    return independentReviewRoutingConflict(
+      { ...submission, usage: this.store.usageLevel() },
+      combineWorkerHostProfiles(catalogs),
+      this.store.pool(),
+    );
   }
   routingHostViews(task: Task) {
-    const ids = [...new Set([...this.hostIds(), ...(task.hostId ? [task.hostId] : [])])];
-    const named = [...new Set([task.preferredProfileId, task.profile?.id,
-      ...Object.values(task.profileRequests ?? {}).map(request => request?.profileId)].filter((id): id is string => Boolean(id)))];
-    return ids.map(hostId => {
-      const online = !this.auditUnavailableHosts.has(hostId) && this.withHost(hostId, () => this.hostAvailable(hostId));
+    const ids = [
+      ...new Set([...this.hostIds(), ...(task.hostId ? [task.hostId] : [])]),
+    ];
+    const named = [
+      ...new Set(
+        [
+          task.preferredProfileId,
+          task.profile?.id,
+          ...Object.values(task.profileRequests ?? {}).map(
+            (request) => request?.profileId,
+          ),
+        ].filter((id): id is string => Boolean(id)),
+      ),
+    ];
+    return ids.map((hostId) => {
+      const online =
+        !this.auditUnavailableHosts.has(hostId) &&
+        this.withHost(hostId, () => this.hostAvailable(hostId));
       const known = this.profileCatalogKnownFor(hostId);
       const profiles = this.profilesFor(hostId);
-      return { hostId, online, profiles: named.map(profileId => {
-        const profile = profiles.find(candidate => candidate.id === profileId);
-        const thinking = task.profileRequests?.worker?.profileId === profileId
-          ? task.profileRequests.worker.thinkingOptionId || task.thinkingOptionId : task.preferredProfileId === profileId ? task.thinkingOptionId : "";
-        const reason = !online ? "Host offline" : !known ? "Host catalog not yet read" : !profile ? "Profile absent from host catalog" :
-          !profile.available ? profile.problem || "Profile unavailable on host" : thinking && !profile.supportedThinking.includes(thinking)
-            ? `Thinking option ${thinking} unsupported` : "Available on host";
-        return { profileId, eligible: reason === "Available on host", reason };
-      }) };
+      return {
+        hostId,
+        online,
+        profiles: named.map((profileId) => {
+          const profile = profiles.find(
+            (candidate) => candidate.id === profileId,
+          );
+          const thinking =
+            task.profileRequests?.worker?.profileId === profileId
+              ? task.profileRequests.worker.thinkingOptionId ||
+                task.thinkingOptionId
+              : task.preferredProfileId === profileId
+                ? task.thinkingOptionId
+                : "";
+          const reason = !online
+            ? "Host offline"
+            : !known
+              ? "Host catalog not yet read"
+              : !profile
+                ? "Profile absent from host catalog"
+                : !profile.available
+                  ? profile.problem || "Profile unavailable on host"
+                  : thinking && !profile.supportedThinking.includes(thinking)
+                    ? `Thinking option ${thinking} unsupported`
+                    : "Available on host";
+          return {
+            profileId,
+            eligible: reason === "Available on host",
+            reason,
+          };
+        }),
+      };
     });
   }
 

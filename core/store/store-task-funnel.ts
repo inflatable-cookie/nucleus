@@ -567,16 +567,41 @@ export class StoreTaskFunnel {
       );
     // First dispatch binds the chosen worker host together with its workspace intent.
     // Once any run or workspace intent exists, no ordinary update can move it.
-    const bindsWorkerHost = kind === "dispatch_intent" && task.phase === "queued" && task.hostSelection?.basis !== "worker_profile" && !task.profile &&
-      change.phase === "dispatching" && !task.workspaceId && !task.workspaceIntent && !task.directory &&
-      !task.agentIntent && !task.agentId && !task.runId && !task.completion && !task.prUrl && !task.prHead &&
-      !task.resumePrNumber && !task.retiredWorkers.length && !task.resolution.currentRunId &&
-      this.services.db.prepare("SELECT 1 FROM runs WHERE taskId=? LIMIT 1").get(id) === undefined &&
-      change.hostSelection?.basis === "worker_profile" && change.hostSelection.hostId === change.hostId;
-    if (change.hostId !== undefined && change.hostId !== task.hostId && !bindsWorkerHost)
+    const bindsWorkerHost =
+      kind === "dispatch_intent" &&
+      task.phase === "queued" &&
+      task.hostSelection?.basis !== "worker_profile" &&
+      !task.profile &&
+      change.phase === "dispatching" &&
+      !task.workspaceId &&
+      !task.workspaceIntent &&
+      !task.directory &&
+      !task.agentIntent &&
+      !task.agentId &&
+      !task.runId &&
+      !task.completion &&
+      !task.prUrl &&
+      !task.prHead &&
+      !task.resumePrNumber &&
+      !task.retiredWorkers.length &&
+      !task.resolution.currentRunId &&
+      this.services.db
+        .prepare("SELECT 1 FROM runs WHERE taskId=? LIMIT 1")
+        .get(id) === undefined &&
+      change.hostSelection?.basis === "worker_profile" &&
+      change.hostSelection.hostId === change.hostId;
+    if (
+      change.hostId !== undefined &&
+      change.hostId !== task.hostId &&
+      !bindsWorkerHost
+    )
       throw new Error("Task host cannot be changed by an update");
-    if (change.hostSelection !== undefined &&
-      JSON.stringify(change.hostSelection) !== JSON.stringify(task.hostSelection) && !bindsWorkerHost)
+    if (
+      change.hostSelection !== undefined &&
+      JSON.stringify(change.hostSelection) !==
+        JSON.stringify(task.hostSelection) &&
+      !bindsWorkerHost
+    )
       throw new Error("Task host selection cannot be changed by an update");
     if (!bindsWorkerHost) {
       const { hostSelection: _selection, ...remainingChange } = change;

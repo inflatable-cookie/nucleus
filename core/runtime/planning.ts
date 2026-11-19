@@ -119,7 +119,10 @@ export class RuntimePlanning {
       throw new Error(
         `Lead ${submitted.id} has a different brief; use lead.edit, then submit again`,
       );
-    let lead = await this.checkLeadAfterMutation(submitted, request.identitySource);
+    let lead = await this.checkLeadAfterMutation(
+      submitted,
+      request.identitySource,
+    );
     if (lead.checkOperationId) {
       const operation = await this.context.engine.awaitOperation(
         lead.checkOperationId,

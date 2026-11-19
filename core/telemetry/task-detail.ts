@@ -42,7 +42,9 @@ export function createTaskDetailCache(
     externalWait?: (task: Task) => string;
     /** The task host's routing profiles, so its routing policy names why a profile is ineligible there (nucleus#1143). */
     profiles?: (task: Task) => readonly Profile[];
-    hosts?: (task: Task) => import("../../shared/contracts").RoutingPolicy["hosts"];
+    hosts?: (
+      task: Task,
+    ) => import("../../shared/contracts").RoutingPolicy["hosts"];
   } = {},
 ) {
   const now = options.now ?? Date.now;
@@ -177,9 +179,28 @@ export function createTaskDetailCache(
         ...entry.value,
         task: currentTask,
         dependencies: dependencyIds.map((id) => store.taskReference(id)),
-        routingPolicy: { ...store.routingPolicy(options.hosts && task.entrypoint === "worker" && task.hostSelection?.basis !== "worker_profile" && !task.profile && taskNeverDispatched(task, entry.evidence.runs) ? { ...task, hostId: "" } : task, now(), options.profiles?.(task) ?? []),
+        routingPolicy: {
+          ...store.routingPolicy(
+            options.hosts &&
+              task.entrypoint === "worker" &&
+              task.hostSelection?.basis !== "worker_profile" &&
+              !task.profile &&
+              taskNeverDispatched(task, entry.evidence.runs)
+              ? { ...task, hostId: "" }
+              : task,
+            now(),
+            options.profiles?.(task) ?? [],
+          ),
           ...(options.hosts ? { hosts: options.hosts(task) } : {}),
-          ...(task.hostSelection?.basis === "worker_profile" && task.hostSelection.reason ? { hostSelection: { hostId: task.hostSelection.hostId, reason: task.hostSelection.reason } } : {}),
+          ...(task.hostSelection?.basis === "worker_profile" &&
+          task.hostSelection.reason
+            ? {
+                hostSelection: {
+                  hostId: task.hostSelection.hostId,
+                  reason: task.hostSelection.reason,
+                },
+              }
+            : {}),
         },
       };
     },

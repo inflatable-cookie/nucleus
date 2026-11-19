@@ -413,7 +413,9 @@ test("a T3 scope question lands on the board and recovery keeps it off the MCP r
     }),
     reportingViaMcp: false,
     hostId: "paseo-host",
-    listLiveAgents: async () => [{ id: "planner", title: "Planner", workspaceId: "planner-ws" }],
+    listLiveAgents: async () => [
+      { id: "planner", title: "Planner", workspaceId: "planner-ws" },
+    ],
     observe: observeIdle("ws", "worker"),
     originAgent: async (id: string) =>
       id === "planner"
@@ -756,7 +758,12 @@ test("host resolution prefers repository override, then online operator default,
     basis: "planner_host",
     reason: "Planner host",
   });
-  const missingPreference = resolveIngressHost({ repositoryHostKind: "bb", operatorDefaultHostKind: "paseo", registered: ["paseo-primary"], online: ["paseo-primary"] });
+  const missingPreference = resolveIngressHost({
+    repositoryHostKind: "bb",
+    operatorDefaultHostKind: "paseo",
+    registered: ["paseo-primary"],
+    online: ["paseo-primary"],
+  });
   assert.equal(missingPreference.hostId, "paseo-primary");
 });
 

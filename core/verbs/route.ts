@@ -290,10 +290,16 @@ export class RouteControls {
       this.engine.requireProfileCatalog();
       // The task's own host decides availability: a profile its catalog cannot
       // run is refused here, before it is ever recorded (nucleus#1139 review).
-      const hostProfiles = role === "worker" ? this.engine.workerRoutingProfiles(task) : this.engine.profilesFor(task.hostId);
+      const hostProfiles =
+        role === "worker"
+          ? this.engine.workerRoutingProfiles(task)
+          : this.engine.profilesFor(task.hostId);
       if (!this.engine.firstWorkerUnbound(task)) {
-        const candidate = hostProfiles.find(item => item.id === profileId);
-        if (!candidate?.available) throw Error(`Profile ${profileId} cannot run on task host ${task.hostId ?? "unknown"}: ${candidate?.problem || "absent from host catalog"}`);
+        const candidate = hostProfiles.find((item) => item.id === profileId);
+        if (!candidate?.available)
+          throw Error(
+            `Profile ${profileId} cannot run on task host ${task.hostId ?? "unknown"}: ${candidate?.problem || "absent from host catalog"}`,
+          );
       }
       const { profile } = validateNamedProfile(
         profileId,
