@@ -99,6 +99,15 @@ export class AcpSessions implements AcpSessionSurface {
     return rows.length ? JSON.stringify(rows.map(row => [row.id, row.version])) : null;
   }
 
+  /**
+   * The host's inbox uses this to gate its re-entry and release: the offer the inbox's
+   * own turn would show, with the operator-cancel cap applied. Null when none is open.
+   */
+  pendingInboxDecisionKey(hostId: string): string | null {
+    const rows = this.offered({ kind: "inbox", hostId, sessionId: "" });
+    return rows.length ? JSON.stringify(rows.map(row => [row.id, row.version])) : null;
+  }
+
   /** Resolve the exact version shown on a card, including an answer since superseded. */
   decisionSettlement(id: string, version: number): { state: "open" | "answered" | "cancelled"; answer?: string } {
     try {
@@ -123,12 +132,22 @@ export class AcpSessions implements AcpSessionSurface {
    */
   async turn(input: AcpTurnInput, token: string): Promise<AcpTurnReply> {
     if (input.kind === "inbox") {
+      // The inbox holds its turn only while an operator decision is offered (nucleus#1384).
+      // The adapter releases it once nothing is offered and its own cards are settled; an
+      // offer that arrives first cancels that directive, so a card is never left behind.
       const record = verifyAcpInbox({ dataHome: this.dataHome, hostId: input.hostId, sessionId: input.sessionId }, token);
       const waitMs = Math.max(0, Math.min(input.waitMs ?? 0, ACP_TURN_WAIT_MAX_MS));
       const deadline = Date.now() + waitMs;
       for (;;) {
         const elicitations = this.offered(input);
         const signature = JSON.stringify(elicitations);
+        if (elicitations.length) this.releases.delete(record.sessionId);
+        const release = this.releases.get(record.sessionId);
+        if (release !== undefined && elicitations.length === 0) {
+          this.releases.delete(record.sessionId);
+          this.shownDecisions.set(record.sessionId, signature);
+          return { kind: "inbox", hostId: record.hostId, state: "release", reason: release, messages: [], elicitations: [] };
+        }
         if (input.attach || this.shownDecisions.get(record.sessionId) !== signature || Date.now() >= deadline) {
           this.shownDecisions.set(record.sessionId, signature);
           return { kind: "inbox", hostId: record.hostId, state: "hold", reason: "the inbox is open", messages: [], elicitations };

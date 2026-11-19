@@ -214,6 +214,8 @@ export class T3CodeHost implements Host {
   private readonly probeThreadId?: string;
   private readonly modelCapturePath?: string;
   private readonly acp: () => AcpSessionSurface | null;
+  /** Tasks whose attention is active in the current host pass; the inbox title counts them. */
+  private readonly activeTaskIds = new Set<string>();
   constructor(options: T3CodeConfig) {
     this.acp = options.acp ?? (() => null);
     this.probeThreadId = options.probeThreadId;
@@ -264,6 +266,7 @@ export class T3CodeHost implements Host {
       rpc: this.rpc,
       intents: this.intents,
       boardLink: options.boardLink,
+      runningTasks: () => this.activeTaskIds.size,
       workspace: async (directory) => {
         const created = await this.createWorkspace({
           title: "Nucleus",
@@ -456,6 +459,7 @@ export class T3CodeHost implements Host {
    * is what an exact settle or lookup still reads. Nothing in T3 is touched.
    */
   async beginHostPass(tasks: readonly Task[]): Promise<void> {
+    this.activeTaskIds.clear();
     this.reads.beginPass(tasks);
     await this.reconcileObservation();
   }
@@ -633,12 +637,13 @@ export class T3CodeHost implements Host {
   ): Promise<void> {
     if (!this.connected) return;
     const pending = this.acp()?.pendingDecisionKey?.(taskId);
-    await this.presentation.reconcileTaskRow(
-      taskId,
-      pending
-        ? { state: "attention", cause: "Decision needs an operator" }
-        : attention,
-    );
+    const shown = pending
+      ? { state: "attention" as const, cause: "Decision needs an operator" }
+      : attention;
+    // The inbox's title counts tasks executing on this host: attention "active", once each.
+    if (shown.state === "active") this.activeTaskIds.add(taskId);
+    else this.activeTaskIds.delete(taskId);
+    await this.presentation.reconcileTaskRow(taskId, shown);
   }
   /** The ordinary host sweep's nesting pass: dispose owed wakes, hold or release the parent's turn, archive a finished task's parent. */
   async reconcileThreadTitles(tasks: readonly Task[]): Promise<void> {
@@ -647,11 +652,20 @@ export class T3CodeHost implements Host {
       await this.inbox.reconcile();
       const state = this.state.read();
       if (state.inbox) {
-        await this.decisionCards.reconcile(
+        // The inbox is idle between decisions (nucleus#1384): re-enter it only while an
+        // offer is open, and release it only once its own cards are settled on T3.
+        const cards = await this.decisionCards.reconcile(
           state.inbox.threadId,
           state.inbox.workspaceId,
         );
-        await this.decisionHold.reconcile(state.inbox.threadId);
+        const acp = this.acp();
+        if (acp?.pendingInboxDecisionKey?.(this.hostId))
+          await this.decisionHold.reconcile(state.inbox.threadId);
+        else if (cards.settled)
+          acp?.release(
+            state.inbox.sessionId,
+            "no operator decision is open for the inbox",
+          );
       }
       for (const parent of Object.values(state.parents ?? {})) {
         if (!parent.archivedAt) {

@@ -78,6 +78,45 @@ const commandsOf = (server: Awaited<ReturnType<typeof t3Fake>>, type: string) =>
   server.commands.filter(command => (command.type ?? command.method) === type);
 const waiting = (cause = 'Waiting on nucleus#1364'): TaskAttention => ({ state: 'waiting', cause });
 
+test('the inbox counts each active task once and excludes waiting, snoozed and finished tasks', async t => {
+  const { acp, directory, host, parentOf, server, spec } = await fixture(t);
+  const inboxDir = mkdtempSync(join(directory, 'inbox-'));
+  acp.surface.bindInbox = ({ hostId }) => ({
+    sessionId: 'synthetic-inbox', hostId, directory: inboxDir, bindingPath: join(inboxDir, 'binding'),
+  });
+  const worker = await host.createAgent(spec('worker-launch'));
+  const reviewer = await host.createAgent(spec('reviewer-launch', 'reviewer'));
+  const roleThreads = [worker, reviewer].map(role => server.threads.get(role.id)!);
+  for (const role of roleThreads) {
+    role.runs = [syntheticRun(role.thread.id, 1, { status: 'running' })];
+  }
+
+  const otherTask = 'synthetic-other-task';
+  await host.reconcileTaskRow(taskId, { state: 'active' });
+  await host.reconcileTaskRow(otherTask, waiting());
+  await host.reconcileThreadTitles([]);
+  const inbox = host.state.read().inbox!;
+  const inboxTitle = () => server.threads.get(inbox.threadId)!.thread.title;
+  assert.equal(inboxTitle(), '1 task running');
+
+  await host.reconcileTaskRow(taskId, { state: 'active' });
+  await host.reconcileTaskRow(otherTask, { state: 'active' });
+  await host.reconcileThreadTitles([]);
+  assert.equal(inboxTitle(), '2 tasks running');
+
+  for (const role of roleThreads) {
+    role.runs = [syntheticRun(role.thread.id, 1, { status: 'completed' })];
+  }
+  await host.reconcileTaskRow(taskId, waiting());
+  assert.ok(server.threads.get(parentOf()!.threadId)!.thread.snoozedUntil);
+  await host.reconcileThreadTitles([]);
+  assert.equal(inboxTitle(), '1 task running');
+
+  await host.reconcileTaskRow(otherTask, { state: 'finished' });
+  await host.reconcileThreadTitles([]);
+  assert.equal(inboxTitle(), 'All quiet');
+});
+
 test('the parent row names the step its role children are doing (acceptance 2)', async t => {
   const { host, server, spec, task, parentOf } = await fixture(t);
   await host.createAgent(spec('worker-launch'));

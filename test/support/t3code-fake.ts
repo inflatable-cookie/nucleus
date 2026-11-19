@@ -1717,6 +1717,7 @@ export async function t3Fake(t: TestContext, directory: string) {
                   message: "Failed to mutate project.",
                 },
               });
+            if (typeof payload.title === "string") project.title = payload.title;
             if (payload.archived === true)
               archivedProjects.add(payload.projectId);
             else if (payload.archived === false)

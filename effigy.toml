@@ -30,6 +30,7 @@ setup = "npm ci"
 "proof:t3code:read-sizes" = "node scripts/acceptance/t3code-read-sizes.mjs {args}"
 "proof:t3code" = "node --import tsx scripts/acceptance/t3code-private.ts {args}"
 # nucleus#1366's private snooze proof: the one row rule against the installed nightly.
+"proof:t3code:inbox" = "node --import tsx scripts/acceptance/t3code-inbox-private.ts {args}"
 "proof:t3code:snooze" = "node --import tsx scripts/acceptance/t3code-snooze-private.ts {args}"
 # nucleus#1378's private proof: the parent transcript's held turn on the installed nightly, its
 # release and re-entry, the quiet system re-entry probe and closeout.
