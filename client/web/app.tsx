@@ -7,11 +7,29 @@ import { hintSettingsSection } from "../settings-hint";
 import { WebContext } from "./shell";
 import { WebQuestions } from "./questions";
 import { createWebTransport } from "./transport";
-import { applyLiveUpdate, decodeLiveFrame, readLiveFrames } from "./live-channel";
+import {
+  applyLiveUpdate,
+  decodeLiveFrame,
+  readLiveFrames,
+} from "./live-channel";
 import { errorText } from "../error-text";
 import type { BoardTheme } from "../shell/types";
 
-const theme: BoardTheme = { colors: { surface0: "#111318", surface1: "#1a1d24", surface2: "#252932", border: "#39404b", foreground: "#f1f3f5", foregroundMuted: "#a5acb8", accent: "#8caaff", accentForeground: "#101521", statusSuccess: "#71c99a", statusWarning: "#e9bc68", statusDanger: "#ef8282" } };
+const theme: BoardTheme = {
+  colors: {
+    surface0: "#111318",
+    surface1: "#1a1d24",
+    surface2: "#252932",
+    border: "#39404b",
+    foreground: "#f1f3f5",
+    foregroundMuted: "#a5acb8",
+    accent: "#8caaff",
+    accentForeground: "#101521",
+    statusSuccess: "#71c99a",
+    statusWarning: "#e9bc68",
+    statusDanger: "#ef8282",
+  },
+};
 
 export function WebApp() {
   const [live, setLive] = useState(false);
@@ -21,15 +39,24 @@ export function WebApp() {
   const [settings, setSettings] = useState(false);
   const transport = useMemo(() => createWebTransport(), []);
   const query = useMemo(() => new QueryClient(), []);
-  const context = useMemo(() => ({ transport, settings }), [transport, settings]);
-  useEffect(() => { registerSettingsOpener(section => { if (section) hintSettingsSection(section); setSettings(true); }); }, []);
+  const context = useMemo(
+    () => ({ transport, settings }),
+    [transport, settings],
+  );
+  useEffect(() => {
+    registerSettingsOpener((section) => {
+      if (section) hintSettingsSection(section);
+      setSettings(true);
+    });
+  }, []);
   useEffect(() => {
     const controller = new AbortController();
     async function listen() {
       while (!controller.signal.aborted) {
         try {
           const response = await transport.events(controller.signal);
-          if (!response.ok || !response.body) throw new Error(`Live channel: ${response.status}`);
+          if (!response.ok || !response.body)
+            throw new Error(`Live channel: ${response.status}`);
           setLive(true);
           setLiveError(null);
           const reader = response.body.getReader();
@@ -43,22 +70,67 @@ export function WebApp() {
             pending = read.rest;
             for (const frame of read.frames) {
               const update = decodeLiveFrame(frame);
-              if (update.kind === "refused") { setLiveError(update.reason); continue; }
+              if (update.kind === "refused") {
+                setLiveError(update.reason);
+                continue;
+              }
               applyLiveUpdate(query, update);
             }
           }
-        } catch (error) { if (controller.signal.aborted) break; setLiveError(errorText(error)); }
+        } catch (error) {
+          if (controller.signal.aborted) break;
+          setLiveError(errorText(error));
+        }
         setLive(false);
-        await new Promise<void>(resolve => setTimeout(resolve, 3000));
+        await new Promise<void>((resolve) => setTimeout(resolve, 3000));
       }
     }
     void listen();
     return () => controller.abort();
   }, [query, transport]);
-  return <QueryClientProvider client={query}><WebContext.Provider value={context}><BoardLiveContext.Provider value={live}>
-    <WebQuestions /><div data-live-channel={live ? "connected" : "disconnected"} style={{ display: "flex", flexDirection: "column", height: "100vh", width: "100%", overflowX: "auto", background: theme.colors.surface0, color: theme.colors.foreground }}>
-      {liveError && <p role="alert" data-live-error style={{ margin: 0, padding: "6px 12px", background: theme.colors.surface2, color: theme.colors.statusWarning }}>{`Live channel: ${liveError}. Retrying.`}</p>}
-      <div style={{ display: "flex", flex: 1, minHeight: 0 }}>{settings ? <StandaloneSettingsScreen theme={theme} layout={{ compact: false }} onBack={() => setSettings(false)} /> : <MainSurface theme={theme} layout={{ compact: false }} />}</div>
-    </div>
-  </BoardLiveContext.Provider></WebContext.Provider></QueryClientProvider>;
+  return (
+    <QueryClientProvider client={query}>
+      <WebContext.Provider value={context}>
+        <BoardLiveContext.Provider value={live}>
+          <WebQuestions />
+          <div
+            data-live-channel={live ? "connected" : "disconnected"}
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              height: "100vh",
+              width: "100%",
+              overflowX: "auto",
+              background: theme.colors.surface0,
+              color: theme.colors.foreground,
+            }}
+          >
+            {liveError && (
+              <p
+                role="alert"
+                data-live-error
+                style={{
+                  margin: 0,
+                  padding: "6px 12px",
+                  background: theme.colors.surface2,
+                  color: theme.colors.statusWarning,
+                }}
+              >{`Live channel: ${liveError}. Retrying.`}</p>
+            )}
+            <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
+              {settings ? (
+                <StandaloneSettingsScreen
+                  theme={theme}
+                  layout={{ compact: false }}
+                  onBack={() => setSettings(false)}
+                />
+              ) : (
+                <MainSurface theme={theme} layout={{ compact: false }} />
+              )}
+            </div>
+          </div>
+        </BoardLiveContext.Provider>
+      </WebContext.Provider>
+    </QueryClientProvider>
+  );
 }

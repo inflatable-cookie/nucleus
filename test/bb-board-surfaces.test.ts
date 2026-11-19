@@ -488,10 +488,20 @@ test("Settings opens from the panel route with standalone framing and Back navig
     () => direct.query("Nucleus settings") !== undefined,
     "the direct Settings route",
   );
-  assert.ok(direct.query("Standalone Nucleus settings"), "panel Settings route uses standalone framing");
-  assert.ok(direct.query("Nucleus settings column"), "panel Settings route constrains column width");
+  assert.ok(
+    direct.query("Standalone Nucleus settings"),
+    "panel Settings route uses standalone framing",
+  );
+  assert.ok(
+    direct.query("Nucleus settings column"),
+    "panel Settings route constrains column width",
+  );
   const backButton = direct.get("Back to board");
-  assert.equal(backButton.props.style.backgroundColor, "var(--secondary)", "Back control uses BB theme tokens");
+  assert.equal(
+    backButton.props.style.backgroundColor,
+    "var(--secondary)",
+    "Back control uses BB theme tokens",
+  );
   direct.press("Back to board");
   assert.deepEqual(
     navigations.at(-1),
@@ -510,17 +520,28 @@ test("Settings opens from the panel route with standalone framing and Back navig
     "the header's Settings button opens the board's Settings route",
   );
   const fromBoard = mount(h(runtime.BoardPanel, { subPath: "settings" }));
-  await settle(() => fromBoard.query("Back to board") !== undefined, "the Settings route from board");
+  await settle(
+    () => fromBoard.query("Back to board") !== undefined,
+    "the Settings route from board",
+  );
   fromBoard.press("Back to board");
   assert.deepEqual(navigations.at(-1), { path: "board", options: undefined });
   fromBoard.update(h(() => null));
   board.update(h(() => null));
 
   // Opening Settings from a project board (including at a specific section) returns to that project's board.
-  const projectBoard = mount(h(runtime.BoardPanel, { subPath: "project/synthetic" }));
-  await settle(() => projectBoard.query("Projects, Synthetic") !== undefined, "the project board selector");
+  const projectBoard = mount(
+    h(runtime.BoardPanel, { subPath: "project/synthetic" }),
+  );
+  await settle(
+    () => projectBoard.query("Projects, Synthetic") !== undefined,
+    "the project board selector",
+  );
   projectBoard.press("Projects, Synthetic");
-  await settle(() => projectBoard.query("Project settings") !== undefined, "the project settings button");
+  await settle(
+    () => projectBoard.query("Project settings") !== undefined,
+    "the project settings button",
+  );
   projectBoard.press("Project settings");
   assert.deepEqual(
     navigations.at(-1),
@@ -529,7 +550,9 @@ test("Settings opens from the panel route with standalone framing and Back navig
   );
   const fromProject = mount(h(runtime.BoardPanel, { subPath: "settings" }));
   await settle(
-    () => fromProject.query("Projects")?.props.accessibilityState?.selected === true,
+    () =>
+      fromProject.query("Projects")?.props.accessibilityState?.selected ===
+      true,
     "Settings opens at the hinted Projects section",
   );
   fromProject.press("Back to board");
@@ -542,24 +565,44 @@ test("Settings opens from the panel route with standalone framing and Back navig
   projectBoard.update(h(() => null));
 
   // Opening Settings from a thread's ProjectBoardTab also returns to that project's board.
-  const projectTab = mount(h(runtime.ProjectBoardTab, { threadId: "thr_lead" }));
-  await settle(() => projectTab.query("Projects, Synthetic") !== undefined, "the project tab selector");
+  const projectTab = mount(
+    h(runtime.ProjectBoardTab, { threadId: "thr_lead" }),
+  );
+  await settle(
+    () => projectTab.query("Projects, Synthetic") !== undefined,
+    "the project tab selector",
+  );
   projectTab.press("Projects, Synthetic");
-  await settle(() => projectTab.query("Project settings") !== undefined, "the project tab settings button");
+  await settle(
+    () => projectTab.query("Project settings") !== undefined,
+    "the project tab settings button",
+  );
   projectTab.press("Project settings");
   const fromTab = mount(h(runtime.BoardPanel, { subPath: "settings" }));
-  await settle(() => fromTab.query("Back to board") !== undefined, "the Settings route from project tab");
+  await settle(
+    () => fromTab.query("Back to board") !== undefined,
+    "the Settings route from project tab",
+  );
   fromTab.press("Back to board");
-  assert.deepEqual(navigations.at(-1), { path: "board", options: { subPath: "project/synthetic" } });
+  assert.deepEqual(navigations.at(-1), {
+    path: "board",
+    options: { subPath: "project/synthetic" },
+  });
   fromTab.update(h(() => null));
   projectTab.update(h(() => null));
 
   // Visiting the global board clears any prior project return context so a later direct Settings entry falls back to the board.
   const resetBoard = mount(h(runtime.BoardPanel, { subPath: "" }));
-  await settle(() => resetBoard.query("Settings") !== undefined, "the global board after project");
+  await settle(
+    () => resetBoard.query("Settings") !== undefined,
+    "the global board after project",
+  );
   resetBoard.update(h(() => null));
   const laterDirect = mount(h(runtime.BoardPanel, { subPath: "settings" }));
-  await settle(() => laterDirect.query("Back to board") !== undefined, "later direct Settings");
+  await settle(
+    () => laterDirect.query("Back to board") !== undefined,
+    "later direct Settings",
+  );
   laterDirect.press("Back to board");
   assert.deepEqual(navigations.at(-1), { path: "board", options: undefined });
   laterDirect.update(h(() => null));
@@ -574,8 +617,16 @@ test("Settings opens from the panel route with standalone framing and Back navig
     () => section.query("Nucleus settings") !== undefined,
     "the settings section",
   );
-  assert.equal(section.query("Standalone Nucleus settings"), undefined, "settingsSection keeps raw embed free of standalone framing");
-  assert.equal(section.query("Back to board"), undefined, "settingsSection keeps host-owned navigation without a Back control");
+  assert.equal(
+    section.query("Standalone Nucleus settings"),
+    undefined,
+    "settingsSection keeps raw embed free of standalone framing",
+  );
+  assert.equal(
+    section.query("Back to board"),
+    undefined,
+    "settingsSection keeps host-owned navigation without a Back control",
+  );
   section.update(h(() => null));
 });
 
