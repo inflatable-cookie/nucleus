@@ -235,10 +235,12 @@ holds an earlier MCP binding or helper argv) acts as that thread's current run
 when both name the same proven host, agent and retained line. `core/dispatch/acting-run.ts`
 owns that resolution, and every callback path reads it — the caller route, the
 run-context read, `nucleus_report`, `ask`, `tell`, the final report and self-force.
-It refuses exactly three shapes: a ticket for another thread and a task with no
-current run (both naming the run in force and the fix), and a credential its own
-row revoked (the store's own unauthorized refusal, checked before any
-resolution). A proof executor is never resolved across runs, and two runs on
+It refuses exactly three shapes: a ticket for another thread or another task,
+and a task with no current run (both naming the run in force and the fix), and a
+credential its own row revoked (the store's own unauthorized refusal, checked
+before any resolution). Ownership is the task's own run row or the durable run id
+its task row carries, so a thread's credential never speaks for a task it was
+not issued for. A proof executor is never resolved across runs, and two runs on
 different retained lines — a worker's and a reviewer's on the same workspace —
 are never substituted for each other. The resolution is
 recorded once per ticket and run as `stale_ticket_resolved`, so a stale shell has

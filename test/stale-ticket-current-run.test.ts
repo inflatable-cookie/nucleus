@@ -16,7 +16,7 @@ import { Store } from '../core/store/store';
 import { Engine } from '../core/engine';
 import type { Adapter } from '../core/host';
 import type { Run } from '../shared/contracts';
-import { submissionSchema } from '../shared/contracts';
+import { submissionSchema, taskControlInputSchema } from '../shared/contracts';
 import { formatAgentId } from '../shared/agent-identity';
 import { materializeRunContext } from '../core/dispatch/prompt-text/context-store';
 import { askBinding } from '../core/questions/agent-ask';
@@ -243,6 +243,159 @@ test('a retained worker ticket resolves to the revision run that is current on i
     assert.equal(
       f.store.events(f.task.id).filter((event) => event.kind === 'run_completion').length,
       1,
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+test('the nucleus_report route settles a stale ticket\'s final report on the current run', async () => {
+  // The /report route is what nucleus_report and the packaged helper use; its
+  // own report intent and the completion receipt must name one run.
+  const f = await fixture();
+  try {
+    f.store.putRun(
+      runOf('run-old', f.task.id, {
+        released: true,
+        status: 'finished',
+        completion: acceptedReport(f.task.id, 'run-old'),
+      }),
+    );
+    f.store.setCredential('run-old', 'old-token');
+    f.store.putRun(runOf('run-new', f.task.id, { temporaryDirectory: f.dir }));
+    f.store.update(f.task.id, {
+      resolution: {
+        ...f.store.task(f.task.id).resolution,
+        currentRunId: 'run-new',
+      },
+    });
+    f.store.setCredential('run-new', 'new-token');
+
+    const report = {
+      eventId: 'b'.repeat(64),
+      taskId: f.task.id,
+      runId: 'run-old',
+      status: 'blocked',
+      headline: 'Still blocked at the reviewed head',
+      summary: 'Still blocked at the reviewed head',
+      cause: { kind: 'external', name: 'premise' },
+    };
+    const reported = await f.call('/report', 'old-token', report);
+    assert.equal(reported.status, 200, reported.body);
+    assert.deepEqual(JSON.parse(reported.body), {
+      accepted: true,
+      eventId: report.eventId,
+    });
+    assert.equal(f.store.run('run-new')?.completion?.runId, 'run-new');
+    assert.equal(f.store.run('run-new')?.completion?.status, 'blocked');
+    assert.equal(
+      f.store.run('run-old')?.completion?.status,
+      'blocked',
+      'the previous run keeps its own recorded result',
+    );
+
+    // The identical retry collects the recorded response, never a second result
+    // and never a receipt conflict between the two runs it names.
+    const retried = await f.call('/report', 'old-token', report);
+    assert.equal(retried.status, 200, retried.body);
+    assert.deepEqual(JSON.parse(retried.body), {
+      accepted: true,
+      eventId: report.eventId,
+    });
+    assert.equal(
+      f.store.events(f.task.id).filter((event) => event.kind === 'run_completion').length,
+      1,
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+test("another task's ticket cannot act on this task, even on the same thread", async () => {
+  const f = await fixture();
+  try {
+    // Task A's released run: the stale ticket the retained thread still holds.
+    f.store.putRun(
+      runOf('run-old', f.task.id, {
+        released: true,
+        status: 'finished',
+        completion: acceptedReport(f.task.id, 'run-old'),
+      }),
+    );
+    f.store.setCredential('run-old', 'old-token');
+    // Task B runs on the same agent and host, so only the task ownership check
+    // stops A's credential from acting for B.
+    const other = f.store.insert(
+      submissionSchema.parse({
+        submissionId: 'stale-ticket-other',
+        title: 'Other task',
+        repoPath: '/fixture',
+        planningCommit: head,
+        originAgentId: 'origin',
+      }),
+      'host',
+      'brief',
+      head,
+    );
+    f.store.update(other.id, {
+      phase: 'working',
+      runId: 'run-worker',
+      agentId: 'worker',
+      workspaceId: 'ws',
+      temporaryDirectory: f.dir,
+    });
+    f.store.putRun(runOf('run-other', other.id, { temporaryDirectory: f.dir }));
+    f.store.update(other.id, {
+      resolution: {
+        ...f.store.task(other.id).resolution,
+        currentRunId: 'run-other',
+      },
+    });
+    f.store.setCredential('run-other', 'other-token');
+
+    const context = await f.call('/run-context', 'old-token', {
+      callerTaskId: other.id,
+      callerRunId: 'run-old',
+      section: 'rules',
+    });
+    assert.equal(context.status, 409);
+    assert.match(
+      JSON.parse(context.body).error,
+      /task and run identity do not match|another task/,
+    );
+
+    const report = await f.call('/report', 'old-token', {
+      eventId: 'c'.repeat(64),
+      taskId: other.id,
+      runId: 'run-old',
+      status: 'blocked',
+      headline: 'Task A result on task B',
+      summary: 'Task A result on task B',
+    });
+    assert.equal(report.status, 409, report.body);
+    assert.match(JSON.parse(report.body).error, /Stale reporting run|Stale run/);
+    assert.equal(f.store.run('run-other')?.completion, null);
+
+    // Self-force is the path that could move or retry an effect: A's credential
+    // names A's task, so B is not its own task.
+    await assert.rejects(
+      f.engine.taskControlFromAgent(
+        { taskId: other.id, runId: 'run-old', token: 'old-token' },
+        taskControlInputSchema.parse({
+          taskId: other.id,
+          version: f.store.task(other.id).version,
+          action: 'move',
+          to: 'work',
+          force: true,
+          reason: 'idle with no tool child',
+        }),
+      ),
+      /another task/,
+    );
+    assert.equal(
+      f.store.operations({ taskId: other.id }).length,
+      0,
+      'no operation is recorded for the refused force',
     );
   } finally {
     await f.close();

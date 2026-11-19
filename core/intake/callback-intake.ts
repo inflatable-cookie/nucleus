@@ -141,8 +141,12 @@ export class CallbackIntake {
       ),
     );
   }
-  async complete(input: Completion, token: string) {
-    const presentedRunId = input.runId;
+  async complete(
+    input: Completion,
+    token: string,
+    credentialRunId = input.runId,
+  ) {
+    const presentedRunId = credentialRunId;
     const presented = this.store.run(presentedRunId);
     this.store.authenticate(presentedRunId, token);
     const identityTask = this.store.task(input.taskId);

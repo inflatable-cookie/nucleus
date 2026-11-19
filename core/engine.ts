@@ -3037,8 +3037,8 @@ export class Engine {
   reviewerContinuationInFlight(taskId: string, runId: string): boolean {
     return this.callbackIntake.reviewerContinuationInFlight(taskId, runId);
   }
-  complete(input: Completion, token: string) {
-    return this.callbackIntake.complete(input, token);
+  complete(input: Completion, token: string, credentialRunId?: string) {
+    return this.callbackIntake.complete(input, token, credentialRunId);
   }
   completeCheckpoint(
     input: Completion,

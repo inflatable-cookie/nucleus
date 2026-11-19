@@ -72,6 +72,18 @@ const workerThread = (task: Task): Pick<Run, "agentId" | "hostId"> => ({
 const threadRole = (run: Pick<Run, "role"> | null): string =>
   run ? (run.role === "revision" ? "worker" : run.role) : "worker";
 
+/**
+ * Whether the presented identity is this task's own: its run row, or the durable
+ * run id a task row carries. A thread's credential never speaks for a task it was
+ * not issued for, even when the same agent and host run both.
+ */
+const belongsToTask = (
+  task: Task,
+  presentedRunId: string,
+  presented: Run | null,
+): boolean =>
+  presented ? presented.taskId === task.id : presentedRunId === task.runId;
+
 const live = (run: Run) => !run.released && !run.completion;
 
 /**
@@ -89,9 +101,7 @@ function resolveThread(
   presented: Run | null,
   requireLive: boolean,
 ): Run | null {
-  // A run with no row is only ever the task's own durable run id; anything else
-  // is an identity this task does not carry.
-  if (!presented && presentedRunId !== task.runId) return null;
+  if (!belongsToTask(task, presentedRunId, presented)) return null;
   const shown = presented ?? workerThread(task);
   const currentId = currentRunIdFor(task, presented);
   if (!currentId || currentId === presentedRunId) return null;
@@ -208,9 +218,14 @@ function refuse(
   runId: string,
   current: Run | null,
 ): Error {
-  const thread = threadOf(presented ?? workerThread(task)) ?? "an unproven thread";
+  // A ticket issued for another task names no thread of this one, whatever agent
+  // and host it shares with the task's current run.
+  const foreign = presented ? presented.taskId !== task.id : runId !== task.runId;
+  const named = foreign
+    ? `run ${runId} of another task, not ${label(task)}`
+    : `run ${runId} of thread ${threadOf(presented ?? workerThread(task)) ?? "an unproven thread"}`;
   if (current) {
-    const refusal = `Stale Nucleus assignment: this ticket names run ${runId} of thread ${thread}, but ${label(task)} is on run ${current.id} of thread ${threadOf(current) ?? "an unproven thread"}. Nothing was applied. Use the ticket path named in the current run ${current.id}'s dispatch or continuation prompt.`;
+    const refusal = `Stale Nucleus assignment: this ticket names ${named}, but ${label(task)} is on run ${current.id} of thread ${threadOf(current) ?? "an unproven thread"}. Nothing was applied. Use the ticket path named in the current run ${current.id}'s dispatch or continuation prompt.`;
     recordOnce(store, task, runId, current.id, refusal);
     return new Error(refusal);
   }
@@ -218,7 +233,7 @@ function refuse(
     recordSupersededRunRefusal(store, task.id, runId);
     return new Error(supersededResumeRefusal(runId));
   }
-  const refusal = `Stale Nucleus assignment: this ticket names run ${runId} of thread ${thread}, which is no longer current for ${label(task)}, and the task has no current run, so nothing was applied. Resume or restart the task from Nucleus, then use the ticket path its own prompt names.`;
+  const refusal = `Stale Nucleus assignment: this ticket names ${named}, which is no longer current for ${label(task)}, and the task has no current run, so nothing was applied. Resume or restart the task from Nucleus, then use the ticket path its own prompt names.`;
   recordOnce(store, task, runId, null, refusal);
   return new Error(refusal);
 }

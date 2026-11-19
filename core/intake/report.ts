@@ -39,10 +39,13 @@ export class Reports {
     const task=store.task(input.taskId);
     if(task.removedAt)throw Error('Task was removed');
     // A retained thread's stale ticket reports as the thread's current run
-    // (nucleus#1376); the receipt below still names the credential that arrived.
-    const run = reportRunFor(store, task, input.runId);
+    // (nucleus#1376). Everything after this speaks of that run, while the
+    // credential that arrived stays the one this delivery authenticated — the
+    // receipt hash above is the delivered bytes, so an identical retry matches.
+    const run = reportRunFor(store, task, identityRunId);
+    if (run && run.id !== input.runId) input = { ...input, runId: run.id };
     const binding = run ? reportRunBinding(task, run, input) : null;
-    if (binding === 'stale') throw this.staleRun(input.runId,identityRunId,input.taskId);
+    if (binding === 'stale') throw this.staleRun(identityRunId,identityRunId,input.taskId);
     // Spec 050: an owner-armed replacement that has not retired the retained
     // worker yet is that worker's own binding, so its genuine authenticated
     // result is accepted here exactly as the completion handler accepts it. The
@@ -50,7 +53,7 @@ export class Reports {
     // otherwise unbound workers, so no other `changes_requested` report widens.
     if(!run && (task.runId!==input.runId || task.completion
       || (!['working','dispatching','needs_attention'].includes(task.phase) && !ownerArmedRetainedWorker(task,store.runs(task.id)))))
-      throw this.staleRun(input.runId,identityRunId,input.taskId);
+      throw this.staleRun(identityRunId,identityRunId,input.taskId);
     const blockedReviewerEvidence = run?.role === 'reviewer' && ['blocked', 'error'].includes(input.status)
       && Boolean(input.reviewText || input.verdicts?.length);
     if (blockedReviewerEvidence && input.head && input.head !== run.head) throw Error('Blocked reviewer evidence must name the requested exact head');
@@ -72,7 +75,7 @@ export class Reports {
       completion={...completion,reviewText};
     }else if(reviewText)throw Error('Field reviewText is only accepted for reviewer verdicts or blocked reviewer evidence; expected shape: omit it from ready_for_review reports');
     store.setReportIntent(input.eventId,input.taskId,input.runId,hash);
-    const response=await this.engine.complete(completion,token);
+    const response=await this.engine.complete(completion,token,identityRunId);
     store.setReportResponse(input.eventId,hash,response);return response;
   }
   private staleRun(suppliedRunId:string,identityRunId:string,taskId:string) {
