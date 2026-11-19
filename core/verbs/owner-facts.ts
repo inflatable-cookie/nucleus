@@ -42,6 +42,8 @@ import { reviewResultFencesRun } from "../review/review-continuation";
 
 /** Everything the registry reads about one task; a store read, never a remote call. */
 export interface OwnerVerbFacts {
+  /** Live wait wording for next. Verb guards still read the authoritative task. */
+  waitTask?: Task;
   store: Store;
   task: Task;
   runs: Run[];
@@ -494,7 +496,8 @@ function withRecoveryNote(text: string, note: string, limit = 2000): string {
  * and this read never drift apart; this adds the reason, owner and evidence.
  */
 export function ownerTaskStop(facts: OwnerVerbFacts): TaskNextStop | null {
-  const { task, runs } = facts;
+  const { runs } = facts,
+    task = facts.waitTask ?? facts.task;
   // One measurement (nucleus#1187): the stop this reads is the one the same
   // budget figure supports, so a pause the gates no longer see is not a stop here.
   const budget = ownerTaskBudget(facts);

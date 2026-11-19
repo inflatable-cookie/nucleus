@@ -46,6 +46,8 @@ function fixture(t: TestContext, adapter: Loose) {
         "observeRetiredWorkers",
         "retiredObservationKey",
         "retiredObservationPlan",
+        "scheduleLane",
+        "stopped",
         "store",
       ],
       ["observationTargets"],

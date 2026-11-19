@@ -11,7 +11,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { Store } from '../core/store/store';
+import { digest, operationInputHash, Store } from '../core/store/store';
 import { Engine } from '../core/engine';
 import type { ResolutionAdapter } from '../core/resolution';
 import { runSchema, submissionSchema, taskControlInputSchema, taskNextSchema, type Run, type Task } from '../shared/contracts';
@@ -19,31 +19,34 @@ import { collectOwnerVerbFacts, ownerTaskNext } from '../core/verbs/owner-verbs'
 import type { Adapter, AgentObservation } from '../core/host';
 import { EXTERNAL_MERGE_CHECK_REASON_PREFIX } from '../core/recovery/task-reasons';
 import { Lifecycle } from '../core/closeout/workspace-lifecycle';
+import { git } from '../core/git/index';
+import { syncMain } from '../core/forge/index';
+import { plannerEscalations } from '../core/questions/ladder/records';
+import { taskControlOperation } from '../core/verbs/task-control-key';
 
 const head = 'a'.repeat(40), base = 'b'.repeat(40), merged = 'c'.repeat(40);
 const CALLER = 'owner-thread';
 const RETRY_TEXT = 'Resolution check retry requested';
 const workerProfile = profile('worker', 'test/worker'), reviewerProfile = profile('reviewer', 'test/reviewer');
 
-function fixture() {
-  const dir = mkdtempSync(join(tmpdir(), 'ns-066-c6-'));
+function fixture(dir = mkdtempSync(join(tmpdir(), 'ns-066-c6-')), repoPath = '/repo') {
   const store = new Store(join(dir, 'queue.sqlite'));
   store.setMeta('paused', false);
   store.setMeta('hostId', 'host');
   const inserted = store.insert(submissionSchema.parse({
-    submissionId: randomUUID(), title: 'C6 merge cleanup', repoPath: '/repo', planningCommit: base,
+    submissionId: randomUUID(), title: 'C6 merge cleanup', repoPath, planningCommit: base,
     handoffPath: 'handoff.md', originAgentId: 'origin',
   }), 'host', 'handoff', base);
   store.setMeta('pool', [
     { profileId: workerProfile.id, enabled: true, group: 'author', roles: ['worker'], weight: 1, scopes: ['general'] },
     { profileId: reviewerProfile.id, enabled: true, group: 'review', roles: ['reviewer'], weight: 1, scopes: ['general'] },
   ]);
-  store.putRepository({ origin: null, path: '/repo' }, 'queue', 'fixture keeps Queue closeout');
+  store.putRepository({ origin: null, path: repoPath }, 'queue', 'fixture keeps Queue closeout');
   const observations = new Map<string, AgentObservation>();
   const idle = (id: string, workspaceId = 'workspace') =>
     observations.set(id, { id, workspaceId, status: 'idle', active: false, permissions: false, error: '' });
   idle('worker-agent');
-  let merges = 0, syncs = 0, archives = 0;
+  let merges = 0, syncs = 0, archives = 0, sends = 0, notices = 0;
   let observeArchive: () => Promise<boolean> = async () => true;
   const adapter = {
     hostId: 'host',
@@ -51,14 +54,14 @@ function fixture() {
     profiles: async () => [workerProfile, reviewerProfile],
     observe: async (id: string) => observations.get(id) ?? { id, workspaceId: 'workspace', status: 'idle', active: false, permissions: false, error: '' },
     agentTimelinePage: async () => ({ entries: [], hasOlder: false, hasNewer: false, gap: false, staleCursor: false, reset: false, epoch: 'fixture', projection: 'projected', startCursor: null, endCursor: null }),
-    originAgent: async (id: string) => ({ id, workspaceId: 'workspace', archived: true }),
-    archiveAgent: async () => {}, notify: async () => {},
+    originAgent: async (id: string) => ({ id, workspaceId: 'workspace', archived: false }),
+    archiveAgent: async () => {}, notify: async () => { notices++; },
     findAgents: async () => [], findRunAgents: async () => [], findWorkspaces: async () => [],
     verifyWorkspace: async () => {},
     verifyPr: async () => ({ url: 'https://github.com/example/repo/pull/7', head }),
     externalMerge: async () => ({ head, commit: merged }),
     createRun: async () => { throw new Error('no dispatch is expected in these fixtures'); },
-    sendRun: async () => {},
+    sendRun: async () => { sends++; },
     stopAgentTurn: async () => {},
     merge: async () => { merges++; },
     syncMain: async () => { syncs++; return merged; },
@@ -77,36 +80,41 @@ function fixture() {
   const next = () => taskNextSchema.parse(ownerTaskNext(collectOwnerVerbFacts(store, task())));
   return {
     dir, store, engine, adapter, observations, idle, taskId: inserted.id, task, events, next,
-    counts: () => ({ merges, syncs, archives }),
+    counts: () => ({ merges, syncs, archives, sends, notices }),
     setObserveArchive: (fn: () => Promise<boolean>) => { observeArchive = fn; },
     close: async () => { await engine.stop(); store.close(); rmSync(dir, { recursive: true, force: true }); },
   };
 }
 
-function plantMerged(f: ReturnType<typeof fixture>, overrides: Partial<Task> = {}) {
+function plantMerged(f: ReturnType<typeof fixture>, source = { head, base, merged }) {
+  const { head, base, merged } = source;
   const recovery = {
     id: 'episode', key: 'episode', generation: 1, runId: 'recovery-run', agentId: 'coordinator-agent',
     status: 'pending' as const, summary: '', idleSince: null, incidentId: null,
   };
   f.store.update(f.taskId, {
-    phase: 'syncing', reason: RETRY_TEXT, planningBase: base, workspaceIntent: true, agentIntent: true,
+    phase: 'syncing', reason: 'Merge verified; synchronizing local integration branch',
+    planningBase: base, workspaceIntent: true, agentIntent: true,
     workspaceId: 'workspace', directory: join(f.dir, 'worktree'), agentId: 'worker-agent', runId: 'worker-run',
     profile: workerProfile, workerModel: workerProfile.model, prHead: head,
     prUrl: 'https://github.com/example/repo/pull/7',
     completion: { taskId: f.taskId, runId: 'worker-run', eventId: 'worker-ready', status: 'ready_for_review', summary: 'Ready', prNumber: 7 },
     resolution: {
       ...f.task().resolution, mergeIntent: true, mergeHead: head, mergedCommit: merged, syncedCommit: null,
-      externalMerge: true, integrationTurn: null, currentRunId: 'recovery-run', attention: false, recoveryActive: true,
-      recovery, review: { taskId: f.taskId, runId: 'review-run', eventId: 'review-1', status: 'ready_to_merge', summary: 'Approved', head, reviewId: 12 },
+      externalMerge: true, review: { taskId: f.taskId, runId: 'review-run', eventId: 'review-1', status: 'ready_to_merge', summary: 'Approved', head, reviewId: 12 },
     },
-    ...overrides,
   });
+  f.engine.resolution.update(f.task(), { recoveryPhase: 'closeout', recoveryAttempts: 0, recovery: null },
+    {}, 'closeout_recovery_budget');
   f.store.putRun(runSchema.parse({
     id: 'recovery-run', taskId: f.taskId, role: 'recovery', generation: 1, head, base, agentId: 'coordinator-agent',
     workspaceId: 'workspace', profile: null, status: 'finished', createdAt: new Date().toISOString(),
     lastObservedAt: null, active: false, idleSince: null, released: true,
     completion: { taskId: f.taskId, runId: 'recovery-run', eventId: 'recovery-done', status: 'recovered', summary: 'Settled' },
   }) as Run);
+  f.engine.resolution.update(f.task(), {
+    integrationTurn: null, currentRunId: 'recovery-run', attention: false, recoveryActive: true, recovery,
+  }, { reason: RETRY_TEXT }, 'resolution_retry');
   f.idle('coordinator-agent');
   f.idle('worker-agent');
   return f.task();
@@ -126,41 +134,134 @@ function plantDone(f: ReturnType<typeof fixture>, directory: string, extra: Part
   return f.task();
 }
 
-test('C6: a verified merge stuck on retry-text synchronizes under ordinary sweep', async () => {
-  const f = fixture();
+async function integrationFixture() {
+  const dir = mkdtempSync(join(tmpdir(), 'ns-066-c6-integration-'));
+  const repo = join(dir, 'integration');
+  const writer = join(dir, 'writer');
+  const configure = async (path: string) => {
+    await git(path, 'config', 'user.name', 'Nucleus fixture');
+    await git(path, 'config', 'user.email', 'queue@example.invalid');
+  };
   try {
-    plantMerged(f);
-    assert.equal(await f.engine.resolution.recoverExternalMerge(f.task()), false);
-    const settled = f.task();
-    assert.equal(settled.phase, 'syncing');
-    assert.notEqual(settled.reason, RETRY_TEXT);
-    assert.equal(settled.resolution.recoveryActive, false);
-    assert.equal(settled.resolution.recovery?.status, 'resolved');
-    assert.equal(settled.resolution.currentRunId, null);
-    assert.ok(settled.resolution.integrationTurn);
-    assert.equal(f.events('recorded_merge_phase_reconciled').length, 1);
-    await f.engine.wake();
-    const after = f.task();
-    assert.ok(['closing', 'done'].includes(after.phase), `${after.phase}: ${after.reason}`);
-    assert.equal(after.resolution.syncedCommit, merged);
-    assert.equal(after.resolution.mergedCommit, merged);
-    assert.equal(f.counts().syncs, 1);
-    assert.equal(f.counts().merges, 0);
+    await git(dir, 'init', '--bare', '--initial-branch=main', 'origin.git');
+    await git(dir, 'clone', join(dir, 'origin.git'), repo);
+    await configure(repo);
+    await git(repo, 'commit', '--allow-empty', '-m', 'Planning base');
+    await git(repo, 'push', '-u', 'origin', 'main');
+    const base = await git(repo, 'rev-parse', 'HEAD');
+    await git(dir, 'clone', join(dir, 'origin.git'), writer);
+    await configure(writer);
+    await git(writer, 'switch', '-c', 'source');
+    writeFileSync(join(writer, 'change.txt'), 'Reviewed work');
+    await git(writer, 'add', 'change.txt');
+    await git(writer, 'commit', '-m', 'Reviewed work');
+    const head = await git(writer, 'rev-parse', 'HEAD');
+    await git(writer, 'switch', 'main');
+    await git(writer, 'merge', '--no-ff', '--no-edit', head);
+    await git(writer, 'push', 'origin', 'main');
+    const merged = await git(writer, 'rev-parse', 'HEAD');
+    const f = fixture(dir, repo);
+    f.adapter.externalMerge = async () => ({ head, commit: merged });
+    f.adapter.syncMain = syncMain;
+    return { ...f, repo, writer, source: { base, head, merged } };
+  } catch (error) {
+    rmSync(dir, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+async function sweepToDone(f: ReturnType<typeof fixture>) {
+  for (let pass = 0; pass < 4 && f.task().phase !== 'done'; pass++) await f.engine.wake();
+  assert.equal(f.task().phase, 'done', f.task().reason);
+}
+
+function assertSettledNext(f: ReturnType<typeof fixture>) {
+  assert.deepEqual(f.next().verbs.filter(entry => entry.available
+    && ['move', 'retry_effect', 'restart'].includes(entry.verb)), []);
+}
+
+for (const alreadySynchronized of [true, false]) {
+  test(`C6 legacy retry follows ordinary sweep with ${alreadySynchronized ? 'an already current checkout' : 'a fast-forward still owed'}`, async () => {
+    const f = await integrationFixture();
+    try {
+      if (alreadySynchronized) await git(f.repo, 'pull', '--ff-only');
+      plantMerged(f, f.source);
+      const events = () => f.store.eventsAll(f.taskId);
+      let sends = 0;
+      f.adapter.syncMain = (task, allowed, applied, before) => syncMain(task, allowed, move => {
+        assert.equal(f.events('main_sync_intent').length, 1);
+        assert.equal(move.from, f.source.base);
+        assert.equal(move.to, f.source.merged);
+        sends++;
+        applied?.(move);
+      }, before);
+      await sweepToDone(f);
+      const done = f.task();
+      assert.equal(done.resolution.recoveryActive, false);
+      assert.equal(done.resolution.recovery?.status, 'resolved');
+      assert.equal(done.resolution.currentRunId, null);
+      assert.equal(done.resolution.syncedCommit, f.source.merged);
+      assert.equal(await git(f.repo, 'rev-parse', 'HEAD'), f.source.merged);
+      assert.equal(f.events('recorded_merge_phase_reconciled').length, 1);
+      assert.equal(f.events('main_synchronized').length, 1);
+      assert.equal(f.events('resolution_retry').length, 1, 'the old event stays in history');
+      assert.equal(f.events('closeout_recovery_budget').length, 1);
+      assert.equal(f.events('main_sync_intent').length, alreadySynchronized ? 0 : 1);
+      assert.equal(sends, alreadySynchronized ? 0 : 1);
+      if (!alreadySynchronized) {
+        const kinds = events().map(event => event.kind);
+        assert.ok(kinds.indexOf('main_sync_intent') < kinds.indexOf('integration_checkout_fast_forwarded'));
+      }
+      assert.equal(f.counts().merges, 0);
+      assert.equal(f.counts().sends, 0);
+      assertSettledNext(f);
+      // Terminal cleanup still owes its first pass after the closeout write.
+      await f.engine.wake();
+      assert.deepEqual(f.task().resolution.archivedWorkspaceIds, ['workspace']);
+      const settled = events();
+      const counts = f.counts();
+      await f.engine.wake();
+      assert.deepEqual(events(), settled);
+      assert.deepEqual(f.counts(), counts);
+    } finally { await f.close(); }
+  });
+}
+
+test('C6 an escalated task with an exact reviewed merge resumes without a planner restart', async () => {
+  const f = await integrationFixture();
+  try {
+    plantMerged(f, f.source);
+    const original = f.task();
+    f.store.update(f.taskId, { phase: 'blocked', resolution: {
+      ...original.resolution, mergeIntent: false, mergeHead: null, mergedCommit: null, externalMerge: false,
+    } });
+    f.engine.resolution.openPlannerEscalation(f.task(), {
+      cause: digest('synthetic pre-merge blocker'),
+      runId: original.runId,
+      question: 'The reviewed PR appeared blocked. What should continue?',
+      payload: { refusal: 'pre_merge' },
+    });
+    assert.equal(f.task().resolution.stop?.reason, 'escalated');
+    assert.equal(plannerEscalations(f.store.eventsAll(f.taskId))[0]?.answered, false);
+    await sweepToDone(f);
+    const done = f.task();
+    assert.equal(done.resolution.mergedCommit, f.source.merged);
+    assert.equal(done.resolution.review?.head, f.source.head);
+    assert.equal(done.resolution.recovery?.status, 'resolved');
+    assert.equal(done.resolution.stop, null);
+    assert.equal(f.events('planner_escalation_resolved').length, 1);
     assert.equal(f.events('main_synchronized').length, 1);
-    if (after.phase === 'closing') await f.engine.wake();
-    assert.equal(f.task().phase, 'done');
-    assert.equal(f.next().verbs.find(entry => entry.verb === 'retry_effect')?.available ?? false, false);
-    const replayed = f.events('recorded_merge_phase_reconciled').length;
-    const synced = f.events('main_synchronized').length;
-    await f.engine.wake();
-    assert.equal(f.events('recorded_merge_phase_reconciled').length, replayed);
-    assert.equal(f.events('main_synchronized').length, synced);
-    assert.equal(f.counts().syncs, 1);
+    assert.equal(plannerEscalations(f.store.eventsAll(f.taskId))[0]?.answered, true);
     assert.equal(f.counts().merges, 0);
+    assert.equal(f.counts().sends, 0);
+    assertSettledNext(f);
+    await f.engine.wake();
+    assert.equal(f.events('planner_escalation_resolved').length, 1);
+    assert.equal(f.events('main_synchronized').length, 1);
   } finally { await f.close(); }
 });
 
-test('C6 negative: a live participant keeps the verified merge gated', async () => {
+test('C6 a live participant keeps the verified merge gated', async () => {
   const f = fixture();
   try {
     plantMerged(f);
@@ -168,64 +269,124 @@ test('C6 negative: a live participant keeps the verified merge gated', async () 
     await f.engine.wake();
     assert.equal(f.task().phase, 'syncing');
     assert.equal(f.task().resolution.mergedCommit, merged);
+    assert.match(f.next().reason, /waits for participant worker-agent/i);
     assert.equal(f.counts().syncs, 0);
     assert.equal(f.counts().merges, 0);
-  } finally { await f.close(); }
-});
-
-test('C6 negative: a dirty or unproved checkout keeps the real sync gate', async () => {
-  const f = fixture();
-  try {
-    plantMerged(f);
-    f.adapter.syncMain = async () => { throw Error('The bound workspace is dirty'); };
+    const stopped = f.events('task_waiting').length;
     await f.engine.wake();
-    assert.equal(f.task().resolution.mergedCommit, merged);
+    assert.equal(f.events('task_waiting').length, stopped);
+    assert.equal(f.counts().syncs, 0);
+  } finally { await f.close(); }
+});
+
+test('C6 a restart with unknown delivery on the current binding still blocks synchronization', async () => {
+  const f = fixture();
+  try {
+    const task = plantMerged(f);
+    const control = taskControlInputSchema.parse({
+      taskId: task.id, version: task.version, action: 'restart', role: 'worker', reason: 'Resume the retained worker',
+    });
+    const { key, payload } = taskControlOperation(control);
+    const accepted = f.store.acceptOperation({
+      key, payload, kind: 'task_control', inputHash: operationInputHash(payload),
+      taskId: task.id, expectedVersion: task.version,
+    });
+    if ('backpressured' in accepted) throw Error('Unexpected operation backpressure');
+    const { operation } = accepted;
+    f.store.putOperation({
+      ...operation, state: 'needs_attention', attempts: 1, diagnostic: 'Transport',
+      startedAt: operation.createdAt, settledAt: operation.createdAt,
+      effect: { kind: 'task_control', target: 'restart', intentAt: operation.createdAt,
+        status: 'uncertain', result: null, resultAt: null },
+    });
+    for (let pass = 0; pass < 2; pass++) await f.engine.wake();
     assert.equal(f.task().resolution.syncedCommit, null);
+    assert.equal(f.store.operation(operation.id)?.effect?.status, 'uncertain');
+    assert.equal(f.events('operation_superseded').length, 0);
+    assert.equal(f.events('main_sync_intent').length, 0);
+    assert.equal(f.counts().syncs, 0);
+    assert.equal(f.counts().sends, 0);
+    assert.match(f.next().reason, /operation .* is uncertain/);
+  } finally { await f.close(); }
+});
+
+test('C6 a fast-forward whose result was lost is observed before closeout', async () => {
+  const f = await integrationFixture();
+  let restarted: Engine | undefined;
+  try {
+    plantMerged(f, f.source);
+    let writes = 0;
+    f.adapter.syncMain = (task, allowed, _applied, before) => syncMain(task, allowed, () => {
+      writes++;
+      // The checkout moved, but the old process never recorded its result.
+      f.store.setMeta('paused', true);
+      throw new Error('Interrupted before recording the checkout result');
+    }, before);
+    await f.engine.wake();
+    assert.equal(await git(f.repo, 'rev-parse', 'HEAD'), f.source.merged);
+    assert.equal(f.task().resolution.syncedCommit, null);
+    assert.equal(f.events('main_sync_intent').length, 1);
+    assert.equal(f.events('main_synchronized').length, 0);
+    assert.equal(f.next().phase, 'syncing');
+    await f.engine.stop();
+    f.store.setMeta('paused', false);
+    restarted = new Engine(f.store, f.adapter, 0, () => true);
+    restarted.profiles = [workerProfile, reviewerProfile];
+    await sweepToDone({ ...f, engine: restarted });
+    assert.equal(f.task().resolution.syncedCommit, f.source.merged);
+    assert.equal(f.events('main_sync_intent').length, 1);
+    assert.equal(f.events('main_synchronized').length, 1);
+    assert.equal(writes, 1);
     assert.equal(f.counts().merges, 0);
-    assert.notEqual(f.task().phase, 'done');
-  } finally { await f.close(); }
+    assertSettledNext(f);
+  } finally { await restarted?.stop(); await f.close(); }
 });
 
-test('a verified merge in needs_attention never restores a pre-attention snapshot', async () => {
-  const f = fixture();
-  try {
-    plantMerged(f, {
-      phase: 'needs_attention', reason: RETRY_TEXT,
-      resolution: {
-        ...f.task().resolution, mergeIntent: true, mergeHead: head, mergedCommit: merged, syncedCommit: null,
-        externalMerge: true, attention: false, currentRunId: null, recoveryActive: false, recovery: null,
-        externalMergePreAttention: { phase: 'reviewing', reason: 'Ready' },
-        review: { taskId: f.taskId, runId: 'review-run', eventId: 'review-1', status: 'ready_to_merge', summary: 'Approved', head, reviewId: 12 },
-      },
-    });
-    const resumed = f.engine.resolution.resumeClearedAttention(f.task());
-    assert.ok(resumed);
-    assert.notEqual(resumed!.phase, 'reviewing');
-    assert.equal(resumed!.resolution.externalMergePreAttention, null);
-    assert.ok(['syncing', 'merging', 'closing'].includes(resumed!.phase), resumed!.phase);
-    assert.notEqual(resumed!.reason, RETRY_TEXT);
-  } finally { await f.close(); }
-});
+for (const barrier of ['dirty', 'divergent', 'unproved'] as const) {
+  test(`C6 a ${barrier} integration checkout holds and keeps the verified merge`, async () => {
+    const f = await integrationFixture();
+    try {
+      if (barrier === 'dirty') writeFileSync(join(f.repo, 'keep.txt'), 'Local changes');
+      if (barrier === 'divergent') await git(f.repo, 'commit', '--allow-empty', '-m', 'Local change');
+      if (barrier === 'unproved') await git(f.writer, 'push', '--force', 'origin', `${f.source.base}:main`);
+      const before = await git(f.repo, 'rev-parse', 'HEAD');
+      plantMerged(f, f.source);
+      await f.engine.wake();
+      assert.equal(f.task().resolution.mergedCommit, f.source.merged);
+      assert.equal(f.task().resolution.syncedCommit, null);
+      assert.equal(f.task().phase, 'syncing');
+      assert.match(f.next().reason, barrier === 'dirty' ? /dirty/ : barrier === 'divergent' ? /differs from origin/ : /not a valid commit name|merge-base/i);
+      assert.equal(await git(f.repo, 'rev-parse', 'HEAD'), before);
+      assert.equal(f.events('main_sync_intent').length, 0);
+      assert.equal(f.counts().merges, 0);
+      await f.engine.wake();
+      assert.equal(f.events('main_synchronized').length, 0);
+      assert.equal(f.events('main_sync_failed').length, 1);
+    } finally { await f.close(); }
+  });
+}
 
-test('a verified merge still parked on an external-merge check stays until the probe', async () => {
+test('a verified merge re-observes its forge identity before leaving a pre-attention park', async () => {
   const f = fixture();
   try {
-    plantMerged(f, {
+    const planted = plantMerged(f);
+    f.store.update(f.taskId, {
       phase: 'needs_attention', reason: `${EXTERNAL_MERGE_CHECK_REASON_PREFIX} fixture head unavailable`,
-      resolution: {
-        ...f.task().resolution, mergeIntent: true, mergeHead: head, mergedCommit: merged, syncedCommit: null,
-        externalMerge: true, attention: false, currentRunId: null, recoveryActive: false, recovery: null,
-        externalMergePreAttention: { phase: 'syncing', reason: 'Synchronizing main before closeout' },
-        review: { taskId: f.taskId, runId: 'review-run', eventId: 'review-1', status: 'ready_to_merge', summary: 'Approved', head, reviewId: 12 },
-      },
+      resolution: { ...planted.resolution, externalMergePreAttention: { phase: 'reviewing', reason: 'Ready' } },
     });
-    assert.equal(f.engine.resolution.resumeClearedAttention(f.task()), null);
+    f.adapter.externalMerge = async () => ({ head: base, commit: merged });
+    await f.engine.wake();
     assert.equal(f.task().phase, 'needs_attention');
+    assert.ok(f.task().resolution.externalMergePreAttention);
+    assert.equal(f.counts().syncs, 0);
+    assert.match(f.next().reason, /fixture head unavailable/);
+    f.engine.resolution.externalMerge.externalMergeProbeMs = 0;
+    f.adapter.externalMerge = async () => ({ head, commit: merged });
+    await sweepToDone(f);
     assert.equal(f.task().resolution.externalMergePreAttention, null);
-    assert.match(f.task().reason, new RegExp(`^${EXTERNAL_MERGE_CHECK_REASON_PREFIX}`));
-    assert.equal(f.events('external_merge_pre_attention_superseded').length, 1);
-    assert.equal(f.engine.resolution.resumeClearedAttention(f.task()), null);
-    assert.equal(f.events('external_merge_pre_attention_superseded').length, 1);
+    assert.equal(f.events('external_merge_pre_attention_restored').length, 0);
+    assert.equal(f.counts().syncs, 1);
+    assertSettledNext(f);
   } finally { await f.close(); }
 });
 

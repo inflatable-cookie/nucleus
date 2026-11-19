@@ -20,7 +20,10 @@ import type {
   UsageLevel,
   BackupHealth,
 } from "../../shared/contracts";
-import { taskWaitStateContext, queuedReason } from "../recovery/wait-context";
+import {
+  taskWaitStateContext,
+  taskWithCurrentWait,
+} from "../recovery/wait-context";
 import { occupiesSlot, RETIRED_OBSERVATION_STALE_MS } from "../engine";
 import type { Engine } from "../engine";
 import type { Store } from "../store/store";
@@ -136,9 +139,12 @@ export class RuntimeBoard {
         );
         return {
           ...summary,
-          reason: queuedReason(this.context.store, task, context, (candidate) =>
-            this.context.engine.queuedExternalWait(candidate),
-          ),
+          reason: taskWithCurrentWait(
+            this.context.store,
+            task,
+            context,
+            (candidate) => this.context.engine.queuedExternalWait(candidate),
+          ).reason,
         };
       }),
       cursor: page.cursor,
@@ -494,15 +500,14 @@ export class RuntimeBoard {
         ),
       ]),
     );
-    const display = page.tasks.map((task) => ({
-      ...task,
-      reason: queuedReason(
+    const display = page.tasks.map((task) =>
+      taskWithCurrentWait(
         this.context.store,
         task,
         contexts.get(task.id)!,
         (candidate) => this.context.engine.queuedExternalWait(candidate),
       ),
-    }));
+    );
     const events = new Map(
       page.tasks.map((task) => [
         task.id,
@@ -609,29 +614,25 @@ export class RuntimeBoard {
         operatorBoard: input.caller === "operator (board)",
         ...(hostProfiles ? { hostProfiles } : {}),
       };
-      if (task.phase !== "queued") return ownerTaskNext(facts);
       const context = taskWaitStateContext(
         this.context.store,
         task,
         null,
         (candidate) =>
-          this.context.engine.resolution.slotAdmissionReason(candidate),
+          this.context.engine.resolution.slotAdmissionReason(
+            candidate,
+            candidate.phase === "needs_attention",
+          ),
       );
-      const reason = queuedReason(
-        this.context.store,
-        task,
-        context,
-        (candidate) => this.context.engine.queuedExternalWait(candidate),
-      );
-      const stop = task.resolution.stop;
-      const resolution =
-        stop &&
-        (["capacity", "prerequisite"].includes(stop.reason) ||
-          (stop.reason === "route_unavailable" &&
-            this.context.store.routingRetryAllowed(task)))
-          ? { ...task.resolution, stop: null }
-          : task.resolution;
-      return ownerTaskNext({ ...facts, task: { ...task, reason, resolution } });
+      return ownerTaskNext({
+        ...facts,
+        waitTask: taskWithCurrentWait(
+          this.context.store,
+          task,
+          context,
+          (candidate) => this.context.engine.queuedExternalWait(candidate),
+        ),
+      });
     } catch (error) {
       // A read view never fails by design; a programming error names its own
       // source frames so the next occurrence is attributable (papercut a4b0e3a4:

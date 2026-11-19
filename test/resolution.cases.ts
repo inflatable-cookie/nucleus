@@ -14654,12 +14654,21 @@ test("C4 sweep releases the settled agentless recovery after reopen and permits 
     const reopened = new Store(join(f.dir, "queue.sqlite"));
     const resumed = new Engine(reopened, f.adapter, 120_000);
     resumed.profiles = [...f.engine.profiles];
+    resumed.lastHookCleanupAt = Date.now();
+    let readStarted!: () => void;
+    let releaseRead!: () => void;
+    const reading = new Promise<void>(resolve => { readStarted = resolve; });
+    const gated = new Promise<null>(resolve => { releaseRead = () => resolve(null); });
+    const list = f.adapter.hostProcessListing!;
     try {
       assert.equal(
         readCreationAttempt(reopened, run)?.settlement?.attemptId,
         intent.attemptId,
       );
-      await resumed.resolution.recovery.pass(f.task.id);
+      const firstPass = await resumed.auditPass(true);
+      assert.equal(firstPass.fault, null);
+      assert.ok(firstPass.visited.has(f.task.id));
+      await resumed.quiesce();
       assert.equal(
         reopened.run(run.id)?.released,
         false,
@@ -14678,7 +14687,22 @@ test("C4 sweep releases the settled agentless recovery after reopen and permits 
       ];
       const attemptsBefore = reopened.task(f.task.id).resolution
         .recoveryAttempts;
-      await resumed.resolution.recovery.pass(f.task.id);
+      let reads = 0;
+      f.adapter.hostProcessListing = () => {
+        if (++reads !== 1) return list();
+        readStarted();
+        return gated;
+      };
+      const audit = resumed.auditPass(true);
+      const timeout = AbortSignal.timeout(5_000);
+      const [, pass] = await Promise.race([
+        Promise.all([reading, audit]),
+        new Promise<never>((_, reject) => {
+          timeout.addEventListener("abort", () => reject(Error("recovery waited for process cleanup")), { once: true });
+        }),
+      ]);
+      assert.equal(pass.fault, null);
+      assert.ok(pass.visited.has(f.task.id));
       const settled = reopened.task(f.task.id);
       assert.equal(reopened.run(run.id)?.released, true);
       assert.equal(reopened.run(run.id)?.status, "superseded");
@@ -14704,8 +14728,8 @@ test("C4 sweep releases the settled agentless recovery after reopen and permits 
       assert.equal(nextC4Move(reopened, f.task.id)?.available, true);
 
       const eventCount = reopened.eventsAll(f.task.id).length;
-      await resumed.resolution.recovery.pass(f.task.id);
-      await resumed.resolution.recovery.route(settled);
+      const replay = await resumed.auditPass(true);
+      assert.equal(replay.fault, null);
       assert.equal(reopened.eventsAll(f.task.id).length, eventCount);
       assert.deepEqual(
         [
@@ -14733,6 +14757,7 @@ test("C4 sweep releases the settled agentless recovery after reopen and permits 
         moved.reason,
       );
     } finally {
+      releaseRead();
       await resumed.stop();
       reopened.close();
     }

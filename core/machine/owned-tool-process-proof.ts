@@ -1,4 +1,5 @@
 import { realpathSync } from "node:fs";
+import { realpath } from "node:fs/promises";
 import type { HostProcessFact } from "../host/types";
 import { parseAgentId } from "../../shared/agent-identity";
 import { hostKindOf } from "../../shared/host-kind";
@@ -163,36 +164,6 @@ function bbBridgePids(
 /** The per-run report bridges Queue starts beside an agent session. */
 const REPORT_HELPER_SCRIPTS = ["mcp-report.mjs", "worker-report.mjs"];
 
-/** Whether a command runs one of those bridges, whatever its arguments. */
-function isReportHelperCommand(command: string): boolean {
-  const args = commandArgv(command);
-  return (
-    argvBase(args[0]) === "node" &&
-    REPORT_HELPER_SCRIPTS.includes(argvBase(args[1]) ?? "")
-  );
-}
-
-/**
- * The pids of per-run report bridges whose provider is no longer in the table.
- *
- * A bridge is started by the agent host it reports for, so it lives exactly as
- * long as that session; one still listed after its provider is gone has outlived
- * the run and is a run-owned leftover, not standing infrastructure
- * (nucleus#1329). The helper's own identity stays the same read as every other
- * proof here — its pid and the table's start identity — never a pattern match.
- */
-export function orphanedRunHelperPids(
-  processes: readonly HostProcessFact[],
-): Set<number> {
-  const pids = new Set<number>();
-  for (const helper of processes) {
-    if (!isReportHelperCommand(helper.command)) continue;
-    if (processes.some((fact) => fact.pid === helper.ppid)) continue;
-    pids.add(helper.pid);
-  }
-  return pids;
-}
-
 /** Match the Node bridge invocation, not provider config that merely names it. */
 function isRunMcpReportHelper(command: string, ticket: string): boolean {
   const args = commandArgv(command);
@@ -281,6 +252,11 @@ function carriesFlag(argv: readonly string[], name: string): boolean {
   return argv.some((arg) => arg === name || arg.startsWith(`${name}=`));
 }
 
+function runtimeHost(base: string, argv: readonly string[], providerProgram: string): boolean {
+  return base.endsWith("-host") || base.endsWith("_repl") ||
+    (base === providerProgram && argv.slice(1).some(arg => argvBase(arg) === "app-server"));
+}
+
 /**
  * The provider's own standing tool runtimes among one process listing, decided
  * from those facts alone and never from a provider name list:
@@ -317,9 +293,16 @@ export function providerRuntimePids(
   provider: HostProcessFact,
   processes: readonly HostProcessFact[],
 ): Set<number> {
-  const providerArgv = commandArgv(provider.command);
-  const providerProgram = argvBase(providerArgv[0])?.toLowerCase() ?? "";
-  const providerDirectories = new Set(programDirectories(providerArgv[0]));
+  return new Set(new RunProcessTable(processes).runtimePids(provider));
+}
+
+function runtimePids(
+  provider: HostProcessFact,
+  providerProgram: string,
+  providerDirectories: Set<string>,
+  rows: readonly ProcessCommand[],
+  directories: (program: string) => readonly string[],
+): Set<number> {
   const providerShipped = (program: string, base: string): boolean => {
     if (/\.app\/Contents\//.test(program)) return true;
     if (
@@ -327,36 +310,18 @@ export function providerRuntimePids(
       (base !== providerProgram && !base.startsWith(`${providerProgram}-`))
     )
       return false;
-    return programDirectories(program).some((directory) =>
+    return directories(program).some((directory) =>
       providerDirectories.has(directory),
     );
   };
-  const candidates = processes.flatMap((process) => {
-    const argv = commandArgv(process.command);
-    const program = argv[0];
-    const base = argvBase(program)?.toLowerCase() ?? "";
-    if (
-      !program ||
-      !base ||
-      SHELL_PROGRAMS.has(base) ||
-      !providerShipped(program, base)
-    )
-      return [];
-    return [{ process, argv, base }];
-  });
+  const candidates = rows.filter(({ program, base }) => providerShipped(program, base));
   const runtimes = new Set<number>();
   const hosts = new Set<number>();
   for (const { process, argv, base } of candidates) {
     // A nested provider server is a host; the provider itself is the root this
     // proof already starts from, never one of its own runtimes.
     if (process.pid === provider.pid) continue;
-    const host =
-      base.endsWith("-host") ||
-      base.endsWith("_repl") ||
-      base === "node_repl" ||
-      (base === providerProgram &&
-        argv.slice(1).some((arg) => argvBase(arg) === "app-server"));
-    if (!host) continue;
+    if (!runtimeHost(base, argv, providerProgram)) continue;
     hosts.add(process.pid);
     runtimes.add(process.pid);
   }
@@ -404,32 +369,10 @@ export function providerRuntimePids(
   return runtimes;
 }
 
-/** The helper positively identifies its parent provider; a missing helper grants no new host identity. */
-export function runProviderBindings(
-  processes: readonly HostProcessFact[],
-): Array<{
+interface RunProviderBinding {
   runId: string;
   provider: HostProcessFact;
   infrastructure: HostProcessFact[];
-}> {
-  return processes.flatMap((helper) => {
-    const args = commandArgv(helper.command);
-    if (argvBase(args[0]) !== "node" || argvBase(args[1]) !== "mcp-report.mjs")
-      return [];
-    const match = /(?:^|[\\/])mcp-(.+)\.json$/.exec(args[2] ?? "");
-    const provider = processes.find((fact) => fact.pid === helper.ppid);
-    if (!match || !provider) return [];
-    const pids = providerRuntimePids(provider, processes);
-    pids.add(provider.pid);
-    pids.add(helper.pid);
-    return [
-      {
-        runId: match[1],
-        provider,
-        infrastructure: processes.filter((fact) => pids.has(fact.pid)),
-      },
-    ];
-  });
 }
 
 /** Agent hosts, their standing runtimes and report helpers are infrastructure, never run cleanup targets. */
@@ -437,25 +380,118 @@ export function runInfrastructurePids(
   processes: readonly HostProcessFact[],
   bbThreads: readonly string[] = [],
 ): Set<number> {
-  const protectedPids = bbRuntimePids(processes, bbThreads);
-  const orphaned = orphanedRunHelperPids(processes);
-  for (const helper of processes) {
-    if (!isReportHelperCommand(helper.command)) continue;
-    // A bridge whose provider has exited has no session left to serve: it is an
-    // orphan of a finished run, so the sweep's cleanup may reap it by identity.
-    if (orphaned.has(helper.pid)) continue;
-    protectedPids.add(helper.pid);
-    const provider = processes.find((fact) => fact.pid === helper.ppid);
-    if (!provider) continue;
-    for (const pid of providerRuntimePids(provider, processes))
-      protectedPids.add(pid);
-    let ancestor: HostProcessFact | undefined = provider;
-    while (ancestor && !protectedPids.has(ancestor.pid)) {
-      protectedPids.add(ancestor.pid);
-      ancestor = processes.find((fact) => fact.pid === ancestor!.ppid);
+  return new RunProcessTable(processes).infrastructurePids(bbThreads);
+}
+
+interface ProcessCommand {
+  process: HostProcessFact;
+  argv: string[];
+  program: string;
+  base: string;
+}
+
+/** Parsed facts and provider classifications valid only for this listing. */
+export class RunProcessTable {
+  readonly byPid = new Map<number, HostProcessFact>();
+  readonly orphanedHelpers = new Set<number>();
+  private readonly commands = new Map<number, ProcessCommand>();
+  private readonly runtimeCandidates: ProcessCommand[] = [];
+  private readonly helpers: Array<{ fact: HostProcessFact; runId?: string }> = [];
+  private readonly directories = new Map<string, readonly string[]>();
+  private readonly runtimes = new Map<string, ReadonlySet<number>>();
+
+  constructor(private readonly facts: readonly HostProcessFact[]) {
+    for (const fact of facts) {
+      const argv = commandArgv(fact.command);
+      const program = argv[0] ?? "";
+      const base = argvBase(program) ?? "";
+      const row = { process: fact, argv, program, base: base.toLowerCase() };
+      this.byPid.set(fact.pid, fact);
+      this.commands.set(fact.pid, row);
+      if (row.base && !SHELL_PROGRAMS.has(row.base)) this.runtimeCandidates.push(row);
+      const script = base === "node" ? argvBase(argv[1]) : undefined;
+      if (script && REPORT_HELPER_SCRIPTS.includes(script)) {
+        const runId = script === "mcp-report.mjs"
+          ? /(?:^|[\\/])mcp-(.+)\.json$/.exec(argv[2] ?? "")?.[1]
+          : undefined;
+        this.helpers.push({ fact, runId });
+      }
+    }
+    for (const { fact } of this.helpers)
+      if (!this.byPid.has(fact.ppid ?? 0)) this.orphanedHelpers.add(fact.pid);
+  }
+
+  /** Resolve executable links once, off the executor loop, for cleanup. */
+  async readProgramDirectories(signal: AbortSignal): Promise<void> {
+    const programs = [...new Set([...this.commands.values()].map(row => row.program))];
+    for (let offset = 0; offset < programs.length && !signal.aborted; offset += 64) {
+      await Promise.all(programs.slice(offset, offset + 64).map(async program => {
+        const invoked = directoryOf(program);
+        if (!invoked) { this.directories.set(program, []); return; }
+        const resolved = await realpath(program).then(directoryOf, () => null);
+        this.directories.set(program, resolved && resolved !== invoked ? [invoked, resolved] : [invoked]);
+      }));
     }
   }
-  return protectedPids;
+
+  private directoriesFor = (program: string): readonly string[] => {
+    const existing = this.directories.get(program);
+    if (existing) return existing;
+    const directories = programDirectories(program);
+    this.directories.set(program, directories);
+    return directories;
+  };
+
+  runtimePids(provider: HostProcessFact): ReadonlySet<number> {
+    const row = this.commands.get(provider.pid);
+    const argv = row?.argv ?? commandArgv(provider.command);
+    const program = argv[0] ?? "";
+    const base = row?.base ?? argvBase(program)?.toLowerCase() ?? "";
+    // A provider that would itself be a tool host must be excluded from its
+    // own answer. Every other incarnation of an executable shares its answer.
+    const isHost = runtimeHost(base, argv, base);
+    const key = isHost ? `${provider.pid}\0${program}` : program;
+    let pids = this.runtimes.get(key);
+    if (!pids) {
+      pids = runtimePids(provider, base, new Set(this.directoriesFor(program)),
+        this.runtimeCandidates, this.directoriesFor);
+      this.runtimes.set(key, pids);
+    }
+    return pids;
+  }
+
+  /** The bridge positively identifies its parent provider and the run's ticket. */
+  *providerBindings(): Iterable<RunProviderBinding> {
+    for (const { fact: helper, runId } of this.helpers) {
+      const provider = this.byPid.get(helper.ppid ?? 0);
+      if (!runId || !provider) continue;
+      const pids = this.runtimePids(provider);
+      yield { runId, provider, infrastructure: this.facts.filter(fact =>
+        fact.pid === provider.pid || fact.pid === helper.pid || pids.has(fact.pid)) };
+    }
+  }
+
+  infrastructurePids(bbThreads: readonly string[]): Set<number> {
+    const protectedPids = bbRuntimePids(this.facts, bbThreads);
+    const seenRuntimes = new Set<ReadonlySet<number>>();
+    for (const { fact: helper } of this.helpers) {
+      // A bridge with no provider is its finished run's own leftover.
+      if (this.orphanedHelpers.has(helper.pid)) continue;
+      protectedPids.add(helper.pid);
+      const provider = this.byPid.get(helper.ppid ?? 0)!;
+      const runtimes = this.runtimePids(provider);
+      if (!seenRuntimes.has(runtimes)) {
+        seenRuntimes.add(runtimes);
+        for (const pid of runtimes) protectedPids.add(pid);
+      }
+      let ancestor: HostProcessFact | undefined = provider;
+      while (ancestor && !protectedPids.has(ancestor.pid)) {
+        protectedPids.add(ancestor.pid);
+        ancestor = this.byPid.get(ancestor.ppid ?? 0);
+      }
+    }
+    return protectedPids;
+  }
 }
 
 export interface OwnedToolProcessProofOptions {

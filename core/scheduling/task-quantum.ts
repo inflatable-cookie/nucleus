@@ -2,6 +2,8 @@ import {
   deferredWorkerCreationRestart,
   staleWorkerIntent,
 } from "../recovery/absent-creation/stale-worker";
+import { recordedSlotWait } from "../recovery/wait-context";
+import { TASK_PROGRESSING_REASON } from "../../shared/task-detail-summary";
 import {
   hostOwesRunProcessCleanup,
   sweepSettledRunProcesses,
@@ -70,6 +72,8 @@ export type TaskQuantumContext = Pick<
     | "recovery"
     | "resumeClearedAttention"
     | "settleBudgetClock"
+    | "slotAdmissionReason"
+    | "update"
   >;
 };
 
@@ -287,6 +291,24 @@ export class TaskQuantum {
         // The probe may have restored the pre-attention phase and reason it found on
         // a cleared external-merge-check strand; re-read so this pass advances it.
         task = this.context.store.task(taskId);
+      }
+      if (
+        task.phase !== "queued" &&
+        !["done", "cancelled"].includes(task.phase) &&
+        recordedSlotWait(task) &&
+        (task.phase === "verifying" ||
+          !this.context.resolution.slotAdmissionReason(
+            task,
+            task.phase === "needs_attention",
+          ))
+      ) {
+        task = this.context.resolution.update(
+          task,
+          { stop: null },
+          { reason: TASK_PROGRESSING_REASON },
+          "slot_wait_settled",
+          task.resolution.stop!.detail,
+        );
       }
       // The sweep owns discovery for an accepted worker creation restart.
       if (staleWorkerIntent(task) && deferredWorkerCreationRestart(task))

@@ -1,3 +1,7 @@
+import {
+  taskWaitStateContext,
+  taskWithCurrentWait,
+} from "../recovery/wait-context";
 import type {
   BulkDisposition,
   BulkDispositionRequest,
@@ -221,10 +225,19 @@ export class AgentControls {
         "Only the recovery coordinator reads the task plan with its run credential",
       );
     const task = this.store.task(caller.taskId);
+    const wait = taskWaitStateContext(this.store, task, null, (candidate) =>
+      this.engine.resolution.slotAdmissionReason(
+        candidate,
+        candidate.phase === "needs_attention",
+      ),
+    );
     return ownerTaskNext({
       ...collectOwnerVerbFacts(this.store, task, null, caller.runId),
-      hostProfiles: this.engine.profilesFor(task.hostId),
       creationGraceMs: this.engine.resolution.graceMs,
+      waitTask: taskWithCurrentWait(this.store, task, wait, (candidate) =>
+        this.engine.queuedExternalWait(candidate),
+      ),
+      hostProfiles: this.engine.profilesFor(task.hostId),
     });
   }
   updateDependenciesFromAgent(

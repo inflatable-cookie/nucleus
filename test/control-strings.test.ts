@@ -1574,7 +1574,7 @@ callback_reminder_skipped:1:1 cancel:1:52 checkpoint_continued:1:1 closed_out:1:
 closeout_recovery_budget:1:1 completion_received:1:4 coordinator_action_refused:1:2 coordinator_rearm:1:1 delegated_answer:5:1 delegated_closed:3:3
 delegated_decision_route:2:1 delegated_delivery:4:1 dependencies_changed:1:1 dispatch_intent:1:1
 disposition_complete:2:1 disposition_requested:1:1 disposition_turn_interrupted:2:1 environment_deferred:1:3 escalation_resolved:1:1
-external_merge_observed:2:2 external_workspace_archive_archived:1:3 hold:1:100 hold_until_blocked:1:1 hook_blocked:2:0 hook_execution_started:3:2
+external_merge_observed:2:1 external_workspace_archive_archived:1:3 hold:1:100 hold_until_blocked:1:1 hook_blocked:2:0 hook_execution_started:3:2
 hook_failed:1:0 hook_intent:2:2 hook_published:1:0 hook_result:1:0 hook_uncertain:2:1 hook_workspace_created:1:1 hook_workspace_intent:1:1
 incident:3:8 initial_pr_lookup_unavailable:1:1 main_synchronized:1:1 merge_intent:1:1 merge_verified:4:1 native_question_answered:1:1
 native_question_delegated:2:1 native_question_operator:1:1 native_question_response_intent:2:1 native_question_unanswered:1:1

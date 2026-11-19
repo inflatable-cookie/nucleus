@@ -34,6 +34,7 @@ import { telemetryStageForTask } from "../../shared/telemetry";
 import { DISPATCH_WAIT_REASON } from "../../shared/task-stop";
 import { EMPTY_RUN_USAGE } from "../telemetry/run-usage";
 import { TaskChangedRefusal } from "../../shared/task-version";
+import { restartSlotObsolete } from "../dispatch/capacity";
 import {
   plainProfileRequest,
   workerThinkingConflict,
@@ -745,6 +746,22 @@ export class StoreTaskFunnel {
           ...next,
           reason: this.services.dependencyWait(next) || DISPATCH_WAIT_REASON,
         };
+    }
+    const restartSlot = task.resolution.restartSlotHold;
+    if (
+      restartSlot &&
+      next.resolution.restartSlotHold?.fromRunId === restartSlot.fromRunId &&
+      (restartSlotObsolete(next) || restartSlotObsolete(task))
+    ) {
+      next = {
+        ...next,
+        resolution: { ...next.resolution, restartSlotHold: null },
+      };
+      this.services.event(
+        id,
+        "restart_slot_released",
+        JSON.stringify(restartSlot),
+      );
     }
     const freezesCompletion = change.phase === "done" && task.phase !== "done";
     if (freezesCompletion) {

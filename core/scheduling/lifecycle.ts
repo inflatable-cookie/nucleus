@@ -19,6 +19,7 @@ import {
 } from "../review/review-continuation";
 import { staleChangesRequestedPhase } from "../intake/current-binding";
 import { isProviderFailure } from "../questions/ladder";
+import { isMergeCloseoutPhase } from "../closeout/closeout";
 import type { Resolution } from "../resolution";
 
 export type SchedulingLifecycleContext = Pick<
@@ -115,7 +116,10 @@ export class SchedulingLifecycle {
       this.context.store.task(original.id),
     );
     if (isDispositionActive(t)) return;
-    if ((await this.context.reapplyPendingReview(t)) === "applied") return;
+    if (t.resolution.mergedCommit) {
+      const bound = t.resolution.currentRunId ? this.context.store.run(t.resolution.currentRunId) : null;
+      if (!isMergeCloseoutPhase(t) && bound?.role !== "closeout") return;
+    } else if ((await this.context.reapplyPendingReview(t)) === "applied") return;
     // That check yields, for as long as its lease observation takes. Read what the
     // rest of this pass acts on after it, not before.
     t = this.context.store.task(t.id);
@@ -304,7 +308,7 @@ export class SchedulingLifecycle {
     const run = t.resolution.currentRunId
       ? this.context.store.run(t.resolution.currentRunId)
       : null;
-    if (run) {
+    if (run && (!t.resolution.mergedCommit || run.role === "closeout")) {
       await this.context.advanceCompletedRun(t, run);
       return;
     }

@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { join } from "node:path";
 import { fixture, runningPid, wait } from "./support/run-process-cleanup-fixture";
 import { readHostUidProcesses } from "../core/machine/host-process-listing";
 import { pidAlive } from "../core/machine/pid";
@@ -117,4 +118,51 @@ test("the table's liveness answer equals a fresh identity read for the real stor
     // A malformed recorded identity is never a proof either way.
     assert.equal(table(child.pid, "not-an-identity"), "unknown");
   } finally { await f.close(); }
+});
+
+test("a timed-out fresh Darwin identity read retains custody until a later proof", { skip: process.platform !== "darwin" }, async () => {
+  const f = fixture();
+  const path = process.env.PATH;
+  try {
+    const run = f.run(), child = f.orphan(run, "command");
+    await wait(() => existsSync(child.ready));
+    f.release(run);
+    const read = await f.listing();
+    assert.equal(read.state, "listed");
+    if (read.state !== "listed") return;
+    const marker = join(f.root, "fresh-read-started");
+    writeFileSync(join(f.root, "ps"), `#!/bin/sh
+case "$*" in
+  *pid=,lstart=*) : > "${marker}"; exec /bin/sleep 30 ;;
+  *) exec /bin/ps "$@" ;;
+esac
+`, { mode: 0o700 });
+    process.env.PATH = `${f.root}:${path ?? ""}`;
+    const attempt = () => sweepSettledRunProcesses(f.store, "fixture-host", {
+      readProcesses: async () => read.processes,
+      readEnvironments: async (pids) => new Map(pids.map(pid => [pid, {}])),
+      readBoundMs: 800,
+    });
+    await attempt();
+    assert.ok(existsSync(marker), "the bounded attempt reached the native identity read");
+    assert.ok(runningPid(child.pid), "the old positive listing cannot authorize a signal");
+    assert.ok(existsSync(run.temporaryDirectory!));
+    assert.equal(f.store.getMeta<{ pending: boolean }>(`runProcessCleanup:${run.id}`)?.pending, true);
+    const events = () => f.store.eventsAll(f.task.id).filter(event => event.kind.startsWith("run_process_cleanup"));
+    assert.match(events().find(event => event.kind === "run_process_cleanup_deferred")?.detail ?? "",
+      /owned processes could not be stopped/);
+    const first = events();
+    await attempt();
+    assert.deepEqual(events(), first, "the same unknown read does not add another cleanup event");
+
+    process.env.PATH = path;
+    await f.cleanup();
+    await wait(() => !runningPid(child.pid));
+    assert.equal(existsSync(run.temporaryDirectory!), false);
+    assert.equal(f.store.getMeta<{ pending: boolean }>(`runProcessCleanup:${run.id}`)?.pending, false);
+  } finally {
+    if (path === undefined) delete process.env.PATH;
+    else process.env.PATH = path;
+    await f.close();
+  }
 });
