@@ -1,14 +1,9 @@
 /**
- * The validation rule every role's prompt carries: how covering checks are run.
+ * The validation rules every role's prompt carries: how covering checks are run.
  * The per-repository policy is retired (Tom, 2026-11-09, task 985), so this is
  * fixed prompt text and the repository's AGENTS.md Validate section owns the
- * rest.
- */
-/**
- * One bounded continuation. It carries only the authenticated checkpoint
- * summary, the original immutable instruction identity and the exact retained
- * task/worker/workspace/branch identities, so it cannot expand scope, create a
- * nested task, accept partial delivery or bypass review.
+ * rest. This module owns every validation line a worker, revision or reviewer
+ * reads, including the affected-tests rule, so no role prompt states its own.
  */
 /**
  * The one validation rule. The repository's AGENTS.md Validate section selects
@@ -28,16 +23,22 @@ export const VALIDATION_RULE_HEADING = "Task validation rule (the repository's A
 export const VALIDATION_AUTHORITY_RULE = "Validate per the repository's AGENTS.md Validate section: read it; it is the authority on which checks cover what changed. Full milestone QA runs separately on main via `project.qa.run`. Missing required proof is a blocker, not permission to report approval.";
 
 /**
- * The affected-test run (nucleus#1164, Tom 2026-11-12): the test files a change
- * can affect, from the import graph. It reads committed work, so it runs after
- * the commit at the exact head. Full suites and `effigy qa` stay on milestone QA.
+ * The affected-test run attributed to the commit (nucleus#1164, Tom 2026-11-12).
+ * It belongs to the repository, never to Nucleus: only a repository whose
+ * `repository.get` shows `affectedTests.command` gets this rule, and then it
+ * runs exactly that command (nucleus#1380, Tom 2026-11-19). It reads committed
+ * work, so it runs after the commit at the exact head. Without that setting
+ * there is no affected-tests requirement at all; the repository's AGENTS.md
+ * Validate section and the brief decide the covering checks. Full suites stay
+ * on milestone QA.
  */
 export function affectedRunRule(command: string) {
-  return `Affected tests: after you commit, run \`${command}\` once at that exact head. It selects the test files your change can affect through the import graph and runs them through the unit runner. If the affected run fails, read the printed \`$TMPDIR/queue-test-failures-<pid>-<ts>.txt\` summary rather than rerunning to recover failure names. For a baseline, use the repository's supported route (in Nucleus, \`effigy test:baseline <file>\`) to rerun the file alone on \`origin/main\`. If it fails there too, it was already broken: list the file and failing test in your report and PR instead of fixing it. Only failures unique to your branch block review. Report the affected-run command and file count as evidence, and never run the full suite or \`effigy qa\` for it.`;
+  return `Affected tests: this repository configures its own affected-tests command, so after you commit, run \`${command}\` once at that exact head. If the affected run fails, read the failure summary it prints rather than rerunning to recover failure names. For a baseline, use the repository's baseline route to rerun the file alone on \`origin/main\`. If it fails there too, it was already broken: list the file and failing test in your report and PR instead of fixing it. Only failures unique to your branch block review. Report the affected-run command and file count as evidence, and never run the full suite for it.`;
 }
 
+/** Judges that configured command at the reviewed head; says nothing when the repository configures none. */
 export function affectedRunReviewerNote(command: string) {
-  return `Affected tests: judge the author's \`${command}\` at this exact head from its reported command and file count. If that evidence is missing or names another head, run it once yourself. If the affected run fails, read the printed \`$TMPDIR/queue-test-failures-<pid>-<ts>.txt\` summary rather than rerunning to recover failure names. For each failing affected file, use the repository's supported baseline route (in Nucleus, \`effigy test:baseline <file>\`) to rerun it alone on \`origin/main\`; if it fails there too, it was already broken, so list the file and failing test in your report rather than requiring a fix. Only failures unique to the branch block review. Anything wider than the affected set never is.`;
+  return `Affected tests: judge the author's \`${command}\` at this exact head from its reported command and file count. If that evidence is missing or names another head, run it once yourself. If the affected run fails, read the failure summary it prints rather than rerunning to recover failure names. For each failing affected file, use the repository's baseline route to rerun it alone on \`origin/main\`; if it fails there too, it was already broken, so list the file and failing test in your report rather than requiring a fix. Only failures unique to the branch block review. Anything wider than the affected set never is.`;
 }
 
 export function operatorValidationBlock(affectedTestsCommand?: string, reviewer = false) {
