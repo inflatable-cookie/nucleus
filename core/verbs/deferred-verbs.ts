@@ -262,9 +262,17 @@ export class DeferredOwnerVerbs {
     if (state === "ready") {
       const notificationUnavailable = !this.engine.adapter.notify || undefined;
       if (notificationUnavailable !== deferred.notificationUnavailable)
-        task = this.store.update(taskId, {
-          resolution: { ...task.resolution, deferredVerb: { ...deferred, notificationUnavailable } },
-        }, "worker_restart_notification_capability", notificationUnavailable ? "Unavailable" : "Restored");
+        task = this.store.update(
+          taskId,
+          {
+            resolution: {
+              ...task.resolution,
+              deferredVerb: { ...deferred, notificationUnavailable },
+            },
+          },
+          "worker_restart_notification_capability",
+          notificationUnavailable ? "Unavailable" : "Restored",
+        );
       if (notificationUnavailable || blocked(task)) return;
     }
 
