@@ -283,7 +283,7 @@ export function assembleOwnerTaskNext(facts: OwnerVerbFacts, ownerVerbViews: (fa
     attention: task.resolution.attention,
     // Papercut 703b4aa3: the reason is the one the current stop supports, so a
     // budget pause the measured budget no longer shows cannot keep its text.
-    reason: taskVisibleReason(task, ownerTaskBudget(facts)),
+    reason: taskVisibleReason(facts.waitTask ?? task, ownerTaskBudget(facts)),
     activeRun: ownerActiveRun(facts),
     prHead: task.prHead,
     prUrl: task.prUrl,

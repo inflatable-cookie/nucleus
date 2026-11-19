@@ -6,7 +6,7 @@ import {
   workerProfileIsExcluded,
 } from "../../shared/contracts";
 import { unavailableGroupNames } from "../../shared/pool";
-import { capacityRefusal, dispatchBlocked, occupiesSlot } from "./capacity";
+import { dispatchBlocked, occupiesSlot } from "./capacity";
 import { workspaceAdmissionGapMs } from "../engine";
 import {
   GitBulkCommandError,
@@ -64,8 +64,8 @@ export type FirstDispatchPorts = {
 /**
  * First dispatch: the one path that turns a queued task into a workspace, a
  * dispatch intent and a launched run. Every stop is a dispatch-gate fact read as
- * it becomes available, every capacity question goes through `capacityRefusal`,
- * and the intent transaction re-checks each fact after its awaits so a roll,
+ * it becomes available. The intent transaction rechecks the shared slot order
+ * after its awaits so a roll,
  * hold or capacity change that landed meanwhile always wins.
  */
 export class FirstDispatch {
@@ -264,7 +264,7 @@ export class FirstDispatch {
         return;
       const dependencyWait = this.store.dependencyWait(latest);
       if (dependencyWait) return;
-      if (capacityRefusal(this.store, latest)) return;
+      if (this.resolution.slotAdmissionReason(latest)) return;
       const preDispatch = await this.context.hooks.emit(
         "task.pre_dispatch",
         latest,
@@ -304,10 +304,11 @@ export class FirstDispatch {
           throw new Error(
             "Dispatch gate changed; this task is no longer dispatchable",
           );
+        if (dispatchGate({ task: current, dispatchHeld: this.store.getMeta<boolean>("dispatchHeld") }) ||
+            this.store.dependencyWait(current) || this.resolution.slotAdmissionReason(current))
+          return false;
         inFlightWait = this.resolution.projectInFlightAdmissionReason(current);
         if (inFlightWait) return false;
-        if (capacityRefusal(this.store, current))
-          throw new Error("Concurrent task-slot limit reached");
         this.store.update(
           task.id,
           {

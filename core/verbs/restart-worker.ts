@@ -421,21 +421,21 @@ export class WorkerRestarts {
           return continueWorker();
         }
         return this.store.transaction(() => {
-          this.preserveWorkerRestartSlot(task.id, task, runsBefore);
+          const restartSlot = this.workerRestartSlot(task, runsBefore);
           settle();
-          return continueWorker();
+          const continued = continueWorker();
+          return restartSlot && !continued.resolution.restartSlotHold
+            ? this.resolution.update(continued, { restartSlotHold: restartSlot }, {}, 'restart_worker_slot_hold')
+            : continued;
         });
       };
     }, finished.settleable.map(run => run.id)), `task:${task.id}`);
   }
 
-  /** Keep the slot this worker already held until the continuation is admitted. */
-  private preserveWorkerRestartSlot(taskId: string, before: Task, runs: Run[]): void {
-    const current = this.store.task(taskId);
-    if (current.resolution.restartSlotHold) return;
-    if (!occupiesSlot(before, runs)) return;
-    const from = runs.find(runHoldsSlot)?.id ?? current.resolution.currentRunId ?? current.runId;
-    if (!from) return;
-    this.resolution.update(current, { restartSlotHold: { role: 'worker', at: now(), fromRunId: from } }, {}, 'restart_worker_slot_hold');
+  /** Capture the current ownership before settling the old run. */
+  private workerRestartSlot(before: Task, runs: Run[]): Task["resolution"]["restartSlotHold"] {
+    if (!occupiesSlot(before, runs)) return null;
+    const from = runs.find(runHoldsSlot)?.id ?? before.resolution.currentRunId ?? before.runId;
+    return from ? { role: 'worker', at: now(), fromRunId: from } : null;
   }
 }

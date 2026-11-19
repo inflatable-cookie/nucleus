@@ -1,3 +1,4 @@
+import { taskWaitStateContext, taskWithCurrentWait } from "../recovery/wait-context";
 import type { BulkDisposition, BulkDispositionRequest, TaskControlRequest, Task } from "../../shared/contracts";
 import { taskControlInputSchema } from "../../shared/contracts";
 import { requestDisposition, withdrawCancellation, type DispositionRequest } from "./disposition";
@@ -84,7 +85,11 @@ export class AgentControls {
     this.engine.authenticateAgentControl(caller.taskId, caller.runId, caller.token);
     if (this.store.run(caller.runId)?.role !== 'recovery') throw Error('Only the recovery coordinator reads the task plan with its run credential');
     const task = this.store.task(caller.taskId);
-    return ownerTaskNext({ ...collectOwnerVerbFacts(this.store, task, null, caller.runId), hostProfiles: this.engine.profilesFor(task.hostId) });
+    const wait = taskWaitStateContext(this.store, task, null,
+      candidate => this.engine.resolution.slotAdmissionReason(candidate, candidate.phase === "needs_attention"));
+    return ownerTaskNext({ ...collectOwnerVerbFacts(this.store, task, null, caller.runId),
+      waitTask: taskWithCurrentWait(this.store, task, wait, candidate => this.engine.queuedExternalWait(candidate)),
+      hostProfiles: this.engine.profilesFor(task.hostId) });
   }
   updateDependenciesFromAgent(caller:{taskId:string;runId:string;token:string},input:{taskId:string;version:number;dependsOn:string[]}) {
     return this.store.transaction(()=>{

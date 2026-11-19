@@ -282,10 +282,11 @@ export class RetryRoutes {
       this.store.putRun({ ...stopped, status: 'superseded', released: true, active: false });
       const current = this.store.task(t.id);
       this.resolution.update(current, { currentRunId: null, attention: false, recoveryActive: false, recovery: null,
-        stalledTurnStop: null,
-        ...(occupying && holdFrom && !before.resolution.restartSlotHold
-          ? { restartSlotHold: { role: 'worker' as const, at: now(), fromRunId: holdFrom } } : {}) }, {}, 'stopped_revision_restarted');
-      return this.resolution.retry(this.store.task(t.id), true, instruction, true, resumeIntent, prePr);
+        stalledTurnStop: null }, {}, 'stopped_revision_restarted');
+      const continued = this.resolution.retry(this.store.task(t.id), true, instruction, true, resumeIntent, prePr);
+      return occupying && holdFrom && !continued.resolution.restartSlotHold
+        ? this.resolution.update(continued, { restartSlotHold: { role: 'worker', at: now(), fromRunId: holdFrom } }, {}, 'restart_worker_slot_hold')
+        : continued;
     });
   }
 }

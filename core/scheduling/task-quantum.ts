@@ -1,3 +1,5 @@
+import { recordedSlotWait } from "../recovery/wait-context";
+import { TASK_PROGRESSING_REASON } from "../../shared/task-detail-summary";
 import { hostOwesRunProcessCleanup, sweepSettledRunProcesses } from "../machine/run-process-cleanup";
 import { LANE_PRIORITY_AUDIT } from "./lane-priorities";
 import { onCheckoutVolume } from "../workspaces/checkout-volume";
@@ -16,7 +18,7 @@ import { proofExecutionRunning } from "../qa/proof-admission";
 import { hookHoldReason } from "../hooks/hooks";
 import type { Engine } from '../engine';
 
-export type TaskQuantumContext = Pick<Engine, 'adapter' | 'cleanContext' | 'enqueueTitle' | 'hooks' | 'launchAgent' | 'launchProofOnly' | 'note' | 'noteStepFailure' | 'prerequisiteWaitYieldsToLiveWork' | 'profileCatalogKnown' | 'profiles' | 'quantumFinish' | 'quantumSteps' | 'reconcile' | 'reconcileBlockedEffects' | 'reconcileClosedRetainedReviewer' | 'recover' | 'routeTask' | 'scheduleLane' | 'settleFinishedRuns' | 'settleHistoricalProofExecutions' | 'settleRunBuildOutputs' | 'settleSupersededIdleRuns' | 'signoffDecisions' | 'stopped' | 'store' | 'wakeRepository'> & { readonly resolution: Pick<Resolution, 'advance' | 'beginValidationScanPass' | 'holdProofOnlyGoWait' | 'ownedToolHold' | 'owns' | 'raiseOperatorQuestions' | 'reconcileHoldUntil' | 'recordStop' | 'recoverExternalMerge' | 'recovery' | 'resumeClearedAttention' | 'settleBudgetClock'> };
+export type TaskQuantumContext = Pick<Engine, 'adapter' | 'cleanContext' | 'enqueueTitle' | 'hooks' | 'launchAgent' | 'launchProofOnly' | 'note' | 'noteStepFailure' | 'prerequisiteWaitYieldsToLiveWork' | 'profileCatalogKnown' | 'profiles' | 'quantumFinish' | 'quantumSteps' | 'reconcile' | 'reconcileBlockedEffects' | 'reconcileClosedRetainedReviewer' | 'recover' | 'routeTask' | 'scheduleLane' | 'settleFinishedRuns' | 'settleHistoricalProofExecutions' | 'settleRunBuildOutputs' | 'settleSupersededIdleRuns' | 'signoffDecisions' | 'stopped' | 'store' | 'wakeRepository'> & { readonly resolution: Pick<Resolution, 'advance' | 'beginValidationScanPass' | 'holdProofOnlyGoWait' | 'ownedToolHold' | 'owns' | 'raiseOperatorQuestions' | 'reconcileHoldUntil' | 'recordStop' | 'recoverExternalMerge' | 'recovery' | 'resumeClearedAttention' | 'settleBudgetClock' | 'slotAdmissionReason' | 'update'> };
 
 export class TaskQuantum {
   constructor(readonly context: TaskQuantumContext) {}
@@ -148,6 +150,11 @@ export class TaskQuantum {
         // The probe may have restored the pre-attention phase and reason it found on
         // a cleared external-merge-check strand; re-read so this pass advances it.
         task = this.context.store.task(taskId);
+      }
+      if (task.phase !== 'queued' && !['done', 'cancelled'].includes(task.phase) && recordedSlotWait(task)
+          && (task.phase === 'verifying' || !this.context.resolution.slotAdmissionReason(task, task.phase === 'needs_attention'))) {
+        task = this.context.resolution.update(task, { stop: null }, { reason: TASK_PROGRESSING_REASON },
+          'slot_wait_settled', task.resolution.stop!.detail);
       }
       // Project-a #1837: a restart can leave the flag cleared on a recorded pre-attention
       // state. Restore it so the ordinary resolution path advances instead of idling.

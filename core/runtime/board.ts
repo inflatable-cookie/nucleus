@@ -1,6 +1,6 @@
 import { visibleTaskSummaries, availabilitySchema, DEFAULT_GLOBAL_LIMIT, DEFAULT_PROJECT_LIMIT, DEFAULT_PAPERCUT_PROJECT_LIMIT, DEFAULT_STALL_THRESHOLD_MINUTES, DEFAULT_HOLD_REMINDER_MINUTES, DEFAULT_HOLD_ESCALATION_MINUTES, DEFAULT_LANE_DRAIN_MINUTES, DEFAULT_LANE_DRAIN_ESCALATION_MINUTES, DEFAULT_HOST_OUTAGE_NOTICE_MINUTES } from "../../shared/contracts";
 import type { SnapshotInput, SnapshotState, OutcomeSearchInput, Task, BoundRun, UsageLevel, BackupHealth } from "../../shared/contracts";
-import { taskWaitStateContext, queuedReason } from "../recovery/wait-context";
+import { taskWaitStateContext, taskWithCurrentWait } from "../recovery/wait-context";
 import { occupiesSlot, RETIRED_OBSERVATION_STALE_MS } from "../engine";
 import type { Engine } from "../engine";
 import type { Store } from "../store/store";
@@ -70,7 +70,7 @@ export class RuntimeBoard {
       tasks: page.tasks.map(summary => {
         const task = this.context.store.task(summary.id);
         const context = taskWaitStateContext(this.context.store, task, null, candidate => this.context.engine.resolution.slotAdmissionReason(candidate));
-        return { ...summary, reason: queuedReason(this.context.store, task, context, candidate => this.context.engine.queuedExternalWait(candidate)) };
+        return { ...summary, reason: taskWithCurrentWait(this.context.store, task, context, candidate => this.context.engine.queuedExternalWait(candidate)).reason };
       }), cursor: page.cursor, hasMore: page.hasMore, profiles: this.context.engine.profiles, pool: this.context.store.pool(), assignments: this.context.store.counts(), recentAssignments: this.context.store.recentCounts(),
       availability: this.context.store.db.prepare("SELECT data FROM availability").all().map(r => availabilitySchema.parse(JSON.parse(String(r.data)))) };
   }
@@ -227,7 +227,7 @@ export class RuntimeBoard {
       if (pageIds.has(id) && !decisions.has(id)) decisions.set(id, decision.id);
     const admission = this.context.engine.resolution.slotAdmissionReader(this.context.store.admissionCandidates(), this.context.store.pendingRuns(), true);
     const contexts = new Map(page.tasks.map(task => [task.id, taskWaitStateContext(this.context.store, task, decisions.get(task.id) ?? null, admission)]));
-    const display = page.tasks.map(task => ({ ...task, reason: queuedReason(this.context.store, task, contexts.get(task.id)!, candidate => this.context.engine.queuedExternalWait(candidate)) }));
+    const display = page.tasks.map(task => taskWithCurrentWait(this.context.store, task, contexts.get(task.id)!, candidate => this.context.engine.queuedExternalWait(candidate)));
     const events = new Map(page.tasks.map(task => [task.id, this.context.store.eventsAll(task.id)]));
     const repositorySettings = new Map(display.map(task => [task.id, this.context.store.canonicalRepository(task.repoPath, task.repository)]));
     return { tasks: visibleTaskSummaries(display, this.context.store.projects(), runs, decisions, contexts, this.context.hostId, events, repositorySettings), nextOffset: page.nextOffset };
@@ -259,13 +259,10 @@ export class RuntimeBoard {
       // The task host's own snapshot, as queue.detail reads it (nucleus#1151).
       const hostProfiles = this.context.engine.profilesFor?.(task.hostId);
       const facts = { ...this.ownerVerbFacts(task), operatorBoard: input.caller === "operator (board)", ...(hostProfiles ? { hostProfiles } : {}) };
-      if (task.phase !== "queued") return ownerTaskNext(facts);
-      const context = taskWaitStateContext(this.context.store, task, null, candidate => this.context.engine.resolution.slotAdmissionReason(candidate));
-      const reason = queuedReason(this.context.store, task, context, candidate => this.context.engine.queuedExternalWait(candidate));
-      const stop = task.resolution.stop;
-      const resolution = stop && (["capacity", "prerequisite"].includes(stop.reason)
-        || stop.reason === "route_unavailable" && this.context.store.routingRetryAllowed(task)) ? { ...task.resolution, stop: null } : task.resolution;
-      return ownerTaskNext({ ...facts, task: { ...task, reason, resolution } });
+      const context = taskWaitStateContext(this.context.store, task, null,
+        candidate => this.context.engine.resolution.slotAdmissionReason(candidate, candidate.phase === "needs_attention"));
+      return ownerTaskNext({ ...facts, waitTask: taskWithCurrentWait(this.context.store, task, context,
+        candidate => this.context.engine.queuedExternalWait(candidate)) });
     }
     catch (error) {
       // A read view never fails by design; a programming error names its own

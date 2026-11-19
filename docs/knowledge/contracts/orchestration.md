@@ -1152,8 +1152,9 @@ request identities and submitted handoffs are not rewritten.
   restart is holding the slot that task already had (`restartSlotHold`) until
   the next participant's continuation is admitted, whichever role resumes it.
   Capture that ownership before settling or displacing the old runs. A fenced
-  task (dispatch-held, disposition, or a stop that cannot launch) does not keep that restart hold: it neither
-  reserves a slot nor ranks ahead of runnable work. A task with no running
+  task releases its unused restart reservation when fenced. Clearing the fence
+  returns it to ordinary admission at its existing age and priority. The next
+  run takes a held reservation in the same transaction that records its intent. A task with no running
   agent that is only waiting on hosted checks, the repository integration
   (merge) turn, mechanical verification, a thread release or settlement holds
   no slot; it keeps its merge order, and when it next needs an agent it
@@ -1169,13 +1170,15 @@ request identities and submitted handoffs are not rewritten.
   including one whose only occupancy would have been a restart hold. A live or
   starting agent keeps its slot while dispatch is held.
 - Capacity waits and the board's slot counts report agents in use: the occupied
-  count names the live-agent occupants, and the wait names in-flight tasks
-  that hold no slot (checks, merge turn, thread release) separately, so the
-  blocking work and the waiting work are each visible to planners.
+  count names the live or starting occupants and held restart reservations.
+  The wait uses the same current slot decision as admission. Dispatch checks it
+  again when it writes intent. A merged task keeps its integration order, while
+  only a live or starting run can occupy a slot during closeout.
 - Parked `awaiting_review`, `changes_requested` and recovering
   `needs_attention` requests rank ahead of never-dispatched requests. Within a
   tier, `queuePriority` orders globally and equal priorities keep round-robin
-  project fair share.
+  project fair share. A first dispatch that already occupies a slot counts
+  toward its project's turn at that priority when competing starts recheck.
 - A queued task waiting on a prerequisite does not block a runnable task behind
   it in the same project. When the prerequisite settles, its dependent resumes
   its existing place in dispatch order; queue indexing must preserve that order.

@@ -9,6 +9,7 @@ import { incidentKey } from './incident';
 import { isRepositoryContention, repositoryContentionNeedsAttention } from '../scheduling/repository-contention';
 import type { Resolution } from '../resolution';
 import { digest, now } from '../store/store';
+import { recordedSlotWait } from "./wait-context";
 import { EXTERNAL_MERGE_CHECK_REASON_PREFIX, noActionEscalationAtAcceptedHead, visibleTaskReason, workingLanes } from './task-reasons';
 
 /** Task fields that must never ride in a resolution-changes object. Building that
@@ -191,12 +192,7 @@ export class TaskStops {
   /** Record one stop or wait on the task; matching observations retain their first timestamp. */
   recordStop(task: Task, reason: TaskStopReason, detail: string, suggestedVerbs?: TaskStopVerb[], phase?: Task['phase']): Task {
     const current = this.store.task(task.id);
-    // A queued task's capacity wait names the in-flight list, which changes with every
-    // transition. Rewriting ~100 queued rows and events each time pinned the service at
-    // 100% CPU (2026-11-04). A task already waiting on capacity keeps its record; the
-    // board computes the live wait, and dispatch re-reads admission for itself.
-    if (reason === 'capacity' && current.phase === 'queued' && (!phase || phase === current.phase)
-      && current.resolution.stop?.reason === 'capacity') return current;
+    if (reason === 'capacity' && (!phase || phase === current.phase) && recordedSlotWait(current)) return current;
     const stop = taskStopRecord(reason, detail, current.resolution.stop, now(), suggestedVerbs);
     const visible = visibleTaskReason(detail, stop);
     if (JSON.stringify(stop) === JSON.stringify(current.resolution.stop) && current.reason === visible && (!phase || phase === current.phase)) return current;
@@ -388,6 +384,8 @@ export class TaskStops {
         this.resolution.update(current, { stop: null }, { reason }, 'task_waiting', reason);
       return;
     }
+    // The first observation is history. Current membership is projected on reads.
+    if (stop === 'capacity' && recordedSlotWait(current)) return;
     const classification = stop === 'classify' ? taskStopClassification(reason) : { reason: stop, suggestedVerbs: taskStopVerbsFor(stop) };
     const retainedSuggestions = classification.reason === 'escalated' && current.resolution.stop?.reason === 'escalated'
       ? current.resolution.stop.suggestedVerbs : classification.suggestedVerbs;

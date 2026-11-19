@@ -102,6 +102,11 @@ export class WorkerLauncher {
         (restartingRun && current.restartRunId !== runId) ||
         current.workspaceId !== task.workspaceId || current.retiredWorkers.length !== task.retiredWorkers.length ||
         current.profile?.id !== task.profile?.id) return false;
+      const slotWait = this.resolution.slotAdmissionReason(current);
+      if (slotWait) {
+        this.resolution.waiting(current, slotWait, "capacity");
+        return false;
+      }
       this.store.setCredential(runId, token);
       // Spec 020: the worker run records the Queue-held brief version it is given.
       const brief = currentBrief(current);
@@ -119,7 +124,8 @@ export class WorkerLauncher {
       this.store.update(task.id, { branch, runId, ...(this.adapter.runTemporaryDirectory ? { temporaryDirectory: this.adapter.runTemporaryDirectory(runId, current) } : {}), restartRunId: null, transientProviderRetry: undefined, agentIntent: true, reason: "Creating worker", stashBaseline: stash ? { runId, entries: stash } : null,
         ...(brief ? { briefRuns: [...current.briefRuns, { runId, version: brief.version }] } : {}),
         ...(pins.length ? { laneDocumentPins: pins, laneDocumentRuns: [...current.laneDocumentRuns ?? [], { runId, documents: pins.map(({ key, version, digest }) => ({ key, version, digest })) }] } : {}),
-        laneDocumentIssues: [...references.unresolved, ...missingDocuments] }, "agent_intent", runId);
+        laneDocumentIssues: [...references.unresolved, ...missingDocuments],
+        resolution: { ...current.resolution, restartSlotHold: null } }, "agent_intent", runId);
       return true;
     });
     if (!owns) return;

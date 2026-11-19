@@ -3,7 +3,7 @@ import { blockingRecoveryEffects, recoveryEffectsRefusal } from '../recovery/rec
 import { mergeFenced, type Task } from '../../shared/contracts';
 import { now } from '../store/store';
 import { mergeFenceReason } from '../recovery/task-reasons';
-import { CAPACITY_WAIT_PREFIX } from '../../shared/wait-state';
+import { recordedSlotWait } from '../recovery/wait-context';
 import type { Resolution } from '../resolution';
 
 export type IntegrationTurnsContext = Pick<Resolution, 'assignIntegrationTurn' | 'hasEarlierIntegrationTurn' | 'holdLastBlocker' | 'holdsIntegrationTurn' | 'integrationActive' | 'paused' | 'refreshingCloseoutHook' | 'requiredCheckPollState' | 'slotAdmissionReason' | 'store' | 'update' | 'waiting'>;
@@ -93,7 +93,7 @@ export class IntegrationTurns {
     // An already-landed merge must release its occupied slot through closeout.
     // A verification waiting for that slot cannot also fence its synchronization.
     return this.idleOrdinaryVerification(t) && (t.reason.startsWith('Waiting for repository integration turn') ||
-      t.reason.startsWith(CAPACITY_WAIT_PREFIX) && Boolean(this.resolution.slotAdmissionReason(t)));
+      recordedSlotWait(t) && Boolean(this.resolution.slotAdmissionReason(t)));
   }
   holdsIntegrationTurn(t: Task) {
     return this.resolution.integrationActive(t) && !this.resolution.hasEarlierIntegrationTurn(t);

@@ -1,9 +1,10 @@
+import { boardDispatchHoldApplies } from "../../shared/board-dispatch-hold";
 import type { Engine } from "../engine";
 import type { Task } from "../../shared/contracts";
 import { isDispositionActive } from "../../shared/contracts";
 import type { Adapter } from "../host/adapter";
 import type { Resolution } from "../resolution";
-import { capacityRefusal, dispatchBlocked } from "./capacity";
+import { dispatchBlocked } from "./capacity";
 import { startsNoRuns } from "../closeout/queue-drain";
 import {
   assertReviewEntryUnowned,
@@ -151,12 +152,7 @@ export class ReviewEntryAdmission {
           { reason: "Origin available; awaiting review admission" },
           "origin_wait_cleared",
         );
-      const slotWait = () => {
-        if (!recoveredOrigin) return "";
-        return this.resolution.slotAdmissionReason(this.store.task(task.id));
-      };
-      if (slotWait() || capacityRefusal(this.store, this.store.task(task.id)))
-        return;
+      if (this.resolution.slotAdmissionReason(this.store.task(task.id))) return;
       const preDispatch = await this.context.hooks.emit(
         "task.pre_dispatch",
         latest,
@@ -195,11 +191,12 @@ export class ReviewEntryAdmission {
           throw Error("Review-entry admission changed before binding");
         if (this.store.runs(current.id).some((run) => !run.released))
           throw Error("Review-entry admission changed before binding");
-        if (startsNoRuns(this.store)) return null;
+        if (startsNoRuns(this.store) ||
+            this.store.getMeta<boolean>("dispatchHeld") && boardDispatchHoldApplies(current)) return null;
         const wait = this.store.dependencyWait(current);
         if (wait) return wait;
         assertReviewEntryUnowned(this.store, input, current.id);
-        if (slotWait() || capacityRefusal(this.store, current)) return null;
+        if (this.resolution.slotAdmissionReason(current)) return null;
         this.store.update(
           current.id,
           {

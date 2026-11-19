@@ -572,6 +572,46 @@ test('a fenced restart hold does not keep the slot', async () => {
   } finally { await f.close(); }
 });
 
+test('C3 releases a fenced restart reservation without resurrecting a seventeenth slot', async () => {
+  const f = fixture();
+  try {
+    const current = f.current();
+    f.store.putRun({ ...f.store.run('review-run')!, active: null });
+    f.states.set('review-agent', { ...f.states.get('review-agent')!, status: 'closed', active: false, activeTurnId: undefined });
+    await f.engine.performTaskControl(taskControlInputSchema.parse({
+      taskId: current.id, version: current.version, action: 'restart', role: 'reviewer', fresh: true,
+      reason: 'Restart the retained reader', caller: 'owner-thread',
+    }));
+    const reserved = f.current();
+    assert.equal(reserved.resolution.restartSlotHold?.fromRunId, 'review-run');
+    f.store.putRun({ ...f.store.run('review-run')!, active: true, released: true, status: 'superseded' });
+    const occupied = () => f.store.activeCapacityTasks().filter(task => occupiesSlot(task)).length;
+    assert.equal(occupied(), 1, 'the durable restart transfer counts despite the released run');
+
+    const held = await f.engine.performTaskControl({
+      taskId: reserved.id, version: reserved.version, action: 'hold', kind: 'dispatch', reason: 'Wait for an owner answer',
+    }) as Task;
+    assert.equal(held.resolution.restartSlotHold, null);
+    assert.equal(f.events('restart_slot_released').length, 1);
+    f.store.setMeta('globalLimit', 16);
+    for (let i = 0; i < 16; i++) {
+      const task = f.store.insert(submissionSchema.parse({
+        submissionId: randomUUID(), title: `Live worker ${i}`, repoPath: `/synthetic-${i}`, planningCommit: base,
+        handoffPath: 'handoff.md', originAgentId: 'origin',
+      }), 'host', 'handoff', base);
+      f.store.update(task.id, { phase: 'working', agentId: `worker-${i}`, agentActive: true }, 'agent_state');
+    }
+    assert.equal(occupied(), 16);
+    const released = await f.engine.performTaskControl({
+      taskId: held.id, version: held.version, action: 'release', kind: 'dispatch',
+    }) as Task;
+    assert.equal(released.resolution.restartSlotHold, null);
+    assert.equal(occupied(), 16, 'releasing a fence re-enters ordinary admission');
+    assert.match(f.engine.resolution.slotAdmissionReason(f.current()), /16\/16 occupied/);
+    assert.equal(f.events('restart_slot_released').length, 1);
+  } finally { await f.close(); }
+});
+
 for (const occupant of ['worker', 'recovery'] as const) {
 test(`worker restart keeps the task slot held by ${occupant} while another task is queued`, async () => {
   const f = fixture();

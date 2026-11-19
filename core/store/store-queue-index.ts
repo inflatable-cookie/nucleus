@@ -2,7 +2,7 @@ import { boardDispatchHoldApplies } from "../../shared/board-dispatch-hold";
 import { DEFAULT_GLOBAL_LIMIT, runHoldsSlot, taskHasUnreleasedRun, type Run, type Task } from "../../shared/contracts";
 import { holdsOf } from "../../shared/holds";
 import { routeUnavailableStop } from "../../shared/task-stop";
-import { isPapercutTask, slotRequestFenced } from "../dispatch/capacity";
+import { isPapercutTask, queuedSlotObservationPending, slotRequestFenced } from "../dispatch/capacity";
 import type { StoreCore } from "./store-core";
 
 /**
@@ -77,7 +77,7 @@ export class StoreQueueIndex {
   private updateCapacityIndex(task: Task): void {
     if (capacityEligible(task) && (task.phase !== "queued" || task.workspaceId || task.workspaceIntent
       || task.agentId || task.agentIntent || task.agentActive || task.coordinatorAgentId || task.resolution.reviewerAgentId
-      || task.pausedStop || task.interactive || task.retiredWorkers.length || task.proofExecutions.length || task.reviewEntry?.workspaceId))
+      || task.pausedStop || task.interactive || task.resolution.restartSlotHold || task.retiredWorkers.length || task.proofExecutions.length || task.reviewEntry?.workspaceId))
       this.activeCapacityIds.add(task.id);
     else this.activeCapacityIds.delete(task.id);
   }
@@ -217,7 +217,7 @@ export class StoreQueueIndex {
   }
 
   /** At most limit candidates per repository, oldest first on equal priority. */
-  readyQueueHeads(limit: number, repoPath?: string, startedOnly = false): Task[] {
+  readyQueueHeads(limit: number, repoPath?: string, startedOnly = false, forAdmission = false): Task[] {
     this.hooks.ensureProjection();
     if (limit <= 0) return [];
     const result: Task[] = [];
@@ -225,12 +225,22 @@ export class StoreQueueIndex {
     const ages = startedOnly ? this.readyStartedOldest : this.readyOldest;
     const normal = startedOnly ? this.readyStartedNormalQueues : this.readyNormalQueues;
     const papercuts = startedOnly ? this.readyStartedPapercutQueues : this.readyPapercutQueues;
+    const eligible = (id: string) => !forAdmission || !queuedSlotObservationPending(this.task(id)!);
+    const head = (ids: readonly string[]) => {
+      if (!forAdmission) return ids.slice(0, limit);
+      const selected: string[] = [];
+      for (const id of ids) {
+        if (eligible(id)) selected.push(id);
+        if (selected.length === limit) break;
+      }
+      return selected;
+    };
     for (const [repo] of queues) {
       if (repoPath && repo !== repoPath) continue;
-      const selected = [...(normal.get(repo) ?? []).slice(0, limit), ...(papercuts.get(repo) ?? []).slice(0, limit)];
+      const selected = [...head(normal.get(repo) ?? []), ...head(papercuts.get(repo) ?? [])];
       // Fair rotation starts with the repository whose oldest eligible request
       // came first, even when that request has a lower priority than the heads.
-      const oldest = ages.get(repo)?.[0];
+      const oldest = ages.get(repo)?.find(eligible);
       if (oldest && !selected.includes(oldest)) selected.push(oldest);
       for (const id of selected) result.push({ ...this.task(id)! });
     }
@@ -261,7 +271,9 @@ export class StoreQueueIndex {
   admissionCandidates(task?: Task): Task[] {
     const limit = this.core.getMeta<number>("globalLimit") ?? DEFAULT_GLOBAL_LIMIT;
     const byId = new Map(this.activeCapacityTasks().map(candidate => [candidate.id, candidate]));
-    for (const candidate of this.readyQueueHeads(Math.max(1, limit + 2))) if (!byId.has(candidate.id)) byId.set(candidate.id, candidate);
+    const startedOnly = this.core.getMeta<boolean>("dispatchHeld") === true;
+    for (const candidate of this.readyQueueHeads(Math.max(1, limit + 2), undefined, startedOnly, true))
+      if (!byId.has(candidate.id)) byId.set(candidate.id, candidate);
     if (task && !byId.has(task.id)) byId.set(task.id, task);
     return [...byId.values()].sort((a, b) => (this.sequence(b.id) || 0) - (this.sequence(a.id) || 0));
   }

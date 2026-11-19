@@ -4,7 +4,7 @@ import { deriveTaskTelemetry } from './telemetry';
 import { taskDetailView } from '../../shared/contracts';
 import type { HookRecord } from '../../shared/hooks';
 import type { Notice, Profile, Run, Task } from '../../shared/contracts';
-import { taskWaitStateContext, queuedReason } from '../recovery/wait-context';
+import { taskWaitStateContext, taskWithCurrentWait } from '../recovery/wait-context';
 
 /** The task's own recorded rows: everything `task.next` derives a verb from, and nothing remote. */
 export type TaskEvidence = {
@@ -70,7 +70,7 @@ export function createTaskDetailCache(store: Store, options: { maxEntries?: numb
     const task = store.task(taskId);
     const decisionId = store.listDecisions({ status: 'open', task: taskId })[0]?.id ?? null;
     const context = taskWaitStateContext(store, task, decisionId, options.slotAdmissionReason);
-    const currentTask = taskDetailView({ ...task, reason: queuedReason(store, task, context, options.externalWait) }, context, entry.evidence.runs, entry.evidence.events,
+    const currentTask = taskDetailView(taskWithCurrentWait(store, task, context, options.externalWait), context, entry.evidence.runs, entry.evidence.events,
       store.canonicalRepository(task.repoPath, task.repository));
     const dependencyIds = [...new Set([...task.dependsOn, ...(task.prerequisiteWait?.waitsFor ?? [])])];
     // Spec 052: the usage level can expire with no write, so the routing policy is read fresh too.

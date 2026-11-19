@@ -1,7 +1,7 @@
 import type { Task, TaskSummary, Run, LaneView, Project, HostRunInternalRecord, BoardQaRun, HeavyRunView, ProjectQaRun } from "../../shared/contracts";
 import { visibleTaskSummaries } from "../../shared/contracts";
 import type { Store } from "../store/store";
-import { taskWaitStateContext, queuedReason } from "../recovery/wait-context";
+import { taskWaitStateContext, taskWithCurrentWait } from "../recovery/wait-context";
 import { boardQaRuns, createQaStalenessResolver } from "../qa/qa-board";
 import { isAbsolute, relative, resolve } from "node:path";
 
@@ -86,7 +86,7 @@ export function createUiSnapshotFactsCache(store: Store, slotAdmissionReader: (t
     const slotAdmissionReason = slotAdmissionReader(capacityTasks, runs);
     const waitContexts = new Map(tasks.map(task => [task.id,
       taskWaitStateContext(store, task, decisionByTask.get(task.id) ?? null, slotAdmissionReason)]));
-    const displayTasks = tasks.map(task => ({ ...task, reason: queuedReason(store, task, waitContexts.get(task.id)!, externalWait) }));
+    const displayTasks = tasks.map(task => taskWithCurrentWait(store, task, waitContexts.get(task.id)!, externalWait));
     const taskForRun = (hostRun: HostRunInternalRecord) => taskForHostRun(tasks, hostRun);
     const live = currentLive.filter((run): run is HostRunInternalRecord & { state: "queued" | "admitted" | "running" } =>
       run.runClass === "heavy" && run.state !== "settled" && !overdueHostRun(run, Date.now())).sort((a, b) => Date.parse(a.submittedAt) - Date.parse(b.submittedAt));

@@ -6,7 +6,6 @@ import {
   workerExclusionRefusal,
 } from "../../../shared/contracts";
 import {
-  consumeRestartSlotHold,
   dispatchBlocked,
   DISPATCH_HELD_REASON,
 } from "../capacity";
@@ -210,7 +209,7 @@ export class RunReservationAdmission {
         {
           currentRunId: run.id,
           stalledTurnStop: null,
-          ...(consumeRestartSlotHold(latest) ? { restartSlotHold: null } : {}),
+          restartSlotHold: null,
           ...(role === "reviewer" && run.reviewReason
             ? { pendingReviewReason: null }
             : {}),

@@ -17,7 +17,7 @@ import {
   CheckoutUnavailableError,
 } from "../workspaces/checkout-volume";
 import { routeUnavailableStop } from "../../shared/task-stop";
-import { CAPACITY_WAIT_PREFIX } from "../../shared/wait-state";
+import { recordedSlotWait } from "../recovery/wait-context";
 import { WorkspaceObservationUnavailableError } from "../workspaces/workspace-allocation";
 import { isTransportFailure } from "../../shared/transport";
 import {
@@ -543,9 +543,8 @@ export class TaskWakes {
       !(held && boardDispatchHoldApplies(task)) &&
       (!routeUnavailableStop(task) || this.store.routingRetryAllowed(task)) &&
       !occupiesSlot(task) &&
-      (task.phase === "queued" ||
-        task.reason.startsWith(CAPACITY_WAIT_PREFIX)) &&
-      ["queued", "awaiting_review", "changes_requested", "verifying"].includes(
+      (task.phase === "queued" || recordedSlotWait(task)) &&
+      ["queued", "awaiting_review", "changes_requested", "reviewing", "closing"].includes(
         task.phase,
       );
     const ready = (task: Task) =>
@@ -560,10 +559,8 @@ export class TaskWakes {
         (!this.store.dependencyWait(task) &&
           !this.resolution.projectInFlightAdmissionReason(task))) &&
       !this.resolution.slotAdmissionReason(task);
-    const next = fairSlotRequestOrder(
-      this.store.admissionCandidates(),
-      candidate,
-    ).find(ready);
+    const tasks = this.store.admissionCandidates();
+    const next = fairSlotRequestOrder(tasks, candidate, tasks.filter(task => occupiesSlot(task))).find(ready);
     if (!next) return;
     markPhaseFact(
       this.store,

@@ -27,7 +27,7 @@ import {
 } from "../review/review-entry";
 import { now } from "../store/store";
 import { mergeFenceReason } from "../recovery/task-reasons";
-import { CAPACITY_WAIT_PREFIX } from "../../shared/wait-state";
+import { recordedSlotWait } from "../recovery/wait-context";
 import {
   mergeFenced,
   operatorSourceAcceptance,
@@ -621,7 +621,7 @@ export class MergeGates {
     // Revoke the parked classification synchronously before taking the turn or
     // awaiting any hook: a stale capacity reason must never mask active verification.
     if (
-      t.reason.startsWith(CAPACITY_WAIT_PREFIX) ||
+      recordedSlotWait(t) ||
       t.reason.startsWith("Waiting for repository integration turn")
     ) {
       this.resolution.waiting(
