@@ -657,7 +657,7 @@ async function main() {
         },
         initialMessage: {
           messageId: `proof-message-${Date.now()}`,
-          text: `${HOLD_MARKER}: ${task.id}`,
+          text: HOLD_MARKER,
           attachments: [],
         },
       });

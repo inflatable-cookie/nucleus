@@ -142,7 +142,9 @@ task text of its own.
 The agent writes each line as its own paragraph (`text` plus a blank line),
 because clients join message chunks without a separator. It also skips a line
 identical to the one a session showed last, so a repeated attach cannot repeat it.
-The hold rule for a host's re-entry is an exact match. Current parents hold the
+The hold rule for a host's re-entry is an exact match. On the installed nightly
+(`0.1.11-nightly.20261119.4928`) a `system`-created re-entry holds the run too, but T3
+shows it as a user bubble, so there is no quiet re-entry to use. Current parents hold the
 plain sentence the adapter sends (`Nucleus keeps this task thread open for its
 next role.`); a parent launched before that change keeps the legacy marker its
 binding names.

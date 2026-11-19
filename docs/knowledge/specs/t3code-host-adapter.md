@@ -1273,6 +1273,16 @@ when readback proves its postcondition; external disappearance without Nucleus's
 own delete does not retire presentation intents. Regression tests instrument
 `readStream` and exercise repeated real sweeps alongside another task's cleanup.
 
+nucleus#1378's held-turn proof (`effigy proof:t3code:held-turn`) runs the parent
+transcript on the installed nightly: the initial launch, same-state writes, several
+milestones within one held turn, the production release and re-entry, the closeout,
+and the wire's paragraph breaks. On `0.1.11-nightly.20261119.4928`, a re-entry created
+with `createdBy: "system"` is accepted and holds the run, but T3 renders it as a
+visible user bubble. No quiet re-entry exists on `message.dispatch`, so the visible
+plain sentence is the prompt. The proof releases the held turn through a fixture-only
+`acp` debug target, because the adapter in that proof does not own the service's ACP
+surface.
+
 The private proof starts an unmodified checkout of the target nightly revision,
 or its bundled server copied into fresh run scratch, with separate home, data,
 configuration and synthetic Git project/worktree. A local scripted provider drives questions, approvals and a

@@ -31,6 +31,9 @@ setup = "npm ci"
 "proof:t3code" = "node --import tsx scripts/acceptance/t3code-private.ts {args}"
 # nucleus#1366's private snooze proof: the one row rule against the installed nightly.
 "proof:t3code:snooze" = "node --import tsx scripts/acceptance/t3code-snooze-private.ts {args}"
+# nucleus#1378's private proof: the parent transcript's held turn on the installed nightly, its
+# release and re-entry, the quiet system re-entry probe and closeout.
+"proof:t3code:held-turn" = "node --import tsx scripts/acceptance/t3code-held-turn-private.ts {args}"
 # nucleus#1330's operator install route against a private T3Code server: install,
 # status, a thread launched on the registered provider, uninstall, status.
 "proof:t3:install" = "node --import tsx scripts/proof-t3-install.ts {args}"
