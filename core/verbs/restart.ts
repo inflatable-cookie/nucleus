@@ -1,3 +1,4 @@
+import { workerCreationRestartWait } from '../recovery/absent-creation/stale-worker';
 import { unsettledControlRefusal } from '../recovery/recovery-effects';
 import { restartTerminalRefusal } from './verb-refusal-text';
 import { DISPOSITION_CONTROL_REFUSAL, REMOVED_TASK_REFUSAL, parkedRestartRefusal } from './control-refusals';
@@ -148,6 +149,8 @@ export class RestartControls {
         return this.engine.restartParked(input, task, role, reason, operationId);
       throw Error(restartTerminalRefusal(task, "refusal" in parked ? parked.refusal : undefined));
     }
+    const pending = role === 'worker' ? workerCreationRestartWait(this.store, task) : null;
+    if (pending) throw new RestartRefusal(pending);
     const shape = restartShape(task, this.store.runs(task.id), role, this.store.eventsAll(task.id));
     const controlRefusal = unsettledControlRefusal(this.store, task);
     if (controlRefusal) throw new RestartRefusal(controlRefusal);

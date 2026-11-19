@@ -17,7 +17,7 @@ import { verbInput, restartRoles } from './owner-shared';
 import type { RestartRole, OwnerVerb, RestartShapeName } from './owner-shared';
 import { unreportedExecutorRun } from '../qa/proof-admission';
 import { reviewerReportPlan } from './reviewer-report';
-import { workerCreationRefusal, workerCreationWait, workerLookupWait, workerProducerStopped } from '../recovery/absent-creation/stale-worker';
+import { workerCreationRefusal, workerCreationRestartWait, workerCreationWait, workerLookupWait, workerProducerStopped } from '../recovery/absent-creation/stale-worker';
 
 /**
  * Round 4 (Tom, 2026-10-19): what `restart` does when no run of the role needs
@@ -378,6 +378,8 @@ export const restart: OwnerVerb = {
     }
     const controlRefusal = unsettledControlRefusal(facts.store, task);
     if (controlRefusal) return { available: false, refusal: controlRefusal };
+    const pending = workerCreationRestartWait(facts.store, task);
+    if (pending) return { available: false, refusal: pending };
     const role = deriveRestartRole(task, runs);
     const shape = restartShape(task, runs, role, facts.events);
     const report = role === 'reviewer' && shape !== 'stalled_run' ? reviewerReportPlan(task, runs, facts.events) : null;

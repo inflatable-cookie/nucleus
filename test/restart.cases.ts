@@ -6779,7 +6779,7 @@ function busyEpisode(f: ReturnType<typeof fixture>) {
   });
 }
 
-function absentWorkerTask(f: ReturnType<typeof fixture>) {
+function absentWorkerTask(f: ReturnType<typeof fixture>, producerStopped = true) {
   f.store.update(f.taskId, {
     phase: "needs_attention",
     reason: ABSENT_WORKER_REASON,
@@ -6795,9 +6795,27 @@ function absentWorkerTask(f: ReturnType<typeof fixture>) {
   const attempt = readCreationAttempt(f.store, {
     id: task.runId!, taskId: task.id, hostId: task.hostId, workspaceId: task.workspaceId, role: "worker",
   })!;
-  settleCreationAttempt(f.store, attempt, "threw");
+  if (producerStopped) settleCreationAttempt(f.store, attempt, "threw");
   busyEpisode(f);
 }
+
+test("restart records its worker direction while a recovery run still owns settlement", async () => {
+  const f = fixture();
+  try {
+    absentWorkerTask(f, false);
+    const instruction = "Finish the original worker validation";
+    const task = await f.control({ instruction });
+    assert.equal(task.resolution.deferredVerb?.input.instruction, instruction);
+    assert.equal(task.resolution.deferredVerb?.target?.runId, task.runId);
+    assert.equal(f.store.run("recovery-run")!.released, false);
+    assert.equal(f.events("owner_stop_intent").length, 0);
+    assert.equal(f.events("owner_restart_instruction_intent").length, 0);
+    const next = f.next().verbs.find(verb => verb.verb === "restart");
+    assert.match(next?.refusal ?? "", /restart instruction is recorded/);
+  } finally {
+    await f.close();
+  }
+});
 
 function settledResolutionCreation(f: ReturnType<typeof fixture>, run: Run) {
   f.store.putRun({ ...run, status: "intent", agentId: null });

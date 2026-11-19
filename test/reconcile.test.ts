@@ -1,3 +1,4 @@
+import { toolTimelinePage } from './support/tool-timeline';
 import { readCreationAttempt, settleCreationAttempt } from '../core/store/store-task-funnel';
 import { fakeAdapter, profile } from './support/fakes';
 import { test } from 'node:test';
@@ -853,7 +854,9 @@ for (const action of ['restart', 'route'] as const) {
       const author2 = profile('author-2');
       addProfile(f, author2, 'author-2', 'worker');
       const create = f.adapter.createAgent!;
+      const instruction = 'Finish the authorized worker action';
       f.adapter.createAgent = async (...args) => {
+        if (action === 'restart') assert.ok(args[2]?.includes(instruction) || args[3]?.includes(instruction));
         const created = await create(...args);
         const state = f.states.get(created.id)!;
         f.states.set(created.id, { ...state, active: true, status: 'running' });
@@ -870,7 +873,7 @@ for (const action of ['restart', 'route'] as const) {
         return mode === 'partial' ? [{ id: 'label-only', workspaceId: 'workspace', hostConfirmed: false }] : [];
       };
       await f.engine.performTaskControl({ taskId: f.task.id, version: f.current().version, action, role: 'worker',
-        reason: 'Continue approved work', caller: OWNER, ...(action === 'route' ? { now: true, profileId: author2.id } : {}) });
+        reason: 'Continue approved work', caller: OWNER, ...(action === 'route' ? { now: true, profileId: author2.id } : { instruction }) });
       await f.engine.wake();
       assert.match(f.current().resolution.stop?.detail ?? '', /recorded producer/);
       assert.equal(f.current().runId, attempt.id);
@@ -904,6 +907,96 @@ for (const action of ['restart', 'route'] as const) {
     } finally { await f.close(); }
   });
 }
+
+for (const foundImmediately of [true, false]) {
+  test(`restart delivers recorded direction to the original worker when lookup matches ${foundImmediately ? 'immediately' : 'on a later sweep'}`, async () => {
+    const f = fixture();
+    try {
+      const attempt = staleWorkerTask(f, false);
+      const agentId = 'original-worker';
+      f.idle(agentId);
+      f.states.set(agentId, { ...f.states.get(agentId)!, active: true, status: 'running' });
+      const place = () => f.foundAgents.set(attempt.id, [{ id: agentId, workspaceId: 'workspace' }]);
+      if (foundImmediately) place();
+      const instruction = 'Preserve the existing checkout and finish the recorded validation';
+      const deliveries: string[] = [];
+      f.adapter.notify = async (recipient, messageId, text) => {
+        if (!messageId.startsWith('ns-worker-creation-restart-')) return;
+        assert.equal(recipient, agentId);
+        assert.ok(text.includes(instruction));
+        assert.ok(f.events('owner_restart_instruction_intent').some(event => event.detail.includes(messageId)));
+        deliveries.push(messageId);
+      };
+      await f.engine.performTaskControl({ taskId: f.task.id, version: f.current().version, action: 'restart',
+        role: 'worker', reason: 'Resume the original work', instruction, caller: OWNER });
+      assert.equal(f.current().resolution.deferredVerb?.input.instruction, instruction);
+      place();
+      await f.engine.wake();
+      assert.equal(f.current().agentId, agentId);
+      assert.equal(f.current().runId, attempt.id);
+      assert.doesNotThrow(() => f.store.authenticate(attempt.id, 'worker-creation-token'));
+      assert.equal(deliveries.length, 0, 'the original active turn keeps ownership');
+      const next = () => ownerVerbViews(collectOwnerVerbFacts(f.store, f.current())).find(view => view.verb === 'restart');
+      assert.match(next()?.refusal ?? '', /restart instruction is recorded/);
+      f.idle(agentId);
+      await f.engine.wake();
+      assert.equal(deliveries.length, 1);
+      assert.equal(f.current().resolution.deferredVerb, null);
+      assert.equal(f.events('owner_restart_instruction_sent').length, 1);
+      assert.equal(f.events('absent_worker_released').length, 0);
+      await f.engine.wake();
+      assert.equal(deliveries.length, 1);
+      assert.equal(f.events('owner_verb_applied').length, 1);
+    } finally { await f.close(); }
+  });
+}
+
+test('a lost reply on the recorded worker restart is reconciled by exact timeline evidence without resending', async () => {
+  const f = fixture();
+  try {
+    const attempt = staleWorkerTask(f, false);
+    const agentId = 'original-worker';
+    f.idle(agentId);
+    f.foundAgents.set(attempt.id, [{ id: agentId, workspaceId: 'workspace' }]);
+    let messageId = '';
+    let sends = 0;
+    f.adapter.notify = async (_recipient, key) => {
+      if (!key.startsWith('ns-worker-creation-restart-')) return;
+      sends++;
+      messageId = key;
+      throw Error('Transport lost after send');
+    };
+    const restart = () => f.engine.performTaskControl({ taskId: f.task.id, version: f.current().version, action: 'restart',
+      role: 'worker', reason: 'Recover the original worker', instruction: 'Run the recorded validation', caller: OWNER });
+    await restart();
+    await f.engine.wake();
+    assert.equal(sends, 1);
+    assert.equal(f.events('owner_restart_instruction_sent').length, 0);
+    const next = ownerVerbViews(collectOwnerVerbFacts(f.store, f.current())).find(view => view.verb === 'restart');
+    assert.match(next?.refusal ?? '', /delivery.*unknown/i);
+    await assert.rejects(restart(), /delivery.*unknown/i);
+
+    const entry = { timestamp: new Date().toISOString(), item: { type: 'user_message', messageId } };
+    f.adapter.agentTimelinePage = async () => toolTimelinePage([entry], { hasOlder: true });
+    await f.engine.wake();
+    assert.equal(f.events('owner_restart_instruction_sent').length, 0);
+    f.adapter.agentTimelinePage = async () => toolTimelinePage([{ ...entry, item: { ...entry.item, messageId: 'other' } }]);
+    await f.engine.wake();
+    assert.equal(sends, 1);
+    assert.ok(f.current().resolution.deferredVerb);
+    f.adapter.agentTimelinePage = async id => {
+      assert.equal(id, agentId);
+      return toolTimelinePage([entry]);
+    };
+    await f.engine.wake();
+    await f.engine.wake();
+    assert.equal(sends, 1);
+    assert.equal(f.events('owner_restart_instruction_intent').length, 1);
+    assert.equal(f.events('owner_restart_instruction_sent').length, 1);
+    assert.equal(f.current().resolution.deferredVerb, null);
+    assert.doesNotThrow(() => f.store.authenticate(attempt.id, 'worker-creation-token'));
+  } finally { await f.close(); }
+});
 
 test('a host-unavailable transport wait is re-evaluated once the host is back, not kept as a stale reason', async () => {
   const f = fixture(); try {

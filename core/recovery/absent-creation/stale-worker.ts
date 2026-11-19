@@ -1,7 +1,7 @@
 import { isDispositionActive, isDispositionComplete, type Run, type Task } from '../../../shared/contracts';
 import type { Adapter } from '../../host/adapter';
 import type { ResolutionAdapter } from '../../resolution';
-import type { Store } from '../../store/store';
+import { digest, now, type Store } from '../../store/store';
 import { creationTermination, readCreationAttempt } from '../../store/store-task-funnel';
 import { hostFailureRefusalDetail } from '../../host/errors';
 import { creationLookup } from './restarts';
@@ -72,12 +72,45 @@ export function sameWorkerCreation(store: Store, task: Task, observed: Awaited<R
     === (observed.kind === 'bound' ? observed.attempt : observed.proof.attemptId);
 }
 
+export function deferredWorkerCreationRestart(task: Task) {
+  const deferred = task.resolution.deferredVerb;
+  return deferred?.why === 'worker_creation' ? deferred : null;
+}
+
+export function workerCreationRestartDelivery(store: Store, task: Task, at: string) {
+  const messageId = `ns-worker-creation-restart-${digest(`${task.id}:${task.runId}:${at}`).slice(0, 32)}`;
+  const event = store.eventsAll(task.id).findLast(event =>
+    ['owner_restart_instruction_intent', 'owner_restart_instruction_sent'].includes(event.kind)
+      && event.detail.includes(`"messageId":"${messageId}"`));
+  return { messageId, agentId: event ? (JSON.parse(event.detail) as { agentId: string }).agentId : null, state: event?.kind === 'owner_restart_instruction_sent' ? 'sent' as const
+    : event ? 'uncertain' as const : 'ready' as const };
+}
+
+export function workerCreationRestartWait(store: Store, task: Task): string | null {
+  const deferred = deferredWorkerCreationRestart(task);
+  if (!deferred || deferred.target?.runId !== task.runId) return null;
+  const delivery = workerCreationRestartDelivery(store, task, deferred.at);
+  if (delivery.state === 'uncertain') return 'Delivery of the recorded restart instruction is unknown. Nucleus checks the original worker timeline.';
+  return task.agentId
+    ? 'A restart instruction is recorded. Nucleus waits for the retained worker and ordinary admission.'
+    : `A restart instruction is recorded. ${workerLookupWait(task) ?? workerCreationWait}`;
+}
+
+export function recordWorkerCreationRestart(store: Store, task: Task, instruction: string): Task {
+  return store.update(task.id, { resolution: { ...task.resolution,
+    deferredVerb: {
+      input: { action: 'restart', role: 'worker', instruction }, at: now(), why: 'worker_creation',
+      target: { runId: task.runId!, hostId: task.hostId!, workspaceId: task.workspaceId! },
+    },
+  } }, 'worker_creation_restart_recorded', task.runId!);
+}
+
 /** Bind the original run and credential. Any armed route still applies to future runs. */
 export function bindWorkerCreation(store: Store, task: Task, agentId: string): Task {
   return store.update(task.id, {
     agentId, phase: 'working', reason: 'Recovered worker identity',
     failoverReason: '', replacementProfile: null,
-    resolution: { ...task.resolution, attention: false, pendingWorkerInstruction: null,
+    resolution: { ...task.resolution, attention: false,
       stop: task.resolution.stop?.reason === 'lifecycle' ? null : task.resolution.stop },
   }, 'agent_recovered', agentId);
 }
@@ -87,6 +120,10 @@ export function releaseStaleWorkerIntent(store: Store, task: Task, proof: NonNul
   store.deleteCredential(task.runId!);
   const incident = task.resolution.incident;
   const stop = task.resolution.stop;
+  const deferred = deferredWorkerCreationRestart(task);
+  const transfers = deferred && deferred.target?.runId === task.runId
+    && deferred.target.hostId === task.hostId && deferred.target.workspaceId === task.workspaceId;
+  const nextInstruction = transfers ? String(deferred.input.instruction) : instruction;
   return store.update(task.id, {
     agentIntent: false, runId: null, restartRunId: null, transientProviderRetry: undefined,
     agentActive: null, lastAgentStatus: null, lastObservedAt: null, idleSince: null,
@@ -98,7 +135,8 @@ export function releaseStaleWorkerIntent(store: Store, task: Task, proof: NonNul
       stop: stop?.reason === 'lifecycle' || stop?.reason === 'operator_needed' ? null : stop,
       ...(incident && (!incident.runId || incident.runId === task.runId)
         ? { incident: { ...incident, status: 'resolved' as const, updatedAt: new Date().toISOString() } } : {}),
-      ...(instruction ? { pendingWorkerInstruction: instruction } : {}),
+      ...(transfers ? { deferredVerb: null } : {}),
+      ...(nextInstruction ? { pendingWorkerInstruction: nextInstruction } : {}),
     },
   }, 'absent_worker_released', JSON.stringify({ runId: task.runId, ...proof }));
 }

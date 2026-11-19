@@ -1,6 +1,10 @@
 import type { Task, TaskControlInput } from "../../shared/contracts";
-import { taskControlInputSchema } from "../../shared/contracts";
-import { dispatchBlocked } from "../dispatch/capacity";
+import { isDispositionComplete, taskControlInputSchema } from "../../shared/contracts";
+import { deferredWorkerCreationRestart, workerCreationRestartDelivery } from "../recovery/absent-creation/stale-worker";
+import { timelineMessage } from "../recovery/effect-reconcile";
+import { unsettledControlRefusal } from "../recovery/recovery-effects";
+import { ProvenPreSendRefusalError } from "../host/errors";
+import { dispatchBlocked, slotRequestFenced } from "../dispatch/capacity";
 import type { Engine } from "../engine";
 import { now } from "../store/store";
 
@@ -192,6 +196,70 @@ export class DeferredOwnerVerbs {
     );
   }
 
+  /** A creation restart either transfers to a fresh launch or delivers on the original binding. */
+  private async applyWorkerCreationRestart(taskId: string) {
+    const task = this.store.task(taskId);
+    const deferred = deferredWorkerCreationRestart(task);
+    if (!deferred) return;
+    const target = deferred.target;
+    const finish = (kind: string, detail: string) => this.dropDeferredVerb(taskId, deferred.at, kind, detail);
+    if (!target || target.runId !== task.runId || target.hostId !== task.hostId || target.workspaceId !== task.workspaceId
+      || task.removedAt || ['done', 'cancelled'].includes(task.phase) || isDispositionComplete(task)
+      || task.completion || task.resolution.mergedCommit) {
+      finish('deferred_verb_dropped', 'The original worker creation no longer owns this restart instruction');
+      return;
+    }
+    if (!task.agentId) return; // Exact creation settlement still owns the discovery.
+    const { messageId, state, agentId: sentTo } = workerCreationRestartDelivery(this.store, task, deferred.at);
+    if (sentTo && sentTo !== task.agentId) {
+      finish('deferred_verb_dropped', 'The worker binding changed after the restart delivery intent');
+      return;
+    }
+    const blocked = (current: Task) => this.engine.stopped || this.store.getMeta('paused') || slotRequestFenced(current) || Boolean(current.prerequisiteWait && !current.prerequisiteWait.releasedAt)
+      || Boolean(current.resolution.currentRunId) || this.store.runs(taskId).some(run => !run.released)
+      || Boolean(unsettledControlRefusal(this.store, current));
+    const unchanged = () => this.store.task(taskId).version === task.version;
+    if (state === 'sent') {
+      finish('owner_verb_applied', 'The retained worker received its restart instruction');
+      return;
+    }
+    if (state === 'ready' && (blocked(task) || !this.engine.adapter.notify)) return;
+
+    const agentId = task.agentId;
+    const binding = JSON.stringify({ runId: task.runId, agentId, workspaceId: task.workspaceId, messageId });
+    const markSent = () => this.store.transaction(() => {
+      this.store.event(taskId, 'owner_restart_instruction_sent', binding);
+      const current = this.store.task(taskId);
+      if (current.resolution.deferredVerb?.at === deferred.at)
+        this.store.update(taskId, { resolution: { ...current.resolution, deferredVerb: null } },
+          'owner_verb_applied', 'The retained worker received its restart instruction');
+    });
+    try {
+      const observed = await this.engine.host.observe(agentId);
+      if (observed.id !== agentId || observed.workspaceId !== task.workspaceId || !unchanged()) return;
+      if (state === 'uncertain') {
+        const page = await this.engine.host.agentTimelinePage(agentId, 100);
+        if (unchanged() && timelineMessage(page, messageId) === 'present') markSent();
+        return;
+      }
+      if (observed.active || observed.activeTurnId || observed.permissions || !['idle', 'error'].includes(observed.status)
+        || blocked(this.store.task(taskId))) return;
+    } catch {
+      return; // An unavailable read leaves the recorded instruction owned.
+    }
+
+    this.store.event(taskId, 'owner_restart_instruction_intent', binding);
+    try {
+      await this.engine.adapter.notify!(agentId, messageId,
+        `Owner restart instruction for the existing task run ${task.runId}: ${String(deferred.input.instruction)}`);
+    } catch (error) {
+      if (error instanceof ProvenPreSendRefusalError)
+        finish('deferred_verb_refused', error.message);
+      return; // A lost reply owns its original intent until the timeline answers it.
+    }
+    markSent();
+  }
+
   /**
    * Round 4: apply each recorded owner verb whose wait has cleared, against the
    * task's current version. A replay is not the owner's next verb: any hold,
@@ -227,6 +295,10 @@ export class DeferredOwnerVerbs {
       if (task.hostId !== scopedHost) continue;
       if (!this.engine.taskHostAvailable(task)) continue;
       const deferred = task.resolution.deferredVerb;
+      if (deferred?.why === 'worker_creation') {
+        await this.engine.control(() => this.applyWorkerCreationRestart(id), `task:${id}`);
+        continue;
+      }
       if (
         !deferred ||
         task.removedAt ||

@@ -12,7 +12,7 @@ import { OPERATOR_WORKER_REMAP_REASON } from "../recovery/task-reasons";
 import { taskHasPr } from "../forge/index";
 import { digest, now } from "../store/store";
 import { occupiesSlot } from "../dispatch/capacity";
-import { bindWorkerCreation, observeWorkerCreation, releaseStaleWorkerIntent, sameWorkerCreation, workerCreationRefusal } from "../recovery/absent-creation/stale-worker";
+import { bindWorkerCreation, observeWorkerCreation, releaseStaleWorkerIntent, recordWorkerCreationRestart, sameWorkerCreation, workerCreationRefusal } from "../recovery/absent-creation/stale-worker";
 import type { Engine } from "../engine";
 import { restartResumeChoice } from "../task-decision-rules";
 import { collectOwnerVerbFacts, currentRouteProfile, RestartRefusal, workerRestartRefusal } from "./owner-verbs";
@@ -88,24 +88,21 @@ export class WorkerRestarts {
       if (task.prerequisiteWait && !task.prerequisiteWait.releasedAt) throw new RestartRefusal(RETAINED_PREREQUISITE_REFUSAL);
       const observed = await observeWorkerCreation(this.store, this.adapter, task, this.resolution.graceMs);
       const current = check();
-      if (observed.kind === 'wait') {
-        // Keep the authorized continuation across rolls. The failover pass
-        // still has to prove absence and cannot displace another run.
+      if (current.resolution.deferredVerb)
+        throw new RestartRefusal('Another recorded direction already owns this task');
+      if (!sameWorkerCreation(this.store, current, observed))
+        throw new TaskChangedRefusal('Worker creation changed during restart', input.version, current.version);
+      if (observed.kind !== 'absent') {
+        // The direction remains owned while other runs settle through their
+        // ordinary lifecycle. Binding by itself authorizes no cancellation.
         return this.store.transaction(() => {
-          if (!this.store.runs(current.id).some(run => !run.released)
-            && (!current.failoverReason || current.resolution.pendingWorkerInstruction !== input.instruction))
-            this.resolution.update(current, { pendingWorkerInstruction: input.instruction },
-              { failoverReason: OPERATOR_WORKER_REMAP_REASON }, 'worker_creation_restart_recorded', task.runId!);
-          const latest = this.store.task(task.id);
-          if (!latest.resolution.stop || ['lifecycle', 'operator_needed'].includes(latest.resolution.stop.reason))
-            this.resolution.waiting(latest, observed.detail, 'lifecycle');
+          const recorded = recordWorkerCreationRestart(this.store, current, input.instruction);
+          if (observed.kind === 'bound') return bindWorkerCreation(this.store, recorded, observed.agentId);
+          if (!recorded.resolution.stop || ['lifecycle', 'operator_needed'].includes(recorded.resolution.stop.reason))
+            this.resolution.waiting(recorded, observed.detail, 'lifecycle');
           return this.store.task(task.id);
         });
       }
-      if (!sameWorkerCreation(this.store, current, observed))
-        throw new TaskChangedRefusal('Worker creation changed during restart', input.version, current.version);
-      if (observed.kind === 'bound')
-        return this.store.transaction(() => bindWorkerCreation(this.store, current, observed.agentId));
       if (this.adapter.workspaceAvailable && !await this.adapter.workspaceAvailable(task.workspaceId!))
         throw new RestartRefusal('Worker creation recovery requires the retained workspace online');
       return () => this.store.transaction(() => {

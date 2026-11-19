@@ -164,12 +164,13 @@ export const resolutionSchema = z.object({
   pendingWorkerInstruction: z.string().trim().min(1).max(12000).nullable().default(null),
   /**
    * Round 4 (Tom, 2026-10-19): an owner verb whose effect is an immediate
-   * delivery (a reviewer continuation, a same-run re-creation), recorded while
-   * Queue is paused or the task held and applied once that clears.
+   * delivery, recorded while Queue is paused, the task is held, or worker
+   * creation is unsettled. The lifecycle applies it once its wait clears.
    */
-  deferredVerb: z.object({ input: z.record(z.string(), z.unknown()), at: z.string(), why: z.enum(["paused", "held"]),
+  deferredVerb: z.object({ input: z.record(z.string(), z.unknown()), at: z.string(), why: z.enum(["paused", "held", "worker_creation"]),
     /** The exact run (and checkpoint) the recorded verb was for; replay refuses if it changed. */
-    target: z.object({ runId: z.string(), checkpointOrdinal: z.number().int().positive().optional(), head: z.string().optional() }).strict().nullable().default(null) }).strict().nullable().default(null),
+    target: z.object({ runId: z.string(), checkpointOrdinal: z.number().int().positive().optional(), head: z.string().optional(),
+      hostId: z.string().optional(), workspaceId: z.string().optional() }).strict().nullable().default(null) }).strict().nullable().default(null),
   prePrResumeInstruction: z.string().trim().min(1).max(12000).nullable().default(null),
   attention: z.boolean().default(false),
   /**

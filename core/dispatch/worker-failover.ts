@@ -1,5 +1,6 @@
 import {
   bindWorkerCreation,
+  deferredWorkerCreationRestart,
   observeWorkerCreation,
   releaseStaleWorkerIntent,
   sameWorkerCreation,
@@ -590,7 +591,7 @@ export class WorkerFailover {
       // A route-armed replacement over a stale creation intent cannot be consumed until an exact lookup settles that intent.
       if (
         staleWorkerIntent(original) &&
-        original.failoverReason &&
+        (original.failoverReason || deferredWorkerCreationRestart(original)) &&
         original.phase !== "queued"
       ) {
         await this.settleStaleWorkerIntent(this.store.task(original.id));

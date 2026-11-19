@@ -1,3 +1,4 @@
+import { deferredWorkerCreationRestart, staleWorkerIntent } from '../recovery/absent-creation/stale-worker';
 import { hostOwesRunProcessCleanup, sweepSettledRunProcesses } from "../machine/run-process-cleanup";
 import { LANE_PRIORITY_AUDIT } from "./lane-priorities";
 import { onCheckoutVolume } from "../workspaces/checkout-volume";
@@ -149,6 +150,8 @@ export class TaskQuantum {
         // a cleared external-merge-check strand; re-read so this pass advances it.
         task = this.context.store.task(taskId);
       }
+      // The sweep owns discovery for an accepted worker creation restart.
+      if (staleWorkerIntent(task) && deferredWorkerCreationRestart(task)) return;
       // Project-a #1837: a restart can leave the flag cleared on a recorded pre-attention
       // state. Restore it so the ordinary resolution path advances instead of idling.
       const resumed = this.context.resolution.resumeClearedAttention(task);

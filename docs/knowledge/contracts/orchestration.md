@@ -1850,6 +1850,12 @@ review or merge credit; live participants and unsettled effects remain fences.
   keep the intent owned. After proven absence, release revokes the old
   credential and returns the existing work to ordinary dispatch. The live
   route and its sign-off, capacity and availability determine admission.
+- An authorized worker restart keeps its direction on the deferred verb while
+  creation or another run is settling. An exact match keeps the original run and
+  callback credential. Ordinary admission and an idle observation allow one
+  delivery to that worker. After an uncertain send, only exact receipt evidence
+  settles delivery. Proven creation absence transfers the direction to the
+  fresh dispatch.
 - Restart and immediate route can replace an agentless resolution run after
   the exact lookup proves absence following producer termination. Release
   revokes its credential and re-enters the role's ordinary admission on a fresh
