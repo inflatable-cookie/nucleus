@@ -262,6 +262,7 @@ export interface TaskFunnelServices {
   receipt(
     input: Completion,
     token: string,
+    credentialRunId?: string,
   ): { accepted: true; eventId: string } | null;
   setCompletionReceipt(
     id: string,

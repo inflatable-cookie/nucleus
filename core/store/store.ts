@@ -337,7 +337,8 @@ export class Store {
       completePapercutsForTask: (task) =>
         store.planningStore.completePapercutsForTask(task),
       noteGrantRun: (task, role) => store.noteGrantRun(task, role),
-      receipt: (input, token) => store.receipt(input, token),
+      receipt: (input, token, credentialRunId) =>
+        store.receipt(input, token, credentialRunId),
       setCompletionReceipt: (id, task, run, hash, response) =>
         store.setCompletionReceipt(id, task, run, hash, response),
       threadArchiveEffect: (agentId, hostId) =>
@@ -2294,7 +2295,9 @@ export class Store {
     project: Pick<Project, "planner"> | null | undefined,
   ): string | null {
     if (this.responsibleRecipient) {
-      return project && 'key' in project && typeof project.key === 'string' ? this.responsibleRecipient(project.key) : null;
+      return project && "key" in project && typeof project.key === "string"
+        ? this.responsibleRecipient(project.key)
+        : null;
     }
     return this.projectRegistry.projectPlannerRecipient(project);
   }
@@ -2542,8 +2545,9 @@ export class Store {
   receipt(
     input: Completion,
     token: string,
+    credentialRunId?: string,
   ): { accepted: true; eventId: string } | null {
-    return this.authStore.receipt(input, token);
+    return this.authStore.receipt(input, token, credentialRunId);
   }
   /** The task and run write funnels; see `store-task-funnel.ts` for the rules they own. */
   insert(

@@ -15,6 +15,7 @@ import {
   type DispositionRequest,
 } from "./disposition";
 import type { Engine } from "../engine";
+import { actingRunFor } from "../dispatch/acting-run";
 import { collectOwnerVerbFacts, ownerTaskNext } from "./owner-verbs";
 import { DurableFenceRefusal } from "../intake/run-settlement";
 import { operationInputHash } from "../store/store";
@@ -129,28 +130,36 @@ export class AgentControls {
       throw new DurableFenceRefusal(
         "Authenticated self-force applies only to move or retry_effect on your own task",
       );
-    return this.engine.selfForceRunId.run(caller.runId, async () => {
+    // Self-force reads this run's credential from its ticket: a retained thread's
+    // stale ticket acts for the thread's current run (nucleus#1376).
+    const acting = actingRunFor(
+      this.store,
+      this.store.task(caller.taskId),
+      caller.runId,
+    );
+    const actingRunId = acting?.id ?? caller.runId;
+    return this.engine.selfForceRunId.run(actingRunId, async () => {
       if (!this.engine.selfForceRole(this.store.task(caller.taskId)))
         throw new DurableFenceRefusal(
           "Stale assignment or critical task cannot self-force",
         );
       const control = taskControlInputSchema.parse({
         ...input,
-        caller: `run:${caller.runId}`,
+        caller: `run:${actingRunId}`,
         relayed: false,
         delegated: false,
       });
       const payload = {
         type: "task_control",
         control,
-        authenticatedForceRunId: caller.runId,
+        authenticatedForceRunId: actingRunId,
       };
       this.store.setMeta(
         `selfForceGrant:${operationInputHash(payload)}`,
-        caller.runId,
+        actingRunId,
       );
       return this.engine.startOperation({
-        key: `self-force:${caller.runId}:${operationInputHash(payload)}`,
+        key: `self-force:${actingRunId}:${operationInputHash(payload)}`,
         kind: "task_control",
         payload,
         taskId: caller.taskId,
@@ -161,7 +170,13 @@ export class AgentControls {
   authenticateAgentControl(taskId: string, runId: string, token: string) {
     this.store.authenticate(runId, token);
     const task = this.store.task(taskId),
-      run = this.store.run(runId);
+      presented = this.store.run(runId);
+    if (presented ? presented.taskId !== task.id : task.runId !== runId)
+      throw Error("Stale report: task and run identity do not match");
+    // A retained thread's shell may still export an earlier run's ticket; this
+    // thread's current run acts for it, so the caller's own work is never
+    // refused for a stale environment value (nucleus#1376).
+    const run = actingRunFor(this.store, task, runId);
     const current = run
       ? (run.role === "recovery"
           ? task.resolution.recovery?.runId
@@ -173,6 +188,7 @@ export class AgentControls {
         ["working", "dispatching", "needs_attention"].includes(task.phase);
     if (!current || (run && run.taskId !== task.id))
       throw Error("Stale Nucleus assignment cannot use Nucleus controls");
+    return { task, run };
   }
   dependencyDetail(
     caller: { taskId: string; runId: string; token: string },
@@ -215,16 +231,16 @@ export class AgentControls {
     runId: string;
     token: string;
   }) {
-    this.engine.authenticateAgentControl(
+    const { task, run } = this.engine.authenticateAgentControl(
       caller.taskId,
       caller.runId,
       caller.token,
     );
-    if (this.store.run(caller.runId)?.role !== "recovery")
+    if (run?.role !== "recovery")
       throw Error(
         "Only the recovery coordinator reads the task plan with its run credential",
       );
-    const task = this.store.task(caller.taskId);
+    const runId = run.id;
     const wait = taskWaitStateContext(this.store, task, null, (candidate) =>
       this.engine.resolution.slotAdmissionReason(
         candidate,
@@ -232,7 +248,7 @@ export class AgentControls {
       ),
     );
     return ownerTaskNext({
-      ...collectOwnerVerbFacts(this.store, task, null, caller.runId),
+      ...collectOwnerVerbFacts(this.store, task, null, runId),
       creationGraceMs: this.engine.resolution.graceMs,
       waitTask: taskWithCurrentWait(this.store, task, wait, (candidate) =>
         this.engine.queuedExternalWait(candidate),

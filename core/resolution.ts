@@ -390,52 +390,91 @@ export class Resolution {
       const ambient = (this.adapter as { hostId?: string }).hostId;
       return [...new Set([...ids, ...(ambient ? [ambient] : [])])];
     },
-    hostOnline: id => this.hostPorts.online(id),
-    inventory: id => this.withHost(id, () => this.host.listLiveAgents()),
+    hostOnline: (id) => this.hostPorts.online(id),
+    inventory: (id) => this.withHost(id, () => this.host.listLiveAgents()),
     tasks: () => this.store.allTasks(),
     runs: () => this.store.runs(),
-    projectKeyResolver: projects => this.store.projectKeyResolver(projects),
+    projectKeyResolver: (projects) => this.store.projectKeyResolver(projects),
   });
 
-  private readonly confirmedResponsible = new WeakMap<ResponsibleShortlist, ResponsibleCandidate[]>();
-  private readonly responsibleObservations = new WeakMap<ResponsibleShortlist, Promise<{
-    shortlist: ResponsibleShortlist;
-    candidates: ResponsibleCandidate[];
-  } | null>>();
+  private readonly confirmedResponsible = new WeakMap<
+    ResponsibleShortlist,
+    ResponsibleCandidate[]
+  >();
+  private readonly responsibleObservations = new WeakMap<
+    ResponsibleShortlist,
+    Promise<{
+      shortlist: ResponsibleShortlist;
+      candidates: ResponsibleCandidate[];
+    } | null>
+  >();
   /** The read budget per shortlisted thread; a read over it is unverified, never gone (tests shorten it). */
   responsibleObservationMs = RESPONSIBLE_OBSERVATION_MS;
 
   /** Only a routable or unverified candidate can be picked; `unroutable` never is. */
   private static pickable(candidate: ResponsibleCandidate): boolean {
-    return candidate.observation?.state === 'routable' || candidate.observation?.state === 'unverified';
+    return (
+      candidate.observation?.state === "routable" ||
+      candidate.observation?.state === "unverified"
+    );
   }
 
   private static threadOf(candidate: ResponsibleCandidate): ResponsibleThread {
-    return { agentId: candidate.agentId, hostId: candidate.hostId, lastInteraction: candidate.lastInteraction, reasons: candidate.reasons };
+    return {
+      agentId: candidate.agentId,
+      hostId: candidate.hostId,
+      lastInteraction: candidate.lastInteraction,
+      reasons: candidate.reasons,
+    };
   }
 
   cachedResponsible(projectKey: string): string | null {
     const cached = this.responsibleThreads.cache.peek(projectKey);
     return cached
-      ? this.confirmedResponsible.get(cached)?.find(candidate => Resolution.pickable(candidate))?.agentId ?? null
+      ? (this.confirmedResponsible
+          .get(cached)
+          ?.find((candidate) => Resolution.pickable(candidate))?.agentId ??
+          null)
       : null;
   }
 
-  async responsibleThread(project: Project, exclude?: { agentId: string; hostId?: string | null },
-    excludedHosts?: ReadonlySet<string>, taskIndex?: ReturnType<ResponsibleThreadResolver["taskIndex"]>) {
+  async responsibleThread(
+    project: Project,
+    exclude?: { agentId: string; hostId?: string | null },
+    excludedHosts?: ReadonlySet<string>,
+    taskIndex?: ReturnType<ResponsibleThreadResolver["taskIndex"]>,
+  ) {
     // An invalidation can land during inventory or observation. Retry with
     // current registry facts once, then return no verified recipient for this call.
     for (let attempt = 0; attempt < 2; attempt++) {
-      const shortlist = await this.responsibleThreads.resolve(project, excludedHosts, attempt === 0 ? taskIndex : undefined);
+      const shortlist = await this.responsibleThreads.resolve(
+        project,
+        excludedHosts,
+        attempt === 0 ? taskIndex : undefined,
+      );
       if (!shortlist) continue;
       const confirmed = await this.observeResponsible(project.key, shortlist);
-      if (!confirmed || this.responsibleThreads.cache.peek(project.key) !== confirmed.shortlist) continue;
+      if (
+        !confirmed ||
+        this.responsibleThreads.cache.peek(project.key) !== confirmed.shortlist
+      )
+        continue;
       // Tom, 2026-11-19: the sender leaves the shortlist before the pick, so a
       // tell never echoes back to its own thread and the sender is never picked.
-      const isSender = (candidate: ResponsibleCandidate) => Boolean(exclude)
-        && sameCallerIdentity(candidate.agentId, exclude!.agentId, candidate.hostId, exclude!.hostId);
-      const senderIsCandidate = confirmed.candidates.some(candidate => isSender(candidate) && Resolution.pickable(candidate));
-      const pick = confirmed.candidates.find(candidate => !isSender(candidate) && Resolution.pickable(candidate));
+      const isSender = (candidate: ResponsibleCandidate) =>
+        Boolean(exclude) &&
+        sameCallerIdentity(
+          candidate.agentId,
+          exclude!.agentId,
+          candidate.hostId,
+          exclude!.hostId,
+        );
+      const senderIsCandidate = confirmed.candidates.some(
+        (candidate) => isSender(candidate) && Resolution.pickable(candidate),
+      );
+      const pick = confirmed.candidates.find(
+        (candidate) => !isSender(candidate) && Resolution.pickable(candidate),
+      );
       return {
         thread: pick ? Resolution.threadOf(pick) : null,
         observedAt: confirmed.shortlist.observedAt,
@@ -449,14 +488,24 @@ export class Resolution {
       thread: null,
       observedAt: Date.now(),
       senderIsCandidate: false,
-      shortlist: (cached?.threads ?? []).map(thread => ({ ...thread, observation: null })),
+      shortlist: (cached?.threads ?? []).map((thread) => ({
+        ...thread,
+        observation: null,
+      })),
     };
   }
 
-  async refreshResponsibleThreads(projects: Project[], excludedHosts?: ReadonlySet<string>) {
+  async refreshResponsibleThreads(
+    projects: Project[],
+    excludedHosts?: ReadonlySet<string>,
+  ) {
     if (!projects.length) return [];
     const index = this.responsibleThreads.taskIndex(projects);
-    return Promise.all(projects.map(project => this.responsibleThread(project, undefined, excludedHosts, index)));
+    return Promise.all(
+      projects.map((project) =>
+        this.responsibleThread(project, undefined, excludedHosts, index),
+      ),
+    );
   }
 
   /**
@@ -466,39 +515,66 @@ export class Resolution {
    */
   private async observeCandidate(thread: ResponsibleThread): Promise<{
     thread: ResponsibleThread;
-    state: ResponsibleObservationState | 'gone';
+    state: ResponsibleObservationState | "gone";
     detail: string | null;
     observedAt: string;
   }> {
-    let state: ResponsibleObservationState | 'gone';
+    let state: ResponsibleObservationState | "gone";
     let detail: string | null = null;
     try {
-      const route = await observationTimeout(this.plannerPresence.threadRoute(thread.agentId, thread.hostId),
-        'Responsible thread observation timed out', this.responsibleObservationMs);
+      const route = await observationTimeout(
+        this.plannerPresence.threadRoute(thread.agentId, thread.hostId),
+        "Responsible thread observation timed out",
+        this.responsibleObservationMs,
+      );
       state = route.kind;
-      if (route.kind === 'unverified' || route.kind === 'unroutable') detail = route.detail;
+      if (route.kind === "unverified" || route.kind === "unroutable")
+        detail = route.detail;
     } catch (error) {
-      state = 'unverified';
+      state = "unverified";
       detail = error instanceof Error ? error.message : String(error);
     }
     return { thread, state, detail, observedAt: new Date().toISOString() };
   }
 
-  private observeResponsible(projectKey: string, shortlist: ResponsibleShortlist) {
+  private observeResponsible(
+    projectKey: string,
+    shortlist: ResponsibleShortlist,
+  ) {
     const pending = this.responsibleObservations.get(shortlist);
     if (pending) return pending;
     const cache = this.responsibleThreads.cache;
-    const read = Promise.all(shortlist.threads.map(thread => this.observeCandidate(thread))).then(reads => {
-      if (cache.peek(projectKey) !== shortlist) return null;
-      const closed = new Set(reads.filter(read => read.state === 'gone').map(read => read.thread.agentId));
-      const current = closed.size ? cache.discardClosed(projectKey, shortlist, closed) : shortlist;
-      const candidates: ResponsibleCandidate[] = reads.flatMap(read => read.state === 'gone' ? [] : [{
-        ...read.thread,
-        observation: { state: read.state, detail: read.detail, observedAt: read.observedAt },
-      }]);
-      this.confirmedResponsible.set(current, candidates);
-      return { shortlist: current, candidates };
-    }).finally(() => this.responsibleObservations.delete(shortlist));
+    const read = Promise.all(
+      shortlist.threads.map((thread) => this.observeCandidate(thread)),
+    )
+      .then((reads) => {
+        if (cache.peek(projectKey) !== shortlist) return null;
+        const closed = new Set(
+          reads
+            .filter((read) => read.state === "gone")
+            .map((read) => read.thread.agentId),
+        );
+        const current = closed.size
+          ? cache.discardClosed(projectKey, shortlist, closed)
+          : shortlist;
+        const candidates: ResponsibleCandidate[] = reads.flatMap((read) =>
+          read.state === "gone"
+            ? []
+            : [
+                {
+                  ...read.thread,
+                  observation: {
+                    state: read.state,
+                    detail: read.detail,
+                    observedAt: read.observedAt,
+                  },
+                },
+              ],
+        );
+        this.confirmedResponsible.set(current, candidates);
+        return { shortlist: current, candidates };
+      })
+      .finally(() => this.responsibleObservations.delete(shortlist));
     this.responsibleObservations.set(shortlist, read);
     return read;
   }
@@ -2066,8 +2142,18 @@ export class Resolution {
   readoptReplacedReviewer(task: Task, run: Run, input: Completion): boolean {
     return this.callbackIntake.readoptReplacedReviewer(task, run, input);
   }
-  complete(input: Completion, token: string, startEvidence?: string) {
-    return this.callbackIntake.complete(input, token, startEvidence);
+  complete(
+    input: Completion,
+    token: string,
+    startEvidence?: string,
+    credentialRunId?: string,
+  ) {
+    return this.callbackIntake.complete(
+      input,
+      token,
+      startEvidence,
+      credentialRunId,
+    );
   }
   completeValidate(input: Completion, run: Run, task: Task) {
     return this.callbackIntake.completeValidate(input, run, task);

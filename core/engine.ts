@@ -926,7 +926,8 @@ export class Engine {
     // The registry's answers, wired as one set (`core/host/host-ports.ts`): every
     // host question this root asks is answered here or nowhere, so no question
     // stays on the ambient default because its own assignment was forgotten.
-    this.store.responsibleRecipient = key => this.resolution.cachedResponsible(key);
+    this.store.responsibleRecipient = (key) =>
+      this.resolution.cachedResponsible(key);
     this.resolution.hostPorts = {
       taskAvailable: (task, run) =>
         this.taskHostAvailable(task) && (!run || run.hostId === task.hostId),
@@ -3043,8 +3044,8 @@ export class Engine {
   reviewerContinuationInFlight(taskId: string, runId: string): boolean {
     return this.callbackIntake.reviewerContinuationInFlight(taskId, runId);
   }
-  complete(input: Completion, token: string) {
-    return this.callbackIntake.complete(input, token);
+  complete(input: Completion, token: string, credentialRunId?: string) {
+    return this.callbackIntake.complete(input, token, credentialRunId);
   }
   completeCheckpoint(
     input: Completion,
