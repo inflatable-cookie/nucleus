@@ -15,11 +15,13 @@ function fixture() {
   const store = new Store(':memory:');
   const archived = new Set<string>(), sent: string[] = [], asked: string[] = [];
   let fail = false, inventories = 0;
+  /** The live inventory; a test adds a thread to change candidacy. */
+  const threads: Array<{ id: string; title: string; workspaceId: null; directory?: string; updatedAt?: string }> = [
+    { id: 'own', title: 'own', workspaceId: null, directory: repo, updatedAt: '2098-01-01T00:00:00Z' },
+    { id: 'other', title: 'other', workspaceId: null, directory: repo, updatedAt: '2099-01-02T00:00:00Z' },
+  ];
   const adapter = { hostId: 'paseo-synthetic',
-    listLiveAgents: async () => { inventories++; return [
-      { id: 'own', title: 'own', workspaceId: null, directory: repo, updatedAt: '2098-01-01T00:00:00Z' },
-      { id: 'other', title: 'other', workspaceId: null, directory: repo, updatedAt: '2099-01-02T00:00:00Z' },
-    ].filter(thread => !archived.has(thread.id)); },
+    listLiveAgents: async () => { inventories++; return threads.filter(thread => !archived.has(thread.id)); },
     originAgent: async (id: string) => ({ id, title: id, workspaceId: null, archived: archived.has(id) }),
     observe: async (id: string) => ({ id, workspaceId: null, status: archived.has(id) ? 'closed' : 'idle', active: false, permissions: false, error: '', archived: archived.has(id) }),
     notify: async (id: string) => { if (fail) throw Error('delivery failed'); sent.push(id); },
@@ -38,7 +40,7 @@ function fixture() {
   store.update(task.id, { resolution: { ...store.task(task.id).resolution, currentRunId: 'run' } });
   store.setCredential('run', 'token');
   const tell = (n: number) => engine.resolution.agentMessage(agentMessageSchema.parse({ eventId: n.toString(16).padStart(64, '0'), taskId: task.id, runId: 'run', to: { project: 'example' }, text: `message ${n}` }), 'token');
-  return { store, engine, task, archived, sent, asked, tell, inventories: () => inventories, setFail: (value: boolean) => { fail = value; } };
+  return { store, engine, task, archived, sent, asked, threads, tell, inventories: () => inventories, setFail: (value: boolean) => { fail = value; } };
 }
 
 test('own planner is first, and an archived owner falls back to the newest live project thread', async () => {
@@ -52,17 +54,55 @@ test('own planner is first, and an archived owner falls back to the newest live 
   } finally { f.store.close(); }
 });
 
-test('tell chooses the latest live thread, and no live thread produces a recorded self-handling receipt', async () => {
+test('a dispatcher outranks a more recently active repository-only thread, and no live thread records self-handling', async () => {
   const f = fixture();
   try {
+    // A design thread in the same checkout, fresher than the task's owner.
+    f.threads.push({ id: 'design', title: 'design', workspaceId: null, directory: repo, updatedAt: '2099-06-01T00:00:00Z' });
+    // `own` owns this fixture's task, so it is a dispatcher and ranks first.
     assert.equal((await f.tell(1)).status, 'delivered');
-    assert.deepEqual(f.sent, ['other']);
-    f.archived.add('other'); f.archived.add('own');
+    assert.deepEqual(f.sent, ['own']);
+    f.archived.add('design'); f.archived.add('own'); f.archived.add('other');
     const receipt = await f.tell(2);
     assert.equal(receipt.status, 'expired');
     assert.match('detail' in receipt ? receipt.detail : '', /No live responsible thread for example; handle it yourself/);
     assert.equal(f.store.message('2'.padStart(64, '0'))?.status, 'expired');
-    assert.deepEqual(f.sent, ['other']);
+    assert.deepEqual(f.sent, ['own']);
+  } finally { f.store.close(); }
+});
+
+test('a live registered planner outranks a more recently active repository thread', async () => {
+  const f = fixture();
+  try {
+    const planner = formatAgentId('paseo-synthetic', 'own');
+    f.store.setProjectPlanner({ key: 'example', agentId: planner, setBy: 'operator' });
+    f.threads.push({ id: 'design', title: 'design', workspaceId: null, directory: repo, updatedAt: '2099-06-01T00:00:00Z' });
+    const { RuntimeRepositories } = await import('../core/runtime/repositories');
+    const repositories = new RuntimeRepositories({ store: f.store, engine: f.engine, markStoreAccess() {} } as never);
+    const project = await repositories.getProject({ key: 'example' });
+    assert.equal(project?.responsibleThread?.thread?.agentId, planner);
+    assert.deepEqual(project?.responsibleThread?.thread?.reasons, ['registered-planner', 'dispatcher', 'repository-worker']);
+    // The message reaches the registered planner, never the more recent design thread.
+    assert.equal((await f.tell(3)).status, 'delivered');
+    assert.deepEqual(f.sent, ['own']);
+  } finally { f.store.close(); }
+});
+
+test('a tell from the resolved thread skips itself and never echoes back', async () => {
+  const f = fixture();
+  try {
+    // The thread that resolves this project is the thread sending the tell.
+    f.store.setProjectPlanner({ key: 'example', agentId: formatAgentId('paseo-synthetic', 'worker'), setBy: 'operator' });
+    f.threads.push({ id: 'worker', title: 'worker', workspaceId: null, directory: repo, updatedAt: '2099-06-01T00:00:00Z' });
+    assert.equal((await f.tell(1)).status, 'delivered');
+    assert.deepEqual(f.sent, ['own']);
+    // With nobody else live the sender handles it itself instead of receiving its own message.
+    f.archived.add('other'); f.archived.add('own');
+    f.engine.resolution.responsibleThreads.cache.invalidate('example');
+    const receipt = await f.tell(2);
+    assert.equal(receipt.status, 'expired');
+    assert.match('detail' in receipt ? receipt.detail : '', /The sender is the only live responsible thread for example; handle it yourself/);
+    assert.deepEqual(f.sent, ['own']);
   } finally { f.store.close(); }
 });
 
@@ -91,15 +131,16 @@ test('an ask to a project without a live candidate returns a recorded self-handl
   } finally { f.store.close(); }
 });
 
-test('project.get exposes the resolved host, interaction and cache age', async () => {
+test('project.get exposes the resolved host, interaction, ranking reasons and cache age', async () => {
   const f = fixture();
   try {
     const { RuntimeRepositories } = await import('../core/runtime/repositories');
     const repositories = new RuntimeRepositories({ store: f.store, engine: f.engine, markStoreAccess() {} } as never);
     const project = await repositories.getProject({ key: 'example' });
     assert.equal(project?.responsibleThread?.thread?.hostId, 'paseo-synthetic');
-    assert.match(project!.responsibleThread!.thread!.agentId, /other/);
-    assert.equal(project?.responsibleThread?.thread?.lastInteraction, '2099-01-02T00:00:00Z');
+    assert.match(project!.responsibleThread!.thread!.agentId, /own/);
+    assert.deepEqual(project?.responsibleThread?.thread?.reasons, ['dispatcher', 'repository-worker']);
+    assert.ok(project?.responsibleThread?.thread?.lastInteraction);
     assert.ok(project!.responsibleThread!.cacheAgeMs >= 0);
   } finally { f.store.close(); }
 });

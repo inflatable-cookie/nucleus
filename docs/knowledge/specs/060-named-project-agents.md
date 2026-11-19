@@ -76,10 +76,19 @@ thread on a host this process is not connected to is `unknown`.
 ### 3. Responsible threads
 
 Cross-project messages use a short-lived project shortlist from every active
-host. A candidate is live, works in a project checkout or worktree or has
-owned or dispatched project tasks, and is not a task-role thread. Nucleus ranks
-candidates by the most recent host activity or Nucleus call. A live
-`project.set-planner` registration ranks first as a compatibility hint; it
+host. A candidate is live and is the project's registered planner, a thread
+`agent.register` names, a thread that has dispatched or owns project tasks, or a
+thread that works in a project checkout or worktree; a task-role thread is left
+out unless it is registered. Nucleus ranks a live registered planner first,
+then a thread that dispatched or owns project tasks, then a named agent, then a
+thread that only works in the checkout, breaking ties by the most recent host
+activity or Nucleus call (Tom, 2026-11-19; nucleus#1379). A design or support
+thread merely working in the repository therefore never captures project
+messages while a dispatching planner is live. A sender that is itself a
+candidate is skipped, so a `tell` from the resolved thread to its own project
+reaches the next candidate or records that the sender handles it; it is never
+echoed back. A live `project.set-planner` registration ranks first as a
+compatibility hint; it
 still registers an unknown thread under a free default name and retains its
 participant-ticket rules. Clearing the hint leaves the named agent registered.
 
@@ -92,8 +101,10 @@ that pass. When no candidate
 is live, `ask` and `tell` record and return that the sender should handle the
 matter; planning questions do not start a decider. Operator-only matters go to
 the board. A task's own dispatching planner remains its first rung. `project.get`
-and the project settings view show the resolved thread, host, last interaction
-and cache age. Explicit named addressing remains independent of this resolver.
+and the project settings view show the resolved thread, host, ranking reasons
+(registered planner, dispatcher, named agent, repository worker), last
+interaction and cache age. Explicit named addressing remains independent of this
+resolver.
 
 ### 4. Addressing by name
 
