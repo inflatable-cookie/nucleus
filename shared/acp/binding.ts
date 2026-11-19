@@ -55,6 +55,7 @@ export const acpBindingSchema = z
   .object({
     format: z.literal(ACP_BINDING_FORMAT),
     version: z.literal(1),
+    kind: z.literal("task").optional(),
     sessionId: z.string().uuid(),
     taskId: taskIdSchema,
     socketPath: z.string().min(1),

@@ -542,28 +542,38 @@ export class AcpAgent {
   private elicit(session: SessionState, question: AcpElicitation, send: Send): void {
     if (!session.transport.answer) return;
     const key = `${question.id}:${question.version}`;
+    if (session.elicitationAttempts.size >= 512 && !session.elicitationAttempts.has(key)) {
+      for (const old of session.elicitationAttempts.keys()) {
+        if (!session.pendingElicitations.has(old)) { session.elicitationAttempts.delete(old); break; }
+      }
+    }
     if (session.pendingElicitations.has(key) || (session.elicitationAttempts.get(key) ?? 0) >= 2) return;
     session.pendingElicitations.add(key);
     session.elicitationAttempts.set(key, (session.elicitationAttempts.get(key) ?? 0) + 1);
     const requestId = `nucleus-elicitation-${randomUUID()}`;
     const fieldId = `nucleus_${question.id}_${question.version}`;
     this.elicitationReplies.set(requestId, response => {
-      session.pendingElicitations.delete(key);
       const result = isObject(response.result) ? response.result : {};
       const content = isObject(result.content) ? result.content : {};
-      if (result.action !== "accept" || typeof content[fieldId] !== "string") return;
-      const work = session.transport.answer!({ ...session.caller, id: question.id, version: question.version, answer: content[fieldId] as string }).catch(() => {
-        // A failed answer has unknown delivery; the next service read owns reconciliation.
-        this.options.log?.("could not record an elicitation answer");
+      const event = result.action === "accept" && typeof content[fieldId] === "string"
+        ? { action: "accept" as const, answer: content[fieldId] as string }
+        : result.action === "cancel" ? { action: "cancel" as const, requestId } : null;
+      if (!event) return;
+      const work = session.transport.answer!({ ...session.caller, id: question.id, version: question.version, ...event }).then(() => {
+        if (event.action === "accept") session.elicitationAttempts.set(key, 2);
+        session.pendingElicitations.delete(key);
+      }).catch(() => {
+        // A failed answer has unknown delivery; never emit it again blindly.
+        this.options.log?.("could not record an elicitation response");
       });
       this.work.add(work);
       void work.finally(() => this.work.delete(work));
     });
     const field = question.choices.length ? { oneOf: question.choices.map(choice => ({ const: choice.label, title: choice.label, description: choice.consequence })) } : {};
     send({ jsonrpc: "2.0", id: requestId, method: "elicitation/create", params: {
-      sessionId: session.sessionId, mode: "form", message: question.question,
+      sessionId: session.sessionId, mode: "form", message: question.question, _meta: { "cognition.ai/allowOther": true },
       requestedSchema: { type: "object", required: [fieldId], properties: {
-        [fieldId]: { type: "string", title: question.headline, description: question.question, ...field, _meta: { "cognition.ai/allowOther": true } },
+        [fieldId]: { type: "string", title: question.headline, description: question.question, ...field },
       } },
     } });
   }

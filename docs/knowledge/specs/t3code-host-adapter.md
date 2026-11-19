@@ -788,6 +788,48 @@ invent a second follow-up. Expired or nonresumable approvals cannot be answered
 again. An interrupted answer remains uncertain even if the request later expires;
 expiry is not evidence that the original answer was never delivered.
 
+## Operator decisions on T3
+
+An open decision linked to a live T3 task goes to that task's ACP parent; other
+operator decisions go to the environment's single pinned **Nucleus** inbox. The
+inbox has a dedicated service-owned directory and a host-scoped ACP binding, not
+a task identity. Its credential can read its decision projection and answer it,
+but cannot send a task message, report a run or exercise task controls. Re-minting
+replaces the authority record and revokes the previous credential. The inbox is
+not a role thread and retention and task archiving never select it.
+
+Each open decision version becomes its own `elicitation/create` form. The field id
+carries the decision id and version; its title, question and labelled options are
+shown by T3. Multiple cards can remain pending on one held turn. An accepted
+answer goes through the existing decision answer route as the authenticated T3
+operator; it is not a planner relay. A task with an open decision needs a person,
+so its row is unsnoozed and its parent is held or re-entered. Once the answer is
+recorded, ordinary attention projection decides whether the row snoozes again.
+
+The adapter reads each pending runtime request before settlement. An answer from
+another surface is sent to the same request as `runtime-request.respond` with the
+recorded scalar answer. A withdrawal or supersession sends `decision: "cancel"`
+without answers. T3 resolves the request and marks the question item cancelled;
+the agent receives `action: "cancel"` and records no answer. A T3 operator's cancel
+leaves the decision open and permits one re-offer per decision version. The
+service records cancellation receipts so a restart does not reset that limit.
+Neither agent-side `$/cancel_request` nor permission or URL-mode elicitation is
+used for these forms.
+
+A T3 restart cancels the held run but can leave an old card answerable through a
+message continuation. On load the agent does not treat that text as an answer;
+it reads open decisions again. The adapter clears stale cards from the service's
+record. Re-entry uses a durable occurrence generation: an uncertain send is read
+before another occurrence is considered, and a later confirmed restart uses a
+new command identity. The same rule holds the permanent inbox open.
+
+The service mints a fresh one-time board link for `preview.open` on the inbox
+thread. It sends the link only in that WebSocket call, never in an ACP prompt or
+an intent log. A new host connection opens the pane again after T3 or the service
+restarts; an uncertain open is not blindly repeated on the same connection.
+`nucleus t3 install` grants `preview:operate` to the runtime bearer, and a repeat
+install rotates that bearer.
+
 ## Native parenting
 
 A task's row is a thread on the Nucleus ACP provider (Spec 065), and every role is
@@ -816,7 +858,7 @@ checkout is refused with a visible reason, never silently re-homed.
 
 **The turn is held, released and re-entered.** The ACP agent holds the parent's
 turn while the service says to. The adapter releases it when no role child of the
-task is live, so it no longer reads as busy forever. Before
+task is live and no decision needs a person, so it no longer reads as busy forever. Before
 the next child, the parent is re-entered with a message whose text carries the
 adapter's `nucleus-hold-the-task-thread` marker; the binding's `holdPattern` names
 that marker, so the agent holds the turn and shows or forwards nothing. A manually settled parent is left alone; re-entry refuses until the operator

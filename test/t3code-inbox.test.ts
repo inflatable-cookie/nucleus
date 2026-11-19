@@ -20,7 +20,9 @@ test("one host inbox is launched once and pinned outside task retention", async 
     decisionSettlement: id => id.startsWith("1111") ? { state: "answered", answer: "Yes" } : { state: "cancelled" },
     turn: async () => { throw Error("not called"); }, message: async () => { throw Error("not called"); }, release: () => {},
   };
-  const host = new T3CodeHost({ endpoint: fake.endpoint, bearer: "synthetic-bearer", statePath: join(root, "state.json"), probeThreadId: "synthetic-probe", acp: () => acp });
+  let links = 0;
+  const host = new T3CodeHost({ endpoint: fake.endpoint, bearer: "synthetic-bearer", statePath: join(root, "state.json"), probeThreadId: "synthetic-probe", acp: () => acp,
+    boardLink: async () => { links++; return "http://127.0.0.1:1234/#token=synthetic"; } });
   t.after(() => host.close());
   await host.connect();
   await host.reconcileThreadTitles([]);
@@ -28,6 +30,11 @@ test("one host inbox is launched once and pinned outside task retention", async 
   await host.reconcileThreadTitles([]);
   const inbox = host.state.read().inbox!;
   assert.equal(mints, 1);
+  assert.equal(links, 1);
+  const preview = fake.requests.filter(request => request.tag === "preview.open");
+  assert.equal(preview.length, 1);
+  assert.deepEqual(preview[0].payload, { threadId: inbox.threadId, url: "http://127.0.0.1:1234/#token=synthetic", reveal: true });
+  assert.equal(JSON.stringify(host.state.read()).includes("token=synthetic"), false);
   assert.equal(fake.commands.filter(command => command.method === "orchestration.launchThread" && command.threadId === inbox.threadId).length, 1);
   assert.equal(fake.commands.filter(command => command.type === "thread.pin" && command.threadId === inbox.threadId).length, 1);
   assert.ok(fake.threads.get(inbox.threadId)?.thread.pinnedAt);
@@ -40,7 +47,20 @@ test("one host inbox is launched once and pinned outside task retention", async 
     questions: [{ id: `nucleus_${id}_1`, header: "Choice", question: "Choose?", options: [{ label: "Yes" }] }] }));
   await host.decisionCards.reconcile(inbox.threadId, inbox.workspaceId);
   const responses = fake.commands.filter(command => command.type === "runtime-request.respond");
-  assert.deepEqual(responses[0].answers, { [`nucleus_${ids[0]}_1`]: ["Yes"] });
+  assert.deepEqual(responses[0].answers, { [`nucleus_${ids[0]}_1`]: "Yes" });
   assert.equal(responses[1].decision, "cancel");
-  assert.equal(projection.runtimeRequests[1].status, "cancelled");
+  assert.equal(projection.runtimeRequests[1].status, "resolved");
+  assert.equal(projection.turnItems[1].status, "cancelled");
+  // A cancelled held run re-enters under a new occurrence after each observed restart.
+  for (const run of projection.runs) run.status = "cancelled";
+  host.reads.forget(inbox.threadId);
+  await host.decisionHold.reconcile(inbox.threadId);
+  const first = host.state.read().decisionHolds![inbox.threadId];
+  assert.equal(first.generation, 0);
+  for (const run of projection.runs) run.status = "cancelled";
+  host.reads.forget(inbox.threadId);
+  await host.decisionHold.reconcile(inbox.threadId);
+  const second = host.state.read().decisionHolds![inbox.threadId];
+  assert.equal(second.generation, 1);
+  assert.notEqual(second.commandId, first.commandId);
 });

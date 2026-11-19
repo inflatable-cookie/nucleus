@@ -117,7 +117,7 @@ export function reconcileRoutingSignoffs(store: Store, decisions: Decisions, tas
       const replacement = role === "worker" && result.profileId && task.replacementProfile?.profileId === request.profileId
         ? { replacementProfile: { ...task.replacementProfile, profileId: result.profileId } } : {};
       task = store.update(task.id, { profileRequests: { ...task.profileRequests, [role]: next }, ...replacement }, "routing_signoff",
-        JSON.stringify({ role, requested: request.profileId, profileId: next.profileId, status: result.signoff.status, decisionId: asked.decisionId, note: result.signoff.note }));
+        JSON.stringify({ role, requested: request.profileId, profileId: next.profileId, status: result.signoff.status, decisionId: asked.decisionId, by: result.signoff.by, note: result.signoff.note }));
       if (result.signoff.status === "approved" && asked.decisionId) approveRoute(approvedRoutes, store, task, role, next, asked.decisionId, request.reason);
       continue;
     }
@@ -127,7 +127,7 @@ export function reconcileRoutingSignoffs(store: Store, decisions: Decisions, tas
     const prior = priorApprovedSignoff(store, task.id, role, request.profileId);
     if (prior) {
       task = store.update(task.id, { profileRequests: { ...task.profileRequests, [role]: { ...request, signoff: prior } } }, "routing_signoff",
-        JSON.stringify({ role, requested: request.profileId, profileId: request.profileId, status: prior.status, decisionId: prior.decisionId, note: prior.note }));
+        JSON.stringify({ role, requested: request.profileId, profileId: request.profileId, status: prior.status, decisionId: prior.decisionId, by: prior.by, note: prior.note }));
       continue;
     }
     const question = signoffQuestion(store, profiles, task, role, request);

@@ -1,1 +1,1 @@
-T3 installs now grant the runtime permission needed to open the Nucleus board in a preview pane.
+T3 shows task decisions on their parent threads and other decisions in a pinned Nucleus inbox, with the board available in its browser pane.

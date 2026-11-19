@@ -479,13 +479,21 @@ test("task and inbox cards have distinct scopes and a versioned operator answer"
     assert.throws(() => new Decisions(fixture.store).answer({ id: "inbox-question", version: 1, answer: "Yes", answeredBy: "operator (t3code:synthetic)", relayed: false, note: "" }), /authenticated T3 session/);
     const offered = await fixture.acp.turn({ ...caller, attach: true }, binding.token);
     assert.deepEqual(offered.elicitations?.map(row => row.id), ["inbox-question"]);
-    await assert.rejects(() => fixture.acp.answer({ ...caller, id: "task-question", version: 1, answer: "Yes" }, binding.token), /not offered/);
-    await fixture.acp.answer({ ...caller, id: "inbox-question", version: 1, answer: "Yes" }, binding.token);
+    await assert.rejects(() => fixture.acp.answer({ ...caller, id: "task-question", version: 1, action: "accept", answer: "Yes" }, binding.token), /not offered/);
+    await fixture.acp.answer({ ...caller, id: "inbox-question", version: 1, action: "accept", answer: "Yes" }, binding.token);
     const recorded = fixture.store.decision("inbox-question");
     assert.equal(recorded.answer?.answeredBy, "operator (t3code:synthetic)");
     assert.equal(recorded.answer?.relayed, null);
     assert.deepEqual(fixture.acp.decisionSettlement("inbox-question", 1), { state: "answered", answer: "Yes" });
     assert.deepEqual(fixture.acp.decisionSettlement("inbox-question", 2), { state: "cancelled" });
-    await assert.rejects(() => fixture.acp.answer({ ...caller, id: "inbox-question", version: 1, answer: "Yes" }, binding.token), /not offered/);
+    assert.deepEqual(await fixture.acp.answer({ ...caller, id: "inbox-question", version: 1, action: "accept", answer: "Yes" }, binding.token), { recorded: false });
+    fixture.store.addDecision(decision("cancel-question", []));
+    const cancel = { ...caller, id: "cancel-question", version: 1, action: "cancel" as const, requestId: "card-1" };
+    await fixture.acp.answer(cancel, binding.token);
+    await fixture.acp.answer(cancel, binding.token); // The same delivery cannot consume the retry twice.
+    assert.deepEqual((await fixture.acp.turn({ ...caller, attach: true }, binding.token)).elicitations?.map(row => row.id), ["cancel-question"]);
+    await fixture.acp.answer({ ...cancel, requestId: "card-2" }, binding.token);
+    assert.deepEqual((await fixture.acp.turn({ ...caller, attach: true }, binding.token)).elicitations, []);
+    assert.equal(fixture.store.decision("cancel-question").status, "open");
   } finally { await fixture.close(); }
 });

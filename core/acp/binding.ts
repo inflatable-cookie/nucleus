@@ -44,7 +44,7 @@ export function mintAcpSession(input: MintAcpSessionInput): AcpSessionBinding {
     createdAt: (input.now ?? (() => new Date().toISOString()))(),
   });
   const binding: AcpTaskBinding = acpBindingSchema.parse({
-    format: ACP_BINDING_FORMAT, version: 1, sessionId, taskId: record.taskId,
+    format: ACP_BINDING_FORMAT, version: 1, kind: "task", sessionId, taskId: record.taskId,
     socketPath: input.socketPath, token,
     ...(input.ignorePattern ? { ignorePattern: input.ignorePattern } : {}),
     ...(input.holdPattern ? { holdPattern: input.holdPattern } : {}),

@@ -14,10 +14,12 @@ interface InboxContext {
   reads: T3Reads;
   rpc: T3RpcClient;
   intents: T3IntentLedger;
+  boardLink?: () => Promise<string>;
   workspace(directory: string): Promise<{ id: string; projectId: string }>;
 }
 
 export class T3Inbox {
+  private previewAttempted = false;
   constructor(private readonly core: InboxContext) {}
 
   async reconcile(): Promise<void> {
@@ -51,6 +53,13 @@ export class T3Inbox {
       }, undefined, undefined, { resendUnknownAfterRead: true });
       thread = (await this.core.reads.inventory()).threads.find(row => row.id === inbox!.threadId);
       if (!thread) return;
+    }
+    // A link is never persisted or placed in an ACP prompt. A failed native open
+    // has unknown delivery, so this connection does not blindly send it again.
+    if (!this.previewAttempted && this.core.boardLink) {
+      const url = await this.core.boardLink();
+      this.previewAttempted = true;
+      await this.core.rpc.call("preview.open", { threadId: inbox.threadId, url, reveal: true });
     }
     if (thread.pinnedAt === undefined) throw new T3CompatibilityError("inbox thread pinnedAt");
     if (thread.pinnedAt === null) {

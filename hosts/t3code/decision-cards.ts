@@ -22,13 +22,14 @@ export class T3DecisionCards {
       const item = projection.turnItems.find(row => row.type === "user_input_request" && row.requestId === request.id);
       if (!item || item.questions?.length !== 1) continue;
       const question = item.questions[0];
+      if (!question) continue;
       const match = /^nucleus_([0-9a-f-]{36})_(\d+)$/i.exec(question.id);
       if (!match) continue;
-      const decision = acp.decisionSettlement(match[1], Number(match[2]));
-      const stale = Boolean(item.runId && !liveRuns.has(item.runId));
+      const decision = acp.decisionSettlement(match[1]!, Number(match[2]!));
+      const stale = request.responseCapability.type === "message" || Boolean(item.runId && !liveRuns.has(item.runId));
       if (decision.state === "open" && !stale) continue;
       const response = decision.state === "answered" && decision.answer !== undefined
-        ? { answers: { [question.id]: [decision.answer] } }
+        ? { answers: { [question.id]: decision.answer } }
         : { decision: "cancel" as const };
       await this.core.respond(threadId, workspaceId, request.id, response);
     }

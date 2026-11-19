@@ -30,7 +30,7 @@ export interface AcpElicitation {
   question: string;
   choices: Array<{ label: string; consequence: string }>;
 }
-export type AcpAnswerInput = AcpCaller & { id: string; version: number; answer: string };
+export type AcpAnswerInput = AcpCaller & { id: string; version: number } & ({ action: "accept"; answer: string } | { action: "cancel"; requestId: string });
 
 export type AcpTurnReply = {
   /** `hold` keeps the agent's turn open; `release` ends it, and the client settles the thread. */

@@ -820,7 +820,7 @@ test("a held turn offers concurrent decision cards and forwards accepted answers
     client.respond(first.id, { action: "accept", content: { nucleus_one_1: "Yes" } });
     client.respond(second.id, { action: "accept", content: { nucleus_two_1: "No" } });
     for (let i = 0; i < 100 && client.transport.answers.length < 2; i++) await new Promise(resolve => setTimeout(resolve, 5));
-    assert.deepEqual(client.transport.answers.map(row => [row.id, row.answer]), [["one", "Yes"], ["two", "No"]]);
+    assert.deepEqual(client.transport.answers.map(row => [row.id, "answer" in row ? row.answer : null]), [["one", "Yes"], ["two", "No"]]);
     client.notify("session/cancel", { sessionId: binding.sessionId });
     await client.lines.untilResult(prompt);
   } finally { await client.closed(); }

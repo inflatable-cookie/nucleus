@@ -229,6 +229,7 @@ const schema = z.object({
   /** Permanent host-scoped inbox, never a task role or an archive target. */
   inbox: z.object({ threadId: z.string(), sessionId: z.string(), bindingPath: z.string(), directory: z.string(),
     workspaceId: z.string(), projectId: z.string(), createdAt: z.string(), pinGeneration: z.number().int().nonnegative().default(0) }).optional(),
+  decisionHolds: z.record(z.string(), z.object({ generation: z.number().int().nonnegative(), commandId: z.string(), messageId: z.string() })).optional(),
   /**
    * Whether this host can nest role threads right now: the Nucleus ACP provider is
    * registered and ready. When it is not, the host says why on its status line and

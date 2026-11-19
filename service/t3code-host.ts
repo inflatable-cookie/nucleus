@@ -1,4 +1,6 @@
 import { join } from "node:path";
+import { ServiceClient } from "../shared/service/client";
+import { readServiceInfo } from "../shared/service/discovery";
 import type { AcpSessionSurface } from "../shared/acp/surface";
 import {
   createHost,
@@ -93,7 +95,16 @@ export class T3HostConnection {
     private readonly acp: () => AcpSessionSurface | null = () => null,
   ) {
     this.dependencies = dependencies ?? {
-      create: (config) => createHost({ ...config, acp: this.acp }),
+      create: (config) => createHost({ ...config, acp: this.acp, boardLink: async () => {
+        const info = readServiceInfo(this.dataDir);
+        if (!info) throw new Error("The local board service is unavailable");
+        const client = new ServiceClient({ socketPath: info.socketPath, credential: info.credential });
+        try {
+          const result = await client.request("service.ui-link", { action: "issue" }) as { url?: unknown };
+          if (typeof result.url !== "string") throw new Error("The local board did not issue a link");
+          return result.url;
+        } finally { client.close(); }
+      } }),
       adapter: (host) =>
         createAdapter(
           HostPolicies as unknown as HostPolicyConstructor,

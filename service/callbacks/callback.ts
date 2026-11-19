@@ -131,10 +131,13 @@ const acpTurnSchema = z.union([
   acpCallerSchema.extend(acpTurnFields).strict(),
   z.object({ kind: z.literal("inbox"), hostId: z.string().min(1).max(240), sessionId: z.string().min(1).max(160), ...acpTurnFields }).strict(),
 ]);
-const acpAnswerFields = { id: z.string().min(1).max(160), version: z.number().int().positive(), answer: z.string().trim().min(1).max(48000) };
+const acpAnswerFields = { id: z.string().min(1).max(160), version: z.number().int().positive() };
+const acpAnswerCaller = { kind: z.literal("inbox"), hostId: z.string().min(1).max(240), sessionId: z.string().min(1).max(160), ...acpAnswerFields };
 const acpAnswerSchema = z.union([
-  acpCallerSchema.extend(acpAnswerFields).strict(),
-  z.object({ kind: z.literal("inbox"), hostId: z.string().min(1).max(240), sessionId: z.string().min(1).max(160), ...acpAnswerFields }).strict(),
+  acpCallerSchema.extend({ ...acpAnswerFields, action: z.literal("accept"), answer: z.string().trim().min(1).max(48000) }).strict(),
+  acpCallerSchema.extend({ ...acpAnswerFields, action: z.literal("cancel"), requestId: z.string().min(1).max(160) }).strict(),
+  z.object({ ...acpAnswerCaller, action: z.literal("accept"), answer: z.string().trim().min(1).max(48000) }).strict(),
+  z.object({ ...acpAnswerCaller, action: z.literal("cancel"), requestId: z.string().min(1).max(160) }).strict(),
 ]);
 const acpMessageSchema = acpCallerSchema
   .extend({

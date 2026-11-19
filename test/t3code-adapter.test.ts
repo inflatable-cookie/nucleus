@@ -1735,7 +1735,7 @@ test("questions and approvals answer exact runtime requests and refuse wrong kin
   assert.deepEqual(responses[0]!.answers, { choice: ["A"] });
   assert.equal(responses[1]!.requestId, "cancel-request");
   assert.equal(responses[1]!.decision, "cancel");
-  assert.equal(p.runtimeRequests.find(request => request.id === "cancel-request")!.status, "cancelled");
+  assert.equal(p.runtimeRequests.find((request: { id: string }) => request.id === "cancel-request")!.status, "resolved");
   assert.equal(responses[2]!.requestId, "approval-request");
   assert.equal(responses[2]!.decision, "accept");
   const answeredRead = await host.answeredQuestions(created.id);

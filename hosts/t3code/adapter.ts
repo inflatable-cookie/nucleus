@@ -66,6 +66,7 @@ import { T3Presentation } from "./presentation";
 import { T3Nesting } from "./nesting";
 import { T3Inbox } from "./inbox";
 import { T3DecisionCards } from "./decision-cards";
+import { T3DecisionHold } from "./decision-hold";
 import { isSupportRole, labelRole } from "./one-row";
 import type { AcpSessionSurface } from "../../shared/acp/surface";
 
@@ -85,6 +86,8 @@ export interface T3CodeConfig extends T3ConnectionConfig {
   reentryTimeoutMs?: number;
   /** Opt-in path for a bounded capture of the existing config read. */
   modelCapturePath?: string;
+  /** Service-owned one-time board link, minted only for a preview open. */
+  boardLink?: () => Promise<string>;
 }
 const unsupported = (capability: string): never => {
   throw new ProvenPreSendRefusalError(`T3Code does not support ${capability}`);
@@ -204,6 +207,7 @@ export class T3CodeHost implements Host {
   readonly nesting: T3Nesting;
   readonly inbox: T3Inbox;
   readonly decisionCards: T3DecisionCards;
+  readonly decisionHold: T3DecisionHold;
   hostId = "";
   version = "";
   private ready = false;
@@ -237,14 +241,16 @@ export class T3CodeHost implements Host {
       intents: this.intents,
       parentThreadOf: (taskId) => this.nesting.parentOf(taskId)?.threadId,
     });
+    this.decisionHold = new T3DecisionHold({ hostId: () => this.hostId, state: this.state, reads: this.reads, intents: this.intents,
+      unsettle: (threadId, messageId) => this.presentation.unsettleBeforeMessage(threadId, messageId) });
     this.decisionCards = new T3DecisionCards({ acp: this.acp, reads: this.reads,
       respond: async (threadId, workspaceId, requestId, response) => this.respondRuntimeRequest(threadId, workspaceId, requestId, response),
     });
     this.inbox = new T3Inbox({
-      hostId: () => this.hostId, acp: this.acp, state: this.state, reads: this.reads, rpc: this.rpc, intents: this.intents,
+      hostId: () => this.hostId, acp: this.acp, state: this.state, reads: this.reads, rpc: this.rpc, intents: this.intents, boardLink: options.boardLink,
       workspace: async directory => {
         const created = await this.createWorkspace({ title: "Nucleus", requestId: `inbox:${this.hostId}`, directory, project: { workspaceRoot: directory } });
-        return { id: created.id, projectId: this.state.read().workspaces[created.id].projectId };
+        return { id: created.id, projectId: this.state.read().workspaces[created.id]!.projectId };
       },
     });
     this.nesting = new T3Nesting({
@@ -591,9 +597,15 @@ export class T3CodeHost implements Host {
     try {
       await this.inbox.reconcile();
       const state = this.state.read();
-      if (state.inbox) await this.decisionCards.reconcile(state.inbox.threadId, state.inbox.workspaceId);
+      if (state.inbox) {
+        await this.decisionCards.reconcile(state.inbox.threadId, state.inbox.workspaceId);
+        await this.decisionHold.reconcile(state.inbox.threadId);
+      }
       for (const parent of Object.values(state.parents ?? {})) {
-        if (!parent.archivedAt) await this.decisionCards.reconcile(parent.threadId, parent.workspaceId);
+        if (!parent.archivedAt) {
+          await this.decisionCards.reconcile(parent.threadId, parent.workspaceId);
+          if (this.acp()?.pendingDecisionKey?.(parent.taskId)) await this.decisionHold.reconcile(parent.threadId);
+        }
       }
       await this.nesting.reconcile(tasks);
     } catch (error) {

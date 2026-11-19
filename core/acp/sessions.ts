@@ -23,6 +23,7 @@ import { verifyAcpSession, mintAcpSession } from "./binding";
 import type { AcpAnswerInput, AcpMessageInput, AcpSessionBinding, AcpSessionSurface, AcpTurnInput, AcpTurnReply } from "../../shared/acp/surface";
 import { acpFinishedLine, acpLifecycleLine, acpLifecycleSignature, acpTaskFinished, acpTaskName } from "./lifecycle";
 import type { Engine } from "../engine";
+import { createHash } from "node:crypto";
 import { mintAcpInbox, verifyAcpInbox } from "./inbox-binding";
 import { t3OperatorIdentity } from "../../shared/operator-identity";
 import { acpDecisions, acpElicitation } from "./decisions";
@@ -79,6 +80,16 @@ export class AcpSessions implements AcpSessionSurface {
       ...(input.holdPattern ? { holdPattern: input.holdPattern } : {}) });
   }
 
+  private cancelKey(id: string, version: number): string {
+    return `acpCancel:${createHash("sha256").update(JSON.stringify([id, version])).digest("hex")}`;
+  }
+  private offered(caller: AcpTurnInput) {
+    return acpDecisions(this.engine.store, caller).filter(row => {
+      const receipt = this.engine.store.getMeta<{ requests: string[] }>(this.cancelKey(row.id, row.version));
+      return (receipt?.requests.length ?? 0) < 2;
+    }).map(acpElicitation);
+  }
+
   /** The host uses this only for the task parent it already owns. */
   pendingDecisionKey(taskId: string): string | null {
     const rows = acpDecisions(this.engine.store, { taskId, sessionId: "" });
@@ -113,7 +124,7 @@ export class AcpSessions implements AcpSessionSurface {
       const waitMs = Math.max(0, Math.min(input.waitMs ?? 0, ACP_TURN_WAIT_MAX_MS));
       const deadline = Date.now() + waitMs;
       for (;;) {
-        const elicitations = acpDecisions(this.engine.store, input).map(acpElicitation);
+        const elicitations = this.offered(input);
         const signature = JSON.stringify(elicitations);
         if (input.attach || this.shownDecisions.get(record.sessionId) !== signature || Date.now() >= deadline) {
           this.shownDecisions.set(record.sessionId, signature);
@@ -130,7 +141,7 @@ export class AcpSessions implements AcpSessionSurface {
       const task = this.engine.store.task(record.taskId);
       const signature = acpLifecycleSignature(task);
       const messages: string[] = [];
-      const elicitations = acpDecisions(this.engine.store, input).map(acpElicitation);
+      const elicitations = this.offered(input);
       const decisionSignature = JSON.stringify(elicitations);
       const changedDecisions = this.shownDecisions.get(record.sessionId) !== decisionSignature;
       this.shownDecisions.set(record.sessionId, decisionSignature);
@@ -139,7 +150,7 @@ export class AcpSessions implements AcpSessionSurface {
         this.remember(record.sessionId, signature);
       }
       const release = this.releases.get(record.sessionId);
-      if ((release !== undefined || acpTaskFinished(task)) && elicitations.length === 0) {
+      if ((release !== undefined || acpTaskFinished(task)) && !this.pendingDecisionKey(task.id)) {
         this.releases.delete(record.sessionId);
         return this.reply(task, "release", release ?? `the task is ${task.phase}`, messages);
       }
@@ -153,7 +164,25 @@ export class AcpSessions implements AcpSessionSurface {
     if (input.kind === "inbox") verifyAcpInbox({ dataHome: this.dataHome, hostId: input.hostId, sessionId: input.sessionId }, token);
     else verifyAcpSession({ dataHome: this.dataHome, taskId: input.taskId, sessionId: input.sessionId }, token);
     const decision = acpDecisions(this.engine.store, input).find(row => row.id === input.id && row.version === input.version);
-    if (!decision) throw new Error("Decision changed or is not offered to this session");
+    if (!decision) {
+      // A service-initiated settlement follows a closed or changed version. It is
+      // already recorded, and must not be recorded a second time by this callback.
+      try {
+        const current = this.engine.store.decision(input.id);
+        if (current.status !== "open" || current.version !== input.version) return { recorded: false };
+      } catch { return { recorded: false }; }
+      throw new Error("Decision changed or is not offered to this session");
+    }
+    if (input.action === "cancel") {
+      const key = this.cancelKey(input.id, input.version);
+      this.engine.store.transaction(() => {
+        const receipt = this.engine.store.getMeta<{ requests: string[] }>(key) ?? { requests: [] };
+        if (!receipt.requests.includes(input.requestId) && receipt.requests.length < 2) {
+          this.engine.store.setMeta(key, { requests: [...receipt.requests, input.requestId] });
+        }
+      });
+      return { recorded: false };
+    }
     if (!this.options.answerDecision) throw new Error("This process cannot answer decisions");
     const hostId = input.kind === "inbox" ? input.hostId : this.engine.store.task(input.taskId).hostId!;
     return this.options.answerDecision({ id: input.id, version: input.version, answer: input.answer, answeredBy: t3OperatorIdentity(hostId), relayed: false,
