@@ -1113,6 +1113,8 @@ interface ParsedText {
   re?: RegExp;
   /** A literal the reader compares against. */
   reads?: string[];
+  /** A reader call whose formatting may vary. */
+  readerPattern?: RegExp;
   /** Real text the writers produce. */
   sample?: string;
   /** Fixed text the writers must still carry. */
@@ -1360,7 +1362,7 @@ const PARSED: ParsedText[] = [
     re: /\brun (\S+) \(/,
     sample: "a-1: kind scope; run r-1 (worker); agent x",
     writers: [
-      "${ask.id}: kind ${ask.kind}; run ${run.id} (${run.role}); agent ${run.agentId ?? 'unknown'}; question ${digest(ask.question)} (${ask.question.length} chars)",
+      '${ask.id}: kind ${ask.kind}; run ${run.id} (${run.role}); agent ${run.agentId ?? "unknown"}; question ${digest(ask.question)} (${ask.question.length} chars)',
     ],
   },
   {
@@ -1376,7 +1378,7 @@ const PARSED: ParsedText[] = [
       "${ask.id}: queue question ${joined}",
       ": queue question ${decision.id}",
     ],
-    reads: ["split('queue question ')"],
+    reads: ['split("queue question ")'],
   },
   {
     site: "ask delegated planner",
@@ -1384,6 +1386,7 @@ const PARSED: ParsedText[] = [
     sample: "a-1: task planner p-1; asked",
     writers: [
       "${rung === 'task' ? 'task planner' : 'project planner'} ${agentId}; asked",
+      '${rung === "task" ? "task planner" : "project planner"} ${agentId}; asked',
     ],
     reads: [
       'body.startsWith(" task planner ")',
@@ -1451,7 +1454,7 @@ const PARSED: ParsedText[] = [
     site: "operator question kinds",
     reads: [
       "record.intent?.kind === 'release'",
-      "event.detail.includes('kind budget')",
+      'event.detail.includes("kind budget")',
     ],
     writers: [
       "${question.id}: kind ${question.kind}; stop ${task.resolution.stop?.reason ?? 'none'}; head ${task.prHead ?? 'none'}; question ${digest(",
@@ -1483,9 +1486,8 @@ const PARSED: ParsedText[] = [
   },
   {
     site: "absent catalog archive",
-    reads: [
-      "event.detail.includes('observed absent from the catalog and disk without a Queue archive intent')",
-    ],
+    readerPattern:
+      /event\s*\.\s*detail\s*\.\s*includes\s*\(\s*(["'])observed absent from the catalog and disk without a Queue archive intent\1\s*,?\s*\)/,
   },
   // The absent-creation budget is read from the record's own scope, so the
   // legacy sentence it still recognises and the record writer are pinned;
@@ -1514,7 +1516,8 @@ const PARSED: ParsedText[] = [
  * leaves the others, so these carry a floor. A PR that deletes a site lowers it.
  */
 const SITES: Record<string, number> = {
-  "${rung === 'task' ? 'task planner' : 'project planner'} ${agentId}; asked": 3,
+  "${rung === 'task' ? 'task planner' : 'project planner'} ${agentId}; asked": 1,
+  '${rung === "task" ? "task planner" : "project planner"} ${agentId}; asked': 2,
   "decider requested": 3,
   "Task changed; refresh before retrying": 38,
   "Task or run changed; refresh before retrying": 3,
@@ -1554,6 +1557,12 @@ for (const row of PARSED) {
       assert.match(row.sample!, row.re);
     }
     for (const text of row.reads ?? []) present(text, "reader text");
+    if (row.readerPattern)
+      assert.match(
+        source(),
+        row.readerPattern,
+        "reader call is gone or reworded",
+      );
     for (const text of row.writers ?? []) present(text, "writer text");
   });
 }
