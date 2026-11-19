@@ -18,8 +18,8 @@ export const CREATION_REFUSED_BEFORE_SEND = "creation_refused_before_send";
  * where it can. An owner `restart` re-arms recovery and clears the set with it,
  * because the operator's deliberate retry is the fresh attempt, not a repeat.
  *
- * Reads the store's bounded newest events (the latest 100), never the whole
- * history: a refusal this old is not the refusal that just happened.
+ * The complete history matters: intervening events must not hide a refusal or
+ * the owner re-arm that defines this episode.
  */
 /**
  * The runs a proven pre-send creation refusal settled. The launch settlement
@@ -51,17 +51,24 @@ export function refusedRunIds(
 }
 
 export function refusedLaunchProfiles(
-  store: Pick<Store, "events" | "runs">,
+  store: Pick<Store, "eventsAll" | "runs">,
   taskId: string,
 ): Set<string> {
-  const events = store.events(taskId);
+  const events = store.eventsAll(taskId);
   const rearm =
-    events.find((event) => event.kind === "coordinator_rearmed")?.id ?? 0;
+    events.filter((event) => event.kind === "coordinator_rearmed").at(-1)?.id ?? 0;
   const refused = refusedRunIds(events.filter((event) => event.id > rearm));
-  return new Set(
-    store
-      .runs(taskId)
+  const profiles = new Set(
+    store.runs(taskId)
       .filter((run) => refused.has(run.id) && run.profile)
       .map((run) => run.profile!.id),
   );
+  for (const event of events) {
+    if (event.id <= rearm || event.kind !== "worker_creation_refused_before_send") continue;
+    try {
+      const detail = JSON.parse(event.detail) as { profileId?: unknown };
+      if (typeof detail.profileId === "string" && detail.profileId) profiles.add(detail.profileId);
+    } catch { /* older events contain only the reason */ }
+  }
+  return profiles;
 }

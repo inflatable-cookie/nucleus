@@ -685,7 +685,7 @@ export class CoordinatorEpisode {
       run.completion
     )
       return null;
-    return refusedRunIds(this.store.events(t.id)).has(run.id) ? run : null;
+    return refusedRunIds(this.store.eventsAll(t.id)).has(run.id) ? run : null;
   }
   /**
    * A coordinator creation the host refused before send settles that occurrence

@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { Store } from '../core/store/store';
+import { refusedLaunchProfiles } from '../core/recovery/refused-launch';
 import { creationProducerId, readCreationAttempt } from '../core/store/store-task-funnel';
 import { Engine } from '../core/engine';
 import { PaseoAdapter, type Adapter, type AgentObservation } from '../service/paseo-composition';
@@ -399,6 +400,12 @@ test('nucleus#1139: a proven refusal at worker creation names the step and skips
     assert.equal(f.creates.length, 1, 'exactly one creation was attempted');
     const event = f.store.events(task.id).find(candidate => candidate.kind === 'worker_creation_refused_before_send');
     assert.ok(event, 'the refusal is recorded as its own event kind');
+    assert.deepEqual(JSON.parse(event.detail), { runId: f.creates[0].runId, profileId: f.worker.id, reason: current.reason });
+    for (let i = 0; i < 101; i++) f.store.event(task.id, 'other', 'later activity');
+    assert.deepEqual([...refusedLaunchProfiles(f.store, task.id)], [f.worker.id]);
+    f.store.event(task.id, 'coordinator_rearmed', 'owner restart');
+    for (let i = 0; i < 101; i++) f.store.event(task.id, 'other', 'later activity');
+    assert.deepEqual([...refusedLaunchProfiles(f.store, task.id)], []);
     // Spec 058 budgets (nucleus#1153): a proven pre-send refusal is the host's cause,
     // so the task's wall clock stops while it waits for the Nucleus fix. The launch
     // that refuses runs after this pass's quanta, so the next sweep visit settles it

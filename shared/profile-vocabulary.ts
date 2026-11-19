@@ -176,8 +176,8 @@ export function canonicalThinkingValue(entry: ProviderTranslation, value: string
  * The nearest level of one ordered scale (Tom, 2026-11-04/12: a host translates
  * the canonical vocabulary in code, so a level a model does not report is
  * settled here instead of at the send). Distance decides; a tie takes the lower
- * level, the same nearest-below convention the pool uses for capability tiers,
- * so a translated level never silently buys more than the profile asked for.
+ * level. This thinking-scale rule is distinct from the pool capability-tier
+ * rule and may choose a higher supported level when it is closer.
  * `null` when the scale is empty: nothing on this model can carry the level.
  */
 export function nearestThinkingLevel(supported: readonly ThinkingLevel[], level: ThinkingLevel): ThinkingLevel | null {

@@ -50,7 +50,9 @@ profiles.
   and carries its thinking as the `effort` option (`ultra` is `ultrathink`) and
   Pi's as `thinking`. A value a host's table can't express makes the profile
   unavailable on that host with the reason computed (`T3Code can't run codex in
-  mode plan`); nothing is configured per profile and nothing is guessed. Each
+  mode plan`); nothing is configured per profile. For thinking levels the host
+  cannot offer on a model, translation chooses the nearest supported canonical
+  level, with ties going lower; it can therefore choose a higher level. Each
   host's routing snapshot carries the translated launch values, judged against
   that host's catalog, and a profile edit rebuilds the snapshots from the
   catalogs already read. `profile.compatibility` answers, for every stored

@@ -216,8 +216,7 @@ test("a canonical level the real model does not report is settled to the nearest
     [{ id: "reasoningEffort", value: "max" }],
   );
   // The real DeepSeek 4.1 Flash offers low, high and max only: `medium` is the
-  // same distance from low and high, and a tie never buys more than was asked,
-  // so it settles to low (the pool's nearest-below convention).
+  // same distance from low and high, so the thinking-scale tie settles to low.
   const deepseekProfile = {
     ...translated("deepseek", deepseek, catalog),
     thinkingOptionId: "medium",

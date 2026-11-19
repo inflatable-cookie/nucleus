@@ -18991,6 +18991,8 @@ test("a coordinator creation the host refused before send settles at once and th
       run.id,
       "the episode keeps the occurrence it refused",
     );
+    // Intervening events cannot hide the refusal from routing or restart.
+    for (let i = 0; i < 101; i++) f.store.event(f.task.id, "other", "later activity");
     // The refused profile is not asked for again by the retry of this episode.
     assert.deepEqual(
       [...refusedLaunchProfiles(f.store, f.task.id)],
@@ -19042,6 +19044,26 @@ test("a coordinator creation the host refused before send settles at once and th
         true,
         `recovery run ${refused.id} is settled`,
       );
+  } finally {
+    await f.close();
+  }
+});
+
+test("recovery excludes a worker-refused profile before selecting a coordinator", async () => {
+  const f = fixture();
+  try {
+    enableRecovery(f);
+    attention(f, "Worker creation refused before send");
+    const selected = f.engine.resolution.select(f.current(), "coordinator");
+    assert.ok(selected);
+    f.store.event(f.task.id, "worker_creation_refused_before_send",
+      JSON.stringify({ runId: "worker-run", profileId: selected.profile.id, reason: "host refused" }));
+    for (let i = 0; i < 101; i++) f.store.event(f.task.id, "other", "later activity");
+    const excluded = refusedLaunchProfiles(f.store, f.task.id);
+    assert.ok(excluded.has(selected.profile.id));
+    const alternate = f.engine.resolution.select(f.current(), "coordinator", [], excluded);
+    assert.ok(alternate);
+    assert.notEqual(alternate.profile.id, selected.profile.id);
   } finally {
     await f.close();
   }
