@@ -5,7 +5,7 @@ import type { Run, Task } from './contracts';
  *
  * The durable decision is `resolution.noAutomaticRetry` once an owner control has
  * recorded one (`noAutomaticRetryDecided`); only rows with no decision fall back
- * to the phrases an owner wrote in the brief, handoff or instruction that launched
+ * to the phrases an owner wrote in the brief or instruction that launched
  * the run. That fallback is migration evidence for reports and rows recorded
  * before the decision existed: keep it in this one reader, never in the gates.
  */

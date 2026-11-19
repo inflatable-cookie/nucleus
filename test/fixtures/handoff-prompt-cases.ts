@@ -1,7 +1,11 @@
 import type { CheckpointIntent, Run, Task } from '../../shared/contracts';
+import { briefDigest } from '../../core/planning/brief';
+// The pinned Queue-held brief every fixture task runs from (committed handoffs are retired).
+const briefText = '## Outcome\n\nBuild it.\n';
+const pinned = { brief: { text: briefText, mediaType: 'text/markdown', digest: briefDigest(briefText) }, briefVersions: [{ version: 1, digest: briefDigest(briefText), mediaType: 'text/markdown', text: briefText, reason: 'Submitted', pinnedAt: '2026-09-26T00:00:00.000Z' }], handoffText: briefText };
 /** Handoff-mode prompt inputs whose rendered bytes are frozen in handoff-prompts.json (Spec 020 row 6). */
 const base={id:'task',runId:'initial',title:'Build',originAgentId:'origin',coordinatorAgentId:'',dependsOn:['dep'],branch:'ns-task',baseBranch:'main',repoPath:'/repo',workspaceId:'workspace',directory:'/worktree',agentId:'worker',
-  handoffPath:'docs/handoffs/build.md',planningCommit:'a'.repeat(40),instruction:null,retiredWorkers:[],skipPRReview:false,prUrl:'https://github.com/example/repo/pull/7',reason:'Address review',
+  handoffPath:'',...pinned,planningCommit:'a'.repeat(40),instruction:null,retiredWorkers:[],skipPRReview:false,prUrl:'https://github.com/example/repo/pull/7',reason:'Address review',
   resumePrNumber:null,completion:{status:'ready_for_review',prNumber:7},phase:'reviewing',originError:'',notificationAgentId:null,originWorkspaceId:null,workerModel:'model-a',profile:{model:'model-a'},reviewEntry:null,
   resolution:{review:{summary:'Fix links',reviewCommentId:1},revisionPrRepair:false,revisionResumeUnpublished:false,externalMerge:false,mergedCommit:'b'.repeat(40),revisionInstruction:{id:'scoped-1',text:'Scoped ruling',createdAt:'2026-09-13T00:00:00.000Z',runId:'run-revision'}}} as unknown as Task;
 export const handoffTask=base;

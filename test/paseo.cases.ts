@@ -371,7 +371,7 @@ weighted(4)(
         planningSource: null,
         prUrl: "",
         skipPRReview: false,
-        handoffPath: "docs/handoffs/task.md",
+        handoffPath: "tasks/task.md",
         planningCommit: "a".repeat(40),
         briefVersions: [],
         resolution: { closeoutWorkspaceHead: "a".repeat(40), review: null },

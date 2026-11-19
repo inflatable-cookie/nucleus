@@ -8,7 +8,7 @@ import { Store } from "../core/store/store";
 import { Engine } from "../core/engine";
 import { criticalReviewerMeets } from "../core/dispatch/routing";
 import {
-  parseNorthstarDocument,
+  parseBriefDocument,
   submissionQueueFields,
 } from "../core/planning/handoff";
 import {
@@ -72,13 +72,13 @@ function fixture() {
 }
 
 test("critical is one optional brief boolean, retained on task and writable through set_routing", () => {
-  const metadata = parseNorthstarDocument(
+  const metadata = parseBriefDocument(
     "---\ntitle: Critical\nqueue:\n  critical: true\n---\nReview this carefully.\n",
     "draft",
   );
   assert.equal(submissionQueueFields(metadata.queue).critical, true);
   assert.throws(() =>
-    parseNorthstarDocument(
+    parseBriefDocument(
       "---\ntitle: Critical\nqueue:\n  critical: high\n---\nBody\n",
       "draft",
     ),

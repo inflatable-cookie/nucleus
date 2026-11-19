@@ -85,16 +85,16 @@ test('service build identity covers the exact served method set', () => {
   assert.match(identity, /^[a-f0-9]{16}$/);
 });
 
-test('backend content determines the build while docs, roadmaps and client files do not', () => {
+test('backend content determines the build while docs and client files do not', () => {
   const root = mkdtempSync(join(tmpdir(), 'ns-build-'));
   try {
-    for (const dir of ['core', 'service', 'shared', 'hosts', 'bin', 'docs/roadmaps', 'client']) mkdirSync(join(root, dir), { recursive: true });
+    for (const dir of ['core', 'service', 'shared', 'hosts', 'bin', 'docs', 'client']) mkdirSync(join(root, dir), { recursive: true });
     writeFileSync(join(root, 'core', 'worker.ts'), 'initial');
     writeFileSync(join(root, 'shared', 'contracts.ts'), 'contracts');
     writeFileSync(join(root, 'bin', 'queue-service.mjs'), 'entry');
     const original = serviceBuildIdentity(root);
     assert.equal(serviceBuildIdentity(root), original, 'the unchanged tree remains stable');
-    for (const path of ['docs/readme.md', 'docs/roadmaps/plan.md', 'client/screen.tsx']) {
+    for (const path of ['docs/readme.md', 'docs/plan.md', 'client/screen.tsx']) {
       writeFileSync(join(root, path), 'edited');
       assert.equal(serviceBuildIdentity(root), original, `${path} must not restart the service`);
     }

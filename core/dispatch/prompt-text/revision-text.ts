@@ -33,11 +33,11 @@ export function revisionReviewFindings(task: Pick<Task, 'resolution'>): string |
 export function externalMergeCloseoutBlock(task: Task): string {
   const head = task.resolution.mergeHead ?? task.prHead;
   const evidence = head ? mergeReviewEvidenceAt(task, head) : null;
-  if (evidence) return `This PR was merged outside the plugin. The merge is an observed fact, not review or acceptance approval by itself. Nucleus accepted it only because recorded review evidence binds the merged head: ${evidence.detail}. Record that evidence faithfully in the closeout documents; do not infer approval from merged status, and report blocked if the recorded evidence contradicts the repository. `;
+  if (evidence) return `This PR was merged outside the plugin. The merge is an observed fact, not review or acceptance approval by itself. Nucleus accepted it only because recorded review evidence binds the merged head: ${evidence.detail}. Record that evidence faithfully in the closeout summary; do not infer approval from merged status, and report blocked if the recorded evidence contradicts the repository. `;
   const basis = task.skipPRReview
     ? 'the submission explicitly skipped PR review, so no review evidence binds the merged head and none is required'
     : 'the merge is recorded as accepted without an applied verdict (mergedWithNone): the explicit operator acceptance of this external merge through move to=closeout, not review evidence, is its recorded basis';
-  return `This PR was merged outside the plugin. The merge is an observed fact, not review or acceptance approval by itself. Nucleus accepted it without review evidence: ${basis}. That recorded basis is the acceptance evidence for this closeout: record it faithfully in the closeout documents, do not infer review approval from merged status, and report blocked only if the task's records or the repository contradict it. `;
+  return `This PR was merged outside the plugin. The merge is an observed fact, not review or acceptance approval by itself. Nucleus accepted it without review evidence: ${basis}. That recorded basis is the acceptance evidence for this closeout: record it faithfully in the closeout summary, do not infer review approval from merged status, and report blocked only if the task's records or the repository contradict it. `;
 }
 
 /** The neutral continuation action for a revision with no explicit instruction and no review findings. */
@@ -61,11 +61,10 @@ export const workerExclusionBlock = (task: Task) => (task.workerExclusions ?? []
  */
 export function interactiveWorkerBlock(task: Task, session: boolean) {
   if (!session) return '';
-  const source = currentBrief(task) ? 'brief' : 'handoff';
   return `
 INTERACTIVE TASK. The operator asked for this task to be interactive:
-1. Implement the first tranche the ${source} describes, then end your turn WITHOUT reporting to Nucleus: summarize what you built, how to run and try it, and what you would do next.
-2. The operator then works with you in this thread: testing, asking for changes, refining. Their direct instructions in this thread are your authority, including changes to scope beyond the ${source}. If an instruction would break a fixed rule below, say so and ask.
+1. Implement the first tranche the brief describes, then end your turn WITHOUT reporting to Nucleus: summarize what you built, how to run and try it, and what you would do next.
+2. The operator then works with you in this thread: testing, asking for changes, refining. Their direct instructions in this thread are your authority, including changes to scope beyond the brief. If an instruction would break a fixed rule below, say so and ask.
 3. Do not report ready_for_review, progress_checkpoint, blocked or error while the session is interactive; Nucleus refuses a checkpoint during it. If you are stuck, or context pressure or a failure stops you, tell the operator in this thread. The one exception is your own provider's quota exhaustion, reported as described below.
 4. When the operator tells you to submit: commit, push ${task.branch}, open the PR as described below, and report ready_for_review with its prNumber. That report ends the interactive session; independent review follows.
 Fixed rules the operator's instructions do not override: stay on ${task.branch} in this workspace, never merge, never dispatch other workers or coordinators, never use git stash, and never report readiness the operator has not asked for.

@@ -8,6 +8,7 @@ import { Store } from '../core/store/store';
 import { RepositoryHooks } from '../core/hooks/hooks';
 import { git, command } from '../core/git/index';
 import { prepareHandoff } from '../core/planning/handoff';
+import { briefDigest } from '../core/planning/brief';
 import { submissionSchema, type Submission } from '../shared/contracts';
 import { HOOK_TEST_TIMEOUT_MS } from './support/budgets';
 
@@ -35,23 +36,19 @@ const preDispatchHook = () => ({
   target: 'integration_base', program: program('gate'), timeoutMs: HOOK_TEST_TIMEOUT_MS, maxOutputBytes: 65536,
   allowedPaths: [], commitSubject: null,
 });
-const manifestOf = (...hooks: unknown[]) => ({ schema: 'paseo.queue.control.v4', hooks });
+const manifestOf = (...hooks: unknown[]) => ({ schema: 'paseo.queue.control.v5', hooks });
 
-const sections = ['What This Thread Was Doing', 'Why It Matters', 'Current State', 'Boundaries', 'Important Context', 'Suggested Next Move', 'Completion Protocol'];
-const handoff = (skipPRReview: boolean) => `---
-title: Review-skip disposable handoff
-kind: northstar-handoff
-handoff_mode: worker-pr-loop
-worker_mode: implementation
-dispatch_authority: orchestrator
-status: ready-to-launch
-base_required: pushed-main
-queue_dispatch: northstar-queue
+/** A Queue-held brief: the only instruction route (nucleus#1368). */
+const brief = (skipPRReview: boolean) => `---
+title: Review-skip disposable brief
 queue_approval: Operator approved this disposable test
 queue:
   skipPRReview: ${skipPRReview}
 ---
-${sections.map(section => `## ${section}\n\nConcrete task instructions.\n`).join('\n')}`;
+## Outcome
+
+Concrete task instructions.
+`;
 
 async function fixture(t: any, manifest: unknown | null) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'nsq-review-skip-')));
@@ -71,10 +68,13 @@ async function fixture(t: any, manifest: unknown | null) {
       if (executable) await writeFile(join(repo, executable), '#!/bin/sh\n', { mode: 0o755 });
     }
   }
-  await mkdir(join(repo, 'docs/handoffs'), { recursive: true });
-  const path = join(repo, 'docs/handoffs/review-skip.md');
-  const publish = async (text: string) => { await writeFile(path, text); await git(repo, 'add', '-A'); await git(repo, 'commit', '-m', 'handoff'); await git(repo, 'push', 'origin', 'main'); };
-  await publish(handoff(true));
+  await writeFile(join(repo, 'README.md'), '# Repo\n');
+  await git(repo, 'add', '-A');
+  await git(repo, 'commit', '-m', 'initial');
+  await git(repo, 'push', 'origin', 'main');
+  const path = join(root, 'brief.md');
+  const publish = async (text: string) => { await writeFile(path, text); };
+  await publish(brief(true));
   const head = await git(repo, 'rev-parse', 'HEAD');
   const runs: string[] = [];
   const hooks = new RepositoryHooks(new Store(':memory:'), {
@@ -89,16 +89,16 @@ async function fixture(t: any, manifest: unknown | null) {
     },
   });
   const submission = (skipPRReview: boolean): Submission => submissionSchema.parse({
-    submissionId: randomUUID(), title: 'Review skip', repoPath: repo, handoffPath: 'docs/handoffs/review-skip.md',
+    submissionId: randomUUID(), title: 'Review skip', repoPath: repo, brief: { text: brief(skipPRReview), mediaType: 'text/markdown', digest: briefDigest(brief(skipPRReview)) },
     planningCommit: head, originAgentId: 'origin-test', skipPRReview,
   });
-  return { repo, path, head, publish, hooks, runs, submission, input: { handoffPath: path, originAgentId: 'origin-test', baseBranch: 'main', dryRun: true } };
+  return { repo, path, head, publish, hooks, runs, submission, input: { briefPath: path, repoPath: repo, originAgentId: 'origin-test', baseBranch: 'main', dryRun: true } };
 }
 
 test('a hook-owned closeout refuses a review-skipping submission before any hook runs', async t => {
   const f = await fixture(t, manifestOf(preDispatchHook(), closeoutHook()));
   await assert.rejects(prepareHandoff(f.input), /skipPRReview is unavailable for this repository/);
-  await assert.rejects(f.hooks.previewPreDispatch(f.submission(true), 'handoff', f.head), /skipPRReview is unavailable for this repository/);
+  await assert.rejects(f.hooks.previewPreDispatch(f.submission(true), brief(true), f.head), /skipPRReview is unavailable for this repository/);
   assert.deepEqual(f.runs, [], 'the refusal precedes repository hook execution');
 });
 
@@ -113,7 +113,7 @@ test('the refusal is conditional: another closeout binding or none keeps the opt
     const f = await fixture(t, manifest);
     const prepared = await prepareHandoff(f.input);
     assert.equal(prepared.submission.skipPRReview, true, `the option survives: ${JSON.stringify(manifest)}`);
-    await f.hooks.previewPreDispatch(f.submission(true), 'handoff', f.head);
+    await f.hooks.previewPreDispatch(f.submission(true), brief(true), f.head);
     assert.deepEqual(f.runs, [], 'a closeout-only manifest binds no pre-dispatch policy');
   }
 });
@@ -121,10 +121,10 @@ test('the refusal is conditional: another closeout binding or none keeps the opt
 test('an opted-in repository refuses a review-skipping submission before any hook runs', async t => {
   const f = await fixture(t, manifestOf(preDispatchHook()));
   f.hooks.store.putRepository({ origin: null, path: f.repo }, null, 'formal reviews', null, { login: 'northstar-reviewer' });
-  await assert.rejects(f.hooks.previewPreDispatch(f.submission(true), 'handoff', f.head), /opts into formal PR reviews as northstar-reviewer/);
+  await assert.rejects(f.hooks.previewPreDispatch(f.submission(true), brief(true), f.head), /opts into formal PR reviews as northstar-reviewer/);
   assert.deepEqual(f.runs, [], 'the refusal precedes repository hook execution');
   // An ordinary reviewed lane is unaffected.
-  await f.hooks.previewPreDispatch(f.submission(false), 'handoff', f.head);
+  await f.hooks.previewPreDispatch(f.submission(false), brief(false), f.head);
   assert.equal(f.runs.length, 1, 'ordinary pre-dispatch policy still runs');
 });
 
@@ -132,14 +132,14 @@ test('a pre-dispatch hook without closeout ownership still runs and allows the f
   const f = await fixture(t, manifestOf(preDispatchHook()));
   const prepared = await prepareHandoff(f.input);
   assert.equal(prepared.submission.skipPRReview, true);
-  await f.hooks.previewPreDispatch(f.submission(true), 'handoff', f.head);
+  await f.hooks.previewPreDispatch(f.submission(true), brief(true), f.head);
   assert.equal(f.runs.length, 1, 'ordinary pre-dispatch policy still runs');
 });
 
 test('an ordinary reviewed submission is unaffected by a hook-owned closeout', async t => {
   const f = await fixture(t, manifestOf(closeoutHook()));
-  await f.publish(handoff(false));
+  await f.publish(brief(false));
   const prepared = await prepareHandoff(f.input);
   assert.equal(prepared.submission.skipPRReview, false);
-  await f.hooks.previewPreDispatch(f.submission(false), 'handoff', prepared.submission.planningCommit);
+  await f.hooks.previewPreDispatch(f.submission(false), brief(false), prepared.submission.planningCommit);
 });

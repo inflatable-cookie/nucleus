@@ -48,9 +48,7 @@ reply, not for every message:
 
 ## Apply to
 
-- Northstar tasks
-- logs
-- handoffs
+- Nucleus briefs
 - internal contracts and working rules
 
 ## Do not apply blindly to

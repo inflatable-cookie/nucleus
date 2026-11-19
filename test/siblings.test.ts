@@ -13,7 +13,8 @@ import { runPrompt } from '../core/dispatch/prompts';
 import { git, command } from '../core/git/index';
 import { createSiblingWorktrees, findingFor, inspectSiblingWorktrees, removeSiblingWorktrees, siblingMembers, siblingPathFor, siblingsEnabled } from '../core/workspaces/siblings';
 import { buildOutcomeRecord } from '../core/store/store';
-import { parseNorthstarDocument } from '../core/planning/handoff';
+import { parseBriefDocument } from '../core/planning/handoff';
+import { briefDigest } from '../core/planning/brief';
 import { submissionSchema, type Profile, type Run, type Task } from '../shared/contracts';
 import type { Adapter } from '../core/host';
 import { HOOK_TEST_TIMEOUT_MS } from './support/budgets';
@@ -48,7 +49,7 @@ async function twoRepos(t: TestContext) {
     await commit(repo, `init ${name}`, { 'README.md': `${name}\n` });
     await git(repo, 'push', 'origin', 'main');
     if (name === 'alpha') {
-      await commit(repo, 'plan', { 'docs/handoffs/plan.md': '# plan\n' });
+      await commit(repo, 'plan', { 'tasks/plan.md': '# plan\n' });
       await git(repo, 'push', 'origin', 'main');
     }
   }
@@ -83,11 +84,12 @@ function engineFor(t: TestContext, store: Store, dir: string) {
   return engine;
 }
 
-function submit(store: Store, repoPath: string, origin: string, title = 'Sibling task', extra: Record<string, unknown> = {}, planning?: { commit: string; handoff: string; base: string }) {
+const SIBLING_BRIEF = '## Outcome\n\nPlan.\n';
+function submit(store: Store, repoPath: string, origin: string, title = 'Sibling task', extra: Record<string, unknown> = {}, planning?: { commit: string; base: string }) {
   const commit = planning?.commit ?? 'a'.repeat(40);
-  const handoff = planning?.handoff ?? 'handoff.md';
   const base = planning?.base ?? 'a'.repeat(40);
-  return store.insert(submissionSchema.parse({ submissionId: randomUUID(), title, repoPath, planningCommit: commit, handoffPath: handoff, originAgentId: 'origin', ...extra }), 'host', 'handoff', base, {}, undefined, origin);
+  const brief = { text: SIBLING_BRIEF, mediaType: 'text/markdown', digest: briefDigest(SIBLING_BRIEF) };
+  return store.insert(submissionSchema.parse({ submissionId: randomUUID(), title, repoPath, planningCommit: commit, brief, originAgentId: 'origin', ...extra }), 'host', SIBLING_BRIEF, base, {}, undefined, origin);
 }
 
 test('Spec 027 #6 task in a two-repository project gets a pinned detached sibling worktree', { timeout: HOOK_TEST_TIMEOUT_MS }, async (t: TestContext) => {
@@ -122,7 +124,7 @@ test('Spec 027 #6 dispatch records sibling intent before pins and clears it afte
   const f = await twoRepos(t);
   f.store.upsertProject({ key: 'suite', name: 'Suite', repositories: [f.alpha, f.beta], primary: f.alpha });
   const engine = engineFor(t, f.store, f.dir);
-  const task = submit(f.store, f.alpha.path, f.alpha.origin, 'Sibling task', {}, { commit: f.planningCommit, handoff: 'docs/handoffs/plan.md', base: f.planningCommit });
+  const task = submit(f.store, f.alpha.path, f.alpha.origin, 'Sibling task', {}, { commit: f.planningCommit, base: f.planningCommit });
   await engine.wake();
   const dispatched = f.store.task(task.id);
   assert.equal(dispatched.siblingIntent, false);
@@ -136,10 +138,10 @@ test('Spec 027 #7 queue.siblings false creates no worktree and leaves prompts un
   f.store.upsertProject({ key: 'suite', name: 'Suite', repositories: [f.alpha, f.beta], primary: f.alpha });
   const parsed = submissionSchema.parse({ submissionId: randomUUID(), title: 'Opt out', repoPath: f.alpha.path, planningCommit: 'a'.repeat(40), handoffPath: 'handoff.md', originAgentId: 'origin', siblings: false });
   assert.equal(parsed.siblings, false);
-  const doc = `---\ntitle: Opt out\nkind: northstar-handoff\nhandoff_mode: worker-pr-loop\nworker_mode: implementation\ndispatch_authority: orchestrator\nstatus: ready-to-launch\nqueue_dispatch: northstar-queue\nqueue_approval: test\nbase_required: pushed-main\nqueue:\n  siblings: false\n---\n## What This Thread Was Doing\n\nBody.\n\n## Why It Matters\n\nBody.\n\n## Current State\n\nBody.\n\n## Boundaries\n\nBody.\n\n## Important Context\n\nBody.\n\n## Suggested Next Move\n\nBody.\n\n## Completion Protocol\n\nBody.\n`;
-  assert.equal(parseNorthstarDocument(doc, 'handoff').queue.siblings, false);
+  const doc = `---\ntitle: Opt out\nqueue_approval: test\nqueue:\n  siblings: false\n---\n## Outcome\n\nPlan.\n`;
+  assert.equal(parseBriefDocument(doc, 'brief').queue.siblings, false);
   const engine = engineFor(t, f.store, f.dir);
-  const task = submit(f.store, f.alpha.path, f.alpha.origin, 'Opt out', { siblings: false }, { commit: f.planningCommit, handoff: 'docs/handoffs/plan.md', base: f.planningCommit });
+  const task = submit(f.store, f.alpha.path, f.alpha.origin, 'Opt out', { siblings: false }, { commit: f.planningCommit, base: f.planningCommit });
   assert.equal(siblingsEnabled(task), false);
   await engine.wake();
   const dispatched = f.store.task(task.id);
@@ -184,7 +186,7 @@ test('Spec 027 #8 a worker completion records the sibling comparison once', { ti
   const f = await twoRepos(t);
   f.store.upsertProject({ key: 'suite', name: 'Suite', repositories: [f.alpha, f.beta], primary: f.alpha });
   const engine = engineFor(t, f.store, f.dir);
-  const task = submit(f.store, f.alpha.path, f.alpha.origin, 'Sibling task', {}, { commit: f.planningCommit, handoff: 'docs/handoffs/plan.md', base: f.planningCommit });
+  const task = submit(f.store, f.alpha.path, f.alpha.origin, 'Sibling task', {}, { commit: f.planningCommit, base: f.planningCommit });
   await engine.wake();
   let current = f.store.task(task.id);
   assert.equal(current.phase, 'working');
@@ -276,7 +278,7 @@ test('Spec 027 #10 a conflicting sibling path skips that member instead of parki
 async function sharedSiblingFixture(t: TestContext, hostKind: 'bb' | 'paseo') {
   const f = await twoRepos(t);
   f.store.upsertProject({ key: 'suite', name: 'Suite', repositories: [f.alpha, f.beta], primary: f.alpha });
-  const task = submit(f.store, f.alpha.path, f.alpha.origin, 'Shared sibling task', {}, { commit: f.planningCommit, handoff: 'docs/handoffs/plan.md', base: f.planningCommit });
+  const task = submit(f.store, f.alpha.path, f.alpha.origin, 'Shared sibling task', {}, { commit: f.planningCommit, base: f.planningCommit });
   const common = await repoCommonDir(f.alpha.path);
   const root = join(f.dir, WORKSPACES_DIR, digest(common));
   const directory = join(root, `ns-${task.id}`);
@@ -310,7 +312,7 @@ test('nucleus#1315 a second BB task on the same repository resolves the same sha
   await f.provisioning.ensureSharedSiblingCheckouts(f.task);
   const shared = join(f.root, 'beta');
   const first = await git(shared, 'rev-parse', 'HEAD');
-  const second = submit(f.store, f.alpha.path, f.alpha.origin, 'Second task on the repository', {}, { commit: f.planningCommit, handoff: 'docs/handoffs/plan.md', base: f.planningCommit });
+  const second = submit(f.store, f.alpha.path, f.alpha.origin, 'Second task on the repository', {}, { commit: f.planningCommit, base: f.planningCommit });
   const secondDirectory = join(f.root, `ns-${second.id}`);
   await git(f.alpha.path, 'worktree', 'add', '-b', second.branch, secondDirectory, second.planningCommit);
   await f.provisioning.ensureSharedSiblingCheckouts(f.store.update(second.id, { workspaceId: `bb-worktree-${'b'.repeat(40)}`, directory: secondDirectory, baseBranch: 'main' }));

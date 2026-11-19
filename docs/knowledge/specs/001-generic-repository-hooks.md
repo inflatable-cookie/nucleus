@@ -6,7 +6,7 @@ Created: 2026-09-12
 Governing refs: `docs/knowledge/architecture.md`, `docs/knowledge/contracts/orchestration.md`, `docs/knowledge/contracts/repository-hooks.md`
 Repair authority: `docs/knowledge/specs/002-durable-hook-retry-and-isolated-writes.md`
 Execution: g01.007 ready; separate operator dispatch approval required
-Source authority: Northstar relay `docs/handoffs/20260912-183929-queue-generic-hook-planning.md` at `795f9fc443922ddbe57e26254218fdb04b86ba4e`
+Source authority: Northstar relay `20260912-183929-queue-generic-hook-planning` (a retired committed handoff) at `795f9fc443922ddbe57e26254218fdb04b86ba4e`
 
 ## Problem
 

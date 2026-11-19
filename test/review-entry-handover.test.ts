@@ -13,7 +13,7 @@ import {Reports} from '../core/intake/report';
 import {digest} from '../core/store/store';
 import {reviewPublicationBody} from '../core/forge/index';
 import {classifyReviewPublication} from '../core/review/review-publication';
-import {ownerRevisionFixture,runGit} from './support/review-entry-fixture';
+import {ownerRevisionFixture,runGit,fixtureApproval,fixtureBriefText,seedFixtureLead} from './support/review-entry-fixture';
 import {paseoCatalog} from './support/pool-shapes';
 import {verifyReviewSourceView} from '../core/review/review-source';
 import type {ResolutionAdapter} from '../core/resolution';
@@ -98,13 +98,9 @@ async function accept(engine:Engine,f:Fixture,key:string,input=f.reviewInput){
 }
 /** The supported Queue-held-brief form: one checked Queue source instead of a committed handoff. */
 function briefInput(f:Fixture,store=f.store){
-  const text='Queue-held handover scope: review the existing external checkout at the approved head.\n';
-  const stamp=new Date().toISOString();
-  const approval={version:1,digest:briefDigest(text),approver:'operator (board)',approvedAt:stamp,note:'Checked scope',relayed:false};
-  store.addLead({id:'approved-review-brief',title:'Approved review scope',body:text,
-    repositories:[{origin:'https://github.com/example/repo',path:f.repo}],lanes:[],tags:[],papercut:null,closure:null,author:'operator',
-    state:'open',version:1,digest:approval.digest,check:{ok:true,message:'Checked against pushed planning',checkedAt:stamp,planningCommit:f.planningCommit},
-    approval,originAgentId:'origin',baseBranch:'main',dropReason:null,targets:[],source:null,createdAt:stamp,updatedAt:stamp,closedAt:null},'operator');
+  // The owner fixture seeds the approved lead (FIXTURE_LEAD) at the planning commit.
+  const text=fixtureBriefText;
+  const approval=fixtureApproval();
   return {approval,text,input:reviewEntryInputSchema.parse({...f.reviewInput,submission:{...f.reviewInput.submission,handoffPath:'',
     brief:{text,mediaType:'text/markdown',digest:approval.digest},planningSource:{kind:'lead',id:'approved-review-brief'},
     leadProvenance:{version:1,approval,earlierDigests:[]}}})};
@@ -594,6 +590,7 @@ function serviceRuntime(f:Fixture,w:ReturnType<typeof writer>,dataDir:string){
     catalog:async()=>paseoCatalog()} as Adapter&ReviewEntryAdapter;
   const runtime = new QueueRuntime({dataDir,adapterFactory:()=>adapter,timers:true,sweepIntervalMs:20});
   runtime.store.setProfiles([{id:f.reviewer.id,name:f.reviewer.name,provider:f.reviewer.provider,model:f.reviewer.model,notes:''}]);
+  seedFixtureLead(runtime.store,f.repo,f.planningCommit);
   return runtime;
 }
 // Profiles route from the Queue store (#870): seed the reviewer, then refresh the routed list the bootstrap built without it.

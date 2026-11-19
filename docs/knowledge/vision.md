@@ -396,8 +396,8 @@ thread, and a process group recorded before Nucleus, are read through the old
 labels and the old process-identity marker. A split identity is refused rather
 than guessed, and nothing renames what is stored.
 
-Submitted handoffs keep `queue_dispatch: northstar-queue` support permanently;
-new handoffs use `queue_dispatch: nucleus`. Stored events, fence and idempotency
+Committed handoffs are retired (nucleus#1368); briefs are the only instruction
+route. Stored events, fence and idempotency
 identifiers, the review and cancel markers in `core/forge/index.ts`, the hook-commit
 trailers in `core/hooks/hook-publication.ts` and the `queue_dispatch` authorization
 role are unchanged.

@@ -47,7 +47,7 @@ surface. The old `server/` and `host/` source roots disappear after migration.
 | `core/qa/` | Project QA, validation, proof execution, fence and evidence policy. | Neutral |
 | `core/forge/` | Forge interface and GitHub transport, checks, review publication and merge implementation. | Neutral across agent hosts |
 | `core/git/` | Git commands, identity, fetch, snapshots, authentication and transient retries. | Neutral |
-| `core/planning/` | Plans, lanes, leads, decisions, briefs, handoffs and durable operations. | Neutral |
+| `core/planning/` | Plans, lanes, leads, decisions, briefs and durable operations. | Neutral |
 | `core/questions/` | Native questions, agent asks/messages, delegation, ladder and origin notices. | Neutral |
 | `core/verbs/` | Owner controls, disposition and control fences. | Neutral |
 | `core/runtime/` | Board, planning, question, settings and repository handlers with restricted contexts. | Neutral |
@@ -205,7 +205,7 @@ Do not move the source and installed reader/writer contract in one roll.
 `core/store/` now owns store persistence, schema, projections, sibling storage and
 backup sources. Installed backup worker and CLI entries remain under `server/`.
 
-`core/planning/` owns planning records, operations, briefs and handoffs;
+`core/planning/` owns planning records, operations and briefs;
 `core/questions/` owns asks, messages, questions and their delegation policies.
 The review-entry CLI prepares its lead source through the local
 `service/transport/index.mjs` seam. Workspace preparation goes through service

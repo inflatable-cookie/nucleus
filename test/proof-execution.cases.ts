@@ -21,7 +21,7 @@ import { taskControlOperation } from '../core/verbs/task-control-key';
 import { normalizeRepositoryOrigin } from '../shared/lanes';
 import type { Adapter, AgentObservation } from '../core/host';
 import { collectOwnerVerbFacts, ownerTaskNext } from '../core/verbs/owner-verbs';
-import { parseNorthstarDocument } from '../core/planning/handoff';
+import { parseBriefDocument } from '../core/planning/handoff';
 import { proofHeadAdmission, proofInputRedeclarationAllowed, proofSingleFlightRefusal } from '../core/qa/proof-admission';
 import { recordRunStart } from './support/run-start';
 
@@ -612,11 +612,11 @@ weighted(2)('the durable task-control operation is the activation route and repo
 
 weighted(1)('a brief frontmatter names the one authorized selector and its input hashes', async () => {
   const text = `---\ntitle: External source proof\nqueue_approval: 'Owner approved'\nqueue:\n  complexity: high\n  proofExecution:\n    selector: "effigy test unit -- test/x.test.ts"\n    inputs: ["sha256:${'e'.repeat(64)}"]\n---\n\nBody scope.\n`;
-  const metadata = parseNorthstarDocument(text, 'brief') as { queue: { proofExecution?: { selector: string; inputs: string[]; role: string } } };
+  const metadata = parseBriefDocument(text, 'brief') as { queue: { proofExecution?: { selector: string; inputs: string[]; role: string } } };
   assert.equal(metadata.queue.proofExecution?.selector, 'effigy test unit -- test/x.test.ts');
   assert.deepEqual(metadata.queue.proofExecution?.inputs, [`sha256:${'e'.repeat(64)}`]);
   assert.equal(metadata.queue.proofExecution?.role, 'author');
-  assert.throws(() => parseNorthstarDocument(`---\ntitle: Bad\nqueue_approval: x\nqueue:\n  proofExecution:\n    selector: ""\n---\n\nBody.\n`, 'brief'), /Invalid brief frontmatter/);
+  assert.throws(() => parseBriefDocument(`---\ntitle: Bad\nqueue_approval: x\nqueue:\n  proofExecution:\n    selector: ""\n---\n\nBody.\n`, 'brief'), /Invalid brief frontmatter/);
 });
 
 weighted(2)('task.next offers the proof activation and then names the spent allowance', async () => {

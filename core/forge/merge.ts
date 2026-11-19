@@ -7,7 +7,7 @@ import { readyReviewAtHead } from '../recovery/task-reasons';
 import { type CheckHistory, type GateEvidence, type CheckRequirementTransport, requiredCheckRequirements, branchUpdateRequired, observeCheckClassification, type CheckClassification, requiredChecks } from './checks';
 import { api, repo } from './github-client';
 import { requestServiceRollAfterRepositorySync } from './roll-request';
-import { gitFastForward, gitNulEach } from '../git/git-command';
+import { gitFastForward } from '../git/git-command';
 
 export function classifyGithubMerge(p: {mergeable: string; mergeStateStatus: string}, updateBranchRequired: boolean, options: {advisoryChecks?: boolean} = {}): {wait: string; needsRebase?: true} {
   if (p.mergeable === 'CONFLICTING' || p.mergeStateStatus === 'DIRTY') return {wait: MERGE_CONFLICT_REASON, needsRebase: true};
@@ -210,9 +210,6 @@ async function syncIntegrationCheckout(t: Task, allowed: () => boolean, unchange
   if (await git(t.repoPath, 'rev-parse', 'HEAD') !== remote || await gitStatus(t.repoPath, 'status', '--porcelain')) throw new Error('Integration synchronization did not leave a clean expected head');
   return remote;
 }
-// Closeout may publish canonical Markdown below the three docs subtrees plus the
-// exact root docs front door; no other root docs path is admitted.
-const canonicalCloseoutPath=(path:string)=>path==='docs/README.md'||/^docs\/(?:logs|roadmaps|handoffs)\/.+\.md$/.test(path);
 export async function verifyCloseoutPublication(t:Task,result?:Completion) {
   return withIntegrationCheckout(t, (checkout) => verifyIntegrationCloseoutPublication({...t, repoPath: checkout}, result));
 }
@@ -227,12 +224,9 @@ async function verifyIntegrationCloseoutPublication(t:Task,result?:Completion) {
   if(remote!==actual)throw Error('Closeout must be published and match origin before completion');
   await git(t.repoPath,'merge-base','--is-ancestor',baseline,actual);
   await git(t.repoPath,'merge-base','--is-ancestor',t.resolution.mergedCommit,actual);
-  await gitNulEach(t.repoPath,['diff','--name-only','-z',baseline,actual],async path=>{
-    if(!canonicalCloseoutPath(path))throw Error(`Closeout publication changed a path outside canonical closeout: ${path}`);
-    const file=await git(t.repoPath,'ls-tree',actual,'--',path);
-    if(!file&&path===t.handoffPath&&/^docs\/handoffs\/.+\.md$/.test(path))return;
-    if(!file.startsWith('100644 blob '))throw Error(`Closeout publication must preserve regular Markdown files: ${path}`);
-  });
+  // No closeout path is admitted: the outcome row is the closeout record, and a
+  // merged PR's own files were synced before the baseline, so they are not here.
+  if(await git(t.repoPath,'diff','--name-only',baseline,actual))throw Error('Closeout publication changed files; closeout writes only the outcome row');
   if(await git(t.repoPath,'rev-parse','HEAD')!==actual||await git(t.repoPath,'branch','--show-current')!==t.baseBranch||await gitStatus(t.repoPath,'status','--porcelain'))throw Error('Integration checkout changed while verifying closeout');
   return actual;
 }

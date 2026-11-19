@@ -50,7 +50,7 @@ function tempStore() {
 function insertTask(store: Store, index = 0, extra: Partial<Task> = {}): Task {
   const task = store.insert(submissionSchema.parse({
     submissionId: `inc-${index}`, title: `Incremental task ${index}`, repoPath: `/repo-${index % 3}`,
-    planningCommit: base, handoffPath: `docs/handoffs/inc-${index}.md`, originAgentId: 'origin', scope: 'general',
+    planningCommit: base, handoffPath: `tasks/inc-${index}.md`, originAgentId: 'origin', scope: 'general',
   }), 'fixture-host', 'handoff', base);
   if (Object.keys(extra).length) return store.update(task.id, extra);
   return task;
@@ -626,7 +626,7 @@ test('the service accepts a bounded lifecycle hint over its socket and reports t
   try {
     const task = await service.debug({ target: 'store', method: 'insert', args: [submissionSchema.parse({
       submissionId: 'svc-inc-1', title: 'Service hint', repoPath: '/repo', planningCommit: base,
-      handoffPath: 'docs/handoffs/svc-inc-1.md', originAgentId: 'origin',
+      handoffPath: 'tasks/svc-inc-1.md', originAgentId: 'origin',
     }), 'host', 'handoff', base] }) as { id: string; version: number };
     await service.debug({ target: 'store', method: 'update', args: [task.id, { agentId: 'agent-svc', workspaceId: 'ws-svc' }] });
     const matched = await client.request('service.lifecycle-signal', { kind: 'agent.created', agentId: 'agent-svc', workspaceId: 'ws-svc', at: new Date().toISOString() });
@@ -672,7 +672,7 @@ test('the bridge forwards lifecycle hints only to a compatible running service',
     const bridge = new ServiceBridge({ processActions: bridgeProcessActions, dataDir, sourcePath });
     const task = await service.debug({ target: 'store', method: 'insert', args: [submissionSchema.parse({
       submissionId: 'bridge-inc-1', title: 'Bridge hint', repoPath: '/repo', planningCommit: base,
-      handoffPath: 'docs/handoffs/bridge-inc-1.md', originAgentId: 'origin',
+      handoffPath: 'tasks/bridge-inc-1.md', originAgentId: 'origin',
     }), 'host', 'handoff', base] }) as { id: string; version: number };
     await service.debug({ target: 'store', method: 'update', args: [task.id, { agentId: 'agent-bridge', workspaceId: 'ws-bridge' }] });
     assert.equal(await bridge.signal({ kind: 'agent.turn_started', agentId: 'agent-bridge', workspaceId: 'ws-bridge', at }), true);

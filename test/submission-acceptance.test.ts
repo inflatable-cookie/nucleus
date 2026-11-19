@@ -18,29 +18,16 @@ import { formatAgentId } from "../shared/agent-identity";
 import { isUnchangedBoard, submitHandoff } from "../shared/contracts";
 import type { Adapter } from "../core/host";
 
-const sections = [
-  "What This Thread Was Doing",
-  "Why It Matters",
-  "Current State",
-  "Boundaries",
-  "Important Context",
-  "Suggested Next Move",
-  "Completion Protocol",
-];
 const content = `---
 title: Acceptance fixture
-kind: northstar-handoff
-handoff_mode: worker-pr-loop
-worker_mode: implementation
-dispatch_authority: orchestrator
-status: ready-to-launch
-base_required: pushed-main
-queue_dispatch: northstar-queue
 queue_approval: Operator approved fixture work
 queue:
   complexity: medium
 ---
-${sections.map((s) => `## ${s}\n\nCommitted instructions.\n`).join("\n")}`;
+## Outcome
+
+Brief instructions.
+`;
 function gate() {
   let open!: () => void;
   const promise = new Promise<void>((resolve) => {
@@ -62,19 +49,20 @@ async function fixture(
   await git(repo, "checkout", "-b", "main");
   await git(repo, "config", "user.name", "Queue test");
   await git(repo, "config", "user.email", "queue@example.invalid");
-  await mkdir(join(repo, "docs/handoffs"), { recursive: true });
-  const path = join(repo, "docs/handoffs/test.md");
+  await writeFile(join(repo, "README.md"), "Fixture\n");
+  await git(repo, "add", ".");
+  await git(repo, "commit", "-m", "Initial");
+  await git(repo, "push", "-u", "origin", "main");
+  const path = join(dir, "brief.md");
   const text = notify
     ? content.replace(
         "queue:\n  complexity: medium",
         "queue:\n  complexity: medium\n  notifyOriginOnCloseout: true",
       )
     : content;
+  // A brief is Queue-held content: the file is never committed to the repository.
   const publish = async (next = text) => {
     await writeFile(path, next);
-    await git(repo, "add", ".");
-    await git(repo, "commit", "-m", "Fixture");
-    await git(repo, "push", "origin", "main");
   };
   await publish();
   let available = !offline,
@@ -132,7 +120,8 @@ async function fixture(
     text,
     input: {
       hostId: "fixture-host",
-      handoffPath: path,
+      briefPath: path,
+      repoPath: repo,
       originAgentId: "origin",
       baseBranch: "main",
       dryRun: false,
@@ -536,24 +525,19 @@ test(
 );
 
 test(
-  "Git outage defers validation under the same receipt, with no origin lookup for quiet submissions",
+  "Git outage refuses brief capture before acceptance, with no origin lookup; the same submission succeeds once the remote returns",
   { timeout: 15000 },
   async (t) => {
     const f = await fixture(t);
     await rename(f.remote, `${f.remote}.away`);
+    // Brief capture reads the pushed head synchronously, so an outage refuses before any operation exists.
+    await assert.rejects(f.runtime.submitHandoff(f.input), /Brief planning awaits the Git remote/);
+    assert.equal(f.runtime.store.tasks().length, 0);
+    assert.equal(f.lookups(), 0);
+    await rename(`${f.remote}.away`, f.remote);
     const receipt = await f.runtime.submitHandoff(f.input);
     assert.ok("operation" in receipt && receipt.operation);
-    await f.runtime.engine.quiesce();
-    const waiting = f.runtime.store.operation(receipt.operation.id)!;
-    assert.equal(waiting.state, "pending");
-    assert.match(waiting.diagnostic, /Git remote/);
-    assert.equal(f.runtime.store.tasks().length, 0);
-    await rename(`${f.remote}.away`, f.remote);
-    f.runtime.engine.resumeSubmissions();
-    const settled = await f.runtime.engine.awaitOperation(
-      receipt.operation.id,
-      5000,
-    );
+    const settled = await f.runtime.engine.awaitOperation(receipt.operation.id, 5000);
     assert.equal(settled.state, "succeeded", settled.diagnostic);
     assert.equal(f.lookups(), 0);
   },
@@ -564,10 +548,9 @@ test(
   { timeout: 15000 },
   async (t) => {
     const f = await fixture(t);
-    await writeFile(
-      f.path,
-      f.text.replace("Acceptance fixture", "Unpushed fixture"),
-    );
+    await f.publish(f.text.replace("Acceptance fixture", "Unpushed fixture"));
+    // The unpushed state is a local integration commit, not an edit to the brief.
+    await writeFile(join(f.repo, "unpushed.txt"), "local only\n");
     await git(f.repo, "add", ".");
     await git(f.repo, "commit", "-m", "Not pushed");
     const receipt = await f.runtime.submitHandoff(f.input);

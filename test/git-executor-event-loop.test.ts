@@ -56,7 +56,7 @@ exec "${realGit}" "$@"
 
   const inserted = await service.debug({ target: 'store', method: 'insert', args: [submissionSchema.parse({
     submissionId: 'slow-git-1', title: 'Git does not block the executor', repoPath: '/fixture', planningCommit: base,
-    handoffPath: 'docs/handoffs/slow-git-1.md', originAgentId: 'origin',
+    handoffPath: 'tasks/slow-git-1.md', originAgentId: 'origin',
   }), 'fixture-host', 'Handoff', base] }) as { id: string };
 
   const task = {

@@ -3894,13 +3894,6 @@ weighted(1)(
 // Tom, 2026-10-18: amending the brief after a reviewer checkpoint must not strand the reviewer.
 const continuationBrief = (extra = "") => `---
 title: Reviewer continuation
-kind: northstar-handoff
-handoff_mode: worker-pr-loop
-worker_mode: implementation
-dispatch_authority: orchestrator
-status: ready-to-launch
-base_required: pushed-main
-queue_dispatch: northstar-queue
 queue_approval: Operator approved this disposable brief
 ---
 ${["What This Thread Was Doing", "Why It Matters", "Current State", "Boundaries", "Important Context", "Suggested Next Move", "Completion Protocol"].map((section) => `## ${section}\n\nBrief instructions.${extra}\n`).join("\n")}`;

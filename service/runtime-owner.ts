@@ -132,7 +132,6 @@ import {
   DEFAULT_UNCERTAIN_MERGE_RETRY_MS,
   UNCERTAIN_MERGE_PROOF_TIMEOUT_MS,
   sourcePromotionInputSchema,
-  submissionSchema,
   submitInstruction as submitInstructionRpc,
   reviewEntryReconcileInputSchema,
   BACKUP_DUE_CHECK_MS,
@@ -170,6 +169,7 @@ import {
   originReviewProof,
   withOriginReviewAdapter,
 } from "../core/review/origin-review-adapter";
+import { COMMITTED_HANDOFF_RETIRED } from "../core/planning/brief";
 import { Papercuts } from "../core/planning/papercut-operations";
 import { Leads } from "../core/planning/leads";
 import { Decisions } from "../core/planning/decisions";
@@ -2056,14 +2056,9 @@ export class QueueRuntime {
     return operation;
   }
 
-  async submitInstruction(input: z.infer<typeof submitInstructionRpc.input>) {
-    return this.submit(
-      submissionSchema.parse({
-        ...input,
-        handoffPath: input.instruction.path,
-        planningCommit: input.instruction.commit,
-      }),
-    );
+  /** A committed instruction artifact is a committed handoff by another name: retired (nucleus#1368). */
+  async submitInstruction(_input: z.infer<typeof submitInstructionRpc.input>): Promise<never> {
+    throw new Error(COMMITTED_HANDOFF_RETIRED);
   }
   configurePool({ entries }: { entries: PoolEntry[] }) {
     return this.settingsOperations.configurePool({ entries });

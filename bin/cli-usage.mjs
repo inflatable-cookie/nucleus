@@ -46,5 +46,4 @@ ui --revoke revokes every outstanding link. A link is the operator's board acces
 so do not paste it into a shared log or prompt.
 --via-paseo routes through the Paseo bridge (needed for bridge-only methods such as service-state).
 See README.md "CLI methods" and the nucleus skill for payload shapes. Only the
-"nucleus" skill is installed; the retired "northstar-queue" name survives in
-submitted handoffs, which may still carry it in queue_dispatch.`;
+"nucleus" skill is installed.`;

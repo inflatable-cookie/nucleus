@@ -587,7 +587,7 @@ process.stdout.write(JSON.stringify({schema:'paseo.queue.hook-result.v1',eventId
   const blocked = first.records[0];
   assert.equal(blocked.state, 'blocked');
 
-  const repairedPlan = '---\nkind: northstar-handoff\nroadmap: docs/roadmaps/g02/092-task.md\n---\n';
+  const repairedPlan = '{"repaired":true}\n';
   const repaired = await commit(repo, 'repair roadmap reference', {
     'docs/repair.txt': { content: 'linked\n' },
     'docs/plan.json': { content: repairedPlan },
@@ -770,7 +770,7 @@ test(`pre-commit recovery refuses ${name}`, async t => {
 
 test('the recovery and isolated-checkout code stays document-system agnostic', async () => {
   const sources = await Promise.all(['core/hooks/hooks.ts'].map(file => readFile(join(process.cwd(), file), 'utf8')));
-  for (const forbidden of ['docs/handoffs', 'handoffPath', 'planningCommit', 'frontmatter', 'Northstar handoff file', 'g0', 'worker-pr-loop', 'inflatable-cookie']) {
+  for (const forbidden of ['handoffPath', 'planningCommit', 'frontmatter', 'Northstar handoff file', 'g0', 'worker-pr-loop', 'inflatable-cookie']) {
     assert.equal(sources.join('\n').includes(forbidden), false, `generic hook core must not embed ${forbidden}`);
   }
 });

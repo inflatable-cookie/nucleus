@@ -22,7 +22,6 @@ Product documentation lives outside `docs/knowledge/`:
 | Project front page: what Nucleus is, install, getting started | [README.md](../../README.md) |
 | The Nucleus skill for planners and workers | [skills/nucleus/SKILL.md](../../skills/nucleus/SKILL.md) |
 
-Nucleus implements the legacy Northstar handoff protocol (committed handoffs,
-v1–v4 manifests, lifecycle hooks) for consumer repositories that still use it.
-Those paths and terms are product in this repository's code, specs and skill, not
-process records.
+Nucleus reads pre-v5 control manifests (v1–v4) for consumer repositories whose
+hook schemas predate brief mode; brief tasks refuse them. A Queue-held brief is
+the only instruction route; committed handoffs are retired (nucleus#1368).

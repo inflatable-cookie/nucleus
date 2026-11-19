@@ -12,7 +12,7 @@ test('mixed store registration preserves historical events and pending operation
   const store = new Store(join(dir, 'queue.sqlite'));
   try {
     store.setMeta('hostId', 'legacy');
-    const task = store.insert(submissionSchema.parse({ submissionId: 'migration', title: 'Migration', repoPath: '/fixture', planningCommit: 'a'.repeat(40), handoffPath: 'docs/handoffs/migration.md', originAgentId: 'origin' }), 'legacy', 'Handoff', 'b'.repeat(40));
+    const task = store.insert(submissionSchema.parse({ submissionId: 'migration', title: 'Migration', repoPath: '/fixture', planningCommit: 'a'.repeat(40), handoffPath: 'tasks/migration.md', originAgentId: 'origin' }), 'legacy', 'Handoff', 'b'.repeat(40));
     const control = { taskId: task.id, version: task.version, action: 'hold' as const, reason: 'test' };
     const pending = store.acceptOperation({ key: 'pending', kind: 'task_control', inputHash: operationInputHash(control), taskId: task.id, expectedVersion: task.version, payload: { type: 'task_control', control } });
     if (!('accepted' in pending)) throw new Error('fixture operation was not accepted');
