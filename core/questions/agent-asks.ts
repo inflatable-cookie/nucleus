@@ -151,7 +151,10 @@ export class AgentAsks {
         this.inTurnAsks.delete(task.id);
     }
   }
-  askBinding(task: Task, runId: string): Pick<Run, "id" | "role" | "agentId"> {
+  askBinding(
+    task: Task,
+    runId: string,
+  ): Pick<Run, "id" | "role" | "agentId" | "hostId"> {
     return askBinding(this.store, task, runId);
   }
   askStale(task: Task, suppliedRunId: string): Error {
@@ -168,7 +171,7 @@ export class AgentAsks {
    */
   async resolveAskRoute(
     task: Task,
-    run: Pick<Run, "role">,
+    run: Pick<Run, "role" | "agentId" | "hostId">,
     named: AskTarget,
     kind: AgentAskKind,
   ): Promise<{
@@ -196,6 +199,22 @@ export class AgentAsks {
         hint: "reviewer",
       };
     if (named.kind === "planner") return { target: "planner", hint: "planner" };
+    if (named.kind === "reply") {
+      // nucleus#1387: a handle names one delivered message; the ask reaches its
+      // sender only when that sender is a planner or project agent, which is the
+      // route (and the authority) the project rung already carries.
+      const sender = await this.resolution.replySender(
+        {
+          agentId: run.agentId ?? task.agentId ?? null,
+          hostId: run.hostId ?? task.hostId ?? null,
+        },
+        named.reply,
+      );
+      return {
+        target: "planner",
+        route: { kind: "reply", agentId: sender.agentId },
+      };
+    }
     if (named.kind === "task")
       return {
         target: "planner",
@@ -225,6 +244,26 @@ export class AgentAsks {
     if (!ask.route) return this.resolution.plannerRungsFor(task);
     if (ask.route.kind === "task")
       return this.resolution.plannerRungsFor(this.store.task(ask.route.taskId));
+    if (ask.route.kind === "reply") {
+      // The recorded reply target is re-observed on every attempt; an archived or gone
+      // thread drops the rung instead of reviving it, and the ask falls through the
+      // ordinary rungs like any other unreachable planner.
+      const state = await this.resolution.plannerPresence.threadRoute(
+        ask.route.agentId,
+      );
+      if (state.kind === "routable")
+        return { rungs: [{ agentId: ask.route.agentId, rung: "project" }] };
+      if (state.kind === "unverified") return { rungs: [], issue: state.detail };
+      this.store.event(
+        task.id,
+        "agent_ask_delegation_skipped",
+        `${ask.id}: reply target ${ask.route.agentId} skipped: ${state.kind}`.slice(
+          0,
+          4000,
+        ),
+      );
+      return { rungs: [] };
+    }
     try {
       if (ask.route.agent === null) {
         const project = this.store.projectByKey(ask.route.project);

@@ -21,13 +21,15 @@ const reference = z.string().trim().min(1).max(240);
  * Every recipient form a caller may name. A keyword is this task's role; a string is
  * a task reference (`effigy#590`, a bare number, or a task id) for `tell`; an object
  * addresses a project's fallback planner (`{project}`), a named project agent
- * (`{project, agent}`) or another task's role (`{task, role}`).
+ * (`{project, agent}`), another task's role (`{task, role}`), or the sender of one
+ * delivered message through the reply handle that message carried (`{reply}`).
  */
 export const verbTargetSchema = z.union([
   z.enum(['reviewer', 'worker', 'planner', 'executor']),
   reference,
   z.object({ project: name, agent: name.optional() }).strict(),
   z.object({ task: reference, role: z.enum(TASK_ROLES).optional() }).strict(),
+  z.object({ reply: reference }).strict(),
 ]);
 
 /** The ask question's board fields, unchanged from the original `nucleus_ask`. */
@@ -71,6 +73,8 @@ export function normalizeAskTarget(to, legacyTarget) {
   if (named === undefined) return { kind: 'default' };
   if (named === 'reviewer') return { kind: 'reviewer' };
   if (named === 'planner') return { kind: 'planner' };
+  if (typeof named === 'object' && named !== null && 'reply' in named)
+    return { kind: 'reply', reply: named.reply };
   if (typeof named === 'object' && named !== null && 'project' in named)
     return { kind: 'project', project: named.project, agent: named.agent ?? null };
   if (typeof named === 'object' && named !== null && 'task' in named) {
@@ -78,7 +82,7 @@ export function normalizeAskTarget(to, legacyTarget) {
       throw new Error('ask reaches another task only through its planner: use {task, role: "planner"}; tell reaches its worker or reviewer');
     return { kind: 'task', task: named.task, role: 'planner' };
   }
-  throw new Error(`ask goes to ${ASK_ROUTE_KEYWORDS.join(' or ')}, a project ({project} or {project, agent}), or another task's planner ({task, role: "planner"}); a task reference is for tell`);
+  throw new Error(`ask goes to ${ASK_ROUTE_KEYWORDS.join(' or ')}, a project ({project} or {project, agent}), another task's planner ({task, role: "planner"}), or a message's reply handle ({reply}); a task reference is for tell`);
 }
 
 const sameAskTarget = (a, b) => JSON.stringify(a) === JSON.stringify(b);
@@ -89,12 +93,17 @@ const sameAskTarget = (a, b) => JSON.stringify(a) === JSON.stringify(b);
  * role (default worker); an object names a project or one of its agents.
  */
 export function normalizeTellTarget(to, role) {
-  if (to === undefined) throw new Error('tell requires to: reviewer, worker, planner, a task reference, {project} or {project, agent}');
+  if (to === undefined) throw new Error('tell requires to: reviewer, worker, planner, a task reference, {project}, {project, agent} or {reply}');
   if (typeof to === 'string' && TELL_ROLE_KEYWORDS.includes(to)) {
     if (role !== undefined) throw new Error(`role names a task reference's role; ${to} already names its recipient`);
     return to === 'planner' ? { kind: 'planner' } : { kind: 'counterpart', role: to };
   }
   if (typeof to === 'string') return { kind: 'task', task: to, role: role ?? 'worker' };
+  if ('reply' in to) {
+    if (role !== undefined)
+      throw new Error('role applies to a task reference, not a reply handle');
+    return { kind: 'reply', reply: to.reply };
+  }
   if ('project' in to) {
     if (role !== undefined) throw new Error('role applies to a task reference, not a project');
     return { kind: 'project', project: to.project, agent: to.agent ?? null };

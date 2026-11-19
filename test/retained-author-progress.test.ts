@@ -27,7 +27,7 @@ function fixture(options:{brief?:boolean;gateWait?:string}={}) {
  const profiles=['author','higher','top','reviewer','coordinator'].map(profile);
  const pool:PoolEntry[]=profiles.map(p=>({profileId:p.id,enabled:true,group:p.id,roles:p.id==='reviewer'?['reviewer']:p.id==='coordinator'?['coordinator']:['worker'],scopes:['general'],weight:1,
   // Spec 053: ratings, not role switches, give the reviewer and coordinator their profiles.
-  capability:p.id==='author'?'low':p.id==='higher'?'medium':p.id==='reviewer'?'medium':p.id==='coordinator'?'low':'very_high',
+  capability:p.id==='author'?'mechanical':p.id==='higher'?'worker':p.id==='reviewer'?'worker':p.id==='coordinator'?'mechanical':'heavyweight',
   ...(p.id==='reviewer'?{cost:'low' as const}:p.id==='coordinator'?{cost:'very_low' as const}:{})}));
  store.setMeta('pool',pool);store.setMeta('paused',false);
  // Keep progress receipts and the author task-row binding for retained-work recovery cases.

@@ -1,7 +1,6 @@
 import { z } from "zod";
 import type { PoolEntry, Profile } from "../../shared/contracts";
-import { availabilitySchema,demandRoleOffsetsSchema,poolSchema,routingGrantSchema,usageSettingSchema,type DemandRoleOffsets,type RoutingGrant,type RoutingPolicy,type Task,type UsageLevel,type UsageSetting,type UsageView } from "../../shared/contracts";
-import { DEMAND_ROLE_OFFSETS } from "../../shared/demand";
+import { availabilitySchema,poolSchema,routingGrantSchema,usageSettingSchema,type RoutingGrant,type RoutingPolicy,type Task,type UsageLevel,type UsageSetting,type UsageView } from "../../shared/contracts";
 import { nucleusProfileSchema,profileImportRecordSchema,type NucleusProfile,type ProfileImportRecord } from "../../shared/profiles";
 import { taskRoutingPolicy } from "../dispatch/routing";
 import { now,StoreCore } from "./store-core";
@@ -74,13 +73,7 @@ export class StoreConfig {
    */
   routingPolicy(task: Task, at = Date.now(), profiles: readonly Profile[] = []): RoutingPolicy {
     return taskRoutingPolicy(task, this.pool(), this.usageView(at), this.availability(), at, profiles,
-      { counts: this.counts(), recent: this.recentCounts(), offsets: this.demandRoleOffsets() });
-  }
-
-  /** Spec 053: the host-wide role offsets, defaulting to worker 0, reviewer 0, coordinator −2. */
-  demandRoleOffsets(): DemandRoleOffsets {
-    const parsed = demandRoleOffsetsSchema.safeParse(this.getMeta<unknown>("demandRoleOffsets"));
-    return parsed.success ? parsed.data : { ...DEMAND_ROLE_OFFSETS };
+      { counts: this.counts(), recent: this.recentCounts() });
   }
 
   /** Spec 052: the stored usage setting, if the operator set one. */

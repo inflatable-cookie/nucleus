@@ -112,7 +112,6 @@ import {
   type BoardLead,
   type BoardLeadLink,
   type Decision,
-  type DemandRoleOffsets,
   type HostRunAccountingRetirement,
   type HostRunEscapedDescendant,
   type HostRunInternalRecord,
@@ -850,6 +849,10 @@ export class Store {
   migrateProfileThinking(vocabularies: readonly HostVocabulary[]): void {
     this.migrationStore.migrateProfileThinking(vocabularies);
   }
+  /** Stored profiles' shared provider options under canonical keys, through every host's table (nucleus#1386). */
+  migrateProfileOptions(vocabularies: readonly HostVocabulary[]): void {
+    this.migrationStore.migrateProfileOptions(vocabularies);
+  }
   close() {
     this.taskChanged(null);
     this.taskChangeListeners.clear();
@@ -1538,10 +1541,6 @@ export class Store {
         .all(taskId) as { taskId: string }[]
     ).map((row) => row.taskId);
   }
-  /** Spec 053: the host-wide role offsets, defaulting to worker 0, reviewer 0, coordinator −2. */
-  demandRoleOffsets(): DemandRoleOffsets {
-    return this.configStore.demandRoleOffsets();
-  }
   /** Spec 052: the stored usage setting, if the operator set one. */
   usageSetting(): UsageSetting | null {
     return this.configStore.usageSetting();
@@ -1628,6 +1627,9 @@ export class Store {
   }
   message(id: string): AgentMessageRecord | null {
     return this.messagesStore.message(id);
+  }
+  messageByReplyTo(replyTo: string): AgentMessageRecord | null {
+    return this.messagesStore.messageByReplyTo(replyTo);
   }
   putMessage(record: AgentMessageRecord) {
     return this.messagesStore.putMessage(record);

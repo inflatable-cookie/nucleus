@@ -213,7 +213,14 @@ export interface AgentAskShape {
 /** A planner rung addressed beyond the asking task (shared/agent-verbs `ask` recipients). */
 export type AskRoute =
   | { kind: "project"; project: string; agent: string | null }
-  | { kind: "task"; taskId: string };
+  | { kind: "task"; taskId: string }
+  /**
+   * nucleus#1387: the planner or project agent whose delivered message carried this
+   * reply handle. The route names that one thread, so an ask through a handle reaches
+   * exactly the sender that asked to be answered, with the authority its project rung
+   * already has.
+   */
+  | { kind: "reply"; agentId: string };
 
 export type AgentAskReceipt =
   | { status: "answered"; askId: string; answer: string; answeredBy: string }

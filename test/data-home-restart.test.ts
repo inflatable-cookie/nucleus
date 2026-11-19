@@ -50,7 +50,7 @@ const PROFILES = [
 
 /** Two subscription entries (the pool), with their roles and scope. */
 const POOL = [
-  { profileId: 'fixture-worker', enabled: true, group: 'fixture-worker', roles: ['worker'], weight: 2, scopes: ['general'], capability: 'high', cost: 'medium' },
+  { profileId: 'fixture-worker', enabled: true, group: 'fixture-worker', roles: ['worker'], weight: 2, scopes: ['general'], capability: 'worker', cost: 'medium' },
   { profileId: 'fixture-reviewer', enabled: true, group: 'fixture-reviewer', roles: ['reviewer'], weight: 1, scopes: ['general'] },
 ];
 

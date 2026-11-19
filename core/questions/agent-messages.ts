@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { randomBytes } from "node:crypto";
 import { formatAgentId, parseAgentId, sameCallerIdentity } from "../../shared/agent-identity";
 import { observationTimeout } from "../recovery/observation-timeout";
 import { digest, now } from "../store/store";
@@ -38,6 +39,14 @@ import { ProjectAgentTargetRefusal } from "../planning/project-agents";
  * with no live planner waits in its project's inbox until one is assigned or
  * comes back. Messages carry information only: they grant no authority, change no
  * brief, hold, verdict or budget, and every delivery says so.
+ *
+ * nucleus#1387: every delivered message carries its own reply route. A message's
+ * `replyTo` handle is issued to that one message, bound to the sender's
+ * host-verified identity at send time, usable by that message's recipient only and
+ * valid for a bounded time. `tell {to: {reply: handle}}` (and `ask`, when the
+ * original sender is a planner or project agent that can answer) resolves the
+ * handle to that sender and delivers through the ordinary path, so a thread that
+ * is none of the addressable roles can still be answered without registering.
  */
 
 /** The body is a short message, not a document; the ask question shares this bound. */
@@ -51,6 +60,21 @@ export const AGENT_MESSAGE_RATE_LIMIT = 20;
 export const AGENT_MESSAGE_RATE_WINDOW_MS = 3600_000;
 /** Keep tell responsive while allowing very fast host deliveries to be acknowledged inline. */
 export const AGENT_MESSAGE_INLINE_DELIVERY_MS = 2_000;
+
+/**
+ * How long a message's reply handle works. A bounded address keeps a stale handle
+ * from reaching a thread months later; the sender's own thread is re-observed on
+ * every reply, so an archived sender refuses instead of reviving.
+ */
+export const AGENT_MESSAGE_REPLY_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** The opaque prefix that marks a service-issued reply handle, so no other value can be mistaken for one. */
+export const REPLY_HANDLE_PREFIX = "nreply_";
+
+/** One fresh reply handle: random, opaque, and never derived from an agent or thread identity. */
+export function newReplyHandle(): string {
+  return `${REPLY_HANDLE_PREFIX}${randomBytes(18).toString("base64url")}`;
+}
 
 export const AGENT_MESSAGE_ROLES = ["worker", "reviewer", "executor"] as const;
 /** Every role a message row can carry: a task's worker, reviewer or live proof executor, a planner ladder, or a named project agent. */
@@ -112,6 +136,8 @@ export type AgentMessageReceipt =
       role: AgentMessageRole;
       recordedAt: string;
       deliveredAt: string;
+      /** The reply handle this message carries back to its own sender. */
+      replyTo: string | null;
     }
   | {
       status: "queued";
@@ -120,6 +146,7 @@ export type AgentMessageReceipt =
       role: AgentMessageRole;
       recordedAt: string;
       detail: string;
+      replyTo: string | null;
     }
   | {
       status: "uncertain";
@@ -128,6 +155,7 @@ export type AgentMessageReceipt =
       role: AgentMessageRole;
       recordedAt: string;
       detail: string;
+      replyTo: string | null;
     }
   | {
       status: "expired";
@@ -136,8 +164,14 @@ export type AgentMessageReceipt =
       role: AgentMessageRole;
       recordedAt: string;
       detail: string;
+      replyTo: string | null;
     }
-  | { status: "duplicate"; messageId: string; detail: string };
+  | {
+      status: "duplicate";
+      messageId: string;
+      detail: string;
+      replyTo: string | null;
+    };
 
 /** A planner or named-agent endpoint's store key, shared by its messages' `toTaskId` and its project's events. */
 export const projectEndpointId = (projectKey: string): string =>
@@ -157,13 +191,16 @@ export const agentMessageRecord = (
 
 /**
  * The labelled text delivered into the recipient's thread. It names the sender's
- * role and project (never a thread ID) and states the information-only rule.
+ * role and project (never a thread ID) and states the information-only rule. The
+ * last two lines are the message's own reply route (nucleus#1387): the concrete
+ * handle line an agent copies to answer, instead of guessing a thread to address.
  */
 export function agentMessageDeliveryText(record: {
   fromReference: string | null;
   fromTaskId: string;
   fromRole: AgentMessageRole;
   fromProject: string | null;
+  replyTo: string | null;
   text: string;
 }): string {
   const from = record.fromReference ?? record.fromTaskId;
@@ -175,7 +212,13 @@ export function agentMessageDeliveryText(record: {
   return [
     `Queue message from ${from}${attribution}:`,
     record.text,
-    "(Messages carry information only: no authority, and no change to any brief, hold, verdict or budget. Decisions still go through the planner ladder. Reply through the tell route your session names.)",
+    ...(record.replyTo
+      ? [
+          `Reply: nucleus tell {to:{reply:"${record.replyTo}"}}`,
+          `(This reply address is yours alone, reaches this sender, works for 7 days and expires then. It carries information only.)`,
+        ]
+      : []),
+    "(Messages carry information only: no authority, and no change to any brief, hold, verdict or budget. Decisions still go through the planner ladder.)",
   ].join("\n");
 }
 
@@ -194,7 +237,7 @@ interface MessageSender {
   projectKey: string | null;
 }
 
-/** Who a message is for, once resolved: a task's worker or reviewer, a planner ladder, or a named agent. */
+/** Who a message is for, once resolved: a task's worker or reviewer, a planner ladder, a named agent, or one message's sender. */
 type Recipient =
   | { kind: "task"; task: Task; role: "worker" | "reviewer" | "executor" }
   | {
@@ -209,6 +252,21 @@ type Recipient =
       name: string;
       agentId: string;
       hostId: string;
+      label: string;
+    }
+  /**
+   * nucleus#1387: the sender of one delivered message, reached through that
+   * message's reply handle. It is one thread, not a role: it is observed before the
+   * send and an archived or gone sender refuses rather than being revived.
+   */
+  | {
+      kind: "reply";
+      inReplyTo: string;
+      taskId: string;
+      agentId: string;
+      hostId: string | null;
+      /** The sender's role: a task role, a planner or a project agent; never the operator. */
+      role: Exclude<AgentMessageRole, "operator">;
       label: string;
     };
 
@@ -431,6 +489,11 @@ export class AgentMessages {
         throw Error("A task cannot message itself");
       return this.taskRecipient(recipient, target.role);
     }
+    if (target.kind === "reply")
+      return this.replyRecipient(
+        { agentId: sender.agentId, hostId: sender.hostId },
+        target.reply,
+      );
     const project = projectOfTarget(store, target.project);
     if (target.agent === null)
       return {
@@ -451,6 +514,158 @@ export class AgentMessages {
       agentId: agent.agentId,
       hostId: agent.hostId,
       label: `the ${project.key} ${target.agent}`,
+    };
+  }
+
+  /**
+   * nucleus#1387: the message a reply handle addresses, after the two checks that
+   * make a handle an address rather than a capability: it has not expired, and the
+   * caller is that message's recipient. Both refusals send nothing and disclose
+   * nothing about the sender.
+   */
+  async replyRecord(
+    caller: { agentId: string | null; hostId: string | null },
+    handle: string,
+  ): Promise<AgentMessageRecord> {
+    const record = this.store.messageByReplyTo(handle);
+    if (!record)
+      throw Error(
+        "That reply handle is not one Nucleus issued; nothing was sent",
+      );
+    const expiresAt = record.replyExpiresAt
+      ? Date.parse(record.replyExpiresAt)
+      : Number.NaN;
+    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now())
+      throw Error(
+        `That reply handle${Number.isFinite(expiresAt) ? ` expired on ${new Date(expiresAt).toISOString()}` : " has expired"}; nothing was sent. Address a role or project instead.`,
+      );
+    if (!(await this.replyIsRecipient(record, caller)))
+      throw Error(
+        "That reply handle was issued to another recipient; nothing was sent",
+      );
+    return record;
+  }
+
+  /**
+   * The sender a reply handle reaches, for `ask` (nucleus#1387). Only a project planner
+   * or a named project agent can answer a question: its answer is the same one the
+   * project rung already gives, so a handle grants no authority a thread did not
+   * already have. A raw host thread or a task role is answered with `tell` instead.
+   */
+  async replySender(
+    caller: { agentId: string | null; hostId: string | null },
+    handle: string,
+  ): Promise<{
+    messageId: string;
+    agentId: string;
+    hostId: string | null;
+    reference: string | null;
+  }> {
+    const record = await this.replyRecord(caller, handle);
+    const participantSender =
+      record.fromTaskId.startsWith("project:") ||
+      record.fromTaskId.startsWith("task-planner:");
+    if (
+      !participantSender ||
+      (record.fromRole !== "planner" && record.fromRole !== "agent")
+    )
+      throw Error(
+        `Message ${record.id} came from ${record.fromRole === "agent" && !participantSender ? "a host thread" : `a ${record.fromRole}`}, which answers only through a planner ladder; a reply handle asks a project planner or agent, so answer this sender with tell`,
+      );
+    if (!record.fromAgentId)
+      throw Error(
+        `Message ${record.id} names no planner thread, so no question can reach its sender`,
+      );
+    return {
+      messageId: record.id,
+      agentId: record.fromAgentId,
+      hostId: record.fromHostId ?? null,
+      reference: record.fromReference,
+    };
+  }
+
+  /** The message's own recipient: the recorded agent, or one of a project-inbox message's current candidates. */
+  private async replyIsRecipient(
+    record: AgentMessageRecord,
+    caller: { agentId: string | null; hostId: string | null },
+  ): Promise<boolean> {
+    if (!caller.agentId) return false;
+    if (record.toAgentId)
+      return sameCallerIdentity(
+        caller.agentId,
+        record.toAgentId,
+        caller.hostId,
+        record.toHostId,
+      );
+    // A planner-addressed message records no agent until it is delivered: the caller
+    // must be one of that message's own recipients now, never the sender itself.
+    if (!record.toProjectKey || record.toRole === "agent") return false;
+    try {
+      const { candidates } = await this.threadCandidates(record);
+      return candidates.some((candidate) =>
+        sameCallerIdentity(
+          caller.agentId,
+          candidate.agentId,
+          caller.hostId,
+          candidate.hostId,
+        ),
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  /** Resolve a reply handle to its message's sender, observed now; an archived or gone sender refuses. */
+  private async replyRecipient(
+    replier: { agentId: string | null; hostId: string | null },
+    handle: string,
+  ): Promise<Recipient> {
+    return this.senderRecipient(await this.replyRecord(replier, handle));
+  }
+
+  /**
+   * The message's sender as a recipient. A task role is reached through the ordinary
+   * task path (queued for a busy recipient, refused when the task is terminal); a
+   * planner, named agent or host thread is reached in its own thread, observed first,
+   * and an archived or gone thread refuses instead of being revived.
+   */
+  private async senderRecipient(
+    record: AgentMessageRecord,
+  ): Promise<Recipient> {
+    if (record.fromRole === "operator")
+      throw Error(
+        "That message came from the operator, who has no agent thread to reply to; nothing was sent",
+      );
+    if (record.fromRole !== "planner" && record.fromRole !== "agent") {
+      const task = this.store.taskOrNull(record.fromTaskId);
+      if (!task)
+        throw Error(
+          `The task that sent message ${record.id} is gone, so nothing was sent`,
+        );
+      return this.taskRecipient(task, record.fromRole);
+    }
+    if (!record.fromAgentId)
+      throw Error(
+        `Message ${record.id} names no sender thread, so it cannot be answered; nothing was sent`,
+      );
+    const hostId = record.fromHostId ?? null;
+    const host = await this.liveThreadHost(
+      record.fromAgentId,
+      hostId ?? undefined,
+      true,
+    );
+    if (!host)
+      throw Error(
+        `The sender of message ${record.id} is archived or gone; the reply was refused and that thread will not be revived`,
+      );
+    return {
+      kind: "reply",
+      inReplyTo: record.id,
+      taskId: record.fromTaskId,
+      agentId: record.fromAgentId,
+      hostId: host,
+      role: record.fromRole,
+      label: record.fromReference ?? record.fromTaskId,
     };
   }
 
@@ -517,13 +732,17 @@ export class AgentMessages {
     const toTaskId =
       recipient.kind === "task"
         ? recipient.task.id
-        : projectEndpointId(recipient.projectKey);
+        : recipient.kind === "reply"
+          ? recipient.taskId
+          : projectEndpointId(recipient.projectKey);
     const toRole: AgentMessageRole =
       recipient.kind === "task"
         ? recipient.role
         : recipient.kind === "planners"
           ? "planner"
-          : "agent";
+          : recipient.kind === "reply"
+            ? recipient.role
+            : "agent";
     const label =
       recipient.kind === "task"
         ? this.taskLabel(recipient.task)
@@ -563,6 +782,7 @@ export class AgentMessages {
           duplicate.status === "uncertain"
             ? `An identical message (${duplicate.id}) has an unknown delivery outcome; it was not resent.`
             : `An identical message (${duplicate.id}) was already recorded for this recipient and role within the rate window; it was dropped, not delivered again.`,
+        replyTo: duplicate.replyTo,
       };
     const received = existing.filter(withinWindow).length;
     if (received >= AGENT_MESSAGE_RATE_LIMIT)
@@ -574,6 +794,12 @@ export class AgentMessages {
         ? this.messageRecipientIdentity(recipient.task, recipient.role)
         : null;
     const createdAt = now();
+    // nucleus#1387: every recorded message carries its own reply handle, issued here
+    // against the sender's authenticated identity and valid for a bounded time.
+    const replyTo = newReplyHandle();
+    const replyExpiresAt = new Date(
+      Date.parse(createdAt) + AGENT_MESSAGE_REPLY_TTL_MS,
+    ).toISOString();
     const record = agentMessageRecordSchema.parse({
       // The event id is the row identity, so a past-window repeat of the same call derives one.
       id: replay
@@ -593,7 +819,9 @@ export class AgentMessages {
           ? identity!.agentId
           : recipient.kind === "agent"
             ? recipient.agentId
-            : null,
+            : recipient.kind === "reply"
+              ? recipient.agentId
+              : null,
       toReference:
         recipient.kind === "task" ? (recipient.task.reference ?? null) : label,
       toHostId:
@@ -601,11 +829,19 @@ export class AgentMessages {
           ? recipient.task.hostId
           : recipient.kind === "agent"
             ? recipient.hostId
-            : null,
-      toProjectKey: recipient.kind === "task" ? null : recipient.projectKey,
+            : recipient.kind === "reply"
+              ? recipient.hostId
+              : null,
+      toProjectKey:
+        recipient.kind === "task" || recipient.kind === "reply"
+          ? null
+          : recipient.projectKey,
       toAgentName: recipient.kind === "agent" ? recipient.name : null,
       toLadderTaskId:
         recipient.kind === "planners" ? recipient.ladderTaskId : null,
+      replyTo,
+      replyExpiresAt,
+      inReplyTo: recipient.kind === "reply" ? recipient.inReplyTo : null,
       textDigest: digest(text),
       text,
       status: "queued",
@@ -638,6 +874,7 @@ export class AgentMessages {
           to: label,
           role: recipient.role,
           recordedAt: record.createdAt,
+          replyTo: record.replyTo,
           detail: `${identity!.wait.charAt(0).toUpperCase()}${identity!.wait.slice(1)}; Nucleus will deliver it when the ${recipient.role}'s next turn starts.`,
         };
       return await this.deliverWithinInlineWindow(
@@ -647,6 +884,10 @@ export class AgentMessages {
         () => this.deliverAgentMessage(store.task(recipient.task.id), record),
       );
     }
+    if (recipient.kind === "reply")
+      return await this.deliverWithinInlineWindow(record, label, toRole, () =>
+        this.deliverReplyMessage(record),
+      );
     return await this.deliverWithinInlineWindow(record, label, toRole, () =>
       this.deliverThreadMessage(record),
     );
@@ -674,6 +915,7 @@ export class AgentMessages {
           to: label,
           role,
           recordedAt: record.createdAt,
+          replyTo: record.replyTo,
           detail:
             "Message recorded; delivery is still in progress. Retry the identical tell JSON to read its outcome; it will not be sent twice.",
         }
@@ -813,6 +1055,7 @@ export class AgentMessages {
         to: label,
         role,
         recordedAt: record.createdAt,
+        replyTo: record.replyTo,
         detail:
           "Delivery outcome is unknown; the recorded intent will not be resent.",
       };
@@ -856,6 +1099,7 @@ export class AgentMessages {
         to: label,
         role,
         recordedAt: record.createdAt,
+        replyTo: record.replyTo,
         detail:
           "The recipient task finished before delivery; the message expired.",
       };
@@ -867,6 +1111,7 @@ export class AgentMessages {
         to: label,
         role,
         recordedAt: record.createdAt,
+        replyTo: record.replyTo,
         detail: `${identity.wait.charAt(0).toUpperCase()}${identity.wait.slice(1)}; Nucleus will deliver it when the ${role}'s next turn starts.`,
       };
     const hostId = recipient.hostId;
@@ -877,6 +1122,7 @@ export class AgentMessages {
         to: label,
         role,
         recordedAt: record.createdAt,
+        replyTo: record.replyTo,
         detail: "Waiting for the recorded recipient host.",
       };
     if (
@@ -891,6 +1137,7 @@ export class AgentMessages {
         to: label,
         role,
         recordedAt: record.createdAt,
+        replyTo: record.replyTo,
         detail: hostId
           ? `Waiting for host ${hostId}.`
           : "Waiting for a proven recipient host.",
@@ -902,6 +1149,7 @@ export class AgentMessages {
         to: label,
         role,
         recordedAt: record.createdAt,
+        replyTo: record.replyTo,
         detail: "The recipient host cannot deliver messages.",
       };
     if (this.deliveringMessages.has(record.id))
@@ -911,6 +1159,7 @@ export class AgentMessages {
         to: label,
         role,
         recordedAt: record.createdAt,
+        replyTo: record.replyTo,
         detail: "A delivery is already in flight.",
       };
     this.deliveringMessages.add(record.id);
@@ -931,6 +1180,7 @@ export class AgentMessages {
             fromTaskId: record.fromTaskId,
             fromRole: record.fromRole,
             fromProject: record.fromProject,
+            replyTo: record.replyTo,
             text: record.text,
           }),
         }),
@@ -961,6 +1211,7 @@ export class AgentMessages {
         to: label,
         role,
         recordedAt: record.createdAt,
+        replyTo: record.replyTo,
         deliveredAt: delivered.deliveredAt!,
       };
     } catch (error) {
@@ -993,6 +1244,7 @@ export class AgentMessages {
         to: label,
         role,
         recordedAt: current.createdAt,
+        replyTo: current.replyTo,
         detail:
           "Delivery outcome is unknown; the recorded intent will not be resent.",
       };
@@ -1003,6 +1255,7 @@ export class AgentMessages {
         to: label,
         role,
         recordedAt: current.createdAt,
+        replyTo: current.replyTo,
         detail: "A delivery is already in flight.",
       };
     let candidates: Array<{ agentId: string; hostId?: string }>;
@@ -1042,6 +1295,7 @@ export class AgentMessages {
           to: label,
           role,
           recordedAt: current.createdAt,
+          replyTo: current.replyTo,
           detail: `${detail}.`,
         };
       }
@@ -1051,6 +1305,7 @@ export class AgentMessages {
         to: label,
         role,
         recordedAt: current.createdAt,
+        replyTo: current.replyTo,
         detail: error instanceof Error ? error.message : String(error),
       };
     }
@@ -1087,6 +1342,7 @@ export class AgentMessages {
       to: label,
       role,
       recordedAt: current.createdAt,
+      replyTo: current.replyTo,
       detail,
     };
   }
@@ -1166,6 +1422,83 @@ export class AgentMessages {
     } catch { return tolerateUnverified ? hostId : null; }
   }
 
+  /**
+   * nucleus#1387: deliver one reply into the original sender's thread. The sender is
+   * re-observed here, never trusted from the record: an archived or gone thread
+   * expires the reply instead of being revived, exactly as the send-time refusal did.
+   * A busy or unverified recipient still gets the reply through the ordinary path,
+   * with the delivery intent fenced so an unknown outcome is never resent.
+   */
+  private async deliverReplyMessage(
+    record: AgentMessageRecord,
+  ): Promise<AgentMessageReceipt> {
+    const store = this.store;
+    const current = store.message(record.id) ?? record;
+    const label = current.toReference ?? current.toTaskId;
+    const role = current.toRole;
+    if (current.status !== "queued") return this.receiptOf(current, label);
+    if (current.deliveryIntentAt && current.deliveryIntentState !== "refused")
+      return {
+        status: "uncertain",
+        messageId: current.id,
+        to: label,
+        role,
+        recordedAt: current.createdAt,
+        replyTo: current.replyTo,
+        detail:
+          "Delivery outcome is unknown; the recorded intent will not be resent.",
+      };
+    const agentId = current.toAgentId;
+    if (!agentId)
+      return this.expireReply(
+        current,
+        label,
+        "the reply records no sender thread to reach",
+      );
+    const hostId = await this.liveThreadHost(
+      agentId,
+      current.toHostId ?? undefined,
+      true,
+    );
+    if (!hostId)
+      return this.expireReply(
+        current,
+        label,
+        "the sender's thread is archived or gone, so the reply expired rather than reviving it",
+      );
+    return this.notifyThread(current, agentId, hostId, label);
+  }
+
+  /** A reply that can never arrive says so, on the record and on both endpoints, and never waits.**/
+  private expireReply(
+    record: AgentMessageRecord,
+    label: string,
+    detail: string,
+  ): AgentMessageReceipt {
+    this.store.transaction(() => {
+      this.store.putMessage({ ...record, status: "expired", error: detail });
+      this.store.event(
+        record.fromTaskId,
+        "agent_message_expired",
+        `${record.id}: to ${label} (${record.toRole}); ${detail}`,
+      );
+      this.store.event(
+        record.toTaskId,
+        "agent_message_expired",
+        `${record.id}: from ${record.fromReference ?? record.fromTaskId} (${record.fromRole}); ${detail}`,
+      );
+    });
+    return {
+      status: "expired",
+      messageId: record.id,
+      to: label,
+      role: record.toRole,
+      recordedAt: record.createdAt,
+      replyTo: record.replyTo,
+      detail: `${detail.charAt(0).toUpperCase()}${detail.slice(1)}.`,
+    };
+  }
+
   /** One planner or agent delivery, fenced by an intent record so an unknown outcome is never resent. */
   private async notifyThread(
     record: AgentMessageRecord,
@@ -1194,6 +1527,7 @@ export class AgentMessages {
             fromTaskId: record.fromTaskId,
             fromRole: record.fromRole,
             fromProject: record.fromProject,
+            replyTo: record.replyTo,
             text: record.text,
           }),
         }),
@@ -1223,6 +1557,7 @@ export class AgentMessages {
         to: label,
         role: record.toRole,
         recordedAt: record.createdAt,
+        replyTo: record.replyTo,
         deliveredAt: delivered.deliveredAt!,
       };
     } catch (error) {
@@ -1312,6 +1647,7 @@ export class AgentMessages {
       to: label,
       role,
       recordedAt: intent.createdAt,
+      replyTo: intent.replyTo,
       detail: refused
         ? `Delivery was refused before send (${detail}); it remains queued.`
         : `Delivery outcome is unknown (${detail}); the recorded intent will not be resent.`,
@@ -1338,6 +1674,7 @@ export class AgentMessages {
         to: label,
         role,
         recordedAt: record.createdAt,
+        replyTo: record.replyTo,
         deliveredAt: record.deliveredAt ?? record.createdAt,
       };
     if (record.status === "expired")
@@ -1347,6 +1684,7 @@ export class AgentMessages {
         to: label,
         role,
         recordedAt: record.createdAt,
+        replyTo: record.replyTo,
         detail:
           record.error ||
           "The recipient finished before delivery; the message expired.",
@@ -1358,6 +1696,7 @@ export class AgentMessages {
         to: label,
         role,
         recordedAt: record.createdAt,
+        replyTo: record.replyTo,
         detail:
           "Delivery outcome is unknown; the recorded intent will not be resent.",
       };
@@ -1367,6 +1706,7 @@ export class AgentMessages {
       to: label,
       role,
       recordedAt: record.createdAt,
+      replyTo: record.replyTo,
       detail: `${record.error ? `${record.error}; r` : "R"}etained queued for the ${role}'s next turn.`,
     };
   }
@@ -1388,6 +1728,17 @@ export class AgentMessages {
     for (const record of this.store.queuedMessages()) {
       if (this.stopped() || delivered >= 50) return;
       if (this.deliveringMessages.has(record.id)) continue;
+      // nucleus#1387: a queued reply waits for its recorded sender thread exactly as an
+      // ordinary message waits for its role's next turn, and expires if that thread is gone.
+      if (record.inReplyTo) {
+        try {
+          const receipt = await this.deliverReplyMessage(record);
+          if (receipt.status === "delivered") delivered++;
+        } catch {
+          /* a transient failure keeps its message queued for the next wake */
+        }
+        continue;
+      }
       if (record.toProjectKey) {
         try {
           const receipt = await this.deliverThreadMessage(record);

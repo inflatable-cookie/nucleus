@@ -35,6 +35,7 @@ test('legacy pending message survives restart without changing identities or eve
     store.putMessage({ id: 'pending', contentKey: 'content', fromTaskId: a.id, fromRole: 'worker', fromAgentId: raw, fromReference: null, fromProject: null,
       toTaskId: b.id, toRole: 'worker', toAgentId: raw, toReference: null, textDigest: 'digest', text: 'hello', status: 'uncertain',
       deliveryIntentAt: '2026-01-01T00:00:00.000Z', deliveryHostId: 'host-b', deliveryIntentState: 'intent',
+      replyTo: null, replyExpiresAt: null, inReplyTo: null,
       createdAt: '2026-01-01T00:00:00.000Z', deliveredAt: null, error: '' });
     store.event(a.id, 'legacy', raw);
     const events = store.eventsAll(a.id);
@@ -270,6 +271,7 @@ test('a queued mixed-version message with conflicting recipient host waits witho
     const record: AgentMessageRecord = { id: 'mixed-host', contentKey: 'mixed', fromTaskId: f.sender.id, fromRole: 'worker',
       fromAgentId: 'worker', fromReference: null, fromProject: null, toTaskId: f.recipient.id, toRole: 'worker',
       toAgentId: 'peer', toHostId: 'other-host', toReference: null, textDigest: 'digest', text: 'hello', status: 'queued',
+      replyTo: null, replyExpiresAt: null, inReplyTo: null,
       createdAt: new Date().toISOString(), deliveredAt: null, error: '' };
     f.store.putMessage(record);
     const receipt = await (f.engine.resolution as any).deliverAgentMessage(f.store.task(f.recipient.id), record);
@@ -309,7 +311,16 @@ test("a worker message reaches a live recipient's thread labelled with the sende
     );
     assert.match(f.notified[0]!.text, /The API for retry_effect landed/);
     assert.match(f.notified[0]!.text, /carry information only/);
-    assert.match(f.notified[0]!.text, /tell route your session names/);
+    // nucleus#1387: the delivered text names this message's own reply route.
+    const deliveredMessage = f.store.message(receipt.messageId)!;
+    assert.ok(deliveredMessage.replyTo);
+    assert.match(
+      f.notified[0]!.text,
+      new RegExp(
+        `Reply: nucleus tell \\{to:\\{reply:"${deliveredMessage.replyTo}"\\}\\}`,
+      ),
+    );
+    assert.doesNotMatch(f.notified[0]!.text, /tell route your session names/);
     assert.doesNotMatch(f.notified[0]!.text, /nucleus_message/);
     assert.match(f.notified[0]!.messageId, /^ns-agent-message-[0-9a-f]{64}$/);
     // Recorded on both tasks: one row, visible from either side.
@@ -1193,6 +1204,9 @@ test("retention purging removes a purged task's sent and received messages", () 
       toReference: two.reference,
       textDigest: "d".repeat(64),
       text: "Kept only while both tasks exist.",
+      replyTo: null,
+      replyExpiresAt: null,
+      inReplyTo: null,
       status: "delivered",
       createdAt: new Date().toISOString(),
       deliveredAt: new Date().toISOString(),

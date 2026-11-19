@@ -17,7 +17,7 @@ import {
 import { plannerEscalations, type LadderEvent } from "./ladder";
 import { askLifecycle } from "./agent-ask-events";
 import type { Resolution } from "../resolution";
-import { requestedTier } from "../../shared/demand";
+import { complexityBracket } from "../../shared/demand";
 import { chooseProfile } from "../dispatch/routing";
 import { plannerParticipantTicketPath } from "../dispatch/participant-tickets";
 import { runTicketPath, writeRunTicket } from "../dispatch/agent-creation";
@@ -1380,8 +1380,9 @@ export class Delegation {
   }
 
   /**
-   * Deciders use automatic selection at the task's requested tier. Ordinary
-   * coordinator offsets cannot authorize a weaker decider. Availability is the store's typed rows through the
+   * Deciders use automatic selection at the task's own bracket
+   * (`complexityBracket`, nucleus#1362): the coordinator's Mechanical demand
+   * cannot authorize a weaker decider. Availability is the store's typed rows through the
    * shared group rule, never a decode of the durable table here.
    */
   deciderProfile(task: Task): Profile | null {
@@ -1389,11 +1390,11 @@ export class Delegation {
     const profiles = this.profiles().filter(
       (profile) => profile.model !== "default",
     );
-    const tier = requestedTier(task.complexity);
+    const tier = complexityBracket(task.complexity);
     const pool = this.store
       .pool()
       .filter(
-        (entry) => demandRank(entry.capability ?? "medium") >= demandRank(tier),
+        (entry) => demandRank(entry.capability ?? "worker") >= demandRank(tier),
       );
     return (
       chooseProfile(
@@ -1411,7 +1412,6 @@ export class Delegation {
         "coordinator",
         this.store.recentCounts(),
         this.store.usageLevel(),
-        this.store.demandRoleOffsets(),
       )?.profile ?? null
     );
   }

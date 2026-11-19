@@ -111,7 +111,6 @@ import type {
   SnapshotState,
   SnapshotInput,
   UsageLevel,
-  DemandRoleOffsets,
   Submission,
   PoolEntry,
   BulkDispositionRequest,
@@ -514,6 +513,8 @@ export class QueueRuntime {
     // nucleus#1365: stored profiles carry thinking in one canonical field, mapped
     // back through every host's table before anything reads them.
     this.store.migrateProfileThinking(Object.values(HOST_VOCABULARIES));
+    // nucleus#1386: shared provider options (speed) move to their canonical keys.
+    this.store.migrateProfileOptions(Object.values(HOST_VOCABULARIES));
     this.capacityChanges = new CapacityChangeJournal(this.store);
     // Keyed mutations are journaled around their handlers so a replacement can
     // answer a response lost mid-roll (request ledger, service-boundary contract).
@@ -945,7 +946,8 @@ export class QueueRuntime {
             this.projectQaRunner(),
             {
               canAdmit: () => !this.closing && this.anyHostConnected(),
-              refreshResponsibleThread: project => this.engine.resolution.responsibleThread(project),
+              refreshResponsibleThread: (project) =>
+                this.engine.resolution.responsibleThread(project),
             },
           );
           void this.scheduledQa.tick();
@@ -1353,7 +1355,7 @@ export class QueueRuntime {
     this.engine.acp = new AcpSessions(this.engine, {
       dataHome: this.dataDir,
       socketPath: this.paseo.socketPath,
-      answerDecision: input => this.questions.answerT3Decision(input),
+      answerDecision: (input) => this.questions.answerT3Decision(input),
     });
     // Local reads are safe as soon as the callback surface and SQLite owner
     // exist. Daemon connection, profile refresh, durable operation resume and
@@ -2061,7 +2063,9 @@ export class QueueRuntime {
   }
 
   /** A committed instruction artifact is a committed handoff by another name: retired (nucleus#1368). */
-  async submitInstruction(_input: z.infer<typeof submitInstructionRpc.input>): Promise<never> {
+  async submitInstruction(
+    _input: z.infer<typeof submitInstructionRpc.input>,
+  ): Promise<never> {
     throw new Error(COMMITTED_HANDOFF_RETIRED);
   }
   configurePool({ entries }: { entries: PoolEntry[] }) {
@@ -2292,9 +2296,6 @@ export class QueueRuntime {
   async configureUsage(input: { level: UsageLevel; until?: string | null }) {
     return this.settingsOperations.configureUsage(input);
   }
-  async configureDemandOffsets(input: DemandRoleOffsets) {
-    return this.settingsOperations.configureDemandOffsets(input);
-  }
   capacityAuthorityState() {
     return this.settingsOperations.capacityAuthorityState();
   }
@@ -2389,7 +2390,9 @@ export class QueueRuntime {
       dataDir: this.dataDir,
       hostRunStateDir: this.hostRunStateDir,
       ownerInstance: this.owner,
-      responsibleThread: async project => (await this.engine.resolution.responsibleThread(project)).thread?.agentId ?? null,
+      responsibleThread: async (project) =>
+        (await this.engine.resolution.responsibleThread(project)).thread
+          ?.agentId ?? null,
       notify: async (agentId, messageId, text) => {
         const identity = parseAgentId(agentId);
         const hostId =

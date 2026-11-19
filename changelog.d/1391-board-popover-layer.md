@@ -1,0 +1,1 @@
+The board's project selector popover, queue menu and slot usage popover now render in the shell's popover layer above the board columns, instead of being painted over by the Working column's cards. The Triage tag filter already used that layer.

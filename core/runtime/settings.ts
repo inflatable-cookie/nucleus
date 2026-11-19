@@ -8,7 +8,7 @@ import { z } from "zod";
 import { Store, StoreMaintenanceError } from "../store/store";
 import type { Adapter } from "../host/adapter";
 import type { Engine } from "../engine";
-import type { UsageLevel, DemandRoleOffsets, PoolEntry } from "../../shared/contracts";
+import type { UsageLevel, PoolEntry } from "../../shared/contracts";
 import { capacitySchema, projectDispatchLimitSchema } from "../../shared/contracts";
 import type { Decisions } from '../planning/decisions';
 import { applyRoutingGrant } from "../dispatch/routing-signoff";
@@ -193,16 +193,6 @@ export class RuntimeSettings {
     });
     void this.context.engine.wake().catch(() => { /* a failed drain is recorded as engineError */ });
     return this.context.store.usageView();
-  }
-
-  /** Spec 053: the host-wide role offsets every automatic selection and the board preview read. */
-  async configureDemandOffsets(input: DemandRoleOffsets) {
-    this.context.store.transaction(() => {
-      this.context.store.setMeta("demandRoleOffsets", input);
-      this.context.store.advanceRevision();
-    });
-    void this.context.engine.wake().catch(() => { /* a failed drain is recorded as engineError */ });
-    return this.context.store.demandRoleOffsets();
   }
 
   /**

@@ -1,15 +1,17 @@
 /**
- * Spec 035 "A reservation settles when its recorded process is gone": a
- * foreground admission reservation is held by its own admission hook for the
- * whole run, so the hook's absence is the end of that foreground. The ordinary
- * sweep settles such a reservation `lost` — custody unknown, no result invented
- * — instead of leaving it `running` until something else notices.
+ * Spec 035 "The sweep proves every reservation's holder": a foreground
+ * admission reservation is held by its own admission hook for the whole run, so
+ * the hook's absence is the end of that foreground. The ordinary sweep settles
+ * such a reservation `lost` — custody unknown, no result invented — on the next
+ * pass instead of leaving it `running` until its 24-hour run timeout. The
+ * 2026-11-19 shape this covers is oxide#328's: a two-minute run whose hook died
+ * went on holding its task's workspace and a heavy slot with nothing to wait for.
  *
- * Two shapes reach it. A row whose producer already closed its accounting (the
- * 2026-11-08 rows: a two-minute run retired its charge and then sat `running`
- * for the whole 24-hour run timeout) settles on the sweep's own evidence. A row
- * the producer still reports live, held or retained keeps its hold until its
- * recorded run timeout, the deadline Queue itself owns.
+ * The proof is the hook's own liveness, by pid and contract 010 start identity.
+ * A live hook keeps its slot, a reused pid number is gone, an unreadable process
+ * table is unknown and never absence — and it says so on the row. The run
+ * timeout only decides whether the settlement's own journal fact is `hook_gone`
+ * or `expiry`.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -17,6 +19,10 @@ import { Store } from "../core/store/store";
 import {
   HOST_RUN_ABANDONED_RELEASE_REASON,
   HOST_RUN_EXPIRED_RELEASE_REASON,
+  HOST_RUN_HOOK_DIED_BEFORE_ADMIT_REASON,
+  HOST_RUN_HOOK_GONE_PENDING_EVENT,
+  HOST_RUN_LIVENESS_UNKNOWN_EVENT,
+  HOST_RUN_WATCH_EVIDENCE_WINDOW_MS,
   HostRunScheduler,
   type HostRunSchedulerOptions,
   type HostRunSubmission,
@@ -199,23 +205,170 @@ test("an overdue admission reservation with a dead hook settles as expired, cust
   assert.equal(h.scheduler.list().some(item => item.id === run.id), true, "it stays in history");
 });
 
-test("inside its own run timeout the reservation is untouched, even with the hook already gone", t => {
+test("a dead hook inside its own run timeout settles on the next sweep, not at the deadline", t => {
   const h = harness(t);
-  const run = launched(h.scheduler, admission("early"));
+  // The real 2026-11-19 shape: a heavy reservation whose recorded hook process
+  // no longer exists, its own timeout a day away, its task's workspace waiting.
+  // No watch ever read this row's producer answer, so the proving pass holds its
+  // one bounded window and the next pass settles it.
+  const run = launched(h.scheduler, admission("early", { runTimeoutMs: 24 * 60 * 60_000 }));
+  assert.equal(h.store.hostRunHoldingWorkspace(repository.path)?.id, run.id, "it holds the task's workspace");
 
-  h.time(RUN_TIMEOUT_MS - 1);
+  h.scheduler.tick();
+
+  const pending = h.scheduler.get(run.id)!;
+  assert.equal(pending.state, "running", "the proving pass leaves the watch its window");
+  const [proof] = facts(h, run.id, HOST_RUN_HOOK_GONE_PENDING_EVENT);
+  assert.equal(proof.windowMs, HOST_RUN_WATCH_EVIDENCE_WINDOW_MS);
+  assert.match(String(proof.observation), /not a live process/, "the proof that decided it is recorded");
+  assert.deepEqual(proof.hook, { pid: HOOK.pid, startIdentity: HOOK.startIdentity });
+  assert.equal(h.store.hostRunHoldingWorkspace(repository.path)?.id, run.id, "one window is not a hold");
+
+  h.time(HOST_RUN_WATCH_EVIDENCE_WINDOW_MS + 1);
+  h.scheduler.tick();
+
+  const settled = h.scheduler.get(run.id)!;
+  assert.equal(settled.state, "settled", "the next pass settles it");
+  assert.equal(settled.settledAt, new Date(LAUNCHED_MS + HOST_RUN_WATCH_EVIDENCE_WINDOW_MS + 1).toISOString());
+  assert.equal(settled.settlement?.outcome, "lost", "outcome unknown, never invented");
+  assert.equal(settled.capacityReleasedAt, settled.settledAt, "the heavy slot is released by the settlement");
+  assert.equal(settled.capacityReleaseReason, HOST_RUN_ABANDONED_RELEASE_REASON);
+  assert.deepEqual(facts(h, run.id, "expiry"), [], "the deadline was never involved");
+  const [gone] = facts(h, run.id, "hook_gone");
+  assert.equal(gone.custody, "unknown");
+  assert.deepEqual(gone.hook, { pid: HOOK.pid, startIdentity: HOOK.startIdentity }, "the dead identity is on the record");
+  assert.equal(h.store.hostRunHoldingWorkspace(repository.path), null, "the workspace hold goes with it");
+  assert.equal(h.store.hostRunCapacityCandidates().some(item => item.id === run.id), false, "no capacity is reserved");
+  assert.equal(h.scheduler.summary().reservedCpu, 0);
+  assert.equal(h.scheduler.list().some(item => item.id === run.id), true, "the history is kept");
+  assert.equal(facts(h, run.id, HOST_RUN_HOOK_GONE_PENDING_EVENT).length, 1, "the window is named once");
+
+  h.time(60_000);
+  h.scheduler.tick();
+  assert.deepEqual(h.scheduler.get(run.id), settled, "a repeated pass adds nothing");
+});
+
+test("a row whose producer answer a watch already read settles on the proving pass", t => {
+  const h = harness(t);
+  const run = launched(h.scheduler, admission("watch-answered", { runTimeoutMs: 24 * 60 * 60_000 }));
+  // The endpoint watch read the producer and got a live-foreground hold: the
+  // evidence is on the row, so the sweep no longer waits for another read.
+  h.scheduler.note(run.id, "effigy_observation_retained", {
+    kind: "live-foreground", reason: "the producer's gate is still held by a foreground holder",
+  });
+
+  h.scheduler.tick();
+
+  const settled = h.scheduler.get(run.id)!;
+  assert.equal(settled.state, "settled", "the answer is already read; the hook's absence decides");
+  assert.equal(settled.settlement?.outcome, "lost");
+  assert.equal(settled.capacityReleasedAt, settled.settledAt);
+  assert.deepEqual(facts(h, run.id, HOST_RUN_HOOK_GONE_PENDING_EVENT), [], "nothing was deferred");
+  assert.equal(h.store.hostRunJournal(run.id).filter(row => row.event === "effigy_observation_retained").length, 1,
+    "the producer's own answer stays on the row");
+});
+
+test("a watch note about itself never stands in for the producer's answer", t => {
+  for (const kind of ["hook-liveness-unknown", "reconcile-fault"] as const) {
+    const h = harness(t);
+    const run = launched(h.scheduler, admission(`watch-self-${kind}`, { runTimeoutMs: 24 * 60 * 60_000 }));
+    // The endpoint writes this while the hook is still alive (or a tick threw):
+    // it says something about the watch, not about the producer, so the sweep
+    // must still give a live watch its window before settling.
+    h.scheduler.note(run.id, "effigy_observation_refused", {
+      kind, reason: kind === "reconcile-fault" ? "the reservation row could not be read" : "the hook's identity could not be re-read",
+    });
+
+    h.scheduler.tick();
+
+    assert.equal(h.scheduler.get(run.id)!.state, "running", `${kind}: no producer read yet, so the pass defers`);
+    assert.equal(facts(h, run.id, HOST_RUN_HOOK_GONE_PENDING_EVENT).length, 1, `${kind}: the window is named`);
+
+    h.time(HOST_RUN_WATCH_EVIDENCE_WINDOW_MS + 1);
+    h.scheduler.tick();
+
+    const settled = h.scheduler.get(run.id)!;
+    assert.equal(settled.state, "settled", `${kind}: the next pass settles it`);
+    assert.equal(settled.settlement?.outcome, "lost");
+    assert.equal(h.store.hostRunHoldingWorkspace(repository.path), null, `${kind}: the workspace hold goes with it`);
+  }
+});
+
+test("a watch that asked the producer and could not classify the answer settles on the proving pass", t => {
+  const h = harness(t);
+  const run = launched(h.scheduler, admission("watch-asked-unknown", { runTimeoutMs: 24 * 60 * 60_000 }));
+  // `run status` was called and answered something Queue cannot classify: the
+  // producer was read, so there is no second read to wait for.
+  h.scheduler.note(run.id, "effigy_observation_refused", { kind: "unknown", reason: "run status answered an unreadable journal" });
+
+  h.scheduler.tick();
+
+  const settled = h.scheduler.get(run.id)!;
+  assert.equal(settled.state, "settled");
+  assert.equal(settled.settlement?.outcome, "lost");
+  assert.deepEqual(facts(h, run.id, HOST_RUN_HOOK_GONE_PENDING_EVENT), [], "the producer was already read");
+});
+
+test("a live hook inside its own run timeout keeps the reservation", t => {
+  const h = harness(t, { hookAlive: () => true, hookStartIdentity: () => HOOK.startIdentity });
+  const run = launched(h.scheduler, admission("live"));
+
   h.scheduler.tick();
   h.scheduler.tick();
 
   const held = h.scheduler.get(run.id)!;
-  assert.equal(held.state, "running");
+  assert.equal(held.state, "running", "a live process carrying its recorded start identity keeps its slot");
   assert.equal(held.settlement, null);
+  assert.equal(h.store.hostRunHoldingWorkspace(repository.path)?.id, run.id);
+  assert.deepEqual(facts(h, run.id, HOST_RUN_LIVENESS_UNKNOWN_EVENT), [], "proven alive is not an unknown");
+});
+
+test("an admitted reservation whose hook died before admit is cancelled on the sweep", t => {
+  const h = harness(t, { capacity: singleCpu });
+  const run = h.scheduler.submit(
+    admission("waiting-admit", { budgetFallback: { cpu: 1, memoryBytes: 100 } }),
+    { launch: () => { /* the admission is still waiting for a slot */ } },
+  );
+  h.scheduler.bindProcess(run.id, HOOK);
+  assert.equal(h.scheduler.get(run.id)!.state, "admitted");
+  assert.equal(h.store.hostRunHoldingWorkspace(repository.path)?.id, run.id, "it holds the task's workspace");
+
+  h.scheduler.tick();
+
+  const settled = h.scheduler.get(run.id)!;
+  assert.equal(settled.state, "settled");
+  assert.equal(settled.settlement?.outcome, "cancelled");
+  assert.equal(settled.settlement?.launched, false, "nothing was launched for it");
+  assert.equal(settled.capacityReleasedAt, settled.settledAt);
+  assert.equal(settled.capacityReleaseReason, HOST_RUN_HOOK_DIED_BEFORE_ADMIT_REASON);
+  assert.equal(h.store.hostRunHoldingWorkspace(repository.path), null);
+  const [gone] = facts(h, run.id, "hook_gone");
+  assert.equal(gone.custody, "unknown");
+  assert.equal(gone.launched, false, "no command was ever launched for it");
+  assert.deepEqual(gone.hook, { pid: HOOK.pid, startIdentity: HOOK.startIdentity }, "the dead identity is on the record");
+  assert.match(String(gone.observation), /not a live process/, "the proof that decided it is kept");
+
+  h.scheduler.tick();
+  assert.equal(h.store.hostRunJournal(run.id).filter(row => row.event === "settlement").length, 1, "a repeated pass adds nothing");
+});
+
+test("an unreadable process table holds the reservation and names why, once", t => {
+  const h = harness(t, { hookAlive: () => true, hookStartIdentity: () => "4242@unknown" });
+  const run = launched(h.scheduler, admission("unreadable-table"));
+
+  h.scheduler.tick();
+  h.time(60_000);
+  h.scheduler.tick();
+
+  const held = h.scheduler.get(run.id)!;
+  assert.equal(held.state, "running", "unknown is never read as absence");
   assert.equal(held.capacityReleasedAt, null);
-  assert.deepEqual(facts(h, run.id, "expiry"), [], "the deadline is the run's own timeout");
-  assert.deepEqual(facts(h, run.id, "settlement"), []);
-  assert.equal(h.store.hostRunCapacityCandidates().some(item => item.id === run.id), true,
-    "it still reserves its capacity");
-  assert.equal(h.scheduler.summary().reservedCpu > 0, true);
+  const notes = facts(h, run.id, HOST_RUN_LIVENESS_UNKNOWN_EVENT);
+  assert.equal(notes.length, 1, "the row names the unreadable identity once");
+  assert.equal(notes[0].kind, "hook-liveness-unknown");
+  assert.match(String(notes[0].reason), /start identity could not be read/);
+  assert.deepEqual(notes[0].hook, { pid: HOOK.pid, startIdentity: HOOK.startIdentity });
+  assert.equal(h.store.hostRunHoldingWorkspace(repository.path)?.id, run.id, "an unproven hook keeps the workspace");
 });
 
 test("a live hook past the timeout keeps the reservation until it is gone", t => {
@@ -238,11 +391,15 @@ test("a live pid carrying another start identity is a gone hook", t => {
   const h = harness(t, { hookAlive: () => true, hookStartIdentity: () => "4242@2026-11-01T11:30:00Z" });
   const run = launched(h.scheduler, admission("reused"));
 
-  h.time(RUN_TIMEOUT_MS + 1);
+  // No clock advance past the deadline: the reused pid number is the only
+  // evidence, and it decides once the sweep's watch window has passed.
+  h.scheduler.tick();
+  h.time(HOST_RUN_WATCH_EVIDENCE_WINDOW_MS + 1);
   h.scheduler.tick();
 
   assert.equal(h.scheduler.get(run.id)!.state, "settled", "a reused pid number is not this hook");
   assert.equal(h.scheduler.get(run.id)!.settlement?.outcome, "lost");
+  assert.equal(facts(h, run.id, "hook_gone").length, 1);
 });
 
 test("an unprovable live identity never reads as absence", t => {
@@ -256,18 +413,22 @@ test("an unprovable live identity never reads as absence", t => {
   assert.equal(unreadable.scheduler.get(run.id)!.capacityReleasedAt, null);
 });
 
-test("an admission reservation with no recorded hook identity holds", t => {
+test("an admission reservation with no recorded hook identity holds and names why", t => {
   const h = harness(t, { hookAlive: () => true });
   const submission = admission("unbound");
   h.scheduler.submit(submission, launchHandler(h.scheduler));
   const run = h.scheduler.get(submission.id)!;
   assert.equal(run.pid, null, "nothing recorded to prove gone or alive");
 
+  h.scheduler.tick();
   h.time(RUN_TIMEOUT_MS + 1);
   h.scheduler.tick();
 
   assert.equal(h.scheduler.get(run.id)!.state, "running");
   assert.deepEqual(facts(h, run.id, "expiry"), []);
+  const notes = facts(h, run.id, HOST_RUN_LIVENESS_UNKNOWN_EVENT);
+  assert.equal(notes.length, 1, "the unbound hold is named once");
+  assert.match(String(notes[0].reason), /records no hook process/);
 });
 
 test("an already-released reservation keeps its original release reason", t => {

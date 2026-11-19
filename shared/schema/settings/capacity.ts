@@ -249,15 +249,4 @@ export type CapacityAuthorityState = z.infer<
   typeof capacityAuthorityStateSchema
 >;
 
-/** Spec 053: how far each role's demand sits from the task's complexity, host-wide (Settings → Dispatch limits). */
-const demandOffsetSchema = z.number().int().min(-4).max(4);
 
-export const demandRoleOffsetsSchema = z
-  .object({
-    worker: demandOffsetSchema,
-    reviewer: demandOffsetSchema,
-    coordinator: demandOffsetSchema,
-  })
-  .strict();
-
-export type DemandRoleOffsets = z.infer<typeof demandRoleOffsetsSchema>;

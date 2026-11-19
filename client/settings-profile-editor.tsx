@@ -25,7 +25,7 @@ import {
   profileAvailability,
   type NucleusProfile,
 } from "../shared/profiles";
-import { PROFILE_CAPABILITY_LEVELS } from "../shared/pool";
+import { BRACKET_LABELS, PROFILE_CAPABILITY_LEVELS } from "../shared/pool";
 import {
   RUNTIME_MODES,
   RUNTIME_MODE_LABELS,
@@ -56,6 +56,7 @@ import {
   identityCreateInput,
   hiddenThinkingValues,
   identityValid,
+  withCanonicalOption,
   levelLabel,
   modelWords,
   namedProvider,
@@ -500,7 +501,12 @@ export function ProfileEditor({
       : feature.value;
   const setFeature = (feature: HostFeature, value: unknown) =>
     applyIdentity({
-      featureValues: { ...draft.featureValues, [feature.id]: value },
+      featureValues: withCanonicalOption(
+        draft.provider,
+        draft.featureValues,
+        feature.id,
+        value,
+      ),
     });
   const differing =
     catalogs.length > 1
@@ -941,7 +947,7 @@ export function ProfileEditor({
           <View style={{ ...half, gap: space.xs }}>
             {sliderLabel(
               "Capability",
-              "Each run starts at the usage level's tier for the task's complexity, moved by its role. Selection rotates among profiles at or above that. The top two tiers need permission at Low and Normal, frontier at High. Unset counts as medium.",
+              "Low complexity runs on Mechanical, medium and high on Worker, very high on Heavyweight; a high task may step up to Heavyweight after review changes. Heavyweight and Frontier need permission at Low and Normal, Frontier at High. Unset counts as Worker.",
               entry.capability,
             )}
             <StopSlider
@@ -949,10 +955,10 @@ export function ProfileEditor({
               c={c}
               a11yLabel="Capability"
               stops={PROFILE_CAPABILITY_LEVELS}
-              unsetStop="medium"
+              unsetStop="worker"
               value={entry.capability ?? null}
-              labelFor={levelLabel}
-              stopLabel={(level) => `Capability ${level.replaceAll("_", " ")}`}
+              labelFor={(level) => BRACKET_LABELS[level]}
+              stopLabel={(level) => `Capability ${BRACKET_LABELS[level]}`}
               onChange={(level) =>
                 onChangePool({
                   capability: entry.capability === level ? null : level,

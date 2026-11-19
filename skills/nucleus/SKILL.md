@@ -487,36 +487,46 @@ such as `planner-2`.
 
 Every new task names `queue.complexity` (Spec 053). A submission, brief check or
 promotion without it is refused with a message naming the field. Complexity is
-how capable a model the work needs, not how long it is. Each run's demand is
-that complexity moved by its role (the coordinator needs two steps less by
-default; the operator sets these offsets in Settings) and by the usage level.
-Nucleus rotates among every profile rated at or above the demand, leaning toward
-cheaper ones, so rate honestly: `medium` for ordinary work, `high` for subtle or
-cross-cutting changes, `very_high` only when the strongest model is needed.
+how capable a model the work needs, not how long it is. Profiles carry one of
+four capability brackets: **Mechanical**, **Worker**, **Heavyweight** and
+**Frontier** (Tom, 2026-11-19). At `normal`, `very_low` and `low` work runs on
+Mechanical, `medium` and `high` on Worker, and `very_high` on Heavyweight. The
+difference between `medium` and `high` is the step-up: a `medium` task stays on
+Worker, while a `high` task may climb once to Heavyweight after a review asks for
+changes, and a `very_high` one to Frontier (sign-off below Extra high). Roles have no
+offsets: the reviewer's bracket follows the usage level and the coordinator runs
+on Mechanical when one is available. Nucleus rotates among the profiles at the
+run's bracket, leaning toward cheaper ones, so rate honestly: `medium` for
+ordinary work, `high` for subtle or cross-cutting changes that may need a
+Heavyweight second attempt, `very_high` only when the work needs Heavyweight from
+the start.
 
 ### Usage level
 
 The operator sets a host-wide usage level (Settings → Dispatch limits slider, or
 `queue.usage`): `low`, `normal` (default), `high`, `extra_high` or `maximum`,
 with an optional `until` when it returns to normal (Tom, 2026-11-17; `minimal` is
-gone and a stored value reads as `low`). Tiers are the capability scale profiles
-carry; the top two are `frontier` (Opus-class) and `very_high` (Sol
-extra-high-class). Where a task starts and what needs permission:
+gone and a stored value reads as `low`). The levels move a task by whole
+brackets; "the top two" are Heavyweight and Frontier. Where a task starts and
+what needs permission:
 
-| Level | Worker starts | Permission |
-| --- | --- | --- |
-| `low` | one tier below its complexity | high and very-high complexity work needs permission when it is submitted (a board decision holds the task); any run on the top two tiers needs permission, except the recorded climb back to the task's requested tier |
-| `normal` | high and very-high complexity one tier below; lower complexities at the requested tier | any run on the top two tiers needs permission, except the recorded climb back to the task's own requested tier |
-| `high` | at the requested tier | frontier needs permission |
-| `extra_high` | at the requested tier | none |
-| `maximum` | workers and reviewers on frontier or very-high models whatever the complexity | none |
+| Level | Worker starts | Reviewer | Permission |
+| --- | --- | --- | --- |
+| `low` | one bracket below the one it may climb to | one bracket below the worker | high and very-high complexity work needs permission when it is submitted (a board decision holds the task); Frontier needs permission, and Heavyweight unless the task starts or climbs there |
+| `normal` | Mechanical, Worker or Heavyweight by complexity (above) | one bracket below the worker | Frontier needs permission, and Heavyweight unless the task starts or climbs there |
+| `high` | `high` and `very_high` on Heavyweight; lower as at `normal` | the worker's bracket | Frontier needs permission |
+| `extra_high` | as at `high` | the worker's bracket | none |
+| `maximum` | workers and reviewers on Heavyweight or Frontier whatever the complexity | the worker's bracket | none |
 
-A request for a profile the level's permission rule holds (a top-tier profile
-above the task's requested tier at `low` or `normal`, or frontier at `high`) is a
-question to the operator, not a pin. An applied review that asks for changes lets
-the next worker run climb one tier toward the task's requested tier, on a fresh
-worker agent, and records that climb for the round. A profile above the task's
-requested tier is never automatic; an explicit request reaches it: Nucleus opens a decision on the board, and
+A Mechanical worker gets a Mechanical reviewer, and a `critical` task still
+prefers a reviewer at least as capable as the worker.
+
+A request for a profile the level's permission rule holds (Frontier, or a
+Heavyweight profile the task neither starts nor climbs on, at `low` or `normal`;
+Frontier at `high`) is a question to the operator, not a pin. An applied review
+that asks for changes lets the next worker run climb one bracket, on a fresh
+worker agent, and records that climb for the round. A profile above the bracket
+the task may climb to is never automatic for a worker; an explicit request reaches it: Nucleus opens a decision on the board, and
 the role runs on automatic selection until the operator approves, picks another
 profile or declines. Nothing waits for the answer, except the `low` submission
 gate described above. Prefer setting `complexity` over naming a profile; ask for
@@ -1372,7 +1382,7 @@ Own decisions within the brief and record material decisions and reasons in the 
 
 Work around blockers within the approved scope first. If a second opinion is needed, ask the retained reviewer. Ask the planner once in the current turn when a ruling is needed. If the answer is pending, collect it later with the identical question. After one reviewer consult, report a remaining blocker with what you tried. Nucleus escalates once per cause to the project planner and joins repeats to the open escalation.
 
-Use the ask and tell tools or feed the same JSON on stdin to `nucleus ask -` ({to, question, …}) and `nucleus tell -` ({to, text, role?}) with your current run binding. On BB, use the report command with the continuation variables from your prompt, adding `ask` or `message` to pass the same JSON. Address task roles or planners by role. Messages communicate information. Never resend a message or re-ask a question whose delivery is unknown.
+Use the ask and tell tools or feed the same JSON on stdin to `nucleus ask -` ({to, question, …}) and `nucleus tell -` ({to, text, role?}) with your current run binding. On BB, use the report command with the continuation variables from your prompt, adding `ask` or `message` to pass the same JSON. Address task roles or planners by role; a delivered message also carries its own reply route, so answer its sender with `nucleus tell -` and `{"to":{"reply":"<handle>"},"text":"…"}` (the message's `Reply:` line names the handle, and `ask` accepts the same `{reply}` for a planner or project agent). Messages communicate information. Never resend a message or re-ask a question whose delivery is unknown.
 
 Continue until you deliver or hit a concrete impediment. Push finished work before reporting blocked. For blocked or error include `cause` ({kind: 'external', name: '<short cause>'}, {kind: 'internal'} or {kind: 'unfinished'}) and `impediment` with the failed command or observed provider message. Classify admission, guard or budget refusals and proof or native-step failures as external. Unfinished work and context pressure call for continued work or a checkpoint where allowed. A blocked or error report without an impediment or new commit can continue the same thread at most twice before the planner ladder.
 
@@ -1380,7 +1390,7 @@ For a push or PR creation, observe the branch or PR before each retry and back o
 
 ## Reviewer rules
 
-Own the review judgment within the brief. Ask the planner once in the current turn when a ruling is needed. If the answer is pending, collect it later with the identical question. Use the ask and tell tools or feed the same JSON on stdin to `nucleus ask -` ({to, question, …}) and `nucleus tell -` ({to, text, role?}) with your current run binding. On BB, use the report command with the continuation variables from your prompt, adding `ask` or `message` to pass the same JSON. Address task roles or planners by role. Messages communicate information. Never resend a message or re-ask a question whose delivery is unknown.
+Own the review judgment within the brief. Ask the planner once in the current turn when a ruling is needed. If the answer is pending, collect it later with the identical question. Use the ask and tell tools or feed the same JSON on stdin to `nucleus ask -` ({to, question, …}) and `nucleus tell -` ({to, text, role?}) with your current run binding. On BB, use the report command with the continuation variables from your prompt, adding `ask` or `message` to pass the same JSON. Address task roles or planners by role; a delivered message also carries its own reply route, so answer its sender with `nucleus tell -` and `{"to":{"reply":"<handle>"},"text":"…"}` (the message's `Reply:` line names the handle, and `ask` accepts the same `{reply}` for a planner or project agent). Messages communicate information. Never resend a message or re-ask a question whose delivery is unknown.
 
 For blocked or error include `cause` ({kind: 'external', name: '<short cause>'}, {kind: 'internal'} or {kind: 'unfinished'}) and `impediment` with the failed command or observed provider message. Classify admission, guard or budget refusals and proof or native-step failures as external. Use a review checkpoint for unfinished reading within the checkpoint allowance.
 

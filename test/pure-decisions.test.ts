@@ -439,13 +439,13 @@ test("coordinatorActionPlan: it applies the reported verb’s own view, or names
           profileId: "sol",
         }),
         routeCost: "very_high",
-        routeCapability: "very_high",
+        routeCapability: "heavyweight",
         usage: "normal",
       }),
       expect: {
         ok: false,
         refusal:
-          "A coordinator cannot route to sol: its very high tier needs the operator's permission at the normal usage level. Use a profile the level covers, and report an environment block (a missing tool or stack) as cannot",
+          "A coordinator cannot route to sol: its heavyweight tier needs the operator's permission at the normal usage level. Use a profile the level covers, and report an environment block (a missing tool or stack) as cannot",
       },
     },
     {

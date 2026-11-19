@@ -275,11 +275,10 @@ test('Settings-only capacity writes apply and record the change, refuse every ot
     runtime.store.transaction(() => runtime.store.setMeta('pool', [{ profileId: 'fixture', group: 'subscription', weight: 2, enabled: true, scopes: ['general'], roles: ['worker'] }]));
     runtime.availabilityControl({ group: 'subscription', unavailable: true, reason: 'usage limit reached', retryAt: null });
     await runtime.configureUsage({ level: 'high', until: null });
-    await runtime.configureDemandOffsets({ worker: 1, reviewer: -1, coordinator: 0 });
     runtime.store.setMeta('operationLimit', 77);
     const preserved = () => {
       const meta: Record<string, unknown> = {};
-      for (const key of ['paused', 'pool', 'usageLevel', 'demandRoleOffsets', 'operationLimit', 'projectDispatchLimit', 'hostId']) meta[key] = runtime.store.getMeta(key);
+      for (const key of ['paused', 'pool', 'usageLevel', 'operationLimit', 'projectDispatchLimit', 'hostId']) meta[key] = runtime.store.getMeta(key);
       return { meta, availability: runtime.store.availability(), overrides: runtime.store.projectDispatchLimitOverrides(), paseo: runtime.store.configuredPaseoCallLimit(), operation: runtime.store.configuredOperationLimit(), revision: runtime.store.telemetryRevision() };
     };
     const before = preserved();

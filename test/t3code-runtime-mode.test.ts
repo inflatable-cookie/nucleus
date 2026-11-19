@@ -168,11 +168,11 @@ test('worker, reviewer and coordinator selection for a T3-bound task each find a
     store.setMeta('pool', pool);
     await engine.refresh();
     const hostProfiles = engine.profilesFor('t3code:env');
-    const counts = store.counts(), recent = store.recentCounts(), offsets = store.demandRoleOffsets();
+    const counts = store.counts(), recent = store.recentCounts();
     // A task with one recorded author, so reviewer independence has evidence.
     const task = { ...taskOf({ complexity: 'medium' }), workerModel: 'other-author', workerModels: ['other-author'] };
     // The worker selection dispatch makes: the T3 catalog's own snapshot.
-    const worker = chooseProfile(task, hostProfiles, pool, counts, new Set(), 'worker', recent, 'normal', offsets, true);
+    const worker = chooseProfile(task, hostProfiles, pool, counts, new Set(), 'worker', recent, 'normal', true);
     assert.ok(worker, 'a T3-bound task gets a worker');
     // Reviewer and coordinator go through the same resolution the recovery and
     // review paths use, inside the task's host context.
