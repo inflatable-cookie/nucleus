@@ -8,6 +8,7 @@ import { DurableFenceRefusal, matchingInactiveParticipant } from "../intake/run-
 import type { AgentObservation } from "../host/adapter";
 import { digest, now } from "../store/store";
 import { occupiesSlot } from "../dispatch/capacity";
+import type { ExhaustedReviewerReplacement } from "./reviewer-report";
 
 /**
  * The owner verbs that keep or replace a task's reviewer: continuing the retained
@@ -106,7 +107,8 @@ export class ReviewerControls {
    * return the task to `awaiting_review` so the ordinary selection launches the
    * next reviewer at the same exact head.
    */
-  async restartReview(taskId: string, reason: string, instruction: string, fresh = true): Promise<Task> {
+  async restartReview(taskId: string, reason: string, instruction: string, fresh = true, replacement?: ExhaustedReviewerReplacement): Promise<Task> {
+    replacement?.recheck();
     const currentRunId = this.store.task(taskId).resolution.currentRunId;
     const uncertainReviewer = currentRunId ? this.store.run(currentRunId) : null;
     if (fresh && uncertainReviewer?.role === 'reviewer' && uncertainReviewer.status === 'uncertain' && uncertainReviewer.agentId)
@@ -190,6 +192,7 @@ export class ReviewerControls {
           }
         }
         this.engine.assertUnchangedBeforeCancel(taskId, before.version, runsBefore);
+        replacement?.recheck();
       };
       let observedClosed = false, threadArchived = false;
       await observe();

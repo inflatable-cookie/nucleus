@@ -29,7 +29,8 @@ import type { Adapter } from "../host/adapter";
 import type { Resolution } from "../resolution";
 import {
   REVIEW_AUTHORIZATION_REQUIRED,
-  REVIEW_BUDGET_EXHAUSTED,
+  REVIEW_READER_EXHAUSTED,
+  reviewerCannotFinish,
   reviewCheckpointPathFor,
   writeReviewCheckpoint,
 } from "../review/review-continuation";
@@ -877,13 +878,15 @@ export class CallbackIntake {
     const { task, run } = gate();
     const limit = this.engine.reviewContinuationLimit();
     const records = run.reviewCheckpoints ?? [];
-    if (records.length >= limit)
+    if (input.checkpoint?.exhausted || reviewerCannotFinish(run) || records.length >= limit)
       return this.engine.rejectReviewProgress(
         task,
         run,
         input,
         limit,
-        "review exceeded continuation limit",
+        input.checkpoint?.exhausted || reviewerCannotFinish(run)
+          ? "reviewer reported it cannot finish the remaining reading"
+          : "review exceeded continuation limit",
       );
     const response = this.store.transaction(() => {
       const current = gate();
@@ -1024,13 +1027,11 @@ export class CallbackIntake {
         digest(JSON.stringify(input)),
         JSON.stringify(receipt),
       );
+      // A replaced reader keeps its evidence without moving the current task.
+      if (current.resolution.currentRunId === run.id)
+        this.store.update(task.id, { reason: REVIEW_READER_EXHAUSTED });
       return receipt;
     });
-    // Replaced is not released (planner ruling, 2026-11-09): an exhausted claim
-    // holder's evidence stays on its run, and only a current run's exhaustion
-    // moves the task's reason — the replacement owns the task's continuation.
-    if (task.resolution.currentRunId === run.id)
-      this.store.update(task.id, { reason: REVIEW_BUDGET_EXHAUSTED });
     void this.engine.wake().catch(() => {
       /* a failed drain is recorded as engineError */
     });

@@ -10,13 +10,12 @@ import { z } from "zod";
 export const REVIEW_CONTINUATION_LIMIT = 6;
 
 /**
- * The checkpoint allowance a reviewer reads as used of allowed. At the last
- * allowed checkpoint the turn must end with a verdict, because Queue refuses
- * another review_in_progress report.
+ * The checkpoint allowance a reviewer reads as used of allowed. At the final
+ * continuation, a further progress report records unread items for the owner.
  */
 export function reviewAllowanceText(ordinal: number, limit: number): string {
   return ordinal >= limit
-    ? `${ordinal} of ${limit}: this turn must end with a verdict`
+    ? `${ordinal} of ${limit}: final continuation`
     : `${ordinal} of ${limit} checkpoints used`;
 }
 
@@ -28,6 +27,7 @@ export const reviewProgressSchema = z.object({
   covered: z.array(z.string().trim().min(1).max(600)).max(MAX_REVIEW_CHECKPOINT_ITEMS).default([]),
   remaining: z.array(z.string().trim().min(1).max(600)).min(1).max(MAX_REVIEW_CHECKPOINT_ITEMS),
   notes: z.string().trim().max(4000).optional(),
+  exhausted: z.literal(true).optional(),
 }).strict().refine(value => JSON.stringify(value).length <= MAX_REVIEW_CHECKPOINT_BYTES, `A review checkpoint must be at most ${MAX_REVIEW_CHECKPOINT_BYTES} characters`);
 
 export type ReviewProgress = z.infer<typeof reviewProgressSchema>;
@@ -94,8 +94,8 @@ export const reviewCheckpointRecordSchema = z.object({
 export type ReviewCheckpointRecord = z.infer<typeof reviewCheckpointRecordSchema>;
 
 /**
- * A review_in_progress report Queue refused because the checkpoint allowance was
- * spent. The reading is kept as evidence on the run for the owner and the next
+ * A review_in_progress report Queue retained when the allowance was spent or
+ * the reviewer reported it could not finish. The owner and the next
  * reader; it is never an accepted checkpoint, so it grants no continuation.
  */
 export const rejectedReviewReadingSchema = z.object({

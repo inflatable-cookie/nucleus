@@ -18,7 +18,7 @@ export const LIVE_STORE_COUNTS_REVIEWER_NOTE =
  * Mandatory reading finishes before any verdict. A review checkpoint is a stop,
  * never a verdict, and a closed review run cannot be supplemented.
  */
-export const REVIEWER_READING_RULE = 'Read every input the brief names personally before you judge it. Never report a verdict, or pass, while any required input is unread: a closed review run cannot be supplemented. Set reviewResponsibility=author only for changes_required that names a concrete author defect, and environment only for blocked/error that names an external impediment. A ready_to_merge report omits reviewResponsibility. Unfinished reading is yours: report review_in_progress with reviewResponsibility=reviewer, a covered/remaining/notes checkpoint and no verdicts; never return it to the author.';
+export const REVIEWER_READING_RULE = 'Read every input the brief names personally before you judge it. Never report a verdict, or pass, while any required input is unread: a closed review run cannot be supplemented. Set reviewResponsibility=author only for changes_required that names a concrete author defect, and environment only for blocked/error that names an external impediment. A ready_to_merge report omits reviewResponsibility. Unfinished reading is yours: report review_in_progress with reviewResponsibility=reviewer, a covered/remaining/notes checkpoint and no verdicts; never return it to the author. If this reader cannot finish, set checkpoint.exhausted to true and list the unread items so an owner can authorize a fresh review.';
 
 export const COORDINATOR_NO_ESCALATE_FOR_UNRUN_TESTS = "Do not escalate a recovery solely because tests or checks the repository validation rule says not to run were not run.";
 

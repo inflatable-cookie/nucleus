@@ -9,7 +9,7 @@ import { OWNER_STOP_HOLD_PREFIX } from "../../merge/merge-hold";
 import { blockingTaskOperations } from "../../recovery/recovery-effects";
 import type { Store } from "../../store/store";
 import { stoppedDeliveryResume } from "./delivery";
-import { REVIEW_AGENT_CLOSED, REVIEW_BUDGET_EXHAUSTED } from "./reader";
+import { REVIEW_AGENT_CLOSED, REVIEW_BUDGET_EXHAUSTED, REVIEW_READER_EXHAUSTED, reviewerCannotFinish } from "./reader";
 import { reviewResultFencesRun } from "./result-fence";
 
 /**
@@ -40,7 +40,7 @@ export function reviewContinuationLocalRefusal(store: Store, task: Task, run: Ru
   // Both established causes of an impossible retained-agent continuation use the
   // same existing recovery: a fresh reviewer at the same exact head. Refuse the
   // same-run continuation itself, whatever the live observation would say.
-  if (run.reviewBudgetExhaustedAt) return refuse(REVIEW_BUDGET_EXHAUSTED);
+  if (run.reviewBudgetExhaustedAt) return refuse(reviewerCannotFinish(run) ? REVIEW_READER_EXHAUSTED : REVIEW_BUDGET_EXHAUSTED);
   if (run.retainedAgentClosedAt) return refuse(REVIEW_AGENT_CLOSED);
   if (reviewResultFencesRun(store, task, run)) return refuse('A reviewer result already exists; checkpoints cannot authorize another review turn');
   // A reader is bound to its own recorded run workspace, which the pre-send

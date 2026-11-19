@@ -147,6 +147,7 @@ export {
 import { TaskControlDispatcher } from "./verbs/dispatcher";
 
 import { ReviewerControls } from "./verbs/reviewer";
+import type { ExhaustedReviewerReplacement } from "./verbs/reviewer-report";
 import { TaskCompletion } from "./verbs/complete";
 import { SettingsControls } from "./verbs/settings";
 import { ForceVerbs } from "./verbs/force";
@@ -2446,12 +2447,14 @@ export class Engine {
     reason: string,
     instruction: string,
     fresh = true,
+    replacement?: ExhaustedReviewerReplacement,
   ): Promise<Task> {
     return this.reviewerControls.restartReview(
       taskId,
       reason,
       instruction,
       fresh,
+      replacement,
     );
   }
 

@@ -45,7 +45,7 @@ import type { OwnerVerbFacts } from "./owner-facts";
 import { verbInput, restartRoles } from "./owner-shared";
 import type { RestartRole, OwnerVerb, RestartShapeName } from "./owner-shared";
 import { unreportedExecutorRun } from "../qa/proof-admission";
-import { reviewerReportPlan } from "./reviewer-report";
+import { exhaustedReviewer, exhaustedReviewerRefusal, reviewerReportPlan } from "./reviewer-report";
 import {
   workerCreationRefusal,
   workerCreationRestartWait,
@@ -581,7 +581,7 @@ function rejectedReadingNote(run: Run): string {
   const reading = run.reviewRejectedReadings?.at(-1);
   if (!reading) return "";
   const { covered, remaining } = reading.checkpoint;
-  return ` The last reading refused past the allowance (${covered.length} covered, ${remaining.length} remaining items, at ${reading.at}) is kept on run ${run.id} as evidence, not as a checkpoint, and grants no continuation.`;
+  return ` The last unfinished reading (${covered.length} covered, ${remaining.length} remaining items, at ${reading.at}) is kept on run ${run.id} as evidence, not as a checkpoint, and grants no continuation.`;
 }
 
 export function retainedContinuationPlan(
@@ -747,6 +747,18 @@ export const restart: OwnerVerb = {
     if (controlRefusal) return { available: false, refusal: controlRefusal };
     const pending = workerCreationRestartWait(facts.store, task);
     if (pending) return { available: false, refusal: pending };
+    const exhausted = exhaustedReviewer(task, runs);
+    if (exhausted) {
+      const refusal = exhaustedReviewerRefusal(facts.store, task, exhausted);
+      return refusal
+        ? { available: false, refusal }
+        : {
+            available: true,
+            fill: ["reason"],
+            args: { taskId: task.id, version: task.version, role: "reviewer", fresh: true },
+            note: `Reviewer ${exhausted.id} cannot finish the remaining reading. Nucleus verifies the exact PR head and observes the reviewer idle in its workspace before replacing it.${rejectedReadingNote(exhausted)}`,
+          };
+    }
     const role = deriveRestartRole(task, runs);
     const shape = restartShape(task, runs, role, facts.events);
     const report =

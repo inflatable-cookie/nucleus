@@ -8,7 +8,7 @@ import { fixture } from './support/review-continuation-fixture';
 // reading refused past that allowance is kept as evidence, never as a checkpoint.
 test('the checkpoint allowance reads used of allowed', () => {
   assert.equal(reviewAllowanceText(2, 6), '2 of 6 checkpoints used');
-  assert.equal(reviewAllowanceText(6, 6), '6 of 6: this turn must end with a verdict');
+  assert.equal(reviewAllowanceText(6, 6), '6 of 6: final continuation');
 });
 
 test('the final-allowance continuation names the count, and a refused over-budget reading is kept as evidence', async () => {
@@ -18,7 +18,7 @@ test('the final-allowance continuation names the count, and a refused over-budge
     await f.engine.performTaskControl({ taskId: f.submitted.id, version: f.current().version, action: 'restart', role: 'reviewer', reason: 'Continue the checkpointed review' } as never);
     assert.equal(f.reviewerDeliveries.length, 1, 'the first checkpoint was continued once');
     const continuation = f.reviewerDeliveries[0]!.text;
-    assert.match(continuation, /Checkpoint allowance: 1 of 1: this turn must end with a verdict/);
+    assert.match(continuation, /Checkpoint allowance: 1 of 1: final continuation/);
     assert.match(continuation, /a further review_in_progress checkpoint is refused/);
     assert.doesNotMatch(continuation, /A new review_in_progress checkpoint ends this turn/);
 

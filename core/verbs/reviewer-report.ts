@@ -1,5 +1,13 @@
 import type { Run, Task } from "../../shared/contracts";
 import type { Engine } from "../engine";
+import type { Store } from "../store/store";
+import {
+  DurableFenceRefusal,
+  matchingInactiveParticipant,
+  runFenceRefusal,
+  runSettlementFence,
+} from "../intake/run-settlement";
+import { REVIEW_READER_EXHAUSTED, reviewerCannotFinish } from "../review/review-continuation";
 import {
   hostFailureRefusalDetail,
   ProvenPreSendRefusalError,
@@ -27,13 +35,58 @@ export async function verifyReviewerPr(
   return pr;
 }
 
-/** A fresh reader may replace only a proven gone or non-independent binding. */
+export type ExhaustedReviewerReplacement = { run: Run; recheck: () => void };
+
+/** Exhaustion is evidence about one current reader and exact source. */
+export function exhaustedReviewer(task: Task, runs: Run[]): Run | null {
+  const run = unreportedReviewer(task, runs);
+  return run && task.prUrl && task.prHead && task.hostId &&
+    run.taskId === task.id && (!run.hostId || run.hostId === task.hostId) &&
+    run.workspaceId === task.workspaceId && reviewerCannotFinish(run)
+    ? run
+    : null;
+}
+
+export function exhaustedReviewerRefusal(store: Store, task: Task, run: Run): string | null {
+  const fence = runSettlementFence({ store, task }, run);
+  return fence ? runFenceRefusal(run, fence) : unresolvedReviewerDelivery(run, store.eventsAll(task.id));
+}
+
+/** A fresh reader may replace a proven gone, non-independent or exhausted binding. */
 export async function requireReviewerReplacement(
   engine: Engine,
   task: Task,
   version: number,
-): Promise<void> {
+  allowExhausted = false,
+): Promise<ExhaustedReviewerReplacement | null> {
   const runs = engine.store.runs(task.id);
+  const exhausted = allowExhausted ? exhaustedReviewer(task, runs) : null;
+  const recheck = () => {
+    engine.requireOwnerControlCurrent(
+      engine.store.task(task.id),
+      version,
+      "Task changed during reviewer observation; refresh before retrying",
+    );
+    if (!runsUnchangedSince(runs, engine.store.runs(task.id)))
+      throw Error("Task or run changed; refresh before retrying");
+    if (exhausted) {
+      const refusal = exhaustedReviewerRefusal(engine.store, task, exhausted);
+      if (refusal) throw new DurableFenceRefusal(refusal);
+    }
+  };
+  if (exhausted) {
+    recheck();
+    const pr = await verifyReviewerPr(engine, task, exhausted, taskPrNumber(task));
+    if (pr.url !== task.prUrl || pr.head !== exhausted.head)
+      throw Error("The PR identity or head changed; no reviewer was replaced");
+    const state = await engine.onTaskHost(task, () =>
+      engine.host.observe(exhausted.agentId!),
+    );
+    recheck();
+    if (!matchingInactiveParticipant(exhausted, state))
+      throw Error("The exhausted reviewer is not positively idle in its workspace; no reviewer was replaced");
+    return { run: exhausted, recheck };
+  }
   const current = runs.find(
     (run) =>
       run.id === task.resolution.currentRunId &&
@@ -41,7 +94,7 @@ export async function requireReviewerReplacement(
       !run.released,
   );
   const agentId = task.resolution.reviewerAgentId ?? current?.agentId;
-  if (!agentId || engine.resolution.authorAgentIds(task).has(agentId)) return;
+  if (!agentId || engine.resolution.authorAgentIds(task).has(agentId)) return null;
   const prior = runs.findLast(
     (run) => run.role === "reviewer" && run.agentId === agentId,
   );
@@ -54,7 +107,7 @@ export async function requireReviewerReplacement(
         error.message ===
           "Original reviewer model is not independent of actual task authors"
       )
-        return;
+        return null;
       // Missing or unreadable identity is not proof of a model collision.
     }
   }
@@ -72,13 +125,7 @@ export async function requireReviewerReplacement(
       /* An unreadable archive is not proof of absence. */
     }
   }
-  engine.requireOwnerControlCurrent(
-    engine.store.task(task.id),
-    version,
-    "Task changed during reviewer observation; refresh before retrying",
-  );
-  if (!runsUnchangedSince(runs, engine.store.runs(task.id)))
-    throw Error("Task or run changed; refresh before retrying");
+  recheck();
   if (
     state.id !== agentId ||
     state.workspaceId !== (prior?.workspaceId ?? task.workspaceId) ||
@@ -90,6 +137,7 @@ export async function requireReviewerReplacement(
     throw Error(
       "The retained reviewer is still live or its absence is unproven; continue that reviewer instead",
     );
+  return null;
 }
 
 /** A current, bound reviewer whose report has not reached Nucleus. */
@@ -126,10 +174,20 @@ export function reviewerReportPlan(
   return refusal ? { refusal } : { run };
 }
 
-export function reviewerReportRequestRefusal(
-  run: Run,
-  events: readonly { kind: string; detail: string }[],
-): string | null {
+type ReviewerReportEvents = readonly { kind: string; detail: string }[];
+
+function lastReviewerReportRequest(run: Run, events: ReviewerReportEvents) {
+  return events.findLast(
+    (event) =>
+      [
+        "reviewer_report_request_sent",
+        "reviewer_report_request_intent",
+        "reviewer_report_request_refused",
+      ].includes(event.kind) && event.detail.startsWith(`${run.id}:`),
+  );
+}
+
+function unresolvedReviewerDelivery(run: Run, events: ReviewerReportEvents): string | null {
   if (
     run.reviewDeliveries?.some(
       (delivery) =>
@@ -138,19 +196,17 @@ export function reviewerReportRequestRefusal(
     (run.reviewContinuation && run.reviewContinuation.status !== "delivered")
   )
     return "The retained reviewer has an unresolved checkpoint delivery; wait for observation before requesting its report";
-  const prior = events.findLast(
-    (event) =>
-      [
-        "reviewer_report_request_sent",
-        "reviewer_report_request_intent",
-        "reviewer_report_request_refused",
-      ].includes(event.kind) && event.detail.startsWith(`${run.id}:`),
-  );
-  if (prior?.kind === "reviewer_report_request_sent")
-    return "The retained reviewer was already asked to resend its report; wait for that report";
-  if (prior?.kind === "reviewer_report_request_intent")
-    return "The retained reviewer report request has unknown delivery; inspect it before retrying";
-  return null;
+  return lastReviewerReportRequest(run, events)?.kind === "reviewer_report_request_intent"
+    ? "The retained reviewer report request has unknown delivery; inspect it before retrying"
+    : null;
+}
+
+export function reviewerReportRequestRefusal(run: Run, events: ReviewerReportEvents): string | null {
+  if (reviewerCannotFinish(run)) return REVIEW_READER_EXHAUSTED;
+  return unresolvedReviewerDelivery(run, events) ??
+    (lastReviewerReportRequest(run, events)?.kind === "reviewer_report_request_sent"
+      ? "The retained reviewer was already asked to resend its report; wait for that report"
+      : null);
 }
 
 /** Ask the retained reviewer to resend its result on the original credential, once. */

@@ -31,6 +31,8 @@ import { blockingRecoveryEffectsRefusal } from "../recovery/recovery-effects";
 import {
   reviewInProgress,
   reviewerIdentityAtHead,
+  reviewerCannotFinish,
+  REVIEW_READER_EXHAUSTED,
   reviewContinuationState,
   reviewResultFencesRun,
   retainedReaderStateDecision,
@@ -294,6 +296,8 @@ function moveViews(facts: OwnerVerbFacts): TaskNextVerb[] {
     );
     if (identity.kind === "refused")
       return { available: false, refusal: identity.refusal };
+    if (identity.kind === "valid" && reviewerCannotFinish(identity.run))
+      return { available: false, refusal: REVIEW_READER_EXHAUSTED };
     const reader =
       identity.kind === "valid" && reviewInProgress(identity.run)
         ? identity.run

@@ -176,6 +176,7 @@ function fixture(
       id: runId,
       taskId: submitted.id,
       role: "reviewer",
+      hostId: submitted.hostId,
       generation: 1,
       head: fixtureHead,
       base: fixtureBase,
@@ -490,6 +491,7 @@ function fixture(
     reviewerDeliveries,
     reviewerTimeline,
     stops,
+    archived,
     createdRuns,
     states,
     fixtureHead,
@@ -766,47 +768,161 @@ test("move to=review refuses an unsettled delivery and a reader that cannot cont
   }
 });
 
-test("a spent checkpoint allowance offers the retained reviewer once and keeps both fresh controls fenced", async () => {
+function unableReport(f: ReturnType<typeof fixture>, exhausted = false) {
+  const input = {
+    eventId: randomUUID(),
+    taskId: f.submitted.id,
+    runId: f.runId,
+    status: "review_in_progress" as const,
+    head: f.fixtureHead,
+    summary: "Unable to issue a verdict with part of the delta unread",
+    reviewResponsibility: "reviewer" as const,
+    checkpoint: {
+      covered: ["First item", "Second item"],
+      remaining: ["Third item"],
+      ...(exhausted ? { exhausted: true as const } : {}),
+    },
+  };
+  return {
+    input,
+    send: (token = "token") =>
+      whileReaderInTurn(f.engine, "review-agent", () =>
+        f.engine.complete(input, token),
+      ),
+  };
+}
+
+for (const action of ["restart", "route"] as const) {
+  test(`${action} replaces an exhausted reviewer on the same head once`, async () => {
+    const f = fixture();
+    try {
+      // Route covers an explicit report before the allowance runs out. Restart
+      // covers the existing report shape written after the final continuation.
+      if (action === "restart") {
+        f.store.setMeta("reviewContinuationLimit", 1);
+        f.observe({ status: "running", active: true });
+        await f.checkpoint("First item");
+        f.observe({ status: "idle", active: false });
+        await restartReviewer(f);
+        assert.equal(f.run().reviewDeliveries?.at(-1)?.status, "delivered");
+        assert.equal(f.view("restart").args?.fresh, undefined);
+      }
+      f.observe({ status: "running", active: true });
+      const report = unableReport(f, action === "route");
+      await assert.rejects(report.send("wrong-token"), /Unauthorized/);
+      assert.equal(f.run().reviewRejectedReadings, undefined);
+      const receipt = await report.send();
+      assert.deepEqual(await report.send(), receipt);
+      assert.equal(f.events("review_checkpoint_rejected").length, 1);
+      assert.deepEqual(f.run().reviewRejectedReadings?.[0]?.checkpoint.remaining, ["Third item"]);
+      assert.deepEqual(f.run().reviewRejectedReadings?.[0]?.head, f.fixtureHead);
+      assert.ok(f.run().reviewBudgetExhaustedAt);
+      assert.equal(f.run().completion, null);
+      assert.equal(f.run().reviewCheckpoints?.length ?? 0, action === "restart" ? 1 : 0);
+      await f.engine.wake();
+      await f.engine.quiesce();
+      assert.equal(f.current().resolution.stop?.reason, "operator_needed");
+      const view = f.view("restart");
+      assert.equal(view.available, true, JSON.stringify(view));
+      assert.equal(view.args?.fresh, true);
+      assert.match(view.note ?? "", /cannot finish/);
+      assert.match(f.moveReviewView().refusal ?? "", /restart role=reviewer fresh/);
+      await assert.rejects(restartReviewer(f), /cannot finish/);
+      assert.equal(f.events("reviewer_report_request_intent").length, 0);
+
+      const direction = action === "restart"
+        ? { action, ...view.args, reason: "Replace the exhausted reader" }
+        : { action, role: "reviewer", profileId: reviewer.id, now: true, version: f.current().version };
+      await assert.rejects(f.control(direction), /not positively idle/);
+      f.observe({ status: "idle", active: false, permissions: true });
+      await assert.rejects(f.control(direction), /not positively idle/);
+      f.observe({ permissions: false });
+      const verify = f.adapter.verifyPr.bind(f.adapter);
+      f.adapter.verifyPr = async (...args) => ({ ...await verify(...args), head: otherHead });
+      await assert.rejects(f.control(direction), /PR identity or head changed/);
+      f.adapter.verifyPr = verify;
+      assert.equal(f.run().released, false);
+      assert.equal(f.archived.size, 0);
+      assert.deepEqual(f.stops, []);
+      assert.deepEqual(f.createdRuns, []);
+
+      const reading = f.run().reviewRejectedReadings;
+      if (action === "route") Reflect.deleteProperty(f.adapter, "stopAgentTurn");
+      await f.control(direction);
+      await f.engine.wake();
+      await f.engine.quiesce();
+      assert.equal(f.run().released, true);
+      assert.equal(f.run().status, "superseded");
+      assert.deepEqual(f.run().reviewRejectedReadings, reading);
+      assert.equal(f.run().completion, null);
+      assert.deepEqual([...f.archived], ["review-agent"]);
+      assert.equal(f.events("thread_archive_intent").length, 1);
+      assert.equal(f.createdRuns.length, 1);
+      const fresh = f.createdRuns[0]!;
+      assert.notEqual(fresh.id, f.runId);
+      assert.equal(fresh.head, f.fixtureHead);
+      assert.equal(f.current().resolution.currentRunId, fresh.id);
+      assert.equal(f.current().resolution.reviewerAgentId, `agent-${fresh.id}`);
+      assert.equal(f.current().resolution.review, null);
+      assert.equal(f.next().outcome.reader?.runId, fresh.id);
+      assert.equal(f.view("restart").args?.fresh, undefined);
+      await assert.rejects(f.control(direction), /changed/i);
+      await f.engine.wake();
+      await f.engine.quiesce();
+      assert.equal(f.events("thread_archive_intent").length, 1);
+      assert.equal(f.createdRuns.length, 1);
+      assert.equal(f.events("reviewer_report_request_intent").length, 0);
+    } finally {
+      await f.close();
+    }
+  });
+}
+
+test("exhaustion leaves unknown checkpoint delivery fenced", async () => {
   const f = fixture();
   try {
     f.observe({ status: "running", active: true });
-    await f.checkpoint("First item", "First of three");
-    await f.checkpoint("Second item", "Second of three");
-    f.store.putRun({
-      ...f.run(),
-      reviewBudgetExhaustedAt: new Date().toISOString(),
-    });
-    assert.equal(f.view("restart").available, true);
-    assert.equal(f.view("restart").args?.fresh, undefined);
-    assert.match(f.view("restart").note ?? "", /allowance is spent/);
-    await assert.rejects(
-      f.control({ action: "restart", role: "reviewer", fresh: true }),
-      /retained reviewer is still live/,
-    );
-    await assert.rejects(
-      f.control({
-        action: "route",
-        role: "reviewer",
-        profileId: reviewer.id,
-        now: true,
-      }),
-      /retained reviewer is still live/,
-    );
-    assert.equal(f.stops.length, 0);
-    assert.equal(f.createdRuns.length, 0);
-    assert.equal(f.run().released, false);
+    await f.checkpoint("First item");
     f.observe({ status: "idle", active: false });
-    await f.control({
-      ...f.view("restart").args,
-      reason: "Recover the retained report",
-    });
-    assert.equal(f.events("reviewer_report_request_intent").length, 1);
+    f.adapter.continueReviewer = async () => { throw Error("Transport lost"); };
+    await assert.rejects(restartReviewer(f), /uncertain send outcome/);
+    const delivery = f.run().reviewDeliveries?.at(-1);
+    assert.equal(delivery?.status, "uncertain");
+    await unableReport(f, true).send();
+    await f.engine.wake();
+    await f.engine.quiesce();
+    assert.equal(f.view("restart").available, false);
+    assert.match(f.view("restart").refusal ?? "", /delivery.*uncertain/);
+    await assert.rejects(f.control({ action: "restart", role: "reviewer", fresh: true }), /delivery.*uncertain/);
+    await assert.rejects(f.control({ action: "route", role: "reviewer", profileId: reviewer.id, now: true }), /delivery.*uncertain/);
+    assert.deepEqual(f.run().reviewDeliveries?.at(-1), delivery);
+    assert.equal(f.run().released, false);
+    assert.deepEqual(f.createdRuns, []);
+    assert.equal(f.archived.size, 0);
+  } finally {
+    await f.close();
+  }
+});
+
+test("a legacy budget marker without unread evidence preserves report recovery", async () => {
+  const f = fixture();
+  try {
+    f.observe({ status: "running", active: true });
+    await f.checkpoint("First item");
+    f.store.putRun({ ...f.run(), reviewBudgetExhaustedAt: new Date().toISOString() });
+    f.observe({ status: "idle", active: false });
+    const view = f.view("restart");
+    assert.equal(view.available, true);
+    assert.equal(view.args?.fresh, undefined);
+    await assert.rejects(f.control({ action: "restart", role: "reviewer", fresh: true }), /retained reviewer is still live/);
+    await assert.rejects(f.control({ action: "route", role: "reviewer", profileId: reviewer.id, now: true }), /retained reviewer is still live/);
+    await f.control({ ...view.args, reason: "Recover the retained report" });
     assert.equal(f.events("reviewer_report_request_sent").length, 1);
     assert.equal(f.current().resolution.currentRunId, f.runId);
-    assert.equal(f.view("restart").available, false);
-    assert.match(f.view("restart").refusal ?? "", /already asked/);
     await assert.rejects(restartReviewer(f), /already asked/);
     assert.equal(f.events("reviewer_report_request_sent").length, 1);
+    assert.deepEqual(f.createdRuns, []);
+    assert.equal(f.archived.size, 0);
   } finally {
     await f.close();
   }

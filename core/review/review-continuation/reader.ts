@@ -27,6 +27,13 @@ export function reviewContinuationLimit(store: Pick<Store, 'getMeta'>): number {
 }
 
 export const REVIEW_BUDGET_EXHAUSTED = 'The reviewer spent its checkpoint budget and stopped; restart role=reviewer or move to=review observes the retained reviewer and asks it to finish or redeliver its report at the same head.';
+export const REVIEW_READER_EXHAUSTED = 'The retained reviewer cannot finish the remaining reading; restart role=reviewer fresh replaces it once it is observed idle at the same exact head.';
+
+export function reviewerCannotFinish(run: Run): boolean {
+  return Boolean(run.role === 'reviewer' && run.reviewBudgetExhaustedAt &&
+    run.reviewRejectedReadings?.some(reading => reading.head === run.head && reading.checkpoint.remaining.length > 0));
+}
+
 export const REVIEW_AUTHORIZATION_REQUIRED = 'The reviewer saved a checkpoint; Queue continues the same reviewer from it once its turn ends. Checkpoints are preserved, not approval.';
 /**
  * The reviewer's own agent was positively observed closed with its checkpoint
@@ -54,6 +61,7 @@ export function reviewAuthorizationRequired(task: Task, store: Pick<Store, 'run'
   // A result ends checkpoint reading, including tasks carrying an older
   // publication-continuation cause. Ordinary intake owns release and application.
   if (run?.role === 'reviewer' && run.completion) return false;
+  if (run && !run.released && reviewerCannotFinish(run)) return true;
   if (task.resolution.pendingRevisionCause === 'continuation' && !reviewInProgress(run)) return false;
   return reviewInProgress(run) || Boolean(run && run.role === 'revision' && run.revisionCause === 'continuation' && !run.completion && !run.released);
 }
@@ -69,6 +77,7 @@ export function reviewAuthorizationRequired(task: Task, store: Pick<Store, 'run'
  */
 export function reviewContinuationState(task: Task, store: Pick<Store, 'run'>): 'awaiting' | 'reserved' | 'continuing' | 'uncertain' | 'exhausted' | 'closed' | null {
   const run = task.resolution.currentRunId ? store.run(task.resolution.currentRunId) : null;
+  if (run && !run.released && !run.completion && reviewerCannotFinish(run)) return 'exhausted';
   if (!reviewInProgress(run) || !run) return null;
   // A checkpoint rejected past the budget leaves the reviewer stopped, whatever its last delivery said.
   if (run.reviewBudgetExhaustedAt) return 'exhausted';
@@ -109,7 +118,11 @@ export function reviewContinuationWait(task: Task, store: Pick<Store, 'run' | 'e
   if (state === 'reserved') return { reason: reviewDeliveryReason(delivery!.deliveryId, 'reserved'), stop: 'lifecycle' };
   if (state === 'uncertain') return { reason: reviewDeliveryReason(delivery!.deliveryId, 'uncertain'), stop: 'operator_needed' };
   if (state === 'awaiting') return { reason: REVIEW_AUTHORIZATION_REQUIRED, stop: 'lifecycle' };
-  if (state === 'exhausted') return { reason: REVIEW_BUDGET_EXHAUSTED, stop: 'operator_needed' };
+  if (state === 'exhausted') {
+    const unsettled = run?.reviewDeliveries?.find(item => item.status === 'reserved' || item.status === 'uncertain');
+    if (unsettled) return { reason: reviewDeliveryReason(unsettled.deliveryId, unsettled.status as 'reserved' | 'uncertain'), stop: 'operator_needed' };
+    return { reason: run && reviewerCannotFinish(run) ? REVIEW_READER_EXHAUSTED : REVIEW_BUDGET_EXHAUSTED, stop: 'operator_needed' };
+  }
   if (state === 'closed') return { reason: `${REVIEW_AGENT_CLOSED} (run ${run!.id}, agent ${run!.agentId}, checkpoint ${run!.reviewCheckpoints?.at(-1)?.ordinal ?? 'none'} at ${run!.head})`, stop: 'operator_needed' };
   // No checkpoint continuation stands on the named run (nucleus#1106): a
   // superseded or released named run cannot be continued, so this states the

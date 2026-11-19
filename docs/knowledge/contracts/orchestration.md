@@ -2183,8 +2183,8 @@ reports, grants or spends that history.
   never a checkpoint, never a continuation.
 - The continuation prompt and `next` show the allowance used of allowed
   (`2 of 6 checkpoints used`). The continuation for the last allowed checkpoint
-  says `6 of 6: this turn must end with a verdict`, because Nucleus refuses a
-  further `review_in_progress` report there.
+  says `6 of 6: final continuation`. A further progress report there
+  records unread items for the owner.
 - An open incident fences a retained continuation only while it binds the
   current work; an incident recorded against a released run cannot hold the
   reader.
@@ -2206,10 +2206,10 @@ reports, grants or spends that history.
   the canonical project, or a project rooted at the checkout). Cleanliness is
   proved, then the task/run/workspace binding and the checkout's Git source
   are re-proved as the last awaited proof before send.
-- A spent checkpoint allowance ends automatic checkpoint continuation. The
-  owner can ask the same idle reviewer to finish or redeliver its report after
-  the PR head and thread are observed. A positively closed reviewer may be
-  replaced; a missing report alone never authorizes replacement.
+- An authenticated report that lists unread items after the final allowance, or
+  marks them with `checkpoint.exhausted: true`, ends retained continuation.
+  Nucleus keeps the evidence on the original run. An owner can authorize a new
+  independent reader under [the fresh restart rule](../specs/050-owner-task-controls.md#a-checkpointed-reviewer-that-cannot-be-continued).
 - A reader whose creation delivery stayed uncertain is continuable on the exact
   authenticated checkpoint evidence that proves creation reached it.
 - Refusals before the adapter's send are definite failures. After the adapter
@@ -2228,8 +2228,8 @@ reports, grants or spends that history.
   preserves a live reader and asks an idle, unreported reader to resend its
   result on the same run and credential. A released reportless round resumes
   the same reviewer with a report-recovery instruction. Unknown delivery is
-  observed before any retry. A new reviewer is for a reader proved gone or
-  ruled out by its model or independence, not a missing report or a round count.
+  observed before any retry. A new reviewer requires evidence of inability
+  to finish, loss of the thread, or model or independence ineligibility.
 - One identity derivation separates an absent reader (none, or another head), a
   valid one and a refused one (binding unprovable). A refused reader is never
   read as absent or displaced; the move refuses and names the deliberate

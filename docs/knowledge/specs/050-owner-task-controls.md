@@ -454,12 +454,17 @@ is lost and no reviewer is replaced by a read. A failed, ambiguous or relocated
 observation, an active turn, a pending permission, or a merely idle or errored
 agent records nothing.
 
-A spent checkpoint allowance ends checkpoint continuation. `next` offers the
-retained reviewer's report request when applicable. An active turn keeps the
-report, and an idle reader can finish or redeliver on its existing credential.
-A reviewer proved gone or ineligible can be replaced on the role's route,
-subject to the existing task, source and admission gates. The original reader's
-checkpoint and verdict history stays with its run.
+A reviewer can report that it cannot finish by setting
+`checkpoint.exhausted: true` on its authenticated progress report and listing
+the unread items. A progress report after the final allowance provides the same
+evidence. `next` offers `restart role=reviewer fresh` for that reader. A
+reviewer `route now` can also replace it under ordinary routing authorization.
+Both observe the exact PR head, binding and idle reader before acting. A live
+turn, pending permission or unsettled delivery still holds the original run.
+
+A missing report keeps the retained reviewer. An idle reader can finish or
+redeliver on its existing credential. A fresh run earns its own verdict at the
+current head. The previous reader's progress stays with its run.
 
 ## Worker replacement ceiling
 
