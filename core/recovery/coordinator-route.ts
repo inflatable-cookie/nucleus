@@ -36,7 +36,7 @@ import {
 } from "./recovery-context";
 import { groupIsUnavailable, supersedingRouteProfile } from "../../shared/pool";
 import { requiredCheckPollMetaKey } from "../forge/checks";
-import { ProvenPreSendRefusalError, creationFailureSummary } from "./task-reasons";
+import { HostSnapshotPendingError, ProvenPreSendRefusalError, creationFailureSummary } from "./task-reasons";
 import { refusedLaunchProfiles } from "./refused-launch";
 import { unreleasedExecutorRun } from "../qa/proof-admission";
 import {
@@ -907,6 +907,24 @@ export class CoordinatorRoute {
       this.episode.save(t, { agentId });
       return null;
     } catch (error) {
+      // A host that has not settled its model options has not refused this
+      // creation: nothing crossed the send boundary, so the pending run is
+      // released and the task waits for the next pass's settled snapshot
+      // (nucleus#1375). The episode keeps its run identity.
+      if (error instanceof HostSnapshotPendingError) {
+        if (attempted)
+          this.episode.releaseRefusedCreation(
+            this.store.task(t.id),
+            attempted,
+            error.detail,
+          );
+        this.episode.wait(
+          this.store.task(t.id),
+          `Waiting for T3Code to settle the host catalogue: ${error.detail}`,
+          "lifecycle",
+        );
+        return null;
+      }
       // A proven pre-send refusal never crossed the send boundary: settle that
       // occurrence now (run, credential and the episode's agent binding) rather
       // than leaving an intent nobody can deliver. The escalation keeps the

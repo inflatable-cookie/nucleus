@@ -32,6 +32,11 @@ interface NativeConnection {
   readonly compatibilityFailure?: string;
   /** Whether T3's own client hides tagged support threads, read at connect and never written. */
   readonly supportThreadStatus?: string;
+  /**
+   * Each provider's models with the option descriptors (id, type, role) the last
+   * `server.getConfig` read reported (nucleus#1375). Empty before that read.
+   */
+  readonly modelShapes?: string;
   connect(probeThreadId?: string): Promise<void>;
   close(): void;
 }
@@ -131,6 +136,7 @@ export class T3HostConnection {
     threadShapePending: boolean;
     supportThreads: string;
     nativeParenting: string;
+    modelShapes: string;
     lastDisconnectReason: T3DisconnectReason | null;
     lastProtocolError: T3ProtocolError | null;
   } {
@@ -147,6 +153,7 @@ export class T3HostConnection {
       threadShapePending: connected && this.host?.threadShapePending === true,
       supportThreads: connected ? (this.host?.supportThreadStatus ?? "") : "",
       nativeParenting: connected ? (this.host?.nativeParentingStatus ?? "") : "",
+      modelShapes: connected ? (this.host?.modelShapes ?? "") : "",
     };
   }
 

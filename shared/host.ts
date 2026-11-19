@@ -545,6 +545,13 @@ export const hostModelSchema = z
     defaultThinkingOptionId: z.string().nullable().default(null),
     modes: z.array(hostModeSchema).default([]),
     features: z.array(hostFeatureSchema).default([]),
+    /**
+     * The host has not settled this model's options yet (a provider mid-probe), so
+     * its thinking levels are the table's, not a report of absence. Selection keeps
+     * a profile the launch fence waits for instead of parking it as unsupported
+     * (nucleus#1375). Absent means a settled report.
+     */
+    unsettled: z.boolean().optional(),
   })
   .strict();
 export type HostModel = z.infer<typeof hostModelSchema>;

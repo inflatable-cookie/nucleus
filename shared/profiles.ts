@@ -158,7 +158,13 @@ function availabilityOn(
       supportedThinking: [],
     };
   const supportedThinking = model.thinkingOptions.map((option) => option.id);
+  // A host that has not settled this model's options has not answered for the
+  // thinking level or the feature values either: unknown, never negative, so
+  // selection keeps the profile and the launch fence waits for a settled snapshot
+  // (nucleus#1375). The runtime-mode list is a provider fact, not a model probe.
+  const unsettled = model.unsettled === true;
   if (
+    !unsettled &&
     profile.thinkingOptionId &&
     !supportedThinking.includes(profile.thinkingOptionId)
   )
@@ -180,8 +186,9 @@ function availabilityOn(
     };
   // A deferred read answers nothing about feature values: unknown, never
   // negative. The launch context resolves them with the real project
-  // directory, and a host that always answers (T3Code) never defers.
-  if (catalog.featuresDeferred !== true)
+  // directory, and a host that always answers (T3Code) never defers. The same
+  // holds for a model option report the host has not settled yet.
+  if (catalog.featuresDeferred !== true && !unsettled)
     for (const [option, value] of Object.entries(profile.featureValues ?? {})) {
       const feature = model.features.find((candidate) => candidate.id === option);
       if (!feature)
