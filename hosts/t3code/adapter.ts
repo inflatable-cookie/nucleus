@@ -1407,7 +1407,9 @@ export class T3CodeHost implements Host {
             );
           if (
             request.kind === "user_input"
-              ? !response.answers || !!response.decision
+              ? response.answers
+                ? !!response.decision
+                : response.decision !== "cancel" && response.decision !== "decline"
               : !response.decision || !!response.answers
           )
             throw new ProvenPreSendRefusalError(

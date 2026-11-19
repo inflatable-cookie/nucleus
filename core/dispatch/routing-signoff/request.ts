@@ -1,3 +1,4 @@
+import { isOperatorBoardOrT3 } from "../../../shared/operator-identity";
 /**
  * Spec 052 routing sign-off (Tom, 2026-10-21). A request for a profile above
  * the usage level's cost ceiling, or rated frontier below Maximum, applies only once the operator signs
@@ -57,10 +58,10 @@ export function outcome(decision: DecisionView | null, approve: string, choices:
   const closed = (note: string): { signoff: Signoff } => ({ signoff: { status: "declined", decisionId: decision.id, by: null, at, note } });
   if (decision.status !== "answered" || !decision.answer) return closed(`The sign-off decision was ${decision.status}`);
   const answer = decision.answer;
-  if (answer.relayed || answer.answeredBy !== OPERATOR_BOARD)
+  if (answer.relayed || !isOperatorBoardOrT3(answer.answeredBy))
     return closed("A relayed answer does not sign off a routing request; answer on the board");
   const text = answer.text.trim();
-  const signed = (profileId?: string) => ({ signoff: { status: "approved" as const, decisionId: decision.id, by: OPERATOR_BOARD, at, note: "" },
+  const signed = (profileId?: string) => ({ signoff: { status: "approved" as const, decisionId: decision.id, by: answer.answeredBy, at, note: "" },
     ...(profileId ? { profileId } : {}) });
   if (text === approve) return signed();
   const chosen = choices.get(text);

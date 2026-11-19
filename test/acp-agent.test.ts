@@ -38,6 +38,8 @@ const binding: AcpBinding = acpBindingSchema.parse({
 class ScriptedTransport implements AcpSessionTransport {
   readonly turns: AcpTurnRequest[] = [];
   readonly messages: AcpMessageRequest[] = [];
+  readonly answers: import("../shared/acp/surface").AcpAnswerInput[] = [];
+  answer(input: import("../shared/acp/surface").AcpAnswerInput): Promise<unknown> { this.answers.push(input); return Promise.resolve({}); }
   /** Answers waiting to be handed out, in order. */
   readonly replies: AcpTurnReply[];
   /** The answer every call without a queued one receives. */
@@ -181,6 +183,7 @@ function harness(
       );
       return id;
     },
+    respond(id: unknown, result: unknown): void { input.write(`${JSON.stringify({ jsonrpc: "2.0", id, result })}\n`); },
     notify(method: string, params: unknown): void {
       input.write(`${JSON.stringify({ jsonrpc: "2.0", method, params })}\n`);
     },
@@ -799,6 +802,26 @@ test("an inbox session holds with its host identity and never forwards stale pro
     assert.deepEqual(transport.turns[0], { kind: "inbox", hostId: inbox.hostId, sessionId: inbox.sessionId, waitMs: 0, attach: true });
     assert.equal(transport.messages.length, 0);
     client.notify("session/cancel", { sessionId: inbox.sessionId });
+    await client.lines.untilResult(prompt);
+  } finally { await client.closed(); }
+});
+
+
+test("a held turn offers concurrent decision cards and forwards accepted answers once", async () => {
+  const question = (id: string) => ({ id, version: 1, headline: `Choose ${id}`, question: `Question ${id}?`, choices: [{ label: "Yes", consequence: "Proceed" }, { label: "No", consequence: "Hold" }] });
+  const client = harness({ replies: [reply("hold"), { ...reply("hold"), elicitations: [question("one"), question("two")] }] });
+  try {
+    await client.lines.untilResult(client.request("session/new", { cwd: "/synthetic" }));
+    const prompt = client.request("session/prompt", { sessionId: binding.sessionId, prompt: [{ type: "text", text: "start" }] });
+    const first = await client.lines.next();
+    const second = await client.lines.next();
+    assert.equal(first.method, "elicitation/create");
+    assert.equal(second.method, "elicitation/create");
+    client.respond(first.id, { action: "accept", content: { nucleus_one_1: "Yes" } });
+    client.respond(second.id, { action: "accept", content: { nucleus_two_1: "No" } });
+    for (let i = 0; i < 100 && client.transport.answers.length < 2; i++) await new Promise(resolve => setTimeout(resolve, 5));
+    assert.deepEqual(client.transport.answers.map(row => [row.id, row.answer]), [["one", "Yes"], ["two", "No"]]);
+    client.notify("session/cancel", { sessionId: binding.sessionId });
     await client.lines.untilResult(prompt);
   } finally { await client.closed(); }
 });

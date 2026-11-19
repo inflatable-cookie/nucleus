@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { z } from "zod";
 
 export const ACP_INBOX_FORMAT = "nucleus.acp.inbox";
-export const acpInboxHostSchema = z.string().min(1).max(240);
+export const acpInboxHostSchema = z.string().regex(/^t3code:[A-Za-z0-9_-]{1,180}$/);
 export const acpInboxBindingSchema = z.object({
   format: z.literal(ACP_INBOX_FORMAT),
   version: z.literal(1),

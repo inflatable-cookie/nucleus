@@ -1350,6 +1350,7 @@ export class QueueRuntime {
     this.engine.acp = new AcpSessions(this.engine, {
       dataHome: this.dataDir,
       socketPath: this.paseo.socketPath,
+      answerDecision: input => this.questions.answerT3Decision(input),
     });
     // Local reads are safe as soon as the callback surface and SQLite owner
     // exist. Daemon connection, profile refresh, durable operation resume and

@@ -1,3 +1,4 @@
+import { isT3OperatorIdentity } from "../../shared/operator-identity";
 import { DISPOSITION_CONTROL_REFUSAL, REMOVED_TASK_REFUSAL } from '../verbs/control-refusals';
 import { holdOwnerOf, holdsOf, isDispositionActive, type Run, type Task, type TaskControlInput, type DecisionView } from '../../shared/contracts';
 import { proofHeadAdmission, proofSingleFlightRefusal } from './proof-admission';
@@ -113,7 +114,7 @@ export function proofGoDecision(task: Task, input: TaskControlInput,
     const answer = decision.answer;
     if (decision.question !== question || !decision.links.tasks.includes(task.id) || !answer || !answerEvent.detail.startsWith(`${questionId}: ${answer.text} — answered by `))
       return { kind: 'refuse', message: 'The linked board decision does not match the recorded release answer; no execution was activated' };
-    if (answer.relayed ? (!/planner/i.test(answer.answeredBy) || !answer.note.trim()) : !['operator', 'operator (board)'].includes(answer.answeredBy))
+    if (answer.relayed ? (!/planner/i.test(answer.answeredBy) || !answer.note.trim()) : !['operator', 'operator (board)'].includes(answer.answeredBy) && !isT3OperatorIdentity(answer.answeredBy))
       return { kind: 'refuse', message: 'The release answer is not recorded as operator GO or a planner relay with the operator quote' };
     evidence = { questionId, decisionId, question, answer: answer.text,
       answeredBy: answer.relayed ? `${answer.answeredBy} (relaying the operator)` : answer.answeredBy,
@@ -124,7 +125,7 @@ export function proofGoDecision(task: Task, input: TaskControlInput,
     const marker = body.lastIndexOf(' — answered by ');
     const answer = marker < 0 ? '' : body.slice(0, marker);
     const answeredBy = marker < 0 ? '' : body.slice(marker + ' — answered by '.length);
-    if (!answer.startsWith('GO — run the qualification') || !['operator', 'operator (board)'].includes(answeredBy))
+    if (!answer.startsWith('GO — run the qualification') || !['operator', 'operator (board)'].includes(answeredBy) && !isT3OperatorIdentity(answeredBy))
       return { kind: 'refuse', message: 'The native release answer is missing operator identity or the verbatim GO' };
     evidence = { questionId, decisionId: null, question, answer, answeredBy,
       quote: JSON.stringify({ answer, answeredBy, answeredAt: answerEvent.at }), askedAt: questionEvent.at, answeredAt: answerEvent.at };

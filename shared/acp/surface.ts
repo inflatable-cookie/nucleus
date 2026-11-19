@@ -23,6 +23,15 @@ export type AcpTurnInput = AcpCaller & {
   attach?: boolean;
 }
 
+export interface AcpElicitation {
+  id: string;
+  version: number;
+  headline: string;
+  question: string;
+  choices: Array<{ label: string; consequence: string }>;
+}
+export type AcpAnswerInput = AcpCaller & { id: string; version: number; answer: string };
+
 export type AcpTurnReply = {
   /** `hold` keeps the agent's turn open; `release` ends it, and the client settles the thread. */
   state: "hold" | "release";
@@ -30,6 +39,7 @@ export type AcpTurnReply = {
   reason: string;
   /** Lifecycle lines the client shows as agent messages; empty when nothing changed. */
   messages: string[];
+  elicitations?: AcpElicitation[];
 } & ({ kind?: "task"; task: { taskId: string; reference: string | null; phase: string; name: string } } | { kind: "inbox"; hostId: string });
 
 export interface AcpMessageInput { taskId: string; sessionId: string; eventId: string; text: string }
@@ -48,6 +58,8 @@ export interface AcpSessionSurface {
   bindInbox?(input: { hostId: string } & AcpBindingRules): { sessionId: string; hostId: string; directory: string; bindingPath: string };
   /** Ask whether to keep holding this turn, and which lifecycle lines to show. */
   turn(input: AcpTurnInput, token: string): Promise<AcpTurnReply>;
+  /** Record a native operator answer to an offered decision. */
+  answer?(input: AcpAnswerInput, token: string): Promise<unknown>;
   /** The operator's text in the task's thread: recorded and routed by Nucleus, never by the agent. */
   message(input: AcpMessageInput, token: string): Promise<unknown>;
   /** A host adapter's release directive: end this session's held turn now. */

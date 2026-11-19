@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { Engine } from "../core/engine";
+import { Decisions } from "../core/planning/decisions";
 import { Store } from "../core/store/store";
 import { startCallbacks } from "../service/callbacks/callback";
 import { AcpSessions, ACP_TURN_WAIT_MAX_MS, bindAcpSession } from "../core/acp/sessions";
@@ -15,7 +16,7 @@ import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { callbackRequest } from "../shared/service/callback-client.mjs";
 import { callCatalogueMethod } from "../service/transport/dispatch";
-import { submissionSchema, type Run, type Task } from "../shared/contracts";
+import { decisionSchema, submissionSchema, type Run, type Task } from "../shared/contracts";
 import type { Adapter } from "../core/host";
 import { base, profile } from "./support/responsible-lifecycle-fixture";
 import { socketFixtureDirectory } from "./support/socket-fixture";
@@ -29,7 +30,7 @@ import { socketFixtureDirectory } from "./support/socket-fixture";
 
 const WORKER = "worker-agent";
 
-async function acpFixture() {
+async function acpFixture(hostId = "host") {
   const dir = socketFixtureDirectory("callback.sock");
   const socketPath = join(dir, "callback.sock");
   const worktree = join(dir, "work");
@@ -37,7 +38,7 @@ async function acpFixture() {
   const author = profile("author", "glm-4.7", "pi");
   const notified: Array<{ agentId: string; messageId: string; text: string }> = [];
   const adapter = {
-    hostId: "host",
+    hostId,
     profiles: async () => [author],
     observe: async (id: string) => ({
       id, workspaceId: "ws", status: "idle", active: false, permissions: false, error: "",
@@ -49,13 +50,13 @@ async function acpFixture() {
   } as unknown as Adapter;
   const engine = new Engine(store, adapter, 0);
   engine.profiles = [author];
-  engine.identifyOriginHost = async () => "host";
+  engine.identifyOriginHost = async () => hostId;
   engine.resolution.worktreeValidationProbe = () => ({ state: "absent" });
   store.setMeta("paused", false);
   const task = store.insert(submissionSchema.parse({
     submissionId: "acp-fixture", title: "Synthetic ACP task", repoPath: join(dir, "repo"),
     planningCommit: base, brief: { text: "Synthetic ACP brief\n" }, originAgentId: "origin",
-  }), "host", "brief", base);
+  }), hostId, "brief", base);
   // A live worker run: an operator message has someone to reach.
   store.update(task.id, {
     phase: "working", directory: worktree, agentId: WORKER, runId: "run-1", workspaceId: "ws",
@@ -68,7 +69,7 @@ async function acpFixture() {
   } as unknown as Run);
   store.update(task.id, { resolution: { ...store.task(task.id).resolution, currentRunId: "run-1" } });
   mkdirSync(worktree, { recursive: true });
-  const acp = new AcpSessions(engine, { dataHome: dir, socketPath, pollMs: 50 });
+  const acp = new AcpSessions(engine, { dataHome: dir, socketPath, pollMs: 50, answerDecision: input => new Decisions(store).answer(input, { trustedT3: true }) });
   // Count the turn calls so a test can wait for a held turn to reach the service.
   let turns = 0;
   const served = acp.turn.bind(acp);
@@ -454,8 +455,34 @@ test("an inbox session can hold its own turn but cannot use a task's message aut
     const binding = readAcpBinding(inbox.bindingPath);
     assert.ok("kind" in binding && binding.kind === "inbox");
     const reply = await callbackRequest(binding, "/acp-turn", { kind: "inbox", hostId: inbox.hostId, sessionId: inbox.sessionId, waitMs: 0 });
-    assert.deepEqual(reply, { kind: "inbox", hostId: inbox.hostId, state: "hold", reason: "the inbox is open", messages: [] });
+    assert.deepEqual(reply, { kind: "inbox", hostId: inbox.hostId, state: "hold", reason: "the inbox is open", messages: [], elicitations: [] });
     await assert.rejects(() => callbackRequest(binding, "/acp-message", { taskId: fixture.taskId, sessionId: fixture.sessionId, eventId: "a".repeat(64), text: "synthetic" }), /Unauthorized callback/);
     await assert.rejects(() => callbackRequest(binding, "/acp-turn", { kind: "inbox", hostId: "t3code:other", sessionId: inbox.sessionId, waitMs: 0 }), /Unauthorized callback/);
+  } finally { await fixture.close(); }
+});
+
+
+test("task and inbox cards have distinct scopes and a versioned operator answer", async () => {
+  const fixture = await acpFixture("t3code:synthetic");
+  try {
+    const stamp = new Date().toISOString();
+    const decision = (id: string, tasks: string[]) => decisionSchema.parse({ id, version: 1, question: `Question ${id}?`,
+      choices: [{ label: "Yes", consequence: "Proceed" }, { label: "No", consequence: "Hold" }],
+      askedBy: { agentId: "synthetic" }, links: { tasks }, status: "open", createdAt: stamp, updatedAt: stamp });
+    fixture.store.addDecision(decision("task-question", [fixture.taskId]));
+    fixture.store.addDecision(decision("inbox-question", []));
+    const task = await fixture.turn({ attach: true });
+    assert.deepEqual(task.elicitations?.map(row => row.id), ["task-question"]);
+    const inbox = fixture.acp.bindInbox({ hostId: "t3code:synthetic" });
+    const binding = readAcpBinding(inbox.bindingPath);
+    const caller = { kind: "inbox" as const, hostId: inbox.hostId, sessionId: inbox.sessionId };
+    const offered = await fixture.acp.turn({ ...caller, attach: true }, binding.token);
+    assert.deepEqual(offered.elicitations?.map(row => row.id), ["inbox-question"]);
+    await assert.rejects(() => fixture.acp.answer({ ...caller, id: "task-question", version: 1, answer: "Yes" }, binding.token), /not offered/);
+    await fixture.acp.answer({ ...caller, id: "inbox-question", version: 1, answer: "Yes" }, binding.token);
+    const recorded = fixture.store.decision("inbox-question");
+    assert.equal(recorded.answer?.answeredBy, "operator (t3code:synthetic)");
+    assert.equal(recorded.answer?.relayed, null);
+    await assert.rejects(() => fixture.acp.answer({ ...caller, id: "inbox-question", version: 1, answer: "Yes" }, binding.token), /not offered/);
   } finally { await fixture.close(); }
 });

@@ -8,6 +8,7 @@
  */
 import { request } from "node:http";
 import type { AcpBinding } from "./binding";
+import type { AcpAnswerInput } from "./surface";
 import type { AcpMessageReply, AcpMessageRequest, AcpSessionTransport, AcpTurnReply, AcpTurnRequest } from "./agent";
 
 /** Socket margin over the service's own wait, so a long-poll is never cut off by the client. */
@@ -20,6 +21,7 @@ export function createAcpTransport(binding: AcpBinding): AcpSessionTransport {
     turn: (input: AcpTurnRequest, signal: AbortSignal) =>
       post<AcpTurnReply>(binding, "/acp-turn", input, { signal, timeoutMs: input.waitMs + ACP_SOCKET_MARGIN_MS }),
     message: (input: AcpMessageRequest) => post<AcpMessageReply>(binding, "/acp-message", input, { timeoutMs: ACP_MESSAGE_TIMEOUT_MS }),
+    answer: (input: AcpAnswerInput) => post(binding, "/acp-answer", input, { timeoutMs: ACP_MESSAGE_TIMEOUT_MS }),
   };
 }
 

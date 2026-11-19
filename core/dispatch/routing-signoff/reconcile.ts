@@ -1,3 +1,4 @@
+import { isOperatorBoardOrT3 } from "../../../shared/operator-identity";
 /**
  * One pass over a task's routing requests: apply a standing grant that covers a
  * request, clear a sign-off whose grant is gone, ask for each request that needs
@@ -189,7 +190,7 @@ function reconcileUnavailablePreference(store: Store, decisions: Decisions, task
     try { record = JSON.parse(prior.detail.slice(profileId.length + 2)); } catch { return task; }
     let decision;
     try { decision = decisions.get({ id: record.decisionId }); } catch { return task; }
-    if (decision.status !== 'answered' || !decision.answer || decision.answer.relayed || decision.answer.answeredBy !== 'operator (board)') return task;
+    if (decision.status !== 'answered' || !decision.answer || decision.answer.relayed || !isOperatorBoardOrT3(decision.answer.answeredBy)) return task;
     const selected = record.choices[decision.answer.text.trim()];
     if (selected) return store.update(task.id, { profileRequests: { ...task.profileRequests, worker: { profileId: selected, required: true, reason: 'Operator selected an available worker profile' } } },
       'routing_unavailable_resolved', `${profileId}: selected ${selected}`);

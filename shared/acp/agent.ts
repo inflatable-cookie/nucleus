@@ -21,7 +21,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { AcpBindingMissingError } from "./binding";
 import type { AcpBinding } from "./binding";
-import type { AcpCaller, AcpMessageInput, AcpTurnInput, AcpTurnReply } from "./surface";
+import type { AcpAnswerInput, AcpCaller, AcpElicitation, AcpMessageInput, AcpTurnInput, AcpTurnReply } from "./surface";
 
 export type { AcpMessageInput, AcpTurnInput, AcpTurnReply };
 
@@ -64,6 +64,7 @@ export interface AcpMessageReply {
 export interface AcpSessionTransport {
   turn(input: AcpTurnRequest, signal: AbortSignal): Promise<AcpTurnReply>;
   message(input: AcpMessageRequest): Promise<AcpMessageReply>;
+  answer?(input: AcpAnswerInput): Promise<unknown>;
 }
 
 /** What a thread's working directory resolves to: Nucleus's binding and how to reach the service. */
@@ -125,6 +126,8 @@ interface SessionState {
   cancelled: boolean;
   controller: AbortController;
   inFlight: boolean;
+  elicitationAttempts: Map<string, number>;
+  pendingElicitations: Set<string>;
 }
 
 /**
@@ -137,6 +140,7 @@ export class AcpAgent {
   private readonly inertSessions = new Set<string>();
   private readonly work = new Set<Promise<unknown>>();
   private model: string = ACP_MODELS[0].modelId;
+  private readonly elicitationReplies = new Map<Id, (response: Json) => void>();
 
   constructor(private readonly options: AcpAgentOptions) {}
 
@@ -210,6 +214,11 @@ export class AcpAgent {
     if (!isObject(message) || message.jsonrpc !== "2.0") return;
     const id = message.id;
     const method = message.method;
+    if ((typeof id === "number" || typeof id === "string") && method === undefined) {
+      const receive = this.elicitationReplies.get(id);
+      if (receive) { this.elicitationReplies.delete(id); receive(message); }
+      return;
+    }
     if (typeof id !== "number" && typeof id !== "string") {
       // A notification carries no answer. `session/cancel` is the only one the agent acts on.
       if (
@@ -346,6 +355,8 @@ export class AcpAgent {
       cancelled: false,
       controller: new AbortController(),
       inFlight: false,
+      elicitationAttempts: new Map(),
+      pendingElicitations: new Set(),
     };
     this.sessions.set(session.sessionId, session);
     this.result(send, id, this.sessionResult(session.sessionId));
@@ -501,6 +512,7 @@ export class AcpAgent {
           session.controller.signal,
         );
         failures = 0;
+        for (const question of reply.elicitations ?? []) this.elicit(session, question, send);
         for (const line of reply.messages)
           this.emit(send, session.sessionId, line);
         if (reply.state === "release") return "end_turn";
@@ -524,6 +536,36 @@ export class AcpAgent {
         await delay(this.retryDelayMs);
       }
     }
+  }
+
+  /** A held turn can carry several native cards; the service owns each answer. */
+  private elicit(session: SessionState, question: AcpElicitation, send: Send): void {
+    if (!session.transport.answer) return;
+    const key = `${question.id}:${question.version}`;
+    if (session.pendingElicitations.has(key) || (session.elicitationAttempts.get(key) ?? 0) >= 2) return;
+    session.pendingElicitations.add(key);
+    session.elicitationAttempts.set(key, (session.elicitationAttempts.get(key) ?? 0) + 1);
+    const requestId = `nucleus-elicitation-${randomUUID()}`;
+    const fieldId = `nucleus_${question.id}_${question.version}`;
+    this.elicitationReplies.set(requestId, response => {
+      session.pendingElicitations.delete(key);
+      const result = isObject(response.result) ? response.result : {};
+      const content = isObject(result.content) ? result.content : {};
+      if (result.action !== "accept" || typeof content[fieldId] !== "string") return;
+      const work = session.transport.answer!({ ...session.caller, id: question.id, version: question.version, answer: content[fieldId] as string }).catch(() => {
+        // A failed answer has unknown delivery; the next service read owns reconciliation.
+        this.options.log?.("could not record an elicitation answer");
+      });
+      this.work.add(work);
+      void work.finally(() => this.work.delete(work));
+    });
+    const field = question.choices.length ? { oneOf: question.choices.map(choice => ({ const: choice.label, title: choice.label, description: choice.consequence })) } : {};
+    send({ jsonrpc: "2.0", id: requestId, method: "elicitation/create", params: {
+      sessionId: session.sessionId, mode: "form", message: question.question,
+      requestedSchema: { type: "object", required: [fieldId], properties: {
+        [fieldId]: { type: "string", title: question.headline, description: question.question, ...field, _meta: { "cognition.ai/allowOther": true } },
+      } },
+    } });
   }
 
   private emit(send: Send, sessionId: string, text: string): void {

@@ -20,10 +20,12 @@
 import type { Task } from "../../shared/contracts";
 import type { AgentMessageReceipt } from "../questions/agent-messages";
 import { verifyAcpSession, mintAcpSession } from "./binding";
-import type { AcpMessageInput, AcpSessionBinding, AcpSessionSurface, AcpTurnInput, AcpTurnReply } from "../../shared/acp/surface";
+import type { AcpAnswerInput, AcpMessageInput, AcpSessionBinding, AcpSessionSurface, AcpTurnInput, AcpTurnReply } from "../../shared/acp/surface";
 import { acpFinishedLine, acpLifecycleLine, acpLifecycleSignature, acpTaskFinished, acpTaskName } from "./lifecycle";
 import type { Engine } from "../engine";
 import { mintAcpInbox, verifyAcpInbox } from "./inbox-binding";
+import { t3OperatorIdentity } from "../../shared/operator-identity";
+import { acpDecisions, acpElicitation } from "./decisions";
 
 /** How long one long-poll may wait; the agent asks again after this. */
 export const ACP_TURN_WAIT_MAX_MS = 25_000;
@@ -40,6 +42,7 @@ export interface AcpSessionsOptions {
   /** The callback socket the binding points the agent at. */
   socketPath: string;
   pollMs?: number;
+  answerDecision?: (input: { id: string; version: number; answer: string; answeredBy: string; relayed: boolean; note: string }) => unknown;
 }
 
 /**
@@ -56,6 +59,7 @@ export class AcpSessions implements AcpSessionSurface {
   /** The last lifecycle signature each session was shown, so a quiet task sends nothing. */
   private readonly shown = new Map<string, string>();
   /** Release directives from a host adapter, consumed by the turn that acts on them. */
+  private readonly shownDecisions = new Map<string, string>();
   private readonly releases = new Map<string, string>();
   /** Turns waiting on this session: a release, or a new signature, wakes them. */
   private readonly waiting = new Map<string, Set<() => void>>();
@@ -90,8 +94,16 @@ export class AcpSessions implements AcpSessionSurface {
     if (input.kind === "inbox") {
       const record = verifyAcpInbox({ dataHome: this.dataHome, hostId: input.hostId, sessionId: input.sessionId }, token);
       const waitMs = Math.max(0, Math.min(input.waitMs ?? 0, ACP_TURN_WAIT_MAX_MS));
-      if (!input.attach && waitMs) await this.wait(record.sessionId, waitMs);
-      return { kind: "inbox", hostId: record.hostId, state: "hold", reason: "the inbox is open", messages: [] };
+      const deadline = Date.now() + waitMs;
+      for (;;) {
+        const elicitations = acpDecisions(this.engine.store, input).map(acpElicitation);
+        const signature = JSON.stringify(elicitations);
+        if (input.attach || this.shownDecisions.get(record.sessionId) !== signature || Date.now() >= deadline) {
+          this.shownDecisions.set(record.sessionId, signature);
+          return { kind: "inbox", hostId: record.hostId, state: "hold", reason: "the inbox is open", messages: [], elicitations };
+        }
+        await this.wait(record.sessionId, Math.min(this.pollMs, deadline - Date.now()));
+      }
     }
     const record = verifyAcpSession({ dataHome: this.dataHome, taskId: input.taskId, sessionId: input.sessionId }, token);
     const waitMs = Math.max(0, Math.min(input.waitMs ?? 0, ACP_TURN_WAIT_MAX_MS));
@@ -101,18 +113,34 @@ export class AcpSessions implements AcpSessionSurface {
       const task = this.engine.store.task(record.taskId);
       const signature = acpLifecycleSignature(task);
       const messages: string[] = [];
+      const elicitations = acpDecisions(this.engine.store, input).map(acpElicitation);
+      const decisionSignature = JSON.stringify(elicitations);
+      const changedDecisions = this.shownDecisions.get(record.sessionId) !== decisionSignature;
+      this.shownDecisions.set(record.sessionId, decisionSignature);
       if (first || input.attach === true || this.shown.get(record.sessionId) !== signature) {
         messages.push(acpTaskFinished(task) ? acpFinishedLine(task) : acpLifecycleLine(task));
         this.remember(record.sessionId, signature);
       }
       const release = this.releases.get(record.sessionId);
-      if (release !== undefined || acpTaskFinished(task)) {
+      if ((release !== undefined || acpTaskFinished(task)) && elicitations.length === 0) {
         this.releases.delete(record.sessionId);
         return this.reply(task, "release", release ?? `the task is ${task.phase}`, messages);
       }
-      if (messages.length || Date.now() >= deadline) return this.reply(task, "hold", `the task is ${task.phase}`, messages);
+      if (messages.length || changedDecisions || input.attach || Date.now() >= deadline) return { ...this.reply(task, "hold", `the task is ${task.phase}`, messages), elicitations };
       await this.wait(record.sessionId, Math.min(this.pollMs, deadline - Date.now()));
     }
+  }
+
+  /** Only an authenticated session may answer a decision currently offered to it. */
+  async answer(input: AcpAnswerInput, token: string): Promise<unknown> {
+    if (input.kind === "inbox") verifyAcpInbox({ dataHome: this.dataHome, hostId: input.hostId, sessionId: input.sessionId }, token);
+    else verifyAcpSession({ dataHome: this.dataHome, taskId: input.taskId, sessionId: input.sessionId }, token);
+    const decision = acpDecisions(this.engine.store, input).find(row => row.id === input.id && row.version === input.version);
+    if (!decision) throw new Error("Decision changed or is not offered to this session");
+    if (!this.options.answerDecision) throw new Error("This process cannot answer decisions");
+    const hostId = input.kind === "inbox" ? input.hostId : this.engine.store.task(input.taskId).hostId!;
+    return this.options.answerDecision({ id: input.id, version: input.version, answer: input.answer, answeredBy: t3OperatorIdentity(hostId), relayed: false,
+      note: input.kind === "inbox" ? `Answered from T3 inbox ${input.hostId}` : `Answered from T3 task ${input.taskId}` });
   }
 
   /** The operator's text in the task's thread: recorded and routed by Nucleus, never by the agent. */

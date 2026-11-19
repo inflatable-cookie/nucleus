@@ -1640,7 +1640,7 @@ export async function t3Fake(t: TestContext, directory: string) {
               const item = p.runtimeRequests.find(
                 (r: Value) => r.id === payload.requestId,
               )!;
-              item.status = "resolved";
+              item.status = item.kind === "user_input" && (payload.decision === "cancel" || payload.decision === "decline") ? "cancelled" : "resolved";
               if (payload.answers) item.answers = payload.answers;
               break;
             }

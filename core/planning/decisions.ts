@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { isT3OperatorIdentity } from "../../shared/operator-identity";
 import { clipDecisionQuestion, DECISION_QUESTION_MAX, decisionLinksSchema, decisionSchema, storedDecisionSchema, decisionVersionSchema, type Decision, type DecisionVersion, type DecisionView, type Project, type Task } from "../../shared/contracts";
 import { isOperatorOrigin, taskPlanner } from "../../shared/contracts";
 import { parseAgentId, sameCallerIdentity } from "../../shared/agent-identity";
@@ -176,11 +177,12 @@ export class Decisions {
     return this.store.listDecisions(query).map(decision => this.view(decision));
   }
 
-  answer(input: { id: string; version: number; answer: string; answeredBy: string; relayed: boolean; note: string; overtakes?: string[] }): DecisionView {
+  answer(input: { id: string; version: number; answer: string; answeredBy: string; relayed: boolean; note: string; overtakes?: string[] }, authority?: { trustedT3: true }): DecisionView {
+    if (isT3OperatorIdentity(input.answeredBy) && !authority?.trustedT3) throw new Error("T3 operator identity requires an authenticated T3 session");
     const relayed = input.relayed;
-    if (relayed && (input.answeredBy === "operator" || input.answeredBy === "operator (board)"))
+    if (relayed && (input.answeredBy === "operator" || input.answeredBy === "operator (board)" || isT3OperatorIdentity(input.answeredBy)))
       throw new Error("A relayed answer names the relaying agent, not the operator");
-    if (!relayed && input.answeredBy !== "operator" && input.answeredBy !== "operator (board)")
+    if (!relayed && input.answeredBy !== "operator" && input.answeredBy !== "operator (board)" && !isT3OperatorIdentity(input.answeredBy))
       throw new Error("Only the operator answers without a relay; set relayed true and name the relaying agent");
     if (relayed && !input.note.trim()) throw new Error("A relayed answer requires a note quoting the operator's authorization");
     return this.store.transaction(() => {
