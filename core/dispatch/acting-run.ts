@@ -89,6 +89,9 @@ function resolveThread(
   presented: Run | null,
   requireLive: boolean,
 ): Run | null {
+  // A run with no row is only ever the task's own durable run id; anything else
+  // is an identity this task does not carry.
+  if (!presented && presentedRunId !== task.runId) return null;
   const shown = presented ?? workerThread(task);
   const currentId = currentRunIdFor(task, presented);
   if (!currentId || currentId === presentedRunId) return null;
@@ -119,7 +122,9 @@ export function reportRunFor(
 ): Run | null {
   const presented = store.run(runId);
   if (presented?.role === "executor") return presented;
-  return resolveThread(store, task, runId, presented, false);
+  // Nothing resolves: the presented run stays the one that answers, and every
+  // acceptance rule then applies to it exactly as before this owner existed.
+  return resolveThread(store, task, runId, presented, false) ?? presented;
 }
 
 /**

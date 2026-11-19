@@ -21,7 +21,7 @@ import { reportReadyRefusal, settleReportReady } from './report-ready';
 import { proofResultRefusal, settleProofExecution, type ProofOutcome } from './proof-settlement';
 import { threadReleasePendingReason, threadRunningReason } from './thread-waits';
 import { reportRunBinding } from './report-run-binding';
-import { actingRunFor } from '../dispatch/acting-run';
+import { reportRunFor } from '../dispatch/acting-run';
 
 /**
  * Authenticate, validate and record one run report — the resolution side of a
@@ -92,7 +92,7 @@ export class RunCallbackIntake {
       // downstream gate then speak of one run. The receipt still authenticates
       // the presented credential, which is the one that arrived.
       const presentedRunId = credentialRunId;
-      const acting = actingRunFor(this.store, task, presentedRunId);
+      const acting = reportRunFor(this.store, task, presentedRunId);
       if (!acting) throw new Error('Unknown run');
       let run = acting;
       if (acting.id !== presentedRunId) {

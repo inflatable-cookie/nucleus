@@ -7,7 +7,7 @@ import {assertReviewResponsibility} from '../review/review-verdicts';
 import {liveResumeRunSupersedes,recordSupersededRunRefusal,supersededByPendingResume,supersededPriorRevisionRun,supersededResumeRefusal} from '../recovery/superseded-resume';
 import {ownerArmedRetainedWorker} from '../recovery/task-reasons';
 import {reportRunBinding} from './report-run-binding';
-import {actingRunFor} from '../dispatch/acting-run';
+import {reportRunFor} from '../dispatch/acting-run';
 // recoveryAction and replacementAgentId are retired (Spec 050); stored records keep them readable.
 export const reportSchema=completionBaseSchema.omit({reviewCommentId:true,reviewId:true,coordinatorGeneration:true,recoveryAction:true,replacementAgentId:true}).extend({reviewText:z.string().trim().min(1).max(48000).optional()}).strict().superRefine(refineCoordinatorCompletionAction);
 export type ReportInput=z.infer<typeof reportSchema>;
@@ -40,7 +40,7 @@ export class Reports {
     if(task.removedAt)throw Error('Task was removed');
     // A retained thread's stale ticket reports as the thread's current run
     // (nucleus#1376); the receipt below still names the credential that arrived.
-    const run = actingRunFor(store, task, input.runId);
+    const run = reportRunFor(store, task, input.runId);
     const binding = run ? reportRunBinding(task, run, input) : null;
     if (binding === 'stale') throw this.staleRun(input.runId,identityRunId,input.taskId);
     // Spec 050: an owner-armed replacement that has not retired the retained
