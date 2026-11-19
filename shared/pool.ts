@@ -1,50 +1,53 @@
 import type {CapabilityLevel,DemandLevel,PoolEntry,ProfileCapability,RoutePolicy,UsageLevel,UsageView} from './contracts';
 import {profileCapabilityLevels} from './contracts';
 export type ProfileSettings=PoolEntry;
-/** Ordinal rank of the five cost and task-complexity levels, lowest first. */
+/** Ordinal rank of the five cost and task-complexity levels, lowest first (a profile's capability is a bracket). */
 export const CAPABILITY_LEVELS: readonly CapabilityLevel[] = ["very_low", "low", "medium", "high", "very_high"];
 export function capabilityRank(value:CapabilityLevel):number{return CAPABILITY_LEVELS.indexOf(value);}
-/** A profile's five capability stops, lowest first (Tom, 2026-11-09: `very_low` gave way to `frontier`). */
+/** A profile's four capability brackets, lowest first (Tom, 2026-11-19). */
 export const PROFILE_CAPABILITY_LEVELS: readonly ProfileCapability[] = profileCapabilityLevels;
-/**
- * The demand scale both a run's demand and a profile's capability rank on:
- * task complexity's five levels plus `frontier`, which only Maximum reaches.
- */
-export const DEMAND_LEVELS: readonly DemandLevel[] = ["very_low", "low", "medium", "high", "very_high", "frontier"];
+/** The bracket names Settings, the board and routing text show. */
+export const BRACKET_LABELS: Record<ProfileCapability, string> = {
+  mechanical: "Mechanical", worker: "Worker", heavyweight: "Heavyweight", frontier: "Frontier",
+};
+/** The demand scale a run's demand and a profile's capability both rank on: the four brackets. */
+export const DEMAND_LEVELS: readonly DemandLevel[] = profileCapabilityLevels;
 export function demandRank(value:DemandLevel):number{return DEMAND_LEVELS.indexOf(value);}
 /**
- * Spec 052 (Tom, 2026-11-17): each level's permission rule is about a profile's
- * capability tier, not its cost. "The top two tiers" are frontier
- * (Opus-class) and very-high (Sol extra-high-class).
+ * Spec 052: each level's permission rule is about a profile's bracket, not its
+ * cost. "The top two" are Heavyweight and Frontier (Tom, 2026-11-19).
  */
-export const TOP_TIERS: readonly ProfileCapability[] = ["very_high", "frontier"];
+export const TOP_TIERS: readonly ProfileCapability[] = ["heavyweight", "frontier"];
 
-/** Whether a profile's capability is one of the top two tiers. */
+/** Whether a profile's bracket is one of the top two. */
 export const topTier = (capability: ProfileCapability | null | undefined): boolean =>
-  capability === "very_high" || capability === "frontier";
+  capability === "heavyweight" || capability === "frontier";
 
 /**
  * The operator's levels, spelled once for diagnostics and Settings: what a
  * level does, in one line, and the rule behind it.
  */
 export const USAGE_LABELS: Record<UsageLevel, { label: string; detail: string; summary: string }> = {
-  low: { label: "Low", summary: "Starts one tier below the task; high-complexity work needs permission at submission",
-    detail: "Every task starts one tier below its complexity. High and very-high complexity work needs permission when it is submitted, and any run on the top two tiers needs permission." },
-  normal: { label: "Normal", summary: "High-complexity work starts one tier below; the top two tiers need permission",
-    detail: "High and very-high complexity work starts one tier below its complexity; lower complexities start at the requested tier. Any run on the top two tiers needs permission, except climbing back to the task's own requested tier." },
-  high: { label: "High", summary: "Starts at the requested tier; frontier needs permission",
-    detail: "Every task starts at its requested tier. Frontier profiles need permission; very-high profiles are automatic." },
-  extra_high: { label: "Extra high", summary: "Starts at the requested tier; nothing needs permission",
-    detail: "Every task starts at its requested tier, and no run needs permission." },
-  maximum: { label: "Maximum", summary: "Workers and reviewers run on frontier or very-high profiles",
-    detail: "Workers and reviewers run on frontier or very-high models regardless of complexity, and no run needs permission." },
+  low: { label: "Low", summary: "Starts one bracket below the task; high-complexity work needs permission at submission",
+    detail: "Every task starts one bracket below the one it may climb to. High and very-high complexity work needs permission when it is submitted. Frontier always needs permission, and Heavyweight does unless the task starts or climbs there. The reviewer runs one bracket below the worker." },
+  normal: { label: "Normal", summary: "Low complexity on Mechanical, medium and high on Worker, very high on Heavyweight",
+    detail: "Very-low and low complexity start on Mechanical, medium and high on Worker, and very high on Heavyweight. A high task may climb once to Heavyweight after review changes; a very-high one to Frontier only with permission. The reviewer runs one bracket below the worker." },
+  high: { label: "High", summary: "High-complexity work starts on Heavyweight; Frontier needs permission",
+    detail: "High and very-high complexity start on Heavyweight; lower complexities start as at Normal. Frontier profiles need permission. The reviewer runs on the worker's bracket." },
+  extra_high: { label: "Extra high", summary: "Starts as at High; nothing needs permission",
+    detail: "Every task starts as at High, and no run needs permission. The reviewer runs on the worker's bracket." },
+  maximum: { label: "Maximum", summary: "Workers and reviewers run on Heavyweight or Frontier profiles",
+    detail: "Workers and reviewers run on Heavyweight or Frontier profiles regardless of complexity, and no run needs permission. The coordinator stays on Mechanical." },
 };
 
 /**
  * Whether automatic selection needs the operator's sign-off to run this pool
- * entry (Spec 052, Tom 2026-11-17). `requested` is the task's own requested
- * tier, which climbing back to never needs permission. Cost is only the
- * rotation lean (Spec 053) and never a permission rule.
+ * entry (Spec 052, Tom 2026-11-17 and 2026-11-19). `requested` is the bracket
+ * the task may climb to and `climbTier` the bracket a recorded climb earned.
+ * At Low and Normal, Frontier always needs sign-off and Heavyweight does unless
+ * the task starts there (a very-high task, which may climb to Frontier) or a
+ * recorded climb reached it. Cost is only the rotation lean (Spec 053) and
+ * never a permission rule.
  */
 export function requestOnly(entry: Pick<PoolEntry, "cost" | "capability">, usage: UsageLevel = "normal",
   requested?: DemandLevel | null, climbTier?: DemandLevel | null): boolean {
@@ -56,10 +59,7 @@ export function requestOnly(entry: Pick<PoolEntry, "cost" | "capability">, usage
     case "high": return tier === "frontier";
     case "normal":
     case "low":
-      // The exception belongs to the recorded climb back to the task's own
-      // requested tier, never to a first attempt before any review climbed
-      // (Tom, 2026-11-17).
-      return topTier(tier) && !(climbTier && demandRank(tier) === demandRank(climbTier));
+      return tier === "frontier" || (tier === "heavyweight" && requested !== "frontier" && climbTier !== "heavyweight");
   }
 }
 
@@ -76,8 +76,8 @@ export function submissionNeedsPermission(level: UsageLevel, complexity: Capabil
 export const requestSignedOff = (request: { signoff?: { status: string } | null } | null | undefined) => request?.signoff?.status === "approved";
 /**
  * Whether an explicit request reaches this pool entry. A profile the level
- * covers needs none; a top-tier profile at Low or Normal (above the task's own
- * requested tier) or a frontier profile at High needs the request with a reason
+ * covers needs none; a held top-two profile at Low or Normal or a Frontier
+ * profile at High needs the request with a reason
  * and the operator's board sign-off (Tom, 2026-10-21; 2026-11-17).
  */
 export const requestReaches = (entry: Pick<PoolEntry, "cost" | "capability" | "profileId">, usage: UsageLevel,
@@ -106,9 +106,9 @@ export function automaticReachable(entry: Pick<PoolEntry, "cost" | "capability">
   role: "worker" | "reviewer" | "coordinator" = "worker"): boolean {
   const tier = entry.capability;
   if (level === "maximum" && role !== "coordinator") return topTier(tier);
-  // A reviewer is not capped at the task's requested tier (Tom, 2026-11-18):
+  // Only a worker is capped at the climb bracket (Tom, 2026-11-18 reviewer; 2026-11-19 coordinator):
   // only the level's permission rule bounds it.
-  if (role !== "reviewer" && requested && tier && demandRank(tier) > demandRank(requested)) return false;
+  if (role === "worker" && requested && tier && demandRank(tier) > demandRank(requested)) return false;
   return !requestOnly(entry, level, requested, climbTier);
 }
 
@@ -130,12 +130,12 @@ export function describeAutomaticSelection(entry: Pick<PoolEntry, "cost" | "capa
   switch (automaticSelection(entry, usage.level, requested, climbTier, role)) {
     case "allowed": return `${entry.capability === "frontier" ? "Frontier · " : ""}Automatic at ${label}${ends}${ended}`;
     case "request_tier": {
-      const tier = entry.capability === "frontier" ? "Frontier" : "Very high";
+      const tier = entry.capability ? BRACKET_LABELS[entry.capability] : "Unrated";
       const aboveRequested = requested && entry.capability && demandRank(entry.capability) > demandRank(requested);
       const rule = usage.level === "maximum" && role !== "coordinator"
-        ? "below the top two tiers, which Maximum reserves for workers and reviewers"
-        : aboveRequested ? `above the task's requested ${requested} tier, so an explicit route is required`
-        : usage.level === "high" ? "request-only at High" : `top two tiers need permission at ${label}`;
+        ? "below Heavyweight and Frontier, which Maximum reserves for workers and reviewers"
+        : aboveRequested ? `above the task's ${BRACKET_LABELS[requested]} bracket, so an explicit route is required`
+        : usage.level === "high" ? "request-only at High" : `needs permission at ${label}`;
       return `${tier}: ${rule}${ended}`;
     }
   }

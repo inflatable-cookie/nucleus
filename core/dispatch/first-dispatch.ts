@@ -101,7 +101,6 @@ export class FirstDispatch {
         unavailableGroupNames(this.store.availability()),
         this.store.recentCounts(),
         this.store.usageLevel(),
-        this.store.demandRoleOffsets(),
         [
           this.store.repositoryFor(task.repoPath)?.hostKind,
           this.store.getMeta<import("../../shared/host-kind").HostKind | null>(
@@ -268,7 +267,6 @@ export class FirstDispatch {
             "worker",
             this.store.recentCounts(),
             this.store.usageLevel(),
-            this.store.demandRoleOffsets(),
             true,
           ));
     if (dispatchGate({ selectionAvailable: Boolean(selection) })) {

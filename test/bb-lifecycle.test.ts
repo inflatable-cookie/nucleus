@@ -506,7 +506,7 @@ async function fixture(t: TestContext): Promise<Fixture> {
       weight: 2,
       roles: ["worker" as const],
       scopes: ["general" as const],
-      capability: "medium",
+      capability: "worker",
     },
     {
       profileId: "luna-review",
@@ -515,7 +515,7 @@ async function fixture(t: TestContext): Promise<Fixture> {
       weight: 2,
       roles: ["reviewer" as const],
       scopes: ["general" as const],
-      capability: "medium",
+      capability: "worker",
     },
   ]);
   runtime.store.setMeta("paused", false);

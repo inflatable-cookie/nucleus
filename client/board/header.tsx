@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { Pressable, ScrollView, Text, View, useWindowDimensions } from "react-native";
 import { useQuery } from "@tanstack/react-query";
 import * as api from "../../shared/contracts";
@@ -9,6 +9,7 @@ import { useRpc, Icon } from "../shell";
 import { ActionButton, Button, muted, row, type Colors } from "../controls";
 import { errorText } from "../error-text";
 import { QaFenceNotice } from "../qa-fence-notice";
+import { Popover } from "../popover";
 import type { BoardAct } from "./use-board-data";
 import { control as controlSize, space, type as typeScale, radius, overlay } from "../design";
 
@@ -65,6 +66,10 @@ export function BoardHeader({ c, workspaceName, state, refetchState, busy, act, 
   // Queue #665: the header's slot count opens the per-project popover. The flag
   // lives in the header, so a live board refresh never closes it.
   const [slotsOpen, setSlotsOpen] = useState(false);
+  // Queue #1391: the header menus' anchors. Their panels render in the shell's
+  // popover layer, positioned from these anchors' window coordinates.
+  const slotsAnchor = useRef<View | null>(null), slotsMenu = useRef<View | null>(null);
+  const queueAnchor = useRef<View | null>(null), queueMenu = useRef<View | null>(null);
   // Queue #665: Escape closes the slot popover on hosts with a DOM. The
   // anchored dropdown has no Modal onRequestClose to lean on; guarded like
   // localStore in project-scope-controls, so native hosts skip it.
@@ -89,10 +94,12 @@ export function BoardHeader({ c, workspaceName, state, refetchState, busy, act, 
           gap: space.lg,
           position: "relative",
           // Queue #665 / #706: no zIndex here, so this block is not a stacking
-          // context. The title+controls row raises to 50 while a header menu is
-          // open, stacking above the nav row (20) and the outside-press layer
-          // (40). The layer still covers the nav row and the board. Slot and
-          // pause wrappers keep zIndex 50 inside that raised row.
+          // context. The open header menus render in the shell's popover layer,
+          // above the nav row and the board columns (Tom, 2026-11-19): an
+          // anchored dropdown inside the header is painted over by the column
+          // cards that follow it. The title+controls row keeps zIndex 50 while a
+          // menu is open, so the outside-press layer (40) still covers the nav
+          // row (20) and the board while the menu keeps its presses.
         }}
       >
         <View style={{ ...row, justifyContent: "space-between", ...(queueMenuOpen || slotsOpen ? { zIndex: 50 } : {}) }}>
@@ -109,7 +116,7 @@ export function BoardHeader({ c, workspaceName, state, refetchState, busy, act, 
               trigger. The panel is an anchored dropdown in the ProjectFilter /
               SelectFilter pattern (relative wrapper, absolute panel, the same
               surface and shadow tokens), never a Modal. */}
-            <View style={{ position: "relative", zIndex: slotsOpen ? 50 : 0 }}>
+            <View ref={slotsAnchor} style={{ position: "relative", zIndex: slotsOpen ? 50 : 0 }}>
             <Text style={muted(c)}>
               {state?.connected
                 ? state.paused
@@ -129,10 +136,11 @@ export function BoardHeader({ c, workspaceName, state, refetchState, busy, act, 
                 ? ` · ${state.operationBacklog} operation${state.operationBacklog === 1 ? "" : "s"} queued`
                 : ""}
             </Text>
-            {/* Queue #665: per-project counts live in the anchored dropdown, never inline. */}
-            {!workspacePanel && slotsOpen && state && <ScrollView accessibilityRole="menu" accessibilityLabel="Projects using slots" nestedScrollEnabled
+            {/* Queue #665: per-project counts live in the popover, never inline. Outside a host it renders in place, positioned as before. */}
+            {!workspacePanel && slotsOpen && state && <Popover anchor={slotsAnchor} contentRef={slotsMenu} align="start" inlineStyle={{ top: space.lg, left: 0, width: 380 }}>
+              <ScrollView accessibilityRole="menu" accessibilityLabel="Projects using slots" nestedScrollEnabled
               contentContainerStyle={{ gap: space.xs }}
-              style={{ position: "absolute", top: space.lg, left: 0, width: 380, maxWidth: "92%", maxHeight: 320, padding: space.sm, borderWidth: 1, borderColor: c.border, borderRadius: radius.panel, backgroundColor: c.surface1,
+              style={{ width: 380, maxWidth: "92%", maxHeight: 320, padding: space.sm, borderWidth: 1, borderColor: c.border, borderRadius: radius.panel, backgroundColor: c.surface1,
                 shadowColor: overlay.shadow, shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.38, shadowRadius: 14, elevation: 12 }}>
               <Text accessibilityRole="header" style={{ color: c.foreground, fontWeight: "600", fontSize: typeScale.body.fontSize }}>Projects using slots</Text>
               {slotRows.length === 0
@@ -142,7 +150,8 @@ export function BoardHeader({ c, workspaceName, state, refetchState, busy, act, 
                   <Text numberOfLines={1} style={{ color: c.foregroundMuted, fontSize: typeScale.metadata.fontSize, fontFamily: "monospace", minWidth: 84, textAlign: "right" }}>{`${project.occupiedSlots}/${project.slotLimit} slots`}</Text>
                   <Text numberOfLines={1} style={{ color: c.foregroundMuted, fontSize: typeScale.metadata.fontSize, fontFamily: "monospace", minWidth: 104, textAlign: "right" }}>{`${project.inFlightTasks}/${project.inFlightLimit} in flight`}</Text>
                 </View>)}
-            </ScrollView>}
+              </ScrollView>
+            </Popover>}
             </View>
             {!workspacePanel &&
               serviceStateQuery.data &&
@@ -190,7 +199,7 @@ export function BoardHeader({ c, workspaceName, state, refetchState, busy, act, 
                   <View style={{ flexDirection: "row", alignItems: "center" }}>
                     <Button small iconOnly joined="start" c={c} icon={control.icon} text={control.label} disabled={control.disabled}
                       onPress={() => { setQueueMenuOpen(false); if (state) void act(() => setQueue({ paused: !state.paused })); }} />
-                    <Pressable accessibilityRole="button" accessibilityLabel="Queue controls menu" accessibilityState={{ expanded: queueMenuOpen, disabled: control.disabled }} disabled={control.disabled}
+                    <Pressable ref={queueAnchor} accessibilityRole="button" accessibilityLabel="Queue controls menu" accessibilityState={{ expanded: queueMenuOpen, disabled: control.disabled }} disabled={control.disabled}
                       onPress={() => { setQueueMenuOpen(!queueMenuOpen); setSlotsOpen(false); }}
                       style={{ minHeight: 36, minWidth: 28, alignItems: "center", justifyContent: "center", paddingHorizontal: space.xxs, backgroundColor: c.surface2,
                         borderTopRightRadius: radius.control, borderBottomRightRadius: radius.control, borderTopLeftRadius: 0, borderBottomLeftRadius: 0,
@@ -198,7 +207,9 @@ export function BoardHeader({ c, workspaceName, state, refetchState, busy, act, 
                       <Icon name={queueMenuOpen ? "ChevronUp" : "ChevronDown"} size={16} color={c.foreground} />
                     </Pressable>
                   </View>
-                  {queueMenuOpen && <View accessibilityRole="menu" accessibilityLabel="Queue controls" style={{ position: "absolute", top: controlSize.height + space.xxs / 2, right: 0, width: 260, maxHeight: Math.max(0, viewportHeight - inset - controlSize.height - space.lg), borderWidth: 1, borderColor: c.border, borderRadius: radius.panel, backgroundColor: c.surface1,
+                  {/* The open menu renders in the shell's popover layer, above the board columns. Outside a host it renders in place, positioned as before. */}
+                  {queueMenuOpen && <Popover anchor={queueAnchor} contentRef={queueMenu} align="end" inlineStyle={{ top: controlSize.height + space.xxs / 2, right: 0, width: 260 }}>
+                    <View accessibilityRole="menu" accessibilityLabel="Queue controls" style={{ width: 260, maxHeight: Math.max(0, viewportHeight - inset - controlSize.height - space.lg), borderWidth: 1, borderColor: c.border, borderRadius: radius.panel, backgroundColor: c.surface1,
                     shadowColor: overlay.shadow, shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.38, shadowRadius: 14, elevation: 12 }}>
                     {([
                       { key: "pause", icon: control.icon, label: state?.paused ? "Resume" : "Pause", run: () => { if (state) void act(() => setQueue({ paused: !state.paused })); } },
@@ -219,7 +230,8 @@ export function BoardHeader({ c, workspaceName, state, refetchState, busy, act, 
                       {!state.drained && state.boundRuns.slice(0, 8).map(run =>
                         <Text key={run.runId} numberOfLines={1} style={{ color: c.foregroundMuted, fontSize: typeScale.metadata.fontSize }}>{`${run.reference ?? run.taskId} · ${run.role}`}</Text>)}
                     </ScrollView>}
-                  </View>}
+                    </View>
+                  </Popover>}
                 </View>
               ) : (
                 <Button key={control.id} small iconOnly c={c} icon={control.icon} text={control.label}
@@ -264,11 +276,11 @@ export function BoardHeader({ c, workspaceName, state, refetchState, busy, act, 
       {children}
       {/* Queue #665 / #706: an outside click closes the open header menu. The
         layer sits above the nav row (zIndex 20) and the board (zIndex 40) and
-        below the raised title+controls row (zIndex 50), so a press on the
-        project filter or the board dismisses while the menu keeps its presses.
-        Other header icons live in that raised row, so they close the menu in
-        their own onPress. Follows RecordModal's outside-press layer without a
-        Modal. */}
+        below the raised title+controls row (zIndex 50) and the popover layer
+        (zIndex 1000), so a press on the project filter or the board dismisses
+        while the menu in the layer keeps its presses. Other header icons live
+        in that raised row, so they close the menu in their own onPress.
+        Follows RecordModal's outside-press layer without a Modal. */}
       {!workspacePanel && queueMenuOpen && <Pressable accessibilityRole="button" accessibilityLabel="Close queue controls" onPress={() => setQueueMenuOpen(false)} style={{ position: "absolute", top: 0, right: 0, bottom: 0, left: 0, zIndex: 40 }} />}
       {!workspacePanel && slotsOpen && <Pressable accessibilityRole="button" accessibilityLabel="Close project slot usage" onPress={() => setSlotsOpen(false)} style={{ position: "absolute", top: 0, right: 0, bottom: 0, left: 0, zIndex: 40 }} />}
   </>;

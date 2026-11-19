@@ -1251,7 +1251,7 @@ request identities and stored committed-handoff rows are not rewritten.
   task's `routingPolicy` (on `queue.detail` and `next`, both read against the
   task host's snapshot) lists the enabled pool profiles its host rules out or
   translates (`host.effects`) and how automatic worker
-  selection reads now (`selection`: complexity, role and usage offsets, the
+  selection reads now (`selection`: complexity, the usage level's start bracket, the
   first-attempt step, the demand, the profiles meeting it ordered by recent use
   over effective weight, and why the leader wins). An earlier migration
   copied the host's profile list once with ids unchanged without overwriting
@@ -1270,20 +1270,23 @@ request identities and stored committed-handoff rows are not rewritten.
 - Enabled flag, provider and group availability and thinking support are the
   eligibility gates; every profile can work, review and coordinate
   ([Spec 053](../specs/053-demand-based-selection.md), Tom, 2026-10-21).
-- Demand is the task's `complexity` (required on new submissions; `medium` when
-  absent), moved by the role offset and the usage level. Selection keeps every
-  eligible profile whose `capability` meets demand, else the most capable
+- Demand is a capability bracket (Mechanical, Worker, Heavyweight, Frontier)
+  from the task's `complexity` (required on new submissions; `medium` when
+  absent), the usage level and the step-up; the reviewer's bracket follows the
+  usage level and the coordinator runs on Mechanical when one is available
+  ([Spec 052](../specs/052-usage-level.md), Tom 2026-11-19). Selection keeps every
+  eligible profile at the demand's bracket, else the nearest above or the most capable
   eligible profiles, then rotates over the last 50 assignments by recent use
   over effective weight: configured weight times a cost lean that doubles per
   cost step down (Spec 053, Tom, 2026-11-04: cost leans, it doesn't exclude).
 - Frontier profiles, and profiles the usage level's permission rule holds, need a
   per-role request with a reason and the operator's board sign-off unless the
-  usage level puts them in automatic selection: frontier only at Maximum
+  usage level puts them in automatic selection: Frontier only at Extra high and Maximum
   ([Spec 052](../specs/052-usage-level.md), Tom 2026-11-09). Worker authorization does
   not authorize frontier review or coordination.
 - For Nucleus's own implementation and review work, request frontier profiles
   while usage allows, per role with a reason (Tom, 2026-10-18).
-- A coordinator's `route` never names a very_high-cost (Sol-class) profile;
+- A coordinator's `route` never names a profile the level holds (a Heavyweight or Frontier profile at Normal);
   availability and environment blocks are not capability failures (Tom,
   2026-10-01 and 2026-10-15). Owners may route there with a reason and board
   sign-off. A coordinator never routes to a profile the level's permission rule holds either.

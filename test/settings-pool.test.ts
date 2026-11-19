@@ -83,11 +83,10 @@ function selectSettingsTab(ui: ReturnType<typeof mount>, label: string) {
   tab.props.onPress();
 }
 
-function screenTree(state: ReturnType<typeof board>, onPool?: (input: unknown) => void, compact = false, onUsage?: (input: unknown) => void, onOffsets?: (input: unknown) => void) {
+function screenTree(state: ReturnType<typeof board>, onPool?: (input: unknown) => void, compact = false, onUsage?: (input: unknown) => void) {
   const invoke = async (method: string, input: unknown) => {
     if (method === 'queue.ui-snapshot') return state;
     if (method === 'queue.capacity-state') return capacityAuthorityState();
-    if (method === 'queue.demand-offsets') { onOffsets?.(input); return input; }
     if (method === 'queue.usage') { onUsage?.(input); return { level: 'maximum', setLevel: 'maximum', until: null, expired: false }; }
     if (method === 'backup.list') return { snapshots: [], localError: null };
     if (method === 'queue.pool' || method === 'queue.profile') { onPool?.(input); return { ok: true }; }
@@ -467,7 +466,7 @@ test('Spec 052: the usage slider lives under Dispatch limits, and saves a level 
   assert.doesNotMatch(ui.text(), /until/);
   // The end-time field sits in a column: no flex basis to stretch it into a tall gap (Tom, 2026-10-22).
   assert.ok(!ui.ofType('View').some(node => node.props.style?.flexBasis === 280), 'no 280 px basis on the Limits page');
-  for (const title of ['Usage level', 'Role demand', 'Task slots', 'Project overrides']) {
+  for (const title of ['Usage level', 'Task slots', 'Project overrides']) {
     const header = ui.ofType('Text').find(node => node.props.accessibilityRole === 'header' && node.children.join('') === title);
     assert.ok(header, `${title} section header`);
     // A long note or "Not saved" reason wraps below; it never squeezes the title (review #599).
@@ -478,7 +477,7 @@ test('Spec 052: the usage slider lives under Dispatch limits, and saves a level 
   }
   assert.ok(ui.ofType('View').filter(node => node.props.style?.flexWrap === 'wrap' && node.props.style?.columnGap === 12).length >= 4, 'every section header row wraps');
   ui.press('Usage Maximum');
-  await settle(() => /Workers and reviewers run on frontier or very-high models/.test(ui.get('Usage level help').props.accessibilityHint));
+  await settle(() => /Workers and reviewers run on Heavyweight or Frontier/.test(ui.get('Usage level help').props.accessibilityHint));
   await waitFor(() => sent.length === 1, 'the level to save on press');
   assert.deepEqual(sent[0], { level: 'maximum', until: null });
   ui.press('Return to Normal: No end');
@@ -500,36 +499,27 @@ test('Spec 052: the usage slider lives under Dispatch limits, and saves a level 
   unmount(ui);
 });
 
-test('Spec 053: Dispatch limits sets the role demand offsets within -4..+4 and autosaves all three once the presses settle', async () => {
+test('Dispatch limits has no Role demand section: roles carry no demand offsets (Tom, 2026-11-19)', async () => {
   await load();
-  const sent: unknown[] = [];
-  const ui = mount(screenTree(board({ profiles: [profile('live', 'Live model')], pool: [entry('live')] }), undefined, false, undefined, input => sent.push(input)));
+  const ui = mount(screenTree(board({ profiles: [profile('live', 'Live model')], pool: [entry('live')] })));
   selectSettingsTab(ui, 'Profiles');
   await settle(() => ui.text().includes('Live model'));
   ui.press('Dispatch limits');
-  await settle(() => Boolean(ui.query('Role demand offsets')));
-  assert.equal(ui.get('coordinator demand offset').props.value, '−2', 'defaults: coordinator two steps below the task');
-  assert.equal(ui.get('reviewer demand offset').props.value, '0');
-  assert.equal(ui.query('Save role demand'), undefined, 'no save button');
-  assert.equal(ui.query('Role demand save status'), undefined, 'no idle label: the status element appears only with a real status');
-  ui.press('Lower reviewer demand');
-  ui.press('Lower coordinator demand'); ui.press('Lower coordinator demand'); ui.press('Lower coordinator demand');
-  await settle(() => ui.query('coordinator demand offset')?.props.value === '−4');
-  assert.equal(ui.get('Lower coordinator demand').props.disabled, true, 'the floor is −4');
-  await waitFor(() => sent.length === 1, 'the offsets to autosave');
-  assert.deepEqual(sent[0], { worker: 0, reviewer: -1, coordinator: -4 }, 'quick presses land as one save');
-  await waitFor(() => ui.get('Role demand save status').children.join('') === 'Saved', 'the saved status');
+  await settle(() => ui.text().includes('Usage level'));
+  assert.equal(ui.query('Role demand offsets'), undefined);
+  assert.equal(ui.query('coordinator demand offset'), undefined);
+  assert.doesNotMatch(ui.text(), /Role demand/);
   unmount(ui);
 });
 
 test('Dispatch limits keeps explanations behind (?): hidden until hovered or pressed (Tom, 2026-10-22)', async () => {
   await load();
   const ui = mount(screenTree(board({ profiles: [profile('live', 'Live model')], pool: [entry('live')] })));
-  await settle(() => ui.query('Role demand help') !== undefined);
+  await settle(() => ui.query('Task slots help') !== undefined);
   // The descriptions are no longer on the page.
   for (const text of ["Each run starts at the usage level's tier", 'Parked tasks hold no slot', "A project's own slot limit", 'Runs need what the task needs'])
     assert.ok(!ui.text().includes(text), `"${text}" sits behind its (?)`);
-  for (const title of ['Usage level', 'Role demand', 'Task slots', 'Project overrides']) {
+  for (const title of ['Usage level', 'Task slots', 'Project overrides']) {
     const help = ui.get(`${title} help`);
     assert.ok(help.props.accessibilityHint.length > 20, `${title} has its explanation as the (?) hint`);
     assert.equal(ui.query(`${title} help text`), undefined, `${title} help is closed by default`);
@@ -540,10 +530,10 @@ test('Dispatch limits keeps explanations behind (?): hidden until hovered or pre
   assert.match(ui.text(), /Parked tasks hold no slot/);
   ui.press('Task slots help');
   await settle(() => !ui.query('Task slots help text'));
-  ui.get('Role demand help').props.onHoverIn();
-  await settle(() => Boolean(ui.query('Role demand help text')));
-  ui.get('Role demand help').props.onHoverOut();
-  await settle(() => !ui.query('Role demand help text'));
+  ui.get('Project overrides help').props.onHoverIn();
+  await settle(() => Boolean(ui.query('Project overrides help text')));
+  ui.get('Project overrides help').props.onHoverOut();
+  await settle(() => !ui.query('Project overrides help text'));
   // Review #600: a press closes a tip that hover or focus opened, and it stays closed until the pointer leaves.
   ui.get('Usage level help').props.onHoverIn();
   await settle(() => Boolean(ui.query('Usage level help text')));
@@ -646,7 +636,7 @@ test('Spec 052: a profile row shows a status only for a problem; a frontier prof
       ui.press('Edit Frontier Opus with a long profile name');
       await settle(() => Boolean(ui.query('Capability help')));
       assert.equal(ui.query('Selection by request'), undefined, 'By request is retired (Tom, 2026-11-09)');
-      assert.match(ui.get('Capability help').props.accessibilityHint, /The top two tiers need permission at Low and Normal, frontier at High/);
+      assert.match(ui.get('Capability help').props.accessibilityHint, /Heavyweight and Frontier need permission at Low and Normal, Frontier at High/);
       assert.match(ui.get('Cost help').props.accessibilityHint, /Unset ranks as medium and is never cost-gated/);
       assert.doesNotMatch(ui.text(), /Each cost step down|Each run needs the task's complexity|Weight 2 receives|By request/);
       assert.equal(ui.query('Save Frontier Opus with a long profile name'), undefined);
@@ -907,16 +897,16 @@ test('Cost and Capability are sliders with the chosen value beside the label, no
     assert.ok(costLabelRow, 'the value shares the label row');
     assert.doesNotMatch(ui.text(), /Very low|Very high|\bMedium\b/, 'no stop labels under either slider');
     capability.props.onAccessibilityAction({ nativeEvent: { actionName: 'increment' } });
-    await waitFor(() => saved.some(value => (value as { capability?: string })?.capability === 'medium'), 'an adjust from unset to start at medium, as unset counts');
-    // Tom, 2026-11-09: five capability stops, low to frontier; very low is gone.
-    assert.deepEqual(['low', 'medium', 'high', 'very high', 'frontier'].map(stop => Boolean(ui.query(`Capability ${stop}`))), [true, true, true, true, true]);
-    assert.equal(ui.query('Capability very low'), undefined, 'no very low stop');
-    assert.equal(capability.props.accessibilityValue.max, 4);
-    ui.press('Capability frontier');
+    await waitFor(() => saved.some(value => (value as { capability?: string })?.capability === 'worker'), 'an adjust from unset to start at Worker, as unset counts');
+    // Tom, 2026-11-19: four capability brackets, Mechanical to Frontier.
+    assert.deepEqual(['Mechanical', 'Worker', 'Heavyweight', 'Frontier'].map(stop => Boolean(ui.query(`Capability ${stop}`))), [true, true, true, true]);
+    for (const retired of ['low', 'medium', 'high', 'very high', 'very low']) assert.equal(ui.query(`Capability ${retired}`), undefined, `no ${retired} stop`);
+    assert.equal(capability.props.accessibilityValue.max, 3, 'four stops');
+    ui.press('Capability Frontier');
     await waitFor(() => saved.some(value => (value as { capability?: string })?.capability === 'frontier'), 'the frontier stop to autosave');
     await settle(() => ui.get('Capability value').children.join('') === 'Frontier');
     assert.equal(ui.get('Capability value').children.join(''), 'Frontier', 'the chosen value shows at the right of the label');
-    assert.match(ui.get('Capability help').props.accessibilityHint, /The top two tiers need permission at Low and Normal, frontier at High/);
+    assert.match(ui.get('Capability help').props.accessibilityHint, /Heavyweight and Frontier need permission at Low and Normal, Frontier at High/);
     ui.press('Cost very low');
     await waitFor(() => saved.some(value => (value as { cost?: string })?.cost === 'very_low'), 'a stop press to autosave');
   } finally { unmount(ui); }

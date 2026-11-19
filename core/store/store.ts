@@ -112,7 +112,6 @@ import {
   type BoardLead,
   type BoardLeadLink,
   type Decision,
-  type DemandRoleOffsets,
   type HostRunAccountingRetirement,
   type HostRunEscapedDescendant,
   type HostRunInternalRecord,
@@ -1541,10 +1540,6 @@ export class Store {
         )
         .all(taskId) as { taskId: string }[]
     ).map((row) => row.taskId);
-  }
-  /** Spec 053: the host-wide role offsets, defaulting to worker 0, reviewer 0, coordinator −2. */
-  demandRoleOffsets(): DemandRoleOffsets {
-    return this.configStore.demandRoleOffsets();
   }
   /** Spec 052: the stored usage setting, if the operator set one. */
   usageSetting(): UsageSetting | null {

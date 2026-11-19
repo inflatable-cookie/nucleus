@@ -1,56 +1,11 @@
-import type {
-  Task,
-  Run,
-  Profile,
-  PoolEntry,
-  DemandRoleOffsets,
-  ProfileCapability,
-  RoutePolicy,
-  RoutingPolicy,
-  UsageLevel,
-  UsageView,
-  HostEffect,
-  SelectionExplanation,
-} from "../../shared/contracts";
+import type { Task, Run, Profile, PoolEntry, ProfileCapability, RoutePolicy, RoutingPolicy, UsageLevel, UsageView, HostEffect, SelectionExplanation } from "../../shared/contracts";
 import type { Resolution } from "../resolution";
-import {
-  authorModelKey,
-  queueAuthorModelKey,
-  taskAuthorModelKeys,
-} from "../../shared/authors";
-import {
-  activeGroupLimit,
-  demandRank,
-  unavailableGroupNames,
-  workerThinking,
-} from "../../shared/pool";
-export { workerThinking };
-import {
-  automaticReachable,
-  automaticSelection,
-  requestOnly,
-  describeRoutePolicy,
-  honouredRequest,
-  requestReaches,
-  groupIsUnavailable,
-  topTier,
-} from "../../shared/pool";
-import {
-  DEMAND_ROLE_OFFSETS,
-  climbedTier,
-  effectiveWeight,
-  requestedTier,
-  reviewerDemand,
-  runDemand,
-  selectionTier,
-  usageCeiling,
-  workerActualTier,
-  workerClimbTarget,
-  workerStartTier,
-  workerStepLabel,
-  workerStepUp,
-} from "../../shared/demand";
-type Role = "worker" | "reviewer" | "coordinator";
+import { authorModelKey, queueAuthorModelKey, taskAuthorModelKeys } from "../../shared/authors";
+import {activeGroupLimit,demandRank,unavailableGroupNames,workerThinking} from '../../shared/pool';
+export {workerThinking};
+import {automaticReachable, automaticSelection, requestOnly, describeRoutePolicy, honouredRequest, requestReaches, groupIsUnavailable, topTier} from '../../shared/pool';
+import {climbedTier, effectiveWeight, requestedTier, reviewerDemand, runDemand, selectionTier, usageCeiling, workerActualTier, workerClimbTarget, workerStartTier, workerStepLabel, workerStepUp} from '../../shared/demand';
+type Role = "worker"|"reviewer"|"coordinator";
 /**
  * Spec 050: whether the task's recorded reviewer request is an owner `route`
  * for this profile. Only the `route` verb writes the marker — `set_routing`
@@ -59,18 +14,11 @@ type Role = "worker" | "reviewer" | "coordinator";
  * route with a recorded `owner_control` waiver event.
  */
 /** The refusal for a worker thinking level given twice with different values, or null. */
-export function workerThinkingConflict(
-  top: string | undefined,
-  request: { thinkingOptionId?: string } | null | undefined,
-): string | null {
+export function workerThinkingConflict(top: string | undefined, request: { thinkingOptionId?: string } | null | undefined): string | null {
   return top && request?.thinkingOptionId && request.thinkingOptionId !== top
-    ? `Conflicting worker thinking levels: thinkingOptionId ${top} and profileRequests.worker.thinkingOptionId ${request.thinkingOptionId}; give one`
-    : null;
+    ? `Conflicting worker thinking levels: thinkingOptionId ${top} and profileRequests.worker.thinkingOptionId ${request.thinkingOptionId}; give one` : null;
 }
-export function isOwnerRoutedReviewer(
-  task: Pick<Task, "profileRequests">,
-  profileId: string,
-): boolean {
+export function isOwnerRoutedReviewer(task: Pick<Task, "profileRequests">, profileId: string): boolean {
   const request = task.profileRequests?.reviewer;
   return request?.ownerRoute === true && request.profileId === profileId;
 }
@@ -79,19 +27,9 @@ export function isOwnerRoutedReviewer(
  * `route` writes the `ownerRoute` marker, so callers can never smuggle the
  * reviewer independence waiver through another writer.
  */
-export function plainProfileRequest(request: {
-  profileId: string;
-  reason: string;
-  required: boolean;
-  thinkingOptionId?: string;
-}) {
-  return {
-    profileId: request.profileId,
-    reason: request.reason,
-    required: request.required,
-    ...(request.thinkingOptionId !== undefined
-      ? { thinkingOptionId: request.thinkingOptionId }
-      : {}),
+export function plainProfileRequest(request: { profileId: string; reason: string; required: boolean; thinkingOptionId?: string }) {
+  return { profileId: request.profileId, reason: request.reason, required: request.required,
+    ...(request.thinkingOptionId !== undefined ? { thinkingOptionId: request.thinkingOptionId } : {}),
   };
 }
 /**
@@ -122,28 +60,19 @@ type ResolvedModel =
  */
 function workerRequest(routing: RoutingPreflightInput): RoleRequest | null {
   const request = routing.profileRequests?.worker;
-  if (request)
-    return { profileId: request.profileId, required: request.required };
+  if (request) return { profileId: request.profileId, required: request.required };
   if (routing.preferredProfileId)
-    return {
-      profileId: routing.preferredProfileId,
-      required: Boolean(routing.requirePreferred),
-    };
+    return { profileId: routing.preferredProfileId, required: Boolean(routing.requirePreferred) };
   return null;
 }
 
 function reviewerRequest(routing: RoutingPreflightInput): RoleRequest | null {
   const request = routing.profileRequests?.reviewer;
-  return request
-    ? { profileId: request.profileId, required: request.required }
-    : null;
+  return request ? { profileId: request.profileId, required: request.required } : null;
 }
 
-function resolveProfile(
-  profileId: string,
-  profiles: readonly Profile[],
-): ResolvedModel {
-  const profile = profiles.find((candidate) => candidate.id === profileId);
+function resolveProfile(profileId: string, profiles: readonly Profile[]): ResolvedModel {
+  const profile = profiles.find(candidate => candidate.id === profileId);
   if (!profile) return { kind: "missing", profileId };
   const model = profile.model;
   const key = authorModelKey(model);
@@ -162,19 +91,12 @@ function identityRoutes(
   profiles: readonly Profile[],
   pool: readonly PoolEntry[],
 ): Array<{ id: string; model: string; key: string }> {
-  const request =
-    role === "worker" ? workerRequest(routing) : reviewerRequest(routing);
+  const request = role === "worker" ? workerRequest(routing) : reviewerRequest(routing);
   const requested = requestedTier(routing.complexity);
-  return pool.flatMap((entry) => {
-    const profile = profiles.find(
-      (candidate) => candidate.id === entry.profileId,
-    );
+  return pool.flatMap(entry => {
+    const profile = profiles.find(candidate => candidate.id === entry.profileId);
     if (!entry.enabled || !profile?.available) return [];
-    if (
-      requestOnly(entry, routing.usage, requested) &&
-      request?.profileId !== entry.profileId
-    )
-      return [];
+    if (requestOnly(entry, routing.usage, requested) && request?.profileId !== entry.profileId) return [];
     const key = authorModelKey(profile.model);
     if (key === "default") return [];
     return [{ id: profile.id, model: profile.model, key }];
@@ -195,110 +117,53 @@ export function independentReviewRoutingConflict(
   if (routing.skipPRReview) return null;
   const worker = workerRequest(routing);
   const reviewer = reviewerRequest(routing);
-  const resolvedWorker = worker
-    ? resolveProfile(worker.profileId, profiles)
-    : null;
-  const resolvedReviewer = reviewer
-    ? resolveProfile(reviewer.profileId, profiles)
-    : null;
+  const resolvedWorker = worker ? resolveProfile(worker.profileId, profiles) : null;
+  const resolvedReviewer = reviewer ? resolveProfile(reviewer.profileId, profiles) : null;
   if (worker?.required && resolvedWorker?.kind === "missing")
-    return correction(
-      `Required worker profile ${worker.profileId} is absent from the live catalog`,
-    );
+    return correction(`Required worker profile ${worker.profileId} is absent from the live catalog`);
   if (worker?.required && resolvedWorker?.kind === "opaque")
-    return correction(
-      `Required worker ${worker.profileId} (${resolvedWorker.model || "default"}) uses an opaque provider-default model that cannot prove review independence`,
-    );
+    return correction(`Required worker ${worker.profileId} (${resolvedWorker.model || "default"}) uses an opaque provider-default model that cannot prove review independence`);
   if (reviewer?.required && resolvedReviewer?.kind === "missing")
-    return correction(
-      `Required reviewer profile ${reviewer.profileId} is absent from the live catalog`,
-    );
+    return correction(`Required reviewer profile ${reviewer.profileId} is absent from the live catalog`);
   if (reviewer?.required && resolvedReviewer?.kind === "opaque")
-    return correction(
-      `Required reviewer ${reviewer.profileId} (${resolvedReviewer.model || "default"}) uses an opaque provider-default model that cannot prove review independence`,
-    );
+    return correction(`Required reviewer ${reviewer.profileId} (${resolvedReviewer.model || "default"}) uses an opaque provider-default model that cannot prove review independence`);
   const authorLabels = new Map<string, string>();
   if (worker?.required && resolvedWorker?.kind === "concrete")
-    authorLabels.set(
-      resolvedWorker.key,
-      `required worker ${resolvedWorker.profileId} (${resolvedWorker.model})`,
-    );
+    authorLabels.set(resolvedWorker.key, `required worker ${resolvedWorker.profileId} (${resolvedWorker.model})`);
   for (const model of routing.declaredAuthorModels ?? []) {
     const key = authorModelKey(model);
     if (key === "default")
-      return correction(
-        `Declared author model ${model || "default"} is opaque and cannot prove review independence`,
-      );
-    if (!authorLabels.has(key))
-      authorLabels.set(key, `declared author model ${model}`);
+      return correction(`Declared author model ${model || "default"} is opaque and cannot prove review independence`);
+    if (!authorLabels.has(key)) authorLabels.set(key, `declared author model ${model}`);
   }
   if (reviewer?.required && resolvedReviewer?.kind === "concrete") {
     const author = authorLabels.get(resolvedReviewer.key);
     if (author) {
-      if (
-        worker?.required &&
-        resolvedWorker?.kind === "concrete" &&
-        resolvedWorker.profileId === resolvedReviewer.profileId
-      )
-        return correction(
-          `Required worker ${resolvedWorker.profileId} (${resolvedWorker.model}) and required reviewer ${resolvedReviewer.profileId} (${resolvedReviewer.model}) share the same model`,
-        );
-      return correction(
-        `${author} and required reviewer ${resolvedReviewer.profileId} (${resolvedReviewer.model}) share model ${resolvedReviewer.model}`,
-      );
+      if (worker?.required && resolvedWorker?.kind === "concrete" && resolvedWorker.profileId === resolvedReviewer.profileId)
+        return correction(`Required worker ${resolvedWorker.profileId} (${resolvedWorker.model}) and required reviewer ${resolvedReviewer.profileId} (${resolvedReviewer.model}) share the same model`);
+      return correction(`${author} and required reviewer ${resolvedReviewer.profileId} (${resolvedReviewer.model}) share model ${resolvedReviewer.model}`);
     }
   }
   if (authorLabels.size && !reviewer?.required) {
     const routes = identityRoutes("reviewer", routing, profiles, pool);
-    if (!routes.length || routes.some((route) => !authorLabels.has(route.key)))
-      return null;
-    return correction(
-      `${[...authorLabels.values()].join(" and ")} leaves no independent reviewer route`,
-    );
+    if (!routes.length || routes.some(route => !authorLabels.has(route.key))) return null;
+    return correction(`${[...authorLabels.values()].join(" and ")} leaves no independent reviewer route`);
   }
-  if (
-    reviewer?.required &&
-    resolvedReviewer?.kind === "concrete" &&
-    !authorLabels.size
-  ) {
+  if (reviewer?.required && resolvedReviewer?.kind === "concrete" && !authorLabels.size) {
     const routes = identityRoutes("worker", routing, profiles, pool);
-    if (
-      !routes.length ||
-      routes.some((route) => route.key !== resolvedReviewer.key)
-    )
-      return null;
-    return correction(
-      `Required reviewer ${resolvedReviewer.profileId} (${resolvedReviewer.model}) leaves no independent worker route`,
-    );
+    if (!routes.length || routes.some(route => route.key !== resolvedReviewer.key)) return null;
+    return correction(`Required reviewer ${resolvedReviewer.profileId} (${resolvedReviewer.model}) leaves no independent worker route`);
   }
   return null;
 }
-export function validateNamedProfile(
-  profileId: string,
-  role: Role,
-  scope: Task["scope"],
-  profiles: Profile[],
-  pool: PoolEntry[],
-  reason = "",
-  thinkingOptionId = "",
-) {
-  const profile = profiles.find((p) => p.id === profileId);
-  const entry = pool.find((p) => p.profileId === profileId);
-  if (!profile)
-    throw Error(`Profile ${profileId} is absent from the live catalog`);
-  if (!profile.available)
-    throw Error(`Profile ${profileId} is unavailable: ${profile.problem}`);
-  if (!entry?.enabled)
-    throw Error(`Profile ${profileId} is disabled in the pool`);
-  if (
-    role === "worker" &&
-    thinkingOptionId &&
-    !profile.supportedThinking.includes(thinkingOptionId)
-  )
-    throw Error(
-      `Profile ${profileId} does not support thinking option ${thinkingOptionId}`,
-    );
-  return { profile, entry };
+export function validateNamedProfile(profileId:string, role:Role, scope:Task["scope"], profiles:Profile[], pool:PoolEntry[], reason="", thinkingOptionId="") {
+  const profile=profiles.find(p=>p.id===profileId);
+  const entry=pool.find(p=>p.profileId===profileId);
+  if(!profile)throw Error(`Profile ${profileId} is absent from the live catalog`);
+  if(!profile.available)throw Error(`Profile ${profileId} is unavailable: ${profile.problem}`);
+  if(!entry?.enabled)throw Error(`Profile ${profileId} is disabled in the pool`);
+  if(role==="worker"&&thinkingOptionId&&!profile.supportedThinking.includes(thinkingOptionId))throw Error(`Profile ${profileId} does not support thinking option ${thinkingOptionId}`);
+  return {profile,entry};
 }
 /**
  * Review independence for worker selection (Spec 036). A retained reviewer
@@ -307,16 +172,11 @@ export function validateNamedProfile(
  * the `route` verb's refusal and the `next` route view read this one rule. It
  * has no waiver: the reviewer-side owner-route waiver has no worker counterpart.
  */
-export function reviewerFiltersWorker(
-  reviewer: { model: string } | null | undefined,
-  worker: { model: string },
-): boolean {
+export function reviewerFiltersWorker(reviewer: { model: string } | null | undefined, worker: { model: string }): boolean {
   // No recorded reviewer model filters nothing; an opaque one filters the opaque
   // worker models it cannot be told apart from.
   const reviewerModel = reviewer?.model ? authorModelKey(reviewer.model) : "";
-  return (
-    Boolean(reviewerModel) && authorModelKey(worker.model) === reviewerModel
-  );
+  return Boolean(reviewerModel) && authorModelKey(worker.model) === reviewerModel;
 }
 
 /** The reason a reviewer-filtered worker profile is named by, in eligibility and route refusals. */
@@ -327,10 +187,7 @@ export function reviewerIndependenceFilter(worker: { model: string }): string {
 }
 
 /** The route refusal for a worker profile review independence filters, naming the two ways out. */
-export function workerReviewerRouteRefusal(
-  worker: Profile,
-  reviewer: { model: string },
-): string {
+export function workerReviewerRouteRefusal(worker: Profile, reviewer: { model: string }): string {
   return `Worker profile ${worker.id} ${reviewerIndependenceFilter(worker)}; worker selection drops it with no waiver. Route the retained reviewer to a different model, or route the worker to an eligible profile that does not run on ${reviewer.model}.`;
 }
 
@@ -341,267 +198,131 @@ export function workerReviewerRouteRefusal(
  * the two filters that remove catalogued profiles before eligibility reads
  * them, and the message names them plainly.
  */
-function eligibilityAbsence(
-  task: Task,
-  profileId: string,
-  catalog: readonly Profile[],
-): string {
-  if (!catalog.some((profile) => profile.id === profileId))
-    return "absent from catalog";
-  if (
-    task.workerExclusions?.some(
-      (exclusion) => exclusion.profileId === profileId,
-    )
-  )
-    return "excluded for this task";
-  const candidate = catalog.find((profile) => profile.id === profileId);
-  if (
-    candidate &&
-    reviewerFiltersWorker(task.resolution?.reviewerProfile, candidate)
-  )
-    return reviewerIndependenceFilter(candidate);
+function eligibilityAbsence(task:Task,profileId:string,catalog:readonly Profile[]):string{
+  if(!catalog.some(profile=>profile.id===profileId))return "absent from catalog";
+  if(task.workerExclusions?.some(exclusion=>exclusion.profileId===profileId))return "excluded for this task";
+  const candidate=catalog.find(profile=>profile.id===profileId);
+  if(candidate&&reviewerFiltersWorker(task.resolution?.reviewerProfile,candidate))return reviewerIndependenceFilter(candidate);
   return "filtered from the eligible set";
 }
-export function eligibilityReasons(
-  task: Task,
-  profiles: Profile[],
-  pool: PoolEntry[],
-  availability: {
-    group: string;
-    unavailable: boolean;
-    reason: string;
-    retryAt: string | null;
-  }[],
-  usage: UsageLevel = "normal",
-  catalog: readonly Profile[] = profiles,
-) {
-  const raw = task.profileRequests?.worker;
-  const requested = requestedTier(task.complexity);
-  const climb = climbedTier(task);
-  const request = honouredRequest(raw, pool, usage, requested, climb);
-  const preferred = request?.profileId ?? (raw ? "" : task.preferredProfileId);
-  const required = request?.required ?? (!raw && task.requirePreferred);
-  const reasons = pool
-    .map((entry) => {
-      const p = profiles.find((profile) => profile.id === entry.profileId);
-      const causes: string[] = [];
-      if (!entry.enabled) causes.push("disabled");
-      if (!p) causes.push(eligibilityAbsence(task, entry.profileId, catalog));
-      else if (!p.available) causes.push(`unavailable: ${p.problem}`);
-      if (!requestReaches(entry, usage, request, requested, climb))
-        causes.push(
-          raw?.profileId === entry.profileId
-            ? "awaiting the operator's board sign-off"
-            : `${entry.capability ?? "unrated"} tier needs the operator's board sign-off at the ${usage} usage level`,
-        );
-      const thinking = workerThinking(task);
-      if (thinking && p && !p.supportedThinking.includes(thinking))
-        causes.push(`thinking option ${thinking} unsupported`);
-      const group = availability.find(
-        (a) => a.group === entry.group && groupIsUnavailable(a),
-      );
-      if (group)
-        causes.push(
-          `group ${entry.group} unavailable: ${group.reason}${group.retryAt ? ` (retry ${group.retryAt})` : ""}`,
-        );
-      return causes.length ? `${entry.profileId}: ${causes.join(", ")}` : null;
-    })
-    .filter((reason): reason is string => Boolean(reason));
-  if (required && preferred)
-    reasons.unshift(`preference required but ineligible: ${preferred}`);
-  if (!pool.length) reasons.push("pool empty");
-  return `No eligible worker profile: ${reasons.slice(0, 8).join("; ")}${reasons.length > 8 ? `; and ${reasons.length - 8} more` : ""}`.slice(
-    0,
-    2000,
-  );
+export function eligibilityReasons(task:Task,profiles:Profile[],pool:PoolEntry[],availability:{group:string;unavailable:boolean;reason:string;retryAt:string|null}[],usage:UsageLevel="normal",catalog:readonly Profile[]=profiles) {
+  const raw=task.profileRequests?.worker;
+  const requested=requestedTier(task.complexity);
+  const climb=climbedTier(task);
+  const request=honouredRequest(raw,pool,usage,requested,climb);
+  const preferred=request?.profileId??(raw?"":task.preferredProfileId);
+  const required=request?.required??(!raw&&task.requirePreferred);
+  const reasons=pool.map(entry=>{
+    const p=profiles.find(profile=>profile.id===entry.profileId);
+    const causes:string[]=[];
+    if(!entry.enabled)causes.push("disabled");
+    if(!p)causes.push(eligibilityAbsence(task,entry.profileId,catalog));
+    else if(!p.available)causes.push(`unavailable: ${p.problem}`);
+    if(!requestReaches(entry,usage,request,requested,climb))causes.push(raw?.profileId===entry.profileId?"awaiting the operator's board sign-off":`${entry.capability ?? "unrated"} tier needs the operator's board sign-off at the ${usage} usage level`);
+    const thinking=workerThinking(task);
+    if(thinking&&p&&!p.supportedThinking.includes(thinking))causes.push(`thinking option ${thinking} unsupported`);
+    const group=availability.find(a=>a.group===entry.group&&groupIsUnavailable(a));
+    if(group)causes.push(`group ${entry.group} unavailable: ${group.reason}${group.retryAt?` (retry ${group.retryAt})`:""}`);
+    return causes.length?`${entry.profileId}: ${causes.join(", ")}`:null;
+  }).filter((reason):reason is string=>Boolean(reason));
+  if(required&&preferred)reasons.unshift(`preference required but ineligible: ${preferred}`);
+  if(!pool.length)reasons.push("pool empty");
+  return `No eligible worker profile: ${reasons.slice(0,8).join("; ")}${reasons.length>8?`; and ${reasons.length-8} more`:""}`.slice(0,2000);
 }
 /** An unrated worker or reviewer cannot demonstrate critical peer capability. */
-export function criticalReviewerMeets(
-  task: Task,
-  profile: Profile,
-  pool: readonly PoolEntry[],
-): boolean {
-  const worker = pool.find(
-    (entry) => entry.profileId === task.profile?.id,
-  )?.capability;
-  const reviewer = pool.find(
-    (entry) => entry.profileId === profile.id,
-  )?.capability;
-  return Boolean(
-    worker &&
-      reviewer &&
-      task.profile &&
-      authorModelKey(profile.model) !== "default" &&
-      authorModelKey(profile.model) !== authorModelKey(task.profile.model) &&
-      demandRank(reviewer) >= demandRank(worker),
-  );
+export function criticalReviewerMeets(task: Task, profile: Profile, pool: readonly PoolEntry[]): boolean {
+  const worker = pool.find(entry => entry.profileId === task.profile?.id)?.capability;
+  const reviewer = pool.find(entry => entry.profileId === profile.id)?.capability;
+  return Boolean(worker && reviewer && task.profile && authorModelKey(profile.model) !== 'default'
+    && authorModelKey(profile.model) !== authorModelKey(task.profile.model) && demandRank(reviewer) >= demandRank(worker));
 }
-export function chooseProfile(
-  task: Task,
-  profiles: Profile[],
-  pool: PoolEntry[],
-  counts: Record<string, number>,
-  unavailable: Set<string>,
-  role: "worker" | "reviewer" | "coordinator" = "worker",
-  recent: Record<string, number> = counts,
-  usage: UsageLevel = "normal",
-  offsets: DemandRoleOffsets = DEMAND_ROLE_OFFSETS,
-  initialWorker = false,
-) {
+export function chooseProfile(task: Task, profiles: Profile[], pool: PoolEntry[], counts: Record<string, number>, unavailable: Set<string>, role: "worker"|"reviewer"|"coordinator" = "worker", recent:Record<string,number>=counts, usage:UsageLevel="normal", initialWorker = false) {
   // Spec 052 (2026-10-21): an unsigned request for a request-only profile is
   // dropped whole: it pins nothing, waits for nothing and sets no thinking, so
   // the role runs on automatic selection until the operator signs it off.
-  const raw = task.profileRequests?.[role];
-  const requested = requestedTier(task.complexity);
+  const raw=task.profileRequests?.[role];
+  const requested=requestedTier(task.complexity);
   // Spec 052 (Tom, 2026-11-17): the applied changes-required review authorizes
   // one worker climb (recorded then), and the record keeps the climbed tier
   // permitted for this task's later runs. A first attempt before any climb has
   // no exception.
   const climb = role === "worker" ? workerClimbTarget(task, pool, usage) : null;
   const climbTier = climb?.to ?? climbedTier(task);
-  const request = honouredRequest(raw, pool, usage, requested, climbTier);
-  const unsigned = Boolean(raw && !request);
-  const preferredId =
-    request?.profileId ??
-    (role === "worker" && !unsigned ? task.preferredProfileId : "");
-  const required =
-    request?.required ??
-    (role === "worker" && !unsigned && task.requirePreferred);
-  const thinkingOptionId =
-    role === "worker"
-      ? unsigned
-        ? (task.thinkingOptionId ?? "")
-        : workerThinking(task)
-      : (request?.thinkingOptionId ?? "");
+  const request=honouredRequest(raw, pool, usage, requested, climbTier);
+  const unsigned=Boolean(raw&&!request);
+  const preferredId=request?.profileId ?? (role === "worker" && !unsigned ? task.preferredProfileId : "");
+  const required=request?.required ?? (role === "worker" && !unsigned && task.requirePreferred);
+  const thinkingOptionId=role === "worker" ? (unsigned ? task.thinkingOptionId ?? "" : workerThinking(task)) : request?.thinkingOptionId ?? "";
   // Spec 053 / Spec 052 (Tom, 2026-11-17): the run's tier decides the set.
-  const fullDemand = runDemand(task.complexity, role, usage, offsets);
+  const fullDemand = runDemand(task.complexity, role, usage);
   const workerActual = workerActualTier(task, pool);
-  const raised =
-    role === "reviewer"
-      ? reviewerDemand(task, pool, usage, offsets)
-      : workerActual && demandRank(workerActual) > demandRank(fullDemand)
-        ? workerActual
-        : fullDemand;
+  const raised = role === "reviewer" ? reviewerDemand(task, pool, usage)
+    : workerActual && demandRank(workerActual) > demandRank(fullDemand) ? workerActual : fullDemand;
   // A task keeps the worker tier it earned: a first run starts at the level's
   // tier, and a climbed or routed worker never falls back below its actual
-  // profile. A reviewer's demand is the worker's tier moved by the reviewer offset.
-  const demand =
-    role === "worker"
-      ? climb
-        ? climb.to
-        : raised
-      : role === "reviewer"
-        ? raised
-        : fullDemand;
-  // Maximum reserves the top two tiers for workers and reviewers (an explicit
+  // profile. A reviewer's demand follows the usage level from the worker's bracket.
+  const demand = role === "worker" ? (climb ? climb.to : raised) : role === "reviewer" ? raised : fullDemand;
+  // Maximum reserves Heavyweight and Frontier for workers and reviewers (an explicit
   // request included), and a reviewer never runs below the worker's actual tier.
   const roleMeets = (entry: PoolEntry) => {
-    if (
-      usage === "maximum" &&
-      role !== "coordinator" &&
-      !topTier(entry.capability)
-    )
-      return false;
+    if (usage === "maximum" && role !== "coordinator" && !topTier(entry.capability)) return false;
     // No absolute reviewer floor (Tom, 2026-11-18: "a reviewer should be able to
     // be lower tier", "a Sol reviewer for an Opus worker is fine"): the reviewer
-    // offset sets its demand, and a critical task prefers a rigorous reviewer
+    // level sets its demand, and a critical task prefers a rigorous reviewer
     // below, falling back to the best independent one when none is available.
     return true;
   };
-  let eligible = pool.flatMap((entry) => {
-    const profile = profiles.find((p) => p.id === entry.profileId);
+  let eligible = pool.flatMap(entry => {
+    const profile = profiles.find(p => p.id === entry.profileId);
     // Spec 053 retires the pool's role and scope switches: every model can work, review and coordinate.
-    if (!entry.enabled || !profile?.available || unavailable.has(entry.group))
-      return [];
+    if (!entry.enabled || !profile?.available || unavailable.has(entry.group)) return [];
     // A profile the level's permission rule holds (Spec 052, Tom 2026-11-17)
     // is never selected automatically; only an explicit request with a reason
     // that the operator signed off on the board reaches it.
-    if (!requestReaches(entry, usage, request, requested, climbTier)) return [];
-    if (
-      thinkingOptionId &&
-      !profile.supportedThinking.includes(thinkingOptionId)
-    )
-      return [];
-    return [
-      {
-        entry,
-        profile: {
-          ...profile,
-          thinkingOptionId: thinkingOptionId || profile.thinkingOptionId,
-        },
-      },
-    ];
+    if(!requestReaches(entry, usage, request, requested, climbTier))return [];
+    if (thinkingOptionId && !profile.supportedThinking.includes(thinkingOptionId)) return [];
+    return [{ entry, profile: { ...profile, thinkingOptionId: thinkingOptionId || profile.thinkingOptionId } }];
   });
   if (preferredId) {
-    const preferred = eligible.find((e) => e.profile.id === preferredId);
+    const preferred = eligible.find(e => e.profile.id === preferredId);
     // An explicit (honoured) request or owner route is its own permission; a
     // plain preference never reaches above the requested tier or a tier the
     // level holds. A preferred reviewer must also meet the worker's capability.
-    const preferredReaches =
-      Boolean(preferred) &&
-      roleMeets(preferred!.entry) &&
-      (request
-        ? true
-        : automaticReachable(
-            preferred!.entry,
-            usage,
-            requested,
-            climbTier,
-            role,
-          ));
+    const preferredReaches = Boolean(preferred) && roleMeets(preferred!.entry) && (request
+      ? true
+      : automaticReachable(preferred!.entry, usage, requested, climbTier, role));
     if (preferred && preferredReaches) return preferred;
     if (required) return null;
   }
   if (role === "reviewer" && task.critical) {
-    const rigorous = eligible.filter((candidate) =>
-      criticalReviewerMeets(task, candidate.profile, pool),
-    );
+    const rigorous = eligible.filter(candidate => criticalReviewerMeets(task, candidate.profile, pool));
     // Availability includes usage/sign-off gates above. A shortfall never parks review.
     if (rigorous.length) eligible = rigorous;
   }
-  // A reviewer must at least match the worker's actual capability, so its
-  // ceiling rises to that tier even when the worker sits above the task's own
-  // requested tier; a worker never exceeds the requested tier automatically.
-  // A reviewer is never capped at the task's requested tier: when no
-  // independent profile carries its tier, the nearest permitted tier above
-  // serves (selectionTier still prefers the exact tier, and `eligible` already
-  // holds only profiles the usage level permits). Capping it at the requested
-  // tier parked every review whose only independent match sat one tier higher.
-  const ceiling =
-    role === "coordinator"
-      ? requested
-      : role === "reviewer" || usage === "maximum"
-        ? "frontier"
-        : requested;
-  // Maximum's top-tier rule is for workers and reviewers; a coordinator keeps
-  // its configured offset and the ordinary tier set.
+  // A worker never exceeds the bracket the task may climb to automatically. A
+  // reviewer is never capped there: when no independent profile carries its
+  // bracket, the nearest permitted bracket above serves (selectionTier still
+  // prefers the exact bracket, and `eligible` already holds only profiles the
+  // usage level permits).
+  // A coordinator runs on Mechanical when one is available and otherwise on
+  // the lowest permitted bracket that has a profile (Tom, 2026-11-19), so only
+  // a worker is bounded by the bracket the task may climb to.
+  const ceiling = role === "worker" && usage !== "maximum" ? requested : "frontier";
+  // Maximum's top-two rule is for workers and reviewers; a coordinator stays
+  // on the ordinary bracket set.
   const topOnly = usage === "maximum" && role !== "coordinator";
-  const { tier: rawTier } = selectionTier(
-    demand,
-    eligible.map((candidate) => candidate.entry),
-    topOnly,
-    ceiling,
-  );
+  const { tier: rawTier } = selectionTier(demand, eligible.map(candidate => candidate.entry), topOnly, ceiling);
   // The reviewer floor is absolute: when every independent candidate is weaker
   // than the worker's actual tier, the role waits for a route rather than
   // certifying that tier on a weaker profile.
-  const tier = rawTier.filter((entry) => roleMeets(entry));
-  const inTier = new Set(tier.map((entry) => entry.profileId));
-  const ranked = eligible.filter((candidate) =>
-    inTier.has(candidate.entry.profileId),
-  );
-  const share = (candidate: (typeof ranked)[number]) =>
-    effectiveWeight(candidate.entry.weight, candidate.entry.cost);
-  ranked.sort(
-    (a, b) =>
-      (recent[`profile:${a.profile.id}`] ?? 0) / share(a) -
-        (recent[`profile:${b.profile.id}`] ?? 0) / share(b) ||
-      (recent[a.entry.group] ?? 0) - (recent[b.entry.group] ?? 0) ||
-      (counts[`profile:${a.profile.id}`] ?? 0) / share(a) -
-        (counts[`profile:${b.profile.id}`] ?? 0) / share(b) ||
-      (counts[a.entry.group] ?? 0) - (counts[b.entry.group] ?? 0) ||
-      a.profile.id.localeCompare(b.profile.id),
-  );
+  const tier = rawTier.filter(entry => roleMeets(entry));
+  const inTier = new Set(tier.map(entry => entry.profileId));
+  const ranked = eligible.filter(candidate => inTier.has(candidate.entry.profileId));
+  const share = (candidate: typeof ranked[number]) => effectiveWeight(candidate.entry.weight, candidate.entry.cost);
+  ranked.sort((a, b) => (recent[`profile:${a.profile.id}`] ?? 0) / share(a) - (recent[`profile:${b.profile.id}`] ?? 0) / share(b)
+    || (recent[a.entry.group] ?? 0) - (recent[b.entry.group] ?? 0)
+    || (counts[`profile:${a.profile.id}`] ?? 0) / share(a) - (counts[`profile:${b.profile.id}`] ?? 0) / share(b)
+    || (counts[a.entry.group] ?? 0) - (counts[b.entry.group] ?? 0) || a.profile.id.localeCompare(b.profile.id));
   return ranked[0] ?? null;
 }
 /**
@@ -610,40 +331,11 @@ export function chooseProfile(
  * task's own requests, preference and recorded runs, never the whole pool.
  * Read-only: no selection, gate or setting depends on it.
  */
-export interface SelectionCounts {
-  counts: Record<string, number>;
-  recent: Record<string, number>;
-  offsets: DemandRoleOffsets;
-}
-export function taskRoutingPolicy(
-  task: Task,
-  pool: readonly PoolEntry[],
-  usage: UsageView,
-  availability: readonly {
-    group: string;
-    unavailable: boolean;
-    reason: string;
-    retryAt: string | null;
-  }[],
-  at = Date.now(),
-  profiles: readonly Profile[] = [],
-  selectionCounts?: SelectionCounts,
-): RoutingPolicy {
-  const named: Array<{
-    role: Role;
-    profileId: string;
-    source: RoutePolicy["source"];
-  }> = [];
-  const add = (
-    role: Role,
-    profileId: string | null | undefined,
-    source: RoutePolicy["source"],
-  ) => {
-    if (
-      profileId &&
-      !named.some((item) => item.role === role && item.profileId === profileId)
-    )
-      named.push({ role, profileId, source });
+export interface SelectionCounts { counts: Record<string, number>; recent: Record<string, number> }
+export function taskRoutingPolicy(task: Task, pool: readonly PoolEntry[], usage: UsageView, availability: readonly { group: string; unavailable: boolean; reason: string; retryAt: string | null }[], at = Date.now(), profiles: readonly Profile[] = [], selectionCounts?: SelectionCounts): RoutingPolicy {
+  const named: Array<{ role: Role; profileId: string; source: RoutePolicy["source"] }> = [];
+  const add = (role: Role, profileId: string | null | undefined, source: RoutePolicy["source"]) => {
+    if (profileId && !named.some(item => item.role === role && item.profileId === profileId)) named.push({ role, profileId, source });
   };
   add("worker", task.profileRequests?.worker?.profileId, "request");
   add("worker", task.preferredProfileId, "preference");
@@ -653,99 +345,27 @@ export function taskRoutingPolicy(
   add("coordinator", task.profileRequests?.coordinator?.profileId, "request");
   const taskTier = requestedTier(task.complexity);
   const climbTier = climbedTier(task);
-  return {
-    usage,
-    requested: taskTier,
-    climbTier,
-    scope: task.scope,
-    profiles: named.map(({ role, profileId, source }) => {
-      const entry = pool.find((item) => item.profileId === profileId);
-      const group =
-        entry &&
-        availability.find(
-          (item) => item.group === entry.group && groupIsUnavailable(item, at),
-        );
-      // The task host's own catalog is the availability answer when the caller
-      // passes it: a profile that host cannot run — an unreported runtime mode is
-      // the T3Code case (nucleus#1143) — is ineligible there with its reason
-      // named, so the board shows why instead of the launch refusing it.
-      const profile =
-        entry && profiles.length
-          ? profiles.find((candidate) => candidate.id === profileId)
-          : undefined;
-      const gates = !entry
-        ? ["not in the pool"]
-        : [
-            ...(!entry.enabled ? ["disabled in the pool"] : []),
-            ...(profile && !profile.available
-              ? [`unavailable on this host: ${profile.problem}`]
-              : []),
-            ...(group
-              ? [
-                  `group ${entry.group} unavailable${group.retryAt ? ` until ${group.retryAt}` : ""}`,
-                ]
-              : []),
-          ];
-      const requested =
-        source === "request"
-          ? task.profileRequests?.[role]?.signoff
-          : undefined;
-      const policy = {
-        role,
-        profileId,
-        source,
-        inPool: Boolean(entry),
-        cost: entry?.cost ?? null,
-        capability: entry?.capability ?? null,
-        automatic: entry
-          ? automaticSelection(entry, usage.level, taskTier, climbTier, role)
-          : null,
-        gates,
-        ...(requested
-          ? {
-              signoff: {
-                status: requested.status,
-                decisionId: requested.decisionId,
-                note: requested.note,
-                ...(requested.grantId ? { grantId: requested.grantId } : {}),
-                ...(requested.endedGrantId
-                  ? { endedGrantId: requested.endedGrantId }
-                  : {}),
-              },
-            }
-          : {}),
-      };
-      return {
-        ...policy,
-        explanation: describeRoutePolicy(
-          policy,
-          usage,
-          undefined,
-          taskTier,
-          climbTier,
-        ),
-      };
-    }),
-    ...(profiles.length && selectionCounts
-      ? {
-          selection: workerSelectionExplanation(
-            task,
-            pool,
-            profiles,
-            usage.level,
-            new Set(
-              availability
-                .filter((item) => groupIsUnavailable(item, at))
-                .map((item) => item.group),
-            ),
-            selectionCounts,
-          ),
-        }
-      : {}),
-    ...(task.hostId && profiles.length
-      ? { host: { hostId: task.hostId, effects: hostEffects(pool, profiles) } }
-      : {}),
-  };
+  return { usage, requested: taskTier, climbTier, scope: task.scope, profiles: named.map(({ role, profileId, source }) => {
+    const entry = pool.find(item => item.profileId === profileId);
+    const group = entry && availability.find(item => item.group === entry.group && groupIsUnavailable(item, at));
+    // The task host's own catalog is the availability answer when the caller
+    // passes it: a profile that host cannot run — an unreported runtime mode is
+    // the T3Code case (nucleus#1143) — is ineligible there with its reason
+    // named, so the board shows why instead of the launch refusing it.
+    const profile = entry && profiles.length ? profiles.find(candidate => candidate.id === profileId) : undefined;
+    const gates = !entry ? ["not in the pool"] : [
+      ...(!entry.enabled ? ["disabled in the pool"] : []),
+      ...(profile && !profile.available ? [`unavailable on this host: ${profile.problem}`] : []),
+      ...(group ? [`group ${entry.group} unavailable${group.retryAt ? ` until ${group.retryAt}` : ""}`] : []),
+    ];
+    const requested = source === "request" ? task.profileRequests?.[role]?.signoff : undefined;
+    const policy = { role, profileId, source, inPool: Boolean(entry), cost: entry?.cost ?? null, capability: entry?.capability ?? null,
+      automatic: entry ? automaticSelection(entry, usage.level, taskTier, climbTier, role) : null, gates,
+      ...(requested ? { signoff: { status: requested.status, decisionId: requested.decisionId, note: requested.note, ...(requested.grantId ? { grantId: requested.grantId } : {}), ...(requested.endedGrantId ? { endedGrantId: requested.endedGrantId } : {}) } } : {}) };
+    return { ...policy, explanation: describeRoutePolicy(policy, usage, undefined, taskTier, climbTier) };
+  }), ...(profiles.length && selectionCounts ? { selection: workerSelectionExplanation(task, pool, profiles, usage.level,
+    new Set(availability.filter(item => groupIsUnavailable(item, at)).map(item => item.group)), selectionCounts) } : {}),
+  ...(task.hostId && profiles.length ? { host: { hostId: task.hostId, effects: hostEffects(pool, profiles) } } : {}) };
 }
 
 /**
@@ -753,101 +373,29 @@ export function taskRoutingPolicy(
  * (nucleus#1151, "why did this get Luna?"): the same demand, tier and rotation
  * `chooseProfile` uses at first dispatch, against the task host's snapshot.
  */
-export function workerSelectionExplanation(
-  task: Task,
-  pool: readonly PoolEntry[],
-  profiles: readonly Profile[],
-  usage: UsageLevel,
-  unavailableGroups: ReadonlySet<string>,
-  { counts, recent, offsets }: SelectionCounts,
-): SelectionExplanation {
+export function workerSelectionExplanation(task: Task, pool: readonly PoolEntry[], profiles: readonly Profile[], usage: UsageLevel,
+  unavailableGroups: ReadonlySet<string>, { counts, recent }: SelectionCounts): SelectionExplanation {
   const complexity = task.complexity ?? "medium";
   const requested = requestedTier(complexity);
   const climb = workerClimbTarget(task, pool, usage);
   const climbTier = climb?.to ?? climbedTier(task);
-  const demand = climb
-    ? climb.to
-    : runDemand(complexity, "worker", usage, offsets);
-  const eligible = pool.filter(
-    (entry) =>
-      entry.enabled &&
-      !unavailableGroups.has(entry.group) &&
-      requestReaches(entry, usage, null, requested, climbTier) &&
-      profiles.some(
-        (profile) => profile.id === entry.profileId && profile.available,
-      ),
-  );
-  const { tier, shortfall } = selectionTier(
-    demand,
-    eligible,
-    usage === "maximum",
-    usageCeiling(usage, requested),
-  );
-  const nameOf = (id: string) =>
-    profiles.find((profile) => profile.id === id)?.name ?? id;
-  const met = tier
-    .map((entry) => ({
-      profileId: entry.profileId,
-      name: nameOf(entry.profileId),
-      capability: entry.capability ?? null,
-      cost: entry.cost ?? null,
-      weight: entry.weight,
-      effectiveWeight: effectiveWeight(entry.weight, entry.cost),
-      recent: recent[`profile:${entry.profileId}`] ?? 0,
-    }))
-    .sort(
-      (a, b) =>
-        a.recent / a.effectiveWeight - b.recent / b.effectiveWeight ||
-        a.profileId.localeCompare(b.profileId),
-    );
-  const picked = chooseProfile(
-    task,
-    [...profiles],
-    [...pool],
-    counts,
-    new Set(unavailableGroups),
-    "worker",
-    recent,
-    usage,
-    offsets,
-    true,
-  );
-  const named =
-    task.profileRequests?.worker?.profileId ?? task.preferredProfileId;
-  const row =
-    picked && met.find((item) => item.profileId === picked.profile.id);
-  const reason = !picked
-    ? "no eligible profile"
-    : picked.profile.id === named
-      ? "named by the task's request or preference"
-      : row
-        ? `fewest recent assignments per effective weight in the set: ${row.recent} of the last 50 over weight ${row.weight} × cost lean ${row.effectiveWeight / row.weight} (cost ${row.cost ?? "unset"})${
-            met.length > 1
-              ? `; next ${met
-                  .filter((item) => item.profileId !== row.profileId)
-                  .slice(0, 2)
-                  .map(
-                    (item) =>
-                      `${item.name} ${item.recent} over ${item.effectiveWeight}`,
-                  )
-                  .join(", ")}`
-              : ""
-          }`
-        : "outside the demand set";
-  return {
-    role: "worker",
-    complexity,
-    roleOffset: offsets.worker,
-    startTier: workerStartTier(usage, complexity),
-    step: workerStepLabel(usage, false),
-    fullDemand: demand,
-    demand,
-    shortfall,
-    met,
-    choice: picked
-      ? { profileId: picked.profile.id, name: picked.profile.name, reason }
-      : null,
-  };
+  const demand = climb ? climb.to : runDemand(complexity, "worker", usage);
+  const eligible = pool.filter(entry => entry.enabled && !unavailableGroups.has(entry.group) && requestReaches(entry, usage, null, requested, climbTier)
+    && profiles.some(profile => profile.id === entry.profileId && profile.available));
+  const { tier, shortfall } = selectionTier(demand, eligible, usage === "maximum", usageCeiling(usage, requested));
+  const nameOf = (id: string) => profiles.find(profile => profile.id === id)?.name ?? id;
+  const met = tier.map(entry => ({ profileId: entry.profileId, name: nameOf(entry.profileId), capability: entry.capability ?? null, cost: entry.cost ?? null,
+    weight: entry.weight, effectiveWeight: effectiveWeight(entry.weight, entry.cost), recent: recent[`profile:${entry.profileId}`] ?? 0 }))
+    .sort((a, b) => a.recent / a.effectiveWeight - b.recent / b.effectiveWeight || a.profileId.localeCompare(b.profileId));
+  const picked = chooseProfile(task, [...profiles], [...pool], counts, new Set(unavailableGroups), "worker", recent, usage, true);
+  const named = task.profileRequests?.worker?.profileId ?? task.preferredProfileId;
+  const row = picked && met.find(item => item.profileId === picked.profile.id);
+  const reason = !picked ? "no eligible profile"
+    : picked.profile.id === named ? "named by the task's request or preference"
+    : row ? `fewest recent assignments per effective weight in the set: ${row.recent} of the last 50 over weight ${row.weight} × cost lean ${row.effectiveWeight / row.weight} (cost ${row.cost ?? "unset"})${met.length > 1 ? `; next ${met.filter(item => item.profileId !== row.profileId).slice(0, 2).map(item => `${item.name} ${item.recent} over ${item.effectiveWeight}`).join(", ")}` : ""}`
+    : "outside the demand set";
+  return { role: "worker", complexity, startTier: workerStartTier(usage, complexity), step: workerStepLabel(usage, false),
+    fullDemand: demand, demand, shortfall, met, choice: picked ? { profileId: picked.profile.id, name: picked.profile.name, reason } : null };
 }
 
 /**
@@ -856,47 +404,21 @@ export function workerSelectionExplanation(
  * entries are left out: they never dispatch anywhere, so the host is not why
  * they were passed over.
  */
-export function hostEffects(
-  pool: readonly PoolEntry[],
-  profiles: readonly Profile[],
-): HostEffect[] {
+export function hostEffects(pool: readonly PoolEntry[], profiles: readonly Profile[]): HostEffect[] {
   const effects: HostEffect[] = [];
   for (const entry of pool) {
     if (!entry.enabled) continue;
-    const profile = profiles.find(
-      (candidate) => candidate.id === entry.profileId,
-    );
+    const profile = profiles.find(candidate => candidate.id === entry.profileId);
     if (!profile) continue;
-    if (!profile.available)
-      effects.push({
-        profileId: profile.id,
-        name: profile.name,
-        effect: "unavailable",
-        reason: profile.problem,
-      });
-    else if (profile.translated?.length)
-      effects.push({
-        profileId: profile.id,
-        name: profile.name,
-        effect: "translated",
-        reason: `launches as ${profile.provider}/${profile.model}${profile.modeId ? `, mode ${profile.modeId}` : ""}${profile.thinkingOptionId ? `, thinking ${profile.thinkingOptionId}` : ""}${
-          profile.featureValues && Object.keys(profile.featureValues).length
-            ? `, options ${Object.entries(profile.featureValues)
-                .map(([key, value]) => `${key}=${String(value)}`)
-                .join(", ")}`
-            : ""
-        }`,
-      });
+    if (!profile.available) effects.push({ profileId: profile.id, name: profile.name, effect: "unavailable", reason: profile.problem });
+    else if (profile.translated?.length) effects.push({ profileId: profile.id, name: profile.name, effect: "translated",
+      reason: `launches as ${profile.provider}/${profile.model}${profile.modeId ? `, mode ${profile.modeId}` : ""}${profile.thinkingOptionId ? `, thinking ${profile.thinkingOptionId}` : ""}${profile.featureValues && Object.keys(profile.featureValues).length ? `, options ${Object.entries(profile.featureValues).map(([key, value]) => `${key}=${String(value)}`).join(", ")}` : ""}` });
   }
   return effects;
 }
 
-export const proofExecutorAgents = (
-  task: Pick<Task, "proofExecutions">,
-): string[] =>
-  (task.proofExecutions ?? []).flatMap((record) =>
-    record.agentId ? [record.agentId] : [],
-  );
+export const proofExecutorAgents = (task: Pick<Task, 'proofExecutions'>): string[] =>
+  (task.proofExecutions ?? []).flatMap(record => record.agentId ? [record.agentId] : []);
 
 /**
  * Spec 036/050: whether a reviewer is independent of the task's authors.
@@ -906,84 +428,39 @@ export const proofExecutorAgents = (
  * does not apply the owner-route waiver and does not treat a default reviewer
  * model as unknown on its own.
  */
-export type ReviewerIndependence =
-  | "independent"
-  | "unknown"
-  | "collision"
-  | "waived";
+export type ReviewerIndependence = 'independent' | 'unknown' | 'collision' | 'waived';
 export type ReviewerIndependenceFacts =
-  | {
-      site: "select";
-      entrypoint: string | undefined;
-      authors: ReadonlySet<string>;
-      currentAuthorModels: ReadonlySet<string>;
-    }
-  | {
-      site: "profile" | "assert" | "verify";
-      authors: ReadonlySet<string>;
-      currentAuthorModels: ReadonlySet<string>;
-      reviewerModel: string;
-      namedRequired: boolean;
-      ownerRouted: boolean;
-    }
-  | { site: "consult"; authors: ReadonlySet<string>; reviewerModel: string };
-export function reviewerIndependence(
-  facts: ReviewerIndependenceFacts,
-): ReviewerIndependence {
-  if (facts.site === "select") {
-    if (facts.entrypoint === "proof" && facts.authors.size === 0)
-      return "independent";
-    const currentKnown =
-      facts.currentAuthorModels.size > 0 &&
-      !facts.currentAuthorModels.has("default");
-    return currentKnown &&
-      facts.authors.size > 0 &&
-      !facts.authors.has("default")
-      ? "independent"
-      : "unknown";
+  | { site: 'select'; entrypoint: string | undefined; authors: ReadonlySet<string>; currentAuthorModels: ReadonlySet<string> }
+  | { site: 'profile' | 'assert' | 'verify'; authors: ReadonlySet<string>; currentAuthorModels: ReadonlySet<string>; reviewerModel: string; namedRequired: boolean; ownerRouted: boolean }
+  | { site: 'consult'; authors: ReadonlySet<string>; reviewerModel: string };
+export function reviewerIndependence(facts: ReviewerIndependenceFacts): ReviewerIndependence {
+  if (facts.site === 'select') {
+    if (facts.entrypoint === 'proof' && facts.authors.size === 0) return 'independent';
+    const currentKnown = facts.currentAuthorModels.size > 0 && !facts.currentAuthorModels.has('default');
+    return currentKnown && facts.authors.size > 0 && !facts.authors.has('default') ? 'independent' : 'unknown';
   }
-  if (facts.site === "consult") {
-    if (!facts.authors.size || facts.authors.has("default")) return "unknown";
-    return facts.authors.has(facts.reviewerModel) ? "collision" : "independent";
+  if (facts.site === 'consult') {
+    if (!facts.authors.size || facts.authors.has('default')) return 'unknown';
+    return facts.authors.has(facts.reviewerModel) ? 'collision' : 'independent';
   }
-  if (facts.site === "profile") {
-    if (!facts.reviewerModel || facts.reviewerModel === "default")
-      return "unknown";
-    if (!facts.authors.has(facts.reviewerModel)) return "independent";
-    const currentKnown =
-      facts.currentAuthorModels.size > 0 &&
-      !facts.currentAuthorModels.has("default");
-    if (
-      facts.namedRequired &&
-      currentKnown &&
-      (!facts.currentAuthorModels.has(facts.reviewerModel) || facts.ownerRouted)
-    )
-      return "waived";
-    return "collision";
+  if (facts.site === 'profile') {
+    if (!facts.reviewerModel || facts.reviewerModel === 'default') return 'unknown';
+    if (!facts.authors.has(facts.reviewerModel)) return 'independent';
+    const currentKnown = facts.currentAuthorModels.size > 0 && !facts.currentAuthorModels.has('default');
+    if (facts.namedRequired && currentKnown && (!facts.currentAuthorModels.has(facts.reviewerModel) || facts.ownerRouted)) return 'waived';
+    return 'collision';
   }
-  if (
-    !facts.authors.size ||
-    facts.authors.has("default") ||
-    !facts.reviewerModel ||
-    facts.reviewerModel === "default" ||
-    facts.currentAuthorModels.has("default")
-  )
-    return "unknown";
-  if (!facts.authors.has(facts.reviewerModel)) return "independent";
-  if (
-    facts.namedRequired &&
-    (!facts.currentAuthorModels.has(facts.reviewerModel) || facts.ownerRouted)
-  )
-    return "waived";
-  return "collision";
+  if (!facts.authors.size || facts.authors.has('default') || !facts.reviewerModel || facts.reviewerModel === 'default' || facts.currentAuthorModels.has('default'))
+    return 'unknown';
+  if (!facts.authors.has(facts.reviewerModel)) return 'independent';
+  if (facts.namedRequired && (!facts.currentAuthorModels.has(facts.reviewerModel) || facts.ownerRouted)) return 'waived';
+  return 'collision';
 }
 
 /** Who may take a role: reviewer, coordinator or proof executor selection and its independence gates. */
 export class RoleSelection {
   constructor(readonly resolution: Resolution) {}
-  get store() {
-    return this.resolution.store;
-  }
+  get store() { return this.resolution.store; }
   /**
    * Spec 036: agents that authored task work. A reviewer must never be an
    * agent that ran the worker, a revision or an author checkpoint turn on the
@@ -992,37 +469,17 @@ export class RoleSelection {
    * agent identities join the revision-run agents here.
    */
   authorAgentIds(t: Task): Set<string> {
-    return new Set(
-      [
-        ...(t.entrypoint === "proof" ? [] : [t.agentId]),
-        ...(t.retiredWorkers ?? []).map((w) => w.agentId),
-        ...this.store
-          .runs(t.id)
-          .filter((r) => r.role === "revision" && r.agentId)
-          .map((r) => r.agentId!),
-      ].filter((id): id is string => Boolean(id)),
-    );
+    return new Set([...(t.entrypoint === 'proof' ? [] : [t.agentId]), ...(t.retiredWorkers ?? []).map(w => w.agentId),
+      ...this.store.runs(t.id).filter(r => r.role === 'revision' && r.agentId).map(r => r.agentId!)].filter((id): id is string => Boolean(id)));
   }
-  select(
-    t: Task,
-    role: "reviewer" | "coordinator" | "executor",
-    extraUnavailable: Iterable<string> = [],
-    excludedProfiles: ReadonlySet<string> = new Set(),
-    usage: UsageLevel = this.store.usageLevel(),
-  ) {
-    const unavailable = new Set([
-      ...unavailableGroupNames(this.store.availability()),
-      ...extraUnavailable,
-    ]);
+  select(t: Task, role: 'reviewer' | 'coordinator' | 'executor', extraUnavailable: Iterable<string> = [], excludedProfiles: ReadonlySet<string> = new Set(), usage: UsageLevel = this.store.usageLevel()) {
+    const unavailable = new Set([...unavailableGroupNames(this.store.availability()), ...extraUnavailable]);
     const pool = this.store.pool();
     // Opaque provider routes cannot prove review independence. Every boundary
     // (selection, retained restart, verdict verification) reads the one author
     // evidence derivation in shared/authors.ts.
     const model = authorModelKey;
-    const authors = taskAuthorModelKeys(
-      t,
-      this.store.runs(t.id).filter((run) => run.role === "revision"),
-    );
+    const authors = taskAuthorModelKeys(t, this.store.runs(t.id).filter(run => run.role === 'revision'));
     // Spec 036: an earlier author's model is allowed only when the operator
     // names that profile explicitly through route (preflight already
     // proved it independent of the head under review). Automatic selection
@@ -1032,29 +489,18 @@ export class RoleSelection {
     // shares the model of the worker whose head is under review stays
     // excluded here exactly as without a request, so selection alone can
     // never certify a head through its own author's model.
-    const reviewerRequest =
-      role === "reviewer" ? t.profileRequests?.reviewer : undefined;
-    const explicitReviewer =
-      reviewerRequest?.required === true
-        ? reviewerRequest.profileId
-        : undefined;
+    const reviewerRequest = role === 'reviewer' ? t.profileRequests?.reviewer : undefined;
+    const explicitReviewer = reviewerRequest?.required === true ? reviewerRequest.profileId : undefined;
     // The current author is the Queue worker whose head is under review. A
     // workerless external-PR review entry has no such worker, so every recorded
     // external author is current: absence never manufactures an unknown author.
     const currentQueueModel = queueAuthorModelKey(t);
-    const currentAuthorModels =
-      currentQueueModel === null ? authors : new Set([currentQueueModel]);
+    const currentAuthorModels = currentQueueModel === null ? authors : new Set([currentQueueModel]);
     // A reviewer may never be selected while any author evidence is unknown: the
     // current Queue author's own model when a worker exists, or any declared,
     // observed or later-contributor model. Selection, the retained continuation
     // and verdict verification all read this same gate.
-    const reviewerIndependent =
-      reviewerIndependence({
-        site: "select",
-        entrypoint: t.entrypoint,
-        authors,
-        currentAuthorModels,
-      }) === "independent";
+    const reviewerIndependent = reviewerIndependence({ site: 'select', entrypoint: t.entrypoint, authors, currentAuthorModels }) === 'independent';
     // Spec 050: an owner-routed reviewer (`route`, which writes the
     // `ownerRoute` marker) is used even when it shares the current author's
     // model; the audit records the waiver. A required request from any other
@@ -1062,187 +508,85 @@ export class RoleSelection {
     // author's model needs the marker, so `set_routing` and submission-time
     // requests can never certify a head through its own author's model.
     // Optional requests and automatic selection keep preferring independence.
-    const ownerRouted = Boolean(
-      explicitReviewer && isOwnerRoutedReviewer(t, explicitReviewer),
-    );
+    const ownerRouted = Boolean(explicitReviewer && isOwnerRoutedReviewer(t, explicitReviewer));
     // An excluded profile is excluded for every role this call selects: a host
     // that refused it before send does not see it proposed to recovery either
     // (nucleus#1364).
-    const profiles = this.resolution
-      .profiles()
-      .filter((p) => !excludedProfiles.has(p.id))
-      .filter(
-        (p) =>
-          role !== "reviewer" ||
-          (reviewerIndependent &&
-            model(p.model) !== "default" &&
-            reviewerIndependence({
-              site: "profile",
-              authors,
-              currentAuthorModels,
-              reviewerModel: model(p.model),
-              namedRequired: p.id === explicitReviewer,
-              ownerRouted,
-            }) !== "collision"),
-      )
-      .filter(
-        (p) =>
-          role !== "executor" ||
-          (p.model !== "default" &&
-            !(
-              t.entrypoint === "proof" &&
-              t.resolution.reviewerProfile &&
-              model(p.model) === model(t.resolution.reviewerProfile.model)
-            )),
-      );
-    return chooseProfile(
-      {
-        ...t,
-        preferredProfileId: "",
-        requirePreferred: false,
-        thinkingOptionId: "",
-        scope:
-          role === "coordinator" &&
-          !honouredRequest(
-            t.profileRequests?.coordinator,
-            pool,
-            usage,
-            requestedTier(t.complexity),
-            climbedTier(t),
-          )
-            ? ("general" as const)
-            : t.scope,
-      },
-      profiles,
-      pool,
-      this.store.counts(),
-      unavailable,
-      role === "executor" ? "worker" : role,
-      this.store.recentCounts(),
-      usage,
-      this.store.demandRoleOffsets(),
-    );
+    const profiles = this.resolution.profiles().filter(p => !excludedProfiles.has(p.id))
+      .filter(p => role !== 'reviewer' || reviewerIndependent && model(p.model) !== 'default' && reviewerIndependence({
+      site: 'profile', authors, currentAuthorModels, reviewerModel: model(p.model),
+      namedRequired: p.id === explicitReviewer, ownerRouted,
+    }) !== 'collision')
+      .filter(p => role !== 'executor' || (p.model !== 'default'
+        && !(t.entrypoint === 'proof' && t.resolution.reviewerProfile && model(p.model) === model(t.resolution.reviewerProfile.model))));
+    return chooseProfile({ ...t, preferredProfileId: '', requirePreferred: false, thinkingOptionId: '', scope: role === 'coordinator' && !honouredRequest(t.profileRequests?.coordinator, pool, usage, requestedTier(t.complexity), climbedTier(t)) ? 'general' as const : t.scope }, profiles, pool, this.store.counts(), unavailable, role === 'executor' ? 'worker' : role,this.store.recentCounts(),usage);
   }
   /**
    * When a required profile request is what leaves a role without a profile,
    * name it and why, so the owner can `route` the role elsewhere. Empty otherwise.
    */
-  requiredRouteNote(t: Task, role: "reviewer" | "coordinator"): string {
+  requiredRouteNote(t: Task, role: 'reviewer' | 'coordinator'): string {
     const request = t.profileRequests?.[role];
-    if (!request?.required) return "";
-    const entry = this.store
-      .pool()
-      .find((item) => item.profileId === request.profileId);
-    const profile = this.resolution
-      .profiles()
-      .find((item) => item.id === request.profileId);
-    const availability = entry
-      ? activeGroupLimit(this.store.availability(), entry.group)
-      : undefined;
-    const why = !entry
-      ? "it is not in the profile pool"
-      : !entry.enabled
-        ? "it is disabled"
-        : !profile?.available
-          ? `the profile is unavailable${profile?.problem ? `: ${profile.problem}` : ""}`
-          : availability
-            ? `subscription group ${entry.group} is unavailable`
-            : "";
-    return why
-      ? `; the required ${role} request names ${request.profileId}, but ${why}: route role=${role} to another profile`
-      : "";
+    if (!request?.required) return '';
+    const entry = this.store.pool().find(item => item.profileId === request.profileId);
+    const profile = this.resolution.profiles().find(item => item.id === request.profileId);
+    const availability = entry ? activeGroupLimit(this.store.availability(), entry.group) : undefined;
+    const why = !entry ? 'it is not in the profile pool' : !entry.enabled ? 'it is disabled'
+      : !profile?.available ? `the profile is unavailable${profile?.problem ? `: ${profile.problem}` : ''}`
+      : availability ? `subscription group ${entry.group} is unavailable` : '';
+    return why ? `; the required ${role} request names ${request.profileId}, but ${why}: route role=${role} to another profile` : '';
   }
   /**
    * Spec 052: when the usage level's cost ceiling, not the pool, leaves a role
    * with no profile, say so and name the way out. Empty when the pool itself is
    * the cause.
    */
-  usageCeilingNote(
-    t: Task,
-    role: "reviewer" | "coordinator" | "worker",
-    extraUnavailable: Iterable<string> = [],
-    excludedProfiles: ReadonlySet<string> = new Set(),
-    widened?: () => {
-      profile: Profile;
-      entry: { cost?: string | null; capability?: ProfileCapability | null };
-    } | null,
-  ): string {
+  usageCeilingNote(t: Task, role: 'reviewer' | 'coordinator' | 'worker', extraUnavailable: Iterable<string> = [], excludedProfiles: ReadonlySet<string> = new Set(), widened?: () => { profile: Profile; entry: { cost?: string | null; capability?: ProfileCapability | null } } | null): string {
     const usage = this.store.usageLevel();
-    if (usage === "extra_high" || usage === "maximum") return "";
-    if (
-      role !== "worker" &&
-      !widened &&
-      this.resolution.select(t, role, extraUnavailable, excludedProfiles)
-    )
-      return "";
-    const above = widened
-      ? widened()
-      : role === "worker"
-        ? null
-        : this.resolution.select(
-            t,
-            role,
-            extraUnavailable,
-            excludedProfiles,
-            "maximum",
-          );
-    return above
-      ? `; the ${usage} usage level needs the operator's board sign-off for ${(above.entry.capability ?? "top-tier").replaceAll("_", " ")} runs: raise the usage level or route the ${role} to a profile`
-      : "";
+    if (usage === 'extra_high' || usage === 'maximum') return '';
+    if (role !== 'worker' && !widened && this.resolution.select(t, role, extraUnavailable, excludedProfiles)) return '';
+    const above = widened ? widened() : role === 'worker' ? null : this.resolution.select(t, role, extraUnavailable, excludedProfiles, 'maximum');
+    return above ? `; the ${usage} usage level needs the operator's board sign-off for ${(above.entry.capability ?? 'top-tier').replaceAll('_', ' ')} runs: raise the usage level or route the ${role} to a profile` : '';
   }
   /**
-   * Spec 052 (Tom, 2026-11-17): a reviewer must be at least as capable as the
-   * worker's actual profile. A retained reviewer below a climbed or routed
-   * worker is replaced on the next round; the reselection floors against the
-   * same rating.
+   * Spec 052 (Tom, 2026-11-19): a retained reviewer below the bracket the
+   * level asks of it for the worker's actual profile (one below at Low and
+   * Normal, the same above) is replaced on the next round.
    */
   reviewerCapabilityIssue(t: Task, assigned: Profile | null): string | null {
     if (!assigned) return null;
     const pool = this.store.pool();
     const usage = this.store.usageLevel();
-    const entry = pool.find((item) => item.profileId === assigned.id);
-    // A null capability is a supported rating (unrated counts as medium), not
+    const entry = pool.find(item => item.profileId === assigned.id);
+    // A null capability is a supported rating (unrated counts as Worker), not
     // an absent profile: Maximum's top-tier floor still applies to it.
     const reviewer = entry?.capability ?? null;
     if (!entry) return null;
     if (usage === "maximum" && !topTier(reviewer))
-      return `reviewer profile ${assigned.name || assigned.id} is rated ${reviewer ?? "unrated"}, below the top two tiers Maximum reserves for reviewers`;
-    // A retained reviewer is measured against the offset demand, not the critical
+      return `reviewer profile ${assigned.name || assigned.id} is rated ${reviewer ?? "unrated"}, below Heavyweight and Frontier, which Maximum reserves for reviewers`;
+    // A retained reviewer is measured against the level's reviewer bracket, not the critical
     // preference, so a critical task's fallback reviewer is not churned.
-    const required = reviewerDemand(
-      { ...t, critical: false },
-      pool,
-      usage,
-      this.store.demandRoleOffsets(),
-    );
-    const reviewerRank = reviewer ? demandRank(reviewer) : demandRank("medium");
+    const required = reviewerDemand({ ...t, critical: false }, pool, usage);
+    const reviewerRank = reviewer ? demandRank(reviewer) : demandRank("worker");
     return reviewerRank < demandRank(required)
-      ? `reviewer profile ${assigned.name || assigned.id} is rated ${reviewer ?? "unrated"}, below the ${required} tier this run needs`
+      ? `reviewer profile ${assigned.name || assigned.id} is rated ${reviewer ?? "unrated"}, below the ${required} bracket this run needs`
       : null;
   }
-  retainedProfileIssue(assigned: Profile | null) {
-    if (!assigned) return "assigned profile is missing";
+  retainedProfileIssue(assigned:Profile|null){
+    if(!assigned)return 'assigned profile is missing';
     // An unloaded catalog proves nothing about the profile: report no issue, so no
     // caller supersedes, remaps or parks on it. Every action that would use the
     // profile (a launch) waits for the catalog on its own (consumer #660, review #565).
-    if (!this.resolution.catalogKnown()) return null;
-    const catalog = this.resolution
-      .profiles()
-      .find((p) => p.id === assigned.id);
-    if (!catalog?.available)
-      return `profile ${assigned.name || assigned.id} is unavailable`;
-    const entry = this.store.pool().find((p) => p.profileId === assigned.id);
-    if (!entry?.enabled)
-      return `pool profile ${assigned.name || assigned.id} is disabled`;
-    const availability = entry
-      ? activeGroupLimit(this.store.availability(), entry.group)
-      : undefined;
-    if (availability) return `subscription group ${entry.group} is unavailable`;
+    if(!this.resolution.catalogKnown())return null;
+    const catalog=this.resolution.profiles().find(p=>p.id===assigned.id);
+    if(!catalog?.available)return `profile ${assigned.name||assigned.id} is unavailable`;
+    const entry=this.store.pool().find(p=>p.profileId===assigned.id);
+    if(!entry?.enabled)return `pool profile ${assigned.name||assigned.id} is disabled`;
+    const availability=entry?activeGroupLimit(this.store.availability(),entry.group):undefined;
+    if(availability)return `subscription group ${entry.group} is unavailable`;
     return null;
   }
-  retainedWorkerProfileIssue(t: Task) {
-    return this.resolution.retainedProfileIssue(t.profile);
-  }
+  retainedWorkerProfileIssue(t:Task){return this.resolution.retainedProfileIssue(t.profile)}
   /**
    * Spec 052 sign-off for a new run on a retained profile: a reviewer launched
    * fresh on the recorded reviewer profile, or a new run on the bound coordinator.
@@ -1250,105 +594,49 @@ export class RoleSelection {
    * not new selections and are never stopped by it (Tom, 2026-10-21: keep the
    * worker's thread).
    */
-  signoffIssue(
-    t: Task,
-    assigned: Profile | null,
-    role: "reviewer" | "coordinator",
-  ): string | null {
-    if (!assigned) return null;
-    const entry = this.store
-      .pool()
-      .find((item) => item.profileId === assigned.id);
-    const usage = this.store.usageLevel();
-    const request = t.profileRequests?.[role];
+  signoffIssue(t:Task,assigned:Profile|null,role:'reviewer'|'coordinator'):string|null{
+    if(!assigned)return null;
+    const entry=this.store.pool().find(item=>item.profileId===assigned.id);
+    const usage=this.store.usageLevel();
+    const request=t.profileRequests?.[role];
     // A request the operator has since signed off for another profile takes over
     // from the retained one, as an owner route does.
-    if (
-      request?.signoff?.status === "approved" &&
-      request.profileId !== assigned.id
-    )
-      return `the operator signed off ${request.profileId} for the ${role}`;
-    if (
-      !entry ||
-      requestReaches(
-        entry,
-        usage,
-        request,
-        requestedTier(t.complexity),
-        climbedTier(t),
-      )
-    )
-      return null;
-    return `profile ${assigned.name || assigned.id} needs the operator's board sign-off at the ${usage} usage level`;
+    if(request?.signoff?.status==='approved'&&request.profileId!==assigned.id)return `the operator signed off ${request.profileId} for the ${role}`;
+    if(!entry||requestReaches(entry,usage,request,requestedTier(t.complexity),climbedTier(t)))return null;
+    return `profile ${assigned.name||assigned.id} needs the operator's board sign-off at the ${usage} usage level`;
   }
   assertReviewProfileIndependent(task: Task, run: Run) {
-    if (!task.hostId || run.hostId !== task.hostId)
-      throw new Error("Waiting for a proven reviewer host");
-    const profile = run.profile,
-      assigned = task.resolution.reviewerProfile;
+    if (!task.hostId || run.hostId !== task.hostId) throw new Error('Waiting for a proven reviewer host');
+    const profile = run.profile, assigned = task.resolution.reviewerProfile;
     // A first review-entry reviewer is checked by the pre-send guard before
     // createRun has returned the new agent ID and before delivery records the
     // assignment on the task. Treat only that fully unassigned shape as a fresh
     // selection; every recorded reviewer still needs its exact pinned identity.
-    const firstSelection =
-      !run.agentId && !task.resolution.reviewerAgentId && !assigned;
-    if (
-      !profile ||
-      (!firstSelection &&
-        (!assigned || task.resolution.reviewerAgentId !== run.agentId))
-    )
-      throw new Error("Original reviewer profile/agent assignment is missing");
-    const runtimeIdentity = (p: Profile) =>
-      JSON.stringify([p.provider, p.model, p.modeId, p.featureValues]);
-    const configured = this.resolution
-      .profiles()
-      .find((candidate) => candidate.id === profile.id);
-    if (!this.resolution.catalogKnown())
-      throw new Error(
-        "The daemon profile catalog is still loading after service start; retry shortly",
-      );
-    if (
-      !configured ||
-      runtimeIdentity(configured) !== runtimeIdentity(profile) ||
-      (assigned &&
-        (runtimeIdentity(assigned) !== runtimeIdentity(profile) ||
-          assigned.thinkingOptionId !== profile.thinkingOptionId))
-    )
-      throw new Error("Original reviewer profile runtime identity changed");
-    if (
-      profile.thinkingOptionId !== undefined &&
-      !configured.supportedThinking.includes(profile.thinkingOptionId)
-    )
-      throw new Error(
-        `Original reviewer profile no longer supports pinned thinking option ${profile.thinkingOptionId}`,
-      );
+    const firstSelection = !run.agentId && !task.resolution.reviewerAgentId && !assigned;
+    if (!profile || (!firstSelection && (!assigned || task.resolution.reviewerAgentId !== run.agentId)))
+      throw new Error('Original reviewer profile/agent assignment is missing');
+    const runtimeIdentity = (p: Profile) => JSON.stringify([p.provider, p.model, p.modeId, p.featureValues]);
+    const configured = this.resolution.profiles().find(candidate => candidate.id === profile.id);
+    if (!this.resolution.catalogKnown()) throw new Error('The daemon profile catalog is still loading after service start; retry shortly');
+    if (!configured || runtimeIdentity(configured) !== runtimeIdentity(profile) ||
+        (assigned && (runtimeIdentity(assigned) !== runtimeIdentity(profile) || assigned.thinkingOptionId !== profile.thinkingOptionId)))
+      throw new Error('Original reviewer profile runtime identity changed');
+    if (profile.thinkingOptionId !== undefined && !configured.supportedThinking.includes(profile.thinkingOptionId))
+      throw new Error(`Original reviewer profile no longer supports pinned thinking option ${profile.thinkingOptionId}`);
     const profileIssue = this.resolution.retainedProfileIssue(profile);
-    if (profileIssue)
-      throw new Error(
-        `Original reviewer profile is unavailable: ${profileIssue}`,
-      );
+    if (profileIssue) throw new Error(`Original reviewer profile is unavailable: ${profileIssue}`);
     // The reviewer agent may not be an agent that authored any part of the task,
     // including the author-side proof execution (Spec 055).
-    if (
-      run.agentId &&
-      (this.resolution.authorAgentIds(task).has(run.agentId) ||
-        proofExecutorAgents(task).includes(run.agentId))
-    )
-      throw new Error(
-        "Original reviewer authored this task; independent continuation refused",
-      );
+    if (run.agentId && (this.resolution.authorAgentIds(task).has(run.agentId) || proofExecutorAgents(task).includes(run.agentId)))
+      throw new Error('Original reviewer authored this task; independent continuation refused');
     const model = authorModelKey;
-    const authors = taskAuthorModelKeys(
-      task,
-      this.store.runs(task.id).filter((item) => item.role === "revision"),
-    );
+    const authors = taskAuthorModelKeys(task, this.store.runs(task.id).filter(item => item.role === 'revision'));
     // The current author is the Queue worker whose head is under review. A
     // workerless external-PR review entry has no such worker, so its recorded
     // declared and observed external authors are the current author: absence is
     // not an unknown model. An actual worker with no recorded model still is.
     const queueAuthorModel = queueAuthorModelKey(task);
-    const currentAuthorModels =
-      queueAuthorModel === null ? authors : new Set([queueAuthorModel]);
+    const currentAuthorModels = queueAuthorModel === null ? authors : new Set([queueAuthorModel]);
     const reviewerModel = model(profile.model);
     // Spec 050: an owner `route` (which writes the `ownerRoute` marker)
     // may name a reviewer on any author's model, including the current
@@ -1356,22 +644,12 @@ export class RoleSelection {
     // or optional — never waives the current author's model; continuation
     // and closure recheck that same marked request.
     const reviewerRequest = task.profileRequests?.reviewer;
-    const named =
-      reviewerRequest?.required === true &&
-      reviewerRequest.profileId === profile.id;
+    const named = reviewerRequest?.required === true && reviewerRequest.profileId === profile.id;
     const independence = reviewerIndependence({
-      site: "assert",
-      authors,
-      currentAuthorModels,
-      reviewerModel,
-      namedRequired: Boolean(named),
-      ownerRouted: isOwnerRoutedReviewer(task, profile.id),
+      site: 'assert', authors, currentAuthorModels, reviewerModel,
+      namedRequired: Boolean(named), ownerRouted: isOwnerRoutedReviewer(task, profile.id),
     });
-    if (independence === "unknown")
-      throw new Error("Reviewer/model independence is unknown");
-    if (independence === "collision")
-      throw new Error(
-        "Original reviewer model is not independent of actual task authors",
-      );
+    if (independence === 'unknown') throw new Error('Reviewer/model independence is unknown');
+    if (independence === 'collision') throw new Error('Original reviewer model is not independent of actual task authors');
   }
 }

@@ -674,12 +674,6 @@ function assertHeaderMenuStacksAboveNav(
 ) {
   const menu = ui.get(menuLabel);
   const overlayZ = Number(hostStyle(ui.get(overlayLabel)).zIndex ?? 0);
-  const root = ui.ofType("View")[0];
-  const headerRow = ancestorsOf(root, menu).find(
-    (node) => hostStyle(node).justifyContent === "space-between",
-  );
-  assert.ok(headerRow, "the menu lives under the title+controls header row");
-  const headerZ = Number(hostStyle(headerRow!).zIndex ?? 0);
   const navRow = ui.ofType("View").find((node) => {
     const style = hostStyle(node);
     return style.zIndex === 20 && style.justifyContent === "space-between";
@@ -692,13 +686,17 @@ function assertHeaderMenuStacksAboveNav(
     overlayZ > 20,
     "the outside-press layer covers the nav row and the board",
   );
+  // Queue #1391: the open menu renders in the shell's popover layer, above
+  // the board columns, instead of climbing a z-index ladder inside the
+  // header — an anchored dropdown there is painted over by the column cards.
+  // The bundled surface carries its own copy of the layer id string.
+  const layer = ui
+    .ofType("View")
+    .find((node) => node.props.testID === "nucleus-popover-layer");
+  assert.ok(layer, "the board shell mounts one popover layer");
   assert.ok(
-    headerZ > 20,
-    "the header row itself stacks above the nav row; a nested wrapper zIndex 50 is not enough",
-  );
-  assert.ok(
-    headerZ > overlayZ,
-    "raising the header row keeps the menu above the outside-press layer",
+    ancestorsOf(layer, menu).length > 0,
+    "the menu renders in the top layer, above the board columns",
   );
 }
 

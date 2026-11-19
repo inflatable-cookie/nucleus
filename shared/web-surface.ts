@@ -38,7 +38,6 @@ export const SETTINGS_WRITE_METHODS: ReadonlySet<string> = new Set([
   "queue.pool",
   "queue.profile",
   "queue.availability",
-  "queue.demand-offsets",
   "queue.usage",
   "queue.project-dispatch-limit",
   "queue.routing-grant",

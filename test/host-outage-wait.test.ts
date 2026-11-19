@@ -69,7 +69,7 @@ test('a working task on a disconnected Nightly transport waits on its host, then
   t.after(() => store.close());
   store.setMeta('paused', false);
   store.setMeta('pool', [{ profileId: profile.id, enabled: true, group: 'synthetic', roles: ['worker', 'reviewer'],
-    weight: 1, scopes: ['general'], capability: 'medium' }]);
+    weight: 1, scopes: ['general'], capability: 'worker' }]);
   const inserted = store.insert(submissionSchema.parse({ submissionId: randomUUID(), title: 'Host outage',
     repoPath: directory, planningCommit: base, handoffPath: 'handoff.md', originAgentId: 'origin' }), host.hostId, 'handoff.md', base);
   store.update(inserted.id, {

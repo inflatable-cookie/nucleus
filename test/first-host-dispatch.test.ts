@@ -23,7 +23,13 @@ test("first dispatch binds the selected profile host before workspace creation",
   const paseo = adapter("paseo"),
     t3 = adapter("t3");
   const engine = new Engine(store, paseo, 0);
-  const profiles = [profile("paseo-only"), profile("t3-only"), profile("both")];
+  const paseoWorker = profile("paseo-only");
+  const t3Worker = profile("t3-only");
+  const sharedWorker = profile("both");
+  const workers = [paseoWorker, t3Worker, sharedWorker];
+  const paseoReviewer = profile("paseo-reviewer");
+  const t3Reviewer = profile("t3-reviewer");
+  const profiles = [...workers, paseoReviewer, t3Reviewer];
   store.setMeta(
     "pool",
     profiles.map((p) =>
@@ -33,7 +39,7 @@ test("first dispatch binds the selected profile host before workspace creation",
         group: p.id,
         weight: 1,
         scopes: ["general"],
-        capability: "medium",
+        capability: workers.includes(p) ? "heavyweight" : "worker",
         cost: "medium",
       }),
     ),
@@ -46,19 +52,21 @@ test("first dispatch binds the selected profile host before workspace creation",
   engine.profileCatalogKnownFor = () => true;
   engine.profilesFor = (id) =>
     id === "t3code:one"
-      ? profiles.filter((p) => p.id !== "paseo-only")
-      : profiles.filter((p) => p.id !== "t3-only");
+      ? [t3Worker, sharedWorker, t3Reviewer]
+      : [paseoWorker, sharedWorker, paseoReviewer];
+  const heavyTask = (overrides: Record<string, unknown>) =>
+    submission({ complexity: "very_high", ...overrides });
   engine.launchAgent = async () => {};
   engine.enqueueTitle = () => {};
   try {
     const legacy = store.insert(
-      submission({ repoPath: "/synthetic/legacy" }),
+      heavyTask({ repoPath: "/synthetic/legacy" }),
       "paseo:one",
       "handoff",
       "a".repeat(40),
     );
     const legacyRetry = store.update(legacy.id, {
-      profile: profiles[0]!,
+      profile: paseoWorker,
       profileGroup: "paseo-only",
     });
     assert.equal(
@@ -70,7 +78,7 @@ test("first dispatch binds the selected profile host before workspace creation",
     store.chargeAssignment("paseo-only", "paseo-only");
     store.chargeAssignment("both", "both");
     const rotated = store.insert(
-      submission({ repoPath: "/synthetic/rotation" }),
+      heavyTask({ repoPath: "/synthetic/rotation" }),
       "paseo:one",
       "handoff",
       "a".repeat(40),
@@ -84,7 +92,7 @@ test("first dispatch binds the selected profile host before workspace creation",
       ["both", "paseo:one"],
     ] as const) {
       const task = store.insert(
-        submission({ preferredProfileId: id, requirePreferred: true }),
+        heavyTask({ preferredProfileId: id, requirePreferred: true }),
         "paseo:one",
         "handoff",
         "a".repeat(40),
@@ -111,10 +119,10 @@ test("first dispatch binds the selected profile host before workspace creation",
       );
       assert.equal(summary.hostReason, result.hostSelection?.reason);
       if (id === "t3-only") {
-        const reviewer = engine.withHost(expected, () =>
+        const reviewer = engine.onTaskHost(result, () =>
           engine.resolution.select(result, "reviewer"),
         );
-        assert.equal(reviewer?.profile.id, "both");
+        assert.equal(reviewer?.profile.id, t3Reviewer.id);
         assert.equal(
           engine
             .workerRoutingProfiles(result)
@@ -161,7 +169,7 @@ test("first dispatch binds the selected profile host before workspace creation",
     }
     engine.hostAvailable = (id) => id !== "t3code:one";
     const held = store.insert(
-      submission({
+      heavyTask({
         repoPath: "/synthetic/held",
         preferredProfileId: "t3-only",
         requirePreferred: true,
@@ -179,7 +187,7 @@ test("first dispatch binds the selected profile host before workspace creation",
     );
     store.setMeta("paused", false);
     const offline = store.insert(
-      submission({ preferredProfileId: "t3-only", requirePreferred: false }),
+      heavyTask({ preferredProfileId: "t3-only", requirePreferred: false }),
       "paseo:one",
       "handoff",
       "a".repeat(40),

@@ -1,10 +1,4 @@
-import type {
-  DemandRoleOffsets,
-  PoolEntry,
-  Profile,
-  Task,
-  UsageLevel,
-} from "../../shared/contracts";
+import type { PoolEntry, Profile, Task, UsageLevel } from "../../shared/contracts";
 import { chooseProfile } from "./routing";
 import { workerProfileIsExcluded } from "../../shared/contracts";
 import { hostKindOf, type HostKind } from "../../shared/host-kind";
@@ -25,7 +19,6 @@ export function chooseFirstWorkerHost(
   unavailable: Set<string>,
   recent: Record<string, number>,
   usage: UsageLevel,
-  offsets: DemandRoleOffsets,
   preferredKinds: readonly (HostKind | null | undefined)[] = [],
 ) {
   const profiles = combineWorkerHostProfiles(hosts).filter(
@@ -40,7 +33,6 @@ export function chooseFirstWorkerHost(
     "worker",
     recent,
     usage,
-    offsets,
     true,
   );
   if (!selected) return null;

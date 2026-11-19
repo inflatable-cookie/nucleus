@@ -126,7 +126,7 @@ test("a high-demand decider refuses probes and validates a draft without recordi
     );
     f.store.setMeta("pool", [
       ...pool,
-      { ...pool[0], profileId: f.higher.id, capability: "high", group: "high" },
+      { ...pool[0], profileId: f.higher.id, capability: "worker", group: "high" },
     ]);
     resolution.delegatedAnswerWaitMs = ANSWERING_WINDOW_MS;
     resolution.agentAskWaitMs = 5_000;

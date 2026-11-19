@@ -474,7 +474,7 @@ The runtime build packages both bundles together.
     snapshot polling while this channel is connected and resumes it after a
     disconnect; an unavailable event still triggers a read to expose the failure.
 - **Surface.** Web calls carry `via: "web"`. The Settings writes (`queue.capacity`,
-  `queue.pool`, `queue.profile`, `queue.availability`, `queue.demand-offsets`,
+  `queue.pool`, `queue.profile`, `queue.availability`,
   `queue.usage`, `queue.project-dispatch-limit`,
   `queue.routing-grant`, `repository.set`, `backup.now`,
   `profile.create`, `profile.update`, `profile.remove`;

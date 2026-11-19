@@ -628,7 +628,7 @@ test('the full screen wires the writes: set-planner as the operator, then a re-r
   let reads = 0;
   const writes: Call[] = [];
   const data = settingsOf([row('nucleus', 'Nucleus', [repo('acme/nucleus')])]);
-  const board = { revision: 1, connected: true, hostId: 'host', paused: false, error: '', quiet: true, activeWorkers: 0, unsettled: 0, globalLimit: 32, projectLimit: 4, papercutProjectLimit: 2, tasks: [], profiles: [], pool: [], availability: [], assignments: {}, recentAssignments: {}, lanes: [], projects: [], projectLimitOverrides: {}, projectInFlightLimitOverrides: {}, projectCapacities: [], prStates: {}, usage: { level: 'normal', setLevel: 'normal', until: null, expired: false }, demandOffsets: { worker: 0, reviewer: 0, coordinator: 0 }, routingGrants: [], backup: { newestSnapshotAt: new Date().toISOString(), localError: null } };
+  const board = { revision: 1, connected: true, hostId: 'host', paused: false, error: '', quiet: true, activeWorkers: 0, unsettled: 0, globalLimit: 32, projectLimit: 4, papercutProjectLimit: 2, tasks: [], profiles: [], pool: [], availability: [], assignments: {}, recentAssignments: {}, lanes: [], projects: [], projectLimitOverrides: {}, projectInFlightLimitOverrides: {}, projectCapacities: [], prStates: {}, usage: { level: 'normal', setLevel: 'normal', until: null, expired: false }, routingGrants: [], backup: { newestSnapshotAt: new Date().toISOString(), localError: null } };
   const { QueueSettingsScreen } = await import('../client/settings-screen');
   for (const width of [390, 1024]) {
     writes.length = 0;

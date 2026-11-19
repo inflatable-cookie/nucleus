@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import { chooseFirstWorkerHost } from "../core/dispatch/first-host-selection";
 import { profile } from "./support/fakes";
 import { poolSchema, submissionSchema, type Task } from "../shared/contracts";
-import { DEMAND_ROLE_OFFSETS } from "../shared/demand";
 
 const task = {
   ...submissionSchema.parse({
@@ -13,7 +12,7 @@ const task = {
     planningCommit: "a".repeat(40),
     handoffPath: "h",
     originAgentId: "o",
-    complexity: "medium",
+    complexity: "very_high",
     hostId: "paseo",
   }),
   workerExclusions: [],
@@ -28,7 +27,7 @@ const pool = [paseo, t3, both].map((p) =>
     group: p.id,
     weight: 1,
     scopes: ["general"],
-    capability: "medium",
+    capability: "heavyweight",
     cost: "medium",
   }),
 );
@@ -45,7 +44,6 @@ function pick(id: string, catalogs = hosts) {
     new Set(),
     {},
     "normal",
-    DEMAND_ROLE_OFFSETS,
   );
 }
 
@@ -74,7 +72,6 @@ test("the selected thinking option must be supported by the chosen host", () => 
     new Set(),
     {},
     "normal",
-    DEMAND_ROLE_OFFSETS,
   );
   assert.equal(selected?.hostId, "t3");
 });
@@ -88,7 +85,6 @@ test("rotation gives each profile one entry across the online hosts", () => {
     new Set(),
     { "profile:paseo-only": 4, "profile:both": 4, "profile:t3-only": 0 },
     "normal",
-    DEMAND_ROLE_OFFSETS,
   );
   assert.equal(selected?.profile.id, "t3-only");
   assert.equal(selected?.hostId, "t3");
@@ -107,7 +103,6 @@ test("repository preference precedes the operator default when both can run the 
     new Set(),
     {},
     "normal",
-    DEMAND_ROLE_OFFSETS,
     ["t3code", "paseo"],
   );
   assert.equal(selected?.hostId, "t3code:one");
