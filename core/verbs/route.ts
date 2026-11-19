@@ -1,4 +1,7 @@
-import { DurableFenceRefusal, matchingInactiveParticipant } from "../intake/run-settlement";
+import {
+  DurableFenceRefusal,
+  matchingInactiveParticipant,
+} from "../intake/run-settlement";
 import { unsettledControlRefusal } from "../recovery/recovery-effects";
 import { archiveReplacedReviewer } from "../workspaces/thread-archive-replacement";
 import { routeStateRefusal } from "./control-refusals";
@@ -45,7 +48,10 @@ import {
   retainedWorkerFailureCause,
 } from "../recovery/worker-replacement";
 import { proofOnlyReceiptAwaitingReview } from "../qa/proof-records";
-import { requireReviewerReplacement, type ExhaustedReviewerReplacement } from "./reviewer-report";
+import {
+  requireReviewerReplacement,
+  type ExhaustedReviewerReplacement,
+} from "./reviewer-report";
 import { observeRecoveryCreation } from "../recovery/coordinator-episode";
 import { creationLookup } from "../recovery/absent-creation/restarts";
 import {
@@ -356,9 +362,15 @@ export class RouteControls {
         ? unsettledControlRefusal(this.store, task)
         : null;
       if (controlRefusal) throw new DurableFenceRefusal(controlRefusal);
-      const reviewerReplacement = replaceLive && role === "reviewer"
-        ? await requireReviewerReplacement(this.engine, task, task.version, true)
-        : null;
+      const reviewerReplacement =
+        replaceLive && role === "reviewer"
+          ? await requireReviewerReplacement(
+              this.engine,
+              task,
+              task.version,
+              true,
+            )
+          : null;
 
       // A `route now` displaces that role's live run, so a worker replacement owes
       // the same unresolved delivery and effect proofs the retained-worker
@@ -485,8 +497,13 @@ export class RouteControls {
           reviewerReplacement,
         );
         task = this.store.task(task.id);
-        if (reviewerReplacement && this.store.run(reviewerReplacement.run.id)?.completion)
-          throw Error("The reviewer reported during replacement; the authenticated result keeps its authority");
+        if (
+          reviewerReplacement &&
+          this.store.run(reviewerReplacement.run.id)?.completion
+        )
+          throw Error(
+            "The reviewer reported during replacement; the authenticated result keeps its authority",
+          );
         // Spec 050: a completed callback that wins the replacement race is
         // preserved. The stop retains an authentic completion that landed during
         // the cancellation, so this control must not then detach that run from
@@ -830,8 +847,13 @@ export class RouteControls {
     const observed = await this.engine.host.observe(agentId);
     if (reviewerReplacement) {
       reviewerReplacement.recheck();
-      if (run?.id !== reviewerReplacement.run.id || !matchingInactiveParticipant(reviewerReplacement.run, observed))
-        throw Error("The exhausted reviewer is not positively idle in its workspace; no reviewer was replaced");
+      if (
+        run?.id !== reviewerReplacement.run.id ||
+        !matchingInactiveParticipant(reviewerReplacement.run, observed)
+      )
+        throw Error(
+          "The exhausted reviewer is not positively idle in its workspace; no reviewer was replaced",
+        );
     }
     if (observed.id !== agentId || observed.workspaceId !== workspaceId)
       throw Error(

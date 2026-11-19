@@ -7,7 +7,10 @@ import {
   runFenceRefusal,
   runSettlementFence,
 } from "../intake/run-settlement";
-import { REVIEW_READER_EXHAUSTED, reviewerCannotFinish } from "../review/review-continuation";
+import {
+  REVIEW_READER_EXHAUSTED,
+  reviewerCannotFinish,
+} from "../review/review-continuation";
 import {
   hostFailureRefusalDetail,
   ProvenPreSendRefusalError,
@@ -40,16 +43,27 @@ export type ExhaustedReviewerReplacement = { run: Run; recheck: () => void };
 /** Exhaustion is evidence about one current reader and exact source. */
 export function exhaustedReviewer(task: Task, runs: Run[]): Run | null {
   const run = unreportedReviewer(task, runs);
-  return run && task.prUrl && task.prHead && task.hostId &&
-    run.taskId === task.id && (!run.hostId || run.hostId === task.hostId) &&
-    run.workspaceId === task.workspaceId && reviewerCannotFinish(run)
+  return run &&
+    task.prUrl &&
+    task.prHead &&
+    task.hostId &&
+    run.taskId === task.id &&
+    (!run.hostId || run.hostId === task.hostId) &&
+    run.workspaceId === task.workspaceId &&
+    reviewerCannotFinish(run)
     ? run
     : null;
 }
 
-export function exhaustedReviewerRefusal(store: Store, task: Task, run: Run): string | null {
+export function exhaustedReviewerRefusal(
+  store: Store,
+  task: Task,
+  run: Run,
+): string | null {
   const fence = runSettlementFence({ store, task }, run);
-  return fence ? runFenceRefusal(run, fence) : unresolvedReviewerDelivery(run, store.eventsAll(task.id));
+  return fence
+    ? runFenceRefusal(run, fence)
+    : unresolvedReviewerDelivery(run, store.eventsAll(task.id));
 }
 
 /** A fresh reader may replace a proven gone, non-independent or exhausted binding. */
@@ -76,7 +90,12 @@ export async function requireReviewerReplacement(
   };
   if (exhausted) {
     recheck();
-    const pr = await verifyReviewerPr(engine, task, exhausted, taskPrNumber(task));
+    const pr = await verifyReviewerPr(
+      engine,
+      task,
+      exhausted,
+      taskPrNumber(task),
+    );
     if (pr.url !== task.prUrl || pr.head !== exhausted.head)
       throw Error("The PR identity or head changed; no reviewer was replaced");
     const state = await engine.onTaskHost(task, () =>
@@ -84,7 +103,9 @@ export async function requireReviewerReplacement(
     );
     recheck();
     if (!matchingInactiveParticipant(exhausted, state))
-      throw Error("The exhausted reviewer is not positively idle in its workspace; no reviewer was replaced");
+      throw Error(
+        "The exhausted reviewer is not positively idle in its workspace; no reviewer was replaced",
+      );
     return { run: exhausted, recheck };
   }
   const current = runs.find(
@@ -94,7 +115,8 @@ export async function requireReviewerReplacement(
       !run.released,
   );
   const agentId = task.resolution.reviewerAgentId ?? current?.agentId;
-  if (!agentId || engine.resolution.authorAgentIds(task).has(agentId)) return null;
+  if (!agentId || engine.resolution.authorAgentIds(task).has(agentId))
+    return null;
   const prior = runs.findLast(
     (run) => run.role === "reviewer" && run.agentId === agentId,
   );
@@ -187,7 +209,10 @@ function lastReviewerReportRequest(run: Run, events: ReviewerReportEvents) {
   );
 }
 
-function unresolvedReviewerDelivery(run: Run, events: ReviewerReportEvents): string | null {
+function unresolvedReviewerDelivery(
+  run: Run,
+  events: ReviewerReportEvents,
+): string | null {
   if (
     run.reviewDeliveries?.some(
       (delivery) =>
@@ -196,17 +221,24 @@ function unresolvedReviewerDelivery(run: Run, events: ReviewerReportEvents): str
     (run.reviewContinuation && run.reviewContinuation.status !== "delivered")
   )
     return "The retained reviewer has an unresolved checkpoint delivery; wait for observation before requesting its report";
-  return lastReviewerReportRequest(run, events)?.kind === "reviewer_report_request_intent"
+  return lastReviewerReportRequest(run, events)?.kind ===
+    "reviewer_report_request_intent"
     ? "The retained reviewer report request has unknown delivery; inspect it before retrying"
     : null;
 }
 
-export function reviewerReportRequestRefusal(run: Run, events: ReviewerReportEvents): string | null {
+export function reviewerReportRequestRefusal(
+  run: Run,
+  events: ReviewerReportEvents,
+): string | null {
   if (reviewerCannotFinish(run)) return REVIEW_READER_EXHAUSTED;
-  return unresolvedReviewerDelivery(run, events) ??
-    (lastReviewerReportRequest(run, events)?.kind === "reviewer_report_request_sent"
+  return (
+    unresolvedReviewerDelivery(run, events) ??
+    (lastReviewerReportRequest(run, events)?.kind ===
+    "reviewer_report_request_sent"
       ? "The retained reviewer was already asked to resend its report; wait for that report"
-      : null);
+      : null)
+  );
 }
 
 /** Ask the retained reviewer to resend its result on the original credential, once. */

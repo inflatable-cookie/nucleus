@@ -77,7 +77,8 @@ export async function moveRetainedReader(
   reading: Run,
   operationId?: string,
 ): Promise<Task | null> {
-  if (reviewerCannotFinish(reading)) throw new RestartRefusal(REVIEW_READER_EXHAUSTED);
+  if (reviewerCannotFinish(reading))
+    throw new RestartRefusal(REVIEW_READER_EXHAUSTED);
   const store = engine.store;
   const reader = reviewInProgress(reading) ? reading : null;
   const readerTask = store.task(input.taskId);

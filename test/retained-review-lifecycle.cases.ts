@@ -814,11 +814,20 @@ for (const action of ["restart", "route"] as const) {
       const receipt = await report.send();
       assert.deepEqual(await report.send(), receipt);
       assert.equal(f.events("review_checkpoint_rejected").length, 1);
-      assert.deepEqual(f.run().reviewRejectedReadings?.[0]?.checkpoint.remaining, ["Third item"]);
-      assert.deepEqual(f.run().reviewRejectedReadings?.[0]?.head, f.fixtureHead);
+      assert.deepEqual(
+        f.run().reviewRejectedReadings?.[0]?.checkpoint.remaining,
+        ["Third item"],
+      );
+      assert.deepEqual(
+        f.run().reviewRejectedReadings?.[0]?.head,
+        f.fixtureHead,
+      );
       assert.ok(f.run().reviewBudgetExhaustedAt);
       assert.equal(f.run().completion, null);
-      assert.equal(f.run().reviewCheckpoints?.length ?? 0, action === "restart" ? 1 : 0);
+      assert.equal(
+        f.run().reviewCheckpoints?.length ?? 0,
+        action === "restart" ? 1 : 0,
+      );
       await f.engine.wake();
       await f.engine.quiesce();
       assert.equal(f.current().resolution.stop?.reason, "operator_needed");
@@ -826,19 +835,32 @@ for (const action of ["restart", "route"] as const) {
       assert.equal(view.available, true, JSON.stringify(view));
       assert.equal(view.args?.fresh, true);
       assert.match(view.note ?? "", /cannot finish/);
-      assert.match(f.moveReviewView().refusal ?? "", /restart role=reviewer fresh/);
+      assert.match(
+        f.moveReviewView().refusal ?? "",
+        /restart role=reviewer fresh/,
+      );
       await assert.rejects(restartReviewer(f), /cannot finish/);
       assert.equal(f.events("reviewer_report_request_intent").length, 0);
 
-      const direction = action === "restart"
-        ? { action, ...view.args, reason: "Replace the exhausted reader" }
-        : { action, role: "reviewer", profileId: reviewer.id, now: true, version: f.current().version };
+      const direction =
+        action === "restart"
+          ? { action, ...view.args, reason: "Replace the exhausted reader" }
+          : {
+              action,
+              role: "reviewer",
+              profileId: reviewer.id,
+              now: true,
+              version: f.current().version,
+            };
       await assert.rejects(f.control(direction), /not positively idle/);
       f.observe({ status: "idle", active: false, permissions: true });
       await assert.rejects(f.control(direction), /not positively idle/);
       f.observe({ permissions: false });
       const verify = f.adapter.verifyPr.bind(f.adapter);
-      f.adapter.verifyPr = async (...args) => ({ ...await verify(...args), head: otherHead });
+      f.adapter.verifyPr = async (...args) => ({
+        ...(await verify(...args)),
+        head: otherHead,
+      });
       await assert.rejects(f.control(direction), /PR identity or head changed/);
       f.adapter.verifyPr = verify;
       assert.equal(f.run().released, false);
@@ -847,7 +869,8 @@ for (const action of ["restart", "route"] as const) {
       assert.deepEqual(f.createdRuns, []);
 
       const reading = f.run().reviewRejectedReadings;
-      if (action === "route") Reflect.deleteProperty(f.adapter, "stopAgentTurn");
+      if (action === "route")
+        Reflect.deleteProperty(f.adapter, "stopAgentTurn");
       await f.control(direction);
       await f.engine.wake();
       await f.engine.quiesce();
@@ -884,7 +907,9 @@ test("exhaustion leaves unknown checkpoint delivery fenced", async () => {
     f.observe({ status: "running", active: true });
     await f.checkpoint("First item");
     f.observe({ status: "idle", active: false });
-    f.adapter.continueReviewer = async () => { throw Error("Transport lost"); };
+    f.adapter.continueReviewer = async () => {
+      throw Error("Transport lost");
+    };
     await assert.rejects(restartReviewer(f), /uncertain send outcome/);
     const delivery = f.run().reviewDeliveries?.at(-1);
     assert.equal(delivery?.status, "uncertain");
@@ -893,8 +918,19 @@ test("exhaustion leaves unknown checkpoint delivery fenced", async () => {
     await f.engine.quiesce();
     assert.equal(f.view("restart").available, false);
     assert.match(f.view("restart").refusal ?? "", /delivery.*uncertain/);
-    await assert.rejects(f.control({ action: "restart", role: "reviewer", fresh: true }), /delivery.*uncertain/);
-    await assert.rejects(f.control({ action: "route", role: "reviewer", profileId: reviewer.id, now: true }), /delivery.*uncertain/);
+    await assert.rejects(
+      f.control({ action: "restart", role: "reviewer", fresh: true }),
+      /delivery.*uncertain/,
+    );
+    await assert.rejects(
+      f.control({
+        action: "route",
+        role: "reviewer",
+        profileId: reviewer.id,
+        now: true,
+      }),
+      /delivery.*uncertain/,
+    );
     assert.deepEqual(f.run().reviewDeliveries?.at(-1), delivery);
     assert.equal(f.run().released, false);
     assert.deepEqual(f.createdRuns, []);
@@ -909,13 +945,27 @@ test("a legacy budget marker without unread evidence preserves report recovery",
   try {
     f.observe({ status: "running", active: true });
     await f.checkpoint("First item");
-    f.store.putRun({ ...f.run(), reviewBudgetExhaustedAt: new Date().toISOString() });
+    f.store.putRun({
+      ...f.run(),
+      reviewBudgetExhaustedAt: new Date().toISOString(),
+    });
     f.observe({ status: "idle", active: false });
     const view = f.view("restart");
     assert.equal(view.available, true);
     assert.equal(view.args?.fresh, undefined);
-    await assert.rejects(f.control({ action: "restart", role: "reviewer", fresh: true }), /retained reviewer is still live/);
-    await assert.rejects(f.control({ action: "route", role: "reviewer", profileId: reviewer.id, now: true }), /retained reviewer is still live/);
+    await assert.rejects(
+      f.control({ action: "restart", role: "reviewer", fresh: true }),
+      /retained reviewer is still live/,
+    );
+    await assert.rejects(
+      f.control({
+        action: "route",
+        role: "reviewer",
+        profileId: reviewer.id,
+        now: true,
+      }),
+      /retained reviewer is still live/,
+    );
     await f.control({ ...view.args, reason: "Recover the retained report" });
     assert.equal(f.events("reviewer_report_request_sent").length, 1);
     assert.equal(f.current().resolution.currentRunId, f.runId);

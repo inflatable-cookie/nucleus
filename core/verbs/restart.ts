@@ -282,9 +282,15 @@ export class RestartControls {
     const role =
       (input.role as RestartRole | undefined) ??
       deriveRestartRole(task, this.store.runs(task.id));
-    const replacement = role === "reviewer" && fresh
-      ? await requireReviewerReplacement(this.engine, task, input.version, true)
-      : null;
+    const replacement =
+      role === "reviewer" && fresh
+        ? await requireReviewerReplacement(
+            this.engine,
+            task,
+            input.version,
+            true,
+          )
+        : null;
     if (
       ["done", "cancelled"].includes(task.phase) ||
       task.resolution.mergedCommit
@@ -337,9 +343,10 @@ export class RestartControls {
       role === "worker" ? workerCreationRestartWait(this.store, task) : null;
     if (pending) throw new RestartRefusal(pending);
     const runs = this.store.runs(task.id);
-    const shape = role === "reviewer" && exhaustedReviewer(task, runs)
-      ? "stopped_reviewer"
-      : restartShape(task, runs, role, this.store.eventsAll(task.id));
+    const shape =
+      role === "reviewer" && exhaustedReviewer(task, runs)
+        ? "stopped_reviewer"
+        : restartShape(task, runs, role, this.store.eventsAll(task.id));
     const controlRefusal = unsettledControlRefusal(this.store, task);
     if (controlRefusal) throw new RestartRefusal(controlRefusal);
     // nucleus#1195: the proof executor's one continuation is a re-report request,
@@ -622,7 +629,13 @@ export class RestartControls {
       instruction,
     };
     if (replacement)
-      return this.engine.restartReview(task.id, reason, instruction, true, replacement);
+      return this.engine.restartReview(
+        task.id,
+        reason,
+        instruction,
+        true,
+        replacement,
+      );
     switch (shape) {
       case "owner_stopped_worker":
       case "pre_dispatch":

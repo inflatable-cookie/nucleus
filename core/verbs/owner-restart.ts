@@ -45,7 +45,11 @@ import type { OwnerVerbFacts } from "./owner-facts";
 import { verbInput, restartRoles } from "./owner-shared";
 import type { RestartRole, OwnerVerb, RestartShapeName } from "./owner-shared";
 import { unreportedExecutorRun } from "../qa/proof-admission";
-import { exhaustedReviewer, exhaustedReviewerRefusal, reviewerReportPlan } from "./reviewer-report";
+import {
+  exhaustedReviewer,
+  exhaustedReviewerRefusal,
+  reviewerReportPlan,
+} from "./reviewer-report";
 import {
   workerCreationRefusal,
   workerCreationRestartWait,
@@ -755,7 +759,12 @@ export const restart: OwnerVerb = {
         : {
             available: true,
             fill: ["reason"],
-            args: { taskId: task.id, version: task.version, role: "reviewer", fresh: true },
+            args: {
+              taskId: task.id,
+              version: task.version,
+              role: "reviewer",
+              fresh: true,
+            },
             note: `Reviewer ${exhausted.id} cannot finish the remaining reading. Nucleus verifies the exact PR head and observes the reviewer idle in its workspace before replacing it.${rejectedReadingNote(exhausted)}`,
           };
     }

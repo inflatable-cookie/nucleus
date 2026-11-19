@@ -878,7 +878,11 @@ export class CallbackIntake {
     const { task, run } = gate();
     const limit = this.engine.reviewContinuationLimit();
     const records = run.reviewCheckpoints ?? [];
-    if (input.checkpoint?.exhausted || reviewerCannotFinish(run) || records.length >= limit)
+    if (
+      input.checkpoint?.exhausted ||
+      reviewerCannotFinish(run) ||
+      records.length >= limit
+    )
       return this.engine.rejectReviewProgress(
         task,
         run,

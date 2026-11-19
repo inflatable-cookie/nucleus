@@ -100,22 +100,24 @@ function routeViews(facts: OwnerVerbFacts): TaskNextVerb[] {
     const filterNote =
       role === "worker" ? workerRouteFilterNote(facts, current) : null;
     const profileId = filterNote ? "" : current;
-    const exhausted = role === "reviewer" ? exhaustedReviewer(task, facts.runs) : null;
+    const exhausted =
+      role === "reviewer" ? exhaustedReviewer(task, facts.runs) : null;
     const replacementWait =
       unsettledControlRefusal(facts.store, task) ??
-      (exhausted ? exhaustedReviewerRefusal(facts.store, task, exhausted) : null) ??
+      (exhausted
+        ? exhaustedReviewerRefusal(facts.store, task, exhausted)
+        : null) ??
       (role === "worker" && task.agentIntent && !task.agentId
         ? (workerLookupWait(task) ??
           (workerProducerStopped(facts.store, task, facts.creationGraceMs ?? 0)
             ? null
             : workerCreationWait))
         : null);
-    const retainedReviewer =
-      exhausted
-        ? "The retained reviewer cannot finish. Add now to replace it after Nucleus verifies the exact PR head and observes it idle."
-        : role === "reviewer" && task.resolution.reviewerAgentId
-          ? "Immediate replacement requires proof that the retained reviewer is gone or ineligible."
-          : null;
+    const retainedReviewer = exhausted
+      ? "The retained reviewer cannot finish. Add now to replace it after Nucleus verifies the exact PR head and observes it idle."
+      : role === "reviewer" && task.resolution.reviewerAgentId
+        ? "Immediate replacement requires proof that the retained reviewer is gone or ineligible."
+        : null;
     const note = [
       role === "worker" ? workerNote : null,
       filterNote,
