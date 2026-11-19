@@ -1006,8 +1006,11 @@ export class AgentMessages {
         detail: "A delivery is already in flight.",
       };
     let candidates: Array<{ agentId: string; hostId?: string }>;
+    let senderIsCandidate = false;
     try {
-      candidates = await this.threadCandidates(current);
+      const resolved = await this.threadCandidates(current);
+      candidates = resolved.candidates;
+      senderIsCandidate = resolved.senderIsCandidate;
     } catch (error) {
       if (
         error instanceof ProjectAgentTargetRefusal &&
@@ -1064,7 +1067,9 @@ export class AgentMessages {
     }
     const detail = current.toRole === "agent"
       ? `Agent ${current.toAgentName ?? "unknown"} is not live on its host; the message waits until it is reachable.`
-      : `No live responsible thread for ${current.toProjectKey}; handle it yourself.`;
+      : senderIsCandidate
+        ? `The sender is the only live responsible thread for ${current.toProjectKey}; handle it yourself.`
+        : `No live responsible thread for ${current.toProjectKey}; handle it yourself.`;
     if (current.toRole !== "agent") {
       store.transaction(() => {
         store.putMessage({ ...current, status: "expired", error: detail });
@@ -1085,16 +1090,21 @@ export class AgentMessages {
   /** The threads a planner or agent message may reach, in order; each is re-read at delivery, never trusted from the record. */
   private async threadCandidates(
     record: AgentMessageRecord,
-  ): Promise<Array<{ agentId: string; hostId?: string }>> {
+  ): Promise<{
+    candidates: Array<{ agentId: string; hostId?: string }>;
+    /** The sender was itself a live responsible candidate for the project. */
+    senderIsCandidate: boolean;
+  }> {
     const key = record.toProjectKey!;
     if (record.toRole === "agent") {
       const target = await this.resolution.resolveProjectAgentTarget(
         key,
         record.toAgentName ?? null,
       );
-      return [{ agentId: target.agentId, hostId: target.hostId }];
+      return { candidates: [{ agentId: target.agentId, hostId: target.hostId }], senderIsCandidate: false };
     }
     const candidates: Array<{ agentId: string; hostId?: string }> = [];
+    let senderIsCandidate = false;
     if (record.toLadderTaskId) {
       try {
         const task = this.store.task(record.toLadderTaskId);
@@ -1106,14 +1116,18 @@ export class AgentMessages {
     }
     const project = this.store.projectByKey(key);
     if (project) {
-      const { thread } = await this.resolution.responsibleThread(project, record.fromAgentId ? { agentId: record.fromAgentId, hostId: record.fromHostId } : undefined);
-      if (thread) candidates.push({ agentId: thread.agentId, hostId: thread.hostId });
+      const resolved = await this.resolution.responsibleThread(project, record.fromAgentId ? { agentId: record.fromAgentId, hostId: record.fromHostId } : undefined);
+      if (resolved.thread) candidates.push({ agentId: resolved.thread.agentId, hostId: resolved.thread.hostId });
+      else senderIsCandidate = resolved.senderIsCandidate;
     }
-    return candidates.filter(
-      (candidate, index) =>
-        candidates.findIndex((other) => other.agentId === candidate.agentId) ===
-        index,
-    );
+    return {
+      candidates: candidates.filter(
+        (candidate, index) =>
+          candidates.findIndex((other) => other.agentId === candidate.agentId) ===
+          index,
+      ),
+      senderIsCandidate,
+    };
   }
 
   /** A thread's host when it is available and observed live (not archived, not gone); null otherwise. */

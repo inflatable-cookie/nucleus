@@ -5,6 +5,7 @@ import {
   repositorySettingsSchema,
 } from "./projects";
 import { projectAgentViewSchema } from "./project-agents";
+import { RESPONSIBLE_THREAD_REASONS } from "../responsible-thread";
 
 /**
  * Settings → Projects (nucleus#948): one read for the page. Writes stay on
@@ -62,7 +63,13 @@ export type ProjectSettingsRepository = z.infer<
 >;
 
 export const responsibleThreadViewSchema = z.object({
-  thread: z.object({ agentId: z.string(), hostId: z.string(), lastInteraction: z.string().nullable() }).strict().nullable(),
+  thread: z.object({
+    agentId: z.string(),
+    hostId: z.string(),
+    lastInteraction: z.string().nullable(),
+    /** Why this thread was chosen: registration, dispatch, repository work. */
+    reasons: z.array(z.enum(RESPONSIBLE_THREAD_REASONS)),
+  }).strict().nullable(),
   cacheAgeMs: z.number().nonnegative(),
 }).strict();
 

@@ -411,10 +411,14 @@ export class Resolution {
       if (!shortlist) continue;
       const confirmed = await this.observeResponsible(project.key, shortlist);
       if (!confirmed || this.responsibleThreads.cache.peek(project.key) !== confirmed.shortlist) continue;
+      // A sender that is itself a live candidate is skipped so a tell never
+      // echoes back; the receipt can then name the sender's own handling.
+      const senderIsCandidate = Boolean(exclude) && confirmed.threads.some(candidate =>
+        sameCallerIdentity(candidate.agentId, exclude!.agentId, candidate.hostId, exclude!.hostId));
       const thread = confirmed.threads.find(candidate => !exclude || !sameCallerIdentity(candidate.agentId, exclude.agentId, candidate.hostId, exclude.hostId));
-      return { thread: thread ?? null, observedAt: confirmed.shortlist.observedAt };
+      return { thread: thread ?? null, observedAt: confirmed.shortlist.observedAt, senderIsCandidate };
     }
-    return { thread: null, observedAt: Date.now() };
+    return { thread: null, observedAt: Date.now(), senderIsCandidate: false };
   }
 
   async refreshResponsibleThreads(projects: Project[], excludedHosts?: ReadonlySet<string>) {

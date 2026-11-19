@@ -1,20 +1,29 @@
 import { formatAgentId } from '../../shared/agent-identity';
+import type { ResponsibleThreadReason } from '../../shared/responsible-thread';
 
 /** A host-qualified, live thread eligible to receive cross-project messages. */
 export interface ResponsibleThread {
   agentId: string;
   hostId: string;
   lastInteraction: string | null;
+  /** Every reason this thread is a candidate, strongest first; `project.get` shows them. */
+  reasons: ResponsibleThreadReason[];
 }
 
 /** Facts supplied by a host inventory and the project/task registry. */
 export interface ResponsibleThreadFact {
   nativeId: string;
   lastInteraction: string | null;
-  belongsToProject: boolean;
+  /** The project's registered `project.set-planner` thread. */
+  registeredPlanner: boolean;
+  /** A thread `agent.register` names on the project. */
+  registeredAgent: boolean;
+  /** The thread dispatched or owns tasks in the project. */
+  dispatcher: boolean;
+  /** The thread works in a project checkout or linked worktree. */
+  repositoryWorker: boolean;
   taskRole: boolean;
   closed: boolean;
-  registeredHint: boolean;
 }
 
 export interface ResponsibleHost {
@@ -29,6 +38,40 @@ export interface ResponsibleShortlist {
 
 const DEFAULT_TTL_MS = 3 * 60_000;
 const DEFAULT_HOST_TIMEOUT_MS = 2_000;
+
+/**
+ * Registration outranks dispatch, dispatch outranks a bare repository worker,
+ * and a live registered planner outranks every other candidate however recently
+ * it was active. Within one rank the most recent interaction wins.
+ */
+export const RESPONSIBLE_THREAD_RANK: Record<ResponsibleThreadReason, number> = {
+  'registered-planner': 3,
+  dispatcher: 2,
+  'registered-agent': 1,
+  'repository-worker': 0,
+};
+
+function reasonsOf(fact: ResponsibleThreadFact): ResponsibleThreadReason[] {
+  return [
+    ...(fact.registeredPlanner ? ['registered-planner' as const] : []),
+    ...(fact.dispatcher ? ['dispatcher' as const] : []),
+    ...(fact.registeredAgent ? ['registered-agent' as const] : []),
+    ...(fact.repositoryWorker ? ['repository-worker' as const] : []),
+  ];
+}
+
+/**
+ * An explicit registration is a candidate even when the thread carries a task
+ * label: the operator named it, so it is not merely a busy worker.
+ */
+function candidate(fact: ResponsibleThreadFact, reasons: readonly ResponsibleThreadReason[]): boolean {
+  if (fact.closed || !reasons.length) return false;
+  return !fact.taskRole || fact.registeredPlanner || fact.registeredAgent;
+}
+
+function rank(reasons: readonly ResponsibleThreadReason[]): number {
+  return reasons.reduce((highest, reason) => Math.max(highest, RESPONSIBLE_THREAD_RANK[reason]), -1);
+}
 
 /**
  * The cache owns no host state. Callers invalidate on delivery failure, a closed
@@ -94,8 +137,9 @@ export class ResponsibleThreadCache {
           host.inventory(),
           new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('Host inventory timed out')), this.hostTimeoutMs); }),
         ]);
-        return facts.filter(fact => fact.belongsToProject && !fact.taskRole && !fact.closed)
-          .map(fact => ({ ...fact, hostId: host.id, agentId: formatAgentId(host.id, fact.nativeId) }));
+        return facts.map(fact => ({ fact, reasons: reasonsOf(fact) }))
+          .filter(({ fact, reasons }) => candidate(fact, reasons))
+          .map(({ fact, reasons }) => ({ ...fact, reasons, hostId: host.id, agentId: formatAgentId(host.id, fact.nativeId) }));
       } catch {
         return [];
       } finally {
@@ -103,10 +147,10 @@ export class ResponsibleThreadCache {
       }
     }));
     const threads = inventories.flat().sort((a, b) =>
-      Number(b.registeredHint) - Number(a.registeredHint)
+      rank(b.reasons) - rank(a.reasons)
       || (b.lastInteraction ?? '').localeCompare(a.lastInteraction ?? '')
       || a.agentId.localeCompare(b.agentId))
-      .map(({ agentId, hostId, lastInteraction }) => ({ agentId, hostId, lastInteraction }));
+      .map(({ agentId, hostId, lastInteraction, reasons }) => ({ agentId, hostId, lastInteraction, reasons }));
     return { threads, observedAt: this.clock() };
   }
 }

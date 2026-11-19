@@ -193,7 +193,7 @@ function OpenedProject({ c, compact, entry, data, error, refetch, actions, back,
     {entry.responsibleThread && <View style={{ gap: space.xxs }}>
       <FieldCaption c={c} text="Responsible thread" />
       <Text style={muted(c)}>{entry.responsibleThread.thread
-        ? `${entry.responsibleThread.thread.agentId} · ${entry.responsibleThread.thread.hostId} · last interaction ${entry.responsibleThread.thread.lastInteraction ?? "unknown"}`
+        ? `${entry.responsibleThread.thread.agentId} · ${entry.responsibleThread.thread.hostId} · ranked by ${entry.responsibleThread.thread.reasons.join(", ") || "none"} · last interaction ${entry.responsibleThread.thread.lastInteraction ?? "unknown"}`
         : "No live responsible thread"}</Text>
       <Text style={muted(c)}>Cache age: {Math.floor(entry.responsibleThread.cacheAgeMs / 1000)}s</Text>
     </View>}
