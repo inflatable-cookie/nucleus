@@ -268,6 +268,47 @@ test("a row whose producer answer a watch already read settles on the proving pa
     "the producer's own answer stays on the row");
 });
 
+test("a watch note about itself never stands in for the producer's answer", t => {
+  for (const kind of ["hook-liveness-unknown", "reconcile-fault"] as const) {
+    const h = harness(t);
+    const run = launched(h.scheduler, admission(`watch-self-${kind}`, { runTimeoutMs: 24 * 60 * 60_000 }));
+    // The endpoint writes this while the hook is still alive (or a tick threw):
+    // it says something about the watch, not about the producer, so the sweep
+    // must still give a live watch its window before settling.
+    h.scheduler.note(run.id, "effigy_observation_refused", {
+      kind, reason: kind === "reconcile-fault" ? "the reservation row could not be read" : "the hook's identity could not be re-read",
+    });
+
+    h.scheduler.tick();
+
+    assert.equal(h.scheduler.get(run.id)!.state, "running", `${kind}: no producer read yet, so the pass defers`);
+    assert.equal(facts(h, run.id, HOST_RUN_HOOK_GONE_PENDING_EVENT).length, 1, `${kind}: the window is named`);
+
+    h.time(HOST_RUN_WATCH_EVIDENCE_WINDOW_MS + 1);
+    h.scheduler.tick();
+
+    const settled = h.scheduler.get(run.id)!;
+    assert.equal(settled.state, "settled", `${kind}: the next pass settles it`);
+    assert.equal(settled.settlement?.outcome, "lost");
+    assert.equal(h.store.hostRunHoldingWorkspace(repository.path), null, `${kind}: the workspace hold goes with it`);
+  }
+});
+
+test("a watch that asked the producer and could not classify the answer settles on the proving pass", t => {
+  const h = harness(t);
+  const run = launched(h.scheduler, admission("watch-asked-unknown", { runTimeoutMs: 24 * 60 * 60_000 }));
+  // `run status` was called and answered something Queue cannot classify: the
+  // producer was read, so there is no second read to wait for.
+  h.scheduler.note(run.id, "effigy_observation_refused", { kind: "unknown", reason: "run status answered an unreadable journal" });
+
+  h.scheduler.tick();
+
+  const settled = h.scheduler.get(run.id)!;
+  assert.equal(settled.state, "settled");
+  assert.equal(settled.settlement?.outcome, "lost");
+  assert.deepEqual(facts(h, run.id, HOST_RUN_HOOK_GONE_PENDING_EVENT), [], "the producer was already read");
+});
+
 test("a live hook inside its own run timeout keeps the reservation", t => {
   const h = harness(t, { hookAlive: () => true, hookStartIdentity: () => HOOK.startIdentity });
   const run = launched(h.scheduler, admission("live"));

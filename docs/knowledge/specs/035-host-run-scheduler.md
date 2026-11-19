@@ -993,12 +993,17 @@ provably dead.
   and the next pass settles the row whether an answer arrived or not — fifteen
   seconds later at the twenty-second sweep, which is about fifteen watch ticks
   of one-second cadence against an eight-second status call. A row that already
-  carries the answer (any `effigy_observation`, `effigy_observation_retained` or
-  `effigy_observation_refused` fact, or an accounting retirement) settles on the
-  proving pass, and a reservation past its own run timeout settles on it too:
-  the deadline is its own final answer. The window is a bound, never a hold: a
-  service with no watch attached, a watch that died and a producer that never
-  answers all clear on the next pass.
+  carries the producer's answer settles on the proving pass: its closure
+  (`effigy_observation`), the hold it answered
+  (`effigy_observation_retained`), the watch's report that it read this run and
+  could not classify the answer (`effigy_observation_refused` with kind
+  `unknown`), or an accounting retirement. A note the watch made about itself is
+  never that answer — `hook-liveness-unknown` is written while the hook is still
+  alive and `reconcile-fault` when a tick throws — so neither suppresses the
+  window. A reservation past its own run timeout also settles on the proving
+  pass: the deadline is its own final answer. The window is a bound, never a
+  hold: a service with no watch attached, a watch that died and a producer that
+  never answers all clear on the next pass.
 - **What it writes.** A running reservation settles `lost` through the one
   settlement writer above, which releases its capacity and stops holding its
   workspace (`hostRunHoldingWorkspace` holds only queued, admitted, running and

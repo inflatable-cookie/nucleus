@@ -89,12 +89,35 @@ export const HOST_RUN_HOOK_GONE_PENDING_EVENT = "hook_gone_pending";
  */
 export const HOST_RUN_WATCH_EVIDENCE_WINDOW_MS = 15_000;
 /**
- * Journal events that mean an endpoint watch has read this reservation's producer
- * answer. Any one of them is the evidence the sweep's own window is waiting for.
+ * Journal events that only a producer read writes: the producer's own closure
+ * record and the hold it answered. Either is the evidence the sweep's window is
+ * waiting for.
  */
 const HOST_RUN_PRODUCER_OBSERVATION_EVENTS: readonly string[] = [
-  "effigy_observation", "effigy_observation_retained", "effigy_observation_refused",
+  "effigy_observation", "effigy_observation_retained",
 ];
+/**
+ * The one `effigy_observation_refused` kind that still means the producer was
+ * asked: the watch did read this run and got no readable answer. The event's
+ * other kinds are the watch reporting on itself or on the launcher
+ * (`hook-liveness-unknown` while the hook was still alive, `reconcile-fault`,
+ * `runtime-absent`, `absence-evidence-incomplete`, `accounting-retirement-refused`),
+ * so none of them proves the producer was ever read and none of them may stand in
+ * for its answer.
+ */
+const HOST_RUN_PRODUCER_REFUSAL_KINDS: readonly string[] = ["unknown"];
+
+/**
+ * Whether this journal entry is the row's producer answer: what the producer
+ * itself said (a closure or a hold), or the watch's report that it read this run
+ * and could not classify the answer. Never a note the watch made about itself.
+ */
+function hostRunProducerAnswerEntry(entry: { event: string; data: unknown }): boolean {
+  if (HOST_RUN_PRODUCER_OBSERVATION_EVENTS.includes(entry.event)) return true;
+  if (entry.event !== "effigy_observation_refused") return false;
+  const kind = (entry.data as { kind?: unknown } | null)?.kind;
+  return typeof kind === "string" && HOST_RUN_PRODUCER_REFUSAL_KINDS.includes(kind);
+}
 /**
  * Start-identity reads one settlement sweep may spend. A dead pid needs none, so
  * the leaked public records cost nothing here; a live pid that may be a reused
@@ -371,18 +394,21 @@ export class HostRunSettlementOwner {
    *
    * The watch is the only reader of the producer, and a settled row stops being
    * watched, so a settlement written before that read discards evidence about the
-   * run the producer alone can give. A row that already carries the answer — a
-   * closure, a retained hold, a refusal, or an accounting retirement — has
-   * nothing left to wait for and settles on this pass. Otherwise the first pass
-   * to prove the hook gone records `hook_gone_pending` with that proof, and the
-   * next pass settles the row whether the watch answered in the window or not, so
-   * a service with no watch attached, a crashed watch and a watch that cannot
-   * reach the producer all still clear inside one window.
+   * run the producer alone can give. A row that already carries the producer's
+   * answer — its closure, its hold, or the watch's report that it asked and could
+   * not classify the answer, or an accounting retirement — has nothing left to
+   * wait for and settles on this pass. The watch's notes about itself, above all
+   * `hook-liveness-unknown` written while the hook was still alive, are not that
+   * answer: they never suppress the window. Otherwise the first pass to prove the
+   * hook gone records `hook_gone_pending` with that proof, and the next pass
+   * settles the row whether the watch answered in the window or not, so a service
+   * with no watch attached, a crashed watch and a watch that cannot reach the
+   * producer all still clear inside one window.
    */
   deferToWatchEvidence(run: HostRunInternalRecord, observation: string): boolean {
     const journal = this.context.store.hostRunJournal(run.id);
     const answered = hostRunAccountingRetirementOf(this.context.store, run) !== undefined
-      || journal.some(entry => HOST_RUN_PRODUCER_OBSERVATION_EVENTS.includes(entry.event));
+      || journal.some(hostRunProducerAnswerEntry);
     if (answered) return false;
     const pending = journal.filter(entry => entry.event === HOST_RUN_HOOK_GONE_PENDING_EVENT).at(-1);
     // The proof instant is the scheduler's own clock, recorded in the fact: the
