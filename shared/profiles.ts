@@ -270,10 +270,30 @@ export function profileCompatibility(
   const launch = translation.launch;
   const provider = hostProviderFor(launch.provider, catalog);
   const answer = withLevels(availabilityOn(launch, provider, catalog));
+  // The option this host's table uses to carry a thinking level is not a plain
+  // feature: a value it does not offer is a thinking level the host lacks, and
+  // the reason names the level rather than the carrier's spelling (nucleus#1364).
+  const carrier = isCanonicalProvider(profile.provider)
+    ? vocabulary.providers[profile.provider]?.thinkingOption
+    : undefined;
+  const reason = answer.available
+    ? ""
+    : hostReason(answer.problem, vocabulary.label, launch.provider, launch, carrier, profile.thinkingOptionId);
+  // The two shapes a thinking level takes an unavailable answer in: the level
+  // field itself, and the table carrier that holds it as a feature value.
+  const thinkingProblem =
+    answer.problem === "Configured thinking level is not supported" ||
+    (Boolean(carrier) &&
+      Boolean(profile.thinkingOptionId) &&
+      answer.problem === `Configured option ${carrier} does not offer that value`);
   return {
     ...answer,
     status: answer.available ? "works" : "unavailable",
-    reason: answer.available ? "" : hostReason(answer.problem, vocabulary.label, launch.provider, launch),
+    // A level the carrier does not offer is reported as the thinking level the
+    // host lacks, on the profile the board and selection read, not only on the
+    // compatibility row.
+    problem: !answer.available && thinkingProblem ? reason : answer.problem,
+    reason,
     translated: translation.translated,
     launch,
   };
@@ -289,7 +309,14 @@ function canonicalThinkingLevelsOn(provider: string, modelId: string, catalog: H
 }
 
 /** The availability problem with the host named. */
-function hostReason(problem: string, label: string, providerKey: string, values: AvailabilityFields): string {
+function hostReason(
+  problem: string,
+  label: string,
+  providerKey: string,
+  values: AvailabilityFields,
+  carrier?: string,
+  level?: string,
+): string {
   const missing = /^Provider (\S+) is not available on this host$/.exec(problem);
   if (missing) return `${label} has no ${missing[1]} provider`;
   const mode = /^Configured runtime mode (\S+) is not one of this host's modes(?: \((.*)\))?$/.exec(problem);
@@ -297,6 +324,8 @@ function hostReason(problem: string, label: string, providerKey: string, values:
   if (problem === "Configured thinking level is not supported") return `${label}'s ${values.model} has no thinking level ${values.thinkingOptionId}`;
   if (/^Model \S+ is not available from provider/.test(problem)) return `${label}'s ${providerKey} has no model ${values.model}`;
   const option = /^Configured option (\S+) (is not supported|needs a boolean value|does not offer that value)$/.exec(problem);
+  if (option && carrier && level && option[1] === carrier && option[2] === "does not offer that value")
+    return `${label}'s ${values.model} has no thinking level ${level}`;
   if (option) return option[2] === "is not supported" ? `${label}'s ${values.model} has no option ${option[1]}`
     : option[2] === "needs a boolean value" ? `${label}'s ${values.model} option ${option[1]} needs on or off`
     : `${label}'s ${values.model} option ${option[1]} has no value ${String(values.featureValues?.[option[1]!])}`;

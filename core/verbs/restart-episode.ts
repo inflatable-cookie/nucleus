@@ -151,6 +151,38 @@ export class EpisodeRestarts {
   private async coordinator(c: RestartRequest): Promise<Task> {
     const { task, input, reason } = c;
     const version = task.version;
+    // A creation the host refused before send owes no exact lookup: nothing was
+    // delivered. Its episode keeps the occurrence it refused, and the owner's
+    // restart re-arms recovery over it (nucleus#1364), exactly as the
+    // absent-creation release does.
+    const refusedRecovery = this.resolution.recovery.refusedRun(task);
+    if (refusedRecovery)
+      return this.engine.control(
+        () =>
+          this.store.transaction(() => {
+            const current = this.store.task(task.id);
+            this.engine.requireOwnerControlCurrent(
+              current,
+              version,
+              "Task changed during refused recovery-run verification",
+            );
+            const others = this.store
+              .runs(task.id)
+              .filter((run) => !run.released && run.id !== refusedRecovery.id);
+            if (others.length)
+              throw Error(
+                "Resolve the other retained runs before restarting coordinator recovery",
+              );
+            return this.resolution.operatorReturn(
+              current,
+              { recoveryActive: false, recovery: null, recoveryAttempts: 0 },
+              {},
+              "coordinator_rearmed",
+              `Owner restarted coordinator recovery after a refused creation: ${reason}`,
+            );
+          }),
+        `task:${task.id}`,
+      );
     const absentRecovery = this.resolution.recovery.absentRun(task);
     if (absentRecovery) {
       const observed = await observeRecoveryCreation(

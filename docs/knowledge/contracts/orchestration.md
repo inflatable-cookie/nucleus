@@ -1265,6 +1265,10 @@ request identities and submitted handoffs are not rewritten.
   Nucleus stored and replacing it on Refresh (the
   [service boundary](service-boundary.md) owns that rule). Selection and
   dispatch use the stored list with availability from the live host catalog.
+  A host-scoped snapshot answers only from that host's own catalog: a task whose
+  host has no snapshot read (a host removed from the registry, or one not read
+  yet) waits on its own catalog with the host named, and never selects from
+  another host's profiles (nucleus#1364).
 - Enabled flag, provider and group availability and thinking support are the
   eligibility gates; every profile can work, review and coordinate
   ([Spec 053](../specs/053-demand-based-selection.md), Tom, 2026-10-21).

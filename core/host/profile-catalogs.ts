@@ -132,18 +132,38 @@ export class ProfileCatalogs {
     return !provider || !provider.available;
   }
 
-  /** The routing profiles a task's own host reports; a host without a snapshot reads the primary set. */
-  profilesFor(hostId?: string | null): Profile[] { return hostId ? this.hostProfiles.get(hostId) ?? this.owner.profiles : this.owner.profiles; }
+  /**
+   * The routing profiles a task's own host reports. A host with its own adapter
+   * answers only from its own catalog snapshot: an unread or unreachable host
+   * waits on its own catalog instead of selecting from another host's profiles,
+   * so a task hosted on T3 never launches a profile only Paseo's catalog judges
+   * (nucleus#1364). A host without a distinct adapter, or the primary host, is
+   * the primary profile set.
+   */
+  profilesFor(hostId?: string | null): Profile[] {
+    if (this.isPrimaryHost(hostId)) return this.owner.profiles;
+    return this.hostProfiles.get(hostId!) ?? [];
+  }
+
+  /**
+   * Whether a host id is this engine's primary host: no id, the primary adapter,
+   * or an id the primary was registered under. A removed host is not primary.
+   */
+  private isPrimaryHost(hostId?: string | null): boolean {
+    if (!hostId) return true;
+    if (hostId === this.primaryHostId) return true;
+    const selected = this.owner.resolveHostAdapter(hostId);
+    return selected !== undefined && selected === this.owner.primaryAdapter;
+  }
 
   /**
    * Dispatch waits until the task's host's catalog is known, not only the primary's.
-   * The primary host's catalog is the primary profile set; only a secondary host
-   * with its own adapter waits for its own snapshot.
+   * The primary host's catalog is the primary profile set; only a host with its own
+   * adapter waits for its own snapshot, and an unknown host never borrows another
+   * host's answer.
    */
   profileCatalogKnownFor(hostId?: string | null): boolean {
-    if (!hostId) return this.profileCatalogKnown();
-    const selected = this.owner.resolveHostAdapter(hostId);
-    if (!selected || selected === this.owner.primaryAdapter) return this.profileCatalogKnown();
-    return this.hostCatalogRefreshed.has(hostId);
+    if (this.isPrimaryHost(hostId)) return this.profileCatalogKnown();
+    return this.hostCatalogRefreshed.has(hostId!);
   }
 }

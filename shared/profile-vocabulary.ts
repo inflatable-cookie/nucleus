@@ -164,6 +164,36 @@ export function canonicalThinkingLevels(entry: ProviderTranslation, model: HostM
 }
 
 /**
+ * The canonical level a host's own value spells, for one provider, read from the
+ * table's inverse entry. A value the table carries no level for is `null`, never
+ * a guess: the table is the whole contract for what a host can express.
+ */
+export function canonicalThinkingValue(entry: ProviderTranslation, value: string): ThinkingLevel | null {
+  return THINKING_LEVELS.find(candidate => entry.thinking[candidate] === value) ?? null;
+}
+
+/**
+ * The nearest level of one ordered scale (Tom, 2026-11-04/12: a host translates
+ * the canonical vocabulary in code, so a level a model does not report is
+ * settled here instead of at the send). Distance decides; a tie takes the lower
+ * level. This thinking-scale rule is distinct from the pool capability-tier
+ * rule and may choose a higher supported level when it is closer.
+ * `null` when the scale is empty: nothing on this model can carry the level.
+ */
+export function nearestThinkingLevel(supported: readonly ThinkingLevel[], level: ThinkingLevel): ThinkingLevel | null {
+  if (supported.includes(level)) return level;
+  const want = THINKING_LEVELS.indexOf(level);
+  let best: ThinkingLevel | null = null;
+  for (const candidate of supported) {
+    const away = Math.abs(THINKING_LEVELS.indexOf(candidate) - want);
+    if (best === null || away < Math.abs(THINKING_LEVELS.indexOf(best) - want)
+      || (away === Math.abs(THINKING_LEVELS.indexOf(best) - want) && THINKING_LEVELS.indexOf(candidate) < THINKING_LEVELS.indexOf(best)))
+      best = candidate;
+  }
+  return best;
+}
+
+/**
  * One host's catalog in canonical values: only the providers its table names,
  * and per model only the thinking levels and modes the table can express and
  * the host reports. Options a table uses to carry thinking or a mode are left

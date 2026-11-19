@@ -396,12 +396,26 @@ stock driver (Codex, Grok, Muse, Kiro) names its reasoning select
 `currentValue`; other selects and booleans become catalog features; model
 `aliases` carry through.
 
-At launch the adapter maps the profile's `thinkingOptionId` and feature values
-into `ModelSelection.options` (`[{ id, value }]`;
-`packages/contracts/src/modelSelection.ts`, values `string | boolean`). A
-value the model does not report is refused before send with the option and
-value named — no silent dropping, no nearest-value guessing. Selection keeps
-such a profile out of a host-bound task in the first place: the engine keeps a
+At launch the adapter maps the profile's thinking level and feature values into
+`ModelSelection.options` (`[{ id, value }]`;
+`packages/contracts/src/modelSelection.ts`, values `string | boolean`). The
+canonical thinking level reaches the model's carrier whichever way the profile
+stores it and whichever descriptor carries it (nucleus#1364): a level stored as
+`thinkingOptionId` and a level a translated feature carries
+(`translated: ["thinking"]`) are the same fact, and it is sent on the option this
+adapter's table names for the provider (`thinking` for Pi, `effort` for Claude
+and FX) or, for a provider with no table carrier, on the reasoning select
+(`role: "reasoning"`, or the stock `reasoningEffort`). A canonical level the
+model's carrier does not offer settles to the nearest level it does offer, by the
+one ordered-scale rule in `shared/profile-vocabulary.ts` (distance decides, a tie
+takes the lower level, so a translated level never silently buys more than the
+profile asked for); the real nightly's `gpt-6-luna` offers low..max, Muse 1.3
+offers minimal..xhigh, and DeepSeek 4.1 Flash offers low, high and max. A level
+therefore never fails at send. A model whose snapshot reports no carrier at all
+is still refused before send with the option named, and any other feature value
+the model does not report is refused with the option and value named — no silent
+dropping, no post-send guess. Selection keeps such a profile out of a host-bound
+task in the first place: the engine keeps a
 routing-profile snapshot per registered host, built from that host's own
 catalog, and dispatch, worker creation, reviewer selection and the
 `route`/`set_routing` validation read the task host's snapshot, so
@@ -464,7 +478,15 @@ A creation refusal that is proven pre-send settles the run refused and the task
 in attention with the step that failed named — `Worker creation refused before
 send: …`, `Reviewer creation refused before send: …`, `Coordinator creation
 refused before send: …` — instead of the absent-creation exact-lookup ladder,
-which would find nothing and send a replacement into the same refusal.
+which would find nothing and send a replacement into the same refusal. A refused
+coordinator creation (`CoordinatorRoute`) releases its run, credential and
+episode agent binding at once and keeps the escalation with the refusal named, so
+nothing remains to look up and the owner's `restart` re-arms recovery instead of
+being refused by an intent that never crossed the send boundary. Until that
+restart, recovery selection leaves out every profile this host refused before
+send, so the retry asks for another eligible one rather than repeating the
+identical launch; when none is left the ordinary route-unavailable wait names the
+`route` that fixes it (nucleus#1364).
 
 The adapter's owner-only state file binds those records to the authenticated
 environment. The service is that file's single owner: it holds the parsed record

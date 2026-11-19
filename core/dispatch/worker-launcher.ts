@@ -365,7 +365,7 @@ export class WorkerLauncher {
                 resolution: { ...current.resolution, attention: true },
               },
               "worker_creation_refused_before_send",
-              reason,
+              JSON.stringify({ runId, profileId: current.profile?.id ?? null, reason }),
             );
           });
           return;

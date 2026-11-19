@@ -33,6 +33,7 @@ export class Recovery {
  settleFinishedRun(...args:Parameters<CoordinatorEpisode['settleFinishedRun']>):void{return this.episode.settleFinishedRun(...args);}
  releaseWithNotAppliedAction(...args:Parameters<CoordinatorEpisode['releaseWithNotAppliedAction']>):boolean{return this.episode.releaseWithNotAppliedAction(...args);}
  absentRun(t:Task){return this.episode.absentRun(t);}
+ refusedRun(t:Task){return this.episode.refusedRun(t);}
  releaseAbsent(...args:Parameters<CoordinatorEpisode['releaseAbsent']>){return this.episode.releaseAbsent(...args);}
  settleAuthorizationFencedRun(t:Task){return this.episode.settleAuthorizationFencedRun(t);}
  pass(taskId?:string){return this.passStage.pass(taskId);}

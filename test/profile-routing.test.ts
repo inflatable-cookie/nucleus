@@ -71,3 +71,39 @@ test('failed initial catalog read waits; missing host model is unavailable', asy
     assert.match(engine.profiles[0]!.problem, /not available/);
   } finally { store.close(); }
 });
+
+test("a task host this engine cannot resolve never borrows another host's profiles (nucleus#1364)", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "profile-routing-"));
+  const store = new Store(join(dir, "db"));
+  try {
+    importHostProfiles(store, { source: "paseo", hostProfiles });
+    const engine = new Engine(store, {
+      catalog: async () => catalog,
+      vocabulary: paseoVocabulary,
+    } as Adapter);
+    // The registered host this task names has no adapter in this engine: a host
+    // removed from the registry, or one never read. Selection must not fall back
+    // to the primary host's profiles, because that is how a T3-hosted task once
+    // picked a profile only Paseo's catalog could launch.
+    engine.hostIds = () => ["t3code:env"];
+    engine.resolveHostAdapter = () => undefined;
+    await engine.refresh();
+    assert.deepEqual(
+      engine.profilesFor("t3code:env"),
+      [],
+      "no borrowed profile set for a host without its own catalog",
+    );
+    assert.equal(
+      engine.profileCatalogKnownFor("t3code:env"),
+      false,
+      "dispatch waits for that host's own catalog",
+    );
+    assert.ok(
+      engine.profilesFor(undefined).length > 0,
+      "the primary host keeps its own set",
+    );
+    assert.equal(engine.profileCatalogKnownFor(undefined), true);
+  } finally {
+    store.close();
+  }
+});

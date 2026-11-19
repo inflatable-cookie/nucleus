@@ -36,7 +36,8 @@ import {
 } from "./recovery-context";
 import { groupIsUnavailable, supersedingRouteProfile } from "../../shared/pool";
 import { requiredCheckPollMetaKey } from "../forge/checks";
-import { creationFailureSummary } from "./task-reasons";
+import { ProvenPreSendRefusalError, creationFailureSummary } from "./task-reasons";
+import { refusedLaunchProfiles } from "./refused-launch";
 import { unreleasedExecutorRun } from "../qa/proof-admission";
 import {
   CoordinatorEpisode,
@@ -557,6 +558,9 @@ export class CoordinatorRoute {
         t,
         `No job workspace is available for coordinator recovery. ${cause(t, this.store.runs(t.id))}`,
       );
+    // The run this attempt records, so a proven pre-send refusal can settle the
+    // occurrence it created (the catch never guesses an identity).
+    let attempted: Run | null = null;
     try {
       // Existing closeout without a callback: preserve its run and MCP binding.
       const owed = this.store
@@ -696,7 +700,15 @@ export class CoordinatorRoute {
         }
       }
       if (!agentId) {
-        const selection = this.resolution.select(t, "coordinator");
+        // A profile this host already refused before send is not asked again by
+        // the retry of the same episode; an owner restart re-arms recovery and
+        // clears the set with it (nucleus#1364).
+        const selection = this.resolution.select(
+          t,
+          "coordinator",
+          [],
+          refusedLaunchProfiles(this.store, t.id),
+        );
         if (!selection) {
           this.episode.wait(
             t,
@@ -757,6 +769,7 @@ export class CoordinatorRoute {
         released: false,
         ...(temporaryDirectory ? { temporaryDirectory } : {}),
       };
+      attempted = run;
       let superseded = false,
         waitingForCapacity = "",
         heldForDispatch = false,
@@ -894,6 +907,17 @@ export class CoordinatorRoute {
       this.episode.save(t, { agentId });
       return null;
     } catch (error) {
+      // A proven pre-send refusal never crossed the send boundary: settle that
+      // occurrence now (run, credential and the episode's agent binding) rather
+      // than leaving an intent nobody can deliver. The escalation keeps the
+      // refusal named for its owner, and `restart` then applies (Spec 050/066;
+      // the refusal is not an absent creation to look up, nucleus#1364).
+      if (error instanceof ProvenPreSendRefusalError && attempted)
+        this.episode.releaseRefusedCreation(
+          this.store.task(t.id),
+          attempted,
+          creationFailureSummary(error.reason),
+        );
       return this.episode.escalate(
         this.store.task(t.id),
         creationFailureSummary(

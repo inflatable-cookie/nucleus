@@ -19,6 +19,7 @@ import {
   readCreationAttempt,
 } from "../store/store-task-funnel";
 import { creationLookup } from "./absent-creation/restarts";
+import { CREATION_REFUSED_BEFORE_SEND, refusedRunIds } from "./refused-launch";
 import { taskProgressDigest } from "./coordinator-report";
 import { recoveryApplicationsInFlight } from "./coordinator-settlement";
 import {
@@ -664,6 +665,66 @@ export class CoordinatorEpisode {
       settled = true;
     });
     return settled;
+  }
+  /**
+   * The episode's own creation the host refused before send: it never crossed
+   * the send boundary, so its run settled released with no agent and no
+   * completion (nucleus#1364). Nothing is left for the exact-creation lookup to
+   * find, and the owner `restart` re-arms over the refusal instead of being
+   * refused by an intent that cannot exist.
+   */
+  refusedRun(t: Task) {
+    const episode = t.resolution.recovery,
+      run = episode?.runId ? this.store.run(episode.runId) : null;
+    if (
+      episode?.status !== "escalated" ||
+      !run ||
+      run.role !== "recovery" ||
+      !run.released ||
+      run.agentId ||
+      run.completion
+    )
+      return null;
+    return refusedRunIds(this.store.eventsAll(t.id)).has(run.id) ? run : null;
+  }
+  /**
+   * A coordinator creation the host refused before send settles that occurrence
+   * at once (nucleus#1364): nothing crossed the send boundary, so the run, its
+   * credential and the episode's agent binding are released here, the refusal is
+   * recorded against the run, and the episode keeps its record naming it. The
+   * escalation stays for the owner, and an owner `restart` then re-arms recovery
+   * over it instead of being refused by an intent that cannot exist. Automatic
+   * recovery asks for another eligible profile; the refused one stays out until
+   * that restart re-arms it (`refused-launch.ts`).
+   */
+  releaseRefusedCreation(t: Task, run: Run, reason: string): Task | null {
+    return this.store.transaction(() => {
+      const current = this.store.task(t.id),
+        latest = this.store.run(run.id),
+        episode = current.resolution.recovery;
+      if (!latest || latest.released || latest.agentId || latest.completion)
+        return null;
+      if (!episode || episode.runId !== latest.id) return null;
+      this.store.deleteCredential(latest.id);
+      this.store.putRun({
+        ...latest,
+        status: "superseded",
+        released: true,
+        active: false,
+      });
+      this.store.event(
+        current.id,
+        CREATION_REFUSED_BEFORE_SEND,
+        JSON.stringify({ runId: latest.id, reason: reason.slice(0, 1000) }),
+      );
+      return this.resolution.update(
+        this.store.task(current.id),
+        { recovery: { ...episode, runId: latest.id, agentId: null } },
+        {},
+        "recovery_creation_refused_before_send",
+        reason,
+      );
+    });
   }
   /** The coordinator restart subject while its escalated creation still owns the run. */
   absentRun(t: Task) {

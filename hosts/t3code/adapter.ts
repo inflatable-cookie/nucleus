@@ -23,7 +23,14 @@ import {
 } from "../../core/host";
 import { isHostOperationTimeout } from "../../core/host";
 import { T3RpcClient, type T3ConnectionConfig } from "./rpc";
-import { t3codeVocabulary } from "./vocabulary";
+import {
+  canonicalThinkingValue,
+  isThinkingLevel,
+  nearestThinkingLevel,
+  type ProviderTranslation,
+  type ThinkingLevel,
+} from "../../shared/profile-vocabulary";
+import { t3codeTranslation, t3codeVocabulary } from "./vocabulary";
 import { T3StateFile, canonical, retiredRecord, restoredRecord } from "./state";
 import {
   decode,
@@ -130,6 +137,34 @@ type ConfigModel = z.infer<
  * The model's real option descriptors from `server.getConfig`, read at launch:
  * a value T3 does not report for that model is refused before send, never
  * dropped silently and never guessed to a nearest choice.
+ */
+/**
+ * The canonical thinking level a translated profile asks for: its
+ * `thinkingOptionId` when the host sends the level there, or the value the
+ * table's carrier feature carries back to canonical (`translated: ["thinking"]`).
+ * A level stored either way is the same fact, so a launch resolves both.
+ */
+const thinkingLevelFor = (
+  profile: Profile,
+  translation: ProviderTranslation | undefined,
+): ThinkingLevel | null => {
+  if (profile.thinkingOptionId)
+    return isThinkingLevel(profile.thinkingOptionId)
+      ? profile.thinkingOptionId
+      : (translation
+          ? canonicalThinkingValue(translation, profile.thinkingOptionId)
+          : null);
+  const carrier = translation?.thinkingOption
+    ? profile.featureValues?.[translation.thinkingOption]
+    : undefined;
+  return typeof carrier === "string" && translation
+    ? canonicalThinkingValue(translation, carrier)
+    : null;
+};
+/**
+ * The model's real option descriptors from `server.getConfig`, read at launch:
+ * an option T3 does not report for that model is refused before send, never
+ * dropped silently and never invented.
  */
 const optionRefusal = (
   model: string,
@@ -960,36 +995,40 @@ export class T3CodeHost implements Host {
   /**
    * The profile's thinking level and reported feature values as the nightly's
    * `ProviderOptionSelection[]` for this exact model, from the `server.getConfig`
-   * read the launch already made. A value the model does not report is refused
-   * before send with the option and value named; nothing is dropped or
-   * re-anchored to a nearest choice. Selection keeps such a profile out of a
-   * T3 task through the host catalog; this fence catches catalog drift.
+   * read the launch already made.
+   *
+   * The canonical thinking level reaches the model's thinking carrier whichever
+   * way the host carries it (Tom, 2026-11-12): the reasoning select T3 marks
+   * `role: "reasoning"` (Codex, Grok, Muse, Kiro), or the option this adapter's
+   * table names for the provider (`thinking` for Pi, `effort` for Claude and FX).
+   * A level stored as `thinkingOptionId` and a level a translated feature carries
+   * (`translated: ["thinking"]`) are the same fact, so both resolve here.
+   *
+   * A canonical level this model does not report is settled to the nearest level
+   * its carrier offers by the vocabulary's own rule, so a catalog that dropped a
+   * level costs the level, never the launch. A model that reports no carrier at
+   * all is refused before send with the option named: nothing is sent to be
+   * dropped remotely, and selection keeps such a profile out of a T3 task
+   * through the host catalog; that refusal is the drift fence.
    */
   modelSelectionOptions(
     profile: Profile,
     model: ConfigModel | undefined,
   ): OptionSelection[] {
-    const thinking = profile.thinkingOptionId;
+    const translation = t3codeTranslation(profile.provider);
     const features = Object.entries(profile.featureValues ?? {});
-    if (!thinking && !features.length) return [];
+    const requested = thinkingLevelFor(profile, translation);
+    if (!requested && !features.length) return [];
     const descriptors = model?.capabilities?.optionDescriptors ?? [];
     const options: OptionSelection[] = [];
-    if (thinking) {
-      const reasoning = descriptors.find(isReasoningDescriptor);
-      if (
-        !reasoning ||
-        !reasoning.options.some((choice) => choice.id === thinking)
-      )
-        throw new ProvenPreSendRefusalError(
-          optionRefusal(
-            profile.model,
-            reasoning?.id ?? "reasoning option",
-            thinking,
-          ),
-        );
-      options.push({ id: reasoning.id, value: thinking });
+    const consumed = new Set<string>();
+    if (requested) {
+      const { level, descriptor } = this.thinkingSelection(profile, requested, translation, descriptors);
+      if (translation?.thinkingOption) consumed.add(translation.thinkingOption);
+      options.push({ id: descriptor, value: level });
     }
     for (const [option, feature] of features) {
+      if (consumed.has(option)) continue;
       const descriptor = descriptors.find((d) => d.id === option);
       if (!descriptor)
         throw new ProvenPreSendRefusalError(
@@ -1013,6 +1052,51 @@ export class T3CodeHost implements Host {
       else options.push({ id: option, value: feature });
     }
     return options;
+  }
+
+  /**
+   * The descriptor and native value one canonical thinking level rides on this
+   * model: the table's carrier option when the model reports it, else the
+   * reasoning select. The value is the exact level the carrier offers, or the
+   * nearest one the vocabulary rule settles on. A model that reports no carrier
+   * at all is refused here, before send, naming the option.
+   */
+  private thinkingSelection(
+    profile: Profile,
+    requested: ThinkingLevel,
+    translation: ProviderTranslation | undefined,
+    descriptors: ReadonlyArray<z.infer<typeof optionDescriptor>>,
+  ): { descriptor: string; level: string } {
+    const carrierName = translation?.thinkingOption ?? "reasoning option";
+    const carrier =
+      (translation?.thinkingOption
+        ? descriptors.find((d) => d.id === translation.thinkingOption)
+        : undefined) ?? descriptors.find(isReasoningDescriptor);
+    // No carrier at all is the drift fence: the option itself is missing from
+    // this snapshot, which is what the pilot's launch read during a provider
+    // re-probe. Nothing is sent to be dropped, and the message names the option.
+    if (!carrier || carrier.type !== "select")
+      throw new ProvenPreSendRefusalError(
+        optionRefusal(profile.model, carrierName),
+      );
+    const offered = carrier.options.flatMap((choice) => {
+      const level = translation
+        ? canonicalThinkingValue(translation, choice.id)
+        : (isThinkingLevel(choice.id) ? choice.id : null);
+      return level ? [{ level, value: choice.id }] : [];
+    });
+    const nearest = nearestThinkingLevel(
+      offered.map((option) => option.level),
+      requested,
+    );
+    const chosen = nearest
+      ? offered.find((option) => option.level === nearest)
+      : undefined;
+    if (!chosen)
+      throw new ProvenPreSendRefusalError(
+        optionRefusal(profile.model, carrier.id, requested),
+      );
+    return { descriptor: carrier.id, level: chosen.value };
   }
 
   async sendMessage(id: string, input: HostMessage) {

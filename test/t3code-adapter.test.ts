@@ -2795,17 +2795,25 @@ test("a profile with a supported thinking level launches with the mapped modelSe
   });
 });
 
-test("an unreported option value is refused before send with the option and value named", async (t) => {
+test("a thinking level the model does not report settles to the nearest one it does", async (t) => {
   const { host, server, spec } = await fixture(t);
+  // The synthetic model offers low, medium and high: a canonical xhigh is the
+  // nearest of those, so the launch carries high instead of refusing
+  // (nucleus#1364; `test/t3code-thinking-levels.test.ts` holds the real shapes).
   const xhigh: Profile = {
     ...profile,
     thinkingOptionId: "xhigh",
     supportedThinking: ["xhigh"],
   };
-  await assert.rejects(
-    host.createAgent({ ...spec("launch-xhigh"), profile: xhigh }),
-    /T3Code model synthetic-model has no reasoningEffort "xhigh"/,
+  await host.createAgent({ ...spec("launch-xhigh"), profile: xhigh });
+  assert.deepEqual(
+    (server.commands[0]!.modelSelection as { options: unknown[] }).options,
+    [{ id: "reasoningEffort", value: "high" }],
   );
+});
+
+test("an unreported feature value is refused before send with the option and value named", async (t) => {
+  const { host, server, spec } = await fixture(t);
   const unknownChoice: Profile = {
     ...profile,
     featureValues: { serviceTier: "ultra" },
