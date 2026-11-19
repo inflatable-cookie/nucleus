@@ -21,7 +21,10 @@ import {
 import { startsNoRuns } from "../closeout/queue-drain";
 import type { Resolution } from "../resolution";
 import { chooseProfile, eligibilityReasons } from "./routing";
-import { chooseFirstWorkerHost, formatWorkerHostSelectionReason } from "./first-host-selection";
+import {
+  chooseFirstWorkerHost,
+  formatWorkerHostSelectionReason,
+} from "./first-host-selection";
 import { dispatchGate } from "./dispatch-decisions";
 import { USAGE_GATE_WAIT, usageGateBlocked } from "./usage-gate";
 

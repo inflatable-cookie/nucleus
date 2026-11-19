@@ -838,7 +838,8 @@ export class WorkerRestarts {
                         String((routeAvailabilityRow as { data: string }).data),
                       )
                     : null;
-                  const restartCatalogs = this.engine.workerHostCatalogs(latestTask);
+                  const restartCatalogs =
+                    this.engine.workerHostCatalogs(latestTask);
                   const restartHostSelection = resolveWorkerHostForProfile(
                     latestTask,
                     restartCatalogs,

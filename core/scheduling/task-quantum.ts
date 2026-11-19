@@ -113,12 +113,21 @@ export class TaskQuantum {
 
   private async applyApprovedRoutes(taskId: string): Promise<void> {
     let task: Task;
-    try { task = this.context.store.task(taskId); } catch { return; }
+    try {
+      task = this.context.store.task(taskId);
+    } catch {
+      return;
+    }
     const hostProfiles = this.context.profileCatalogKnownFor(task.hostId)
       ? this.context.profilesFor(task.hostId)
       : this.context.profiles;
     const workerCatalogs = this.context.workerHostCatalogs(task);
-    if (!this.context.profileCatalogKnown() && !this.context.profileCatalogKnownFor(task.hostId) && !workerCatalogs.length) return;
+    if (
+      !this.context.profileCatalogKnown() &&
+      !this.context.profileCatalogKnownFor(task.hostId) &&
+      !workerCatalogs.length
+    )
+      return;
     const routes = reconcileRoutingSignoffs(
       this.context.store,
       this.context.signoffDecisions,

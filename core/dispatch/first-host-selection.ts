@@ -35,7 +35,8 @@ export function resolveWorkerHostForProfile(
       (profile) =>
         profile.id === profileId &&
         profile.available &&
-        (!thinkingOptionId || profile.supportedThinking.includes(thinkingOptionId)),
+        (!thinkingOptionId ||
+          profile.supportedThinking.includes(thinkingOptionId)),
     ),
   );
   if (!capable.length) return null;

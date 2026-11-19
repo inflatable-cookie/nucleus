@@ -216,16 +216,15 @@ export async function provisionHostMovedWorkspace(
   task: Task,
 ): Promise<boolean> {
   if (task.workspaceId || task.workspaceIntent) return true;
-  if (
-    task.phase === "queued" ||
-    task.hostSelection?.basis !== "worker_profile"
-  )
+  if (task.phase === "queued" || task.hostSelection?.basis !== "worker_profile")
     return true;
   const displaced = task.resolution.displacedHostWorkspaces ?? [];
   if (
     displaced.length === 0 &&
     !task.retiredWorkers.some((w) => w.hostId && w.hostId !== task.hostId) &&
-    !context.store.runs(task.id).some((r) => r.hostId && r.hostId !== task.hostId)
+    !context.store
+      .runs(task.id)
+      .some((r) => r.hostId && r.hostId !== task.hostId)
   )
     return true;
   const blocking = displaced.filter(

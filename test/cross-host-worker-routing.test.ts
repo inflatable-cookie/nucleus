@@ -8,7 +8,10 @@ import { Decisions } from "../core/planning/decisions";
 import { reconcileRoutingSignoffs } from "../core/dispatch/routing-signoff";
 import { Store } from "../core/store/store";
 import { git } from "../core/git/index";
-import { collectOwnerVerbFacts, ownerTaskNext } from "../core/verbs/owner-verbs";
+import {
+  collectOwnerVerbFacts,
+  ownerTaskNext,
+} from "../core/verbs/owner-verbs";
 import {
   poolSchema,
   submissionSchema,
@@ -55,7 +58,12 @@ function setupMultiHostFixture(options?: {
     t3Reviewer,
   ];
   const allProfiles = [...paseoProfiles, ...t3Profiles];
-  const workerIds = new Set(["paseo-only", "t3-only", "t3-same-model", "t3-frontier"]);
+  const workerIds = new Set([
+    "paseo-only",
+    "t3-only",
+    "t3-same-model",
+    "t3-frontier",
+  ]);
   const pool = [
     ...allProfiles.map((p) =>
       poolSchema.parse({
@@ -64,7 +72,12 @@ function setupMultiHostFixture(options?: {
         group: p.id,
         weight: 1,
         scopes: ["general"],
-        capability: p.id === "t3-frontier" ? "frontier" : workerIds.has(p.id) ? "heavyweight" : "worker",
+        capability:
+          p.id === "t3-frontier"
+            ? "frontier"
+            : workerIds.has(p.id)
+              ? "heavyweight"
+              : "worker",
         cost: p.id === "t3-frontier" ? "very_high" : "medium",
         roles: workerIds.has(p.id) ? ["worker"] : ["reviewer"],
       }),
@@ -78,8 +91,13 @@ function setupMultiHostFixture(options?: {
 
   const archivedWorkspaces: Array<{ host: string; id: string }> = [];
   const archivedAgents: Array<{ host: string; id: string }> = [];
-  const createdWorkspaces: Array<{ host: string; id: string; dir: string }> = [];
-  const launchedRuns: Array<{ host: string; profileId: string; taskId: string }> = [];
+  const createdWorkspaces: Array<{ host: string; id: string; dir: string }> =
+    [];
+  const launchedRuns: Array<{
+    host: string;
+    profileId: string;
+    taskId: string;
+  }> = [];
   const cancelledAgents: Array<{ host: string; agentId: string }> = [];
   const agentWorkspaces = new Map<string, string>();
   const agentStatuses = new Map<string, { status: string; active: boolean }>();
@@ -117,7 +135,10 @@ function setupMultiHostFixture(options?: {
         return { id, workspaceId: task.workspaceId };
       },
       observe: async (agentId) => {
-        const st = agentStatuses.get(agentId) ?? { status: "idle", active: false };
+        const st = agentStatuses.get(agentId) ?? {
+          status: "idle",
+          active: false,
+        };
         return {
           id: agentId,
           workspaceId: agentWorkspaces.get(agentId) ?? null,
@@ -140,7 +161,9 @@ function setupMultiHostFixture(options?: {
         workspaceId: agentWorkspaces.get(agentId) ?? null,
         title: "",
         deleted: false,
-        archived: archivedAgents.some((a) => a.host === hostId && a.id === agentId),
+        archived: archivedAgents.some(
+          (a) => a.host === hostId && a.id === agentId,
+        ),
       }),
       verifyResume: async () => "c".repeat(40),
       verifyPrIdentity: async (task) => ({
@@ -314,7 +337,10 @@ test("next route view offers cross-host move only when target host is online and
     assert.equal(workerVerb?.available, true);
     assert.equal(workerVerb?.args?.profileId, "t3-only");
     assert.deepEqual(workerVerb?.fill, ["reason"]);
-    assert.match(workerVerb?.note ?? "", /moves this task from paseo:one to t3code:one/);
+    assert.match(
+      workerVerb?.note ?? "",
+      /moves this task from paseo:one to t3code:one/,
+    );
 
     // Target host lacks requested thinking mode ("xhigh" not in t3-only supportedThinking)
     f.store.update(task.id, {
@@ -418,7 +444,10 @@ test("route without now, route now, and board-approved route move dispatched tas
     assert.equal(moved.agentId, null);
     assert.equal(moved.retiredWorkers[0]?.hostId, "paseo:one");
     assert.equal(moved.resolution.displacedHostWorkspaces.length, 1);
-    assert.equal(moved.resolution.displacedHostWorkspaces[0]?.hostId, "paseo:one");
+    assert.equal(
+      moved.resolution.displacedHostWorkspaces[0]?.hostId,
+      "paseo:one",
+    );
 
     // Ordinary cleanup settles old host workspace & thread on paseo:one only once
     await f.engine.lifecycle.archive(f.store.task(task.id));
@@ -450,7 +479,10 @@ test("route without now, route now, and board-approved route move dispatched tas
     assert.ok(runningTask.workspaceId?.startsWith("ws-"));
     assert.ok(runningTask.agentId);
     f.agentWorkspaces.set(runningTask.agentId!, runningTask.workspaceId!);
-    f.agentStatuses.set(runningTask.agentId!, { status: "running", active: true });
+    f.agentStatuses.set(runningTask.agentId!, {
+      status: "running",
+      active: true,
+    });
     const frontierPool = [
       ...f.store.pool().filter((e) => e.profileId !== "paseo-only"),
       poolSchema.parse({
@@ -483,8 +515,8 @@ test("route without now, route now, and board-approved route move dispatched tas
     await f.engine.withHost("t3code:one", () =>
       f.engine.taskQuantumOwner.quantumFinish(task.id),
     );
-    const decisionId =
-      f.store.task(task.id).profileRequests?.worker?.signoff?.decisionId;
+    const decisionId = f.store.task(task.id).profileRequests?.worker?.signoff
+      ?.decisionId;
     assert.ok(decisionId);
     const decision = f.engine.signoffDecisions.get({ id: decisionId! });
     f.engine.signoffDecisions.answer({
@@ -496,7 +528,10 @@ test("route without now, route now, and board-approved route move dispatched tas
       note: "",
     });
     // Mark current T3 agent idle and let quantumFinish apply the approved route now!
-    f.agentStatuses.set(runningTask.agentId!, { status: "idle", active: false });
+    f.agentStatuses.set(runningTask.agentId!, {
+      status: "idle",
+      active: false,
+    });
     await f.engine.withHost("t3code:one", () =>
       f.engine.taskQuantumOwner.quantumFinish(task.id),
     );
@@ -595,7 +630,10 @@ test("restart fresh selection / WorkerFailover moves task to T3 when Paseo worke
       moved.profile?.id === "t3-only" || moved.profile?.id === "t3-same-model",
     );
     assert.equal(moved.prUrl, "https://github.com/org/repo/pull/99");
-    assert.equal(moved.resolution.displacedHostWorkspaces[0]?.hostId, "paseo:one");
+    assert.equal(
+      moved.resolution.displacedHostWorkspaces[0]?.hostId,
+      "paseo:one",
+    );
 
     await f.engine.lifecycle.archive(moved);
     await f.engine.withHost("t3code:one", () =>
@@ -627,7 +665,15 @@ test("route rejects move when real git worktree has uncommitted changes and reco
   await git(repoDir, "add", "README.md");
   await git(repoDir, "commit", "-m", "init");
   const head = await git(repoDir, "rev-parse", "HEAD");
-  await git(repoDir, "worktree", "add", "-b", "ns-task-branch", worktreeDir, head);
+  await git(
+    repoDir,
+    "worktree",
+    "add",
+    "-b",
+    "ns-task-branch",
+    worktreeDir,
+    head,
+  );
 
   const f = setupMultiHostFixture({ repoPath: root });
   try {

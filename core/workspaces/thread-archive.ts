@@ -73,11 +73,13 @@ export function exhaustedThreadArchives(
   if (task.workspaceId === workspaceId) {
     ids.add(task.agentId);
     for (const worker of task.retiredWorkers)
-      if ((worker.hostId ?? task.hostId) === task.hostId) ids.add(worker.agentId);
+      if ((worker.hostId ?? task.hostId) === task.hostId)
+        ids.add(worker.agentId);
   }
   return [...ids].filter((id): id is string => {
     if (!id) return false;
-    const hostId = runs.find((run) => run.agentId === id)?.hostId ?? task.hostId;
+    const hostId =
+      runs.find((run) => run.agentId === id)?.hostId ?? task.hostId;
     const key = store.threadArchiveKey(id, hostId);
     return !key || (store.getMeta<ArchiveEffect>(key)?.retries ?? 0) >= 3;
   });

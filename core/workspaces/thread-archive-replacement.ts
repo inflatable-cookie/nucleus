@@ -1,12 +1,24 @@
-import type { Adapter } from '../host/adapter';
-import { HostFacade } from '../host/host-facade';
-import type { Run } from '../../shared/contracts';
-import { Store, now } from '../store/store';
-import { observationAdvanceSince, runsUnchangedSince } from '../recovery/observation-advance';
-import { supersededIdleBinding } from '../recovery/fence-settlement';
-import { blockingRecoveryEffectsRefusal } from '../recovery/recovery-effects';
-import { ownedByTask, threadHasUnreleasedRun, threadServesAnotherTask } from './thread-ownership';
-import { settleArchive, removesThreads, threadArchivedOrGone, type ArchiveEffect } from './thread-archive-effect';
+import type { Adapter } from "../host/adapter";
+import { HostFacade } from "../host/host-facade";
+import type { Run } from "../../shared/contracts";
+import { Store, now } from "../store/store";
+import {
+  observationAdvanceSince,
+  runsUnchangedSince,
+} from "../recovery/observation-advance";
+import { supersededIdleBinding } from "../recovery/fence-settlement";
+import { blockingRecoveryEffectsRefusal } from "../recovery/recovery-effects";
+import {
+  ownedByTask,
+  threadHasUnreleasedRun,
+  threadServesAnotherTask,
+} from "./thread-ownership";
+import {
+  settleArchive,
+  removesThreads,
+  threadArchivedOrGone,
+  type ArchiveEffect,
+} from "./thread-archive-effect";
 
 /**
  * The mid-task thread lanes: a thread this task deliberately replaced.
@@ -26,14 +38,24 @@ import { settleArchive, removesThreads, threadArchivedOrGone, type ArchiveEffect
  * settled thread, which can no longer report into the task. A host that cannot
  * remove a thread keeps the archive fence it has today, exactly as before.
  */
-export async function archiveReplacedReviewer(store: Store, adapter: Adapter, run: Run): Promise<boolean> {
+export async function archiveReplacedReviewer(
+  store: Store,
+  adapter: Adapter,
+  run: Run,
+): Promise<boolean> {
   if (!run.agentId) return false;
   const key = store.threadArchiveKey(run.agentId, run.hostId);
   if (!key || !adapter.originAgent) return false;
   const stoppedAndIdle = async (): Promise<boolean> => {
     const state = await new HostFacade({ adapter }).observe(run.agentId!);
-    return state.id === run.agentId && state.workspaceId === run.workspaceId && !state.active && !state.activeTurnId
-      && !state.permissions && ['idle', 'error', 'closed'].includes(state.status);
+    return (
+      state.id === run.agentId &&
+      state.workspaceId === run.workspaceId &&
+      !state.active &&
+      !state.activeTurnId &&
+      !state.permissions &&
+      ["idle", "error", "closed"].includes(state.status)
+    );
   };
   if (removesThreads(adapter)) {
     // A stop reply may precede its turn becoming idle. Reuse the existing ready
@@ -41,12 +63,18 @@ export async function archiveReplacedReviewer(store: Store, adapter: Adapter, ru
     // ready proves that no archive or delete was sent. A prior unknown effect
     // keeps its own identity and delivery history.
     if (!store.getMeta<ArchiveEffect>(key))
-      store.putThreadArchiveEffect(key, run.agentId, { status: 'ready', at: now() } satisfies ArchiveEffect);
+      store.putThreadArchiveEffect(key, run.agentId, {
+        status: "ready",
+        at: now(),
+      } satisfies ArchiveEffect);
     try {
-      if (!await stoppedAndIdle()) return false;
-      if (store.getMeta<ArchiveEffect>(key)?.status === 'ready') store.deleteMeta(key);
+      if (!(await stoppedAndIdle())) return false;
+      if (store.getMeta<ArchiveEffect>(key)?.status === "ready")
+        store.deleteMeta(key);
       return true;
-    } catch { return false; }
+    } catch {
+      return false;
+    }
   }
   let effect = store.getMeta<ArchiveEffect>(key);
   const fresh = !effect;
@@ -54,15 +82,27 @@ export async function archiveReplacedReviewer(store: Store, adapter: Adapter, ru
     // Record the replacement before observing the stopped turn. A successful
     // stop reply can precede inactivity; `ready` proves no archive was sent and
     // lets observation finish the same replacement once the turn becomes idle.
-    effect = { status: 'ready', at: now() };
+    effect = { status: "ready", at: now() };
     store.putThreadArchiveEffect(key, run.agentId, effect);
-    store.event(run.taskId, 'thread_archive_intent', `reviewer: ${run.agentId}`);
+    store.event(
+      run.taskId,
+      "thread_archive_intent",
+      `reviewer: ${run.agentId}`,
+    );
   }
-  if (effect.status === 'ready' && !await stoppedAndIdle()) return false;
-  if (effect.status !== 'archived') await settleArchive(store, adapter, run.taskId, run.agentId, key, fresh, effect);
-  return store.getMeta<ArchiveEffect>(key)?.status === 'archived';
+  if (effect.status === "ready" && !(await stoppedAndIdle())) return false;
+  if (effect.status !== "archived")
+    await settleArchive(
+      store,
+      adapter,
+      run.taskId,
+      run.agentId,
+      key,
+      fresh,
+      effect,
+    );
+  return store.getMeta<ArchiveEffect>(key)?.status === "archived";
 }
-
 
 /**
  * Release one superseded or replaced run whose thread its host reports archived
@@ -75,18 +115,28 @@ export async function archiveReplacedReviewer(store: Store, adapter: Adapter, ru
  * launch selects a reader that can actually report (the reviewer route stays).
  * Returns whether this call released the run.
  */
-export async function releaseUnreachableRun(store: Store, adapter: Adapter, run: Run, stopped: () => boolean = () => false): Promise<boolean> {
+export async function releaseUnreachableRun(
+  store: Store,
+  adapter: Adapter,
+  run: Run,
+  stopped: () => boolean = () => false,
+): Promise<boolean> {
   if (run.released || run.completion || !run.agentId) return false;
-  if (run.status !== 'superseded' && run.replacedAt === undefined) return false;
+  if (run.status !== "superseded" && run.replacedAt === undefined) return false;
   // A service shutdown is not permission to write: the next process re-observes.
   if (stopped()) return false;
   // The host's answer is evidence about the identity and lease read here, so the
   // facts it was read against are captured before the await: a stop, a callback,
   // a release or a new lease while Queue watches wins over that stale answer.
   const admittedTask = store.task(run.taskId);
-  const admittedVersion = admittedTask.version, admittedRuns = store.runs(run.taskId);
+  const admittedVersion = admittedTask.version,
+    admittedRuns = store.runs(run.taskId);
   let unreachable = false;
-  try { unreachable = await threadArchivedOrGone(adapter, run.agentId); } catch { return false; }
+  try {
+    unreachable = await threadArchivedOrGone(adapter, run.agentId);
+  } catch {
+    return false;
+  }
   if (!unreachable || stopped()) return false;
   return store.transaction(() => {
     // A shutdown that landed during the read settles nothing; the next pass and
@@ -99,8 +149,16 @@ export async function releaseUnreachableRun(store: Store, adapter: Adapter, run:
     // the archive read: any substantive task change (a stop, a phase, a hold, a
     // route) or any run change (a result, a delivery, an effect, a released or
     // re-leased run) refuses the release and leaves it to a later pass.
-    if (!observationAdvanceSince(task, admittedVersion) || !runsUnchangedSince(admittedRuns, store.runs(run.taskId))) return false;
-    if (latest.agentId !== run.agentId || latest.workspaceId !== run.workspaceId) return false;
+    if (
+      !observationAdvanceSince(task, admittedVersion) ||
+      !runsUnchangedSince(admittedRuns, store.runs(run.taskId))
+    )
+      return false;
+    if (
+      latest.agentId !== run.agentId ||
+      latest.workspaceId !== run.workspaceId
+    )
+      return false;
     // The ordinary superseded release owns the binding rules: a creation intent,
     // uncertain delivery, pending authenticated delivery, current binding, stop
     // intent or checkpoint intent is never released by observation alone. A
@@ -108,41 +166,104 @@ export async function releaseUnreachableRun(store: Store, adapter: Adapter, run:
     // settlement accepts (planner ruling, 2026-11-09), so it settles that claim
     // and nothing else: the archive proves the thread cannot take a turn, never
     // what an unsettled delivery or effect already did.
-    const binding = supersededIdleBinding(store, run.taskId, latest, { settledClaim: latest.replacedAt !== undefined });
+    const binding = supersededIdleBinding(store, run.taskId, latest, {
+      settledClaim: latest.replacedAt !== undefined,
+    });
     if (!binding.superseded) return false;
-    if (blockingRecoveryEffectsRefusal(store, task, { runId: latest.id })) return false;
+    if (blockingRecoveryEffectsRefusal(store, task, { runId: latest.id }))
+      return false;
     const at = now();
     // The archived thread is the terminal observation the closed-agent path
     // records: no same-agent continuation can ever land on it, so the relaunch
     // selections stop naming this run.
-    const closed = latest.role === 'reviewer' ? { retainedAgentClosedAt: latest.retainedAgentClosedAt ?? at } : {};
-    store.putRun({ ...latest, status: 'superseded', released: true, active: false, ...closed });
-    store.event(run.taskId, 'run_released_from_observed_liveness', `${latest.role} ${latest.id}: its thread is archived or gone on its host`.slice(0, 2000));
-    if (latest.role === 'reviewer' && latest.agentId) {
-      store.event(run.taskId, 'reviewer_agent_closed', JSON.stringify({ runId: latest.id, agentId: latest.agentId,
-        workspaceId: latest.workspaceId, head: latest.head, checkpointOrdinal: latest.reviewCheckpoints?.at(-1)?.ordinal ?? null, observedAt: at }));
+    const closed =
+      latest.role === "reviewer"
+        ? { retainedAgentClosedAt: latest.retainedAgentClosedAt ?? at }
+        : {};
+    store.putRun({
+      ...latest,
+      status: "superseded",
+      released: true,
+      active: false,
+      ...closed,
+    });
+    store.event(
+      run.taskId,
+      "run_released_from_observed_liveness",
+      `${latest.role} ${latest.id}: its thread is archived or gone on its host`.slice(
+        0,
+        2000,
+      ),
+    );
+    if (latest.role === "reviewer" && latest.agentId) {
+      store.event(
+        run.taskId,
+        "reviewer_agent_closed",
+        JSON.stringify({
+          runId: latest.id,
+          agentId: latest.agentId,
+          workspaceId: latest.workspaceId,
+          head: latest.head,
+          checkpointOrdinal: latest.reviewCheckpoints?.at(-1)?.ordinal ?? null,
+          observedAt: at,
+        }),
+      );
       const current = store.task(run.taskId);
       if (current.resolution.reviewerAgentId === latest.agentId)
-        store.update(current.id, { resolution: { ...current.resolution, reviewerAgentId: null } }, 'reviewer_thread_released', latest.agentId);
+        store.update(
+          current.id,
+          { resolution: { ...current.resolution, reviewerAgentId: null } },
+          "reviewer_thread_released",
+          latest.agentId,
+        );
     }
     return true;
   });
 }
 
-
 /** A pending replacement archive remains owned until ordinary observation settles it. */
-export async function observeReviewerReplacement(store: Store, adapter: Adapter, run: Run): Promise<boolean> {
+export async function observeReviewerReplacement(
+  store: Store,
+  adapter: Adapter,
+  run: Run,
+): Promise<boolean> {
   const key = run.agentId && store.threadArchiveKey(run.agentId, run.hostId);
-  if (run.role !== 'reviewer' || run.released || run.completion || !key || !store.getMeta<ArchiveEffect>(key)) return false;
+  if (
+    run.role !== "reviewer" ||
+    run.released ||
+    run.completion ||
+    !key ||
+    !store.getMeta<ArchiveEffect>(key)
+  )
+    return false;
   if (await archiveReplacedReviewer(store, adapter, run)) {
     store.transaction(() => {
       const latest = store.run(run.id)!;
       if (latest.completion || latest.released) return;
-      store.putRun({ ...latest, status: 'superseded', released: true, active: false, replacedAt: now() });
+      store.putRun({
+        ...latest,
+        status: "superseded",
+        released: true,
+        active: false,
+        replacedAt: now(),
+      });
       const task = store.task(run.taskId);
       if (task.resolution.currentRunId === run.id)
-        store.update(task.id, { phase: 'awaiting_review', resolution: { ...task.resolution, currentRunId: null,
-          reviewerAgentId: null, reviewerProfile: null, attention: false, recoveryActive: false } }, 'restart_review_fresh');
+        store.update(
+          task.id,
+          {
+            phase: "awaiting_review",
+            resolution: {
+              ...task.resolution,
+              currentRunId: null,
+              reviewerAgentId: null,
+              reviewerProfile: null,
+              attention: false,
+              recoveryActive: false,
+            },
+          },
+          "restart_review_fresh",
+        );
     });
   }
   return true;
@@ -159,16 +280,26 @@ export async function observeReviewerReplacement(store: Store, adapter: Adapter,
  * observation-first effect the terminal lane uses: an unknown outcome is
  * never resent, and each thread is archived exactly once.
  */
-export async function archiveSupersededWorkers(store: Store, adapter: Adapter, taskId: string): Promise<void> {
+export async function archiveSupersededWorkers(
+  store: Store,
+  adapter: Adapter,
+  taskId: string,
+): Promise<void> {
   const task = store.task(taskId);
-  if (task.removedAt || store.getMeta('paused')) return;
+  if (task.removedAt || store.getMeta("paused")) return;
   // Terminal tasks belong to the closeout lane, which archives every worker.
-  if (['done', 'cancelled'].includes(task.phase)) return;
+  if (["done", "cancelled"].includes(task.phase)) return;
   // T3-only from here: check the host kind before touching its reads, so
   // other hosts (and their pinned quantum order) see no new adapter access.
   if (!removesThreads(adapter) || !adapter.originAgent) return;
   const host = new HostFacade({ adapter });
-  const live = new Set([task.agentId, task.coordinatorAgentId, task.resolution.reviewerAgentId].filter((id): id is string => Boolean(id)));
+  const live = new Set(
+    [
+      task.agentId,
+      task.coordinatorAgentId,
+      task.resolution.reviewerAgentId,
+    ].filter((id): id is string => Boolean(id)),
+  );
   for (const worker of task.retiredWorkers) {
     if ((worker.hostId ?? task.hostId) !== task.hostId) continue;
     const agentId = worker.agentId;
@@ -178,23 +309,40 @@ export async function archiveSupersededWorkers(store: Store, adapter: Adapter, t
     const key = store.threadArchiveKey(agentId, task.hostId);
     if (!key) continue;
     const effect = store.getMeta<ArchiveEffect>(key);
-    if (effect?.status === 'archived' && (effect.op ?? 'archive') === 'archive') continue;
+    if (effect?.status === "archived" && (effect.op ?? "archive") === "archive")
+      continue;
     // Archive only what this task owns and what has already ended its turn:
     // a live run or a pending permission waits for the next pass.
     let observed;
-    try { observed = await host.observe(agentId); }
-    catch { continue; }
+    try {
+      observed = await host.observe(agentId);
+    } catch {
+      continue;
+    }
     if (!observed || !ownedByTask(observed.labels, task.id)) continue;
-    if (observed.active || observed.activeTurnId || observed.permissions || !['idle', 'error', 'closed'].includes(observed.status)) continue;
-    const fresh = !effect || effect.status === 'archived';
+    if (
+      observed.active ||
+      observed.activeTurnId ||
+      observed.permissions ||
+      !["idle", "error", "closed"].includes(observed.status)
+    )
+      continue;
+    const fresh = !effect || effect.status === "archived";
     if (!effect || fresh) {
       if (threadServesAnotherTask(store, task, agentId)) continue;
-      store.putThreadArchiveEffect(key, agentId, { status: 'intent', at: now(), op: 'archive' } satisfies ArchiveEffect);
-      store.event(taskId, 'thread_archive_intent', `superseded worker: archive ${agentId}`);
+      store.putThreadArchiveEffect(key, agentId, {
+        status: "intent",
+        at: now(),
+        op: "archive",
+      } satisfies ArchiveEffect);
+      store.event(
+        taskId,
+        "thread_archive_intent",
+        `superseded worker: archive ${agentId}`,
+      );
     }
     const current = store.getMeta<ArchiveEffect>(key);
     if (!current) continue;
     await settleArchive(store, adapter, taskId, agentId, key, fresh, current);
   }
 }
-

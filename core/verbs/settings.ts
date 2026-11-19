@@ -662,12 +662,19 @@ export class SettingsControls {
       for (const change of result.changed) {
         const task = this.store.task(change.taskId);
         const workerCatalogs = this.engine.workerHostCatalogs(task);
-        if (!this.engine.profileCatalogKnown() && !this.engine.profileCatalogKnownFor(task.hostId) && !workerCatalogs.length) continue;
+        if (
+          !this.engine.profileCatalogKnown() &&
+          !this.engine.profileCatalogKnownFor(task.hostId) &&
+          !workerCatalogs.length
+        )
+          continue;
         reconcileRoutingSignoffs(
           this.store,
           this.engine.signoffDecisions,
           change.taskId,
-          this.engine.profileCatalogKnownFor(task.hostId) ? this.engine.profilesFor(task.hostId) : this.engine.profiles,
+          this.engine.profileCatalogKnownFor(task.hostId)
+            ? this.engine.profilesFor(task.hostId)
+            : this.engine.profiles,
           {
             workerProfiles: this.engine.workerRoutingProfiles(task),
             workerCatalogPending: this.engine.workerHostCatalogPending(task),

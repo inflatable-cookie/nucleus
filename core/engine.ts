@@ -422,7 +422,13 @@ export class Engine {
         !this.auditUnavailableHosts.has(task.hostId) &&
         (!this.activeHostId || this.activeHostId === task.hostId) &&
         this.hostAvailable(task.hostId) &&
-        this.store.runs(task.id).every((run) => run.hostId === task.hostId || (run.released && Boolean(run.hostId))),
+        this.store
+          .runs(task.id)
+          .every(
+            (run) =>
+              run.hostId === task.hostId ||
+              (run.released && Boolean(run.hostId)),
+          ),
     );
   }
   /**
@@ -1360,10 +1366,14 @@ export class Engine {
       )
       .map((hostId) => ({ hostId, profiles: this.profilesFor(hostId) }));
   }
-  preferredHostKindsForTask(task: Pick<Task, "repoPath">): (import("../shared/host-kind").HostKind | null | undefined)[] {
+  preferredHostKindsForTask(
+    task: Pick<Task, "repoPath">,
+  ): (import("../shared/host-kind").HostKind | null | undefined)[] {
     return [
       this.store.repositoryFor(task.repoPath)?.hostKind,
-      this.store.getMeta<import("../shared/host-kind").HostKind | null>("operatorDefaultHostKind"),
+      this.store.getMeta<import("../shared/host-kind").HostKind | null>(
+        "operatorDefaultHostKind",
+      ),
     ];
   }
   workerHostCatalogPending(task: { hostId?: string | null }): boolean {

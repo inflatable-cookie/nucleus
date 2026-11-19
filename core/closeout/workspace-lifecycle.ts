@@ -9,7 +9,10 @@ import {
 import { OWNER_STOP_HOLD_PREFIX, releasePatch } from "../merge/merge-hold";
 import type { Engine } from "../engine";
 import { now } from "../store/store";
-import { settleArchive, type ArchiveEffect } from "../workspaces/thread-archive-effect";
+import {
+  settleArchive,
+  type ArchiveEffect,
+} from "../workspaces/thread-archive-effect";
 import { threadBoundToAnotherLiveTask } from "../workspaces/thread-ownership";
 import { portsContext } from "../port-context";
 import { CloseoutRecovery } from "./recovery";
@@ -438,7 +441,11 @@ export class Lifecycle {
     taskId: string,
     index: number,
     patch: Partial<Task["resolution"]["displacedHostWorkspaces"][number]>,
-    extra?: { archivedWorkspaceId?: string | null; eventKind?: string; detail?: string },
+    extra?: {
+      archivedWorkspaceId?: string | null;
+      eventKind?: string;
+      detail?: string;
+    },
   ): void {
     const latest = this.store.task(taskId);
     const list = [...(latest.resolution.displacedHostWorkspaces ?? [])];
@@ -447,7 +454,9 @@ export class Lifecycle {
     list[index] = { ...current, ...patch };
     const archivedWorkspaceIds =
       extra?.archivedWorkspaceId &&
-      !latest.resolution.archivedWorkspaceIds.includes(extra.archivedWorkspaceId)
+      !latest.resolution.archivedWorkspaceIds.includes(
+        extra.archivedWorkspaceId,
+      )
         ? [...latest.resolution.archivedWorkspaceIds, extra.archivedWorkspaceId]
         : latest.resolution.archivedWorkspaceIds;
     this.engine.resolution.update(
@@ -465,13 +474,15 @@ export class Lifecycle {
     const initial = this.store.task(taskId);
     const entries = initial.resolution.displacedHostWorkspaces ?? [];
     for (let index = 0; index < entries.length; index++) {
-      const entry = this.store.task(taskId).resolution.displacedHostWorkspaces?.[index];
+      const entry =
+        this.store.task(taskId).resolution.displacedHostWorkspaces?.[index];
       if (!entry || entry.state === "archived") continue;
       if (this.paused()) return;
       await this.engine.withHost(entry.hostId, async () => {
         if (!this.engine.hostAvailable(entry.hostId) || this.paused()) return;
         const currentTask = this.store.task(taskId);
-        const currentEntry = currentTask.resolution.displacedHostWorkspaces?.[index];
+        const currentEntry =
+          currentTask.resolution.displacedHostWorkspaces?.[index];
         if (!currentEntry || currentEntry.state === "archived") return;
         const adapter = this.adapter;
         let finished = false;
@@ -513,11 +524,20 @@ export class Lifecycle {
               if (
                 this.store.unreleasedRunsForAgent(agentId, currentEntry.hostId)
                   .length > 0 ||
-                threadBoundToAnotherLiveTask(this.store, this.store.task(taskId), agentId)
+                threadBoundToAnotherLiveTask(
+                  this.store,
+                  this.store.task(taskId),
+                  agentId,
+                )
               ) {
-                throw new Error(`Thread ${agentId} on ${currentEntry.hostId} still serves live work`);
+                throw new Error(
+                  `Thread ${agentId} on ${currentEntry.hostId} still serves live work`,
+                );
               }
-              const key = this.store.threadArchiveKey(agentId, currentEntry.hostId);
+              const key = this.store.threadArchiveKey(
+                agentId,
+                currentEntry.hostId,
+              );
               if (!key) continue;
               const effect = this.store.getMeta<ArchiveEffect>(key);
               if (effect?.status === "archived") continue;
@@ -560,7 +580,8 @@ export class Lifecycle {
           );
           finished = true;
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
+          const message =
+            error instanceof Error ? error.message : String(error);
           this.updateDisplacedHostWorkspace(taskId, index, {
             state:
               currentEntry.state === "intent" && isTransportFailure(error)

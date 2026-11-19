@@ -207,8 +207,8 @@ export class OwnedWorkspaceArchive {
       }
       const slug =
         reviewRun?.reviewSourceView?.branch ??
-        (displacedBranch ??
-          (id === task.workspaceId ? task.branch : `ns-closeout-${task.id}`));
+        displacedBranch ??
+        (id === task.workspaceId ? task.branch : `ns-closeout-${task.id}`);
       const intakeOwned =
         id === task.workspaceId &&
         task.reviewEntry?.preserveWorkspace === false &&

@@ -600,9 +600,11 @@ export class StoreTaskFunnel {
       !change.agentIntent &&
       !change.workspaceId &&
       !change.workspaceIntent &&
-      (this.services.db
-        .prepare("SELECT data FROM runs WHERE taskId=?")
-        .all(id) as Array<{ data: string }>).every((row) => {
+      (
+        this.services.db
+          .prepare("SELECT data FROM runs WHERE taskId=?")
+          .all(id) as Array<{ data: string }>
+      ).every((row) => {
         try {
           return JSON.parse(row.data).released === true;
         } catch {

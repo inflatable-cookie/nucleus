@@ -317,11 +317,7 @@ function planWorkerFailover(
   const catalogOutage = facts.providerUnavailable();
   const outage =
     Boolean(assignedGroup && unavailable.has(assignedGroup)) || catalogOutage;
-  const demand = runDemand(
-    task.complexity,
-    "worker",
-    store.usageLevel(),
-  );
+  const demand = runDemand(task.complexity, "worker", store.usageLevel());
   // An outage alone must not promote work to a stronger fallback. An explicit
   // request is already subject to the normal route/sign-off rules.
   const explicitlyRequested =
@@ -494,7 +490,9 @@ function planWorkerFailover(
         selected.profile.id,
         selected.profile.thinkingOptionId ?? "",
       ) ?? null;
-    const hostChanges = Boolean(targetHost && targetHost.hostId !== task.hostId);
+    const hostChanges = Boolean(
+      targetHost && targetHost.hostId !== task.hostId,
+    );
     const decision = decideWorkerReplacement({
       task,
       requestedProfileId: requestedId ?? selected.profile.id,
@@ -1111,7 +1109,9 @@ export class WorkerFailover {
               retireReason: retirementReason,
               patch: {
                 ...(task.agentId ? {} : { continuesWorkspace: true }),
-                phase: this.adapter.createRun ? "changes_requested" : "dispatching",
+                phase: this.adapter.createRun
+                  ? "changes_requested"
+                  : "dispatching",
                 failoverReason: "",
                 replacementProfile: null,
                 reason: `Moving worker to ${targetHost.hostId} for ${selected.profile.name}`,
