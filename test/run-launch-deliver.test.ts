@@ -6,7 +6,7 @@ import { fakeAdapter, profile } from './support/fakes';
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -284,7 +284,7 @@ test('retained send keeps the guard immediately before the native send', async (
     const { sendRunVia } = await import('../core/dispatch/run-launch/send');
     await sendRunVia({
       helperPath: '/helper',
-      scratchPlacement: () => ({ mount: f.dir, root: f.dir, create: () => { order.push('scratch'); }, remove: () => false }),
+      scratchPlacement: () => ({ mount: f.dir, root: f.dir, create: (path) => { mkdirSync(path); order.push('scratch'); }, remove: () => false }),
       retainedAgentRef: () => ({
         workspaceId: 'workspace', archivedAt: null, status: 'idle', activeTurn: null, pendingPermissions: [], runtimeInfo: null,
         refresh: async () => { order.push('refresh'); },

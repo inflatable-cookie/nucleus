@@ -184,7 +184,7 @@ export function workerAgentSpec(
       if (current.perThreadEnvironment === false)
         prepareRunScratch(current, task, runId, task.temporaryDirectory);
       const scratch = environment.TMPDIR ?? task.temporaryDirectory;
-      if (scratch) materializeRunContext(scratch, runId, buildRunContext(task, { id: runId, role: 'worker', head: task.planningCommit }, mcp));
+      if (scratch && (current.perThreadEnvironment !== false || current.prepareRunScratch)) materializeRunContext(scratch, runId, buildRunContext(task, { id: runId, role: 'worker', head: task.planningCommit }, mcp));
       materializeLaneDocuments(task.temporaryDirectory, task.laneDocumentPins);
       const selectedPrompt = retry ? legacyPrompt : prompt;
       try { if (scratch) writePromptSize(scratch, runId, 'worker', measureRunPrompt(selectedPrompt, task, { head: task.planningCommit, temporaryDirectory: scratch }, mcp)); } catch { /* telemetry cannot prevent launch */ }
@@ -254,7 +254,7 @@ export function runAgentSpec(
             ? run.temporaryDirectory
             : environment.TMPDIR,
       };
-      if (effectiveRun.temporaryDirectory) materializeRunContext(effectiveRun.temporaryDirectory, run.id, buildRunContext(task, run, mcp, affectedTestsCommand));
+      if (effectiveRun.temporaryDirectory && (current.perThreadEnvironment !== false || current.prepareRunScratch)) materializeRunContext(effectiveRun.temporaryDirectory, run.id, buildRunContext(task, run, mcp, affectedTestsCommand));
       materializeLaneDocuments(
         effectiveRun.temporaryDirectory,
         task.laneDocumentPins,

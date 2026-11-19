@@ -77,7 +77,7 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
       };
     }
     creationOwner() {
-      return { ...super.creationOwner(), perThreadEnvironment: false as const };
+      return { ...super.creationOwner(), perThreadEnvironment: false as const, prepareRunScratch: true };
     }
     private requireHelper(): void {
       if (!this.helperPath || !this.socketPath)

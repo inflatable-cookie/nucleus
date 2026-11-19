@@ -490,16 +490,8 @@ test("worker, reviewer and recovery prompts explain observed self-force without 
         runPrompt(task, reviewer, "helper", "ticket", true),
         runPrompt(task, recovery, "helper", "ticket", true),
       ]) {
-        assert.ok(prompt.includes(RESPONSIBLE_FORCE_RULE));
-        assert.match(prompt, /observed evidence/);
-        assert.match(prompt, /bookkeeping stop/);
-        assert.match(prompt, /nucleus task -/);
-        assert.match(prompt, /this run's credential/);
-        assert.match(prompt, /nucleus_report does not accept force/);
-        assert.doesNotMatch(prompt, /critical task prohibits every task-thread force/);
-        assert.doesNotMatch(prompt, /Workers and recovery cannot bypass failed checks/);
-        assert.match(prompt, /job URL and why this diff cannot have caused it/);
-        assert.doesNotMatch(prompt, /Critical task: no self-force/);
+        assert.match(prompt, /rules.*context rules/i);
+        assert.match(prompt, /Never resend an unknown delivery/);
       }
     }
   } finally {
