@@ -476,6 +476,7 @@ test("task and inbox cards have distinct scopes and a versioned operator answer"
     const inbox = fixture.acp.bindInbox({ hostId: "t3code:synthetic" });
     const binding = readAcpBinding(inbox.bindingPath);
     const caller = { kind: "inbox" as const, hostId: inbox.hostId, sessionId: inbox.sessionId };
+    assert.throws(() => new Decisions(fixture.store).answer({ id: "inbox-question", version: 1, answer: "Yes", answeredBy: "operator (t3code:synthetic)", relayed: false, note: "" }), /authenticated T3 session/);
     const offered = await fixture.acp.turn({ ...caller, attach: true }, binding.token);
     assert.deepEqual(offered.elicitations?.map(row => row.id), ["inbox-question"]);
     await assert.rejects(() => fixture.acp.answer({ ...caller, id: "task-question", version: 1, answer: "Yes" }, binding.token), /not offered/);
@@ -483,6 +484,8 @@ test("task and inbox cards have distinct scopes and a versioned operator answer"
     const recorded = fixture.store.decision("inbox-question");
     assert.equal(recorded.answer?.answeredBy, "operator (t3code:synthetic)");
     assert.equal(recorded.answer?.relayed, null);
+    assert.deepEqual(fixture.acp.decisionSettlement("inbox-question", 1), { state: "answered", answer: "Yes" });
+    assert.deepEqual(fixture.acp.decisionSettlement("inbox-question", 2), { state: "cancelled" });
     await assert.rejects(() => fixture.acp.answer({ ...caller, id: "inbox-question", version: 1, answer: "Yes" }, binding.token), /not offered/);
   } finally { await fixture.close(); }
 });

@@ -272,3 +272,18 @@ test('the recorded sign-off is read from typed events: unreadable rows are skipp
     assert.equal(priorNonGrantSignoff(f.store, task.id, 'reviewer', 'opus'), null);
   } finally { f.close(); }
 });
+
+test('an authenticated T3 operator answer signs off the requested profile', () => {
+  const f = fixture(); try {
+    const task = f.submit();
+    f.reconcile(task.id);
+    const pending = f.store.task(task.id).profileRequests!.reviewer!.signoff!;
+    const decision = f.decisions.get({ id: pending.decisionId! });
+    f.decisions.answer({ id: decision.id, version: decision.version, answer: signoffApprove('Sol oracle'),
+      answeredBy: 'operator (t3code:synthetic)', relayed: false, note: 'T3 inbox' }, { trustedT3: true });
+    f.reconcile(task.id);
+    const signoff = f.store.task(task.id).profileRequests!.reviewer!.signoff!;
+    assert.equal(signoff.status, 'approved');
+    assert.equal(signoff.by, 'operator (t3code:synthetic)');
+  } finally { f.close(); }
+});

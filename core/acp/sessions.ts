@@ -79,6 +79,23 @@ export class AcpSessions implements AcpSessionSurface {
       ...(input.holdPattern ? { holdPattern: input.holdPattern } : {}) });
   }
 
+  /** The host uses this only for the task parent it already owns. */
+  pendingDecisionKey(taskId: string): string | null {
+    const rows = acpDecisions(this.engine.store, { taskId, sessionId: "" });
+    return rows.length ? JSON.stringify(rows.map(row => [row.id, row.version])) : null;
+  }
+
+  /** Resolve the exact version shown on a card, including an answer since superseded. */
+  decisionSettlement(id: string, version: number): { state: "open" | "answered" | "cancelled"; answer?: string } {
+    try {
+      const decision = this.engine.store.decision(id);
+      if (decision.version === version && decision.status === "open") return { state: "open" };
+      const next = decision.versions.find(row => row.version === version + 1);
+      if (next?.status === "answered" && next.answer) return { state: "answered", answer: next.answer.text };
+    } catch { /* A removed decision has no answer and its card is cleared. */ }
+    return { state: "cancelled" };
+  }
+
   /** Create an inbox credential with no task authority. */
   bindInbox(input: { hostId: string; ignorePattern?: string; holdPattern?: string }) {
     return mintAcpInbox({ ...input, dataHome: this.dataHome, socketPath: this.options.socketPath });

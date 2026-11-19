@@ -1162,7 +1162,7 @@ export async function t3Fake(t: TestContext, directory: string) {
         case "orchestration.launchThread": {
           for (const field of contract.launchThread.required)
             assert.ok(Object.hasOwn(payload, field), `launchThread.${field}`);
-          assert.equal(payload.workspaceStrategy.type, "existing_worktree");
+          assert.ok(["existing_worktree", "root"].includes(payload.workspaceStrategy.type));
           assert.ok(
             contract.launchThread.runtimeModes.includes(payload.runtimeMode),
           );
@@ -1207,10 +1207,11 @@ export async function t3Fake(t: TestContext, directory: string) {
           commands.push({ method: request.tag, ...payload });
           controls.mutationObserver();
           if (controls.disconnectMutation) return socket.destroy();
-          const p = threadProjection(
-            payload.threadId,
-            payload.workspaceStrategy.worktreePath,
-          );
+          const root = projects().find(project => project.id === payload.projectId)?.workspaceRoot;
+          const p = threadProjection(payload.threadId, payload.workspaceStrategy.type === "root" ? root : payload.workspaceStrategy.worktreePath);
+          p.thread.projectId = payload.projectId;
+          if (payload.workspaceStrategy.type === "root") p.thread.worktreePath = null;
+          p.thread.pinnedAt = null;
           p.thread.title = payload.title;
           p.thread.modelSelection = payload.modelSelection;
           p.thread.providerInstanceId = payload.modelSelection.instanceId;
@@ -1418,6 +1419,9 @@ export async function t3Fake(t: TestContext, directory: string) {
               p.thread.snoozedAt = STAMP;
               break;
             }
+            case "thread.pin":
+              p.thread.pinnedAt = STAMP;
+              break;
             case "thread.unsnooze":
               p.thread.snoozedUntil = null;
               p.thread.snoozedAt = null;

@@ -537,6 +537,8 @@ export class T3Reads {
   }
 
   workspaceFor(thread: Projection["thread"]) {
+    const inbox = this.core.state.read().inbox;
+    if (inbox && thread.id === inbox.threadId && thread.projectId === inbox.projectId && thread.worktreePath === null) return inbox.workspaceId;
     return (
       Object.values(this.core.state.read().workspaces).find(
         (w) =>
