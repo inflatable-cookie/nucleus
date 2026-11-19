@@ -102,6 +102,9 @@ async function driveUntil(
           await f.runtime.engine.wakeTask(taskId).catch(() => {});
       }
       if (i % 5 === 4) await f.runtime.engine.wake().catch(() => {});
+      // The sweep enqueues the terminal cleanup; draining it is the operator's
+      // own pass and the timers would do it too.
+      if (i % 5 === 4) await f.runtime.engine.drainCleanup().catch(() => {});
     } catch {
       /* a refused pass is the next pass's work */
     }

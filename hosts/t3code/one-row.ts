@@ -74,6 +74,3 @@ export function labelRole(labels: Record<string, string> | undefined): string | 
 export function labelTask(labels: Record<string, string> | undefined): string | undefined {
   return labels?.[WIRE_LABEL_KEYS.task];
 }
-export function labelRun(labels: Record<string, string> | undefined): string | undefined {
-  return labels?.[WIRE_LABEL_KEYS.run];
-}

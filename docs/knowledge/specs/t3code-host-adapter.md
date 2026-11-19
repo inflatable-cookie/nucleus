@@ -33,9 +33,8 @@ projection: *active* while a role child runs or a person must act (Nucleus
 unsnoozes it then, and leaves a manual settle alone); *snoozed* while the task
 waits on nothing Nucleus is running and needs no one (held until something,
 prerequisite wait, queued for capacity, between roles), with the snooze renewed
-before it lapses; *archived* when the task finishes. The fallback paths and
-per-role settle rules described below are retired (implementation:
-nucleus#1366).
+before it lapses; *archived* when the task finishes. The top-level fallback and
+the per-role settle rules it replaced are gone (implementation: nucleus#1366).
 Archived task threads are pruned by Nucleus's own retention pass (see the
 orchestration contract, "Archived thread retention"). The adapter does not patch T3,
 attach Nucleus MCP servers, raise Nucleus questions inside threads or contribute
@@ -297,39 +296,38 @@ archive is a catalog operation, not evidence that a folder was removed. Native
 workspace operations without an equivalent must explicitly refuse rather than
 pretend to be a Paseo workspace.
 
-Core derives the worker thread title with `taskWorkspaceTitle`, the same
+Core derives the task row's title with `taskWorkspaceTitle`, the same
 projection and cap used for Paseo workspace titles. It sends the current title through
-`thread.metadata.update`; support threads keep their task-number and role title.
-The adapter appends the step the task's support threads are doing (see
+`thread.metadata.update` on the task's parent thread; the adapter appends the
+step the task's role children are doing (see
 [one row per task](#one-row-per-task)).
 The core title projection coalesces queued changes and records failed writes on
 the task for sweep retry. Each title-change request has its own durable command
-identity, so returning to a prior state still updates the thread. Before
-retrying an uncertain T3 update, the adapter reads the thread title and settles
-the write if the desired title is already present.
+identity — the identity includes the desired title, so a changed title is never
+a changed payload under a spent command (nucleus#1366) — and a refusal names the
+row title, never another role's work. Before retrying an uncertain T3 update,
+the adapter reads the thread title and settles the write if the desired title is
+already present.
 
 ## Operations and delivery
 
 | Host operation | T3 RPC or command | Required result |
 | --- | --- | --- |
 | Register project | `projects.mutate` / `project.create` mutation | Deterministic IDs bind the real repository root; the receipt ledger answers replays; reconcile unknown delivery against the complete inventory before retry |
-| Create (fallback) | `orchestration.launchThread` with explicit thread/message IDs, provider instance/model, prompt, the profile's runtime mode and model options, and `existing_worktree` | Top-level thread with the exact project and directory |
+| Refuse a role that cannot be a child | No command: a proven pre-send refusal naming the reason and the fix | The task waits visibly (`T3 provider not ready: … run \`nucleus t3 install\``, an archived or deleted parent, another checkout, a parent T3 will not run); never a top-level role thread |
 | Create parent | `orchestration.launchThread` on the `nucleus` provider instance with the ACP model and the task's own checkout | The task's one row; its run is held by the ACP agent, never a model's turn |
 | Create role child | `delegated_task.request` anchored on the parent's live run and root node, with the profile's provider, model, runtime mode and options, and no `workspaceStrategy` | A native subagent child that inherits the parent's checkout; deterministic `thread:delegated-task:<commandId>` |
 | Dispose a child's wake | `delegated_task.completion-delivery.dispose` naming `node:delegated-task:<commandId>` | `completionDelivery.state: disposed`; sent after the create and after every follow-up dispatch |
-| Hold and release the parent | `message.dispatch` (one re-entry prompt) and the ACP session's `release` | The parent's run is live exactly while a child may be created; the task settles in T3 when nothing runs |
+| Hold and release the parent | `message.dispatch` (one re-entry prompt) and the ACP session's `release` | The parent's run is live exactly while a child may be created; a finished task's held turn is released at once and the parent archived |
 | Follow-up | `orchestration.dispatchCommand` / `message.dispatch` | Stable command and message IDs; receipt records acceptance |
 | Observe | `orchestration.subscribeShell` and a bounded `orchestration.subscribeThread` | Fresh state, including active run and pending request, from a snapshot whose timeline window never makes a long thread unobservable |
 | Answer question or permission | `runtime-request.respond` through dispatch | Exact request, thread and workspace; typed answers or approval decision |
 | Stop | `thread.stop` through dispatch | Receipt followed by observation; never a replacement thread |
 | Archive | `thread.archive` through dispatch | Receipt followed by archived-state observation |
 | Remove | `thread.delete` through dispatch at closeout, never `onlyIfUnused` | Durable intent, then `deletedAt` or absence from a complete inventory proves removal; an unknown outcome is never resent |
-| Settle report | `thread.settle` through dispatch for any completed non-worker role | Immediately after the accepted Nucleus receipt; bind `expectedLatestRunId`, keep an uncertain intent and inspect `settledOverride` before retry |
-| Wake settled support thread | `thread.unsettle` through dispatch before a follow-up message | Stable command intent; a retained reviewer is active again for its next round |
-| Surface a stuck worker thread | `thread.unsettle` through dispatch while the task needs attention or any of its agents is working | Per-episode command identity; only the worker thread surfaces, and the ordinary settles put it back once the task waits on nothing Nucleus is running |
-| Tag a support thread | `thread.tag.set` through dispatch with `nucleus-support` | One durable command per thread; never the worker row, and never a settings write |
-| Link a support thread | `thread.created.record` through dispatch from the worker's latest root node | One completed `thread_created` card in the worker's conversation, retried until the worker run names its root node |
-| Read the hide setting | `server.getConfig`'s `settings.hideTaggedThreads` and `settings.hiddenThreadTags` | Read-only, at connect; never `server.updateSettings` |
+| Snooze a waiting row | `thread.snooze` through dispatch with `snoozedUntil` in the future | One bounded horizon, read back from `snoozedUntil`; deterministic command identity per wait episode and horizon; a refusal is "stay active" for that episode, never a retry loop |
+| Show a row again | `thread.unsnooze` through dispatch with `reason: "user"` | Only a row this host snoozed; a person who must act or a running role gets the row back. A manual settle is never touched |
+| Wake a settled thread before a message | `thread.unsettle` through dispatch before the send | A settled thread starts no run, and T3 does not clear a manual settle on `message.dispatch`; this is the one unsettle a follow-up or a re-entry needs |
 | Archive workspace | Mark the task's T3 worktree handle archived in adapter state | Observation reads the handle's `archivedAt`; the shared project registration remains registered and available |
 | Atomic interrupt and continue | `message.dispatch` `steer_active` with the live run's `targetRunId` | The message injects into the active turn; with no active run the refusal is proven before send |
 | Tell or relayed answer (`steerOrNotify`) | `message.dispatch` `steer_active` when the thread has a live run, read immediately before send; otherwise `queue_after_active` as `notify` | A proven not-sent steer falls back to one queued send under its own command identity; a remote steer failure is unknown delivery and is never resent. Nucleus's own reminders and notices keep `queue_after_active` |
@@ -341,46 +339,61 @@ existing durable intent before send. Launch also binds its explicit thread and
 initial-message IDs. Persist the mapping before remote creation so a lost reply
 cannot produce an unowned thread.
 
-Nightly `0.1.10-nightly.20261111.4529`'s installed bundle defines the command
-shape used for report settlement as:
+Nightly `0.1.11-nightly.20261118.4890`'s installed bundle defines the one row
+commands as (`apps/server` bundle, `OrchestrationV2` command union):
 
 ```ts
 {
-  type: "thread.settle",
+  type: "thread.snooze",
   commandId: CommandId,
   threadId: ThreadId,
-  expectedLatestRunId?: RunId,
-  settledAt?: DateTimeUtc
+  snoozedUntil: IsoDateTime
+}
+{
+  type: "thread.unsnooze",
+  commandId: CommandId,
+  threadId: ThreadId,
+  reason: "user"
 }
 ```
 
-After Nucleus accepts a completion from any support role, T3 settles that
-thread using the latest completed native run ID. The host sweep enforces the
-same rule for every T3-bound task, so recorded-completion releases and other
-finish paths settle support threads even when no callback report arrived. It
-settles a worker thread after the task has moved to review, and keeps it active
-while the task is still in work. Each pass reads the T3 projection first; a
-live native run is never settled, and the command's `expectedLatestRunId` keeps
-a later run from being settled by an older completion. A bind the Nightly
-rejected as stale (its latest run moved on, `OrchestrationV2DispatchCommandError`)
-retires without touching the thread, and the next pass settles the current
-latest run under a fresh command instead of leaving the thread unsettled
-(nucleus#1181; that retire-then-stop is what stranded swallowtail#227's
-reviewer thread). A compatibility failure keeps its exact field in the
-settlement warning and retries on the next pass, never just once. Failed
-settlements record a task event and are reconciled on a later pass; settlement
-failure never blocks the task report.
+`snoozedUntil` must be in the future. The handler refuses a thread with a
+pending non-user-input approval, a queued user run, and an archived thread; a
+snoozed thread wakes at `snoozedUntil` or early on a guest message, a pending
+runtime request or a failed run, and the client never auto-settles a snoozed
+thread. `thread.settle` clears a snooze, and `thread.unsnooze` clears the snooze
+and leaves `settledOverride` exactly as it was (`runtimeLayer`, `dispatchOnce`).
+Both commands are ordinary dispatch commands, so the runtime bearer's
+`orchestration:operate` scope covers them; they need no wider scope.
 
-Unknown settlement delivery is recorded. On the next host sweep,
-`settledOverride: "settled"` proves success, and a changed or active latest run
-retires the old intent without touching the new run. A support settlement is
-retried only when the projection proves the same completed run is still latest
-and unsettled, using the identical command. Worker handover unknown delivery
-remains unknown and is never resent. A new review message first sends
-`thread.unsettle` with `reason: "user"`; T3 does not clear a manual settled
-override on `message.dispatch`. Existing closeout and retention paths still
-decide when threads are archived or removed; the [thread
-lifecycle](#thread-lifecycle) is where that decision lives.
+Nucleus never issues `thread.settle` for a task thread (Tom, 2026-11-19). The
+task's parent row is driven by the one attention projection the board and
+`task.next` read (`shared/task-attention.ts`):
+
+- *attention* or *active* — a person must act, or a role child is running: the
+  row is shown, and a row this host snoozed is unsnoozed.
+- *waiting* — the task waits on nothing Nucleus is running and needs no one: the
+  row is snoozed. An owner hold with a release condition and an unresolved
+  prerequisite wait are waiting with their named cause, never attention.
+- *finished* — the row's snooze is retired and the terminal lane archives it.
+
+The horizon is bounded (48 hours) and the ordinary sweep renews it with 24 hours
+left, so the row never wakes itself while the task still waits. The command
+identity is deterministic per wait episode and horizon, so a returning identical
+wish never reuses a spent command. Like every presentation write, the effect is
+recorded before the send and the adapter reads `snoozedUntil` back afterwards: a
+read-back that proves the snooze did not land resends under the same identity,
+and a read-back that finds the row already snoozed by someone else leaves it
+alone. A refusal is "stay active" for that wait episode and is never retried;
+only a new episode (the row was shown again in between) may snooze again. A row
+an operator settled by hand is left exactly as it is — no snooze, no unsettle —
+and a repeated pass inside the horizon writes nothing.
+
+The one remaining `thread.unsettle` is the wake a message needs: a settled
+thread starts no run, and T3 does not clear a manual settle on `message.dispatch`
+(`unsettleBeforeMessage`, used by the parent re-entry and every follow-up).
+Existing closeout and retention paths still decide when threads are archived or
+removed; the [thread lifecycle](#thread-lifecycle) is where that decision lives.
 
 ### Model options
 
@@ -507,13 +520,13 @@ The history the file carries is bounded. Beyond the newest 64 terminal commands 
 entry keeps its delivery receipt — status, kind, thread, the digest of the wire it
 delivered, its deletion marks and, for a launch, the thread a replay reads — and
 loses the message or launch body. The entry itself is never dropped: a command
-identity stays taken, so an exact lookup, a settle and the attention-unsettle and
-row-title ladders still find what they recorded, and a repeat replays the receipt
+identity stays taken, so an exact lookup and the snooze, unsnooze and row-title
+ladders still find what they recorded, and a repeat replays the receipt
 instead of sending again. An unresolved intent (`unknown` delivery) is never
 compacted, a pre-send refusal keeps the wire a recorded retry replays, and the
 kinds whose body a later exact lookup parses (a confirmed deletion, a runtime
 response, a project mutation) keep theirs. Per-thread records — agents, parents,
-workspaces, settle markers, row titles — are one small entry per thread and each is
+workspaces, snooze records, row titles — are one small entry per thread and each is
 the exact fact a later lookup reads, so they are kept (24 KB of that 12 MB file).
 
 Runtime responses also bind the native thread/request pair to their original
@@ -577,8 +590,8 @@ live: a thread whose task is done or cancelled, or that T3's own thread list
 reports archived or removed, leaves observation. Its live record moves to the
 stored `retiredAgents` index, which keeps the identity its own rows read —
 workspace, labels, the recorded parent link a nested child's one-row rule needs, and
-the task's state title — so an exact settle, an exact lookup and the terminal archive
-lane still answer; the intent ledger, the settle markers and every recorded command
+the task's state title — so an exact lookup and the terminal archive lane still
+answer; the intent ledger, the snooze records and every recorded command
 stay exactly as recorded, and a confirmed deletion marks the retired record. Nothing
 leaves T3: leaving observation never deletes, archives or edits a thread, and a person
 or planner re-attaching a thread returns it to observation under the ordinary verbs. A thread that has left observation answers from the thread list
@@ -588,8 +601,8 @@ no snapshot for it, and a read that would need one is refused rather than answer
 from memory.
 
 Inside one pass every consumer shares one thread list and one snapshot per thread:
-status, row step, presentation, settle and pending questions all read the same
-answer, so a tracked thread costs at most one `subscribeThread` per pass however many
+status, row step, the row's shown/snoozed decision and pending questions all read the
+same answer, so a tracked thread costs at most one `subscribeThread` per pass however many
 paths ask about it, plus at most one more after each command the pass sends to that
 thread (the write invalidates the snapshot the pass held, so a post-write read is
 never answered from before the write). The pass skips a thread's snapshot entirely while the row
@@ -781,21 +794,21 @@ fast-path dispose was lost. The binding also ignores the nightly's wake and rest
 wordings, so even a wake that arrives is never forwarded to the task as a person's
 message.
 
-**Only a recorded child is a child.** A task can have a parent and still run some
-of its roles as top-level threads (a different checkout, a parked native path, an
-archived parent). A child is a thread whose own recorded agent entry names the
-parent it was created under; nothing is inferred from the task having a parent. So a
-fallback role thread of a parented task keeps every one-row rule — it is tagged,
-linked, settled and stepped like any top-level support thread — and its follow-ups
-send no child dispose (nucleus#1305 review).
+**There is no top-level fallback (Tom, 2026-11-19).** A role that cannot be
+created as a child refuses before the send, and the task waits visibly with the
+reason and the fix: the provider instance is missing or not ready ("T3 provider not
+ready: … run `nucleus t3 install`"), the parent is archived or deleted, the role's
+run needs another checkout than the parent's, or a re-entry T3 will not run. The
+refusal text is the task's reason, so the board and the operator see it, and the
+operator can move the task to another host. Nothing is launched that the task's one
+row would then have to settle, and there is no ten-minute native-path parking.
 
-**A finished parent is never relaunched.** A parent whose thread is archived, or
-deleted, ends the nested path for that task: the remaining roles launch as top-level
-threads and the record keeps its archived marker so later roles fall back at once.
-Launching a second parent would orphan the task's existing children and re-mint a
-binding under a thread nothing runs. Deletion is read two ways from the same
-inventory, because the nightly omits a removed thread from the shell lists and also
-serves it as a `deletedAt` tombstone: absent or tombstoned are the same fact.
+**A finished parent is never relaunched.** Launching a second parent would orphan
+the task's existing children and re-mint a binding under a thread nothing runs.
+Deletion is read two ways from the same inventory, because the nightly omits a
+removed thread from the shell lists and also serves it as a `deletedAt` tombstone:
+absent or tombstoned are the same fact. A finished task's held turn is released at
+once — the create grace window is for live work — and its parent is archived.
 
 **A deleted child does not hold the turn.** The release decision reads one complete
 inventory: a child absent from it, or listed there as a `deletedAt` tombstone, is
@@ -809,19 +822,16 @@ session are deterministic for a task
 adapter's state before the send, and a lost reply is settled by finding the thread
 before anything is launched again. A child's id is derived from its command id, so
 a lost reply cannot produce an unowned thread; a failed child command is read back
-first — adopted when the child exists, and only a proven absence falls back to a
-top-level thread under the launch's own command identity. The parent is kept out of
+first and adopted when the child exists, and a proven absence refuses with the
+reason rather than launching anything else. The parent is kept out of
 the recorded agent labels, because it is nobody's run: `findAgents` must not mistake
 it for the worker the task created.
 
-**Presentation follows the recorded row.** A recorded child's title (including the
-step suffix), worker settle and attention unsettle address the parent row it is drawn
-inside, and a child's own settle is a no-op. A role thread that is not a recorded
-child — a worker or revision run that fell back to a top-level thread of a parented
-task — keeps its own row: its title, settle and unsettle are written to that thread
-and never to the parent, so a fallback worker is settled where it actually runs
-(nucleus#1305 review). When the task ends, the sweep archives the parent; the shared
-project registration is untouched.
+**Presentation follows the parent row.** Every role title (including the step
+suffix) and the shown/snoozed state address the parent row the children are drawn
+inside; no presentation write addresses a child. When the task ends, the sweep
+releases the held turn and archives the parent; the shared project registration is
+untouched.
 
 **The provider is checked, never assumed.** The nested path needs an enabled,
 ready provider instance named `nucleus` whose driver is `acpRegistry`, advertising
@@ -830,7 +840,7 @@ registers it once with `nucleus t3 install` ([operator install
 route](#operator-install-route)); the adapter reads `server.getConfig` at connect
 and at each create, records what it found in its own state, and reports it as
 `service.health`'s `t3code.nativeParenting` line. A missing, disabled or
-wrong-driver instance falls back to top-level role threads. The status distinguishes
+wrong-driver instance refuses each role with that reason instead of falling back. The status distinguishes
 an absent instance from a registered instance that is not ready, including T3's
 status message when present. The adapter and the service never write T3 settings; only
 the operator's `nucleus t3 install` and `nucleus t3 uninstall` do, through T3's own
@@ -839,60 +849,32 @@ the operator's `nucleus t3 install` and `nucleus t3 uninstall` do, through T3's 
 
 ## One row per task
 
-One task reads as one row (Tom, 2026-11-15). This is the fallback shape: a task
-whose parent cannot be launched, or a role whose run needs another checkout, keeps
-top-level threads, and these rules are what make them read as one row. A nested
-task needs none of them — T3 draws its children inside the parent row itself — so
-the adapter records no tag, card or step for a child (nucleus#1305). Three things
-follow.
+One task reads as one row (Tom, 2026-11-15; nucleus#1366): the task's parent thread
+on the Nucleus ACP provider. T3 draws every role child inside that row itself, so the
+adapter tags, links and settles nothing, and a child has no row of its own. Two
+things follow.
 
-**Support threads are tagged.** Every support thread created on T3 — reviewer,
-recovery, verification, closeout and executor; every role but the worker-shaped
-one — carries the tag `nucleus-support`, a constant of the adapter's own table and
-never a setting. The worker thread is never tagged. The tag is presentation only:
-the card and the row title do not depend on it.
+**The row carries the step.** The row's title is the task's own state title
+(`taskWorkspaceTitle`, the shared helper Paseo uses) plus ` · ` and the step its role
+children report: `reviewing`, `recovery`, `verifying`, `closing`, `executing`,
+`<role> needs input` for a pending question or permission, or `blocked: <role>` for a
+child whose latest run ended with a fault. A step the state title already opens with
+is not repeated. The step is read from the role threads' own projections on the host
+sweep, so it follows a role that starts, needs input or stalls without a task title
+change. Only the thread each role currently uses counts: a role that gets a
+replacement child displaces the old one, so a superseded thread's last failed run is
+history rather than the task's attention.
 
-**Each support thread is linked from the worker's conversation.** After a support
-thread launches, the adapter records `thread.created.record` in the worker
-thread: the parent is the worker's latest run, the parent node is that run's own
-root node, the target is the new support thread, and `targetRunId` is null. The
-nightly writes one completed `thread_created` card, which opens the support
-thread. That command needs a worker run with a root node, so the intent is
-recorded in the adapter's state before the send and retried on the ordinary host
-sweep until one exists. A replay of the same command id is one card, not two.
-The card's title is the target thread's own title, which already names the role
-(`#225 review: …`), so no second title is invented. Unknown delivery is resent
-only after a fresh read proves the card absent; the worker transcript read stays a
-bounded observation read and never asks for full history.
-
-**The worker row carries the step.** The row's title is the task's own state title
-(`taskWorkspaceTitle`, the shared helper Paseo uses) plus ` · ` and the step its
-support threads report: `reviewing`, `recovery`, `verifying`, `closing`,
-`executing`, `<role> needs input` for a pending question or permission, or
-`blocked: <role>` for a thread whose latest run ended with a fault. A step the
-state title already opens with is not repeated. The step is read from the support
-threads' own projections on the host sweep, so it follows a role that starts,
-needs input or stalls without a task title change. Only the thread each role
-currently uses counts: a role that gets a replacement thread displaces the old one,
-so a superseded thread's last failed run is history rather than the task's
-attention. The worker row is unsettled
-while any of the task's runs is live or the task needs attention, and it settles
-once the task waits on nothing Nucleus is running. Being in T3's "Working"
-section is the client's own view of an active run and cannot be set from outside;
-unsettling only keeps the row out of the settled list, which is what Nucleus can
-do.
-
-**The hide setting is optional and read-only.** A client hides a tagged top-level
-thread only while its own `hideTaggedThreads` is on and `hiddenThreadTags` lists
-`nucleus-support`. Nucleus reads both from `server.getConfig`'s `settings` at
-connect and never writes settings; with the switch off, or the tag missing, the
-support threads stay visible and everything else behaves as above.
-`service.health`'s `t3code.supportThreads` reports which case holds and points at
-the README section that enables it. Nucleus surfaces a hidden thread's pending
-question or permission itself: that thread's role name rides the worker row and
-the row is unsettled, so a hidden approval is never invisible. The question is
-still answered in the support thread (open it from its card) or through Nucleus's
-own routes.
+**The row is snoozed, never settled.** The row's shown/snoozed state is the one
+attention projection's answer (see [Operations and
+delivery](#operations-and-delivery)): a person who must act — the task's own
+attention flag, a role asking a question, a child that ended with a fault — or a live
+role child gets the row shown, and a row this host snoozed is unsnoozed; a task that
+waits on nothing Nucleus is running is snoozed; a finished task's row is the terminal
+lane's. A row an operator settled by hand is theirs: Nucleus writes nothing to it,
+and the only `thread.unsettle` it still sends is the wake a message needs before it
+can start a run. Being in T3's "Working" section is the client's own view of an
+active run and cannot be set from outside.
 
 ## Thread lifecycle
 
@@ -902,18 +884,15 @@ is archived at once (Tom, 2026-11-13; nucleus#1181). A nested task's parent thre
 is archived by the nesting sweep once the task reaches a terminal phase or is
 removed (`thread.archive`, deterministic command id, one archive per thread); its
 children keep their own run lifecycle. Releasing the parent's held turn is not an
-archive and changes no thread fact. Released support threads stay settled
-(`thread.settle`, above), and the task keeps its retained reviewer and recovery
-bindings; the next round or fault continues the same thread through the host's
-follow-up helper, which sends `thread.unsettle` before the message. Every
-finished native turn of a reused thread ends settled: the adapter remembers
-which thread it settled, an unsettle clears that mark, and a later settle
-settles the latest finished run under a fresh command identity instead of
-early-returning on the old receipt (nucleus#1181; swallowtail#227's reviewer
-thread stayed unsettled after its second round because the second settle
-reused the first round's settled key). A new thread
-is needed only when the old one is gone or deleted, or the role's selected
-profile changes; other displaced threads stay settled until closeout (Tom, 2026-11-12).
+archive and changes no thread fact; a finished task's held turn is released at once
+and its parent archived. Nucleus never settles a task thread (see [one row per
+task](#one-row-per-task)): a waiting row is snoozed and a row that needs a person is
+shown again, while the task keeps its retained reviewer and recovery bindings so the
+next round or fault continues the same child thread. The one `thread.unsettle` left
+is the wake a follow-up message needs when the thread was settled by hand. A new
+thread is needed only when the old one is gone or deleted, or the role's selected
+profile changes; other displaced threads stay as the terminal lane leaves them
+(Tom, 2026-11-12).
 
 Role detection reads the shared `WIRE_LABEL_KEYS` through the label helpers:
 `nucleus.role` identifies support threads, while the task's worker identity or a
@@ -923,16 +902,15 @@ worker and recovery label shapes with synthetic IDs, including catch-up cleanup.
 A deliberate reviewer replacement stops the turn and observes it idle, then
 releases the displaced run. The existing released-run callback fence refuses a
 late report; it needs no in-flight deletion, archive or separate removal fence.
-The displaced thread stays settled for terminal cleanup. Decider threads keep
+The displaced thread stays as the terminal lane leaves it. Decider threads keep
 their existing lifecycle and are outside this cleanup rule.
 
-Attention surfaces the worker thread (Tom, 2026-11-13; nucleus#1181): while a
-T3-bound task is blocked, errored, needs attention or carries an attention flag
-(a planner or operator escalation), the sweep unsettles the task's worker
-thread (`thread.unsettle`) so it shows in T3's main list instead of the settled
-list. Only the worker thread surfaces, never support threads, and the title
-already shows the state. When the task leaves attention the ordinary settles
-put the thread back under a fresh command. A superseded worker is archived at
+A person who must act shows the task's row (Tom, 2026-11-13; nucleus#1181, as
+replaced by nucleus#1366): while a T3-bound task is blocked, errored, needs
+attention, carries an attention flag or has a role child asking a question or
+faulted, the sweep shows the parent row again (`thread.unsnooze`, only when this
+host snoozed it) so it leaves T3's snoozed state. When the task returns to
+waiting the row is snoozed again under a fresh wait episode. A superseded worker is archived at
 once: when a worker run is replaced on a different profile — an owner
 `route now`, an approval reroute or failover to another profile — the old worker
 thread is archived as soon as its run is released and no live T3 run remains on
@@ -1155,26 +1133,18 @@ question ownership separate. `test/t3code-observation.test.ts` counts thread
 snapshots on the serving side: a pass over stored terminal-task threads serves
 none, an unchanged live thread is not snapshotted again, a changed live thread is
 snapshotted once for every consumer, a thread T3 reports archived leaves
-observation, and a terminal task keeps its exact settle and lookup after its agent
-records leave the stored `agents` map. Its state fixture carries the stored file's
-own top-level and record key sets.
+observation, and a terminal task keeps its exact lookup after its agent records
+leave the stored `agents` map. Its state fixture carries the stored file's own
+top-level and record key sets.
 
-A T3 worker thread is settled with `thread.settle` once its handover is accepted
-and the task moves to review, guarded by `expectedLatestRunId` so a thread a
-later run already owns is never settled (nucleus#1154). The accepted receipt is
-durable first; the settle is presentation only. The handover's turn may still
-be ending when the report arrives, and a live run is never settled, so the intent
-is recorded in the adapter's own state (`pendingSettles`) and the ordinary host
-sweep retries it once that run has ended, naming it in `expectedLatestRunId`; an
-intent whose run never ends is retired after 24 hours, and one that a later run
-replaced is retired without touching the thread. A revision round wakes the
-worker through the same explicit `thread.unsettle` every follow-up send uses, and
-its next handover settles it again under that run's own command id. A proven
-pre-send refusal can retry under a new command ID. Worker unknown delivery stays
-unknown and is never resent, while an unrecorded settle is retried from
-`pendingSettles`. The adapter records each worker settle's command id before the
-send (`workerSettles`) so the support reconciler cannot resend a worker's
-unknown mutation.
+`test/t3code-one-row.test.ts` is the row's own suite: the parent row naming the step
+its role children report, a later round writing the same step under a fresh command
+identity, a superseded child's fault dropping off the row, a waiting task's row
+snoozed once with `snoozedUntil` read back and renewed before the horizon with no
+write on a repeated pass, a person who must act unsnoozing a row this host snoozed,
+an operator's settled row left alone, a snooze refused for a pending approval
+staying active with no retry loop, no `thread.settle` on any decision, and a role
+whose create refuses launching no thread and naming the fix.
 
 One end-to-end test drives an ordinary task's whole lifecycle on the fake
 Nightly transport (nucleus#1139): promotion onto the T3 host, workspace
@@ -1199,17 +1169,13 @@ derived node id; a released parent re-entered by a marked message and the next
 child anchored on the re-entered run; a follow-up's own dispose; one release per
 held turn and the parent's archive at a terminal phase; child questions and
 permissions answered on the child with the parent never addressed; a reconnect
-that re-enters the same parent rather than launching another; the fallbacks (no
-provider, a non-ACP driver, a role in another checkout, a parent T3 will not run)
-with the host status naming why; an unknown child command never resent under the
-same identity; the recorded delegated-task wire shapes decoding into the projection;
-a fallback role of a parented task staying a tagged, settled top-level thread that
-sends no child dispose; a worker that fell back to a top-level thread keeping its own
-title, settle and unsettle instead of writing them to the parent; a deleted child
-releasing the parent turn; a `deletedAt` tombstone in the inventory counting as
-deleted for both a child and the parent; and a role launched after its parent was
-archived, or after the parent vanished from the inventory, falling back instead of
-relaunching it. `test/acp-agent.test.ts` adds the hold rule (nothing shown, nothing
+that re-enters the same parent rather than launching another; the refusals (no
+provider, a non-ACP driver, a role in another checkout, a parent T3 will not run, an
+archived or deleted parent) naming the reason and the fix and launching nothing; an
+unknown child command never resent under the same identity; the recorded
+delegated-task wire shapes decoding into the projection; a deleted child releasing
+the parent turn; and a `deletedAt` tombstone in the inventory counting as deleted for
+both a child and the parent. `test/acp-agent.test.ts` adds the hold rule (nothing shown, nothing
 forwarded, the turn held) and keeps it distinct from the ignore rule;
 `test/acp-service.test.ts` proves a mint carries both prompt rules into the binding
 and that a mint without them writes neither.
