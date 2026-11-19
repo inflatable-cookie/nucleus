@@ -35,6 +35,7 @@ interface NativeConnection {
   /** Provider model option descriptors from the last config read (nucleus#1375). */
   readonly modelShapes?: string;
   connect(probeThreadId?: string): Promise<void>;
+  openInboxUi?(): Promise<{ status: "opened" | "reused" }>;
   close(): void;
 }
 
@@ -95,16 +96,30 @@ export class T3HostConnection {
     private readonly acp: () => AcpSessionSurface | null = () => null,
   ) {
     this.dependencies = dependencies ?? {
-      create: (config) => createHost({ ...config, acp: this.acp, boardLink: async () => {
-        const info = readServiceInfo(this.dataDir);
-        if (!info) throw new Error("The local board service is unavailable");
-        const client = new ServiceClient({ socketPath: info.socketPath, credential: info.credential });
-        try {
-          const result = await client.request("service.ui-link", { action: "issue" }) as { url?: unknown };
-          if (typeof result.url !== "string") throw new Error("The local board did not issue a link");
-          return result.url;
-        } finally { client.close(); }
-      } }),
+      create: (config) =>
+        createHost({
+          ...config,
+          acp: this.acp,
+          boardLink: async () => {
+            const info = readServiceInfo(this.dataDir);
+            if (!info)
+              throw new Error("The local board service is unavailable");
+            const client = new ServiceClient({
+              socketPath: info.socketPath,
+              credential: info.credential,
+            });
+            try {
+              const result = (await client.request("service.ui-link", {
+                action: "issue",
+              })) as { url?: unknown };
+              if (typeof result.url !== "string")
+                throw new Error("The local board did not issue a link");
+              return result.url;
+            } finally {
+              client.close();
+            }
+          },
+        }),
       adapter: (host) =>
         createAdapter(
           HostPolicies as unknown as HostPolicyConstructor,
@@ -156,7 +171,9 @@ export class T3HostConnection {
       error: this.errorValue,
       version: this.versionValue,
       threadShapePending: connected && this.host?.threadShapePending === true,
-      nativeParenting: connected ? (this.host?.nativeParentingStatus ?? "") : "",
+      nativeParenting: connected
+        ? (this.host?.nativeParentingStatus ?? "")
+        : "",
       modelShapes: connected ? (this.host?.modelShapes ?? "") : "",
     };
   }
@@ -249,6 +266,19 @@ export class T3HostConnection {
         )
         .slice(0, 500)}`;
     }
+  }
+
+  async openInboxUi(hostId: string): Promise<{ status: "opened" | "reused" }> {
+    this.retireDisconnected();
+    if (!this.session || this.session.id !== hostId || !this.host?.connected) {
+      throw new Error(`T3Code host ${hostId} is not connected`);
+    }
+    if (!this.host.openInboxUi) {
+      throw new Error(
+        `T3Code host ${hostId} does not support opening the board`,
+      );
+    }
+    return await this.host.openInboxUi();
   }
 
   close(): void {

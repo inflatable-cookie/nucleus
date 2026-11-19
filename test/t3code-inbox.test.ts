@@ -4,9 +4,13 @@ import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { T3CodeHost } from "../hosts/t3code/adapter";
+import { T3CompatibilityError } from "../hosts/t3code/contracts";
 import { HOLD_MARKER } from "../hosts/t3code/nesting";
 import { inboxTitle } from "../hosts/t3code/inbox";
 import { T3DecisionCards } from "../hosts/t3code/decision-cards";
+import { T3DecisionHold } from "../hosts/t3code/decision-hold";
+import { T3StateFile } from "../hosts/t3code/state";
+import type { T3IntentLedger } from "../hosts/t3code/intents";
 import type { TestContext } from "node:test";
 import type { AcpSessionSurface } from "../shared/acp/surface";
 import {
@@ -563,4 +567,208 @@ test("the card T3 shows pending is the presence the sweep reports, and a live ca
   // A held turn is already live: no release, and no second re-entry.
   assert.equal(released.length, 0);
   assert.equal(holdPosts(fake, inbox.threadId).length, 0);
+});
+
+test("inbox ui reuses an open board tab and reopens with a fresh pairing link when closed or failed", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "t3-inbox-ui-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const inboxDir = join(root, "inbox");
+  mkdirSync(inboxDir);
+  const fake = await t3Fake(t, root);
+  fake.controls.providers = [
+    {
+      instanceId: "nucleus",
+      displayName: "Nucleus",
+      driver: "acpRegistry",
+      enabled: true,
+      status: "ready",
+      models: [{ slug: "nucleus", name: "Nucleus" }],
+    },
+  ];
+  let issuedLinks = 0;
+  const acp: AcpSessionSurface = {
+    bind: () => {
+      throw Error("no task binding");
+    },
+    bindInbox: ({ hostId }) => ({
+      sessionId: "synthetic-inbox-ui-session",
+      hostId,
+      directory: inboxDir,
+      bindingPath: join(root, "binding"),
+    }),
+    turn: async () => {
+      throw Error("not called");
+    },
+    message: async () => {
+      throw Error("not called");
+    },
+    release: () => {},
+  };
+  const host = new T3CodeHost({
+    endpoint: fake.endpoint,
+    bearer: "synthetic-bearer",
+    statePath: join(root, "state.json"),
+    probeThreadId: "synthetic-probe",
+    acp: () => acp,
+    boardLink: async () => {
+      issuedLinks += 1;
+      return `http://127.0.0.1:1234/#token=synthetic-${issuedLinks}`;
+    },
+  });
+  t.after(() => host.close());
+  await host.connect();
+  await host.reconcileThreadTitles([]);
+  const inbox = host.state.read().inbox!;
+  const previewOpens = () =>
+    fake.requests.filter((request) => request.tag === "preview.open");
+  assert.equal(issuedLinks, 1);
+  assert.equal(previewOpens().length, 1);
+
+  // Already-open board tab: ui reuses it without minting a second pairing link or opening a duplicate tab.
+  const reused = await host.openInboxUi();
+  assert.deepEqual(reused, { status: "reused" });
+  assert.equal(issuedLinks, 1);
+  assert.equal(previewOpens().length, 1);
+  assert.equal((fake.previews.get(inbox.threadId) ?? []).length, 1);
+
+  // Non-board tab present while board tab is closed: ui mints a fresh pairing link and reopens the board tab.
+  fake.previews.set(inbox.threadId, [
+    {
+      threadId: inbox.threadId,
+      tabId: "other-site",
+      navStatus: {
+        _tag: "Success",
+        url: "https://example.com/",
+        title: "Example",
+      },
+      canGoBack: false,
+      canGoForward: false,
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    },
+  ]);
+  const reopened = await host.openInboxUi();
+  assert.deepEqual(reopened, { status: "opened" });
+  assert.equal(issuedLinks, 2);
+  assert.equal(previewOpens().length, 2);
+  assert.deepEqual(previewOpens()[1]!.payload, {
+    threadId: inbox.threadId,
+    url: "http://127.0.0.1:1234/#token=synthetic-2",
+    reveal: true,
+  });
+
+  // A LoadFailed board tab is closed and replaced on ui.
+  const openBoard = (fake.previews.get(inbox.threadId) ?? []).find(
+    (session) => session.tabId !== "other-site",
+  )!;
+  openBoard.navStatus = {
+    _tag: "LoadFailed",
+    url: "http://127.0.0.1:1234/",
+    title: "",
+    code: -1,
+    description: "Connection refused",
+  };
+  const replaced = await host.openInboxUi();
+  assert.deepEqual(replaced, { status: "opened" });
+  assert.equal(issuedLinks, 3);
+  assert.equal(
+    fake.requests.some(
+      (request) =>
+        request.tag === "preview.close" &&
+        (request.payload as { tabId?: string }).tabId === openBoard.tabId,
+    ),
+    true,
+  );
+  assert.equal(
+    JSON.stringify(host.state.read()).includes("token=synthetic"),
+    false,
+  );
+});
+
+test("decisionHold advances on a bounded long thread unless a previous hold is unknown outside the window", async (t) => {
+  const root = mkdtempSync(join(tmpdir(), "t3-hold-bounded-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const state = new T3StateFile(join(root, "t3code.json"));
+  const threadId = "synthetic-inbox-thread";
+  const sent: string[] = [];
+  const intents = {
+    effect: async (commandId: string) => {
+      sent.push(commandId);
+      state.update((draft) => {
+        draft.intents[commandId] = {
+          payload: "{}",
+          status: "settled",
+          kind: "message.dispatch",
+          threadId,
+        };
+      });
+    },
+  } as unknown as T3IntentLedger;
+
+  let windowItems: Array<{
+    type: string;
+    messageId?: string;
+    runId?: string;
+  }> = [];
+  const reads = {
+    isObserved: async () => true,
+    readProjection: async (_id: string, kind: string) => {
+      if (kind === "transcript")
+        throw new T3CompatibilityError(
+          "subscribeThread: incomplete projection",
+        );
+      return {
+        thread: {
+          id: threadId,
+          deletedAt: null,
+          archivedAt: null,
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+        runs: [syntheticRun(threadId, 1, { status: "completed" })],
+        turnItems: kind === "observation" ? [] : (windowItems as unknown[]),
+      };
+    },
+  };
+  const hold = new T3DecisionHold({
+    hostId: () => "synthetic-host",
+    state,
+    reads: reads as never,
+    intents,
+    wake: async () => undefined,
+  });
+
+  // Generation 0 sends cleanly on observation.
+  await hold.reconcile(threadId);
+  const first = state.read().decisionHolds![threadId]!;
+  assert.equal(first.generation, 0);
+  assert.equal(sent.length, 1);
+
+  // Generation 1 advances when previous.messageId is visible in the bounded window.
+  windowItems = [
+    {
+      type: "user_message",
+      messageId: first.messageId,
+      runId: syntheticRun(threadId, 1, { status: "completed" }).id,
+    },
+  ];
+  await hold.reconcile(threadId);
+  const second = state.read().decisionHolds![threadId]!;
+  assert.equal(second.generation, 1);
+  assert.equal(sent.length, 2);
+
+  // Generation 2 advances when a settled previous hold has scrolled past a bounded window of newer turns.
+  windowItems = [{ type: "user_message", messageId: "newer-ui-turn" }];
+  await hold.reconcile(threadId);
+  const third = state.read().decisionHolds![threadId]!;
+  assert.equal(third.generation, 2);
+  assert.equal(sent.length, 3);
+
+  // If the prior send is unknown and absent from the bounded window, reconciliation refuses to guess.
+  state.update((draft) => {
+    draft.intents[third.commandId]!.status = "unknown";
+  });
+  await assert.rejects(
+    hold.reconcile(threadId),
+    /subscribeThread: incomplete projection/,
+  );
+  assert.equal(sent.length, 3);
 });

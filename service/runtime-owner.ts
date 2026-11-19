@@ -1357,6 +1357,12 @@ export class QueueRuntime {
       dataHome: this.dataDir,
       socketPath: this.paseo.socketPath,
       answerDecision: (input) => this.questions.answerT3Decision(input),
+      openInboxUi: async (hostId) => {
+        if (!this.t3Host) {
+          throw new Error(`T3Code host ${hostId} is not configured`);
+        }
+        return await this.t3Host.openInboxUi(hostId);
+      },
     });
     // Local reads are safe as soon as the callback surface and SQLite owner
     // exist. Daemon connection, profile refresh, durable operation resume and

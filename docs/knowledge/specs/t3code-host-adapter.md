@@ -919,11 +919,38 @@ returns to an earlier value is written again rather than replayed. The project n
 stays "Nucleus Inbox".
 
 The service mints a fresh one-time board link for `preview.open` on the inbox
-thread. It sends the link only in that WebSocket call, never in an ACP prompt or
-an intent log. A new host connection opens the pane again after T3 or the service
+thread. It sends the link only in that WebSocket call, never in an ACP prompt,
+thread reply or intent log. A new host connection opens the pane again after T3 or the service
 restarts; an uncertain open is not blindly repeated on the same connection.
 `nucleus t3 install` grants `preview:operate` to the runtime bearer, and a repeat
 install rotates that bearer.
+
+Typing exact `ui` in the pinned Nucleus inbox reuses or reopens the board in that
+thread's browser pane (Tom, 2026-11-19). The inbox ACP agent routes exact `ui`
+through its authenticated `inbox` binding (`/acp-inbox-ui` -> `AcpSessions.openInboxUi`
+-> `T3HostConnection.openInboxUi` -> `T3Inbox.openBoard`). `openBoard` reads
+`preview.list` for the inbox thread: if a healthy (`Loading` or `Success`) board
+tab matching the board's origin already exists, it reuses that tab without
+minting another pairing link or opening a duplicate tab; otherwise it closes any
+`LoadFailed` board tab, mints a fresh one-time pairing link, and calls
+`preview.open` with `reveal: true`. Non-`ui` prompts and task threads never
+invoke this route, pairing URLs never cross back to the ACP session or logs,
+and once the open finishes the inbox returns to `end_turn` (idle) at once
+unless an offerable decision holds it.
+
+**Workspace pane layout limitation.** Verified against installed nightly
+`0.1.11-nightly.20261119.4941` (commit `ff9efe89f6e7`): the right panel's
+maximized state (`byThreadKey[threadKey].maximized` via `setMaximized` in the
+client `rightPanelStore` persisted in `window.localStorage`) is client-local
+only, controlled by the native "Maximize panel" toggle (`PanelLayoutControls`)
+or `rightPanel.toggleMaximized`. Neither `WS_METHODS` (`preview.open`,
+`preview.resize`, `preview.adjust`) nor `OrchestrationV2` exposes a server RPC
+or command to set or toggle workspace pane layout, and browser viewport sizing
+(`preview.resize`) does not change that layout. Likewise, `WS_METHODS` exposes
+no `preview.reveal` or `tabId`-reusing `preview.open` RPC (`PreviewManager.open`
+always creates a new `tabId`, and `PreviewManager.requestReveal` is internal to
+T3's in-process MCP `PreviewAutomationBroker`). The adapter keeps T3's native
+manual maximize control with no T3 patches or client-state hacks.
 
 ## Native parenting
 
@@ -1408,6 +1435,15 @@ visible user bubble. No quiet re-entry exists on `message.dispatch`, so the visi
 plain sentence is the prompt. The proof releases the held turn through a fixture-only
 `acp` debug target, because the adapter in that proof does not own the service's ACP
 surface.
+
+`test/t3code-inbox.test.ts`, `test/acp-agent.test.ts`, `test/acp-service.test.ts`
+and `effigy proof:t3code:inbox` (`scripts/acceptance/t3code-inbox-private.ts`)
+cover the pinned inbox lifecycle and its `ui` command: reusing an already-open
+board tab without duplicating it or minting another link, ignoring non-exact
+prompts, reopening from a closed or `LoadFailed` pane with a fresh one-time
+pairing link and `reveal: true`, keeping pairing URLs out of ACP messages and
+logs, and returning to idle immediately when no decisions are offerable while
+staying held when an offerable decision is open.
 
 The private proof starts an unmodified checkout of the target nightly revision,
 or its bundled server copied into fresh run scratch, with separate home, data,

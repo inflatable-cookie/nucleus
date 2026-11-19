@@ -1,0 +1,1 @@
+Typing `ui` in the pinned T3 "Nucleus" inbox reuses an open Nucleus board preview tab or reopens it with a fresh one-time pairing link when closed, keeps pairing URLs out of chat messages and logs, and returns the inbox to idle when no decision is open.
