@@ -866,7 +866,7 @@ for (const action of ["restart", "route"] as const) {
       assert.equal(f.run().released, false);
       assert.equal(f.archived.size, 0);
       assert.deepEqual(f.stops, []);
-      assert.deepEqual(f.createdRuns, []);
+      assert.equal(f.createdRuns.length, 0);
 
       const reading = f.run().reviewRejectedReadings;
       if (action === "route")
