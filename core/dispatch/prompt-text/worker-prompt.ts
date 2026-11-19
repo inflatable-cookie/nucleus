@@ -56,7 +56,7 @@ export function workerPrompt(
   affectedTestsCommand?: string,
   section: PromptSection = unmeasuredSection,
 ) {
-  const callbackCommand = runCallbackCommand(task.hostId, task.runId, ticket);
+  const callbackCommand = runCallbackCommand(task.runId, ticket);
   const reportPolicy = briefReportPolicy(task);
   const reportOnly = reportPolicy.reportOnly;
   const session = interactiveSessionOpen(task, runs);

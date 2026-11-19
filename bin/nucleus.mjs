@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Internal implementation; agents use the installed `nucleus` command.
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
 import { DATA_HOME_ENTRIES, dataHome, isDataHomeError, resolveDataHome } from '../shared/data-home.mjs';
@@ -42,6 +42,9 @@ try {
     if (!Object.hasOwn(helpers, name) && name !== 'report') throw Error('Choose a helper: submit, reparent, detach, review-entry, bulk-dispose, subscribe, or report');
     const script = name === 'report' ? (process.env.NUCLEUS_HELPER || join(dataHome(), 'worker-report.mjs')) : fileURLToPath(new URL(helpers[name], import.meta.url));
     const ticket = name === 'report' ? (await import('./run-ticket.mjs')).runTicketPath() : null;
+    // A retained shell can name a ticket that a release already deleted (nucleus#1392). Say which
+    // exit applies instead of surfacing a bare ENOENT from the helper.
+    if (ticket && !existsSync(ticket)) throw Error(`The run ticket this shell names is gone, because its run was released. Run the helper with NUCLEUS_CONTINUATION_RUN_ID and NUCLEUS_CONTINUATION_TICKET set to this run's ID and ticket path from your prompt, then retry`);
     const child = spawnSync(process.execPath, [script, ...(ticket ? [ticket] : []), ...helperArgs], { stdio: 'inherit' });
     if (child.error) throw child.error;
     if (child.signal) throw Error(`Helper stopped by ${child.signal}; inspect its result before retrying`);

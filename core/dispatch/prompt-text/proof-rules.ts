@@ -105,15 +105,22 @@ function proofFilesAtHead(task: Pick<Task, 'proofFiles'>, head: string) {
   return allFiles.filter(file => file.head === head || file.runId === latestAuthorRunId);
 }
 
-export function proofFilesSummary(task: Pick<Task, 'proofFiles'>, head: string, command: string): string {
-  const count = proofFilesAtHead(task, head).length;
-  return count ? `${count} proof ${count === 1 ? 'file' : 'files'} recorded for head ${head} and the latest author run; read \`${command} context proofs\`. Judge each file at its recorded head.\n` : '';
-}
-
 export function proofFilesBlock(task: Pick<Task, 'proofFiles'>, head: string): string {
   const files = proofFilesAtHead(task, head);
   if (!files.length) return '';
   return `Proof files recorded for exact head ${head} and the latest author run (local copies under Nucleus's own scratch; never uploaded to the forge):\n${files.map(file => `- ${file.label} (recorded head ${file.head}): ${file.path}${file.sourcePath ? ` (original locator ${file.sourcePath})` : ''} (sha256 ${file.sha256}, ${file.bytes} bytes, delivered by run ${file.runId})`).join('\n')}\n`;
+}
+
+/**
+ * The reviewer's proof inventory, rendered inline in the prompt floor (nucleus#1392).
+ * Brief-required proof must stay reachable without a helper read, so the list
+ * never lives only in the on-demand context store. Empty when the task has no
+ * proof file for this head or the latest author run, so a task with no proof
+ * gets no section.
+ */
+export function reviewerProofInventory(task: Pick<Task, 'proofFiles'>, head: string): string {
+  const inventory = proofFilesBlock(task, head);
+  return inventory ? `${PROOF_FILES_REVIEWER_RULE}\n${inventory}` : '';
 }
 
 /**

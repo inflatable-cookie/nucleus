@@ -1,0 +1,1 @@
+A reviewer's prompt now lists the proof files recorded for its head, so brief-required proof is visible without a helper read. A retained reviewer's continuation run can read its proof and history context after its prior run was released: every run's helper commands name that run's own ticket, and a stale released ticket now gets a refusal that names the fix.

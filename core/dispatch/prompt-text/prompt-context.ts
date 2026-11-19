@@ -27,7 +27,7 @@ import {
   runTemporaryPromptNote,
 } from "./workspace-text";
 import { operatorValidationBlock } from "./validation";
-import { requiredProofNote } from "./proof-rules";
+import { requiredProofNote, reviewerProofInventory } from "./proof-rules";
 import {
   queueBriefBlock,
   queueLaneBlock,
@@ -59,14 +59,17 @@ export const bbBrowserCapabilityNotice = (task: Pick<Task, "hostId">) =>
     ? "BB browser-cache capability gap: BB does not expose per-thread environment injection, so Nucleus cannot guarantee that this thread sees the Playwright browsers available to Paseo. If a required browser is unavailable, report that capability gap and the observed failure.\n"
     : "";
 
-/** BB cannot inject a run environment, so bind its report and context commands explicitly. */
-export function runCallbackCommand(
-  host: Task["hostId"],
-  runId: string | null,
-  ticket?: string,
-): string {
+/**
+ * Every run's report and context commands name that run's own ticket. A retained
+ * shell keeps the NUCLEUS_TICKET it exported at its first dispatch, and a release
+ * deletes that ticket file (nucleus#1392, seen live on nucleus#1384), so a bare
+ * helper command reads a path that no longer exists. Binding the continuation
+ * identity on the command itself keeps the read on this run's ticket on every
+ * host; BB additionally cannot inject a run environment at all.
+ */
+export function runCallbackCommand(runId: string | null, ticket?: string): string {
   const prefix =
-    host?.startsWith("bb:") && runId && ticket
+    runId && ticket
       ? `NUCLEUS_CONTINUATION_RUN_ID=${quote(runId)} NUCLEUS_CONTINUATION_TICKET=${quote(ticket)} `
       : "";
   return `${prefix}nucleus helper report`;
@@ -81,7 +84,7 @@ export function runPromptContext(
   affectedTestsCommand?: string,
   section: PromptSection = unmeasuredSection,
 ): RunPromptContext {
-  const callbackCommand = runCallbackCommand(task.hostId, run.id, ticket);
+  const callbackCommand = runCallbackCommand(run.id, ticket);
   const runScratchNote = runTemporaryPromptNote(run.temporaryDirectory);
   const reportPolicy = briefReportPolicy(task);
   const reportOnly = run.role === "revision" && reportPolicy.reportOnly;
@@ -155,6 +158,11 @@ export function runPromptContext(
       section(
         "namedProof",
         proofOnly ? "" : requiredProofNote(run.role, task),
+      ) +
+      // A reviewer reads brief-required proof from its prompt floor, not the store (nucleus#1392).
+      section(
+        "proofFiles",
+        run.role === "reviewer" ? reviewerProofInventory(task, run.head) : "",
       ) +
       section("lane", queueLaneBlock(task)) +
       section(
