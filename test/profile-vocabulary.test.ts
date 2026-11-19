@@ -307,7 +307,9 @@ test('each host\'s routing snapshot carries its translation, selection and routi
     assert.equal(policy.selection?.choice?.profileId, 'shape-4');
     const board = new RuntimeBoard({ store, engine, markStoreAccess: () => {},
       cachedTaskDetail: createTaskDetailCache(store, { profiles: task => engine.profilesFor(task.hostId) }) } as unknown as BoardContext);
-    assert.deepEqual(board.taskNext({ taskId: retained.id }).routingPolicy?.host, policy.host);
+    const nextPolicy = board.taskNext({ taskId: retained.id }).routingPolicy;
+    assert.equal(nextPolicy?.host, undefined, 'before first dispatch the combined catalog is not attributed to one host');
+    assert.deepEqual(nextPolicy?.hosts?.map(host => host.hostId), ['paseo:local', 't3code:env']);
 
     const read = engine.profileCompatibility();
     assert.deepEqual(read.hosts.map(entry => [entry.hostId, entry.kind, entry.label]), [['paseo:local', 'paseo', 'Paseo'], ['t3code:env', 't3code', 'T3Code']]);

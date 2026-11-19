@@ -392,7 +392,7 @@ export function workerSelectionExplanation(task: Task, pool: readonly PoolEntry[
   const picked = chooseProfile(task, [...profiles], [...pool], counts, new Set(unavailableGroups), "worker", recent, usage, offsets, true);
   const named = task.profileRequests?.worker?.profileId ?? task.preferredProfileId;
   const row = picked && met.find(item => item.profileId === picked.profile.id);
-  const reason = !picked ? "no eligible profile on this host"
+  const reason = !picked ? "no eligible profile"
     : picked.profile.id === named ? "named by the task's request or preference"
     : row ? `fewest recent assignments per effective weight in the set: ${row.recent} of the last 50 over weight ${row.weight} × cost lean ${row.effectiveWeight / row.weight} (cost ${row.cost ?? "unset"})${met.length > 1 ? `; next ${met.filter(item => item.profileId !== row.profileId).slice(0, 2).map(item => `${item.name} ${item.recent} over ${item.effectiveWeight}`).join(", ")}` : ""}`
     : "outside the demand set";

@@ -648,8 +648,9 @@ test("repository hostKind selects the online host of that kind; switching back l
       },
       () => [],
     );
-    assert.equal(view.host, "t3code:env");
-    assert.equal(taskNextSchema.parse(view).host, "t3code:env");
+    assert.equal(view.host, undefined);
+    assert.equal(view.hostPreference, "t3code:env");
+    assert.equal(taskNextSchema.parse(view).hostPreference, "t3code:env");
   } finally {
     await runtime.drain();
   }
