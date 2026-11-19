@@ -252,9 +252,17 @@ function carriesFlag(argv: readonly string[], name: string): boolean {
   return argv.some((arg) => arg === name || arg.startsWith(`${name}=`));
 }
 
-function runtimeHost(base: string, argv: readonly string[], providerProgram: string): boolean {
-  return base.endsWith("-host") || base.endsWith("_repl") ||
-    (base === providerProgram && argv.slice(1).some(arg => argvBase(arg) === "app-server"));
+function runtimeHost(
+  base: string,
+  argv: readonly string[],
+  providerProgram: string,
+): boolean {
+  return (
+    base.endsWith("-host") ||
+    base.endsWith("_repl") ||
+    (base === providerProgram &&
+      argv.slice(1).some((arg) => argvBase(arg) === "app-server"))
+  );
 }
 
 /**
@@ -314,7 +322,9 @@ function runtimePids(
       providerDirectories.has(directory),
     );
   };
-  const candidates = rows.filter(({ program, base }) => providerShipped(program, base));
+  const candidates = rows.filter(({ program, base }) =>
+    providerShipped(program, base),
+  );
   const runtimes = new Set<number>();
   const hosts = new Set<number>();
   for (const { process, argv, base } of candidates) {
@@ -396,7 +406,8 @@ export class RunProcessTable {
   readonly orphanedHelpers = new Set<number>();
   private readonly commands = new Map<number, ProcessCommand>();
   private readonly runtimeCandidates: ProcessCommand[] = [];
-  private readonly helpers: Array<{ fact: HostProcessFact; runId?: string }> = [];
+  private readonly helpers: Array<{ fact: HostProcessFact; runId?: string }> =
+    [];
   private readonly directories = new Map<string, readonly string[]>();
   private readonly runtimes = new Map<string, ReadonlySet<number>>();
 
@@ -408,12 +419,14 @@ export class RunProcessTable {
       const row = { process: fact, argv, program, base: base.toLowerCase() };
       this.byPid.set(fact.pid, fact);
       this.commands.set(fact.pid, row);
-      if (row.base && !SHELL_PROGRAMS.has(row.base)) this.runtimeCandidates.push(row);
+      if (row.base && !SHELL_PROGRAMS.has(row.base))
+        this.runtimeCandidates.push(row);
       const script = base === "node" ? argvBase(argv[1]) : undefined;
       if (script && REPORT_HELPER_SCRIPTS.includes(script)) {
-        const runId = script === "mcp-report.mjs"
-          ? /(?:^|[\\/])mcp-(.+)\.json$/.exec(argv[2] ?? "")?.[1]
-          : undefined;
+        const runId =
+          script === "mcp-report.mjs"
+            ? /(?:^|[\\/])mcp-(.+)\.json$/.exec(argv[2] ?? "")?.[1]
+            : undefined;
         this.helpers.push({ fact, runId });
       }
     }
@@ -423,14 +436,31 @@ export class RunProcessTable {
 
   /** Resolve executable links once, off the executor loop, for cleanup. */
   async readProgramDirectories(signal: AbortSignal): Promise<void> {
-    const programs = [...new Set([...this.commands.values()].map(row => row.program))];
-    for (let offset = 0; offset < programs.length && !signal.aborted; offset += 64) {
-      await Promise.all(programs.slice(offset, offset + 64).map(async program => {
-        const invoked = directoryOf(program);
-        if (!invoked) { this.directories.set(program, []); return; }
-        const resolved = await realpath(program).then(directoryOf, () => null);
-        this.directories.set(program, resolved && resolved !== invoked ? [invoked, resolved] : [invoked]);
-      }));
+    const programs = [
+      ...new Set([...this.commands.values()].map((row) => row.program)),
+    ];
+    for (
+      let offset = 0;
+      offset < programs.length && !signal.aborted;
+      offset += 64
+    ) {
+      await Promise.all(
+        programs.slice(offset, offset + 64).map(async (program) => {
+          const invoked = directoryOf(program);
+          if (!invoked) {
+            this.directories.set(program, []);
+            return;
+          }
+          const resolved = await realpath(program).then(
+            directoryOf,
+            () => null,
+          );
+          this.directories.set(
+            program,
+            resolved && resolved !== invoked ? [invoked, resolved] : [invoked],
+          );
+        }),
+      );
     }
   }
 
@@ -441,6 +471,20 @@ export class RunProcessTable {
     this.directories.set(program, directories);
     return directories;
   };
+
+  /**
+   * The provider's own standing host processes in this listing: the provider
+   * executable in its `app-server` mode, or one of its own tool hosts. The host
+   * daemon starts and keeps them, so they outlive the thread whose launch
+   * environment they still carry (nucleus#1372).
+   */
+  providerHostPids(): ReadonlySet<number> {
+    const pids = new Set<number>();
+    // A shell is never one of these hosts, whatever its script is named.
+    for (const row of this.runtimeCandidates)
+      if (runtimeHost(row.base, row.argv, row.base)) pids.add(row.process.pid);
+    return pids;
+  }
 
   runtimePids(provider: HostProcessFact): ReadonlySet<number> {
     const row = this.commands.get(provider.pid);
@@ -453,8 +497,13 @@ export class RunProcessTable {
     const key = isHost ? `${provider.pid}\0${program}` : program;
     let pids = this.runtimes.get(key);
     if (!pids) {
-      pids = runtimePids(provider, base, new Set(this.directoriesFor(program)),
-        this.runtimeCandidates, this.directoriesFor);
+      pids = runtimePids(
+        provider,
+        base,
+        new Set(this.directoriesFor(program)),
+        this.runtimeCandidates,
+        this.directoriesFor,
+      );
       this.runtimes.set(key, pids);
     }
     return pids;
@@ -466,8 +515,16 @@ export class RunProcessTable {
       const provider = this.byPid.get(helper.ppid ?? 0);
       if (!runId || !provider) continue;
       const pids = this.runtimePids(provider);
-      yield { runId, provider, infrastructure: this.facts.filter(fact =>
-        fact.pid === provider.pid || fact.pid === helper.pid || pids.has(fact.pid)) };
+      yield {
+        runId,
+        provider,
+        infrastructure: this.facts.filter(
+          (fact) =>
+            fact.pid === provider.pid ||
+            fact.pid === helper.pid ||
+            pids.has(fact.pid),
+        ),
+      };
     }
   }
 

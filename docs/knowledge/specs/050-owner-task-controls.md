@@ -462,6 +462,18 @@ reviewer `route now` can also replace it under ordinary routing authorization.
 Both observe the exact PR head, binding and idle reader before acting. A live
 turn, pending permission or unsettled delivery still holds the original run.
 
+That reader is ruled out, so the ordinary sweep takes the same exit instead of
+leaving it to a person: once its own agent is observed settled at the recorded
+head, Queue performs `restart role=reviewer fresh` for it — the one rule `next`
+states, under the same retirement ceiling as every fresh replacement. Where the
+replacement cannot act, or the ceiling is spent, the pass opens the planner
+escalation (Spec 058) with that verb in the question and the refusal named on
+the wait, so the reader is answered on the pass that observes it and never sits
+silently (nucleus#1372: an exhausted reader sat idle for five hours while `next`
+offered the verb and nothing acted). The escalation is per reader: a
+replacement that later exhausts is its own cause, not a repeat of the answered
+escalation before it.
+
 A missing report keeps the retained reviewer. An idle reader can finish or
 redeliver on its existing credential. A fresh run earns its own verdict at the
 current head. The previous reader's progress stays with its run.
