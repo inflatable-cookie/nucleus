@@ -28,9 +28,9 @@ visibly with the reason and the fix (for example "T3 provider not ready: run
 never settles a task thread; a waiting task is snoozed (Tom, 2026-11-19: "I use
 the settle list for longer running threads I want to come back to.. it would be
 great if we could keep Nucleus noise to a minimum in that list, snoozing seems
-ideal?").** The parent row has three states, driven by the board's attention
+ideal?").** **Nucleus wakes a thread the operator settled (Tom, 2026-11-19: "I explicitly want nucleus to unsettle threads like that.. when threads have done what they can then need to wait for nucleus to notify it of progress, I want to settle it so it's out the way, then it gets woken by nucleus").** A settle means "out of the way until Nucleus has something", not "never deliver". A message, decision, re-entry or follow-up addressed to a settled thread unsettles it and is delivered. Nucleus still never issues `thread.settle` itself. The parent row has three states, driven by the board's attention
 projection: *active* while a role child runs or a person must act (Nucleus
-unsnoozes it then, and leaves a manual settle alone); *snoozed* while the task
+unsnoozes it then, and unsettles a thread the operator settled); *snoozed* while the task
 waits on nothing Nucleus is running and needs no one (held until something,
 prerequisite wait, queued for capacity, between roles), with the snooze renewed
 before it lapses; *archived* when the task finishes. The top-level fallback and
@@ -341,7 +341,7 @@ already present.
 | Remove | `thread.delete` through dispatch at closeout, never `onlyIfUnused` | Durable intent, then `deletedAt` or absence from a complete inventory proves removal; an unknown outcome is never resent |
 | Snooze a waiting row | `thread.snooze` through dispatch with `snoozedUntil` in the future | One bounded horizon, read back from `snoozedUntil`; deterministic command identity per wait episode and horizon; a refusal is "stay active" for that episode, never a retry loop |
 | Show a row again | `thread.unsnooze` through dispatch with `reason: "user"` | Only a row this host snoozed; a person who must act or a running role gets the row back immediately through the title/row projection drain and the host pass. The snooze record stays until a fresh T3 read proves `snoozedUntil` is cleared; a settled unsnooze that still reads snoozed is re-observed and retried as a new occurrence, while an unknown delivery is never resent blindly. Operator snoozes and manual settles are never touched |
-| Continue a manually settled thread | Refuse before sending | The operator must unsettle the thread in T3 before a follow-up or re-entry can start a run |
+| Continue a manually settled thread | Unsettle, then send | A message, decision, follow-up or re-entry for a thread the operator settled unsettles it first and then delivers (Tom, 2026-11-19). Refusing before send is retired |
 | Archive workspace | Mark the task's T3 worktree handle archived in adapter state | Observation reads the handle's `archivedAt`; the shared project registration remains registered and available |
 | Atomic interrupt and continue | `message.dispatch` `steer_active` with the live run's `targetRunId` | The message injects into the active turn; with no active run the refusal is proven before send |
 | Tell or relayed answer (`steerOrNotify`) | `message.dispatch` `steer_active` when the thread has a live run, read immediately before send; otherwise `queue_after_active` as `notify` | A proven not-sent steer falls back to one queued send under its own command identity; a remote steer failure is unknown delivery and is never resent. Nucleus's own reminders and notices keep `queue_after_active` |
@@ -421,13 +421,15 @@ reply or remote failure) retains its command identity and is never resent
 blindly while delivery is unknown; once a fresh read confirms `snoozedUntil`
 cleared, the unknown unsnooze intent settles and the snooze record is retired.
 
-An operator snooze (any live snooze not recorded by this host) and a row an
-operator settled by hand are left exactly as they are — no snooze, no
-unsnooze, no unsettle — and a repeated pass inside the horizon writes nothing.
+An operator snooze (any live snooze not recorded by this host) is left exactly
+as it is, and a repeated pass inside the horizon writes nothing.
 
 A settled thread starts no run, and T3 does not clear a manual settle on
-`message.dispatch`. Re-entry and follow-up refuse before sending until the operator
-unsettles it in T3.
+`message.dispatch`. So when Nucleus has a message, decision, re-entry or follow-up
+for a thread the operator settled, it unsettles the thread first and then sends
+(Tom, 2026-11-19). A settle is how the operator parks a thread until Nucleus has
+news. Until that is implemented, those sends refuse before sending (the earlier
+behaviour).
 Existing closeout and retention paths still decide when threads are archived or
 removed; the [thread lifecycle](#thread-lifecycle) is where that decision lives.
 
