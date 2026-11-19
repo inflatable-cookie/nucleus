@@ -16,17 +16,40 @@ import {
 import { groupIsUnavailable } from "../../shared/pool";
 import { proofOnlyReceiptAwaitingReview } from "../qa/proof-records";
 import { z } from "zod";
-import { isDispositionActive, mergeReviewEvidenceAt, taskControlInputSchema, taskNextVerbSchema, type Run, type Task, type TaskControlInput, type TaskNextVerb } from "../../shared/contracts";
+import {
+  isDispositionActive,
+  mergeReviewEvidenceAt,
+  taskControlInputSchema,
+  taskNextVerbSchema,
+  type Run,
+  type Task,
+  type TaskControlInput,
+  type TaskNextVerb,
+} from "../../shared/contracts";
 import { operatorReplacementPending } from "../recovery/task-reasons";
 import { blockingRecoveryEffectsRefusal } from "../recovery/recovery-effects";
-import { reviewInProgress, reviewerIdentityAtHead, reviewContinuationState, reviewResultFencesRun, retainedReaderStateDecision, retainedReaderStoredRefusal, retainedReaderUnavailableRefusal, reviewContinuationWait, keepRetainedReviewer } from "../review/review-continuation";
-import { durableRunFence, currentReadyPrEvidence, prIdentity } from './owner-facts';
-import type { OwnerVerbFacts } from './owner-facts';
-import { verbInput } from './owner-shared';
-import type { OwnerVerbApplicability, OwnerVerb } from './owner-shared';
-import { interactiveSessionOpen } from '../dispatch/interactive';
-import { retainedContinuationPlan } from './owner-restart';
-import { reviewRequiredForTask } from '../review/reviewer-setting';
+import {
+  reviewInProgress,
+  reviewerIdentityAtHead,
+  reviewContinuationState,
+  reviewResultFencesRun,
+  retainedReaderStateDecision,
+  retainedReaderStoredRefusal,
+  retainedReaderUnavailableRefusal,
+  reviewContinuationWait,
+  keepRetainedReviewer,
+} from "../review/review-continuation";
+import {
+  durableRunFence,
+  currentReadyPrEvidence,
+  prIdentity,
+} from "./owner-facts";
+import type { OwnerVerbFacts } from "./owner-facts";
+import { verbInput } from "./owner-shared";
+import type { OwnerVerbApplicability, OwnerVerb } from "./owner-shared";
+import { interactiveSessionOpen } from "../dispatch/interactive";
+import { retainedContinuationPlan } from "./owner-restart";
+import { reviewRequiredForTask } from "../review/reviewer-setting";
 
 export const moveTargets = ["work", "review", "merge", "closeout"] as const;
 
@@ -427,25 +450,61 @@ function moveViews(facts: OwnerVerbFacts): TaskNextVerb[] {
   // store-only fact is the one the dependency correction reads; the applied
   // move still proves the merge, the descendant heads, the
   // accepting authority and fresh inactivity.
-  const neverDispatchedReviewEntry = task.phase === "queued" && Boolean(task.reviewEntry) && facts.store.reviewEntryUnrunBeforeFirstRun(task);
-  const closeout = ((): (OwnerVerbApplicability & { note?: string }) => {
-    const shared = gate("closeout"); if (shared) return shared;
-    if (['done', 'cancelled'].includes(task.phase))
+  const neverDispatchedReviewEntry =
+    task.phase === "queued" &&
+    Boolean(task.reviewEntry) &&
+    facts.store.reviewEntryUnrunBeforeFirstRun(task);
+  const closeout = ((): OwnerVerbApplicability & { note?: string } => {
+    const shared = gate("closeout");
+    if (shared) return shared;
+    if (["done", "cancelled"].includes(task.phase))
       return { available: false, refusal: `The task is ${task.phase}` };
-    if ((!neverDispatchedReviewEntry && ["queued", "dispatching"].includes(task.phase)) || !prIdentity(task))
-      return { available: false, refusal: "Moving to closeout requires a dispatched task with a PR" };
+    if (
+      (!neverDispatchedReviewEntry &&
+        ["queued", "dispatching"].includes(task.phase)) ||
+      !prIdentity(task)
+    )
+      return {
+        available: false,
+        refusal: "Moving to closeout requires a dispatched task with a PR",
+      };
     if (neverDispatchedReviewEntry)
-      return { available: true, args: {},
-        note: "This task never dispatched and its PR merged outside Nucleus: no reviewer, review, verification or proof exists at the merged head, and the merge is an observed fact, never acceptance. move closeout observes the merged head, branch and merge commit at the forge, proves the merged head descends from the intake and recorded source heads, and records your explicit operator source acceptance (qualification) of that exact head with the missing evidence; without it the task stays held." };
+      return {
+        available: true,
+        args: {},
+        note: "This task never dispatched and its PR merged outside Nucleus: no reviewer, review, verification or proof exists at the merged head, and the merge is an observed fact, never acceptance. move closeout observes the merged head, branch and merge commit at the forge, proves the merged head descends from the intake and recorded source heads, and records your explicit operator source acceptance (qualification) of that exact head with the missing evidence; without it the task stays held.",
+      };
     if (task.resolution.mergedCommit) {
       const head = task.resolution.mergeHead;
-      if (!head || reviewRequiredForTask(facts.store, task) && !mergeReviewEvidenceAt(task, head))
-        return { available: false, refusal: 'The recorded merge needs its exact head and matching review evidence' };
-      const refusal = durableRunFence(facts) ?? blockingRecoveryEffectsRefusal(facts.store, task, {
-        kinds: ['operation', 'hook', 'run-delivery', 'review-delivery', 'publication', 'attention-notice'],
-      });
-      return refusal ? { available: false, refusal } : { available: true, args: {},
-        note: 'Nucleus re-observes the recorded merge and the retained participants before resuming closeout.' };
+      if (
+        !head ||
+        (reviewRequiredForTask(facts.store, task) &&
+          !mergeReviewEvidenceAt(task, head))
+      )
+        return {
+          available: false,
+          refusal:
+            "The recorded merge needs its exact head and matching review evidence",
+        };
+      const refusal =
+        durableRunFence(facts) ??
+        blockingRecoveryEffectsRefusal(facts.store, task, {
+          kinds: [
+            "operation",
+            "hook",
+            "run-delivery",
+            "review-delivery",
+            "publication",
+            "attention-notice",
+          ],
+        });
+      return refusal
+        ? { available: false, refusal }
+        : {
+            available: true,
+            args: {},
+            note: "Nucleus re-observes the recorded merge and the retained participants before resuming closeout.",
+          };
     }
     if (live && ["intent", "uncertain"].includes(live.status))
       return {
@@ -473,8 +532,14 @@ function moveViews(facts: OwnerVerbFacts): TaskNextVerb[] {
     // A never-dispatched review-entry closeout always needs its acceptance; a
     // dispatched one offers the descendant pair, and the ordinary reason-only
     // closeout stays available beside it.
-    view("closeout", closeout, neverDispatchedReviewEntry ? ["reason", "qualification"] : ["reason"],
-      neverDispatchedReviewEntry || task.resolution.mergedCommit ? [] : ["qualification", "head"]),
+    view(
+      "closeout",
+      closeout,
+      neverDispatchedReviewEntry ? ["reason", "qualification"] : ["reason"],
+      neverDispatchedReviewEntry || task.resolution.mergedCommit
+        ? []
+        : ["qualification", "head"],
+    ),
   ];
 }
 

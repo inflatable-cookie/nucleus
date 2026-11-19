@@ -14657,8 +14657,12 @@ test("C4 sweep releases the settled agentless recovery after reopen and permits 
     resumed.lastHookCleanupAt = Date.now();
     let readStarted!: () => void;
     let releaseRead!: () => void;
-    const reading = new Promise<void>(resolve => { readStarted = resolve; });
-    const gated = new Promise<null>(resolve => { releaseRead = () => resolve(null); });
+    const reading = new Promise<void>((resolve) => {
+      readStarted = resolve;
+    });
+    const gated = new Promise<null>((resolve) => {
+      releaseRead = () => resolve(null);
+    });
     const list = f.adapter.hostProcessListing!;
     try {
       assert.equal(
@@ -14698,7 +14702,11 @@ test("C4 sweep releases the settled agentless recovery after reopen and permits 
       const [, pass] = await Promise.race([
         Promise.all([reading, audit]),
         new Promise<never>((_, reject) => {
-          timeout.addEventListener("abort", () => reject(Error("recovery waited for process cleanup")), { once: true });
+          timeout.addEventListener(
+            "abort",
+            () => reject(Error("recovery waited for process cleanup")),
+            { once: true },
+          );
         }),
       ]);
       assert.equal(pass.fault, null);
