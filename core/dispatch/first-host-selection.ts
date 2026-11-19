@@ -1,4 +1,9 @@
-import type { PoolEntry, Profile, Task, UsageLevel } from "../../shared/contracts";
+import type {
+  PoolEntry,
+  Profile,
+  Task,
+  UsageLevel,
+} from "../../shared/contracts";
 import { chooseProfile } from "./routing";
 import { workerProfileIsExcluded } from "../../shared/contracts";
 import { hostKindOf, type HostKind } from "../../shared/host-kind";
