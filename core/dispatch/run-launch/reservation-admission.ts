@@ -5,7 +5,11 @@ import {
   isDispositionActive,
   workerExclusionRefusal,
 } from "../../../shared/contracts";
-import { dispatchBlocked, DISPATCH_HELD_REASON, slotRequestFenced } from "../capacity";
+import {
+  dispatchBlocked,
+  DISPATCH_HELD_REASON,
+  slotRequestFenced,
+} from "../capacity";
 import { blockingRecoveryEffectsRefusal } from "../../recovery/recovery-effects";
 import { retainedPrerequisiteRevision } from "../../store/store-prerequisites";
 import {
@@ -136,10 +140,13 @@ export class RunReservationAdmission {
         );
       if (role === "revision") {
         if (t.prerequisiteWait || latest.prerequisiteWait) {
-          if (latest.version !== t.version
-            || !retainedPrerequisiteRevision(latest)
-            || slotRequestFenced(latest)
-            || blockingRecoveryEffectsRefusal(this.store, latest)) return false;
+          if (
+            latest.version !== t.version ||
+            !retainedPrerequisiteRevision(latest) ||
+            slotRequestFenced(latest) ||
+            blockingRecoveryEffectsRefusal(this.store, latest)
+          )
+            return false;
         }
         const exclusion = workerExclusionRefusal(latest, agentId, profile?.id);
         if (exclusion) {
@@ -209,8 +216,12 @@ export class RunReservationAdmission {
           profile,
         );
       if (role === "revision" && latest.prerequisiteWait) {
-        t = this.store.update(t.id, { prerequisiteWait: null }, "prerequisite_wait_resumed",
-          JSON.stringify({ waitId: latest.prerequisiteWait.id, runId: run.id }));
+        t = this.store.update(
+          t.id,
+          { prerequisiteWait: null },
+          "prerequisite_wait_resumed",
+          JSON.stringify({ waitId: latest.prerequisiteWait.id, runId: run.id }),
+        );
       }
       this.resolution.update(
         t,

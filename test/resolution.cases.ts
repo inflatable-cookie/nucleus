@@ -18462,10 +18462,19 @@ test("overlapping blocked results do not clear the successor run", async () => {
 });
 
 function c5Prerequisite(f: ReturnType<typeof fixture>): Task {
-  return f.store.insert(submissionSchema.parse({
-    submissionId: randomUUID(), title: "Upstream source", repoPath: "/upstream",
-    planningCommit: base, brief: { text: "Capture source evidence" }, originAgentId: "origin",
-  }), "host", "source", base);
+  return f.store.insert(
+    submissionSchema.parse({
+      submissionId: randomUUID(),
+      title: "Upstream source",
+      repoPath: "/upstream",
+      planningCommit: base,
+      brief: { text: "Capture source evidence" },
+      originAgentId: "origin",
+    }),
+    "host",
+    "source",
+    base,
+  );
 }
 
 function c5Next(store: Store, taskId: string) {
@@ -18478,16 +18487,33 @@ test("C5 releases an already authorized pre-PR worker in the release sweep", asy
     const prerequisite = c5Prerequisite(f);
     f.adapter.verifyResume = async () => head;
     const blocked = f.store.update(f.task.id, {
-      phase: "blocked", prUrl: null, prHead: null,
-      completion: { taskId: f.task.id, runId: f.task.runId!, eventId: randomUUID(), status: "blocked", summary: "Waiting for source evidence" },
+      phase: "blocked",
+      prUrl: null,
+      prHead: null,
+      completion: {
+        taskId: f.task.id,
+        runId: f.task.runId!,
+        eventId: randomUUID(),
+        status: "blocked",
+        summary: "Waiting for source evidence",
+      },
     });
-    const instruction = "Continue the approved work using the upstream evidence";
+    const instruction =
+      "Continue the approved work using the upstream evidence";
     const armed = await f.engine.performTaskControl({
-      taskId: blocked.id, version: blocked.version, action: "restart", role: "worker",
-      reason: "Resume the retained worker", instruction,
+      taskId: blocked.id,
+      version: blocked.version,
+      action: "restart",
+      role: "worker",
+      reason: "Resume the retained worker",
+      instruction,
     });
     assert.equal(armed.resolution.prePrResumeInstruction, instruction);
-    const waiting = f.store.setPrerequisiteWait(armed, [prerequisite.id], "Wait for source evidence");
+    const waiting = f.store.setPrerequisiteWait(
+      armed,
+      [prerequisite.id],
+      "Wait for source evidence",
+    );
     await f.step();
     assert.equal(f.sends.length, 0);
     assert.equal(c5Next(f.store, f.task.id).stop?.reason, "prerequisite");
@@ -18503,15 +18529,37 @@ test("C5 releases an already authorized pre-PR worker in the release sweep", asy
     assert.equal(f.current().resolution.prePrResumeInstruction, null);
     assert.deepEqual(c5Next(f.store, f.task.id).activeRun?.runId, resumed.id);
 
-    const relevantEvents = () => f.store.eventsAll(f.task.id)
-      .filter(event => ["prerequisite_wait_released", "prerequisite_wait_resumed", "run_intent"].includes(event.kind));
+    const relevantEvents = () =>
+      f.store
+        .eventsAll(f.task.id)
+        .filter((event) =>
+          [
+            "prerequisite_wait_released",
+            "prerequisite_wait_resumed",
+            "run_intent",
+          ].includes(event.kind),
+        );
     const events = relevantEvents();
-    assert.deepEqual(events.map(event => event.kind), ["prerequisite_wait_released", "prerequisite_wait_resumed", "run_intent"]);
-    assert.deepEqual(JSON.parse(events[1]!.detail), { waitId: waiting.prerequisiteWait!.id, runId: resumed.id });
+    assert.deepEqual(
+      events.map((event) => event.kind),
+      ["prerequisite_wait_released", "prerequisite_wait_resumed", "run_intent"],
+    );
+    assert.deepEqual(JSON.parse(events[1]!.detail), {
+      waitId: waiting.prerequisiteWait!.id,
+      runId: resumed.id,
+    });
     await f.engine.wake();
     assert.deepEqual(relevantEvents(), events);
-    assert.deepEqual(f.sends.map(run => run.id), [resumed.id]);
-    assert.equal(f.store.notices(f.task.id).filter(notice => notice.kind === "prerequisite").length, 1);
+    assert.deepEqual(
+      f.sends.map((run) => run.id),
+      [resumed.id],
+    );
+    assert.equal(
+      f.store
+        .notices(f.task.id)
+        .filter((notice) => notice.kind === "prerequisite").length,
+      1,
+    );
   } finally {
     await f.close();
   }
@@ -18521,38 +18569,99 @@ test("C5 finds a committed release after restart and waits for the uncertain rev
   const f = fixture(true);
   try {
     const prerequisite = c5Prerequisite(f);
-    const instruction = "Apply the approved scoped change when the upstream source is ready";
-    const armed = f.engine.resolution.retry(f.current(), true, undefined, true, false, false, instruction);
-    const waiting = f.store.setPrerequisiteWait(armed, [prerequisite.id], "Wait for the scoped change input");
+    const instruction =
+      "Apply the approved scoped change when the upstream source is ready";
+    const armed = f.engine.resolution.retry(
+      f.current(),
+      true,
+      undefined,
+      true,
+      false,
+      false,
+      instruction,
+    );
+    const waiting = f.store.setPrerequisiteWait(
+      armed,
+      [prerequisite.id],
+      "Wait for the scoped change input",
+    );
     const observedAt = Date.now();
-    const before = (seconds: number) => new Date(observedAt - seconds * 1000).toISOString();
+    const before = (seconds: number) =>
+      new Date(observedAt - seconds * 1000).toISOString();
     const oldReviewer = runSchema.parse({
-      id: "old-reviewer", taskId: f.task.id, role: "reviewer", generation: 1,
-      head, base, agentId: "old-reader", workspaceId: f.task.workspaceId,
-      profile: f.engine.profiles[1], status: "running", active: true, released: false,
-      createdAt: before(3), lastObservedAt: null, idleSince: null, completion: null,
+      id: "old-reviewer",
+      taskId: f.task.id,
+      role: "reviewer",
+      generation: 1,
+      head,
+      base,
+      agentId: "old-reader",
+      workspaceId: f.task.workspaceId,
+      profile: f.engine.profiles[1],
+      status: "running",
+      active: true,
+      released: false,
+      createdAt: before(3),
+      lastObservedAt: null,
+      idleSince: null,
+      completion: null,
     });
     f.store.putRun(oldReviewer);
     f.idle(oldReviewer.agentId!);
-    f.states.set(oldReviewer.agentId!, { ...f.states.get(oldReviewer.agentId!)!, status: "running", active: true });
+    f.states.set(oldReviewer.agentId!, {
+      ...f.states.get(oldReviewer.agentId!)!,
+      status: "running",
+      active: true,
+    });
 
     const input = taskControlInputSchema.parse({
-      taskId: waiting.id, version: waiting.version, action: "restart", role: "reviewer", reason: "Continue the retained review",
+      taskId: waiting.id,
+      version: waiting.version,
+      action: "restart",
+      role: "reviewer",
+      reason: "Continue the retained review",
     });
     const { key, payload } = taskControlOperation(input);
     const intentAt = before(2);
-    const accepted = f.store.acceptOperation({
-      key, payload, kind: "task_control", inputHash: operationInputHash(payload),
-      taskId: waiting.id, expectedVersion: waiting.version, hostId: waiting.hostId!,
-    }, intentAt);
+    const accepted = f.store.acceptOperation(
+      {
+        key,
+        payload,
+        kind: "task_control",
+        inputHash: operationInputHash(payload),
+        taskId: waiting.id,
+        expectedVersion: waiting.version,
+        hostId: waiting.hostId!,
+      },
+      intentAt,
+    );
     assert.ok("accepted" in accepted);
     const uncertain = f.store.putOperation({
-      ...accepted.operation, startedAt: intentAt, settledAt: intentAt, attempts: 1,
-      state: "needs_attention", diagnostic: "Transport", result: null,
-      effect: { kind: "task_control", target: "restart", intentAt, status: "uncertain", result: null, resultAt: null },
+      ...accepted.operation,
+      startedAt: intentAt,
+      settledAt: intentAt,
+      attempts: 1,
+      state: "needs_attention",
+      diagnostic: "Transport",
+      result: null,
+      effect: {
+        kind: "task_control",
+        target: "restart",
+        intentAt,
+        status: "uncertain",
+        result: null,
+        resultAt: null,
+      },
     });
-    f.store.putRun({ ...oldReviewer, id: "later-reviewer", agentId: "later-reader", createdAt: before(1),
-      status: "superseded", released: true, active: false });
+    f.store.putRun({
+      ...oldReviewer,
+      id: "later-reviewer",
+      agentId: "later-reader",
+      createdAt: before(1),
+      status: "superseded",
+      released: true,
+      active: false,
+    });
     f.idle("later-reader");
     f.store.update(prerequisite.id, { phase: "done" });
 
@@ -18560,17 +18669,27 @@ test("C5 finds a committed release after restart and waits for the uncertain rev
     assert.equal(f.store.reconcilePrerequisiteWait(waiting.id), "released");
     const released = f.current().prerequisiteWait;
     assert.ok(released?.releasedAt);
-    assert.equal(f.store.notices(waiting.id).find(notice => notice.kind === "prerequisite")?.status, "pending");
+    assert.equal(
+      f.store
+        .notices(waiting.id)
+        .find((notice) => notice.kind === "prerequisite")?.status,
+      "pending",
+    );
     assert.equal(f.sends.length, 0);
     await f.engine.stop();
 
     const reopened = new Store(join(f.dir, "queue.sqlite"));
     const restarted = new Engine(reopened, f.adapter, 0, () => true);
     restarted.profiles = [...f.engine.profiles];
-    const events = (kind: string) => reopened.eventsAll(waiting.id).filter(event => event.kind === kind);
+    const events = (kind: string) =>
+      reopened.eventsAll(waiting.id).filter((event) => event.kind === kind);
     const next = () => c5Next(reopened, waiting.id);
-    const restartEffect = () => next().verbs.find(view =>
-      view.verb === "retry_effect" && view.args?.effect === `operation.${uncertain.id}`);
+    const restartEffect = () =>
+      next().verbs.find(
+        (view) =>
+          view.verb === "retry_effect" &&
+          view.args?.effect === `operation.${uncertain.id}`,
+      );
     try {
       for (let pass = 0; pass < 2; pass++) {
         await restarted.wake();
@@ -18580,27 +18699,55 @@ test("C5 finds a committed release after restart and waits for the uncertain rev
         assert.equal(events("prerequisite_wait_resumed").length, 0);
         assert.equal(next().activeRun?.runId, oldReviewer.id);
         assert.match(String(restartEffect()?.args?.summary ?? ""), /Transport/);
-        assert.equal(f.creates.length + f.sends.length + f.continuations.length, 0);
+        assert.equal(
+          f.creates.length + f.sends.length + f.continuations.length,
+          0,
+        );
       }
 
       f.idle(oldReviewer.agentId!);
-      f.states.set(oldReviewer.agentId!, { ...f.states.get(oldReviewer.agentId!)!, status: "closed" });
+      f.states.set(oldReviewer.agentId!, {
+        ...f.states.get(oldReviewer.agentId!)!,
+        status: "closed",
+      });
       await restarted.wake();
-      assert.equal(reopened.run(oldReviewer.id)?.released, true,
-        reopened.eventsAll(waiting.id).slice(-8).map(event => `${event.kind}: ${event.detail}`).join("\n"));
+      assert.equal(
+        reopened.run(oldReviewer.id)?.released,
+        true,
+        reopened
+          .eventsAll(waiting.id)
+          .slice(-8)
+          .map((event) => `${event.kind}: ${event.detail}`)
+          .join("\n"),
+      );
       const settled = events("operation_superseded");
       assert.equal(settled.length, 1);
       assert.equal(JSON.parse(settled[0]!.detail).id, uncertain.id);
-      assert.deepEqual(reopened.operation(uncertain.id)?.effect, uncertain.effect);
+      assert.deepEqual(
+        reopened.operation(uncertain.id)?.effect,
+        uncertain.effect,
+      );
 
       await restarted.wake();
-      const revisions = reopened.runs(waiting.id).filter(run => run.role === "revision");
+      const revisions = reopened
+        .runs(waiting.id)
+        .filter((run) => run.role === "revision");
       const current = reopened.task(waiting.id);
-      assert.equal(revisions.length, 1, JSON.stringify({
-        phase: current.phase, reason: current.reason, stop: current.resolution.stop,
-        instruction: current.resolution.revisionInstruction, wait: current.prerequisiteWait,
-        events: reopened.eventsAll(waiting.id).slice(-8).map(event => [event.kind, event.detail]),
-      }));
+      assert.equal(
+        revisions.length,
+        1,
+        JSON.stringify({
+          phase: current.phase,
+          reason: current.reason,
+          stop: current.resolution.stop,
+          instruction: current.resolution.revisionInstruction,
+          wait: current.prerequisiteWait,
+          events: reopened
+            .eventsAll(waiting.id)
+            .slice(-8)
+            .map((event) => [event.kind, event.detail]),
+        }),
+      );
       const [revision] = revisions;
       assert.equal(revision!.instruction, instruction);
       assert.equal(revision!.agentId, f.task.agentId);
@@ -18608,19 +18755,33 @@ test("C5 finds a committed release after restart and waits for the uncertain rev
       assert.equal(next().activeRun?.runId, revision!.id);
       assert.equal(restartEffect(), undefined);
       assert.equal(reopened.task(waiting.id).prerequisiteWait, null);
-      assert.equal(reopened.task(waiting.id).resolution.revisionInstruction?.runId, revision!.id);
+      assert.equal(
+        reopened.task(waiting.id).resolution.revisionInstruction?.runId,
+        revision!.id,
+      );
 
       const resumed = events("prerequisite_wait_resumed");
       assert.equal(resumed.length, 1);
-      assert.deepEqual(JSON.parse(resumed[0]!.detail), { waitId: released.id, runId: revision!.id });
+      assert.deepEqual(JSON.parse(resumed[0]!.detail), {
+        waitId: released.id,
+        runId: revision!.id,
+      });
       await restarted.wake();
       assert.equal(events("prerequisite_wait_released").length, 1);
       assert.deepEqual(events("operation_superseded"), settled);
       assert.deepEqual(events("prerequisite_wait_resumed"), resumed);
-      assert.deepEqual(f.sends.map(run => run.id), [revision!.id]);
+      assert.deepEqual(
+        f.sends.map((run) => run.id),
+        [revision!.id],
+      );
       assert.equal(f.creates.length + f.continuations.length, 0);
-      const notices = reopened.notices(waiting.id).filter(notice => notice.kind === "prerequisite");
-      assert.deepEqual(notices.map(notice => [notice.id, notice.status]), [[`prerequisite-wait:${released.id}`, "delivered"]]);
+      const notices = reopened
+        .notices(waiting.id)
+        .filter((notice) => notice.kind === "prerequisite");
+      assert.deepEqual(
+        notices.map((notice) => [notice.id, notice.status]),
+        [[`prerequisite-wait:${released.id}`, "delivered"]],
+      );
       assert.deepEqual(f.notices, [notices[0]!.id]);
     } finally {
       await restarted.stop();
@@ -18638,10 +18799,17 @@ test("C5 leaves a changes-requested verdict behind a released wait for an explic
     await f.engine.wake();
     const review = f.run();
     assert.equal(review.role, "reviewer");
-    const waiting = f.store.setPrerequisiteWait(f.current(), [prerequisite.id], "Wait for upstream");
+    const waiting = f.store.setPrerequisiteWait(
+      f.current(),
+      [prerequisite.id],
+      "Wait for upstream",
+    );
     const changes = await f.report("changes_required");
     assert.equal(f.current().phase, "changes_requested");
-    assert.equal(f.current().resolution.pendingWorkerInstruction, changes.summary);
+    assert.equal(
+      f.current().resolution.pendingWorkerInstruction,
+      changes.summary,
+    );
     assert.equal(f.current().resolution.revisionInstruction, null);
     f.store.update(prerequisite.id, { phase: "done" });
     await f.engine.wake();
@@ -18650,18 +18818,33 @@ test("C5 leaves a changes-requested verdict behind a released wait for an explic
     assert.equal(released.prerequisiteWait.id, waiting.prerequisiteWait!.id);
     const next = c5Next(f.store, f.task.id);
     assert.equal(next.activeRun, null);
-    const move = next.verbs.find(view => view.verb === "move" && view.args?.to === "work");
+    const move = next.verbs.find(
+      (view) => view.verb === "move" && view.args?.to === "work",
+    );
     assert.ok(move?.available);
     assert.ok(move.fill?.includes("reason"));
     const notices = [...f.notices];
     await f.engine.wake();
     assert.equal(f.current().phase, "changes_requested");
-    assert.deepEqual(f.store.runs(f.task.id).map(run => run.id), [review.id]);
+    assert.deepEqual(
+      f.store.runs(f.task.id).map((run) => run.id),
+      [review.id],
+    );
     assert.equal(f.sends.length, 0);
-    assert.equal(f.store.eventsAll(f.task.id).filter(event => event.kind === "prerequisite_wait_released").length, 1);
-    assert.equal(f.store.eventsAll(f.task.id).filter(event => event.kind === "prerequisite_wait_resumed").length, 0);
+    assert.equal(
+      f.store
+        .eventsAll(f.task.id)
+        .filter((event) => event.kind === "prerequisite_wait_released").length,
+      1,
+    );
+    assert.equal(
+      f.store
+        .eventsAll(f.task.id)
+        .filter((event) => event.kind === "prerequisite_wait_resumed").length,
+      0,
+    );
     const notice = `prerequisite-wait:${released.prerequisiteWait.id}`;
-    assert.equal(f.notices.filter(id => id === notice).length, 1);
+    assert.equal(f.notices.filter((id) => id === notice).length, 1);
     assert.deepEqual(f.notices, notices);
   } finally {
     await f.close();

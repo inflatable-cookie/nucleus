@@ -442,9 +442,7 @@ function memoFacts(
 
 /** A prerequisite wait or an already occupied slot needs no admission. */
 function slotAdmissionExempt(task: Task, occupied = false): boolean {
-  return (
-    prerequisiteWaitBlocksPhase(task) || occupied
-  );
+  return prerequisiteWaitBlocksPhase(task) || occupied;
 }
 
 /** These queued tasks are still visited for observation, but own no place in slot order. */
