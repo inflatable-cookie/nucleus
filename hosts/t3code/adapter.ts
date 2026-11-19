@@ -594,6 +594,7 @@ export class T3CodeHost implements Host {
       title: p.thread.title,
       archived: !!p.thread.archivedAt,
       deleted: !!p.thread.deletedAt,
+      ...(p.thread.settledOverride === "settled" ? { settled: true } : {}),
     };
   }
   /** One synchronized thread snapshot: the reads module owns the decode, the host owns this entry to it. */

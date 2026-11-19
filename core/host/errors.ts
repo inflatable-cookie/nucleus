@@ -33,6 +33,17 @@ export class ProvenPreSendRefusalError extends Error {
   }
 }
 /**
+ * The host's thread carries an operator's manual settle. Nucleus never clears it
+ * to deliver a message (Tom, 2026-11-19), so the send is refused before it leaves.
+ * A project message treats this thread as gone and moves to the next live candidate.
+ */
+export class OperatorSettledRefusalError extends ProvenPreSendRefusalError {
+  constructor(reason: string, label?: string) {
+    super(reason, label);
+    this.name = "OperatorSettledRefusalError";
+  }
+}
+/**
  * The host's own catalogue is not settled yet: a provider is still probing, or it
  * reports no model options at all. Nothing was sent, so a launch waits for the
  * next pass to read a settled snapshot instead of refusing the profile

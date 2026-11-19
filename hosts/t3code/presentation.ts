@@ -4,6 +4,7 @@ import { capPaseoTitle } from "../../shared/paseo-title";
 import { WIRE_LABEL_KEYS } from "../../shared/wire-labels";
 import {
   HostUnknownDeliveryError,
+  OperatorSettledRefusalError,
   ProvenPreSendRefusalError,
 } from "../../core/host";
 import type { Task } from "../../shared/contracts";
@@ -456,7 +457,7 @@ export class T3Presentation {
       );
     const projection = await this.core.reads.readProjection(id, "observation");
     if (projection.thread.settledOverride === "settled")
-      throw new ProvenPreSendRefusalError(
+      throw new OperatorSettledRefusalError(
         "T3Code thread is manually settled; unsettle it in T3 before continuing",
       );
   }

@@ -8,7 +8,7 @@ import { T3CodeHost } from '../hosts/t3code/adapter';
 import { createAdapter } from '../hosts/t3code';
 import { T3RpcError } from '../hosts/t3code/rpc';
 import { HostPolicies } from '../core/host/host-policies';
-import type { HostPolicyConstructor } from '../core/host';
+import { OperatorSettledRefusalError, type HostPolicyConstructor } from '../core/host';
 import { taskWorkspaceTitle } from '../core/workspaces/workspace-title';
 import { PARENT_MODEL, PARENT_PROVIDER } from '../hosts/t3code/nesting';
 import { SNOOZE_HORIZON_MS, SNOOZE_RENEW_BEFORE_MS } from '../hosts/t3code/presentation';
@@ -326,6 +326,20 @@ test('re-entry leaves a manually settled parent untouched', async t => {
   const before = server.commands.length;
   await assert.rejects(host.createAgent(spec('reviewer-launch', 'reviewer')), /settled/i);
   assert.equal(server.commands.slice(before).some(command => command.type === 'thread.unsettle' || command.type === 'message.dispatch'), false);
+});
+
+test('an operator-settled thread reports settled on its origin read and refuses a message before send, typed as a settle', async t => {
+  const { host, server, spec } = await fixture(t);
+  const worker = await host.createAgent(spec('worker-launch'));
+  server.threads.get(worker.id)!.thread.settledOverride = 'settled';
+  const origin = await host.originAgent(worker.id);
+  assert.equal(origin?.settled, true);
+  assert.equal(origin?.archived, false);
+  const before = server.commands.length;
+  await assert.rejects(host.sendMessage(worker.id, { messageId: 'settled-message', text: 'hello' }), (error: unknown) =>
+    error instanceof OperatorSettledRefusalError && /manually settled/.test(error.message));
+  assert.equal(server.commands.slice(before).some(command => command.type === 'message.dispatch' || command.type === 'thread.unsettle'), false,
+    'the message is never sent and the settle is never cleared');
 });
 
 test('a snooze refused for a pending approval stays active with no retry loop', async t => {

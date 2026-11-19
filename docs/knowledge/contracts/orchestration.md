@@ -826,7 +826,12 @@ Each recipient thread is observed before a send, and an archived or gone thread 
 sent to. A `tell` to a planner with no live thread waits in its project's inbox (a
 queued record with `toProjectKey`) and is delivered by the sweep to the next live planner.
 A named agent that is archived or gone refuses at send. An `ask` routed to an archived
-rung moves on to the next rung.
+rung moves on to the next rung. A thread the operator settled by hand on its host is
+gone for a project message: it is never a candidate, and a send the host refuses as
+settled (the typed operator-settled refusal) is recorded refused, the cache is cleared
+and the message re-resolves once without that thread. It is never left queued on a
+settled thread, and Nucleus never unsettles a thread to deliver. A refusal names its
+route ("Project message", "Task role message", "Agent message", "Reply message").
 
 **EffectReconcile** (`core/recovery/effect-reconcile.ts`). Settles an unknown send from
 its exact message: reviewer deliveries, run creations and attention notices.
