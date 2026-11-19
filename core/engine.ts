@@ -304,6 +304,8 @@ export class Engine {
         "recovery",
         "resumeClearedAttention",
         "settleBudgetClock",
+        "slotAdmissionReason",
+        "update",
       ],
     ),
   );

@@ -1,0 +1,1 @@
+Queue slot waits now show current occupants and order, including after a service restart. Dispatch checks the order again before recording intent, and releasing a fence returns a parked restart to ordinary admission.

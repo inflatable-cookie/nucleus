@@ -1,7 +1,9 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import {
   DEFAULT_PROJECT_LIMIT,
   DEFAULT_PAPERCUT_PROJECT_LIMIT,
 } from "../../shared/contracts";
+import { boardDispatchHoldApplies } from "../../shared/board-dispatch-hold";
 import { externalWorkspace } from "../../shared/workspace-ownership";
 import {
   currentTaskStop,
@@ -33,7 +35,7 @@ import type { Store } from "../store/store";
  * the dispatch waits for a slot - so this has to be readable from the resolution, which
  * cannot import the engine without a cycle.
  */
-type CapacityTask = Task & { hasUnreleasedRun?: boolean; hasLiveRun?: boolean };
+type CapacityTask = Task & { hasLiveRun?: boolean };
 
 /** A dispatch fence blocks fresh task-work launches. A merge fence does not. */
 export const dispatchBlocked = (task: Task) => Boolean(holdsOf(task).dispatch);
@@ -115,7 +117,22 @@ export function slotRequestFenced(task: Task): boolean {
 const workerHoldsSlot = (task: Task): boolean => {
   // An interactive session pins its operator-attached agent for the session.
   if (task.interactive === true) return true;
-  // Observed live, whatever the phase or report state.
+  // Once the worker's report has advanced into the PR lifecycle, the worker
+  // observation belongs to the old turn. Any live continuation is a run row.
+  if (
+    task.resolution.mergedCommit ||
+    (task.completion &&
+      ![
+        "queued",
+        "dispatching",
+        "working",
+        "blocked",
+        "error",
+        "needs_attention",
+      ].includes(task.phase))
+  )
+    return false;
+  // Prior to handover, a report can arrive while the worker is still running.
   if (task.agentActive === true) return true;
   if (task.agentIntent && !task.completion) {
     // Intent recorded but the agent never arrived: the launch is starting.
@@ -147,15 +164,20 @@ const workerHoldsSlot = (task: Task): boolean => {
 // agent it requests a slot through the ordinary fair-share order. Terminal
 // tasks never hold slots.
 export const occupiesSlot = (task: CapacityTask, runs: Run[] = []) =>
+  task.removedAt == null &&
   !["done", "cancelled"].includes(task.phase) &&
   (workerHoldsSlot(task) ||
     runs.some(runHoldsSlot) ||
     task.hasLiveRun === true ||
-    (Boolean(task.resolution.restartSlotHold) && !slotRequestFenced(task)));
+    (Boolean(task.resolution.restartSlotHold) && !restartSlotObsolete(task)));
 
-/** The next participant takes this task's held slot, whichever role resumes it. */
-export function consumeRestartSlotHold(task: Task): boolean {
-  return Boolean(task.resolution.restartSlotHold);
+/** These transitions relinquish the held slot. The next launch must compete again. */
+export function restartSlotObsolete(task: Task): boolean {
+  return (
+    Boolean(task.resolution.mergedCommit || task.removedAt) ||
+    ["done", "cancelled"].includes(task.phase) ||
+    slotRequestFenced(task)
+  );
 }
 
 /** Never-dispatched `queued` work. Every other slot request is in-flight. */
@@ -164,7 +186,10 @@ function isInFlightSlotRequest(task: Task): boolean {
 }
 
 /** Priority globally, oldest first on per-project ties, round-robin across projects. */
-function fairShareSlotOrder(requestsOldestFirst: Task[]): Task[] {
+function fairShareSlotOrder(
+  requestsOldestFirst: Task[],
+  occupiedStarts: Task[] = [],
+): Task[] {
   const projects = new Map<string, Task[]>();
   for (const task of requestsOldestFirst) {
     const queue = projects.get(task.repoPath) ?? [];
@@ -175,30 +200,42 @@ function fairShareSlotOrder(requestsOldestFirst: Task[]): Task[] {
     queue.sort((a, b) => b.queuePriority - a.queuePriority);
   const order = [...projects.keys()];
   const offsets = new Map(order.map((project) => [project, 0]));
+  // A queued start that already committed belongs to this project's turn.
+  // Re-reading after that write must give the other projects their turns.
+  const turns = new Map<string, number>();
+  const turnKey = (task: Task) =>
+    JSON.stringify([task.repoPath, task.queuePriority]);
+  const served = (task: Task) => turns.get(turnKey(task)) ?? 0;
+  const takeTurn = (task: Task) => turns.set(turnKey(task), served(task) + 1);
+  for (const task of occupiedStarts) takeTurn(task);
   const result: Task[] = [];
   let cursor = 0;
   while (result.length < requestsOldestFirst.length) {
+    const heads = order.map(
+      (project) => projects.get(project)![offsets.get(project)!],
+    );
     const priority = Math.max(
-      ...order.flatMap((project) => {
-        const task = projects.get(project)![offsets.get(project)!];
-        return task ? [task.queuePriority] : [];
-      }),
+      ...heads.flatMap((task) => (task ? [task.queuePriority] : [])),
+    );
+    const fewestTurns = Math.min(
+      ...heads.flatMap((task) =>
+        task?.queuePriority === priority ? [served(task)] : [],
+      ),
     );
     let selected = -1;
     for (let step = 0; step < order.length; step++) {
       const index = (cursor + step) % order.length;
-      const project = order[index];
-      if (
-        projects.get(project)![offsets.get(project)!]?.queuePriority ===
-        priority
-      ) {
+      const head = heads[index];
+      if (head?.queuePriority === priority && served(head) === fewestTurns) {
         selected = index;
         break;
       }
     }
     if (selected < 0) break;
     const project = order[selected];
-    result.push(projects.get(project)![offsets.get(project)!] as Task);
+    const task = heads[selected];
+    result.push(task);
+    takeTurn(task);
     offsets.set(project, offsets.get(project)! + 1);
     cursor = (selected + 1) % order.length;
   }
@@ -212,6 +249,7 @@ function fairShareSlotOrder(requestsOldestFirst: Task[]): Task[] {
 export function fairSlotRequestOrder(
   tasksNewestFirst: Task[],
   isRequest: (task: Task) => boolean,
+  occupied: Task[] = [],
 ): Task[] {
   const requests = tasksNewestFirst
     .toReversed()
@@ -220,6 +258,11 @@ export function fairSlotRequestOrder(
     ...fairShareSlotOrder(requests.filter(isInFlightSlotRequest)),
     ...fairShareSlotOrder(
       requests.filter((task) => !isInFlightSlotRequest(task)),
+      occupied.filter(
+        (task) =>
+          !task.completion &&
+          (task.phase === "dispatching" || task.phase === "working"),
+      ),
     ),
   ];
 }
@@ -305,7 +348,22 @@ export function capacityLimitFor(
   projectLimit: number = DEFAULT_PROJECT_LIMIT,
   papercuts: PapercutDispatchPolicy = defaultPapercutPolicy,
 ): CapacityLimit | null {
-  const occupied = tasks.filter((task) => occupiesSlot(task));
+  return occupiedCapacityLimit(
+    task,
+    tasks.filter((candidate) => occupiesSlot(candidate)),
+    globalLimit,
+    projectLimit,
+    papercuts,
+  );
+}
+
+function occupiedCapacityLimit(
+  task: Task,
+  occupied: Task[],
+  globalLimit: number,
+  projectLimit: number,
+  papercuts: PapercutDispatchPolicy,
+): CapacityLimit | null {
   if (occupied.length >= globalLimit) return "global";
   const key = slotPoolKey(task, papercuts);
   if (
@@ -342,33 +400,10 @@ export function capacityFor(
   return limit === null ? "" : capacityReason(limit);
 }
 
-/**
- * The capacity refusal at this instant, read from the store's own limits. Every
- * dispatch admission asks this one question, so the four re-checks before an
- * intent cannot drift from one another.
- */
-export function capacityRefusal(
-  store: Pick<
-    Store,
-    | "activeCapacityTasks"
-    | "getMeta"
-    | "papercutDispatchPolicy"
-    | "projectDispatchLimitFor"
-  >,
-  task: Task,
-): string {
-  return capacityFor(
-    task,
-    store.activeCapacityTasks(),
-    store.getMeta<number>("globalLimit") ?? DEFAULT_GLOBAL_LIMIT,
-    store.projectDispatchLimitFor(task),
-    store.papercutDispatchPolicy(),
-  );
-}
-
 interface SlotAdmissionView {
   tasks: Task[];
-  runsByTask: Map<string, Run[]>;
+  occupied: Task[];
+  boardHeld: boolean;
   globalLimit: number;
   projectLimitFor: ReturnType<Store["projectDispatchLimitResolver"]>;
   papercuts: ReturnType<Store["papercutDispatchPolicy"]>;
@@ -405,17 +440,28 @@ function memoFacts(
 }
 
 /** A prerequisite wait or an already occupied slot needs no admission. */
-function slotAdmissionExempt(
-  task: Task,
-  current?: Task,
-  runs: Run[] = [],
-): boolean {
+function slotAdmissionExempt(task: Task, occupied = false): boolean {
   return (
     Boolean(
       task.phase === "changes_requested" && task.prerequisiteWait?.releasedAt,
     ) ||
     Boolean(task.prerequisiteWait && !task.prerequisiteWait.releasedAt) ||
-    Boolean(current && occupiesSlot(current, runs))
+    occupied
+  );
+}
+
+/** These queued tasks are still visited for observation, but own no place in slot order. */
+export function queuedSlotObservationPending(task: Task): boolean {
+  return (
+    task.phase === "queued" &&
+    Boolean(
+      task.resolution.hostWait ||
+        task.resolution.stop?.reason === "host_unavailable" ||
+        (task.entrypoint === "review" &&
+          task.originHostId &&
+          task.originHostId !== task.hostId &&
+          task.resolution.stop?.reason === "origin_busy"),
+    )
   );
 }
 
@@ -436,18 +482,7 @@ export function slotRequestDecision(
     occupiesSlot(candidate)
   )
     return false;
-  // An unavailable host cannot consume a future slot while healthy hosts wait.
-  // The independent hostWait survives when an owner-facing stop takes precedence.
-  if (
-    candidate.phase === "queued" &&
-    (candidate.resolution.hostWait ||
-      candidate.resolution.stop?.reason === "host_unavailable" ||
-      (candidate.entrypoint === "review" &&
-        candidate.originHostId &&
-        candidate.originHostId !== candidate.hostId &&
-        candidate.resolution.stop?.reason === "origin_busy"))
-  )
-    return false;
+  if (queuedSlotObservationPending(candidate)) return false;
   if (mergeHeld(candidate) && candidate.phase === "verifying") return false;
   if (
     candidate.phase === "verifying" &&
@@ -492,6 +527,28 @@ export function decideSlotAdmission(
   requests: Task[],
   waiters: Task[],
 ): string {
+  return describeSlotAdmission(
+    task,
+    tasks.filter((candidate) => occupiesSlot(candidate)),
+    globalLimit,
+    projectLimitFor,
+    papercuts,
+    capacity,
+    requests,
+    waiters,
+  );
+}
+
+function describeSlotAdmission(
+  task: Task,
+  occupied: Task[],
+  globalLimit: number,
+  projectLimitFor: (task: Task) => number,
+  papercuts: PapercutDispatchPolicy,
+  capacity: CapacityLimit | null,
+  requests: Task[],
+  waiters: Task[],
+): string {
   if (capacity) {
     // Running work fills the pool: name its occupancy against the limit, and
     // list in-flight waiters that hold no slot (checks, merge turn, thread
@@ -500,9 +557,7 @@ export function decideSlotAdmission(
     const key = slotPoolKey(task, papercuts);
     const sameScope = (candidate: Task) =>
       globalScope || slotPoolKey(candidate, papercuts) === key;
-    const occupants = tasks.filter(
-      (candidate) => occupiesSlot(candidate) && sameScope(candidate),
-    );
+    const occupants = occupied.filter(sameScope);
     const limit = globalScope
       ? globalLimit
       : slotPoolLimit(task, projectLimitFor(task), papercuts);
@@ -516,7 +571,6 @@ export function decideSlotAdmission(
     const counts = ` (${occupants.length}/${limit} occupied${labels ? `: ${labels}` : ""}${waiterLabels ? `; ${waiters.length} waiting without a slot: ${waiterLabels}` : ""})`;
     return `${CAPACITY_WAIT_PREFIX} ${capacityReason(capacity)}${counts}`;
   }
-  const occupied = tasks.filter((candidate) => occupiesSlot(candidate));
   let globalAvailable = globalLimit - occupied.length;
   const occupiedByProject = new Map<string, number>();
   for (const candidate of occupied) {
@@ -552,10 +606,8 @@ export function decideSlotAdmission(
           ),
           running = runningByProject.get(key) ?? 0;
         const reserved = (occupiedByProject.get(key) ?? 0) - running;
-        const occupants = tasks.filter(
-          (candidate) =>
-            occupiesSlot(candidate) &&
-            slotPoolKey(candidate, papercuts) === key,
+        const occupants = occupied.filter(
+          (candidate) => slotPoolKey(candidate, papercuts) === key,
         );
         const labels = occupants
           .map((candidate) => waitLabel(candidate, task))
@@ -586,35 +638,39 @@ export class SlotAdmission {
   get store() {
     return this.resolution.store;
   }
-  private dispatchPassFacts: Pick<
-    SlotAdmissionView,
-    "integrationReady" | "dependencyWait"
-  > | null = null;
-  private dispatchPassDepth = 0;
-  /**
-   * One dispatch pass asks every queued task's admission, and each answer ranks
-   * every other request, so uncached prerequisite and integration reads cost the
-   * square of the queue: 410 queued Project-a tasks held the service at 100% CPU with
-   * reads timing out (2026-11-05). These two facts only order fair-share requests,
-   * so a pass reads each once. A later pass sees any change, and launch still reads
-   * its own prerequisites and capacity live.
-   */
-  async withDispatchPass<T>(pass: () => Promise<T>): Promise<T> {
-    if (this.dispatchPassDepth++ === 0) {
-      this.dispatchPassFacts = memoFacts({
-        integrationReady: (task) => this.resolution.holdsIntegrationTurn(task),
-        dependencyWait: (task) => this.store.dependencyWait(task),
-      });
-    }
-    try {
-      return await pass();
-    } finally {
-      if (--this.dispatchPassDepth === 0) this.dispatchPassFacts = null;
-    }
+  private readonly dispatchPass = new AsyncLocalStorage<{
+    revision: number;
+    facts: Pick<SlotAdmissionView, "integrationReady" | "dependencyWait">;
+  }>();
+  /** Memoize ordering reads within one unchanged dispatch pass. */
+  withDispatchPass<T>(pass: () => Promise<T>): Promise<T> {
+    return this.dispatchPass.run(
+      { revision: -1, facts: this.orderingFacts() },
+      pass,
+    );
   }
-  /** The prerequisite wait one dispatch pass has read, or a live read outside a pass. */
+
+  private orderingFacts() {
+    return memoFacts({
+      integrationReady: (task) => this.resolution.holdsIntegrationTurn(task),
+      dependencyWait: (task) => this.store.dependencyWait(task),
+    });
+  }
+
+  private currentPassFacts() {
+    const pass = this.dispatchPass.getStore();
+    // The reservation boundary must re-read after awaits, including a transaction's own writes.
+    if (!pass || this.store.db.isTransaction) return null;
+    const revision = this.store.boardRevision();
+    if (pass.revision !== revision) {
+      pass.revision = revision;
+      pass.facts = this.orderingFacts();
+    }
+    return pass.facts;
+  }
+
   passDependencyWait(task: Task): string {
-    return (this.dispatchPassFacts ?? this.store).dependencyWait(task);
+    return (this.currentPassFacts() ?? this.store).dependencyWait(task);
   }
   /** Read-only board batch; never retained across a revision or used by launch. */
   slotAdmissionReader(
@@ -622,33 +678,38 @@ export class SlotAdmission {
     runs: Run[],
     includeRecovery = false,
   ): (task: Task) => string {
-    const runsByTask = new Map<string, Run[]>();
-    for (const run of runs) {
-      const queue = runsByTask.get(run.taskId);
-      if (queue) queue.push(run);
-      else runsByTask.set(run.taskId, [run]);
-    }
+    const live = new Set(runs.filter(runHoldsSlot).map((run) => run.taskId));
+    const facts = this.orderingFacts();
     const view: SlotAdmissionView = {
-      tasks,
-      runsByTask,
+      tasks: tasks.map((task) => ({
+        ...task,
+        hasLiveRun:
+          live.has(task.id) || (task as CapacityTask).hasLiveRun === true,
+      })),
+      occupied: [],
       requestFlags: new Map(),
+      boardHeld: this.store.getMeta<boolean>("dispatchHeld") === true,
       globalLimit:
         this.store.getMeta<number>("globalLimit") ?? DEFAULT_GLOBAL_LIMIT,
       projectLimitFor: this.store.projectDispatchLimitResolver(),
       papercuts: this.store.papercutDispatchPolicy(),
-      ...memoFacts({
-        integrationReady: (task) => this.resolution.holdsIntegrationTurn(task),
-        dependencyWait: (task) => this.store.dependencyWait(task),
-      }),
+      ...facts,
     };
-    return (task) =>
-      this.resolution.slotAdmissionReason(
+    view.occupied = view.tasks.filter((task) => occupiesSlot(task));
+    // Explicit recovery reads can rank recovery requests. Ordinary starts and
+    // their display use the same order for queued and review/revision work.
+    const recoveryView = { ...view, requestFlags: new Map<string, boolean>() };
+    return (task) => {
+      const recovery = includeRecovery && task.phase === "needs_attention";
+      return this.resolution.slotAdmissionReason(
         task,
-        includeRecovery,
+        recovery,
         undefined,
-        view,
+        recovery ? recoveryView : view,
       );
+    };
   }
+
   /**
    * `parkedPhases`: parked phases that count as slot requests. Fair-share ranks
    * in-flight requests ahead of never-dispatched queued ones. Queued dispatch,
@@ -664,47 +725,18 @@ export class SlotAdmission {
     // A completed retained wait on changes_requested is parked for explicit
     // operator action, so it is not currently requesting a revision slot.
     if (slotAdmissionExempt(task)) return "";
-    let tasks = view?.tasks ?? this.store.admissionCandidates(task);
-    // A bounded queue page can be full of origin waits that reserve nothing.
-    // Rank the remaining requests too, including a review just recovered from
-    // that wait. Preserve the active-capacity projection for live run owners.
+    const tasks = view?.tasks ?? this.store.admissionCandidates(task);
+    const occupied =
+      view?.occupied ?? tasks.filter((candidate) => occupiesSlot(candidate));
     if (
-      !view &&
-      tasks.some(
-        (candidate) =>
-          candidate.phase === "queued" &&
-          candidate.entrypoint === "review" &&
-          candidate.originHostId &&
-          candidate.originHostId !== candidate.hostId &&
-          candidate.resolution.stop?.reason === "origin_busy",
+      slotAdmissionExempt(
+        task,
+        occupied.some((candidate) => candidate.id === task.id),
       )
-    ) {
-      const all = this.store.tasks();
-      const waiting = all.filter(
-        (candidate) =>
-          candidate.phase === "queued" &&
-          candidate.entrypoint === "review" &&
-          candidate.originHostId &&
-          candidate.originHostId !== candidate.hostId &&
-          candidate.resolution.stop?.reason === "origin_busy",
-      ).length;
-      const limit =
-        this.store.getMeta<number>("globalLimit") ?? DEFAULT_GLOBAL_LIMIT;
-      const included = new Map(
-        this.store
-          .readyQueueHeads(limit + 2 + waiting)
-          .map((candidate) => [candidate.id, candidate]),
-      );
-      for (const candidate of this.store.activeCapacityTasks())
-        included.set(candidate.id, candidate);
-      if (!included.has(task.id)) included.set(task.id, task);
-      tasks = all
-        .filter((candidate) => included.has(candidate.id))
-        .map((candidate) => included.get(candidate.id)!);
-    }
-    const current = tasks.find((candidate) => candidate.id === task.id) ?? task;
-    const taskRuns = view?.runsByTask.get(task.id) ?? this.store.runs(task.id);
-    if (slotAdmissionExempt(task, current, taskRuns)) return "";
+    )
+      return "";
+    const boardHeld =
+      view?.boardHeld ?? this.store.getMeta<boolean>("dispatchHeld") === true;
     const globalLimit =
       view?.globalLimit ??
       this.store.getMeta<number>("globalLimit") ??
@@ -712,7 +744,7 @@ export class SlotAdmission {
     const projectLimitFor =
       view?.projectLimitFor ?? this.store.projectDispatchLimitResolver();
     const papercuts = view?.papercuts ?? this.store.papercutDispatchPolicy();
-    const facts = view ?? this.dispatchPassFacts;
+    const facts = view ?? this.currentPassFacts();
     const isRequest = (candidate: Task) => {
       const known = view?.requestFlags?.get(candidate.id);
       if (known !== undefined) return known;
@@ -723,6 +755,7 @@ export class SlotAdmission {
     const readsAsRequest = (candidate: Task) => {
       // An offline host cannot use a free slot or reserve another host's turn.
       if (
+        (boardHeld && boardDispatchHoldApplies(candidate)) ||
         !candidate.hostId ||
         !this.resolution.withHost(candidate.hostId, () =>
           this.resolution.hostAvailable(candidate),
@@ -776,9 +809,9 @@ export class SlotAdmission {
       }
       return result === true;
     };
-    const capacity = capacityLimitFor(
+    const capacity = occupiedCapacityLimit(
       task,
-      tasks,
+      occupied,
       globalLimit,
       projectLimitFor(task),
       papercuts,
@@ -796,12 +829,21 @@ export class SlotAdmission {
           isRequest(candidate),
       );
     } else {
-      requests = view?.requests ?? fairSlotRequestOrder(tasks, isRequest);
+      requests =
+        view?.requests ?? fairSlotRequestOrder(tasks, isRequest, occupied);
       if (view) view.requests = requests;
     }
-    return decideSlotAdmission(
+    // A board page can include a request beyond the bounded ranked heads.
+    if (
+      view &&
+      !capacity &&
+      !tasks.some((candidate) => candidate.id === task.id) &&
+      isRequest(task)
+    )
+      requests = [...requests, task];
+    return describeSlotAdmission(
       task,
-      tasks,
+      occupied,
       globalLimit,
       projectLimitFor,
       papercuts,
