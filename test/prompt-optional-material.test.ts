@@ -99,6 +99,31 @@ test('a brief that names visual proof carries the optional delivery mechanics, a
   assert.match(REQUIRED_PROOF_AUTHOR_NOTE, /never waive a proof this brief names as required/);
 });
 
+test('the visual-proof classifier finds the words an author actually writes', () => {
+  // A brief asks for evidence in its own words. Each of these must select the
+  // delivery paragraph, because the alternative withholds the evidence route.
+  for (const brief of [
+    '## Outcome\n\nAttach captures of the board after the change.\n',
+    '## Outcome\n\nInclude pictures of the dialog in both themes.\n',
+    '## Outcome\n\nAttach a photo of the rendered output.\n',
+    '## Outcome\n\nAttach a screen capture of the flow.\n',
+    '## Outcome\n\nShow before/after evidence for the reordered columns.\n',
+    '## Outcome\n\nShow before and after evidence for the reordered columns.\n',
+    '## Outcome\n\nAdd a short recording of the import.\n',
+    '## Outcome\n\nAttach board.png and the mov of the replay.\n',
+  ]) {
+    assert.equal(briefNamesVisualProof(task(brief)), true, brief);
+    const rendered = prompts(brief);
+    for (const role of ['worker', 'workerContinuation', 'revision'] as const)
+      assert.ok(rendered[role].includes(PROOF_FILES_RULE), `${role} carries the delivery mechanics for: ${brief}`);
+    assert.doesNotMatch(rendered.worker, /there are none to deliver/, brief);
+  }
+  // A brief with no visual evidence in it keeps the paragraph that says so.
+  const plain = '## Outcome\n\nChange the parser and run the tests.\n';
+  assert.equal(briefNamesVisualProof(task(plain)), false);
+  assert.ok(prompts(plain).worker.includes(PROOF_FILES_NONE_NOTE));
+});
+
 test('the run context is reference material: read if you need it, and a failed read is never a blocker', () => {
   for (const text of ['## Outcome\n\nChange the parser.\n', '## Outcome\n\nAttach screenshots.\n']) {
     const rendered = prompts(text);

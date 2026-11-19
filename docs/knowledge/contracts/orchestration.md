@@ -1662,7 +1662,11 @@ request identities and stored committed-handoff rows are not rewritten.
   optional delivery for proof the brief names: a brief that names no visual or
   rendered proof gets a paragraph saying there is nothing to deliver, and the
   size limits are named as packaging (summarise larger evidence into compact
-  evidence plus hashes) rather than as a reason to stop.
+  evidence plus hashes) rather than as a reason to stop. The classifier reads the
+  words an author writes for that evidence — screenshots, captures, pictures,
+  photos, renders, recordings, images, video files and before/after — and errs
+  towards the delivery paragraph, because the extra paragraph costs a line while
+  withholding the route loses the evidence.
 
 - Worker prompts separate action from status. Revision and resume requests
   store their text as `pendingWorkerInstruction`; dispatch copies it onto

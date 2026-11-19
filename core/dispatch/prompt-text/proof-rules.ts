@@ -67,10 +67,23 @@ export const PROOF_FILES_NONE_NOTE = "Proof files for the retained reviewer: thi
 /**
  * Whether the brief asks for visual or rendered proof. The match is generous on
  * purpose: an extra paragraph is harmless, while staying silent about evidence
- * the brief asked for is not. No match selects the paragraph that says there is
- * nothing to deliver.
+ * the brief asked for is not. Every word an author reaches for — a capture, a
+ * picture, a photo, a before/after pair — has to select the delivery paragraph,
+ * so the list carries the common nouns and their files, and an ambiguous word
+ * ("capture the log") costs only the extra paragraph. No match selects the
+ * paragraph that says there is nothing to deliver.
  */
-const VISUAL_PROOF_TERMS = /\b(?:screenshots?|screen ?shots?|screen ?recordings?|recordings?|render(?:s|ed|ing)?|visual|images?|videos?|gifs?|png|jpe?g|webp|mp4|webm|before.and.after)\b/i;
+const VISUAL_PROOF_TERMS = new RegExp(`\\b(?:${[
+  // The nouns an author uses for a picture of the result.
+  'screenshots?', 'screen ?shots?', 'screen ?grabs?', 'screen ?recordings?', 'recordings?',
+  'captures?', 'pictures?', 'photos?', 'photographs?', 'frame ?grabs?',
+  'images?', 'videos?', 'clips?', 'gifs?', 'animated gifs?',
+  // Rendering and the visual reading of the change.
+  'render(?:s|ed|ing)?', 'visual',
+  // The common image and video files, and the before/after pair.
+  'png', 'jpe?g', 'webp', 'mp4', 'webm', 'mov',
+  'before.{0,12}after', 'after.{0,12}before',
+].join('|')})\\b`, 'i');
 
 export function briefNamesVisualProof(task: Pick<Task, 'briefVersions'>): boolean {
   return VISUAL_PROOF_TERMS.test(currentBrief(task)?.text ?? '');
