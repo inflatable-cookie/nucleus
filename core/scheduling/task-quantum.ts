@@ -24,6 +24,7 @@ import { startsNoRuns } from "../closeout/queue-drain";
 import { isDispositionActive } from "../../shared/contracts";
 import type { Resolution } from "../resolution";
 import { participantToolRunIds } from "../recovery/task-reasons";
+import { releasedRunDeliveryEvidence } from "../recovery/recovery-effects";
 import { proofExecutionRunning } from "../qa/proof-admission";
 import { hookHoldReason } from "../hooks/hooks";
 import type { Engine } from "../engine";
@@ -67,6 +68,7 @@ export type TaskQuantumContext = Pick<
     | "owns"
     | "raiseOperatorQuestions"
     | "reconcileHoldUntil"
+    | "reconcileUncertainRunDelivery"
     | "recordStop"
     | "recoverExternalMerge"
     | "recovery"
@@ -79,6 +81,26 @@ export type TaskQuantumContext = Pick<
 
 export class TaskQuantum {
   constructor(readonly context: TaskQuantumContext) {}
+  private async observeReleasedRunDeliveries(taskId: string): Promise<void> {
+    const { adapter, resolution, store } = this.context;
+    if (!adapter.originAgent || !adapter.agentTimelinePage) return;
+    for (const run of store.runs(taskId)) {
+      if (
+        !run.released ||
+        run.status !== "uncertain" ||
+        !run.agentId ||
+        !run.workspaceId ||
+        releasedRunDeliveryEvidence(store, run)
+      )
+        continue;
+      try {
+        await resolution.reconcileUncertainRunDelivery(taskId, run.id);
+      } catch {
+        /* An unreadable or changed timeline leaves this occurrence unknown. */
+      }
+    }
+  }
+
   private async applyApprovedRoutes(taskId: string): Promise<void> {
     if (!this.context.profileCatalogKnown()) return;
     const routes = reconcileRoutingSignoffs(
@@ -440,6 +462,7 @@ export class TaskQuantum {
         // Nucleus#1159: later task evidence answers an uncertain host effect, and
         // a phase still blocked on one past its bound becomes attention rather
         // than staying the quiet wait nobody sees.
+        if (!current.removedAt) await this.observeReleasedRunDeliveries(taskId);
         this.context.reconcileBlockedEffects(taskId);
         // Superseded idle runs release before recovery observes: a stale
         // run whose episode was cleared must not hold the recovery busy

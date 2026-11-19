@@ -12,6 +12,7 @@ import {
   decodeEscalationChoice,
   escalationAnswerControl,
   escalationContinuationInstruction,
+  escalationChoiceBinding,
   escalationVerbChoices,
   extractDecisionIdCandidates,
   extractFirstIsoTimestamp,
@@ -284,6 +285,20 @@ export class EscalationSettlement {
               reviewerIncident.runId
             ? this.store.run(reviewerIncident.runId)
             : null;
+      const choiceFacts =
+        selected.kind === "owner"
+          ? collectOwnerVerbFacts(this.store, current)
+          : null;
+      if (selected.kind === "owner" && choiceFacts) {
+        if (selected.choice.binding === undefined)
+          throw Error(
+            "This offer has no recorded run or PR binding. Use a fresh offer or apply the current action from task next",
+          );
+        if (selected.choice.binding !== escalationChoiceBinding(choiceFacts))
+          throw Error(
+            "The task's run or PR binding changed after this escalation offer; read next again",
+          );
+      }
       const workerChoice =
         selected.kind === "owner" &&
         ((selected.choice.verb === "move" &&
@@ -473,9 +488,7 @@ export class EscalationSettlement {
           Object.fromEntries(
             Object.entries(args).filter(([key]) => key !== "version"),
           );
-        const fresh = escalationVerbChoices(
-          ownerVerbViews(collectOwnerVerbFacts(this.store, current)),
-        ).find(
+        const fresh = escalationVerbChoices(ownerVerbViews(choiceFacts!)).find(
           (item) =>
             item.verb === choice.verb &&
             JSON.stringify(withoutVersion(item.args)) ===

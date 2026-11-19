@@ -15,7 +15,6 @@ import {
 } from "../questions/ladder/records";
 import {
   reviewContinuationState,
-  reviewResultFencesRun,
   reviewerCannotFinish,
 } from "../review/review-continuation";
 
@@ -299,25 +298,6 @@ export class ReviewerAutoContinue {
         incident: incidentFenceOpen(task),
       };
       const reason = `Queue continues the reviewer from checkpoint ${checkpoint.ordinal}`;
-      const markFencedReaderStopped = () => {
-        const latestRun = this.store.run(run.id);
-        if (
-          latestRun &&
-          !latestRun.released &&
-          !latestRun.completion &&
-          latestRun.status !== "superseded" &&
-          reviewResultFencesRun(this.store, this.store.task(task.id), latestRun)
-        ) {
-          const observedAt = new Date().toISOString();
-          this.store.putRun({
-            ...latestRun,
-            status: "stopped",
-            active: false,
-            idleSince: latestRun.idleSince ?? observedAt,
-            lastObservedAt: observedAt,
-          });
-        }
-      };
       try {
         await this.engine.replayingDeferredVerb.run(true, () =>
           this.engine.performTaskControl(
@@ -340,14 +320,12 @@ export class ReviewerAutoContinue {
             "review_auto_continued",
             `${checkpoint.ordinal} run ${run.id} at ${run.head}`,
           );
-        else markFencedReaderStopped();
       } catch (error) {
         const detail =
           `${checkpoint.ordinal} run ${run.id}: ${error instanceof Error ? error.message : String(error)}`.slice(
             0,
             2000,
           );
-        markFencedReaderStopped();
         const last = this.refusals.get(`${run.id}:${checkpoint.ordinal}`);
         this.refusals.set(`${run.id}:${checkpoint.ordinal}`, {
           detail,

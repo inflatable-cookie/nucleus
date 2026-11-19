@@ -301,6 +301,7 @@ export class Engine {
         "owns",
         "raiseOperatorQuestions",
         "reconcileHoldUntil",
+        "reconcileUncertainRunDelivery",
         "recordStop",
         "recoverExternalMerge",
         "recovery",

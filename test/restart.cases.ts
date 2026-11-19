@@ -9,7 +9,7 @@ import { holdLifecycleFollowUps } from "./support/hold-lifecycle-follow-ups";
 import { waitFor } from "./support/budgets";
 import { test } from "./support/sharded-test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -28,7 +28,12 @@ import {
 import { QueueRuntime } from "../service/runtime-owner";
 import { taskControlOperation } from "../core/verbs/task-control-key";
 import { type ResolutionAdapter } from "../core/resolution";
-import { ABSENT_WORKER_REASON } from "../core/recovery/task-reasons";
+import {
+  ABSENT_WORKER_REASON,
+  ProvenPreSendRefusalError,
+} from "../core/recovery/task-reasons";
+import { CoordinatorEpisode } from "../core/recovery/coordinator-episode";
+import { holdPatch } from "../core/merge/merge-hold";
 import {
   REVIEW_AUTHORIZATION_REQUIRED,
   reviewCheckpointPathFor,
@@ -75,7 +80,7 @@ type Role = "worker" | "reviewer" | "coordinator";
 const profile = (id: string, model: string, roles: Role[]): Profile =>
   sharedProfile(id, model, { provider: "codex" });
 
-function fixture() {
+function fixture(hostId = "host") {
   const dir = mkdtempSync(join(tmpdir(), "ns-restart-"));
   const store = new Store(join(dir, "queue.sqlite"));
   store.setMeta("paused", false);
@@ -115,7 +120,7 @@ function fixture() {
       handoffPath: "handoff.md",
       originAgentId: "origin",
     }),
-    "host",
+    hostId,
     "handoff",
     base,
   );
@@ -159,6 +164,7 @@ function fixture() {
     _text: string,
   ) => {};
   const adapter = fakeAdapter({
+    hostId,
     catalog: async () => paseoCatalog(),
     validate: async () => base,
     verifyWorkspace: async () => {},
@@ -303,70 +309,76 @@ function fixture() {
 const ownerControlCount = (f: ReturnType<typeof fixture>) =>
   f.events("owner_control").length;
 
+async function parkedRestartEvidence(f: ReturnType<typeof fixture>) {
+  f.store.setMeta("paused", true);
+  const at = new Date().toISOString();
+  f.store.putRun(
+    runSchema.parse({
+      id: "proof-recovery",
+      taskId: f.taskId,
+      role: "recovery",
+      generation: 1,
+      head,
+      base,
+      agentId: "coord-agent",
+      workspaceId: "workspace",
+      profile: f.profiles.coord,
+      status: "running",
+      createdAt: at,
+      lastObservedAt: null,
+      active: true,
+      idleSince: null,
+      completion: null,
+      released: false,
+    }),
+  );
+  f.store.update(f.taskId, {
+    phase: "needs_attention",
+    agentId: "worker-agent",
+    runId: "worker-run",
+    workspaceId: "workspace",
+    directory: "/worktree",
+    profile: f.profiles.worker,
+    agentIntent: true,
+    resolution: {
+      ...f.current().resolution,
+      attention: true,
+      currentRunId: null,
+    },
+  });
+  const before = f.current(),
+    runs = f.store.runs(f.taskId);
+  const control = taskControlInputSchema.parse({
+    taskId: f.taskId,
+    version: before.version,
+    action: "restart",
+    role: "reviewer",
+    reason: "Resume review",
+    caller: CALLER,
+  });
+  const { key, payload } = taskControlOperation(control);
+  const accepted = await f.engine.startOperation({
+    key,
+    kind: "task_control",
+    payload,
+  });
+  assert.ok("accepted" in accepted);
+  const failed = await f.engine.awaitOperation(accepted.operation.id);
+  // Parent falsification: old prose classification made this needs_attention.
+  assert.equal(failed.state, "failed");
+  assert.match(failed.diagnostic, /retained thread or uncertain delivery/);
+  assert.ok(failed.preSendReceipt?.buildId);
+  assert.deepEqual(f.current(), before);
+  assert.deepEqual(f.store.runs(f.taskId), runs);
+  assert.equal(f.createdRuns.length, 0);
+  return { before, runs, control, key, payload, failed, at };
+}
+
 test("a parked restart refusal keeps its execution proof and reconciles only that unchanged occurrence", async () => {
   const f = fixture();
   try {
-    f.store.setMeta("paused", true);
-    const at = new Date().toISOString();
-    f.store.putRun(
-      runSchema.parse({
-        id: "proof-recovery",
-        taskId: f.taskId,
-        role: "recovery",
-        generation: 1,
-        head,
-        base,
-        agentId: "coord-agent",
-        workspaceId: "workspace",
-        profile: f.profiles.coord,
-        status: "running",
-        createdAt: at,
-        lastObservedAt: null,
-        active: true,
-        idleSince: null,
-        completion: null,
-        released: false,
-      }),
-    );
-    f.store.update(f.taskId, {
-      phase: "needs_attention",
-      agentId: "worker-agent",
-      runId: "worker-run",
-      workspaceId: "workspace",
-      directory: "/worktree",
-      profile: f.profiles.worker,
-      agentIntent: true,
-      resolution: {
-        ...f.current().resolution,
-        attention: true,
-        currentRunId: null,
-      },
-    });
-    const before = f.current(),
-      runs = f.store.runs(f.taskId);
-    const control = taskControlInputSchema.parse({
-      taskId: f.taskId,
-      version: before.version,
-      action: "restart",
-      role: "reviewer",
-      reason: "Resume review",
-      caller: CALLER,
-    });
-    const { key, payload } = taskControlOperation(control);
-    const accepted = await f.engine.startOperation({
-      key,
-      kind: "task_control",
-      payload,
-    });
-    assert.ok("accepted" in accepted);
-    const failed = await f.engine.awaitOperation(accepted.operation.id);
-    // Parent falsification: old prose classification made this needs_attention.
-    assert.equal(failed.state, "failed");
-    assert.match(failed.diagnostic, /retained thread or uncertain delivery/);
-    assert.ok(failed.preSendReceipt?.buildId);
-    assert.deepEqual(f.current(), before);
-    assert.deepEqual(f.store.runs(f.taskId), runs);
-    assert.equal(f.createdRuns.length, 0);
+    const { before, runs, control, key, payload, failed, at } =
+      await parkedRestartEvidence(f);
     const input = operationStatus.input.parse({
       operationId: failed.id,
       reconcilePreSendInputHash: failed.inputHash,
@@ -515,6 +527,79 @@ test("a parked restart refusal keeps its execution proof and reconciles only tha
     await f.close();
   }
 });
+
+for (const variant of [
+  "unchanged",
+  "changed run",
+  "changed caller",
+  "changed head",
+  "missing receipt",
+] as const) {
+  test(`sweep settles a parked restart receipt only with its exact evidence (${variant})`, async () => {
+    const f = fixture();
+    try {
+      const { runs, control, key, payload, failed } =
+        await parkedRestartEvidence(f);
+      const proof = failed.preSendReceipt!;
+      f.store.putOperation({
+        ...failed,
+        state: "running",
+        settledAt: null,
+        diagnostic: "",
+        effect: proof.effect,
+        ...(variant === "missing receipt" ? { preSendReceipt: null } : {}),
+      });
+      f.engine.resumeOperations();
+      const held = await f.engine.awaitOperation(failed.id);
+      assert.equal(held.state, "needs_attention");
+      if (variant === "changed caller")
+        f.store.putOperation(held, {
+          ...payload,
+          control: { ...control, caller: "another-thread" },
+        });
+      if (variant === "changed run")
+        f.store.putRun({ ...runs[0]!, active: false });
+      if (variant === "changed head")
+        f.store.update(f.taskId, { prHead: "d".repeat(40) });
+
+      f.engine.hostAvailable = () => false;
+      assert.equal((await f.engine.auditPass(true)).fault, null);
+      const swept = f.store.operation(held.id)!;
+      assert.equal(
+        swept.state,
+        variant === "unchanged" ? "failed" : "needs_attention",
+      );
+      assert.deepEqual(swept.effect, held.effect);
+      assert.equal(swept.result, null);
+      assert.equal(
+        f.next().verbs.some((verb) => verb.refusal?.includes(held.id)),
+        variant !== "unchanged",
+      );
+      assert.equal(
+        f.events("operation_pre_send_refused").length,
+        variant === "unchanged" ? 1 : 0,
+      );
+      if (variant === "unchanged") {
+        const replay = await f.engine.startOperation({
+          key,
+          kind: "task_control",
+          payload,
+        });
+        assert.ok("accepted" in replay);
+        assert.deepEqual(replay.operation, swept);
+      }
+      assert.equal((await f.engine.auditPass(true)).fault, null);
+      assert.deepEqual(f.store.operation(held.id), swept);
+      assert.equal(f.createdRuns.length, 0);
+      assert.equal(
+        f.events("operation_pre_send_refused").length,
+        variant === "unchanged" ? 1 : 0,
+      );
+    } finally {
+      await f.close();
+    }
+  });
+}
 
 test("a durable parked restart records wrong-role instructions as a definite refusal", async () => {
   const f = fixture();
@@ -2274,7 +2359,7 @@ test("an owner restart with an intent but no sent receipt reports unknown delive
   }
 });
 
-test("a real lost restart settles after its old worker is isolated and released", async () => {
+test("the sweep settles a real lost restart after its old worker is isolated and released", async () => {
   const f = fixture();
   try {
     retainedWorker(f, "retained_worker", false);
@@ -2312,8 +2397,25 @@ test("a real lost restart settles after its old worker is isolated and released"
     assert.ok("accepted" in accepted);
     const operation = await f.engine.awaitOperation(accepted.operation.id);
     assert.equal(operation.state, "needs_attention");
+    assert.equal(operation.effect?.target, "restart");
     assert.equal(operation.effect?.status, "uncertain");
+    assert.equal(operation.attempts, 1);
+    assert.match(operation.diagnostic, /Transport/);
+    assert.equal(operation.result, null);
+    assert.equal(operation.preSendReceipt ?? null, null);
     assert.equal(f.events("owner_control").length, 0);
+    const sweep = async () => {
+      const pass = await f.engine.auditPass(true);
+      assert.equal(pass.fault, null);
+      assert.ok(pass.visited.has(f.taskId));
+    };
+    const waiting = () =>
+      f
+        .next()
+        .verbs.some(
+          (view) => !view.available && view.refusal?.includes(operation.id),
+        );
+    assert.equal(waiting(), true);
     const offered = () =>
       f
         .next()
@@ -2331,6 +2433,15 @@ test("a real lost restart settles after its old worker is isolated and released"
       f.control({ reason: "A second restart" }),
       /operation .*uncertain/,
     );
+    await sweep();
+    assert.deepEqual(f.store.operation(operation.id), operation);
+    assert.equal(f.events("operation_superseded").length, 0);
+    assert.equal(
+      waiting(),
+      true,
+      "a host answer leaves the original target unknown",
+    );
+    assert.equal(offered(), false);
     assert.equal(sends, 1);
     await new Promise((resolve) => setTimeout(resolve, 10));
     const alternate = profile("worker-alt", "test/worker-alt", ["worker"]);
@@ -2367,8 +2478,8 @@ test("a real lost restart settles after its old worker is isolated and released"
       failoverReason: "agent_errored: Connection error",
     });
     assert.equal(
-      offered(),
-      false,
+      waiting(),
+      true,
       "the original worker remains the target before retirement",
     );
     await assert.rejects(
@@ -2402,10 +2513,11 @@ test("a real lost restart settles after its old worker is isolated and released"
     assert.equal(f.events("worker_replacement").length, 1);
     assert.notEqual(f.current().agentId, "worker-agent");
     const replaced = f.current();
+    f.store.setMeta("paused", true);
     f.store.update(f.taskId, { retiredWorkers: [] });
     assert.equal(
-      offered(),
-      false,
+      waiting(),
+      true,
       "a replacement without the target retirement stays unknown",
     );
     f.store.update(f.taskId, {
@@ -2413,16 +2525,37 @@ test("a real lost restart settles after its old worker is isolated and released"
       agentId: "worker-agent",
     });
     assert.equal(
-      offered(),
-      false,
+      waiting(),
+      true,
       "a replacement using the old agent is not isolated",
     );
     f.store.update(f.taskId, { agentId: replaced.agentId });
+    await sweep();
+    const settled = f.store.operation(operation.id)!;
+    const { settlement, ...receipt } = settled;
+    const { settlement: _, ...initialReceipt } = operation;
+    assert.deepEqual(receipt, initialReceipt);
+    assert.ok(settlement);
+    const { evidence, kind, ...binding } = settlement;
+    assert.equal(kind, "superseded");
+    assert.deepEqual(binding, {
+      id: operation.id,
+      inputHash: operation.inputHash,
+      attempt: operation.attempts,
+      intentAt: operation.effect!.intentAt,
+    });
+    assert.match(
+      evidence,
+      /worker-run on worker-agent was retired by worker replacement/,
+    );
+    assert.equal(waiting(), false);
     assert.equal(offered(), false);
-    f.engine.reconcileBlockedEffects(f.taskId);
     assert.equal(f.events("operation_superseded").length, 1);
-    f.engine.reconcileBlockedEffects(f.taskId);
+    await sweep();
+    assert.deepEqual(f.store.operation(operation.id), settled);
     assert.equal(f.events("operation_superseded").length, 1);
+    assert.equal(waiting(), false);
+    assert.equal(offered(), false);
     const repeated = await f.engine.startOperation({
       key,
       kind: "task_control",
@@ -2431,7 +2564,8 @@ test("a real lost restart settles after its old worker is isolated and released"
       payload,
     });
     assert.ok("accepted" in repeated);
-    assert.equal(repeated.operation.state, "needs_attention");
+    assert.deepEqual(repeated.operation, settled);
+    assert.equal(f.events("owner_control").length, 0);
     assert.equal(sends, 1);
   } finally {
     await f.close();
@@ -2505,6 +2639,184 @@ test("uncertain revision delivery is refused in next and control without releasi
     assert.match(view.refusal!, /uncertain delivery/);
     await assert.rejects(f.control(), /uncertain delivery/);
     assert.deepEqual(restartState(f), before);
+  } finally {
+    await f.close();
+  }
+});
+
+for (const variant of [
+  "proved",
+  "unknown delivery",
+  "no current refusal",
+] as const) {
+  test(`an escalated T3 worker restart follows next after hold release (${variant})`, async () => {
+    const f = fixture("t3code:synthetic");
+    try {
+      const directory = join(f.dir, "worktree");
+      mkdirSync(directory);
+      const prepared = f.store.update(f.taskId, {
+        phase: "dispatching",
+        workspaceIntent: true,
+        workspaceId: "workspace",
+        directory,
+        profile: f.profiles.worker,
+        profileGroup: "worker",
+      });
+      const create = f.adapter.createAgent;
+      let refusedRunId = "";
+      f.adapter.verifyWorkspace = async () => prepared.branch;
+      f.adapter.createAgent = async (task) => {
+        refusedRunId = task.runId!;
+        throw new ProvenPreSendRefusalError(
+          "T3Code model does not support the selected reasoning option",
+        );
+      };
+      await f.engine.launchAgent(prepared);
+      assert.ok(refusedRunId);
+      assert.equal(f.current().phase, "needs_attention");
+      assert.equal(
+        JSON.parse(f.events("worker_creation_refused_before_send")[0]!.detail)
+          .runId,
+        refusedRunId,
+      );
+      assert.equal(f.current().runId, null);
+      assert.equal(f.current().agentIntent, false);
+
+      const episode = new CoordinatorEpisode(f.engine.resolution);
+      const recovery = runSchema.parse({
+        id: "recovery-create",
+        taskId: f.taskId,
+        hostId: prepared.hostId,
+        role: "recovery",
+        head,
+        base,
+        generation: 1,
+        workspaceId: "workspace",
+        profile: f.profiles.coord,
+        status: "uncertain",
+        createdAt: new Date().toISOString(),
+        active: false,
+        released: false,
+        agentId: null,
+        lastObservedAt: null,
+        idleSince: null,
+        completion: null,
+      });
+      f.store.putRun(recovery);
+      episode.escalate(f.current(), "The recovery creation is unavailable");
+      episode.save(f.current(), { runId: recovery.id });
+      f.engine.resolution.update(f.current(), { recoveryActive: true });
+      if (variant !== "unknown delivery")
+        episode.releaseRefusedCreation(
+          f.current(),
+          recovery,
+          "Recovery was refused before send",
+        );
+      if (variant === "no current refusal")
+        f.store.event(f.taskId, "agent_intent", "a-later-worker-intent");
+
+      f.store.setMeta("paused", true);
+      f.store.update(
+        f.taskId,
+        holdPatch(
+          f.current(),
+          "dispatch",
+          "operator",
+          "Wait for host rollout",
+          { kind: "time", at: "2000-01-01T00:00:00.000Z" },
+        ),
+        "hold",
+      );
+      const pass = await f.engine.auditPass(true);
+      assert.equal(pass.fault, null);
+      assert.ok(pass.visited.has(f.taskId));
+      assert.equal(f.events("hold_auto_released").length, 1);
+      assert.equal(f.current().resolution.recovery?.status, "escalated");
+      assert.equal(f.current().resolution.recoveryActive, true);
+
+      const view = f.next().verbs.find((verb) => verb.verb === "restart")!;
+      if (variant !== "proved") {
+        assert.equal(view.available, false);
+        assert.match(view.refusal ?? "", /move to=work/);
+        const before = f.current();
+        await assert.rejects(
+          f.control({ role: "worker" }),
+          (error) => error instanceof Error && error.message === view.refusal,
+        );
+        assert.deepEqual(f.current(), before);
+        assert.equal(f.createdRunTokens.size, 0);
+        return;
+      }
+      assert.equal(view.available, true, JSON.stringify(view));
+      assert.equal(view.args?.role, "worker");
+      const input = taskControlInputSchema.parse({
+        ...view.args,
+        caller: CALLER,
+        reason: "Resume after the host rollout",
+      });
+      const { key, payload } = taskControlOperation(input);
+      const start = () =>
+        f.engine.startOperation({
+          key,
+          kind: "task_control",
+          taskId: f.taskId,
+          expectedVersion: input.version,
+          payload,
+        });
+      const accepted = await start();
+      assert.ok("accepted" in accepted);
+      const operation = await f.engine.awaitOperation(accepted.operation.id);
+      assert.equal(operation.state, "succeeded", operation.diagnostic);
+      assert.equal(f.current().phase, "queued");
+      assert.equal(f.current().resolution.incident?.status, "resolved");
+      assert.equal(f.current().resolution.recoveryActive, false);
+      assert.equal(f.current().resolution.recovery, null);
+      assert.equal(f.events("resolution_retry").length, 0);
+      const replay = await start();
+      assert.ok("accepted" in replay);
+      assert.deepEqual(replay.operation, operation);
+      assert.equal(f.events("restart_requested").length, 1);
+
+      f.adapter.createAgent = create;
+      f.store.setMeta("paused", false);
+      await f.engine.wake();
+      await f.engine.wake();
+      assert.equal(f.current().phase, "working", f.current().reason);
+      assert.notEqual(f.current().runId, refusedRunId);
+      assert.equal(f.createdRunTokens.size, 1);
+      assert.equal(f.current().workspaceId, "workspace");
+      assert.equal(f.store.run(recovery.id)?.released, true);
+      assert.equal(f.events("restart_requested").length, 1);
+    } finally {
+      await f.close();
+    }
+  });
+}
+
+test("a parked absence without a creation intent offers ordinary admission", async () => {
+  const f = fixture();
+  try {
+    const parked = f.engine.resolution.recordStop(
+      f.current(),
+      "operator_needed",
+      ABSENT_WORKER_REASON,
+      undefined,
+      "needs_attention",
+    );
+    const restart = f
+      .next()
+      .verbs.find((verb) => verb.verb === "restart" && verb.available);
+    assert.ok(restart?.args);
+    const resumed = await f.control({
+      ...restart.args,
+      reason: "Run ordinary admission",
+    });
+    assert.equal(resumed.phase, "queued");
+    assert.equal(resumed.runId, null);
+    assert.equal(resumed.agentIntent, false);
+    assert.notEqual(f.next().reason, parked.reason);
+    await assert.rejects(f.control({ ...restart.args }), /Task changed/);
+    assert.equal(f.createdRuns.length, 0);
   } finally {
     await f.close();
   }

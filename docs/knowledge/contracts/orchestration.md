@@ -2236,7 +2236,9 @@ reports, grants or spends that history.
   records unread items for the owner.
 - An open incident fences a retained continuation only while it binds the
   current work; an incident recorded against a released run cannot hold the
-  reader.
+  reader. A released reviewer's applied blocked or error result belongs to that
+  run. A replacement already bound to the same head can continue its own
+  authenticated checkpoint once its agent is idle.
 - A delivered continuation has had its turn. The exits are the reviewer's own
   verdict or next checkpoint, an owner `stop` of that turn followed by `restart
   role=reviewer`, `route role=reviewer` to a profile with capacity, or a fresh

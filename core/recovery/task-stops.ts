@@ -1,3 +1,5 @@
+import { callbackTransportPhase } from "../../shared/service/transport.mjs";
+import { hostKindOf } from "../../shared/host-kind";
 import { randomUUID } from "node:crypto";
 import type { Incident, Run, Task } from "../../shared/contracts";
 import type { IncidentCause } from "../../shared/incident";
@@ -230,7 +232,9 @@ export class TaskStops {
   private settleHostWait(taskId: string): Task {
     const current = this.store.task(taskId);
     const hadWait = Boolean(current.resolution.hostWait);
-    const hostStop = current.resolution.stop?.reason === "host_unavailable";
+    const hostStop =
+      current.resolution.stop?.reason === "host_unavailable" ||
+      this.legacyBbConnectStop(current);
     if (!hadWait && !hostStop) return current;
     const detail = `Host ${current.hostId ?? "unknown"} answered; the wait it wrote cannot hold and the task's next step is decided afresh`;
     const reason = hostStop
@@ -246,6 +250,28 @@ export class TaskStops {
       detail,
     );
   }
+  /** Older BB connect refusals were written as generic attention stops. */
+  private legacyBbConnectStop(task: Task): boolean {
+    const stop = task.resolution.stop;
+    const prefix =
+      "BB host operation was not sent: Service socket connect failed: ";
+    if (
+      hostKindOf(task.hostId) !== "bb" ||
+      stop?.reason !== "operator_needed" ||
+      task.reason !== stop.detail ||
+      !stop.detail.startsWith(prefix) ||
+      callbackTransportPhase(new Error(stop.detail.slice(prefix.length))) !==
+        "connect"
+    )
+      return false;
+    return (
+      this.store
+        .eventsAll(task.id)
+        .findLast((event) => event.kind === "task_stopped")?.detail ===
+      JSON.stringify(stop)
+    );
+  }
+
   /**
    * The host answered this pass: settle the wait it wrote. Nothing about the task's
    * identity, host or threads changes; the next pass re-proves each retained thread

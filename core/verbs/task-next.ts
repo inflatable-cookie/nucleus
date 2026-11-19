@@ -461,6 +461,10 @@ export function assembleOwnerTaskNext(
   const fences = holdsOf(task);
   const verbs = [...ownerVerbViews(planned), ...holdViews(task)];
   const stop = ownerTaskStop(facts);
+  if (stop)
+    stop.suggestedVerbs = stop.suggestedVerbs.filter((verb) =>
+      verbs.some((view) => view.verb === verb && view.available),
+    );
   const reviewerSwap = reviewerSwapView(facts);
   const checkpointWait =
     stop?.reason === "lifecycle" && Boolean(retainedCheckpointRun(facts.runs));

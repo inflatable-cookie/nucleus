@@ -2486,6 +2486,28 @@ export class Store {
   reconcileTaskControlPreSend(id: string, inputHash: string): QueueOperation {
     return this.preSendStore.reconcileTaskControlPreSend(id, inputHash);
   }
+  settleTaskPreSendReceipts(taskId: string): void {
+    this.transaction(() => {
+      const rows = this.db
+        .prepare(
+          `SELECT id FROM operations WHERE taskId=? AND kind='task_control'
+        AND state='needs_attention' AND json_type(data,'$.preSendReceipt')='object'`,
+        )
+        .all(taskId);
+      for (const row of rows)
+        this.preSendStore.settleTaskControlPreSend(String(row.id), taskId);
+    });
+  }
+  taskIdsWithPreSendReceipts(after: string, limit: number): string[] {
+    const rows = this.db
+      .prepare(
+        `SELECT DISTINCT taskId FROM operations
+      WHERE kind='task_control' AND state='needs_attention' AND taskId>?
+        AND json_type(data,'$.preSendReceipt')='object' ORDER BY taskId LIMIT ?`,
+      )
+      .all(after, limit);
+    return rows.map((row) => String(row.taskId));
+  }
   operations(
     filter: {
       states?: QueueOperation["state"][];

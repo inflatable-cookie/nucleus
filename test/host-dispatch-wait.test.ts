@@ -1,5 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import {
+  collectOwnerVerbFacts,
+  ownerTaskNext,
+} from "../core/verbs/owner-verbs";
 import { Engine } from "../core/engine";
 import { Store } from "../core/store/store";
 import { submissionSchema, summarizeTask } from "../shared/contracts";
@@ -619,5 +623,61 @@ test("a recovered cross-host review rejoins fair slot order before admission", a
   } finally {
     await engine.stop();
     f.close();
+  }
+});
+
+test("a BB socket connection refusal clears on the next healthy sweep", async () => {
+  const store = new Store(":memory:");
+  const host = "bb:synthetic-host";
+  let online = false;
+  const engine = new Engine(store, fakeAdapter({}), 0);
+  engine.hostAvailable = (id) => id === host && online;
+  store.setMeta("paused", true);
+  const failure =
+    "BB host operation was not sent: Service socket connect failed: connect ENOENT fixture.sock";
+  try {
+    const stopped = store.insert(
+      submissionSchema.parse(submission({ submissionId: "bb-stale-stop" })),
+      host,
+      "handoff",
+      "a".repeat(40),
+    );
+    const independent = store.insert(
+      submissionSchema.parse(
+        submission({ submissionId: "bb-independent-stop" }),
+      ),
+      host,
+      "handoff",
+      "a".repeat(40),
+    );
+    engine.note(stopped.id, failure, "operator_needed", "needs_attention");
+    engine.note(
+      independent.id,
+      "Planner must choose the next approach",
+      "escalated",
+      "needs_attention",
+    );
+    const next = (id: string) =>
+      ownerTaskNext(collectOwnerVerbFacts(store, store.task(id)));
+    assert.equal((await engine.auditPass(true)).fault, null);
+    assert.equal(store.task(stopped.id).resolution.stop?.detail, failure);
+    online = true;
+    assert.equal((await engine.auditPass(true)).fault, null);
+    assert.equal(store.task(stopped.id).resolution.stop, null);
+    assert.doesNotMatch(next(stopped.id).reason, /connect ENOENT/);
+    assert.equal(
+      next(independent.id).stop?.detail,
+      "Planner must choose the next approach",
+    );
+    assert.equal((await engine.auditPass(true)).fault, null);
+    assert.equal(
+      store
+        .eventsAll(stopped.id)
+        .filter((event) => event.kind === "host_wait_cleared").length,
+      1,
+    );
+  } finally {
+    await engine.stop();
+    store.close();
   }
 });

@@ -12,7 +12,9 @@ import { unsettledControlRefusal } from "../recovery/recovery-effects";
 import { ProvenPreSendRefusalError } from "../host/errors";
 import { dispatchBlocked, slotRequestFenced } from "../dispatch/capacity";
 import type { Engine } from "../engine";
-import { now } from "../store/store";
+import { TASK_PROGRESSING_REASON } from "../../shared/task-detail-summary";
+import { LANE_PRIORITY_TASK } from "../scheduling/lane-priorities";
+import { now, type Store } from "../store/store";
 
 /** The exact run (and checkpoint) a recorded verb was for. */
 export type DeferredVerbTarget = {
@@ -20,6 +22,57 @@ export type DeferredVerbTarget = {
   checkpointOrdinal?: number;
   head?: string;
 } | null;
+
+/** The exact reason the deferred-verb writer owns. */
+const deferredVerbReason = (action: unknown, why: string) =>
+  `Owner ${String(action)} recorded; it is delivered once Nucleus is ${why === "paused" ? "unpaused" : "released"}`;
+
+/** Settle a stop left behind by a release on an earlier service build. */
+function settleDroppedDeferredVerbStop(store: Store, taskId: string): void {
+  const task = store.task(taskId);
+  if (task.resolution.deferredVerb) return;
+  const stop = task.resolution.stop;
+  if (!stop?.detail.startsWith("Owner ") || stop.detail !== task.reason) return;
+  const events = store.eventsAll(taskId);
+  const deferred = events.findLast(
+    (event) => event.kind === "owner_verb_deferred",
+  );
+  if (!deferred) return;
+  let recorded: { action?: string; why?: string };
+  try {
+    recorded = JSON.parse(deferred.detail);
+  } catch {
+    return;
+  }
+  if (
+    !recorded.action ||
+    !recorded.why ||
+    deferredVerbReason(recorded.action, recorded.why) !== stop.detail
+  )
+    return;
+  const settled = events.find(
+    (event) =>
+      event.id > deferred.id &&
+      event.at >= stop.since &&
+      ((event.kind === "deferred_verb_refused" &&
+        event.detail.startsWith(`${recorded.action}: `)) ||
+        (event.kind === "owner_verb_applied" &&
+          event.detail === recorded.action)),
+  );
+  if (!settled) return;
+  store.update(
+    task.id,
+    {
+      reason:
+        settled.kind === "deferred_verb_refused"
+          ? `Recorded owner action is no longer applicable: ${settled.detail.slice(0, 1200)}`
+          : TASK_PROGRESSING_REASON,
+      resolution: { ...task.resolution, stop: null },
+    },
+    "deferred_verb_stop_cleared",
+    String(settled.id),
+  );
+}
 
 /**
  * Round 4: an owner verb whose effect is an immediate delivery applies now, and
@@ -44,7 +97,7 @@ export class DeferredOwnerVerbs {
     return this.store.update(
       task.id,
       {
-        reason: `Owner ${input.action} recorded; it is delivered once Nucleus is ${why === "paused" ? "unpaused" : "released"}`,
+        reason: deferredVerbReason(input.action, why),
         resolution: {
           ...task.resolution,
           deferredVerb: {
@@ -76,7 +129,8 @@ export class DeferredOwnerVerbs {
     this.store.transaction(() => {
       const current = this.store.task(taskId);
       if (current.resolution.deferredVerb?.at !== at) return;
-      const marker = current.resolution.deferredVerb.input.__workerAsk as
+      const deferred = current.resolution.deferredVerb;
+      const marker = deferred.input.__workerAsk as
         | { escalationId?: string; questionId?: string }
         | undefined;
       if (
@@ -122,9 +176,26 @@ export class DeferredOwnerVerbs {
           `${marker.escalationId}: ${detail}`.slice(0, 4000),
         );
       }
+      const oldReason = deferredVerbReason(deferred.input.action, deferred.why);
+      const oldStop = current.resolution.stop;
+      const ownsStop = oldStop?.detail === oldReason;
+      const reason =
+        current.reason === oldReason
+          ? (!ownsStop && oldStop?.detail) ||
+            (kind === "deferred_verb_refused"
+              ? `Recorded owner action is no longer applicable: ${detail.slice(0, 1200)}`
+              : TASK_PROGRESSING_REASON)
+          : current.reason;
       this.store.update(
         taskId,
-        { resolution: { ...current.resolution, deferredVerb: null } },
+        {
+          reason,
+          resolution: {
+            ...current.resolution,
+            deferredVerb: null,
+            ...(ownsStop ? { stop: null } : {}),
+          },
+        },
         kind,
         detail.slice(0, 2000),
       );
@@ -139,6 +210,8 @@ export class DeferredOwnerVerbs {
 
   /** Why a recorded verb's target no longer holds, or null. */
   private targetChanged(task: Task, target: DeferredVerbTarget): string | null {
+    if (["done", "cancelled"].includes(task.phase))
+      return `the task is ${task.phase}`;
     if (!target) return null;
     if (
       task.runId === target.runId &&
@@ -155,7 +228,10 @@ export class DeferredOwnerVerbs {
       run.reviewCheckpoints?.at(-1)?.ordinal !== target.checkpointOrdinal
     )
       return `checkpoint ${target.checkpointOrdinal} is no longer the latest`;
-    if (target.head !== undefined && run.head !== target.head)
+    if (
+      target.head !== undefined &&
+      (run.head !== target.head || task.prHead !== target.head)
+    )
       return `its head ${target.head} changed`;
     return null;
   }
@@ -353,7 +429,9 @@ export class DeferredOwnerVerbs {
     const ids = (
       this.store.db
         .prepare(
-          "SELECT id FROM tasks WHERE json_extract(data,'$.resolution.deferredVerb') IS NOT NULL",
+          `SELECT id FROM tasks WHERE json_type(data,'$.resolution.deferredVerb')='object'
+            OR (json_extract(data,'$.reason') LIKE 'Owner % recorded; it is delivered once Nucleus is %'
+              AND json_extract(data,'$.resolution.stop.detail')=json_extract(data,'$.reason'))`,
         )
         .all() as Array<{ id: string }>
     ).map((row) => row.id);
@@ -371,8 +449,7 @@ export class DeferredOwnerVerbs {
     }
     for (const id of ids) {
       const task = this.store.task(id);
-      if (task.hostId !== scopedHost) continue;
-      if (!this.engine.taskHostAvailable(task)) continue;
+      if (task.hostId !== scopedHost || task.removedAt) continue;
       const deferred = task.resolution.deferredVerb;
       if (deferred?.why === "worker_creation") {
         await this.engine.control(
@@ -381,9 +458,16 @@ export class DeferredOwnerVerbs {
         );
         continue;
       }
+      if (!deferred) {
+        await this.engine.scheduleLane(
+          `task:${id}`,
+          LANE_PRIORITY_TASK,
+          async () => settleDroppedDeferredVerbStop(this.store, id),
+        );
+        continue;
+      }
       if (
-        !deferred ||
-        task.removedAt ||
+        !this.engine.taskHostAvailable(task) ||
         (dispatchBlocked(task) &&
           !this.deferredRestartSupersedesOwnerStop(task))
       )

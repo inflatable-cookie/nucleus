@@ -174,6 +174,7 @@ export class Sweep {
   }
   /** Durable cursor for the bounded safety sweep: the last task identity reconciled. */
   sweepCursor: string | null = null;
+  private preSendCursor = "";
   sweepChain: Promise<void> | null = null;
   sweepMode: "window" | "drain" | null = null;
   sweepPending: "window" | "drain" | null = null;
@@ -378,8 +379,29 @@ export class Sweep {
       // not stall on: `HostPass` records a step that throws there.
       this.engine.store.setMeta("hostPassError", "");
       let covered = false;
-      // The hourly and daily store chores and the periodic owner/lane passes
-      // keep their own cadence; the sweep runs one maintenance pass.
+      // Check the receipt under its task lane before ordinary observations
+      // can advance the task or run snapshot it binds.
+      const receiptTasks = this.engine.store.taskIdsWithPreSendReceipts(
+        this.preSendCursor,
+        SWEEP_WINDOW,
+      );
+      this.preSendCursor =
+        receiptTasks.length === SWEEP_WINDOW ? receiptTasks.at(-1)! : "";
+      for (const taskId of receiptTasks) {
+        if (this.engine.stopped)
+          return { fault: null, covered: false, visited };
+        await boundQuantum(
+          this.engine.scheduleLane(
+            `task:${taskId}`,
+            LANE_PRIORITY_TASK,
+            async () => {
+              if (this.engine.store.taskOrNull(taskId))
+                this.engine.store.settleTaskPreSendReceipts(taskId);
+            },
+          ),
+          () => this.recordQuantumOutage(taskId),
+        );
+      }
       // Audit A6: one bounded labelled inventory answers every identity this
       // pass observes, and retired workers are re-read on their own slow cadence.
       // A list that cannot be walked to its end answers nothing, so every
@@ -451,7 +473,10 @@ export class Sweep {
       }
       // A failed host already spent its per-pass observation budget; do not
       // query it again while refreshing project notice recipients.
-      await this.engine.resolution.refreshResponsibleThreads(this.engine.store.projects(), unavailableHosts);
+      await this.engine.resolution.refreshResponsibleThreads(
+        this.engine.store.projects(),
+        unavailableHosts,
+      );
       await this.maintenance.run();
       this.engine.clearRetiredInvalidations();
       // Engine restart scans incomplete dispositions before normal task
