@@ -26,6 +26,7 @@ import {
 } from "../../shared/wait-state";
 import type { Resolution } from "../resolution";
 import type { Store } from "../store/store";
+import { prerequisiteWaitBlocksPhase } from "../store/store-prerequisites";
 
 /**
  * Project and global occupancy, in a module both the engine and the resolution can use.
@@ -441,13 +442,7 @@ function memoFacts(
 
 /** A prerequisite wait or an already occupied slot needs no admission. */
 function slotAdmissionExempt(task: Task, occupied = false): boolean {
-  return (
-    Boolean(
-      task.phase === "changes_requested" && task.prerequisiteWait?.releasedAt,
-    ) ||
-    Boolean(task.prerequisiteWait && !task.prerequisiteWait.releasedAt) ||
-    occupied
-  );
+  return prerequisiteWaitBlocksPhase(task) || occupied;
 }
 
 /** These queued tasks are still visited for observation, but own no place in slot order. */
@@ -498,8 +493,7 @@ export function slotRequestDecision(
   }
   if (candidate.phase === "queued")
     return facts.dependencyWait === undefined ? "read" : !facts.dependencyWait;
-  if (candidate.prerequisiteWait && !candidate.prerequisiteWait.releasedAt)
-    return false;
+  if (prerequisiteWaitBlocksPhase(candidate)) return false;
   if (isParkedTask(candidate) && parkedPhases.includes(candidate.phase))
     return true;
   return (
@@ -722,8 +716,7 @@ export class SlotAdmission {
     parkedPhases: readonly string[] = ["awaiting_review", "changes_requested"],
     view?: SlotAdmissionView,
   ): string {
-    // A completed retained wait on changes_requested is parked for explicit
-    // operator action, so it is not currently requesting a revision slot.
+    // A parked prerequisite wait isn't requesting a revision slot.
     if (slotAdmissionExempt(task)) return "";
     const tasks = view?.tasks ?? this.store.admissionCandidates(task);
     const occupied =

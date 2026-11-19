@@ -5,8 +5,13 @@ import {
   isDispositionActive,
   workerExclusionRefusal,
 } from "../../../shared/contracts";
-import { dispatchBlocked, DISPATCH_HELD_REASON } from "../capacity";
+import {
+  dispatchBlocked,
+  DISPATCH_HELD_REASON,
+  slotRequestFenced,
+} from "../capacity";
 import { blockingRecoveryEffectsRefusal } from "../../recovery/recovery-effects";
+import { retainedPrerequisiteRevision } from "../../store/store-prerequisites";
 import {
   proofSingleFlightRefusal,
   ProofSingleFlightError,
@@ -134,6 +139,15 @@ export class RunReservationAdmission {
           "Proof-execution source or brief reservation changed during admission",
         );
       if (role === "revision") {
+        if (t.prerequisiteWait || latest.prerequisiteWait) {
+          if (
+            latest.version !== t.version ||
+            !retainedPrerequisiteRevision(latest) ||
+            slotRequestFenced(latest) ||
+            blockingRecoveryEffectsRefusal(this.store, latest)
+          )
+            return false;
+        }
         const exclusion = workerExclusionRefusal(latest, agentId, profile?.id);
         if (exclusion) {
           if (!latest.failoverReason)
@@ -201,6 +215,14 @@ export class RunReservationAdmission {
           this.store.task(t.id),
           profile,
         );
+      if (role === "revision" && latest.prerequisiteWait) {
+        t = this.store.update(
+          t.id,
+          { prerequisiteWait: null },
+          "prerequisite_wait_resumed",
+          JSON.stringify({ waitId: latest.prerequisiteWait.id, runId: run.id }),
+        );
+      }
       this.resolution.update(
         t,
         {

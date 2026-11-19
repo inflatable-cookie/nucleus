@@ -1332,6 +1332,12 @@ request identities and submitted handoffs are not rewritten.
 - A dependent's prerequisite wait is derived on read. After the final prerequisite
   settles, its checkout siblings refresh even if dispatch is held; a pause defers
   that work until unpause ([Spec 028](../specs/028-fresh-sibling-checkouts.md)).
+- A dispatched task's prerequisite release records one notice and re-enters
+  ordinary admission in the same sweep. The released wait remains discoverable
+  after restart. A saved pre-PR or scoped worker continuation consumes it when
+  the run intent commits, after independent blockers clear. Changes requested
+  without that authorization stays available for an owner move to work.
+  [Spec 066](../specs/066-one-reconciler.md#implementation-batches) covers both paths.
 - Declared-stage execution is retired (Tom, 2026-10-06): a submission declaring
   `queue.stages` refuses, and stage records stay readable history that never
   dispatches or merges.

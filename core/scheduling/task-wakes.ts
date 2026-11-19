@@ -33,6 +33,7 @@ import { LANE_PRIORITY_TASK } from "./lane-priorities";
 import { now, type Store } from "../store/store";
 import { settlementHeld, startsNoRuns } from "../closeout/queue-drain";
 import { markPhaseFact } from "./phase-latency";
+import { prerequisiteWaitBlocksPhase } from "../store/store-prerequisites";
 
 /**
  * A wake that threw after its caller stopped waiting. The engine being stopped is
@@ -558,7 +559,7 @@ export class TaskWakes {
             this.engine.taskHostAvailable(task),
           ),
       ) &&
-      !task.prerequisiteWait &&
+      !prerequisiteWaitBlocksPhase(task) &&
       (task.phase !== "queued" ||
         (!this.store.dependencyWait(task) &&
           !this.resolution.projectInFlightAdmissionReason(task))) &&

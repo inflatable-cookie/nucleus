@@ -1,0 +1,1 @@
+Released prerequisites now wake the task in the same sweep. An authorized worker continuation survives a restart and resumes once when its other blockers clear. A revision that still needs an owner decision stays parked.
