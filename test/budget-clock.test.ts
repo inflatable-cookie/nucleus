@@ -390,8 +390,9 @@ test('a task with real runs over its wall-time budget is still stopped, and its 
       createdAt: iso(Date.now() - 120 * MINUTE), lastObservedAt: null, active: false, idleSince: null,
       completion: null, released: true }));
     const runs = f.store.runs(f.submitted.id), events = f.store.eventsAll(f.submitted.id);
-    const gate = taskBudget(f.current(), runs, Date.now(), events);
-    const detail = taskDetailView(f.current(), {}, runs, events);
+    const measuredAt = Date.now();
+    const gate = taskBudget(f.current(), runs, measuredAt, events);
+    const detail = taskDetailView(f.current(), {}, runs, events, undefined, measuredAt);
     assert.equal(gate.exhausted, 'wall_time');
     assert.equal(detail.budget!.wallMs.used, gate.wallMs.used);
     assert.equal(detail.budget!.exhausted, 'wall_time');

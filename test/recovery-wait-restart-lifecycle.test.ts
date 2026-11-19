@@ -572,16 +572,46 @@ test('a fenced restart hold does not keep the slot', async () => {
   } finally { await f.close(); }
 });
 
+async function restartClosedReader(f: ReturnType<typeof fixture>) {
+  const current = f.current();
+  f.store.putRun({ ...f.store.run('review-run')!, active: null });
+  f.states.set('review-agent', { ...f.states.get('review-agent')!, status: 'closed', active: false, activeTurnId: undefined });
+  await f.engine.performTaskControl(taskControlInputSchema.parse({
+    taskId: current.id, version: current.version, action: 'restart', role: 'reviewer', fresh: true,
+    reason: 'Restart the retained reader', caller: 'owner-thread',
+  }));
+}
+
+test('C3 sweep transfers the closed reader’s reservation to one new run', async () => {
+  const f = fixture();
+  try {
+    const waiting = f.store.insert(submissionSchema.parse({
+      submissionId: randomUUID(), title: 'Queued behind the restart', repoPath: '/repo', planningCommit: base,
+      handoffPath: 'handoff.md', originAgentId: 'origin',
+    }), 'host', 'handoff', base);
+    await restartClosedReader(f);
+    assert.equal(f.current().resolution.restartSlotHold?.fromRunId, 'review-run');
+    assert.equal(f.store.run('review-run')?.released, true);
+    assert.match(f.engine.resolution.slotAdmissionReason(f.store.task(waiting.id)), /1\/1 occupied/);
+
+    await f.engine.wake();
+    assert.equal(f.current().resolution.restartSlotHold, null);
+    assert.equal(f.createdRuns.length, 1);
+    const replacement = f.store.run(f.createdRuns[0].id)!;
+    assert.equal(replacement.id, f.current().resolution.currentRunId);
+    assert.equal(replacement.head, head);
+    assert.equal(replacement.role, 'reviewer');
+    assert.equal(f.store.task(waiting.id).phase, 'queued');
+    await f.engine.wake();
+    assert.equal(f.createdRuns.length, 1);
+    assert.equal(f.current().resolution.currentRunId, replacement.id);
+  } finally { await f.close(); }
+});
+
 test('C3 releases a fenced restart reservation without resurrecting a seventeenth slot', async () => {
   const f = fixture();
   try {
-    const current = f.current();
-    f.store.putRun({ ...f.store.run('review-run')!, active: null });
-    f.states.set('review-agent', { ...f.states.get('review-agent')!, status: 'closed', active: false, activeTurnId: undefined });
-    await f.engine.performTaskControl(taskControlInputSchema.parse({
-      taskId: current.id, version: current.version, action: 'restart', role: 'reviewer', fresh: true,
-      reason: 'Restart the retained reader', caller: 'owner-thread',
-    }));
+    await restartClosedReader(f);
     const reserved = f.current();
     assert.equal(reserved.resolution.restartSlotHold?.fromRunId, 'review-run');
     f.store.putRun({ ...f.store.run('review-run')!, active: true, released: true, status: 'superseded' });
