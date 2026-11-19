@@ -317,11 +317,6 @@ export interface OriginAgent {
   archived: boolean;
   /** The host reports the thread permanently removed, when it distinguishes that from archived (T3Code). */
   deleted?: boolean;
-  /**
-   * The operator settled the thread by hand on the host (T3Code's manual marker).
-   * Nucleus never clears it; a project message treats the thread as gone.
-   */
-  settled?: boolean;
 }
 
 export interface HostLiveAgent {

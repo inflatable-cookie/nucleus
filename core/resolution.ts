@@ -8,7 +8,7 @@ import {
 } from "./host/host-ports";
 import { CriticalReviewFallback } from "./dispatch/critical-review-fallback";
 import { ValidationRetry } from "./qa/validation-retry";
-import { PlannerPresence, isSettledRoute } from "./questions/planner-presence";
+import { PlannerPresence } from "./questions/planner-presence";
 import { ResponsibleThreadResolver } from "./questions/responsible-thread-resolver";
 import {
   RESPONSIBLE_OBSERVATION_MS,
@@ -443,8 +443,6 @@ export class Resolution {
     exclude?: { agentId: string; hostId?: string | null },
     excludedHosts?: ReadonlySet<string>,
     taskIndex?: ReturnType<ResponsibleThreadResolver["taskIndex"]>,
-    /** Threads a delivery already refused as operator-settled: the next live candidate is picked instead. */
-    skip?: ReadonlySet<string>,
   ) {
     // An invalidation can land during inventory or observation. Retry with
     // current registry facts once, then return no verified recipient for this call.
@@ -475,10 +473,7 @@ export class Resolution {
         (candidate) => isSender(candidate) && Resolution.pickable(candidate),
       );
       const pick = confirmed.candidates.find(
-        (candidate) =>
-          !isSender(candidate) &&
-          !skip?.has(candidate.agentId) &&
-          Resolution.pickable(candidate),
+        (candidate) => !isSender(candidate) && Resolution.pickable(candidate),
       );
       return {
         thread: pick ? Resolution.threadOf(pick) : null,
@@ -532,8 +527,7 @@ export class Resolution {
         "Responsible thread observation timed out",
         this.responsibleObservationMs,
       );
-      // An operator-settled thread is put away like an archived one: never a candidate (Tom, 2026-11-19).
-      state = isSettledRoute(route) ? "gone" : route.kind;
+      state = route.kind;
       if (route.kind === "unverified" || route.kind === "unroutable")
         detail = route.detail;
     } catch (error) {

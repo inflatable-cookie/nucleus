@@ -30,7 +30,7 @@ the settle list for longer running threads I want to come back to.. it would be
 great if we could keep Nucleus noise to a minimum in that list, snoozing seems
 ideal?").** **Nucleus wakes a thread the operator settled (Tom, 2026-11-19: "I explicitly want nucleus to unsettle threads like that.. when threads have done what they can then need to wait for nucleus to notify it of progress, I want to settle it so it's out the way, then it gets woken by nucleus").** A settle means "out of the way until Nucleus has something", not "never deliver". A message, decision, re-entry or follow-up addressed to a settled thread unsettles it and is delivered. Nucleus still never issues `thread.settle` itself. The parent row has three states, driven by the board's attention
 projection: *active* while a role child runs or a person must act (Nucleus
-unsnoozes it then, and unsettles a thread the operator settled); *snoozed* while the task
+unsnoozes it then, and leaves a settled row settled); *snoozed* while the task
 waits on nothing Nucleus is running and needs no one (held until something,
 prerequisite wait, queued for capacity, between roles), with the snooze renewed
 before it lapses; *archived* when the task finishes. The top-level fallback and
@@ -425,11 +425,19 @@ An operator snooze (any live snooze not recorded by this host) is left exactly
 as it is, and a repeated pass inside the horizon writes nothing.
 
 A settled thread starts no run, and T3 does not clear a manual settle on
-`message.dispatch`. So when Nucleus has a message, decision, re-entry or follow-up
-for a thread the operator settled, it unsettles the thread first and then sends
-(Tom, 2026-11-19). A settle is how the operator parks a thread until Nucleus has
-news. Until that is implemented, those sends refuse before sending (the earlier
-behaviour).
+`message.dispatch`. So every message, decision, re-entry and follow-up goes through
+one delivery gate, `wakeBeforeDelivery` (Tom, 2026-11-19). The gate reads the thread
+fresh and refuses an archived or removed one before anything else. A settled thread
+is unsettled with a recorded `thread.unsettle` (`reason: "user"`), whose command
+identity is `identity("unsettle", [threadId, messageId])`, and is read back until T3
+shows it active; only then is the message sent. The read-back allows a few short
+gaps for a late apply. A thread still settled after those gaps refuses before send,
+and the message stays queued for the next pass. An unsettle with an unknown outcome
+is never resent blindly: the next pass reads the thread first, and resends the
+unsettle only when that read shows it did not land. An unsettle that landed is
+settled, not repeated. A settle is how the operator parks a thread until Nucleus has
+news. Nucleus never issues `thread.settle`, and a snooze or other settle the operator
+placed is left as it is.
 Existing closeout and retention paths still decide when threads are archived or
 removed; the [thread lifecycle](#thread-lifecycle) is where that decision lives.
 
@@ -921,8 +929,9 @@ the next child, the parent is re-entered with a message whose text carries the
 adapter's plain sentence, `Nucleus keeps this task thread open for its next role.`,
 which T3 shows as the user bubble. The binding's `holdPattern` matches that sentence
 exactly, so the agent holds the turn and shows or forwards nothing. A legacy parent uses the same sentence: the agent recognizes it for the old binding
-rule as well. A manually settled parent is left alone; re-entry refuses until the operator
-unsettles it. A parent T3 will not run leaves the task waiting with a reason.
+rule as well. A manually settled parent is woken first: the re-entry message goes through the
+delivery gate, which unsettles it and reads it back before sending. A parent T3 will
+not run leaves the task waiting with a reason.
 
 **Completion wakes never reach the parent.** Every child is created with
 `completionWake: "settled_only"` and its delivery is disposed
@@ -1028,8 +1037,9 @@ delivery](#operations-and-delivery)): a person who must act — the task's own
 attention flag, a role asking a question, a child that ended with a fault — or a live
 role child gets the row shown, and a row this host snoozed is unsnoozed; a task that
 waits on nothing Nucleus is running is snoozed; a finished task's row is the terminal
-lane's. A row an operator settled by hand is theirs: Nucleus writes nothing to it,
-and a continuation waits for the operator to unsettle it. Being in T3's "Working" section is the client's own view of an
+lane's. A row an operator settled by hand stays settled for presentation: Nucleus
+writes no snooze or title to it. A message or re-entry for that row still goes
+through the delivery gate, which unsettles it first. Being in T3's "Working" section is the client's own view of an
 active run and cannot be set from outside.
 
 ## Thread lifecycle
@@ -1044,7 +1054,7 @@ archive and changes no thread fact; a finished task's held turn is released at o
 and its parent archived. Nucleus never settles a task thread (see [one row per
 task](#one-row-per-task)): a waiting row is snoozed and a row that needs a person is
 shown again, while the task keeps its retained reviewer and recovery bindings so the
-next round or fault continues the same child thread. A manually settled thread must be unsettled by its operator before a follow-up. A new
+next round or fault continues the same child thread. A manually settled thread is unsettled by the delivery gate before a follow-up is sent. A new
 thread is needed only when the old one is gone or deleted, or the role's selected
 profile changes; other displaced threads stay as the terminal lane leaves them
 (Tom, 2026-11-12).
@@ -1345,7 +1355,11 @@ forwarded, the turn held) and keeps it distinct from the ignore rule;
 and that a mint without them writes neither.
 
 `test/t3code-one-row.test.ts` covers parent row titles, snooze and renewal,
-manual settle, refusal, and the absence of top-level role launches and settle writes.
+the manual settle left alone by presentation, the re-entry wake, and the absence of
+top-level role launches and settle writes. `test/t3code-settled-delivery.test.ts`
+covers the delivery gate on the private server: settled and visible targets, the
+archived fence, a delayed unsettle, unknown unsettles that did and did not land, and
+the wire order and command identities.
 The sweep skips presentation work for confirmed terminal archive or deletion.
 Once Nucleus's own recorded delete is confirmed by its receipt or authoritative
 readback, unknown presentation intents for that thread become

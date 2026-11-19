@@ -13,8 +13,6 @@ import { normalizeRepositoryOrigin } from "../../shared/lanes";
 import { askBinding } from "./agent-ask";
 import type { Resolution } from "../resolution";
 import { ProvenPreSendRefusalError } from "../recovery/task-reasons";
-import { OperatorSettledRefusalError } from "../host/errors";
-import { isSettledRoute, type PlannerThreadRoute } from "./planner-presence";
 import {
   normalizeTellTarget,
   TASK_ROLES,
@@ -45,16 +43,10 @@ const REFUSAL_LABEL: Record<ThreadRouteKind, string> = {
   reply: "Reply message",
 };
 
-const OPERATOR_SETTLED_REASON =
-  "the operator settled this thread on its host; Nucleus never clears that to deliver a message";
-
 /** Re-label a pre-send refusal with the route that was refused; any other error passes through. */
 function relabelRefusal(error: unknown, kind: ThreadRouteKind): unknown {
   if (!(error instanceof ProvenPreSendRefusalError)) return error;
-  const label = REFUSAL_LABEL[kind];
-  return error instanceof OperatorSettledRefusalError
-    ? new OperatorSettledRefusalError(error.reason, label)
-    : new ProvenPreSendRefusalError(error.reason, label);
+  return new ProvenPreSendRefusalError(error.reason, REFUSAL_LABEL[kind]);
 }
 
 /**
@@ -1261,7 +1253,6 @@ export class AgentMessages {
    */
   private async deliverThreadMessage(
     record: AgentMessageRecord,
-    excluded: ReadonlySet<string> = new Set(),
   ): Promise<AgentMessageReceipt> {
     const store = this.store;
     const current = store.message(record.id) ?? record;
@@ -1292,7 +1283,7 @@ export class AgentMessages {
     let candidates: ThreadCandidate[];
     let senderIsCandidate = false;
     try {
-      const resolved = await this.threadCandidates(current, excluded);
+      const resolved = await this.threadCandidates(current);
       candidates = resolved.candidates;
       senderIsCandidate = resolved.senderIsCandidate;
     } catch (error) {
@@ -1341,29 +1332,19 @@ export class AgentMessages {
       };
     }
     for (const candidate of candidates) {
-      try {
-        // A project thread that cannot be confirmed in time still gets the tell
-        // path, which queues for a busy recipient. A named agent does not: an
-        // unreadable thread is never sent to (spec 060, section 4).
-        const hostId = await this.liveThreadHost(
-          candidate.agentId,
-          candidate.hostId,
-          current.toRole !== "agent",
-          candidate.kind,
-        );
-        if (!hostId) {
-          if (current.toProjectKey) this.resolution.responsibleThreads.cache.invalidate(current.toProjectKey);
-          continue;
-        }
-        return await this.notifyThread(current, candidate.agentId, hostId, label, candidate.kind);
-      } catch (error) {
-        if (!(error instanceof OperatorSettledRefusalError) || candidate.kind !== "project") throw error;
-        // Tom, 2026-11-19: a project thread the operator settled is put away like an
-        // archived one. The cache is cleared and the message re-resolves once without
-        // it: the next live candidate, or the sender handles it. It never queues on it.
-        this.resolution.responsibleThreads.cache.invalidate(current.toProjectKey!);
-        return this.deliverThreadMessage(record, new Set([...excluded, candidate.agentId]));
+      // A project thread that cannot be confirmed in time still gets the tell
+      // path, which queues for a busy recipient. A named agent does not: an
+      // unreadable thread is never sent to (spec 060, section 4).
+      const hostId = await this.liveThreadHost(
+        candidate.agentId,
+        candidate.hostId,
+        current.toRole !== "agent",
+      );
+      if (!hostId) {
+        if (current.toProjectKey) this.resolution.responsibleThreads.cache.invalidate(current.toProjectKey);
+        continue;
       }
+      return this.notifyThread(current, candidate.agentId, hostId, label, candidate.kind);
     }
     const detail = current.toRole === "agent"
       ? `Agent ${current.toAgentName ?? "unknown"} is not live on its host; the message waits until it is reachable.`
@@ -1391,7 +1372,6 @@ export class AgentMessages {
   /** The threads a planner or agent message may reach, in order; each is re-read at delivery, never trusted from the record. */
   private async threadCandidates(
     record: AgentMessageRecord,
-    excluded: ReadonlySet<string> = new Set(),
   ): Promise<{
     candidates: ThreadCandidate[];
     /** The sender was itself a live responsible candidate for the project. */
@@ -1415,23 +1395,15 @@ export class AgentMessages {
       try {
         const task = this.store.task(record.toLadderTaskId);
         for (const rung of (await this.resolution.plannerRungsFor(task)).rungs)
-          if (!isSender(rung.agentId) && !excluded.has(rung.agentId))
-            candidates.push({ agentId: rung.agentId, kind: "rung" });
+          if (!isSender(rung.agentId)) candidates.push({ agentId: rung.agentId, kind: "rung" });
       } catch {
         /* the ladder's task is gone; the project's planner still answers */
       }
     }
     const project = this.store.projectByKey(key);
     if (project) {
-      const resolved = await this.resolution.responsibleThread(
-        project,
-        record.fromAgentId ? { agentId: record.fromAgentId, hostId: record.fromHostId } : undefined,
-        undefined,
-        undefined,
-        excluded,
-      );
-      if (resolved.thread)
-        candidates.push({ agentId: resolved.thread.agentId, hostId: resolved.thread.hostId, kind: "project" });
+      const resolved = await this.resolution.responsibleThread(project, record.fromAgentId ? { agentId: record.fromAgentId, hostId: record.fromHostId } : undefined);
+      if (resolved.thread) candidates.push({ agentId: resolved.thread.agentId, hostId: resolved.thread.hostId, kind: "project" });
       else senderIsCandidate = resolved.senderIsCandidate;
     }
     return {
@@ -1454,7 +1426,6 @@ export class AgentMessages {
     agentId: string,
     hintHostId: string | undefined,
     tolerateUnverified: boolean,
-    kind: ThreadRouteKind = "reply",
   ): Promise<string | null> {
     const hostId =
       hintHostId ?? parseAgentId(agentId)?.hostId ?? (await this.resolution.identifyOriginHost(agentId));
@@ -1466,16 +1437,11 @@ export class AgentMessages {
       )
     )
       return null;
-    let state: PlannerThreadRoute;
     try {
-      state = await observationTimeout(this.resolution.plannerPresence.threadRoute(agentId, hostId), 'Thread observation timed out', this.resolution.responsibleObservationMs);
+      const state = await observationTimeout(this.resolution.plannerPresence.threadRoute(agentId, hostId), 'Thread observation timed out', this.resolution.responsibleObservationMs);
+      if (state.kind === "routable") return hostId;
+      return state.kind === "unverified" && tolerateUnverified ? hostId : null;
     } catch { return tolerateUnverified ? hostId : null; }
-    // Tom, 2026-11-19: an operator-settled project thread is put away like an archived one,
-    // and it is checked again here, at delivery, so a cached shortlist cannot send to it.
-    if (kind === "project" && isSettledRoute(state))
-      throw new OperatorSettledRefusalError(OPERATOR_SETTLED_REASON, REFUSAL_LABEL.project);
-    if (state.kind === "routable") return hostId;
-    return state.kind === "unverified" && tolerateUnverified ? hostId : null;
   }
 
   /**
@@ -1620,14 +1586,7 @@ export class AgentMessages {
     } catch (error) {
       if (record.toProjectKey) this.resolution.responsibleThreads.cache.invalidate(record.toProjectKey);
       this.settleLateMessage(intent, agentId, error);
-      const refusal = relabelRefusal(error, kind);
-      // A settled project thread is recorded as refused and raised, so the caller re-resolves
-      // rather than leaving the message queued on it (Tom, 2026-11-19).
-      if (kind === "project" && refusal instanceof OperatorSettledRefusalError) {
-        this.failedSend(intent, label, record.toRole, refusal);
-        throw refusal;
-      }
-      return this.failedSend(intent, label, record.toRole, refusal);
+      return this.failedSend(intent, label, record.toRole, relabelRefusal(error, kind));
     } finally {
       this.deliveringMessages.delete(record.id);
     }

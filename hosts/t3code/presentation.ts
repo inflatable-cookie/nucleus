@@ -4,7 +4,6 @@ import { capPaseoTitle } from "../../shared/paseo-title";
 import { WIRE_LABEL_KEYS } from "../../shared/wire-labels";
 import {
   HostUnknownDeliveryError,
-  OperatorSettledRefusalError,
   ProvenPreSendRefusalError,
 } from "../../core/host";
 import type { Task } from "../../shared/contracts";
@@ -43,6 +42,13 @@ const latestRun = (projection: Projection) =>
 export const SNOOZE_HORIZON_MS = 48 * 60 * 60_000;
 /** The sweep renews once less than this remains, leaving a day of slack for a paused queue. */
 export const SNOOZE_RENEW_BEFORE_MS = 24 * 60 * 60_000;
+
+/**
+ * How many times the delivery gate reads a thread back after its unsettle, and the
+ * gap between reads, before a message waits for the next pass (T3 may apply it late).
+ */
+export const UNSETTLE_READ_ATTEMPTS = 4;
+export const UNSETTLE_READ_GAP_MS = 250;
 
 /** The collaborators a presentation write needs: durable state, the ledger and the reads. */
 export interface T3PresentationContext {
@@ -245,7 +251,8 @@ export class T3Presentation {
    * attention, or a role asking a question or ending with a fault — gets the row
    * shown; a task that waits on nothing Nucleus runs and needs no one gets it
    * snoozed; a running role leaves it shown. A row an operator settled by hand is
-   * theirs and is left exactly as it is.
+   * theirs and is left exactly as it is here; a message or re-entry for it still goes
+   * through `wakeBeforeDelivery`, which unsettles it first.
    *
    * The title rides the same pass: the task's own state title plus the step, so a
    * role that starts, needs input or stalls shows without a task title change.
@@ -450,16 +457,87 @@ export class T3Presentation {
     }
   }
 
-  async unsettleBeforeMessage(id: string, _messageId: string) {
+  /**
+   * The one delivery gate for a message, decision, re-entry or follow-up (Tom,
+   * 2026-11-19: "I explicitly want nucleus to unsettle threads like that"). It
+   * freshly observes the target. A thread the operator settled is unsettled first,
+   * by a recorded `thread.unsettle` under the message's own identity, and read back
+   * until T3 shows it active; only then does the caller send. Nucleus never issues
+   * `thread.settle`. An archived or removed thread is fenced and never unsettled.
+   *
+   * Resolves once the thread is active. Otherwise it throws a proven pre-send refusal:
+   * nothing was sent, so the message stays queued. An unknown unsettle is reconciled
+   * by a fresh read before anything repeats, and never resent blindly.
+   */
+  async wakeBeforeDelivery(id: string, messageId: string): Promise<void> {
     if (this.core.intents.confirmedDeletion(this.core.state.read(), id))
       throw new ProvenPreSendRefusalError(
-        "T3Code thread deletion is confirmed",
+        "T3Code thread deletion is confirmed; nothing was sent",
       );
-    const projection = await this.core.reads.readProjection(id, "observation");
-    if (projection.thread.settledOverride === "settled")
-      throw new OperatorSettledRefusalError(
-        "T3Code thread is manually settled; unsettle it in T3 before continuing",
+    const observed = await this.observeFresh(id);
+    if (observed.thread.archivedAt || observed.thread.deletedAt)
+      throw new ProvenPreSendRefusalError(
+        "T3Code thread is archived or removed; nothing was sent",
       );
+    if (observed.thread.settledOverride !== "settled") return;
+
+    const key = identity("unsettle", canonical([id, messageId]));
+    let resendUnknown = false;
+    if (this.core.state.read().intents[key]?.status === "unknown") {
+      // A prior unsettle with an unknown outcome: a fresh read decides whether it landed.
+      const reread = await this.observeFresh(id);
+      if (reread.thread.settledOverride !== "settled") {
+        this.core.state.update((current) => {
+          const intent = current.intents[key];
+          if (intent?.status === "unknown")
+            current.intents[key] = { ...intent, status: "settled", result: null };
+        });
+        return;
+      }
+      resendUnknown = true;
+    }
+
+    try {
+      await this.core.intents.effect(
+        key,
+        "orchestration.dispatchCommand",
+        {
+          type: "thread.unsettle",
+          commandId: key,
+          threadId: id,
+          reason: "user",
+        },
+        undefined,
+        undefined,
+        { retryRefusedBeforeSend: true, resendUnknownAfterRead: resendUnknown },
+      );
+    } catch (error) {
+      if (error instanceof ProvenPreSendRefusalError)
+        throw new ProvenPreSendRefusalError(
+          `T3Code unsettle was refused before send (${error.reason}); nothing was sent`,
+        );
+      // The unsettle may or may not have landed. The message is not sent either way,
+      // so it waits, and the next pass reads the thread before anything repeats.
+      throw new ProvenPreSendRefusalError(
+        "T3Code unsettle outcome is unknown; nothing was sent and the thread is read again before the message is retried",
+      );
+    }
+
+    // T3 may show the unsettle a moment after the command returns: read it back.
+    for (let attempt = 0; attempt < UNSETTLE_READ_ATTEMPTS; attempt++) {
+      if (attempt) await new Promise((done) => setTimeout(done, UNSETTLE_READ_GAP_MS));
+      const read = await this.observeFresh(id);
+      if (read.thread.settledOverride !== "settled") return;
+    }
+    throw new ProvenPreSendRefusalError(
+      "T3Code still shows the thread settled after its unsettle; nothing was sent and the message waits for the next pass",
+    );
+  }
+
+  /** One thread's projection read after forgetting any held snapshot, so the answer is current. */
+  private async observeFresh(id: string) {
+    this.core.reads.forget?.(id);
+    return this.core.reads.readProjection(id, "observation");
   }
 
   /**

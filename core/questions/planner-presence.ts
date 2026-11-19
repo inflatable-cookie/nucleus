@@ -18,20 +18,11 @@ export type PlannerPresenceContext = Pick<
 >;
 
 export type PlannerThreadRoute =
-  /**
-   * `settled` marks a routable thread the operator settled by hand. Only a project
-   * message reads it (as gone); a task's own rung still routes to it as before.
-   */
-  | { kind: "routable" | "gone"; settled?: true }
+  | { kind: "routable" | "gone" }
   /** The read could not confirm the thread (host down, lookup failed, no T3 tombstone): not proof of absence. */
   | { kind: "unverified"; detail: string }
   /** The host answered with a different thread than the recorded identity. */
   | { kind: "unroutable"; detail: string };
-
-/** A routable thread the operator settled by hand: a project message puts it away like an archived one. */
-export function isSettledRoute(route: PlannerThreadRoute): boolean {
-  return route.kind === "routable" && route.settled === true;
-}
 
 export function unroutablePlannerDetail(
   agentId: string,
@@ -118,10 +109,9 @@ export class PlannerPresence {
           : { kind: "gone" };
       if (registered.id !== expected)
         return unroutable("the host returned a different thread");
-      if (registered.archived || registered.deleted) return { kind: "gone" };
-      return registered.settled
-        ? { kind: "routable", settled: true }
-        : { kind: "routable" };
+      return {
+        kind: registered.archived || registered.deleted ? "gone" : "routable",
+      };
     } catch {
       return unverified("the host could not verify the thread");
     }

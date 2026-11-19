@@ -249,8 +249,8 @@ export class T3CodeHost implements Host {
       state: this.state,
       reads: this.reads,
       intents: this.intents,
-      unsettle: (threadId, messageId) =>
-        this.presentation.unsettleBeforeMessage(threadId, messageId),
+      wake: (threadId, messageId) =>
+        this.presentation.wakeBeforeDelivery(threadId, messageId),
     });
     this.decisionCards = new T3DecisionCards({
       acp: this.acp,
@@ -594,7 +594,6 @@ export class T3CodeHost implements Host {
       title: p.thread.title,
       archived: !!p.thread.archivedAt,
       deleted: !!p.thread.deletedAt,
-      ...(p.thread.settledOverride === "settled" ? { settled: true } : {}),
     };
   }
   /** One synchronized thread snapshot: the reads module owns the decode, the host owns this entry to it. */
@@ -1218,7 +1217,7 @@ export class T3CodeHost implements Host {
   }
 
   async sendMessage(id: string, input: HostMessage) {
-    await this.presentation.unsettleBeforeMessage(id, input.messageId);
+    await this.presentation.wakeBeforeDelivery(id, input.messageId);
     await this.intents.effect(
       input.messageId,
       "orchestration.dispatchCommand",
@@ -1270,7 +1269,7 @@ export class T3CodeHost implements Host {
         sent: false as const,
         reason: "T3Code retained-thread guard refused",
       };
-    await this.presentation.unsettleBeforeMessage(id, input.messageId);
+    await this.presentation.wakeBeforeDelivery(id, input.messageId);
     await this.intents.effect(
       input.messageId,
       "orchestration.dispatchCommand",
@@ -1317,7 +1316,7 @@ export class T3CodeHost implements Host {
       throw new ProvenPreSendRefusalError(
         "T3Code thread has no active run to steer",
       );
-    await this.presentation.unsettleBeforeMessage(id, messageId);
+    await this.presentation.wakeBeforeDelivery(id, messageId);
     await this.intents.effect(messageId, "orchestration.dispatchCommand", {
       type: "message.dispatch",
       commandId: messageId,
@@ -1346,7 +1345,7 @@ export class T3CodeHost implements Host {
     const runId = await this.reads.activeRunId(id);
     if (!runId) return this.sendMessage(id, input);
     try {
-      await this.presentation.unsettleBeforeMessage(id, messageId);
+      await this.presentation.wakeBeforeDelivery(id, messageId);
       await this.intents.effect(
         identity("steer", messageId),
         "orchestration.dispatchCommand",
