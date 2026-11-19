@@ -20,7 +20,7 @@
 import type { Task } from "../../shared/contracts";
 import type { AgentMessageReceipt } from "../questions/agent-messages";
 import { verifyAcpSession, mintAcpSession } from "./binding";
-import type { AcpAnswerInput, AcpMessageInput, AcpSessionBinding, AcpSessionSurface, AcpTurnInput, AcpTurnReply } from "../../shared/acp/surface";
+import type { AcpAnswerInput, AcpCaller, AcpCardScope, AcpMessageInput, AcpPendingCard, AcpSessionBinding, AcpSessionSurface, AcpTurnInput, AcpTurnReply } from "../../shared/acp/surface";
 import { acpFinishedLine, acpLifecycleLine, acpLifecycleSignature, acpTaskFinished, acpTaskName, type AcpLineMemory } from "./lifecycle";
 import type { Engine } from "../engine";
 import { createHash } from "node:crypto";
@@ -34,6 +34,13 @@ export const ACP_TURN_WAIT_MAX_MS = 25_000;
 export const ACP_TURN_POLL_MS = 1_000;
 /** Sessions whose last shown signature is remembered; the oldest is dropped first. */
 export const ACP_SIGNATURE_MEMORY = 512;
+
+/** The key one host scope's cards are recorded under. */
+const scopeKey = (scope: AcpCardScope): string =>
+  "hostId" in scope ? `inbox:${scope.hostId}` : `task:${scope.taskId}`;
+/** The scope a caller offers decisions in, when it names one. */
+const callerScope = (caller: AcpCaller): string | null =>
+  caller.kind === "inbox" ? `inbox:${caller.hostId}` : caller.taskId ? `task:${caller.taskId}` : null;
 
 export interface AcpMessageReply { receipt: AgentMessageReceipt }
 
@@ -64,6 +71,12 @@ export class AcpSessions implements AcpSessionSurface {
   private readonly shown = new Map<string, { signature: string; memory: AcpLineMemory }>();
   /** Release directives from a host adapter, consumed by the turn that acts on them. */
   private readonly shownDecisions = new Map<string, string>();
+  /**
+   * The decision cards each host scope's own read of T3 shows still pending. A version
+   * with a live card is not offered again, and one whose card is gone is offered again;
+   * absence is the host's read, never this process's assumption (nucleus#1395).
+   */
+  private readonly presentCards = new Map<string, Set<string>>();
   private readonly releases = new Map<string, string>();
   /** Turns waiting on this session: a release, or a new signature, wakes them. */
   private readonly waiting = new Map<string, Set<() => void>>();
@@ -86,26 +99,48 @@ export class AcpSessions implements AcpSessionSurface {
   private cancelKey(id: string, version: number): string {
     return `acpCancel:${createHash("sha256").update(JSON.stringify([id, version])).digest("hex")}`;
   }
-  private offered(caller: AcpTurnInput) {
+  /**
+   * The decisions this session may still ask about: open here, and not dismissed as many
+   * times as the operator's one re-offer allows. The operator's dismissal is the only
+   * thing recorded as a cancellation receipt, so a settlement the host made from its own
+   * read of T3 never spends that allowance (nucleus#1395).
+   */
+  private offerable(caller: AcpCaller) {
     return acpDecisions(this.engine.store, caller).filter(row => {
       const receipt = this.engine.store.getMeta<{ requests: string[] }>(this.cancelKey(row.id, row.version));
       return (receipt?.requests.length ?? 0) < 2;
-    }).map(acpElicitation);
+    });
   }
 
   /** The host uses this only for the task parent it already owns. */
   pendingDecisionKey(taskId: string): string | null {
-    const rows = acpDecisions(this.engine.store, { taskId, sessionId: "" });
+    const rows = this.offerable({ taskId, sessionId: "" });
     return rows.length ? JSON.stringify(rows.map(row => [row.id, row.version])) : null;
   }
 
   /**
-   * The host's inbox uses this to gate its re-entry and release: the offer the inbox's
-   * own turn would show, with the operator-cancel cap applied. Null when none is open.
+   * The host's inbox uses this to gate its re-entry and release: a decision this inbox
+   * must ask about, with the operator-cancel cap applied. Null when none is open. A
+   * version whose card the host still shows pending counts: the turn exists to hold it.
    */
   pendingInboxDecisionKey(hostId: string): string | null {
-    const rows = this.offered({ kind: "inbox", hostId, sessionId: "" });
+    const rows = this.offerable({ kind: "inbox", hostId, sessionId: "" });
     return rows.length ? JSON.stringify(rows.map(row => [row.id, row.version])) : null;
+  }
+
+  /**
+   * What the next offer raises: the offerable versions whose card the host's own read of
+   * T3 does not already show pending. Recording an unread thread (`null`) proves nothing.
+   */
+  observedCards(scope: AcpCardScope, cards: AcpPendingCard[] | null): void {
+    if (cards === null) return;
+    this.presentCards.set(scopeKey(scope), new Set(cards.map(card => `${card.id}:${card.version}`)));
+  }
+
+  /** The versions a turn may raise a card for now. */
+  private raises(caller: AcpCaller) {
+    const present = this.presentCards.get(callerScope(caller) ?? "");
+    return this.offerable(caller).filter(row => !present?.has(`${row.id}:${row.version}`)).map(acpElicitation);
   }
 
   /** Resolve the exact version shown on a card, including an answer since superseded. */
@@ -128,7 +163,9 @@ export class AcpSessions implements AcpSessionSurface {
    * Ask whether to keep holding this turn, and which lifecycle lines to show. An
    * attach (`attach: true`) always gets the current line: the agent may have been
    * killed and relaunched while this service kept the session's shown signature, and
-   * a reloaded thread has nothing else to display.
+   * a reloaded thread has nothing else to display. An attach raises no card: a card
+   * belongs to a held turn, and the first held poll offers it at once because the attach
+   * recorded no offer (nucleus#1395).
    */
   async turn(input: AcpTurnInput, token: string): Promise<AcpTurnReply> {
     if (input.kind === "inbox") {
@@ -139,11 +176,14 @@ export class AcpSessions implements AcpSessionSurface {
       const waitMs = Math.max(0, Math.min(input.waitMs ?? 0, ACP_TURN_WAIT_MAX_MS));
       const deadline = Date.now() + waitMs;
       for (;;) {
-        const elicitations = this.offered(input);
+        const elicitations = input.attach === true ? [] : this.raises(input);
         const signature = JSON.stringify(elicitations);
-        if (elicitations.length) this.releases.delete(record.sessionId);
+        // A decision this inbox must ask about holds the turn, even while its card is
+        // already live on T3: an offer that arrives first cancels that release directive.
+        const required = this.pendingInboxDecisionKey(record.hostId);
+        if (required) this.releases.delete(record.sessionId);
         const release = this.releases.get(record.sessionId);
-        if (release !== undefined && elicitations.length === 0) {
+        if (release !== undefined && !required) {
           this.releases.delete(record.sessionId);
           this.shownDecisions.set(record.sessionId, signature);
           return { kind: "inbox", hostId: record.hostId, state: "release", reason: release, messages: [], elicitations: [] };
@@ -163,7 +203,7 @@ export class AcpSessions implements AcpSessionSurface {
       const task = this.engine.store.task(record.taskId);
       const signature = acpLifecycleSignature(task);
       const messages: string[] = [];
-      const elicitations = this.offered(input);
+      const elicitations = input.attach === true ? [] : this.raises(input);
       const decisionSignature = JSON.stringify(elicitations);
       const changedDecisions = this.shownDecisions.get(record.sessionId) !== decisionSignature;
       this.shownDecisions.set(record.sessionId, decisionSignature);
@@ -199,6 +239,9 @@ export class AcpSessions implements AcpSessionSurface {
       throw new Error("Decision changed or is not offered to this session");
     }
     if (input.action === "cancel") {
+      // Only the operator's own dismissal reaches this route: the agent records the
+      // cancellation receipt for a card its live turn raised, and a card a host settled
+      // from its own read of T3 records nothing (nucleus#1395).
       const key = this.cancelKey(input.id, input.version);
       this.engine.store.transaction(() => {
         const receipt = this.engine.store.getMeta<{ requests: string[] }>(key) ?? { requests: [] };

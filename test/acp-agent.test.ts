@@ -848,3 +848,150 @@ test("a held turn offers concurrent decision cards and forwards accepted answers
     await client.lines.untilResult(prompt);
   } finally { await client.closed(); }
 });
+
+/** One offered decision version, as the service sends it. */
+const decisionCard = (id: string, version = 1) => ({
+  id,
+  version,
+  headline: `Choose ${id}`,
+  question: `Question ${id}?`,
+  choices: [
+    { label: "Yes", consequence: "Proceed" },
+    { label: "No", consequence: "Hold" },
+  ],
+});
+
+/** The decision field id a card carries: `nucleus_<id>_<version>`. */
+const fieldOf = (message: Json): string => {
+  const params = message.params as Json;
+  const schema = params.requestedSchema as Json;
+  return Object.keys(schema.properties as Json)[0]!;
+};
+
+/** Wait for a fact the agent reaches asynchronously, so no assertion races a poll. */
+async function until(predicate: () => boolean, what: string): Promise<void> {
+  for (const started = Date.now(); !predicate(); ) {
+    if (Date.now() - started > 5_000) throw new Error(`the agent did not reach: ${what}`);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
+test("a card settled after its ACP turn ended is the host's settlement, and the version is offered again", async () => {
+  // nucleus#1395's live shape: the turn ends while the socket is replaced, T3 then
+  // settles the card the ended turn left behind. Two such turns used to spend the
+  // version's whole re-offer, so the third turn raised nothing at all.
+  const card = decisionCard("reoffered");
+  const client = harness({ replies: [reply("hold"), { ...reply("hold"), elicitations: [card] }] });
+  try {
+    await client.lines.untilResult(client.request("session/new", { cwd: "/synthetic" }));
+    const raised: Array<Json["id"]> = [];
+    for (const turn of [1, 2, 3]) {
+      if (turn > 1) client.transport.replies.push({ ...reply("hold"), elicitations: [card] });
+      const prompt = client.request("session/prompt", { sessionId: binding.sessionId, prompt: [{ type: "text", text: `turn ${turn}` }] });
+      const message = await client.lines.next();
+      assert.equal(message.method, "elicitation/create", `turn ${turn} raises the open version's card`);
+      assert.equal(fieldOf(message), "nucleus_reoffered_1", "the field id carries the version the card shows");
+      raised.push(message.id);
+      // The turn ends before anyone answers; T3 settles the card the ended turn left.
+      client.notify("session/cancel", { sessionId: binding.sessionId });
+      await client.lines.untilResult(prompt);
+      client.respond(message.id, { action: "cancel" });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    assert.equal(new Set(raised).size, 3, "each held turn raised its own card");
+    assert.deepEqual(client.transport.answers, [], "a settlement that follows an ended turn is not the operator's dismissal");
+  } finally {
+    await client.closed();
+  }
+});
+
+test("an operator's dismissal of a live card is recorded once, and the version is raised again", async () => {
+  const card = decisionCard("dismissed");
+  const client = harness({ replies: [reply("hold"), { ...reply("hold"), elicitations: [card] }] });
+  try {
+    await client.lines.untilResult(client.request("session/new", { cwd: "/synthetic" }));
+    const prompt = client.request("session/prompt", { sessionId: binding.sessionId, prompt: [{ type: "text", text: "start" }] });
+    const first = await client.lines.next();
+    assert.equal(first.method, "elicitation/create");
+    // The operator dismisses the card while its turn is held: that is the dismissal the
+    // service's one re-offer budget counts. The same delivery twice counts once.
+    client.respond(first.id, { action: "cancel" });
+    client.respond(first.id, { action: "cancel" });
+    await until(() => client.transport.answers.length === 1, "the dismissal to be recorded");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.deepEqual(client.transport.answers, [
+      { taskId: "task-1", sessionId: binding.sessionId, id: "dismissed", version: 1, action: "cancel", requestId: first.id },
+    ]);
+    // A dismissal does not block the version: the service may offer it once more.
+    client.transport.replies.push({ ...reply("hold"), elicitations: [card] });
+    const second = await client.lines.next();
+    assert.equal(second.method, "elicitation/create");
+    assert.notEqual(second.id, first.id, "the re-offer is a new card, not the dismissed one");
+    client.notify("session/cancel", { sessionId: binding.sessionId });
+    await client.lines.untilResult(prompt);
+  } finally {
+    await client.closed();
+  }
+});
+
+test("an answer whose delivery failed is never resent, and the version is offered again on the next turn", async () => {
+  const card = decisionCard("unknown");
+  const client = harness({ replies: [reply("hold"), { ...reply("hold"), elicitations: [card] }] });
+  // The socket was replaced between the operator's answer and the service seeing it.
+  client.transport.answer = async (input) => {
+    client.transport.answers.push(input);
+    throw new Error("connect ENOENT /nonexistent/callback.sock");
+  };
+  try {
+    await client.lines.untilResult(client.request("session/new", { cwd: "/synthetic" }));
+    const prompt = client.request("session/prompt", { sessionId: binding.sessionId, prompt: [{ type: "text", text: "start" }] });
+    const first = await client.lines.next();
+    assert.equal(first.method, "elicitation/create");
+    client.respond(first.id, { action: "accept", content: { nucleus_unknown_1: "Yes" } });
+    await until(() => client.transport.answers.length === 1, "the failed delivery");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal(client.transport.answers.length, 1, "an unknown delivery is reconciled, never resent");
+    client.notify("session/cancel", { sessionId: binding.sessionId });
+    await client.lines.untilResult(prompt);
+    // Nothing was recorded, so the service still offers the version: the next held turn
+    // asks again with a new card.
+    client.transport.replies.push({ ...reply("hold"), elicitations: [card] });
+    const again = client.request("session/prompt", { sessionId: binding.sessionId, prompt: [{ type: "text", text: "again" }] });
+    const second = await client.lines.next();
+    assert.equal(second.method, "elicitation/create");
+    assert.equal(fieldOf(second), "nucleus_unknown_1");
+    assert.notEqual(second.id, first.id);
+    assert.equal(client.transport.answers.length, 1, "the earlier answer was not sent a second time");
+    client.notify("session/cancel", { sessionId: binding.sessionId });
+    await client.lines.untilResult(again);
+  } finally {
+    await client.closed();
+  }
+});
+
+test("one held turn raises one card per decision version, however often the service offers it", async () => {
+  const one = decisionCard("one");
+  const two = decisionCard("two", 2);
+  const client = harness({
+    replies: [
+      reply("hold"),
+      { ...reply("hold"), elicitations: [one, two] },
+      { ...reply("hold"), elicitations: [one, two] },
+      { ...reply("hold"), elicitations: [one] },
+    ],
+  });
+  try {
+    await client.lines.untilResult(client.request("session/new", { cwd: "/synthetic" }));
+    const prompt = client.request("session/prompt", { sessionId: binding.sessionId, prompt: [{ type: "text", text: "start" }] });
+    const first = await client.lines.next();
+    const second = await client.lines.next();
+    assert.deepEqual([fieldOf(first), fieldOf(second)], ["nucleus_one_1", "nucleus_two_2"]);
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    assert.deepEqual(client.lines.pending.filter((message) => message.method === "elicitation/create"), [],
+      "a version that already has a live card is never offered a second one");
+    client.notify("session/cancel", { sessionId: binding.sessionId });
+    await client.lines.untilResult(prompt);
+  } finally {
+    await client.closed();
+  }
+});

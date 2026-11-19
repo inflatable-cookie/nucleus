@@ -1,5 +1,8 @@
-/** Settle the native cards this adapter raised when their decision changes elsewhere. */
-import type { AcpSessionSurface } from "../../shared/acp/surface";
+/**
+ * Settle the native cards this adapter raised when their decision changes elsewhere, and
+ * record the cards T3 still shows pending so the next held turn raises only the rest.
+ */
+import type { AcpCardScope, AcpPendingCard, AcpSessionSurface } from "../../shared/acp/surface";
 import type { Projection, T3Reads } from "./reads";
 import { activeStatuses } from "./reads";
 
@@ -15,13 +18,18 @@ export class T3DecisionCards {
   /**
    * `settled` is true only when the thread was read and every Nucleus card on it is
    * answered or cancelled on T3. An unread thread is never settled.
+   *
+   * The cards T3 still shows pending are recorded for `scope`, so the service offers a
+   * version again exactly when the host's own read shows no live card for it: a card lost
+   * with its turn is absent here and comes back on the next held turn (nucleus#1395).
    */
-  async reconcile(threadId: string, workspaceId: string): Promise<{ settled: boolean }> {
+  async reconcile(threadId: string, workspaceId: string, scope: AcpCardScope): Promise<{ settled: boolean }> {
     const acp = this.core.acp();
     if (!acp?.decisionSettlement || !(await this.core.reads.isObserved(threadId))) return { settled: false };
     const projection = await this.core.reads.readProjection(threadId, "window");
     const liveRuns = new Set(projection.runs.filter(run => activeStatuses.has(run.status)).map(run => run.id));
     let open = 0;
+    const present: AcpPendingCard[] = [];
     // A window keeps only the newest timeline suffix. A pending card older than that
     // suffix has no item in the window, so its question is read from the full transcript.
     let transcript: Projection | null = null;
@@ -37,14 +45,21 @@ export class T3DecisionCards {
       if (!question) continue;
       const match = /^nucleus_([0-9a-f-]{36})_(\d+)$/i.exec(question.id);
       if (!match) continue;
-      const decision = acp.decisionSettlement(match[1]!, Number(match[2]!));
+      const id = match[1]!;
+      const version = Number(match[2]!);
+      const decision = acp.decisionSettlement(id, version);
       const stale = request.responseCapability.type === "message" || Boolean(item.runId && !liveRuns.has(item.runId));
-      if (decision.state === "open" && !stale) { open++; continue; }
+      if (decision.state === "open" && !stale) {
+        open++;
+        present.push({ id, version });
+        continue;
+      }
       const response = decision.state === "answered" && decision.answer !== undefined
         ? { answers: { [question.id]: decision.answer } }
         : { decision: "cancel" as const };
       await this.core.respond(threadId, workspaceId, request.id, response);
     }
+    acp.observedCards?.(scope, present);
     return { settled: open === 0 };
   }
 }

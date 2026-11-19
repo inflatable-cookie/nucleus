@@ -1,0 +1,1 @@
+T3 shows a decision's card again when it is lost: a card cancelled across a callback-socket replacement or an ended ACP turn is re-offered on the next held turn in the same inbox or task thread, with exactly one live card per decision version.

@@ -657,6 +657,7 @@ export class T3CodeHost implements Host {
         const cards = await this.decisionCards.reconcile(
           state.inbox.threadId,
           state.inbox.workspaceId,
+          { hostId: this.hostId },
         );
         const acp = this.acp();
         if (acp?.pendingInboxDecisionKey?.(this.hostId))
@@ -672,6 +673,7 @@ export class T3CodeHost implements Host {
           await this.decisionCards.reconcile(
             parent.threadId,
             parent.workspaceId,
+            { taskId: parent.taskId },
           );
           if (this.acp()?.pendingDecisionKey?.(parent.taskId))
             await this.decisionHold.reconcile(parent.threadId);

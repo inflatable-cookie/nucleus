@@ -126,8 +126,15 @@ socket, authenticated by the minted token:
     that acts on it and the next turn holds again, which is what "release the
     parent between children, re-enter by message" needs. Directives are
     memory-only, so a service restart re-derives the answer from the task.
+  - `elicitations` names the decision versions whose card the host's own read does
+    not already show pending, with the operator's one re-offer applied: a version
+    that already has a live card raises none, and one whose card is gone is
+    offered again. An attach shows the line only and records no offer, so the
+    first held poll of a reopened thread offers its cards at once.
 - `POST /acp-answer` authenticates a task or host-scoped inbox session, checks the
-  offered decision and version, and records an operator answer or cancellation receipt.
+  offered decision and version, and records an operator answer or the operator's own
+  dismissal receipt. A cancellation a host makes for a card whose turn ended is not
+  the operator's and records nothing (see [T3 decisions](t3code-host-adapter.md#operator-decisions-on-t3)).
 - `POST /acp-message` `{taskId, sessionId, eventId, text}` records the
   operator's text through the existing message route and answers its receipt.
 
@@ -218,8 +225,18 @@ task message route. The service projects operator decisions into native ACP
 forms; the agent holds several requests at once and sends accepted answers or
 cancel receipts back over the authenticated callback. The service checks the
 decision version and the session's scope before recording an operator answer.
-Task bindings continue to use their checkout and task identity. T3-specific
-thread creation, card settlement and restart behavior belong to the
+Task bindings continue to use their checkout and task identity.
+
+A card belongs to the turn that raised it. The agent remembers a raised card for
+that turn only, so one version has at most one live card and the next held turn
+raises again whatever the service still offers; the offer itself is the service's
+decision, and it names only the versions a host's own read does not already show
+pending (`observedCards`). An answer the service could not record is never resent:
+the version stays open and is offered again, and the operator's next answer is a
+fresh delivery. A cancel is recorded as the operator's dismissal only when it
+arrives for a card the held turn raised; a card a client settles after its turn
+ended is a settlement and records nothing. T3-specific thread creation, card
+settlement and restart behavior belong to the
 [T3 adapter](t3code-host-adapter.md#operator-decisions-on-t3).
 
 ## Not in this spec

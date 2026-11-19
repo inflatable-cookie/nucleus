@@ -126,8 +126,15 @@ interface SessionState {
   cancelled: boolean;
   controller: AbortController;
   inFlight: boolean;
-  elicitationAttempts: Map<string, number>;
-  pendingElicitations: Set<string>;
+  /** How many turns this session has had; a card belongs to the one that raised it. */
+  turn: number;
+  /**
+   * The cards this session's live turn raised, by `id:version`, each with the turn that
+   * raised it. One version is never raised twice at once, and a card that outlived its
+   * turn is forgotten at the next one: a client that settles a card without telling this
+   * process must not leave a version unraised forever.
+   */
+  cards: Map<string, { requestId: string; turn: number }>;
 }
 
 /**
@@ -357,8 +364,8 @@ export class AcpAgent {
       cancelled: false,
       controller: new AbortController(),
       inFlight: false,
-      elicitationAttempts: new Map(),
-      pendingElicitations: new Set(),
+      turn: 0,
+      cards: new Map(),
     };
     this.sessions.set(session.sessionId, session);
     this.result(send, id, this.sessionResult(session.sessionId));
@@ -447,6 +454,13 @@ export class AcpAgent {
       }
       session.cancelled = false;
       session.controller = new AbortController();
+      // A new turn raises its own cards. A card the client no longer shows is not this
+      // turn's, whatever this process last heard: the client settles a turn's cards when
+      // the turn ends, and the service's offer (with the host's read of what is still
+      // pending) says whether the version is raised again (nucleus#1395).
+      session.turn += 1;
+      for (const [key, card] of session.cards)
+        if (card.turn < session.turn) session.cards.delete(key);
       for (const line of session.pending.splice(0))
         this.emit(send, sessionId, line);
       if (!opening && !holding && session.caller.kind !== "inbox") {
@@ -540,36 +554,43 @@ export class AcpAgent {
     }
   }
 
-  /** A held turn can carry several native cards; the service owns each answer. */
+  /**
+   * A held turn can carry several native cards; the service owns each answer. A version
+   * gets one card at a time, and only while its turn is held: whether a version may be
+   * offered at all is the service's decision, so this agent spends no attempt of its own.
+   */
   private elicit(session: SessionState, question: AcpElicitation, send: Send): void {
     if (!session.transport.answer) return;
     const key = `${question.id}:${question.version}`;
-    if (session.elicitationAttempts.size >= 512 && !session.elicitationAttempts.has(key)) {
-      for (const old of session.elicitationAttempts.keys()) {
-        if (!session.pendingElicitations.has(old)) { session.elicitationAttempts.delete(old); break; }
-      }
-    }
-    if (session.pendingElicitations.has(key) || (session.elicitationAttempts.get(key) ?? 0) >= 2) return;
-    session.pendingElicitations.add(key);
-    session.elicitationAttempts.set(key, (session.elicitationAttempts.get(key) ?? 0) + 1);
+    if (session.cards.has(key)) return;
     const requestId = `nucleus-elicitation-${randomUUID()}`;
     const fieldId = `nucleus_${question.id}_${question.version}`;
+    // A client that never settles a request must not grow this map without bound; the
+    // oldest card is forgotten, and the service's offer decides about that version again.
+    if (session.cards.size >= 512 && !session.cards.has(key)) {
+      const oldest = session.cards.keys().next();
+      if (!oldest.done) session.cards.delete(oldest.value);
+    }
+    session.cards.set(key, { requestId, turn: session.turn });
+    if (this.elicitationReplies.size >= 512) {
+      const oldest = this.elicitationReplies.keys().next();
+      if (!oldest.done) this.elicitationReplies.delete(oldest.value);
+    }
     this.elicitationReplies.set(requestId, response => {
       const result = isObject(response.result) ? response.result : {};
       const content = isObject(result.content) ? result.content : {};
-      const event = result.action === "accept" && typeof content[fieldId] === "string"
-        ? { action: "accept" as const, answer: content[fieldId] as string }
-        : result.action === "cancel" ? { action: "cancel" as const, requestId } : null;
-      if (!event) return;
-      const work = session.transport.answer!({ ...session.caller, id: question.id, version: question.version, ...event }).then(() => {
-        if (event.action === "accept") session.elicitationAttempts.set(key, 2);
-        session.pendingElicitations.delete(key);
-      }).catch(() => {
-        // A failed answer has unknown delivery; never emit it again blindly.
-        this.options.log?.("could not record an elicitation response");
-      });
-      this.work.add(work);
-      void work.finally(() => this.work.delete(work));
+      const card = session.cards.get(key);
+      const live = card?.requestId === requestId && card.turn === session.turn && session.inFlight;
+      // The client resolved this request, so no card of it exists any more. Presence is
+      // the answer here, never an assumption: it is why the next offer may raise a new one.
+      if (card?.requestId === requestId) session.cards.delete(key);
+      if (result.action === "accept" && typeof content[fieldId] === "string")
+        this.record(session, question, { action: "accept", answer: content[fieldId] as string });
+      else if (result.action === "cancel" && live)
+        // Only a card this turn raised can carry the operator's own dismissal. A card the
+        // client settles after its turn ended is a settlement the host made from its own
+        // read of T3, and recording it would spend the version's one re-offer.
+        this.record(session, question, { action: "cancel", requestId });
     });
     const field = question.choices.length ? { oneOf: question.choices.map(choice => ({ const: choice.label, title: choice.label, description: choice.consequence })) } : {};
     send({ jsonrpc: "2.0", id: requestId, method: "elicitation/create", params: {
@@ -578,6 +599,23 @@ export class AcpAgent {
         [fieldId]: { type: "string", title: question.headline, description: question.question, ...field },
       } },
     } });
+  }
+
+  /** Send one answer to the service, exactly once: an unknown delivery is never resent. */
+  private record(
+    session: SessionState,
+    question: AcpElicitation,
+    event: { action: "accept"; answer: string } | { action: "cancel"; requestId: string },
+  ): void {
+    const work = session.transport
+      .answer!({ ...session.caller, id: question.id, version: question.version, ...event })
+      .catch(() => {
+        // A failed answer has unknown delivery; the service's own decision state decides
+        // whether this version is offered again.
+        this.options.log?.("could not record an elicitation response");
+      });
+    this.work.add(work);
+    void work.finally(() => this.work.delete(work));
   }
 
   /**

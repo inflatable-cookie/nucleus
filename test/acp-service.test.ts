@@ -523,13 +523,15 @@ test("task and inbox cards have distinct scopes and a versioned operator answer"
       askedBy: { agentId: "synthetic" }, links: { tasks }, status: "open", createdAt: stamp, updatedAt: stamp });
     fixture.store.addDecision(decision("task-question", [fixture.taskId]));
     fixture.store.addDecision(decision("inbox-question", []));
-    const task = await fixture.turn({ attach: true });
+    // An attach shows the line only; the held turn offers the card.
+    assert.deepEqual((await fixture.turn({ attach: true })).elicitations, []);
+    const task = await fixture.turn({ waitMs: 0 });
     assert.deepEqual(task.elicitations?.map(row => row.id), ["task-question"]);
     const inbox = fixture.acp.bindInbox({ hostId: "t3code:synthetic" });
     const binding = readAcpBinding(inbox.bindingPath);
     const caller = { kind: "inbox" as const, hostId: inbox.hostId, sessionId: inbox.sessionId };
     assert.throws(() => new Decisions(fixture.store).answer({ id: "inbox-question", version: 1, answer: "Yes", answeredBy: "operator (t3code:synthetic)", relayed: false, note: "" }), /authenticated T3 session/);
-    const offered = await fixture.acp.turn({ ...caller, attach: true }, binding.token);
+    const offered = await fixture.acp.turn({ ...caller, waitMs: 0 }, binding.token);
     assert.deepEqual(offered.elicitations?.map(row => row.id), ["inbox-question"]);
     await assert.rejects(() => fixture.acp.answer({ ...caller, id: "task-question", version: 1, action: "accept", answer: "Yes" }, binding.token), /not offered/);
     await fixture.acp.answer({ ...caller, id: "inbox-question", version: 1, action: "accept", answer: "Yes" }, binding.token);
@@ -543,9 +545,136 @@ test("task and inbox cards have distinct scopes and a versioned operator answer"
     const cancel = { ...caller, id: "cancel-question", version: 1, action: "cancel" as const, requestId: "card-1" };
     await fixture.acp.answer(cancel, binding.token);
     await fixture.acp.answer(cancel, binding.token); // The same delivery cannot consume the retry twice.
-    assert.deepEqual((await fixture.acp.turn({ ...caller, attach: true }, binding.token)).elicitations?.map(row => row.id), ["cancel-question"]);
+    assert.deepEqual((await fixture.acp.turn({ ...caller, waitMs: 0 }, binding.token)).elicitations?.map(row => row.id), ["cancel-question"]);
     await fixture.acp.answer({ ...cancel, requestId: "card-2" }, binding.token);
-    assert.deepEqual((await fixture.acp.turn({ ...caller, attach: true }, binding.token)).elicitations, []);
+    assert.deepEqual((await fixture.acp.turn({ ...caller, waitMs: 0 }, binding.token)).elicitations, []);
     assert.equal(fixture.store.decision("cancel-question").status, "open");
   } finally { await fixture.close(); }
+});
+
+test("a decision card the host's own read shows pending is not offered again, and its absence is", async () => {
+  // nucleus#1395: presence is the host's read of T3's pending requests, never a
+  // process's assumption. A version with a live card raises none, and the version
+  // whose card is gone is offered again on the next held turn.
+  const fixture = await acpFixture("t3code:synthetic");
+  try {
+    const stamp = new Date().toISOString();
+    fixture.store.addDecision(decisionSchema.parse({ id: "inbox-open", version: 1, question: "Question?",
+      choices: [{ label: "Yes", consequence: "Proceed" }, { label: "No", consequence: "Hold" }],
+      askedBy: { agentId: "synthetic" }, links: { tasks: [] }, status: "open", createdAt: stamp, updatedAt: stamp }));
+    const inbox = fixture.acp.bindInbox({ hostId: "t3code:synthetic" });
+    const binding = readAcpBinding(inbox.bindingPath);
+    const caller = { kind: "inbox" as const, hostId: inbox.hostId, sessionId: inbox.sessionId };
+    const held = async () => (await fixture.acp.turn({ ...caller, waitMs: 0 }, binding.token)) as { state: string; elicitations?: Array<{ id: string; version: number }> };
+    // The card is pending on T3: the turn holds for it and raises nothing.
+    fixture.acp.observedCards({ hostId: inbox.hostId }, [{ id: "inbox-open", version: 1 }]);
+    assert.equal((await held()).state, "hold");
+    assert.deepEqual((await held()).elicitations, []);
+    assert.equal(fixture.acp.pendingInboxDecisionKey(inbox.hostId), JSON.stringify([["inbox-open", 1]]),
+      "the decision still needs the operator, so the inbox is held and its title counts it");
+    // A live card is never released away, even by a release directive that arrived first.
+    fixture.acp.release(inbox.sessionId, "no operator decision is open for the inbox");
+    assert.equal((await held()).state, "hold");
+    // The host's next read shows the card gone: the next held turn offers the version again.
+    fixture.acp.observedCards({ hostId: inbox.hostId }, []);
+    assert.deepEqual((await held()).elicitations?.map(row => [row.id, row.version]), [["inbox-open", 1]]);
+    // An unread thread proves nothing, so it does not change what is offered.
+    fixture.acp.observedCards({ hostId: inbox.hostId }, null);
+    assert.deepEqual((await held()).elicitations?.map(row => row.id), ["inbox-open"]);
+  } finally { await fixture.close(); }
+});
+
+test("a task parent's turn releases once the operator's re-offer is spent instead of holding with no card", async () => {
+  // nucleus#1395: the task parent's hold key and the inbox's key disagreed about the
+  // operator-cancel cap, so a spent version held a parent whose card could never return.
+  const fixture = await acpFixture("t3code:synthetic");
+  try {
+    const stamp = new Date().toISOString();
+    fixture.store.addDecision(decisionSchema.parse({ id: "task-question", version: 1, question: "Question?",
+      choices: [{ label: "Yes", consequence: "Proceed" }, { label: "No", consequence: "Hold" }],
+      askedBy: { agentId: "synthetic" }, links: { tasks: [fixture.taskId] }, status: "open", createdAt: stamp, updatedAt: stamp }));
+    assert.deepEqual((await fixture.turn({ waitMs: 0 })).elicitations?.map(row => [row.id, row.version]), [["task-question", 1]]);
+    const caller = { taskId: fixture.taskId, sessionId: fixture.sessionId, id: "task-question", version: 1, action: "cancel" as const };
+    await fixture.acp.answer({ ...caller, requestId: "card-1" }, fixture.token);
+    // One dismissal still permits the one re-offer.
+    assert.deepEqual((await fixture.turn({ waitMs: 0 })).elicitations?.map(row => row.id), ["task-question"]);
+    await fixture.acp.answer({ ...caller, requestId: "card-2" }, fixture.token);
+    assert.deepEqual((await fixture.turn({ waitMs: 0 })).elicitations, []);
+    assert.equal(fixture.acp.pendingDecisionKey(fixture.taskId), null, "a spent re-offer no longer needs the parent held");
+    fixture.acp.release(fixture.sessionId, "no operator decision is open for this task");
+    assert.equal((await fixture.turn({ attach: true })).state, "release");
+  } finally { await fixture.close(); }
+});
+
+test("a real agent re-raises its inbox card after a turn ends and the host settles it", async () => {
+  // nucleus#1395 end to end on the real socket: a card is raised, the turn ends (a
+  // replaced callback socket does that) and T3 settles the leftover card without the
+  // agent hearing about it, then the next held turn raises the still-open version again —
+  // as often as that happens. What counts as present is the host's own read of T3's
+  // pending requests, never a process's assumption.
+  const fixture = await acpFixture("t3code:synthetic");
+  const stamp = new Date().toISOString();
+  const decision = "11111111-1111-4111-8111-111111111111";
+  const field = `nucleus_${decision}_1`;
+  fixture.store.addDecision(decisionSchema.parse({ id: decision, version: 1, question: "Re-offer?",
+    choices: [{ label: "Yes", consequence: "Proceed" }, { label: "No", consequence: "Hold" }],
+    askedBy: { agentId: "synthetic" }, links: { tasks: [] }, status: "open", createdAt: stamp, updatedAt: stamp }));
+  const inbox = fixture.acp.bindInbox({ hostId: "t3code:synthetic" });
+  const scope = { hostId: inbox.hostId };
+  const agent = launchAgent({ worktree: inbox.directory, dir: fixture.dir });
+  try {
+    agent.write({ jsonrpc: "2.0", id: 1, method: "session/new", params: { cwd: inbox.directory, mcpServers: [] } });
+    const opened = await agent.lines.untilId(1);
+    assert.equal((opened.answer.result as Record<string, unknown>).sessionId, inbox.sessionId);
+    assert.equal(fixture.store.decision(decision).status, "open");
+
+    /** The next card the agent raises, read past the lifecycle lines. */
+    const nextCard = async (what: string): Promise<unknown> => {
+      for (;;) {
+        const message = await agent.lines.next();
+        if (message.method !== "elicitation/create") continue;
+        const params = message.params as { requestedSchema: { properties: Record<string, unknown> } };
+        const [carried] = Object.keys(params.requestedSchema.properties);
+        assert.equal(carried, field, `${what} carries the decision id and version as its field`);
+        return message.id;
+      }
+    };
+    /**
+     * Read T3 the way a sweep does, alternating present and absent, until the held turn
+     * acts on a read and raises the card. Each read is that sweep's own answer.
+     */
+    const raiseNext = async (what: string): Promise<unknown> => {
+      let present = false;
+      const sweeps = setInterval(() => {
+        present = !present;
+        fixture.acp.observedCards(scope, present ? [{ id: decision, version: 1 }] : []);
+      }, 100);
+      try {
+        return await nextCard(what);
+      } finally {
+        clearInterval(sweeps);
+        fixture.acp.observedCards(scope, [{ id: decision, version: 1 }]);
+      }
+    };
+
+    const raised: unknown[] = [];
+    for (const round of [1, 2, 3]) {
+      const request = 10 + round;
+      agent.write({ jsonrpc: "2.0", id: request, method: "session/prompt", params: { sessionId: inbox.sessionId, prompt: [{ type: "text", text: `round ${round}` }] } });
+      raised.push(await raiseNext(`round ${round}`));
+      // The turn ends before anyone answers it. T3 settles the card the ended turn left
+      // without telling the agent, so only the next turn's own read can raise it again.
+      agent.write({ jsonrpc: "2.0", method: "session/cancel", params: { sessionId: inbox.sessionId } });
+      const ended = await agent.lines.untilId(request);
+      assert.equal((ended.answer.result as Record<string, unknown>).stopReason, "cancelled", `round ${round} ended its turn`);
+    }
+    assert.equal(new Set(raised).size, raised.length, "every held turn raised its own card");
+    // The settlements recorded nothing: the decision is open and still offered.
+    assert.equal(fixture.store.decision(decision).status, "open");
+    assert.notEqual(fixture.acp.pendingInboxDecisionKey?.(inbox.hostId) ?? null, null);
+    assert.equal(agent.child.exitCode, null, `the agent is still attached: ${agent.stderr()}`);
+  } finally {
+    agent.child.kill();
+    await fixture.close();
+  }
 });

@@ -32,6 +32,11 @@ export interface AcpElicitation {
 }
 export type AcpAnswerInput = AcpCaller & { id: string; version: number } & ({ action: "accept"; answer: string } | { action: "cancel"; requestId: string });
 
+/** Where a host's decision cards live: one inbox, or one task's parent thread. */
+export type AcpCardScope = { hostId: string } | { taskId: string };
+/** One decision card, by the version it carries. */
+export interface AcpPendingCard { id: string; version: number }
+
 export type AcpTurnReply = {
   /** `hold` keeps the agent's turn open; `release` ends it, and the client settles the thread. */
   state: "hold" | "release";
@@ -58,6 +63,12 @@ export interface AcpSessionSurface {
   bindInbox?(input: { hostId: string } & AcpBindingRules): { sessionId: string; hostId: string; directory: string; bindingPath: string };
   /** Read-only projection used by a host to hold and settle native cards. */
   pendingDecisionKey?(taskId: string): string | null;
+  /**
+   * Record the decision cards a host's own read of T3 shows still pending on a thread,
+   * so a turn offers no version that already has a live card. `null` means the thread was
+   * not read, which proves nothing about its cards.
+   */
+  observedCards?(scope: AcpCardScope, cards: AcpPendingCard[] | null): void;
   /** The host inbox's offer, cap applied: a host re-enters the inbox only while this is non-null. */
   pendingInboxDecisionKey?(hostId: string): string | null;
   decisionSettlement?(id: string, version: number): { state: "open" | "answered" | "cancelled"; answer?: string };

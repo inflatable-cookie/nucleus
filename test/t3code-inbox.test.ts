@@ -49,7 +49,7 @@ test("one host inbox is launched once and pinned outside task retention", async 
   projection.runtimeRequests = ids.map((id, index) => syntheticRuntimeRequest({ id: `request-${index}`, nodeId: `node-${index}` }));
   projection.turnItems = ids.map((id, index) => ({ id: `item-${index}`, nodeId: `node-${index}`, ordinal: index, type: "user_input_request", requestId: `request-${index}`,
     questions: [{ id: `nucleus_${id}_1`, header: "Choice", question: "Choose?", options: [{ label: "Yes" }] }] }));
-  await host.decisionCards.reconcile(inbox.threadId, inbox.workspaceId);
+  await host.decisionCards.reconcile(inbox.threadId, inbox.workspaceId, { hostId: host.hostId });
   const responses = fake.commands.filter(command => command.type === "runtime-request.respond");
   assert.deepEqual(responses[0].answers, { [`nucleus_${ids[0]}_1`]: "Yes" });
   assert.equal(responses[1].decision, "cancel");
@@ -79,10 +79,12 @@ async function idleInbox(t: TestContext) {
   const offered: string[] = [];
   const settlement = new Map<string, "open" | "answered" | "cancelled">();
   const released: string[] = [];
+  const observed: Array<{ scope: unknown; cards: Array<{ id: string; version: number }> | null }> = [];
   const acp: AcpSessionSurface = {
     bind: () => { throw Error("no task binding"); },
     bindInbox: ({ hostId }) => ({ sessionId: "synthetic-inbox-session", hostId, directory: inboxDir, bindingPath: join(root, "binding") }),
     pendingInboxDecisionKey: () => offered.length ? JSON.stringify(offered) : null,
+    observedCards: (scope, cards) => { observed.push({ scope, cards }); },
     decisionSettlement: id => ({ state: settlement.get(id) ?? "open", answer: "Yes" }),
     turn: async () => { throw Error("not called"); }, message: async () => { throw Error("not called"); },
     release: (sessionId, reason) => { released.push(`${sessionId}:${reason}`); },
@@ -91,7 +93,7 @@ async function idleInbox(t: TestContext) {
     boardLink: async () => "http://127.0.0.1:1234/#token=synthetic" });
   t.after(() => host.close());
   await host.connect();
-  return { fake, host, offered, settlement, released, root };
+  return { fake, host, offered, settlement, released, observed, root };
 }
 
 const holdPosts = (fake: Awaited<ReturnType<typeof t3Fake>>, threadId: string) =>
@@ -201,12 +203,64 @@ test("a pending card older than the thread window is answered from the full tran
       : { runs: [], runtimeRequests: pending, turnItems: [] },
   };
   const responses: unknown[] = [];
+  const observed: Array<{ scope: unknown; cards: unknown }> = [];
   const cards = new T3DecisionCards({
-    acp: () => ({ decisionSettlement: () => ({ state: "answered", answer: "Yes" }) }) as never,
+    acp: () => ({ decisionSettlement: () => ({ state: "answered", answer: "Yes" }), observedCards: (scope: unknown, list: unknown) => { observed.push({ scope, cards: list }); } }) as never,
     reads: reads as never,
     respond: async (threadId, workspaceId, requestId, response) => { responses.push({ threadId, workspaceId, requestId, response }); },
   });
-  const result = await cards.reconcile("thread-inbox", "workspace-inbox");
+  const result = await cards.reconcile("thread-inbox", "workspace-inbox", { hostId: "t3code:synthetic" });
   assert.deepEqual(responses, [{ threadId: "thread-inbox", workspaceId: "workspace-inbox", requestId: "request-old", response: { answers: { [field]: "Yes" } } }]);
+  assert.deepEqual(observed, [{ scope: { hostId: "t3code:synthetic" }, cards: [] }], "the settled card is recorded as absent");
   assert.equal(result.settled, true);
+});
+
+test("a card lost with its turn is settled on T3, recorded absent, and the open decision is held again", async t => {
+  // nucleus#1395: an ended ACP turn leaves its card pending on a dead run. The sweep
+  // settles it from T3's own pending requests, records that no card is present, and
+  // re-enters the inbox, so the next held turn offers the still-open version again.
+  const { fake, host, offered, observed, released } = await idleInbox(t);
+  await host.reconcileThreadTitles([]);
+  const inbox = host.state.read().inbox!;
+  const id = "11111111-1111-4111-8111-111111111111";
+  const field = `nucleus_${id}_1`;
+  const projection = fake.threads.get(inbox.threadId)!;
+  const run = syntheticRun(inbox.threadId, 1, { status: "completed" });
+  projection.runs = [run];
+  projection.runtimeRequests = [syntheticRuntimeRequest({ id: "request-0", nodeId: "node-0" })];
+  projection.turnItems = [{ id: "item-0", nodeId: "node-0", ordinal: 0, type: "user_input_request", requestId: "request-0", runId: run.id,
+    questions: [{ id: field, header: "Choice", question: "Choose?", options: [{ label: "Yes" }] }] }];
+  offered.push(id);
+  released.length = 0;
+  await host.reconcileThreadTitles([]);
+  const responses = fake.commands.filter(command => command.type === "runtime-request.respond");
+  assert.equal(responses.at(-1)?.requestId, "request-0");
+  assert.equal(responses.at(-1)?.decision, "cancel", "the card on the dead run is settled, not answered");
+  assert.equal(projection.runtimeRequests[0]!.status, "resolved");
+  assert.deepEqual(observed.at(-1), { scope: { hostId: host.hostId }, cards: [] }, "T3's own read shows no card for the version");
+  assert.equal(released.length, 0, "an open decision is never released away");
+  // The decision is still open, so the sweep re-enters the inbox with its held turn.
+  assert.equal(holdPosts(fake, inbox.threadId).length, 1);
+});
+
+test("the card T3 shows pending is the presence the sweep reports, and a live card blocks the re-entry", async t => {
+  const { fake, host, offered, observed, released } = await idleInbox(t);
+  await host.reconcileThreadTitles([]);
+  const inbox = host.state.read().inbox!;
+  const id = "22222222-2222-4222-8222-222222222222";
+  const field = `nucleus_${id}_1`;
+  const projection = fake.threads.get(inbox.threadId)!;
+  const run = syntheticRun(inbox.threadId, 1, { status: "running" });
+  projection.runs = [run];
+  projection.runtimeRequests = [syntheticRuntimeRequest({ id: "request-live", nodeId: "node-live" })];
+  projection.turnItems = [{ id: "item-live", nodeId: "node-live", ordinal: 0, type: "user_input_request", requestId: "request-live", runId: run.id,
+    questions: [{ id: field, header: "Choice", question: "Choose?", options: [{ label: "Yes" }] }] }];
+  offered.push(id);
+  released.length = 0;
+  await host.reconcileThreadTitles([]);
+  assert.deepEqual(observed.at(-1), { scope: { hostId: host.hostId }, cards: [{ id, version: 1 }] }, "the live card is the presence recorded");
+  assert.equal(fake.commands.filter(command => command.type === "runtime-request.respond").length, 0, "a live card is never settled");
+  // A held turn is already live: no release, and no second re-entry.
+  assert.equal(released.length, 0);
+  assert.equal(holdPosts(fake, inbox.threadId).length, 0);
 });
