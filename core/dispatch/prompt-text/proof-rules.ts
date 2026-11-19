@@ -6,6 +6,7 @@
  */
 import type { Run, Task } from '../../../shared/contracts';
 import { PROOF_FILES_SIZE_REFUSAL } from '../../../shared/service/proof-files.mjs';
+import { currentBrief } from '../../planning/brief';
 import { quote } from './workspace-text';
 
 /**
@@ -14,8 +15,12 @@ import { quote } from './workspace-text';
  * outside `operatorValidationBlock` as fixed prompt text. It is honesty
  * guidance: the retained reviewer judges proof named in prose; an owner-gated
  * proof can use `queue.mergeHold`.
+ *
+ * nucleus#1382: the note names only the proof the brief itself names. Proof-file
+ * delivery and its size limits live in the optional paragraph below, so nothing
+ * here reads as a required lookup or as a delivery limit that stops the turn.
  */
-export const REQUIRED_PROOF_AUTHOR_NOTE = `Required proof: covering checks never waive a proof this brief names as required. This run's TMPDIR is removed at release. Deliver every required file artifact through proofFiles; never cite a run-scratch path outside that field or claim that a scratch path persists. ${PROOF_FILES_SIZE_REFUSAL} If you cannot produce a named required proof, report it missing rather than claiming the work is complete.`;
+export const REQUIRED_PROOF_AUTHOR_NOTE = `Required proof: covering checks never waive a proof this brief names as required. This run's TMPDIR is removed at release, so a file artifact you deliver travels through proofFiles; never cite a run-scratch path outside that field or claim that a scratch path persists. If you cannot produce a named required proof, report it missing rather than claiming the work is complete.`;
 
 /**
  * Who performs an acceptance proof follows the brief, and the brief alone names
@@ -44,8 +49,37 @@ export const REQUIRED_PROOF_REVIEWER_NOTE = `Required proof: covering checks nev
  * public PR. The worker names local files in its report; Nucleus copies them
  * into its own evidence directory, hashes them, and lists them for the retained
  * reviewer. Local paths never go into a PR body or comment.
+ *
+ * nucleus#1382: this is optional delivery, never a gate. The limits below are
+ * packaging, and a refused list is corrected and resent in the same turn, so no
+ * worker reads them as permission to stop.
  */
-export const PROOF_FILES_RULE = "Proof files for the retained reviewer. When the brief requires visual or rendered proof — screenshots, rendered images, recordings — never put the files or their local paths in the PR body, a PR comment or your report summary. Save them under this run's scratch or the task worktree, then report proofFiles: [{label: a short description, path: the file's absolute local path}] and top-level head equal to the current pushed PR HEAD. A revision may start at an earlier head, so report the head it now pushed, not the run's starting head. The report bridge does not infer this head. Nucleus checks the reported head against the pushed PR head before copying. It proves each path is a real regular file inside this task's own scratch or worktree (at most 12 files, 8 MiB each, 32 MiB total), copies it into its own per-head evidence directory and records its SHA-256; the retained reviewer can read the copies' paths, hashes and recorded heads from run context. A missing or mismatched head is refused before any copy. Your PR may say that evidence was delivered to the retained reviewer and give the hashes. Nucleus refuses a report naming a path outside this task's own scratch or worktree and copies nothing.";
+export const PROOF_FILES_RULE = `Proof files for the retained reviewer. They are optional delivery for proof the brief names, never a gate of their own. When the brief names visual or rendered proof — screenshots, rendered images, recordings — save the files under this run's scratch or the task worktree and keep the files and their local paths out of the PR body, a PR comment and your report summary. Report them as proofFiles: [{label: a short description, path: the file's absolute local path}] with top-level head equal to the current pushed PR HEAD. A revision may start at an earlier head, so report the head it now pushed, not the run's starting head; the report bridge does not infer this head. Nucleus checks the reported head against the pushed PR head before copying. It proves each path is a real regular file inside this task's own scratch or worktree (at most 12 files), copies it into its own per-head evidence directory and records its SHA-256; the retained reviewer can read the copies' paths, hashes and recorded heads from run context. A missing or mismatched head is refused before any copy, and a refused file list is corrected and resent in the same turn. Your PR may say that evidence was delivered to the retained reviewer and give the hashes. ${PROOF_FILES_SIZE_REFUSAL}`;
+
+/**
+ * The paragraph a brief without visual or rendered proof gets (nucleus#1382). It
+ * says plainly that there is nothing to deliver and still lets the agent deliver
+ * a useful artifact, so a wrong reading of the brief never withholds evidence and
+ * never blocks the turn.
+ */
+export const PROOF_FILES_NONE_NOTE = "Proof files for the retained reviewer: this brief names no visual or rendered proof, so there are none to deliver. If one turns out to be useful, deliver it the same way (proofFiles: [{label, path}] with the current pushed PR HEAD) and say why in your report. Size limits are packaging, never a reason to stop.";
+
+/**
+ * Whether the brief asks for visual or rendered proof. The match is generous on
+ * purpose: an extra paragraph is harmless, while staying silent about evidence
+ * the brief asked for is not. No match selects the paragraph that says there is
+ * nothing to deliver.
+ */
+const VISUAL_PROOF_TERMS = /\b(?:screenshots?|screen ?shots?|screen ?recordings?|recordings?|render(?:s|ed|ing)?|visual|images?|videos?|gifs?|png|jpe?g|webp|mp4|webm|before.and.after)\b/i;
+
+export function briefNamesVisualProof(task: Pick<Task, 'briefVersions'>): boolean {
+  return VISUAL_PROOF_TERMS.test(currentBrief(task)?.text ?? '');
+}
+
+/** The proof-file paragraph this brief gets, with its own trailing newline. */
+export function proofFilesNote(task: Pick<Task, 'briefVersions'>): string {
+  return `${briefNamesVisualProof(task) ? PROOF_FILES_RULE : PROOF_FILES_NONE_NOTE}\n`;
+}
 
 export const PROOF_EXECUTOR_FILES_RULE = `Executor evidence files for the retained reviewer. This run's TMPDIR is removed at release, so deliver every required file artifact through proofFiles; never cite a run-scratch path outside that field or claim that a scratch path persists. Save capture files under this executor run's TMPDIR (or the task checkout), then include proofFiles: [{label: a short description, path: the file's absolute local path}] and top-level head equal to the current pushed PR HEAD. Nucleus verifies the reported head against the forge and checks every file is a real regular file inside this run's own scratch or the task checkout (at most 12 files, 8 MiB per file and 32 MiB total). It copies the complete set into task-retained, per-head evidence storage, records each copied locator, original locator, size and SHA-256 against this proof execution run, and makes the inventory available in the retained reviewer's run context. These copies survive removal of this executor's scratch. ${PROOF_FILES_SIZE_REFUSAL} Never put files or local paths in a PR body, PR comment or report summary; a refused file list copies nothing.`;
 
@@ -92,8 +126,8 @@ export function proofOnlyGoEvidenceBlock(task: Pick<Task, 'requiresOperatorGo'>,
 }
 
 /** The role's Spec 054 instruction as its own rendered line, or '' for a role it does not address. */
-export function requiredProofNote(role: Run['role']): string {
-  if (role === 'revision') return `${REQUIRED_PROOF_AUTHOR_NOTE}\n${PROOF_FILES_RULE}\n`;
+export function requiredProofNote(role: Run['role'], task: Pick<Task, 'briefVersions'>): string {
+  if (role === 'revision') return `${REQUIRED_PROOF_AUTHOR_NOTE}\n${proofFilesNote(task)}`;
   if (role === 'reviewer') return `${REQUIRED_PROOF_REVIEWER_NOTE}\n`;
   return '';
 }

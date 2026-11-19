@@ -43,5 +43,5 @@ export function roleRules(role: PromptRole): string {
 export function contextPointer(role: PromptRole, section: PromptSection, command: string): string {
   const heading = rulesFor(role)?.[0];
   return section('standingRules', heading ? `Follow '${heading}' in the nucleus skill or read it with \`${command} context rules\`. ` : '')
-    + section('contextIndex', `Extended context: \`${command} context [rules|validation|proofs|history]\`. Never resend an unknown delivery or use another thread's ticket.\n`);
+    + section('contextIndex', `Extended context: \`${command} context [rules|validation|proofs|history]\`. These sections are reference material: read one if you need it. Nothing in them is needed to finish this turn unless the brief or a review finding names it, and a failed or refused optional read is never a blocker — continue and mention it in your report. Never resend an unknown delivery or use another thread's ticket.\n`);
 }

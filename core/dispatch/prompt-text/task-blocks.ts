@@ -165,9 +165,14 @@ export function queueBuildOutputBlock(
 }
 
 
-/** A short reminder; the detailed cleanup history is available in the run context. */
+/**
+ * One optional sentence (nucleus#1382): earlier build outputs may be gone, so
+ * re-run a command whose output you rely on. It names no history lookup and no
+ * required step; the recorded cleanup data stays reference material in the run
+ * context.
+ */
 export function queueBuildOutputSummary(task: Pick<Task, "resolution" | "workspaceId">, subjectRunId?: string | null) {
   return queueBuildOutputBlock(task, subjectRunId)
-    ? 'Prior build outputs are not proof of present artifacts. Re-run commands whose output you rely on; read cleanup history with `nucleus helper report context history`. Do not remove another run’s files.\n'
+    ? 'Earlier build outputs may be gone: re-run a command whose output you rely on. An earlier build or proof result is not evidence of present output. Do not remove another run’s files.\n'
     : '';
 }

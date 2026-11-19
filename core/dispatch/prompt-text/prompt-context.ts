@@ -138,7 +138,7 @@ export function runPromptContext(
     scope: section("identity", scope)
       + section("workspace", workspaceRules)
       + section("validation", validates ? operatorValidationBlock(affectedTestsCommand, run.role === "reviewer") : "")
-      + section("namedProof", proofOnly ? "" : requiredProofNote(run.role))
+      + section("namedProof", proofOnly ? "" : requiredProofNote(run.role, task))
       + section("lane", queueLaneBlock(task))
       + section("laneDocuments", queueLaneDocumentBlock(task, run.temporaryDirectory ?? task.temporaryDirectory))
       + section("brief", queueBriefBlock(task))
