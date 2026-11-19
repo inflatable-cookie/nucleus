@@ -4,6 +4,19 @@ import type { HostProcessFact } from "../host/types";
 import { parseAgentId } from "../../shared/agent-identity";
 import { hostKindOf } from "../../shared/host-kind";
 import type { Run, Task } from "../../shared/contracts";
+import {
+  acpTaskRuntimePids,
+  possibleAcpRuntimePids,
+  type RuntimeProcessFact,
+} from "./acp-task-runtime";
+import {
+  argvBase,
+  commandArgv,
+  INTERPRETER_PROGRAMS,
+  REPORT_HELPER_SCRIPTS,
+  SHELL_PROGRAMS,
+} from "./process-shapes";
+import type { ParticipantRuntime } from "./participant-runtime";
 /**
  * The owned-tool process proof: does the provider process rooted by this run's
  * own Queue MCP report helper still carry a descendant that could be work?
@@ -14,19 +27,6 @@ import type { Run, Task } from "../../shared/contracts";
  * bound to one provider session" and "is any descendant left once no turn is
  * live". The caller decides what an `unknown` answer means.
  */
-
-function commandArgv(command: string): string[] {
-  return (
-    command
-      .trim()
-      .match(/(?:"[^"]*"|'[^']*'|\S+)/g)
-      ?.map((arg) => arg.replace(/^["']|["']$/g, "")) ?? []
-  );
-}
-
-function argvBase(arg: string | undefined): string | undefined {
-  return arg?.split(/[\\/]/).pop();
-}
 
 /** A recorded BB participant identifies its own native thread, never a Paseo agent. */
 export function bbThreadForAgent(
@@ -102,6 +102,37 @@ export function possibleBbRuntimePids(
   return bbBridgePids(processes, null);
 }
 
+/** The facts a participant-runtime recognition reads from one listing. */
+export type RuntimeFact = RuntimeProcessFact &
+  Pick<HostProcessFact, "bbThreadId" | "trustedCuaExecutable">;
+
+/**
+ * Every host's positively bound participant runtime in one listing: the BB
+ * threads the caller resolved, and the ACP task parent with its native role
+ * sessions when that host proves one (nucleus#1343, nucleus#1377).
+ */
+export function participantRuntimePids(
+  processes: readonly RuntimeFact[],
+  runtime: ParticipantRuntime = {},
+): Set<number> {
+  const pids = bbRuntimePids(processes, runtime.bbThreads ?? []);
+  for (const pid of acpTaskRuntimePids(processes, runtime.acp ?? null))
+    pids.add(pid);
+  return pids;
+}
+
+/**
+ * Cleanup's version of the same recognition: a plausible host runtime whose
+ * environment this listing cannot read is still never a released run's tool.
+ */
+export function possibleParticipantRuntimePids(
+  processes: readonly RuntimeFact[],
+): Set<number> {
+  const pids = possibleBbRuntimePids(processes);
+  for (const pid of possibleAcpRuntimePids(processes)) pids.add(pid);
+  return pids;
+}
+
 function bbBridgePids(
   processes: readonly Pick<
     HostProcessFact,
@@ -161,9 +192,6 @@ function bbBridgePids(
   return runtime;
 }
 
-/** The per-run report bridges Queue starts beside an agent session. */
-const REPORT_HELPER_SCRIPTS = ["mcp-report.mjs", "worker-report.mjs"];
-
 /** Match the Node bridge invocation, not provider config that merely names it. */
 function isRunMcpReportHelper(command: string, ticket: string): boolean {
   const args = commandArgv(command);
@@ -194,29 +222,6 @@ function programDirectories(program: string | undefined): string[] {
   return resolved && resolved !== invoked ? [invoked, resolved] : [invoked];
 }
 
-/** A command chain starts at a shell, so a shell is never one of these runtimes. */
-const SHELL_PROGRAMS = new Set([
-  "sh",
-  "bash",
-  "zsh",
-  "dash",
-  "ksh",
-  "fish",
-  "csh",
-  "tcsh",
-  "cmd.exe",
-  "powershell",
-  "pwsh",
-]);
-/** Interpreters a provider ships to run the runtime scripts it keeps warm. */
-const INTERPRETER_PROGRAMS = new Set([
-  "node",
-  "nodejs",
-  "deno",
-  "bun",
-  "python",
-  "python3",
-]);
 const RUNTIME_SCRIPT = /\.[cm]?[jt]s$/;
 /** Provider flags that bind a runtime to one provider session rather than to a command. */
 const SESSION_FLAG = /^--?session[-_]?id(?:=|$)/i;
@@ -388,9 +393,9 @@ interface RunProviderBinding {
 /** Agent hosts, their standing runtimes and report helpers are infrastructure, never run cleanup targets. */
 export function runInfrastructurePids(
   processes: readonly HostProcessFact[],
-  bbThreads: readonly string[] = [],
+  runtime: ParticipantRuntime = {},
 ): Set<number> {
-  return new RunProcessTable(processes).infrastructurePids(bbThreads);
+  return new RunProcessTable(processes).infrastructurePids(runtime);
 }
 
 interface ProcessCommand {
@@ -531,8 +536,8 @@ export class RunProcessTable {
     }
   }
 
-  infrastructurePids(bbThreads: readonly string[]): Set<number> {
-    const protectedPids = bbRuntimePids(this.facts, bbThreads);
+  infrastructurePids(runtime: ParticipantRuntime = {}): Set<number> {
+    const protectedPids = participantRuntimePids(this.facts, runtime);
     const seenRuntimes = new Set<ReadonlySet<number>>();
     for (const { fact: helper } of this.helpers) {
       // A bridge with no provider is its finished run's own leftover.
@@ -557,11 +562,13 @@ export class RunProcessTable {
 export interface OwnedToolProcessProofOptions {
   /**
    * The same agent's own fresh observation already proves no provider turn is
-   * live, so the provider's standing tool runtimes are not this run's work.
-   * Absent or false reads every descendant as a possible command.
+   * live, so the provider's standing tool runtimes and its host's own task
+   * runtime are not this run's work. Absent or false reads every descendant as
+   * a possible command.
    */
   noTurnLive?: boolean;
-  bbThreads?: readonly string[];
+  /** The host bindings that recognise this participant's own runtime. */
+  runtime?: ParticipantRuntime;
 }
 
 /**
@@ -675,7 +682,7 @@ export function ownedToolProcessTreeVerdict(
       )
     : null;
   if (runtimes)
-    for (const pid of bbRuntimePids(processes, options.bbThreads ?? []))
+    for (const pid of participantRuntimePids(processes, options.runtime ?? {}))
       runtimes.add(pid);
   const other = [...descendants]
     .sort((a, b) => a - b)

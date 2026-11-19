@@ -886,6 +886,22 @@ the operator's `nucleus t3 install` and `nucleus t3 uninstall` do, through T3's 
 `server.updateSettings`, and only the `nucleus` provider instance (Tom,
 2026-11-18; nucleus#1330).
 
+**The task parent is the participant's runtime, not its tool.** T3 starts the
+`nucleus` provider as `nucleus-acp.mjs` with the task worktree as cwd and keeps
+it for the task's whole life, and it starts every role session as a native child
+of that parent thread. A cwd-rooted process proof would read both as a live tool
+and block review or closeout, so one host-qualified recognition owns them
+(nucleus#1377; [orchestration
+contract](../contracts/orchestration.md), the owned-tool process proof): the
+connected T3 server is the pid its own runtime descriptor records under the
+stored connection's base directory, the ACP parent is its direct child running
+`nucleus-acp.mjs` whose binding names this task, and its role sessions are its
+children — or the server's children whose readable `T3CODE_THREAD_ID` names a
+recorded participant thread. A command a session's tools start stays a tool. The
+same recognition protects these processes from run cleanup and lets the
+owned-tool, review and closeout workspace proofs pass while the task is idle. The
+private proof is `effigy proof:t3:runtime`.
+
 ## One row per task
 
 One task reads as one row (Tom, 2026-11-15; nucleus#1366): the task's parent thread

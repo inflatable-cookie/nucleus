@@ -27,9 +27,16 @@ import {
 } from "./worker-replacement";
 import { resolve, sep } from "node:path";
 import {
-  bbRuntimePids,
+  bbThreadForAgent,
   ownedToolProcessTreeVerdict,
+  participantRuntimePids,
+  type RuntimeFact,
 } from "../machine/owned-tool-process-proof";
+import {
+  participantRuntime,
+  storeDataHome,
+  type ParticipantRuntime,
+} from "../machine/participant-runtime";
 import type { HostProcessFact } from "../host/types";
 
 /**
@@ -247,14 +254,14 @@ export class Stalls {
     if (!state.updatedAt || !Number.isFinite(Date.parse(state.updatedAt)))
       return (
         shellNotice ??
-        (await this.ownedProcessNotice(current, run, role, runId))
+        (await this.ownedProcessNotice(current, run, role, runId, state.id))
       );
     const quietMs = Date.now() - Date.parse(state.updatedAt);
     if (quietMs < this.thresholdMs()) return shellNotice;
     const toolNotice =
       shellNotice ??
       (peek.live ? `${role} is waiting on a running tool` : null) ??
-      (await this.ownedProcessNotice(current, run, role, runId));
+      (await this.ownedProcessNotice(current, run, role, runId, state.id));
     if (toolNotice) return toolNotice;
     const turn = state.activeTurnId
       ? `, active turn ${state.activeTurnId}`
@@ -305,7 +312,7 @@ export class Stalls {
     const role = run?.role === "reviewer" ? "Reviewer" : "Worker";
     return Boolean(
       (await this.shellNotice(t, role, state)).live ||
-        (await this.ownedProcessNotice(t, run, role, runId)),
+        (await this.ownedProcessNotice(t, run, role, runId, state.id)),
     );
   }
 
@@ -315,6 +322,7 @@ export class Stalls {
     run: Run | null,
     role: string,
     runId: string,
+    agentId: string,
   ): Promise<string | null> {
     if (!this.resolution.adapter.hostProcessListing) return null;
     let processes: Awaited<
@@ -366,6 +374,13 @@ export class Stalls {
       run?.temporaryDirectory,
       run ? undefined : t.temporaryDirectory,
     ].filter((root): root is string => Boolean(root));
+    const thread = bbThreadForAgent(agentId, run?.hostId ?? t.hostId);
+    const runtime = participantRuntime({
+      dataHome: storeDataHome(this.store),
+      tasks: [t],
+      runs: this.store.runs(t.id),
+      bbThreads: thread ? [thread] : [],
+    });
     for (const root of roots) {
       const issue = workspaceToolProcessIssue(
         processes.filter(
@@ -376,6 +391,7 @@ export class Stalls {
         ),
         root,
         [runId],
+        runtime,
       );
       if (issue && issue.includes("remains in the task workspace process tree"))
         return `${role} is running a long command (${issue})`;
@@ -975,28 +991,17 @@ function isZombieProcess(process: { state?: string | null }): boolean {
 }
 /** Live process facts that keep a finished-turn shell tool from being settled. */
 export function workspaceToolProcessIssue(
-  processes: Array<
-    Pick<
-      HostProcessFact,
-      | "pid"
-      | "ppid"
-      | "state"
-      | "command"
-      | "cwd"
-      | "bbThreadId"
-      | "trustedCuaExecutable"
-    >
-  >,
+  processes: readonly RuntimeFact[],
   directory: string,
   runIds: readonly string[],
-  bbThreads: readonly string[] = [],
+  bindings: ParticipantRuntime = {},
 ): string | null {
   if (!runIds.length)
     return "the participant has no recorded run identity for process proof";
   // Exited processes never arrive: the readers drop a process whose inspection
   // proves it is gone. What remains is filtered for zombies here.
   const live = processes.filter((process) => !isZombieProcess(process));
-  const runtime = bbRuntimePids(live, bbThreads);
+  const runtime = participantRuntimePids(live, bindings);
   const malformedHelpers = new Set<number>();
   for (const process of live) {
     const args =

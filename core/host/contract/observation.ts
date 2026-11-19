@@ -27,6 +27,7 @@ export interface AgentObservation {
   lastUserMessageAt?: string | null;
 }
 
+import type { ParticipantRuntime } from "../../machine/participant-runtime";
 import type {
   HostProcessFact,
   TimelineEntry,
@@ -87,6 +88,6 @@ export interface HostObservation {
   noLiveWorkspaceProcesses?(
     workspaceId: string,
     runIds: readonly string[],
-    bbThreads?: readonly string[],
+    runtime?: ParticipantRuntime,
   ): Promise<string | null>;
 }

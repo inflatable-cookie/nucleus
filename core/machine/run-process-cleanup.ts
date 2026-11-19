@@ -15,7 +15,10 @@ import {
   protectedRunInfrastructure,
   rememberRunProcessHosts,
 } from "./run-process-hosts";
-import { RunProcessTable } from "./owned-tool-process-proof";
+import {
+  RunProcessTable,
+  possibleParticipantRuntimePids,
+} from "./owned-tool-process-proof";
 import { protectedHostPids } from "./host-process-select";
 import { terminateHostProcessTargets } from "./host-process-reap";
 
@@ -470,7 +473,13 @@ async function sweep(
       ))
     : new Map<number, RunProcessEnvironment | null>();
   const protectedPids = protectedHostPids(
-    new Set([...infrastructure, ...liveAncestor]),
+    new Set([
+      ...infrastructure,
+      ...liveAncestor,
+      // A host task runtime whose identity this snapshot cannot prove — an ACP
+      // parent, its role sessions — is never a released run's tool.
+      ...possibleParticipantRuntimePids(facts),
+    ]),
   );
   const unprotected = live.filter((fact) => !protectedPids.has(fact.pid));
   const protectedFacts = facts.filter((fact) => protectedPids.has(fact.pid));

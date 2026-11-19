@@ -3515,6 +3515,23 @@ after the task finishes.
   arguments through the system JavaScript automation bridge and `sysctl`; an unavailable reader or
   denied kernel read stays unknown. Task sweeps also preserve plausible BB
   bridge runtimes with unknown identity and do not signal their process groups.
+  A T3 task's own ACP parent is participant runtime too (nucleus#1377). The
+  process that runs `nucleus-acp.mjs` is runtime when its parent is the connected
+  T3 server — the pid that server's own runtime descriptor records, under the
+  base directory of the stored connection whose origin the descriptor names —
+  and the ACP binding its own environment names, or its cwd resolves, is this
+  task's. Its native role sessions are runtime as its direct children, and as
+  direct children of the same connected server whose own readable
+  `T3CODE_THREAD_ID` names a recorded participant thread; a session's standing
+  MCP server — the Nucleus report helper, or a program started in its own `mcp`
+  server mode — is runtime with it. An unreadable environment, a parent that is
+  not that server, an unbound server pid and a binding for another task all
+  hold, and a command a session's tools start (`node build.mjs`) is work: a shell
+  is never a runtime. The same recognition protects these processes from run
+  cleanup — which also preserves a plausible ACP parent whose identity it cannot
+  read — and lets the owned-tool proof, review and closeout workspace proof pass
+  while the task is idle (nucleus#1343's host-qualified runtime set, extended per
+  host rather than a second path).
   Those runtimes take two facts from the listing, never a provider
   name list: the program is one the provider ships (inside an application bundle
   such as `Foo.app/Contents/…`, or beside the provider's own executable under
