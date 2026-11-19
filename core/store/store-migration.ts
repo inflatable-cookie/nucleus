@@ -113,6 +113,13 @@ export class StoreMigration {
     // value written after the first run is listed; the same set rewrites nothing.
     const unknownMoved = JSON.stringify(previous?.unknown ?? []) !== JSON.stringify(record.unknown);
     if (previous !== undefined && !changed && !unknownMoved) return;
+    // A later run keeps what earlier runs noted: their conversions and the
+    // dropped role offsets stay in the one record; `unknown` is the current scan.
+    if (previous) {
+      record.changes = [...(previous.changes ?? []), ...record.changes];
+      if (record.droppedDemandRoleOffsets === undefined && previous.droppedDemandRoleOffsets !== undefined)
+        record.droppedDemandRoleOffsets = previous.droppedDemandRoleOffsets;
+    }
     this.core.setMeta(CAPABILITY_BRACKET_MIGRATION_KEY, record);
     for (const item of record.unknown)
       console.warn(

@@ -103,6 +103,34 @@ test('1385: an unknown value written after the first run is listed on the next o
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('1385: a later scan keeps the dropped offsets and earlier conversions in the record', () => {
+  const dir = mkdtempSync(join(process.env.TMPDIR ?? tmpdir(), 'ns-bracket-later-'));
+  try {
+    const path = join(dir, 'queue.sqlite');
+    const seed = new Store(path);
+    seed.deleteMeta(CAPABILITY_BRACKET_MIGRATION_KEY);
+    seed.setMeta('demandRoleOffsets', { worker: 0, reviewer: 0, coordinator: -2 });
+    seed.setMeta('pool', [{ profileId: 'synthetic-haiku', enabled: true, group: 'g', weight: 1, scopes: ['general'], capability: 'medium' }]);
+    seed.close();
+    const first = new Store(path);
+    first.close();
+    // A stale writer adds an unknown value, then another five-point rating.
+    const stale = new Store(path);
+    stale.setMeta('pool', [...stale.getMeta<unknown[]>('pool')!, { profileId: 'synthetic-odd', enabled: true, group: 'g', weight: 1, scopes: ['general'], capability: 'ultra' }]);
+    stale.close();
+    const second = new Store(path);
+    second.setMeta('pool', [...second.getMeta<unknown[]>('pool')!, { profileId: 'synthetic-sol', enabled: true, group: 'g', weight: 1, scopes: ['general'], capability: 'very_high' }]);
+    second.close();
+    const third = new Store(path);
+    try {
+      const record = third.getMeta<CapabilityBracketMigration>(CAPABILITY_BRACKET_MIGRATION_KEY)!;
+      assert.deepEqual(record.droppedDemandRoleOffsets, { worker: 0, reviewer: 0, coordinator: -2 }, 'the dropped offsets survive later scans');
+      assert.deepEqual(record.changes.map(change => change.id), ['synthetic-haiku', 'synthetic-sol'], 'earlier conversions stay listed');
+      assert.deepEqual(record.unknown, [{ id: 'synthetic-odd', field: 'capability', value: 'ultra' }]);
+    } finally { third.close(); }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('1385: a stale writer\'s five-point rating reads as its bracket at the wire boundary', () => {
   for (const [from, to] of [['very_low', 'mechanical'], ['low', 'mechanical'], ['medium', 'worker'], ['high', 'worker'], ['very_high', 'heavyweight'], ['frontier', 'frontier']])
     assert.equal(profileCapabilitySchema.parse(from), to, from);
