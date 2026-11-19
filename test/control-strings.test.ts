@@ -1113,6 +1113,8 @@ interface ParsedText {
   re?: RegExp;
   /** A literal the reader compares against. */
   reads?: string[];
+  /** A reader call whose formatting may vary. */
+  readerPattern?: RegExp;
   /** Real text the writers produce. */
   sample?: string;
   /** Fixed text the writers must still carry. */
@@ -1484,9 +1486,8 @@ const PARSED: ParsedText[] = [
   },
   {
     site: "absent catalog archive",
-    reads: [
-      '"observed absent from the catalog and disk without a Queue archive intent"',
-    ],
+    readerPattern:
+      /event\s*\.\s*detail\s*\.\s*includes\s*\(\s*(["'])observed absent from the catalog and disk without a Queue archive intent\1\s*,?\s*\)/,
   },
   // The absent-creation budget is read from the record's own scope, so the
   // legacy sentence it still recognises and the record writer are pinned;
@@ -1556,6 +1557,12 @@ for (const row of PARSED) {
       assert.match(row.sample!, row.re);
     }
     for (const text of row.reads ?? []) present(text, "reader text");
+    if (row.readerPattern)
+      assert.match(
+        source(),
+        row.readerPattern,
+        "reader call is gone or reworded",
+      );
     for (const text of row.writers ?? []) present(text, "writer text");
   });
 }

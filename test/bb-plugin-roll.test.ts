@@ -645,7 +645,11 @@ function healthContext(plugins: {
   roll: BbPluginRollRecord | null;
 }): RuntimeHealthContext {
   return {
-    store: { getMeta: () => undefined, countTasks: () => 0, maintenanceTasks: () => [] },
+    store: {
+      getMeta: () => undefined,
+      countTasks: () => 0,
+      maintenanceTasks: () => [],
+    },
     engine: { reconciliationSnapshot: () => ({}) },
     lifecycle: {
       phase: "serving",

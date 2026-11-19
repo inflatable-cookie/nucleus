@@ -284,7 +284,10 @@ function fixture() {
   };
   return {
     ...f,
-    close: async () => { await engine.stop(); f.close(); },
+    close: async () => {
+      await engine.stop();
+      f.close();
+    },
     get store() {
       return store;
     },
