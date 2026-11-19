@@ -8,6 +8,11 @@ import { WORKER_REPLACEMENT_CEILING } from "../../shared/schema/task-holds";
 import { dispatchBlocked } from "../dispatch/capacity";
 import type { Engine } from "../engine";
 import { matchingInactiveParticipant } from "../intake/run-settlement";
+import { reviewContinuationCauseId } from "../questions/ladder/causes";
+import {
+  plannerEscalations,
+  type LadderEvent,
+} from "../questions/ladder/records";
 import {
   reviewContinuationState,
   reviewResultFencesRun,
@@ -51,6 +56,10 @@ function incidentFenceOpen(task: Task): boolean {
  * path and at-most-once identity. It runs as Queue, not the owner, so an
  * owner's stop hold still holds it. A refusal waits for a later pass, or retries
  * at once when the fence it named has since cleared.
+ *
+ * An exhausted reader — one that reported it cannot finish — is answered by the
+ * same pass through `replaceExhaustedReviewers`, which takes the fresh-review
+ * exit rather than a continuation.
  */
 export class ReviewerAutoContinue {
   constructor(readonly engine: Engine) {}
@@ -112,7 +121,18 @@ export class ReviewerAutoContinue {
       const run = task.resolution.currentRunId
         ? this.store.run(task.resolution.currentRunId)
         : null;
-      return run?.agentId && reviewerCannotFinish(run) ? { task, run } : null;
+      if (!run?.agentId || !reviewerCannotFinish(run)) return null;
+      // The ladder already owns this reader: its escalation names why the
+      // ordinary replacement could not act, so a later pass owes it no new
+      // observation, restart attempt or record.
+      const cause = reviewContinuationCauseId(task.id, "exhausted", run.id);
+      if (
+        plannerEscalations(this.store.eventsAll(task.id) as LadderEvent[]).some(
+          (escalation) => escalation.cause === cause,
+        )
+      )
+        return null;
+      return { task, run };
     };
     for (const initial of tasks) {
       if (this.engine.stopped) return;
@@ -128,9 +148,11 @@ export class ReviewerAutoContinue {
         );
         continue;
       }
-      // The exhausted reader's own idle observation is the trigger. A busy,
-      // permission-pending, errored or unreadable reader is not proved settled,
-      // so a later pass answers it.
+      // The reader's own settled observation is the trigger, with the same three
+      // states every reviewer continuation accepts: idle, errored and closed are
+      // the existing REVIEW_AGENT_ERRORED and REVIEW_AGENT_CLOSED exits, not a
+      // new reading. A busy, permission-pending or unreadable reader proves
+      // nothing settled, so a later pass answers it.
       const state = await this.engine.host
         .observe(before.run.agentId!)
         .catch(() => null);

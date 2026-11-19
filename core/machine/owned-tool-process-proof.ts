@@ -473,16 +473,19 @@ export class RunProcessTable {
   };
 
   /**
-   * The provider's own standing host processes in this listing: the provider
-   * executable in its `app-server` mode, or one of its own tool hosts. The host
-   * daemon starts and keeps them, so they outlive the thread whose launch
-   * environment they still carry (nucleus#1372).
+   * The provider's standing `app-server` hosts in this listing: the provider's
+   * own executable in its `app-server` subcommand mode (`<program> app-server …`).
+   * The host daemon starts and keeps one across runs, so it outlives the thread
+   * whose launch environment it still carries (nucleus#1372).
+   *
+   * The subcommand position is what names the mode. A path argument that merely
+   * ends in `app-server` is a command's operand, not the provider's host, and a
+   * shell is never one of these hosts whatever its script is named.
    */
   providerHostPids(): ReadonlySet<number> {
     const pids = new Set<number>();
-    // A shell is never one of these hosts, whatever its script is named.
     for (const row of this.runtimeCandidates)
-      if (runtimeHost(row.base, row.argv, row.base)) pids.add(row.process.pid);
+      if (argvBase(row.argv[1]) === "app-server") pids.add(row.process.pid);
     return pids;
   }
 

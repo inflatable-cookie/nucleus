@@ -2749,7 +2749,9 @@ export class Store {
     // obligation, and it must not erase what that run's cleanup already
     // observed: the recorded left-alone decision, the stop that makes a respawn
     // "seen again" and the retained uncertainty are the memory that keeps a
-    // settled run's timeline written once (nucleus#1372).
+    // settled run's timeline written once (nucleus#1372). Keeping the stop time
+    // means a re-queued run inside its respawn window is still left alone rather
+    // than chased, which is the recorded decision's own rule.
     const previous = this.getMeta<{
       leftAlone?: unknown;
       stoppedAt?: string;

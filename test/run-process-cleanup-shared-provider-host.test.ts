@@ -19,23 +19,33 @@ type Run = ReturnType<ReturnType<typeof fixture>["run"]>;
  * treat it as the released run's live ancestor — and a repeated pass must add no
  * events at all.
  *
- * The fixture keeps that exact shape with node as the program: the command line is
- * `<program> app-server --enable goals`, the process is its daemon's child, and it
- * inherits the launching thread's ticket and scratch in its environment, as the
- * shared app-server does.
+ * The fixture keeps that exact shape with node as the program: `<program>
+ * app-server --enable goals`, with the subcommand at argv[1], the process a child
+ * of its daemon, and the launching thread's ticket and scratch in its environment
+ * as the shared app-server has them.
  */
 
-/** A host daemon with one provider host child that carries the released run's environment. */
-async function daemonStartedProviderHost(
+/**
+ * A host daemon with one run-identified child: either the provider's own
+ * `app-server` mode, or a command that merely carries an `app-server` operand.
+ */
+async function daemonStartedChild(
   f: ReturnType<typeof fixture>,
   run: Run,
-): Promise<{ daemon: number; appServer: number }> {
+  shape: "app-server" | "command",
+): Promise<number> {
   const hostScript = join(f.root, "provider-host.cjs");
   const appServer = join(f.root, "app-server");
   const daemonScript = join(f.root, "daemon.cjs");
   const infoFile = join(f.root, "daemon-provider.json");
-  writeFileSync(appServer, "");
+  // The provider's own host program, named for its subcommand mode. A command
+  // shape runs the same file as an operand of another script instead.
+  writeFileSync(appServer, "setInterval(() => {}, 1000);");
   writeFileSync(hostScript, "setInterval(() => {}, 1000);");
+  const argv =
+    shape === "app-server"
+      ? [appServer, "--enable", "goals"]
+      : [hostScript, appServer, "--enable", "goals"];
   const inherited = {
     NUCLEUS_TICKET: join(f.root, "tickets", `${run.id}.json`),
     NUCLEUS_CONTINUATION_TICKET: "",
@@ -47,9 +57,9 @@ async function daemonStartedProviderHost(
     daemonScript,
     `
     const fs = require('node:fs'), { spawn } = require('node:child_process');
-    const child = spawn(process.execPath, [${JSON.stringify(hostScript)}, ${JSON.stringify(appServer)}, '--enable', 'goals'],
+    const child = spawn(process.execPath, ${JSON.stringify(argv)},
       { stdio: 'ignore', env: { ...process.env, ...${JSON.stringify(inherited)} } });
-    fs.writeFileSync(${JSON.stringify(infoFile)} + '.tmp', JSON.stringify({ appServer: child.pid }));
+    fs.writeFileSync(${JSON.stringify(infoFile)} + '.tmp', JSON.stringify({ child: child.pid }));
     fs.renameSync(${JSON.stringify(infoFile)} + '.tmp', ${JSON.stringify(infoFile)});
     setInterval(() => {}, 1000);
   `,
@@ -72,12 +82,11 @@ async function daemonStartedProviderHost(
   assert.ok(daemon.pid);
   f.track(daemon.pid);
   await wait(() => existsSync(infoFile));
-  return {
-    daemon: daemon.pid,
-    appServer: (
-      JSON.parse(readFileSync(infoFile, "utf8")) as { appServer: number }
-    ).appServer,
-  };
+  const child = (
+    JSON.parse(readFileSync(infoFile, "utf8")) as { child: number }
+  ).child;
+  f.track(child);
+  return child;
 }
 
 const cleanupEvents = (f: ReturnType<typeof fixture>) =>
@@ -89,14 +98,10 @@ test("a provider host the daemon keeps never holds a released run's cleanup, and
   const f = fixture();
   try {
     const run = f.run("reviewer");
-    const started = await daemonStartedProviderHost(f, run);
-    f.track(started.appServer);
+    const providerHost = await daemonStartedChild(f, run, "app-server");
     f.release(run);
     await f.cleanup();
-    assert.ok(
-      runningPid(started.appServer),
-      "the provider host is never signalled",
-    );
+    assert.ok(runningPid(providerHost), "the provider host is never signalled");
     assert.equal(
       cleanupEvents(f).length,
       0,
@@ -115,6 +120,52 @@ test("a provider host the daemon keeps never holds a released run's cleanup, and
       f.store.eventsAll(f.task.id).length,
       after,
       "a repeated pass over the same decision records nothing new",
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+test("a daemon-parented command carrying an app-server operand still holds the scratch and is recorded once", async () => {
+  // Only the provider's own `app-server` subcommand is its standing host. A
+  // command that merely names a file called `app-server` is still a live owner
+  // of this run's identity: it keeps the scratch and records once, so the
+  // exclusion can never release a scratch a real process still uses.
+  const f = fixture();
+  try {
+    const run = f.run("reviewer");
+    const command = await daemonStartedChild(f, run, "command");
+    f.release(run);
+    await f.cleanup();
+    assert.ok(runningPid(command), "a live owner is never signalled");
+    assert.ok(
+      existsSync(run.temporaryDirectory!),
+      "the live owner keeps its scratch",
+    );
+    const leftAlone = f.store
+      .events(f.task.id)
+      .filter((event) => event.kind === "run_process_cleanup_left_alone");
+    assert.equal(
+      leftAlone.length,
+      1,
+      JSON.stringify(leftAlone.map((event) => event.detail)),
+    );
+    assert.match(leftAlone[0]!.detail, /live-ancestor/);
+    assert.equal(
+      f.store.getMeta<{ pending: boolean }>(`runProcessCleanup:${run.id}`)
+        ?.pending,
+      true,
+      "the scratch is retained for the next observation",
+    );
+    await f.cleanup();
+    await f.cleanup();
+    assert.equal(
+      f.store
+        .events(f.task.id)
+        .filter((event) => event.kind === "run_process_cleanup_left_alone")
+        .length,
+      1,
+      "the same decision over the same processes is written once",
     );
   } finally {
     await f.close();
