@@ -13,42 +13,111 @@ import type { HostKind } from "./host-kind";
  * host table uses to carry a thinking level or a runtime mode.
  */
 export const CANONICAL_PROVIDERS = [
-  "codex", "claude", "pi", "grok", "cursor", "opencode", "copilot", "omp", "antigravity", "muse", "fx", "kiro",
+  "codex",
+  "claude",
+  "pi",
+  "grok",
+  "cursor",
+  "opencode",
+  "copilot",
+  "omp",
+  "antigravity",
+  "muse",
+  "fx",
+  "kiro",
 ] as const;
 export type CanonicalProvider = (typeof CANONICAL_PROVIDERS)[number];
 
 export const PROVIDER_LABELS: Record<CanonicalProvider, string> = {
-  codex: "Codex", claude: "Claude", pi: "Pi", grok: "Grok", cursor: "Cursor", opencode: "OpenCode",
-  copilot: "Copilot", omp: "OMP", antigravity: "Antigravity", muse: "Muse", fx: "FX", kiro: "Kiro",
+  codex: "Codex",
+  claude: "Claude",
+  pi: "Pi",
+  grok: "Grok",
+  cursor: "Cursor",
+  opencode: "OpenCode",
+  copilot: "Copilot",
+  omp: "OMP",
+  antigravity: "Antigravity",
+  muse: "Muse",
+  fx: "FX",
+  kiro: "Kiro",
 };
 
 /** One ordered thinking scale, lowest first. */
-export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"] as const;
+export const THINKING_LEVELS = [
+  "off",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+  "ultra",
+] as const;
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 
 export const THINKING_LABELS: Record<ThinkingLevel, string> = {
-  off: "Off", minimal: "Minimal", low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Max", ultra: "Ultra",
+  off: "Off",
+  minimal: "Minimal",
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  xhigh: "Extra high",
+  max: "Max",
+  ultra: "Ultra",
 };
 
 /** Runtime modes, strictest first; `full-access` is the unattended run. */
-export const RUNTIME_MODES = ["plan", "supervised", "accept-edits", "auto", "auto-review", "full-access"] as const;
+export const RUNTIME_MODES = [
+  "plan",
+  "supervised",
+  "accept-edits",
+  "auto",
+  "auto-review",
+  "full-access",
+] as const;
 export type RuntimeMode = (typeof RUNTIME_MODES)[number];
 
-export const RUNTIME_MODE_LABELS: Record<RuntimeMode, { label: string; description: string }> = {
+export const RUNTIME_MODE_LABELS: Record<
+  RuntimeMode,
+  { label: string; description: string }
+> = {
   plan: { label: "Plan", description: "Plans only; no edits or commands." },
-  supervised: { label: "Supervised", description: "Asks before commands and file changes." },
-  "accept-edits": { label: "Accept edits", description: "Approves edits, asks before other actions." },
-  auto: { label: "Auto", description: "The provider approves routine actions; others still ask." },
-  "auto-review": { label: "Auto review", description: "A reviewer model approves actions instead of asking." },
-  "full-access": { label: "Full access", description: "Commands and edits run without prompts." },
+  supervised: {
+    label: "Supervised",
+    description: "Asks before commands and file changes.",
+  },
+  "accept-edits": {
+    label: "Accept edits",
+    description: "Approves edits, asks before other actions.",
+  },
+  auto: {
+    label: "Auto",
+    description: "The provider approves routine actions; others still ask.",
+  },
+  "auto-review": {
+    label: "Auto review",
+    description: "A reviewer model approves actions instead of asking.",
+  },
+  "full-access": {
+    label: "Full access",
+    description: "Commands and edits run without prompts.",
+  },
 };
 
-export const isCanonicalProvider = (value: string): value is CanonicalProvider => (CANONICAL_PROVIDERS as readonly string[]).includes(value);
-export const isThinkingLevel = (value: string): value is ThinkingLevel => (THINKING_LEVELS as readonly string[]).includes(value);
-export const isRuntimeMode = (value: string): value is RuntimeMode => (RUNTIME_MODES as readonly string[]).includes(value);
+export const isCanonicalProvider = (
+  value: string,
+): value is CanonicalProvider =>
+  (CANONICAL_PROVIDERS as readonly string[]).includes(value);
+export const isThinkingLevel = (value: string): value is ThinkingLevel =>
+  (THINKING_LEVELS as readonly string[]).includes(value);
+export const isRuntimeMode = (value: string): value is RuntimeMode =>
+  (RUNTIME_MODES as readonly string[]).includes(value);
 
 /** How a host carries one canonical runtime mode: its own mode id, or option values. */
-export type NativeMode = { modeId: string } | { featureValues: Record<string, unknown> };
+export type NativeMode =
+  | { modeId: string }
+  | { featureValues: Record<string, unknown> };
 
 /** One canonical provider on one host. */
 export interface ProviderTranslation {
@@ -81,8 +150,13 @@ export interface HostVocabulary {
  * table's `thinkingOption`, else the host's own thinking selects. A profile
  * stores the level once, as `thinkingOptionId`; these never appear as features.
  */
-export function thinkingCarriers(vocabulary: HostVocabulary, entry: ProviderTranslation): readonly string[] {
-  return entry.thinkingOption ? [entry.thinkingOption] : vocabulary.thinkingSelects ?? [];
+export function thinkingCarriers(
+  vocabulary: HostVocabulary,
+  entry: ProviderTranslation,
+): readonly string[] {
+  return entry.thinkingOption
+    ? [entry.thinkingOption]
+    : (vocabulary.thinkingSelects ?? []);
 }
 
 /** The canonical fields a profile carries. */
@@ -108,9 +182,14 @@ export type Translation =
   | { ok: false; reason: string; launch: LaunchValues };
 
 /** Option ids the table itself uses for one provider's thinking or mode; a profile can't set them directly. */
-export function ownedOptions(vocabulary: HostVocabulary, entry: ProviderTranslation): Set<string> {
+export function ownedOptions(
+  vocabulary: HostVocabulary,
+  entry: ProviderTranslation,
+): Set<string> {
   const owned = new Set<string>(thinkingCarriers(vocabulary, entry));
-  for (const mode of Object.values(entry.modes)) if (mode && "featureValues" in mode) for (const key of Object.keys(mode.featureValues)) owned.add(key);
+  for (const mode of Object.values(entry.modes))
+    if (mode && "featureValues" in mode)
+      for (const key of Object.keys(mode.featureValues)) owned.add(key);
   return owned;
 }
 
@@ -119,16 +198,31 @@ export function ownedOptions(vocabulary: HostVocabulary, entry: ProviderTranslat
  * A value the table can't express answers a reason naming the host and the value;
  * the launch then carries the canonical values so a reader still sees the profile.
  */
-export function translateProfile(vocabulary: HostVocabulary, profile: CanonicalValues): Translation {
+export function translateProfile(
+  vocabulary: HostVocabulary,
+  profile: CanonicalValues,
+): Translation {
   const label = vocabulary.label;
   const fallback: LaunchValues = {
-    provider: profile.provider, model: profile.model,
+    provider: profile.provider,
+    model: profile.model,
     ...(profile.modeId ? { modeId: profile.modeId } : {}),
-    ...(profile.thinkingOptionId ? { thinkingOptionId: profile.thinkingOptionId } : {}),
-    ...(profile.featureValues && Object.keys(profile.featureValues).length ? { featureValues: profile.featureValues } : {}),
+    ...(profile.thinkingOptionId
+      ? { thinkingOptionId: profile.thinkingOptionId }
+      : {}),
+    ...(profile.featureValues && Object.keys(profile.featureValues).length
+      ? { featureValues: profile.featureValues }
+      : {}),
   };
-  const refuse = (reason: string): Translation => ({ ok: false, reason, launch: fallback });
-  if (!isCanonicalProvider(profile.provider)) return refuse(`Provider ${profile.provider} is not in Nucleus's vocabulary`);
+  const refuse = (reason: string): Translation => ({
+    ok: false,
+    reason,
+    launch: fallback,
+  });
+  if (!isCanonicalProvider(profile.provider))
+    return refuse(
+      `Provider ${profile.provider} is not in Nucleus's vocabulary`,
+    );
   const entry = vocabulary.providers[profile.provider];
   if (!entry) return refuse(`${label} has no ${profile.provider} provider`);
   const translated: string[] = [];
@@ -137,31 +231,51 @@ export function translateProfile(vocabulary: HostVocabulary, profile: CanonicalV
   const features: Record<string, unknown> = {};
   const owned = ownedOptions(vocabulary, entry);
   for (const [option, value] of Object.entries(profile.featureValues ?? {})) {
-    if (owned.has(option)) return refuse(`Option ${option} is how ${label} carries a thinking level or mode; set those instead`);
+    if (owned.has(option))
+      return refuse(
+        `Option ${option} is how ${label} carries a thinking level or mode; set those instead`,
+      );
     features[option] = value;
   }
   if (profile.thinkingOptionId) {
     const level = profile.thinkingOptionId;
-    if (!isThinkingLevel(level)) return refuse(`Thinking level ${level} is not in Nucleus's vocabulary`);
+    if (!isThinkingLevel(level))
+      return refuse(`Thinking level ${level} is not in Nucleus's vocabulary`);
     const value = entry.thinking[level];
-    if (value === undefined) return refuse(`${label} can't express thinking level ${level} for ${profile.provider}`);
-    if (entry.thinkingOption) { features[entry.thinkingOption] = value; translated.push("thinking"); }
-    else { launch.thinkingOptionId = value; if (value !== level) translated.push("thinking"); }
+    if (value === undefined)
+      return refuse(
+        `${label} can't express thinking level ${level} for ${profile.provider}`,
+      );
+    if (entry.thinkingOption) {
+      features[entry.thinkingOption] = value;
+      translated.push("thinking");
+    } else {
+      launch.thinkingOptionId = value;
+      if (value !== level) translated.push("thinking");
+    }
   }
   if (profile.modeId) {
     const mode = profile.modeId;
-    if (!isRuntimeMode(mode)) return refuse(`Runtime mode ${mode} is not in Nucleus's vocabulary`);
+    if (!isRuntimeMode(mode))
+      return refuse(`Runtime mode ${mode} is not in Nucleus's vocabulary`);
     const native = entry.modes[mode];
-    if (!native) return refuse(`${label} can't run ${profile.provider} in mode ${mode}`);
-    if ("modeId" in native) { launch.modeId = native.modeId; if (native.modeId !== mode) translated.push("mode"); }
-    else { Object.assign(features, native.featureValues); translated.push("mode"); }
+    if (!native)
+      return refuse(`${label} can't run ${profile.provider} in mode ${mode}`);
+    if ("modeId" in native) {
+      launch.modeId = native.modeId;
+      if (native.modeId !== mode) translated.push("mode");
+    } else {
+      Object.assign(features, native.featureValues);
+      translated.push("mode");
+    }
   }
   if (Object.keys(features).length) launch.featureValues = features;
   return { ok: true, launch, translated };
 }
 
 const hasOption = (feature: HostFeature | undefined, value: string) =>
-  feature?.type === "select" && feature.options.some(option => option.id === value);
+  feature?.type === "select" &&
+  feature.options.some((option) => option.id === value);
 
 /**
  * The canonical thinking levels one provider's model on this host can express:
@@ -170,11 +284,21 @@ const hasOption = (feature: HostFeature | undefined, value: string) =>
  * them from that option, so a caller that only reads the routing snapshot still
  * sees the levels this host really runs (nucleus#1169).
  */
-export function canonicalThinkingLevels(entry: ProviderTranslation, model: HostModel): ThinkingLevel[] {
-  const carrier = entry.thinkingOption ? model.features.find(feature => feature.id === entry.thinkingOption) : undefined;
-  return THINKING_LEVELS.filter(level => {
+export function canonicalThinkingLevels(
+  entry: ProviderTranslation,
+  model: HostModel,
+): ThinkingLevel[] {
+  const carrier = entry.thinkingOption
+    ? model.features.find((feature) => feature.id === entry.thinkingOption)
+    : undefined;
+  return THINKING_LEVELS.filter((level) => {
     const value = entry.thinking[level];
-    return value !== undefined && (entry.thinkingOption ? hasOption(carrier, value) : model.thinkingOptions.some(option => option.id === value));
+    return (
+      value !== undefined &&
+      (entry.thinkingOption
+        ? hasOption(carrier, value)
+        : model.thinkingOptions.some((option) => option.id === value))
+    );
   });
 }
 
@@ -183,8 +307,14 @@ export function canonicalThinkingLevels(entry: ProviderTranslation, model: HostM
  * table's inverse entry. A value the table carries no level for is `null`, never
  * a guess: the table is the whole contract for what a host can express.
  */
-export function canonicalThinkingValue(entry: ProviderTranslation, value: string): ThinkingLevel | null {
-  return THINKING_LEVELS.find(candidate => entry.thinking[candidate] === value) ?? null;
+export function canonicalThinkingValue(
+  entry: ProviderTranslation,
+  value: string,
+): ThinkingLevel | null {
+  return (
+    THINKING_LEVELS.find((candidate) => entry.thinking[candidate] === value) ??
+    null
+  );
 }
 
 /**
@@ -193,10 +323,19 @@ export function canonicalThinkingValue(entry: ProviderTranslation, value: string
  * (T3's claude `effort: ultrathink`, BB's `none`), for display. `null` when the
  * launch carries no level, or one the table has no level for.
  */
-export function launchThinkingLevel(vocabulary: HostVocabulary, launch: Pick<LaunchValues, "provider" | "thinkingOptionId" | "featureValues">): ThinkingLevel | null {
-  const entry = Object.values(vocabulary.providers).find(candidate => candidate?.key === launch.provider);
-  if (!entry) return launch.thinkingOptionId && isThinkingLevel(launch.thinkingOptionId) ? launch.thinkingOptionId : null;
-  if (launch.thinkingOptionId) return canonicalThinkingValue(entry, launch.thinkingOptionId);
+export function launchThinkingLevel(
+  vocabulary: HostVocabulary,
+  launch: Pick<LaunchValues, "provider" | "thinkingOptionId" | "featureValues">,
+): ThinkingLevel | null {
+  const entry = Object.values(vocabulary.providers).find(
+    (candidate) => candidate?.key === launch.provider,
+  );
+  if (!entry)
+    return launch.thinkingOptionId && isThinkingLevel(launch.thinkingOptionId)
+      ? launch.thinkingOptionId
+      : null;
+  if (launch.thinkingOptionId)
+    return canonicalThinkingValue(entry, launch.thinkingOptionId);
   for (const carrier of thinkingCarriers(vocabulary, entry)) {
     const value = launch.featureValues?.[carrier];
     if (typeof value === "string") return canonicalThinkingValue(entry, value);
@@ -212,14 +351,21 @@ export function launchThinkingLevel(vocabulary: HostVocabulary, launch: Pick<Lau
  * rule and may choose a higher supported level when it is closer.
  * `null` when the scale is empty: nothing on this model can carry the level.
  */
-export function nearestThinkingLevel(supported: readonly ThinkingLevel[], level: ThinkingLevel): ThinkingLevel | null {
+export function nearestThinkingLevel(
+  supported: readonly ThinkingLevel[],
+  level: ThinkingLevel,
+): ThinkingLevel | null {
   if (supported.includes(level)) return level;
   const want = THINKING_LEVELS.indexOf(level);
   let best: ThinkingLevel | null = null;
   for (const candidate of supported) {
     const away = Math.abs(THINKING_LEVELS.indexOf(candidate) - want);
-    if (best === null || away < Math.abs(THINKING_LEVELS.indexOf(best) - want)
-      || (away === Math.abs(THINKING_LEVELS.indexOf(best) - want) && THINKING_LEVELS.indexOf(candidate) < THINKING_LEVELS.indexOf(best)))
+    if (
+      best === null ||
+      away < Math.abs(THINKING_LEVELS.indexOf(best) - want) ||
+      (away === Math.abs(THINKING_LEVELS.indexOf(best) - want) &&
+        THINKING_LEVELS.indexOf(candidate) < THINKING_LEVELS.indexOf(best))
+    )
       best = candidate;
   }
   return best;
@@ -231,81 +377,160 @@ export function nearestThinkingLevel(supported: readonly ThinkingLevel[], level:
  * the host reports. Options a table uses to carry thinking or a mode are left
  * out of the features. Settings builds its dropdowns from these.
  */
-export function canonicalCatalog(vocabulary: HostVocabulary, catalog: HostCatalog): HostCatalog {
+export function canonicalCatalog(
+  vocabulary: HostVocabulary,
+  catalog: HostCatalog,
+): HostCatalog {
   const providers: HostProvider[] = [];
   for (const canonical of CANONICAL_PROVIDERS) {
     const entry = vocabulary.providers[canonical];
-    const native = entry && catalog.providers.find(candidate => candidate.key === entry.key);
+    const native =
+      entry &&
+      catalog.providers.find((candidate) => candidate.key === entry.key);
     if (!entry || !native) continue;
     const owned = ownedOptions(vocabulary, entry);
     providers.push({
-      key: canonical, label: PROVIDER_LABELS[canonical], available: native.available, problem: native.problem,
+      key: canonical,
+      label: PROVIDER_LABELS[canonical],
+      available: native.available,
+      problem: native.problem,
       models: native.models.map((model): HostModel => {
-        const carrier = entry.thinkingOption ? model.features.find(feature => feature.id === entry.thinkingOption) : undefined;
+        const carrier = entry.thinkingOption
+          ? model.features.find(
+              (feature) => feature.id === entry.thinkingOption,
+            )
+          : undefined;
         const levels = canonicalThinkingLevels(entry, model);
         const nativeDefault = entry.thinkingOption
-          ? (carrier?.type === "select" ? carrier.options.find(option => option.isDefault)?.id ?? (typeof carrier.value === "string" ? carrier.value : null) : null)
+          ? carrier?.type === "select"
+            ? (carrier.options.find((option) => option.isDefault)?.id ??
+              (typeof carrier.value === "string" ? carrier.value : null))
+            : null
           : model.defaultThinkingOptionId;
-        const defaultLevel = levels.find(level => entry.thinking[level] === nativeDefault) ?? null;
-        const modes = RUNTIME_MODES.filter(mode => {
+        const defaultLevel =
+          levels.find((level) => entry.thinking[level] === nativeDefault) ??
+          null;
+        const modes = RUNTIME_MODES.filter((mode) => {
           const value = entry.modes[mode];
           if (!value) return false;
-          if ("modeId" in value) return model.modes.some(candidate => candidate.id === value.modeId);
-          return catalog.featuresDeferred === true || Object.keys(value.featureValues).every(key => model.features.some(feature => feature.id === key));
+          if ("modeId" in value)
+            return model.modes.some(
+              (candidate) => candidate.id === value.modeId,
+            );
+          return (
+            catalog.featuresDeferred === true ||
+            Object.keys(value.featureValues).every((key) =>
+              model.features.some((feature) => feature.id === key),
+            )
+          );
         });
         return {
-          id: model.id, label: model.label, aliases: model.aliases,
-          thinkingOptions: levels.map(level => ({ id: level, label: THINKING_LABELS[level] })),
+          id: model.id,
+          label: model.label,
+          aliases: model.aliases,
+          thinkingOptions: levels.map((level) => ({
+            id: level,
+            label: THINKING_LABELS[level],
+          })),
           defaultThinkingOptionId: defaultLevel,
-          modes: modes.map(mode => ({ id: mode, ...RUNTIME_MODE_LABELS[mode] })),
-          features: model.features.filter(feature => !owned.has(feature.id)),
+          modes: modes.map((mode) => ({
+            id: mode,
+            ...RUNTIME_MODE_LABELS[mode],
+          })),
+          features: model.features.filter((feature) => !owned.has(feature.id)),
         };
       }),
     });
   }
-  return { providers, ...(catalog.featuresDeferred ? { featuresDeferred: true } : {}) };
+  return {
+    providers,
+    ...(catalog.featuresDeferred ? { featuresDeferred: true } : {}),
+  };
 }
 
 /**
  * Several hosts' canonical catalogs as one: a provider, model, level or mode at
  * least one host can run. A provider is available when any host has it ready.
  */
-export function mergeCanonicalCatalogs(catalogs: readonly HostCatalog[]): HostCatalog {
+export function mergeCanonicalCatalogs(
+  catalogs: readonly HostCatalog[],
+): HostCatalog {
   const providers: HostProvider[] = [];
   for (const catalog of catalogs)
     for (const provider of catalog.providers) {
-      const current = providers.find(candidate => candidate.key === provider.key);
-      if (!current) { providers.push({ ...provider, models: provider.models.map(model => ({ ...model })) }); continue; }
-      if (!current.available && provider.available) { current.available = true; current.problem = ""; }
+      const current = providers.find(
+        (candidate) => candidate.key === provider.key,
+      );
+      if (!current) {
+        providers.push({
+          ...provider,
+          models: provider.models.map((model) => ({ ...model })),
+        });
+        continue;
+      }
+      if (!current.available && provider.available) {
+        current.available = true;
+        current.problem = "";
+      }
       for (const model of provider.models) {
-        const known = current.models.find(candidate => candidate.id === model.id);
-        if (!known) { current.models.push({ ...model }); continue; }
-        known.thinkingOptions = THINKING_LEVELS.filter(level => known.thinkingOptions.some(option => option.id === level) || model.thinkingOptions.some(option => option.id === level))
-          .map(level => ({ id: level, label: THINKING_LABELS[level] }));
+        const known = current.models.find(
+          (candidate) => candidate.id === model.id,
+        );
+        if (!known) {
+          current.models.push({ ...model });
+          continue;
+        }
+        known.thinkingOptions = THINKING_LEVELS.filter(
+          (level) =>
+            known.thinkingOptions.some((option) => option.id === level) ||
+            model.thinkingOptions.some((option) => option.id === level),
+        ).map((level) => ({ id: level, label: THINKING_LABELS[level] }));
         known.defaultThinkingOptionId ??= model.defaultThinkingOptionId;
-        known.modes = RUNTIME_MODES.filter(mode => known.modes.some(item => item.id === mode) || model.modes.some(item => item.id === mode))
-          .map(mode => ({ id: mode, ...RUNTIME_MODE_LABELS[mode] }));
-        known.features = [...known.features, ...model.features.filter(feature => !known.features.some(item => item.id === feature.id))];
+        known.modes = RUNTIME_MODES.filter(
+          (mode) =>
+            known.modes.some((item) => item.id === mode) ||
+            model.modes.some((item) => item.id === mode),
+        ).map((mode) => ({ id: mode, ...RUNTIME_MODE_LABELS[mode] }));
+        known.features = [
+          ...known.features,
+          ...model.features.filter(
+            (feature) => !known.features.some((item) => item.id === feature.id),
+          ),
+        ];
         known.aliases = [...new Set([...known.aliases, ...model.aliases])];
       }
     }
-  const deferred = catalogs.some(catalog => catalog.featuresDeferred);
+  const deferred = catalogs.some((catalog) => catalog.featuresDeferred);
   return { providers, ...(deferred ? { featuresDeferred: true } : {}) };
 }
 
 /** Each canonical level spelled the same on the host. */
-export const sameLevels = (...levels: ThinkingLevel[]): Partial<Record<ThinkingLevel, string>> =>
-  Object.fromEntries(levels.map(level => [level, level]));
+export const sameLevels = (
+  ...levels: ThinkingLevel[]
+): Partial<Record<ThinkingLevel, string>> =>
+  Object.fromEntries(levels.map((level) => [level, level]));
 
 /**
  * The table of a host that speaks the canonical vocabulary as it is. Only for an
  * adapter that carries no table of its own (test doubles); Paseo and T3Code each
  * own an explicit table.
  */
-export function canonicalVocabulary(kind: HostKind, label: string): HostVocabulary {
+export function canonicalVocabulary(
+  kind: HostKind,
+  label: string,
+): HostVocabulary {
   const entry = (key: string): ProviderTranslation => ({
-    key, thinking: sameLevels(...THINKING_LEVELS),
-    modes: Object.fromEntries(RUNTIME_MODES.map(mode => [mode, { modeId: mode }])),
+    key,
+    thinking: sameLevels(...THINKING_LEVELS),
+    modes: Object.fromEntries(
+      RUNTIME_MODES.map((mode) => [mode, { modeId: mode }]),
+    ),
   });
-  return { kind, label, providers: Object.fromEntries(CANONICAL_PROVIDERS.map(key => [key, entry(key)])) };
+  return {
+    kind,
+    label,
+    providers: Object.fromEntries(
+      CANONICAL_PROVIDERS.map((key) => [key, entry(key)]),
+    ),
+  };
 }
