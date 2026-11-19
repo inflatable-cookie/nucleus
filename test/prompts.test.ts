@@ -2480,10 +2480,13 @@ test("the required-proof instruction is fixed prompt text, rendered outside the 
     REQUIRED_PROOF_REVIEWER_NOTE,
     /required artifact named only by a run-scratch path[\s\S]*report `changes_required` with `reviewResponsibility: author`/,
   );
+  // nucleus#1382: the author note names the brief's own proof and the custody
+  // route only; the optional proof-file limits live in the proof-file paragraph.
   assert.match(
     REQUIRED_PROOF_AUTHOR_NOTE,
-    /TMPDIR is removed at release[\s\S]*through proofFiles[\s\S]*8 MiB per file; 32 MiB total[\s\S]*subset the brief allows[\s\S]*reviewResponsibility: environment/,
+    /never waive a proof this brief names as required[\s\S]*through proofFiles[\s\S]*report it missing rather than claiming the work is complete/,
   );
+  assert.doesNotMatch(REQUIRED_PROOF_AUTHOR_NOTE, /exceeds the limits|subset the brief allows|reviewResponsibility/);
 });
 
 test("brief-mode prompts and reviewer continuations carry the required-proof instruction", () => {

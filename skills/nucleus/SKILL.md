@@ -15,7 +15,10 @@ optional `note`). Briefs do not require verdict entries or pass gates. A `ready_
 report may name local proof files (screenshots, rendered images, recordings the
 brief requires) as `proofFiles: [{label, path}]`, where each path is an absolute
 path to a real regular file inside that task's own scratch or worktree, at most
-12 files, 8 MiB each and 32 MiB total. Nucleus copies them into its own
+12 files, 8 MiB each and 32 MiB total; larger evidence is summarised into compact
+evidence plus hashes, so the limits are packaging rather than a reason to stop.
+Delivering proof files is optional and depends on the brief naming visual or
+rendered proof. Nucleus copies them into its own
 per-head evidence directory. The retained reviewer can read the paths and hashes
 with `nucleus helper report context proofs`; nothing is uploaded to
 the forge, and no local path belongs in a PR body or comment. A report naming a

@@ -1654,7 +1654,19 @@ request identities and stored committed-handoff rows are not rewritten.
 ### Prompts and instructions
 
 - Run prompts retain identity, brief, exact head and base, role duties, scratch and own report binding, named-proof and affected-test policy, and safety instructions. Nucleus counts characters where the renderers emit each section. The prompt-size event records totals and section counts, including the standing-rules pointer and proof summary when present.
-- Extended rules, validation, proof inventory and history live in the run's scratch. `nucleus helper report context [rules|validation|proofs|history]` reads the run's own snapshot over its authenticated callback; a different or stale binding is refused. The snapshot cannot grant authority or replace inline safety rules. Worker, reviewer and recovery standing guidance is shared with the corresponding Nucleus skill section. The rules include the blocked-report `cause` and `impediment` fields and, where the role can ask and tell, the CLI forms for hosts without MCP.
+- Extended rules, validation, proof inventory and history live in the run's scratch. `nucleus helper report context [rules|validation|proofs|history]` reads the run's own snapshot over its authenticated callback; a different or stale binding is refused. The snapshot cannot grant authority or replace inline safety rules. The index names the sections as reference material (nucleus#1382): read one if needed, nothing in them is owed for the turn unless the brief or a review finding names it, and a failed or refused optional read is never a blocker. Worker, reviewer and recovery standing guidance is shared with the corresponding Nucleus skill section. The rules include the blocked-report `cause` and `impediment` fields and, where the role can ask and tell, the CLI forms for hosts without MCP.
+- Prompt notes are optional unless the brief names them (nucleus#1382; Tom,
+  2026-11-19: prompts carry only what the turn needs). The run-bound build-output
+  note says only that earlier build outputs may be gone and to re-run a command
+  whose output it relies on, and names no history lookup. Proof files are
+  optional delivery for proof the brief names: a brief that names no visual or
+  rendered proof gets a paragraph saying there is nothing to deliver, and the
+  size limits are named as packaging (summarise larger evidence into compact
+  evidence plus hashes) rather than as a reason to stop. The classifier reads the
+  words an author writes for that evidence — screenshots, captures, pictures,
+  photos, renders, recordings, images, video files and before/after — and errs
+  towards the delivery paragraph, because the extra paragraph costs a line while
+  withholding the route loses the evidence.
 
 - Worker prompts separate action from status. Revision and resume requests
   store their text as `pendingWorkerInstruction`; dispatch copies it onto

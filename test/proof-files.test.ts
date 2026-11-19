@@ -248,7 +248,7 @@ test("executor proof files outside its own scratch or over a file limit are refu
     await assert.rejects(f.complete("proof_executed", {
       head: sourceHead, proofResult: { status: "passed", selector: "effigy test unit -- test/proof.test.ts", exitCode: 0, evidence: "Ran" },
       proofFiles: [{ label: "Oversized", path: oversizedPath }],
-    }), /8 MiB per file; 32 MiB total[\s\S]*subset the brief allows[\s\S]*reviewResponsibility: environment[\s\S]*8388609 bytes/);
+    }), /8 MiB per file; 32 MiB total[\s\S]*summarise larger evidence into compact evidence plus hashes[\s\S]*8388609 bytes/);
     assert.equal(f.task().proofFiles.length, 0);
     assert.equal(existsSync(join(f.scratchRoot, "evidence")), false);
   } finally { await f.close(); }

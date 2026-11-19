@@ -3787,8 +3787,8 @@ test("owner continuation gates disclose recorded run-bound cleanup without chang
     );
     assert.match(
       work.note ?? "",
-      /prior build artifacts are not guaranteed retained, so re-run any command whose output you rely on/,
-      "the note forbids relying on prior output",
+      /earlier build outputs may be gone, so re-run a command whose output you rely on/,
+      "the note says earlier output may be gone and names no history lookup",
     );
     assert.match(
       work.note ?? "",
@@ -3833,7 +3833,7 @@ test("a continuation whose prior run has no cleanup record is told so, and a fin
     );
     assert.match(
       work.note ?? "",
-      /prior build artifacts are not guaranteed retained/,
+      /earlier build outputs may be gone/,
     );
     // A skipped or uncertain record is quoted with its own state, never as a removal.
     f.store.update(f.taskId, {
