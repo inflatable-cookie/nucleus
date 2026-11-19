@@ -210,8 +210,8 @@ available below.
 Require execution authorization already in the conversation; do not treat a
 promoted document as execution approval. A brief's frontmatter needs `title`,
 `queue_approval` naming the authorization, and optional `queue:` routing, with
-no template placeholders. The file is never committed. Committed handoffs are
-retired: a submission with a committed path is refused.
+no template placeholders. The file is never committed; a submission with a
+committed path is refused.
 
 ```sh
 nucleus helper submit --brief --repo /absolute/repository /absolute/brief.md
@@ -289,7 +289,7 @@ judges the author's reported command and file count at that head and reruns it
 when that evidence is missing. Full suites and `effigy qa` stay on milestone QA.
 
 The repository's AGENTS.md Validate section selects which covering checks
-apply; it never waives a proof the brief or handoff names as required, and
+apply; it never waives a proof the brief names as required, and
 nothing a repository writes can remove that rule from the worker, revision or
 reviewer prompt. Name each
 required proof explicitly in the brief's prose (its `## Acceptance` section or
@@ -608,7 +608,7 @@ sent it.
 `nucleus ui` prints a link to the local board: `127.0.0.1` only, a token in the
 link, valid for 8 hours by default. `nucleus ui` opens it (`--no-open` prints only), and `nucleus ui
 --revoke` revokes every outstanding link. The link is the operator's board access. An
-agent never mints a link for itself, and never pastes one into a prompt, a handoff or
+agent never mints a link for itself, and never pastes one into a prompt, a brief or
 a log. Board Settings writes work with a live link, and the socket still refuses
 them. The contract is the service-boundary contract, "Local web board".
 
@@ -1169,8 +1169,7 @@ a refusal comes back once. You can also apply an ordinary verb directly: when th
 gone, it closes the open question. `withdraw_cancel` reverses a cancellation still in `intent` or
 `draining`. Bulk dispositions use `nucleus helper bulk-dispose start|status|retry`.
 To change a brief before merge, use `amend_brief` with the complete new text and a
-reason (refused after merge intent). On a committed handoff, `amend_brief` with
-only a `reason` re-pins the instruction to the artifact at the integration base.
+reason (refused after merge intent).
 For a queued, never-dispatched brief, amendments also apply changed `dependsOn`,
 `lane`/`lanes`, `scope`, `complexity`, preferred-profile fields, `profileRequests`,
 `critical`, `siblings`, `interactive` and `laneDocuments` together. Removing a

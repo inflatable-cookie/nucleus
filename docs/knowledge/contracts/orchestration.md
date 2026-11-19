@@ -435,9 +435,8 @@ dependencies, notes and holds, completion subscriptions and the task's owner.
 Enforces [Lanes](#lanes), [Holds](#holds) and
 [Owners and notices](#owners-and-notices). Delegates remain on Engine.
 
-**BriefControls** (`core/verbs/brief.ts`). Re-pins a committed handoff's
-instruction, amends a Nucleus-held brief, and refuses brief text that still
-declares a stage plan. `brief-routing.ts` owns the routing, merge-hold and
+**BriefControls** (`core/verbs/brief.ts`). Amends a Nucleus-held brief and
+refuses brief text that still declares a stage plan. `brief-routing.ts` owns the routing, merge-hold and
 interactive diff an amendment may apply before dispatch; `brief-proof.ts` owns the
 author-side proof declaration's retirement, clearing and re-declaration; and
 `brief-amendment.ts` owns the delivery of an amendment to a live thread — a typed
@@ -953,19 +952,18 @@ confident, for a later pass:
   a committed `handoffPath` is retired and refused (nucleus#1368).
 - Nucleus pins a brief by digest within 128 KB and writes nothing to the
   repository. Brief mode needs a v5 control manifest at the planning commit, or
-  none; v1–v4 are refused because their hooks read committed handoffs.
+  none; v1–v4 are refused because their hook schemas predate brief mode.
 - `planningCommit` stays required and pushed. In brief mode it must be an
   ancestor of the pushed base at submission, the current base at dispatch and
-  the worker head at launch and continuation; handoff mode compares handoff
-  bytes instead.
+  the worker head at launch and continuation.
 - Prompts carry the brief inline, labelled as Nucleus-held, and tell the worker
   not to commit it. Operator `amend_brief` (text and reason) pins a new version
   before merge and is refused after it; each run records the version it was
   given. A live worker or reviewer is told of the amendment as a message queued
   behind its current step (not an interrupt); an open `ask` is answered
   with the new brief. The next run is given the new version. `amend_brief` with
-  no text re-pins a handoff and refuses brief tasks.
-- Adoption requires a committed handoff and takes over an existing isolated
+  no text is refused: there is no committed instruction to re-pin.
+- Adoption requires a Queue-held brief and takes over an existing isolated
   worker without resetting files or inventing review approval; externally owned
   workspaces are preserved.
 - The outcome row records the final brief version, its digest and earlier

@@ -43,13 +43,13 @@ async function validateBriefSubmission(input: Submission) {
   return { handoffText: input.brief!.text, planningBase, instruction: null };
 }
 /**
- * Brief mode runs only where no lifecycle hook reads a committed handoff: a v5,
+ * Brief mode runs only where no lifecycle hook is written against a pre-v5 schema: a v5,
  * v6 or v7 manifest at the planning commit, or no manifest. v1–v4 are refused.
  */
 export async function assertBriefEligible(repoPath: string, planningCommit: string) {
   const discovery = await discoverManifest(repoPath, planningCommit);
   if (discovery && !manifestSupportsCloseoutSelection(discovery.manifest.schema))
-    throw new Error(`Brief mode requires a ${CONTROL_SCHEMA_V5} control manifest or none; this repository's manifest at ${planningCommit.slice(0, 12)} is ${discovery.manifest.schema}, whose lifecycle hooks read committed handoffs, so brief mode cannot apply.`);
+    throw new Error(`Brief mode requires a ${CONTROL_SCHEMA_V5} control manifest or none; this repository's manifest at ${planningCommit.slice(0, 12)} is ${discovery.manifest.schema}, whose lifecycle hooks predate brief mode, so brief mode cannot apply.`);
 }
 /** A brief task's pinned text must be exactly its current recorded version. */
 export function assertPinnedBrief(task: Task) {

@@ -2,9 +2,8 @@
 
 Owner: Nucleus maintainers
 
-Work reaches this repository as Nucleus tasks. The planner writes a brief (or, for
-tasks submitted before the lean cutover, a committed handoff), Nucleus dispatches a
-worker, an independent reviewer checks the exact head, and Nucleus merges and
+Work reaches this repository as Nucleus tasks. The planner writes a Queue-held brief,
+Nucleus dispatches a worker, an independent reviewer checks the exact head, and Nucleus merges and
 closes the task out. Intent lives in Nucleus's plan (lanes, lane documents and their
 order); leads, tasks, briefs, status and outcomes live in Nucleus too, never in
 this repository. A lead is not execution authority. Board observations and

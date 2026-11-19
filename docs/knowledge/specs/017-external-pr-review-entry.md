@@ -99,7 +99,7 @@ and a strictly validated payload:
 
 | Field | Meaning |
 | --- | --- |
-| `submission` | Existing canonical submission identity, repository, base branch, planning commit, handoff/instruction, scope, dependencies, origin and notification fields. |
+| `submission` | Existing canonical submission identity, repository, base branch, planning commit, brief, scope, dependencies, origin and notification fields. |
 | `workspaceId` | Paseo workspace, inspected against its real directory and Git common directory. The lead CLI prepares an isolated `checkout-pr` workspace when none is supplied; direct API inputs still name an existing workspace. |
 | `workspaceMode` | Optional `isolated` (default). `shared_canonical` returns `exclusive_writer_unavailable` before adapter calls or task binding. |
 | `prNumber` | Positive PR number in the canonical origin repository. |
@@ -240,16 +240,13 @@ Before task creation, verify all of these facts:
 3. Tracked/index/untracked worktree status is clean under the existing canonical
    clean-worktree proof. Local, remote and PR heads equal `expectedHead`.
 4. Local and remote integration refs are synchronized at `expectedBaseCommit`.
-   Published planning is an ancestor of that base. For a committed handoff it
-   must also be an ancestor of `expectedHead`; a Nucleus-held brief is not in the
-   repository, so its PR head may predate planning. Handoff bytes and
-   instruction digest match the pinned artifact. Brief mode instead proves the
+   Published planning is an ancestor of that base. A Nucleus-held brief is not in
+   the repository, so its PR head may predate planning. Brief mode proves the
    exact digest, version, checked Nucleus lead/draft approval and pushed planning
-   ancestry; it reads and writes no repository handoff file.
-5. The Northstar planning reference resolves unambiguously from the committed
-   handoff when handoff mode is used, with the repository's existing
-   roadmap/task-link rules. Brief mode uses its checked Nucleus source and pushed
-   planning ancestry without reading a handoff. Required pre-dispatch hooks
+   ancestry; it reads and writes no repository file. Committed handoffs are
+   retired (nucleus#1368).
+5. The brief uses its checked Nucleus source and pushed planning ancestry without
+   reading any repository file. Required pre-dispatch hooks
    remain mandatory before reviewer launch.
 6. No active turn, pending permissions, uncertain delivery or other live agent
    lease can write the supplied workspace *while a reviewer executes*. Check the
@@ -303,7 +300,7 @@ Acceptance and execution are now separated at that one boundary:
   positively read transient source-writer condition. Everything else is still
   proven at acceptance: canonical isolated workspace, repository and Git common
   directory, branch, clean worktree, exact local/pushed/PR head, synchronized
-  expected base, planning lineage, brief or handoff artifact, author and model
+  expected base, planning lineage, brief artifact, author and model
   declaration, repository permission, dependencies and unowned workspace/branch/PR.
   One task, one operation result, one brief/source claim and the exact identity
   bind together, and `pendingHandover`/the task reason and one `review_entry_bound`

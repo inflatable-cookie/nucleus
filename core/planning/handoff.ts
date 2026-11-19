@@ -76,8 +76,8 @@ const requireMergeHoldReason=<T extends {mergeHold?:boolean;mergeHoldReason?:str
  * A Queue-held brief carries only what Queue acts on: its title, the approval
  * that admits it and its queue policy. Queue imposes no heading structure on a
  * brief; its shape belongs to the planning skill that writes it. Frontmatter keys
- * that committed handoffs once carried (kind, modes, dispatch authority, status)
- * are not read and are stripped.
+ * that older documents carried (kind, modes, dispatch authority, status) are not
+ * read and are stripped.
  */
 const briefMetadataSchema=z.object({title:taskTitleSchema,repository:z.string().optional(),queue_approval:z.string().trim().min(1),queue:briefQueueFieldsSchema.superRefine(requireMergeHoldReason).default({})});
 const draftMetadataSchema=briefMetadataSchema.omit({queue_approval:true}).extend({queue_approval:z.string().optional(),queue:briefQueueFieldsSchema.superRefine(requireMergeHoldReason).default({})});

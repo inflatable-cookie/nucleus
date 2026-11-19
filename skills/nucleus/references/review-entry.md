@@ -61,11 +61,10 @@ submitting, inspect the operation receipt as described below.
    runtime-observed. Tool names such as Cursor cloud or Grok Bot alone do not
    establish a model. Do not infer unknown models, reuse another PR's declaration
    without evidence, or override reviewer independence.
-3. Inspect canonical planning. In handoff mode, promote the PR's bounded scope
-   and a seven-section committed handoff through normal Nucleus planning. For
-   a Nucleus-held brief, use the exact checked Nucleus lead or approved draft and its
-   stored approval/provenance; do not create a repository handoff or copy brief
-   text into the repository. Review entry checks the current source, digest,
+3. Inspect canonical planning. Promote the PR's bounded scope through normal
+   Nucleus planning as a Nucleus-held brief: use the exact checked Nucleus lead or
+   approved draft and its stored approval/provenance; do not create a repository
+   file or copy brief text into the repository. Review entry checks the current source, digest,
    version, approval, successful check and planning commit, then consumes that
    source atomically with task binding. A loose brief file or digest alone is not
    checked approval. Record the takeover request, external evidence, reviewer

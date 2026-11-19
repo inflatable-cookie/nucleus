@@ -615,7 +615,7 @@ test('10. stored legacy committed-handoff rows keep their identity hash, records
     assert.equal(task.brief, null);
     assert.deepEqual(task.briefVersions, []);
     store.putRun(runOf(task, 'reviewer'));
-    assert.equal(store.run('run-reviewer')!.briefVersion, undefined, 'handoff-mode runs gain no brief field');
+    assert.equal(store.run('run-reviewer')!.briefVersion, undefined, 'runs with no pinned brief gain no brief field');
     store.update(task.id, { phase: 'done', reason: 'Closed' });
     assert.deepEqual(store.outcome(task.id)!.brief, { digest: `sha256:${digest('handoff bytes')}`, mediaType: 'text/markdown', text: 'handoff bytes', source: 'handoff', version: null, earlierDigests: [] });
   } finally { store.close(); }

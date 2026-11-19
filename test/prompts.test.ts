@@ -289,7 +289,7 @@ test("worker startup pins the queue-owned branch through PR reporting", () => {
   assert.match(prompt, /git branch --show-current/);
   assert.match(
     prompt,
-    /already dispatched under the brief's `dispatch_authority: orchestrator`/,
+    /already dispatched by Nucleus under orchestrator dispatch authority/,
   );
   assert.doesNotMatch(prompt, /direct Northstar worker fast path/);
   assert.match(prompt, /Never create, rename, or switch/);
@@ -3276,9 +3276,9 @@ test("the required-proof instruction is fixed prompt text, rendered outside the 
   );
 });
 
-test("handoff-mode prompts and reviewer continuations carry the required-proof instruction", () => {
-  // A handoff names its proofs in prose exactly as a brief does, and the frozen
-  // handoff-mode snapshot must show the instruction rendered outside the policy.
+test("brief-mode prompts and reviewer continuations carry the required-proof instruction", () => {
+  // A brief names its proofs in prose, and the frozen brief-mode snapshot must show the
+  // instruction rendered outside the policy.
   const worker = workerPrompt(handoffTask, true);
   const revision = runPrompt(
     handoffTask,

@@ -1,6 +1,6 @@
 # 020 — Briefs stored in Nucleus
 
-Status: implemented
+Status: implemented. Committed-handoff mode is retired (nucleus#1368); the handoff columns and rows below record the contract before that.
 Owner: Nucleus runtime and protocol maintainers
 Created: 2026-09-26
 Decision owner: Tom
@@ -30,7 +30,7 @@ A submission carries a `brief`. A committed `handoffPath` is refused (nucleus#13
   was written against, and it keeps planning ancestry exact.
 - **Eligibility.** Brief mode is allowed only when the repository's manifest at
   the planning commit is v5 (Spec 018), or there is no manifest. v1–v4 lifecycle
-  hooks read committed handoffs, so brief mode on them is refused at dry run and
+  hooks predate brief mode, so brief mode on them is refused at dry run and
   at submission. Lead checks and brief admission also run the independent-review
   routing preflight ([Spec 030](030-routing-changes.md)) so a required
   worker/reviewer pair that shares a model fails before Ready and before any

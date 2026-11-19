@@ -1,7 +1,7 @@
 /**
  * The task-context blocks every role prompt may carry: lane context and lane
- * documents, the Nucleus-held brief, siblings, worktree links, build output,
- * and the handoff/brief source line. Each block returns '' when the task does
+ * documents, the Nucleus-held brief, siblings, worktree links and build output.
+ * Each block returns '' when the task does
  * not carry that context, so a task without it keeps its exact prompt.
  */
 import type { Task } from "../../../shared/contracts";
