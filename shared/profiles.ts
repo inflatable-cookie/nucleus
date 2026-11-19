@@ -292,7 +292,10 @@ export function profileCompatibility(
     answer.problem === "Configured thinking level is not supported" ||
     (Boolean(carrier) &&
       Boolean(profile.thinkingOptionId) &&
-      answer.problem === `Configured option ${carrier} does not offer that value`);
+      (answer.problem === `Configured option ${carrier} does not offer that value` ||
+        // A model that reports no carrier at all: the level is the operator's
+        // fact, not the option's spelling (nucleus#1375).
+        answer.problem === `Configured option ${carrier} is not supported`));
   return {
     ...answer,
     status: answer.available ? "works" : "unavailable",
@@ -331,7 +334,7 @@ function hostReason(
   if (problem === "Configured thinking level is not supported") return `${label}'s ${values.model} has no thinking level ${values.thinkingOptionId}`;
   if (/^Model \S+ is not available from provider/.test(problem)) return `${label}'s ${providerKey} has no model ${values.model}`;
   const option = /^Configured option (\S+) (is not supported|needs a boolean value|does not offer that value)$/.exec(problem);
-  if (option && carrier && level && option[1] === carrier && option[2] === "does not offer that value")
+  if (option && carrier && level && option[1] === carrier && option[2] !== "needs a boolean value")
     return `${label}'s ${values.model} has no thinking level ${level}`;
   if (option) return option[2] === "is not supported" ? `${label}'s ${values.model} has no option ${option[1]}`
     : option[2] === "needs a boolean value" ? `${label}'s ${values.model} option ${option[1]} needs on or off`
