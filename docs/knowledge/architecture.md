@@ -527,7 +527,9 @@ owner to the rules it enforces.
   `recovery.ts` is the `Recovery` surface `Resolution` constructs and wires the
   stages together. `coordinator-route.ts` decides whether a task needs a
   coordinator and launches it; `coordinator-pass.ts` observes that exact run until
-  it reports; `coordinator-episode.ts` owns the episode's durable bookkeeping
+  it reports, and releases any agentless creation whose attempt has terminated
+  once its exact lookup is empty even when no episode names it any more;
+  `coordinator-episode.ts` owns the episode's durable bookkeeping
   (bindings, refusal, release, escalation). `coordinator-report.ts` holds the pure
   report rules — `taskProgressDigest`, `coordinatorReportMatches`,
   `coordinatorActionPlan` (a report to verb arguments, or the refusal naming why it

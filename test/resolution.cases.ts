@@ -14814,6 +14814,183 @@ test("C4 transport deadline keeps a live producer owned until the native call en
   }
 });
 
+test("C4 sweep releases a settled agentless creation its replaced episode no longer names", async () => {
+  const f = fixture();
+  const first = startC4(f);
+  try {
+    const { run: orphan, token } = await first.started;
+    first.finish();
+    await first.route;
+    assert.equal(f.current().resolution.recovery?.runId, orphan.id);
+    assert.equal(f.store.run(orphan.id)?.released, false);
+    // A settled escalation wait resumes ordinary recovery by dropping the
+    // episode and routing again (questions/ladder/resume.ts). The replacement
+    // binds its own creation and drops the first run's episode binding while
+    // that creation is still an unreleased intent (nucleus#1370's live shape).
+    f.engine.resolution.update(
+      f.current(),
+      { recovery: null, recoveryActive: false, stop: null, attention: true },
+      { reason: "Escalation wait ended; no parked step to resume" },
+      "planner_escalation_wake",
+      "test",
+    );
+    const second = startC4(f);
+    const { run: replaced } = await second.started;
+    second.finish();
+    await second.route;
+    assert.equal(f.current().resolution.recovery?.runId, replaced.id);
+    assert.notEqual(replaced.id, orphan.id);
+    assert.deepEqual(
+      [
+        f.store.run(orphan.id)?.role,
+        f.store.run(orphan.id)?.status,
+        f.store.run(orphan.id)?.agentId,
+        f.store.run(orphan.id)?.released,
+      ],
+      ["recovery", "intent", null, false],
+    );
+    // Both producers settled their attempt as thrown. Age both settlements past
+    // the lookup grace so only the release gate decides the outcome.
+    for (const id of [orphan.id, replaced.id])
+      assert.equal(
+        readCreationAttempt(f.store, f.store.run(id)!)?.settlement?.outcome,
+        "threw",
+      );
+    f.store.db
+      .prepare(
+        "UPDATE events SET at=? WHERE taskId=? AND kind='creation_attempt_settled'",
+      )
+      .run(new Date(Date.now() - 180_000).toISOString(), f.task.id);
+    f.adapter.findRunAgents = async () => [];
+    const restartVerb = () =>
+      ownerTaskNext(collectOwnerVerbFacts(f.store, f.current())).verbs.find(
+        (verb) => verb.verb === "restart",
+      );
+    // The orphan is what refuses the owner restart while it is unreleased.
+    await assert.rejects(
+      restartC4(f),
+      /Resolve the other retained runs before restarting coordinator recovery/,
+    );
+    // A dispatch hold that lands while the host is being read owns the task now:
+    // the lookup completes, and the release waits for a later pass.
+    let lookups = 0;
+    f.adapter.findRunAgents = async () => {
+      if (++lookups !== 1) return [];
+      f.store.update(f.task.id, {
+        held: true,
+        holds: {
+          dispatch: {
+            owner: "operator",
+            reason: "Operator hold: maintenance",
+            at: new Date().toISOString(),
+            generation: f.current().coordinatorGeneration,
+            until: null,
+          },
+        },
+      });
+      return [];
+    };
+    await f.engine.resolution.recovery.pass(f.task.id);
+    assert.deepEqual(
+      [f.store.run(orphan.id)?.released, f.store.run(replaced.id)?.released],
+      [false, false],
+      "a dispatch hold that lands during the lookup keeps every creation owned",
+    );
+    assert.equal(
+      f.store
+        .eventsAll(f.task.id)
+        .some((event) => event.kind === "absent_recovery_released"),
+      false,
+    );
+    f.store.update(f.task.id, { held: false, holds: {} });
+    f.adapter.findRunAgents = async () => [];
+    await f.engine.resolution.recovery.pass(f.task.id);
+    assert.equal(f.store.run(replaced.id)?.released, true);
+    assert.equal(
+      f.store.run(orphan.id)?.released,
+      true,
+      "the creation its replaced episode no longer names is released too",
+    );
+    assert.ok(f.store.run(orphan.id)?.absentProvenAt);
+    assert.throws(() => f.store.authenticate(orphan.id, token), /Unauthorized/);
+    const released = f.store
+      .eventsAll(f.task.id)
+      .filter((event) => event.kind === "absent_recovery_released")
+      .map((event) => JSON.parse(event.detail));
+    assert.deepEqual(
+      released.map((event) => event.runId).sort(),
+      [orphan.id, replaced.id].sort(),
+    );
+    for (const event of released)
+      assert.equal(event.terminatedBy, "call_settled");
+    // A repeated pass adds nothing.
+    const eventCount = f.store.eventsAll(f.task.id).length;
+    await f.engine.resolution.recovery.pass(f.task.id);
+    assert.equal(f.store.eventsAll(f.task.id).length, eventCount);
+    // The orphan no longer holds every owner verb: next offers an applicable
+    // restart, and the restart applies.
+    const restart = restartVerb();
+    assert.equal(restart?.available, true, restart?.refusal);
+    const version = f.current().version;
+    const restarted = await restartC4(f);
+    assert.ok(
+      restarted.version > version,
+      `the applied restart moved the task: ${restarted.reason}`,
+    );
+  } finally {
+    first.finish();
+    await first.route;
+    await f.close();
+  }
+});
+
+test("C4 keeps an orphaned creation whose recorded attempt never settled", async () => {
+  const f = fixture();
+  try {
+    enableRecovery(f);
+    // The real run writer reserves the attempt on its journal; no settlement is
+    // ever recorded and this process is still its producer.
+    const orphan: Run = {
+      id: "orphaned-unsettled",
+      taskId: f.task.id,
+      role: "recovery",
+      generation: f.current().coordinatorGeneration,
+      head,
+      base,
+      agentId: null,
+      workspaceId: "workspace",
+      profile: profile("coordinator"),
+      status: "intent",
+      createdAt: new Date().toISOString(),
+      lastObservedAt: null,
+      active: null,
+      idleSince: null,
+      completion: null,
+      released: false,
+    };
+    f.store.putRun(orphan);
+    f.store.setCredential(orphan.id, "orphan-token");
+    const reserved = readCreationAttempt(f.store, f.store.run(orphan.id)!);
+    assert.ok(reserved, "the real run writer reserved the creation attempt");
+    assert.equal(
+      reserved.settlement,
+      null,
+      "no settlement is ever recorded for this attempt",
+    );
+    await f.engine.resolution.recovery.pass(f.task.id);
+    assert.equal(f.store.run(orphan.id)?.released, false);
+    assert.doesNotThrow(() => f.store.authenticate(orphan.id, "orphan-token"));
+    assert.equal(
+      f.store
+        .eventsAll(f.task.id)
+        .some((event) => event.kind === "absent_recovery_released"),
+      false,
+    );
+  } finally {
+    await f.close();
+  }
+});
+
 test("C4 needs a complete online lookup and a recorded producer identity", async () => {
   const f = fixture();
   const launch = startC4(f);
@@ -18992,7 +19169,8 @@ test("a coordinator creation the host refused before send settles at once and th
       "the episode keeps the occurrence it refused",
     );
     // Intervening events cannot hide the refusal from routing or restart.
-    for (let i = 0; i < 101; i++) f.store.event(f.task.id, "other", "later activity");
+    for (let i = 0; i < 101; i++)
+      f.store.event(f.task.id, "other", "later activity");
     // The refused profile is not asked for again by the retry of this episode.
     assert.deepEqual(
       [...refusedLaunchProfiles(f.store, f.task.id)],
@@ -19056,12 +19234,25 @@ test("recovery excludes a worker-refused profile before selecting a coordinator"
     attention(f, "Worker creation refused before send");
     const selected = f.engine.resolution.select(f.current(), "coordinator");
     assert.ok(selected);
-    f.store.event(f.task.id, "worker_creation_refused_before_send",
-      JSON.stringify({ runId: "worker-run", profileId: selected.profile.id, reason: "host refused" }));
-    for (let i = 0; i < 101; i++) f.store.event(f.task.id, "other", "later activity");
+    f.store.event(
+      f.task.id,
+      "worker_creation_refused_before_send",
+      JSON.stringify({
+        runId: "worker-run",
+        profileId: selected.profile.id,
+        reason: "host refused",
+      }),
+    );
+    for (let i = 0; i < 101; i++)
+      f.store.event(f.task.id, "other", "later activity");
     const excluded = refusedLaunchProfiles(f.store, f.task.id);
     assert.ok(excluded.has(selected.profile.id));
-    const alternate = f.engine.resolution.select(f.current(), "coordinator", [], excluded);
+    const alternate = f.engine.resolution.select(
+      f.current(),
+      "coordinator",
+      [],
+      excluded,
+    );
     assert.ok(alternate);
     assert.notEqual(alternate.profile.id, selected.profile.id);
   } finally {
