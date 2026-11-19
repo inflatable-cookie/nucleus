@@ -2399,7 +2399,9 @@ weighted(12)(
       assert.equal(
         f.store
           .events(f.taskId)
-          .filter((event) => event.kind === "integration_base_renewed").length,
+          .filter(
+            (event) => event.kind === "integration_checkout_fast_forwarded",
+          ).length,
         1,
       );
       await stepEngine(f.engine);
@@ -2411,7 +2413,7 @@ weighted(12)(
 );
 
 weighted(12)(
-  "an integration base that origin keeps moving past parks for an operator after the renewal bound",
+  "an integration base that keeps moving holds after one candidate rebuild",
   async (t) => {
     const f = await resolutionFixture(t);
     try {
@@ -2427,24 +2429,23 @@ weighted(12)(
       await stepEngine(f.engine);
       const parked = f.current();
       assert.equal(parked.phase, "verifying", parked.reason);
-      // The stale-base hold is repository contention: it waits out the grace and only then reaches attention for a human.
-      assert.equal(parked.resolution.attention, false, parked.reason);
-      assert.match(parked.reason, /Local integration base differs from origin/);
-      const renewed = f.store
-        .events(f.taskId)
-        .filter((event) => event.kind === "integration_base_renewed");
-      assert.equal(renewed.length, 3, "renewals stop at the bound");
-      assert.equal(
-        pushes,
-        4,
-        "the gate read the base once more after the last renewal and parked",
+      // The checkout now fast-forwards before each read. Movement during the
+      // candidate invalidates it, and one rebuild is allowed per pass (Spec 015).
+      assert.equal(parked.resolution.attention, true, parked.reason);
+      assert.match(
+        parked.reason,
+        /candidate did not settle.*integration base moved/,
       );
       assert.equal(
         f.store
           .events(f.taskId)
-          .filter((event) => event.kind === "integration_base_renewal_refused")
-          .length,
-        0,
+          .filter((event) => event.kind === "pre_merge_candidate_stale").length,
+        2,
+      );
+      assert.equal(
+        pushes,
+        4,
+        "two candidates were each checked before and after",
       );
       assert.equal(f.mergeCount(), 0);
     } finally {
@@ -2471,7 +2472,7 @@ weighted(6)(
         false,
         "dirt is contention, waiting for its owner to clean up",
       );
-      assert.match(parked.reason, /tracked or untracked changes/);
+      assert.match(parked.reason, /Integration checkout is dirty/);
       assert.equal(
         f.store
           .events(f.taskId)
@@ -2508,7 +2509,10 @@ weighted(6)(
       assert.equal(parked.phase, "verifying", parked.reason);
       // Unpushed local commits are repository contention: they wait out the grace instead of parking for attention.
       assert.equal(parked.resolution.attention, false, parked.reason);
-      assert.match(parked.reason, /Local integration base differs from origin/);
+      assert.match(
+        parked.reason,
+        /Local integration branch differs from origin/,
+      );
       assert.equal(
         await git(f.repo, "rev-parse", "HEAD"),
         localHead,
@@ -2517,9 +2521,10 @@ weighted(6)(
       assert.equal(
         f.store
           .events(f.taskId)
-          .filter((event) => event.kind === "integration_base_renewal_refused")
-          .length,
-        1,
+          .filter(
+            (event) => event.kind === "integration_checkout_fast_forwarded",
+          ).length,
+        0,
       );
       assert.equal(
         f.store
@@ -3472,6 +3477,46 @@ weighted(8)(
         : null;
       if (note)
         process.stderr.write(`[prospective-merge-hooks] secondary: ${note}\n`);
+    }
+  },
+);
+
+weighted(1)(
+  "a stale-base hook refusal renews no more than three times per pass",
+  async (t) => {
+    const f = await resolutionFixture(t);
+    try {
+      const hooks = f.engine.resolution.hooks!;
+      let reads = 0,
+        renewals = 0;
+      hooks.prospectiveMergeGate = async () => {
+        reads++;
+        return {
+          kind: "hold",
+          detail: "Local integration base differs from origin",
+          records: [],
+        };
+      };
+      hooks.renewIntegrationBase = async () => {
+        renewals++;
+        return f.base;
+      };
+      await stepEngine(f.engine);
+      assert.equal(reads, 4);
+      assert.equal(renewals, 3);
+      assert.equal(
+        f.store
+          .events(f.taskId)
+          .filter((event) => event.kind === "integration_base_renewed").length,
+        3,
+      );
+      assert.equal(f.mergeCount(), 0);
+      assert.match(
+        f.current().reason,
+        /Local integration base differs from origin/,
+      );
+    } finally {
+      await f.close();
     }
   },
 );
