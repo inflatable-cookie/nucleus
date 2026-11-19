@@ -66,10 +66,10 @@ coordinator = Mechanical
   only with sign-off below Extra high. The ordinary revision launch records it once per
   review run and continues on a fresh revision agent at the climbed profile. An honoured profile request
   still replaces automatic selection.
-- **Worker selection after review** (Spec 058 cutover 3): review history never
-  adds demand or automatically replaces the author. A stronger worker model is
-  selected only by an effective `route role=worker` or ordinary provider-failure
-  handling. Non-converging reviews use the planner ladder and the six-round cap.
+- **Worker selection after review** (Spec 058 cutover 3): apart from the one
+  step-up above, review history never adds demand or automatically replaces the
+  author. Any other stronger worker model is selected only by an effective
+  `route role=worker` or ordinary provider-failure handling. Non-converging reviews use the planner ladder and the six-round cap.
 
 Selection for a run then:
 

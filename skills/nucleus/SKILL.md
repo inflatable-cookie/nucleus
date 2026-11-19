@@ -493,7 +493,7 @@ four capability brackets: **Mechanical**, **Worker**, **Heavyweight** and
 Mechanical, `medium` and `high` on Worker, and `very_high` on Heavyweight. The
 difference between `medium` and `high` is the step-up: a `medium` task stays on
 Worker, while a `high` task may climb once to Heavyweight after a review asks for
-changes, and a `very_high` one to Frontier only with sign-off. Roles have no
+changes, and a `very_high` one to Frontier (sign-off below Extra high). Roles have no
 offsets: the reviewer's bracket follows the usage level and the coordinator runs
 on Mechanical when one is available. Nucleus rotates among the profiles at the
 run's bracket, leaning toward cheaper ones, so rate honestly: `medium` for

@@ -80,6 +80,29 @@ test('1385: stored ratings, climbs and role offsets move to brackets once, and a
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('1385: an unknown value written after the first run is listed on the next open, and the same set is not rewritten', () => {
+  const dir = mkdtempSync(join(process.env.TMPDIR ?? tmpdir(), 'ns-bracket-unknown-'));
+  try {
+    const path = join(dir, 'queue.sqlite');
+    const first = new Store(path);
+    const clean = first.getMeta<CapabilityBracketMigration>(CAPABILITY_BRACKET_MIGRATION_KEY)!;
+    assert.deepEqual(clean.unknown, [], 'a fresh store records an empty first run');
+    first.setMeta('pool', [{ profileId: 'synthetic-odd', enabled: true, group: 'g', weight: 1, scopes: ['general'], capability: 'ultra' }]);
+    first.close();
+    const second = new Store(path);
+    let record: CapabilityBracketMigration;
+    try {
+      record = second.getMeta<CapabilityBracketMigration>(CAPABILITY_BRACKET_MIGRATION_KEY)!;
+      assert.deepEqual(record.unknown, [{ id: 'synthetic-odd', field: 'capability', value: 'ultra' }]);
+      assert.equal(second.getMeta<Array<{ capability: string }>>('pool')![0]!.capability, 'ultra', 'left as stored');
+    } finally { second.close(); }
+    const third = new Store(path);
+    try {
+      assert.deepEqual(third.getMeta(CAPABILITY_BRACKET_MIGRATION_KEY), record, 'the same unknowns rewrite nothing');
+    } finally { third.close(); }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('1385: a stale writer\'s five-point rating reads as its bracket at the wire boundary', () => {
   for (const [from, to] of [['very_low', 'mechanical'], ['low', 'mechanical'], ['medium', 'worker'], ['high', 'worker'], ['very_high', 'heavyweight'], ['frontier', 'frontier']])
     assert.equal(profileCapabilitySchema.parse(from), to, from);

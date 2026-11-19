@@ -71,8 +71,9 @@ export class StoreMigration {
    * scale to Mechanical, Worker, Heavyweight and Frontier, and the retired
    * role-demand offsets are dropped and noted. Idempotent, so it runs on every
    * open: a row a rolled-back build wrote moves too, and a clean store is read
-   * and left as it was. The record is written on the first run and on any run
-   * that changes something; an unrecognised value stays as stored and is listed.
+   * and left as it was. The record is written on the first run, on any run that
+   * changes something, and on any run whose unrecognised values differ from the
+   * record's; an unrecognised value stays as stored and is listed.
    */
   migrateCapabilityBrackets(): void {
     const record: CapabilityBracketMigration = { at: new Date().toISOString(), changes: [], unknown: [] };
@@ -106,9 +107,12 @@ export class StoreMigration {
       record.droppedDemandRoleOffsets = offsets;
       this.core.deleteMeta("demandRoleOffsets");
     }
-    const first = this.core.getMeta<unknown>(CAPABILITY_BRACKET_MIGRATION_KEY) === undefined;
+    const previous = this.core.getMeta<CapabilityBracketMigration>(CAPABILITY_BRACKET_MIGRATION_KEY);
     const changed = record.changes.length > 0 || offsets !== undefined;
-    if (!first && !changed) return;
+    // A run that finds a different set of unknown values records them too, so a
+    // value written after the first run is listed; the same set rewrites nothing.
+    const unknownMoved = JSON.stringify(previous?.unknown ?? []) !== JSON.stringify(record.unknown);
+    if (previous !== undefined && !changed && !unknownMoved) return;
     this.core.setMeta(CAPABILITY_BRACKET_MIGRATION_KEY, record);
     for (const item of record.unknown)
       console.warn(
