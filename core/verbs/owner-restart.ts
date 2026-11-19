@@ -230,6 +230,7 @@ export function escalatedWorkerRestart(
     task.completion ||
     prIdentity(task) ||
     task.resolution.mergeIntent ||
+    !task.resolution.recoveryActive ||
     recovery?.status !== "escalated"
   )
     return null;
@@ -254,7 +255,7 @@ export function escalatedWorkerRestart(
   if (effect) return refuse(effect);
   const refused = refusedRunIds(events);
   if (
-    (recovery.runId && !runs.some((run) => run.id === recovery.runId)) ||
+    !runs.some((run) => run.id === recovery.runId) ||
     runs.some(
       (run) =>
         run.agentId ||
