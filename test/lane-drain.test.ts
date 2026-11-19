@@ -229,6 +229,7 @@ test('Spec 042: a lane that leaves the plan ends its episode, and a project with
 test('a saved plan can drain to a live responsible thread without a planner registration', async () => {
   const f = fixture();
   try {
+    f.store.setMeta('paused', false);
     planFixture(f);
     f.store.setProjectPlanner({ key: 'app', agentId: null, setBy: 'test' });
     f.engine.adapter.listLiveAgents = async () => [{ id: 'checkout-thread', title: '', workspaceId: 'ws', directory: repoA.path }];
@@ -237,7 +238,7 @@ test('a saved plan can drain to a live responsible thread without a planner regi
     await f.engine.resolution.refreshResponsibleThreads(f.store.projects());
     f.store.evaluateLaneDrains();
     await f.engine.resolution.deliverDrainNotices();
-    assert.equal(laneNotices(f)[0]?.status, 'delivered');
+    assert.equal(f.store.notices('lane:alpha')[0]?.status, 'delivered');
     assert.equal(f.notified[0]?.agentId, 'checkout-thread');
   } finally { await f.close(); }
 });

@@ -75,7 +75,7 @@ export async function delegateQuestion<T>(
     /** No rung could be asked on its host. Skip the decider; the caller raises a board decision. */
     onUnavailable?: (planner: string) => void;
     retainDecider?: boolean;
-    /** Agent asks opt out of starting a decider; a recorded delivery can still settle. */
+    /** Planning callers opt out of starting a decider; a recorded delivery can still settle. */
     allowDecider?: boolean;
   },
 ): Promise<{

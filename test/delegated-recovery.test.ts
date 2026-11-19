@@ -263,7 +263,7 @@ for (const outcome of ['unobserved', 'sent', 'answered'] as const) {
         await delegateQuestion(recovered.resolution, task, input);
         assert.equal(deciders, 0, 'uncertainty remains fenced on the next recovery');
       } else if (outcome === 'sent') {
-        assert.equal(deciders, 0, 'a known miss does not create a planning decider');
+        assert.equal(deciders, 1, 'a positively observed send can expire into a known miss');
         assert.equal(unknowns, 0);
       } else {
         assert.equal(result?.role, 'planner', 'an authenticated answer settles the original window');
