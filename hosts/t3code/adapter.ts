@@ -660,22 +660,24 @@ export class T3CodeHost implements Host {
           { hostId: this.hostId },
         );
         const acp = this.acp();
-        if (acp?.pendingInboxDecisionKey?.(this.hostId))
-          await this.decisionHold.reconcile(state.inbox.threadId);
-        else if (cards.settled)
-          acp?.release(
-            state.inbox.sessionId,
-            "no operator decision is open for the inbox",
-          );
+        if (cards) {
+          if (acp?.pendingInboxDecisionKey?.(this.hostId))
+            await this.decisionHold.reconcile(state.inbox.threadId);
+          else if (cards.settled)
+            acp?.release(
+              state.inbox.sessionId,
+              "no operator decision is open for the inbox",
+            );
+        }
       }
       for (const parent of Object.values(state.parents ?? {})) {
         if (!parent.archivedAt) {
-          await this.decisionCards.reconcile(
+          const cards = await this.decisionCards.reconcile(
             parent.threadId,
             parent.workspaceId,
             { taskId: parent.taskId },
           );
-          if (this.acp()?.pendingDecisionKey?.(parent.taskId))
+          if (cards && this.acp()?.pendingDecisionKey?.(parent.taskId))
             await this.decisionHold.reconcile(parent.threadId);
         }
       }

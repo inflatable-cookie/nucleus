@@ -830,12 +830,11 @@ What is offered is the service's reading of two facts, never an assumption:
   requests, settles the cards whose run or capability is gone, and records the
   ones still pending with their decision id and version
   (`observedCards`, per inbox or per task parent). The offer names the open
-  versions whose card that read does not show, so a card lost with an ended turn
-  comes back on the next held turn in the same inbox, binding and session, and a
-  card T3 still shows is never raised twice. An unread thread proves nothing and
-  changes no offer. A card older than the thread's window is read from the full
-  transcript, so a card that survives a T3 restart is settled rather than
-  duplicated;
+  versions whose cards that read confirms absent, so a lost card comes back on
+  the next held turn in the same inbox, binding and session. Offers and re-entry
+  wait for a successful observation when the thread's pending cards are unknown.
+  A card older than the thread's window is read from the full transcript so the
+  sweep can settle a card that survives a T3 restart;
 - the operator's own dismissals. A cancel is the operator's only when it arrives
   for a card the held turn raised, and only that one is recorded as a
   cancellation receipt: an operator's cancel leaves the decision open and permits
@@ -851,7 +850,7 @@ version is offered again on the next held turn, and the operator's next answer i
 a fresh delivery. A card the client settles without telling the agent (the sweep
 answers an ended turn's card, which T3 then cancels locally) is forgotten when the
 next turn starts: a reopened thread's attach shows the line only and records no
-offer, so that turn's first poll raises the cards at once.
+offer. A held poll raises the cards once the host has confirmed their absence.
 
 A T3 restart cancels the held run but can leave an old card answerable through a
 message continuation. On load the agent does not treat that text as an answer;

@@ -8,9 +8,15 @@
  */
 
 /** Where an agent finds its session: the id, the task, and the owner-only file. */
-export interface AcpSessionBinding { sessionId: string; taskId: string; bindingPath: string }
+export interface AcpSessionBinding {
+  sessionId: string;
+  taskId: string;
+  bindingPath: string;
+}
 
-export type AcpCaller = { kind?: "task"; taskId: string; sessionId: string } | { kind: "inbox"; hostId: string; sessionId: string };
+export type AcpCaller =
+  | { kind?: "task"; taskId: string; sessionId: string }
+  | { kind: "inbox"; hostId: string; sessionId: string };
 
 export type AcpTurnInput = AcpCaller & {
   waitMs?: number;
@@ -21,7 +27,7 @@ export type AcpTurnInput = AcpCaller & {
    * answers only when something changed.
    */
   attach?: boolean;
-}
+};
 
 export interface AcpElicitation {
   id: string;
@@ -30,12 +36,18 @@ export interface AcpElicitation {
   question: string;
   choices: Array<{ label: string; consequence: string }>;
 }
-export type AcpAnswerInput = AcpCaller & { id: string; version: number } & ({ action: "accept"; answer: string } | { action: "cancel"; requestId: string });
+export type AcpAnswerInput = AcpCaller & { id: string; version: number } & (
+    | { action: "accept"; answer: string }
+    | { action: "cancel"; requestId: string }
+  );
 
 /** Where a host's decision cards live: one inbox, or one task's parent thread. */
 export type AcpCardScope = { hostId: string } | { taskId: string };
 /** One decision card, by the version it carries. */
-export interface AcpPendingCard { id: string; version: number }
+export interface AcpPendingCard {
+  id: string;
+  version: number;
+}
 
 export type AcpTurnReply = {
   /** `hold` keeps the agent's turn open; `release` ends it, and the client settles the thread. */
@@ -45,12 +57,31 @@ export type AcpTurnReply = {
   /** Lifecycle lines the client shows as agent messages; empty when nothing changed. */
   messages: string[];
   elicitations?: AcpElicitation[];
-} & ({ kind?: "task"; task: { taskId: string; reference: string | null; phase: string; name: string } } | { kind: "inbox"; hostId: string });
+} & (
+  | {
+      kind?: "task";
+      task: {
+        taskId: string;
+        reference: string | null;
+        phase: string;
+        name: string;
+      };
+    }
+  | { kind: "inbox"; hostId: string }
+);
 
-export interface AcpMessageInput { taskId: string; sessionId: string; eventId: string; text: string }
+export interface AcpMessageInput {
+  taskId: string;
+  sessionId: string;
+  eventId: string;
+  text: string;
+}
 
 /** The host-shaped prompt rules a minting adapter may attach (see `shared/acp/binding`). */
-export interface AcpBindingRules { ignorePattern?: string; holdPattern?: string }
+export interface AcpBindingRules {
+  ignorePattern?: string;
+  holdPattern?: string;
+}
 
 export interface AcpSessionSurface {
   /**
@@ -60,18 +91,26 @@ export interface AcpSessionSurface {
    */
   bind(input: { taskId: string } & AcpBindingRules): AcpSessionBinding;
   /** Mint a decision-only inbox identity for this host. */
-  bindInbox?(input: { hostId: string } & AcpBindingRules): { sessionId: string; hostId: string; directory: string; bindingPath: string };
+  bindInbox?(input: { hostId: string } & AcpBindingRules): {
+    sessionId: string;
+    hostId: string;
+    directory: string;
+    bindingPath: string;
+  };
   /** Read-only projection used by a host to hold and settle native cards. */
   pendingDecisionKey?(taskId: string): string | null;
   /**
    * Record the decision cards a host's own read of T3 shows still pending on a thread,
    * so a turn offers no version that already has a live card. `null` means the thread was
-   * not read, which proves nothing about its cards.
+   * not read, so offers wait for a successful observation.
    */
   observedCards?(scope: AcpCardScope, cards: AcpPendingCard[] | null): void;
   /** The host inbox's offer, cap applied: a host re-enters the inbox only while this is non-null. */
   pendingInboxDecisionKey?(hostId: string): string | null;
-  decisionSettlement?(id: string, version: number): { state: "open" | "answered" | "cancelled"; answer?: string };
+  decisionSettlement?(
+    id: string,
+    version: number,
+  ): { state: "open" | "answered" | "cancelled"; answer?: string };
   /** Ask whether to keep holding this turn, and which lifecycle lines to show. */
   turn(input: AcpTurnInput, token: string): Promise<AcpTurnReply>;
   /** Record a native operator answer to an offered decision. */
