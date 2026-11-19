@@ -35,7 +35,9 @@ waits on nothing Nucleus is running and needs no one (held until something,
 prerequisite wait, queued for capacity, between roles), with the snooze renewed
 before it lapses; *archived* when the task finishes. The fallback paths and
 per-role settle rules described below are retired (implementation:
-nucleus#1366). The adapter does not patch T3,
+nucleus#1366).
+Archived task threads are pruned by Nucleus's own retention pass (see the
+orchestration contract, "Archived thread retention"). The adapter does not patch T3,
 attach Nucleus MCP servers, raise Nucleus questions inside threads or contribute
 T3 UI. A T3 thread reports through the packaged nucleus helper with the run
 ticket named in its prompt. Nucleus-raised questions go to the web board and

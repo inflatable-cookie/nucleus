@@ -3719,3 +3719,23 @@ A retained workspace whose head cannot be read holds pre-archive.
 Hook observations retain at most 2,048 entries per map, and checkout cleanup
 reads occurrence payloads in bounded pages through a fixed rowid watermark rather
 than retaining the full table. Backup subprocesses have a two-minute timeout.
+
+## Archived thread retention
+
+Nucleus prunes the threads it created once their task is finished (Tom,
+2026-11-19: "we'll need a way to prune old archived threads on a schedule.. We
+don't want to keep archived task threads around very long, there's a lot of
+them. Maybe three days?"). The service schedules this itself, never a system
+job (Tom, 2026-11-19: "I don't want a system scheduled cron-like job because it
+can go stale, exactly like that. It needs to be managed by Nucleus scheduling").
+
+- One retention pass, run by the service and bounded per pass. Retention is one
+  setting, 3 days by default, shown in Settings. The last run, its count and any
+  failure appear in `service.health`.
+- Each host adapter deletes through its host's own API (Paseo `deleteAgent`, T3
+  `thread.delete`, BB's equivalent if it has one).
+- Scope is the same on every host: only threads Nucleus created for a task that
+  is now `done` or `cancelled`, archived for longer than the retention. Never a
+  planner thread, a thread of an unfinished task or an open decision, or one the
+  operator unarchived.
+- Implementation: nucleus#1367.
