@@ -20,6 +20,7 @@ import { minimalHookEnvironment } from "../core/hooks/hook-result";
 import { hostRunProcessStartIdentity } from "../core/machine/start-identity";
 import { overrideIdentityListing, processStartIdentityEnvironment } from "../core/machine/process-identity-search";
 import { processGroupEmpty } from "../core/machine/process-group";
+import { pidAlive } from "../core/machine/pid";
 import {
   qaRunLiveOutputPath,
   qaStepExitSchema,
@@ -161,6 +162,8 @@ async function inspectionFixture(t: any, options: {
   /** Written to both the state and the separate heartbeat file; absent is fresh. */
   heartbeatAt?: string;
   boundMs?: number;
+  /** The publication window: the record names only the pending step identity. */
+  pendingOnly?: boolean;
   beforeStepStop?: (statePath: string) => void | Promise<void>;
 } = {}) {
   const root = await mkdtemp(join(tmpdir(), "qa-step-exit-inspection-"));
@@ -192,8 +195,10 @@ async function inspectionFixture(t: any, options: {
     schema: "queue.project-qa.supervisor.v1" as const, schema_version: 1 as const, runId, key: "fixture",
     pid: supervisor.pid!, supervisorStartIdentity: hostRunProcessStartIdentity(supervisor.pid!),
     identityToken, startedAt, heartbeatAt,
-    inFlight: "qa" as const, pendingProcessIdentity: null, steps: [], failedStep: null, logWriteErrors: [],
-    activeProcess: {
+    inFlight: "qa" as const,
+    pendingProcessIdentity: options.pendingOnly ? identityToken : null,
+    steps: [], failedStep: null, logWriteErrors: [],
+    activeProcess: options.pendingOnly ? null : {
       step: "qa", pid: endedGroup, processGroupId: endedGroup,
       startIdentity: hostRunProcessStartIdentity(endedGroup), leaderStartIdentity: identityToken,
       startedAt: new Date(Date.now() - 45_000).toISOString(),
@@ -256,24 +261,69 @@ test("a stale heartbeat does not discard a recorded step exit: the run settles f
   assert.throws(() => process.kill(f.supervisor.pid!, 0), /ESRCH/, "the stale supervisor was stopped");
 });
 
-test("a takeover signals only the group the record names, never another process carrying the run token", { skip: process.platform === "win32" }, async (t) => {
+test("a takeover sweeps the run's remaining token processes only after the supervisor is proven dead", { skip: process.platform === "win32" }, async (t) => {
   const f = await inspectionFixture(t, { boundMs: 0 });
-  // A process that inherited the run token in its own group is the shape of a
-  // step the supervisor started after the record we are acting on.
+  // A process carrying the run token outside the recorded step group: a step
+  // whose record never landed, or an escaped descendant.
   const carrier = spawn(process.execPath, ["-e", "setTimeout(() => {}, 120000)"], {
     detached: true, stdio: "ignore",
     env: { ...process.env, ...processStartIdentityEnvironment(f.identityToken) },
   });
   t.after(() => { try { process.kill(-carrier.pid!, "SIGKILL"); } catch { /* already gone */ } });
-  overrideIdentityListing(identity => identity === f.identityToken
-    ? { state: "found", processes: [{ pid: carrier.pid!, processGroupId: carrier.pid!,
-      startIdentity: hostRunProcessStartIdentity(carrier.pid!) }] }
-    : { state: "unknown" });
+  const listings: Array<{ found: boolean; supervisorDead: boolean }> = [];
+  overrideIdentityListing(identity => {
+    if (identity !== f.identityToken) return { state: "unknown" };
+    const alive = pidAlive(carrier.pid!);
+    listings.push({ found: alive, supervisorDead: !pidAlive(f.supervisor.pid!) });
+    return alive
+      ? { state: "found", processes: [{ pid: carrier.pid!, processGroupId: carrier.pid!,
+        startIdentity: hostRunProcessStartIdentity(carrier.pid!) }] }
+      : { state: "absent" };
+  });
   const verdict = await f.inspection.inspectSupervisor(f.run);
   assert.equal(verdict.kind, "step_ended", JSON.stringify(verdict));
   assert.throws(() => process.kill(f.supervisor.pid!, 0), /ESRCH/, "the supervisor was stopped");
-  assert.equal(process.kill(carrier.pid!, 0), true,
-    "a process carrying the run token in another group is never signalled by this takeover");
+  assert.throws(() => process.kill(carrier.pid!, 0), /ESRCH/,
+    "the takeover stopped the run's leftover token processes before settling");
+  assert.ok(listings.length > 0, "the sweep listed the run token");
+  assert.equal(listings.every(listing => listing.supervisorDead), true,
+    "every token listing happened after the supervisor was proven dead");
+});
+
+test("a takeover holds the run instead of settling when the run token cannot be proven gone", { skip: process.platform === "win32" }, async (t) => {
+  const f = await inspectionFixture(t, { boundMs: 0 });
+  // A listing that cannot be read proves nothing about the run's processes.
+  overrideIdentityListing(identity => identity === f.identityToken ? { state: "unknown" } : { state: "unknown" });
+  const verdict = await f.inspection.inspectSupervisor(f.run);
+  assert.equal(verdict.kind, "running", `an unproven sweep holds the run: ${JSON.stringify(verdict)}`);
+});
+
+test("a stale takeover sweeps the pending step whose record never landed", { skip: process.platform === "win32" }, async (t) => {
+  // The publication window: the record names only the pending step identity, so
+  // no group is recorded and only the run token can find the step's processes.
+  const f = await inspectionFixture(t, { heartbeatAt: new Date(Date.now() - 240_000).toISOString(), pendingOnly: true });
+  const carrier = spawn(process.execPath, ["-e", "setTimeout(() => {}, 120000)"], {
+    detached: true, stdio: "ignore",
+    env: { ...process.env, ...processStartIdentityEnvironment(f.identityToken) },
+  });
+  t.after(() => { try { process.kill(-carrier.pid!, "SIGKILL"); } catch { /* already gone */ } });
+  overrideIdentityListing(identity => {
+    if (identity !== f.identityToken) return { state: "unknown" };
+    return pidAlive(carrier.pid!)
+      ? { state: "found", processes: [{ pid: carrier.pid!, processGroupId: carrier.pid!,
+        startIdentity: hostRunProcessStartIdentity(carrier.pid!) }] }
+      : { state: "absent" };
+  });
+  assert.equal((await f.inspection.inspectSupervisor(f.run)).kind, "running", "the first stale observation only records a candidate");
+  await new Promise(resolve => setTimeout(resolve, 5_200));
+  let verdict = await f.inspection.inspectSupervisor(f.run);
+  for (let attempt = 0; verdict.kind === "running" && attempt < 40; attempt++) {
+    await new Promise(resolve => setTimeout(resolve, 100));
+    verdict = await f.inspection.inspectSupervisor(f.run);
+  }
+  assert.equal(verdict.kind, "dead", `a pending step is swept before the lost settlement: ${JSON.stringify(verdict)}`);
+  assert.throws(() => process.kill(carrier.pid!, 0), /ESRCH/, "the pending step's process was stopped");
+  assert.throws(() => process.kill(f.supervisor.pid!, 0), /ESRCH/, "the supervisor was stopped");
 });
 
 test("an unreadable recheck holds the run instead of taking it over", { skip: process.platform === "win32" }, async (t) => {
@@ -304,12 +354,13 @@ test("an outdated record never stops the later step the supervisor moved on to",
       // The supervisor wrote its next step between this inspection's read and
       // its stop decision: the record on disk now names a different group.
       advanced++;
+      const recorded = f.state.activeProcess!;
       writeQaSupervision(statePath, {
         ...f.state,
         heartbeatAt: new Date().toISOString(),
         inFlight: "lint",
         activeProcess: {
-          ...f.state.activeProcess, step: "lint", pid: later.pid!, processGroupId: later.pid!,
+          ...recorded, step: "lint", pid: later.pid!, processGroupId: later.pid!,
           startIdentity: hostRunProcessStartIdentity(later.pid!),
           startedAt: new Date().toISOString(),
         },

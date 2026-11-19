@@ -25,7 +25,7 @@ import { findProcessByCommandTokenAsync } from "../machine/process-identity";
 import { processGroupEmpty } from "../machine/process-group";
 import { processesForStartIdentity, processStartIdentityLiveness } from "../machine/process-identity-search";
 import { confirmStaleSupervisorHeartbeat, SUPERVISOR_STUCK_CONFIRMATION_MS } from "../machine/supervisor-watchdog";
-import { stopRecordedProcessGroup, stopSupervisorProcess } from "./supervisor-process";
+import { stopRecordedProcessGroup, stopRunTokenProcesses, stopSupervisorProcess } from "./supervisor-process";
 
 /**
  * #1393: how long the service lets a supervisor keep a run it has not settled
@@ -311,6 +311,13 @@ export class ProjectQaInspection {
     // this step may have its group stopped and be settled from.
     if (!await this.recordStillNamesStep(statePath, run.id, state.activeProcess)) return null;
     if (state.activeProcess && !await stopRecordedProcessGroup(state.activeProcess, state.identityToken)) return null;
+    // With the supervisor dead, the rest of the run's own tree is what still
+    // carries the run token: a step whose record never landed (the pending
+    // window publishes only its identity), an escaped descendant, a group the
+    // record does not name. Settling while any of those runs would release
+    // capacity for work that is still live, so the takeover sweeps them and
+    // holds the run when the sweep cannot prove them gone.
+    if (!await stopRunTokenProcesses(state.identityToken)) return null;
     return { hostResult: null };
   }
 

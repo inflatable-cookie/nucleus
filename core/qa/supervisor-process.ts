@@ -131,6 +131,41 @@ export async function stopSupervisorProcess(target: {
 }
 
 /**
+ * Stop every process still carrying the run token and prove them gone.
+ *
+ * Only a caller that has already proved the supervisor dead may run this: with
+ * the supervisor gone nothing can start another step, so a token-carrying
+ * process is a leftover of this run's own tree (a pending step whose record
+ * never landed, an escaped descendant, a group the record does not name yet)
+ * and never a step the run would describe later. The answer is true only when
+ * the listing proves absence: an unreadable listing is not proof, and the
+ * caller holds the run instead of settling it.
+ */
+export async function stopRunTokenProcesses(identityToken: string): Promise<boolean> {
+  const signalToken = (name: NodeJS.Signals): void => {
+    const owned = processesForStartIdentity(identityToken);
+    if (owned.state !== "found") return;
+    for (const item of owned.processes) {
+      if (processStartIdentityLiveness(item.pid, item.startIdentity) !== "alive") continue;
+      try { process.kill(item.pid, name); } catch { /* the identity-checked process exited */ }
+    }
+  };
+  const provenAbsent = async (timeoutMs: number): Promise<boolean> => {
+    const deadline = Date.now() + Math.max(0, timeoutMs);
+    for (;;) {
+      if (processesForStartIdentity(identityToken).state === "absent") return true;
+      if (Date.now() >= deadline) return false;
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+  };
+  if (await provenAbsent(0)) return true;
+  signalToken("SIGTERM");
+  if (await provenAbsent(SUPERVISOR_STOP_GRACE_MS)) return true;
+  signalToken("SIGKILL");
+  return provenAbsent(SUPERVISOR_STOP_PROOF_WAIT_MS);
+}
+
+/**
  * Stop a stale supervisor, its published step group and every remaining process
  * carrying the run's token, then prove they are gone.
  *

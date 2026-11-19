@@ -157,15 +157,19 @@ unobservable and the run settles `lost`, carrying the same step and output
 pointer. `lost` therefore means a dead supervisor or an unobservable outcome,
 never a run that simply waited for its capacity deadline.
 
-A takeover is ordered so it can only ever stop what the durable record names.
-`supervisor-process.ts` stops the supervisor first and alone, and only then is a
-step group stopped, through `stopRecordedProcessGroup`, which signals nothing
-outside that group: a process that inherited the run token in another group is a
-step the record does not describe and is never touched. The record is re-read
-before each of those decisions, and the answer must be positive — a record that
-advanced or cannot be read holds the run and the next poll re-inspects instead.
-With the supervisor dead, nothing can start a new step, so the group the record
-still names is the only one the takeover stops.
+A takeover is ordered so it can only ever stop what its own proof names.
+`supervisor-process.ts` stops the supervisor first and alone
+(`stopSupervisorProcess`); nothing can start a step after that. Only then is the
+step group the record still names stopped (`stopRecordedProcessGroup`, which
+signals nothing outside that group), and only then is the rest of the run's own
+tree swept (`stopRunTokenProcesses`): with the supervisor dead, a process still
+carrying the run token is a leftover of this run — a pending step whose record
+never landed, an escaped descendant, a group the record does not describe — and
+never a step the run would describe later. The record is re-read before each
+decision and the answer must be positive: a record that advanced or cannot be
+read holds the run and the next poll re-inspects. A sweep that cannot prove the
+token gone is not proof either, so it holds the run rather than settling while
+work of the run's own may still be live.
 
 `supervisor-process.ts` owns the detached supervisor's own process lifecycle — the
 launch shape and the stale stop with its proof — for milestone QA, project
