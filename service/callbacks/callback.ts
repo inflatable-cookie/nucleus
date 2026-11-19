@@ -441,12 +441,13 @@ export async function startCallbacks(
       bodyBytes: SMALL_CALLBACK_BODY_BYTES,
       handle: (input, token) => {
         const request = dependencyCallerSchema.extend({ section: z.enum(CONTEXT_SECTIONS).optional() }).strict().parse(input);
-        engine.authenticateAgentControl(request.callerTaskId, request.callerRunId, token);
-        const task = engine.store.task(request.callerTaskId);
-        const run = engine.store.run(request.callerRunId);
-        const directory = run?.temporaryDirectory ?? (task.runId === request.callerRunId ? task.temporaryDirectory : null);
+        // The caller binding resolves a retained thread's stale ticket to the
+        // run that acts for it, so the context read is that run's own (nucleus#1376).
+        const { task, run } = engine.authenticateAgentControl(request.callerTaskId, request.callerRunId, token);
+        const runId = run?.id ?? request.callerRunId;
+        const directory = run?.temporaryDirectory ?? (task.runId === runId ? task.temporaryDirectory : null);
         if (!directory) throw new Error('Run context scratch is unavailable');
-        return readRunContext(directory, request.callerRunId, request.section);
+        return readRunContext(directory, runId, request.section);
       },
     },
     "/task-next": {

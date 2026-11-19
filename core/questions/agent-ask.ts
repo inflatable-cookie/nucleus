@@ -2,6 +2,7 @@ import { z } from "zod";
 import { digest, type Store } from "../store/store";
 import type { Run, Task } from "../../shared/contracts";
 import { liveResumeRunSupersedes, recordSupersededRunRefusal, supersededByPendingResume, supersededResumeRefusal } from "../recovery/superseded-resume";
+import { threadRunFor } from "../dispatch/acting-run";
 import { ownerArmedRetainedWorker } from "../recovery/task-reasons";
 import {
   isDelegableQuestionKind,
@@ -220,7 +221,12 @@ export function queueAnswerText(detail: string): string {
  * moved on is refused with that current owner named.
  */
 function askBinding(store: Store, task: Task, runId: string): Pick<Run, 'id' | 'role' | 'agentId' | 'hostId'> {
-  const run = store.run(runId);
+  const presented = store.run(runId);
+  // nucleus#1376: a retained thread's environment may still name an earlier run
+  // of that same thread; its current run asks for the thread.
+  const acting = threadRunFor(store, task, runId);
+  if (acting) runId = acting.id;
+  const run = acting ?? presented;
   if (!task.hostId || (run && run.hostId !== task.hostId)) throw Error('Waiting for a proven run host');
   if (run) {
     const currentRunId = run.role === 'recovery' ? task.resolution.recovery?.runId : task.resolution.currentRunId;

@@ -21,6 +21,7 @@ import { hostKindOf } from "../../../shared/host-kind";
 import type { Project, ProjectAgent } from "../../../shared/contracts";
 import type { Engine } from "../../engine";
 import { digest, type Store } from "../../store/store";
+import { actingRunFor } from "../acting-run";
 import { issueTicket } from "./issue";
 import { plannedThreadCovers } from "./planned-threads";
 import {
@@ -93,9 +94,11 @@ export function resolveTicketCaller(store: Store, input: CallerTicket, token: st
     return { caller: formatAgentId(record.hostId, record.nativeAgentId), hostId: record.hostId, source: "participant-ticket" as const };
   }
   store.authenticate(input.runId, token);
-  const task = store.task(input.taskId), run = store.run(input.runId);
-  if (run?.released) throw Error("Calling run ticket is released");
-  if (run ? run.taskId !== task.id : task.runId !== input.runId) throw Error("Stale report: task and run identity do not match");
+  const task = store.task(input.taskId), presented = store.run(input.runId);
+  if (presented ? presented.taskId !== task.id : task.runId !== input.runId) throw Error("Stale report: task and run identity do not match");
+  // A retained thread's shell may still export an earlier run's ticket; this
+  // thread's current run acts for it (nucleus#1376).
+  const run = actingRunFor(store, task, input.runId);
   const agentId = run ? run.agentId : task.agentId, hostId = run ? run.hostId : task.hostId;
   if (!agentId || !hostId) throw Error("No calling thread and proven host bound to this run");
   return { caller: formatAgentId(hostId, agentId), hostId, source: "run-ticket" as const };

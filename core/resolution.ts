@@ -1936,8 +1936,18 @@ export class Resolution {
   readoptReplacedReviewer(task: Task, run: Run, input: Completion): boolean {
     return this.callbackIntake.readoptReplacedReviewer(task, run, input);
   }
-  complete(input: Completion, token: string, startEvidence?: string) {
-    return this.callbackIntake.complete(input, token, startEvidence);
+  complete(
+    input: Completion,
+    token: string,
+    startEvidence?: string,
+    credentialRunId?: string,
+  ) {
+    return this.callbackIntake.complete(
+      input,
+      token,
+      startEvidence,
+      credentialRunId,
+    );
   }
   completeValidate(input: Completion, run: Run, task: Task) {
     return this.callbackIntake.completeValidate(input, run, task);

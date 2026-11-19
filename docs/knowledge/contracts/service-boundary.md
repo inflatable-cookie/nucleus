@@ -228,7 +228,19 @@ participant ticket first, then a host-supplied identity; caller records are
 host-qualified and existing bare Paseo IDs retain their legacy interpretation.
 An explicit ticket is the asker and delivery target for every verb that records a
 caller (`decision.add`, `lead.submit`, `question.answer`, `tell`); Nucleus records
-the ticket's thread. A missing ticket file uses host verification. A T3
+the ticket's thread. A missing ticket file uses host verification. Nucleus proves
+the thread behind a run ticket, not the shell variable that names it: a retained
+thread whose environment still exports an earlier run's ticket (or whose session
+holds an earlier MCP binding or helper argv) acts as that thread's current run
+when both name the same proven host, agent and retained line. `core/dispatch/acting-run.ts`
+owns that resolution, and every callback path reads it — the caller route, the
+run-context read, `nucleus_report`, `ask`, `tell`, the final report and self-force.
+It refuses exactly three shapes, each naming the run in force and the fix: a
+ticket for another thread, a task with no current run, and a credential its own
+row revoked. A proof executor is never resolved across runs. The resolution is
+recorded once per ticket and run as `stale_ticket_resolved`, so a stale shell has
+a visible cause instead of an inferred one, and each dispatch prompt states its
+own run's ticket path (nucleus#1376). A T3
 `mcp:` identity must match an exact thread on one registered online host.
 `project.set-planner` on the CLI defaults its omitted `agentId` to the verified
 caller. A decision answer is delivered to that recorded asker or queued with a visible wait

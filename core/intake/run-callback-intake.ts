@@ -21,6 +21,7 @@ import { reportReadyRefusal, settleReportReady } from './report-ready';
 import { proofResultRefusal, settleProofExecution, type ProofOutcome } from './proof-settlement';
 import { threadReleasePendingReason, threadRunningReason } from './thread-waits';
 import { reportRunBinding } from './report-run-binding';
+import { actingRunFor } from '../dispatch/acting-run';
 
 /**
  * Authenticate, validate and record one run report — the resolution side of a
@@ -63,16 +64,41 @@ export class RunCallbackIntake {
       `${run.id} verdict at ${task.prHead}${current && current.id !== run.id ? `; settled ${current.id}` : ''}`);
     return true;
   }
-  complete(input: Completion, token: string, startEvidence?: string) {
-    const probe = this.store.run(input.runId);
-    if (probe && probe.taskId === input.taskId && isDispositionActive(this.store.task(probe.taskId))) return recordLateCallbackEvidence(this.store, input, token);
+  complete(
+    input: Completion,
+    token: string,
+    startEvidence?: string,
+    credentialRunId = input.runId,
+  ) {
+    // These branches read the delivered bytes, not the run that acts: the
+    // credential that arrived is the presented run's, so the receipt is checked
+    // and keyed against it.
+    const presentedInput = credentialRunId === input.runId ? input : { ...input, runId: credentialRunId };
+    const probe = this.store.run(presentedInput.runId);
+    if (probe && probe.taskId === presentedInput.taskId && isDispositionActive(this.store.task(probe.taskId))) return recordLateCallbackEvidence(this.store, presentedInput, token);
     // Queue #691: a report from a run that was under way when a task finished is history.
-    if (probe && probe.taskId === input.taskId && probe.role !== 'executor' && ['done', 'cancelled'].includes(this.store.task(probe.taskId).phase))
-      return this.resolution.recordFinishedTaskCompletion(this.store.task(probe.taskId), probe, input, token);
+    if (probe && probe.taskId === presentedInput.taskId && probe.role !== 'executor' && ['done', 'cancelled'].includes(this.store.task(probe.taskId).phase))
+      return this.resolution.recordFinishedTaskCompletion(this.store.task(probe.taskId), probe, presentedInput, token);
     return this.store.transaction(() => {
-      let run = this.store.run(input.runId); if (!run || run.taskId !== input.taskId) throw new Error('Unknown run');
-      this.store.authenticate(run.id, token);
-      let task = this.store.task(run.taskId);
+      let task = this.store.task(input.taskId);
+      const presented = this.store.run(input.runId);
+      if (presented && presented.taskId !== task.id) throw new Error('Unknown run');
+      // The credential that arrived is the presented run's own, before anything
+      // is substituted.
+      this.store.authenticate(credentialRunId, token);
+      // A retained thread's stale ticket names an earlier run of this same
+      // thread; the thread's current run acts for it, and the report is that
+      // run's result (nucleus#1376). The receipt, the run's completion and every
+      // downstream gate then speak of one run. The receipt still authenticates
+      // the presented credential, which is the one that arrived.
+      const presentedRunId = credentialRunId;
+      const acting = actingRunFor(this.store, task, presentedRunId);
+      if (!acting) throw new Error('Unknown run');
+      let run = acting;
+      if (acting.id !== presentedRunId) {
+        input = { ...input, runId: acting.id };
+        task = this.store.task(task.id);
+      }
       if (coordinative(run)) {
         // A coordinative report is bound to its authenticated run. The run is
         // superseded only when the task moved to a newer generation; an
@@ -83,7 +109,7 @@ export class RunCallbackIntake {
         if (input.coordinatorGeneration === undefined) input = { ...input, coordinatorGeneration: run.generation };
         if (input.coordinatorGeneration !== run.generation) throw new Error('Superseded coordinator assignment');
       }
-      const duplicate = this.store.receipt(input, token); if (duplicate) return duplicate;
+      const duplicate = this.store.receipt(input, token, presentedRunId); if (duplicate) return duplicate;
       // Replaced is not released (planner ruling, 2026-11-09, reconciling Tom's
       // 2026-10-19 ruling with #1269): a working replaced reviewer's exact-head
       // verdict is accepted while no verdict for that head exists — it becomes

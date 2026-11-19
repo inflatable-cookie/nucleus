@@ -77,8 +77,15 @@ export class StoreAuth {
   availability(): Array<z.infer<typeof availabilitySchema>> {
     return this.db.prepare("SELECT data FROM availability").all().map(row => availabilitySchema.parse(JSON.parse(String(row.data))));
   }
-  receipt(input: Completion, token: string): { accepted: true; eventId: string } | null {
-    this.authenticate(input.runId, token);
+  /**
+   * The stored receipt for this completion, if any. `credentialRunId` is the run
+   * whose credential the delivery authenticated: a retained thread's stale
+   * ticket reports as the thread's current run, so the receipt is looked up and
+   * keyed by the run that actually acts (input.runId) while the credential is
+   * checked against the run the caller presented.
+   */
+  receipt(input: Completion, token: string, credentialRunId = input.runId): { accepted: true; eventId: string } | null {
+    this.authenticate(credentialRunId, token);
     const row = this.db.prepare("SELECT * FROM receipts WHERE id=?").get(input.eventId);
     if (!row) return null;
     if (!row.hash) {
