@@ -1,3 +1,4 @@
+import { recordPromptSize } from '../dispatch/prompt-text/measure';
 import { taskStopVerbsFor } from "../../shared/task-stop";
 import {
   reviewContinuationState,
@@ -882,8 +883,10 @@ export class CoordinatorRoute {
       }
       if (heldForDispatch) return null;
       if (waitingForCapacity) return null;
-      if (agentId)
+      if (agentId) {
         await this.resolution.adapter.sendRun!(t, run, token, context);
+        recordPromptSize(this.store, t.id, run.id, run.temporaryDirectory);
+      }
       else {
         const created = await this.resolution.adapter.createRun!(
           t,
@@ -892,6 +895,7 @@ export class CoordinatorRoute {
           context,
         );
         agentId = created.id;
+        recordPromptSize(this.store, t.id, run.id, run.temporaryDirectory);
         this.store.putRun({ ...run, agentId });
         if (created.workspaceId !== workspaceId)
           throw Error("Recovery agent created in wrong workspace");

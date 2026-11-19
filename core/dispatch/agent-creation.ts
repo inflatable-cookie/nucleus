@@ -9,6 +9,8 @@ import type { Profile, Run, Task } from "../../shared/contracts";
 import { sharedCargoEnvironment } from "../machine/cargo-cache";
 import { mergeAdmissionLaunchEnv } from "../qa/effigy-admission";
 import { runPrompt } from "./prompts";
+import { measureRunPrompt, writePromptSize } from "./prompt-text/measure";
+import { buildRunContext, materializeRunContext } from "./prompt-text/context-store";
 import {
   runTemporaryEnvironment,
   type RunScratchPlacement,
@@ -181,10 +183,14 @@ export function workerAgentSpec(
             );
       if (current.perThreadEnvironment === false)
         prepareRunScratch(current, task, runId, task.temporaryDirectory);
+      const scratch = environment.TMPDIR ?? task.temporaryDirectory;
+      if (scratch) materializeRunContext(scratch, runId, buildRunContext(task, { id: runId, role: 'worker', head: task.planningCommit }, mcp));
       materializeLaneDocuments(task.temporaryDirectory, task.laneDocumentPins);
+      const selectedPrompt = retry ? legacyPrompt : prompt;
+      try { if (scratch) writePromptSize(scratch, runId, 'worker', measureRunPrompt(selectedPrompt, task, { head: task.planningCommit, temporaryDirectory: scratch }, mcp)); } catch { /* telemetry cannot prevent launch */ }
       return {
         requestId: retry ? `ns-agent-${runId}-socket` : `ns-agent-${runId}`,
-        prompt: retry ? legacyPrompt : prompt,
+        prompt: selectedPrompt,
         labels: wireLabels({
           task: task.id,
           run: runId,
@@ -248,22 +254,16 @@ export function runAgentSpec(
             ? run.temporaryDirectory
             : environment.TMPDIR,
       };
+      if (effectiveRun.temporaryDirectory) materializeRunContext(effectiveRun.temporaryDirectory, run.id, buildRunContext(task, run, mcp, affectedTestsCommand));
       materializeLaneDocuments(
         effectiveRun.temporaryDirectory,
         task.laneDocumentPins,
       );
+      const renderedPrompt = runPrompt(task, effectiveRun, current.helperPath, ticket, mcp, context, ownerContext, affectedTestsCommand);
+      try { if (effectiveRun.temporaryDirectory) writePromptSize(effectiveRun.temporaryDirectory, run.id, run.role, measureRunPrompt(renderedPrompt, task, effectiveRun, mcp, affectedTestsCommand)); } catch { /* telemetry cannot prevent launch */ }
       return {
         requestId: retry ? `ns-run-${run.id}-socket` : `ns-run-${run.id}`,
-        prompt: runPrompt(
-          task,
-          effectiveRun,
-          current.helperPath,
-          ticket,
-          mcp,
-          context,
-          ownerContext,
-          affectedTestsCommand,
-        ),
+        prompt: renderedPrompt,
         labels: wireLabels({
           task: task.id,
           run: run.id,

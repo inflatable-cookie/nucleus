@@ -1,3 +1,4 @@
+import { recordPromptSize } from './prompt-text/measure';
 import { randomBytes, randomUUID } from "node:crypto";
 import { workerProfileIsExcluded } from "../../shared/contracts";
 import type { Task } from "../../shared/contracts";
@@ -299,6 +300,7 @@ export class WorkerLauncher {
             ?.affectedTests?.command,
         ),
       );
+      recordPromptSize(this.store, task.id, runId, prepared.temporaryDirectory);
       this.store.update(
         task.id,
         { agentId: agent.id },
