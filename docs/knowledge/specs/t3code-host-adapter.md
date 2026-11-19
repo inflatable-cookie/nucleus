@@ -327,7 +327,7 @@ already present.
 | Remove | `thread.delete` through dispatch at closeout, never `onlyIfUnused` | Durable intent, then `deletedAt` or absence from a complete inventory proves removal; an unknown outcome is never resent |
 | Snooze a waiting row | `thread.snooze` through dispatch with `snoozedUntil` in the future | One bounded horizon, read back from `snoozedUntil`; deterministic command identity per wait episode and horizon; a refusal is "stay active" for that episode, never a retry loop |
 | Show a row again | `thread.unsnooze` through dispatch with `reason: "user"` | Only a row this host snoozed; a person who must act or a running role gets the row back. A manual settle is never touched |
-| Wake a settled thread before a message | `thread.unsettle` through dispatch before the send | A settled thread starts no run, and T3 does not clear a manual settle on `message.dispatch`; this is the one unsettle a follow-up or a re-entry needs |
+| Continue a manually settled thread | Refuse before sending | The operator must unsettle the thread in T3 before a follow-up or re-entry can start a run |
 | Archive workspace | Mark the task's T3 worktree handle archived in adapter state | Observation reads the handle's `archivedAt`; the shared project registration remains registered and available |
 | Atomic interrupt and continue | `message.dispatch` `steer_active` with the live run's `targetRunId` | The message injects into the active turn; with no active run the refusal is proven before send |
 | Tell or relayed answer (`steerOrNotify`) | `message.dispatch` `steer_active` when the thread has a live run, read immediately before send; otherwise `queue_after_active` as `notify` | A proven not-sent steer falls back to one queued send under its own command identity; a remote steer failure is unknown delivery and is never resent. Nucleus's own reminders and notices keep `queue_after_active` |
@@ -382,16 +382,15 @@ left, so the row never wakes itself while the task still waits. The command
 identity is deterministic per wait episode and horizon, so a returning identical
 wish never reuses a spent command. Like every presentation write, the effect is
 recorded before the send and the adapter reads `snoozedUntil` back afterwards: a
-read-back that proves the snooze did not land resends under the same identity,
-and a read-back that finds the row already snoozed by someone else leaves it
-alone. A refusal is "stay active" for that wait episode and is never retried;
+unknown delivery retains its identity and is never blindly resent. A later read
+that finds the requested horizon establishes ownership; a different snooze is left alone. A refusal is "stay active" for that wait episode and is never retried;
 only a new episode (the row was shown again in between) may snooze again. A row
 an operator settled by hand is left exactly as it is — no snooze, no unsettle —
 and a repeated pass inside the horizon writes nothing.
 
-The one remaining `thread.unsettle` is the wake a message needs: a settled
-thread starts no run, and T3 does not clear a manual settle on `message.dispatch`
-(`unsettleBeforeMessage`, used by the parent re-entry and every follow-up).
+A settled thread starts no run, and T3 does not clear a manual settle on
+`message.dispatch`. Re-entry and follow-up refuse before sending until the operator
+unsettles it in T3.
 Existing closeout and retention paths still decide when threads are archived or
 removed; the [thread lifecycle](#thread-lifecycle) is where that decision lives.
 
@@ -622,11 +621,8 @@ thread again under its own identity (an ordinary launch, or a child created agai
 writes its live record and retires the retired entry. A confirmed removal keeps its entry marked, is never restored, and is never
 an exact-lookup answer, so one thread is never named twice.
 
-Leaving observation never turns a delivery fact into a settled one. An unknown
-`thread.settle` for a thread this host no longer observes is left exactly as
-recorded — never resent, never reconciled, and never marked settled without a T3
-read that proves it — and a recorded worker settle can no longer be presented, so
-its retry record is dropped while its receipt, if any, stays as recorded.
+Leaving observation never turns an unknown delivery into a confirmed effect.
+The adapter does not resend or reconcile it without an authoritative read.
 
 A control action still works, and it never confuses "nothing is running" with "I
 could not look". An explicit stop reads the live run from the thread list's own
@@ -638,9 +634,7 @@ removal, and a removal cancels its runs, so that answer is empty and final. A
 guarded send refuses on the same gate before it reads a projection.
 
 A command dispatched to a thread drops the snapshot held for it, so a read later in
-the same pass cannot answer a post-write question with a pre-write answer: an
-unsettle followed by a settle in one pass sees the unsettle, and a title write
-followed by a title reconciliation sees the title it just sent.
+the same pass cannot answer a post-write question with a pre-write answer: a snooze readback and title reconciliation see the effects just sent.
 
 Report active run, idle, pending question/permission and archived state from
 positive native facts. A removed thread has no projection; the origin read uses
@@ -770,18 +764,15 @@ immediately before the send and anchors the child on it and its root node. A chi
 takes no `workspaceStrategy`: with one, T3 dispatches its first message
 `defer_start` and only its own MCP `delegate_task` handler prepares the run, so an
 outside client's child would never start. A role whose run needs a different
-checkout therefore stays a top-level thread — the fallback, never a silent re-home.
+checkout is refused with a visible reason, never silently re-homed.
 
 **The turn is held, released and re-entered.** The ACP agent holds the parent's
 turn while the service says to. The adapter releases it when no role child of the
-task is live, so the task settles in T3 instead of reading as busy forever. Before
+task is live, so it no longer reads as busy forever. Before
 the next child, the parent is re-entered with a message whose text carries the
 adapter's `nucleus-hold-the-task-thread` marker; the binding's `holdPattern` names
-that marker, so the agent holds the turn and shows or forwards nothing. A settled
-parent is unsettled first (`thread.unsettle`), because a settled thread does not
-start a run. The re-entry is bounded: a parent T3 will not run is a proven reason
-to park the native path for that task (ten minutes) and keep working on top-level
-threads.
+that marker, so the agent holds the turn and shows or forwards nothing. A manually settled parent is left alone; re-entry refuses until the operator
+unsettles it. A parent T3 will not run leaves the task waiting with a reason.
 
 **Completion wakes never reach the parent.** Every child is created with
 `completionWake: "settled_only"` and its delivery is disposed
@@ -872,8 +863,7 @@ attention flag, a role asking a question, a child that ended with a fault — or
 role child gets the row shown, and a row this host snoozed is unsnoozed; a task that
 waits on nothing Nucleus is running is snoozed; a finished task's row is the terminal
 lane's. A row an operator settled by hand is theirs: Nucleus writes nothing to it,
-and the only `thread.unsettle` it still sends is the wake a message needs before it
-can start a run. Being in T3's "Working" section is the client's own view of an
+and a continuation waits for the operator to unsettle it. Being in T3's "Working" section is the client's own view of an
 active run and cannot be set from outside.
 
 ## Thread lifecycle
@@ -888,8 +878,7 @@ archive and changes no thread fact; a finished task's held turn is released at o
 and its parent archived. Nucleus never settles a task thread (see [one row per
 task](#one-row-per-task)): a waiting row is snoozed and a row that needs a person is
 shown again, while the task keeps its retained reviewer and recovery bindings so the
-next round or fault continues the same child thread. The one `thread.unsettle` left
-is the wake a follow-up message needs when the thread was settled by hand. A new
+next round or fault continues the same child thread. A manually settled thread must be unsettled by its operator before a follow-up. A new
 thread is needed only when the old one is gone or deleted, or the role's selected
 profile changes; other displaced threads stay as the terminal lane leaves them
 (Tom, 2026-11-12).
@@ -1180,22 +1169,11 @@ forwarded, the turn held) and keeps it distinct from the ignore rule;
 `test/acp-service.test.ts` proves a mint carries both prompt rules into the binding
 and that a mint without them writes neither.
 
-`test/t3code-one-row.test.ts` covers the one-row model on the same fake transport:
-a reviewer launch tags the thread, records exactly one `thread_created` card on the
-worker's latest root node and retries nothing; a card waits for a worker run that
-names its root node; a live support role, a pending question and a fault each name
-the worker row's step, which is not repeated when the state title already says it;
-and with the hide setting off the threads behave as before while the host status
-says so and no settings write is ever sent. The sweep tests prove the row stays
-unsettled while any of the task's runs is live and settles once the task waits on
-nothing.
-
-The settlement sweep skips threads whose terminal archive or deletion is already
-confirmed in the durable cleanup lane, even if settling the thread previously
-needed no native receipt. Unresolved cleanup effects still get observation and
-settlement on later sweeps.
+`test/t3code-one-row.test.ts` covers parent row titles, snooze and renewal,
+manual settle, refusal, and the absence of top-level role launches and settle writes.
+The sweep skips presentation work for confirmed terminal archive or deletion.
 Once Nucleus's own recorded delete is confirmed by its receipt or authoritative
-readback, unknown settle, unsettle and title intents for that thread become
+readback, unknown presentation intents for that thread become
 `moot`, linked to that delete. Their delivery is never recorded as successful,
 and they are never replayed. The adapter retires them before its presentation
 reconciliation reads, including after restart. An unknown delete remains unknown

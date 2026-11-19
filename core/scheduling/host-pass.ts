@@ -27,7 +27,8 @@ import { submissionRecordFromLegacy } from "../../shared/schema/settings/legacy"
 import { LANE_PRIORITY_AUDIT } from "./lane-priorities";
 import { taskAttention } from "../../shared/task-attention";
 import { holdsOf, taskHoldKind } from "../../shared/holds";
-import { taskHasUnreleasedRun } from "../../shared/task-view";
+import { taskHasUnreleasedRun, taskDetailView } from "../../shared/task-view";
+import { taskWaitStateContext, taskWithCurrentWait } from "../recovery/wait-context";
 
 const ROW_FAILURE_LABEL = "task row presentation";
 
@@ -115,6 +116,8 @@ export class HostPass {
     for (const task of this.store.tasks()) {
       if (task.hostId !== hostId || task.removedAt != null) continue;
       const runs = this.store.runs(task.id);
+      const context = taskWaitStateContext(this.store, task, null);
+      const display = taskDetailView(taskWithCurrentWait(this.store, task, context), context, runs);
       const attention = taskAttention({
         phase: task.phase,
         held: task.held,
@@ -122,9 +125,8 @@ export class HostPass {
         holdKind: taskHoldKind(task),
         attention: task.resolution.attention,
         originFault: Boolean(task.originError || task.originLookupError),
-        prerequisiteWait: Boolean(
-          task.prerequisiteWait && !task.prerequisiteWait.releasedAt,
-        ),
+        prerequisiteWait: display.waitState?.state === "waiting_prerequisite" && display.waitState.owner !== "operator",
+        reason: display.reason,
         liveRun:
           runs.some((run) => !run.released && !run.completion) ||
           taskHasUnreleasedRun(task),

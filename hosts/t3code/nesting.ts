@@ -689,7 +689,7 @@ export class T3Nesting {
    * The parent's live run, re-entered if it has none. A held turn is what makes a
    * child creatable, so "no active run" means "re-arm the thread, then wait for T3 to
    * start it". The wait is bounded: a parent T3 will not run is a proven reason to
-   * keep the task working on a top-level thread.
+   * keep the task waiting with a visible reason.
    */
   private async heldRun(
     parent: ParentThread,
@@ -703,8 +703,7 @@ export class T3Nesting {
       canonical([this.core.hostId(), parent.threadId, requestId]),
     );
     await this.core.presentation
-      .unsettleBeforeMessage(parent.threadId, identity("message", commandId))
-      .catch(() => undefined);
+      .unsettleBeforeMessage(parent.threadId, identity("message", commandId));
     this.core.state.update((state) => {
       const current = state.parents?.[parent.taskId];
       if (!current) return;

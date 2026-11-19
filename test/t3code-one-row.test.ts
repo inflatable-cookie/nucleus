@@ -230,6 +230,38 @@ test("an operator's own settled row is left alone", async t => {
   assert.equal(projection.thread.snoozedUntil, null);
 });
 
+test('unknown snooze delivery keeps its identity and a later landed snooze is undone', async t => {
+  const { host, server, spec, parentOf } = await fixture(t);
+  await host.createAgent(spec('worker-launch'));
+  const parent = parentOf()!;
+  const projection = server.threads.get(parent.threadId)!;
+  const until = new Date(Date.now() + SNOOZE_HORIZON_MS).toISOString();
+  host.state.update(state => {
+    state.snoozes = { ...state.snoozes, [parent.threadId]: {
+      episode: 0, commandId: 'unknown-snooze', until, state: 'unknown', recordedAt: STAMP,
+    } };
+  });
+  await host.reconcileTaskRow(taskId, waiting());
+  await host.reconcileTaskRow(taskId, { state: 'attention', cause: 'Needs a person' });
+  assert.equal(commandsOf(server, 'thread.snooze').length, 0);
+  assert.equal(host.state.read().snoozes?.[parent.threadId]?.state, 'unknown');
+  projection.thread.snoozedUntil = until;
+  await host.reconcileTaskRow(taskId, { state: 'attention', cause: 'Needs a person' });
+  assert.equal(commandsOf(server, 'thread.unsnooze').length, 1);
+  assert.equal(projection.thread.snoozedUntil, null);
+});
+
+test('re-entry leaves a manually settled parent untouched', async t => {
+  const { host, server, spec, parentOf, acp } = await fixture(t);
+  await host.createAgent(spec('worker-launch'));
+  const parent = parentOf()!;
+  acp.surface.release(`session:${taskId}`);
+  server.threads.get(parent.threadId)!.thread.settledOverride = 'settled';
+  const before = server.commands.length;
+  await assert.rejects(host.createAgent(spec('reviewer-launch', 'reviewer')), /settled/i);
+  assert.equal(server.commands.slice(before).some(command => command.type === 'thread.unsettle' || command.type === 'message.dispatch'), false);
+});
+
 test('a snooze refused for a pending approval stays active with no retry loop', async t => {
   const { host, server, spec, parentOf } = await fixture(t);
   await host.createAgent(spec('worker-launch'));

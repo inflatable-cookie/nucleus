@@ -131,13 +131,14 @@ const intent = z.object({
  * wait this host snoozed the row for, `until` is the horizon it read back, and
  * `commandId` is the deterministic identity of that send. `refused` means the
  * nightly would not snooze the row (a pending approval, a queued run), so the row
- * stays active and this episode never retries.
+ * stays active and this episode never retries. `unknown` retains ownership until
+ * a read proves the requested horizon landed; it is never blindly resent.
  */
 const snooze = z.object({
   episode: z.number().int().nonnegative(),
   commandId: z.string(),
   until: z.string(),
-  state: z.enum(["snoozed", "refused"]),
+  state: z.enum(["snoozed", "refused", "unknown"]),
   /** The named wait the row was snoozed for; diagnostic text only. */
   cause: z.string().optional(),
   recordedAt: z.string(),
