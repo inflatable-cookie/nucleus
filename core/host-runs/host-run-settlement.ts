@@ -17,6 +17,19 @@ import { refuseHostRun } from "./host-run-refusal";
 
 type HostRunCapacitySample = ReturnType<typeof hostRunCapacitySampleSchema.parse>;
 
+/**
+ * What one pass proved about a reservation's recorded hook, and the exact
+ * observation behind it. `gone` is the only answer that may settle a row;
+ * `unknown` never is, and its `reason` is what the row records so the stuck
+ * state has a visible cause. `cause: "budget"` is Queue's own read limit, not an
+ * observation of the host, so it is never recorded on the row.
+ */
+export interface HostRunHookLiveness {
+  state: "gone" | "alive" | "unknown";
+  reason: string;
+  cause: "unbound" | "dead" | "reused" | "unreadable" | "budget" | "alive";
+}
+
 export const stableJson = (value: unknown): string => {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
   if (value !== null && typeof value === "object") return `{${Object.entries(value as Record<string, unknown>)
@@ -36,10 +49,75 @@ export const HOST_RUN_ABANDONED_RELEASE_REASON = "the admission hook is gone wit
  * Why an overdue admission reservation's capacity was released (Spec 035, "An
  * overdue reservation with a dead holder expires"). It names what Queue
  * observed — its own run timeout passed and the recorded hook is gone — and
- * claims nothing about the workload. This stays the exit for a reservation the
- * producer still reports live, held or retained.
+ * claims nothing about the workload. The deadline no longer decides whether a
+ * gone hook settles; it only names which of the two exits applies.
  */
 export const HOST_RUN_EXPIRED_RELEASE_REASON = "run timeout expired with the admission hook gone";
+/**
+ * Why an admitted reservation that never launched was settled, in its `hook_gone`
+ * fact and as its release reason (Spec 035, "The sweep proves every
+ * reservation's holder"). The hook is the reservation's whole foreground: once
+ * it is gone nothing can confirm the admission, so the row is cancelled before
+ * it holds a slot or a workspace any longer.
+ */
+export const HOST_RUN_HOOK_DIED_BEFORE_ADMIT_REASON = "admission hook died before admit";
+/**
+ * The one journal event that says a reservation's recorded hook could not be
+ * proven alive or gone this pass, with the exact observation as its reason. It is
+ * written once per distinct reason, so a stuck row always names why it still
+ * holds instead of waiting silently for its run timeout.
+ */
+export const HOST_RUN_LIVENESS_UNKNOWN_EVENT = "hook_liveness_unknown";
+/**
+ * The one journal event that says the sweep has proven a reservation's hook gone
+ * and is holding one bounded window for the endpoint watch to read the producer's
+ * answer first (Spec 035, "The sweep proves every reservation's holder"). It
+ * records the observation and the instant, so a row that settles after that
+ * window names what it waited for.
+ */
+export const HOST_RUN_HOOK_GONE_PENDING_EVENT = "hook_gone_pending";
+/**
+ * How long a proven-gone reservation waits for a live endpoint watch to read its
+ * producer answer before the sweep settles it on its own proof.
+ *
+ * The watch is the only reader of the producer: its `run status` answer (a
+ * closure, a retained hold or a refusal) is evidence about the run that the sweep
+ * cannot get for itself, and a settled row stops being watched. One sweep
+ * interval already gives the watch about twenty one-second ticks, each bounded by
+ * an eight-second status call, so this window is enough for at least one read and
+ * short enough that no reservation waits for a second sweep to be settled.
+ */
+export const HOST_RUN_WATCH_EVIDENCE_WINDOW_MS = 15_000;
+/**
+ * Journal events that only a producer read writes: the producer's own closure
+ * record and the hold it answered. Either is the evidence the sweep's window is
+ * waiting for.
+ */
+const HOST_RUN_PRODUCER_OBSERVATION_EVENTS: readonly string[] = [
+  "effigy_observation", "effigy_observation_retained",
+];
+/**
+ * The one `effigy_observation_refused` kind that still means the producer was
+ * asked: the watch did read this run and got no readable answer. The event's
+ * other kinds are the watch reporting on itself or on the launcher
+ * (`hook-liveness-unknown` while the hook was still alive, `reconcile-fault`,
+ * `runtime-absent`, `absence-evidence-incomplete`, `accounting-retirement-refused`),
+ * so none of them proves the producer was ever read and none of them may stand in
+ * for its answer.
+ */
+const HOST_RUN_PRODUCER_REFUSAL_KINDS: readonly string[] = ["unknown"];
+
+/**
+ * Whether this journal entry is the row's producer answer: what the producer
+ * itself said (a closure or a hold), or the watch's report that it read this run
+ * and could not classify the answer. Never a note the watch made about itself.
+ */
+function hostRunProducerAnswerEntry(entry: { event: string; data: unknown }): boolean {
+  if (HOST_RUN_PRODUCER_OBSERVATION_EVENTS.includes(entry.event)) return true;
+  if (entry.event !== "effigy_observation_refused") return false;
+  const kind = (entry.data as { kind?: unknown } | null)?.kind;
+  return typeof kind === "string" && HOST_RUN_PRODUCER_REFUSAL_KINDS.includes(kind);
+}
 /**
  * Start-identity reads one settlement sweep may spend. A dead pid needs none, so
  * the leaked public records cost nothing here; a live pid that may be a reused
@@ -58,8 +136,7 @@ interface HostRunSettlementOwnerContext {
   sampleCapacity(runs: HostRunInternalRecord[]): HostRunCapacitySample;
   settleIfDue(run: HostRunInternalRecord, budget: { identityReads: number }, scope: "watch" | "sweep"): HostRunInternalRecord | null;
   nowMs: () => number;
-  reservationAccountingRetired(run: HostRunInternalRecord): boolean;
-  admissionHookState(run: HostRunInternalRecord, budget: { identityReads: number }): "gone" | "alive" | "unknown";
+  admissionHookState(run: HostRunInternalRecord, budget: { identityReads: number }): HostRunHookLiveness;
   writeSettlement(run: HostRunInternalRecord, event: "hook_gone" | "expiry", reason: string): HostRunInternalRecord | null;
   hookAlive: (pid: number) => boolean;
   hookStartIdentity: (pid: number) => string;
@@ -160,6 +237,39 @@ export class HostRunSettlementOwner {
     return settled;
   }
 
+  /**
+   * Settle an admitted reservation whose recorded hook died before it was
+   * admitted (Spec 035, "The sweep proves every reservation's holder"). Nothing
+   * was launched for it, so there is no command to lose and no result to wait
+   * for: it is the pinned record's `cancelled` before launch, one `hook_gone`
+   * fact names the dead hook and the observation, and the release carries the
+   * same reason. A row that moved, was settled by another writer or advanced its
+   * epoch is not this pass's to settle.
+   */
+  cancelAdmittedOnDeadHook(run: HostRunInternalRecord, observation: string): HostRunInternalRecord | null {
+    if (run.state !== "queued" && run.state !== "admitted") return null;
+    const at = new Date(this.context.nowMs()).toISOString();
+    const settlement = hostRunSettlementSchema.parse({ format: "host.run.settlement", version: 1, runId: run.id,
+      outcome: "cancelled", launched: false, settledAt: at, result: null, containers: [] });
+    const updated = hostRunInternalRecordSchema.parse({ ...run, state: "settled", position: null, settledAt: at, settlement,
+      capacityReleasedAt: at, capacityReleaseReason: HOST_RUN_HOOK_DIED_BEFORE_ADMIT_REASON, capacityReleaseKind: "automatic" });
+    let persisted: HostRunInternalRecord;
+    try {
+      persisted = this.context.persistMany(updated, [
+        { event: "hook_gone", data: { reason: HOST_RUN_HOOK_DIED_BEFORE_ADMIT_REASON, observation, outcome: settlement.outcome,
+          custody: "unknown", launched: false, settledAt: at,
+          hook: { pid: run.pid, startIdentity: run.startIdentity } } },
+        { event: "settlement", data: { settlement } },
+        { event: "capacity_release", data: { reason: HOST_RUN_HOOK_DIED_BEFORE_ADMIT_REASON, releasedAt: at } },
+      ], at, run.epoch);
+    } catch (error) {
+      // A timer racing an authority handoff is a fenced no-op, not a service error.
+      if (!this.context.currentEpoch(run.epoch)) return null;
+      throw error;
+    }
+    return persisted;
+  }
+
   rejectBeforeLaunch(id: string, reason: string): HostRunInternalRecord {
     const run = this.context.store.hostRun(id);
     if (!run) throw new Error(`Host run ${id} does not exist`);
@@ -208,18 +318,22 @@ export class HostRunSettlementOwner {
 
   /**
    * The ordinary sweep behind `tick()`, and the restart path for rows no watch
-   * covers (Spec 035, "A reservation settles when its recorded process is
-   * gone"): every launched admission reservation whose hook is gone settles
-   * once, and the freed capacity is offered to the queue.
+   * covers (Spec 035, "The sweep proves every reservation's holder": a
+   * reservation whose recorded process is gone settles on the next pass, never
+   * at its run timeout). Every admitted or running admission reservation whose
+   * recorded hook is proven gone settles once, and the freed capacity is offered
+   * to the queue.
    *
-   * The sweep settles the two shapes whose evidence is already final without
-   * asking a producer again: the row's own producer retired its accounting, or
-   * its recorded run timeout has passed. A row the producer still reports live,
-   * held or retained keeps that hold until its deadline; a row with no producer
-   * answer yet is left to the watch that owns it, so the sweep never settles a
-   * reservation one instant before its own observer reads the result. A bounded
-   * page of start-identity reads keeps a busy pass from stalling the service;
-   * anything it leaves unproven waits for the next tick.
+   * The sweep asks no producer anything and needs no second opinion: the hook's
+   * own liveness, by pid and contract 010 start identity, is the whole question,
+   * because the hook is the reservation's entire foreground. What it does not do
+   * is settle a row before a live endpoint watch has read that run's producer
+   * answer: the pass that proves the hook gone holds one bounded window for it
+   * (see `deferToWatchEvidence`), and the next pass settles the row whether or
+   * not the answer arrived. A row whose hook is alive, unreadable, unbound or
+   * unread this pass holds and records why. A bounded page of start-identity
+   * reads keeps a busy pass from stalling the service; anything it leaves
+   * unproven waits for the next tick, and a dead pid costs no read at all.
    */
   sweepAbandonedAdmissions(): HostRunInternalRecord[] {
     const budget = { identityReads: 0 };
@@ -235,40 +349,136 @@ export class HostRunSettlementOwner {
     if (settledRows.length) this.context.pump();
     return settledRows;
   }
+
+  /**
+   * Settle one admission reservation its recorded hook has left behind. The one
+   * question is the hook's liveness; the run timeout only decides which of the
+   * two exits names it.
+   *
+   * An `admitted` reservation never launched a command, so a gone hook means
+   * nothing can confirm the admission: it is cancelled before launch and its
+   * queued slot, reservation and workspace hold go with it. A `running` one is
+   * the pinned record's own `lost` — launched, no result, custody unknown —
+   * because Queue supervised no command for an admission and observed no
+   * container or escaped descendant.
+   */
   settleIfDue(run: HostRunInternalRecord, budget: { identityReads: number }, scope: "watch" | "sweep"): HostRunInternalRecord | null {
-    if (run.state !== "running" || run.submissionSource !== "admission" || run.launchedAt === null) return null;
+    if (run.submissionSource !== "admission") return null;
+    if (run.state === "admitted") {
+      // The watch owns a reservation it is still observing and cancels it there;
+      // the sweep is the path for a row no watch covers. Nothing ran for an
+      // admitted reservation, so there is no producer answer to wait for.
+      if (scope !== "sweep") return null;
+      const admitted = this.admissionHookState(run, budget);
+      if (admitted.state === "unknown") { this.recordUnknownProof(run, admitted); return null; }
+      if (admitted.state !== "gone") return null;
+      return this.cancelAdmittedOnDeadHook(run, admitted.reason);
+    }
+    if (run.state !== "running" || run.launchedAt === null) return null;
     const overdue = Date.parse(run.launchedAt) + run.runTimeoutMs < this.context.nowMs();
-    if (scope === "sweep" && !overdue && !this.context.reservationAccountingRetired(run)) return null;
-    if (this.context.admissionHookState(run, budget) !== "gone") return null;
+    const proof = this.admissionHookState(run, budget);
+    if (proof.state === "unknown") { this.recordUnknownProof(run, proof); return null; }
+    if (proof.state !== "gone") return null;
+    // Inside its own timeout the sweep gives a live watch the one chance to read
+    // this run's producer answer that a settled row would lose. The watch path
+    // has just read it, and an overdue row's deadline is its own final answer.
+    if (scope === "sweep" && !overdue && this.deferToWatchEvidence(run, proof.reason)) return null;
     return overdue
       ? this.context.writeSettlement(run, "expiry", HOST_RUN_EXPIRED_RELEASE_REASON)
       : this.context.writeSettlement(run, "hook_gone", HOST_RUN_ABANDONED_RELEASE_REASON);
   }
 
-  /** True when this row already carries its producer's own accounting retirement. */
-  reservationAccountingRetired(run: HostRunInternalRecord): boolean {
-    return hostRunAccountingRetirementOf(this.context.store, run) !== undefined;
+  /**
+   * Hold one bounded window for the endpoint watch to read this reservation's
+   * producer answer, and say whether this pass deferred to it.
+   *
+   * The watch is the only reader of the producer, and a settled row stops being
+   * watched, so a settlement written before that read discards evidence about the
+   * run the producer alone can give. A row that already carries the producer's
+   * answer — its closure, its hold, or the watch's report that it asked and could
+   * not classify the answer, or an accounting retirement — has nothing left to
+   * wait for and settles on this pass. The watch's notes about itself, above all
+   * `hook-liveness-unknown` written while the hook was still alive, are not that
+   * answer: they never suppress the window. Otherwise the first pass to prove the
+   * hook gone records `hook_gone_pending` with that proof, and the next pass
+   * settles the row whether the watch answered in the window or not, so a service
+   * with no watch attached, a crashed watch and a watch that cannot reach the
+   * producer all still clear inside one window.
+   */
+  deferToWatchEvidence(run: HostRunInternalRecord, observation: string): boolean {
+    const journal = this.context.store.hostRunJournal(run.id);
+    const answered = hostRunAccountingRetirementOf(this.context.store, run) !== undefined
+      || journal.some(hostRunProducerAnswerEntry);
+    if (answered) return false;
+    const pending = journal.filter(entry => entry.event === HOST_RUN_HOOK_GONE_PENDING_EVENT).at(-1);
+    // The proof instant is the scheduler's own clock, recorded in the fact: the
+    // journal's `at` is the store's wall clock, and only this one is comparable
+    // with `nowMs()`.
+    const provenAt = pending ? Date.parse(String((pending.data as { provenAt?: unknown } | null)?.provenAt)) : Number.NaN;
+    if (Number.isFinite(provenAt) && this.context.nowMs() - provenAt >= HOST_RUN_WATCH_EVIDENCE_WINDOW_MS) return false;
+    if (!pending) {
+      const provenAtIso = new Date(this.context.nowMs()).toISOString();
+      try {
+        this.context.store.appendHostRunJournal(run.id, HOST_RUN_HOOK_GONE_PENDING_EVENT, {
+          runId: run.id, observation, windowMs: HOST_RUN_WATCH_EVIDENCE_WINDOW_MS,
+          hook: { pid: run.pid, startIdentity: run.startIdentity }, provenAt: provenAtIso,
+        }, provenAtIso);
+      } catch { /* the next pass records it again before settling */ }
+    }
+    return true;
   }
 
   /**
    * The recorded admission hook's liveness: `gone` only on positive absence,
-   * `unknown` whenever this host cannot prove either way.
+   * `unknown` whenever this host cannot prove either way, with the observation
+   * that decided it.
    *
    * A pid the kernel no longer reports is positive absence, whatever the
    * recorded identity says, because no identity read can make a dead pid alive.
    * A live pid is only `alive` when its identity still matches — a reused number
-   * is `gone` — and an unreadable identity, or a pass that has spent its bounded
-   * reads, is `unknown` and never absence.
+   * is `gone` — and an unreadable or unrecorded identity, or a pass that has
+   * spent its bounded reads, is `unknown` and never absence.
    */
-  admissionHookState(run: HostRunInternalRecord, budget: { identityReads: number }): "gone" | "alive" | "unknown" {
-    if (!run.pid || !run.startIdentity) return "unknown";
-    if (!this.context.hookAlive(run.pid)) return "gone";
-    if (run.startIdentity.endsWith("@unknown")) return "unknown";
-    if (budget.identityReads >= HOST_RUN_SETTLEMENT_IDENTITY_READS_PER_SWEEP) return "unknown";
+  admissionHookState(run: HostRunInternalRecord, budget: { identityReads: number }): HostRunHookLiveness {
+    if (!run.pid || !run.startIdentity)
+      return { state: "unknown", cause: "unbound", reason: "the reservation records no hook process, so its liveness cannot be proven" };
+    if (!this.context.hookAlive(run.pid))
+      return { state: "gone", cause: "dead", reason: `recorded hook pid ${run.pid} is not a live process` };
+    if (run.startIdentity.endsWith("@unknown"))
+      return { state: "unknown", cause: "unreadable", reason: `recorded hook pid ${run.pid} carries no readable start identity (${run.startIdentity})` };
+    if (budget.identityReads >= HOST_RUN_SETTLEMENT_IDENTITY_READS_PER_SWEEP)
+      return { state: "unknown", cause: "budget", reason: `hook pid ${run.pid} was not read again: this pass spent its ${HOST_RUN_SETTLEMENT_IDENTITY_READS_PER_SWEEP} start-identity reads` };
     budget.identityReads++;
     const liveIdentity = this.context.hookStartIdentity(run.pid);
-    if (liveIdentity.endsWith("@unknown")) return "unknown";
-    return startIdentityMatches(run.startIdentity, liveIdentity) ? "alive" : "gone";
+    if (liveIdentity.endsWith("@unknown"))
+      return { state: "unknown", cause: "unreadable", reason: `hook pid ${run.pid} start identity could not be read (${liveIdentity})` };
+    if (!startIdentityMatches(run.startIdentity, liveIdentity))
+      return { state: "gone", cause: "reused", reason: `hook pid ${run.pid} now carries ${liveIdentity}, not the recorded ${run.startIdentity}` };
+    return { state: "alive", cause: "alive", reason: `hook pid ${run.pid} still carries its recorded start identity` };
+  }
+
+  /**
+   * Record that this pass could not prove the recorded hook alive or gone, once
+   * per distinct observation, so a row that still holds capacity names why
+   * instead of waiting silently for its run timeout (Spec 035, "A hold is never
+   * silent"). Queue's own read budget is not an observation of the host and is
+   * never recorded. Best effort and never fatal: a journal that refuses the note
+   * must not stop the sweep settling the rows whose evidence is final.
+   */
+  recordUnknownProof(run: HostRunInternalRecord, proof: HostRunHookLiveness): void {
+    if (proof.cause === "budget") return;
+    const reason = proof.reason;
+    try {
+      if (!this.context.currentEpoch(run.epoch)) return;
+      const already = this.context.store.hostRunJournal(run.id).some(entry => entry.event === HOST_RUN_LIVENESS_UNKNOWN_EVENT
+        && (entry.data as Record<string, unknown> | null)?.reason === reason);
+      if (already) return;
+      this.context.store.appendHostRunJournal(run.id, HOST_RUN_LIVENESS_UNKNOWN_EVENT, {
+        runId: run.id, kind: "hook-liveness-unknown", cause: proof.cause, reason,
+        hook: { pid: run.pid, startIdentity: run.startIdentity },
+        observedAt: new Date(this.context.nowMs()).toISOString(),
+      });
+    } catch { /* the next pass names it again */ }
   }
 
   /**
