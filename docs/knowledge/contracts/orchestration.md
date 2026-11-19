@@ -169,7 +169,10 @@ never a step the run would describe later. The record is re-read before each
 decision and the answer must be positive: a record that advanced or cannot be
 read holds the run and the next poll re-inspects. A sweep that cannot prove the
 token gone is not proof either, so it holds the run rather than settling while
-work of the run's own may still be live.
+work of the run's own may still be live. Every read the sweep makes is the
+spawned listing owner rather than the synchronous one, spaced by a waiting
+cadence, because a takeover runs on the service's own loop: a polling loop of
+host-wide environment scans would hold the accepting loop for seconds under load.
 
 `supervisor-process.ts` owns the detached supervisor's own process lifecycle — the
 launch shape and the stale stop with its proof — for milestone QA, project

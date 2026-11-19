@@ -17,5 +17,6 @@ an escaped descendant, a group the record does not describe. It re-reads the
 record before each decision and requires the answer to be positive: a record that
 advanced or cannot be read holds the run, and so does a sweep that cannot prove
 the run token gone, rather than settling while the run's own work may still be
-live. `lost` is reserved for a supervisor that died or an outcome that is
+live. Every sweep read is spawned, not synchronous, and spaced by a waiting
+cadence, so a takeover never holds the service's event loop. `lost` is reserved for a supervisor that died or an outcome that is
 genuinely unobservable — which still names the step and where its output ended.

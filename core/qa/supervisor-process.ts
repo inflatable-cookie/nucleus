@@ -15,13 +15,22 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { runtimeNodeArgs } from "../../shared/runtime.mjs";
 import { processGroupEmpty, signalProcessGroup, signalProcessGroupByLeader, waitForProcessGroupEmpty } from "../machine/process-group";
-import { processesForStartIdentity, processStartIdentityLiveness } from "../machine/process-identity-search";
+import {
+  processesForStartIdentity, processesForStartIdentityAsync,
+  processStartIdentityLiveness, processStartIdentityLivenessAsync,
+} from "../machine/process-identity-search";
 import { supervisorLiveness, supervisorLivenessAsync } from "../machine/start-identity";
 
 /** The grace a stale supervisor and its groups get between SIGTERM and SIGKILL. */
 export const SUPERVISOR_STOP_GRACE_MS = 250;
 /** Bounded proof window for process-group reaping after SIGKILL. */
 const SUPERVISOR_STOP_PROOF_WAIT_MS = 5_000;
+/**
+ * Cadence between run-token absence reads. Each read is a spawned host listing
+ * on macOS, so the sweep waits this long between them instead of spinning: the
+ * service loop stays free while a takeover waits for its proof.
+ */
+const RUN_TOKEN_SWEEP_POLL_MS = 250;
 export interface DetachedSupervisorLaunch {
   /** The supervisor entry shipped beside the service. */
   entry: string;
@@ -142,26 +151,31 @@ export async function stopSupervisorProcess(target: {
  * caller holds the run instead of settling it.
  */
 export async function stopRunTokenProcesses(identityToken: string): Promise<boolean> {
-  const signalToken = (name: NodeJS.Signals): void => {
-    const owned = processesForStartIdentity(identityToken);
+  // Every read here is spawned rather than synchronous: a takeover runs on the
+  // service's own loop, and one host-wide environment scan costs tens of
+  // milliseconds under normal load (far more under contention), so a polling
+  // loop of them would hold the accepting loop for seconds.
+  const signalToken = async (name: NodeJS.Signals): Promise<void> => {
+    const owned = await processesForStartIdentityAsync(identityToken);
     if (owned.state !== "found") return;
     for (const item of owned.processes) {
-      if (processStartIdentityLiveness(item.pid, item.startIdentity) !== "alive") continue;
+      if (await processStartIdentityLivenessAsync(item.pid, item.startIdentity) !== "alive") continue;
       try { process.kill(item.pid, name); } catch { /* the identity-checked process exited */ }
     }
   };
   const provenAbsent = async (timeoutMs: number): Promise<boolean> => {
     const deadline = Date.now() + Math.max(0, timeoutMs);
     for (;;) {
-      if (processesForStartIdentity(identityToken).state === "absent") return true;
-      if (Date.now() >= deadline) return false;
-      await new Promise(resolve => setTimeout(resolve, 20));
+      if ((await processesForStartIdentityAsync(identityToken)).state === "absent") return true;
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) return false;
+      await new Promise(resolve => setTimeout(resolve, Math.min(RUN_TOKEN_SWEEP_POLL_MS, remaining)));
     }
   };
   if (await provenAbsent(0)) return true;
-  signalToken("SIGTERM");
+  await signalToken("SIGTERM");
   if (await provenAbsent(SUPERVISOR_STOP_GRACE_MS)) return true;
-  signalToken("SIGKILL");
+  await signalToken("SIGKILL");
   return provenAbsent(SUPERVISOR_STOP_PROOF_WAIT_MS);
 }
 

@@ -298,6 +298,41 @@ test("a takeover holds the run instead of settling when the run token cannot be 
   assert.equal(verdict.kind, "running", `an unproven sweep holds the run: ${JSON.stringify(verdict)}`);
 });
 
+test("the token sweep waits between its reads and keeps the service loop free", { skip: process.platform === "win32" }, async (t) => {
+  const f = await inspectionFixture(t, { boundMs: 0 });
+  // A listing that never proves absence keeps the sweep waiting its whole
+  // window. Every read is recorded with the loop's own tick count, so the test
+  // sees both how often the sweep asks and whether the loop turned in between:
+  // one spawned host listing per 250ms leaves the loop free, a tight synchronous
+  // scan loop does not.
+  let ticks = 0;
+  const reads: Array<{ at: number; ticks: number }> = [];
+  overrideIdentityListing(() => {
+    reads.push({ at: Date.now(), ticks });
+    return { state: "unknown" };
+  });
+  const timer = setInterval(() => { ticks++; }, 25);
+  t.after(() => clearInterval(timer));
+  const started = Date.now();
+  const verdict = await f.inspection.inspectSupervisor(f.run);
+  const elapsed = Date.now() - started;
+  clearInterval(timer);
+  assert.equal(verdict.kind, "running", "an unproven sweep holds the run");
+  assert.ok(elapsed >= 5_000, `the sweep waited out its proof window (${elapsed}ms)`);
+  assert.ok(reads.length >= 4, `the sweep polled while waiting (${reads.length} reads)`);
+  assert.ok(reads.length <= 40, `the sweep polls at a waiting cadence, not a spin (${reads.length} reads in ${elapsed}ms)`);
+  for (const [index, read] of reads.slice(1).entries()) {
+    const previous = reads[index];
+    const gap = read.at - previous.at;
+    // A listing taken to signal is immediate; every other listing is a poll,
+    // and a poll must be separated by a real wait the loop could use.
+    if (gap < 5) continue;
+    assert.ok(gap >= 200, `the sweep waits between host listings (${gap}ms between reads ${index} and ${index + 1})`);
+    assert.ok(read.ticks - previous.ticks >= 4,
+      `the event loop turned between host listings (${read.ticks - previous.ticks} ticks between reads ${index} and ${index + 1})`);
+  }
+});
+
 test("a stale takeover sweeps the pending step whose record never landed", { skip: process.platform === "win32" }, async (t) => {
   // The publication window: the record names only the pending step identity, so
   // no group is recorded and only the run token can find the step's processes.
