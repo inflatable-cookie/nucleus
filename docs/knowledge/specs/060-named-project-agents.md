@@ -113,10 +113,12 @@ When no candidate other than the sender is left, or every candidate is
 positively gone, `ask` and `tell` record and return that the sender should
 handle the matter; planning questions do not start a decider. Operator-only
 matters go to the board. A task's own dispatching planner remains its first
-rung. `project.get` and the project settings view show the resolved thread and
-the full shortlist, each thread with its host, ranking reasons (registered
-planner, dispatcher, named agent, repository worker), last interaction and its
-observation (state, detail and when it was taken), plus the cache age. Explicit
+rung. `project.get` shows the resolved thread and the full shortlist, each thread
+with its host, ranking reasons (registered planner, dispatcher, named agent,
+repository worker), last interaction and its observation (state, detail and when
+it was taken), plus the cache age. The project settings payload carries the same
+shortlist, but the board's project editor still renders only the resolved thread
+and cache age. Explicit
 named addressing remains independent of this resolver: an unreadable named
 agent is still never sent to.
 
