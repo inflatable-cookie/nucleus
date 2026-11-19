@@ -17,6 +17,11 @@
  * 4. a real T3 delegated child — the parent's native role session — is runtime when
  *    its own environment names the recorded participant thread, and holds when the
  *    binding does not name it.
+ * 5. another thread's provider app-server — the `<provider> app-server …` T3 starts
+ *    under the same server — and the standing helpers it starts (`cua-driver mcp`,
+ *    the provider's `node_repl`) are runtime even with the task worktree as their
+ *    cwd; a real command one helper starts, a shell's own same-shaped app-server
+ *    and a live run's report helper all still hold (nucleus#1397).
  *
  * Evidence is written to `evidence.json` beside the private root, with no bearer.
  * Run it through `effigy proof:t3:runtime`.
@@ -27,6 +32,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   realpathSync,
   statSync,
   writeFileSync,
@@ -50,7 +56,10 @@ import {
   participantRuntime,
   t3AcpServerRuntime,
 } from "../core/machine/participant-runtime";
-import { acpTaskRuntimePids } from "../core/machine/acp-task-runtime";
+import {
+  acpTaskRuntimePids,
+  possibleAcpRuntimePids,
+} from "../core/machine/acp-task-runtime";
 import { readAcpProcessIdentities } from "../core/machine/run-process-identity";
 import { workspaceToolProcessIssue } from "../core/recovery/stall";
 
@@ -154,7 +163,8 @@ async function main() {
   const t3Data = join(root, "t3-data");
   const nucleusData = join(root, "ns");
   const tmp = join(root, "tmp");
-  for (const path of [privateHome, t3Data, nucleusData, tmp])
+  const helpersDirectory = join(root, "provider-helpers");
+  for (const path of [privateHome, t3Data, nucleusData, tmp, helpersDirectory])
     mkdirSync(path, { recursive: true });
   const environment: NodeJS.ProcessEnv = {
     PATH: process.env.PATH ?? "/usr/bin:/bin",
@@ -169,6 +179,9 @@ async function main() {
     T3CODE_NO_BROWSER: "true",
     T3CODE_LOG_LEVEL: "Warn",
     NUCLEUS_DATA_HOME: nucleusData,
+    // Only this proof's private server sets it: the synthetic provider then
+    // writes and starts the session's standing helpers for the thread's cwd.
+    NUCLEUS_T3_PROVIDER_HELPERS: helpersDirectory,
   };
   const t3Args = (rest: string[]) => [...rest, "--base-dir", t3Data];
   const acpLauncher = join(root, "bin", "nucleus-acp");
@@ -178,6 +191,39 @@ async function main() {
     acpLauncher,
     `#!/bin/sh\n# nucleus-owned-command-v1\nexec ${JSON.stringify(process.execPath)} --import ${JSON.stringify(tsx)} ${JSON.stringify(join(checkout, "bin/nucleus-acp.mjs"))} "$@"\n`,
     { mode: 0o755 },
+  );
+  // The synthetic Codex provider T3 spawns as `<binary> app-server …`, and the
+  // directory its app-server writes the session's standing helpers into. No model
+  // or account is used: the app-server answers T3's protocol locally.
+  const codexHome = join(root, "codex-home");
+  mkdirSync(codexHome, { recursive: true });
+  const syntheticCodex = join(root, "bin", "synthetic-codex");
+  const syntheticPeer = fileURLToPath(
+    new URL("./acceptance/t3code-provider.mjs", import.meta.url),
+  );
+  writeFileSync(
+    syntheticCodex,
+    `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(syntheticPeer)} "$@"\n`,
+    { mode: 0o755 },
+  );
+  mkdirSync(join(t3Data, "userdata"), { recursive: true });
+  writeFileSync(
+    join(t3Data, "userdata", "settings.json"),
+    JSON.stringify(
+      {
+        providerInstances: {
+          codex: {
+            driver: "codex",
+            enabled: true,
+            config: { binaryPath: syntheticCodex, homePath: codexHome },
+          },
+        },
+        notifications: { enabled: false },
+      },
+      null,
+      2,
+    ),
+    { mode: 0o600 },
   );
   writeFileSync(
     join(nucleusData, "settings.json"),
@@ -206,6 +252,8 @@ async function main() {
   await git(["worktree", "add", "--quiet", "-b", "proof-worktree", worktree]);
 
   const children: ChildProcess[] = [];
+  // Processes this proof started itself, signalled by pid in the private root.
+  const strayPids: number[] = [];
   let server: ChildProcess | null = null;
   let service: QueueService | null = null;
   try {
@@ -635,6 +683,243 @@ async function main() {
         recognisedWithAnotherTaskBinding: false,
       });
 
+      // 6. The provider app-server this server hosts (nucleus#1397): T3 starts
+      // another thread's provider as `<provider> app-server …` under the same
+      // server, and that app-server starts the session's standing helpers —
+      // `cua-driver mcp` and the provider's `node_repl` — with the task worktree
+      // as their cwd. They belong to no task, so one recognition owns them and
+      // the workspace proof passes; a real command a helper starts, a shell's own
+      // same-shaped app-server, and a live run's report helper all still hold.
+      const served = (await rpc.call("server.getConfig", {})) as {
+        providers: Array<{
+          instanceId: string;
+          models: Array<{ slug: string }>;
+        }>;
+      };
+      const codexProvider = served.providers.find(
+        (provider) => provider.instanceId === "codex" && provider.models.length,
+      );
+      assert.ok(
+        codexProvider,
+        "the private T3 lists the synthetic codex provider",
+      );
+      const codexThread = `proof-codex-${Date.now()}`;
+      await rpc.call("orchestration.launchThread", {
+        commandId: `proof-codex-launch-${Date.now()}`,
+        threadId: codexThread,
+        projectId,
+        title: "provider app-server proof",
+        modelSelection: {
+          instanceId: "codex",
+          model: codexProvider.models[0]!.slug,
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        workspaceStrategy: {
+          type: "existing_worktree",
+          worktreePath: worktree,
+        },
+        initialMessage: {
+          messageId: `proof-codex-message-${Date.now()}`,
+          text: "proof-hold",
+          attachments: [],
+        },
+      });
+      const chain = await until(
+        async () => {
+          const read = await readHostUidProcesses();
+          const current = read.state === "listed" ? read.processes : [];
+          const appServer = current.find(
+            (fact) =>
+              fact.ppid === serverPid &&
+              /(?:^|\s)app-server(?:\s|$)/.test(fact.command),
+          );
+          if (!appServer) return null;
+          const helpers = current.filter((fact) => fact.ppid === appServer.pid);
+          return helpers.length >= 2 ? { current, appServer, helpers } : null;
+        },
+        "the provider app-server and its standing helpers",
+        60_000,
+      );
+      const chainRuntime = acpTaskRuntimePids(
+        chain.current,
+        runtime.acp ?? null,
+      );
+      assert.ok(
+        chainRuntime.has(chain.appServer.pid),
+        "the provider app-server is this server's own",
+      );
+      for (const helper of chain.helpers) {
+        assert.ok(
+          chainRuntime.has(helper.pid),
+          `the standing helper ${helper.pid} is runtime`,
+        );
+        assert.equal(
+          realpathSync(helper.cwd!),
+          realpathSync(worktree),
+          "the helper inherited the task worktree as its cwd",
+        );
+      }
+      assert.equal(
+        workspaceToolProcessIssue(
+          chain.current,
+          worktree,
+          ["proof-run"],
+          runtime,
+        ),
+        null,
+        "the provider's own helpers never block review",
+      );
+      // Both ends of the chain are this proof's own processes: stop them even if
+      // the private server's teardown does not.
+      strayPids.push(
+        chain.appServer.pid,
+        ...chain.helpers.map((fact) => fact.pid),
+      );
+      note("provider-app-server-helpers", {
+        appServerPid: chain.appServer.pid,
+        helperPids: chain.helpers.map((fact) => fact.pid).sort((a, b) => a - b),
+        helperCommands: chain.helpers.map((fact) => fact.command),
+        helperCwd: chain.helpers[0]?.cwd ?? null,
+      });
+
+      // 6a. A real command the MCP helper started is work, not runtime.
+      const helperMarker = join(helpersDirectory, "spawn-command");
+      writeFileSync(helperMarker, "");
+      const helperChildPid = await until(
+        async () => {
+          if (!existsSync(`${helperMarker}.pid`)) return null;
+          const pid = Number(
+            readFileSync(`${helperMarker}.pid`, "utf8").trim(),
+          );
+          return Number.isSafeInteger(pid) && pid > 0 ? pid : null;
+        },
+        "a command the provider helper started",
+        30_000,
+      );
+      strayPids.push(helperChildPid);
+      listing = await readHostUidProcesses();
+      const withHelperCommand =
+        listing.state === "listed" ? listing.processes : [];
+      assert.equal(
+        acpTaskRuntimePids(withHelperCommand, runtime.acp ?? null).has(
+          helperChildPid,
+        ),
+        false,
+        "a command a helper starts is never runtime",
+      );
+      assert.match(
+        workspaceToolProcessIssue(
+          withHelperCommand,
+          worktree,
+          ["proof-run"],
+          runtime,
+        ) ?? "",
+        new RegExp(`process ${helperChildPid} remains in the task workspace`),
+        "a command a helper starts still holds",
+      );
+      process.kill(helperChildPid, "SIGKILL");
+      await delay(400);
+
+      // 6b. A shell's own same-shaped app-server is a tool: it holds, and cleanup
+      // does not preserve it either.
+      const strayShell = spawn(
+        "/bin/sh",
+        // A command list, not a single command: the shell stays and keeps the
+        // pipe open, exactly as a shell a task's tools started would.
+        ["-c", `${JSON.stringify(syntheticCodex)} app-server && true`],
+        {
+          cwd: worktree,
+          env: { ...environment, NUCLEUS_T3_PROVIDER_HELPERS: "" },
+          // The synthetic provider exits on stdin EOF, as its protocol says.
+          stdio: ["pipe", "ignore", "ignore"],
+        },
+      );
+      children.push(strayShell);
+      const stray = await until(
+        async () => {
+          const read = await readHostUidProcesses();
+          const current = read.state === "listed" ? read.processes : [];
+          const appServer = current.find(
+            (fact) => fact.ppid === strayShell.pid,
+          );
+          return appServer ? { processes: current, appServer } : null;
+        },
+        "a shell's own provider app-server",
+        30_000,
+      );
+      strayPids.push(stray.appServer.pid);
+      assert.equal(
+        acpTaskRuntimePids(stray.processes, runtime.acp ?? null).has(
+          stray.appServer.pid,
+        ),
+        false,
+        "a same-shaped app-server a shell started is not T3's",
+      );
+      assert.equal(
+        possibleAcpRuntimePids(stray.processes).has(stray.appServer.pid),
+        false,
+        "cleanup does not preserve a shell's app-server",
+      );
+      // The shell itself is in the worktree and owns no runtime shape, so it is
+      // the first rooted process the proof names; its app-server is the other.
+      assert.match(
+        workspaceToolProcessIssue(
+          stray.processes,
+          worktree,
+          ["proof-run"],
+          runtime,
+        ) ?? "",
+        new RegExp(
+          `process (?:${strayShell.pid}|${stray.appServer.pid}) remains in the task workspace`,
+        ),
+        "a shell's own app-server still holds",
+      );
+      strayShell.kill("SIGKILL");
+      process.kill(stray.appServer.pid, "SIGKILL");
+      await delay(400);
+
+      // 6c. A live run's report helper keeps its own fence.
+      const ticketRun = "11111111-2222-3333-4444-555555555555";
+      const helperDir = join(root, "report-helper");
+      mkdirSync(helperDir, { recursive: true });
+      writeFileSync(
+        join(helperDir, "mcp-report.mjs"),
+        "setInterval(() => {}, 120000);\n",
+      );
+      const reportHelper = spawn(
+        process.execPath,
+        [
+          join(helperDir, "mcp-report.mjs"),
+          join(root, "tickets", `mcp-${ticketRun}.json`),
+        ],
+        { cwd: worktree, env: environment, stdio: "ignore" },
+      );
+      children.push(reportHelper);
+      await delay(400);
+      listing = await readHostUidProcesses();
+      const withReportHelper =
+        listing.state === "listed" ? listing.processes : [];
+      assert.match(
+        workspaceToolProcessIssue(
+          withReportHelper,
+          worktree,
+          [ticketRun],
+          runtime,
+        ) ?? "",
+        new RegExp(
+          `provider process ${reportHelper.pid} still carries the run MCP ticket`,
+        ),
+        "a live run's report helper still holds",
+      );
+      reportHelper.kill("SIGKILL");
+      await delay(400);
+      note("provider-helpers-negative-cases", {
+        helperChildPid,
+        shellAppServerPid: stray.appServer.pid,
+        reportHelperPid: reportHelper.pid,
+      });
+
       evidence.target.passed = true;
       writeFileSync(
         join(root, "evidence.json"),
@@ -677,15 +962,27 @@ async function main() {
       await delay(200);
       if (child.exitCode === null) child.kill("SIGKILL");
     }
-    // The private server's own children (a provider thread) go with it; anything it
-    // leaves behind is named here so an operator can see it.
+    for (const pid of strayPids)
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {
+        /* already exited */
+      }
+    // The private server's own children — its provider app-servers — can outlive
+    // it. Every process whose command names this run's private root is this
+    // proof's own, so it is stopped here and named in the output.
     try {
       const read = await readHostUidProcesses();
-      const serverPidForLeftovers = server?.pid ?? null;
       const leftovers =
-        read.state === "listed" && serverPidForLeftovers
-          ? read.processes.filter((fact) => fact.ppid === serverPidForLeftovers)
+        read.state === "listed"
+          ? read.processes.filter((fact) => fact.command.includes(root))
           : [];
+      for (const fact of leftovers)
+        try {
+          process.kill(fact.pid, "SIGKILL");
+        } catch {
+          /* already exited */
+        }
       if (leftovers.length)
         console.log(
           JSON.stringify({

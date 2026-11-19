@@ -536,3 +536,335 @@ test(
     }
   },
 );
+
+/**
+ * The shared provider app-server (nucleus#1397): T3 starts each thread's provider
+ * as `<provider> app-server …` directly under the connected server, and that
+ * app-server starts the session's standing helpers — `cua-driver mcp`, the
+ * provider's code-mode runtime host — with the thread's workspace as their cwd.
+ * Several threads share one app-server, so these helpers belong to no task and a
+ * cwd-rooted proof must not read them as work in whichever worktree they run.
+ */
+const APP_SERVER = 700;
+const CUA = 701;
+const REPL = 702;
+const CODE_MODE = 703;
+
+function sharedAppServerListing(worktree: string): HostProcessFact[] {
+  return [
+    fact(
+      SERVER,
+      1,
+      "/Applications/T3 Code (Nightly).app/Contents/MacOS/T3 Code",
+      "/",
+    ),
+    fact(
+      APP_SERVER,
+      SERVER,
+      "/provider/.local/bin/codex app-server -c thread_unload_delay_secs=0",
+      worktree,
+    ),
+    fact(CUA, APP_SERVER, "/provider/.local/bin/cua-driver mcp", worktree),
+    fact(
+      REPL,
+      APP_SERVER,
+      "/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node_repl",
+      worktree,
+    ),
+    fact(
+      CODE_MODE,
+      APP_SERVER,
+      "/provider/.codex/packages/standalone/bin/codex-code-mode-host --listen grpc+stdio://",
+      worktree,
+    ),
+  ];
+}
+
+test("a T3 provider app-server and the standing helpers it keeps are runtime", () => {
+  const fixture = hostFixture();
+  const runtime = runtimeFor(fixture);
+  const processes = sharedAppServerListing(fixture.worktree);
+  // The app-server serves several threads; no ACP parent is needed for it, and
+  // its helpers belong to whichever thread they were started for.
+  assert.deepEqual(sorted(acpTaskRuntimePids(processes, runtime.acp)), [
+    APP_SERVER,
+    CUA,
+    REPL,
+    CODE_MODE,
+  ]);
+  assert.equal(
+    workspaceToolProcessIssue(
+      processes,
+      fixture.worktree,
+      [OTHER_RUN],
+      runtime,
+    ),
+    null,
+    "a helper's inherited task cwd never blocks review",
+  );
+  for (const pid of [APP_SERVER, CUA, REPL, CODE_MODE])
+    assert.ok(
+      possibleParticipantRuntimePids(processes).has(pid),
+      `cleanup preserves ${pid}`,
+    );
+});
+
+test("a command below the app-server or its helpers is work, not runtime", () => {
+  const fixture = hostFixture();
+  const runtime = runtimeFor(fixture);
+  for (const [pid, ppid, command] of [
+    [704, CUA, "node build.mjs"],
+    [705, APP_SERVER, "/bin/zsh -lc 'npx some-tool mcp'"],
+    [706, APP_SERVER, "/provider/.local/bin/cua-driver click 10 10"],
+  ] as const) {
+    const processes = [
+      ...sharedAppServerListing(fixture.worktree),
+      fact(pid, ppid, command, fixture.worktree),
+    ];
+    assert.equal(
+      acpTaskRuntimePids(processes, runtime.acp).has(pid),
+      false,
+      `${command} is never runtime`,
+    );
+    assert.match(
+      workspaceToolProcessIssue(
+        processes,
+        fixture.worktree,
+        [OTHER_RUN],
+        runtime,
+      )!,
+      new RegExp(`process ${pid} remains in the task workspace process tree`),
+    );
+  }
+});
+
+test("a same-shaped helper outside the connected server's app-server exempts nothing", () => {
+  const fixture = hostFixture();
+  const runtime = runtimeFor(fixture);
+  // The app-server's own parent is not the connected server: another daemon's
+  // provider, or a task's own tool, proves no T3 ownership.
+  const foreign = [
+    fact(
+      SERVER,
+      1,
+      "/Applications/T3 Code (Nightly).app/Contents/MacOS/T3 Code",
+      "/",
+    ),
+    fact(900, 1, "/Applications/Other Host.app/Contents/MacOS/other-host", "/"),
+    fact(710, 900, "/usr/local/bin/codex app-server", fixture.worktree),
+    fact(
+      CUA,
+      710,
+      "/provider/.local/bin/cua-driver mcp",
+      fixture.worktree,
+    ),
+    fact(
+      REPL,
+      710,
+      "/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node_repl",
+      fixture.worktree,
+    ),
+  ];
+  const recognised = acpTaskRuntimePids(foreign, runtime.acp);
+  for (const pid of [710, CUA, REPL])
+    assert.equal(
+      recognised.has(pid),
+      false,
+      `${pid} is not this task's runtime`,
+    );
+  assert.match(
+    workspaceToolProcessIssue(foreign, fixture.worktree, [OTHER_RUN], runtime)!,
+    /process 710 remains in the task workspace process tree/,
+  );
+  // Cleanup has no connection to name the server, and a live non-shell parent is
+  // the evidence it keeps: it never stops a plausible provider chain.
+  for (const pid of [710, CUA, REPL])
+    assert.ok(possibleParticipantRuntimePids(foreign).has(pid));
+  // A shell started it: that is a tool chain, and both ends stay targets.
+  const shellStarted = [
+    fact(SERVER, 1, "T3 Code (Nightly)", "/"),
+    fact(711, 712, "/usr/local/bin/codex app-server", fixture.worktree),
+    fact(712, SERVER, "/bin/zsh -lc 'codex app-server'", fixture.worktree),
+    fact(
+      713,
+      711,
+      "/provider/.local/bin/cua-driver mcp",
+      fixture.worktree,
+    ),
+  ];
+  const possible = possibleParticipantRuntimePids(shellStarted);
+  for (const pid of [711, 713])
+    assert.equal(
+      possible.has(pid),
+      false,
+      `${pid} from a shell is never runtime`,
+    );
+});
+
+/**
+ * The same guard path over real process facts: a real T3-shaped server starts a
+ * real provider app-server, which starts the standing helpers real providers keep
+ * (`... mcp`, a `*_repl` runtime host) with the task worktree as their cwd — the
+ * shape that refused review on nucleus#1397. A real command in the worktree, and
+ * a same-named helper that is nobody's child, still hold.
+ */
+test(
+  "real processes: a provider app-server and its helpers are runtime, commands hold",
+  { skip: !["darwin", "linux"].includes(process.platform), timeout: 180_000 },
+  async () => {
+    const fixture = hostFixture();
+    const appServerScript = join(fixture.root, "provider-app-server");
+    const cuaScript = join(fixture.root, "cua-driver");
+    const replScript = join(fixture.root, "node_repl");
+    const infoFile = join(fixture.root, "helpers.json");
+    const shebang = `#!${process.execPath}\n`;
+    const idle = `${shebang}setInterval(() => {}, 120000);\n`;
+    writeFileSync(cuaScript, idle, { mode: 0o755 });
+    writeFileSync(replScript, idle, { mode: 0o755 });
+    writeFileSync(
+      appServerScript,
+      `${shebang}const { spawn } = require("node:child_process");\n` +
+        `const fs = require("node:fs");\n` +
+        `const options = { cwd: process.cwd(), env: process.env, stdio: "ignore" };\n` +
+        `const cua = spawn(${JSON.stringify(cuaScript)}, ["mcp"], options);\n` +
+        `const repl = spawn(${JSON.stringify(replScript)}, [], options);\n` +
+        `fs.writeFileSync(${JSON.stringify(infoFile)}, JSON.stringify({ cua: cua.pid, repl: repl.pid }));\n` +
+        `setInterval(() => {}, 120000);\n`,
+      { mode: 0o755 },
+    );
+    const serverScript = join(fixture.root, "fake-t3-server.cjs");
+    const appServerPidFile = join(fixture.root, "app-server.pid");
+    writeFileSync(
+      serverScript,
+      `const { spawn } = require("node:child_process");\n` +
+        `const appServer = spawn(${JSON.stringify(appServerScript)}, ["app-server", "-c", "thread_unload_delay_secs=0"], { cwd: ${JSON.stringify(fixture.worktree)}, env: process.env, stdio: "ignore" });\n` +
+        `require("node:fs").writeFileSync(${JSON.stringify(appServerPidFile)}, String(appServer.pid));\n` +
+        `setTimeout(() => {}, 120000);\n`,
+    );
+    const env = {
+      PATH: process.env.PATH ?? "",
+      HOME: fixture.root,
+      TMPDIR: fixture.root,
+    };
+    const server = spawn(process.execPath, [serverScript], {
+      cwd: fixture.root,
+      env,
+      stdio: "ignore",
+    });
+    const children: number[] = [];
+    const waitFor = async <T>(read: () => T | null, what: string) => {
+      const deadline = Date.now() + 30_000;
+      while (Date.now() < deadline) {
+        const value = read();
+        if (value) return value;
+        await delay(100);
+      }
+      throw Error(`Timed out waiting for ${what}`);
+    };
+    try {
+      const fileJson = <T>(file: string): T | null => {
+        if (!existsSync(file)) return null;
+        const text = readFileSync(file, "utf8").trim();
+        return text ? (JSON.parse(text) as T) : null;
+      };
+      const appServerPid = await waitFor(() => {
+        const text = existsSync(appServerPidFile)
+          ? readFileSync(appServerPidFile, "utf8").trim()
+          : "";
+        return text ? Number(text) : null;
+      }, "the provider app-server");
+      const helpers = await waitFor(
+        () => fileJson<{ cua: number; repl: number }>(infoFile),
+        "the app-server's standing helpers",
+      );
+      children.push(appServerPid, helpers.cua, helpers.repl);
+      const command = spawn(
+        process.execPath,
+        ["-e", "setTimeout(() => {}, 120000)"],
+        { cwd: fixture.worktree, env, stdio: "ignore" },
+      );
+      children.push(command.pid!);
+      await delay(400);
+      // The descriptor names the server this test started.
+      writeFileSync(
+        join(fixture.baseDir, "userdata", "server-runtime.json"),
+        `${JSON.stringify({
+          version: 1,
+          pid: server.pid,
+          host: "127.0.0.1",
+          port: fixture.port,
+          origin: `http://127.0.0.1:${fixture.port}`,
+          serverVersion: "0.1.6-nightly.fixture",
+        })}\n`,
+      );
+      const runtime = runtimeFor(fixture);
+      assert.equal(runtime.acp?.serverPid, server.pid);
+      const read = await readHostUidProcesses();
+      assert.equal(read.state, "listed");
+      const processes = read.state === "listed" ? read.processes : [];
+      const recognised = acpTaskRuntimePids(processes, runtime.acp);
+      for (const pid of [appServerPid, helpers.cua, helpers.repl])
+        assert.ok(
+          recognised.has(pid),
+          `real provider chain pid ${pid} is runtime`,
+        );
+      assert.equal(recognised.has(command.pid!), false);
+      // A real command in the worktree still holds the proof.
+      assert.match(
+        workspaceToolProcessIssue(
+          processes,
+          fixture.worktree,
+          ["run-1"],
+          runtime,
+        )!,
+        new RegExp(
+          `process ${command.pid} remains in the task workspace process tree`,
+        ),
+      );
+      assert.equal(
+        workspaceToolProcessIssue(
+          processes.filter((fact) => fact.pid !== command.pid),
+          fixture.worktree,
+          ["run-1"],
+          runtime,
+        ),
+        null,
+        "the provider's own helpers with a task cwd never block review",
+      );
+      // A same-named runtime host that is nobody's child is still a tool.
+      const stray = spawn(replScript, [], {
+        cwd: fixture.worktree,
+        env,
+        stdio: "ignore",
+      });
+      children.push(stray.pid!);
+      await delay(400);
+      const after = await readHostUidProcesses();
+      const listing = after.state === "listed" ? after.processes : [];
+      assert.equal(
+        acpTaskRuntimePids(listing, runtime.acp).has(stray.pid!),
+        false,
+        "a basename alone never exempts a process",
+      );
+      assert.match(
+        workspaceToolProcessIssue(
+          listing.filter((fact) => fact.pid !== command.pid),
+          fixture.worktree,
+          ["run-1"],
+          runtime,
+        )!,
+        new RegExp(
+          `process ${stray.pid} remains in the task workspace process tree`,
+        ),
+      );
+    } finally {
+      server.kill("SIGKILL");
+      for (const pid of children)
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {
+          /* already gone */
+        }
+    }
+  },
+);

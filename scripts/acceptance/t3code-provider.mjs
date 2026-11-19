@@ -1,12 +1,52 @@
 #!/usr/bin/env node
 // Synthetic Codex app-server for the private T3 proof. No model or account is used.
 import { randomUUID } from 'node:crypto';
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, writeFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { join } from 'node:path';
 
 if (process.argv.includes('--version')) {
   console.log('codex-cli 0.166.0');
   process.exit(0);
 }
+/**
+ * The standing helpers a real provider app-server starts for a session, opt-in per
+ * proof: an MCP server in its `mcp` mode (`cua-driver mcp`) and the provider's
+ * code-mode runtime host (`node_repl`), both with the thread's workspace as cwd.
+ * `NUCLEUS_T3_PROVIDER_HELPERS` names the directory they are written to. When
+ * `spawn-command` appears in that directory the MCP helper starts one command of
+ * its own, so a proof can observe that a command below a helper is still work.
+ */
+const helpersDirectory = process.env.NUCLEUS_T3_PROVIDER_HELPERS || '';
+const helperPrograms = ['cua-driver', 'node_repl'];
+const started = [];
+function helperScript(name) {
+  if (name !== 'cua-driver') return `#!${process.execPath}\nsetInterval(() => {}, 120000);\n`;
+  return `#!${process.execPath}\n` +
+    `const fs = require('node:fs'), { spawn } = require('node:child_process');\n` +
+    `const marker = ${JSON.stringify(join(helpersDirectory, 'spawn-command'))};\n` +
+    `let started = null;\n` +
+    `setInterval(() => { if (started || !fs.existsSync(marker)) return; started = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 120000)'], { cwd: process.cwd(), stdio: 'ignore' }); fs.writeFileSync(marker + '.pid', String(started.pid)); }, 100);\n` +
+    `setInterval(() => {}, 120000);\n`;
+}
+function startHelpers(cwd) {
+  if (!helpersDirectory || !cwd) return;
+  for (const name of helperPrograms) {
+    const program = join(helpersDirectory, name);
+    writeFileSync(program, helperScript(name), { mode: 0o755 });
+    const args = name === 'cua-driver' ? ['mcp'] : [];
+    const child = spawn(program, args, { cwd, env: process.env, stdio: 'ignore' });
+    started.push(child.pid);
+  }
+  writeFileSync(join(helpersDirectory, 'helpers.json'), JSON.stringify({ cwd, pids: started }));
+}
+function stopHelpers() {
+  for (const pid of started.splice(0))
+    try { process.kill(pid, 'SIGKILL'); } catch { /* already gone */ }
+}
+process.on('SIGTERM', () => { stopHelpers(); process.exit(0); });
+process.on('SIGINT', () => { stopHelpers(); process.exit(0); });
+process.on('exit', stopHelpers);
 const send = value => process.stdout.write(`${JSON.stringify(value)}\n`);
 const reply = (id, result) => send({ id, result });
 const notify = (method, params) => send({ method, params });
@@ -45,6 +85,7 @@ function handle(message) {
   if (method === 'mcpServerStatus/list') return reply(id, { data: [], nextCursor: null });
   if (method === 'thread/start' || method === 'thread/resume') {
     const value = thread(params.threadId, params.cwd);
+    if (method === 'thread/start') startHelpers(value.cwd);
     return reply(id, { thread: value, model: model.id, modelProvider: 'openai', cwd: value.cwd, approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: { type: 'dangerFullAccess' }, reasoningEffort: 'medium' });
   }
   if (method === 'thread/read') return reply(id, { thread: threads.get(params.threadId) || thread(params.threadId) });

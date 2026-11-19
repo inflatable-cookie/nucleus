@@ -29,6 +29,20 @@
  * session is work, and a shell is never a runtime, so every chain it starts
  * stays live.
  *
+ * A provider app-server the same server hosts is runtime with the standing
+ * helpers it keeps. T3 starts each thread's provider as `<provider> app-server …`
+ * directly under the server (one shared app-server serves several threads), and
+ * that app-server starts its sessions' own helpers — an MCP server in its `mcp`
+ * mode (`cua-driver mcp`) or the provider's code-mode runtime host (`node_repl`,
+ * `*-host`) — as its direct children, with the thread's workspace as their cwd.
+ * They outlive every turn and belong to no task, so a cwd-rooted proof reads them
+ * as a tool in whichever worktree they were started for (nucleus#1397). The
+ * evidence is the chain, never a name: the app-server is a direct, live child of
+ * the *connected* server in its `app-server` subcommand mode, and a managed
+ * helper is that app-server's own direct, live, non-shell child whose own shape
+ * is a standing runtime. A process that merely carries such a name, a shell, or
+ * anything below the app-server's direct children is still a command.
+ *
  * An unreadable environment, a parent that is not the server, and a binding that
  * names another task all hold. The same recognition protects these processes
  * from run cleanup and lets workspace proof pass while a task is idle.
@@ -90,6 +104,113 @@ export function isSessionMcpServer(command: string): boolean {
 const alive = (fact: { state?: string | null }) =>
   !(fact.state ?? "").toUpperCase().startsWith("Z");
 
+/** The subcommand position: `<program> app-server`, never a path operand or a flag. */
+const APP_SERVER_MODE = "app-server";
+
+/**
+ * The program a command runs and the subcommand it names, skipping the script
+ * operand an interpreter runs: `codex app-server`, `node /p/codex app-server`,
+ * `cua-driver mcp`. A shell, or a command with no program, is neither.
+ */
+function programAndMode(command: string): {
+  program?: string;
+  mode?: string;
+} {
+  const argv = commandArgv(command);
+  const base = argvBase(argv[0])?.toLowerCase();
+  if (isShellProgram(base)) return {};
+  const interpreted = INTERPRETER_PROGRAMS.has(base!);
+  return {
+    program: argvBase(interpreted ? argv[1] : argv[0])?.toLowerCase(),
+    mode: (interpreted ? argv[2] : argv[1])?.toLowerCase(),
+  };
+}
+
+/** The provider's own `app-server` mode, from the subcommand it names. */
+function isProviderAppServer(command: string): boolean {
+  return programAndMode(command).mode === APP_SERVER_MODE;
+}
+
+/**
+ * A standing helper a provider app-server keeps for one session: a session MCP
+ * server (`cua-driver mcp`, the Nucleus report helper), or the provider's
+ * code-mode runtime host (`node_repl`, `codex-code-mode-host`). The shape is the
+ * program's own arguments, so a command that swaps in another script is not one.
+ */
+function isProviderManagedHelper(command: string): boolean {
+  const { program, mode } = programAndMode(command);
+  if (!program) return false;
+  if (REPORT_HELPER_SCRIPTS.includes(program)) return true;
+  if (mode === "mcp" || mode === "mcp-server" || mode === "mcp_server")
+    return true;
+  return program.endsWith("_repl") || program.endsWith("-host");
+}
+
+/**
+ * The provider app-servers one connected T3 server hosts, and the standing
+ * helpers each keeps (nucleus#1397). The server's own pid is the ancestor fact,
+ * so a same-shaped provider process anywhere else proves nothing; a helper is
+ * one of those app-servers' direct children, so a command a helper or a session
+ * starts stays a tool.
+ */
+export function providerAppServerRuntimePids(
+  processes: readonly RuntimeProcessFact[],
+  serverPid: number,
+): Set<number> {
+  const runtime = new Set<number>();
+  if (!Number.isSafeInteger(serverPid) || serverPid <= 0) return runtime;
+  if (!processes.some((fact) => fact.pid === serverPid)) return runtime;
+  for (const fact of processes)
+    if (
+      alive(fact) &&
+      fact.ppid === serverPid &&
+      isProviderAppServer(fact.command)
+    )
+      runtime.add(fact.pid);
+  for (const fact of processes)
+    if (
+      alive(fact) &&
+      fact.ppid != null &&
+      runtime.has(fact.ppid) &&
+      isProviderManagedHelper(fact.command)
+    )
+      runtime.add(fact.pid);
+  return runtime;
+}
+
+/**
+ * The same shape for run cleanup, which has no T3 connection to name the
+ * server: a provider app-server is still never a released run's tool, so any
+ * live `app-server`-mode process whose own parent is a live non-shell program —
+ * a host daemon, never a shell a session's tools started — with the standing
+ * helpers it keeps is preserved.
+ */
+export function possibleProviderAppServerRuntimePids(
+  processes: readonly RuntimeProcessFact[],
+): Set<number> {
+  const runtime = new Set<number>();
+  const byPid = new Map(processes.map((fact) => [fact.pid, fact]));
+  for (const fact of processes) {
+    if (!alive(fact) || fact.ppid == null) continue;
+    const parent = byPid.get(fact.ppid);
+    if (!parent || !alive(parent)) continue;
+    // A host daemon starts a provider app-server; a shell, a session or a tool
+    // never does.
+    if (isShellProgram(argvBase(commandArgv(parent.command)[0])?.toLowerCase()))
+      continue;
+    if (isProviderAppServer(fact.command)) runtime.add(fact.pid);
+  }
+  for (const fact of processes)
+    if (
+      alive(fact) &&
+      fact.ppid != null &&
+      runtime.has(fact.ppid) &&
+      isProviderManagedHelper(fact.command)
+    )
+      runtime.add(fact.pid);
+  return runtime;
+}
+
 /** The ACP binding a parent carries: its environment's pointer, or its cwd's own. */
 function bindingTaskId(
   fact: RuntimeProcessFact,
@@ -135,6 +256,11 @@ export function acpTaskRuntimePids(
     return runtime;
   // The connected server must be in this listing: its pid alone proves nothing.
   if (!processes.some((fact) => fact.pid === binding.serverPid)) return runtime;
+  // The provider app-servers that server hosts, and their standing helpers, are
+  // runtime whatever thread they serve: several T3 threads share one app-server
+  // and a task worktree is just the cwd a helper inherited (nucleus#1397).
+  for (const pid of providerAppServerRuntimePids(processes, binding.serverPid))
+    runtime.add(pid);
   const candidates = processes.filter(
     (fact) =>
       fact.ppid === binding.serverPid &&
@@ -200,6 +326,8 @@ export function possibleAcpRuntimePids(
   processes: readonly RuntimeProcessFact[],
 ): Set<number> {
   const runtime = new Set<number>();
+  for (const pid of possibleProviderAppServerRuntimePids(processes))
+    runtime.add(pid);
   for (const parent of processes) {
     if (!alive(parent) || !isAcpEntryPoint(parent.command)) continue;
     runtime.add(parent.pid);
