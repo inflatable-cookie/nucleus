@@ -136,13 +136,19 @@ state, plus starts and rolls in the heartbeat gap; incomplete service history
 is reported as unknown.
 
 The supervisor records its last pipeline phase around step output, step logs,
-TAP finalization, teardown, cleanup and result publication. Abandoned-run
-detail names the last recorded phase and says when the supervisor's own exit
-code or signal is unknown. The live-output projection keeps the newest bytes
+TAP finalization, teardown, cleanup and result publication. A detached monitor
+records the supervisor's exit code or signal independently of the service;
+abandoned-run detail names that exit and the last recorded phase, or says when
+either is unknown. The live-output projection keeps the newest bytes
 across truncation, including the redactor's final flush; if the supervisor dies
 before closing it, recovery warns that final bytes up to the token's length may
 have been withheld. A phase is diagnostic evidence, not proof that an operation
 completed or authority to retry it.
+
+After result publication, inspection gives the supervisor the same bounded
+settlement window to finish its live-output close. If it remains live, inspection
+rechecks the result and process identities, stops only that supervisor and
+settles from the published result once its process group is proven empty.
 
 The executor publishes the direct child's exit the moment the kernel reports it
 (`onChildExit`), and `project-qa-detached-io.ts` writes that step's exit code or

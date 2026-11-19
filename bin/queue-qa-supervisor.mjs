@@ -4,5 +4,6 @@
 // the installed checkout. The service spawns it detached and unref'd, so it
 // outlives the service and a Queue roll mid-run loses neither the run nor its
 // recorded steps. Its one argument is the absolute path of the run's plan.
-const { runQaSupervisorMain } = await import("../service/executor/project-qa-supervisor.ts");
-await runQaSupervisorMain();
+const { runQaSupervisorMain, runQaSupervisorMonitor } = await import("../service/executor/project-qa-supervisor.ts");
+if (process.argv[2] === "--monitor") await runQaSupervisorMonitor(process.argv.slice(3));
+else await runQaSupervisorMain();

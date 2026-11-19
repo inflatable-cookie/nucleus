@@ -1,1 +1,1 @@
-Keep the latest QA live output across truncation and record the supervisor's last pipeline phase for recovery diagnostics.
+Keep QA live output across truncation, record supervisor exit and phase diagnostics, and settle published results if final close stalls.

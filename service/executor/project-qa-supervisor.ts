@@ -1,4 +1,7 @@
 import { readFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { runtimeNodeArgs } from "../../shared/runtime.mjs";
+import { writeQaJsonAsync } from "../../core/qa/project-qa-async-io";
 import type { ProcessTreeCpuReads } from "../../core/machine/process-host-reads";
 import {
   qaSupervisionPlanSchema,
@@ -12,6 +15,23 @@ import {
   type QaPipelineRun,
 } from "../../core/qa/project-qa-pipeline";
 import { runQaTeardownRetry } from "../../core/qa/project-qa-teardown";
+
+/** A detached parent records how the supervisor ended, even across service rolls. */
+export async function runQaSupervisorMonitor(argv: string[]): Promise<void> {
+  const [entry, planPath, identityToken] = argv;
+  if (!entry || !planPath || !identityToken) throw new Error("QA monitor needs the entry, plan and identity");
+  const plan = qaSupervisionPlanSchema.parse(JSON.parse(readFileSync(planPath, "utf8")));
+  if (plan.identityToken !== identityToken) throw new Error("QA monitor identity mismatch");
+  const child = spawn(process.execPath, [...runtimeNodeArgs(), entry, planPath, identityToken], {
+    detached: true, stdio: "ignore", env: process.env,
+  });
+  const exit = await new Promise<{ code: number | null; signal: string | null; error: string | null }>(resolve => {
+    child.once("error", error => resolve({ code: null, signal: null, error: error.message }));
+    child.once("exit", (code, signal) => resolve({ code, signal, error: null }));
+  });
+  await writeQaJsonAsync(qaSupervisionPaths(plan.runRoot, plan.runId, plan.attempt).supervisorExitPath,
+    { runId: plan.runId, pid: child.pid ?? null, ...exit }, { durable: false });
+}
 
 /**
  * Detached supervisor entry: read the plan the service wrote, then run the

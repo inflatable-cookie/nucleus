@@ -269,6 +269,16 @@ test("a supervisor that settles nothing after its step's group emptied hands the
   assert.equal(readQaStepExit(f.paths.stepExitPath, { runId: f.runId, step: "qa" })?.signal, "SIGKILL");
 });
 
+test("a published QA result settles after its supervisor stalls in final close", { skip: process.platform === "win32" }, async (t) => {
+  const f = await inspectionFixture(t, { boundMs: 0 });
+  writeQaSupervision(f.paths.statePath, { ...f.state, inFlight: null, activeProcess: null,
+    result: { state: "passed", exitCode: 0, durationMs: 1000, detail: "finished", finishedAt: new Date().toISOString(), hostResult: null } });
+  const verdict = await f.inspection.inspectSupervisor(f.run);
+  assert.equal(verdict.kind, "settled", JSON.stringify(verdict));
+  if (verdict.kind === "settled") assert.equal(verdict.state?.result?.state, "passed");
+  assert.throws(() => process.kill(f.supervisor.pid!, 0), /ESRCH/);
+});
+
 test("a stale heartbeat does not discard a recorded step exit: the run settles from it instead of lost", { skip: process.platform === "win32" }, async (t) => {
   // The supervisor froze with a heartbeat older than the watchdog's threshold.
   const f = await inspectionFixture(t, { heartbeatAt: new Date(Date.now() - 240_000).toISOString() });

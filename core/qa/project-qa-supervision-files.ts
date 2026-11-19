@@ -204,7 +204,7 @@ export function qaRunRootPath(dataDir: string, key: string): string {
 }
 
 /** The per-run supervision and plan paths under one repository's QA root. A retry attempt uses its own file names. */
-export function qaSupervisionPaths(runRoot: string, runId: string, attempt = 0): { statePath: string; planPath: string; resultPath: string; cancelPath: string; cpuCoveragePath: string; heartbeatPath: string; stepExitPath: string; phasePath: string } {
+export function qaSupervisionPaths(runRoot: string, runId: string, attempt = 0): { statePath: string; planPath: string; resultPath: string; cancelPath: string; cpuCoveragePath: string; heartbeatPath: string; stepExitPath: string; phasePath: string; supervisorExitPath: string } {
   const stem = attempt > 0 ? `${runId}.retry-${attempt}` : runId;
   return {
     heartbeatPath: join(runRoot, `${stem}.heartbeat.json`),
@@ -215,7 +215,17 @@ export function qaSupervisionPaths(runRoot: string, runId: string, attempt = 0):
     cancelPath: join(runRoot, `${stem}.cancel.json`),
     stepExitPath: join(runRoot, `${stem}.stepexit.json`),
     phasePath: join(runRoot, `${stem}.phase.json`),
+    supervisorExitPath: join(runRoot, `${stem}.supervisor-exit.json`),
   };
+}
+
+export function readQaSupervisorExit(path: string, runId: string, pid?: number): { code: number | null; signal: string | null; error: string | null } | null {
+  return readOwnerOnlyJson(path, value => {
+    const record = z.object({ runId: z.literal(runId), pid: z.number().int().positive().nullable(),
+      code: z.number().int().nullable(), signal: z.string().nullable(), error: z.string().nullable() }).strict().parse(value);
+    if (pid !== undefined && record.pid !== pid) throw new Error("Supervisor pid mismatch");
+    return record;
+  });
 }
 
 /** The diagnostic phase is separate so older strict supervision readers still work. */
@@ -396,8 +406,8 @@ export function writeQaStepLog(path: string, buffer: Buffer): { bytes: number | 
 
 /** Remove a settled run's per-run plan and supervision files; the store owns the record now. */
 export function removeQaSupervisionFiles(runRoot: string, runId: string, attempt = 0): void {
-  const { statePath, planPath, cancelPath, cpuCoveragePath, heartbeatPath, stepExitPath, phasePath } = qaSupervisionPaths(runRoot, runId, attempt);
-  for (const path of [statePath, planPath, cancelPath, cpuCoveragePath, heartbeatPath, stepExitPath, phasePath]) rmSync(path, { force: true });
+  const { statePath, planPath, cancelPath, cpuCoveragePath, heartbeatPath, stepExitPath, phasePath, supervisorExitPath } = qaSupervisionPaths(runRoot, runId, attempt);
+  for (const path of [statePath, planPath, cancelPath, cpuCoveragePath, heartbeatPath, stepExitPath, phasePath, supervisorExitPath]) rmSync(path, { force: true });
 }
 
 export interface QaFilePruningContext {

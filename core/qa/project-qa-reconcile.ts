@@ -38,7 +38,7 @@ export interface QaReconcileContext {
   spawnQaSupervisor(planPath: string, identityToken: string, temporaryDirectory?: string): number;
   watchEscapedDescendants(runId: string): void;
   settle(run: ProjectQaRun, outcome: QaPipelineOutcome & { interruptedStep: ProjectQaStepName | null }): Promise<ProjectQaRun>;
-  settleFromSupervisor(run: ProjectQaRun, state: QaSupervisionState | null, hostResult: HostRunResult | null): Promise<ProjectQaRun>;
+  settleFromSupervisor(run: ProjectQaRun, state: QaSupervisionState | null, hostResult: HostRunResult | null, closeInterrupted?: boolean): Promise<ProjectQaRun>;
   /** #1393: settle a run whose step's group ended and whose supervisor never settled. */
   settleEndedStep(run: ProjectQaRun, inspection: Extract<SupervisorInspection, { kind: "step_ended" }>): Promise<void>;
   reconcileLostRun(run: ProjectQaRun, state: QaSupervisionState | null, reason: string, escapedDescendants?: HostRunEscapedDescendant[]): Promise<void>;
@@ -82,7 +82,7 @@ export const projectQaReconcile = {
     const activeRecovery = qaRecoveries.get(key);
     if (activeRecovery) return activeRecovery as Promise<void>;
     if (inspection.kind === "settled") {
-      const settling = this.settleFromSupervisor(latest, inspection.state, inspection.hostResult)
+      const settling = this.settleFromSupervisor(latest, inspection.state, inspection.hostResult, inspection.closeInterrupted)
         .then(() => {}).finally(() => qaRecoveries.delete(key));
       qaRecoveries.set(key, settling);
       return settling;
@@ -183,7 +183,7 @@ export const projectQaReconcile = {
       if (JSON.stringify(this.store.qaRun(runId)) !== JSON.stringify(current)) continue;
       this.publishCommandLaunchIdentity(current, inspection.state,
         inspection.kind === "settled" ? inspection.hostResult : null);
-      if (inspection.kind === "settled") { await this.settleFromSupervisor(current, inspection.state, inspection.hostResult); return; }
+      if (inspection.kind === "settled") { await this.settleFromSupervisor(current, inspection.state, inspection.hostResult, inspection.closeInterrupted); return; }
       if (inspection.kind === "step_ended") {
         const recovery = qaRecoveries.get(key);
         if (recovery) { await recovery; return; }
