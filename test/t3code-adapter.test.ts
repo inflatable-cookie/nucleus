@@ -2661,6 +2661,7 @@ test("the workspace inventory reads T3's finished, archived and removed threads 
     [archived.id]: "failed",
     [removed.id]: "cancelled",
     [live.id]: "running",
+    [foreign.id]: "completed",
   };
   await host.archiveAgent(archived.id);
   server.controls.shellTombstones = true;

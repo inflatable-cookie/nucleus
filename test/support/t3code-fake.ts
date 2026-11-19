@@ -767,10 +767,12 @@ export async function t3Fake(t: TestContext, directory: string) {
     const pending = p.runtimeRequests.find(
       (request: Value) => request.status === "pending",
     );
+    // An app state override is a finished thread's own status: it has no live run.
+    const overridden = controls.shellStatuses[p.thread.id];
     const value: Value = {
       ...p.thread,
-      activeRunId: active?.id ?? null,
-      status: controls.shellStatuses[p.thread.id] ?? active?.status ?? "idle",
+      activeRunId: overridden === undefined ? (active?.id ?? null) : null,
+      status: overridden ?? active?.status ?? "idle",
       pendingRuntimeRequest: pending
         ? {
             id: pending.id,
