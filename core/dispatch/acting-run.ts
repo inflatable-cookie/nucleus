@@ -46,7 +46,7 @@ const sameThread = (
   );
 
 /** The run id a task's current run holds for this role; recovery keeps its own slot. */
-export function currentRunIdFor(
+function currentRunIdFor(
   task: Task,
   presented: Pick<Run, "role"> | null,
 ): string | null {

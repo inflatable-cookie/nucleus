@@ -367,6 +367,51 @@ test('a thread with no current run is refused with the reason, not a stale assig
   }
 });
 
+test('a stale ticket never settles another role\'s run on the same thread', async () => {
+  const f = await fixture();
+  try {
+    f.store.putRun(
+      runOf('run-old', f.task.id, {
+        released: true,
+        status: 'finished',
+        completion: acceptedReport(f.task.id, 'run-old'),
+      }),
+    );
+    f.store.setCredential('run-old', 'old-token');
+    // Same agent, same host — but the thread's current run is a review, so the
+    // worker's report cannot become the reviewer's verdict.
+    f.store.putRun(runOf('run-review', f.task.id, { role: 'reviewer' }));
+    f.store.update(f.task.id, {
+      resolution: {
+        ...f.store.task(f.task.id).resolution,
+        currentRunId: 'run-review',
+      },
+    });
+    f.store.setCredential('run-review', 'review-token');
+
+    const refused = await f.call('/run-context', 'old-token', {
+      callerTaskId: f.task.id,
+      callerRunId: 'run-old',
+      section: 'rules',
+    });
+    assert.equal(refused.status, 409);
+    assert.match(JSON.parse(refused.body).error, /run-review/);
+
+    const report = await f.call('/complete', 'old-token', {
+      eventId: 'a'.repeat(64),
+      taskId: f.task.id,
+      runId: 'run-old',
+      status: 'blocked',
+      headline: 'Worker result on a review turn',
+      summary: 'Worker result on a review turn',
+    });
+    assert.equal(report.status, 409, report.body);
+    assert.equal(f.store.run('run-review')?.completion, null);
+  } finally {
+    await f.close();
+  }
+});
+
 test('a revoked credential is refused before any thread resolution', async () => {
   const f = await fixture();
   try {
