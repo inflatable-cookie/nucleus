@@ -221,7 +221,8 @@ export function episodeBindsCurrentWork(task: Task): boolean {
 export function taskStopKind(task: Task, runs: Run[] = [], budget?: TaskBudgetView | null, waitState?: WaitStateView | null): TaskStopKind | null {
   const fences = holdsOf(task);
   if (fences.dispatch || fences.merge) return "hold";
-  if (waitState?.state === "waiting_prerequisite" && waitState.owner === "operator") return "attention";
+  if (waitState?.state === "waiting_prerequisite" &&
+    taskAttention({ phase: task.phase, held: task.held, prerequisiteOperator: waitState.owner === "operator" }).state === "attention") return "attention";
   const stop = currentTaskStop(task, budget);
   if (stop) {
     if (stop.reason === "run_stalled") return "run";

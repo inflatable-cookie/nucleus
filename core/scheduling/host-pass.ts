@@ -126,6 +126,7 @@ export class HostPass {
         attention: task.resolution.attention,
         originFault: Boolean(task.originError || task.originLookupError),
         prerequisiteWait: display.waitState?.state === "waiting_prerequisite" && display.waitState.owner !== "operator",
+        prerequisiteOperator: display.waitState?.state === "waiting_prerequisite" && display.waitState.owner === "operator",
         reason: display.reason,
         liveRun:
           runs.some((run) => !run.released && !run.completion) ||

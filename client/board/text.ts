@@ -45,6 +45,7 @@ export const attention = (t: DisplayTask) => taskAttention({
   attention: t.resolution.attention,
   originFault: Boolean(t.originError || t.originLookupError),
   prerequisiteWait: t.waitState?.state === "waiting_prerequisite" && t.waitState.owner !== "operator",
+  prerequisiteOperator: t.waitState?.state === "waiting_prerequisite" && t.waitState.owner === "operator",
   waitingOn: (t as { waitingOn?: string | null }).waitingOn, reason: t.reason,
 }).state === "attention";
 export const holdKindLabel = (kind: HoldKind) => kind === "dispatch" ? "Dispatch held" : "Merge held";

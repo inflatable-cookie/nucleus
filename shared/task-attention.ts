@@ -47,6 +47,8 @@ export interface TaskAttentionFacts {
   originFault?: boolean;
   /** An unresolved prerequisite wait is the task's current wait. */
   prerequisiteWait?: boolean;
+  /** An impossible prerequisite needs an operator to correct the list. */
+  prerequisiteOperator?: boolean;
   /** Nucleus has an unreleased run for this task. */
   liveRun?: boolean;
   /** The reference the task waits on, when a title or card names one (`nucleus#1364`). */
@@ -94,7 +96,7 @@ export function taskAttention(facts: TaskAttentionFacts): TaskAttention {
   if (hold) return { state: "waiting", cause: waitCause(facts, "Held until its condition") };
   if (facts.prerequisiteWait)
     return { state: "waiting", cause: waitCause(facts, "Waiting for prerequisite") };
-  if (facts.attention || facts.originFault)
+  if (facts.prerequisiteOperator || facts.attention || facts.originFault)
     return { state: "attention", cause: bounded(facts.reason, "Needs attention") };
   if (facts.liveRun) return { state: "active" };
   if (ATTENTION_PHASES.includes(facts.phase))

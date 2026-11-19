@@ -159,6 +159,7 @@ function taskCardColumn(task: TaskSummary): PipelineColumn {
     attention: task.resolution?.attention,
     originFault: Boolean(task.originError || task.originLookupError),
     prerequisiteWait: task.waitState?.state === 'waiting_prerequisite' && task.waitState.owner !== 'operator',
+    prerequisiteOperator: task.waitState?.state === 'waiting_prerequisite' && task.waitState.owner === 'operator',
     waitingOn: task.waitingOn, reason: task.reason,
   });
   return projection.state === 'attention' ? 'Attention' : 'Working';
