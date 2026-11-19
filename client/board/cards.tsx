@@ -90,8 +90,7 @@ export const TaskCard = React.memo(function TaskCard({task,selected,onPress,prSt
   const statusAnchor=useRef<View|null>(null);
   const hostId = task.hostId ?? defaultHostId;
   const hostKind = hostKindOf(hostId);
-  const hostChip =
-    hostKind === "paseo" ? "" : ` · ${HOST_KIND_LABELS[hostKind]}`;
+  const hostChip = !task.hostPending && (task.hostReason || hostKind !== "paseo") ? ` · ${HOST_KIND_LABELS[hostKind]}` : "";
   const questions = useTaskQuestions(
     task.questionAgentIds ?? [],
     hostId ? task.questionAgentIds?.map((id) => formatAgentId(hostId, id)) : [],
@@ -176,7 +175,7 @@ export const TaskCard = React.memo(function TaskCard({task,selected,onPress,prSt
     : task.reason ? `, ${task.reason}` : "";
   const accessibleHold = plainWait || prerequisite ? holdKinds.map(holdKindLabel).map(label => `, ${label}`).join("") : holdLabel;
   const fullHoldReasonA11y = dispatchWait ? `, Full hold reason: ${dispatchWait.reason}` : "";
-  return <BoardCard label={`${projectName(task)}${hostChip}, ${task.title}, ${phaseLabel(task)}${interactiveLabel ? `, ${interactiveLabel}` : ""}${accessibleHold}${holdOwnerA11y}${accessibleWait}${fullHoldReasonA11y}${stopLabel && !stopWait && !stopHeld ? `, ${stopLabel}` : ""}${!accessibleWait && stopA11y ? `, ${stopA11y}` : ""}, Action: open task details`} onPress={onPress} selected={selected} c={c} board={board}
+  return <BoardCard label={`${projectName(task)}${hostChip}, ${task.title}, ${phaseLabel(task)}${interactiveLabel ? `, ${interactiveLabel}` : ""}${accessibleHold}${holdOwnerA11y}${accessibleWait}${task.hostReason ? `, Host: ${task.hostReason}` : ""}${fullHoldReasonA11y}${stopLabel && !stopWait && !stopHeld ? `, ${stopLabel}` : ""}${!accessibleWait && stopA11y ? `, ${stopA11y}` : ""}, Action: open task details`} onPress={onPress} selected={selected} c={c} board={board}
     eyebrow={<><Icon name="Folder" size={12} color={c.foregroundMuted}/><Text numberOfLines={1} ellipsizeMode="tail" style={{...muted(c),fontSize:typeScale.metadata.fontSize,flexShrink:1}}>{projectName(task)}{hostChip}</Text></>}
     accessory={<Pressable ref={statusAnchor} accessibilityRole="button" accessibilityLabel={`Open task details, status ${taskStateLabel(task)}`} onHoverIn={()=>setStatusTip(true)} onHoverOut={()=>setStatusTip(false)} onFocus={()=>setStatusTip(true)} onBlur={()=>setStatusTip(false)} onPress={event=>{event.stopPropagation();onPress();}}
       style={{width:24,height:24,marginTop:-space.xxs / 2,marginRight:-space.xxs,borderRadius:radius.control,alignItems:'center',justifyContent:'center',backgroundColor:c.surface2,flexShrink:0,position:'relative'}}>
@@ -191,6 +190,7 @@ export const TaskCard = React.memo(function TaskCard({task,selected,onPress,prSt
           wait line (nucleus#1366). */}
       <Text numberOfLines={1} style={{color:attentionPriority?c.statusWarning:c.foreground,fontSize:typeScale.metadata.fontSize,fontWeight:'600'}}>{blockingHold(task) ? taskStateLabel(task) : phaseStateLabel(task)}</Text>
       {next}
+      {task.hostReason && <Text numberOfLines={2} style={{...muted(c),fontSize:typeScale.metadata.fontSize}}>{task.hostReason}</Text>}
     </View>}
     footer={hasFooter?<View style={{...row,gap:space.xs,flexWrap:'nowrap'}}>
       {task.queuePriority>0&&<View accessible accessibilityLabel="Promoted in project"><Icon name="ArrowUpToLine" size={12} color={c.foregroundMuted}/></View>}

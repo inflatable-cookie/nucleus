@@ -9,7 +9,7 @@ import { Pair } from "./common";
 
 const CHECKS_HELP = "Required gates only the checks GitHub requires for the base branch; the rest are recorded as advisory. Needs GitHub's required-check settings to be readable for this repository.";
 const REVIEWER_HELP = "Account that posts formal reviews. Its token stays in the login keychain.";
-const HOST_HELP = "Choose a host override for new tasks in this repository, or Inherit to use the operator default. Live tasks keep their host.";
+const HOST_HELP = "Choose a preferred host for new tasks, or Inherit the operator default. The worker profile may choose another host; dispatched tasks keep theirs.";
 const MERGE_HELP = "Runs on every task's prospective merge.";
 const STAGED_HELP = "A staged QA is edited with `nucleus repository.set`.";
 const QA_TIMEOUT_MAX_MIN = PROJECT_QA_TIMEOUT_MAX_MS / 60_000;

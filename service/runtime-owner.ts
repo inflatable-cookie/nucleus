@@ -758,7 +758,8 @@ export class QueueRuntime {
           task.phase === "needs_attention",
         ),
       externalWait: (task) => this.engine.queuedExternalWait(task),
-      profiles: (task) => this.engine.profilesFor(task.hostId),
+      profiles: (task) => this.engine.workerRoutingProfiles(task),
+      hosts: (task) => this.engine.routingHostViews(task),
     });
     this.cachedTelemetrySnapshot = createTelemetrySnapshotCache(this.store);
     this.cachedUiSnapshotFacts = createUiSnapshotFactsCache(

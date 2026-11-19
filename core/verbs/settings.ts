@@ -1,3 +1,4 @@
+import { independentReviewRoutingConflict } from "../dispatch/routing";
 import { parseAgentId, sameCallerIdentity } from '../../shared/agent-identity';
 import { REMOVED_TASK_REFUSAL } from './control-refusals';
 import type { ReparentInput, Task, TaskControlInput } from "../../shared/contracts";
@@ -71,7 +72,7 @@ export class SettingsControls {
       if(after.preferredProfileId||Object.values(after.profileRequests).some(request=>Boolean(request?.profileId)))this.engine.requireProfileCatalog();
       // The task's own host decides availability (nucleus#1139 review): a mode
       // or feature value this host's catalog does not report refuses here.
-      const hostProfiles=this.engine.profilesFor(task.hostId);
+      const hostProfiles=this.engine.workerRoutingProfiles(task);
       if(after.preferredProfileId)validateNamedProfile(after.preferredProfileId,"worker",after.scope,hostProfiles,pool,after.profileRequests.worker?.profileId===after.preferredProfileId?after.profileRequests.worker.reason:"",workerThinking(after));
       for(const role of ["worker","reviewer","coordinator"] as const){
         const request=after.profileRequests[role];
@@ -80,7 +81,7 @@ export class SettingsControls {
         const {profile}=validateNamedProfile(request.profileId,role,after.scope,hostProfiles,pool,request.reason,thinking);
         if(thinking&&!profile.supportedThinking.includes(thinking))throw Error(`Profile ${request.profileId} does not support thinking option ${thinking}`);
       }
-      const routingConflict=this.engine.independentReviewRoutingRefusal({scope:after.scope,preferredProfileId:after.preferredProfileId,requirePreferred:after.requirePreferred,profileRequests:after.profileRequests,skipPRReview:task.skipPRReview,declaredAuthorModels:task.reviewEntry?.authorDeclaration.models},task.hostId);
+      const routingConflict=this.engine.firstWorkerUnbound(task) ? independentReviewRoutingConflict({scope:after.scope,preferredProfileId:after.preferredProfileId,requirePreferred:after.requirePreferred,profileRequests:after.profileRequests,skipPRReview:task.skipPRReview,declaredAuthorModels:task.reviewEntry?.authorDeclaration.models,usage:this.store.usageLevel()},hostProfiles,pool) : this.engine.independentReviewRoutingRefusal({scope:after.scope,preferredProfileId:after.preferredProfileId,requirePreferred:after.requirePreferred,profileRequests:after.profileRequests,skipPRReview:task.skipPRReview,declaredAuthorModels:task.reviewEntry?.authorDeclaration.models},task.hostId);
       if(routingConflict)throw Error(routingConflict);
       const unavailable=pool.filter(entry=>[after.preferredProfileId,...Object.values(after.profileRequests).map(request=>request?.profileId)].includes(entry.profileId)).flatMap(entry=>{
         const row=this.store.db.prepare("SELECT data FROM availability WHERE group_id=?").get(entry.group);

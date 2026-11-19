@@ -121,6 +121,7 @@ export class Dispatch {
     this.store.setRoutingEpoch(
       JSON.stringify([
         this.engine.profiles,
+        this.engine.hostIds().map(id => [id, this.engine.withHost(id, () => this.engine.hostAvailable(id)), this.engine.profilesFor(id)]),
         this.store.pool(),
         availability.map((group) => [group.group, groupIsUnavailable(group)]),
         this.store.usageLevel(),
@@ -178,7 +179,7 @@ export class Dispatch {
         ).filter(
           (task) =>
             !attempted.has(task.id) &&
-            (!task.hostId || !failedHosts.has(task.hostId)),
+            (this.engine.firstWorkerUnbound(task) || !task.hostId || !failedHosts.has(task.hostId)),
         );
         const { start } = queuedVisits(
           candidates,

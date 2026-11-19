@@ -64,6 +64,7 @@ export interface OwnerVerbFacts {
    * explanation that `queue.detail` shows (nucleus#1151). Absent: no snapshot.
    */
   hostProfiles?: Profile[];
+  hostViews?: import("../../shared/contracts").RoutingPolicy["hosts"];
   /** The engine's authenticated reporting coordinator run, when one is applying this read. */
   reportingRunId?: string | null;
   /**

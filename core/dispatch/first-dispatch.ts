@@ -46,6 +46,8 @@ export type FirstDispatchContext = Pick<
   | "hostIds"
   | "hostAvailable"
   | "profileCatalogKnownFor"
+  | "workerHostCatalogs"
+  | "firstWorkerUnbound"
   | "refreshCheckoutSiblings"
   | "stopped"
   | "store"
@@ -88,16 +90,18 @@ export class FirstDispatch {
   }
   async dispatch(taskId: string, dispatchHeld: boolean): Promise<void> {
     const task = this.store.task(taskId);
-    const firstWorker = task.entrypoint !== "review" && task.entrypoint !== "proof" &&
-      !task.workspaceId && !task.workspaceIntent && !task.agentId && this.store.runs(taskId).length === 0;
+    const firstWorker = this.context.firstWorkerUnbound(task);
     if (firstWorker) {
-      const ids = [...new Set([...this.context.hostIds(), ...(task.hostId ? [task.hostId] : [])])];
-      const hosts = ids.filter(id => this.context.withHost(id, () => this.context.hostAvailable(id)) &&
-        this.context.profileCatalogKnownFor(id)).map(hostId => ({ hostId, profiles: this.context.profilesFor(hostId) }));
+      const hosts = this.context.workerHostCatalogs(task);
       const chosen = chooseFirstWorkerHost(task, hosts, this.store.pool(), this.store.counts(),
-        unavailableGroupNames(this.store.availability()), this.store.recentCounts(), this.store.usageLevel(), this.store.demandRoleOffsets());
+        unavailableGroupNames(this.store.availability()), this.store.recentCounts(), this.store.usageLevel(), this.store.demandRoleOffsets(),
+        [this.store.repositoryFor(task.repoPath)?.hostKind, this.store.getMeta<import("../../shared/host-kind").HostKind | null>("operatorDefaultHostKind")]);
       if (chosen) return this.context.withHost(chosen.hostId, () => this.dispatchOnHost(taskId, dispatchHeld, chosen));
       if (hosts.length) {
+        if (dispatchGate({ transientWaiting: this.context.gitTransientWaiting(taskId), task, stopped: this.context.stopped,
+          paused: this.store.getMeta<boolean>("paused"), dispatchHeld }) ||
+          usageGateBlocked(task, this.store.usageLevel()) || this.store.dependencyWait(task) ||
+          this.resolution.slotAdmissionReason(task)) return;
         const profiles = hosts.flatMap(host => host.profiles.filter(profile => profile.available && !workerProfileIsExcluded(task, profile.id)));
         this.context.note(task.id, eligibilityReasons(task, profiles, this.store.pool(), this.store.availability(), this.store.usageLevel(), profiles), "route_unavailable");
         this.store.markRoutingAttempt(task.id);
@@ -344,7 +348,7 @@ export class FirstDispatch {
             ...(firstSelection ? { hostId: firstSelection.hostId, hostSelection: {
               hostId: firstSelection.hostId, basis: "worker_profile" as const,
               reason: firstSelection.capableHostIds.length === 1
-                ? `Profile ${selection.profile.name} runs only on ${firstSelection.hostId}`
+                ? `Profile ${selection.profile.name} can run only on online host ${firstSelection.hostId}`
                 : `Profile ${selection.profile.name} runs on ${firstSelection.capableHostIds.join(", ")}; selected ${firstSelection.hostId}${firstSelection.hostId === recorded.hostId ? " by host preference" : ""}`,
             } } : {}),
             profile: current.entrypoint === "proof" ? null : selection.profile,

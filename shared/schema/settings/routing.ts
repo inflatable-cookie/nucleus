@@ -83,6 +83,10 @@ export const routingPolicySchema = z.object({ usage: usageViewSchema,
   selection: selectionExplanationSchema.optional(),
   /** The task's host and the pool profiles it rules out or maps; absent when no host snapshot was read. */
   host: z.object({ hostId: z.string(), effects: z.array(hostEffectSchema) }).strict().optional(),
+  hostSelection: z.object({ hostId: z.string(), reason: z.string() }).strict().optional(),
+  hosts: z.array(z.object({ hostId: z.string(), online: z.boolean(), profiles: z.array(z.object({
+    profileId: z.string(), eligible: z.boolean(), reason: z.string(),
+  }).strict()) }).strict()).optional(),
 }).strict();
 
 export type RoutingPolicy = z.infer<typeof routingPolicySchema>;

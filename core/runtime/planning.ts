@@ -34,6 +34,7 @@ export interface PlanningContext {
     | "submitPlanningSource"
     | "briefStageProfileRefusal"
     | "independentReviewRoutingRefusal"
+    | "submissionRoutingRefusal"
     | "selectIngressHost"
     | "hostAvailable"
     | "hostIngressAvailable"

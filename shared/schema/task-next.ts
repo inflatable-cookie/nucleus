@@ -199,6 +199,8 @@ export const taskNextSchema = z.object({
   worktreeLinks: worktreeLinksSchema.optional(),
   /** Pinned host for this task. Switching a repository hostKind never rehosts it. */
   host: z.string().optional(),
+  /** Ingress preference before a first worker fixes the host. */
+  hostPreference: z.string().optional(),
 }).strict();
 
 export type TaskNext = z.infer<typeof taskNextSchema>;

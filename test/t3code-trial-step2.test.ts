@@ -755,6 +755,8 @@ test("host resolution prefers repository override, then online operator default,
     basis: "planner_host",
     reason: "Planner host",
   });
+  const missingPreference = resolveIngressHost({ repositoryHostKind: "bb", operatorDefaultHostKind: "paseo", registered: ["paseo-primary"], online: ["paseo-primary"] });
+  assert.equal(missingPreference.hostId, "paseo-primary");
 });
 
 test("the helper ask, message and answer subcommands post to the ticket-bound routes", async () => {

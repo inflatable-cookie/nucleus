@@ -253,7 +253,8 @@ export class AgentControls {
       waitTask: taskWithCurrentWait(this.store, task, wait, (candidate) =>
         this.engine.queuedExternalWait(candidate),
       ),
-      hostProfiles: this.engine.profilesFor(task.hostId),
+      hostProfiles: this.engine.workerRoutingProfiles(task),
+      hostViews: this.engine.routingHostViews(task),
     });
   }
   updateDependenciesFromAgent(

@@ -25,3 +25,16 @@ test('the selected thinking option must be supported by the chosen host', () => 
   const selected = chooseFirstWorkerHost({ ...task, preferredProfileId: 'both', requirePreferred: true, thinkingOptionId: 'high' }, catalogs, pool, {}, new Set(), {}, 'normal', DEMAND_ROLE_OFFSETS);
   assert.equal(selected?.hostId, 't3');
 });
+
+test('rotation gives each profile one entry across the online hosts', () => {
+  const selected = chooseFirstWorkerHost(task, hosts, pool, {}, new Set(),
+    { 'profile:paseo-only': 4, 'profile:both': 4, 'profile:t3-only': 0 }, 'normal', DEMAND_ROLE_OFFSETS);
+  assert.equal(selected?.profile.id, 't3-only');
+  assert.equal(selected?.hostId, 't3');
+});
+
+test('repository preference precedes the operator default when both can run the profile', () => {
+  const realHosts = [{ hostId: 'paseo:one', profiles: [both] }, { hostId: 't3code:one', profiles: [both] }];
+  const selected = chooseFirstWorkerHost(task, realHosts, pool, {}, new Set(), {}, 'normal', DEMAND_ROLE_OFFSETS, ['t3code', 'paseo']);
+  assert.equal(selected?.hostId, 't3code:one');
+});

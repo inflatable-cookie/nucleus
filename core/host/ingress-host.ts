@@ -25,7 +25,8 @@ export function resolveIngressHost(input: {
     if (selected) return { hostId: selected.hostId, selection: selected };
     const offline = chooseKind(input.repositoryHostKind, input.registered, 'repository_override', `Repository host override ${input.repositoryHostKind} is offline`);
     if (offline) return { hostId: offline.hostId, selection: offline };
-    throw new Error(`${input.repositoryHostKind} host is not registered; repository host override cannot be satisfied`);
+    // A preference for an unregistered kind does not limit worker selection.
+    // Use the next preference for ingress; dispatch reads the repository setting again.
   }
 
   if (input.operatorDefaultHostKind) {
@@ -38,11 +39,13 @@ export function resolveIngressHost(input: {
     }
     const offline = chooseKind(input.operatorDefaultHostKind, input.registered, 'operator_default', offlineReason);
     if (offline) return { hostId: offline.hostId, selection: offline };
+    if (input.online.length) return { hostId: input.online[0]!, selection: { hostId: input.online[0]!, basis: 'available_host', reason: offlineReason } };
     throw new Error(`${offlineReason}; no registered planner host is available`);
   }
 
   if (input.plannerHostId && input.registered.includes(input.plannerHostId)) {
     return { hostId: input.plannerHostId, selection: { hostId: input.plannerHostId, basis: 'planner_host', reason: input.online.includes(input.plannerHostId) ? 'Planner host' : `Planner host ${input.plannerHostId} is offline` } };
   }
+  if (input.online.length) return { hostId: input.online[0]!, selection: { hostId: input.online[0]!, basis: 'available_host', reason: 'Planner host is unknown or not registered' } };
   throw new Error('Planner host is unknown or not registered');
 }

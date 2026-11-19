@@ -14,7 +14,7 @@ export const heavyRunViewSchema = z.object({
 export type HeavyRunView = z.infer<typeof heavyRunViewSchema>;
 
 export const taskSummarySchema = z.object({
-  id: z.string(), title: z.string(), repoPath: z.string(), repository: z.string().optional(), version: z.number(), hostId: z.string().optional(),
+  id: z.string(), title: z.string(), repoPath: z.string(), repository: z.string().optional(), version: z.number(), hostId: z.string().optional(), hostReason: z.string().optional(), hostPending: z.literal(true).optional(),
   number: z.number().int().positive().nullable(), reference: z.string().nullable(),
   entrypoint:z.enum(["worker","review","proof"]),
   questionAgentIds: z.array(z.string()).optional(),
