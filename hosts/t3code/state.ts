@@ -163,6 +163,11 @@ const parentThread = z.object({
   createdAt: z.string(),
   /** The task's own state title, the base the row's step rides after. */
   title: z.string().optional(),
+  /**
+   * The exact re-entry text this parent's binding holds. Parents minted before the
+   * plain-sentence text carry none, and keep the text their binding names.
+   */
+  holdText: z.string().optional(),
   archivedAt: z.string().optional(),
   releasedAt: z.string().optional(),
   /** Set when this host re-entered the thread; a create inside its grace window keeps the turn. */

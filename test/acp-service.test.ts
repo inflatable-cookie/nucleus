@@ -210,6 +210,26 @@ test("an attach shows the current lifecycle line even though this service alread
   } finally { await fixture.close(); }
 });
 
+test("milestone lines: same-state writes send nothing, the PR link and the reference show once", async () => {
+  const fixture = await acpFixture();
+  try {
+    assert.equal((await fixture.turn()).messages.length, 1, "the opening line names the task");
+    fixture.store.update(fixture.taskId, { phase: "working" });
+    assert.deepEqual((await fixture.turn()).messages, [], "a same-state write sends no line");
+    fixture.store.update(fixture.taskId, { phase: "awaiting_review", prUrl: "https://example.test/pull/276" });
+    const review = await fixture.turn();
+    assert.deepEqual(review.messages, ["Review · https://example.test/pull/276"], "the reference is not repeated and the link appears once");
+    fixture.store.update(fixture.taskId, { phase: "reviewing" });
+    const reviewing = await fixture.turn();
+    assert.deepEqual(reviewing.messages, ["Reviewing · PR #276"], "a later milestone refers to the PR by number");
+    fixture.store.update(fixture.taskId, { phase: "reviewing" });
+    assert.deepEqual((await fixture.turn()).messages, [], "a later write with the same state repeats nothing");
+    const reattached = await fixture.turn({ attach: true });
+    assert.deepEqual(reattached.messages, [acpLifecycleLine(fixture.store.task(fixture.taskId))], "a reattached session shows the whole line");
+    assert.match(reattached.messages[0]!, /https:\/\/example\.test\/pull\/276$/);
+  } finally { await fixture.close(); }
+});
+
 test("a long poll holds until the task changes, then answers with the change", async () => {
   const fixture = await acpFixture();
   try {
@@ -292,7 +312,9 @@ test("lifecycle text is one bounded line and its signature names every fact it s
   const withPr = { ...task, prUrl: "https://example.test/pr/1", prHead: "a".repeat(40) } as unknown as Task;
   assert.match(acpLifecycleLine(withPr), /https:\/\/example\.test\/pr\/1/);
   assert.notEqual(acpLifecycleSignature(task), acpLifecycleSignature(withPr));
-  assert.notEqual(acpLifecycleSignature(task), acpLifecycleSignature({ ...task, version: 4 } as unknown as Task));
+  // A write that changes nothing the operator reads (a version bump, the same phase) keeps the signature.
+  assert.equal(acpLifecycleSignature(task), acpLifecycleSignature({ ...task, version: 4 } as unknown as Task));
+  assert.equal(acpLifecycleSignature({ ...task, prHead: "b".repeat(40) } as unknown as Task), acpLifecycleSignature(task));
   assert.equal(acpTaskName({ ...task, reference: null, number: 12 } as unknown as Task), "task 12");
 });
 

@@ -1,0 +1,1 @@
+The T3 task parent transcript now reads as one short line per milestone. Repeated states, repeated PR links and task references no longer appear, lines render as separate paragraphs, and the re-entry prompt is a plain sentence instead of an internal marker with the task id.

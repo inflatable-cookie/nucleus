@@ -276,6 +276,21 @@ test("session/load accepts its own session id, shows where the task stands, and 
   await client.closed();
 });
 
+test("each lifecycle line is its own paragraph on the wire", async () => {
+  const client = harness({ replies: [reply("hold", ["nucleus#1304 · Working"])] });
+  const id = client.request("session/load", {
+    sessionId: binding.sessionId,
+    cwd: "/fixture/checkout",
+    mcpServers: [],
+  });
+  await client.lines.untilResult(id);
+  const shown = await client.lines.next();
+  const content = (((shown.params as Json).update as Json).content as Json);
+  // Clients join chunks without a separator, so a line without its paragraph break runs into the next one.
+  assert.equal(content.text, "nucleus#1304 · Working\n\n");
+  await client.closed();
+});
+
 test("session/load refuses a session id the binding does not hold", async () => {
   const client = harness();
   const id = client.request("session/load", {
@@ -437,7 +452,8 @@ test("an injected hold rule keeps the turn without showing or forwarding the hos
     false,
     "a re-entry prompt is never shown as the agent's words",
   );
-  assert.equal(updates.length, 1, "only the release line is shown");
+  // The re-entry's release repeats the line the session already showed, so nothing new is sent.
+  assert.equal(updates.length, 0, "an identical line the session already showed is not sent again");
   // The operator's next message still forwards: one re-entry does not consume the thread.
   const operator = client.request("session/prompt", {
     sessionId: binding.sessionId,

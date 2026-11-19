@@ -54,11 +54,21 @@ export const PARENT_MODEL = "nucleus";
 export const PARENT_DRIVER = "acpRegistry";
 
 /**
- * The marker in every re-entry prompt this module sends. The binding's `holdPattern`
- * names it, so the ACP agent holds that turn and forwards nothing: exactly one place
- * decides what a person is, and it is configuration, never parsed remote text.
+ * The text of every re-entry prompt this module sends, and of the parent's opening
+ * prompt. T3 shows a prompt as a user bubble, so the text is a plain sentence with no
+ * internal marker or task id. The binding's `holdPattern` matches it exactly (see
+ * `parentPromptRules`), so the ACP agent holds that turn and forwards nothing. Exactly
+ * one place decides what a person is, and it is configuration, never parsed remote text.
  */
-export const HOLD_MARKER = "nucleus-hold-the-task-thread";
+export const HOLD_MARKER = "Nucleus keeps this task thread open for its next role.";
+/**
+ * The marker a parent launched before `HOLD_MARKER` was a plain sentence holds. Its
+ * binding still names this pattern, so its re-entries must keep sending it.
+ */
+export const LEGACY_HOLD_MARKER = "nucleus-hold-the-task-thread";
+/** The re-entry text one parent's binding holds; a parent without a recorded text is legacy. */
+export const holdTextFor = (parent: { taskId: string; holdText?: string }): string =>
+  parent.holdText ?? `${LEGACY_HOLD_MARKER}: ${parent.taskId}`;
 
 /**
  * T3's own wordings for text that is not a person speaking to a task: a delegated
@@ -82,7 +92,9 @@ export const parentPromptRules = (): {
   ignorePattern: T3_NOTICE_PHRASES.map((phrase) =>
     phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
   ).join("|"),
-  holdPattern: HOLD_MARKER,
+  // Anchored and escaped: only this exact sentence is a re-entry, never a message that
+  // merely contains it.
+  holdPattern: `^${HOLD_MARKER.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
 });
 
 /** The child thread a delegated-task command creates (nightly `idAllocator.derive`). */
@@ -557,6 +569,7 @@ export class T3Nesting {
     const record: ParentThread = {
       taskId,
       threadId,
+      holdText: HOLD_MARKER,
       sessionId: binding.sessionId,
       bindingPath: binding.bindingPath,
       workspaceId: input.workspace.id,
@@ -620,7 +633,7 @@ export class T3Nesting {
       // lifecycle rather than inventing anything of its own.
       initialMessage: {
         messageId: identity("message", commandId),
-        text: `${HOLD_MARKER}: ${taskId}`,
+        text: HOLD_MARKER,
         attachments: [],
       },
     };
@@ -716,7 +729,7 @@ export class T3Nesting {
       commandId,
       threadId: parent.threadId,
       messageId: identity("message", commandId),
-      text: `${HOLD_MARKER}: ${parent.taskId}`,
+      text: holdTextFor(parent),
       attachments: [],
       dispatchMode: { type: "queue_after_active" },
     });

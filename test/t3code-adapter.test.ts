@@ -215,7 +215,9 @@ test("create launches the task parent on the task checkout and runs the role as 
     type: "existing_worktree",
     worktreePath: directory,
   });
-  assert.match(parent.initialMessage.text, /nucleus-hold-the-task-thread/);
+  // The opening prompt is a plain sentence: no internal marker and no task id on screen.
+  assert.equal(parent.initialMessage.text, "Nucleus keeps this task thread open for its next role.");
+  assert.doesNotMatch(parent.initialMessage.text, /nucleus-hold|task-[0-9a-f-]{8}/);
   assert.equal(parent.runtimeMode, "full-access");
   // The role: a native child of that parent, on the launch's own provider and model,
   // carrying the prompt and the numbered role title.

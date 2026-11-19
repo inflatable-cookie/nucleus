@@ -13,6 +13,7 @@ import {
   PARENT_PROVIDER,
   childTaskId,
   childThreadId,
+  parentPromptRules,
 } from "../hosts/t3code/nesting";
 import type { AcpSessionSurface } from "../shared/acp/surface";
 import {
@@ -266,7 +267,10 @@ test("the first role launches the task parent on the nucleus ACP provider and ru
   // agent's own configuration, never text it parses.
   assert.equal(acp.bindings.length, 1);
   assert.equal(acp.bindings[0]!.taskId, "synthetic-task");
-  assert.equal(acp.bindings[0]!.holdPattern, HOLD_MARKER);
+  // The hold rule is anchored and escaped, so it matches exactly the sentence this host sends.
+  assert.equal(acp.bindings[0]!.holdPattern, parentPromptRules().holdPattern);
+  assert.match(HOLD_MARKER, new RegExp(acp.bindings[0]!.holdPattern!));
+  assert.doesNotMatch(HOLD_MARKER, /nucleus-hold|task-/);
   assert.match(acp.bindings[0]!.ignorePattern!, /delegated-task/);
 
   // The role: a native child of that parent's live run, with the profile's own

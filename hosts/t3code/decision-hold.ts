@@ -2,7 +2,7 @@
 import { activeStatuses, type T3Reads } from "./reads";
 import { canonical, type T3StateFile } from "./state";
 import { identity, type T3IntentLedger } from "./intents";
-import { HOLD_MARKER } from "./nesting";
+import { HOLD_MARKER, holdTextFor } from "./nesting";
 
 interface HoldContext {
   hostId(): string;
@@ -57,11 +57,17 @@ export class T3DecisionHold {
     await this.send(threadId, commandId, messageId);
   }
 
+  /** The text this thread's binding holds: a parent's own, else the inbox's current text. */
+  private holdText(threadId: string): string {
+    const parent = Object.values(this.core.state.read().parents ?? {}).find(row => row.threadId === threadId);
+    return parent ? holdTextFor(parent) : HOLD_MARKER;
+  }
+
   private async send(threadId: string, commandId: string, messageId: string): Promise<void> {
     await this.core.unsettle(threadId, messageId);
     await this.core.intents.effect(commandId, "orchestration.dispatchCommand", {
       type: "message.dispatch", createdBy: "user", creationSource: "server", commandId, threadId, messageId,
-      text: HOLD_MARKER, attachments: [], dispatchMode: { type: "queue_after_active" },
+      text: this.holdText(threadId), attachments: [], dispatchMode: { type: "queue_after_active" },
     });
   }
 }
