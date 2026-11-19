@@ -21,7 +21,7 @@ import {
   ArchiveNotDeliveredError,
   ProvenPreSendRefusalError,
 } from "../../core/host";
-import { isHostOperationTimeout } from "../../core/host/errors";
+import { isHostOperationTimeout } from "../../core/host";
 import { T3RpcClient, type T3ConnectionConfig } from "./rpc";
 import { t3codeVocabulary } from "./vocabulary";
 import { T3StateFile, canonical, retiredRecord, restoredRecord } from "./state";

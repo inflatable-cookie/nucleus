@@ -348,7 +348,7 @@ test('a withdrawn budget question is dismissed by its recorded native request an
   try {
     await engine.performTaskControl({ taskId: queued.id, version: store.task(queued.id).version,
       action: 'extend_budget', reason: 'Continue the current approach', caller: 'operator (board)' });
-    for (let i = 0; i < 20 && dismissed.length < 1; i++) await tick();
+    for (let i = 0; i < 20 && !store.eventsAll(queued.id).some(event => event.kind === 'native_question_dismissed' && event.detail.startsWith(`${questionId}:`)); i++) await tick();
     assert.deepEqual(dismissed, [['worker', 'workspace', 'native-9']],
       'the withdrawn question is dismissed by its recorded requestId without a text prefix');
     assert.ok(store.eventsAll(queued.id).some(event => event.kind === 'native_question_dismissed' && event.detail.startsWith(`${questionId}:`)));

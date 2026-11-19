@@ -1,4 +1,4 @@
-import { isHostOperationTimeout } from "../../core/host/errors";
+import { isHostOperationTimeout } from "../../core/host";
 import { formatTaskNumber } from "../../shared/contracts";
 import { capPaseoTitle } from "../../shared/paseo-title";
 import { WIRE_LABEL_KEYS } from "../../shared/wire-labels";

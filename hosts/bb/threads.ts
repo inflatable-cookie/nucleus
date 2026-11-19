@@ -1,4 +1,4 @@
-import { isHostOperationTimeout } from "../../core/host/errors";
+import { isHostOperationTimeout } from "../../core/host";
 import {
   HostUnknownDeliveryError,
   ProvenPreSendRefusalError,

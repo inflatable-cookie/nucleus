@@ -8,9 +8,8 @@ import {
   PaseoAdapter,
   type AgentObservation,
 } from "../../service/paseo-composition";
-import { Store, digest } from "../../core/store/store";
+import { Store } from "../../core/store/store";
 import { command, git } from "../../core/git/index";
-import { repoCommonDir } from "../../core/workspaces/workspace-allocation";
 import { RuntimeRetirementService } from "../../core/runtime/runtime-retirement";
 import {
   collectOwnerVerbFacts,
@@ -82,17 +81,11 @@ export async function terminalArchiveFixture(
     join(data, "callback.sock"),
     join(data, "worker-report.mjs"),
   );
-  const directory = join(
-    data,
-    "workspaces",
-    digest(await repoCommonDir(primary)),
-    inserted.branch,
-  );
   adapter.findWorkspaces = async () => [];
   // This fixture starts each worktree creation serially and owns the repository.
   adapter.scanForWorktreeAdd = () => ({ state: "absent" });
   adapter.hostProcessListing = async () => [];
-  await adapter.populateTaskWorktree(inserted);
+  const { directory } = await adapter.populateTaskWorktree(inserted);
   await writeFile(join(directory, "task.txt"), "task\n");
   await git(directory, "add", "-A");
   await git(directory, "commit", "-m", "task");

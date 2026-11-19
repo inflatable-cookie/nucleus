@@ -1360,7 +1360,7 @@ const PARSED: ParsedText[] = [
     re: /\brun (\S+) \(/,
     sample: "a-1: kind scope; run r-1 (worker); agent x",
     writers: [
-      "${ask.id}: kind ${ask.kind}; run ${run.id} (${run.role}); agent ${run.agentId ?? 'unknown'}; question ${digest(ask.question)} (${ask.question.length} chars)",
+      '${ask.id}: kind ${ask.kind}; run ${run.id} (${run.role}); agent ${run.agentId ?? "unknown"}; question ${digest(ask.question)} (${ask.question.length} chars)',
     ],
   },
   {
@@ -1376,7 +1376,7 @@ const PARSED: ParsedText[] = [
       "${ask.id}: queue question ${joined}",
       ": queue question ${decision.id}",
     ],
-    reads: ["split('queue question ')"],
+    reads: ['split("queue question ")'],
   },
   {
     site: "ask delegated planner",
@@ -1384,6 +1384,7 @@ const PARSED: ParsedText[] = [
     sample: "a-1: task planner p-1; asked",
     writers: [
       "${rung === 'task' ? 'task planner' : 'project planner'} ${agentId}; asked",
+      '${rung === "task" ? "task planner" : "project planner"} ${agentId}; asked',
     ],
     reads: [
       'body.startsWith(" task planner ")',
@@ -1451,7 +1452,7 @@ const PARSED: ParsedText[] = [
     site: "operator question kinds",
     reads: [
       "record.intent?.kind === 'release'",
-      "event.detail.includes('kind budget')",
+      'event.detail.includes("kind budget")',
     ],
     writers: [
       "${question.id}: kind ${question.kind}; stop ${task.resolution.stop?.reason ?? 'none'}; head ${task.prHead ?? 'none'}; question ${digest(",
@@ -1484,7 +1485,7 @@ const PARSED: ParsedText[] = [
   {
     site: "absent catalog archive",
     reads: [
-      "event.detail.includes('observed absent from the catalog and disk without a Queue archive intent')",
+      '"observed absent from the catalog and disk without a Queue archive intent"',
     ],
   },
   // The absent-creation budget is read from the record's own scope, so the
@@ -1514,7 +1515,8 @@ const PARSED: ParsedText[] = [
  * leaves the others, so these carry a floor. A PR that deletes a site lowers it.
  */
 const SITES: Record<string, number> = {
-  "${rung === 'task' ? 'task planner' : 'project planner'} ${agentId}; asked": 3,
+  "${rung === 'task' ? 'task planner' : 'project planner'} ${agentId}; asked": 1,
+  '${rung === "task" ? "task planner" : "project planner"} ${agentId}; asked': 2,
   "decider requested": 3,
   "Task changed; refresh before retrying": 38,
   "Task or run changed; refresh before retrying": 3,

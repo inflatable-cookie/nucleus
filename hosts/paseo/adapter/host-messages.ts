@@ -1,4 +1,4 @@
-import { ProvenPreSendRefusalError } from "../../../core/host/errors";
+import { ProvenPreSendRefusalError } from "../../../core/host";
 import {
   ensureHostCallOpen,
   recordHostSend,
