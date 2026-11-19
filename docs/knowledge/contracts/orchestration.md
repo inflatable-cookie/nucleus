@@ -1683,13 +1683,24 @@ request identities and stored committed-handoff rows are not rewritten.
   per-repository validation policy setting and its Nucleus-wide default are
   retired, and prompts carry one fixed line naming the section and milestone QA
   on main via `project.qa.run`.
-- The affected-test run (Tom, 2026-11-12, nucleus#1164) is the one standing
-  test run before review: the worker runs `effigy test:affected --run` at the
-  committed head after its commit, and the reviewer judges the reported command
-  and file count there. A missing or failing affected run is a review finding;
-  anything wider than the affected set never is. The worker, revision and
-  reviewer prompts carry `AFFECTED_RUN_RULE` and `AFFECTED_RUN_REVIEWER_NOTE`.
-- Skip full `effigy qa`/`ci` and repeat passes; raw `npx`/`cargo`/`bun`
+- The affected-test run belongs to the repository, never to Nucleus (Tom,
+  2026-11-12, nucleus#1164; nucleus#1380, Tom 2026-11-19: "we can't assume any
+  project has that selector.. hell, we shouldn't assume a project even has
+  effigy!"). Only a repository whose `repository.get` shows an
+  `affectedTests.command` carries the rule, and then the worker and each
+  revision run exactly that command at the committed head after their commit,
+  and the reviewer judges it from the reported command and file count there,
+  rerunning it when that evidence is missing. A missing or failing affected run
+  is a review finding; anything wider than the affected set never is. A
+  repository with no `affectedTests.command` has no affected-tests requirement:
+  its `AGENTS.md` Validate section decides the covering checks, plus any proof
+  the brief names, and a reviewer never blocks for a missing affected run. The
+  worker, revision and reviewer prompts carry `affectedRunRule` and
+  `affectedRunReviewerNote` only when that command is configured, and no prompt
+  or the Nucleus skill names an affected-tests, baseline or QA selector for
+  another repository.
+- Skip full `effigy qa`/`ci` and repeat passes where the repository has those
+  selectors; raw `npx`/`cargo`/`bun`
   validation has no exception. Formatting applies only to changed formatted
   source with a covering Effigy format selector; a missing selector is a
   papercut, not a review blocker. `effigy fmt` formats whole changed TypeScript

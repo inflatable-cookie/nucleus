@@ -97,9 +97,12 @@ export function revisionRunPrompt(prompt: RunPromptContext): string {
   const action = run.instruction?.trim() || revisionContinuationAction(task);
   // A continuation without review findings names the existing action and the
   // ordinary checks only; it must not tell the worker a review defect exists.
+  // The affected-tests rule is not restated here: validation.ts owns it and
+  // names the repository's own command only when that repository configures one
+  // (nucleus#1380), so a repository without `affectedTests` reads no such step.
   const direction = findings
-    ? "Address the public review findings below, run the checks the repository validation rule requires, commit, run the affected tests at the new head (AGENTS.md Validate), and push your changes."
-    : "Run the checks the repository validation rule requires, commit, run the affected tests at the new head (AGENTS.md Validate), and push your changes.";
+    ? "Address the public review findings below, run the checks the repository validation rule requires, commit and push your changes."
+    : "Run the checks the repository validation rule requires, commit and push your changes.";
   const findingsBlock = findings
     ? `Review findings: ${findings}\n${reviewReference(task)}\n`
     : "";

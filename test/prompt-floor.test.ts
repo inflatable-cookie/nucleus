@@ -22,8 +22,8 @@ const task = {
 } as unknown as Task;
 
 const floors = {
-  worker: { rule: 'Worker', duty: /Before editing, confirm/, result: /prNumber/, validation: /Affected tests: after you commit/ },
-  revision: { rule: 'Worker', duty: /Resume implementation in this same workspace/, result: /ready_for_review.*prNumber/, validation: /Affected tests: after you commit/ },
+  worker: { rule: 'Worker', duty: /Before editing, confirm/, result: /prNumber/, validation: /Affected tests: this repository configures its own affected-tests command, so after you commit/ },
+  revision: { rule: 'Worker', duty: /Resume implementation in this same workspace/, result: /ready_for_review.*prNumber/, validation: /Affected tests: this repository configures its own affected-tests command, so after you commit/ },
   reviewer: { rule: 'Reviewer', duty: /Inspect the diff/, result: /reviewText/, validation: /Affected tests: judge the author's/ },
   recovery: { rule: 'Recovery', duty: /Do not edit tracked files/, result: /Report exactly one coordinatorAction/ },
   executor: { rule: null, duty: /Run exactly ONE brief-named selector/, result: /proof_executed with proofResult/ },

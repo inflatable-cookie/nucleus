@@ -279,14 +279,19 @@ counts as evidence and treat any live-store verification as a planner follow-up.
 The reviewer judges the recorded counts; do not require the reviewer to open or
 query the live store, and do not frame that check as awaiting proof.
 
-Before review, each worker and revision also runs the affected test files its
-committed change can reach: `effigy test:affected --run` at the exact head
-(nucleus#1164, Tom 2026-11-12). If an affected file fails, rerun it alone on
-`origin/main` using the repository baseline route (in Nucleus, `effigy test:baseline <file>`). Read the printed `$TMPDIR/queue-test-failures-<pid>-<ts>.txt` failure summary rather than rerunning to recover failure names. When it fails there too, it was already broken: list the file and
-failing test in the report and PR rather than fixing it. Only failures unique
-to the branch block review, and the reviewer applies the same rule. The reviewer
-judges the author's reported command and file count at that head and reruns it
-when that evidence is missing. Full suites and `effigy qa` stay on milestone QA.
+The affected-tests rule applies only when the repository configures it. When
+`repository.get` shows an `affectedTests.command` for that repository, the
+worker and each revision run exactly that command once at the exact head after
+committing (nucleus#1164, Tom 2026-11-12; nucleus#1380, Tom 2026-11-19), and the
+reviewer judges it from the reported command and file count at that head,
+rerunning it when that evidence is missing. If an affected file fails, rerun it
+alone on the base branch with the repository's baseline route; if it fails there
+too it was already broken, so list the file and failing test in the report and
+PR rather than fixing it. Only failures unique to the branch block review, and
+anything wider than the affected set never does. Full suites stay on milestone
+QA. When the repository configures no affected-tests command there is no
+affected-tests requirement: the repository's AGENTS.md Validate section decides
+the covering checks, plus any proof the brief names (nucleus#1380).
 
 The repository's AGENTS.md Validate section selects which covering checks
 apply; it never waives a proof the brief names as required, and
@@ -1246,7 +1251,7 @@ Northstar skill.
 - **Worker** implements one brief in the worktree Nucleus gives it, runs the
   covering checks, opens one PR, reports, and gets out of the way.
 - **Reviewer** checks the exact head against the brief and reports findings. It
-  does not run full `effigy qa`.
+  does not run the repository's full milestone QA.
 
 Coordination (recovery, review routing, merge, closeout) is Nucleus's job.
 
@@ -1302,9 +1307,10 @@ answers "what landed for X" and "why does this code look like this" before readi
 PRs; `queue.detail` reads one task and `queue.outcome` its permanent row.
 
 Full QA runs at a milestone, not per task: `project.qa.run`
-(`{repository, baseBranch}`) runs the repository's `qa` setting or `effigy qa` in
-a Nucleus-owned linked worktree of the registered checkout, with setup and teardown
-recorded as their own steps. `project.qa.get` and `project.qa.cancel` inspect and
+(`{repository, baseBranch}`) runs the repository's `qa` setting in a Nucleus-owned
+linked worktree of the registered checkout, with setup and teardown
+recorded as their own steps. Only a repository that sets no `qa` command runs
+Nucleus's own default. `project.qa.get` and `project.qa.cancel` inspect and
 cancel it, and `project.qa.dismiss { id, reason, caller }` clears a finished
 failure from the board without deleting its record. A request refused with a diagnostic starting "QA request preparation
 was interrupted" claimed no run; submit again with a new request ID only if the
