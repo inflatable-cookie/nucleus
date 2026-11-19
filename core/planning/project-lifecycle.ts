@@ -100,7 +100,7 @@ export class ProjectLifecycle {
       agents,
       responsibleThreads: Object.fromEntries(projects.map((project, index) => {
         const result = responsible?.[index];
-        return [project.key, result ? { thread: result.thread, cacheAgeMs: Math.max(0, Date.now() - result.observedAt) } : undefined];
+        return [project.key, result ? { thread: result.thread, cacheAgeMs: Math.max(0, Date.now() - result.observedAt), shortlist: result.shortlist } : undefined];
       })),
       latestQaRuns: this.context.store.latestQaRunsFor(
         projectSettingsQaKeys(projects),

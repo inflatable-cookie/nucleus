@@ -84,7 +84,7 @@ function anyLatestQaFailed(project: Project, runs: ProjectQaRun[]): boolean {
 
 export function buildProjectSettings(input: {
   projects: Project[];
-  responsibleThreads?: Record<string, { thread: import("../questions/responsible-thread-cache").ResponsibleThread | null; cacheAgeMs: number } | undefined>;
+  responsibleThreads?: Record<string, { thread: import("../questions/responsible-thread-cache").ResponsibleThread | null; cacheAgeMs: number; shortlist: import("../questions/responsible-thread-cache").ResponsibleCandidate[] } | undefined>;
   repositories: RepositorySettings[];
   overrides: Record<string, number>;
   defaultSlots: number;

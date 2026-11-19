@@ -1345,7 +1345,9 @@ export class Delegation {
       planner,
       originHost,
     );
-    if (state.kind === "unroutable") return { rung: null, issue: state.detail };
+    // A task's own planner that cannot be confirmed stays an issue, as before; only the project shortlist tolerates unverified reads.
+    if (state.kind === "unroutable" || state.kind === "unverified")
+      return { rung: null, issue: state.detail };
     return {
       rung: state.kind === "gone" ? null : { agentId: planner, rung: "task" },
     };
