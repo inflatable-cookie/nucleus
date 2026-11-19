@@ -1931,6 +1931,65 @@ for (const variant of ['short label', 'full label', 'changed head', 'changed run
   });
 }
 
+for (const followup of [false, true]) {
+  for (const drift of ['unchanged', 'changed head', 'changed run'] as const) {
+    test(`question.answer fences a pre-roll ${followup ? 'follow-up' : 'initial offer'} with ${drift}`, async () => {
+      const f = fixture();
+      try {
+        const task = dispatched(f);
+        const legacyOffer = escalationVerbChoices(f.next().verbs)
+          .find(choice => choice.verb === 'move' && choice.args.to === 'review')!;
+        assert.ok(legacyOffer.label.startsWith('Move to review: '));
+        assert.ok(!('binding' in legacyOffer));
+        const id = 'legacy-review-offer';
+        const initialId = `ns-escalation-${id}`;
+        const followupId = `ns-escalation-refusal-${id}`;
+        const questionId = followup ? followupId : initialId;
+        const writeFollowup = (offer: typeof legacyOffer) => {
+          f.store.event(task.id, 'planner_escalation_followup_offered', `${id}: ${JSON.stringify({
+            questionId: followupId, choices: [offer.label], ownerChoices: [offer],
+          })}`);
+        };
+        f.store.event(task.id, 'planner_escalation', `${id}: cause ${'c'.repeat(64)}; run ${task.runId}; question pending`);
+        f.store.event(task.id, 'planner_escalation_offered', `${id}: ${JSON.stringify([legacyOffer])}`);
+        if (followup) writeFollowup(legacyOffer);
+        const openQuestion = (question: string, offer: typeof legacyOffer) =>
+          f.engine.resolution.openDelegatedQuestion(f.task(), question, 'planner',
+            `Choose how to continue
+- ${offer.label}`,
+            30_000, 'planner', task.hostId!);
+        openQuestion(questionId, legacyOffer);
+        if (drift === 'changed head') f.store.update(task.id, { prHead: 'c'.repeat(40) });
+        if (drift === 'changed run') f.store.update(task.id, { runId: 'replacement-run' });
+        const answer = (question: string) => Promise.resolve().then(() =>
+          f.engine.resolution.answerDelegatedQuestion({
+            questionId: question, choice: 'Move to review', reason: 'Resume review',
+          }, 'planner'));
+        const before = f.task();
+        await assert.rejects(answer(questionId), /no recorded run or PR binding/);
+        await assert.rejects(answer(questionId), /no recorded run or PR binding/);
+        assert.equal(f.events('planner_escalation_answer_pending').length, 0);
+        assert.equal(f.events('owner_control').length, 0);
+        assert.equal(f.task().prHead, before.prHead);
+        assert.equal(f.task().runId, before.runId);
+
+        if (!followup && drift === 'unchanged') {
+          const fresh = escalationVerbChoices(f.next().verbs, escalationChoiceBinding(f.facts()))
+            .find(choice => choice.verb === 'move' && choice.args.to === 'review')!;
+          writeFollowup(fresh);
+          openQuestion(followupId, fresh);
+          assert.equal((await answer(followupId)).answer, fresh.label);
+          assert.equal((await answer(followupId)).answer, fresh.label);
+          assert.equal(f.events('owner_control').length, 1);
+          assert.equal(f.events('planner_escalation_applied').length, 1);
+        }
+      } finally {
+        await f.close();
+      }
+    });
+  }
+}
+
 test('a held restart loses its old stop after its target moves and the hold releases', async () => {
   const f = fixture(); try {
     const task = dispatched(f);

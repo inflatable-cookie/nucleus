@@ -6,6 +6,7 @@ import {
   blockerCauseId,
   decodeEscalationChoice,
   escalationAnswerControl,
+  escalationChoiceBinding,
   escalationVerbChoices,
   escalationWaitDetail,
   extractDecisionIdCandidates,
@@ -875,7 +876,8 @@ test("a refusal follow-up applies only the refreshed owner verb recorded for tha
     const task = f.current();
     const id = "changed-followup-offer";
     const questionId = `ns-escalation-refusal-${id}`;
-    const route = escalationVerbChoices(ownerVerbViews(collectOwnerVerbFacts(f.store, task))).find(item => item.verb === "route");
+    const facts = collectOwnerVerbFacts(f.store, task);
+    const route = escalationVerbChoices(ownerVerbViews(facts), escalationChoiceBinding(facts)).find(item => item.verb === "route");
     assert.ok(route, "the current task has a route owner verb to offer");
     f.store.event(task.id, "planner_escalation", `${id}: cause ${"c".repeat(64)}; run worker; question pending`);
     f.store.event(task.id, "planner_escalation_offered", `${id}: []`);
@@ -977,7 +979,8 @@ test("a refusal follow-up answer is recovered across a service roll without rese
     const id = "followup-roll";
     const initialQuestionId = `ns-escalation-${id}`;
     const followupQuestionId = `ns-escalation-refusal-${id}`;
-    const route = escalationVerbChoices(ownerVerbViews(collectOwnerVerbFacts(f.store, task))).find(item => item.verb === "route");
+    const facts = collectOwnerVerbFacts(f.store, task);
+    const route = escalationVerbChoices(ownerVerbViews(facts), escalationChoiceBinding(facts)).find(item => item.verb === "route");
     assert.ok(route, "the refreshed offer includes a route action");
     const cause = "d".repeat(64);
     f.store.event(task.id, "planner_escalation", `${id}: cause ${cause}; run worker; question ${"a".repeat(24)} (100 chars)`);

@@ -445,7 +445,7 @@ export async function routePlannerEscalation(
           prompt: nativeDelegationPrompt("planner", {
             question: `Your choice was refused: ${refusal}. Choose again for the same escalation.`,
             choices: retryChoices,
-            context,
+            context: ladder.resolution.decisionContext(followupFacts.task),
           }),
           signal: new AbortController().signal,
           timeoutMs: DELEGATED_ANSWER_TIMEOUT_MS,

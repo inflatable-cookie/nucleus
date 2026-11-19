@@ -286,9 +286,12 @@ export class EscalationSettlement {
             ? this.store.run(reviewerIncident.runId)
             : null;
       const choiceFacts = selected.kind === "owner" ? collectOwnerVerbFacts(this.store, current) : null;
-      if (selected.kind === "owner" && choiceFacts && selected.choice.binding !== undefined
-        && selected.choice.binding !== escalationChoiceBinding(choiceFacts))
-        throw Error("The task's run or PR binding changed after this escalation offer; read next again");
+      if (selected.kind === "owner" && choiceFacts) {
+        if (selected.choice.binding === undefined)
+          throw Error("This offer has no recorded run or PR binding. Use a fresh offer or apply the current action from task next");
+        if (selected.choice.binding !== escalationChoiceBinding(choiceFacts))
+          throw Error("The task's run or PR binding changed after this escalation offer; read next again");
+      }
       const workerChoice =
         selected.kind === "owner" &&
         ((selected.choice.verb === "move" &&
