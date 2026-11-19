@@ -289,7 +289,7 @@ test("worker startup pins the queue-owned branch through PR reporting", () => {
   assert.match(prompt, /git branch --show-current/);
   assert.match(
     prompt,
-    /already dispatched under the handoff's `dispatch_authority: orchestrator`/,
+    /already dispatched under the brief's `dispatch_authority: orchestrator`/,
   );
   assert.doesNotMatch(prompt, /direct Northstar worker fast path/);
   assert.match(prompt, /Never create, rename, or switch/);
@@ -605,15 +605,22 @@ test("identity-confirmation continuation names the recorded PR even before a res
     /Resume implementation in this same workspace and PR/,
   );
 });
-test("scoped revision prompt keeps handoff, review findings and the operator instruction as distinct sources", () => {
+test("scoped revision prompt keeps brief, review findings and the operator instruction as distinct sources", () => {
+  const repairBrief = "Repair brief\n";
+  const pinned = {
+    brief: { text: repairBrief, mediaType: "text/markdown", digest: briefDigest(repairBrief) },
+    briefVersions: [{ version: 1, digest: briefDigest(repairBrief), mediaType: "text/markdown", text: repairBrief, reason: "Submitted", pinnedAt: "2026-09-13T00:00:00.000Z" }],
+    handoffText: repairBrief,
+  };
   const task = {
+    ...pinned,
     id: "task",
     title: "Repair",
     originAgentId: "origin",
     repoPath: "/repo",
     workspaceId: "workspace",
     directory: "/worktree",
-    handoffPath: "handoff.md",
+    handoffPath: "",
     planningCommit: "a".repeat(40),
     skipPRReview: false,
     prUrl: "https://github.com/example/repo/pull/188",
@@ -639,14 +646,14 @@ test("scoped revision prompt keeps handoff, review findings and the operator ins
     instruction: "Apply the accepted per-unit Card 132 ruling",
   } as Run;
   const prompt = runPrompt(task, run, "/helper", "/ticket", true);
-  const handoff = prompt.indexOf("Committed handoff:");
+  const handoff = prompt.indexOf("----- BEGIN QUEUE-HELD BRIEF -----");
   const findings = prompt.indexOf("Review findings:");
   const instruction = prompt.indexOf(
     "Additional operator revision instruction",
   );
   assert.ok(
     handoff >= 0 && findings > handoff && instruction > findings,
-    "instruction must follow the immutable handoff and public review findings",
+    "instruction must follow the pinned brief and public review findings",
   );
   assert.match(prompt, /scoped-1, versioned and bound to this revision run/);
   assert.match(prompt, /distinct sources/);
@@ -883,7 +890,7 @@ test("a non-delivery pre-PR continuation suppresses the summary and keeps the ow
   assert.doesNotMatch(prompt, /diagnostic context only/);
   assert.match(
     prompt,
-    /Continue until the outcome is delivered or an external cause stops you: when the full handoff completes, open one PR and return ready_for_review with its prNumber/,
+    /Continue until the outcome is delivered or an external cause stops you: when the full brief completes, open one PR and return ready_for_review with its prNumber/,
   );
   assert.doesNotMatch(prompt, /Otherwise return blocked\/error/);
 });
@@ -1008,7 +1015,7 @@ test("MCP report fallback covers a closed transport after one identical retry", 
     /If the nucleus_report tool is absent, or its transport stays closed after one identical retry \("Transport closed" or another transport error\), use this authenticated fallback/,
   );
 });
-test("closeout coordinator owns bounded documentation publication and reports its final commit", () => {
+test("closeout coordinator verifies the merged state and writes no files", () => {
   const task = {
     id: "task",
     title: "Card",
@@ -1023,9 +1030,9 @@ test("closeout coordinator owns bounded documentation publication and reports it
     head: "a".repeat(40),
   } as Run;
   const prompt = runPrompt(task, run, "/helper", "/ticket", true);
-  assert.match(prompt, /authorized to update Markdown only under docs\/logs\//);
-  assert.match(prompt, /closeoutCommit/);
-  assert.match(prompt, /Never force-push/);
+  assert.match(prompt, /Do not write, edit or commit any file/);
+  assert.doesNotMatch(prompt, /docs\/logs|closeoutCommit/);
+  assert.match(prompt, /Never commit, push, reset, or stash/);
   assert.doesNotMatch(
     prompt,
     /required repository edits.*do not.*make those changes/,
@@ -1204,7 +1211,7 @@ test("reviewer, worker, closeout and recovery prompts keep their existing valida
     revision,
     /run the checks the repository validation rule requires/,
   );
-  assert.match(closeout, /focused documentation checks/);
+  assert.match(closeout, /Do not write, edit or commit any file/);
   assert.match(
     recovery,
     /Inspect queue and task evidence for the current task/,

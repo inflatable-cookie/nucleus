@@ -94,7 +94,7 @@ test('backend content determines the build while docs and client files do not', 
     writeFileSync(join(root, 'bin', 'queue-service.mjs'), 'entry');
     const original = serviceBuildIdentity(root);
     assert.equal(serviceBuildIdentity(root), original, 'the unchanged tree remains stable');
-    for (const path of ['docs/readme.md', 'docs/notes/plan.md', 'client/screen.tsx']) {
+    for (const path of ['docs/readme.md', 'docs/plan.md', 'client/screen.tsx']) {
       writeFileSync(join(root, path), 'edited');
       assert.equal(serviceBuildIdentity(root), original, `${path} must not restart the service`);
     }

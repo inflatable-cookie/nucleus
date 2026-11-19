@@ -23,7 +23,8 @@ import { cpuTimeMs } from './support/cpu-time';
 const profile: Profile = { id: 'worker', name: 'Worker', provider: 'test', model: 'test', notes: '', available: true, problem: '', supportedThinking: ['low'] };
 
 function dispatched(store: Store, repoPath: string): Task {
-  const task = store.insert(submissionSchema.parse({ submissionId: randomUUID(), title: `Task ${repoPath}`, repoPath, planningCommit: 'a'.repeat(40), handoffPath: 'handoff.md', originAgentId: 'origin' }), 'host', 'handoff', 'a'.repeat(40));
+  const text = '## Outcome\n\nHandoff fixture brief.\n';
+  const task = store.insert(submissionSchema.parse({ submissionId: randomUUID(), title: `Task ${repoPath}`, repoPath, planningCommit: 'a'.repeat(40), brief: { text, mediaType: 'text/markdown', digest: briefDigest(text) }, originAgentId: 'origin' }), 'host', text, 'a'.repeat(40));
   return store.update(task.id, {
     phase: 'working', workspaceIntent: true, agentIntent: true,
     workspaceId: `ws-${task.id}`, directory: '/fixture', agentId: `agent-${task.id}`, runId: `run-${task.id}`,

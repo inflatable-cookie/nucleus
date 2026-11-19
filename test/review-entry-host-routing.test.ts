@@ -5,10 +5,11 @@ import { join } from 'node:path';
 import { Engine } from '../core/engine';
 import { Store } from '../core/store/store';
 import type { Adapter } from '../core/host/adapter';
-import { exactProofFixture } from './support/review-entry-fixture';
+import { exactProofFixture, seedFixtureLead } from './support/review-entry-fixture';
 
 test('review entry binds the selected worker host and separately proves the origin host', async () => {
   const f = exactProofFixture(), store = new Store(join(f.root, 'queue.sqlite'));
+  seedFixtureLead(store, f.repo, f.planningCommit);
   const a = { originAgent: async (id: string) => ({ id, workspaceId: 'origin-workspace', title: 'Origin', archived: false }),
     observe: observeIdle('origin-workspace') } as unknown as Adapter;
   let inspected = 0;
