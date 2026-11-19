@@ -4396,8 +4396,7 @@ test('the sweep owns released-run delivery while an incomplete timeline proves n
     f.store.setMeta('paused', true);
     let incomplete = true;
     f.adapter.agentTimelinePage = async () => ({ ...toolTimelinePage(f.timelineEntries), hasOlder: incomplete });
-    const effect = `run-delivery.${run.id}`;
-    const wait = () => f.views('retry_effect').find(view => view.refusal?.includes(effect))?.refusal;
+    const wait = () => f.views('retry_effect').find(view => view.refusal?.startsWith(`run-delivery ${run.id} `))?.refusal;
     assert.match(wait() ?? '', /exact timeline on a sweep/);
     assert.equal((await f.engine.auditPass(true)).fault, null);
     assert.equal(f.store.run(run.id)?.status, 'uncertain');
