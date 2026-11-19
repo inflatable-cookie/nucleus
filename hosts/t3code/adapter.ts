@@ -439,7 +439,12 @@ export class T3CodeHost implements Host {
    */
   async reconcileObservation(): Promise<void> {
     const state = this.state.read();
-    const tracked = Object.keys(state.agents),
+    // A delegated follow-up child is a real thread in the task's workspace with its
+    // own launch identity, so it leaves observation with its task too (nucleus#1381).
+    const tracked = [
+        ...Object.keys(state.agents),
+        ...Object.keys(state.followUps ?? {}),
+      ],
       retiredIds = Object.keys(state.retiredAgents ?? {});
     if (!tracked.length && !retiredIds.length) return;
     const retire: string[] = [],
@@ -454,10 +459,11 @@ export class T3CodeHost implements Host {
     this.state.update((next) => {
       next.retiredAgents ??= {};
       for (const id of retire) {
-        const record = next.agents[id];
+        const record = next.agents[id] ?? next.followUps?.[id];
         if (!record) continue;
         next.retiredAgents[id] = retiredRecord(record);
         delete next.agents[id];
+        if (next.followUps) delete next.followUps[id];
       }
       for (const id of restore) {
         const record = next.retiredAgents?.[id];

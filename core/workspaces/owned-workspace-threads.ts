@@ -45,6 +45,14 @@ export async function workspaceThreadEntries(
   return entries;
 }
 
+/**
+ * The one positive terminal-state proof for a workspace thread. A host normalises its
+ * own app states into these before the inventory reaches here: `idle` for a finished
+ * run, `closed` for an archived thread, `gone` for a tombstoned one. Any other status,
+ * including a status this list does not name, holds the archive.
+ */
+export const TERMINAL_WORKSPACE_THREAD_STATUSES: ReadonlySet<string> = new Set(['idle', 'error', 'closed', 'gone']);
+
 /** What the inventory says about this task's own threads and everyone else's. */
 export interface WorkspaceThreadFacts {
   /** Threads that are neither this task's nor an attached participant's. */
@@ -70,7 +78,7 @@ export function workspaceThreadFacts(
       if (!allowIdleForeignThreads) throw Error('Preserving workspace containing an unrelated thread');
       if (agent.id) foreignAgentIds.push(agent.id);
     }
-    if (agent.activeTurn || agent.pendingPermissions?.length || !['idle', 'error', 'closed'].includes(agent.status ?? '')) throw Error('Waiting for workspace threads to become idle');
+    if (agent.activeTurn || agent.pendingPermissions?.length || !TERMINAL_WORKSPACE_THREAD_STATUSES.has(agent.status ?? '')) throw Error('Waiting for workspace threads to become idle');
   }
   return { foreignAgentIds };
 }
