@@ -376,6 +376,13 @@ test("another task's ticket cannot act on this task, even on the same thread", a
     assert.match(JSON.parse(report.body).error, /Stale reporting run|Stale run/);
     assert.equal(f.store.run('run-other')?.completion, null);
 
+    // ask and tell read the same identity: B's turn cannot be asked with A's
+    // ticket, so the binding refuses rather than recording the question on B.
+    assert.throws(
+      () => askBinding(f.store, f.store.task(other.id), 'run-old'),
+      /Stale reporting run/,
+    );
+
     // Self-force is the path that could move or retry an effect: A's credential
     // names A's task, so B is not its own task.
     await assert.rejects(
