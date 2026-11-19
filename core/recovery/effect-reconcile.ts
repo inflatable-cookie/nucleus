@@ -43,8 +43,10 @@ export class EffectReconcile {
       if (previous.status === 'refused' && status !== 'refused') return;
       deliveries[index] = { ...previous, status, evidence: evidence.slice(0, 2000), observedAt: now() };
       const repin = status === 'delivered' && receiptProven && previous.briefVersion !== null ? { briefVersion: previous.briefVersion } : {};
-      this.store.putRun({ ...run, reviewDeliveries: deliveries, ...repin });
       const current = this.store.task(run.taskId);
+      const resumed = status === 'delivered' && run.status === 'stopped' &&
+        !run.completion && !run.released && current.resolution.currentRunId === run.id;
+      this.store.putRun({ ...run, ...(resumed ? { status: 'running' as const } : {}), reviewDeliveries: deliveries, ...repin });
       const reason = status === 'uncertain' ? reviewDeliveryReason(deliveryId, 'uncertain') :
         status === 'delivered' ? reviewContinuationWait(current, this.store).reason : `Reviewer delivery ${deliveryId} was refused before send: ${evidence.slice(0, 600)}`;
       const ownedReasons = [reviewDeliveryReason(deliveryId, 'reserved'), reviewDeliveryReason(deliveryId, 'uncertain')];

@@ -617,7 +617,7 @@ export function retainedContinuationPlan(
   if (reviewResultFencesRun(facts.store, task, current))
     return {
       kind: "refused",
-      refusal: `A recorded result fences checkpoint ${checkpoint.ordinal}; move to=review re-observes the head and asks the retained reviewer to report.`,
+      refusal: `A recorded result fences checkpoint ${checkpoint.ordinal} on run ${current.id}.`,
     };
   // A spent budget ends checkpoint turns. A closed reviewer also ends retained report recovery.
   if (current.reviewBudgetExhaustedAt && !current.retainedAgentClosedAt)

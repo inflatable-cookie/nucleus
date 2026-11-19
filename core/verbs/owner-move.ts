@@ -1,4 +1,4 @@
-import { reviewerReportRequestRefusal } from "./reviewer-report";
+import { reviewerReportBindingRefusal, reviewerReportRequestRefusal } from "./reviewer-report";
 import {
   MOVE_WORK_AUTHOR_REFUSAL,
   MOVE_WORK_REPLACEMENT_REFUSAL,
@@ -309,10 +309,8 @@ function moveViews(facts: OwnerVerbFacts): TaskNextVerb[] {
         (state === "awaiting" &&
           reviewResultFencesRun(facts.store, task, reader))
       ) {
-        const reportRefusal = reviewerReportRequestRefusal(
-          reader,
-          facts.events,
-        );
+        const reportRefusal = reviewerReportBindingRefusal(task, runs, reader)
+          ?? reviewerReportRequestRefusal(reader, facts.events);
         return reportRefusal
           ? { available: false, refusal: reportRefusal }
           : {

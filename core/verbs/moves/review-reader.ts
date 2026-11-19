@@ -24,6 +24,7 @@ import { plainHandoverFreshRestart, RestartRefusal } from "../owner-verbs";
 import type { FinishedRuns, ReviewMoveInput, VerifiedPr } from "./types";
 import {
   requestReviewerReport,
+  reviewerReportBindingRefusal,
   reviewerReportRequestRefusal,
   unreportedReviewer,
 } from "../reviewer-report";
@@ -134,14 +135,17 @@ export async function moveRetainedReader(
     Date.parse(reading.lastObservedAt) > Date.parse(delivery.observedAt) &&
     delivery &&
     stoppedDeliveryResume(store, latestTask, reading, delivery).kind === "none";
+  const reportRuns = store.runs(task.id);
+  const resultFenced = state === "awaiting" &&
+    reviewResultFencesRun(store, latestTask, reading);
+  if (resultFenced || state === "exhausted") {
+    const refusal = reviewerReportBindingRefusal(latestTask, reportRuns, reading);
+    if (refusal) throw new RestartRefusal(refusal);
+  }
   if (
     !busy &&
-    (!reader ||
-      stoppedAfterDelivery ||
-      state === "exhausted" ||
-      (state === "awaiting" &&
-        reviewResultFencesRun(store, latestTask, reading))) &&
-    unreportedReviewer(latestTask, store.runs(task.id))?.id === reading.id
+    (!reader || stoppedAfterDelivery || state === "exhausted" || resultFenced) &&
+    unreportedReviewer(latestTask, reportRuns)?.id === reading.id
   ) {
     const wait = engine.dispatchWaitsFor(
       latestTask,

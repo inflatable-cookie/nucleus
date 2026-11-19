@@ -22,7 +22,7 @@ import {
   REVIEW_READER_EXHAUSTED,
   reviewerCannotFinish,
 } from "./reader";
-import { reviewResultFencesRun } from "./result-fence";
+import { reviewResultFence } from "./result-fence";
 
 /**
  * The reviewer-continuation gate's locally observable checks, shared by the
@@ -71,9 +71,12 @@ export function reviewContinuationLocalRefusal(
   // occurrence, never a replay of the creation. An uncertain run with no
   // authenticated checkpoint still sends nothing: its creation is unknown, not
   // absent (Spec 017).
+  // Older auto-continuation marked an idle reader stopped when it saw the
+  // earlier impediment. Its own checkpoint can still authorize a delivery.
+  const legacyStopped = run?.status === "stopped";
   const knownCreation =
     run?.status === "running" ||
-    (run?.status === "uncertain" && (run.reviewCheckpoints?.length ?? 0) > 0);
+    ((run?.status === "uncertain" || legacyStopped) && (run.reviewCheckpoints?.length ?? 0) > 0);
   if (
     task.resolution.currentRunId !== input.runId ||
     !run ||
@@ -96,10 +99,13 @@ export function reviewContinuationLocalRefusal(
         : REVIEW_BUDGET_EXHAUSTED,
     );
   if (run.retainedAgentClosedAt) return refuse(REVIEW_AGENT_CLOSED);
-  if (reviewResultFencesRun(store, task, run))
+  const resultFence = reviewResultFence(store, task, run);
+  if (resultFence === "fenced")
     return refuse(
       "A reviewer result already exists; checkpoints cannot authorize another review turn",
     );
+  if (legacyStopped && resultFence !== "prior_impediment")
+    return refuse("The current reviewer run is completed, released, replaced or unavailable");
   // A reader is bound to its own recorded run workspace, which the pre-send
   // observation then proves is still the agent's workspace. A task-workspace
   // substitution is never read into that binding.

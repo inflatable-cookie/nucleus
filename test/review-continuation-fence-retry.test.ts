@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { fixture } from './support/review-continuation-fixture';
+import { acceptControl, fixture, head } from './support/review-continuation-fixture';
+import { whileReaderInTurn } from './support/reader-in-turn';
+import { collectOwnerVerbFacts, ownerTaskNext } from '../core/verbs/owner-verbs';
+import { completionSchema, taskControlInputSchema } from '../shared/contracts';
 import { holdPatch, releasePatch } from '../core/merge/merge-hold';
 import { ProvenPreSendRefusalError } from '../core/host/errors';
 
@@ -157,3 +160,110 @@ test('a deferred reviewer checkpoint retries on the next pass after its incident
     assert.equal(f.store.events(f.submitted.id).filter(event => event.kind === 'review_auto_continued').length, 1);
   } finally { await f.close(); }
 });
+
+for (const action of ["sweep", "sweep-legacy-stopped", "move", "restart", "unbound-result"] as const) {
+  test(`a replacement reviewer at the same head can resume after an applied impediment (${action})`, async () => {
+    const f = fixture();
+    try {
+      const taskId = f.submitted.id;
+      const oldResult = completionSchema.parse({
+        eventId: "exhausted-reader-blocked", taskId, runId: f.runId, head,
+        status: "blocked", summary: "The continuation allowance is exhausted",
+        reviewResponsibility: "environment", reviewText: "Review stopped before all inputs were read",
+      });
+      await whileReaderInTurn(f.engine, "review-agent", () =>
+        f.engine.complete({
+          eventId: "exhausted-reader-progress", taskId, runId: f.runId, head,
+          status: "review_in_progress", summary: "Continuation allowance exhausted",
+          checkpoint: { covered: ["Diff"], remaining: ["Tests"], exhausted: true },
+        }, "token"));
+      assert.ok(f.run().reviewBudgetExhaustedAt);
+      await f.engine.complete(oldResult, "token");
+      await f.engine.wake();
+      assert.equal(f.current().phase, "blocked");
+      assert.equal(f.run().released, true);
+      assert.equal(f.current().resolution.review?.eventId, oldResult.eventId);
+
+      let token: string | undefined;
+      const createRun = f.adapter.createRun!;
+      f.adapter.createRun = async (task, run, credential) => {
+        token = credential;
+        return createRun(task, run, credential);
+      };
+      f.states.set("review-agent", { ...f.states.get("review-agent")!, status: "closed" });
+      await f.engine.performTaskControl({
+        taskId, version: f.current().version, action: "restart", role: "reviewer",
+        fresh: true, caller: "owner", reason: "Finish the independent review",
+      });
+      await f.engine.wake();
+      const runId = f.current().resolution.currentRunId!;
+      const replacement = f.store.run(runId)!;
+      const agentId = replacement.agentId!;
+      assert.notEqual(runId, f.runId);
+      assert.notEqual(agentId, "review-agent");
+      assert.equal(replacement.head, head);
+      assert.equal(f.current().resolution.review?.eventId, oldResult.eventId);
+
+      const progress = {
+        eventId: "replacement-reader-progress", taskId, runId, head,
+        status: "review_in_progress" as const, summary: "First checkpoint",
+        checkpoint: { covered: ["Diff"], remaining: ["Tests"] },
+      };
+      assert.ok(token);
+      await f.engine.complete(progress, token);
+      await f.engine.quiesce();
+      assert.equal(f.store.run(runId)?.reviewCheckpoints?.length, 1);
+      // The earlier auto-continue writer left this run stopped after a refusal.
+      if (action !== "sweep")
+        f.store.putRun({ ...f.store.run(runId)!, status: "stopped", active: false });
+      f.states.set(agentId, {
+        ...f.states.get(agentId)!, status: "idle", active: false,
+        provider: replacement.profile!.provider, model: replacement.profile!.model,
+      });
+
+      if (action === "unbound-result") {
+        const current = f.current();
+        f.store.update(taskId, { resolution: { ...current.resolution, review: { ...oldResult, eventId: "mismatch" } } });
+        await f.engine.auditPass(true);
+        const next = ownerTaskNext(collectOwnerVerbFacts(f.store, f.current()));
+        assert.ok(!next.verbs.some(verb => verb.verb === "restart" && verb.available && verb.args?.role === "reviewer"));
+        assert.match(next.verbs.find(verb => verb.refusal?.startsWith("move review:"))?.refusal ?? "", /report cannot be requested/);
+        await assert.rejects(f.engine.performTaskControl({
+          action: "move", to: "review", taskId, version: f.current().version, reason: "Inspect the result",
+        }), /report cannot be requested/);
+        assert.doesNotMatch(next.stop?.detail ?? "", /fresh/);
+        assert.equal(f.reviewerDeliveries.length, 0);
+        return;
+      }
+
+      const next = ownerTaskNext(collectOwnerVerbFacts(f.store, f.current()));
+      assert.equal(next.outcome?.reader?.runId, runId);
+      assert.equal(next.outcome?.impediments[0]?.eventId, oldResult.eventId);
+      assert.doesNotMatch(next.stop?.detail ?? "", /fences checkpoint|fresh/);
+      const offer = next.verbs.find(verb => verb.verb === (action === "move" ? "move" : "restart")
+        && verb.available && (action === "move" ? verb.args?.to === "review" : verb.args?.role === "reviewer"));
+      assert.ok(offer?.args && offer.args.fresh !== true, JSON.stringify(next.verbs));
+      if (action === "sweep" || action === "sweep-legacy-stopped") {
+        assert.equal((await f.engine.auditPass(true)).fault, null);
+        assert.equal(f.store.eventsAll(taskId).filter(event => event.kind === "review_auto_continued").length, 1);
+      } else {
+        const input = taskControlInputSchema.parse({ ...offer.args, caller: "owner", reason: "Continue the checkpoint" });
+        const key = `continue-${action}`;
+        const outcome = await acceptControl(f, input, key);
+        assert.equal(outcome.state, "succeeded", outcome.diagnostic);
+        assert.equal((await acceptControl(f, input, key)).id, outcome.id);
+      }
+      assert.equal(f.store.run(runId)?.status, "running");
+      assert.equal(f.store.run(runId)?.reviewDeliveries?.at(-1)?.status, "delivered");
+      assert.equal(f.current().resolution.review?.eventId, oldResult.eventId);
+      assert.equal(f.store.run(f.runId)?.completion?.eventId, oldResult.eventId);
+      assert.equal((await f.engine.auditPass(true)).fault, null);
+      assert.deepEqual(f.reviewerDeliveries.map(delivery => delivery.runId), [runId]);
+      assert.equal(f.store.eventsAll(taskId).filter(event => event.kind === "review_delivery_delivered").length, 1);
+      assert.equal(f.createdRuns.length, 1);
+      assert.deepEqual(f.counts(), { merges: 0, syncs: 0 });
+    } finally {
+      await f.close();
+    }
+  });
+}
