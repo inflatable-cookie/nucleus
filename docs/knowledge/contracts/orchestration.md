@@ -3192,8 +3192,9 @@ after the task finishes.
   controls visible. The host operation page selects needs-attention rows before
   applying its bound, so settled history cannot delay a fresh service. A retained
   terminal tombstone binds a matching submission by its stored input digest; a
-  historical pre-send fence refusal remains a refusal after task retention. Neither
-  path replays the command. Unproved occurrences and process cleanup waits name
+  historical pre-send fence refusal remains a refusal after task retention. The
+  operation retains occurrence-bound settlement evidence, so task-event retention
+  cannot revive it and a repeated key cannot reopen it. Neither path replays the command. Unproved occurrences and process cleanup waits name
   their reason and an owner action on Hosts.
 - A done task's workspace is archived with every thread in it (Tom, 2026-09-27);
   only a running thread (active turn or pending permission) makes it wait. No

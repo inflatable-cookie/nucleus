@@ -531,6 +531,16 @@ export function hasRecordedOperationSettlement(
   task: Task,
   operation: QueueOperation,
 ): boolean {
+  const settlement = operation.settlement;
+  if (
+    settlement &&
+    settlement.id === operation.id &&
+    settlement.inputHash === operation.inputHash &&
+    settlement.attempt === operation.attempts &&
+    settlement.intentAt === (operation.effect?.intentAt ?? null) &&
+    settlement.evidence
+  )
+    return true;
   return store.eventsAll(task.id).some((event) => {
     if (event.kind !== "operation_superseded") return false;
     try {

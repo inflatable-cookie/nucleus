@@ -27,7 +27,9 @@ function cleanupReason(uncertainty: unknown, reason: unknown): string {
     try {
       const value = JSON.parse(String(uncertainty)) as { reason?: unknown };
       if (typeof value.reason === "string" && value.reason) return value.reason;
-    } catch { /* Report unreadable evidence without exposing its contents. */ }
+    } catch {
+      /* Report unreadable evidence without exposing its contents. */
+    }
     return "ownership evidence is unreadable";
   }
   return reason ? String(reason) : "waiting for a process observation";
@@ -78,10 +80,16 @@ export function hostDependents(
   const states = LIVE_OPERATION_STATES.map(() => "?").join(",");
   for (const row of db
     .prepare(
-      `SELECT operations.id AS id, operations.kind AS kind, operations.state AS state, operations.taskId AS taskId, json_extract(operations.data,'$.diagnostic') AS diagnostic FROM operations
+      `SELECT operations.id AS id, operations.kind AS kind, operations.state AS state, operations.taskId AS taskId, json_extract(operations.data,'$.startedAt') AS startedAt, json_extract(operations.data,'$.effect.target') AS target, json_extract(operations.data,'$.diagnostic') AS diagnostic FROM operations
     LEFT JOIN tasks ON tasks.id=operations.taskId OR (operations.kind='submit' AND operations.taskId IS NULL
       AND tasks.submission=json_extract(operations.data,'$.submissionId'))
     WHERE operations.state IN (${states}) AND COALESCE(json_extract(operations.data,'$.hostId'),json_extract(tasks.data,'$.hostId'))=?
+      AND NOT (operations.state='needs_attention' AND COALESCE(
+        json_extract(operations.data,'$.settlement.id')=operations.id
+        AND json_extract(operations.data,'$.settlement.inputHash')=operations.inputHash
+        AND json_extract(operations.data,'$.settlement.attempt')=json_extract(operations.data,'$.attempts')
+        AND json_extract(operations.data,'$.settlement.intentAt') IS json_extract(operations.data,'$.effect.intentAt')
+        AND json_type(operations.data,'$.settlement.evidence')='text',0))
       AND NOT (operations.state='needs_attention' AND (operations.kind='submit' OR (operations.kind='task_control'
         AND COALESCE(json_extract(operations.data,'$.effect.kind')='task_control' AND json_extract(operations.data,'$.effect.target')='restart',0))) AND EXISTS (SELECT 1 FROM events
         WHERE events.taskId=operations.taskId AND events.kind='operation_superseded' AND json_valid(events.detail)
@@ -93,7 +101,7 @@ export function hostDependents(
     )
     .all(...LIVE_OPERATION_STATES, host.id))
     effects.push(
-      `${String(row.kind).replace(/_/g, " ")}${row.taskId ? ` for ${ref(String(row.taskId))}` : ""}: ${row.state === "needs_attention" ? `settlement lacks proof; owner should inspect operation ${String(row.id)} with operation-status and reconcile its outcome` : `operation ${String(row.id)} is ${String(row.state)}`}${row.diagnostic ? ` (${String(row.diagnostic)})` : ""}`,
+      `${String(row.kind).replace(/_/g, " ")}${row.taskId ? ` for ${ref(String(row.taskId))}` : ""}: ${row.state === "needs_attention" ? `settlement lacks proof${row.kind === "task_control" && !row.taskId ? " (operation task identity is missing)" : row.kind === "task_control" && row.target === "restart" && !row.startedAt ? " (operation start time is missing)" : ""}; owner should inspect operation ${String(row.id)} with operation-status and reconcile its outcome` : `operation ${String(row.id)} is ${String(row.state)}`}${row.diagnostic ? ` (${String(row.diagnostic)})` : ""}`,
     );
   for (const row of db
     .prepare(
@@ -101,8 +109,23 @@ export function hostDependents(
     WHERE key LIKE 'runProcessCleanup:%' AND json_extract(value,'$.pending')=1 AND json_extract(value,'$.hostId')=?
     ORDER BY key`,
     )
-    .all(host.id))
-    effects.push(`process cleanup for ${ref(String(row.taskId))}: ${cleanupReason(row.uncertainty, row.reason)}; owner should inspect run ${String(row.runId)} and restore process ownership observation; the sweep retries`);
+    .all(host.id)) {
+    const reason = cleanupReason(row.uncertainty, row.reason);
+    const action =
+      reason === "a live run shares this agent" ||
+      reason === "run or its participant is active"
+        ? "wait for the active run to finish"
+        : reason === "a protected runtime still uses the scratch directory" ||
+            reason === "live-ancestor" ||
+            reason === "respawned-after-stop"
+          ? "wait for the owning runtime to release the scratch"
+          : reason === "scratch retirement was refused"
+            ? "inspect the scratch retirement guard"
+            : "restore process ownership observation";
+    effects.push(
+      `process cleanup for ${ref(String(row.taskId))}: ${reason}; owner should inspect run ${String(row.runId)} and ${action}; the sweep retries`,
+    );
+  }
   for (const task of source.finishedTasksOwingThreadCleanup(
     host.id,
     host.kind === "t3code",
