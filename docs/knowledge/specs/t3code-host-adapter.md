@@ -19,10 +19,16 @@ A task is one T3 thread on the Nucleus ACP provider (Spec 065) and its worker,
 reviewer, recovery, closeout and executor threads are that thread's native
 subagent children (Tom, 2026-11-16; nucleus#1305 — see [Native
 parenting](#native-parenting)). The parent authors nothing: it shows the task's
-lifecycle and holds its turn while any child runs. When the provider is missing or
-a child cannot be created the task falls back to separate top-level role threads,
-tagged and linked by [one row per task](#one-row-per-task), with no loss of
-function. The adapter does not patch T3,
+lifecycle and holds its turn while any child runs. **There is no top-level
+fallback (Tom, 2026-11-19, on retiring it so the parent's is the only row rule:
+"Agreed, let's keep things simple").** When the provider is missing or not ready,
+the parent is archived or deleted, or a child can't be created, the task waits
+visibly with the reason and the fix (for example "T3 provider not ready: run
+`nucleus t3 install`"), or the operator moves it to another host. The task's one
+parent row is settled whenever the task waits on nothing Nucleus is running and
+needs no person, and unsettled only when a person must act, driven by the board's
+attention projection. The fallback paths and per-role row rules described below
+are retired (implementation: nucleus#1366). The adapter does not patch T3,
 attach Nucleus MCP servers, raise Nucleus questions inside threads or contribute
 T3 UI. A T3 thread reports through the packaged nucleus helper with the run
 ticket named in its prompt. Nucleus-raised questions go to the web board and
