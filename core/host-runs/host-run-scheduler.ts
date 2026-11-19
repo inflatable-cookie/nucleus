@@ -19,7 +19,7 @@ import { defaultHostCapacity, HostRunCapacity } from "./host-run-capacity";
 import { HostRunLaunch } from "./host-run-launch";
 import { HostRunQueueOrder } from "./host-run-queue-order";
 import type { HostRunHandler, HostRunSchedulerOptions, HostRunSubmission } from "./host-run-scheduler-types";
-import { HostRunSettlementOwner, stableJson } from "./host-run-settlement";
+import { HostRunSettlementOwner, stableJson, type HostRunHookLiveness } from "./host-run-settlement";
 import { pidAlive } from "../machine/process-identity";
 import { hostRunProcessStartIdentity } from "../machine/start-identity";
 import type { Store } from "../store/store";
@@ -29,7 +29,10 @@ import { refuseHostRun } from "./host-run-refusal";
 export { classifyHostRun } from "./host-run-admission";
 export { defaultBudgetFallback, HISTORY_MEMORY_SHARE_CAP, NO_HISTORY_CPU_SHARE, percentile95, selectorForArgv } from "./host-run-capacity";
 export type { HostRunEvent, HostRunHandler, HostRunSchedulerOptions, HostRunSubmission } from "./host-run-scheduler-types";
-export { HOST_RUN_ABANDONED_RELEASE_REASON, HOST_RUN_EXPIRED_RELEASE_REASON, HOST_RUN_SETTLEMENT_IDENTITY_READS_PER_SWEEP } from "./host-run-settlement";
+export {
+  HOST_RUN_ABANDONED_RELEASE_REASON, HOST_RUN_EXPIRED_RELEASE_REASON, HOST_RUN_HOOK_DIED_BEFORE_ADMIT_REASON,
+  HOST_RUN_LIVENESS_UNKNOWN_EVENT, HOST_RUN_SETTLEMENT_IDENTITY_READS_PER_SWEEP, type HostRunHookLiveness,
+} from "./host-run-settlement";
 
 export const HOST_RUN_CAPACITY_DEADLINE_MS = 30 * 60_000;
 const AUTHORITY_JOURNAL_RUN_ID = "__host_run_authority__";
@@ -425,37 +428,33 @@ export class HostRunScheduler {
 
   /**
    * The ordinary sweep behind `tick()`, and the restart path for rows no watch
-   * covers (Spec 035, "A reservation settles when its recorded process is
-   * gone"): every launched admission reservation whose hook is gone settles
-   * once, and the freed capacity is offered to the queue.
+   * covers (Spec 035, "The sweep proves every reservation's holder"): every
+   * admitted or running admission reservation whose recorded hook is gone
+   * settles once, and the freed capacity is offered to the queue.
    *
-   * The sweep settles the two shapes whose evidence is already final without
-   * asking a producer again: the row's own producer retired its accounting, or
-   * its recorded run timeout has passed. A row the producer still reports live,
-   * held or retained keeps that hold until its deadline; a row with no producer
-   * answer yet is left to the watch that owns it, so the sweep never settles a
-   * reservation one instant before its own observer reads the result. A bounded
-   * page of start-identity reads keeps a busy pass from stalling the service;
-   * anything it leaves unproven waits for the next tick.
+   * The hook's own liveness, by pid and contract 010 start identity, is the whole
+   * question, so the sweep asks no producer and needs no second opinion. A row
+   * whose hook is alive, unreadable, unbound or unread this pass holds and
+   * records why. A bounded page of start-identity reads keeps a busy pass from
+   * stalling the service; anything it leaves unproven waits for the next tick,
+   * and a dead pid costs no read at all.
    */
   sweepAbandonedAdmissions(): HostRunInternalRecord[] { return this.settlementOwner.sweepAbandonedAdmissions(); }
 
   private settleIfDue(run: HostRunInternalRecord, budget: { identityReads: number }, scope: "watch" | "sweep"): HostRunInternalRecord | null { return this.settlementOwner.settleIfDue(run, budget, scope); }
 
-  /** True when this row already carries its producer's own accounting retirement. */
-  private reservationAccountingRetired(run: HostRunInternalRecord): boolean { return this.settlementOwner.reservationAccountingRetired(run); }
-
   /**
    * The recorded admission hook's liveness: `gone` only on positive absence,
-   * `unknown` whenever this host cannot prove either way.
+   * `unknown` whenever this host cannot prove either way, with the observation
+   * that decided it.
    *
    * A pid the kernel no longer reports is positive absence, whatever the
    * recorded identity says, because no identity read can make a dead pid alive.
    * A live pid is only `alive` when its identity still matches — a reused number
-   * is `gone` — and an unreadable identity, or a pass that has spent its bounded
-   * reads, is `unknown` and never absence.
+   * is `gone` — and an unreadable or unrecorded identity, or a pass that has
+   * spent its bounded reads, is `unknown` and never absence.
    */
-  private admissionHookState(run: HostRunInternalRecord, budget: { identityReads: number }): "gone" | "alive" | "unknown" { return this.settlementOwner.admissionHookState(run, budget); }
+  private admissionHookState(run: HostRunInternalRecord, budget: { identityReads: number }): HostRunHookLiveness { return this.settlementOwner.admissionHookState(run, budget); }
 
   /**
    * One writer for both honest exits of an abandoned reservation: the producer
@@ -687,7 +686,6 @@ export class HostRunScheduler {
       sampleCapacity: this.sampleCapacity.bind(this),
       settleIfDue: this.settleIfDue.bind(this),
       nowMs: this.nowMs.bind(this),
-      reservationAccountingRetired: this.reservationAccountingRetired.bind(this),
       admissionHookState: this.admissionHookState.bind(this),
       writeSettlement: this.writeSettlement.bind(this),
       hookAlive: this.hookAlive.bind(this),

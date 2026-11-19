@@ -922,12 +922,10 @@ proven gone. Two observers apply the one rule, from the same stored identity:
   (an unreadable journal, an answer that is not a closure): it reads the answer,
   records its cause, and settles. One `run status` reachable answer and one
   settle, never a hold that outlives its evidence.
-- **The sweep** behind the scheduler's `tick()`, which the service's first pass
-  after a start runs: it settles a hook-gone reservation whose producer already
-  retired its accounting (#412 operator disposition, #417 producer cleanup, the
-  foreground-absence retirement) and one past its own recorded run timeout. It
-  leaves a reservation with no producer answer to the watch that owns it, so the
-  sweep never settles a row one instant before its observer reads the result.
+- **The sweep** behind the scheduler's `tick()`, which runs every 20 seconds and
+  on the service's first pass after a start: it settles any admitted or running
+  reservation whose recorded hook is proven gone, on its own evidence alone
+  (below). It asks no producer anything.
 
 What a settlement is, and is not:
 
@@ -935,7 +933,7 @@ What a settlement is, and is not:
   `lost`: launched, no result, no process-group identity, no containers and no
   escaped descendants, because Nucleus observed none of them. The hook is not
   the workload, so hook absence never proves the workload died. One `hook_gone`
-  journal fact (or `expiry` when the run timeout is what is due) records the
+  journal fact (or `expiry` when the run timeout is also past) records the
   reason, the dead hook identity and `custody: "unknown"`.
 - **A producer's verdict stays evidence, never a result.** When the row already
   holds its bound runtime's own terminal answer — `checkout-journal`,
@@ -952,10 +950,6 @@ What a settlement is, and is not:
   or the foreground-absence retirement — is never rewritten, replaced or
   double-released: the settlement adds the row's terminal state and the
   retirement keeps its own record.
-- **A producer that still says the run is live keeps the slot.** A `live`,
-  `held-lock`, `live-foreground` or genuine retention-expiry answer, and a
-  missing or `@unknown` hook identity, are not a gone process: the reservation
-  holds, and its own run timeout stays the deadline that ends it.
 - **Only positive absence counts.** A pid the kernel no longer reports is gone.
   A live pid is gone only when its contract 010 start identity differs, which is
   a reused number. An unreadable live identity, an `@unknown` recorded identity
@@ -968,6 +962,47 @@ What a settlement is, and is not:
   per pass so a busy sweep never stalls the service, and anything left unproven
   waits for the next tick. A settled row is no longer a capacity candidate and a
   second pass writes nothing.
+
+### The sweep proves every reservation's holder (task 1389)
+
+Tom asked on 2026-11-19 why a `done` and merged task's workspace had not
+archived: its archived run's admission hook process was gone, and its
+reservation still read `running` with `capacityReleasedAt: null`, holding the
+task's workspace and a heavy slot until its 24-hour deadline. The planner told
+the Effigy planner that Nucleus releases capacity from its own side after a
+crash, by the hook process's liveness and start identity; it did not happen.
+
+The rule: the sweep proves every admitted or running admission reservation's
+recorded process on its own evidence, and settles it once when that process is
+gone. The hook is the reservation's whole foreground, so its absence is the end
+of the reservation whatever a producer last said. This supersedes the earlier
+"a producer that still says the run is live keeps the slot" hold for a hook
+that is provably dead.
+
+- **What the sweep decides.** A dead pid is gone. A live pid is alive only when
+  its start identity still matches the recorded one; a different identity is a
+  reused number and settles. An unreadable or unrecorded identity is unknown:
+  the row holds, and one `hook_liveness_unknown` journal fact per distinct
+  observation names why, so the hold has a visible cause instead of a silent
+  wait for the deadline.
+- **What it writes.** A running reservation settles `lost` through the one
+  settlement writer above, which releases its capacity and stops holding its
+  workspace (`hostRunHoldingWorkspace` holds only queued, admitted, running and
+  still-charged rows). An admitted one never launched a command, so it settles
+  `cancelled` before launch with one `hook_gone` fact naming the dead hook and the
+  observation, and releases the same way. The archive and capacity admission
+  then proceed on their own ordinary passes.
+- **Accepted risk.** A dead hook can leave a workload running — a sentinel may
+  still hold the producer's gate, or the process may have been re-parented and
+  survived. Settling the reservation releases its slot and its workspace hold on
+  accounting evidence, never on a claim of clean closure, and can therefore
+  archive a directory a stray process still uses. That is the same accepted risk
+  as the 2026-10-25 "Auto-free them" ruling, now applied to every dead hook
+  rather than only to the producer's own `not-recorded` answer.
+- **Unchanged.** A live hook keeps its slot. Queue- and client-submitted runs
+  keep their own watch, which proves a result record's absence before it settles
+  anything; this rule adds no sweep-side settlement for them. Nothing is
+  relaunched and an unknown delivery is still not permission to retry.
 
 ## Bounded history reads behind the pinned rows (audit A7/A8, task 435)
 

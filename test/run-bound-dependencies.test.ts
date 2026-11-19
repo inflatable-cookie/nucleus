@@ -11,6 +11,7 @@ import { buildOutputCleanupHooks, removeBuildOutput } from "../core/workspaces/w
 import { completionSchema, hostRunRecordSchema, runSchema, type HostRunInternalRecord } from "../shared/contracts";
 import { HOOK_TEST_TIMEOUT_MS } from "./support/budgets";
 import { HOST_RUN_ACCOUNTING_POLICY, hostRunAccountingAuthority, hostRunAccountingAutomaticRetirementRecord, hostRunAccountingDispositionRecord, hostRunPublicDigest } from "../core/host-runs/host-run-accounting";
+import { HostRunScheduler } from "../core/host-runs/host-run-scheduler";
 import { hostRunAccountingDispositionMetaKey } from "../core/host-runs/host-run-meta-keys";
 import { git, setup, settlingAdapter } from "./support/preserved-retirement-fixture";
 
@@ -224,6 +225,46 @@ test("a host run that still holds the workspace holds run-bound cleanup until it
       assert.equal(runRecord(f)?.state, "complete", state);
     } finally { await engine.stop(); f.store.close(); }
   }
+});
+
+/**
+ * The 2026-11-19 shape (oxide#328): a `done` task's workspace waited on a host
+ * run whose admission hook process was gone. The sweep settles that reservation
+ * on its own liveness proof, and the run-bound cleanup that was holding on it
+ * proceeds on the next pass (Spec 035, "The sweep proves every reservation's
+ * holder").
+ */
+test("a dead admission hook's sweep settlement releases the workspace and the waiting run-bound cleanup proceeds", { timeout: HOOK_TEST_TIMEOUT_MS }, async t => {
+  const f = await setup(t, false, true);
+  authorResult(f, "author-swept-admission", "blocked");
+  const scheduler = HostRunScheduler.forStore(f.store);
+  t.after(() => scheduler.stop());
+  // A pid this host cannot be running: no identity read is needed to prove it gone.
+  const deadPid = 9_999_999;
+  const run = scheduler.submit({
+    id: "admission-dead-hook", epoch: scheduler.authority().epoch, submissionSource: "admission",
+    caller: "queue:effigy-admission", repository: { origin: "acme/repo", path: f.directory },
+    selector: "qa:stage:rust", runClass: "heavy", classSource: "manifest", priority: "interactive",
+    runTimeoutMs: 24 * 60 * 60_000,
+  }, { launch: item => { scheduler.markLaunched(item.id); } });
+  scheduler.bindProcess(run.id, { pid: deadPid, processGroupId: deadPid, startIdentity: `${deadPid}@2026-11-19T14:51:11Z` });
+  assert.equal(f.store.hostRun(run.id)?.state, "running");
+  const engine = new Engine(f.store, settlingAdapter(f, { active: false }), 0);
+  try {
+    await engine.settleRunBuildOutputs(f.task.id);
+    assert.ok((await stat(f.target)).isDirectory(), "the reservation holds the workspace");
+    assert.match(runRecord(f)?.detail ?? "", new RegExp(`host run ${run.id}`));
+
+    scheduler.tick();
+
+    const settled = f.store.hostRun(run.id)!;
+    assert.equal(settled.state, "settled", "the first sweep settles it, a day before its own timeout");
+    assert.equal(settled.settlement?.outcome, "lost");
+    assert.equal(settled.capacityReleasedAt, settled.settledAt);
+    await engine.settleRunBuildOutputs(f.task.id);
+    await assert.rejects(stat(f.target), { code: "ENOENT" }, "the waiting cleanup proceeds");
+    assert.equal(runRecord(f)?.state, "complete");
+  } finally { await engine.stop(); f.store.close(); }
 });
 
 /** Each valid retirement basis for `run`, built by the production record builders. */
