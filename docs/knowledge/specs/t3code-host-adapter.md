@@ -416,7 +416,8 @@ in `vocabulary.thinkingSelects` — `reasoningEffort`, `effort`, `reasoning`,
 `variant`, `reasoning_effort`, `thinking_level`, `thinking`, which is T3's own
 client list (nucleus#1375 read it from the installed bundle). A stock codex model
 reports `reasoningEffort` with no `role`, which is why the id list, not the role
-alone, decides. The catalog maps a generic reasoning select to
+alone, decides. An id-only match must offer at least one canonical level; otherwise
+it remains a feature. The catalog maps a generic reasoning select to
 `thinkingOptions` (with `defaultThinkingOptionId` from the default choice or
 `currentValue`), the table's own carrier stays a feature the way it always was,
 and other selects and booleans become catalog features; model `aliases` carry
@@ -1308,3 +1309,11 @@ local provider. Its evidence distinguishes source drift, injected incompatible
 read responses and actual lifecycle operations on the private nightly.
 
 When the server cannot be reached, uninstall refuses without changes and says the stored runtime bearer remains active; start T3Code and retry.
+
+The opt-in `NUCLEUS_T3_MODEL_CAPTURE` path writes the decoded codex terra and
+luna, Pi and Claude model entries from the adapter's existing config read. It
+contains no settings or environment identity, is limited to 16 models per provider
+and 256 KiB, and makes no additional T3 call. Set the path inside run scratch
+when collecting a capture; the file is overwritten on each config read. The
+committed fixture predates this writer and came from an ad hoc read-only adapter
+client and decoder against the configured host.

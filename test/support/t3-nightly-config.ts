@@ -1,9 +1,9 @@
 /**
  * The nightly's own `server.getConfig` shapes for Tom's live T3 host
- * (nucleus#1375), captured from the service's own read: the same
- * `server.getConfig` call, decode and model mapping the adapter runs, taken
- * through a read-only connection with the host's configured session bearer. No
- * mutation and no second call path — nucleus#1364 invented these shapes from a
+ * (nucleus#1375), captured in an ad hoc read-only connection using the adapter's
+ * `server.getConfig` client and decoder with the host's configured session bearer.
+ * This preceded the opt-in capture writer on the service adapter's existing read.
+ * No mutation — nucleus#1364 invented these shapes from a
  * private server that had none of these providers configured, which is how the
  * codex carrier was missed.
  *

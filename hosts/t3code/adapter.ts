@@ -1,4 +1,4 @@
-import { realpath } from "node:fs/promises";
+import { realpath, writeFile } from "node:fs/promises";
 import { basename } from "node:path";
 import { z } from "zod";
 import type {
@@ -36,6 +36,7 @@ import {
   descriptorSummary,
   modelDescriptors,
   providerModelShapes,
+  providerReportsOptions,
   tableThinkingOptions,
   t3ModelThinking,
   type ConfigModel,
@@ -84,6 +85,8 @@ export interface T3CodeConfig extends T3ConnectionConfig {
    * the product bound; a test drives a short one (nucleus#1305).
    */
   reentryTimeoutMs?: number;
+  /** Opt-in path for a bounded capture of the existing config read. */
+  modelCapturePath?: string;
 }
 const unsupported = (capability: string): never => {
   throw new ProvenPreSendRefusalError(`T3Code does not support ${capability}`);
@@ -205,8 +208,10 @@ export class T3CodeHost implements Host {
   version = "";
   private ready = false;
   private readonly probeThreadId?: string;
+  private readonly modelCapturePath?: string;
   constructor(options: T3CodeConfig) {
     this.probeThreadId = options.probeThreadId;
+    this.modelCapturePath = options.modelCapturePath ?? process.env.NUCLEUS_T3_MODEL_CAPTURE;
     this.rpc = new T3RpcClient(options);
     this.state = new T3StateFile(options.statePath);
     this.reads = new T3Reads({
@@ -303,7 +308,7 @@ export class T3CodeHost implements Host {
    * T3's own provider/model/option vocabulary — no endpoint, credential or
    * environment identity.
    */
-  private retainModelShapes(observed: z.infer<typeof config>): void {
+  private async retainModelShapes(observed: z.infer<typeof config>): Promise<void> {
     const line = observed.providers
       .filter((provider) => provider.enabled && provider.models.length)
       .slice(0, 12)
@@ -311,6 +316,22 @@ export class T3CodeHost implements Host {
       .join(" | ");
     this.modelShapeSummary =
       line.length > 4_000 ? `${line.slice(0, 4_000)}…` : line;
+    if (this.modelCapturePath) {
+      // Only model entries from the already decoded read; never settings, credentials
+      // or environment identity. Bound both the number of entries and output bytes.
+      const providers = observed.providers
+        .filter((provider) => ["codex", "pi", "claudeAgent"].includes(provider.instanceId))
+        .slice(0, 3)
+        .map(({ instanceId, status, models }) => ({
+          instanceId, status,
+          models: models.filter((model) => instanceId !== "codex" ||
+            ["gpt-6.1-terra", "gpt-6-luna"].includes(model.slug)).slice(0, 16),
+        }));
+      const capture = JSON.stringify({ providers }, null, 2);
+      if (Buffer.byteLength(capture) > 256 * 1024)
+        throw new Error("T3Code model capture exceeds 256 KiB");
+      await writeFile(this.modelCapturePath, capture + "\n", { mode: 0o600 });
+    }
   }
   capabilities() {
     return {
@@ -333,7 +354,7 @@ export class T3CodeHost implements Host {
         await this.rpc.call("server.getConfig", {}),
         "server.getConfig",
       );
-      this.retainModelShapes(observed);
+      await this.retainModelShapes(observed);
       const hostId = `t3code:${observed.environment.environmentId}`;
       const previous = this.state.read();
       if (previous.hostId && previous.hostId !== hostId)
@@ -586,7 +607,7 @@ export class T3CodeHost implements Host {
       await this.rpc.call("server.getConfig", {}),
       "server.getConfig",
     );
-    this.retainModelShapes(value);
+    await this.retainModelShapes(value);
     return {
       providers: value.providers.map((p) => ({
         key: p.instanceId,
@@ -896,22 +917,18 @@ export class T3CodeHost implements Host {
       await this.rpc.call("server.getConfig", {}),
       "server.getConfig",
     );
-    this.retainModelShapes(observed);
+    await this.retainModelShapes(observed);
     const provider = observed.providers.find(
       (p) => p.instanceId === spec.profile.provider,
     );
-    if (!provider?.models.some((m) => m.slug === spec.profile.model))
-      throw new ProvenPreSendRefusalError(
-        `T3Code provider ${spec.profile.provider} does not report model ${spec.profile.model}`,
-      );
     const options = this.modelSelectionOptions(
       spec.profile,
       provider,
-      provider.models.find((m) => m.slug === spec.profile.model)!,
+      provider?.models.find((m) => m.slug === spec.profile.model),
     );
     const runtimeMode = this.launchRuntimeMode(
       spec.profile,
-      provider.supportedRuntimeModes,
+      provider?.supportedRuntimeModes,
     );
     const title = this.presentation.numberedThreadTitle(
       spec.taskNumber,
@@ -1080,11 +1097,16 @@ export class T3CodeHost implements Host {
     const translation = t3codeTranslation(profile.provider);
     const features = Object.entries(profile.featureValues ?? {});
     const requested = thinkingLevelFor(profile, translation);
-    if (!requested && !features.length) return [];
-    if (!provider || !model)
-      throw new HostSnapshotPendingError(
-        `T3Code reports no ${profile.provider} model ${profile.model} yet`,
+    if (!provider || !model) {
+      if (provider && (provider.status !== "ready" || !providerReportsOptions(provider)))
+        throw new HostSnapshotPendingError(
+          `T3Code reports no ${profile.provider} model ${profile.model} yet`,
+        );
+      throw new ProvenPreSendRefusalError(
+        `T3Code provider ${profile.provider} does not report model ${profile.model}`,
       );
+    }
+    if (!requested && !features.length) return [];
     const thinking = t3ModelThinking(provider, model, translation);
     if (thinking.state === "unsettled")
       throw new HostSnapshotPendingError(thinking.detail);

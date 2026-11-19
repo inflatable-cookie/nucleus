@@ -72,7 +72,7 @@ export const modelDescriptors = (model: ConfigModel): readonly Descriptor[] =>
   model.capabilities?.optionDescriptors ?? [];
 
 /** Whether this provider instance reports any model option at all. */
-const providerReportsOptions = (provider: ConfigProvider): boolean =>
+export const providerReportsOptions = (provider: ConfigProvider): boolean =>
   provider.models.some((model) => modelDescriptors(model).length > 0);
 
 /**
@@ -148,7 +148,11 @@ export function t3ModelThinking(
             descriptor.id === translation.thinkingOption &&
             descriptor.type === "select",
         )
-      : undefined) ?? descriptors.find(isReasoningDescriptor);
+      : undefined) ?? descriptors.find(
+      (descriptor) =>
+        isReasoningDescriptor(descriptor) &&
+        (descriptor.role === "reasoning" || offeredLevels(translation, descriptor).length > 0),
+    );
   if (carrier && carrier.type === "select")
     return {
       state: "carrier",

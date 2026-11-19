@@ -1064,3 +1064,19 @@ test("a nested role whose provider has not settled its options waits before any 
   );
   assert.equal(commandOf(server, "delegated_task.request"), undefined);
 });
+
+
+test("a nested role refuses a missing model on a settled provider before creating a parent", async (t) => {
+  const { host, server, spec } = await fixture(t);
+  server.controls.providers = [nucleusProvider, {
+    instanceId: "codex", displayName: "Codex", driver: "codex", enabled: true, status: "ready",
+    models: [{ slug: "other", name: "Other", capabilities: { optionDescriptors: [
+      { id: "reasoningEffort", label: "Reasoning", type: "select", options: [{ id: "high", label: "High" }] },
+    ] } }],
+  }];
+  await assert.rejects(() => host.createAgent({ ...spec("worker-create", "Work"),
+    profile: { ...profile, provider: "codex", model: "missing", thinkingOptionId: "high" },
+  }), (error: unknown) => error instanceof ProvenPreSendRefusalError && /does not report model missing/.test(error.message));
+  assert.equal(parentOf(host), undefined);
+  assert.equal(commandOf(server, "delegated_task.request"), undefined);
+});

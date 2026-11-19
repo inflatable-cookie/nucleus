@@ -1,7 +1,7 @@
 import { test, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
-import { realpath } from "node:fs/promises";
+import { realpath, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { T3CodeHost } from "../hosts/t3code/adapter";
@@ -134,6 +134,7 @@ const pool = (): PoolEntry[] =>
 async function fixture(
   t: TestContext,
   providerShapes: unknown = liveConfigModels,
+  capture = false,
 ) {
   const root = mkdtempSync(join(tmpdir(), "t3-thinking-"));
   const directory = await realpath(root);
@@ -147,6 +148,7 @@ async function fixture(
     statePath: join(root, "state.json"),
     timeoutMs: 1_000,
     probeThreadId: "synthetic-probe",
+    ...(capture ? { modelCapturePath: join(root, "models.json") } : {}),
   });
   t.after(() => {
     host.close();
@@ -588,4 +590,30 @@ test("a role profile's options come from its own provider entry, never the paren
     profileCompatibility(terra, catalog, t3codeVocabulary).status,
     "works",
   );
+});
+
+
+test("the existing config read writes a bounded model capture when requested", async (t) => {
+  const { root, server } = await fixture(t, liveConfigModels, true);
+  const captured = JSON.parse(await readFile(join(root, "models.json"), "utf8"));
+  const codex = captured.providers.find((p: { instanceId: string }) => p.instanceId === "codex");
+  assert.deepEqual(codex.models.map((m: { slug: string }) => m.slug), ["gpt-6.1-terra", "gpt-6-luna"]);
+  assert.ok(captured.providers.some((p: { instanceId: string }) => p.instanceId === "pi"));
+  assert.ok(captured.providers.some((p: { instanceId: string }) => p.instanceId === "claudeAgent"));
+  assert.equal(JSON.stringify(captured).includes("synthetic-bearer"), false);
+  assert.equal(server.requests.filter((call) => call.tag === "server.getConfig").length, 2);
+});
+
+test("a generic variant without levels remains a feature beside the real carrier", async (t) => {
+  const shapes = structuredClone(liveConfigModels);
+  const model = shapes[0]!.models[0]!;
+  model.capabilities!.optionDescriptors.unshift({
+    id: "variant", label: "Variant", type: "select",
+    options: [{ id: "standard", label: "Standard" }, { id: "fast", label: "Fast" }],
+  } as never);
+  const { catalog, host } = await fixture(t, shapes);
+  const entry = catalog.providers.find((p) => p.key === "codex")!.models.find((m) => m.id === model.slug)!;
+  assert.ok(entry.features.some((f) => f.id === "variant"));
+  assert.ok(entry.thinkingOptions.some((o) => o.id === "high"));
+  assert.deepEqual(host.modelSelectionOptions({ ...profiles[0]!, provider: "codex", model: model.slug, thinkingOptionId: "high" } as Profile, shapes[0] as never, model as never), [{ id: "reasoningEffort", value: "high" }]);
 });
