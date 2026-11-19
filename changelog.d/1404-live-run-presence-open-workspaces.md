@@ -1,0 +1,1 @@
+Live run presence now adds tabs and labels only to workspaces already open and not archiving. It leaves milestone QA runs without an eligible workspace untouched and never reopens an archiving workspace.

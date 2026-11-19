@@ -74,10 +74,8 @@ export interface LiveRunPresenceTarget {
   kind: LiveRunKind;
   selector: string;
   tabName: string;
-  /** The workspace the run shows in, or null while its directory has no entry yet. */
-  workspaceId: string | null;
-  /** The checkout to open as a workspace when `workspaceId` is null. */
-  openDirectory: string | null;
+  /** An already-open, unarchived workspace. */
+  workspaceId: string;
   cwd: string;
   outputPaths: string[];
   label: LiveRunLabel;
@@ -88,7 +86,7 @@ export interface RunTerminalPointer {
   format: typeof RUN_TERMINAL_POINTER_FORMAT;
   version: 1;
   key: string;
-  /** The workspace the tab lives in, or an empty string while it is still to open. */
+  /** The workspace the tab lives in. */
   workspaceId: string;
   tabName: string;
   sessionId: string;
@@ -121,8 +119,8 @@ export const liveRunTabName = (kind: LiveRunKind, selector: string) =>
   capPaseoTitle(`${TAB_PREFIX[kind]} · ${cleanSelector(selector) || "run"}`);
 /**
  * One tab per workspace directory and selector. The directory, not the workspace
- * id, is the identity: a milestone QA run may open its workspace on first sight,
- * and the tab it follows must be the same file before and after that.
+ * id, is the identity, and presence is placed only in an already-open,
+ * unarchived workspace.
  */
 export const liveRunPresenceKey = (
   kind: LiveRunKind,
@@ -140,11 +138,14 @@ export const liveRunPresenceKey = (
 export function liveRunPresenceTargets(
   input: LiveRunPresenceInput,
 ): LiveRunPresenceTarget[] {
+  const openWorkspaces = input.workspaces.filter(
+    (workspace) => !workspace.archivingAt,
+  );
   const byId = new Map(
-    input.workspaces.map((workspace) => [workspace.id, workspace]),
+    openWorkspaces.map((workspace) => [workspace.id, workspace]),
   );
   const byDirectory = new Map<string, LiveRunPresenceWorkspace>();
-  for (const workspace of input.workspaces)
+  for (const workspace of openWorkspaces)
     if (workspace.directory)
       byDirectory.set(resolve(workspace.directory), workspace);
   // A Queue-submitted validation run works in its own isolated checkout, outside
@@ -186,11 +187,7 @@ export function liveRunPresenceTargets(
       ? byDirectory.get(checkout)
       : ((task?.workspaceId ? byId.get(task.workspaceId) : undefined) ??
         byDirectory.get(resolve(task?.directory ?? run.repository.path)));
-    // Milestone QA runs on the project's main checkout. When the operator's
-    // sidebar has no workspace on that checkout, Queue opens one on it — an entry
-    // only, never a worktree — and it stays afterwards (Tom, 2026-11-01).
-    const openDirectory = !workspace && qa ? checkout : null;
-    if (!workspace?.directory && !openDirectory) continue;
+    if (!workspace?.directory) continue;
     const outputPaths = qa
       ? [
           qaRunLiveOutputPath(
@@ -204,7 +201,7 @@ export function liveRunPresenceTargets(
               .liveOutputPath,
           ]
         : clientRunOutputPaths(input.stateDir, run.id);
-    const cwd = workspace?.directory ?? openDirectory!;
+    const cwd = workspace.directory;
     const key = liveRunPresenceKey(kind, cwd, selector);
     if (chosen.has(key)) continue;
     chosen.set(key, {
@@ -214,8 +211,7 @@ export function liveRunPresenceTargets(
       kind,
       selector: cleanSelector(selector),
       tabName: liveRunTabName(kind, selector),
-      workspaceId: workspace?.id ?? null,
-      openDirectory,
+      workspaceId: workspace.id,
       cwd,
       outputPaths,
       label: LIVE_RUN_LABELS[kind],
@@ -302,10 +298,6 @@ export interface LiveRunPresenceOptions {
 interface PassState {
   /** Terminals per workspace, read once per pass. */
   terminals: Map<string, Array<{ id: string; name: string }> | null>;
-  /** The workspace id opened for a directory this pass, or null when opening failed. */
-  opened: Map<string, string | null>;
-  /** Labels a workspace opened this pass needs, since no inventory listed it. */
-  openedLabels: Map<string, Set<string>>;
 }
 
 /**
@@ -408,47 +400,10 @@ export class LiveRunPresence {
     this.auditedWhileIdle = liveRunIds.size === 0;
     const pass: PassState = {
       terminals: new Map(),
-      opened: new Map(),
-      openedLabels: new Map(),
     };
     for (const target of targets)
       await this.openTerminal(daemon, target, pass);
     await this.reconcileLabels(daemon, workspaces, targets, pass);
-  }
-
-  /**
-   * The workspace a target shows in, opening the project's own entry on the
-   * registered checkout when nothing has it open. One open per directory per
-   * pass, and a failure is this projection's problem alone: the tab waits for
-   * the next pass instead.
-   */
-  private async workspaceFor(
-    daemon: RunPresenceDaemon,
-    target: LiveRunPresenceTarget,
-    pass: PassState,
-  ): Promise<string | null> {
-    if (target.workspaceId) return target.workspaceId;
-    const directory = target.openDirectory;
-    if (!directory) return null;
-    if (!pass.opened.has(directory)) {
-      let opened: string | null = null;
-      try {
-        const workspace = await daemon.openWorkspace({
-          directory,
-          requestId: `queue-run-workspace:${eventId(directory)}:${this.passes}`,
-        });
-        opened = workspace.id;
-        // A sidebar entry this projection needed is the operator's once it exists,
-        // so it is never archived with the run (Tom, 2026-11-01).
-        this.log(`opened the Paseo workspace for ${directory}`);
-      } catch (error) {
-        this.log(
-          `workspace for ${directory} could not be opened: ${errorMessage(error)}`,
-        );
-      }
-      pass.opened.set(directory, opened);
-    }
-    return pass.opened.get(directory) ?? null;
   }
 
   /** Open the run's tab, or keep the one this workspace and selector already has. */
@@ -463,7 +418,7 @@ export class LiveRunPresence {
       format: RUN_TERMINAL_POINTER_FORMAT,
       version: 1,
       key: target.key,
-      workspaceId: target.workspaceId ?? "",
+      workspaceId: target.workspaceId,
       tabName: target.tabName,
       sessionId: target.sessionId,
       runId: target.runId,
@@ -483,15 +438,7 @@ export class LiveRunPresence {
         : {}),
     };
     this.writePointer(pointerPath, pointer);
-    const workspaceId = await this.workspaceFor(daemon, target, pass);
-    if (!workspaceId) return;
-    // A workspace this pass opened is not in the inventory it read, so its label
-    // is assigned from what the target asked for rather than from a stale list.
-    if (!target.workspaceId) {
-      const names = pass.openedLabels.get(workspaceId) ?? new Set<string>();
-      names.add(target.label.name);
-      pass.openedLabels.set(workspaceId, names);
-    }
+    const workspaceId = target.workspaceId;
     if (!pass.terminals.has(workspaceId)) {
       try {
         pass.terminals.set(
@@ -598,18 +545,13 @@ export class LiveRunPresence {
       }
     };
     for (const workspace of workspaces) {
+      if (workspace.archivingAt) continue;
       const desired = wanted.get(workspace.id) ?? new Set<string>();
       for (const label of Object.values(LIVE_RUN_LABELS)) {
         const assigned = workspace.labels.includes(label.name);
         const want = desired.has(label.name);
         if (assigned === want) continue;
         await assign(workspace.id, label, want);
-      }
-    }
-    // A workspace opened in this pass was not in the inventory read above.
-    for (const [workspaceId, names] of pass.openedLabels) {
-      for (const label of Object.values(LIVE_RUN_LABELS)) {
-        if (names.has(label.name)) await assign(workspaceId, label, true);
       }
     }
   }

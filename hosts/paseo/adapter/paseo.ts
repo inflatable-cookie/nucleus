@@ -287,6 +287,7 @@ export function paseoAdapterClass(Policy: HostPolicyConstructor) {
             id: workspace.id,
             directory: workspace.workspaceDirectory ?? null,
             labels: workspace.labels ?? [],
+            archivingAt: workspace.archivingAt ?? null,
           })),
         listTerminals: async (workspaceId) =>
           (
@@ -311,16 +312,6 @@ export function paseoAdapterClass(Policy: HostPolicyConstructor) {
           if (!created.terminal)
             throw new Error(created.error || "Paseo created no terminal");
           return { id: created.terminal.id };
-        },
-        // Opening the project's own entry on a checkout is the one workspace effect
-        // this projection makes, and only when the operator has none open on it: the
-        // daemon registers the entry and creates no worktree.
-        openWorkspace: async (input) => {
-          const workspace = await this.api.workspaces.open(
-            input.directory,
-            input.requestId,
-          );
-          return { id: workspace.id, directory: workspace.directory };
         },
         ensureWorkspaceLabel: async (label) => {
           await this.client.updateWorkspaceLabel({
