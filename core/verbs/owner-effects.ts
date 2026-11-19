@@ -739,10 +739,15 @@ function effectViews(facts: OwnerVerbFacts): TaskNextVerb[] {
       };
     const operationId = ownerEffectIdentity(item.effect, "operation");
     const operation = operationId ? facts.store.operation(operationId) : null;
-    if (operation?.kind === "task_control" && operation.state === "needs_attention"
-      && ["restart", "route"].includes(operation.effect?.target ?? ""))
+    if (
+      operation?.kind === "task_control" &&
+      operation.state === "needs_attention" &&
+      ["restart", "route"].includes(operation.effect?.target ?? "")
+    )
       return taskNextVerbSchema.parse({
-        verb: "retry_effect", action: "retry_effect", available: false,
+        verb: "retry_effect",
+        action: "retry_effect",
+        available: false,
         refusal: `${item.summary}. Waiting for the sweep to observe its target.`,
       });
     if (

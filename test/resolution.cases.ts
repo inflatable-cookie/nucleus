@@ -12461,23 +12461,32 @@ test("coordinator resume replaces a freshly verified absent initial worker witho
   try {
     enableRecovery(f);
     const oldRun = "timed-out-run";
-    const task = f.store.update(f.task.id, {
-      phase: "needs_attention",
-      reason: ABSENT_WORKER_REASON,
-      agentId: null,
-      agentIntent: true,
-      runId: oldRun,
-      completion: null,
-      prHead: null,
-      prUrl: null,
-      resolution: {
-        ...f.current().resolution,
-        currentRunId: null,
-        attention: true,
+    const task = f.store.update(
+      f.task.id,
+      {
+        phase: "needs_attention",
+        reason: ABSENT_WORKER_REASON,
+        agentId: null,
+        agentIntent: true,
+        runId: oldRun,
+        completion: null,
+        prHead: null,
+        prUrl: null,
+        resolution: {
+          ...f.current().resolution,
+          currentRunId: null,
+          attention: true,
+        },
       },
-    }, "agent_intent", oldRun);
+      "agent_intent",
+      oldRun,
+    );
     const attempt = readCreationAttempt(f.store, {
-      id: oldRun, taskId: task.id, hostId: task.hostId, workspaceId: task.workspaceId, role: "worker",
+      id: oldRun,
+      taskId: task.id,
+      hostId: task.hostId,
+      workspaceId: task.workspaceId,
+      role: "worker",
     })!;
     settleCreationAttempt(f.store, attempt, "threw");
     f.store.setCredential(oldRun, "old-token");
@@ -18466,17 +18475,29 @@ test("C4 route now releases only the exact absent recovery and leaves ordinary r
   try {
     const { run, token } = await launch.started;
     await f.engine.resolution.recovery.pass(f.task.id);
-    const route = () => f.engine.performTaskControl({
-      taskId: f.task.id, version: f.current().version, action: "route", role: "coordinator",
-      now: true, profileId: run.profile!.id, reason: "Select the recovery route",
-    });
+    const route = () =>
+      f.engine.performTaskControl({
+        taskId: f.task.id,
+        version: f.current().version,
+        action: "route",
+        role: "coordinator",
+        now: true,
+        profileId: run.profile!.id,
+        reason: "Select the recovery route",
+      });
     await assert.rejects(route(), /Recovery creation is still owned/);
     assert.doesNotThrow(() => f.store.authenticate(run.id, token));
     assert.equal(nextC4Move(f.store, f.task.id)?.available, false);
 
     launch.finish();
     await launch.route;
-    f.adapter.findRunAgents = async () => [{ id: "partial-recovery", workspaceId: run.workspaceId, hostConfirmed: false }];
+    f.adapter.findRunAgents = async () => [
+      {
+        id: "partial-recovery",
+        workspaceId: run.workspaceId,
+        hostConfirmed: false,
+      },
+    ];
     await assert.rejects(route(), /Recovery creation is still owned/);
     assert.equal(f.store.run(run.id)?.released, false);
 
@@ -18488,7 +18509,12 @@ test("C4 route now releases only the exact absent recovery and leaves ordinary r
     assert.equal(f.current().resolution.recovery?.status, "resolved");
     assert.equal(nextC4Move(f.store, f.task.id)?.available, true);
     await f.engine.resolution.recovery.pass(f.task.id);
-    assert.equal(f.store.eventsAll(f.task.id).filter(event => event.kind === "absent_recovery_released").length, 1);
+    assert.equal(
+      f.store
+        .eventsAll(f.task.id)
+        .filter((event) => event.kind === "absent_recovery_released").length,
+      1,
+    );
   } finally {
     launch.finish();
     await launch.route;

@@ -1291,7 +1291,10 @@ export function admitAdapter(raw: Adapter, admission: Admission): Adapter {
     ),
   );
   // Creation settlement needs a fresh exact read after producer proof.
-  set("findRunAgents", call("inventory", "findRunAgents", () => undefined));
+  set(
+    "findRunAgents",
+    call("inventory", "findRunAgents", () => undefined),
+  );
   set(
     "findOpenBranchPr",
     call("control", "findOpenBranchPr", (args) =>

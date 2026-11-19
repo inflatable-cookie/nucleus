@@ -1,4 +1,7 @@
-import { readCreationAttempt, settleCreationAttempt } from "../core/store/store-task-funnel";
+import {
+  readCreationAttempt,
+  settleCreationAttempt,
+} from "../core/store/store-task-funnel";
 import { fakeAdapter } from "./support/fakes";
 import { profile as sharedProfile } from "./support/fakes";
 import { paseoCatalog } from "./support/pool-shapes";
@@ -2312,13 +2315,18 @@ test("a real lost restart settles after its old worker is isolated and released"
         .next()
         .verbs.some(
           (v) =>
-            v.verb === "retry_effect" && v.available &&
+            v.verb === "retry_effect" &&
+            v.available &&
             JSON.stringify(v.args ?? {}).includes(`operation.${operation.id}`),
         );
     assert.equal(offered(), false);
-    const restart = () => f.next().verbs.find(verb => verb.verb === "restart");
+    const restart = () =>
+      f.next().verbs.find((verb) => verb.verb === "restart");
     assert.match(restart()?.refusal ?? "", /operation .*uncertain/);
-    await assert.rejects(f.control({ reason: "A second restart" }), /operation .*uncertain/);
+    await assert.rejects(
+      f.control({ reason: "A second restart" }),
+      /operation .*uncertain/,
+    );
     assert.equal(sends, 1);
     await new Promise((resolve) => setTimeout(resolve, 10));
     const alternate = profile("worker-alt", "test/worker-alt", ["worker"]);
@@ -2359,10 +2367,19 @@ test("a real lost restart settles after its old worker is isolated and released"
       false,
       "the original worker remains the target before retirement",
     );
-    await assert.rejects(f.engine.performTaskControl({
-      taskId: f.taskId, version: f.current().version, action: "route", role: "worker",
-      profileId: alternate.id, now: true, reason: "Choose another worker", caller: CALLER,
-    }), /operation .*uncertain/);
+    await assert.rejects(
+      f.engine.performTaskControl({
+        taskId: f.taskId,
+        version: f.current().version,
+        action: "route",
+        role: "worker",
+        profileId: alternate.id,
+        now: true,
+        reason: "Choose another worker",
+        caller: CALLER,
+      }),
+      /operation .*uncertain/,
+    );
     await f.engine.recoverExhaustedWorkers();
     assert.equal(
       f.store.run("worker-run"),
@@ -2493,18 +2510,29 @@ test("absent worker creation without a producer record keeps its original reserv
   const f = fixture();
   try {
     f.store.update(f.taskId, {
-      phase: "needs_attention", reason: ABSENT_WORKER_REASON,
-      workspaceIntent: true, agentIntent: true, agentId: null, runId: "absent-run",
-      workspaceId: "workspace", directory: "/worktree", profile: f.profiles.worker,
+      phase: "needs_attention",
+      reason: ABSENT_WORKER_REASON,
+      workspaceIntent: true,
+      agentIntent: true,
+      agentId: null,
+      runId: "absent-run",
+      workspaceId: "workspace",
+      directory: "/worktree",
+      profile: f.profiles.worker,
     });
     f.store.setCredential("absent-run", "original-token");
-    assert.match(f.next().verbs.find(verb => verb.verb === "restart")?.refusal ?? "", /recorded producer/);
+    assert.match(
+      f.next().verbs.find((verb) => verb.verb === "restart")?.refusal ?? "",
+      /recorded producer/,
+    );
     const task = await f.control({ instruction: "Continue the approved work" });
     assert.equal(task.resolution.stop?.reason, "lifecycle");
     assert.equal(task.agentIntent, true);
     assert.equal(task.runId, "absent-run");
     assert.equal(f.events("absent_worker_released").length, 0);
-    assert.doesNotThrow(() => f.store.authenticate("absent-run", "original-token"));
+    assert.doesNotThrow(() =>
+      f.store.authenticate("absent-run", "original-token"),
+    );
   } finally {
     await f.close();
   }
@@ -6779,21 +6807,33 @@ function busyEpisode(f: ReturnType<typeof fixture>) {
   });
 }
 
-function absentWorkerTask(f: ReturnType<typeof fixture>, producerStopped = true) {
-  f.store.update(f.taskId, {
-    phase: "needs_attention",
-    reason: ABSENT_WORKER_REASON,
-    workspaceIntent: true,
-    agentIntent: true,
-    agentId: null,
-    runId: "absent-worker",
-    workspaceId: "workspace",
-    directory: "/worktree",
-    profile: f.profiles.worker,
-  }, "agent_intent", "absent-worker");
+function absentWorkerTask(
+  f: ReturnType<typeof fixture>,
+  producerStopped = true,
+) {
+  f.store.update(
+    f.taskId,
+    {
+      phase: "needs_attention",
+      reason: ABSENT_WORKER_REASON,
+      workspaceIntent: true,
+      agentIntent: true,
+      agentId: null,
+      runId: "absent-worker",
+      workspaceId: "workspace",
+      directory: "/worktree",
+      profile: f.profiles.worker,
+    },
+    "agent_intent",
+    "absent-worker",
+  );
   const task = f.current();
   const attempt = readCreationAttempt(f.store, {
-    id: task.runId!, taskId: task.id, hostId: task.hostId, workspaceId: task.workspaceId, role: "worker",
+    id: task.runId!,
+    taskId: task.id,
+    hostId: task.hostId,
+    workspaceId: task.workspaceId,
+    role: "worker",
   })!;
   if (producerStopped) settleCreationAttempt(f.store, attempt, "threw");
   busyEpisode(f);
@@ -6810,7 +6850,7 @@ test("restart records its worker direction while a recovery run still owns settl
     assert.equal(f.store.run("recovery-run")!.released, false);
     assert.equal(f.events("owner_stop_intent").length, 0);
     assert.equal(f.events("owner_restart_instruction_intent").length, 0);
-    const next = f.next().verbs.find(verb => verb.verb === "restart");
+    const next = f.next().verbs.find((verb) => verb.verb === "restart");
     assert.match(next?.refusal ?? "", /restart instruction is recorded/);
   } finally {
     await f.close();
@@ -6820,7 +6860,11 @@ test("restart records its worker direction while a recovery run still owns settl
 function settledResolutionCreation(f: ReturnType<typeof fixture>, run: Run) {
   f.store.putRun({ ...run, status: "intent", agentId: null });
   const reserved = f.store.run(run.id)!;
-  settleCreationAttempt(f.store, readCreationAttempt(f.store, reserved)!, "threw");
+  settleCreationAttempt(
+    f.store,
+    readCreationAttempt(f.store, reserved)!,
+    "threw",
+  );
   f.store.putRun({ ...reserved, status: "uncertain" });
 }
 
@@ -6901,10 +6945,15 @@ for (const family of [
           delete (f.adapter as Partial<ResolutionAdapter>).createRun;
         const before = f.current(),
           runs = f.store.runs(f.taskId);
-        const control = f.control({ instruction: "Continue only after full admission" });
+        const control = f.control({
+          instruction: "Continue only after full admission",
+        });
         if (fault === "inventory") {
           const waiting = await control;
-          assert.match(waiting.resolution.stop?.detail ?? "", /lookup is unavailable/);
+          assert.match(
+            waiting.resolution.stop?.detail ?? "",
+            /lookup is unavailable/,
+          );
         } else await assert.rejects(control, { name: /Error/ }, fault);
         assert.equal(
           f.events("owner_stop_intent").length,
@@ -6920,7 +6969,8 @@ for (const family of [
           f.observations.get("coord-agent")!.activeTurnId,
           "coordinator-turn",
         );
-        if (fault !== "inventory") assert.deepEqual(f.current(), before, `${fault}: no task settlement`);
+        if (fault !== "inventory")
+          assert.deepEqual(f.current(), before, `${fault}: no task settlement`);
         assert.deepEqual(
           f.store.runs(f.taskId),
           runs,

@@ -1,24 +1,53 @@
-import { workerCreationRestartWait } from '../recovery/absent-creation/stale-worker';
-import { unsettledControlRefusal } from '../recovery/recovery-effects';
-import { restartTerminalRefusal } from './verb-refusal-text';
-import { DISPOSITION_CONTROL_REFUSAL, REMOVED_TASK_REFUSAL, parkedRestartRefusal } from './control-refusals';
-import { OPERATOR_BOARD_CALLER, isDispositionActive, WORKER_REPLACEMENT_CEILING, type Task, type TaskControlInput } from "../../shared/contracts";
+import { workerCreationRestartWait } from "../recovery/absent-creation/stale-worker";
+import { unsettledControlRefusal } from "../recovery/recovery-effects";
+import { restartTerminalRefusal } from "./verb-refusal-text";
+import {
+  DISPOSITION_CONTROL_REFUSAL,
+  REMOVED_TASK_REFUSAL,
+  parkedRestartRefusal,
+} from "./control-refusals";
+import {
+  OPERATOR_BOARD_CALLER,
+  isDispositionActive,
+  WORKER_REPLACEMENT_CEILING,
+  type Task,
+  type TaskControlInput,
+} from "../../shared/contracts";
 import type { AgentObservation } from "../host/adapter";
 import { taskPrNumber } from "../forge/index";
 import type { RestartRole } from "./owner-verbs";
-import { RestartRefusal, collectOwnerVerbFacts, deriveRestartRole, parkedRestart, restartShape, restartTakesParkedStep, unservedParkedStep, workerRestartRefusal } from "./owner-verbs";
+import {
+  RestartRefusal,
+  collectOwnerVerbFacts,
+  deriveRestartRole,
+  parkedRestart,
+  restartShape,
+  restartTakesParkedStep,
+  unservedParkedStep,
+  workerRestartRefusal,
+} from "./owner-verbs";
 import { hostFailureRefusalDetail } from "../host/errors";
 import { DurableFenceRefusal } from "../intake/run-settlement";
 import { digest, now } from "../store/store";
 import type { Engine } from "../engine";
 import { resendExecutorReport } from "./executor-report";
-import { requestReviewerReport, requireReviewerReplacement, reviewerReportPlan } from './reviewer-report';
-import { verifyEnclosingOperation } from '../planning/enclosing-operation';
+import {
+  requestReviewerReport,
+  requireReviewerReplacement,
+  reviewerReportPlan,
+} from "./reviewer-report";
+import { verifyEnclosingOperation } from "../planning/enclosing-operation";
 import type { RestartRequest } from "./owner-shared";
 
 /** Raised after read-only verification or the parked transaction has refused. */
 class ParkedRestartPreSendRefusal extends Error {
-  constructor(message: string, readonly taskEvidenceHash: string, readonly runEvidenceHash: string) { super(message); }
+  constructor(
+    message: string,
+    readonly taskEvidenceHash: string,
+    readonly runEvidenceHash: string,
+  ) {
+    super(message);
+  }
 }
 export { ParkedRestartPreSendRefusal };
 
@@ -35,16 +64,39 @@ export { ParkedRestartPreSendRefusal };
  */
 export class RestartControls {
   constructor(readonly engine: Engine) {}
-  get store() { return this.engine.store; }
-  get adapter() { return this.engine.adapter; }
-  get resolution() { return this.engine.resolution; }
+  get store() {
+    return this.engine.store;
+  }
+  get adapter() {
+    return this.engine.adapter;
+  }
+  get resolution() {
+    return this.engine.resolution;
+  }
   /** Re-run a parked step for restart's parked fallback; runs inside the caller's transaction. */
-  restartParkedStep(task: Task, instruction: string | undefined, reviewerInstruction: string | undefined): Task {
-    return this.engine.workerRestarts.restartParkedStep(task, instruction, reviewerInstruction);
+  restartParkedStep(
+    task: Task,
+    instruction: string | undefined,
+    reviewerInstruction: string | undefined,
+  ): Task {
+    return this.engine.workerRestarts.restartParkedStep(
+      task,
+      instruction,
+      reviewerInstruction,
+    );
   }
 
   /** Handler-owned admission for restart displacement. */
-  prepareWorkerResume(input: { taskId: string; version: number; instruction: string; settleFences?: { detail: string; runIds: string[]; displacedRunIds?: string[] } }): Promise<Task | (() => Task)> {
+  prepareWorkerResume(input: {
+    taskId: string;
+    version: number;
+    instruction: string;
+    settleFences?: {
+      detail: string;
+      runIds: string[];
+      displacedRunIds?: string[];
+    };
+  }): Promise<Task | (() => Task)> {
     return this.engine.workerRestarts.prepareWorkerResume(input);
   }
 
@@ -54,66 +106,149 @@ export class RestartControls {
    * answers an escalation with the restart's reason, which stays the owner's:
    * a coordinator's restart never answers one.
    */
-  async restartParked(input: TaskControlInput, task: Task, role: RestartRole, reason: string, operationId?: string): Promise<Task> {
-    const parked = parkedRestart(collectOwnerVerbFacts(this.store, task, operationId, this.engine.coordinatorActionRunId.getStore()));
+  async restartParked(
+    input: TaskControlInput,
+    task: Task,
+    role: RestartRole,
+    reason: string,
+    operationId?: string,
+  ): Promise<Task> {
+    const parked = parkedRestart(
+      collectOwnerVerbFacts(
+        this.store,
+        task,
+        operationId,
+        this.engine.coordinatorActionRunId.getStore(),
+      ),
+    );
     // A parked refusal is decided from store reads before any binding or send, so
     // it is a definite pre-send refusal: the durable operation settles as refused
     // instead of leaving an unresolved effect that fences the next owner verb.
     if ("refusal" in parked)
       throw new RestartRefusal(parkedRestartRefusal(role, parked.refusal));
     if (parked.kind === "answer") {
-      if (!this.engine.isOwnerCall()) throw Error("Answering an escalation is the owner's decision; a coordinator's restart cannot answer it");
+      if (!this.engine.isOwnerCall())
+        throw Error(
+          "Answering an escalation is the owner's decision; a coordinator's restart cannot answer it",
+        );
       this.engine.rejectFenced(task, "escalation answer");
       return this.resolution.resolveEscalation(task, reason, true);
     }
     if (operationId) {
       const operation = this.store.operation(operationId);
-      if (!operation || operation.state !== 'running' || operation.taskId !== task.id || operation.kind !== 'task_control')
-        throw Error('The task-control operation changed before its parked boundary');
-      this.store.putOperation({ ...operation, preSendBoundaryStartedAt: now() });
+      if (
+        !operation ||
+        operation.state !== "running" ||
+        operation.taskId !== task.id ||
+        operation.kind !== "task_control"
+      )
+        throw Error(
+          "The task-control operation changed before its parked boundary",
+        );
+      this.store.putOperation({
+        ...operation,
+        preSendBoundaryStartedAt: now(),
+      });
     }
     // A reviewer instruction routes a blocked, reviewed task back to review;
     // GitHub's PR head must still be the head that instruction is about.
-    const reviewerInstruction = role === "reviewer" ? input.instruction : undefined;
+    const reviewerInstruction =
+      role === "reviewer" ? input.instruction : undefined;
     // The commit runs in the same continuation as the head proof, with no yield
     // between the proof's version recheck and the transaction.
-    const commit = () => this.store.transaction(() => {
-      const current = this.store.task(task.id);
-      this.engine.requireOwnerControlCurrent(current, input.version, "Task changed; refresh before restarting");
-      const restarted = this.engine.restartParkedStep(current, role === "reviewer" ? undefined : input.instruction, reviewerInstruction);
-      if (role === 'reviewer' && input.fresh === true && restarted.phase === 'awaiting_review')
-        return this.store.update(restarted.id, { resolution: { ...restarted.resolution, reviewerAgentId: null, reviewerProfile: null } }, 'restart_review_fresh', reason);
-      return restarted;
-    });
+    const commit = () =>
+      this.store.transaction(() => {
+        const current = this.store.task(task.id);
+        this.engine.requireOwnerControlCurrent(
+          current,
+          input.version,
+          "Task changed; refresh before restarting",
+        );
+        const restarted = this.engine.restartParkedStep(
+          current,
+          role === "reviewer" ? undefined : input.instruction,
+          reviewerInstruction,
+        );
+        if (
+          role === "reviewer" &&
+          input.fresh === true &&
+          restarted.phase === "awaiting_review"
+        )
+          return this.store.update(
+            restarted.id,
+            {
+              resolution: {
+                ...restarted.resolution,
+                reviewerAgentId: null,
+                reviewerProfile: null,
+              },
+            },
+            "restart_review_fresh",
+            reason,
+          );
+        return restarted;
+      });
     try {
-      return await ((reviewerInstruction ? this.engine.reviewerInstructionHeadProof(task, input.version, commit) : null) ?? commit());
+      return await ((reviewerInstruction
+        ? this.engine.reviewerInstructionHeadProof(task, input.version, commit)
+        : null) ?? commit());
     } catch (error) {
       // Verification is read-only and all local writes are rolled back; neither
       // route can authorize or send a continuation before it returns.
-      throw new ParkedRestartPreSendRefusal(error instanceof Error ? error.message : String(error),
-        digest(JSON.stringify(this.store.task(task.id))), digest(JSON.stringify(this.store.runs(task.id))));
+      throw new ParkedRestartPreSendRefusal(
+        error instanceof Error ? error.message : String(error),
+        digest(JSON.stringify(this.store.task(task.id))),
+        digest(JSON.stringify(this.store.runs(task.id))),
+      );
     }
   }
 
   /** The GitHub PR-head proof a reviewer instruction needs, then `commit`; null when no proof applies (no await, no yield). */
-  reviewerInstructionHeadProof(task: Task, version: number, commit: () => Task): Promise<Task> | null {
+  reviewerInstructionHeadProof(
+    task: Task,
+    version: number,
+    commit: () => Task,
+  ): Promise<Task> | null {
     const peek = this.store.task(task.id);
-    if (peek.removedAt || peek.version !== version || !['blocked', 'error'].includes(peek.phase)) return null;
+    if (
+      peek.removedAt ||
+      peek.version !== version ||
+      !["blocked", "error"].includes(peek.phase)
+    )
+      return null;
     const review = this.resolution.acceptedReviewAtUnchangedHead(peek);
-    const advanced = review?.head ? null : this.resolution.retainedWorkerAdvancedReviewHead(peek);
+    const advanced = review?.head
+      ? null
+      : this.resolution.retainedWorkerAdvancedReviewHead(peek);
     const executor = this.store.runs(peek.id).at(-1);
-    const proof = executor?.role === 'executor' && peek.resolution.reviewerAgentId
-      ? (peek.proofExecutions ?? []).find(item => item.runId === executor.id && item.head === executor.head && item.settledAt)
-      : undefined;
+    const proof =
+      executor?.role === "executor" && peek.resolution.reviewerAgentId
+        ? (peek.proofExecutions ?? []).find(
+            (item) =>
+              item.runId === executor.id &&
+              item.head === executor.head &&
+              item.settledAt,
+          )
+        : undefined;
     if (!review?.head && !advanced && !proof) return null;
     return (async () => {
       const expected = proof?.head ?? review?.head ?? advanced?.head;
       const pr = await this.adapter.verifyPr(peek, taskPrNumber(peek));
       if (pr.head !== expected) {
-        const source = proof ? 'settled proof' : review?.head ? 'accepted review' : "retained worker's latest pushed head";
-        throw new Error(`The current PR head ${pr.head} differs from the ${source} head ${expected}; a reviewer instruction requires that head to be unchanged`);
+        const source = proof
+          ? "settled proof"
+          : review?.head
+            ? "accepted review"
+            : "retained worker's latest pushed head";
+        throw new Error(
+          `The current PR head ${pr.head} differs from the ${source} head ${expected}; a reviewer instruction requires that head to be unchanged`,
+        );
       }
-      this.engine.requireOwnerControlCurrent(this.store.task(peek.id), version, 'Task changed during PR head verification; refresh before retrying');
+      this.engine.requireOwnerControlCurrent(
+        this.store.task(peek.id),
+        version,
+        "Task changed during PR head verification; refresh before retrying",
+      );
       return commit();
     })();
   }
@@ -127,86 +262,242 @@ export class RestartControls {
    * Every identity is derived here; the caller supplies only a reason and,
    * optionally, an instruction.
    */
-  async restartTask(input: TaskControlInput, operationId?: string): Promise<Task> {
+  async restartTask(
+    input: TaskControlInput,
+    operationId?: string,
+  ): Promise<Task> {
     const reason = (input.reason ?? "").trim();
     if (!reason) throw Error("restart requires a reason");
     const fresh = input.fresh === true;
     let task = this.store.task(input.taskId);
     if (task.removedAt) throw Error(REMOVED_TASK_REFUSAL);
-    this.engine.requireOwnerControlCurrent(task, input.version, "Task changed; refresh before restarting");
+    this.engine.requireOwnerControlCurrent(
+      task,
+      input.version,
+      "Task changed; refresh before restarting",
+    );
     if (isDispositionActive(task)) throw Error(DISPOSITION_CONTROL_REFUSAL);
     // Round 4: a restart applies while paused; what it would start waits (deferOwnerVerb).
-    const role = (input.role as RestartRole | undefined) ?? deriveRestartRole(task, this.store.runs(task.id));
-    if (role === 'reviewer' && fresh) await requireReviewerReplacement(this.engine, task, input.version);
-    if (["done", "cancelled"].includes(task.phase) || task.resolution.mergedCommit) {
-      if (task.resolution.mergedCommit && !['done', 'cancelled', 'syncing', 'closing', 'closeout'].includes(task.phase))
-        return this.engine.moveToCloseout({ taskId: task.id, version: task.version, reason, caller: input.caller,
-          enclosing: () => verifyEnclosingOperation(this.store, input, operationId) });
+    const role =
+      (input.role as RestartRole | undefined) ??
+      deriveRestartRole(task, this.store.runs(task.id));
+    if (role === "reviewer" && fresh)
+      await requireReviewerReplacement(this.engine, task, input.version);
+    if (
+      ["done", "cancelled"].includes(task.phase) ||
+      task.resolution.mergedCommit
+    ) {
+      if (
+        task.resolution.mergedCommit &&
+        !["done", "cancelled", "syncing", "closing", "closeout"].includes(
+          task.phase,
+        )
+      )
+        return this.engine.moveToCloseout({
+          taskId: task.id,
+          version: task.version,
+          reason,
+          caller: input.caller,
+          enclosing: () =>
+            verifyEnclosingOperation(this.store, input, operationId),
+        });
       // A finished or merged task restarts no run; a merged one still re-runs its
       // parked step (a closeout resynchronization), and either answers an escalation.
-      const parked = parkedRestart(collectOwnerVerbFacts(this.store, task, operationId, this.engine.coordinatorActionRunId.getStore()));
-      if ("kind" in parked && (parked.kind === "answer" || task.resolution.mergedCommit && !["done", "cancelled"].includes(task.phase)))
-        return this.engine.restartParked(input, task, role, reason, operationId);
-      throw Error(restartTerminalRefusal(task, "refusal" in parked ? parked.refusal : undefined));
+      const parked = parkedRestart(
+        collectOwnerVerbFacts(
+          this.store,
+          task,
+          operationId,
+          this.engine.coordinatorActionRunId.getStore(),
+        ),
+      );
+      if (
+        "kind" in parked &&
+        (parked.kind === "answer" ||
+          (task.resolution.mergedCommit &&
+            !["done", "cancelled"].includes(task.phase)))
+      )
+        return this.engine.restartParked(
+          input,
+          task,
+          role,
+          reason,
+          operationId,
+        );
+      throw Error(
+        restartTerminalRefusal(
+          task,
+          "refusal" in parked ? parked.refusal : undefined,
+        ),
+      );
     }
-    const pending = role === 'worker' ? workerCreationRestartWait(this.store, task) : null;
+    const pending =
+      role === "worker" ? workerCreationRestartWait(this.store, task) : null;
     if (pending) throw new RestartRefusal(pending);
-    const shape = restartShape(task, this.store.runs(task.id), role, this.store.eventsAll(task.id));
+    const shape = restartShape(
+      task,
+      this.store.runs(task.id),
+      role,
+      this.store.eventsAll(task.id),
+    );
     const controlRefusal = unsettledControlRefusal(this.store, task);
     if (controlRefusal) throw new RestartRefusal(controlRefusal);
     // nucleus#1195: the proof executor's one continuation is a re-report request,
     // never a relaunch, a fresh agent or a selector re-run.
-    if (shape === "unreported_executor") return await resendExecutorReport(this.engine, input, task, reason);
+    if (shape === "unreported_executor")
+      return await resendExecutorReport(this.engine, input, task, reason);
     // A worker continuation whose recorded workspace is gone re-creates the
     // worktree from the branch on origin through the move-to-work transition, so
     // the task, PR and approval stay and the role starts on a fresh thread
     // (nucleus#974). A parked step that never needed the worker keeps its shape.
-    const workerShape = shape !== null && ["blocked_worker", "retained_worker", "blocked_with_pr", "stopped_revision", "owner_stopped_worker"].includes(shape);
-    if (role === "worker" && workerShape && task.workspaceId && this.adapter.workspaceAvailable
-      && !await this.adapter.workspaceAvailable(task.workspaceId)) {
+    const workerShape =
+      shape !== null &&
+      [
+        "blocked_worker",
+        "retained_worker",
+        "blocked_with_pr",
+        "stopped_revision",
+        "owner_stopped_worker",
+      ].includes(shape);
+    if (
+      role === "worker" &&
+      workerShape &&
+      task.workspaceId &&
+      this.adapter.workspaceAvailable &&
+      !(await this.adapter.workspaceAvailable(task.workspaceId))
+    ) {
       if (!this.adapter.recoverTaskWorkspace)
-        throw new RestartRefusal("The recorded task workspace is gone and this host cannot re-create a worktree; restore the workspace before restarting");
-      return this.engine.moveToWork({ taskId: task.id, version: task.version, reason, instruction: input.instruction, caller: input.caller });
+        throw new RestartRefusal(
+          "The recorded task workspace is gone and this host cannot re-create a worktree; restore the workspace before restarting",
+        );
+      return this.engine.moveToWork({
+        taskId: task.id,
+        version: task.version,
+        reason,
+        instruction: input.instruction,
+        caller: input.caller,
+      });
     }
-    if (restartTakesParkedStep(task, shape, collectOwnerVerbFacts(this.store, task, operationId, this.engine.coordinatorActionRunId.getStore()),
-      { explicitRole: input.role !== undefined })) return this.engine.restartParked(input, task, role, reason, operationId);
+    if (
+      restartTakesParkedStep(
+        task,
+        shape,
+        collectOwnerVerbFacts(
+          this.store,
+          task,
+          operationId,
+          this.engine.coordinatorActionRunId.getStore(),
+        ),
+        { explicitRole: input.role !== undefined },
+      )
+    )
+      return this.engine.restartParked(input, task, role, reason, operationId);
     // A role shape the task cannot serve has no path of its own; the parked step's
     // refusal is the truthful answer (and is a definite pre-send refusal).
     if (shape && unservedParkedStep(task, shape)) {
-      const parked = parkedRestart(collectOwnerVerbFacts(this.store, task, operationId, this.engine.coordinatorActionRunId.getStore()));
+      const parked = parkedRestart(
+        collectOwnerVerbFacts(
+          this.store,
+          task,
+          operationId,
+          this.engine.coordinatorActionRunId.getStore(),
+        ),
+      );
       if ("refusal" in parked)
         throw new RestartRefusal(parkedRestartRefusal(role, parked.refusal));
     }
-    const targetRunId = shape === "owner_stopped_worker" ? task.runId : role === "reviewer" ? task.resolution.currentRunId
-      : shape === "stopped_revision" ? this.store.runs(task.id).findLast(run => run.role === "revision" && !run.released && run.agentId === task.agentId)?.id
-      : null;
-    if (this.engine.ownerStopHold(task) && targetRunId && this.engine.ownerStopNamesRun(task, targetRunId)) {
+    const targetRunId =
+      shape === "owner_stopped_worker"
+        ? task.runId
+        : role === "reviewer"
+          ? task.resolution.currentRunId
+          : shape === "stopped_revision"
+            ? this.store
+                .runs(task.id)
+                .findLast(
+                  (run) =>
+                    run.role === "revision" &&
+                    !run.released &&
+                    run.agentId === task.agentId,
+                )?.id
+            : null;
+    if (
+      this.engine.ownerStopHold(task) &&
+      targetRunId &&
+      this.engine.ownerStopNamesRun(task, targetRunId)
+    ) {
       if (shape === "stopped_reviewer") {
         // A held reviewer restart may be deferred, but the hold cannot hide an
         // unrelated durable run fence that would refuse the same restart.
-        const finished = await this.engine.collectVerbFinishedRuns(task.id,
-          run => run.role === "reviewer" || run.id === this.engine.openEpisodeRunId(task.id));
-        if (finished.fenced.length) throw new DurableFenceRefusal(this.engine.verbRunFenceRefusal(finished.fenced[0]!));
-        return this.engine.deferOwnerVerb(task, input, "held", { runId: targetRunId });
+        const finished = await this.engine.collectVerbFinishedRuns(
+          task.id,
+          (run) =>
+            run.role === "reviewer" ||
+            run.id === this.engine.openEpisodeRunId(task.id),
+        );
+        if (finished.fenced.length)
+          throw new DurableFenceRefusal(
+            this.engine.verbRunFenceRefusal(finished.fenced[0]!),
+          );
+        return this.engine.deferOwnerVerb(task, input, "held", {
+          runId: targetRunId,
+        });
       }
       if (["owner_stopped_worker", "stopped_revision"].includes(shape ?? ""))
-        return this.engine.deferOwnerVerb(task, input, "held", { runId: targetRunId });
+        return this.engine.deferOwnerVerb(task, input, "held", {
+          runId: targetRunId,
+        });
     }
-    const report = role === 'reviewer' && !fresh && shape !== 'stalled_run'
-      ? reviewerReportPlan(task, this.store.runs(task.id), this.store.eventsAll(task.id)) : null;
+    const report =
+      role === "reviewer" && !fresh && shape !== "stalled_run"
+        ? reviewerReportPlan(
+            task,
+            this.store.runs(task.id),
+            this.store.eventsAll(task.id),
+          )
+        : null;
     if (report) {
       if ("refusal" in report) throw new RestartRefusal(report.refusal);
       const run = report.run;
-      const wait = this.engine.dispatchWaitsFor(task, this.engine.isOwnerCall(), true);
-      if (wait) return this.engine.deferOwnerVerb(task, input, wait, { runId: run.id, head: run.head });
-      return requestReviewerReport(this.engine, task, run, input.version, reason, input.instruction);
+      const wait = this.engine.dispatchWaitsFor(
+        task,
+        this.engine.isOwnerCall(),
+        true,
+      );
+      if (wait)
+        return this.engine.deferOwnerVerb(task, input, wait, {
+          runId: run.id,
+          head: run.head,
+        });
+      return requestReviewerReport(
+        this.engine,
+        task,
+        run,
+        input.version,
+        reason,
+        input.instruction,
+      );
     }
     // The ceiling remains the automatic loop breaker. Only a deliberate
     // operator-relayed fresh worker restart can pass it.
-    const workerReplacementShape = shape !== null && ["blocked_worker", "retained_worker", "blocked_with_pr", "stopped_revision"].includes(shape);
-    const armsReplacement = fresh && role === "worker" && workerReplacementShape;
-    const operatorRelayed = input.caller === OPERATOR_BOARD_CALLER || (input.relayed === true && Boolean(input.note?.trim()));
-    if (armsReplacement && task.retiredWorkers.length >= WORKER_REPLACEMENT_CEILING && !operatorRelayed) {
+    const workerReplacementShape =
+      shape !== null &&
+      [
+        "blocked_worker",
+        "retained_worker",
+        "blocked_with_pr",
+        "stopped_revision",
+      ].includes(shape);
+    const armsReplacement =
+      fresh && role === "worker" && workerReplacementShape;
+    const operatorRelayed =
+      input.caller === OPERATOR_BOARD_CALLER ||
+      (input.relayed === true && Boolean(input.note?.trim()));
+    if (
+      armsReplacement &&
+      task.retiredWorkers.length >= WORKER_REPLACEMENT_CEILING &&
+      !operatorRelayed
+    ) {
       throw new RestartRefusal(this.engine.replacementCeilingRefusal(task));
     }
     // Tom, 2026-10-23 ("Worker continues"): an explicitly named worker restart
@@ -216,42 +507,101 @@ export class RestartControls {
     // resume closed to this shape; a restart without a role still resumes into
     // review below. The worker refusals run first with a fresh observation.
     if (shape === "blocked_with_pr" && input.role === "worker") {
-      const unobserved = workerRestartRefusal(collectOwnerVerbFacts(this.store, task), shape);
+      const unobserved = workerRestartRefusal(
+        collectOwnerVerbFacts(this.store, task),
+        shape,
+      );
       if (unobserved) throw new RestartRefusal(unobserved);
       let observed: AgentObservation;
-      try { observed = await this.engine.onTaskHost(task, () => this.engine.host.observe(task.agentId!)); }
-      catch (error) { throw new RestartRefusal(`The retained worker cannot be observed (${hostFailureRefusalDetail(error)}); restore observation before restarting. No continuation was sent`); }
+      try {
+        observed = await this.engine.onTaskHost(task, () =>
+          this.engine.host.observe(task.agentId!),
+        );
+      } catch (error) {
+        throw new RestartRefusal(
+          `The retained worker cannot be observed (${hostFailureRefusalDetail(error)}); restore observation before restarting. No continuation was sent`,
+        );
+      }
       const latest = this.store.task(task.id);
-      this.engine.requireOwnerControlCurrent(latest, task.version, "Task changed during restart verification; read next again before restarting");
-      const refusal = workerRestartRefusal(collectOwnerVerbFacts(this.store, latest), shape, observed);
+      this.engine.requireOwnerControlCurrent(
+        latest,
+        task.version,
+        "Task changed during restart verification; read next again before restarting",
+      );
+      const refusal = workerRestartRefusal(
+        collectOwnerVerbFacts(this.store, latest),
+        shape,
+        observed,
+      );
       if (refusal) throw new RestartRefusal(refusal);
-      return this.engine.moveToWork({ taskId: task.id, version: task.version, reason, instruction: input.instruction, caller: input.caller,
-        restart: this.engine.workerRestartArm(task, { reason, instruction: input.instruction, caller: input.caller,
-          relayed: input.relayed, note: input.note, fresh, observedWorker: observed,
-          supersedeNonDelivery: !fresh && task.resolution.nonDeliveryRoutePending }) });
+      return this.engine.moveToWork({
+        taskId: task.id,
+        version: task.version,
+        reason,
+        instruction: input.instruction,
+        caller: input.caller,
+        restart: this.engine.workerRestartArm(task, {
+          reason,
+          instruction: input.instruction,
+          caller: input.caller,
+          relayed: input.relayed,
+          note: input.note,
+          fresh,
+          observedWorker: observed,
+          supersedeNonDelivery:
+            !fresh && task.resolution.nonDeliveryRoutePending,
+        }),
+      });
     }
     if (shape === "coordinator" && fresh)
-      throw Error("Coordinator restart retries the existing resolution; fresh is unsupported here. Use route role=coordinator with now to replace its agent");
-    const instruction = input.instruction?.trim()
-      || "Continue the existing task under its current approved instruction source and within its approved scope.";
+      throw Error(
+        "Coordinator restart retries the existing resolution; fresh is unsupported here. Use route role=coordinator with now to replace its agent",
+      );
+    const instruction =
+      input.instruction?.trim() ||
+      "Continue the existing task under its current approved instruction source and within its approved scope.";
 
     // A stalled live run is stopped through the existing durable targeted stop.
     // The stall incident is that stall's own evidence, so it is not settled first.
     if (shape === "stalled_run") {
-      const runId = task.resolution.incident?.runId ?? task.resolution.currentRunId ?? task.runId;
-      if (!runId) throw Error("The stalled run has no recorded identity to stop");
-      const stopped = await this.engine.stopStalledTurn({ taskId: task.id, version: task.version, runId });
+      const runId =
+        task.resolution.incident?.runId ??
+        task.resolution.currentRunId ??
+        task.runId;
+      if (!runId)
+        throw Error("The stalled run has no recorded identity to stop");
+      const stopped = await this.engine.stopStalledTurn({
+        taskId: task.id,
+        version: task.version,
+        runId,
+      });
       const stop = stopped.resolution.stalledTurnStop;
       // The stop is asynchronous: the continuation is recorded with the stop so
       // the reconciliation that observes inactivity releases the run and starts
       // the continuation instead of parking. When inactivity is already
       // confirmed, continue now through the ordinary shapes.
       if (stop && stop.status !== "stopped" && stop.status !== "completed") {
-        return this.store.update(stopped.id, {
-          resolution: { ...stopped.resolution, stalledTurnStop: { ...stop, restartInstruction: instruction, restartFresh: fresh } },
-        }, "stalled_turn_restart_requested", instruction.slice(0, 600));
+        return this.store.update(
+          stopped.id,
+          {
+            resolution: {
+              ...stopped.resolution,
+              stalledTurnStop: {
+                ...stop,
+                restartInstruction: instruction,
+                restartFresh: fresh,
+              },
+            },
+          },
+          "stalled_turn_restart_requested",
+          instruction.slice(0, 600),
+        );
       }
-      if (stop?.status === "stopped") return this.engine.restartTask({ ...input, version: stopped.version }, operationId);
+      if (stop?.status === "stopped")
+        return this.engine.restartTask(
+          { ...input, version: stopped.version },
+          operationId,
+        );
       return stopped;
     }
 
@@ -262,7 +612,15 @@ export class RestartControls {
     // intact. A stalled live run settles nothing: the stall incident is
     // that stop's own evidence.
     task = this.store.task(task.id);
-    const request: RestartRequest = { input, task, role, shape: shape!, reason, operationId, instruction };
+    const request: RestartRequest = {
+      input,
+      task,
+      role,
+      shape: shape!,
+      reason,
+      operationId,
+      instruction,
+    };
     switch (shape) {
       case "owner_stopped_worker":
       case "pre_dispatch":
@@ -278,7 +636,8 @@ export class RestartControls {
       case "absent_resolution":
       case "coordinator":
         return this.engine.restartEpisode(request);
-      default: throw Error(`restart does not support the ${shape} state`);
+      default:
+        throw Error(`restart does not support the ${shape} state`);
     }
   }
 }

@@ -554,15 +554,35 @@ export class WorkerFailover {
   private async settleStaleWorkerIntent(task: Task): Promise<void> {
     await this.engine.control(async () => {
       const current = this.store.task(task.id);
-      if (current.version !== task.version || workerCreationRefusal(this.store, current)) return;
-      const observed = await observeWorkerCreation(this.store, this.adapter, current, this.resolution.graceMs);
+      if (
+        current.version !== task.version ||
+        workerCreationRefusal(this.store, current)
+      )
+        return;
+      const observed = await observeWorkerCreation(
+        this.store,
+        this.adapter,
+        current,
+        this.resolution.graceMs,
+      );
       this.store.transaction(() => {
         const latest = this.store.task(task.id);
-        if (latest.version !== current.version || workerCreationRefusal(this.store, latest)
-          || !sameWorkerCreation(this.store, latest, observed)) return;
-        if (observed.kind === "absent") releaseStaleWorkerIntent(this.store, latest, observed.proof);
-        else if (observed.kind === "bound") bindWorkerCreation(this.store, latest, observed.agentId);
-        else if (!latest.resolution.stop || ["lifecycle", "operator_needed"].includes(latest.resolution.stop.reason))
+        if (
+          latest.version !== current.version ||
+          workerCreationRefusal(this.store, latest) ||
+          !sameWorkerCreation(this.store, latest, observed)
+        )
+          return;
+        if (observed.kind === "absent")
+          releaseStaleWorkerIntent(this.store, latest, observed.proof);
+        else if (observed.kind === "bound")
+          bindWorkerCreation(this.store, latest, observed.agentId);
+        else if (
+          !latest.resolution.stop ||
+          ["lifecycle", "operator_needed"].includes(
+            latest.resolution.stop.reason,
+          )
+        )
           this.resolution.waiting(latest, observed.detail, "lifecycle");
       });
     }, `task:${task.id}`);
