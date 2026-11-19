@@ -62,6 +62,6 @@ test('error rendering is bounded and never throws', () => {
 });
 
 test('the stop message matches the engine rejection', async () => {
-  const { readFileSync } = await import('node:fs');
-  assert.match(readFileSync(new URL('../core/engine.ts', import.meta.url), 'utf8'), new RegExp(`new Error\\("${STOPPED_BEFORE_DRAIN_MESSAGE}"\\)`));
+  const { STOPPED_BEFORE_DRAIN } = await import('../core/engine');
+  assert.equal(STOPPED_BEFORE_DRAIN().message, STOPPED_BEFORE_DRAIN_MESSAGE);
 });

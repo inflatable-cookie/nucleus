@@ -274,10 +274,20 @@ for (const variant of ['unavailable', 'active', 'permission', 'idle', 'error', '
         assert.deepEqual(f.createdRuns, [], 'idle: nothing is launched');
         return;
       }
+      if (variant === 'unavailable') {
+        assert.match(f.current().reason, /Waiting on Paseo host/);
+        assert.equal(f.current().resolution.hostWait?.hostId, 'host');
+        assert.equal(f.current().resolution.currentRunId, run.id);
+        assert.equal(f.store.run(run.id)!.released, false);
+        assert.doesNotThrow(() => f.store.authenticate(run.id, 'token'));
+        assert.deepEqual(f.continuations, [], 'the unavailable host receives no continuation');
+        assert.deepEqual(f.createdRuns, [], 'the unavailable host receives no launch');
+        return;
+      }
       assert.equal(f.current().reason, REVIEW_AUTHORIZATION_REQUIRED, `${variant}: the checkpoint stop stands`);
       assert.deepEqual(f.continuations, [], `${variant}: nothing is continued`);
       const restart = f.restartView();
-      if (variant === 'unavailable' || variant === 'other workspace' || variant === 'other agent') {
+      if (variant === 'other workspace' || variant === 'other agent') {
         assert.equal(f.current().resolution.incident?.status, 'reconciling');
         assert.equal(f.current().resolution.incident?.runId, run.id);
         assert.equal(restart.available, false, JSON.stringify(restart));

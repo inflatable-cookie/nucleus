@@ -1097,8 +1097,9 @@ test('explicit resume replaces a definitively absent initial worker in the retai
     assert.equal(running.phase,'working');assert.equal(running.runId,runId,'the retried creation reuses the same run ID');assert.equal(running.workspaceId,uncertain.workspaceId);assert.equal(f.calls.workspaces,0);assert.equal(f.calls.agents,1);
   }finally{await f.close()}
 });
-test('Pi settings-lock launch failure retries once after backoff in the retained workspace',async()=>{
+test('Pi settings-lock launch failure remains owned after backoff with an empty inventory',async()=>{
   const f=fixture();try{
+    Object.assign(f.adapter, { findRunAgents: async () => [] });
     const original=f.add();let attempts=0;const launchError='Invalid settings file ~/.pi/agent/settings.json: Lock file is already being held\nUnknown option: --mcp-config';
     f.adapter.createAgent=async t=>{attempts++;if(attempts===1)throw Error(launchError);return{id:'retried-worker',workspaceId:t.workspaceId}};
     f.store.setMeta('paused',false);await f.engine.wake();
@@ -1112,9 +1113,10 @@ test('Pi settings-lock launch failure retries once after backoff in the retained
     await f.engine.wake();
     await f.engine.wake();
     const retried=f.store.task(original.id);
-    assert.equal(attempts,2);assert.equal(retried.agentId,'retried-worker');assert.equal(retried.phase,'working');
+    assert.equal(attempts,1);assert.equal(retried.agentId,null);assert.equal(retried.phase,'needs_attention');
+    assert.match(retried.reason,/original create may still deliver/);
     assert.equal(retried.workspaceId,workspaceId);assert.equal(f.calls.workspaces,1);
-    assert.equal(f.store.events(original.id).filter(event=>event.kind==='absent_worker_retry').length,1);
+    assert.equal(f.store.events(original.id).filter(event=>event.kind==='absent_worker_retry').length,0);
   }finally{await f.close()}
 });
 test('absent-worker resume preserves an uncertain intent when a matching worker appears',async()=>{
@@ -1486,19 +1488,19 @@ test('an exhausted worker with no profile eligible even after a reset gets owner
   assert.match(stopped.reason,/No eligible replacement worker: No eligible worker profile: .*unavailable: removed/);
  }finally{await f.close()}
 });
-test('a lost replacement creation is retried once automatically, then escalates without launching blindly',async()=>{
+test('a lost replacement creation stays owned without launching blindly',async()=>{
  const f=fixture();try{
   const task=f.add();f.store.setMeta('paused',false);await f.engine.wake();const old=f.store.task(task.id);
   const second={...profile,id:'second',model:'second'};f.engine.profiles=[profile,second];f.store.setMeta('pool',[...f.store.pool(),{profileId:'second',enabled:true,group:'second',weight:1,roles:['worker'],scopes:['general']}]);
   f.adapter.verifyResume=async()=>{};f.adapter.observe=async id=>({id,workspaceId:old.workspaceId,status:'error',active:false,permissions:false,error:'usage_limit_reached',model:'author'});
+  Object.assign(f.adapter, { findRunAgents: async () => [] });
   let attempts=0;f.adapter.createAgent=async()=>{attempts++;throw Error('lost response')};
   await f.engine.wake();await f.engine.wake();
-  // The proven-absent first creation was automatically replaced exactly once in the retained workspace.
-  assert.equal(attempts,2);assert.equal(f.calls.workspaces,1);
+  // Empty inventory cannot prove that the original producer has stopped.
+  assert.equal(attempts,1);assert.equal(f.calls.workspaces,1);
   await f.engine.wake();
-  // The second absence escalates to the coordinator instead of another blind launch.
-  assert.equal(attempts,2);assert.equal(f.store.task(task.id).agentId,null);assert.equal(f.store.task(task.id).agentIntent,true);
-  assert.match(f.store.task(task.id).reason,/also proved absent/);
+  assert.equal(attempts,1);assert.equal(f.store.task(task.id).agentId,null);assert.equal(f.store.task(task.id).agentIntent,true);
+  assert.match(f.store.task(task.id).reason,/original create may still deliver/);
  }finally{await f.close()}
 });
 
@@ -1900,10 +1902,11 @@ test('late worker lookup preserves a worker already bound while the lookup was i
     f.store.setMeta('paused', false);
     const task = f.add();
     const pending = f.store.update(task.id, { phase: 'dispatching', workspaceIntent: true, workspaceId: 'workspace', directory: '/fixture', agentIntent: true, agentId: null, runId: 'pending-run' });
-    f.adapter.findAgents = async () => {
+    Object.assign(f.adapter, { findRunAgents: async (run: Run) => {
+      assert.equal(run.id, 'pending-run');
       f.store.update(task.id, { agentId: 'bound-worker', phase: 'working', reason: 'Worker running' });
       return [{ id: 'bound-worker', workspaceId: 'workspace' }];
-    };
+    } });
     await (f.engine as any).recover(pending);
     assert.equal(f.store.task(task.id).phase, 'working');
     assert.equal(f.store.task(task.id).agentId, 'bound-worker');

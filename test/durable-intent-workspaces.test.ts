@@ -55,7 +55,8 @@ for (const agent of [false, true]) {
           observed++;
           return [{ id: "ws", directory: f.dir }];
         },
-        findAgents: async () => {
+        findRunAgents: async (run) => {
+          assert.equal(run.id, f.task().runId, "lookup uses the original run identity");
           observed++;
           return [{ id: "worker", workspaceId: "ws" }];
         },

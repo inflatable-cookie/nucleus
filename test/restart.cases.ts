@@ -854,7 +854,7 @@ async function advanceViaRevision(
       runId: revision!.id,
       status: "ready_for_review",
       summary: "Ready for review",
-      head: revision!.head,
+      head,
       prNumber,
     },
     token,
@@ -864,11 +864,11 @@ async function advanceViaRevision(
     10_000,
     "revision to enter review",
   );
-  assert.equal(
-    f.current().phase,
-    "awaiting_review",
-    "the authenticated result advanced the task",
+  assert.ok(
+    ["awaiting_review", "reviewing"].includes(f.current().phase),
+    "the authenticated result advanced the task to review",
   );
+  assert.equal(f.current().prHead, head, "review remains bound to the verified PR head");
   release();
 }
 

@@ -2399,7 +2399,7 @@ weighted(12)(
       assert.equal(
         f.store
           .events(f.taskId)
-          .filter((event) => event.kind === "integration_base_renewed").length,
+          .filter((event) => event.kind === "integration_checkout_fast_forwarded").length,
         1,
       );
       await stepEngine(f.engine);
@@ -2471,7 +2471,7 @@ weighted(6)(
         false,
         "dirt is contention, waiting for its owner to clean up",
       );
-      assert.match(parked.reason, /tracked or untracked changes/);
+      assert.match(parked.reason, /Integration checkout is dirty/);
       assert.equal(
         f.store
           .events(f.taskId)
@@ -2508,7 +2508,7 @@ weighted(6)(
       assert.equal(parked.phase, "verifying", parked.reason);
       // Unpushed local commits are repository contention: they wait out the grace instead of parking for attention.
       assert.equal(parked.resolution.attention, false, parked.reason);
-      assert.match(parked.reason, /Local integration base differs from origin/);
+      assert.match(parked.reason, /Local integration branch differs from origin/);
       assert.equal(
         await git(f.repo, "rev-parse", "HEAD"),
         localHead,
@@ -2517,9 +2517,9 @@ weighted(6)(
       assert.equal(
         f.store
           .events(f.taskId)
-          .filter((event) => event.kind === "integration_base_renewal_refused")
+          .filter((event) => event.kind === "integration_checkout_fast_forwarded")
           .length,
-        1,
+        0,
       );
       assert.equal(
         f.store
