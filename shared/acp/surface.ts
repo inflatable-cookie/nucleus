@@ -10,9 +10,9 @@
 /** Where an agent finds its session: the id, the task, and the owner-only file. */
 export interface AcpSessionBinding { sessionId: string; taskId: string; bindingPath: string }
 
-export interface AcpTurnInput {
-  taskId: string;
-  sessionId: string;
+export type AcpCaller = { kind?: "task"; taskId: string; sessionId: string } | { kind: "inbox"; hostId: string; sessionId: string };
+
+export type AcpTurnInput = AcpCaller & {
   waitMs?: number;
   /**
    * `true` when the client is attaching (`session/new`/`session/load`) rather than
@@ -23,15 +23,24 @@ export interface AcpTurnInput {
   attach?: boolean;
 }
 
-export interface AcpTurnReply {
+export interface AcpElicitation {
+  id: string;
+  version: number;
+  headline: string;
+  question: string;
+  choices: Array<{ label: string; consequence: string }>;
+}
+export type AcpAnswerInput = AcpCaller & { id: string; version: number } & ({ action: "accept"; answer: string } | { action: "cancel"; requestId: string });
+
+export type AcpTurnReply = {
   /** `hold` keeps the agent's turn open; `release` ends it, and the client settles the thread. */
   state: "hold" | "release";
   /** Why, in one line: the task's state, or the release directive the service recorded. */
   reason: string;
   /** Lifecycle lines the client shows as agent messages; empty when nothing changed. */
   messages: string[];
-  task: { taskId: string; reference: string | null; phase: string; name: string };
-}
+  elicitations?: AcpElicitation[];
+} & ({ kind?: "task"; task: { taskId: string; reference: string | null; phase: string; name: string } } | { kind: "inbox"; hostId: string });
 
 export interface AcpMessageInput { taskId: string; sessionId: string; eventId: string; text: string }
 
@@ -45,8 +54,15 @@ export interface AcpSessionSurface {
    * remote text: an ignore prompt ends the turn, a hold prompt holds it.
    */
   bind(input: { taskId: string } & AcpBindingRules): AcpSessionBinding;
+  /** Mint a decision-only inbox identity for this host. */
+  bindInbox?(input: { hostId: string } & AcpBindingRules): { sessionId: string; hostId: string; directory: string; bindingPath: string };
+  /** Read-only projection used by a host to hold and settle native cards. */
+  pendingDecisionKey?(taskId: string): string | null;
+  decisionSettlement?(id: string, version: number): { state: "open" | "answered" | "cancelled"; answer?: string };
   /** Ask whether to keep holding this turn, and which lifecycle lines to show. */
   turn(input: AcpTurnInput, token: string): Promise<AcpTurnReply>;
+  /** Record a native operator answer to an offered decision. */
+  answer?(input: AcpAnswerInput, token: string): Promise<unknown>;
   /** The operator's text in the task's thread: recorded and routed by Nucleus, never by the agent. */
   message(input: AcpMessageInput, token: string): Promise<unknown>;
   /** A host adapter's release directive: end this session's held turn now. */

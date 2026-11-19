@@ -1714,6 +1714,13 @@ test("questions and approvals answer exact runtime requests and refuse wrong kin
     "question-request",
     { choice: "A" },
   );
+  p.runtimeRequests.push({ id: "cancel-request", kind: "user_input", status: "pending", responseCapability: { type: "live", providerSessionId: "session" } });
+  await host.respondRuntimeRequest(
+    created.id,
+    workspace.id,
+    "cancel-request",
+    { decision: "cancel" },
+  );
   await host.respondRuntimeRequest(
     created.id,
     workspace.id,
@@ -1723,11 +1730,14 @@ test("questions and approvals answer exact runtime requests and refuse wrong kin
   const responses = server.commands.filter(
     (command) => command.type === "runtime-request.respond",
   );
-  assert.equal(responses.length, 2);
+  assert.equal(responses.length, 3);
   assert.equal(responses[0]!.requestId, "question-request");
   assert.deepEqual(responses[0]!.answers, { choice: ["A"] });
-  assert.equal(responses[1]!.requestId, "approval-request");
-  assert.equal(responses[1]!.decision, "accept");
+  assert.equal(responses[1]!.requestId, "cancel-request");
+  assert.equal(responses[1]!.decision, "cancel");
+  assert.equal(p.runtimeRequests.find((request: { id: string }) => request.id === "cancel-request")!.status, "resolved");
+  assert.equal(responses[2]!.requestId, "approval-request");
+  assert.equal(responses[2]!.decision, "accept");
   const answeredRead = await host.answeredQuestions(created.id);
   assert.ok(answeredRead.ok);
   assert.equal(answeredRead.answered[0]?.requestId, "question-request");

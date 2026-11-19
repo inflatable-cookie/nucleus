@@ -1,3 +1,4 @@
+import { isOperatorBoardOrT3 } from "../../../shared/operator-identity";
 /**
  * One pass over a task's routing requests: apply a standing grant that covers a
  * request, clear a sign-off whose grant is gone, ask for each request that needs
@@ -116,7 +117,7 @@ export function reconcileRoutingSignoffs(store: Store, decisions: Decisions, tas
       const replacement = role === "worker" && result.profileId && task.replacementProfile?.profileId === request.profileId
         ? { replacementProfile: { ...task.replacementProfile, profileId: result.profileId } } : {};
       task = store.update(task.id, { profileRequests: { ...task.profileRequests, [role]: next }, ...replacement }, "routing_signoff",
-        JSON.stringify({ role, requested: request.profileId, profileId: next.profileId, status: result.signoff.status, decisionId: asked.decisionId, note: result.signoff.note }));
+        JSON.stringify({ role, requested: request.profileId, profileId: next.profileId, status: result.signoff.status, decisionId: asked.decisionId, by: result.signoff.by, note: result.signoff.note }));
       if (result.signoff.status === "approved" && asked.decisionId) approveRoute(approvedRoutes, store, task, role, next, asked.decisionId, request.reason);
       continue;
     }
@@ -126,7 +127,7 @@ export function reconcileRoutingSignoffs(store: Store, decisions: Decisions, tas
     const prior = priorApprovedSignoff(store, task.id, role, request.profileId);
     if (prior) {
       task = store.update(task.id, { profileRequests: { ...task.profileRequests, [role]: { ...request, signoff: prior } } }, "routing_signoff",
-        JSON.stringify({ role, requested: request.profileId, profileId: request.profileId, status: prior.status, decisionId: prior.decisionId, note: prior.note }));
+        JSON.stringify({ role, requested: request.profileId, profileId: request.profileId, status: prior.status, decisionId: prior.decisionId, by: prior.by, note: prior.note }));
       continue;
     }
     const question = signoffQuestion(store, profiles, task, role, request);
@@ -189,7 +190,7 @@ function reconcileUnavailablePreference(store: Store, decisions: Decisions, task
     try { record = JSON.parse(prior.detail.slice(profileId.length + 2)); } catch { return task; }
     let decision;
     try { decision = decisions.get({ id: record.decisionId }); } catch { return task; }
-    if (decision.status !== 'answered' || !decision.answer || decision.answer.relayed || decision.answer.answeredBy !== 'operator (board)') return task;
+    if (decision.status !== 'answered' || !decision.answer || decision.answer.relayed || !isOperatorBoardOrT3(decision.answer.answeredBy)) return task;
     const selected = record.choices[decision.answer.text.trim()];
     if (selected) return store.update(task.id, { profileRequests: { ...task.profileRequests, worker: { profileId: selected, required: true, reason: 'Operator selected an available worker profile' } } },
       'routing_unavailable_resolved', `${profileId}: selected ${selected}`);

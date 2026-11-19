@@ -1,3 +1,4 @@
+import { isOperatorBoardOrT3 } from "../../../shared/operator-identity";
 /**
  * Spec 052 routing sign-off (Tom, 2026-10-21). A request for a profile above
  * the usage level's cost ceiling, or rated frontier below Maximum, applies only once the operator signs
@@ -34,7 +35,7 @@ export const boardSignoff = (): Signoff => ({ status: "approved", decisionId: nu
 
 /** The sign-off a standing grant writes on a request it covers. */
 export function grantSignoff(grant: RoutingGrant): Signoff {
-  return { status: "approved", decisionId: grant.decisionId, by: OPERATOR_BOARD, at: grant.activatedAt ?? now(), note: "", grantId: grant.id };
+  return { status: "approved", decisionId: grant.decisionId, by: grant.activatedBy ?? OPERATOR_BOARD, at: grant.activatedAt ?? now(), note: "", grantId: grant.id };
 }
 
 const nameOf = (profiles: readonly Profile[], profileId: string) => profiles.find(profile => profile.id === profileId)?.name ?? profileId;
@@ -57,15 +58,15 @@ export function outcome(decision: DecisionView | null, approve: string, choices:
   const closed = (note: string): { signoff: Signoff } => ({ signoff: { status: "declined", decisionId: decision.id, by: null, at, note } });
   if (decision.status !== "answered" || !decision.answer) return closed(`The sign-off decision was ${decision.status}`);
   const answer = decision.answer;
-  if (answer.relayed || answer.answeredBy !== OPERATOR_BOARD)
+  if (answer.relayed || !isOperatorBoardOrT3(answer.answeredBy))
     return closed("A relayed answer does not sign off a routing request; answer on the board");
   const text = answer.text.trim();
-  const signed = (profileId?: string) => ({ signoff: { status: "approved" as const, decisionId: decision.id, by: OPERATOR_BOARD, at, note: "" },
+  const signed = (profileId?: string) => ({ signoff: { status: "approved" as const, decisionId: decision.id, by: answer.answeredBy, at, note: "" },
     ...(profileId ? { profileId } : {}) });
   if (text === approve) return signed();
   const chosen = choices.get(text);
   if (chosen) return signed(chosen);
-  return { signoff: { status: "declined", decisionId: decision.id, by: OPERATOR_BOARD, at, note: text.slice(0, 400) } };
+  return { signoff: { status: "declined", decisionId: decision.id, by: answer.answeredBy, at, note: text.slice(0, 400) } };
 }
 
 /**
@@ -122,7 +123,7 @@ export function withoutGrantSignoff(request: Request): Request {
 /** The routing sign-off events, decoded once: the ask, and each recorded outcome. */
 export type SignoffEvent =
   | { kind: "requested"; role: Role; profileId: string; decisionId: string }
-  | { kind: "recorded"; role: Role; profileId: string; status: string; decisionId: string | null; grantId: string | null };
+  | { kind: "recorded"; role: Role; profileId: string; status: string; decisionId: string | null; grantId: string | null; by: string | null };
 
 const isRole = (value: unknown): value is Role => typeof value === "string" && (ROLES as readonly string[]).includes(value);
 const textOf = (value: unknown): string | null => typeof value === "string" && value ? value : null;
@@ -150,7 +151,7 @@ export function readSignoffEvents(store: Store, taskId: string): SignoffEvent[] 
     }
     const profileId = textOf(record.profileId);
     if (!profileId) continue;
-    events.push({ kind: "recorded", role: record.role, profileId, status: textOf(record.status) ?? "", decisionId, grantId: textOf(record.grantId) });
+    events.push({ kind: "recorded", role: record.role, profileId, status: textOf(record.status) ?? "", decisionId, grantId: textOf(record.grantId), by: textOf(record.by) });
   }
   return events;
 }
@@ -169,8 +170,8 @@ export function priorNonGrantSignoff(store: Store, taskId: string, role: Role, p
     const event = events[index]!;
     if (event.kind !== "recorded" || event.role !== role || event.profileId !== profileId) continue;
     if (event.grantId) continue;
-    if (event.status === "approved") return { status: "approved", decisionId: event.decisionId, by: OPERATOR_BOARD, at: now(), note: "" };
-    if (event.status === "declined") return { status: "declined", decisionId: event.decisionId, by: OPERATOR_BOARD, at: now(), note: "" };
+    if (event.status === "approved") return { status: "approved", decisionId: event.decisionId, by: event.by ?? OPERATOR_BOARD, at: now(), note: "" };
+    if (event.status === "declined") return { status: "declined", decisionId: event.decisionId, by: event.by ?? OPERATOR_BOARD, at: now(), note: "" };
     return null;
   }
   return null;

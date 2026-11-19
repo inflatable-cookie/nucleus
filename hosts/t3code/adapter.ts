@@ -64,6 +64,9 @@ import {
 import { identity, T3IntentLedger } from "./intents";
 import { T3Presentation } from "./presentation";
 import { T3Nesting } from "./nesting";
+import { T3Inbox } from "./inbox";
+import { T3DecisionCards } from "./decision-cards";
+import { T3DecisionHold } from "./decision-hold";
 import { isSupportRole, labelRole } from "./one-row";
 import type { AcpSessionSurface } from "../../shared/acp/surface";
 
@@ -83,6 +86,8 @@ export interface T3CodeConfig extends T3ConnectionConfig {
   reentryTimeoutMs?: number;
   /** Opt-in path for a bounded capture of the existing config read. */
   modelCapturePath?: string;
+  /** Service-owned one-time board link, minted only for a preview open. */
+  boardLink?: () => Promise<string>;
 }
 const unsupported = (capability: string): never => {
   throw new ProvenPreSendRefusalError(`T3Code does not support ${capability}`);
@@ -200,12 +205,17 @@ export class T3CodeHost implements Host {
   readonly intents: T3IntentLedger;
   readonly presentation: T3Presentation;
   readonly nesting: T3Nesting;
+  readonly inbox: T3Inbox;
+  readonly decisionCards: T3DecisionCards;
+  readonly decisionHold: T3DecisionHold;
   hostId = "";
   version = "";
   private ready = false;
   private readonly probeThreadId?: string;
   private readonly modelCapturePath?: string;
+  private readonly acp: () => AcpSessionSurface | null;
   constructor(options: T3CodeConfig) {
+    this.acp = options.acp ?? (() => null);
     this.probeThreadId = options.probeThreadId;
     this.modelCapturePath = options.modelCapturePath ?? process.env.NUCLEUS_T3_MODEL_CAPTURE;
     this.rpc = new T3RpcClient(options);
@@ -231,6 +241,18 @@ export class T3CodeHost implements Host {
       intents: this.intents,
       parentThreadOf: (taskId) => this.nesting.parentOf(taskId)?.threadId,
     });
+    this.decisionHold = new T3DecisionHold({ hostId: () => this.hostId, state: this.state, reads: this.reads, intents: this.intents,
+      unsettle: (threadId, messageId) => this.presentation.unsettleBeforeMessage(threadId, messageId) });
+    this.decisionCards = new T3DecisionCards({ acp: this.acp, reads: this.reads,
+      respond: async (threadId, workspaceId, requestId, response) => this.respondRuntimeRequest(threadId, workspaceId, requestId, response),
+    });
+    this.inbox = new T3Inbox({
+      hostId: () => this.hostId, acp: this.acp, state: this.state, reads: this.reads, rpc: this.rpc, intents: this.intents, boardLink: options.boardLink,
+      workspace: async directory => {
+        const created = await this.createWorkspace({ title: "Nucleus", requestId: `inbox:${this.hostId}`, directory, project: { workspaceRoot: directory } });
+        return { id: created.id, projectId: this.state.read().workspaces[created.id]!.projectId };
+      },
+    });
     this.nesting = new T3Nesting({
       rpc: this.rpc,
       state: this.state,
@@ -239,7 +261,7 @@ export class T3CodeHost implements Host {
       presentation: this.presentation,
       hostId: () => this.hostId,
       requireConnection: () => this.requireConnection(),
-      acp: options.acp ?? (() => null),
+      acp: this.acp,
       ...(options.reentryTimeoutMs === undefined
         ? {}
         : { reentryTimeoutMs: options.reentryTimeoutMs }),
@@ -566,12 +588,25 @@ export class T3CodeHost implements Host {
     attention: TaskAttention,
   ): Promise<void> {
     if (!this.connected) return;
-    await this.presentation.reconcileTaskRow(taskId, attention);
+    const pending = this.acp()?.pendingDecisionKey?.(taskId);
+    await this.presentation.reconcileTaskRow(taskId, pending ? { state: "attention", cause: "Decision needs an operator" } : attention);
   }
   /** The ordinary host sweep's nesting pass: dispose owed wakes, hold or release the parent's turn, archive a finished task's parent. */
   async reconcileThreadTitles(tasks: readonly Task[]): Promise<void> {
     if (!this.connected) return;
     try {
+      await this.inbox.reconcile();
+      const state = this.state.read();
+      if (state.inbox) {
+        await this.decisionCards.reconcile(state.inbox.threadId, state.inbox.workspaceId);
+        await this.decisionHold.reconcile(state.inbox.threadId);
+      }
+      for (const parent of Object.values(state.parents ?? {})) {
+        if (!parent.archivedAt) {
+          await this.decisionCards.reconcile(parent.threadId, parent.workspaceId);
+          if (this.acp()?.pendingDecisionKey?.(parent.taskId)) await this.decisionHold.reconcile(parent.threadId);
+        }
+      }
       await this.nesting.reconcile(tasks);
     } catch (error) {
       if (isHostOperationTimeout(error))
@@ -1407,7 +1442,9 @@ export class T3CodeHost implements Host {
             );
           if (
             request.kind === "user_input"
-              ? !response.answers || !!response.decision
+              ? response.answers
+                ? !!response.decision
+                : response.decision !== "cancel" && response.decision !== "decline"
               : !response.decision || !!response.answers
           )
             throw new ProvenPreSendRefusalError(

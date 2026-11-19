@@ -17,9 +17,12 @@ escalations are the only durable attention signal.
 ## Outcome
 
 An agent records a question that needs the operator as a **decision** in Nucleus.
-The operator sees every open decision in one place on the board, answers it
-there, and the answer reaches the asking agent. Decisions clear when answered,
-withdrawn or superseded.
+The board shows all open decisions. The operator can also answer in the Paseo
+composer pill or in T3. In T3, operator questions for T3-hosted tasks appear
+on their parent threads. Other decisions routed to that T3 operator appear in
+the pinned Nucleus inbox. See [operator decisions on T3](t3code-host-adapter.md#operator-decisions-on-t3).
+Decisions clear when answered, withdrawn or superseded. Answers reach the
+asking agent.
 
 ## Record
 
@@ -71,9 +74,14 @@ the record's links would fabricate history for an imported decision.
 - `decision.add` — an agent records an open decision.
 - `decision.get`, `decision.list` — filter by status, asker, project, task,
   lead or papercut.
-- `decision.answer` — the operator answers. From the board it carries operator
-  authority. Relayed by an agent it must quote the operator verbatim and name
-  the approver, with `relayed: true`, as `lead.approve` does.
+- `decision.answer` — records the operator's answer. The board and Paseo pill
+  carry direct operator authority. Nucleus also records an answer from an
+  authenticated T3 task parent or inbox as a direct operator answer, with
+  `answeredBy: operator (t3code:<hostId>)` derived from the session's host.
+  The session can answer only decisions offered to it at the current version.
+  That identity is reserved for authenticated T3 sessions. Agent relays
+  record the relaying agent, quote the operator verbatim and name the approver
+  in the note, with `relayed: true`.
 - `decision.withdraw` — the asker (or the operator) withdraws an open decision
   with a reason.
 - `decision.link` — adds task, lead and papercut links to an **open or answered**
@@ -88,6 +96,10 @@ the record's links would fabricate history for an imported decision.
   not versioned content, so the write is in place with no new version; an
   ambiguous asker and unresolvable links are left as is.
 - `decision.supersede` — replaces an open decision with a new one in one step.
+
+Direct T3 answers can sign off routing requests and activate planner grants
+under [Spec 052](052-usage-level.md), and can satisfy the proof-only release GO
+under [Spec 055](055-source-immutable-proof-executor.md).
 
 ## Delivery
 

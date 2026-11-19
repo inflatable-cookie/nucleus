@@ -12,7 +12,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync } from "node:fs";
 import { ACP_BINDING_FORMAT, ACP_SESSION_FORMAT, acpBindingPath, acpBindingSchema, acpBindingsDir, acpSessionPath, acpSessionRecordSchema, acpSessionsDir,
-  type AcpSessionRecord, type AcpBinding } from "../../shared/acp/binding";
+  type AcpSessionRecord, type AcpTaskBinding } from "../../shared/acp/binding";
 import type { AcpSessionBinding } from "../../shared/acp/surface";
 import { writeOwnedJson } from "../machine/owned-file.mjs";
 import { digest } from "../store/store";
@@ -43,8 +43,8 @@ export function mintAcpSession(input: MintAcpSessionInput): AcpSessionBinding {
     tokenHash: digest(token),
     createdAt: (input.now ?? (() => new Date().toISOString()))(),
   });
-  const binding: AcpBinding = acpBindingSchema.parse({
-    format: ACP_BINDING_FORMAT, version: 1, sessionId, taskId: record.taskId,
+  const binding: AcpTaskBinding = acpBindingSchema.parse({
+    format: ACP_BINDING_FORMAT, version: 1, kind: "task", sessionId, taskId: record.taskId,
     socketPath: input.socketPath, token,
     ...(input.ignorePattern ? { ignorePattern: input.ignorePattern } : {}),
     ...(input.holdPattern ? { holdPattern: input.holdPattern } : {}),

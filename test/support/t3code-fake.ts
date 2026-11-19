@@ -911,6 +911,7 @@ export async function t3Fake(t: TestContext, directory: string) {
       const marker = () =>
         controls.synchronized ? [{ kind: "synchronized", sequence: 1 }] : [];
       switch (request.tag) {
+        case "preview.open": return success({ threadId: payload.threadId, tabId: "synthetic-preview" });
         case "server.getConfig": {
           const reasoning: Value = {
             id: "reasoningEffort",
@@ -1162,7 +1163,7 @@ export async function t3Fake(t: TestContext, directory: string) {
         case "orchestration.launchThread": {
           for (const field of contract.launchThread.required)
             assert.ok(Object.hasOwn(payload, field), `launchThread.${field}`);
-          assert.equal(payload.workspaceStrategy.type, "existing_worktree");
+          assert.ok(["existing_worktree", "root"].includes(payload.workspaceStrategy.type));
           assert.ok(
             contract.launchThread.runtimeModes.includes(payload.runtimeMode),
           );
@@ -1207,10 +1208,11 @@ export async function t3Fake(t: TestContext, directory: string) {
           commands.push({ method: request.tag, ...payload });
           controls.mutationObserver();
           if (controls.disconnectMutation) return socket.destroy();
-          const p = threadProjection(
-            payload.threadId,
-            payload.workspaceStrategy.worktreePath,
-          );
+          const root = projectRows.find(project => project.id === payload.projectId)?.workspaceRoot;
+          const p = threadProjection(payload.threadId, payload.workspaceStrategy.type === "root" ? root : payload.workspaceStrategy.worktreePath);
+          p.thread.projectId = payload.projectId;
+          if (payload.workspaceStrategy.type === "root") p.thread.worktreePath = null;
+          p.thread.pinnedAt = null;
           p.thread.title = payload.title;
           p.thread.modelSelection = payload.modelSelection;
           p.thread.providerInstanceId = payload.modelSelection.instanceId;
@@ -1277,8 +1279,8 @@ export async function t3Fake(t: TestContext, directory: string) {
             if (payload.answers)
               for (const answer of Object.values(payload.answers))
                 assert.ok(
-                  Array.isArray(answer),
-                  "question answer uses provider answer array",
+                  Array.isArray(answer) || (threads.get(payload.threadId)?.thread.providerInstanceId === "nucleus" && typeof answer === "string"),
+                  "question answer uses the provider's answer shape",
                 );
           }
           commands.push({ method: request.tag, ...payload });
@@ -1325,6 +1327,10 @@ export async function t3Fake(t: TestContext, directory: string) {
                     rootNodeId: `node:root:${payload.commandId}`,
                   }),
                 );
+              if (p.thread.providerInstanceId === "nucleus" && payload.text === "nucleus-hold-the-task-thread") {
+                const active = p.runs.find((run: Value) => ["preparing", "starting", "running", "waiting"].includes(run.status));
+                if (active) p.turnItems.push(syntheticTurnItem(payload.threadId, p.turnItems.length, { type: "user_message", messageId: payload.messageId, runId: active.id }));
+              }
               if (payload.threadId.startsWith("thread:delegated-task:"))
                 recordFollowUp(payload);
               break;
@@ -1418,6 +1424,9 @@ export async function t3Fake(t: TestContext, directory: string) {
               p.thread.snoozedAt = STAMP;
               break;
             }
+            case "thread.pin":
+              p.thread.pinnedAt = STAMP;
+              break;
             case "thread.unsnooze":
               p.thread.snoozedUntil = null;
               p.thread.snoozedAt = null;
@@ -1641,6 +1650,10 @@ export async function t3Fake(t: TestContext, directory: string) {
                 (r: Value) => r.id === payload.requestId,
               )!;
               item.status = "resolved";
+              if (item.kind === "user_input" && (payload.decision === "cancel" || payload.decision === "decline")) {
+                const card = p.turnItems.find((row: Value) => row.requestId === payload.requestId);
+                if (card) card.status = "cancelled";
+              }
               if (payload.answers) item.answers = payload.answers;
               break;
             }

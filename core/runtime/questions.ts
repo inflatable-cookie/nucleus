@@ -84,7 +84,16 @@ export class RuntimeQuestions {
   }
 
   answerDecision(input: Parameters<Decisions["answer"]>[0]) {
-    const view = this.context.decisions.answer(input);
+    return this.recordDecisionAnswer(input);
+  }
+
+  /** Only the authenticated ACP session invokes this non-RPC path. */
+  answerT3Decision(input: Parameters<Decisions["answer"]>[0]) {
+    return this.recordDecisionAnswer(input, true);
+  }
+
+  private recordDecisionAnswer(input: Parameters<Decisions["answer"]>[0], trustedT3 = false) {
+    const view = this.context.decisions.answer(input, trustedT3 ? { trustedT3: true } : undefined);
     // Spec 058 (task 550): a board or pill answer settles any nucleus_ask or
     // ask-mode Queue question waiting behind this decision. Best-effort: the
     // answer is already durably recorded, and a hook failure must never fail it.

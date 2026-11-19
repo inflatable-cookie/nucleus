@@ -21,7 +21,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { AcpBindingMissingError } from "./binding";
 import type { AcpBinding } from "./binding";
-import type { AcpMessageInput, AcpTurnInput, AcpTurnReply } from "./surface";
+import type { AcpAnswerInput, AcpCaller, AcpElicitation, AcpMessageInput, AcpTurnInput, AcpTurnReply } from "./surface";
 
 export type { AcpMessageInput, AcpTurnInput, AcpTurnReply };
 
@@ -54,9 +54,7 @@ export const ACP_MODELS = [
 ] as const;
 
 /** The turn request the transport sends: the surface's input with the wait always named. */
-export interface AcpTurnRequest extends AcpTurnInput {
-  waitMs: number;
-}
+export type AcpTurnRequest = AcpTurnInput & { waitMs: number };
 export type AcpMessageRequest = AcpMessageInput;
 export interface AcpMessageReply {
   receipt: { status: string; detail?: string };
@@ -66,6 +64,7 @@ export interface AcpMessageReply {
 export interface AcpSessionTransport {
   turn(input: AcpTurnRequest, signal: AbortSignal): Promise<AcpTurnReply>;
   message(input: AcpMessageRequest): Promise<AcpMessageReply>;
+  answer?(input: AcpAnswerInput): Promise<unknown>;
 }
 
 /** What a thread's working directory resolves to: Nucleus's binding and how to reach the service. */
@@ -117,7 +116,7 @@ const reasonOf = (error: unknown): string =>
 
 interface SessionState {
   sessionId: string;
-  taskId: string;
+  caller: AcpCaller;
   binding: AcpBinding;
   transport: AcpSessionTransport;
   /** Lifecycle lines the service already sent, waiting for the next prompt to show them. */
@@ -127,6 +126,8 @@ interface SessionState {
   cancelled: boolean;
   controller: AbortController;
   inFlight: boolean;
+  elicitationAttempts: Map<string, number>;
+  pendingElicitations: Set<string>;
 }
 
 /**
@@ -139,6 +140,7 @@ export class AcpAgent {
   private readonly inertSessions = new Set<string>();
   private readonly work = new Set<Promise<unknown>>();
   private model: string = ACP_MODELS[0].modelId;
+  private readonly elicitationReplies = new Map<Id, (response: Json) => void>();
 
   constructor(private readonly options: AcpAgentOptions) {}
 
@@ -212,6 +214,11 @@ export class AcpAgent {
     if (!isObject(message) || message.jsonrpc !== "2.0") return;
     const id = message.id;
     const method = message.method;
+    if ((typeof id === "number" || typeof id === "string") && method === undefined) {
+      const receive = this.elicitationReplies.get(id);
+      if (receive) { this.elicitationReplies.delete(id); receive(message); }
+      return;
+    }
     if (typeof id !== "number" && typeof id !== "string") {
       // A notification carries no answer. `session/cancel` is the only one the agent acts on.
       if (
@@ -340,7 +347,7 @@ export class AcpAgent {
     const attached = await this.attach(source);
     const session: SessionState = {
       sessionId: binding.sessionId,
-      taskId: binding.taskId,
+      caller: callerFor(binding),
       binding,
       transport: source.transport,
       pending: attached.messages,
@@ -348,6 +355,8 @@ export class AcpAgent {
       cancelled: false,
       controller: new AbortController(),
       inFlight: false,
+      elicitationAttempts: new Map(),
+      pendingElicitations: new Set(),
     };
     this.sessions.set(session.sessionId, session);
     this.result(send, id, this.sessionResult(session.sessionId));
@@ -379,8 +388,7 @@ export class AcpAgent {
     try {
       return await transport.turn(
         {
-          taskId: binding.taskId,
-          sessionId: binding.sessionId,
+          ...callerFor(binding),
           waitMs: 0,
           attach: true,
         },
@@ -389,7 +397,7 @@ export class AcpAgent {
     } catch (error) {
       throw new AcpRefusal(
         -32000,
-        `Nucleus is unreachable for task ${binding.taskId}: ${reasonOf(error)}`,
+        `Nucleus is unreachable for this session: ${reasonOf(error)}`,
       );
     }
   }
@@ -439,7 +447,7 @@ export class AcpAgent {
       session.controller = new AbortController();
       for (const line of session.pending.splice(0))
         this.emit(send, sessionId, line);
-      if (!opening && !holding) {
+      if (!opening && !holding && session.caller.kind !== "inbox") {
         const forwarded = await this.forward(session, text, send);
         if (!forwarded) {
           this.result(send, id, { stopReason: "end_turn" });
@@ -463,12 +471,13 @@ export class AcpAgent {
     text: string,
     send: Send,
   ): Promise<boolean> {
+    if (session.caller.kind === "inbox") return false;
     const eventId = createHash("sha256")
       .update(`${session.sessionId}\0${text}`)
       .digest("hex");
     try {
       await session.transport.message({
-        taskId: session.taskId,
+        taskId: session.caller.taskId,
         sessionId: session.sessionId,
         eventId,
         text,
@@ -497,13 +506,13 @@ export class AcpAgent {
       try {
         const reply = await session.transport.turn(
           {
-            taskId: session.taskId,
-            sessionId: session.sessionId,
+            ...session.caller,
             waitMs: this.turnWaitMs,
           },
           session.controller.signal,
         );
         failures = 0;
+        for (const question of reply.elicitations ?? []) this.elicit(session, question, send);
         for (const line of reply.messages)
           this.emit(send, session.sessionId, line);
         if (reply.state === "release") return "end_turn";
@@ -527,6 +536,46 @@ export class AcpAgent {
         await delay(this.retryDelayMs);
       }
     }
+  }
+
+  /** A held turn can carry several native cards; the service owns each answer. */
+  private elicit(session: SessionState, question: AcpElicitation, send: Send): void {
+    if (!session.transport.answer) return;
+    const key = `${question.id}:${question.version}`;
+    if (session.elicitationAttempts.size >= 512 && !session.elicitationAttempts.has(key)) {
+      for (const old of session.elicitationAttempts.keys()) {
+        if (!session.pendingElicitations.has(old)) { session.elicitationAttempts.delete(old); break; }
+      }
+    }
+    if (session.pendingElicitations.has(key) || (session.elicitationAttempts.get(key) ?? 0) >= 2) return;
+    session.pendingElicitations.add(key);
+    session.elicitationAttempts.set(key, (session.elicitationAttempts.get(key) ?? 0) + 1);
+    const requestId = `nucleus-elicitation-${randomUUID()}`;
+    const fieldId = `nucleus_${question.id}_${question.version}`;
+    this.elicitationReplies.set(requestId, response => {
+      const result = isObject(response.result) ? response.result : {};
+      const content = isObject(result.content) ? result.content : {};
+      const event = result.action === "accept" && typeof content[fieldId] === "string"
+        ? { action: "accept" as const, answer: content[fieldId] as string }
+        : result.action === "cancel" ? { action: "cancel" as const, requestId } : null;
+      if (!event) return;
+      const work = session.transport.answer!({ ...session.caller, id: question.id, version: question.version, ...event }).then(() => {
+        if (event.action === "accept") session.elicitationAttempts.set(key, 2);
+        session.pendingElicitations.delete(key);
+      }).catch(() => {
+        // A failed answer has unknown delivery; never emit it again blindly.
+        this.options.log?.("could not record an elicitation response");
+      });
+      this.work.add(work);
+      void work.finally(() => this.work.delete(work));
+    });
+    const field = question.choices.length ? { oneOf: question.choices.map(choice => ({ const: choice.label, title: choice.label, description: choice.consequence })) } : {};
+    send({ jsonrpc: "2.0", id: requestId, method: "elicitation/create", params: {
+      sessionId: session.sessionId, mode: "form", message: question.question, _meta: { "cognition.ai/allowOther": true },
+      requestedSchema: { type: "object", required: [fieldId], properties: {
+        [fieldId]: { type: "string", title: question.headline, description: question.question, ...field },
+      } },
+    } });
   }
 
   private emit(send: Send, sessionId: string, text: string): void {
@@ -568,3 +617,10 @@ const yieldToEventLoop = (): Promise<void> =>
   new Promise((resolve) => {
     setImmediate(resolve).unref?.();
   });
+
+/** The binding, never prompt text, selects the scoped service surface. */
+function callerFor(binding: AcpBinding): AcpCaller {
+  return "kind" in binding && binding.kind === "inbox"
+    ? { kind: "inbox", hostId: binding.hostId, sessionId: binding.sessionId }
+    : { taskId: binding.taskId, sessionId: binding.sessionId };
+}

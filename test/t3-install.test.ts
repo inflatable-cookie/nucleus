@@ -254,6 +254,7 @@ test("install mints the two bearers, registers our provider and stores the runti
   assert.deepEqual(runtimeSession!.scopes, [
     "orchestration:read",
     "orchestration:operate",
+    "preview:operate",
   ]);
   assert.ok(!runtimeSession!.scopes.includes("settings:write"));
   assert.ok(!runtimeSession!.scopes.includes("providers:manage"));
@@ -320,6 +321,7 @@ test("install mints the two bearers, registers our provider and stores the runti
   assert.deepEqual(report.bearer.scopes, [
     "orchestration:read",
     "orchestration:operate",
+    "preview:operate",
   ]);
   assert.ok(
     !status.stdout.includes(runtimeSession!.token),

@@ -335,6 +335,17 @@
         "user"
       ],
       "source": "packages/contracts/src/orchestrationV2.ts (thread.unsnooze); clears snoozedUntil/snoozedAt and leaves settledOverride as it was"
+    },
+    "thread.pin": {
+      "required": [
+        "type",
+        "commandId",
+        "threadId"
+      ],
+      "optional": [
+        "orderKey"
+      ],
+      "source": "T3 nightly thread.pin command pins a thread"
     }
   },
   "launchThread": {
