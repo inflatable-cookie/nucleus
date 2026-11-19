@@ -134,11 +134,16 @@ export function storedHoldOwner(task: { notificationAgentId?: string | null; ori
 }
 
 
-/** Compact board view of each present fence; omitted entirely when neither is set. */
-export function holdFencesView(task: HoldFields): { dispatch?: { owner: string; reason: string; since: string }; merge?: { owner: string; reason: string; since: string } } | undefined {
+/**
+ * Compact board view of each present fence; omitted entirely when neither is set.
+ * `until` rides along because a hold with a release condition is a wait, not
+ * attention, and the board reads that from the same projection a host does
+ * (nucleus#1366).
+ */
+export function holdFencesView(task: HoldFields): { dispatch?: { owner: string; reason: string; since: string; until?: HoldFence["until"] }; merge?: { owner: string; reason: string; since: string; until?: HoldFence["until"] } } | undefined {
   const holds = holdsOf(task);
   if (!holds.dispatch && !holds.merge) return undefined;
-  const view = (fence: HoldFence) => ({ owner: holdOwnerOf(task, fence.owner), reason: fence.reason.slice(0, 600), since: fence.at });
+  const view = (fence: HoldFence) => ({ owner: holdOwnerOf(task, fence.owner), reason: fence.reason.slice(0, 600), since: fence.at, until: fence.until ?? null });
   return {
     ...(holds.dispatch ? { dispatch: view(holds.dispatch) } : {}),
     ...(holds.merge ? { merge: view(holds.merge) } : {}),

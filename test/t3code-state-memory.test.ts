@@ -58,8 +58,7 @@ function storedState(intents: Record<string, StoredIntentOptions>): string {
       ...(entry.kind === undefined ? {} : { kind: entry.kind }),
       ...(entry.threadId === undefined ? {} : { threadId: entry.threadId }),
     }])),
-    settledThreads: { 'thread-0': identity('settle', 'thread-0') },
-    nesting: { state: 'fallback', reason: 'synthetic provider absent', at: STAMP },
+    nesting: { state: 'unavailable', reason: 'synthetic provider absent', at: STAMP },
   });
 }
 
@@ -98,8 +97,7 @@ test('the snapshot path reads host state from memory: no file read after the one
   const host = new T3CodeHost({ endpoint: server.endpoint, bearer: 'synthetic-bearer', statePath, timeoutMs: 2_000, probeThreadId: 'synthetic-probe' });
   t.after(() => host.close());
   await host.connect();
-  const status = host.supportThreadStatus, parenting = host.nativeParentingStatus;
-  assert.match(status, /^support threads visible/);
+  const parenting = host.nativeParentingStatus;
   assert.match(parenting, /^native parenting/);
   // The connect write bounded the history this process owns, with no separate pass.
   const written = JSON.parse(readFileSync(statePath, 'utf8')) as { intents: Record<string, { payloadDigest?: string }> };
@@ -108,13 +106,12 @@ test('the snapshot path reads host state from memory: no file read after the one
   // The service is the file's single owner; removing it cannot change an answer,
   // because nothing on this path reads it again.
   unlinkSync(statePath);
-  assert.equal(host.supportThreadStatus, status, 'the support-thread status line is the memory record');
   assert.equal(host.nativeParentingStatus, parenting);
   assert.equal(Object.keys(host.state.read().agents).length, THREADS);
   const task = { directory: '/synthetic/worktree-1' } as Task;
   assert.equal((await host.findWorkspaces(task)).length, 1, 'a repeated adapter read answers from memory');
   for (let pass = 0; pass < 200; pass++) {
-    host.supportThreadStatus; host.nativeParentingStatus; host.state.read();
+    host.nativeParentingStatus; host.state.read();
     assert.equal((await host.findWorkspaces(task)).length, 1);
   }
   // A fresh reader of the same path sees the file, which is now absent: the loaded
@@ -126,10 +123,9 @@ test('a change written through survives a restart, and a corrupted or unsafe fil
   const { statePath } = fixture(t);
   writeFileSync(statePath, storedState(manyCommands(8)), { mode: 0o600 });
   const state = new T3StateFile(statePath);
-  state.update(next => { next.supportThreads = 'hidden'; next.rowTitles = { 'thread-2': 'Doing: synthetic' }; });
+  state.update(next => { next.rowTitles = { 'thread-2': 'Doing: synthetic' }; });
   // A restart: a fresh owner-path reader loads exactly what the write recorded.
   const restarted = new T3StateFile(statePath).read();
-  assert.equal(restarted.supportThreads, 'hidden');
   assert.equal(restarted.rowTitles?.['thread-2'], 'Doing: synthetic');
   assert.equal(statSync(statePath).mode & 0o777, 0o600, 'the file stays owner-only');
 
@@ -209,7 +205,7 @@ test('bounded history keeps every delivery receipt and drops only the bodies it 
 
   const { intents, state, sent } = ledgerFor(statePath);
   // The ordinary write path bounds the history: no separate pass, no timer.
-  state.update(next => { next.supportThreads = 'setting_off'; });
+  state.update(next => { next.rowTitles = { 'thread-2': 'Doing: synthetic' }; });
 
   const saved = JSON.parse(readFileSync(statePath, 'utf8')) as { intents: Record<string, { payload: string; status: string; payloadDigest?: string; result?: unknown }> };
   assert.ok(statSync(statePath).size < before / 4, `the file stays small (${statSync(statePath).size} of ${before})`);
@@ -248,7 +244,7 @@ test('bounded history keeps every delivery receipt and drops only the bodies it 
 
   // No command identity is dropped, and nothing re-expands on the next write.
   const compacted = state.read().intents[oldest];
-  state.update(next => { next.supportThreads = 'hidden'; });
+  state.update(next => { next.rowTitles = { 'thread-2': 'Reviewing: synthetic' }; });
   assert.deepEqual(state.read().intents[oldest], compacted);
   assert.equal(Object.keys(state.read().intents).length, Object.keys(commands).length + 4, 'every recorded command identity stays');
 });

@@ -10,6 +10,7 @@ import {
   ProvenPreSendRefusalError,
 } from "../core/host";
 import { t3codeVocabulary } from "../hosts/t3code/vocabulary";
+import { acpStub, nucleusProvider } from "./support/t3code-acp";
 import { isReasoningDescriptor } from "../hosts/t3code/thinking";
 import { chooseProfile } from "../core/dispatch/routing";
 import {
@@ -139,15 +140,16 @@ async function fixture(
   const root = mkdtempSync(join(tmpdir(), "t3-thinking-"));
   const directory = await realpath(root);
   const server = await t3Fake(t, directory);
-  server.controls.providers = structuredClone(
-    providerShapes,
-  ) as typeof liveConfigModels;
+  server.controls.providers = [...structuredClone(providerShapes as typeof liveConfigModels), nucleusProvider];
+  const acp = acpStub(server.threads);
   const host = new T3CodeHost({
     endpoint: server.endpoint,
     bearer: "synthetic-bearer",
     statePath: join(root, "state.json"),
     timeoutMs: 1_000,
     probeThreadId: "synthetic-probe",
+    acp: () => acp.surface,
+    reentryTimeoutMs: 200,
     ...(capture ? { modelCapturePath: join(root, "models.json") } : {}),
   });
   t.after(() => {
@@ -176,7 +178,7 @@ const launchSpec = (
   attempt: () => ({
     requestId,
     prompt: "Synthetic prompt",
-    labels: { task: "synthetic-task", role: "worker" },
+    labels: { "nucleus.task": "synthetic-task" },
     environment: {},
   }),
 });

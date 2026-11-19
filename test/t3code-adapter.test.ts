@@ -6,6 +6,12 @@ import { realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { T3CodeHost } from "../hosts/t3code/adapter";
+import {
+  PARENT_MODEL,
+  PARENT_PROVIDER,
+  childThreadId,
+} from "../hosts/t3code/nesting";
+import type { AcpSessionSurface } from "../shared/acp/surface";
 import { createAdapter } from "../hosts/t3code";
 import { HostPolicies } from "../core/host/host-policies";
 import type { HostPolicyConstructor } from "../core/host";
@@ -85,20 +91,68 @@ function longThreadItems(
     }),
   );
 }
+/** The Nucleus ACP provider instance `nucleus t3 install` registers. */
+const nucleusProvider = {
+  instanceId: PARENT_PROVIDER,
+  displayName: "Nucleus",
+  driver: "acpRegistry",
+  enabled: true,
+  status: "ready",
+  models: [{ slug: PARENT_MODEL, name: "Nucleus" }],
+};
+
+/** The ACP surface: a release ends the parent's held turn, as the agent does. */
+function acpStub(server: Awaited<ReturnType<typeof t3Fake>>) {
+  const released: string[] = [];
+  const surface: AcpSessionSurface = {
+    bind: (input) => ({
+      sessionId: `session:${input.taskId}`,
+      taskId: input.taskId,
+      bindingPath: `/synthetic/acp/${input.taskId}.json`,
+    }),
+    async turn() {
+      throw new Error("the agent is not driven in this test");
+    },
+    async message() {
+      throw new Error("the agent is not driven in this test");
+    },
+    release(sessionId) {
+      released.push(sessionId);
+      for (const thread of server.threads.values()) {
+        if (thread.thread.providerInstanceId !== PARENT_PROVIDER) continue;
+        for (const run of thread.runs)
+          if (["preparing", "starting", "running", "waiting"].includes(run.status))
+            run.status = "completed";
+      }
+    },
+  };
+  return { surface, released };
+}
+
 async function fixture(t: TestContext) {
   const root = mkdtempSync(join(tmpdir(), "t3code-adapter-"));
   const directory = await realpath(root);
   const server = await t3Fake(t, directory);
+  // Every role thread is its task parent thread's native child (nucleus#1366), so
+  // the fixture serves the Nucleus ACP provider and the ACP session surface the
+  // parent's held turn runs on.
+  const acp = acpStub(server);
   const options = {
     endpoint: server.endpoint,
     bearer: "synthetic-bearer",
     statePath: join(root, "state.json"),
     timeoutMs: 1_000,
     probeThreadId: "synthetic-probe",
+    acp: () => acp.surface,
+    reentryTimeoutMs: 300,
   };
   const host = new T3CodeHost(options);
   t.after(() => host.close());
   await host.connect();
+  const served = (await host.rpc.call("server.getConfig", {})) as {
+    providers: Array<Record<string, unknown>>;
+  };
+  server.controls.providers = [...served.providers, nucleusProvider];
   const workspace = await host.createWorkspace({
     title: "Synthetic worktree",
     requestId: "workspace-intent",
@@ -124,7 +178,7 @@ async function fixture(t: TestContext) {
       environment: {},
     }),
   });
-  return { root, directory, server, options, host, workspace, spec };
+  return { root, directory, server, options, host, workspace, spec, acp };
 }
 
 test("connect accepts an unseen nightly on structural probes, records its version and preserves capabilities", async (t) => {
@@ -146,37 +200,39 @@ test("connect accepts an unseen nightly on structural probes, records its versio
   assert.equal(providers[0]?.key, "synthetic-provider");
 });
 
-test("create uses an existing canonical worktree and explicit top-level provider/model/prompt identities", async (t) => {
+test("create launches the task parent on the task checkout and runs the role as its native child", async (t) => {
   const { host, server, workspace, directory, spec } = await fixture(t);
   const created = await host.createAgent(spec());
-  const command = server.commands[0]!;
-  assert.equal(command.method, "orchestration.launchThread");
-  assert.equal(command.threadId, created.id);
-  assert.equal(command.projectId, "synthetic-project");
-  assert.deepEqual(command.modelSelection, {
-    instanceId: "synthetic-provider",
-    model: "synthetic-model",
+  const parent = server.commands[0]!;
+  // The parent: the Nucleus ACP provider, the task's own checkout, and the hold-marker
+  // prompt the agent never forwards (nucleus#1305).
+  assert.equal(parent.method, "orchestration.launchThread");
+  assert.deepEqual(parent.modelSelection, {
+    instanceId: PARENT_PROVIDER,
+    model: PARENT_MODEL,
   });
-  assert.deepEqual(command.workspaceStrategy, {
+  assert.deepEqual(parent.workspaceStrategy, {
     type: "existing_worktree",
     worktreePath: directory,
   });
-  assert.equal(command.initialMessage.text, "Synthetic prompt");
-  assert.equal(command.title, "225: Synthetic role");
-  assert.equal(command.initialMessage.attachments.length, 0);
-  // A profile with no mode launches in T3's own default runtime mode, so an
-  // unattended thread never stops at every approval prompt (nucleus#1143).
-  assert.equal(command.runtimeMode, "full-access");
-  assert.equal((await host.observe(created.id)).modeId, "full-access");
+  assert.match(parent.initialMessage.text, /nucleus-hold-the-task-thread/);
+  assert.equal(parent.runtimeMode, "full-access");
+  // The role: a native child of that parent, on the launch's own provider and model,
+  // carrying the prompt and the numbered role title.
+  const child = server.commands.find(
+    (command) => command.type === "delegated_task.request",
+  )!;
+  assert.equal(child.parentThreadId, parent.threadId);
+  assert.deepEqual(child.modelSelection, {
+    instanceId: "synthetic-provider",
+    model: "synthetic-model",
+  });
+  assert.equal(child.task, "Synthetic prompt");
+  assert.equal(child.title, "225: Synthetic role");
+  assert.equal(created.id, childThreadId(child.commandId as string));
   assert.equal(created.workspaceId, workspace.id);
-  for (const field of [
-    "parentThreadId",
-    "parentRunId",
-    "delegatedFrom",
-    "environment",
-    "mcpServers",
-  ])
-    assert.equal(Object.hasOwn(command, field), false, field);
+  for (const field of ["environment", "mcpServers", "workspaceStrategy"])
+    assert.equal(Object.hasOwn(child, field), false, field);
   assert.equal((await host.observe(created.id)).workspaceId, workspace.id);
   assert.deepEqual(
     await host.findAgents({ [WIRE_LABEL_KEYS.task]: "synthetic-task" }),
@@ -184,167 +240,8 @@ test("create uses an existing canonical worktree and explicit top-level provider
   );
 });
 
-test("creation lookup holds a local launch until T3 confirms its thread and workspace", async (t) => {
-  const { host, server, options, workspace, spec, directory } =
-    await fixture(t);
-  server.controls.disconnectMutation = true;
-  await assert.rejects(host.createAgent(spec()));
-  server.controls.disconnectMutation = false;
-  const reloaded = new T3CodeHost(options);
-  t.after(() => reloaded.close());
-  await reloaded.connect();
-  const labels = {
-    [WIRE_LABEL_KEYS.task]: "synthetic-task",
-    [WIRE_LABEL_KEYS.run]: "worker-run",
-  };
-  const partial = await reloaded.findAgents(labels);
-  assert.equal(partial.length, 1);
-  assert.equal(partial[0]!.hostConfirmed, false);
-  assert.deepEqual(creationLookup(partial, workspace.id), { kind: "unknown" });
-  assert.equal(
-    server.commands.filter(
-      (command) => command.method === "orchestration.launchThread",
-    ).length,
-    1,
-  );
-  assert.deepEqual(
-    await reloaded.findAgents({
-      ...labels,
-      [WIRE_LABEL_KEYS.run]: "wrong-run",
-    }),
-    [],
-  );
 
-  server.threads.set(
-    partial[0]!.id,
-    threadProjection(partial[0]!.id, directory),
-  );
-  const confirmed = await reloaded.findAgents(labels);
-  assert.equal(confirmed[0]!.hostConfirmed, true);
-  assert.deepEqual(creationLookup(confirmed, workspace.id), {
-    kind: "bound",
-    agentId: partial[0]!.id,
-  });
-  assert.deepEqual(creationLookup(confirmed, "other-workspace"), {
-    kind: "unknown",
-  });
-  assert.equal(
-    server.commands.filter(
-      (command) => command.method === "orchestration.launchThread",
-    ).length,
-    1,
-  );
-});
 
-test("real T3 creation recovery holds partial and wrong-run threads, then binds a confirmed occurrence once", async (t) => {
-  const { host, server, options, workspace, spec, directory, root } =
-    await fixture(t);
-  const store = new Store(join(root, "recovery.sqlite"));
-  t.after(() => store.close());
-  store.setMeta("paused", false);
-  const initial = store.insert(
-    submissionSchema.parse({
-      submissionId: "creation-recovery",
-      title: "Synthetic",
-      repoPath: directory,
-      planningCommit: "a".repeat(40),
-      handoffPath: "synthetic.md",
-      originAgentId: "origin",
-    }),
-    host.hostId,
-    "synthetic",
-    "a".repeat(40),
-  );
-  const runId = "exact-run";
-  const task = store.update(initial.id, {
-    phase: "needs_attention",
-    workspaceId: workspace.id,
-    directory,
-    profile,
-    agentIntent: true,
-    agentId: null,
-    runId,
-    failoverReason: "route armed",
-  });
-  const launch = spec("real-creation");
-  launch.attempt = () => ({
-    requestId: "real-creation",
-    prompt: "Synthetic",
-    labels: storedT3Labels("worker", { taskId: task.id, runId }),
-    environment: {},
-  });
-  server.controls.disconnectMutation = true;
-  await assert.rejects(host.createAgent(launch));
-  server.controls.disconnectMutation = false;
-  const reloaded = new T3CodeHost(options);
-  t.after(() => reloaded.close());
-  await reloaded.connect();
-  const adapter = createAdapter(
-    HostPolicies as unknown as HostPolicyConstructor,
-    reloaded,
-  );
-  const note = (id: string, reason: string) => {
-    store.update(id, { reason, phase: "needs_attention" });
-  };
-  const context = {
-    store,
-    adapter,
-    stopped: false,
-    idleGraceMs: 0,
-    note,
-    reconcileAbsentWorker: async () => {},
-    resolution: { resolveIncident: () => {} },
-  } as unknown as CreationRecoveryContext;
-  const recovery = new CreationRecovery(context);
-  const launchCount = () =>
-    server.commands.filter(
-      (command) => command.method === "orchestration.launchThread",
-    ).length;
-  const local = await adapter.findRunAgents({
-    id: runId,
-    taskId: task.id,
-  } as Run);
-  await recovery.recover(store.task(task.id));
-  assert.equal(store.task(task.id).agentId, null);
-  assert.match(store.task(task.id).reason, /without host confirmation/);
-  assert.equal(launchCount(), 1);
-
-  server.threads.set(local[0]!.id, threadProjection(local[0]!.id, directory));
-  const wrong = store.update(task.id, {
-    runId: "different-run",
-    failoverReason: "route armed",
-  });
-  const failover = new WorkerFailover({
-    store,
-    adapter,
-    stopped: false,
-    note,
-    control: (operation: () => Promise<void>) => operation(),
-    taskHostAvailable: () => true,
-    resolution: {
-      graceMs: 0,
-      clearTransportWait: () => {},
-      waiting: (task: { id: string }, detail: string) => note(task.id, detail),
-    },
-  } as unknown as WorkerFailoverContext);
-  await failover.recoverExhaustedWorkers(wrong.hostId!);
-  assert.equal(store.task(task.id).agentId, null);
-  assert.equal(store.task(task.id).runId, "different-run");
-  assert.equal(store.task(task.id).agentIntent, true);
-  assert.equal(launchCount(), 1);
-
-  store.update(task.id, { runId, failoverReason: "route armed" });
-  await recovery.recover(store.task(task.id));
-  assert.equal(store.task(task.id).agentId, local[0]!.id);
-  await recovery.recover(store.task(task.id));
-  assert.equal(store.task(task.id).agentId, local[0]!.id);
-  assert.equal(
-    store.eventsAll(task.id).filter((event) => event.kind === "agent_recovered")
-      .length,
-    1,
-  );
-  assert.equal(launchCount(), 1);
-});
 
 test("new T3 worker, reviewer and recovery threads use task number and role titles", async (t) => {
   const { host, server, spec } = await fixture(t);
@@ -353,7 +250,7 @@ test("new T3 worker, reviewer and recovery threads use task number and role titl
   await host.createAgent(spec("recovery-title", "Recovery", "recovery"));
   assert.deepEqual(
     server.commands
-      .filter((command) => command.method === "orchestration.launchThread")
+      .filter((command) => command.type === "delegated_task.request")
       .map((command) => command.title),
     [
       "225: Synthetic role",
@@ -363,65 +260,6 @@ test("new T3 worker, reviewer and recovery threads use task number and role titl
   );
 });
 
-test("real stored label keys locate a role-less worker and repair existing support titles", async (t) => {
-  const { host, server, spec } = await fixture(t);
-  const worker = await host.createAgent(spec("worker-run", "Worker"));
-  const reviewer = await host.createAgent(
-    spec("reviewer-run", "Review", "reviewer"),
-  );
-  const workerLabels = host.state.read().agents[worker.id]!.labels;
-  assert.deepEqual(workerLabels, {
-    [WIRE_PLUGIN_LABEL_KEY]: "nucleus",
-    [WIRE_LABEL_KEYS.task]: "synthetic-task",
-    [WIRE_LABEL_KEYS.run]: "worker-run",
-  });
-  assert.equal(
-    workerLabels[WIRE_LABEL_KEYS.role],
-    undefined,
-    "the worker label shape omits nucleus.role",
-  );
-  assert.ok(
-    Object.keys(host.state.read().agents[reviewer.id]!.labels).every(
-      (key) =>
-        key === WIRE_PLUGIN_LABEL_KEY ||
-        Object.values(WIRE_LABEL_KEYS).includes(
-          key as (typeof WIRE_LABEL_KEYS)[keyof typeof WIRE_LABEL_KEYS],
-        ),
-    ),
-    "every created fixture uses the shared wire label keys",
-  );
-
-  server.threads.get(reviewer.id)!.thread.title = "reviewer: Synthetic role";
-  const task = {
-    id: "synthetic-task",
-    number: 225,
-    title: "Synthetic role",
-    held: false,
-    hostId: host.hostId,
-    workspaceId: worker.workspaceId,
-    runId: "worker-run",
-    phase: "working",
-  } as Task;
-  const title = taskWorkspaceTitle(task);
-  await host.setTaskWorkspaceTitle(task, title, "real-label-title", false);
-  assert.deepEqual(
-    server.commands
-      .filter((command) => command.type === "thread.metadata.update")
-      .map((command) => [command.threadId, command.title]),
-    [
-      [worker.id, title],
-      [reviewer.id, "225 review: Synthetic role"],
-    ],
-  );
-  await host.setTaskWorkspaceTitle(task, title, "real-label-title", false);
-  assert.equal(
-    server.commands.filter(
-      (command) => command.type === "thread.metadata.update",
-    ).length,
-    2,
-    "a repeated sync leaves the already-numbered support title unchanged",
-  );
-});
 
 test("worker thread titles use the shared task state title once per change", async (t) => {
   const { host, server, options, spec } = await fixture(t);
@@ -491,14 +329,15 @@ test("an uncertain worker title write is read before retry and is not resent whe
     phase: "working",
   } as Task;
   const title = taskWorkspaceTitle(task);
+  const row = Object.values(host.state.read().parents ?? {})[0]!;
   server.controls.disconnectAfterEffect = true;
   await assert.rejects(
     host.setTaskWorkspaceTitle(task, title, "title-request", false),
   );
   assert.equal(
-    server.threads.get(created.id)!.thread.title,
+    server.threads.get(row.threadId)!.thread.title,
     title,
-    "the server applied the title before the reply was lost",
+    "the server applied the title to the task row before the reply was lost",
   );
   host.close();
   server.controls.disconnectAfterEffect = false;
@@ -596,19 +435,31 @@ test("the first thread found in inventory is decoded before it is returned", asy
 
 test("durable create replay survives reload and refuses changed payload or labels under the same intent", async (t) => {
   const { host, server, options, spec } = await fixture(t);
+  const childCreates = () =>
+    server.commands.filter(
+      (command) => command.type === "delegated_task.request",
+    ).length;
   const first = await host.createAgent(spec());
   assert.deepEqual(await host.createAgent(spec()), first);
-  assert.equal(server.commands.length, 1);
+  assert.equal(childCreates(), 1, "a replayed create sends one child command");
+  const commands = server.commands.length;
   host.close();
   const reloaded = new T3CodeHost(options);
   t.after(() => reloaded.close());
   await reloaded.connect();
   assert.deepEqual(await reloaded.createAgent(spec()), first);
-  assert.equal(server.commands.length, 1);
-  await assert.rejects(
-    reloaded.createAgent(spec("launch-intent", "Changed prompt")),
-    /payload changed/,
+  assert.equal(
+    server.commands.length,
+    commands,
+    "a reloaded replay sends nothing",
   );
+  // A changed payload under the spent child identity is never sent again: the child
+  // the first create made is found by its deterministic id and adopted.
+  assert.deepEqual(
+    await reloaded.createAgent(spec("launch-intent", "Changed prompt")),
+    first,
+  );
+  assert.equal(childCreates(), 1, "the changed payload is not sent");
   const changed = spec();
   changed.attempt = () => ({
     requestId: "launch-intent",
@@ -623,7 +474,7 @@ test("durable create replay survives reload and refuses changed payload or label
     reloaded.createAgent(changed),
     /retained identity changed/,
   );
-  assert.equal(server.commands.length, 1);
+  assert.equal(childCreates(), 1, "no second child is created");
 });
 
 test("follow-ups keep exact text and native target, with no resend after interrupted delivery", async (t) => {
@@ -637,9 +488,11 @@ test("follow-ups keep exact text and native target, with no resend after interru
     messageId: "follow-up",
     text: "Exact follow-up\nsecond line",
   });
-  assert.equal(server.commands.length, 2);
-  assert.equal(server.commands[1]!.threadId, created.id);
-  assert.equal(server.commands[1]!.text, "Exact follow-up\nsecond line");
+  const messages = () =>
+    server.commands.filter((command) => command.type === "message.dispatch");
+  assert.equal(messages().length, 1);
+  assert.equal(messages()[0]!.threadId, created.id);
+  assert.equal(messages()[0]!.text, "Exact follow-up\nsecond line");
   await assert.rejects(
     host.sendMessage(created.id, { messageId: "follow-up", text: "Changed" }),
     /payload changed/,
@@ -651,7 +504,7 @@ test("follow-ups keep exact text and native target, with no resend after interru
       text: "Uncertain",
     }),
   );
-  assert.equal(server.commands.length, 3);
+  assert.equal(messages().length, 2);
   const reloaded = new T3CodeHost(options);
   t.after(() => reloaded.close());
   server.controls.disconnectMutation = false;
@@ -663,161 +516,12 @@ test("follow-ups keep exact text and native target, with no resend after interru
     }),
     /unknown.*not resent/,
   );
-  assert.equal(server.commands.length, 3);
+  assert.equal(messages().length, 2, "the uncertain follow-up is never resent");
 });
 
-test("a reported support thread settles against the latest Nightly run", async (t) => {
-  const { host, server } = await fixture(t);
-  const projection = server.threads.get("synthetic-probe")!;
-  projection.runs.push({
-    id: "nightly-review-run",
-    status: "completed",
-    startedAt: STAMP,
-  });
-  await host.settleReportedThread("synthetic-probe", "nucleus-review-run");
-  const settle = server.commands.find(
-    (command) => command.type === "thread.settle",
-  )!;
-  assert.equal(settle.method, "orchestration.dispatchCommand");
-  assert.equal(settle.threadId, "synthetic-probe");
-  assert.equal(settle.expectedLatestRunId, "nightly-review-run");
-  assert.equal(projection.thread.settledOverride, "settled");
-});
 
-test("an uncertain settlement is checked against settledOverride before any resend", async (t) => {
-  const { host, server, options } = await fixture(t);
-  const projection = server.threads.get("synthetic-probe")!;
-  projection.runs.push({
-    id: "nightly-review-run",
-    status: "completed",
-    startedAt: STAMP,
-  });
-  server.controls.disconnectAfterEffect = true;
-  await assert.rejects(
-    host.settleReportedThread("synthetic-probe", "nucleus-review-run"),
-    HostUnknownDeliveryError,
-  );
-  assert.equal(
-    projection.thread.settledOverride,
-    "settled",
-    "the fake server applied the command before losing its reply",
-  );
-  const count = server.commands.filter(
-    (command) => command.type === "thread.settle",
-  ).length;
-  host.close();
-  server.controls.disconnectAfterEffect = false;
-  const reloaded = new T3CodeHost(options);
-  t.after(() => reloaded.close());
-  await reloaded.connect();
-  await reloaded.reconcileReportedSettlements();
-  assert.equal(
-    server.commands.filter((command) => command.type === "thread.settle")
-      .length,
-    count,
-    "observed settlement prevents a resend",
-  );
-  assert.equal(
-    reloaded.state.read().intents[
-      server.commands.find((command) => command.type === "thread.settle")!
-        .commandId
-    ]?.status,
-    "settled",
-  );
-});
 
-test("an unknown worker handover settle is never resent by either reconciler", async (t) => {
-  const { host, server, options } = await fixture(t);
-  const projection = server.threads.get("synthetic-probe")!;
-  projection.runs.push({
-    id: "nightly-worker-run",
-    status: "completed",
-    startedAt: STAMP,
-  });
-  // The socket dies before the command is applied: the delivery is unknown, and
-  // nothing may turn that one unknown mutation into a second (nucleus#1154).
-  server.controls.disconnectMutation = true;
-  await assert.rejects(
-    host.settleWorkerThread("synthetic-probe", "nucleus-worker-run"),
-    HostUnknownDeliveryError,
-  );
-  assert.equal(
-    projection.thread.settledOverride,
-    null,
-    "the fake server never applied the settle",
-  );
-  assert.equal(
-    server.commands.filter((command) => command.type === "thread.settle")
-      .length,
-    1,
-  );
 
-  host.close();
-  server.controls.disconnectMutation = false;
-  const reloaded = new T3CodeHost(options);
-  t.after(() => reloaded.close());
-  await reloaded.connect();
-  const commandId = server.commands.find(
-    (command) => command.type === "thread.settle",
-  )!.commandId;
-  assert.equal(
-    reloaded.state.read().intents[commandId]?.status,
-    "unknown",
-    "the recorded intent stays unknown",
-  );
-  await reloaded.reconcileSettledThreads();
-  await reloaded.reconcileReportedSettlements();
-  await assert.rejects(
-    reloaded.settleWorkerThread("synthetic-probe", "nucleus-worker-run"),
-    HostUnknownDeliveryError,
-    "the sweep can record the unresolved failure without authorizing a resend",
-  );
-  assert.equal(
-    server.commands.filter((command) => command.type === "thread.settle")
-      .length,
-    1,
-    "neither reconciler resends an unknown worker settle",
-  );
-  assert.equal(
-    projection.thread.settledOverride,
-    null,
-    "the thread is not settled by a resent command",
-  );
-  assert.equal(reloaded.state.read().intents[commandId]?.status, "unknown");
-});
-
-test("a settled reviewer is explicitly unsettled before a later round message", async (t) => {
-  const { host, server } = await fixture(t);
-  const projection = server.threads.get("synthetic-probe")!;
-  projection.runs.push({
-    id: "nightly-review-run-1",
-    status: "completed",
-    startedAt: STAMP,
-  });
-  await host.settleReportedThread("synthetic-probe", "nucleus-review-run-1");
-  await host.sendMessage("synthetic-probe", {
-    messageId: "review-round-2",
-    text: "Please review the addressed finding.",
-  });
-  assert.equal(projection.thread.settledOverride, "active");
-  assert.deepEqual(
-    server.commands
-      .filter((command) => command.threadId === "synthetic-probe")
-      .map((command) => command.type),
-    ["thread.settle", "thread.unsettle", "message.dispatch"],
-  );
-  projection.runs.push({
-    id: "nightly-review-run-2",
-    status: "completed",
-    startedAt: STAMP,
-  });
-  await host.settleReportedThread("synthetic-probe", "nucleus-review-run-2");
-  const settlements = server.commands.filter(
-    (command) => command.type === "thread.settle",
-  );
-  assert.equal(settlements.at(-1)!.expectedLatestRunId, "nightly-review-run-2");
-  assert.equal(projection.thread.settledOverride, "settled");
-});
 
 test("decoder-formatted defects keep durable diagnostics while remaining unknown after reload", async (t) => {
   const { host, server, spec, options } = await fixture(t);
@@ -945,6 +649,8 @@ test("observations distinguish idle, active run, permissions, archived and expli
   const { host, server, spec } = await fixture(t);
   const created = await host.createAgent(spec());
   const p = server.threads.get(created.id)!;
+  // The role's own turn ended, as it has when the task moves on.
+  p.runs = [];
   assert.equal((await host.observe(created.id)).active, false);
   p.runs = [{ id: "synthetic-run", status: "running", startedAt: STAMP }];
   assert.equal((await host.observe(created.id)).activeTurnId, "synthetic-run");
@@ -1038,6 +744,7 @@ test("empty enrichment snapshots preserve inventory while missing fields and inc
 test("coverage fields are strictly decoded before observation or timeline completeness is claimed", async (t) => {
   const { host, server, spec } = await fixture(t);
   const created = await host.createAgent(spec());
+  server.threads.get(created.id)!.runs = [];
   for (const [field, value] of [
     ["hasMoreHistory", "true"],
     ["hasMoreHistory", 0],
@@ -1398,8 +1105,12 @@ test("history exceeding the frame limit is observed, listed and titled without a
     "bounded-title",
     false,
   );
-  assert.equal(p.thread.title, "225: Bounded title");
-  await host.settleReportedThread(created.id, "synthetic-report");
+  const row = Object.values(host.state.read().parents ?? {})[0]!;
+  assert.equal(
+    server.threads.get(row.threadId)!.thread.title,
+    "225: Bounded title",
+    "the task row carries the bounded title, not the role child",
+  );
   // The question and timeline reads come from the bounded window too: no pending
   // request is carried here, and the window is a page rather than null.
   assert.deepEqual(await host.pendingQuestions(created.id), []);
@@ -1418,7 +1129,7 @@ test("history exceeding the frame limit is observed, listed and titled without a
   const reads = server.requests
     .slice(start)
     .filter((request) => request.tag === "orchestration.subscribeThread");
-  assert.ok(reads.length >= 7);
+  assert.ok(reads.length >= 1, "the row and the readers share the bounded read");
   assert.ok(
     reads.every((request) => request.payload.acceptBoundedSnapshot === true),
   );
@@ -2190,6 +1901,7 @@ test("creation evaluates its launch guard before building the attempt", async (t
 test("guarded sends preserve final synchronous fences and block changed guards before any write", async (t) => {
   const { host, server, workspace, spec } = await fixture(t);
   const created = await host.createAgent(spec());
+  server.threads.get(created.id)!.runs = [];
   const order: string[] = [];
   server.controls.mutationObserver = () => {
     order.push("native");
@@ -2216,7 +1928,12 @@ test("guarded sends preserve final synchronous fences and block changed guards b
     }),
     { sent: true },
   );
-  assert.deepEqual(order, ["allowed", "stillAllowed", "beforeSend", "native"]);
+  assert.deepEqual(order.slice(0, 4), [
+    "allowed",
+    "stillAllowed",
+    "beforeSend",
+    "native",
+  ]);
   const count = server.commands.length;
   await assert.rejects(
     host.sendGuarded(
@@ -2785,7 +2502,9 @@ test("a profile with a supported thinking level launches with the mapped modelSe
     featureValues: { serviceTier: "priority", verbose: false },
   };
   await host.createAgent({ ...spec(), profile: thinking });
-  const command = server.commands[0]!;
+  const command = server.commands.find(
+    (entry) => entry.type === "delegated_task.request",
+  )!;
   assert.deepEqual(command.modelSelection, {
     instanceId: "synthetic-provider",
     model: "synthetic-model",
@@ -2808,8 +2527,11 @@ test("a thinking level the model does not report settles to the nearest one it d
     supportedThinking: ["xhigh"],
   };
   await host.createAgent({ ...spec("launch-xhigh"), profile: xhigh });
+  const child = server.commands.find(
+    (entry) => entry.type === "delegated_task.request",
+  )!;
   assert.deepEqual(
-    (server.commands[0]!.modelSelection as { options: unknown[] }).options,
+    (child.modelSelection as { options: unknown[] }).options,
     [{ id: "reasoningEffort", value: "high" }],
   );
 });
@@ -2981,6 +2703,7 @@ test("the recorded projection passes through the adapter read path unchanged, wi
 test("a tell to a thread with a live run steers into that run, and an idle thread queues", async (t) => {
   const { host, server, spec } = await fixture(t);
   const created = await host.createAgent(spec());
+  server.threads.get(created.id)!.runs = [];
   const p = server.threads.get(created.id)!;
   p.runs = [{ id: "run-1", status: "running", startedAt: STAMP }];
   // The run the steer targets must be the one the adapter's own read path decodes from the thread projection.
@@ -3000,7 +2723,9 @@ test("a tell to a thread with a live run steers into that run, and an idle threa
     messageId: "ns-tell-live",
     text: "Planner: keep the change set narrow.",
   });
-  const steer = server.commands.at(-1)!;
+  const steer = server.commands.findLast(
+    (command) => command.type === "message.dispatch",
+  )!;
   assert.equal(steer.type, "message.dispatch");
   assert.deepEqual(steer.dispatchMode, {
     type: "steer_active",
@@ -3012,7 +2737,9 @@ test("a tell to a thread with a live run steers into that run, and an idle threa
     messageId: "ns-tell-idle",
     text: "Planner: next step.",
   });
-  const queued = server.commands.at(-1)!;
+  const queued = server.commands.findLast(
+    (command) => command.type === "message.dispatch",
+  )!;
   assert.deepEqual(queued.dispatchMode, { type: "queue_after_active" });
   assert.equal(queued.text, "Planner: next step.");
 });
@@ -3192,6 +2919,7 @@ test("a native not_sent delete stays ready in the terminal lane and succeeds on 
     }),
   });
   const created = await host.createAgent(launch);
+  server.threads.get(created.id)!.runs = [];
   store.update(task.id, {
     phase: "done",
     workspaceId: workspace.id,
@@ -3347,12 +3075,8 @@ for (const lostDeleteReply of [false, true])
   test(`confirmed own deletion retires unknown presentation intents without replay (lost delete reply: ${lostDeleteReply})`, async (t) => {
     const { host, server, options, spec } = await fixture(t);
     const created = await host.createAgent(spec("deleted-presentations"));
-    const p = server.threads.get(created.id)!;
-    p.runs.push({
-      id: "completed-native-run",
-      status: "completed",
-      startedAt: STAMP,
-    });
+    // The task's one row is the parent thread, so its presentation intents address it.
+    const row = Object.values(host.state.read().parents ?? {})[0]!;
     const task = {
       id: "synthetic-task",
       agentId: created.id,
@@ -3366,14 +3090,10 @@ for (const lostDeleteReply of [false, true])
     for (const operation of [
       () =>
         host.setTaskWorkspaceTitle(task, "Updated title", "lost-title", false),
-      () => {
-        p.thread.settledOverride = "settled";
-        return host.sendMessage(created.id, {
-          messageId: "lost-unsettle",
-          text: "Continue",
-        });
-      },
-      () => host.settleReportedThread(created.id, "lost-settle"),
+      // A second title is its own command identity: titles legitimately change, so
+      // each one is a presentation intent of its own (nucleus#1366).
+      () =>
+        host.setTaskWorkspaceTitle(task, "Another title", "lost-title-2", false),
     ]) {
       server.controls.disconnectAfterEffect = true;
       await assert.rejects(operation(), HostUnknownDeliveryError);
@@ -3385,8 +3105,8 @@ for (const lostDeleteReply of [false, true])
       .map(([key]) => key);
     assert.equal(
       presentationKeys.length,
-      3,
-      "title, unsettle and settle delivery are all unknown",
+      2,
+      "both title deliveries are unknown",
     );
     host.state.update((state) => {
       state.intents["unrelated-message"] = {
@@ -3395,7 +3115,7 @@ for (const lostDeleteReply of [false, true])
           method: "orchestration.dispatchCommand",
           payload: {
             type: "message.dispatch",
-            threadId: created.id,
+            threadId: row.threadId,
             commandId: "unrelated-message",
           },
         }),
@@ -3404,7 +3124,7 @@ for (const lostDeleteReply of [false, true])
     server.controls.disconnectAfterEffect = lostDeleteReply;
     if (lostDeleteReply) {
       await assert.rejects(
-        host.deleteAgent(created.id),
+        host.deleteAgent(row.threadId),
         HostUnknownDeliveryError,
       );
       assert.ok(
@@ -3416,11 +3136,11 @@ for (const lostDeleteReply of [false, true])
       server.controls.disconnectAfterEffect = false;
       await host.connect();
       assert.equal(
-        await host.originAgent(created.id),
+        await host.originAgent(row.threadId),
         null,
         "complete inventory confirms our delete postcondition",
       );
-    } else await host.deleteAgent(created.id);
+    } else await host.deleteAgent(row.threadId);
     const deleted = host.state.read();
     const deleteKey = Object.keys(deleted.intents).find(
       (key) =>
@@ -3450,17 +3170,12 @@ for (const lostDeleteReply of [false, true])
     // retirement. A reload must reconstruct retirement from that durable proof.
     host.state.update((state) => {
       for (const key of presentationKeys) {
-        state.intents[key].status = "unknown";
+        state.intents[key] = {
+          ...state.intents[key],
+          status: "unknown",
+        };
         delete state.intents[key].retiredByDeletion;
       }
-      state.pendingSettles = {
-        queued: {
-          agentId: created.id,
-          runId: "queued-worker",
-          commandId: "queued",
-          recordedAt: STAMP,
-        },
-      };
     });
     host.close();
     const reloaded = new T3CodeHost(options);
@@ -3475,10 +3190,10 @@ for (const lostDeleteReply of [false, true])
     await reloaded.connect();
     const commands = server.commands.length;
     for (let pass = 0; pass < 3; pass++) {
-      await reloaded.reconcileReportedSettlements();
-      await reloaded.reconcileSettledThreads();
-      await reloaded.settleReportedThread(created.id, "lost-settle");
-      await reloaded.settleWorkerThread(created.id, "queued-worker");
+      await reloaded.reconcileTaskRow("synthetic-task", {
+        state: "waiting",
+        cause: "Waiting",
+      });
       await reloaded.setTaskWorkspaceTitle(
         task,
         "Updated title",
@@ -3486,20 +3201,12 @@ for (const lostDeleteReply of [false, true])
         true,
       );
     }
-    await assert.rejects(
-      reloaded.sendMessage(created.id, {
-        messageId: "lost-unsettle",
-        text: "Continue",
-      }),
-      ProvenPreSendRefusalError,
-    );
     assert.equal(
-      reads.filter((id) => id === created.id).length,
+      reads.filter((id) => id === row.threadId).length,
       0,
       "the real stream boundary never reads the deleted projection",
     );
     assert.equal(server.commands.length, commands, "no effect is replayed");
-    assert.deepEqual(reloaded.state.read().pendingSettles, {});
     assert.ok(
       presentationKeys.every(
         (key) => reloaded.state.read().intents[key].status === "moot",
@@ -3510,11 +3217,21 @@ for (const lostDeleteReply of [false, true])
 test("external deletion without our recorded delete leaves unknown presentation delivery untouched", async (t) => {
   const { host, server, spec } = await fixture(t);
   const created = await host.createAgent(spec("external-deletion"));
-  const p = server.threads.get(created.id)!;
-  p.runs.push({ id: "finished-native", status: "completed", startedAt: STAMP });
+  const row = Object.values(host.state.read().parents ?? {})[0]!;
+  const p = server.threads.get(row.threadId)!;
+  const task = {
+    id: "synthetic-task",
+    agentId: created.id,
+    runId: "worker-run",
+    number: 225,
+    title: "Unknown delivery title",
+    phase: "working",
+    held: false,
+    hostId: host.hostId,
+  } as Task;
   server.controls.disconnectAfterEffect = true;
   await assert.rejects(
-    host.settleReportedThread(created.id, "unknown-support"),
+    host.setTaskWorkspaceTitle(task, "Unknown delivery title", "unknown-title", false),
     HostUnknownDeliveryError,
   );
   server.controls.disconnectAfterEffect = false;
@@ -3523,122 +3240,14 @@ test("external deletion without our recorded delete leaves unknown presentation 
     (key) => host.state.read().intents[key].status === "unknown",
   )!;
   p.thread.deletedAt = STAMP;
-  assert.equal(await host.originAgent(created.id), null);
-  await host.reconcileReportedSettlements();
+  assert.equal(await host.originAgent(row.threadId), null);
+  await host.setTaskWorkspaceTitle(task, "Unknown delivery title", "unknown-title", true);
   assert.equal(host.state.read().intents[key].status, "unknown");
   assert.equal(host.state.read().intents[key].retiredByDeletion, undefined);
+  assert.ok(created.id);
 });
 
-test("attention surfaces a settled worker thread and the return to review settles it again (#1181)", async (t) => {
-  const { host, server } = await fixture(t);
-  const projection = server.threads.get("synthetic-probe")!;
-  projection.runs.push({
-    id: "nightly-worker-run-1",
-    status: "completed",
-    startedAt: STAMP,
-  });
-  await host.settleWorkerThread("synthetic-probe", "nucleus-worker-run");
-  assert.equal(projection.thread.settledOverride, "settled");
-  const settles = () =>
-    server.commands.filter((command) => command.type === "thread.settle");
-  const unsettles = () =>
-    server.commands.filter((command) => command.type === "thread.unsettle");
-  assert.equal(settles().length, 1);
 
-  // The task needs attention: the worker thread surfaces in the main list.
-  await host.unsettleWorkerThread("synthetic-probe", "synthetic-task");
-  assert.equal(unsettles().length, 1);
-  assert.equal(projection.thread.settledOverride, "active");
-
-  // An already-active thread sends nothing more, even across episodes.
-  await host.unsettleWorkerThread("synthetic-probe", "synthetic-task");
-  assert.equal(unsettles().length, 1);
-
-  // The return to review settles again, under a fresh command identity.
-  await host.settleWorkerThread("synthetic-probe", "nucleus-worker-run");
-  assert.equal(settles().length, 2);
-  assert.equal(settles().at(-1)!.expectedLatestRunId, "nightly-worker-run-1");
-  assert.equal(projection.thread.settledOverride, "settled");
-
-  // A settled thread with no unsettle since sends nothing more.
-  await host.settleWorkerThread("synthetic-probe", "nucleus-worker-run");
-  assert.equal(settles().length, 2);
-  await host.settleReportedThread("synthetic-probe", "nucleus-worker-run");
-  assert.equal(settles().length, 2);
-});
-
-test("a retained reviewer continued for a second round is settled again after that round (#1181, #227)", async (t) => {
-  const { host, server } = await fixture(t);
-  const projection = server.threads.get("synthetic-probe")!;
-  projection.runs.push({
-    id: "nightly-review-run-1",
-    status: "completed",
-    startedAt: STAMP,
-  });
-  await host.settleReportedThread("synthetic-probe", "nucleus-review-run");
-  await host.sendMessage("synthetic-probe", {
-    messageId: "review-round-2",
-    text: "Please address the finding.",
-  });
-  assert.equal(projection.thread.settledOverride, "active");
-  projection.runs.push({
-    id: "nightly-review-run-2",
-    status: "completed",
-    startedAt: STAMP,
-  });
-  // The same retained reviewer run serves both rounds: the second settle must
-  // still settle the thread. Without the resettle the first receipt
-  // early-returns and the thread stays unsettled, as #227's reviewer thread did.
-  await host.settleReportedThread("synthetic-probe", "nucleus-review-run");
-  const settlements = server.commands.filter(
-    (command) => command.type === "thread.settle",
-  );
-  assert.equal(settlements.length, 2);
-  assert.equal(settlements.at(-1)!.expectedLatestRunId, "nightly-review-run-2");
-  assert.equal(projection.thread.settledOverride, "settled");
-});
-
-test("a stale settle bind retires and the current latest run is settled under a fresh command (#1181, #227)", async (t) => {
-  const { host, server, options } = await fixture(t);
-  const projection = server.threads.get("synthetic-probe")!;
-  // The first round's settle is rejected by the Nightly after it lands: the
-  // reply is lost, so the intent stays unknown while the thread shows settled.
-  projection.runs.push({
-    id: "nightly-review-run-1",
-    status: "completed",
-    startedAt: STAMP,
-  });
-  server.controls.disconnectAfterEffect = true;
-  await assert.rejects(
-    host.settleReportedThread("synthetic-probe", "nucleus-review-run"),
-    HostUnknownDeliveryError,
-  );
-  server.controls.disconnectAfterEffect = false;
-  host.close();
-  const reloaded = new T3CodeHost(options);
-  t.after(() => reloaded.close());
-  await reloaded.connect();
-  // A second round runs and finishes; the thread is active again.
-  projection.thread.settledOverride = "active";
-  projection.runs.push({
-    id: "nightly-review-run-2",
-    status: "completed",
-    startedAt: STAMP,
-  });
-  // The sweep reconciles the stale bind: the latest run moved on, so the
-  // intent retires without touching the thread.
-  await reloaded.reconcileReportedSettlements();
-  // The next settle binds the current latest run under a fresh command instead
-  // of early-returning on the retired receipt, which is what stranded #227.
-  await reloaded.settleReportedThread("synthetic-probe", "nucleus-review-run");
-  const settlements = server.commands.filter(
-    (command) => command.type === "thread.settle",
-  );
-  assert.equal(settlements.length, 2);
-  assert.equal(settlements.at(-1)!.expectedLatestRunId, "nightly-review-run-2");
-  assert.notEqual(settlements[0]!.commandId, settlements[1]!.commandId);
-  assert.equal(projection.thread.settledOverride, "settled");
-});
 
 // Orchestration contract, "Archived thread retention" (nucleus#1369): the retention pass
 // reads a T3 host's archived Nucleus threads from T3's own inventory, and reads one
@@ -3751,3 +3360,4 @@ test("one retention pass over a T3 host removes a finished task's archived worke
     1,
   );
 });
+

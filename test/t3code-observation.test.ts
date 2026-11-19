@@ -54,9 +54,6 @@ async function fixture(
   t: TestContext,
   input: {
     threads: readonly StoredThread[];
-    settled?: readonly { threadId: string; runId: string }[];
-    pendingSettles?: readonly { threadId: string; runId: string }[];
-    unknownSettles?: readonly { threadId: string; runId: string }[];
     /** Threads this host proved it removed. */
     deleted?: readonly string[];
     /** Tasks this host runs on its own parent thread. */
@@ -74,9 +71,6 @@ async function fixture(
       storedHostState({
         directory,
         threads: input.threads,
-        settled: input.settled,
-        pendingSettles: input.pendingSettles,
-        unknownSettles: input.unknownSettles,
         deleted: input.deleted,
         parents: input.parents,
       }),
@@ -175,9 +169,6 @@ test("a pass over terminal tasks serves no T3 thread snapshot at all", async (t)
   const live = { id: threadId("live"), taskId: "task-live", runId: "run-live" };
   const { host, server, snapshotsFor, served } = await fixture(t, {
     threads: [...terminal, live],
-    settled: terminal
-      .slice(0, 3)
-      .map((thread) => ({ threadId: thread.id, runId: thread.runId })),
     seed: (fake) => {
       for (const thread of terminal)
         fake.threads.get(thread.id)!.thread.archivedAt = STAMP;
@@ -214,11 +205,12 @@ test("a pass over terminal tasks serves no T3 thread snapshot at all", async (t)
       thread.runId,
     );
   }
-  // The whole pass: titles, both settle paths, the observation inventory and the
-  // reconciliation passes all run against those finished threads and serve nothing.
+  // The whole pass: titles, the row decision (which finds no parent row for a
+  // finished task), the observation inventory and the reconciliation passes all run
+  // against those finished threads and serve nothing.
   await host.reconcileThreadTitles(tasks);
-  await host.settleWorkerThread(terminal[3]!.id, terminal[3]!.runId);
-  await host.settleReportedThread(terminal[4]!.id, terminal[4]!.runId);
+  await host.reconcileTaskRow(terminal[3]!.taskId, { state: "waiting", cause: "Waiting" });
+  await host.reconcileTaskRow(terminal[4]!.taskId, { state: "attention", cause: "Needs a person" });
   assert.deepEqual(
     [
       ...(await host.observationInventory(
@@ -227,9 +219,7 @@ test("a pass over terminal tasks serves no T3 thread snapshot at all", async (t)
     ],
     [],
   );
-  await host.unsettleWorkerThread(terminal[5]!.id, terminal[5]!.taskId);
-  await host.reconcileSettledThreads();
-  await host.reconcileReportedSettlements();
+  await host.reconcileTaskRow(terminal[5]!.taskId, { state: "active" });
   await host.endHostPass();
   assert.equal(
     served(),
@@ -342,7 +332,7 @@ test("a thread T3 reports archived leaves observation even while its task is liv
   );
 });
 
-test("a terminal task keeps its exact settle and lookup after its agent records leave host state", async (t) => {
+test("a terminal task keeps its exact lookup after its agent records leave host state", async (t) => {
   const settledThread = {
     id: threadId("settled"),
     taskId: "task-done",
@@ -363,9 +353,6 @@ test("a terminal task keeps its exact settle and lookup after its agent records 
   };
   const { host, server, snapshotsFor, served } = await fixture(t, {
     threads: [settledThread, awaiting, removed],
-    settled: [{ threadId: settledThread.id, runId: settledThread.runId }],
-    // A handover settle recorded before the task ended and never completed.
-    pendingSettles: [{ threadId: awaiting.id, runId: awaiting.runId }],
     // A thread this host proved it removed, which is the other terminal fact.
     deleted: [removed.id],
   });
@@ -378,10 +365,6 @@ test("a terminal task keeps its exact settle and lookup after its agent records 
     stored.retiredAgents?.[settledThread.id]?.labels[WIRE_LABEL_KEYS.run],
     settledThread.runId,
   );
-  // The durable settle receipt an exact settle still reads.
-  const marker = stored.settledThreads?.[settledThread.id];
-  assert.ok(marker, "the recorded settle marker stays");
-  assert.equal(stored.intents[marker!]?.status, "settled");
 
   const before = served();
   // An exact lookup answers from the launch identity alone: no snapshot.
@@ -401,17 +384,9 @@ test("a terminal task keeps its exact settle and lookup after its agent records 
     0,
     "the exact lookup reads no T3 thread",
   );
-  // Settling again sends nothing and reads nothing: the task is over and the
-  // recorded receipt is what a settle reads. The unresolved one is retired rather
-  // than resent, and never read for.
-  await host.settleWorkerThread(settledThread.id, settledThread.runId);
-  await host.settleReportedThread(awaiting.id, awaiting.runId);
-  await host.reconcileSettledThreads();
-  assert.deepEqual(
-    Object.keys(host.state.read().pendingSettles ?? {}),
-    [],
-    "the unresolved settle is retired, not resent",
-  );
+  // A finished task's row decision finds no row: Nucleus never settles a thread, so
+  // there is nothing to send and nothing to read (nucleus#1366).
+  await host.reconcileTaskRow("task-done", { state: "finished" });
   assert.equal(
     server.commands.filter((command) => command.type === "thread.settle")
       .length,
@@ -468,6 +443,11 @@ test("a live task still reads its own threads once for their step and row title"
     taskId: "task-live",
     runId: "run-worker",
   };
+  const parent = {
+    id: threadId("parent"),
+    taskId: "task-live",
+    runId: "run-parent",
+  };
   const reviewer = {
     id: threadId("reviewer"),
     taskId: "task-live",
@@ -475,7 +455,14 @@ test("a live task still reads its own threads once for their step and row title"
     role: "reviewer" as const,
   };
   const { host, server, snapshotsFor, served } = await fixture(t, {
-    threads: [worker, reviewer],
+    threads: [worker, parent, reviewer],
+    parents: [
+      {
+        taskId: "task-live",
+        threadId: parent.id,
+        title: "Working*: synthetic",
+      },
+    ],
     seed: (fake, directory) => {
       seed(fake, reviewer.id, directory, (projection) => {
         projection.thread.title = "225 review: synthetic";
@@ -488,33 +475,29 @@ test("a live task still reads its own threads once for their step and row title"
       });
     },
   });
-  // The row's base title is what the adapter recorded when it last titled the row.
-  host.state.update((state) => {
-    state.agents[worker.id]!.title = "Working*: synthetic";
-  });
   const tasks = [taskFact("task-live", "working")] as Task[];
   const before = served();
   await host.beginHostPass(tasks);
-  await host.reconcileThreadTitles(tasks);
+  await host.reconcileTaskRow("task-live", {
+    state: "waiting",
+    cause: "Waiting on nucleus#1364",
+  });
   await host.endHostPass();
   assert.equal(
     snapshotsFor(reviewer.id, before),
     1,
     "the reviewer thread is read once for its step",
   );
-  // The title write this pass sent drops the worker's held snapshot, so the settle
-  // path that follows it reads the row it just wrote rather than the one before.
-  assert.equal(
-    snapshotsFor(worker.id, before),
-    2,
-    "the worker row is read once for its title, and once after its own title write",
-  );
   assert.ok(
     host.state.read().agents[reviewer.id] !== undefined,
     "a live support thread stays observed",
   );
   const titles = server.commands
-    .filter((command) => command.type === "thread.metadata.update")
+    .filter(
+      (command) =>
+        command.type === "thread.metadata.update" &&
+        command.threadId === parent.id,
+    )
     .map((command) => command.title);
   assert.ok(
     titles.some((title) => String(title).includes("blocked: reviewer")),
@@ -581,60 +564,6 @@ test("an explicit stop still stops a live run in a thread that left observation"
   );
   assert.equal(served(), before, "neither stop served a thread snapshot");
   await host.endHostPass();
-});
-
-test("an unknown settle for a thread that left observation stays exactly as recorded", async (t) => {
-  // Unknown delivery is never rewritten into a receipt: without a T3 read that proves
-  // the settle landed, the entry keeps the outcome it has, and nothing is resent,
-  // read for or marked settled (nucleus#1328 review).
-  const thread = {
-    id: threadId("unknown"),
-    taskId: "task-done",
-    runId: "run-unknown",
-    role: "revision" as const,
-  };
-  const { host, server, snapshotsFor, served } = await fixture(t, {
-    threads: [thread],
-    unknownSettles: [{ threadId: thread.id, runId: thread.runId }],
-  });
-  const recorded = Object.entries(host.state.read().intents).find(
-    ([, intent]) => (intent as { kind?: string }).kind === "thread.settle",
-  )!;
-  assert.equal((recorded[1] as { status: string }).status, "unknown");
-  const before = served();
-  await host.beginHostPass([taskFact("task-done", "done") as Task]);
-  await host.settleReportedThread(thread.id, thread.runId);
-  await host.reconcileReportedSettlements();
-  await host.settleWorkerThread(thread.id, thread.runId);
-  await host.reconcileSettledThreads();
-  await host.endHostPass();
-  const after = host.state.read().intents[recorded[0]];
-  assert.equal(
-    after?.status,
-    "unknown",
-    "the recorded outcome is not rewritten",
-  );
-  assert.equal(
-    Object.hasOwn(after ?? {}, "result"),
-    false,
-    "no invented receipt is written",
-  );
-  assert.deepEqual(
-    after?.payload,
-    (recorded[1] as { payload: string }).payload,
-    "the recorded wire is untouched",
-  );
-  assert.equal(
-    server.commands.filter((command) => command.type === "thread.settle")
-      .length,
-    0,
-    "nothing was sent",
-  );
-  assert.equal(
-    snapshotsFor(thread.id, before),
-    0,
-    "and nothing was read for it",
-  );
 });
 
 test('an unreadable thread list never reads as "nothing to stop"', async (t) => {

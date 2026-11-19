@@ -165,34 +165,16 @@ nucleus t3 uninstall # remove the provider and this environment's sessions
 `nucleus-acp` command as an ACP provider named `nucleus` through T3's own
 settings route, only touching that one instance. Nucleus checks for it at connect
 and before every launch and reports the answer as `service.health`'s
-`t3code.nativeParenting` line. Without it, a task falls back to one top-level
-thread per agent, which is the next paragraph, and nothing stops working.
+`t3code.nativeParenting` line. Without it, a role cannot be created as a child:
+the task waits visibly with that reason and the `nucleus t3 install` fix, and no
+top-level thread is launched in its place.
 
-In that fallback, Nucleus tags the worker's sibling threads `nucleus-support` and
-links each one from the worker's conversation as a card, so the worker thread is
-the task's one row and its title names the step. Those threads still appear in the
-sidebar as their own rows until you turn T3's own hide setting on. That setting is
-optional: with it off, everything above works the same and the support threads
-simply stay visible.
-
-The hide switch lives in T3's server settings and has no settings screen:
-`hideTaggedThreads: true` plus `nucleus-support` in `hiddenThreadTags`. A client
-hides a tagged top-level thread only while both are true. Nucleus reads the switch
-at connect and never writes it; `service.health`'s `t3code.supportThreads` line says
-whether support threads are hidden.
-
-To turn it on, paste this into an agent on the machine that runs T3:
-
-> Find T3Code's server settings file (the `settings.json` in T3's data directory),
-> or use T3's own `server.updateSettings` route from a client. Set
-> `hideTaggedThreads` to `true` and add `nucleus-support` to `hiddenThreadTags`,
-> keeping every other setting and any other tag exactly as it is. Show me the
-> diff of the file (or the patch you sent) before saving. To revert, set
-> `hideTaggedThreads` back to `false`; leave the tag list as it is or remove the
-> `nucleus-support` entry.
-
-Answering a reviewer's or recovery thread's question still happens in that
-support thread, opened from its card, or through Nucleus's own routes.
+The task's row is snoozed while the task waits on nothing Nucleus is running and
+needs no one — a hold with a release condition, a prerequisite wait, capacity —
+and is shown again as soon as a role runs or a person must act. Nucleus never
+settles a task thread, so its rows stay out of your settle list; a row you settle
+by hand is left alone. A question or permission still belongs to the task's own
+thread (open it from the row) or goes through Nucleus's own routes.
 
 ## Development
 

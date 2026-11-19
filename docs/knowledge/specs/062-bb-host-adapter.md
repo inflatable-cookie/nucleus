@@ -321,10 +321,11 @@ disappear until its next round; hiding it with `visibility: "hidden"` would remo
 and from every list unless `includeHidden` is passed. Both make a live task's participants invisible
 to get a state BB does not have.
 
-**Rejected alternative: tag and hide support threads as T3Code does.** T3's `nucleus-support` tag
-exists to collapse a flat list into one row (Spec: T3Code host adapter, "One row per task"). BB's
-list already nests the roles under their planner and their worktree, which is stronger; adding a
-hiding tag would remove exactly the rows the operator asked to see.
+**Rejected alternative: tag and hide support threads as T3Code once did.** T3's own `nucleus-support`
+tag existed to collapse a flat list into one row; T3Code retired it with its top-level role fallback
+(nucleus#1366), because every role is now a native child of the task row (Spec: T3Code host adapter,
+"One row per task"). BB's list already nests the roles under their planner and their worktree, which
+is stronger; adding a hiding tag would remove exactly the rows the operator asked to see.
 
 ### 5. Operator surfaces: the forked sidebar, the task group header, the global board and the per-project board
 

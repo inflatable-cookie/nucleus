@@ -17,9 +17,18 @@ export class ArchiveNotDeliveredError extends Error {
     this.name = "ArchiveNotDeliveredError";
   }
 }
+/**
+ * A send this adapter refused before delivery. `label` names the work that was
+ * refused, so a title write never reports itself as a reviewer continuation
+ * (nucleus#1366); it defaults to the reviewer continuation these refusals
+ * originally carried.
+ */
 export class ProvenPreSendRefusalError extends Error {
-  constructor(readonly reason: string) {
-    super(`Reviewer continuation refused before send: ${reason}`);
+  constructor(
+    readonly reason: string,
+    label = "Reviewer continuation",
+  ) {
+    super(`${label} refused before send: ${reason}`);
     this.name = "ProvenPreSendRefusalError";
   }
 }

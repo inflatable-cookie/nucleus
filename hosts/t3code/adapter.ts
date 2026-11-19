@@ -16,6 +16,7 @@ import type {
   NativeDecisionAnswer,
 } from "../../shared/host";
 import type { Task, Profile } from "../../shared/contracts";
+import type { TaskAttention } from "../../shared/task-attention";
 import { WIRE_LABEL_KEYS } from "../../shared/wire-labels";
 import {
   ArchiveNotDeliveredError,
@@ -63,12 +64,7 @@ import {
 import { identity, T3IntentLedger } from "./intents";
 import { T3Presentation } from "./presentation";
 import { T3Nesting } from "./nesting";
-import {
-  SUPPORT_THREADS_DOC,
-  SUPPORT_THREAD_TAG,
-  isSupportRole,
-  supportThreadVisibility,
-} from "./one-row";
+import { isSupportRole, labelRole } from "./one-row";
 import type { AcpSessionSurface } from "../../shared/acp/surface";
 
 export interface T3CodeConfig extends T3ConnectionConfig {
@@ -234,8 +230,6 @@ export class T3CodeHost implements Host {
       reads: this.reads,
       intents: this.intents,
       parentThreadOf: (taskId) => this.nesting.parentOf(taskId)?.threadId,
-      nestedChild: (threadId) =>
-        this.nesting.taskOfChild(threadId) !== undefined,
     });
     this.nesting = new T3Nesting({
       rpc: this.rpc,
@@ -249,10 +243,10 @@ export class T3CodeHost implements Host {
       ...(options.reentryTimeoutMs === undefined
         ? {}
         : { reentryTimeoutMs: options.reentryTimeoutMs }),
-      modelSelectionOptions: (profile, provider, model) =>
+      modelSelectionOptionsFor: (profile, provider, model) =>
         this.modelSelectionOptions(profile, provider, model),
-      runtimeMode: (profile, supported) =>
-        this.launchRuntimeMode(profile, supported),
+      roleRuntimeMode: (provider, roleProfile) =>
+        this.launchRuntimeMode(roleProfile, provider.supportedRuntimeModes),
     });
   }
   get connected() {
@@ -269,20 +263,6 @@ export class T3CodeHost implements Host {
   }
   get compatibilityFailure() {
     return this.reads.compatibilityFailure;
-  }
-  /**
-   * Whether T3's own client hides tagged support threads, read at connect from
-   * `server.getConfig`'s settings and never written. Reported as a host status
-   * line with the README section that turns it on; the adapter's behaviour is the
-   * same either way, so an unset switch changes nothing but how many rows show.
-   */
-  get supportThreadStatus(): string {
-    const state = this.state.read().supportThreads;
-    if (state === "hidden")
-      return `support threads hidden by tag ${SUPPORT_THREAD_TAG}`;
-    if (state === "tag_missing")
-      return `support threads visible: ${SUPPORT_THREAD_TAG} is not in hiddenThreadTags (${SUPPORT_THREADS_DOC})`;
-    return `support threads visible: hide setting not enabled (${SUPPORT_THREADS_DOC})`;
   }
   /**
    * Whether this host is parenting role threads on the Nucleus ACP provider, or why
@@ -376,8 +356,6 @@ export class T3CodeHost implements Host {
       this.state.update((state) => {
         state.hostId = hostId;
         state.lastPassedVersion = observed.environment.serverVersion;
-        // Read-only: the client's own hide switch, never a settings write.
-        state.supportThreads = supportThreadVisibility(observed.settings);
       });
       // The nesting path needs the Nucleus ACP provider instance; record the answer
       // from this same read-only probe so the host status says it up front.
@@ -577,30 +555,22 @@ export class T3CodeHost implements Host {
       uncertain,
     );
   }
-  async settleReportedThread(agentId: string, runId: string): Promise<void> {
-    await this.presentation.settleReportedThread(agentId, runId);
-  }
-  async reconcileReportedSettlements(): Promise<void> {
-    await this.presentation.reconcileReportedSettlements();
-  }
-  async settleWorkerThread(agentId: string, runId: string): Promise<void> {
-    await this.presentation.settleWorkerThread(agentId, runId);
-  }
-  async reconcileSettledThreads(): Promise<void> {
-    await this.presentation.reconcileSettledThreads();
-  }
-  async unsettleWorkerThread(agentId: string, taskId: string): Promise<void> {
-    await this.presentation.unsettleWorkerThread(agentId, taskId);
-  }
   /**
-   * The ordinary host sweep's title pass, and the retry of the one-row effects: a
-   * support thread's card and tag that could not be sent when it was created, and
-   * the worker row's step while a support role acts.
+   * The task's one row, from the attention projection the board and `task.next`
+   * read (nucleus#1366). Nucleus never settles a task thread: a waiting task is
+   * snoozed and a task that needs a person is shown again, while an operator's own
+   * settle is left alone.
    */
+  async reconcileTaskRow(
+    taskId: string,
+    attention: TaskAttention,
+  ): Promise<void> {
+    if (!this.connected) return;
+    await this.presentation.reconcileTaskRow(taskId, attention);
+  }
+  /** The ordinary host sweep's nesting pass: dispose owed wakes, hold or release the parent's turn, archive a finished task's parent. */
   async reconcileThreadTitles(tasks: readonly Task[]): Promise<void> {
     if (!this.connected) return;
-    await this.presentation.reconcileSupportRows();
-    await this.presentation.reconcileWorkerRows(tasks);
     try {
       await this.nesting.reconcile(tasks);
     } catch (error) {
@@ -908,6 +878,14 @@ export class T3CodeHost implements Host {
     };
   }
 
+  /**
+   * One role thread, always the task parent thread's native child (nucleus#1305;
+   * nucleus#1366). There is no top-level fallback: a role a child cannot be created
+   * for refuses before the send with the reason and the fix, so the task waits
+   * visibly on the board — "T3 provider not ready: run `nucleus t3 install`" — or
+   * the operator moves it to another host. Nothing is launched that the task's one
+   * row would then have to settle.
+   */
   async createAgent(spec: HostAgentSpec) {
     this.requireConnection();
     if (spec.mcpBindingPath) unsupported("per-thread MCP reporting");
@@ -919,8 +897,8 @@ export class T3CodeHost implements Host {
       throw new ProvenPreSendRefusalError("T3Code workspace is not registered");
     if (Object.keys(attempt.environment).length)
       unsupported("per-thread launch environment");
-    // One config read answers every launch fact: the model's options, the
-    // runtime mode the provider offers and the provider's own existence.
+    // One config read answers every launch fact: the role's model, the runtime mode
+    // the provider offers and the parent provider's own existence.
     const observed = decode(
       config,
       await this.rpc.call("server.getConfig", {}),
@@ -930,27 +908,26 @@ export class T3CodeHost implements Host {
     const provider = observed.providers.find(
       (p) => p.instanceId === spec.profile.provider,
     );
-    const options = this.modelSelectionOptions(
+    // Validate against the role provider before creating or re-entering a parent.
+    this.modelSelectionOptions(
       spec.profile,
       provider,
       provider?.models.find((m) => m.slug === spec.profile.model),
     );
-    const runtimeMode = this.launchRuntimeMode(
-      spec.profile,
-      provider?.supportedRuntimeModes,
-    );
+    if (!provider)
+      throw new ProvenPreSendRefusalError(`T3Code provider ${spec.profile.provider} is unavailable`);
+    this.launchRuntimeMode(spec.profile, provider.supportedRuntimeModes);
     const title = this.presentation.numberedThreadTitle(
       spec.taskNumber,
       attempt.labels[WIRE_LABEL_KEYS.role],
       spec.title,
     );
-    // Native parenting (nucleus#1305): the role thread becomes a child of the task's
-    // parent thread on the Nucleus ACP provider. A null answer means nothing was sent
-    // and the ordinary top-level launch below is the fallback.
     const nested = await this.nesting.create({
       spec,
       attempt,
       profile: spec.profile,
+      roleProvider: provider,
+      roleModel: provider.models.find((m) => m.slug === spec.profile.model),
       observed,
       workspace: {
         id: spec.workspaceId,
@@ -959,90 +936,19 @@ export class T3CodeHost implements Host {
       },
       title,
     });
-    if (nested) {
-      if (this.reads.threadShapePending)
-        await this.reads
-          .readProjection(nested.id, "observation")
-          .catch(() => undefined);
-      return nested;
-    }
-    const id = identity("thread", attempt.requestId);
-    const payload = {
-      commandId: attempt.requestId,
-      threadId: id,
-      projectId: workspace.projectId,
-      title,
-      modelSelection: {
-        instanceId: spec.profile.provider,
-        model: spec.profile.model,
-        ...(options.length ? { options } : {}),
-      },
-      runtimeMode,
-      interactionMode: "default",
-      workspaceStrategy: {
-        type: "existing_worktree",
-        worktreePath: workspace.directory,
-      },
-      initialMessage: {
-        messageId: identity("message", attempt.requestId),
-        text: attempt.prompt,
-        attachments: [],
-      },
-    };
-    this.state.update((state) => {
-      const old = state.agents[id],
-        record = { id, workspaceId: spec.workspaceId, labels: attempt.labels };
-      if (
-        old &&
-        canonical({
-          id: old.id,
-          workspaceId: old.workspaceId,
-          labels: old.labels,
-        }) !== canonical(record)
-      )
-        throw new ProvenPreSendRefusalError("T3Code retained identity changed");
-      state.agents[id] = { ...old, ...record };
-      // A thread this host launches again is observed again, whatever the retired
-      // index last said about it (nucleus#1328 review).
-      delete state.retiredAgents?.[id];
-    });
-    const result = await this.intents.effect(
-      attempt.requestId,
-      "orchestration.launchThread",
-      payload,
-      () => {
-        if (spec.guard && !spec.guard.stillAllowed())
-          throw new ProvenPreSendRefusalError("T3Code launch guard changed");
-      },
-    );
-    if (
-      decode(z.object({ threadId: z.literal(id) }), result, "launchThread")
-        .threadId !== id
-    )
-      throw new T3CompatibilityError("launchThread.threadId");
-    this.state.update((state) => {
-      if (state.agents[id]) state.agents[id].title = payload.title;
-    });
-    // One row per task: every support thread is tagged and linked from the
-    // worker's conversation. Both are durable presentation effects, recorded
-    // before send and completed by the ordinary sweep, so a worker run that has
-    // not appeared yet or a lost reply never costs the card.
-    const role = attempt.labels[WIRE_LABEL_KEYS.role];
+    // A nested create either returns the child or refuses before the send; it never
+    // returns "nothing sent, launch a top-level thread instead" (nucleus#1366).
+    if (!nested.ok) throw new ProvenPreSendRefusalError(nested.reason);
+    // The role's current thread, so a displaced one stops naming the row's step.
     const taskId = attempt.labels[WIRE_LABEL_KEYS.task];
-    if (taskId && isSupportRole(role)) {
-      try {
-        await this.presentation.registerSupportThread({
-          taskId,
-          threadId: id,
-          role: role!,
-        });
-      } catch {
-        /* the recorded row keeps for the next sweep */
-      }
-    }
+    const role = labelRole(attempt.labels);
+    if (taskId && isSupportRole(role))
+      this.presentation.noteRoleThread(taskId, role!, nested.id);
     if (this.reads.threadShapePending)
-      await this.reads.readProjection(id, "observation");
-    return { id, workspaceId: spec.workspaceId };
+      await this.reads
+        .readProjection(nested.id, "observation")
+        .catch(() => undefined);
+    return { id: nested.id, workspaceId: spec.workspaceId };
   }
 
   /**

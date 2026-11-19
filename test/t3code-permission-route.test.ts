@@ -16,6 +16,7 @@ import { readServiceInfo } from '../service/transport/identity';
 import { hostPermissionAnswer, type HostPermissionAnswerInput } from '../shared/rpc/questions';
 import { callCatalogueMethod } from '../service/transport/dispatch';
 import { t3Fake } from './support/t3code-fake';
+import { acpStub, serveNucleusProvider } from './support/t3code-acp';
 import { QueueRuntime } from '../service/runtime-owner';
 import { Store } from '../core/store/store';
 import { Engine } from '../core/engine';
@@ -24,10 +25,14 @@ import { submissionSchema, type Run } from '../shared/contracts';
 async function nativeFixture(t: TestContext) {
   const directory = realpathSync(mkdtempSync(join(tmpdir(), 't3p-')));
   const server = await t3Fake(t, directory);
+  const acp = acpStub(server.threads);
+  // The ACP surface stays out of `config`: the service persists it as worker data,
+  // and a function is not cloneable.
   const config = { endpoint: server.endpoint, bearer: 'synthetic-bearer', probeThreadId: 'synthetic-probe' };
-  const host = createHost({ ...config, statePath: join(directory, 'hosts', 't3code.json'), timeoutMs: 2_000 });
+  const host = createHost({ ...config, statePath: join(directory, 'hosts', 't3code.json'), timeoutMs: 2_000, acp: () => acp.surface, reentryTimeoutMs: 200 });
   t.after(() => host.close());
   await host.connect();
+  await serveNucleusProvider(host, server);
   const workspace = await host.createWorkspace({ title: 'Synthetic worktree', requestId: 'workspace', directory, project: { projectId: 'synthetic-project' } });
   const agent = await host.createAgent({ workspaceId: workspace.id, title: 'Synthetic worker', mcpBindingPath: null,
     profile: { id: 'profile', name: 'Synthetic', provider: 'synthetic-provider', model: 'synthetic-model', notes: '', available: true, problem: '', supportedThinking: [] },

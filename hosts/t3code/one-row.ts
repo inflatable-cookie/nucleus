@@ -1,20 +1,11 @@
 /**
- * The one-row model on T3 (Tom, 2026-11-15): every support thread is tagged,
- * each is linked from the worker's conversation by a `thread_created` card, and
- * the worker row carries the task's step.
- *
- * The tag is a constant of this adapter's table, never a setting: a hidden
- * thread is hidden by the client's own `hideTaggedThreads` setting, which
- * Nucleus only reads (see `supportThreadVisibility`). The owner thread is never
- * tagged, so it stays the task's one visible row.
+ * The one-row model on T3 (Tom, 2026-11-15; nucleus#1366): a task is one row, its
+ * parent thread, and that row spends most of its life snoozed rather than settled.
+ * This module is the vocabulary that row reads — which roles are support roles, the
+ * step they report and how the row's title names it. Nothing here tags, links or
+ * settles a thread: T3 draws a nested child inside the parent row itself.
  */
 import { WIRE_LABEL_KEYS } from '../../shared/wire-labels';
-
-/** The tag every support thread carries. The README's hide setting names it. */
-export const SUPPORT_THREAD_TAG = 'nucleus-support';
-
-/** The README section the host status points at when the hide setting is off. */
-export const SUPPORT_THREADS_DOC = 'README: T3: one row per task';
 
 /**
  * The run role whose thread is still the task's worker row. A worker launch
@@ -82,19 +73,4 @@ export function labelRole(labels: Record<string, string> | undefined): string | 
 }
 export function labelTask(labels: Record<string, string> | undefined): string | undefined {
   return labels?.[WIRE_LABEL_KEYS.task];
-}
-export function labelRun(labels: Record<string, string> | undefined): string | undefined {
-  return labels?.[WIRE_LABEL_KEYS.run];
-}
-
-/**
- * What the client's own hide setting says about the tag, read from
- * `server.getConfig`'s settings and never written: `hidden` only when the switch
- * is on and the tag is listed, which is exactly the client's rule.
- */
-export function supportThreadVisibility(settings: { hideTaggedThreads?: boolean; hiddenThreadTags?: string[] } | undefined):
-  'hidden' | 'setting_off' | 'tag_missing' {
-  if (settings?.hideTaggedThreads !== true) return 'setting_off';
-  const tags = (settings.hiddenThreadTags ?? []).map(tag => tag.trim()).filter(Boolean);
-  return tags.includes(SUPPORT_THREAD_TAG) ? 'hidden' : 'tag_missing';
 }

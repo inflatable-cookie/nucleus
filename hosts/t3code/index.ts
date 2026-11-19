@@ -12,6 +12,7 @@ import type {
   HostWorkspaceSpec,
 } from "../../shared/host";
 import type { Run, Task } from "../../shared/contracts";
+import type { TaskAttention } from "../../shared/task-attention";
 import { WIRE_LABEL_KEYS } from "../../shared/wire-labels";
 import { T3CodeHost, type T3CodeConfig } from "./adapter";
 
@@ -252,29 +253,17 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
     deleteAgent(id: string) {
       return this.native.deleteAgent(id);
     }
+    reconcileTaskRow(taskId: string, attention: TaskAttention) {
+      return this.native.reconcileTaskRow(taskId, attention);
+    }
     archivedThreads() {
       return this.native.archivedThreads();
     }
     threadArchiveState(id: string) {
       return this.native.threadArchiveState(id);
     }
-    settleWorkerThread(id: string, runId: string) {
-      return this.native.settleWorkerThread(id, runId);
-    }
     reconcileThreadTitles(tasks: readonly Task[]) {
       return this.native.reconcileThreadTitles(tasks);
-    }
-    reconcileSettledThreads() {
-      return this.native.reconcileSettledThreads();
-    }
-    unsettleWorkerThread(agentId: string, taskId: string) {
-      return this.native.unsettleWorkerThread(agentId, taskId);
-    }
-    settleReportedThread(agentId: string, runId: string) {
-      return this.native.settleReportedThread(agentId, runId);
-    }
-    reconcileReportedSettlements() {
-      return this.native.reconcileReportedSettlements();
     }
     agentTimelinePage(id: string, limit?: number) {
       return this.native.agentTimelinePage(id, limit);

@@ -76,6 +76,12 @@ export const threadRecord = z.object({
   /** Nightly's manual settled marker; a new message dispatch clears it. */
   settledOverride: z.enum(["settled", "active"]).nullable(),
   settledAt: date.nullable(),
+  /**
+   * The instant a snooze wakes (nucleus#1366). A snoozed thread is out of the
+   * client's active list until then, wakes early on a guest message, a pending
+   * runtime request or a failed run, and is never auto-settled while snoozed.
+   */
+  snoozedUntil: date.nullable().optional(),
   worktreePath: z.string().nullable(),
   branch: z.string().nullable(),
   archivedAt: date.nullable(),

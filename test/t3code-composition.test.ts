@@ -34,8 +34,6 @@ class NativeHost {
   version = "nightly-synthetic";
   threadShapePending = false;
   compatibilityFailure = "";
-  supportThreadStatus =
-    "support threads visible: hide setting not enabled (README: T3: one row per task)";
   nativeParentingStatus = "native parenting not used yet";
   modelShapes = "codex(ready): synthetic-model [reasoningEffort:select]";
   connects = 0;
@@ -115,7 +113,6 @@ test("second host registers separately, retains its admission on reconnect, and 
       error: "",
       version: first.version,
       threadShapePending: false,
-      supportThreads: first.supportThreadStatus,
       nativeParenting: first.nativeParentingStatus,
       modelShapes: first.modelShapes,
     });
@@ -156,7 +153,6 @@ test("an empty T3 host registers online while its thread shape is pending", asyn
       error: "",
       version: empty.version,
       threadShapePending: true,
-      supportThreads: empty.supportThreadStatus,
       nativeParenting: empty.nativeParentingStatus,
       modelShapes: empty.modelShapes,
     });

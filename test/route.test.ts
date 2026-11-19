@@ -2087,16 +2087,12 @@ test("a removable host finishes a reviewer route after its stop reply precedes i
   const f = fixture();
   try {
     const archived: string[] = [],
-      deleted: string[] = [],
-      settled: string[] = [];
+      deleted: string[] = [];
     f.adapter.archiveAgent = async (id) => {
       archived.push(id);
     };
     f.adapter.deleteAgent = async (id) => {
       deleted.push(id);
-    };
-    f.adapter.settleReportedThread = async (id) => {
-      settled.push(id);
     };
     f.adapter.stopAgentTurn = async (id) => {
       f.stops.push(id);
@@ -2184,7 +2180,6 @@ test("a removable host finishes a reviewer route after its stop reply precedes i
       undefined,
       "closeout will start its own deletion effect",
     );
-    assert.deepEqual(settled, ["reviewer"]);
     assert.deepEqual(
       archived,
       [],

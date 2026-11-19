@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { taskPhaseSchema, dependencyIdsSchema, laneKeyListSchema, holdKindSchema, dispositionStatusSchema } from "./task-primitives";
+import { holdUntilSchema } from "./task-holds";
 import { taskStopKindSchema, taskStopRecordSchema } from "../task-stop";
 import { REPORT_HEADLINE_MAX } from "../task-detail-summary";
 import { taskBudgetBoardViewSchema } from "../task-budget";
@@ -63,8 +64,10 @@ export const taskSummarySchema = z.object({
   // Independent fences when either is present. Omitted when the task is unheld so
   // empty objects do not inflate the 128 KiB board transfer.
   holds: z.object({
-    dispatch: z.object({ owner: z.string(), reason: z.string(), since: z.string() }).strict().optional(),
-    merge: z.object({ owner: z.string(), reason: z.string(), since: z.string() }).strict().optional(),
+    // A release condition on a hold is what makes it a wait rather than attention;
+    // the board reads it when it projects the Attention column (nucleus#1366).
+    dispatch: z.object({ owner: z.string(), reason: z.string(), since: z.string(), until: holdUntilSchema.nullable().optional() }).strict().optional(),
+    merge: z.object({ owner: z.string(), reason: z.string(), since: z.string(), until: holdUntilSchema.nullable().optional() }).strict().optional(),
   }).strict().optional(),
   holdDisplayOwner: z.string().optional(),
   /** Plain name for the holder in a responsible-task blocker escalation. */

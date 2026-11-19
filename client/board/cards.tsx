@@ -1,6 +1,6 @@
 import { useTaskQuestions } from "../native-questions";
 import { formatAgentId } from "../../shared/agent-identity";
-import { dispatchWaitFence, phaseStateLabel, taskStateLabel } from "../../shared/task-state";
+import { blockingHold, dispatchWaitFence, phaseStateLabel, taskStateLabel } from "../../shared/task-state";
 import React, { useState, useRef } from "react";
 import { Pressable, Text, View } from "react-native";
 import { Icon } from "../shell";
@@ -186,7 +186,10 @@ export const TaskCard = React.memo(function TaskCard({task,selected,onPress,prSt
     title={<Text numberOfLines={2} style={{ color: c.foreground, fontWeight: "600", fontSize: board ? typeScale.body.fontSize : typeScale.body.fontSize, lineHeight:typeScale.body.lineHeight }}>{[taskNumberLabel(task, false), task.entrypoint==="review"?"Review entry":"", task.title].filter(Boolean).join(" · ")}</Text>}
     chips={hasChips?<View style={{...row,gap:space.xs,flexWrap:'wrap'}}>{parked&&<RecordChips c={c} chips={['parked']}/>}<InteractiveBadge task={task} c={c}/>{task.parked&&<Badge label="Parked (no slot held)" tone="warning" c={c} a11y="Parked (no slot held)"/>}{task.pausedStop&&<Badge label="Stopped while paused" tone="warning" c={c} a11y="Stopped while Nucleus was paused; Nucleus resumes it when the queue starts"/>}<HoldChips task={task} c={c} decisionTitle={decisionTitle}/>{showStopBadge&&<StopBadge task={task} c={c}/>}{budgetExhausted&&<BudgetBadge task={task} c={c}/>}{decisions&&<Badge label="Decision" tone={recordBadgeTone("decision")} c={c} a11y="Open decisions linked"/>}</View>:undefined}
     snippet={<View style={{gap:space.xxs}}>
-      <Text numberOfLines={1} style={{color:attentionPriority?c.statusWarning:c.foreground,fontSize:typeScale.metadata.fontSize,fontWeight:'600'}}>{phaseStateLabel(task)}</Text>
+      {/* A hold with a release condition is the task's wait, so the row names it
+          instead of the phase; every other card keeps its phase line and its own
+          wait line (nucleus#1366). */}
+      <Text numberOfLines={1} style={{color:attentionPriority?c.statusWarning:c.foreground,fontSize:typeScale.metadata.fontSize,fontWeight:'600'}}>{blockingHold(task) ? taskStateLabel(task) : phaseStateLabel(task)}</Text>
       {next}
     </View>}
     footer={hasFooter?<View style={{...row,gap:space.xs,flexWrap:'nowrap'}}>

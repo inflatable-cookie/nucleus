@@ -384,7 +384,7 @@ async function readService(dataDir: string): Promise<ServiceRead> {
         error?: string;
         version?: string;
         nativeParenting?: string;
-        supportThreads?: string;
+
       };
       threadRetention?: ServiceRead["retention"];
     };
@@ -408,7 +408,6 @@ async function readService(dataDir: string): Promise<ServiceRead> {
             error: t3.error ?? "",
             version: t3.version ?? "",
             nativeParenting: t3.nativeParenting ?? "",
-            supportThreads: t3.supportThreads ?? "",
           }
         : null,
       retention: health.threadRetention ?? null,
@@ -804,7 +803,6 @@ async function status(
           hostId: null,
           error: "",
           nativeParenting: "",
-          supportThreads: "",
         })
       : null,
     projects:

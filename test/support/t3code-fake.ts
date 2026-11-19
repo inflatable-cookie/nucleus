@@ -650,6 +650,18 @@ export async function t3Fake(t: TestContext, directory: string) {
      */
     runOnLaunch: false,
     /**
+     * A thread launched on the Nucleus ACP provider starts its held turn at launch,
+     * exactly as the ACP agent does. `false` is how a test says that turn never
+     * starts, which is the refusal a role create names (nucleus#1305, #1366).
+     */
+    parentHeldTurn: true,
+    /**
+     * A freshly created delegated child starts a running turn, as the nightly does.
+     * `false` lets a fixture decide each role's turn itself, which is what a test
+     * that drives reports needs.
+     */
+    childRunOnCreate: true,
+    /**
      * Serve a removed thread as a `deletedAt` tombstone in the shell lists instead of
      * omitting it. Both shapes exist on the wire, and a reader must treat either one as
      * the same deletion fact (nucleus#1305 review).
@@ -1208,7 +1220,14 @@ export async function t3Fake(t: TestContext, directory: string) {
             role: "user",
             text: payload.initialMessage.text,
           });
-          if (controls.runOnLaunch)
+          // A thread launched on the Nucleus ACP provider starts its held turn at
+          // launch, exactly as the ACP agent does; `runOnLaunch: false` is the one
+          // way a test says that turn never starts (nucleus#1305).
+          if (
+            controls.runOnLaunch ||
+            (payload.modelSelection.instanceId === "nucleus" &&
+              controls.parentHeldTurn !== false)
+          )
             p.runs.push(
               syntheticRun(payload.threadId, 1, {
                 id: `run:launch:${payload.threadId}`,
@@ -1287,9 +1306,12 @@ export async function t3Fake(t: TestContext, directory: string) {
               // A message to a thread with no live run starts one, as a provider turn
               // does. A follow-up to a delegated child also records a new app-owned
               // task under the dispatch's own command id, exactly as the nightly's
-              // recordSubagentFollowup does (node:delegated-task:<commandId>).
+              // recordSubagentFollowup does (node:delegated-task:<commandId>). A
+              // parent thread's held turn is re-armed by its message (nucleus#1305).
               if (
-                controls.runOnLaunch &&
+                (controls.runOnLaunch ||
+                  (p.thread.providerInstanceId === "nucleus" &&
+                    controls.parentHeldTurn !== false)) &&
                 !p.runs.some((run: Value) =>
                   ["preparing", "starting", "running", "waiting"].includes(
                     run.status,
@@ -1349,6 +1371,56 @@ export async function t3Fake(t: TestContext, directory: string) {
             case "thread.unsettle":
               p.thread.settledOverride = "active";
               p.thread.settledAt = null;
+              break;
+            case "thread.snooze": {
+              // The nightly's own guards (nucleus#1366): a wake time in the future,
+              // no pending non-user-input approval, no queued user run, not archived.
+              const until = Date.parse(payload.snoozedUntil);
+              if (p.thread.archivedAt !== null)
+                return failure({
+                  _tag: "Fail",
+                  error: {
+                    _tag: "OrchestrationV2DispatchCommandError",
+                    message: "Thread is archived.",
+                  },
+                });
+              if (!Number.isFinite(until) || until <= Date.now())
+                return failure({
+                  _tag: "Fail",
+                  error: {
+                    _tag: "OrchestrationV2DispatchCommandError",
+                    message: "snooze wake time is not in the future.",
+                  },
+                });
+              if (
+                p.runtimeRequests.some(
+                  (request: Value) =>
+                    request.status === "pending" &&
+                    request.kind !== "user_input",
+                )
+              )
+                return failure({
+                  _tag: "Fail",
+                  error: {
+                    _tag: "OrchestrationV2DispatchCommandError",
+                    message: "Thread has a pending approval and cannot be snoozed.",
+                  },
+                });
+              if (p.runs.some((run: Value) => run.status === "queued"))
+                return failure({
+                  _tag: "Fail",
+                  error: {
+                    _tag: "OrchestrationV2DispatchCommandError",
+                    message: "Thread has a queued run and cannot be snoozed.",
+                  },
+                });
+              p.thread.snoozedUntil = payload.snoozedUntil;
+              p.thread.snoozedAt = STAMP;
+              break;
+            }
+            case "thread.unsnooze":
+              p.thread.snoozedUntil = null;
+              p.thread.snoozedAt = null;
               break;
             case "thread.metadata.update":
               if (payload.title !== undefined) p.thread.title = payload.title;
@@ -1495,13 +1567,16 @@ export async function t3Fake(t: TestContext, directory: string) {
                 rootThreadId: parent!.thread.lineage?.rootThreadId ?? parentId,
               };
               child.thread.forkedFrom = { type: "node", nodeId: taskId };
-              child.runs = [
-                syntheticRun(childId, 1, {
-                  id: `run:${payload.commandId}`,
-                  status: "running",
-                  rootNodeId: `node:root:${payload.commandId}`,
-                }),
-              ];
+              child.runs =
+                controls.childRunOnCreate === false
+                  ? []
+                  : [
+                      syntheticRun(childId, 1, {
+                        id: `run:${payload.commandId}`,
+                        status: "running",
+                        rootNodeId: `node:root:${payload.commandId}`,
+                      }),
+                    ];
               child.messages.push({
                 id: `message:delegated-task:${payload.commandId}`,
                 role: "user",

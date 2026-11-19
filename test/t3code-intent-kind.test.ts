@@ -276,37 +276,44 @@ test("an unknown T3 command cannot be resent while its original reply is pending
   }
 });
 
-test("T3 settlement loops propagate a timeout without visiting later entries", async () => {
+test("the row pass propagates a read timeout instead of writing a later task", async () => {
   const { T3Presentation } = await import("../hosts/t3code/presentation");
   const { T3RpcError } = await import("../hosts/t3code/rpc");
-  const intent = {
-    status: "unknown",
-    kind: "thread.settle",
-    threadId: "thread-1",
-    payload: "{}",
+  const state: {
+    agents: Record<string, unknown>;
+    parents: Record<string, { taskId: string; threadId: string; title: string }>;
+    intents: Record<string, unknown>;
+    rowTitles: Record<string, string>;
+    supportCurrent: Record<string, string>;
+    snoozes: Record<string, unknown>;
+  } = {
+    agents: {},
+    parents: { "task-1": { taskId: "task-1", threadId: "row-1", title: "Waiting: one" } },
+    intents: {},
+    rowTitles: {},
+    supportCurrent: {},
+    snoozes: {},
   };
-  const state = {
-    intents: { one: intent, two: intent },
-    pendingSettles: { one: {}, two: {} },
-    workerSettles: {},
-  };
+  let reads = 0;
   const presentation = new T3Presentation({
-    state: { read: () => state },
-    reads: { observes: () => true },
+    state: {
+      read: () => state,
+      update: (change: (next: typeof state) => void) => change(state),
+    },
+    intents: { confirmedDeletion: () => false },
+    parentThreadOf: (taskId: string) => state.parents[taskId]?.threadId,
     requireConnection: () => {},
+    reads: {
+      isObserved: async () => true,
+      readProjection: async () => {
+        reads++;
+        throw new T3RpcError("timeout", "orchestration.subscribeThread");
+      },
+    },
   } as never) as any;
-  presentation.retireDeletedPresentationIntents = () => {};
-  presentation.pruneWorkerSettles = () => {};
-  let calls = 0;
-  const timeout = () => {
-    calls++;
-    throw new T3RpcError("timeout", "orchestration.dispatchCommand");
-  };
-  presentation.reconcileSettleIntent = timeout;
-  await assert.rejects(presentation.reconcileReportedSettlements(), /timeout/);
-  assert.equal(calls, 1);
-  calls = 0;
-  presentation.attemptWorkerSettle = timeout;
-  await assert.rejects(presentation.reconcileSettledThreads(), /timeout/);
-  assert.equal(calls, 1);
+  await assert.rejects(
+    presentation.reconcileTaskRow("task-1", { state: "waiting", cause: "Waiting" }),
+    /timeout/,
+  );
+  assert.equal(reads, 1, "a timeout stops the row pass at its first read");
 });

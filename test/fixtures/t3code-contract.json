@@ -312,6 +312,29 @@
         "restart_active"
       ],
       "steerRequiresTargetRunId": true
+    },
+    "thread.snooze": {
+      "required": [
+        "type",
+        "commandId",
+        "threadId",
+        "snoozedUntil"
+      ],
+      "optional": [],
+      "source": "packages/contracts/src/orchestrationV2.ts (thread.snooze); the handler refuses a wake time not in the future, a pending non-user-input approval, a queued user run, and an archived thread; a snooze wakes at the wake time or early on a guest message, a pending runtime request or a failed run, and it is never auto-settled while snoozed"
+    },
+    "thread.unsnooze": {
+      "required": [
+        "type",
+        "commandId",
+        "threadId",
+        "reason"
+      ],
+      "optional": [],
+      "reasons": [
+        "user"
+      ],
+      "source": "packages/contracts/src/orchestrationV2.ts (thread.unsnooze); clears snoozedUntil/snoozedAt and leaves settledOverride as it was"
     }
   },
   "launchThread": {
@@ -510,6 +533,7 @@
   "supportRows": {
     "sourceBuild": "0.1.10-nightly.20261111.4529",
     "source": "apps/server bundle: ServerSettings (hideTaggedThreads, hiddenThreadTags) inside server.getConfig's ServerConfig; client bundle: the sidebar's hidden-thread-tags derivation",
+    "retiredForNucleus": "nucleus#1366: Nucleus tags and links no thread and reads no hide setting; T3 draws a nested role child inside the parent row, and a waiting task's row is snoozed instead of settled",
     "settingsKeys": {
       "hideTaggedThreads": "Boolean$2.pipe(withDecodingDefault(succeed(false)))",
       "hiddenThreadTags": "ArraySchema(Unknown).pipe(decodeTo(ArraySchema(String$2), ...), withDecodingDefault(succeed([])))"

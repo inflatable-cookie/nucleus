@@ -30,8 +30,12 @@ const intentKind = z.enum([
   "launchThread",
   "project.create",
   "project.update",
+  // `settle`, `tag.set` and `created.record` are decode allowances for records a
+  // previous build wrote: Nucleus sends no settle, tag or card any more.
   "thread.settle",
   "thread.unsettle",
+  "thread.snooze",
+  "thread.unsnooze",
   "thread.metadata.update",
   "thread.delete",
   "thread.stop",
@@ -52,10 +56,8 @@ const agent = z.object({
   title: z.string().optional(),
   /**
    * The parent thread this role thread was created as a delegated child of, recorded
-   * at creation. A role thread of a parented task that is *not* a child (a fallback
-   * launch, or a role whose run needs another checkout) never carries it, so
-   * "nested child" stays a recorded fact and is never inferred from the task
-   * (nucleus#1305 review).
+   * at creation. Every role thread of a parented task carries it, so "nested child"
+   * stays a recorded fact and is never inferred from the task (nucleus#1305).
    */
   parentThreadId: z.string().optional(),
 });
@@ -125,41 +127,29 @@ const intent = z.object({
     .optional(),
 });
 /**
- * One accepted worker handover whose thread had not yet ended its turn: the
- * settle waits for the named run (or the next run to end) instead of settling a
- * live turn, and the ordinary host sweep retries it. Presentation only; the
- * durable settle itself is the `intents` ledger entry written before the send.
+ * One task row's snooze, by native thread id (nucleus#1366). `episode` names the
+ * wait this host snoozed the row for, `until` is the horizon it read back, and
+ * `commandId` is the deterministic identity of that send. `refused` means the
+ * nightly would not snooze the row (a pending approval, a queued run), so the row
+ * stays active and this episode never retries. `unknown` retains ownership until
+ * a read proves the requested horizon landed; it is never blindly resent.
  */
-const settleIntent = z.object({
-  agentId: z.string(),
-  runId: z.string(),
+const snooze = z.object({
+  episode: z.number().int().nonnegative(),
   commandId: z.string(),
-  expectedLatestRunId: z.string().optional(),
+  until: z.string(),
+  state: z.enum(["snoozed", "refused", "unknown"]),
+  /** The task became active after this uncertain send. */
+  ended: z.boolean().optional(),
+  /** The named wait the row was snoozed for; diagnostic text only. */
+  cause: z.string().optional(),
   recordedAt: z.string(),
-});
-/**
- * One support thread the one-row model still owes work on: its `nucleus-support`
- * tag and the `thread_created` card in the worker's conversation. Both are
- * durable presentation effects recorded here before they are sent, so a lost
- * reply is reconciled by a fresh read (the card's presence, or the recorded tag
- * intent) and never resent blindly.
- */
-const supportRow = z.object({
-  taskId: z.string(),
-  threadId: z.string(),
-  role: z.string(),
-  recordedAt: z.string(),
-  /** The tag's outcome once known; `unknown` delivery is never resent. */
-  tag: z.enum(["pending", "settled", "unknown"]).optional(),
-  /** The card's outcome once known; a readback proves it without a resend. */
-  card: z.enum(["pending", "settled", "unknown"]).optional(),
 });
 /**
  * One task's parent thread: the Nucleus ACP session that owns the task's row, the
  * checkout binding the launched agent resolves, and the facts the sweep needs to
  * hold or release its held turn. `releasedAt` is the last release this host sent, so
- * a sweep releases one turn once; `fallbackUntil` parks the native path after a child
- * this host could not create, so the rest of the task's roles do not pay the wait.
+ * a sweep releases one turn once.
  */
 const parentThread = z.object({
   taskId: z.string(),
@@ -176,7 +166,6 @@ const parentThread = z.object({
   releasedAt: z.string().optional(),
   /** Set when this host re-entered the thread; a create inside its grace window keeps the turn. */
   holdingSince: z.string().optional(),
-  fallbackUntil: z.string().optional(),
 });
 const schema = z.object({
   version: z.literal(1),
@@ -193,26 +182,6 @@ const schema = z.object({
    * thread out of observation.
    */
   retiredAgents: z.record(z.string(), retiredAgent).optional(),
-  pendingSettles: z.record(z.string(), settleIntent).optional(),
-  /**
-   * One thread Nucleus last settled, by the command that settled it. An
-   * unsettle clears the entry, so a later settle re-reads the thread and
-   * settles it again under a fresh command instead of early-returning on the
-   * old receipt (nucleus#1181: a retained reviewer continued for a second
-   * round, or a worker surfaced for attention and returned to review).
-   */
-  settledThreads: z.record(z.string(), z.string()).optional(),
-  /**
-   * Worker handover settle command ids, recorded before the send. A worker settle
-   * whose delivery is unknown is never resent (nucleus#1154), so the support-thread
-   * reconciler must be able to tell it apart from a support report's settle.
-   */
-  workerSettles: z.record(z.string(), z.string()).optional(),
-  /**
-   * Support threads owing the one-row presentation effects, by native thread id.
-   * Removed once both the tag and the card reached an outcome.
-   */
-  supportRows: z.record(z.string(), supportRow).optional(),
   /**
    * The worker row's composited title last written, by worker thread id. The
    * agent record's `title` stays the task's own state title; this is the state
@@ -226,10 +195,29 @@ const schema = z.object({
    */
   supportCurrent: z.record(z.string(), z.string()).optional(),
   /**
-   * What this host read from T3's own settings at connect, never written back:
-   * whether support threads are hidden by the client's tag setting.
+   * The delegated child T3 mints for a follow-up dispatch, by native thread id.
+   * T3 starts a new delegated task under the dispatch's own command id, so the
+   * thread is real and shares the task's workspace, but it is nobody's recorded
+   * agent: the task's role keeps the thread it already had. Recording its identity
+   * and labels keeps the closeout participant proof able to read it as the task's
+   * own idle thread rather than a foreign reader (nucleus#1366).
    */
-  supportThreads: z.enum(["hidden", "setting_off", "tag_missing"]).optional(),
+  followUps: z
+    .record(
+      z.string(),
+      z.object({
+        workspaceId: z.string(),
+        labels: z.record(z.string(), z.string()),
+        parentThreadId: z.string(),
+      }),
+    )
+    .optional(),
+  /**
+   * The task row this host snoozed, by native thread id: the horizon it asked for
+   * and read back, and the deterministic command that sent it. A row an operator
+   * snoozed by hand has no record here, so this host leaves it alone.
+   */
+  snoozes: z.record(z.string(), snooze).optional(),
   /**
    * The task's parent thread on the Nucleus ACP provider, by task id. Role threads
    * are that thread's native subagent children, so the parent is the task's one
@@ -238,21 +226,21 @@ const schema = z.object({
    */
   parents: z.record(z.string(), parentThread).optional(),
   /**
-   * Why the native-parent path is not in use, when it is not: a missing provider
-   * instance, or a child that could not be created. Recorded for the host status and
-   * for the next pass, never as a task decision (a task keeps working on top-level
-   * role threads, which is the fallback).
+   * Whether this host can nest role threads right now: the Nucleus ACP provider is
+   * registered and ready. When it is not, the host says why on its status line and
+   * every role create refuses before the send, so the task waits visibly with the
+   * reason and the fix instead of launching a top-level fallback thread
+   * (nucleus#1366).
    */
   nesting: z
     .object({
-      state: z.enum(["nested", "fallback"]),
+      state: z.enum(["nested", "unavailable"]),
       reason: z.string(),
       at: z.string(),
     })
     .optional(),
 });
 export type T3State = z.infer<typeof schema>;
-export type T3SettleIntent = z.infer<typeof settleIntent>;
 export type T3AgentRecord = T3State["agents"][string];
 export type T3RetiredAgent = z.infer<typeof retiredAgent>;
 
@@ -261,11 +249,23 @@ export type T3RetiredAgent = z.infer<typeof retiredAgent>;
  * task and role, and the workspace it was launched into. A retired thread answers an
  * exact lookup from this record alone, without a native read.
  */
+/** The identity a thread's launch or follow-up recorded: what its labels and row read. */
+export type T3ThreadIdentity = {
+  workspaceId: string;
+  labels: Record<string, string>;
+  parentThreadId?: string;
+  title?: string;
+};
+
 export function agentRecord(
   state: T3State,
   threadId: string,
-): T3AgentRecord | T3RetiredAgent | undefined {
-  return state.agents[threadId] ?? state.retiredAgents?.[threadId];
+): T3ThreadIdentity | undefined {
+  return (
+    state.agents[threadId] ??
+    state.retiredAgents?.[threadId] ??
+    state.followUps?.[threadId]
+  );
 }
 
 /**

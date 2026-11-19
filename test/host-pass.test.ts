@@ -33,13 +33,22 @@ import { runSchema } from "../shared/contracts";
 type Loose = Record<string, any>;
 const HOST = "host-1";
 
-function fixture(t: TestContext, adapter: Loose) {
+function fixture(t: TestContext, adapter: Loose, options: { task?: boolean } = {}) {
   const store = new Store(":memory:");
   const engine = new Engine(store, adapter as Adapter, 60_000);
   t.after(async () => {
     await engine.stop();
     store.close();
   });
+  // The row step visits one task on the host; the other steps here are
+  // host-level calls.
+  if (options.task)
+    store.insert(
+      submission({ submissionId: "row-host-pass", title: "Row step" }),
+      HOST,
+      "handoff",
+      "a".repeat(40),
+    );
   const hostPass = new HostPass(
     enginePorts(
       engine,
@@ -63,24 +72,21 @@ function fixture(t: TestContext, adapter: Loose) {
 test("a step that throws is recorded and the host's later steps still run", async (t) => {
   const ran: string[] = [];
   const adapter = {
-    reconcileReportedSettlements: async () => {
-      ran.push("settlements");
+    reconcileTaskRow: async () => {
+      ran.push("rows");
     },
     reconcileThreadTitles: () => {
       ran.push("titles");
       throw new Error("titles fault");
     },
-    reconcileSettledThreads: async () => {
-      ran.push("settled");
-    },
   };
-  const f = fixture(t, adapter);
+  const f = fixture(t, adapter, { task: true });
 
   const result = await f.engine.withHost(HOST, () => f.hostPass.run(HOST));
 
   assert.deepEqual(
     ran,
-    ["settlements", "titles", "settled"],
+    ["rows", "titles"],
     "the client steps run in order, past the failure",
   );
   assert.equal(
@@ -118,7 +124,7 @@ test("a clean pass records no failure and answers the inventory it read", async 
 test("a step that fails at the transport boundary answers nothing for that host and nothing for another", async (t) => {
   const ran: string[] = [];
   const f = fixture(t, {
-    reconcileReportedSettlements: async () => {
+    reconcileTaskRow: async () => {
       const host = f.engine.activeHostId;
       if (host === HOST)
         throw new Error(`Transport not connected: host ${host} is unavailable`);
@@ -126,10 +132,7 @@ test("a step that fails at the transport boundary answers nothing for that host 
     reconcileThreadTitles: () => {
       ran.push("titles");
     },
-    reconcileSettledThreads: async () => {
-      ran.push("settled");
-    },
-  });
+  }, { task: true });
 
   const result = await f.engine.withHost(HOST, () => f.hostPass.run(HOST));
   assert.equal(
@@ -137,14 +140,10 @@ test("a step that fails at the transport boundary answers nothing for that host 
     false,
     "a connected claim is not an answer",
   );
-  assert.deepEqual(
-    ran,
-    ["titles", "settled"],
-    "the host's later steps still run",
-  );
+  assert.deepEqual(ran, ["titles"], "the host's later steps still run");
   assert.match(
     String(f.store.getMeta("hostPassError")),
-    /reconcileReportedSettlements: Transport not connected/,
+    /reconcileTaskRows: Transport not connected/,
   );
 
   // The next host's pass is its own reading, and the previous failure is not carried.

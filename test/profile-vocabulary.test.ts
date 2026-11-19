@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { T3CodeHost } from '../hosts/t3code/adapter';
 import { t3codeVocabulary } from '../hosts/t3code/vocabulary';
+import { acpStub, nucleusProvider } from './support/t3code-acp';
 import { paseoVocabulary } from '../hosts/paseo/vocabulary';
 import { PaseoAdapter } from '../service/paseo-composition';
 import { Engine } from '../core/engine';
@@ -39,7 +40,9 @@ async function t3Fixture(t: TestContext) {
   const directory = await realpath(root);
   const server = await t3Fake(t, directory);
   server.controls.providers = nightlyProviders();
-  const host = new T3CodeHost({ endpoint: server.endpoint, bearer: 'synthetic-bearer', statePath: join(root, 'state.json'), timeoutMs: 1_000, probeThreadId: 'synthetic-probe' });
+  server.controls.providers = [...(server.controls.providers ?? []), nucleusProvider];
+  const acp = acpStub(server.threads);
+  const host = new T3CodeHost({ endpoint: server.endpoint, bearer: 'synthetic-bearer', statePath: join(root, 'state.json'), timeoutMs: 1_000, probeThreadId: 'synthetic-probe', acp: () => acp.surface, reentryTimeoutMs: 200 });
   t.after(() => { host.close(); rmSync(root, { recursive: true, force: true }); });
   await host.connect();
   return { root, directory, host, server, catalog: await host.catalog() };
@@ -147,7 +150,7 @@ test('acceptance 1: removing any translation entry the pool uses fails the cover
 });
 
 const launchSpec = (workspaceId: string, profile: Profile, requestId: string): HostAgentSpec => ({ workspaceId, profile, title: 'Synthetic role', mcpBindingPath: null,
-  attempt: () => ({ requestId, prompt: 'Synthetic prompt', labels: { task: 'synthetic-task', role: 'worker' }, environment: {} }) });
+  attempt: () => ({ requestId, prompt: 'Synthetic prompt', labels: { 'nucleus.task': 'synthetic-task' }, environment: {} }) });
 
 test('acceptance 2: a canonical Opus profile launches on T3 as claudeAgent with full-access and its effort, and on Paseo with Paseo\'s ids, with no per-profile settings', async t => {
   const { directory, host, server, catalog } = await t3Fixture(t);

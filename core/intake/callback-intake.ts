@@ -140,42 +140,6 @@ export class CallbackIntake {
       ),
     );
   }
-  /**
-   * Settle the worker's own thread once its handover is accepted (Tom,
-   * 2026-11-12): the receipt is durable first, the effect runs on the worker's
-   * host, and a refusal or unknown outcome changes nothing — the thread keeps its
-   * state until a message wakes it or its next handover settles it again. Only
-   * the worker's own handover settles: a reviewer, coordinator or executor
-   * thread has its own lifecycle.
-   */
-  private async settleHandedOverWorker(
-    taskId: string,
-    sourceRun: Run | null | undefined,
-    status: Completion["status"],
-  ): Promise<void> {
-    if (status !== "ready_for_review" && status !== "report_ready") return;
-    if (sourceRun && sourceRun.role !== "revision") return;
-    let task: Task;
-    try {
-      task = this.store.task(taskId);
-    } catch {
-      return;
-    }
-    const agentId = sourceRun?.agentId ?? task.agentId;
-    const runId = sourceRun?.id ?? task.runId;
-    const hostId = sourceRun?.hostId ?? task.hostId;
-    if (!agentId || !runId || !hostId) return;
-    try {
-      // The presence check reads the adapter the task's own host serves: the
-      // default host's adapter never names this thread.
-      await this.engine.onTaskHost({ hostId }, async () => {
-        const settle = this.adapter.settleWorkerThread;
-        if (settle) await settle.call(this.adapter, agentId, runId);
-      });
-    } catch {
-      /* presentation only; the thread keeps its state and its next handover settles again */
-    }
-  }
   async complete(input: Completion, token: string) {
     const sourceRun = this.store.run(input.runId);
     this.store.authenticate(input.runId, token);
@@ -187,11 +151,7 @@ export class CallbackIntake {
     )
       throw new Error("Stale report: task and run identity do not match");
     const priorReceipt = this.store.receipt(proofFilesRemoved(input), token);
-    if (priorReceipt) {
-      await this.settleHandedOverWorker(input.taskId, sourceRun, input.status);
-      await this.settleReportedThread(sourceRun);
-      return priorReceipt;
-    }
+    if (priorReceipt) return priorReceipt;
     let verifiedPr: { url: string; head: string } | null = null;
     // A worker report is bound to this task by typed identity: the canonical source,
     // the task branch, the base branch and the exact head. Its prose may name no
@@ -303,8 +263,6 @@ export class CallbackIntake {
       }
       const receipt = this.resolution.complete(input, token, startEvidence);
       void this.engine.cleanContext(() => this.engine.wakeTask(input.taskId));
-      await this.settleHandedOverWorker(input.taskId, sourceRun, input.status);
-      await this.settleReportedThread(sourceRun);
       await this.resolution.settleCompletedExecutorBlocker(input);
       void this.engine.cleanContext(() => this.engine.wakeTask(input.taskId));
       return receipt;
@@ -329,9 +287,7 @@ export class CallbackIntake {
       sourceRun.role !== "executor" &&
       ["done", "cancelled"].includes(this.store.task(input.taskId).phase)
     ) {
-      const receipt = this.resolution.complete(input, token);
-      await this.settleReportedThread(sourceRun);
-      return receipt;
+      return this.resolution.complete(input, token);
     }
     // Spec 037/1090: a source approval is one exact shape, refused before any
     // proof routing or reviewer evidence is recorded.
@@ -417,9 +373,7 @@ export class CallbackIntake {
     );
     if (runRoute === "run" || runRoute === "reviewer") {
       if (isDispositionActive(this.store.task(input.taskId))) {
-        const receipt = recordLateCallbackEvidence(this.store, input, token);
-        await this.settleReportedThread(sourceRun);
-        return receipt;
+        return recordLateCallbackEvidence(this.store, input, token);
       }
       if (
         completionRoute(input.status, this.store.run(input.runId) ?? null) ===
@@ -536,11 +490,6 @@ export class CallbackIntake {
         "unfinished_continuation",
         JSON.stringify(unfinished),
       );
-    await this.settleHandedOverWorker(
-      input.taskId,
-      this.store.run(input.runId) ?? null,
-      input.status,
-    );
     void this.engine.cleanContext(() => this.engine.wakeTask(input.taskId));
     return response;
   }
@@ -587,19 +536,6 @@ export class CallbackIntake {
       kind: "branch",
       head: /^[a-f0-9]{40}$/.test(remote) ? remote : null,
     };
-  }
-  /** The accepted receipt is durable before the best-effort host presentation effect. */
-  private async settleReportedThread(
-    run: Run | null | undefined,
-  ): Promise<void> {
-    if (!run || run.role === "revision" || !run.agentId || !run.hostId) return;
-    try {
-      await this.engine.withHost(run.hostId, async () => {
-        await this.adapter.settleReportedThread?.(run.agentId!, run.id);
-      });
-    } catch {
-      /* T3 records the uncertain intent; a later host sweep retries it. */
-    }
   }
   /**
    * Bounded worker checkpoint. Identity, cleanliness, pushed-head and budget

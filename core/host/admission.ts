@@ -1420,9 +1420,9 @@ export function admitAdapter(raw: Adapter, admission: Admission): Adapter {
     ),
   );
   set(
-    "reconcileSettledThreads",
-    call("cleanup", "reconcileSettledThreads", (args) =>
-      requestIdentity("reconcileSettledThreads", args),
+    "reconcileTaskRow",
+    call("cleanup", "reconcileTaskRow", (args) =>
+      requestIdentity("reconcileTaskRow", args),
     ),
   );
   set(
