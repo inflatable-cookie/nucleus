@@ -1,3 +1,4 @@
+import { reviewerReportRequestRefusal } from './reviewer-report';
 import { MOVE_WORK_AUTHOR_REFUSAL, MOVE_WORK_REPLACEMENT_REFUSAL, MOVE_REVIEW_WORKSPACE_REFUSAL, MOVE_MERGE_ACCEPTANCE_REFUSAL } from "./control-refusals";
 import { RETAINED_PREREQUISITE_REFUSAL } from "./verb-refusal-text";
 import { readyReviewAtHead } from "../recovery/task-reasons";
@@ -143,8 +144,11 @@ function moveViews(facts: OwnerVerbFacts): TaskNextVerb[] {
     if (reader) {
       const state = reviewContinuationState(task, facts.store);
       const readerDecision = retainedReaderStateDecision(state);
-      if (state === 'exhausted' || state === 'awaiting' && reviewResultFencesRun(facts.store, task, reader))
-        return { available: true, args: {}, note: 'Nucleus verifies the exact PR head and observes the retained reviewer before requesting its report.' };
+      if (state === 'exhausted' || state === 'awaiting' && reviewResultFencesRun(facts.store, task, reader)) {
+        const reportRefusal = reviewerReportRequestRefusal(reader, facts.events);
+        return reportRefusal ? { available: false, refusal: reportRefusal }
+          : { available: true, args: {}, note: 'Nucleus verifies the exact PR head, preserves an active reviewer turn and asks an idle reviewer for its report.' };
+      }
       const storedRefusal = retainedReaderStoredRefusal(state, reviewContinuationWait(task, facts.store).reason);
       if (storedRefusal) return { available: false, refusal: storedRefusal };
       // An awaiting checkpoint is the one case where the move delegates a

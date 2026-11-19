@@ -1,3 +1,4 @@
+import { unsettledControlRefusal } from '../recovery/recovery-effects';
 import { restartTerminalRefusal } from './verb-refusal-text';
 import { DISPOSITION_CONTROL_REFUSAL, REMOVED_TASK_REFUSAL, parkedRestartRefusal } from './control-refusals';
 import { OPERATOR_BOARD_CALLER, isDispositionActive, WORKER_REPLACEMENT_CEILING, type Task, type TaskControlInput } from "../../shared/contracts";
@@ -10,7 +11,7 @@ import { DurableFenceRefusal } from "../intake/run-settlement";
 import { digest, now } from "../store/store";
 import type { Engine } from "../engine";
 import { resendExecutorReport } from "./executor-report";
-import { requestReviewerReport, requireReviewerReplacement, unreportedReviewer } from './reviewer-report';
+import { requestReviewerReport, requireReviewerReplacement, reviewerReportPlan } from './reviewer-report';
 import { verifyEnclosingOperation } from '../planning/enclosing-operation';
 import type { RestartRequest } from "./owner-shared";
 
@@ -42,7 +43,7 @@ export class RestartControls {
   }
 
   /** Handler-owned admission for restart displacement. */
-  prepareWorkerResume(input: { taskId: string; version: number; instruction: string; settleFences?: { detail: string; runIds: string[]; displacedRunIds?: string[] } }): Promise<() => Task> {
+  prepareWorkerResume(input: { taskId: string; version: number; instruction: string; settleFences?: { detail: string; runIds: string[]; displacedRunIds?: string[] } }): Promise<Task | (() => Task)> {
     return this.engine.workerRestarts.prepareWorkerResume(input);
   }
 
@@ -135,7 +136,6 @@ export class RestartControls {
     if (isDispositionActive(task)) throw Error(DISPOSITION_CONTROL_REFUSAL);
     // Round 4: a restart applies while paused; what it would start waits (deferOwnerVerb).
     const role = (input.role as RestartRole | undefined) ?? deriveRestartRole(task, this.store.runs(task.id));
-    const unreported = role === 'reviewer' ? unreportedReviewer(task, this.store.runs(task.id)) : null;
     if (role === 'reviewer' && fresh) await requireReviewerReplacement(this.engine, task, input.version);
     if (["done", "cancelled"].includes(task.phase) || task.resolution.mergedCommit) {
       if (task.resolution.mergedCommit && !['done', 'cancelled', 'syncing', 'closing', 'closeout'].includes(task.phase))
@@ -149,6 +149,8 @@ export class RestartControls {
       throw Error(restartTerminalRefusal(task, "refusal" in parked ? parked.refusal : undefined));
     }
     const shape = restartShape(task, this.store.runs(task.id), role, this.store.eventsAll(task.id));
+    const controlRefusal = unsettledControlRefusal(this.store, task);
+    if (controlRefusal) throw new RestartRefusal(controlRefusal);
     // nucleus#1195: the proof executor's one continuation is a re-report request,
     // never a relaunch, a fresh agent or a selector re-run.
     if (shape === "unreported_executor") return await resendExecutorReport(this.engine, input, task, reason);
@@ -187,10 +189,14 @@ export class RestartControls {
       if (["owner_stopped_worker", "stopped_revision"].includes(shape ?? ""))
         return this.engine.deferOwnerVerb(task, input, "held", { runId: targetRunId });
     }
-    if (unreported && !fresh && shape !== 'stalled_run' && (!(unreported.reviewCheckpoints?.length) || unreported.reviewBudgetExhaustedAt)) {
+    const report = role === 'reviewer' && !fresh && shape !== 'stalled_run'
+      ? reviewerReportPlan(task, this.store.runs(task.id), this.store.eventsAll(task.id)) : null;
+    if (report) {
+      if ("refusal" in report) throw new RestartRefusal(report.refusal);
+      const run = report.run;
       const wait = this.engine.dispatchWaitsFor(task, this.engine.isOwnerCall(), true);
-      if (wait) return this.engine.deferOwnerVerb(task, input, wait, { runId: unreported.id, head: unreported.head });
-      return requestReviewerReport(this.engine, task, unreported, input.version, reason, input.instruction);
+      if (wait) return this.engine.deferOwnerVerb(task, input, wait, { runId: run.id, head: run.head });
+      return requestReviewerReport(this.engine, task, run, input.version, reason, input.instruction);
     }
     // The ceiling remains the automatic loop breaker. Only a deliberate
     // operator-relayed fresh worker restart can pass it.

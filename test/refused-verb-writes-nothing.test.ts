@@ -183,10 +183,9 @@ const restartRows: Row[] = [
     setup: f => { f.update({ phase: 'blocked', workspaceIntent: true, workspaceId: 'workspace', directory: '/worktree' });
       f.adapter.findWorkspaces = async () => [{ id: 'other', directory: '/other' }] as never; },
     refusal: /Visible workspace does not uniquely match/ },
-  { name: 'worker lookup finds a match', shape: 'absent_worker', role: 'worker',
-    setup: f => { f.update({ phase: 'needs_attention', reason: ABSENT_WORKER_REASON, workspaceIntent: true, agentIntent: true, agentId: null, runId: 'absent-worker', workspaceId: 'workspace', directory: '/worktree', profile: worker });
-      f.adapter.findAgents = async () => [{ id: 'found', workspaceId: 'workspace' }] as never; },
-    refusal: /no longer proven absent/ },
+  { name: 'worker creation identity is incomplete', shape: 'absent_worker', role: 'worker',
+    setup: f => { f.update({ phase: 'needs_attention', reason: ABSENT_WORKER_REASON, workspaceIntent: true, agentIntent: true, agentId: null, runId: null, workspaceId: 'workspace', directory: '/worktree', profile: worker }); },
+    refusal: /requires a retained run/ },
   { name: 'unobservable', shape: 'blocked_worker', role: 'worker', setup: f => { blockedWorker(f); unobservable(f); }, refusal: /cannot be observed/ },
   { name: 'active worker', shape: 'blocked_worker', role: 'worker', setup: f => { blockedWorker(f); busyWorker(f); }, refusal: /active or awaiting a response/ },
   { name: 'fresh, resume unverifiable', shape: 'blocked_worker', role: 'worker', args: { fresh: true }, setup: f => { blockedWorker(f); refuseAdapter(f, 'verifyResume'); }, refusal: /verifyResume refused/ },

@@ -827,10 +827,11 @@ no matching owner stop keeps its ordinary handling. Releasing first leaves a pas
 that can act on the stale state. An active recovery run still fences the restart;
 let it finish or `stop` it. While the task is reviewing, `restart role=worker`
 doesn't apply; use `move to=work` under the hold instead, then release.
-A checkpointed reviewer has two ends to its retained-agent continuation: it spent
-its checkpoint budget, or its own agent was observed closed. `next` records that
-plainly, refuses the same-run continuation, and offers `fresh: true` there beside
-`move to=review`; the run, checkpoint and verdict history stay as evidence.
+When the checkpoint allowance is spent, use the retained reviewer's existing
+run. `next` offers a report request when it can apply. Nucleus preserves an
+active turn and asks an idle reviewer to finish or redeliver once. A reviewer
+proved closed can be replaced at the same exact head with `fresh: true`. The
+run, checkpoint and verdict history stay as evidence.
 Nucleus revisits an unfinished checkpoint from current facts. Admission and the
 existing recovery bound decide whether it opens a coordinator episode; the
 coordinator can request retained continuation or another permitted verb. A

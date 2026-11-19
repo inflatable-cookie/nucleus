@@ -1844,21 +1844,16 @@ review or merge credit; live participants and unsettled effects remain fences.
 - A single exact match binds in the sweep. An incomplete, unavailable or
   ambiguous reading holds the reservation. Release keeps the original task stop
   and recovery allowance. Ordinary admission gives any later launch a fresh run.
-- Worker and other resolution sweeps retain agentless creations on empty
-  inventory. Their owner-control cutover is tracked in
-  [Spec 066](../specs/066-one-reconciler.md).
-- `route role=reviewer now` on a proven-absent run releases it without an archive
-  wait: its credential is revoked and its incident resolves. The reviewer then
-  launches one fresh run on the named profile. A creation not yet proven absent
-  is refused, and route never stops or replaces it.
-- `restart` on a proven-absent resolution run releases it and launches a fresh
-  run from the role's current route. Its profile and provider come from the live
-  catalog, never the recorded creation payload. The new run has a new run ID and
-  creation intent.
-- A stale worker creation intent (no agent, no PR, no accepted result) with a
-  route or restart armed is settled by exact lookup first. Zero matches releases
-  the intent, and the armed replacement launches from the current route. One
-  matching agent binds to the task. Anything else waits for the operator.
+- Worker restart, immediate routing and an armed worker failover use the
+  recorded producer and the same exact lookup. One exact match binds to the
+  original run and credential. Pending, incomplete or ambiguous observations
+  keep the intent owned. After proven absence, release revokes the old
+  credential and returns the existing work to ordinary dispatch. The live
+  route and its sign-off, capacity and availability determine admission.
+- Restart and immediate route can replace an agentless resolution run after
+  the exact lookup proves absence following producer termination. Release
+  revokes its credential and re-enters the role's ordinary admission on a fresh
+  run ID. An agentless recovery also settles its bound episode.
 - A host-unavailable transport wait is re-evaluated by the first pass that sees
   the host back.
 

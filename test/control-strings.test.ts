@@ -1566,7 +1566,7 @@ for (const row of PARSED) {
  * that deletes a reader or writer lowers its floor deliberately.
  */
 const EVENT_KINDS =
-  `absent_creation_replaced:2:1 absent_worker_retry:2:1 adopted:1:0 agent_ask:2:3 agent_ask_answered:2:7 agent_ask_decision:1:3 agent_ask_delegated:1:2
+  `absent_creation_replaced:2:1 absent_worker_retry:1:1 adopted:1:0 agent_ask:2:3 agent_ask_answered:2:7 agent_ask_decision:1:3 agent_ask_delegated:1:2
 agent_ask_delegation_missed:1:3 agent_ask_delegation_unknown:1:3 agent_ask_joined:1:1 agent_ask_planning_ruling:1:1 agent_ask_resumed:1:2
 agent_ask_reviewer_missed:1:2 agent_ask_stale_answered:1:2 agent_ask_superseded:3:3 agent_created:1:1 agent_intent:1:3 automatic_retry_suppressed:1:1
 blocked_pr_identity_deferred:1:1 blocked_review_evidence:1:1 blocker_ladder_classified:1:1 callback_reminder:3:10 callback_reminder_extended:2:1

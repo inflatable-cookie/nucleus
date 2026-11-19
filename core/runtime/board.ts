@@ -20,7 +20,7 @@ import type { createUiSnapshotFactsCache, UiSnapshotFacts } from "../telemetry/u
 export interface BoardContext {
   store: Store;
   engine: Pick<Engine, "profiles" | "retiredObservationKey" | "queuedExternalWait"> & Partial<Pick<Engine, "profilesFor">> & {
-    resolution: Pick<Engine["resolution"], "slotAdmissionReason" | "slotAdmissionReader">;
+    resolution: Pick<Engine["resolution"], "slotAdmissionReason" | "slotAdmissionReader"> & Partial<Pick<Engine["resolution"], "graceMs">>;
   };
   decisions: Decisions;
   cachedTaskDetail: ReturnType<typeof createTaskDetailCache>;
@@ -258,7 +258,7 @@ export class RuntimeBoard {
     try {
       // The task host's own snapshot, as queue.detail reads it (nucleus#1151).
       const hostProfiles = this.context.engine.profilesFor?.(task.hostId);
-      const facts = { ...this.ownerVerbFacts(task), operatorBoard: input.caller === "operator (board)", ...(hostProfiles ? { hostProfiles } : {}) };
+      const facts = { ...this.ownerVerbFacts(task), creationGraceMs: this.context.engine.resolution?.graceMs, operatorBoard: input.caller === "operator (board)", ...(hostProfiles ? { hostProfiles } : {}) };
       if (task.phase !== "queued") return ownerTaskNext(facts);
       const context = taskWaitStateContext(this.context.store, task, null, candidate => this.context.engine.resolution.slotAdmissionReason(candidate));
       const reason = queuedReason(this.context.store, task, context, candidate => this.context.engine.queuedExternalWait(candidate));

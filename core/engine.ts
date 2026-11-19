@@ -1027,7 +1027,6 @@ export class Engine {
         [
           "ensureIncident",
           "resolveIncident",
-          "resumeAbsentWorker",
           "returnToDispatch",
           "saveIncident",
         ],
@@ -1151,6 +1150,7 @@ export class Engine {
         [
           "activeHostId",
           "adapter",
+          "control",
           "host",
           "launchAgent",
           "note",
@@ -2000,7 +2000,7 @@ export class Engine {
       runIds: string[];
       displacedRunIds?: string[];
     };
-  }): Promise<() => Task> {
+  }): Promise<Task | (() => Task)> {
     return this.workerRestarts.prepareWorkerResume(input);
   }
   repinInstruction(input: { taskId: string; version: number }): Promise<Task> {

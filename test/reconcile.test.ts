@@ -1,3 +1,4 @@
+import { readCreationAttempt, settleCreationAttempt } from '../core/store/store-task-funnel';
 import { fakeAdapter, profile } from './support/fakes';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -818,9 +819,13 @@ test('an uncertain reviewer creation refuses immediate owner routing', async () 
 });
 
 /** The barge#066 stored shape: a worker creation intent with no agent, on a changes_requested task with no PR. */
-function staleWorkerTask(f: Fixture) {
-  f.store.update(f.task.id, { phase: 'changes_requested', agentId: null, agentIntent: true, runId: 'stale-worker-run', prHead: null, prUrl: null, completion: null, reason: 'Changes: stale creation' });
-  return f.current();
+function staleWorkerTask(f: Fixture, stopped = true) {
+  const runId = 'stale-worker-run';
+  f.store.setCredential(runId, 'worker-creation-token');
+  const task = f.store.update(f.task.id, { phase: 'changes_requested', agentId: null, agentIntent: true, runId, prHead: null, prUrl: null, completion: null, reason: 'Changes: stale creation' }, 'agent_intent', runId);
+  const attempt = readCreationAttempt(f.store, { id: runId, taskId: task.id, hostId: task.hostId, workspaceId: task.workspaceId, role: 'worker' })!;
+  if (stopped) settleCreationAttempt(f.store, attempt, 'threw');
+  return attempt;
 }
 
 test('a route armed over a stale worker creation intent launches a fresh worker from the current route after exact lookup', async () => {
@@ -840,6 +845,57 @@ test('a route armed over a stale worker creation intent launches a fresh worker 
     assert.deepEqual(launched, [author2.id]);
   } finally { await f.close(); }
 });
+
+for (const action of ['restart', 'route'] as const) {
+  test(`C4/C7 ${action} waits through a live producer and partial inventory, then the sweep admits once`, async () => {
+    const f = fixture(); try {
+      const attempt = staleWorkerTask(f, false);
+      const author2 = profile('author-2');
+      addProfile(f, author2, 'author-2', 'worker');
+      const nextRestart = () => ownerVerbViews(collectOwnerVerbFacts(f.store, f.current())).find(view => view.verb === 'restart');
+      assert.match(nextRestart()?.refusal ?? '', /recorded producer/);
+
+      let mode: 'empty' | 'partial' = 'empty';
+      f.adapter.findRunAgents = async run => {
+        assert.equal(run.id, attempt.id);
+        assert.equal(run.hostId, attempt.hostId);
+        assert.equal(run.workspaceId, attempt.workspaceId);
+        return mode === 'partial' ? [{ id: 'label-only', workspaceId: 'workspace', hostConfirmed: false }] : [];
+      };
+      await f.engine.performTaskControl({ taskId: f.task.id, version: f.current().version, action, role: 'worker',
+        reason: 'Continue approved work', caller: OWNER, ...(action === 'route' ? { now: true, profileId: author2.id } : {}) });
+      await f.engine.wake();
+      assert.match(f.current().resolution.stop?.detail ?? '', /recorded producer/);
+      assert.equal(f.current().runId, attempt.id);
+      assert.equal(f.events('absent_worker_released').length, 0);
+      assert.doesNotThrow(() => f.store.authenticate(attempt.id, 'worker-creation-token'));
+
+      mode = 'partial';
+      settleCreationAttempt(f.store, attempt, 'threw');
+      await f.engine.wake();
+      assert.match(f.current().resolution.stop?.detail ?? '', /partial or ambiguous/);
+      assert.equal(f.events('absent_worker_released').length, 0);
+      const waits = f.events('task_waiting').length;
+      await f.engine.wake();
+      assert.equal(f.events('task_waiting').length, waits);
+
+      mode = 'empty';
+      await f.engine.wake();
+      await f.engine.wake();
+      assert.notEqual(f.current().runId, attempt.id);
+      assert.ok(f.current().agentId);
+      assert.equal(f.current().profile?.id, action === 'route' ? author2.id : 'author');
+      assert.throws(() => f.store.authenticate(attempt.id, 'worker-creation-token'), /Unauthorized/);
+      assert.deepEqual(f.events('absent_worker_released').map(event => JSON.parse(event.detail)),
+        [{ runId: attempt.id, attemptId: attempt.attemptId, terminatedBy: 'call_settled' }]);
+      assert.equal(nextRestart()?.available, false);
+      const recorded = [f.events('agent_created').length, f.events('task_waiting').length, f.reminders.length];
+      await f.engine.wake();
+      assert.deepEqual([f.events('agent_created').length, f.events('task_waiting').length, f.reminders.length], recorded);
+      assert.equal(f.events('absent_worker_released').length, 1);
+    } finally { await f.close(); }
+  });
+}
 
 test('a host-unavailable transport wait is re-evaluated once the host is back, not kept as a stale reason', async () => {
   const f = fixture(); try {

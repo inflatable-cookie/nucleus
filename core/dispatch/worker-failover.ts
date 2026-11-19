@@ -1,9 +1,11 @@
 import {
-  staleWorkerIntent,
+  bindWorkerCreation,
+  observeWorkerCreation,
   releaseStaleWorkerIntent,
+  sameWorkerCreation,
+  staleWorkerIntent,
+  workerCreationRefusal,
 } from "../recovery/absent-creation/stale-worker";
-import { creationLookup } from "../recovery/absent-creation/restarts";
-import type { ResolutionAdapter } from "../resolution";
 import type { Resolution } from "../resolution";
 import type { Profile, Run, Task } from "../../shared/contracts";
 import {
@@ -509,6 +511,7 @@ function planWorkerFailover(
 export type WorkerFailoverContext = Pick<
   Engine,
   | "activeHostId"
+  | "control"
   | "adapter"
   | "host"
   | "launchAgent"
@@ -546,84 +549,22 @@ export class WorkerFailover {
   get resolution() {
     return this.engine.resolution;
   }
-  /**
-   * Settle a worker creation intent that never bound an agent, once a route or
-   * restart armed a replacement over it. Exact lookup decides: no agent releases
-   * the intent so the armed replacement launches from the current route; one
-   * matching agent binds to the task; anything else waits or escalates. A creation
-   * younger than the grace window is still the in-flight launch's to settle.
-   */
+  /** A route over an unbound creation waits until its original occurrence settles. */
   private async settleStaleWorkerIntent(task: Task): Promise<void> {
-    const intent = this.store
-      .eventsAll(task.id)
-      .filter(
-        (event) => event.kind === "agent_intent" && event.detail === task.runId,
-      )
-      .at(-1);
-    if (intent && Date.now() - Date.parse(intent.at) < this.resolution.graceMs)
-      return;
-    const lookup = this.adapter as typeof this.adapter &
-      Partial<Pick<ResolutionAdapter, "findRunAgents">>;
-    if (!task.runId || !lookup.findRunAgents) {
-      this.engine.note(
-        task.id,
-        "Exact worker creation lookup is unavailable; the intent remains owned",
-        "operator_needed",
-        "needs_attention",
-      );
-      return;
-    }
-    const identity = {
-      id: task.runId,
-      taskId: task.id,
-      hostId: task.hostId,
-      role: "worker",
-      workspaceId: task.workspaceId,
-    } as unknown as Run;
-    let found, other;
-    try {
-      found = await lookup.findRunAgents(identity);
-      // An older task thread is not proof that this occurrence exists or is absent.
-      other = found.length ? [] : await this.adapter.findAgents(task);
-    } catch (error) {
-      if (isTransportFailure(error)) {
-        this.resolution.transportDeferred(this.store.task(task.id), error);
-        return;
-      }
-      throw error;
-    }
-    const latest = this.store.task(task.id);
-    if (!staleWorkerIntent(latest) || latest.version !== task.version) return;
-    const decision = creationLookup(found, task.workspaceId);
-    if (decision.kind === "absent" && other.length === 0) {
-      this.store.transaction(() =>
-        releaseStaleWorkerIntent(
-          this.store,
-          latest,
-          "exact lookup proved no worker; the armed replacement launches from the current route",
-        ),
-      );
-      return;
-    }
-    if (decision.kind === "bound") {
-      this.store.update(
-        task.id,
-        {
-          agentId: decision.agentId,
-          phase: "working",
-          reason: "Recovered worker identity",
-        },
-        "agent_recovered",
-        decision.agentId,
-      );
-      return;
-    }
-    this.engine.note(
-      task.id,
-      "Worker creation lookup is partial or ambiguous; the intent remains owned",
-      "operator_needed",
-      "needs_attention",
-    );
+    await this.engine.control(async () => {
+      const current = this.store.task(task.id);
+      if (current.version !== task.version || workerCreationRefusal(this.store, current)) return;
+      const observed = await observeWorkerCreation(this.store, this.adapter, current, this.resolution.graceMs);
+      this.store.transaction(() => {
+        const latest = this.store.task(task.id);
+        if (latest.version !== current.version || workerCreationRefusal(this.store, latest)
+          || !sameWorkerCreation(this.store, latest, observed)) return;
+        if (observed.kind === "absent") releaseStaleWorkerIntent(this.store, latest, observed.proof);
+        else if (observed.kind === "bound") bindWorkerCreation(this.store, latest, observed.agentId);
+        else if (!latest.resolution.stop || ["lifecycle", "operator_needed"].includes(latest.resolution.stop.reason))
+          this.resolution.waiting(latest, observed.detail, "lifecycle");
+      });
+    }, `task:${task.id}`);
   }
 
   async recoverExhaustedWorkers(scopedHost?: string): Promise<void> {
@@ -644,14 +585,15 @@ export class WorkerFailover {
       if (original.hostId !== scopedHost) continue;
       if (!this.engine.taskHostAvailable(original)) continue;
       // The host is back: a host-unavailable wait recorded by an earlier pass is re-evaluated here, not kept as a stale reason.
-      this.resolution.clearTransportWait(original);
+      const current = this.store.task(original.id);
+      this.resolution.clearTransportWait(current);
       // A route-armed replacement over a stale creation intent cannot be consumed until an exact lookup settles that intent.
       if (
         staleWorkerIntent(original) &&
         original.failoverReason &&
         original.phase !== "queued"
       ) {
-        await this.settleStaleWorkerIntent(original);
+        await this.settleStaleWorkerIntent(this.store.task(original.id));
         continue;
       }
       // An owner `move to=work` for a gone author is a replacement with no old

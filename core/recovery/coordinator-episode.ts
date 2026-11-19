@@ -6,7 +6,7 @@ import type { Resolution } from '../resolution';
 import { missingOriginHasPlanner } from '../questions/origin';
 import { randomUUID } from 'node:crypto';
 import { threadRunningReason } from '../intake/thread-waits';
-import { creationProducerId, readCreationAttempt } from '../store/store-task-funnel';
+import { creationTermination, readCreationAttempt } from '../store/store-task-funnel';
 import { creationLookup } from './absent-creation/restarts';
 import { taskProgressDigest } from './coordinator-report';
 import { recoveryApplicationsInFlight } from './coordinator-settlement';
@@ -37,12 +37,7 @@ const agentlessCreation=(run:Run|null):run is Run=>Boolean(run&&run.role==='reco
 export async function observeRecoveryCreation(resolution:RecoveryContext, task:Task, run:Run){
  if(!run.hostId||run.hostId!==task.hostId||!run.workspaceId||!resolution.hostAvailable(task,run))
   throw Error('The recovery creation lookup needs its recorded host and workspace online');
- const attempt=readCreationAttempt(resolution.store,run);
- const terminatedBy=attempt?.settlement ? 'call_settled'
-  : attempt&&attempt.producerId!==creationProducerId ? 'service_replaced' : null;
- const graceFrom=Date.parse(attempt?.settlement?.at??attempt?.reservedAt??'');
- const proof=attempt&&terminatedBy&&Date.now()-graceFrom>=resolution.graceMs
-  ? {attemptId:attempt.attemptId,terminatedBy} : null;
+ const proof=creationTermination(resolution.store,run,resolution.graceMs);
  const found=await resolution.onTaskHost(run,()=>{
   if(!resolution.adapter.findRunAgents)throw Error('Run identity lookup is unavailable');
   return resolution.adapter.findRunAgents(run);

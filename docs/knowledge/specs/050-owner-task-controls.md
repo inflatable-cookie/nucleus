@@ -454,20 +454,12 @@ is lost and no reviewer is replaced by a read. A failed, ambiguous or relocated
 observation, an active turn, a pending permission, or a merely idle or errored
 agent records nothing.
 
-`next` then reports the closed observation with its run, agent, checkpoint and
-head, refuses the same-run continuation for both causes, and offers
-`restart role=reviewer fresh` (a fresh reviewer on the role's route at the same
-recorded head), with `route role=reviewer` with `now` as the other deliberate
-replacement. A spent budget keeps its own recorded stop, and a held task
-keeps its hold; neither is overwritten. Since Tom's 2026-10-27 ruling
-("Preserve the reader for everyone", decision 029a631e) `move to=review`
-preserves the reader it can continue rather than replacing it, so for these two
-causes the move refuses and names the deliberate `restart role=reviewer fresh`
-instead of silently starting a fresh reader; the read view and the applied
-control are the same rule. The owner's chosen verb settles the closed run
-through its ordinary transaction, so the recovery is one `owner_control` event
-with no duplicate delivery, and the fresh reviewer owns its complete independent
-reading and verdict.
+A spent checkpoint allowance ends checkpoint continuation. `next` offers the
+retained reviewer's report request when applicable. An active turn keeps the
+report, and an idle reader can finish or redeliver on its existing credential.
+A reviewer proved gone or ineligible can be replaced on the role's route,
+subject to the existing task, source and admission gates. The original reader's
+checkpoint and verdict history stays with its run.
 
 ## Worker replacement ceiling
 

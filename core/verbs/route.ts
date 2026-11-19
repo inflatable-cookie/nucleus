@@ -1,3 +1,5 @@
+import { DurableFenceRefusal } from '../intake/run-settlement';
+import { unsettledControlRefusal } from '../recovery/recovery-effects';
 import { archiveReplacedReviewer } from '../workspaces/thread-archive-replacement';
 import { routeStateRefusal } from './control-refusals';
 import { REMOVED_TASK_REFUSAL } from './control-refusals';
@@ -17,7 +19,11 @@ import { OPERATOR_WORKER_REMAP_REASON, PROFILE_CATALOG_LOADING_REFUSAL, isAccept
 import { decideWorkerReplacement, retainedWorkerFailureCause } from "../recovery/worker-replacement";
 import { proofOnlyReceiptAwaitingReview } from "../qa/proof-records";
 import { requireReviewerReplacement } from './reviewer-report';
-import { provenAbsentCreation } from '../recovery/absent-creation/decisions';
+import { observeRecoveryCreation } from '../recovery/coordinator-episode';
+import { creationLookup } from '../recovery/absent-creation/restarts';
+import { creationTermination, readCreationAttempt } from '../store/store-task-funnel';
+
+import { bindWorkerCreation, observeWorkerCreation, releaseStaleWorkerIntent, sameWorkerCreation, staleWorkerIntent, workerCreationRefusal } from '../recovery/absent-creation/stale-worker';
 
 /** Build the route's task patch from facts captured in the transaction. */
 export function routePatch(f: {
@@ -54,7 +60,7 @@ export function routePatch(f: {
   } else if (role === 'reviewer') {
     const ownsReviewerSlot = !currentRunLive || currentRun!.role === 'reviewer';
     const activeResolution = ['verifying', 'merging', 'syncing', 'closing'].includes(current.phase);
-    if ((replaceLive || !live) && ownsReviewerSlot && !activeResolution) {
+    if ((replaceLive || !live && (!current.resolution.reviewerAgentId || waitingOnRole)) && ownsReviewerSlot && !activeResolution) {
       const acceptedReview = isAcceptedReview(current.resolution.review) && current.resolution.review!.head === current.prHead;
       if (current.phase === 'reviewing' || waitingOnRole) {
         patch.phase = 'awaiting_review';
@@ -152,8 +158,9 @@ export class RouteControls {
       // The displacement a `now` route owes; a sign-off-pending route owes none
       // and is written like a route without `now`.
       const replaceLive = replaceNow && !signoffPendingNow;
-      if (replaceLive && role === 'reviewer' && task.resolution.reviewerAgentId
-        && task.resolution.reviewerProfile?.id === profileId)
+      const controlRefusal = replaceLive ? unsettledControlRefusal(this.store, task) : null;
+      if (controlRefusal) throw new DurableFenceRefusal(controlRefusal);
+      if (replaceLive && role === 'reviewer')
         await requireReviewerReplacement(this.engine, task, task.version);
 
       // A `route now` displaces that role's live run, so a worker replacement owes
@@ -173,7 +180,30 @@ export class RouteControls {
         throw Error(this.engine.replacementCeilingRefusal(task));
       }
 
-      const live = this.routeLiveRun(task, role);
+      let workerCreation: Awaited<ReturnType<typeof observeWorkerCreation>> | null = null;
+      if (replaceLive && role === 'worker' && task.agentIntent && !task.agentId) {
+        const refusal = workerCreationRefusal(this.store, task);
+        if (refusal) throw Error(refusal);
+        workerCreation = await observeWorkerCreation(this.store, this.adapter, task, this.resolution.graceMs);
+      }
+
+      const recoveryCreation = role === 'coordinator' && replaceLive ? this.resolution.recovery.absentRun(task) : null;
+      const live = recoveryCreation ? { run: recoveryCreation } : this.routeLiveRun(task, role);
+      const agentless = replaceLive && live?.run && !live.run.agentId ? live.run : null;
+      const recoveryObservation = agentless && recoveryCreation
+        ? await observeRecoveryCreation(this.resolution, task, recoveryCreation) : null;
+      let absentRun: { run: Run; attemptId: string } | null = null;
+      if (agentless && !recoveryObservation) {
+        const proof = creationTermination(this.store, agentless, this.resolution.graceMs);
+        if (!proof || agentless.status !== 'uncertain' || agentless.hostId !== task.hostId || !this.resolution.adapter.findRunAgents)
+          throw Error(`route now cannot replace the ${role}'s creation until an exact lookup proves no agent exists after its producer has stopped`);
+        const found = await this.resolution.adapter.findRunAgents(agentless);
+        if (creationLookup(found, agentless.workspaceId).kind !== 'absent')
+          throw Error(`route now cannot replace the ${role}'s creation while its agent is present or placement is uncertain`);
+        absentRun = { run: agentless, attemptId: proof.attemptId };
+      }
+      if (recoveryObservation && (recoveryObservation.lookup.kind !== 'absent' || !recoveryObservation.proof))
+        throw new DurableFenceRefusal('Recovery creation is still owned; route without now or wait for an exact empty lookup after its producer stops');
       // A route normally affects the next run only. If the task is parked on a
       // completed run of this role, routing it is also the owner's instruction
       // to start that missing next run (the same transition restart would take).
@@ -189,9 +219,7 @@ export class RouteControls {
       const admittedCompletion = task.completion?.eventId ?? null;
       const admittedRunCompletion = live?.run?.completion?.eventId ?? null;
       let archivePending = false;
-      // A proven-absent reviewer creation has no thread to stop or archive: it is released in the transaction below.
-      const absentRun = replaceLive && role === 'reviewer' && live?.run && provenAbsentCreation(live.run) ? live.run : null;
-      if (replaceLive && live && !absentRun) {
+      if (replaceLive && live && !agentless) {
         archivePending = await this.stopRouteRun(task, role, live.run, operationId);
         task = this.store.task(task.id);
         // Spec 050: a completed callback that wins the replacement race is
@@ -233,8 +261,17 @@ export class RouteControls {
       const updated = this.store.transaction(() => {
         let current = this.store.task(task.id);
         this.engine.requireOwnerControlCurrent(current, task.version, "Task changed during route");
+        if (recoveryObservation) {
+          const released = this.resolution.recovery.releaseAbsent(recoveryObservation);
+          if (!released) throw Error('Recovery creation changed during route; refresh before retrying');
+          current = released;
+        }
         if (absentRun) {
-          this.resolution.releaseAbsentRun(current, absentRun.id, `route now ${role} to ${profileId}`);
+          const { run, attemptId } = absentRun;
+          if (JSON.stringify(this.store.run(run.id)) !== JSON.stringify(run)
+            || readCreationAttempt(this.store, run)?.attemptId !== attemptId)
+            throw Error('Run creation changed during route; refresh before retrying');
+          this.resolution.releaseAbsentRun(current, run.id, `route now ${role} to ${profileId}`);
           current = this.store.task(task.id);
         }
         const thinkingPatch = role === 'worker' && !unsignedRoute ? input.thinkingOptionId ?? honouredWorkerThinking(task, this.store.pool(), this.store.usageLevel(), requestedTierOfTask, climbedTierOfTask) : undefined;
@@ -256,23 +293,37 @@ export class RouteControls {
               failure: retainedWorkerFailureCause({ task: current, groupUnavailable: availability && groupIsUnavailable(availability)
                 ? { group: assignedGroup!, reason: String(availability.reason ?? '') } : null }),
               explicitOperatorRelay: false, freshRestart: false });
-            if (!decision.allowed) replacementRefusal = { rule: decision.rule, detail: decision.detail };
+            if (!workerCreation && !decision.allowed) replacementRefusal = { rule: decision.rule, detail: decision.detail };
           }
         }
-        const patch = routePatch({ current, role, profileId, reason, replaceLive, live: Boolean(live), currentRun, waitingOnRole,
+        if (workerCreation) {
+          const refusal = workerCreationRefusal(this.store, current);
+          if (refusal) throw Error(refusal);
+          if (!sameWorkerCreation(this.store, current, workerCreation))
+            throw Error('Worker creation changed during route; refresh before retrying');
+        }
+        const patch = routePatch({ current, role, profileId, reason, replaceLive: replaceLive && !workerCreation, live: Boolean(live) || role === 'worker' && staleWorkerIntent(current), currentRun, waitingOnRole,
           hasUnreleasedRun: role === 'coordinator' && !replaceLive && !live ? this.store.runs(current.id).some(run => !run.released && run.id !== this.coordinatorActionRunId.getStore()) : false,
           requests, includeThinking: role === 'worker' && !unsignedRoute, thinking: thinkingPatch,
           lifted: exclusionLifted ? lifted : null, continuation, replacementRefusal });
         if (replacementRefusal) this.store.event(current.id, 'worker_replacement_refused', `${replacementRefusal.rule}: ${replacementRefusal.detail}`);
-        return this.store.update(current.id, archivePending ? { ...patch, phase: current.phase,
+        const routed = this.store.update(current.id, archivePending ? { ...patch, phase: current.phase,
           reason: 'Reviewer replacement archive is not confirmed; the launch waits until observation releases the retained reviewer, and it releases once that thread is proven archived, gone or closed',
           resolution: current.resolution,
         } : patch, "route_changed", JSON.stringify({
           role, profileId, thinkingOptionId: input.thinkingOptionId ?? null, reason, now: replaceNow,
           phaseBefore: current.phase, independenceWaived, exclusionLifted, before,
         }));
+        if (!workerCreation) return routed;
+        if (workerCreation.kind === 'absent')
+          return releaseStaleWorkerIntent(this.store, routed, workerCreation.proof, continuation);
+        if (workerCreation.kind === 'bound')
+          return bindWorkerCreation(this.store, routed, workerCreation.agentId);
+        if (!routed.resolution.stop || ['lifecycle', 'operator_needed'].includes(routed.resolution.stop.reason))
+          this.resolution.waiting(routed, workerCreation.detail, 'lifecycle');
+        return this.store.task(routed.id);
       });
-      if ((replaceLive && live) || this.coordinatorActionRunId.getStore())
+      if ((replaceLive && live && !agentless) || this.coordinatorActionRunId.getStore())
         settleSupersededFences(this.store, updated.id, `route now replaced the live ${role} run`, now(), this.coordinatorActionRunId.getStore());
       // The new request replaces the question the old one was waiting on.
       if (before?.signoff?.status === "pending" && before.signoff.decisionId)
@@ -328,11 +379,9 @@ export class RouteControls {
       .flatMap(row => { try { const detail = JSON.parse(row.detail) as { effectId?: string; status?: string; turnId?: string | null }; return detail.effectId === intent.effectId ? [detail] : []; } catch { return []; } }) : [];
     const recordedTurn = prior.find(detail => detail.status === "intent");
     const alreadyStopped = prior.some(detail => detail.status === "sent" || detail.status === "inactive");
-    // An unresolved stop is resent only to the same known turn: an unknown turn
-    // on either side cannot prove the live turn is the one this operation
-    // stopped, and unknown delivery is never permission to retry blindly.
-    if (!alreadyStopped && recordedTurn && busy && (!recordedTurn.turnId || !intent.turnId))
-      throw Error(`route now cannot prove the live ${role} turn is the one this operation stopped; route again to stop the current turn`);
+    if (!alreadyStopped && recordedTurn && busy
+      && (!recordedTurn.turnId || !intent.turnId || recordedTurn.turnId === intent.turnId))
+      throw Error(`route now still has an unresolved stop for the ${role}; wait for observation to settle its delivery`);
     if (alreadyStopped || (recordedTurn && recordedTurn.turnId !== intent.turnId)) {
       this.store.event(task.id, "route_stop_settled", JSON.stringify({ ...intent, turnId: recordedTurn?.turnId ?? intent.turnId, status: "replayed",
         ...(intent.turnId && recordedTurn?.turnId !== intent.turnId ? { untouchedTurnId: intent.turnId } : {}) }));

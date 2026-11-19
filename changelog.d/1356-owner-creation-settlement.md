@@ -1,0 +1,1 @@
+Restart and route preserve an unresolved worker creation until its producer has stopped and an exact host lookup can settle it. A spent reviewer checkpoint allowance keeps report recovery on the retained reviewer.

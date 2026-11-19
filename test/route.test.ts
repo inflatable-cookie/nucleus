@@ -696,17 +696,17 @@ for (const supplied of [false, true]) test(`routed blocked worker moves its reta
   } finally { await f.close(); }
 });
 
-test('route now stops and replaces a live reviewer without losing the PR or head', async () => {
+test('route now stops and replaces an ineligible reviewer without losing the PR or head', async () => {
   const f = fixture(); try {
     f.store.putRun({ id: 'rev-live', taskId: f.task.id, role: 'reviewer', generation: 1, head, base, agentId: 'reviewer', workspaceId: 'workspace',
-      profile: f.engine.profiles.find(p => p.id === 'luna')!, status: 'running', createdAt: new Date().toISOString(),
+      profile: f.engine.profiles.find(p => p.id === 'authorrev')!, status: 'running', createdAt: new Date().toISOString(),
       lastObservedAt: null, active: true, idleSince: null, completion: null, released: false } as Run);
     f.store.setCredential('rev-live', 'token');
     f.store.update(f.task.id, { phase: 'reviewing', resolution: { ...f.current().resolution, currentRunId: 'rev-live', reviewerAgentId: 'reviewer',
-      reviewerProfile: f.engine.profiles.find(p => p.id === 'luna')! } });
+      reviewerProfile: f.engine.profiles.find(p => p.id === 'authorrev')! } });
     f.observations.set('reviewer', { id: 'reviewer', workspaceId: 'workspace', status: 'running', active: true, permissions: false, error: '', activeTurnId: 'turn-9' });
 
-    const routed = await f.control({ role: 'reviewer', profileId: 'authorrev', now: true, reason: 'Replace the live reviewer' });
+    const routed = await f.control({ role: 'reviewer', profileId: 'luna', now: true, reason: 'Replace the non-independent reviewer' });
     assert.deepEqual(f.stops, ['reviewer'], 'the live reviewer turn was stopped through Paseo');
     assert.equal(f.current().resolution.currentRunId, null);
     assert.equal(f.current().resolution.reviewerAgentId, null);
@@ -720,7 +720,7 @@ test('route now stops and replaces a live reviewer without losing the PR or head
     await f.engine.wake();
     const run = f.creates.find(candidate => candidate.role === 'reviewer');
     assert.ok(run, 'the replacement reviewer launches');
-    assert.equal(run.profile?.id, 'authorrev', 'the replacement starts on the new route');
+    assert.equal(run.profile?.id, 'luna', 'the replacement starts on the new route');
     assert.equal(f.current().prUrl, 'https://github.com/example/repo/pull/1', 'the PR is kept');
     assert.equal(f.current().prHead, head, 'the exact head is kept');
   } finally { await f.close(); }
@@ -734,16 +734,16 @@ test('a removable host finishes a reviewer route after its stop reply precedes i
     f.adapter.settleReportedThread = async id => { settled.push(id); };
     f.adapter.stopAgentTurn = async id => { f.stops.push(id); };
     f.store.putRun({ id: 'rev-live', taskId: f.task.id, hostId: 'host', role: 'reviewer', generation: 1, head, base,
-      agentId: 'reviewer', workspaceId: 'workspace', profile: f.engine.profiles.find(p => p.id === 'luna')!,
+      agentId: 'reviewer', workspaceId: 'workspace', profile: f.engine.profiles.find(p => p.id === 'authorrev')!,
       status: 'running', createdAt: new Date().toISOString(), lastObservedAt: null, active: true,
       idleSince: null, completion: null, released: false });
     f.store.setCredential('rev-live', 'token');
     f.store.update(f.task.id, { phase: 'reviewing', resolution: { ...f.current().resolution,
-      currentRunId: 'rev-live', reviewerAgentId: 'reviewer', reviewerProfile: f.engine.profiles.find(p => p.id === 'luna')! } });
+      currentRunId: 'rev-live', reviewerAgentId: 'reviewer', reviewerProfile: f.engine.profiles.find(p => p.id === 'authorrev')! } });
     f.observations.set('reviewer', { id: 'reviewer', workspaceId: 'workspace', status: 'running', active: true,
       permissions: false, error: '', activeTurnId: 'turn-9' });
 
-    await f.control({ role: 'reviewer', profileId: 'authorrev', now: true, reason: 'Replace the live reviewer' });
+    await f.control({ role: 'reviewer', profileId: 'luna', now: true, reason: 'Replace the non-independent reviewer' });
     const key = qualifiedThreadArchiveEffectKey('host', 'reviewer');
     assert.deepEqual(f.stops, ['reviewer']);
     assert.equal(f.store.run('rev-live')!.released, false, 'the still-active stopped turn retains its run');

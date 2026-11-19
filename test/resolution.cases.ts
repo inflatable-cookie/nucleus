@@ -14607,6 +14607,42 @@ test("C4 restart requires both exact absence and a settled producer", async () =
   }
 });
 
+test("C4 route now releases only the exact absent recovery and leaves ordinary review available", async () => {
+  const f = fixture();
+  const launch = startC4(f);
+  try {
+    const { run, token } = await launch.started;
+    await f.engine.resolution.recovery.pass(f.task.id);
+    const route = () => f.engine.performTaskControl({
+      taskId: f.task.id, version: f.current().version, action: "route", role: "coordinator",
+      now: true, profileId: run.profile!.id, reason: "Select the recovery route",
+    });
+    await assert.rejects(route(), /Recovery creation is still owned/);
+    assert.doesNotThrow(() => f.store.authenticate(run.id, token));
+    assert.equal(nextC4Move(f.store, f.task.id)?.available, false);
+
+    launch.finish();
+    await launch.route;
+    f.adapter.findRunAgents = async () => [{ id: "partial-recovery", workspaceId: run.workspaceId, hostConfirmed: false }];
+    await assert.rejects(route(), /Recovery creation is still owned/);
+    assert.equal(f.store.run(run.id)?.released, false);
+
+    f.adapter.findRunAgents = async () => [];
+    await route();
+    assert.equal(f.store.run(run.id)?.released, true);
+    assert.equal(f.store.run(run.id)?.status, "superseded");
+    assert.throws(() => f.store.authenticate(run.id, token), /Unauthorized/);
+    assert.equal(f.current().resolution.recovery?.status, "resolved");
+    assert.equal(nextC4Move(f.store, f.task.id)?.available, true);
+    await f.engine.resolution.recovery.pass(f.task.id);
+    assert.equal(f.store.eventsAll(f.task.id).filter(event => event.kind === "absent_recovery_released").length, 1);
+  } finally {
+    launch.finish();
+    await launch.route;
+    await f.close();
+  }
+});
+
 test("C4 sweep releases the settled agentless recovery after reopen and permits an ordinary move", async () => {
   const f = fixture();
   const launch = startC4(f);

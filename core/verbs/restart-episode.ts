@@ -1,3 +1,5 @@
+import { creationTermination, readCreationAttempt } from '../store/store-task-funnel';
+import { creationLookup } from '../recovery/absent-creation/restarts';
 import { TaskChangedRefusal } from "../../shared/task-version";
 import { COORDINATOR_LOOP_LIMIT, unproductiveCoordinatorRuns } from '../recovery/recovery-bound';
 import { DEFAULT_GLOBAL_LIMIT, type Run, type Task, type TaskControlInput } from "../../shared/contracts";
@@ -177,14 +179,24 @@ export class EpisodeRestarts {
         if (capacity) throw Error(capacity);
       }
       const run = this.resolution.absentResolutionRun(current);
-      if (!run) throw Error('Absent resolution-run recovery requires an uncertain reviewer, coordinator or escalated recovery creation with no agent');
+      if (!run || !run.hostId || run.hostId !== current.hostId) throw Error('Absent resolution-run recovery requires an uncertain reviewer, coordinator or escalated recovery creation with no agent');
       if (this.resolution.recovery.busy(current) && !settling.includes(current.resolution.recovery?.runId ?? '')) throw Error('Wait for coordinator recovery to finish before replacing the absent run');
       return this.resolution.admitAbsentResolution(current, run.id, settling);
     };
     const run = admitLocal();
     if (this.adapter.workspaceAvailable && !await this.adapter.workspaceAvailable(task.workspaceId!)) throw Error('Absent resolution-run recovery requires the retained task workspace');
     if (!this.resolution.adapter.findRunAgents) throw Error('Run identity lookup is unavailable');
+    const proof = creationTermination(this.store, run, this.resolution.graceMs);
     const found = await this.resolution.adapter.findRunAgents(run);
+    const lookup = creationLookup(found, run.workspaceId);
+    if (lookup.kind === 'absent' && !proof) {
+      const current = check();
+      if (!current.resolution.stop || current.resolution.stop.reason === 'lifecycle')
+        this.resolution.waiting(current, `The ${run.role} creation remains uncertain; waiting for its recorded producer to stop and the lookup grace period to pass`, 'lifecycle');
+      return this.store.task(task.id);
+    }
+    if (lookup.kind === 'unknown' && found.length === 1 && found[0]!.workspaceId === run.workspaceId)
+      throw Error('Run creation lookup has an incomplete host identity; no restart');
     // A fresh run needs creation capability; refuse before anything is settled.
     if (restart && !found.length && !this.resolution.adapter.createRun) throw Error('Agent creation is unavailable; uncertain run restart refused');
     if (restart && !found.length) {
@@ -227,7 +239,8 @@ export class EpisodeRestarts {
       if (restart) {
         const wait = this.engine.dispatchWaitsFor(current);
         if (wait) return this.engine.deferOwnerVerb(current, restart.input, wait, { runId: run.id });
-        // The lookup above read zero matches: the creation is absent, so a fresh run starts from the current route.
+        if (!proof || readCreationAttempt(this.store, run)?.attemptId !== proof.attemptId)
+          throw new TaskChangedRefusal('Run creation changed during restart', input.version, current.version);
         return this.resolution.replaceAbsentRunFromRoute(current, run.id, restart.instruction, input.settleFences);
       }
       throw Error('Restart authorization is required');

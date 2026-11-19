@@ -40,7 +40,7 @@ export async function requireReviewerReplacement(engine: Engine, task: Task, ver
   }
   engine.requireOwnerControlCurrent(engine.store.task(task.id), version, 'Task changed during reviewer observation; refresh before retrying');
   if (!runsUnchangedSince(runs, engine.store.runs(task.id))) throw Error('Task or run changed; refresh before retrying');
-  if (state.id !== agentId || !archived || state.active || state.activeTurnId || state.permissions)
+  if (state.id !== agentId || state.workspaceId !== (prior?.workspaceId ?? task.workspaceId) || !archived || state.active || state.activeTurnId || state.permissions)
     throw Error('The retained reviewer is still live or its absence is unproven; continue that reviewer instead');
 }
 
@@ -50,6 +50,27 @@ export function unreportedReviewer(task: Task, runs: Run[]): Run | null {
   return run && run.role === 'reviewer' && !run.released && !run.completion && run.agentId
     && (!task.resolution.reviewerAgentId || run.agentId === task.resolution.reviewerAgentId) && run.workspaceId && run.head === task.prHead
     && ['running', 'finished'].includes(run.status) ? run : null;
+}
+
+/** The same report-recovery decision is shown by next and applied by restart. */
+export function reviewerReportPlan(task: Task, runs: Run[], events: readonly { kind: string; detail: string }[]): { refusal: string } | { run: Run } | null {
+  const run = unreportedReviewer(task, runs);
+  if (!run || run.retainedAgentClosedAt || (run.reviewCheckpoints?.length && !run.reviewBudgetExhaustedAt)) return null;
+  const refusal = reviewerReportRequestRefusal(run, events);
+  return refusal ? { refusal } : { run };
+}
+
+export function reviewerReportRequestRefusal(run: Run, events: readonly { kind: string; detail: string }[]): string | null {
+  if (run.reviewDeliveries?.some(delivery => delivery.status === 'reserved' || delivery.status === 'uncertain')
+    || run.reviewContinuation && run.reviewContinuation.status !== 'delivered')
+    return 'The retained reviewer has an unresolved checkpoint delivery; wait for observation before requesting its report';
+  const prior = events.findLast(event => ['reviewer_report_request_sent', 'reviewer_report_request_intent', 'reviewer_report_request_refused'].includes(event.kind)
+    && event.detail.startsWith(`${run.id}:`));
+  if (prior?.kind === 'reviewer_report_request_sent')
+    return 'The retained reviewer was already asked to resend its report; wait for that report';
+  if (prior?.kind === 'reviewer_report_request_intent')
+    return 'The retained reviewer report request has unknown delivery; inspect it before retrying';
+  return null;
 }
 
 /** Ask the retained reviewer to resend its result on the original credential, once. */
@@ -80,9 +101,8 @@ export async function requestReviewerReport(engine: Engine, task: Task, run: Run
     });
   }
   // Re-read after every awaited proof so concurrent callers cannot both send.
-  const prior = store.eventsAll(task.id).findLast(event => ['reviewer_report_request_sent', 'reviewer_report_request_intent', 'reviewer_report_request_refused'].includes(event.kind) && event.detail.startsWith(`${run.id}:`));
-  if (prior?.kind === 'reviewer_report_request_sent') throw Error('The retained reviewer was already asked to resend its report; wait for that report');
-  if (prior?.kind === 'reviewer_report_request_intent') throw Error('The retained reviewer report request has unknown delivery; inspect it before retrying');
+  const refusal = reviewerReportRequestRefusal(run, store.eventsAll(task.id));
+  if (refusal) throw new ProvenPreSendRefusalError(refusal);
   const messageId = `ns-reviewer-report-${run.id}`;
   const text = `Nucleus did not receive your review report for run ${run.id} at head ${run.head}. Resend your existing authenticated report using this same run and credential; do not repeat checks or start another review. If you did not finish, continue the review and report its result.${instruction ? ` Owner direction: ${instruction}` : ''} Reason: ${reason}`;
   store.event(task.id, 'reviewer_report_request_intent', `${run.id}: ${JSON.stringify({ agentId: run.agentId, messageId })}`);

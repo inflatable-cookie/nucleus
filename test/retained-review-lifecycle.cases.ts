@@ -277,16 +277,42 @@ test('move to=review refuses an unsettled delivery and a reader that cannot cont
     assert.equal(f.store.run(f.runId)!.released, false);
     assert.equal(f.current().resolution.currentRunId, f.runId);
 
-    // A spent budget or a closed agent is explicit, never a silent replacement.
+    // A spent budget preserves an active reader and a report request is the idle path.
     f.store.putRun({ ...f.run(), reviewBudgetExhaustedAt: new Date().toISOString(), reviewDeliveries: [] });
-    await assert.rejects(f.engine.performTaskControl(taskControlInputSchema.parse({ action: 'move', to: 'review', taskId: f.submitted.id,
-      version: f.current().version, reason: 'Move forward', caller: CALLER })), /restart role=reviewer fresh/);
+    await f.control({ action: 'move', to: 'review' });
     assert.equal(f.store.run(f.runId)!.released, false);
+    assert.equal(f.events('reviewer_report_request_sent').length, 0);
 
     f.store.putRun({ ...f.run(), reviewBudgetExhaustedAt: undefined, retainedAgentClosedAt: new Date().toISOString() });
     await assert.rejects(f.engine.performTaskControl(taskControlInputSchema.parse({ action: 'move', to: 'review', taskId: f.submitted.id,
       version: f.current().version, reason: 'Move forward', caller: CALLER })), /restart role=reviewer fresh/);
     assert.equal(f.store.run(f.runId)!.released, false);
+  } finally { await f.close(); }
+});
+
+test('a spent checkpoint allowance offers the retained reviewer once and keeps both fresh controls fenced', async () => {
+  const f = fixture(); try {
+    f.observe({ status: 'running', active: true });
+    await f.checkpoint('First item', 'First of three');
+    await f.checkpoint('Second item', 'Second of three');
+    f.store.putRun({ ...f.run(), reviewBudgetExhaustedAt: new Date().toISOString() });
+    assert.equal(f.view('restart').available, true);
+    assert.equal(f.view('restart').args?.fresh, undefined);
+    assert.match(f.view('restart').note ?? '', /allowance is spent/);
+    await assert.rejects(f.control({ action: 'restart', role: 'reviewer', fresh: true }), /retained reviewer is still live/);
+    await assert.rejects(f.control({ action: 'route', role: 'reviewer', profileId: reviewer.id, now: true }), /retained reviewer is still live/);
+    assert.equal(f.stops.length, 0);
+    assert.equal(f.createdRuns.length, 0);
+    assert.equal(f.run().released, false);
+    f.observe({ status: 'idle', active: false });
+    await f.control({ ...f.view('restart').args, reason: 'Recover the retained report' });
+    assert.equal(f.events('reviewer_report_request_intent').length, 1);
+    assert.equal(f.events('reviewer_report_request_sent').length, 1);
+    assert.equal(f.current().resolution.currentRunId, f.runId);
+    assert.equal(f.view('restart').available, false);
+    assert.match(f.view('restart').refusal ?? '', /already asked/);
+    await assert.rejects(restartReviewer(f), /already asked/);
+    assert.equal(f.events('reviewer_report_request_sent').length, 1);
   } finally { await f.close(); }
 });
 

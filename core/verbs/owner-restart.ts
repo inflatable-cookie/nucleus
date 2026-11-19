@@ -1,3 +1,4 @@
+import { unsettledControlRefusal } from '../recovery/recovery-effects';
 import { RETAINED_PREREQUISITE_REFUSAL, NO_RESOLUTION_RUN_REFUSAL, restartTerminalRefusal } from "./verb-refusal-text";
 import { DISPOSITION_CONTROL_REFUSAL, parkedRestartRefusal } from "./control-refusals";
 import { z } from "zod";
@@ -14,7 +15,8 @@ import type { OwnerVerbFacts } from './owner-facts';
 import { verbInput, restartRoles } from './owner-shared';
 import type { RestartRole, OwnerVerb, RestartShapeName } from './owner-shared';
 import { unreportedExecutorRun } from '../qa/proof-admission';
-import { unreportedReviewer } from './reviewer-report';
+import { reviewerReportPlan } from './reviewer-report';
+import { workerCreationRefusal, workerCreationWait, workerProducerStopped } from '../recovery/absent-creation/stale-worker';
 
 /**
  * Round 4 (Tom, 2026-10-19): what `restart` does when no run of the role needs
@@ -237,7 +239,7 @@ export function workerRestartRefusal(facts: OwnerVerbFacts, shape: RestartShape,
     return "Worker restart requires the retained worker, workspace and route";
   if (task.prerequisiteWait && !task.prerequisiteWait.releasedAt)
     return RETAINED_PREREQUISITE_REFUSAL;
-  const delivery = retainedWorkerDeliveryRefusal(facts);
+  const delivery = unsettledControlRefusal(facts.store, task) ?? retainedWorkerDeliveryRefusal(facts);
   if (delivery) return delivery;
 
   if (observed && (observed.id !== task.agentId || observed.workspaceId !== task.workspaceId))
@@ -252,6 +254,16 @@ export function workerRestartRefusal(facts: OwnerVerbFacts, shape: RestartShape,
   if (!['idle', 'error', 'closed'].includes(observed.status))
     return `The retained worker is not proven idle (status: ${observed.status}); wait for a supported idle observation before restarting`;
   return null;
+}
+
+/** Preview may require a fresh exact lookup, but a known pending producer is a wait. */
+export function absentWorkerRestartRefusal(facts: OwnerVerbFacts): string | null {
+  const { store, task, runs, reportingRunId } = facts;
+  if (task.prerequisiteWait && !task.prerequisiteWait.releasedAt) return RETAINED_PREREQUISITE_REFUSAL;
+  const episodeId = task.resolution.recovery?.runId;
+  const settling = runs.filter(run => run.id === episodeId || run.id === reportingRunId || run.completion).map(run => run.id);
+  return workerCreationRefusal(store, task, settling)
+    ?? (workerProducerStopped(store, task, facts.creationGraceMs ?? 0) ? null : workerCreationWait);
 }
 
 /**
@@ -293,10 +305,7 @@ export function retainedContinuationPlan(facts: OwnerVerbFacts): RetainedContinu
     return { kind: "refused", refusal: "Automatic reconciliation still owns the task incident; continue the review after it settles" };
   if (reviewResultFencesRun(facts.store, task, current))
     return { kind: "refused", refusal: `A recorded result fences checkpoint ${checkpoint.ordinal}; move to=review re-observes the head and asks the retained reviewer to report.` };
-  // Two established causes make the retained-agent continuation impossible: the
-  // checkpoint budget is spent, or the reviewer's own agent was positively
-  // observed closed. Both keep the lease and the saved progress, and both are
-  // recovered by the existing fresh-review verbs at the same exact head.
+  // A spent budget ends checkpoint turns. A closed reviewer also ends retained report recovery.
   if (current.reviewBudgetExhaustedAt && !current.retainedAgentClosedAt)
     return { kind: "refused", refusal: `The checkpoint allowance is spent; restart role=reviewer or move to=review asks the retained reviewer to finish or redeliver its report.${rejectedReadingNote(current)}` };
   if (current.retainedAgentClosedAt)
@@ -366,19 +375,20 @@ export const restart: OwnerVerb = {
         return { available: true, fill: ["reason"], args: { taskId: task.id, version: task.version } };
       return { available: false, refusal: restartTerminalRefusal(task, "refusal" in parked ? parked.refusal : undefined) };
     }
+    const controlRefusal = unsettledControlRefusal(facts.store, task);
+    if (controlRefusal) return { available: false, refusal: controlRefusal };
     const role = deriveRestartRole(task, runs);
     const shape = restartShape(task, runs, role, facts.events);
-    const candidate = role === 'reviewer' && shape !== 'stalled_run' ? unreportedReviewer(task, runs) : null;
-    const reviewer = candidate && !candidate.retainedAgentClosedAt
-      && (!(candidate.reviewCheckpoints?.length) || candidate.reviewBudgetExhaustedAt) ? candidate : null;
-    if (reviewer) {
-      const last = facts.events.findLast(event => ['reviewer_report_request_sent', 'reviewer_report_request_intent', 'reviewer_report_request_refused'].includes(event.kind)
-        && event.detail.startsWith(`${reviewer.id}:`));
-      const requested = last?.kind === 'reviewer_report_request_sent' || last?.kind === 'reviewer_report_request_intent';
-      return requested
-        ? { available: false, refusal: `Reviewer ${reviewer.id} already has a report request or unknown delivery; inspect its thread` }
-        : { available: true, fill: ['reason'], args: { taskId: task.id, version: task.version, role: 'reviewer' },
-          note: `Asks retained reviewer ${reviewer.agentId} to resend the report on run ${reviewer.id} after observing it idle; no new review starts.${rejectedReadingNote(reviewer)}` };
+    const report = role === 'reviewer' && shape !== 'stalled_run' ? reviewerReportPlan(task, runs, facts.events) : null;
+    if (report) {
+      if ("refusal" in report) return { available: false, refusal: report.refusal };
+      const reviewer = report.run;
+      return { available: true, fill: ['reason'], args: { taskId: task.id, version: task.version, role: 'reviewer' },
+        note: `${reviewer.reviewBudgetExhaustedAt ? 'The checkpoint allowance is spent. ' : ''}Asks retained reviewer ${reviewer.agentId} to finish or redeliver the report on run ${reviewer.id} after observing it idle.${rejectedReadingNote(reviewer)}` };
+    }
+    if (shape === 'absent_worker') {
+      const refusal = absentWorkerRestartRefusal(facts);
+      if (refusal) return { available: false, refusal };
     }
     // nucleus#1195: one bounded continuation asks a live proof executor whose
     // result never arrived to resend that report on its existing run and
@@ -405,7 +415,9 @@ export const restart: OwnerVerb = {
       if ("refusal" in parked)
         return { available: false, refusal: parkedRestartRefusal(role, parked.refusal) };
     }
-    let observationNote: string | undefined;
+    let observationNote = shape === "absent_worker"
+      ? "Nucleus checks the exact creation on its recorded host before returning the work to ordinary dispatch."
+      : undefined;
     if (shape === "checkpoint_reviewer") {
       // The same plan a preserving `move to=review` reads: one derivation, so the
       // two views cannot advertise different answers for the same checkpoint.

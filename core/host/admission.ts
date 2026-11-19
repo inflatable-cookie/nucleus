@@ -21,7 +21,7 @@ import {
   withPaseoCallTiming,
   type PaseoCallRecorder,
 } from "../../shared/host-call-timing";
-import { DEFAULT_GLOBAL_LIMIT, type Run } from "../../shared/contracts";
+import { DEFAULT_GLOBAL_LIMIT } from "../../shared/contracts";
 import {
   type AdmissionClass,
   type PaseoAdmission,
@@ -1290,16 +1290,8 @@ export function admitAdapter(raw: Adapter, admission: Admission): Adapter {
       requestIdentity("findAgents", args),
     ),
   );
-  // A recovery release needs a read started after producer proof. Sharing an
-  // earlier lookup could reuse an empty inventory from while it was alive.
-  set(
-    "findRunAgents",
-    call("inventory", "findRunAgents", (args) =>
-      (args[0] as Run).role === "recovery"
-        ? undefined
-        : requestIdentity("findRunAgents", args),
-    ),
-  );
+  // Creation settlement needs a fresh exact read after producer proof.
+  set("findRunAgents", call("inventory", "findRunAgents", () => undefined));
   set(
     "findOpenBranchPr",
     call("control", "findOpenBranchPr", (args) =>

@@ -5,7 +5,7 @@ import { hostFailureRefusalDetail } from "../../host/errors";
 import { REVIEW_FRESH_REPLACEMENT_EXIT, reviewContinuationState, reviewContinuationWait, reviewInProgress, reviewResultFencesRun, stoppedDeliveryResume, retainedReaderStateDecision, retainedReaderStoredRefusal, retainedReaderUnavailableRefusal } from "../../review/review-continuation";
 import { plainHandoverFreshRestart, RestartRefusal } from "../owner-verbs";
 import type { FinishedRuns, ReviewMoveInput, VerifiedPr } from "./types";
-import { requestReviewerReport, unreportedReviewer } from '../reviewer-report';
+import { requestReviewerReport, reviewerReportRequestRefusal, unreportedReviewer } from '../reviewer-report';
 
 /** Decide how an observed retained reader is treated, without sending a turn. */
 export function retainedReaderDecision(input: {
@@ -66,6 +66,11 @@ export async function moveRetainedReader(engine: Engine, input: ReviewMoveInput,
     const wait = engine.dispatchWaitsFor(latestTask, engine.isOwnerCall(), true);
     if (wait) return engine.deferOwnerVerb(latestTask, taskControlInputSchema.parse({ ...input, action: 'move', to: 'review' }), wait, { runId: reading.id, head: reading.head });
     return requestReviewerReport(engine, latestTask, reading, input.version, input.reason);
+  }
+  if (state === 'exhausted' && busy && reader) {
+    const refusal = reviewerReportRequestRefusal(reading, store.eventsAll(task.id));
+    if (refusal) throw new RestartRefusal(refusal);
+    return engine.preserveRetainedReviewer(input, readerTask, reader, pr, finished, state);
   }
   const decision = retainedReaderDecision({ reader: Boolean(reader), state, busy: Boolean(busy), status: observed.status,
     waitReason: wait.reason, agentId: reading.agentId, runId: reading.id });

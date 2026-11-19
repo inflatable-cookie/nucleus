@@ -745,7 +745,6 @@ export class Resolution {
       "paused",
       "recordIncidentEvent",
       "resolveIncident",
-      "resumeWorkerContinuation",
       "settleVerbFences",
       "store",
       "update",
@@ -1674,17 +1673,6 @@ export class Resolution {
       settleRunIds,
     );
   }
-  resumeWorkerContinuation(
-    t: Task,
-    operator: boolean,
-    continueWorker: (task: Task) => Task,
-  ): Task {
-    return this.retryRoutes.resumeWorkerContinuation(
-      t,
-      operator,
-      continueWorker,
-    );
-  }
   resumeWorker(t: Task, instruction: string, operator = false) {
     return this.retryRoutes.resumeWorker(t, instruction, operator);
   }
@@ -1700,32 +1688,6 @@ export class Resolution {
       operator,
       settleRunIds,
     );
-  }
-  /**
-   * Mint one worker in the retained workspace for a proven-absent creation.
-   *
-   * `authorized` is the operator path: it also accepts the post-replacement escalation the
-   * automatic budget writes, because the state is recoverable and only the automatic path's
-   * budget should stop it. Automatic and recovery callers keep the initial reason only, so
-   * the one-replacement budget stays exactly one and a later automatic absence still
-   * escalates. The event differs, so an operator replacement is visible as such and never
-   * counts as the automatic retry.
-   */
-  admitAbsentWorker(
-    t: Task,
-    instruction: string,
-    authorized = false,
-    settleRunIds: string[] = [],
-  ): string {
-    return this.absentRestarts.admitAbsentWorker(
-      t,
-      instruction,
-      authorized,
-      settleRunIds,
-    );
-  }
-  resumeAbsentWorker(t: Task, instruction: string, authorized = false) {
-    return this.absentRestarts.resumeAbsentWorker(t, instruction, authorized);
   }
   absentResolutionRun(t: Task) {
     return this.absentRestarts.absentResolutionRun(t);

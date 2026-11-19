@@ -32,7 +32,7 @@ import { repositoryIdentity,type StoreTasks } from "./store-tasks";
 export const creationProducerId = randomUUID();
 const creationReserved = 'creation_attempt_reserved';
 const creationSettled = 'creation_attempt_settled';
-type CreationBinding = Pick<Run, 'id' | 'taskId' | 'hostId'> & { workspaceId: string | null; role: Run['role'] | 'worker' };
+export type CreationBinding = Pick<Run, 'id' | 'taskId' | 'hostId'> & { workspaceId: string | null; role: Run['role'] | 'worker' };
 type CreationReservation = CreationBinding & { producerId: string; attemptId: string };
 type CreationOutcome = 'returned' | 'threw';
 type CreationSettlement = { attemptId: string; outcome: CreationOutcome };
@@ -69,6 +69,16 @@ export function readCreationAttempt(store: Pick<CreationJournal, 'db'>, binding:
       || reservation.hostId !== binding.hostId || reservation.workspaceId !== binding.workspaceId || reservation.role !== binding.role) return null;
   return { ...reservation, reservedAt: String(reserved.at),
     settlement: creationAttemptSettlement(store, binding.taskId, reservation.attemptId) };
+}
+
+/** Capture termination before starting the inventory read that can prove absence. */
+export function creationTermination(store: Pick<CreationJournal, 'db'>, binding: CreationBinding, graceMs: number) {
+  const attempt = readCreationAttempt(store, binding);
+  if (!attempt) return null;
+  const terminatedBy = attempt.settlement ? 'call_settled'
+    : attempt.producerId !== creationProducerId ? 'service_replaced' : null;
+  const since = Date.parse(attempt.settlement?.at ?? attempt.reservedAt);
+  return terminatedBy && Date.now() - since >= graceMs ? { attemptId: attempt.attemptId, terminatedBy } : null;
 }
 
 export function settleCreationAttempt(store: CreationJournal, attempt: CreationAttempt, outcome: CreationOutcome): void {

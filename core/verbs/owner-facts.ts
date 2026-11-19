@@ -45,6 +45,7 @@ export interface OwnerVerbFacts {
    */
   planning?: boolean;
   operatorBoard?: boolean;
+  creationGraceMs?: number;
 }
 
 export function collectOwnerVerbFacts(store: Store, task: Task, operationId?: string | null, reportingRunId?: string | null): OwnerVerbFacts {

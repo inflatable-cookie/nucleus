@@ -1,3 +1,5 @@
+import { readCreationAttempt, settleCreationAttempt } from '../core/store/store-task-funnel';
+import type { ResolutionAdapter } from '../core/resolution';
 import { fakeAdapter } from './support/fakes';
 import { queuedReason, taskWaitStateContext } from '../core/recovery/wait-context';
 import { test } from 'node:test';
@@ -1083,19 +1085,37 @@ test('unknown workspace creation is recovered only from positive identity, never
     await f.engine.wake(); assert.equal(f.calls.agents, 1); assert.equal(f.calls.workspaces, 1);
   } finally { await f.close(); }
 });
-test('explicit resume replaces a definitively absent initial worker in the retained workspace',async()=>{
-  const f=fixture();try{
-    const original=f.add(),runId='timed-out-run';
-    const uncertain=f.store.update(original.id,{phase:'needs_attention',reason:ABSENT_WORKER_REASON,workspaceIntent:true,workspaceId:`ws-${original.id}`,directory:'/fixture',profile,profileGroup:'test',planningBase:original.planningCommit,agentIntent:true,runId});
-    f.store.setCredential(runId,'old-token');let lookups=0,purged:string[]=[];
-    f.adapter.findAgents=async()=>{lookups++;return[]};f.adapter.purgeReportingFiles=(_task,runs)=>{purged=runs};
-    const ready=await f.engine.performTaskControl({ taskId: uncertain.id, version: uncertain.version, action: 'restart', role: 'worker', reason: 'Resume the retained worker', instruction: 'Continue the original handoff' });
-    assert.equal(ready.phase,'dispatching');assert.equal(ready.workspaceId,uncertain.workspaceId);assert.equal(ready.profile?.id,profile.id);
-    assert.equal(ready.agentIntent,false);assert.equal(ready.agentId,null);assert.equal(ready.runId,runId);assert.equal(ready.restartRunId,runId);assert.deepEqual(purged,[runId]);assert.equal(lookups,1);
-    assert.throws(()=>f.store.authenticate(runId,'old-token'),/Unauthorized/);
-    f.store.setMeta('paused',false);await f.engine.wake();const running=f.store.task(uncertain.id);
-    assert.equal(running.phase,'working');assert.equal(running.runId,runId,'the retried creation reuses the same run ID');assert.equal(running.workspaceId,uncertain.workspaceId);assert.equal(f.calls.workspaces,0);assert.equal(f.calls.agents,1);
-  }finally{await f.close()}
+test('explicit resume replaces a definitively absent initial worker in the retained workspace', async () => {
+  const f = fixture();
+  try {
+    const original = f.add(), runId = 'timed-out-run';
+    f.store.setCredential(runId, 'old-token');
+    const uncertain = f.store.update(original.id, { phase: 'needs_attention', reason: ABSENT_WORKER_REASON, workspaceIntent: true,
+      workspaceId: `ws-${original.id}`, directory: '/fixture', profile, profileGroup: 'test', planningBase: original.planningCommit,
+      agentIntent: true, runId }, 'agent_intent', runId);
+    const attempt = readCreationAttempt(f.store, { id: runId, taskId: original.id, hostId: uncertain.hostId,
+      workspaceId: uncertain.workspaceId, role: 'worker' })!;
+    settleCreationAttempt(f.store, attempt, 'threw');
+    let lookups = 0;
+    (f.adapter as Adapter & ResolutionAdapter).findRunAgents = async () => { lookups++; return []; };
+    const ready = await f.engine.performTaskControl({ taskId: uncertain.id, version: uncertain.version, action: 'restart', role: 'worker',
+      reason: 'Resume the retained worker', instruction: 'Continue the original handoff' });
+    assert.equal(ready.phase, 'queued');
+    assert.equal(ready.workspaceId, uncertain.workspaceId);
+    assert.equal(ready.agentIntent, false);
+    assert.equal(ready.runId, null);
+    assert.equal(ready.restartRunId, null);
+    assert.equal(lookups, 1);
+    assert.throws(() => f.store.authenticate(runId, 'old-token'), /Unauthorized/);
+    f.store.setMeta('paused', false);
+    await f.engine.wake();
+    const running = f.store.task(uncertain.id);
+    assert.equal(running.phase, 'working');
+    assert.notEqual(running.runId, runId);
+    assert.equal(running.workspaceId, uncertain.workspaceId);
+    assert.equal(f.calls.workspaces, 0);
+    assert.equal(f.calls.agents, 1);
+  } finally { await f.close(); }
 });
 test('Pi settings-lock launch failure retries once after backoff in the retained workspace',async()=>{
   const f=fixture();try{
@@ -1117,16 +1137,24 @@ test('Pi settings-lock launch failure retries once after backoff in the retained
     assert.equal(f.store.events(original.id).filter(event=>event.kind==='absent_worker_retry').length,1);
   }finally{await f.close()}
 });
-test('absent-worker resume preserves an uncertain intent when a matching worker appears',async()=>{
-  const f=fixture();try{
-    const original=f.add(),runId='uncertain-run';
-    const uncertain=f.store.update(original.id,{phase:'needs_attention',reason:ABSENT_WORKER_REASON,workspaceIntent:true,workspaceId:`ws-${original.id}`,directory:'/fixture',profile,planningBase:original.planningCommit,agentIntent:true,runId});
-    f.store.setCredential(runId,'old-token');let purged=false;
-    f.adapter.findAgents=async()=>[{id:'late-worker',workspaceId:uncertain.workspaceId}];f.adapter.purgeReportingFiles=()=>{purged=true};
-    await assert.rejects(f.engine.performTaskControl({ taskId: uncertain.id, version: uncertain.version, action: 'restart', role: 'worker', reason: 'Resume the retained worker', instruction: 'Continue' }),/no longer proven absent/);
-    const retained=f.store.task(uncertain.id);assert.equal(retained.agentIntent,true);assert.equal(retained.runId,runId);assert.equal(retained.agentId,null);
-    assert.equal(purged,false);assert.doesNotThrow(()=>f.store.authenticate(runId,'old-token'));assert.equal(f.calls.agents,0);
-  }finally{await f.close()}
+test('worker restart binds an exact match to the original credential', async () => {
+  const f = fixture();
+  try {
+    const original = f.add(), runId = 'uncertain-run';
+    const uncertain = f.store.update(original.id, { phase: 'needs_attention', reason: ABSENT_WORKER_REASON, workspaceIntent: true,
+      workspaceId: `ws-${original.id}`, directory: '/fixture', profile, planningBase: original.planningCommit, agentIntent: true, runId },
+      'agent_intent', runId);
+    f.store.setCredential(runId, 'old-token');
+    (f.adapter as Adapter & ResolutionAdapter).findRunAgents = async () => [{ id: 'late-worker', workspaceId: uncertain.workspaceId }];
+    const retained = await f.engine.performTaskControl({ taskId: uncertain.id, version: uncertain.version, action: 'restart', role: 'worker',
+      reason: 'Resume the retained worker', instruction: 'Continue' });
+    assert.equal(retained.agentIntent, true);
+    assert.equal(retained.runId, runId);
+    assert.equal(retained.agentId, 'late-worker');
+    assert.doesNotThrow(() => f.store.authenticate(runId, 'old-token'));
+    assert.equal(f.calls.agents, 0);
+    assert.equal(f.store.events(original.id).filter(event => event.kind === 'absent_worker_released').length, 0);
+  } finally { await f.close(); }
 });
 test('a transient initial worker error resumes the same run in its retained thread',async()=>{
  const f=fixture();try{
