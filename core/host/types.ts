@@ -169,6 +169,8 @@ export interface LiveRunPresenceWorkspace {
   id: string;
   directory: string | null;
   labels: readonly string[];
+  /** Paseo's inventory marks workspaces being archived with a timestamp. */
+  archivingAt?: string | null;
 }
 
 /** The daemon surface the projection uses, and nothing else. */
@@ -178,15 +180,6 @@ export interface RunPresenceDaemon {
     workspaceId: string,
   ): Promise<Array<{ id: string; name: string }>>;
   createTerminal(input: RunPresenceTerminal): Promise<{ id: string }>;
-  /**
-   * Open, or reuse, the Paseo workspace entry for a checkout directory. It
-   * registers a sidebar entry on that checkout only: no worktree, no setup, and
-   * nothing about the checkout itself changes.
-   */
-  openWorkspace(input: {
-    directory: string;
-    requestId: string;
-  }): Promise<{ id: string; directory: string | null }>;
   /** Create or recolour the label definition, so an assignment always has one. */
   ensureWorkspaceLabel(label: LiveRunLabel): Promise<void>;
   assignWorkspaceLabel(input: {

@@ -257,6 +257,8 @@ export interface NativeWorkspaceEntry {
   readonly workspaceDirectory?: string | null;
   readonly worktreeSlug?: string | null;
   readonly labels?: readonly string[];
+  /** Paseo exposes an entry while archiving through this timestamp. */
+  readonly archivingAt?: string | null;
 }
 
 /** The registrations this host can be asked for: a folder, or the closeout worktree core proved. */
