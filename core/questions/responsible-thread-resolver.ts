@@ -5,6 +5,7 @@ import { sameCallerIdentity } from '../../shared/agent-identity';
 import { ownerCandidateKind } from '../../shared/owner-candidate-kind';
 import { isOperatorOrigin, taskOwner, type Project, type Run, type Task } from '../../shared/contracts';
 import type { HostLiveAgent } from '../../shared/host';
+import { observationTimeout } from '../recovery/observation-timeout';
 import { ResponsibleThreadCache, type ResponsibleThreadFact, type ResponsibleShortlist } from './responsible-thread-cache';
 
 const git = promisify(execFile);
@@ -35,6 +36,15 @@ export class ResponsibleThreadResolver {
   readonly cache = new ResponsibleThreadCache();
   private readonly membership = new Map<string, string>();
   private readonly activity = new Map<string, string>();
+  private readonly inventories = new Map<string, Promise<HostLiveAgent[]>>();
+  private inventory(hostId: string): Promise<HostLiveAgent[]> {
+    const pending = this.inventories.get(hostId);
+    if (pending) return pending;
+    const read = observationTimeout(this.ports.inventory(hostId), 'Responsible host inventory timed out', 1800)
+      .finally(() => { if (this.inventories.get(hostId) === read) this.inventories.delete(hostId); });
+    this.inventories.set(hostId, read);
+    return read;
+  }
   recordActivity(agentId: string): void {
     this.activity.set(agentId, new Date().toISOString());
     if (this.activity.size > 10_000) this.activity.delete(this.activity.keys().next().value!);
@@ -42,11 +52,11 @@ export class ResponsibleThreadResolver {
   }
   constructor(private readonly ports: ResponsibleThreadResolverPorts) {}
 
-  async resolve(project: Project): Promise<ResponsibleShortlist> {
+  async resolve(project: Project, excludedHosts: ReadonlySet<string> = new Set()): Promise<ResponsibleShortlist> {
     const tasks = this.ports.tasks();
     const runs = this.ports.runs();
     const projectTasks = tasks.filter(task => this.ports.projectFor(task.repoPath, task.repository ?? null)?.key === project.key);
-    const online = this.ports.hostIds().filter(id => this.ports.hostOnline(id)).sort();
+    const online = this.ports.hostIds().filter(id => !excludedHosts.has(id) && this.ports.hostOnline(id)).sort();
     // A host leaving or a new dispatching/owning thread changes the shortlist
     // immediately, including when an earlier host pass is still in flight.
     const fingerprint = JSON.stringify([online, project.planner?.agentId,
@@ -57,7 +67,7 @@ export class ResponsibleThreadResolver {
     const hosts = online.map(id => ({
       id,
       inventory: async () => {
-        const agents = await this.ports.inventory(id);
+        const agents = await this.inventory(id);
         const roots = project.repositories.map(repo => repo.path).filter(Boolean);
         const common = new Map<string, Promise<string | null>>();
         const gitRoot = (path: string) => {

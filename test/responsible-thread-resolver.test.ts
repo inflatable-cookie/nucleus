@@ -46,3 +46,16 @@ test('a recent verified Nucleus call changes the ranking and host loss drops cac
   online = false;
   assert.deepEqual((await resolver.resolve(project)).threads, []);
 });
+
+
+test('concurrent project resolution shares a single host inventory', async () => {
+  let calls = 0, release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const resolver = new ResponsibleThreadResolver({ hostIds: () => ['t3code:one'], hostOnline: () => true,
+    inventory: async () => { calls++; await gate; return []; }, tasks: () => [], runs: () => [], projectFor: () => null });
+  const other = { ...project, key: 'other' };
+  const first = resolver.resolve(project), second = resolver.resolve(other);
+  release();
+  await Promise.all([first, second]);
+  assert.equal(calls, 1);
+});

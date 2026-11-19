@@ -399,8 +399,8 @@ export class Resolution {
   }
 
   /** Re-observe cached candidates before use; an old inventory cannot revive a closed thread. */
-  async responsibleThread(project: Project, exclude?: { agentId: string; hostId?: string | null }) {
-    const shortlist = await this.responsibleThreads.resolve(project);
+  async responsibleThread(project: Project, exclude?: { agentId: string; hostId?: string | null }, excludedHosts?: ReadonlySet<string>) {
+    const shortlist = await this.responsibleThreads.resolve(project, excludedHosts);
     const candidates = shortlist.threads.filter(thread => !exclude || !sameCallerIdentity(thread.agentId, exclude.agentId, thread.hostId, exclude.hostId));
     const states = await Promise.all(candidates.map(async thread => {
       try {
