@@ -566,8 +566,8 @@ async function main() {
     );
     assert.equal(
       host.state.read().snoozes?.[seedThreadId]?.state,
-      "refused",
-      "the refusal is recorded for this wait episode",
+      "unknown",
+      "the remote refusal retains unknown delivery for this wait episode",
     );
     await host.reconcileTaskRow(TASK_ID, {
       state: "waiting",

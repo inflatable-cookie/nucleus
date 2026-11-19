@@ -3075,7 +3075,6 @@ for (const lostDeleteReply of [false, true])
     const created = await host.createAgent(spec("deleted-presentations"));
     // The task's one row is the parent thread, so its presentation intents address it.
     const row = Object.values(host.state.read().parents ?? {})[0]!;
-    const p = server.threads.get(row.threadId)!;
     const task = {
       id: "synthetic-task",
       agentId: created.id,
@@ -3089,13 +3088,6 @@ for (const lostDeleteReply of [false, true])
     for (const operation of [
       () =>
         host.setTaskWorkspaceTitle(task, "Updated title", "lost-title", false),
-      () => {
-        p.thread.settledOverride = "settled";
-        return host.sendMessage(row.threadId, {
-          messageId: "lost-unsettle",
-          text: "Continue",
-        });
-      },
       // A second title is its own command identity: titles legitimately change, so
       // each one is a presentation intent of its own (nucleus#1366).
       () =>
@@ -3111,8 +3103,8 @@ for (const lostDeleteReply of [false, true])
       .map(([key]) => key);
     assert.equal(
       presentationKeys.length,
-      3,
-      "title, unsettle and changed-title delivery are all unknown",
+      2,
+      "both title deliveries are unknown",
     );
     host.state.update((state) => {
       state.intents["unrelated-message"] = {

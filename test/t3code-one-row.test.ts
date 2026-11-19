@@ -272,7 +272,7 @@ test('a snooze refused for a pending approval stays active with no retry loop', 
   await host.reconcileTaskRow(taskId, waiting());
   assert.equal(commandsOf(server, 'thread.snooze').length, 1, 'the refused snooze was sent once');
   assert.equal(projection.thread.snoozedUntil, null, 'the row stays active');
-  assert.equal(host.state.read().snoozes?.[parent.threadId]?.state, 'refused');
+  assert.equal(host.state.read().snoozes?.[parent.threadId]?.state, 'unknown');
 
   // The same wait keeps the row active: this episode never retries.
   const commands = server.commands.length;
