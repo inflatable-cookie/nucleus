@@ -40,7 +40,12 @@ class ScriptedTransport implements AcpSessionTransport {
   readonly turns: AcpTurnRequest[] = [];
   readonly messages: AcpMessageRequest[] = [];
   readonly answers: import("../shared/acp/surface").AcpAnswerInput[] = [];
-  answer(input: import("../shared/acp/surface").AcpAnswerInput): Promise<unknown> { this.answers.push(input); return Promise.resolve({}); }
+  answer(
+    input: import("../shared/acp/surface").AcpAnswerInput,
+  ): Promise<unknown> {
+    this.answers.push(input);
+    return Promise.resolve({});
+  }
   /** Answers waiting to be handed out, in order. */
   readonly replies: AcpTurnReply[];
   /** The answer every call without a queued one receives. */
@@ -184,7 +189,9 @@ function harness(
       );
       return id;
     },
-    respond(id: unknown, result: unknown): void { input.write(`${JSON.stringify({ jsonrpc: "2.0", id, result })}\n`); },
+    respond(id: unknown, result: unknown): void {
+      input.write(`${JSON.stringify({ jsonrpc: "2.0", id, result })}\n`);
+    },
     notify(method: string, params: unknown): void {
       input.write(`${JSON.stringify({ jsonrpc: "2.0", method, params })}\n`);
     },
@@ -278,7 +285,9 @@ test("session/load accepts its own session id, shows where the task stands, and 
 });
 
 test("each lifecycle line is its own paragraph on the wire", async () => {
-  const client = harness({ replies: [reply("hold", ["nucleus#1304 · Working"])] });
+  const client = harness({
+    replies: [reply("hold", ["nucleus#1304 · Working"])],
+  });
   const id = client.request("session/load", {
     sessionId: binding.sessionId,
     cwd: "/fixture/checkout",
@@ -286,7 +295,7 @@ test("each lifecycle line is its own paragraph on the wire", async () => {
   });
   await client.lines.untilResult(id);
   const shown = await client.lines.next();
-  const content = (((shown.params as Json).update as Json).content as Json);
+  const content = ((shown.params as Json).update as Json).content as Json;
   // Clients join chunks without a separator, so a line without its paragraph break runs into the next one.
   assert.equal(content.text, "nucleus#1304 · Working\n\n");
   await client.closed();
@@ -414,9 +423,18 @@ test("an injected ignore rule ends the prompt silently: no text shown, nothing f
 });
 
 test("legacy T3 compatibility reserves only the exact readable sentence for the old binding", () => {
-  assert.equal(isLegacyT3Hold("nucleus-hold-the-task-thread", T3_HOLD_TEXT), true);
+  assert.equal(
+    isLegacyT3Hold("nucleus-hold-the-task-thread", T3_HOLD_TEXT),
+    true,
+  );
   assert.equal(isLegacyT3Hold("other", T3_HOLD_TEXT), false);
-  assert.equal(isLegacyT3Hold("nucleus-hold-the-task-thread", `${T3_HOLD_TEXT} Please help`), false);
+  assert.equal(
+    isLegacyT3Hold(
+      "nucleus-hold-the-task-thread",
+      `${T3_HOLD_TEXT} Please help`,
+    ),
+    false,
+  );
 });
 
 test("an injected hold rule keeps the turn without showing or forwarding the host's re-entry", async () => {
@@ -424,7 +442,9 @@ test("an injected hold rule keeps the turn without showing or forwarding the hos
   // is configuration, so it is never shown as the agent's words and never forwarded as
   // the operator's, but the turn is held — which is the whole point of the re-entry.
   const client = harness({
-    agent: { hold: (text) => isLegacyT3Hold("nucleus-hold-the-task-thread", text) },
+    agent: {
+      hold: (text) => isLegacyT3Hold("nucleus-hold-the-task-thread", text),
+    },
   });
   await client.lines.untilResult(
     client.request("session/new", { cwd: "/fixture/checkout" }),
@@ -460,7 +480,11 @@ test("an injected hold rule keeps the turn without showing or forwarding the hos
     "a re-entry prompt is never shown as the agent's words",
   );
   // The re-entry's release repeats the line the session already showed, so nothing new is sent.
-  assert.equal(updates.length, 0, "an identical line the session already showed is not sent again");
+  assert.equal(
+    updates.length,
+    0,
+    "an identical line the session already showed is not sent again",
+  );
   // The operator's next message still forwards: one re-entry does not consume the thread.
   const operator = client.request("session/prompt", {
     sessionId: binding.sessionId,
@@ -815,36 +839,326 @@ test("an unbound directory opens an inert session but cannot prompt or load", as
 
 test("an inbox session holds with its host identity and never forwards stale prompt text as a task message", async () => {
   const transport = new ScriptedTransport();
-  const inbox = { format: "nucleus.acp.inbox" as const, version: 1 as const, kind: "inbox" as const,
-    hostId: "t3code:synthetic", sessionId: "6b1d4e1a-9c1f-4f80-9b0b-3a0e1a6f2c11", socketPath: "/nonexistent/callback.sock", token: "fixture-token" };
-  const client = harness({ agent: { resolve: async () => ({ binding: inbox, transport }) } });
+  const inbox = {
+    format: "nucleus.acp.inbox" as const,
+    version: 1 as const,
+    kind: "inbox" as const,
+    hostId: "t3code:synthetic",
+    sessionId: "6b1d4e1a-9c1f-4f80-9b0b-3a0e1a6f2c11",
+    socketPath: "/nonexistent/callback.sock",
+    token: "fixture-token",
+  };
+  const client = harness({
+    agent: { resolve: async () => ({ binding: inbox, transport }) },
+  });
   try {
-    await client.lines.untilResult(client.request("session/load", { sessionId: inbox.sessionId, cwd: "/synthetic" }));
-    const prompt = client.request("session/prompt", { sessionId: inbox.sessionId, prompt: [{ type: "text", text: "stale card answer" }] });
+    await client.lines.untilResult(
+      client.request("session/load", {
+        sessionId: inbox.sessionId,
+        cwd: "/synthetic",
+      }),
+    );
+    const prompt = client.request("session/prompt", {
+      sessionId: inbox.sessionId,
+      prompt: [{ type: "text", text: "stale card answer" }],
+    });
     await turnStarted(transport, 2);
-    assert.deepEqual(transport.turns[0], { kind: "inbox", hostId: inbox.hostId, sessionId: inbox.sessionId, waitMs: 0, attach: true });
+    assert.deepEqual(transport.turns[0], {
+      kind: "inbox",
+      hostId: inbox.hostId,
+      sessionId: inbox.sessionId,
+      waitMs: 0,
+      attach: true,
+    });
     assert.equal(transport.messages.length, 0);
     client.notify("session/cancel", { sessionId: inbox.sessionId });
     await client.lines.untilResult(prompt);
-  } finally { await client.closed(); }
+  } finally {
+    await client.closed();
+  }
 });
 
-
 test("a held turn offers concurrent decision cards and forwards accepted answers once", async () => {
-  const question = (id: string) => ({ id, version: 1, headline: `Choose ${id}`, question: `Question ${id}?`, choices: [{ label: "Yes", consequence: "Proceed" }, { label: "No", consequence: "Hold" }] });
-  const client = harness({ replies: [reply("hold"), { ...reply("hold"), elicitations: [question("one"), question("two")] }] });
+  const question = (id: string) => ({
+    id,
+    version: 1,
+    headline: `Choose ${id}`,
+    question: `Question ${id}?`,
+    choices: [
+      { label: "Yes", consequence: "Proceed" },
+      { label: "No", consequence: "Hold" },
+    ],
+  });
+  const client = harness({
+    replies: [
+      reply("hold"),
+      { ...reply("hold"), elicitations: [question("one"), question("two")] },
+    ],
+  });
   try {
-    await client.lines.untilResult(client.request("session/new", { cwd: "/synthetic" }));
-    const prompt = client.request("session/prompt", { sessionId: binding.sessionId, prompt: [{ type: "text", text: "start" }] });
+    await client.lines.untilResult(
+      client.request("session/new", { cwd: "/synthetic" }),
+    );
+    const prompt = client.request("session/prompt", {
+      sessionId: binding.sessionId,
+      prompt: [{ type: "text", text: "start" }],
+    });
     const first = await client.lines.next();
     const second = await client.lines.next();
     assert.equal(first.method, "elicitation/create");
     assert.equal(second.method, "elicitation/create");
-    client.respond(first.id, { action: "accept", content: { nucleus_one_1: "Yes" } });
-    client.respond(second.id, { action: "accept", content: { nucleus_two_1: "No" } });
-    for (let i = 0; i < 100 && client.transport.answers.length < 2; i++) await new Promise(resolve => setTimeout(resolve, 5));
-    assert.deepEqual(client.transport.answers.map(row => [row.id, "answer" in row ? row.answer : null]), [["one", "Yes"], ["two", "No"]]);
+    client.respond(first.id, {
+      action: "accept",
+      content: { nucleus_one_1: "Yes" },
+    });
+    client.respond(second.id, {
+      action: "accept",
+      content: { nucleus_two_1: "No" },
+    });
+    for (let i = 0; i < 100 && client.transport.answers.length < 2; i++)
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.deepEqual(
+      client.transport.answers.map((row) => [
+        row.id,
+        "answer" in row ? row.answer : null,
+      ]),
+      [
+        ["one", "Yes"],
+        ["two", "No"],
+      ],
+    );
     client.notify("session/cancel", { sessionId: binding.sessionId });
     await client.lines.untilResult(prompt);
-  } finally { await client.closed(); }
+  } finally {
+    await client.closed();
+  }
+});
+
+/** One offered decision version, as the service sends it. */
+const decisionCard = (id: string, version = 1) => ({
+  id,
+  version,
+  headline: `Choose ${id}`,
+  question: `Question ${id}?`,
+  choices: [
+    { label: "Yes", consequence: "Proceed" },
+    { label: "No", consequence: "Hold" },
+  ],
+});
+
+/** The decision field id a card carries: `nucleus_<id>_<version>`. */
+const fieldOf = (message: Json): string => {
+  const params = message.params as Json;
+  const schema = params.requestedSchema as Json;
+  return Object.keys(schema.properties as Json)[0]!;
+};
+
+/** Wait for a fact the agent reaches asynchronously, so no assertion races a poll. */
+async function until(predicate: () => boolean, what: string): Promise<void> {
+  for (const started = Date.now(); !predicate(); ) {
+    if (Date.now() - started > 5_000)
+      throw new Error(`the agent did not reach: ${what}`);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
+test("a card settled after its ACP turn ended is the host's settlement, and the version is offered again", async () => {
+  // nucleus#1395's live shape: the turn ends while the socket is replaced, T3 then
+  // settles the card the ended turn left behind. Two such turns used to spend the
+  // version's whole re-offer, so the third turn raised nothing at all.
+  const card = decisionCard("reoffered");
+  const client = harness({
+    replies: [reply("hold"), { ...reply("hold"), elicitations: [card] }],
+  });
+  try {
+    await client.lines.untilResult(
+      client.request("session/new", { cwd: "/synthetic" }),
+    );
+    const raised: Array<Json["id"]> = [];
+    for (const turn of [1, 2, 3]) {
+      if (turn > 1)
+        client.transport.replies.push({
+          ...reply("hold"),
+          elicitations: [card],
+        });
+      const prompt = client.request("session/prompt", {
+        sessionId: binding.sessionId,
+        prompt: [{ type: "text", text: `turn ${turn}` }],
+      });
+      const message = await client.lines.next();
+      assert.equal(
+        message.method,
+        "elicitation/create",
+        `turn ${turn} raises the open version's card`,
+      );
+      assert.equal(
+        fieldOf(message),
+        "nucleus_reoffered_1",
+        "the field id carries the version the card shows",
+      );
+      raised.push(message.id);
+      // The turn ends before anyone answers; T3 settles the card the ended turn left.
+      client.notify("session/cancel", { sessionId: binding.sessionId });
+      await client.lines.untilResult(prompt);
+      client.respond(message.id, { action: "cancel" });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    assert.equal(new Set(raised).size, 3, "each held turn raised its own card");
+    assert.deepEqual(
+      client.transport.answers,
+      [],
+      "a settlement that follows an ended turn is not the operator's dismissal",
+    );
+  } finally {
+    await client.closed();
+  }
+});
+
+test("an operator's dismissal of a live card is recorded once, and the version is raised again", async () => {
+  const card = decisionCard("dismissed");
+  const client = harness({
+    replies: [reply("hold"), { ...reply("hold"), elicitations: [card] }],
+  });
+  try {
+    await client.lines.untilResult(
+      client.request("session/new", { cwd: "/synthetic" }),
+    );
+    const prompt = client.request("session/prompt", {
+      sessionId: binding.sessionId,
+      prompt: [{ type: "text", text: "start" }],
+    });
+    const first = await client.lines.next();
+    assert.equal(first.method, "elicitation/create");
+    // The operator dismisses the card while its turn is held: that is the dismissal the
+    // service's one re-offer budget counts. The same delivery twice counts once.
+    client.respond(first.id, { action: "cancel" });
+    client.respond(first.id, { action: "cancel" });
+    await until(
+      () => client.transport.answers.length === 1,
+      "the dismissal to be recorded",
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.deepEqual(client.transport.answers, [
+      {
+        taskId: "task-1",
+        sessionId: binding.sessionId,
+        id: "dismissed",
+        version: 1,
+        action: "cancel",
+        requestId: first.id,
+      },
+    ]);
+    // A dismissal does not block the version: the service may offer it once more.
+    client.transport.replies.push({ ...reply("hold"), elicitations: [card] });
+    const second = await client.lines.next();
+    assert.equal(second.method, "elicitation/create");
+    assert.notEqual(
+      second.id,
+      first.id,
+      "the re-offer is a new card, not the dismissed one",
+    );
+    client.notify("session/cancel", { sessionId: binding.sessionId });
+    await client.lines.untilResult(prompt);
+  } finally {
+    await client.closed();
+  }
+});
+
+test("an answer whose delivery failed is never resent, and the version is offered again on the next turn", async () => {
+  const card = decisionCard("unknown");
+  const client = harness({
+    replies: [reply("hold"), { ...reply("hold"), elicitations: [card] }],
+  });
+  // The socket was replaced between the operator's answer and the service seeing it.
+  client.transport.answer = async (input) => {
+    client.transport.answers.push(input);
+    throw new Error("connect ENOENT /nonexistent/callback.sock");
+  };
+  try {
+    await client.lines.untilResult(
+      client.request("session/new", { cwd: "/synthetic" }),
+    );
+    const prompt = client.request("session/prompt", {
+      sessionId: binding.sessionId,
+      prompt: [{ type: "text", text: "start" }],
+    });
+    const first = await client.lines.next();
+    assert.equal(first.method, "elicitation/create");
+    client.respond(first.id, {
+      action: "accept",
+      content: { nucleus_unknown_1: "Yes" },
+    });
+    await until(
+      () => client.transport.answers.length === 1,
+      "the failed delivery",
+    );
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal(
+      client.transport.answers.length,
+      1,
+      "an unknown delivery is reconciled, never resent",
+    );
+    client.notify("session/cancel", { sessionId: binding.sessionId });
+    await client.lines.untilResult(prompt);
+    // Nothing was recorded, so the service still offers the version: the next held turn
+    // asks again with a new card.
+    client.transport.replies.push({ ...reply("hold"), elicitations: [card] });
+    const again = client.request("session/prompt", {
+      sessionId: binding.sessionId,
+      prompt: [{ type: "text", text: "again" }],
+    });
+    const second = await client.lines.next();
+    assert.equal(second.method, "elicitation/create");
+    assert.equal(fieldOf(second), "nucleus_unknown_1");
+    assert.notEqual(second.id, first.id);
+    assert.equal(
+      client.transport.answers.length,
+      1,
+      "the earlier answer was not sent a second time",
+    );
+    client.notify("session/cancel", { sessionId: binding.sessionId });
+    await client.lines.untilResult(again);
+  } finally {
+    await client.closed();
+  }
+});
+
+test("one held turn raises one card per decision version, however often the service offers it", async () => {
+  const one = decisionCard("one");
+  const two = decisionCard("two", 2);
+  const client = harness({
+    replies: [
+      reply("hold"),
+      { ...reply("hold"), elicitations: [one, two] },
+      { ...reply("hold"), elicitations: [one, two] },
+      { ...reply("hold"), elicitations: [one] },
+    ],
+  });
+  try {
+    await client.lines.untilResult(
+      client.request("session/new", { cwd: "/synthetic" }),
+    );
+    const prompt = client.request("session/prompt", {
+      sessionId: binding.sessionId,
+      prompt: [{ type: "text", text: "start" }],
+    });
+    const first = await client.lines.next();
+    const second = await client.lines.next();
+    assert.deepEqual(
+      [fieldOf(first), fieldOf(second)],
+      ["nucleus_one_1", "nucleus_two_2"],
+    );
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    assert.deepEqual(
+      client.lines.pending.filter(
+        (message) => message.method === "elicitation/create",
+      ),
+      [],
+      "a version that already has a live card is never offered a second one",
+    );
+    client.notify("session/cancel", { sessionId: binding.sessionId });
+    await client.lines.untilResult(prompt);
+  } finally {
+    await client.closed();
+  }
 });

@@ -847,11 +847,40 @@ The adapter reads each pending runtime request before settlement. An answer from
 another surface is sent to the same request as `runtime-request.respond` with the
 recorded scalar answer. A withdrawal or supersession sends `decision: "cancel"`
 without answers. T3 resolves the request and marks the question item cancelled;
-the agent receives `action: "cancel"` and records no answer. A T3 operator's cancel
-leaves the decision open and permits one re-offer per decision version. The
-service records cancellation receipts so a restart does not reset that limit.
-Neither agent-side `$/cancel_request` nor permission or URL-mode elicitation is
-used for these forms.
+the agent receives `action: "cancel"` and records no answer. Neither agent-side
+`$/cancel_request` nor permission or URL-mode elicitation is used for these forms.
+
+**A card belongs to the turn that raised it, and a lost card is offered again
+(nucleus#1395).** An open, offerable decision always has exactly one live card:
+the agent keeps a raised card for its own held turn only, so one version never
+has two, and the next held turn raises again whatever the service still offers.
+What is offered is the service's reading of two facts, never an assumption:
+
+- the host's own read of T3. Each sweep reads the thread's pending runtime
+  requests, settles the cards whose run or capability is gone, and records the
+  ones still pending with their decision id and version
+  (`observedCards`, per inbox or per task parent). The offer names the open
+  versions whose cards that read confirms absent, so a lost card comes back on
+  the next held turn in the same inbox, binding and session. Offers and re-entry
+  wait for a successful observation when the thread's pending cards are unknown.
+  A card older than the thread's window is read from the full transcript so the
+  sweep can settle a card that survives a T3 restart;
+- the operator's own dismissals. A cancel is the operator's only when it arrives
+  for a card the held turn raised, and only that one is recorded as a
+  cancellation receipt: an operator's cancel leaves the decision open and permits
+  one re-offer per decision version, and the receipt survives a service restart so
+  that limit is not reset. A card the client settles after its turn ended (across
+  a callback-socket replacement, say) is a settlement the host made from its read,
+  records nothing, and so never spends the version's re-offer. A version whose
+  re-offer is spent no longer holds a task parent or names the inbox, because the
+  offer key applies the same rule everywhere.
+
+An answer whose delivery is unknown is never resent. The decision stays open, the
+version is offered again on the next held turn, and the operator's next answer is
+a fresh delivery. A card the client settles without telling the agent (the sweep
+answers an ended turn's card, which T3 then cancels locally) is forgotten when the
+next turn starts: a reopened thread's attach shows the line only and records no
+offer. A held poll raises the cards once the host has confirmed their absence.
 
 A T3 restart cancels the held run but can leave an old card answerable through a
 message continuation. On load the agent does not treat that text as an answer;
