@@ -147,6 +147,7 @@ export async function callerCliFixture(mismatch = false) {
             role: "planner",
             recordedAt: new Date().toISOString(),
             detail: "queued for the project inbox",
+            replyTo: "nreply_fixture",
           };
         } else if (frame.method !== "service.auth") {
           calls.push({ method: frame.method, input: frame.input });

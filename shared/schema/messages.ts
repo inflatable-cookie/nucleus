@@ -29,6 +29,17 @@ export const agentMessageRecordSchema = z.object({
   toAgentName: z.string().min(1).nullable().optional(),
   /** The task whose planner ladder a planner recipient is: its own planner first, then the project's. */
   toLadderTaskId: z.string().min(1).nullable().optional(),
+  /**
+   * The service-issued reply handle bound to this message's sender at send time
+   * (nucleus#1387): an opaque address back to that sender, usable by this message's
+   * recipient only, until `replyExpiresAt`. Null on messages recorded before handles
+   * existed. A handle names no thread and grants nothing but delivering a message.
+   */
+  replyTo: z.string().nullable().default(null),
+  /** When the reply handle stops working; null when the record has no handle. */
+  replyExpiresAt: z.string().nullable().default(null),
+  /** The message this one replies to through that message's reply handle, when it is a reply. */
+  inReplyTo: z.string().nullable().default(null),
   textDigest: z.string(),
   /** The message body itself, bounded to the send limit; both tasks' detail shows it. */
   text: z.string().min(1),

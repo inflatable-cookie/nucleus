@@ -3036,6 +3036,18 @@ export class Resolution {
   ): Promise<AgentMessageReceipt> {
     return this.agentMessages.hostAgentMessage(identity, input);
   }
+  /** nucleus#1387: the planner or project agent a message's reply handle reaches, for `ask`. */
+  replySender(
+    caller: { agentId: string | null; hostId: string | null },
+    handle: string,
+  ): Promise<{
+    messageId: string;
+    agentId: string;
+    hostId: string | null;
+    reference: string | null;
+  }> {
+    return this.agentMessages.replySender(caller, handle);
+  }
   /** Spec 065: the operator's text from a task's ACP thread, routed as an operator message. */
   operatorMessage(
     taskId: string,
