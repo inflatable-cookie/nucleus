@@ -5,9 +5,16 @@ import { realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { T3CodeHost } from '../hosts/t3code/adapter';
+import { createAdapter } from '../hosts/t3code';
+import { T3RpcError } from '../hosts/t3code/rpc';
+import { HostPolicies } from '../core/host/host-policies';
+import type { HostPolicyConstructor } from '../core/host';
 import { taskWorkspaceTitle } from '../core/workspaces/workspace-title';
 import { PARENT_MODEL, PARENT_PROVIDER } from '../hosts/t3code/nesting';
 import { SNOOZE_HORIZON_MS, SNOOZE_RENEW_BEFORE_MS } from '../hosts/t3code/presentation';
+import { Store } from '../core/store/store';
+import { Engine } from '../core/engine';
+import { submission } from './support/fakes';
 import type { AcpSessionSurface } from '../shared/acp/surface';
 import type { HostAgentSpec } from '../shared/host';
 import type { Profile, Task } from '../shared/contracts';
@@ -363,4 +370,240 @@ test('a role whose create refuses launches no top-level thread and names the fix
   );
   assert.equal(commandsOf(server, 'orchestration.launchThread').length, 0, 'nothing is launched');
   assert.equal(parentOf(), undefined);
+});
+
+test('settled unsnooze that has not cleared snoozedUntil keeps the snooze record, re-observes on delayed apply, and retries as a new occurrence when still snoozed', async t => {
+  const { host, server, spec, parentOf } = await fixture(t);
+  await host.createAgent(spec('worker-launch'));
+  const parent = parentOf()!;
+  const projection = server.threads.get(parent.threadId)!;
+
+  await host.reconcileTaskRow(taskId, waiting());
+  const snoozedUntil = projection.thread.snoozedUntil;
+  assert.ok(snoozedUntil, 'row is snoozed');
+
+  // 1. Delayed apply: T3 acks thread.unsnooze, yet read-back still shows snoozedUntil.
+  const nativeCall = host.rpc.call.bind(host.rpc);
+  let dropUnsnoozeEffect = true;
+  host.rpc.call = async (method, payload) => {
+    if (
+      dropUnsnoozeEffect &&
+      method === 'orchestration.dispatchCommand' &&
+      (payload as { type?: string }).type === 'thread.unsnooze'
+    ) {
+      return { ok: true };
+    }
+    return nativeCall(method, payload);
+  };
+
+  await host.reconcileTaskRow(taskId, { state: 'active' });
+  assert.equal(projection.thread.snoozedUntil, snoozedUntil, 'row is still snoozed on T3');
+  assert.ok(host.state.read().snoozes?.[parent.threadId], 'snooze record is kept until read-back proves cleared');
+  const firstUnsnoozeIntent = Object.values(host.state.read().intents).find(
+    intent => intent.kind === 'thread.unsnooze',
+  );
+  assert.equal(firstUnsnoozeIntent?.status, 'settled', 'first unsnooze receipt settled');
+
+  // When delayed apply lands before the next pass, re-observation forgets the snooze without resending.
+  projection.thread.snoozedUntil = null;
+  await host.reconcileTaskRow(taskId, { state: 'active' });
+  assert.equal(host.state.read().snoozes?.[parent.threadId], undefined, 'delayed apply retired snooze on re-observe');
+  assert.equal(commandsOf(server, 'thread.unsnooze').length, 0, 'no redundant unsnooze sent after delayed apply');
+
+  // 2. Ack that did not take: snooze again, ack unsnooze without clearing, then let the retry take.
+  await host.reconcileTaskRow(taskId, waiting('Second wait'));
+  const secondSnooze = projection.thread.snoozedUntil;
+  assert.ok(secondSnooze, 'second wait snoozes row');
+
+  await host.reconcileTaskRow(taskId, { state: 'active' });
+  assert.equal(projection.thread.snoozedUntil, secondSnooze, 'still snoozed after unapplied ack');
+  assert.ok(host.state.read().snoozes?.[parent.threadId], 'snooze record stays for retry');
+
+  dropUnsnoozeEffect = false;
+  await host.reconcileTaskRow(taskId, { state: 'active' });
+  const unsnoozeCommands = commandsOf(server, 'thread.unsnooze');
+  assert.equal(unsnoozeCommands.length, 1, 'next pass retries unsnooze on the wire');
+  const unsnoozeIntents = Object.entries(host.state.read().intents)
+    .filter(([, intent]) => intent.kind === 'thread.unsnooze')
+    .map(([id]) => id);
+  assert.equal(new Set(unsnoozeIntents).size, 3, 'retry used a fresh command identity as a new occurrence');
+  assert.equal(projection.thread.snoozedUntil, null, 'read-back proves snoozedUntil cleared');
+  assert.equal(host.state.read().snoozes?.[parent.threadId], undefined, 'snooze record retired only after read-back');
+});
+
+test('stale pass snapshot never hides a still-snoozed row or forgets an active snooze', async t => {
+  const { host, server, spec, parentOf, task } = await fixture(t);
+  await host.createAgent(spec('worker-launch'));
+  const parent = parentOf()!;
+  const projection = server.threads.get(parent.threadId)!;
+  const activeTask = task({ phase: 'working', agentId: parent.threadId });
+
+  await host.beginHostPass([activeTask]);
+  // Populate T3Reads' held cache with snoozedUntil: null from earlier in this pass.
+  const initial = await host.readProjection(parent.threadId, 'observation');
+  assert.equal(initial.thread.snoozedUntil, null);
+
+  // Now T3 has snoozedUntil set while the pass's cached inventory row still had null.
+  const until = new Date(Date.now() + SNOOZE_HORIZON_MS).toISOString();
+  projection.thread.snoozedUntil = until;
+  host.state.update(state => {
+    state.snoozes = {
+      ...state.snoozes,
+      [parent.threadId]: { episode: 0, commandId: 'stale-pass-snooze', until, state: 'snoozed', recordedAt: STAMP },
+    };
+  });
+
+  await host.reconcileTaskRow(taskId, { state: 'active' });
+  host.endHostPass();
+  assert.equal(commandsOf(server, 'thread.unsnooze').length, 1, 'unsnoozeRow bypassed the stale held snapshot');
+  assert.equal(projection.thread.snoozedUntil, null);
+  assert.equal(host.state.read().snoozes?.[parent.threadId], undefined);
+});
+
+test('unknown unsnooze delivery is never resent blindly and settles once read-back shows cleared', async t => {
+  const { host, server, spec, parentOf } = await fixture(t);
+  await host.createAgent(spec('worker-launch'));
+  const parent = parentOf()!;
+  const projection = server.threads.get(parent.threadId)!;
+
+  await host.reconcileTaskRow(taskId, waiting());
+  assert.ok(projection.thread.snoozedUntil);
+
+  const nativeCall = host.rpc.call.bind(host.rpc);
+  let unsnoozeAttempts = 0;
+  host.rpc.call = async (method, payload) => {
+    if (
+      method === 'orchestration.dispatchCommand' &&
+      (payload as { type?: string }).type === 'thread.unsnooze'
+    ) {
+      unsnoozeAttempts++;
+      throw new T3RpcError('timeout', method);
+    }
+    return nativeCall(method, payload);
+  };
+
+  await assert.rejects(host.reconcileTaskRow(taskId, { state: 'active' }), /Host delivery is unknown/i);
+  assert.equal(unsnoozeAttempts, 1);
+  assert.ok(host.state.read().snoozes?.[parent.threadId], 'snooze record stays while unsnooze delivery is unknown');
+
+  // Re-running while snoozedUntil is still set must not resend blindly while delivery is unknown.
+  await host.reconcileTaskRow(taskId, { state: 'active' });
+  assert.equal(unsnoozeAttempts, 1, 'timed-out unknown unsnooze is never resent blindly');
+  const unknownUnsnooze = Object.values(host.state.read().intents).filter(
+    intent => intent.kind === 'thread.unsnooze' && intent.status === 'unknown',
+  );
+  assert.equal(unknownUnsnooze.length, 1, 'unknown delivery keeps one command identity');
+
+  // Once T3's read-back shows snoozedUntil cleared, the next pass settles and retires the snooze.
+  projection.thread.snoozedUntil = null;
+  host.rpc.call = nativeCall;
+  await host.reconcileTaskRow(taskId, { state: 'active' });
+  assert.equal(host.state.read().snoozes?.[parent.threadId], undefined, 'snooze retired after read-back');
+  assert.equal(
+    Object.values(host.state.read().intents).some(
+      intent => intent.kind === 'thread.unsnooze' && intent.status === 'unknown',
+    ),
+    false,
+    'unknown unsnooze intent settled by positive read-back',
+  );
+});
+
+test('an operator snooze inside the renew margin is never overwritten or unsnoozed', async t => {
+  const { host, server, spec, parentOf } = await fixture(t);
+  await host.createAgent(spec('worker-launch'));
+  const parent = parentOf()!;
+  const projection = server.threads.get(parent.threadId)!;
+  const operatorUntil = new Date(Date.now() + 60 * 60_000).toISOString();
+  projection.thread.snoozedUntil = operatorUntil;
+  const before = server.commands.length;
+
+  await host.reconcileTaskRow(taskId, waiting());
+  await host.reconcileTaskRow(taskId, { state: 'active' });
+  await host.reconcileTaskRow(taskId, { state: 'attention', cause: 'Needs a person' });
+
+  assert.equal(server.commands.length, before, 'no snooze or unsnooze sent for an operator snooze');
+  assert.equal(projection.thread.snoozedUntil, operatorUntil);
+});
+
+test('active worker going idle and resuming in the same native child unsnoozes on the immediate drain', async t => {
+  const { directory, server, host, workspace, spec, parentOf } = await fixture(t);
+  const store = new Store(':memory:');
+  store.setMeta('paused', false);
+  const adapter = createAdapter(HostPolicies as unknown as HostPolicyConstructor, host);
+  const engine = new Engine(store, adapter, 60_000);
+  t.after(async () => {
+    await engine.stop();
+    store.close();
+  });
+
+  const inserted = store.insert(
+    submission({ submissionId: 'same-child-resume', title: 'Same child resume', repoPath: directory }),
+    host.hostId,
+    'handoff',
+    'a'.repeat(40),
+  );
+  const worker = await host.createAgent({
+    workspaceId: workspace.id,
+    profile,
+    title: 'Same child resume',
+    taskNumber: inserted.number,
+    mcpBindingPath: null,
+    attempt: () => ({
+      requestId: 'worker-launch-same-child',
+      prompt: 'Worker prompt',
+      labels: storedT3Labels('worker', { taskId: inserted.id, runId: 'worker-run-1' }),
+      environment: {},
+    }),
+  });
+  const parent = parentOf()!;
+  const parentProjection = server.threads.get(parent.threadId)!;
+  const workerProjection = server.threads.get(worker.id)!;
+  workerProjection.runs = [syntheticRun(worker.id, 1, { status: 'running' })];
+  const prereq = store.insert(
+    submission({ submissionId: 'same-child-prereq', title: 'Same child prereq', repoPath: directory }),
+    host.hostId,
+    'handoff',
+    'a'.repeat(40),
+  );
+  // Real stored task state: worker went idle while waiting on a prerequisite -> snoozed parent row.
+  workerProjection.runs = [syntheticRun(worker.id, 1, { status: 'completed' })];
+  store.update(inserted.id, {
+    phase: 'working',
+    workspaceId: workspace.id,
+    directory,
+    agentId: worker.id,
+    agentIntent: true,
+    agentActive: false,
+    idleSince: STAMP,
+    runId: 'worker-run-1',
+    prerequisiteWait: {
+      id: prereq.id,
+      waitsFor: [prereq.id],
+      reason: 'Wait briefly before resuming',
+      releasedAt: null,
+    },
+  });
+
+  // 1. HostPass reconciles the waiting task and snoozes its parent row.
+  await engine.auditPass(false);
+  assert.ok(parentProjection.thread.snoozedUntil, 'parent row is snoozed while task waits');
+  assert.ok(host.state.read().snoozes?.[parent.threadId], 'host recorded snooze');
+
+  // 2. The wait lifts and the same native child resumes.
+  store.update(inserted.id, {
+    prerequisiteWait: null,
+    agentActive: true,
+    idleSince: null,
+  });
+  workerProjection.runs = [syntheticRun(worker.id, 2, { status: 'running' })];
+
+  const activatedAt = Date.now();
+  engine.enqueueTitle(inserted.id);
+  await engine.drainProjections({ cleanup: false });
+  const elapsedMs = Date.now() - activatedAt;
+
+  assert.equal(parentProjection.thread.snoozedUntil, null, 'parent row unsnoozed on the immediate drain');
+  assert.equal(host.state.read().snoozes?.[parent.threadId], undefined, 'snooze record retired after read-back');
+  assert.equal(store.task(inserted.id).agentId, worker.id, 'same native worker child resumed');
+  assert.ok(elapsedMs < 2_000, `expected immediate drain reconcile (<2000ms), got ${elapsedMs}ms`);
 });

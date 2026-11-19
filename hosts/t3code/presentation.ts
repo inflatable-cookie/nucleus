@@ -526,13 +526,13 @@ export class T3Presentation {
         this.recordSnooze(threadId, { ...record, state: "snoozed" });
       return;
     }
+    // A snooze nobody here recorded is the operator's and is always left alone.
+    if (snoozed && !record) return;
     if (snoozed && wakeAt - now > SNOOZE_RENEW_BEFORE_MS) {
       // Still well inside the horizon. Our own record is the fact, so a repeated
-      // pass sends nothing; a snooze nobody here recorded is the operator's, and is
-      // left alone too.
-      if (!record) return;
+      // pass sends nothing.
       this.recordSnooze(threadId, {
-        ...record,
+        ...record!,
         until: projection.thread.snoozedUntil!,
         state: "snoozed",
         cause,
@@ -543,9 +543,10 @@ export class T3Presentation {
     // returning identical wait never reuses a spent command.
     const episode = record?.episode ?? 0;
     const until = new Date(now + SNOOZE_HORIZON_MS).toISOString();
-    const commandId = identity(
+    const commandId = this.commandIdFor(
       "snooze",
-      canonical([this.core.hostId(), threadId, until, episode]),
+      [this.core.hostId(), threadId, until, episode],
+      settledOrRefused,
     );
     this.recordSnooze(threadId, {
       episode, commandId, until, state: "unknown", cause,
@@ -592,9 +593,15 @@ export class T3Presentation {
    * Show the row again because a person must act or a role is running. Only a row
    * this host snoozed is unsnoozed: an operator's own settle is never touched, and
    * Nucleus never sends `thread.settle`.
+   *
+   * This host keeps its snooze record until a fresh T3 read proves `snoozedUntil`
+   * is cleared. If a settled unsnooze has not cleared it (delayed apply, stale
+   * snapshot or an ack that did not land), the next pass re-observes and retries as
+   * a new occurrence; an unknown delivery keeps its identity and is never resent
+   * blindly.
    */
   private async unsnoozeRow(threadId: string): Promise<void> {
-    const record = this.core.state.read().snoozes?.[threadId];
+    let record = this.core.state.read().snoozes?.[threadId];
     if (!record || record.state === "refused") {
       // Nothing this host snoozed: the row is already shown, so a repeated pass
       // sends nothing.
@@ -604,21 +611,48 @@ export class T3Presentation {
     if (this.core.intents.confirmedDeletion(this.core.state.read(), threadId))
       return;
     if (!(await this.core.reads.isObserved(threadId))) return;
+    // Drop any cached snapshot before reading: a held snapshot from earlier in the
+    // pass must never hide a still-snoozed row or settle an unsnooze early.
+    this.core.reads.forget?.(threadId);
     const projection = await this.core.reads.readProjection(
       threadId,
       "observation",
     );
-    if (projection.thread.snoozedUntil === null || projection.thread.snoozedUntil === undefined) {
+    if (
+      projection.thread.archivedAt ||
+      projection.thread.deletedAt ||
+      projection.thread.settledOverride === "settled"
+    ) {
+      this.forgetSnooze(threadId);
+      return;
+    }
+    if (
+      record.state === "unknown" &&
+      projection.thread.snoozedUntil === record.until
+    ) {
+      record = { ...record, state: "snoozed" };
+      this.recordSnooze(threadId, record);
+    }
+    if (
+      projection.thread.snoozedUntil === null ||
+      projection.thread.snoozedUntil === undefined
+    ) {
+      this.settleObservedUnsnooze(threadId, record.commandId);
       if (record.state === "unknown") {
         if (Date.parse(record.until) <= Date.now()) this.forgetSnooze(threadId);
         else this.recordSnooze(threadId, { ...record, ended: true });
       } else this.forgetSnooze(threadId);
       return;
     }
-    if (record.state === "unknown" && projection.thread.snoozedUntil !== record.until) return;
-    const commandId = identity(
+    if (
+      record.state === "unknown" &&
+      projection.thread.snoozedUntil !== record.until
+    )
+      return;
+    const commandId = this.commandIdFor(
       "unsnooze",
-      canonical([this.core.hostId(), threadId, record.commandId]),
+      [this.core.hostId(), threadId, record.commandId],
+      settledOrRefused,
     );
     try {
       await this.core.intents.effect(
@@ -634,7 +668,45 @@ export class T3Presentation {
       /* the next pass re-reads the row before it decides again */
       return;
     }
-    this.forgetSnooze(threadId);
+    // Never forget on the ack alone: T3's own `snoozedUntil` read-back proves the
+    // row is shown. Keep the record when `snoozedUntil` is still set so the next
+    // pass re-observes and retries under a fresh occurrence if still needed.
+    this.core.reads.forget?.(threadId);
+    let observed: Projection;
+    try {
+      observed = await this.core.reads.readProjection(threadId, "observation");
+    } catch (error) {
+      if (isHostOperationTimeout(error)) throw error;
+      return;
+    }
+    if (
+      observed.thread.snoozedUntil === null ||
+      observed.thread.snoozedUntil === undefined
+    ) {
+      this.forgetSnooze(threadId);
+    }
+  }
+
+  /** Settle an uncertain unsnooze once a fresh T3 read proves `snoozedUntil` cleared. */
+  private settleObservedUnsnooze(
+    threadId: string,
+    snoozeCommandId: string,
+  ): void {
+    const key = this.commandIdFor(
+      "unsnooze",
+      [this.core.hostId(), threadId, snoozeCommandId],
+      settledOrRefused,
+    );
+    if (this.core.state.read().intents[key]?.status !== "unknown") return;
+    this.core.state.update((current) => {
+      const prior = current.intents[key];
+      if (prior?.status === "unknown")
+        current.intents[key] = {
+          ...prior,
+          status: "settled",
+          result: { snoozedUntil: null },
+        };
+    });
   }
 
   /** Record the row's snooze by thread id; an unchanged record is the same fact, never a write. */

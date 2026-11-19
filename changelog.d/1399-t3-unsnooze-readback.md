@@ -1,0 +1,1 @@
+- Keep T3Code host snooze records until a fresh `snoozedUntil` read-back proves the row is shown, re-observing and retrying settled unsnoozes as new occurrences when still snoozed while never resending unknown deliveries blindly, and reconcile task rows alongside title projection drains so active-role changes surface immediately instead of waiting for the next sweep.

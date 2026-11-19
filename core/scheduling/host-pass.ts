@@ -25,10 +25,8 @@ import {
 import { submissionSchema } from "../../shared/contracts";
 import { submissionRecordFromLegacy } from "../../shared/schema/settings/legacy";
 import { LANE_PRIORITY_AUDIT } from "./lane-priorities";
-import { taskAttention } from "../../shared/task-attention";
-import { holdsOf, taskHoldKind } from "../../shared/holds";
-import { taskHasUnreleasedRun, taskDetailView } from "../../shared/task-view";
-import { taskWaitStateContext, taskWithCurrentWait } from "../recovery/wait-context";
+import type { TaskAttention } from "../../shared/task-attention";
+import { taskRowAttention } from "../workspaces/task-row-attention";
 
 const ROW_FAILURE_LABEL = "task row presentation";
 
@@ -113,25 +111,14 @@ export class HostPass {
   private async reconcileTaskRows(hostId: string): Promise<void> {
     const reconcile = this.adapter.reconcileTaskRow;
     if (!reconcile) return;
-    for (const task of this.store.tasks()) {
-      if (task.hostId !== hostId || task.removedAt != null) continue;
-      const runs = this.store.runs(task.id);
-      const context = taskWaitStateContext(this.store, task, null);
-      const display = taskDetailView(taskWithCurrentWait(this.store, task, context), context, runs);
-      const attention = taskAttention({
-        phase: task.phase,
-        held: task.held,
-        holds: holdsOf(task),
-        holdKind: taskHoldKind(task),
-        attention: task.resolution.attention,
-        originFault: Boolean(task.originError || task.originLookupError),
-        prerequisiteWait: display.waitState?.state === "waiting_prerequisite" && display.waitState.owner !== "operator",
-        prerequisiteOperator: display.waitState?.state === "waiting_prerequisite" && display.waitState.owner === "operator",
-        reason: display.reason,
-        liveRun:
-          runs.some((run) => !run.released && !run.completion) ||
-          taskHasUnreleasedRun(task),
-      });
+    const rows = this.store
+      .tasks()
+      .filter((task) => task.hostId === hostId && task.removedAt == null)
+      .map((task) => ({ task, attention: taskRowAttention(this.store, task) }));
+    const rank = (state: TaskAttention["state"]) =>
+      state === "active" || state === "attention" ? 0 : state === "waiting" ? 1 : 2;
+    rows.sort((left, right) => rank(left.attention.state) - rank(right.attention.state));
+    for (const { task, attention } of rows) {
       try {
         await reconcile.call(this.adapter, task.id, attention);
       } catch (error) {
