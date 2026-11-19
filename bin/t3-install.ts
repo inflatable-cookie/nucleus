@@ -58,6 +58,7 @@ import {
 import {
   readT3Connection,
   readT3RuntimeDescriptor,
+  t3HttpOrigin,
   t3RuntimeDescriptorPath,
   writeT3Connection,
   type T3ConnectionSettings,
@@ -200,27 +201,8 @@ interface RunnableServer {
   serverVersion: string;
 }
 
-/** Use the RPC client's transport mapping while retaining the origin's security and port. */
-export function t3HttpOrigin(endpoint: string): string {
-  const url = new URL(endpoint);
-  if (
-    !["http:", "https:", "ws:", "wss:"].includes(url.protocol) ||
-    url.username ||
-    url.password ||
-    url.search ||
-    url.hash
-  )
-    throw new Error(
-      "T3Code endpoint must be an HTTP or WebSocket URL without credentials, query or fragment",
-    );
-  url.protocol =
-    url.protocol === "ws:"
-      ? "http:"
-      : url.protocol === "wss:"
-        ? "https:"
-        : url.protocol;
-  return url.origin;
-}
+/** The endpoint's own origin, owned by \`shared/t3/settings.ts\` and re-exported here. */
+export { t3HttpOrigin };
 
 /** The environment descriptor an unauthenticated read answers; proves it is a T3 server. */
 async function probeServer(
@@ -384,7 +366,6 @@ async function readService(dataDir: string): Promise<ServiceRead> {
         error?: string;
         version?: string;
         nativeParenting?: string;
-
       };
       threadRetention?: ServiceRead["retention"];
     };

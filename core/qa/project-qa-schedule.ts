@@ -1,5 +1,5 @@
 /** Opt-in main-branch milestone scheduling; all execution uses ProjectQaRunner. */
-import type { Notice, ProjectQaRun, RepositorySettings } from '../../shared/contracts';
+import type { Notice, Project, ProjectQaRun, RepositorySettings } from '../../shared/contracts';
 import { Decisions } from '../planning/decisions';
 import { gitRaw } from '../hooks/hooks';
 import { repositoryOrigin } from '../planning/lanes';
@@ -25,6 +25,7 @@ interface ScheduleState {
 export interface QaScheduleOptions {
   clock?: () => number;
   canAdmit?: () => boolean;
+  refreshResponsibleThread?: (project: Project) => Promise<unknown>;
   includes?: (row: RepositorySettings, merge: Merge, run: ProjectQaRun) => Promise<boolean>;
 }
 export const qaScheduleStateKey = (key: string) => `projectQaSchedule:${key}`;
@@ -39,8 +40,8 @@ export function qaNoticeOwner(store: Store, notice: Notice): string | null {
   return qaScheduleNoticeOwner(store, notice);
 }
 
-/** Pending schedule notifications follow the project's planner (else the Queue planner), never a task author. */
-export function qaScheduleNoticeOwner(store: Store, notice: Notice): string | null {
+/** A scheduled notice remains eligible while its schedule and episode are current. */
+export function qaScheduleNoticeProject(store: Store, notice: Notice): Project | null {
   const key = notice.taskId.slice('qa:'.length), row = store.repositoryFor(key);
   if (!row?.qa?.schedule) return null;
   const project = store.projectFor(row.repository.path, row.repository.origin);
@@ -49,7 +50,12 @@ export function qaScheduleNoticeOwner(store: Store, notice: Notice): string | nu
     const state = store.getMeta<ScheduleState>(qaScheduleStateKey(key));
     if (!state?.redSince || !notice.id.includes(state.redSince)) return null;
   }
-  return store.projectPlannerRecipient(project);
+  return project;
+}
+
+export function qaScheduleNoticeOwner(store: Store, notice: Notice): string | null {
+  const project = qaScheduleNoticeProject(store, notice);
+  return project ? store.projectPlannerRecipient(project) : null;
 }
 
 export class ProjectQaSchedules {
@@ -103,7 +109,7 @@ export class ProjectQaSchedules {
       refuseQaAdmission('schedule_paused', 'Scheduled QA paused, disabled or repository settings changed before admission');
     const project = this.store.projectFor(current.repository.path, current.repository.origin);
     if (!project || project.visibility !== 'active' || !this.store.projectPlannerRecipient(project))
-      refuseQaAdmission('schedule_no_planner', 'Scheduled QA requires an active project with a planner');
+      refuseQaAdmission('schedule_no_planner', 'Scheduled QA requires an active project with a live responsible thread');
   }
   private async includes(row: RepositorySettings, merge: Merge, run: ProjectQaRun): Promise<boolean> {
     if (this.options.includes) return this.options.includes(row, merge, run);
@@ -164,6 +170,10 @@ export class ProjectQaSchedules {
     }
   }
   async advance(row: RepositorySettings): Promise<void> {
+    if (this.options.refreshResponsibleThread) {
+      const project = this.store.projectFor(row.repository.path, row.repository.origin);
+      if (project?.visibility === 'active') await this.options.refreshResponsibleThread(project);
+    }
     this.guard(row);
     const key = this.key(row), meta = qaScheduleStateKey(key), stamp = this.stamp(), at = Date.parse(stamp);
     const schedule = row.qa!.schedule!, interval = schedule.maxIntervalHours * HOUR;

@@ -651,6 +651,9 @@ export function paseoAdapterClass(Policy: HostPolicyConstructor) {
         title: string;
         workspaceId: string | null;
         labels?: Record<string, string>;
+        directory?: string | null;
+        repositoryRoot?: string | null;
+        updatedAt?: string | null;
       }>
     > {
       const found: Array<{
@@ -658,7 +661,14 @@ export function paseoAdapterClass(Policy: HostPolicyConstructor) {
         title: string;
         workspaceId: string | null;
         labels?: Record<string, string>;
+        directory?: string | null;
+        repositoryRoot?: string | null;
+        updatedAt?: string | null;
       }> = [];
+      // The inventory is optional evidence: a workspace lookup failure must not
+      // hide threads whose task ownership establishes project membership.
+      const workspaces = await this.workspaceHost.workspaceInventory().catch(() => []);
+      const byId = new Map(workspaces.map(workspace => [workspace.id, workspace]));
       let cursor: string | undefined;
       for (let page = 0; page < 20; page++) {
         const result = await this.api.agents.list({
@@ -668,7 +678,7 @@ export function paseoAdapterClass(Policy: HostPolicyConstructor) {
         found.push(
           ...result.entries
             .map((e) => e.agent)
-            .filter((a) => !a.archivedAt)
+            .filter((a) => !a.archivedAt && a.status !== "closed")
             .map((a) => {
               const labels =
                 a.labels &&
@@ -676,10 +686,14 @@ export function paseoAdapterClass(Policy: HostPolicyConstructor) {
                 !Array.isArray(a.labels)
                   ? (a.labels as Record<string, string>)
                   : undefined;
+              const workspace = a.workspaceId ? byId.get(a.workspaceId) : undefined;
               return {
                 id: a.id,
                 title: a.title ?? "",
                 workspaceId: a.workspaceId ?? null,
+                directory: workspace?.workspaceDirectory ?? null,
+                repositoryRoot: workspace?.projectRootPath ?? null,
+                updatedAt: typeof a.updatedAt === "string" ? a.updatedAt : null,
                 ...(labels ? { labels } : {}),
               };
             }),

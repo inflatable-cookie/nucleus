@@ -115,7 +115,7 @@ Connection order:
    the repository; expose no bearer in settings responses, diagnostics or logs.
 2. Exchange the bearer at `/api/auth/websocket-ticket/rpc`, then open `/ws` with
    the short-lived ticket and the supported orchestration protocol. The client needs
-   `orchestration:read` and `orchestration:operate`; missing scopes fail closed.
+   `orchestration:read`, `orchestration:operate` and `preview:operate`; missing scopes fail closed.
 3. Read `server.getConfig` through the authenticated socket. Validate
    `environment.environmentId`, `serverVersion` and
    `orchestrationProtocolVersion`, then strictly decode a full shell snapshot.
@@ -778,7 +778,13 @@ missing collection cannot stand in for a real one (nucleus#1188). Archived
 threads are retired participants: they report the terminal
 closed state with `archived` carried on its own field, so archive proofs and
 workspace teardown read a terminal state while retained reads still see the
-retirement.
+retirement. The workspace thread inventory reads the same terminal states as the
+single-thread read (nucleus#1381): a finished run (`completed`, `interrupted`,
+`failed`, `cancelled`, `rolled_back`) reads `idle`, an archived thread `closed`
+and a tombstoned one `gone`. A live run, a pending request or any other status
+holds the archive. A delegated follow-up child leaves observation with its task,
+as its parent does, so a finished task's follow-up reads as retired, not as a
+live row.
 
 On T3 startup, active runs are cancelled and live approvals expire. Pending
 questions may remain pending with `responseCapability: {type: "message"}`.
@@ -787,6 +793,48 @@ Read this capability from the fresh thread projection and answer through
 invent a second follow-up. Expired or nonresumable approvals cannot be answered
 again. An interrupted answer remains uncertain even if the request later expires;
 expiry is not evidence that the original answer was never delivered.
+
+## Operator decisions on T3
+
+An open decision linked to a live T3 task goes to that task's ACP parent; other
+operator decisions go to the environment's single pinned **Nucleus** inbox. The
+inbox has a dedicated service-owned directory and a host-scoped ACP binding, not
+a task identity. Its credential can read its decision projection and answer it,
+but cannot send a task message, report a run or exercise task controls. Re-minting
+replaces the authority record and revokes the previous credential. The inbox is
+not a role thread and retention and task archiving never select it.
+
+Each open decision version becomes its own `elicitation/create` form. The field id
+carries the decision id and version; its title, question and labelled options are
+shown by T3. Multiple cards can remain pending on one held turn. An accepted
+answer goes through the existing decision answer route as the authenticated T3
+operator; it is not a planner relay. A task with an open decision needs a person,
+so its row is unsnoozed and its parent is held or re-entered. Once the answer is
+recorded, ordinary attention projection decides whether the row snoozes again.
+
+The adapter reads each pending runtime request before settlement. An answer from
+another surface is sent to the same request as `runtime-request.respond` with the
+recorded scalar answer. A withdrawal or supersession sends `decision: "cancel"`
+without answers. T3 resolves the request and marks the question item cancelled;
+the agent receives `action: "cancel"` and records no answer. A T3 operator's cancel
+leaves the decision open and permits one re-offer per decision version. The
+service records cancellation receipts so a restart does not reset that limit.
+Neither agent-side `$/cancel_request` nor permission or URL-mode elicitation is
+used for these forms.
+
+A T3 restart cancels the held run but can leave an old card answerable through a
+message continuation. On load the agent does not treat that text as an answer;
+it reads open decisions again. The adapter clears stale cards from the service's
+record. Re-entry uses a durable occurrence generation: an uncertain send is read
+before another occurrence is considered, and a later confirmed restart uses a
+new command identity. The same rule holds the permanent inbox open.
+
+The service mints a fresh one-time board link for `preview.open` on the inbox
+thread. It sends the link only in that WebSocket call, never in an ACP prompt or
+an intent log. A new host connection opens the pane again after T3 or the service
+restarts; an uncertain open is not blindly repeated on the same connection.
+`nucleus t3 install` grants `preview:operate` to the runtime bearer, and a repeat
+install rotates that bearer.
 
 ## Native parenting
 
@@ -816,7 +864,7 @@ checkout is refused with a visible reason, never silently re-homed.
 
 **The turn is held, released and re-entered.** The ACP agent holds the parent's
 turn while the service says to. The adapter releases it when no role child of the
-task is live, so it no longer reads as busy forever. Before
+task is live and no decision needs a person, so it no longer reads as busy forever. Before
 the next child, the parent is re-entered with a message whose text carries the
 adapter's `nucleus-hold-the-task-thread` marker; the binding's `holdPattern` names
 that marker, so the agent holds the turn and shows or forwards nothing. A manually settled parent is left alone; re-entry refuses until the operator
@@ -885,6 +933,22 @@ status message when present. The adapter and the service never write T3 settings
 the operator's `nucleus t3 install` and `nucleus t3 uninstall` do, through T3's own
 `server.updateSettings`, and only the `nucleus` provider instance (Tom,
 2026-11-18; nucleus#1330).
+
+**The task parent is the participant's runtime, not its tool.** T3 starts the
+`nucleus` provider as `nucleus-acp.mjs` with the task worktree as cwd and keeps
+it for the task's whole life, and it starts every role session as a native child
+of that parent thread. A cwd-rooted process proof would read both as a live tool
+and block review or closeout, so one host-qualified recognition owns them
+(nucleus#1377; [orchestration
+contract](../contracts/orchestration.md), the owned-tool process proof): the
+connected T3 server is the pid its own runtime descriptor records under the
+stored connection's base directory, the ACP parent is its direct child running
+`nucleus-acp.mjs` whose binding names this task, and its role sessions are its
+children — or the server's children whose readable `T3CODE_THREAD_ID` names a
+recorded participant thread. A command a session's tools start stays a tool. The
+same recognition protects these processes from run cleanup and lets the
+owned-tool, review and closeout workspace proofs pass while the task is idle. The
+private proof is `effigy proof:t3:runtime`.
 
 ## One row per task
 
@@ -1061,7 +1125,7 @@ refuses clearly when nothing answers. The environment id in that descriptor is
 the host id the service must come online as, `t3code:<environmentId>`.
 
 **Bearers.** Two sessions, split by scope. The service's **runtime** bearer has
-`orchestration:read` and `orchestration:operate` only, with a long TTL
+`orchestration:read`, `orchestration:operate` and `preview:operate`, with a long TTL
 (`--ttl`, default 365 days), label and subject `nucleus`; it is stored owner-only
 in `<data home>/settings.json` as `t3code: { endpoint, bearer, sessionId, environmentId, baseDir,
 expiresAt, probeThreadId? }`, and is never printed, reported or logged. The

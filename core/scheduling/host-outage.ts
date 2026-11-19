@@ -73,8 +73,7 @@ export class HostOutages {
    *
    * - a project that becomes affected after an earlier project was told still
    *   hears once for the same outage;
-   * - a project whose planner was not resolvable at an earlier pass is retried on
-   *   later ones instead of being marked as told;
+   * - a notice with no live recipient stays pending for delivery on a later pass;
    * - the same project never hears twice for one outage, and the notice itself is
    *   never resent after an uncertain delivery (its recorded intent covers that).
    *
@@ -101,10 +100,8 @@ export class HostOutages {
         for (const [projectKey, tasks] of this.groupByProject(waiting)) {
           if (current.notifiedProjects[projectKey]) continue;
           const project = this.store.projectByKey(projectKey);
-          const planner = this.store.projectPlannerRecipient(project);
-          // No recipient yet: retry next pass, so a project that gains a planner
-          // during the same outage still hears once.
-          if (!planner) continue;
+          // Keep a visible pending notice when no live thread exists yet.
+          const planner = this.store.projectPlannerRecipient(project) ?? `project:${projectKey}`;
           const id = hostOutageNoticeId(hostId, projectKey, outage.since);
           this.store.putNotice({
             id, taskId: `project:${projectKey}`, agentId: planner, recipientAgentId: planner,

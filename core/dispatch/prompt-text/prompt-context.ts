@@ -152,7 +152,7 @@ export function runPromptContext(
             )
           : "",
       ) +
-      section("namedProof", proofOnly ? "" : requiredProofNote(run.role)) +
+      section("namedProof", proofOnly ? "" : requiredProofNote(run.role, task)) +
       section("lane", queueLaneBlock(task)) +
       section(
         "laneDocuments",

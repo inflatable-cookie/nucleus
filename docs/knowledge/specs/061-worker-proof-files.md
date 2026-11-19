@@ -92,9 +92,13 @@ PR body or comment. A PR may state that evidence was delivered to the retained
 reviewer and give the hashes. The ordinary reviewer publication body carries
 only reviewer findings, the verdict table and the authenticated marker.
 
-If a required artifact exceeds the proof-file limits (8 MiB per file or 32 MiB
-total), the author may deliver the subset allowed by the brief or report blocked
-with `reviewResponsibility: environment`, naming the required evidence size.
+The size limits are packaging, never a delivery gate (nucleus#1382). A report
+whose files exceed 8 MiB per file or 32 MiB total is refused so the author can
+summarise the evidence into compact evidence plus hashes and resend the
+corrected list in the same turn; it is never a reason to report blocked. The
+worker and revision prompts say the same, and a brief that names no visual or
+rendered proof gets a paragraph saying there is nothing to deliver instead of
+the delivery mechanics.
 
 ## Acceptance
 

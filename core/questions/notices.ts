@@ -1,15 +1,16 @@
 import type { Notice } from '../../shared/contracts';
+import { parseAgentId } from '../../shared/agent-identity';
 import { TASK_OWNER_HOLD, episodeBindsCurrentWork, isDispositionActive, isDispositionComplete, isRetainedProfileReason, taskOwner } from '../../shared/contracts';
 import { normalizeRepositoryOrigin } from '../../shared/lanes';
 import { isSshAuthExhausted } from '../../shared/ssh-auth';
 import { isWaitingTaskStop } from '../../shared/task-stop';
 import { parseHostOutageNoticeId } from '../../shared/host-outage';
 import { isCloseoutHookHold } from '../hooks/hooks';
-import { NO_ORIGIN_THREAD_WAIT, missingOriginHasPlanner, noticeId, noticeTarget, originRecipient } from './origin';
+import { NO_ORIGIN_THREAD_WAIT, missingOriginHasPlanner, noticeId, noticeTarget, originRecipient, originUsesProject } from './origin';
 import type { AgentObservation } from '../host/adapter';
 import { isAgentGoneRefusal } from '../host/errors';
 import { qaSettlementHostMessageId } from '../qa/project-qa-notice';
-import { qaNoticeOwner } from '../qa/project-qa-schedule';
+import { qaNoticeOwner, qaScheduleNoticeProject } from '../qa/project-qa-schedule';
 import type { Resolution } from '../resolution';
 import { now } from '../store/store';
 import { active } from '../recovery/task-reasons';
@@ -114,11 +115,15 @@ export class Notices {
     let state: AgentObservation | null;
     try { state = d.observe ? await d.observe() : await this.resolution.host.observe(d.recipient); }
     catch (error) {
-      if (d.gone && isAgentGoneRefusal(error)) { d.gone(); return 'done'; }
+      if (isAgentGoneRefusal(error)) {
+        this.resolution.responsibleThreads.cache.invalidateMatching(d.recipient);
+        if (d.gone) { d.gone(); return 'done'; }
+      }
       d.wait(d.lookupWait(error instanceof Error ? error.message : String(error)));
       return 'done';
     }
     if (!state) return 'done';
+    if (state.archived || state.status === 'closed' || state.status === 'gone') { this.resolution.responsibleThreads.cache.invalidateMatching(d.recipient); d.gone?.(); return 'done'; }
     if (!(d.ready ? d.ready(state) : !active(state))) { d.wait(d.busyWait(state)); return 'done'; }
     if (this.paused()) return 'paused';
     const record = d.confirm();
@@ -126,7 +131,7 @@ export class Notices {
     const target = d.target(record);
     d.mark(record, 'intent', '');
     try { await this.resolution.host.sendMessage(target.agentId, { messageId: target.id, text: target.text, sourceAgentId: target.sourceAgentId }); d.mark(record, 'delivered', ''); }
-    catch (error) { d.mark(record, 'uncertain', String(error)); }
+    catch (error) { this.resolution.responsibleThreads.cache.invalidateMatching(d.recipient); d.mark(record, 'uncertain', String(error)); }
     return 'done';
   }
   /**
@@ -145,7 +150,7 @@ export class Notices {
    */
   async deliverHostOutageNotices() {
     if (!this.adapter.notify || this.paused()) return;
-    for (const n of this.store.pendingNotices()) {
+    for (let n of this.store.pendingNotices()) {
       if (this.paused()) return;
       if (n.kind !== 'host_outage') continue;
       // Durable intent first (planner ruling, 2026-11-14; nucleus#1198 review):
@@ -162,7 +167,11 @@ export class Notices {
         this.store.putNotice({ ...n, status: 'superseded', error: ended });
         continue;
       }
-      const recipientHost = await this.resolution.identifyOriginHost(n.agentId);
+      const project = this.store.projectByKey(n.taskId.replace(/^project:/, ''));
+      const resolved = project ? (await this.resolution.responsibleThread(project)).thread : null;
+      if (!resolved) { if (project) this.store.putNotice({ ...n, error: `No live responsible thread for ${project.key}` }); continue; }
+      if (n.agentId !== resolved.agentId || n.error) { n = { ...n, agentId: resolved.agentId, recipientAgentId: resolved.agentId, error: '' }; this.store.putNotice(n); }
+      const recipientHost = parseAgentId(n.agentId)?.hostId ?? await this.resolution.identifyOriginHost(n.agentId);
       if (!recipientHost) {
         if (n.error !== 'Waiting for a proven planner host') this.store.putNotice({ ...n, error: 'Waiting for a proven planner host' });
         continue;
@@ -177,7 +186,7 @@ export class Notices {
         lookupWait: message => `Waiting for the project planner: ${message}`,
         busyWait: state => `Waiting for the project planner to finish (${state.status})`,
         wait: reason => { if (n.error !== reason) this.store.putNotice({ ...n, error: reason }); },
-        gone: () => this.store.putNotice({ ...n, status: 'superseded', error: 'The planner thread is no longer available' }),
+        gone: () => this.store.putNotice({ ...n, error: 'The responsible thread is no longer available' }),
         confirm: () => {
           const current = this.store.notices(n.taskId).find(notice => notice.id === n.id);
           if (!current || current.status !== 'pending') return null;
@@ -202,7 +211,7 @@ export class Notices {
    */
   async deliverDrainNotices() {
     if (!this.adapter.notify || this.paused()) return;
-    for (const n of this.store.pendingNotices()) {
+    for (let n of this.store.pendingNotices()) {
       if (this.paused()) return;
       if (n.kind !== 'lane_drain' && n.kind !== 'next_aim' && n.kind !== 'qa') continue;
       const [scope, key, ...rest] = n.id.split(':');
@@ -214,24 +223,44 @@ export class Notices {
           return n.kind === 'qa';
         } catch { return false; }
       };
+      if (n.status === 'intent') { this.store.putNotice({ ...n, status: 'uncertain', error: 'Restart during delivery; inspect the owner thread before resending' }); continue; }
+      const scheduledQa = n.kind === 'qa' && !n.id.startsWith('project-qa-settled:');
+      const qaProject = scheduledQa ? qaScheduleNoticeProject(this.store, n) : null;
       let live = episodeLive();
       if (n.kind === 'qa') {
-        const owner = qaNoticeOwner(this.store, n);
-        live = Boolean(owner);
-        if (owner && n.status === 'pending' && n.agentId !== owner) {
-          this.store.putNotice({ ...n, agentId: owner, recipientAgentId: owner }); continue;
+        live = scheduledQa ? Boolean(qaProject) : Boolean(qaNoticeOwner(this.store, n));
+        if (qaProject) {
+          const { thread } = await this.resolution.responsibleThread(qaProject);
+          if (!thread) {
+            if (n.error !== 'No live responsible thread') this.store.putNotice({ ...n, error: 'No live responsible thread' });
+            continue;
+          }
+          if (n.agentId !== thread.agentId || n.error) {
+            n = { ...n, agentId: thread.agentId, recipientAgentId: thread.agentId, error: '' };
+            this.store.putNotice(n);
+          }
         }
       }
       if (!live) { this.store.putNotice({ ...n, status: 'superseded', error: 'The drain episode ended before the prompt was delivered' }); continue; }
-      if (n.status === 'intent') { this.store.putNotice({ ...n, status: 'uncertain', error: 'Restart during delivery; inspect the owner thread before resending' }); continue; }
-      const recipientHost = await this.resolution.identifyOriginHost(n.agentId);
+      if (n.status === 'pending' && n.kind !== 'qa') {
+        const project = n.kind === 'next_aim' ? this.store.projectByKey(key) : this.store.projects().find(candidate => {
+          try { return this.store.plan({ project: candidate.key }).entries.some(entry => entry.lane === key); }
+          catch { return false; }
+        });
+        const thread = project ? (await this.resolution.responsibleThread(project)).thread : null;
+        if (!thread) { if (n.error !== 'No live responsible thread') this.store.putNotice({ ...n, error: 'No live responsible thread' }); continue; }
+        if (n.agentId !== thread.agentId) { n = { ...n, agentId: thread.agentId, recipientAgentId: thread.agentId, error: '' }; this.store.putNotice(n); }
+      }
+      const recipientHost = parseAgentId(n.agentId)?.hostId ?? await this.resolution.identifyOriginHost(n.agentId);
       if (!recipientHost || !this.resolution.withHost(recipientHost, () => this.resolution.originHostAvailable(recipientHost))) continue;
       const sent = await this.resolution.withHost(recipientHost, () => this.sendDurably({
         recipient: n.agentId,
         lookupWait: message => `Waiting for the plan owner: ${message}`,
         busyWait: state => `Waiting for the plan owner to finish (${state.status})`,
         wait: reason => { if (n.error !== reason) this.store.putNotice({ ...n, error: reason }); },
-        gone: () => this.store.putNotice({ ...n, status: 'superseded', error: 'Owner thread is no longer available; escalation covers the answer' }),
+        gone: () => this.store.putNotice(n.kind === 'qa' && !scheduledQa
+          ? { ...n, status: 'superseded', error: 'The QA recipient is no longer available' }
+          : { ...n, error: 'The responsible thread is no longer available' }),
         confirm: () => {
           // Plan saves and lane-document edits may land while the owner is finishing
           // another run. Refresh at the delivery boundary and retain the episode ID.
@@ -239,12 +268,13 @@ export class Notices {
           const current = this.store.notices(n.taskId).find(notice => notice.id === n.id);
           if (!current || current.status !== 'pending') return null;
           let stillLive = episodeLive();
-          if (n.kind === 'qa') {
-            const owner = qaNoticeOwner(this.store, current);
-            if (owner && (current.agentId !== owner || current.agentId !== n.agentId)) {
-              this.store.putNotice({ ...current, agentId: owner, recipientAgentId: owner }); return null;
-            }
-            stillLive = Boolean(owner);
+          if (qaProject) {
+            const latest = qaScheduleNoticeProject(this.store, current);
+            stillLive = Boolean(latest);
+            if (latest && (latest.key !== qaProject.key || latest.version !== qaProject.version
+              || latest.planner?.agentId !== qaProject.planner?.agentId || qaNoticeOwner(this.store, current) !== n.agentId)) return null;
+          } else if (n.kind === 'qa') {
+            stillLive = Boolean(qaNoticeOwner(this.store, current));
           }
           if (!stillLive) { this.store.putNotice({ ...current, status: 'superseded', error: 'The drain episode ended before the prompt was delivered' }); return null; }
           return current;
@@ -327,6 +357,10 @@ export class Notices {
       const task = this.store.task(n.taskId);
       if (task.originHostId !== scopedHost) continue;
       const completion=n.kind==='completion';
+      if (n.status === 'pending' && n.originEntry && originUsesProject(task)) {
+        const project = this.store.projectFor(task.repoPath, normalizeRepositoryOrigin(task.repository ?? ''));
+        if (project && !this.store.projectPlannerRecipient(project)) await this.resolution.responsibleThread(project);
+      }
       const target=noticeTarget(this.store,task,n);
       // A settled notice keeps the recipient it recorded: a later owner change never
       // reinterprets delivery history (review #602).

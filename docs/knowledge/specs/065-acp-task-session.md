@@ -43,7 +43,9 @@ nothing else:
   the task's history;
 - `session/prompt` holds the turn while the service says to, shows the
   lifecycle lines the service sends as `session/update` agent messages, and
-  forwards anything a person typed. A host that released a turn re-enters the
+  forwards a person's text from a task session. The inbox never forwards prompt text.
+  It also raises each service-projected decision as a concurrent native form and
+  returns the operator's answer or cancellation receipt. A host that released a turn re-enters the
   thread with a prompt of its own, and the binding's `holdPattern` names it:
   nothing is shown, nothing is forwarded, and the turn is held, which is what
   gives the host's next child a live parent run (nucleus#1305);
@@ -106,7 +108,7 @@ launched.
 
 ### 3. The service API: hold, release, lifecycle text
 
-`core/acp/sessions.ts` serves two callback routes on the existing callback
+`core/acp/sessions.ts` serves three callback routes on the existing callback
 socket, authenticated by the minted token:
 
 - `POST /acp-turn` `{taskId, sessionId, waitMs, attach?}` answers
@@ -120,10 +122,12 @@ socket, authenticated by the minted token:
     whatever this service already showed for that session. The stored signature
     suppresses only the repetitions a held turn would otherwise make;
   - `release` when the task is terminal, or when a host adapter called
-    `release(sessionId, reason)`. A release directive is consumed by the turn
+    `release(sessionId, reason)`, provided no operator decision is open. A release directive is consumed by the turn
     that acts on it and the next turn holds again, which is what "release the
     parent between children, re-enter by message" needs. Directives are
     memory-only, so a service restart re-derives the answer from the task.
+- `POST /acp-answer` authenticates a task or host-scoped inbox session, checks the
+  offered decision and version, and records an operator answer or cancellation receipt.
 - `POST /acp-message` `{taskId, sessionId, eventId, text}` records the
   operator's text through the existing message route and answers its receipt.
 
@@ -193,12 +197,24 @@ launcher whose `session/load` shows the line the dead process had already shown.
 Affected unit files cover the rest; `effigy check` and `effigy qa:docs` gate the
 docs.
 
+## T3 inbox and decision forms
+
+A T3 inbox is a second binding kind scoped to a host, with its own owner-only
+credential and dedicated directory. It has no task identity and cannot invoke the
+task message route. The service projects operator decisions into native ACP
+forms; the agent holds several requests at once and sends accepted answers or
+cancel receipts back over the authenticated callback. The service checks the
+decision version and the session's scope before recording an operator answer.
+Task bindings continue to use their checkout and task identity. T3-specific
+thread creation, card settlement and restart behavior belong to the
+[T3 adapter](t3code-host-adapter.md#operator-decisions-on-t3).
+
 ## Not in this spec
 
 Parenting role threads as ACP children of this session, and registering the
 Nucleus provider in T3, are the host adapter's work
 ([t3code host adapter](t3code-host-adapter.md), "Native parenting"): it holds the
-turn while any child is active, releases it when none is, and re-enters with a
+turn while a child is active or a decision needs the operator, releases it when neither applies, and re-enters with a
 `holdPattern` prompt before the next child. Registering the provider
 is one operator setting (`nucleus-acp` is the installed command path); a drift
 in the client's ACP revision is the adapter's compatibility check, not the

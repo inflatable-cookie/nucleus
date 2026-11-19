@@ -26,6 +26,7 @@ import { createHash } from "node:crypto";
 import { readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
+import { acpInboxBindingSchema, type AcpInboxBinding } from "./inbox-binding";
 
 export const ACP_SESSION_FORMAT = "nucleus.acp.session";
 export const ACP_BINDING_FORMAT = "nucleus.acp.binding";
@@ -54,6 +55,7 @@ export const acpBindingSchema = z
   .object({
     format: z.literal(ACP_BINDING_FORMAT),
     version: z.literal(1),
+    kind: z.literal("task").optional(),
     sessionId: z.string().uuid(),
     taskId: taskIdSchema,
     socketPath: z.string().min(1),
@@ -76,7 +78,8 @@ export const acpBindingSchema = z
     holdPattern: z.string().min(1).max(400).optional(),
   })
   .strict();
-export type AcpBinding = z.infer<typeof acpBindingSchema>;
+export type AcpTaskBinding = z.infer<typeof acpBindingSchema>;
+export type AcpBinding = AcpTaskBinding | AcpInboxBinding;
 
 /** Every ACP file lives here, directly under the data home. */
 export const acpRoot = (dataHome: string): string => join(dataHome, "acp");
@@ -139,7 +142,7 @@ export function readAcpBinding(path: string): AcpBinding {
     );
   }
   try {
-    return acpBindingSchema.parse(JSON.parse(text));
+    return z.union([acpBindingSchema, acpInboxBindingSchema]).parse(JSON.parse(text));
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new AcpBindingError(

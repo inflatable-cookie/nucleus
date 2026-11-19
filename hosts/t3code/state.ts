@@ -36,6 +36,7 @@ const intentKind = z.enum([
   "thread.unsettle",
   "thread.snooze",
   "thread.unsnooze",
+  "thread.pin",
   "thread.metadata.update",
   "thread.delete",
   "thread.stop",
@@ -225,6 +226,10 @@ const schema = z.object({
    * run, and `findAgents` must never mistake it for the worker this task created.
    */
   parents: z.record(z.string(), parentThread).optional(),
+  /** Permanent host-scoped inbox, never a task role or an archive target. */
+  inbox: z.object({ threadId: z.string(), sessionId: z.string(), bindingPath: z.string(), directory: z.string(),
+    workspaceId: z.string(), projectId: z.string(), createdAt: z.string(), pinGeneration: z.number().int().nonnegative().default(0) }).optional(),
+  decisionHolds: z.record(z.string(), z.object({ generation: z.number().int().nonnegative(), commandId: z.string(), messageId: z.string() })).optional(),
   /**
    * Whether this host can nest role threads right now: the Nucleus ACP provider is
    * registered and ready. When it is not, the host says why on its status line and
@@ -274,7 +279,7 @@ export function agentRecord(
  * (`nesting.taskOfChild`), and `title` is the state title its row rides on, so a thread
  * that comes back has the record it had (nucleus#1328 review).
  */
-export function retiredRecord(record: T3AgentRecord): T3RetiredAgent {
+export function retiredRecord(record: T3ThreadIdentity): T3RetiredAgent {
   return {
     workspaceId: record.workspaceId,
     labels: record.labels,

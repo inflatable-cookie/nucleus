@@ -2,6 +2,7 @@ export interface AgentObservation {
   id: string;
   workspaceId: string | null;
   status: string;
+  archived?: boolean;
   active: boolean;
   permissions: boolean;
   error: string;
@@ -26,6 +27,7 @@ export interface AgentObservation {
   lastUserMessageAt?: string | null;
 }
 
+import type { ParticipantRuntime } from "../../machine/participant-runtime";
 import type {
   HostProcessFact,
   TimelineEntry,
@@ -53,6 +55,10 @@ export interface HostObservation {
       title: string;
       workspaceId: string | null;
       labels?: Record<string, string>;
+      /** Native working directory and repository root, when the host reports them. */
+      directory?: string | null;
+      repositoryRoot?: string | null;
+      updatedAt?: string | null;
     }>
   >;
   /** One newest page of the agent's timeline, or null when the read fails; a failed read is never evidence. */
@@ -82,6 +88,6 @@ export interface HostObservation {
   noLiveWorkspaceProcesses?(
     workspaceId: string,
     runIds: readonly string[],
-    bbThreads?: readonly string[],
+    runtime?: ParticipantRuntime,
   ): Promise<string | null>;
 }

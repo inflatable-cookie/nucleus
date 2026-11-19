@@ -1,3 +1,4 @@
+import { isOperatorBoardOrT3 } from "../../../shared/operator-identity";
 /**
  * Spec 052 planner grants (Tom, 2026-11-06). A planner asks for standing
  * permission to use profiles the usage level holds for a block of work; the
@@ -162,14 +163,14 @@ function applyAnsweredGrants(store: Store, decisions: Decisions): void {
     if (decision?.status === "open") continue;
     const at = now();
     const answer = decision?.status === "answered" ? decision.answer : null;
-    const boardYes = Boolean(answer && !answer.relayed && answer.answeredBy === GRANT_OPERATOR_BOARD && answer.text.trim() === GRANT_APPROVE);
+    const boardYes = Boolean(answer && !answer.relayed && isOperatorBoardOrT3(answer.answeredBy) && answer.text.trim() === GRANT_APPROVE);
     if (boardYes) {
-      replaceGrant(store, { ...grant, status: "active", activatedAt: at, activatedBy: GRANT_OPERATOR_BOARD });
+      replaceGrant(store, { ...grant, status: "active", activatedAt: at, activatedBy: answer!.answeredBy });
       settleCoveredTasks(store, decisions);
       continue;
     }
     const note = !decision ? "The grant decision is gone"
-      : answer?.relayed || (answer && answer.answeredBy !== GRANT_OPERATOR_BOARD)
+      : answer?.relayed || (answer && !isOperatorBoardOrT3(answer.answeredBy))
         ? "A relayed answer does not activate a grant; answer on the board"
         : decision.status === "answered" ? (answer?.text ?? "declined").slice(0, 400)
           : `The grant decision was ${decision.status}`;

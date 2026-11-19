@@ -102,6 +102,7 @@ const COMMANDS = new Set([
   "thread.create",
   "thread.stop",
   "thread.archive",
+  "thread.pin",
   "thread.delete",
   "message.dispatch",
   "project.create",

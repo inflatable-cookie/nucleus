@@ -82,6 +82,7 @@ export const threadRecord = z.object({
    * runtime request or a failed run, and is never auto-settled while snoozed.
    */
   snoozedUntil: date.nullable().optional(),
+  pinnedAt: date.nullable().optional(),
   worktreePath: z.string().nullable(),
   branch: z.string().nullable(),
   archivedAt: date.nullable(),

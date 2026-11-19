@@ -75,6 +75,8 @@ export async function delegateQuestion<T>(
     /** No rung could be asked on its host. Skip the decider; the caller raises a board decision. */
     onUnavailable?: (planner: string) => void;
     retainDecider?: boolean;
+    /** Planning callers opt out of starting a decider; a recorded delivery can still settle. */
+    allowDecider?: boolean;
   },
 ): Promise<{
   role: DelegateRole;
@@ -215,6 +217,7 @@ export async function delegateQuestion<T>(
   }
   if (
     !current() ||
+    (input.allowDecider === false && !deciderDelivery) ||
     input.canAdvance?.() === false ||
     !resolution.adapter.runDecider
   )

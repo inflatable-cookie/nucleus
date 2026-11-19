@@ -404,7 +404,12 @@ export class T3Nesting {
     const role = this.core.state.read().agents[threadId];
     if (role && followUpId !== threadId) {
       this.core.state.update((state) => {
-        if (state.agents[followUpId] || state.followUps?.[followUpId]) return;
+        if (
+          state.agents[followUpId] ||
+          state.followUps?.[followUpId] ||
+          state.retiredAgents?.[followUpId]
+        )
+          return;
         state.followUps = {
           ...state.followUps,
           [followUpId]: {
@@ -468,6 +473,7 @@ export class T3Nesting {
       if (projection.thread.archivedAt) continue;
       if (!projection.runs.some((run) => activeStatuses.has(run.status)))
         continue;
+      if (this.core.acp()?.pendingDecisionKey?.(task.id)) continue;
       if (this.holding(parent)) continue;
       if (await this.anyChildLive(task.id)) continue;
       await this.release(parent);

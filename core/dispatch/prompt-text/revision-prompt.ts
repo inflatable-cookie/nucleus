@@ -23,10 +23,10 @@ import {
 } from "./report-rules";
 import {
   PROOF_FILES_REVIEWER_RULE,
-  PROOF_FILES_RULE,
   REQUIRED_PROOF_AUTHOR_NOTE,
   REQUIRED_PROOF_REVIEWER_NOTE,
   proofFilesBlock,
+  proofFilesNote,
 } from "./proof-rules";
 import {
   REVIEWER_READING_RULE,
@@ -97,9 +97,12 @@ export function revisionRunPrompt(prompt: RunPromptContext): string {
   const action = run.instruction?.trim() || revisionContinuationAction(task);
   // A continuation without review findings names the existing action and the
   // ordinary checks only; it must not tell the worker a review defect exists.
+  // The affected-tests rule is not restated here: validation.ts owns it and
+  // names the repository's own command only when that repository configures one
+  // (nucleus#1380), so a repository without `affectedTests` reads no such step.
   const direction = findings
-    ? "Address the public review findings below, run the checks the repository validation rule requires, commit, run the affected tests at the new head (AGENTS.md Validate), and push your changes."
-    : "Run the checks the repository validation rule requires, commit, run the affected tests at the new head (AGENTS.md Validate), and push your changes.";
+    ? "Address the public review findings below, run the checks the repository validation rule requires, commit and push your changes."
+    : "Run the checks the repository validation rule requires, commit and push your changes.";
   const findingsBlock = findings
     ? `Review findings: ${findings}\n${reviewReference(task)}\n`
     : "";
@@ -115,8 +118,7 @@ Recorded clean head: ${intent.head}
 Retained identities: worker ${task.agentId}, workspace ${task.workspaceId}, directory ${task.directory}, queue-owned branch ${task.branch}
 ${task.resolution.pendingWorkerInstruction ? `Authorized continuation action: ${task.resolution.pendingWorkerInstruction}\n` : ""}${queueLaneBlock(task)}${queueLaneDocumentBlock(task, task.temporaryDirectory)}${queueBriefBlock(task)}${queueBuildOutputBlock(task, task.runId ?? null)}Continue the same approved brief in this existing workspace and branch. Confirm \`git branch --show-current\` prints exactly ${task.branch} before editing. Read the Nucleus-held brief above and applicable repository instructions. ${VALIDATION_RUN_RULE}
 ${REQUIRED_PROOF_AUTHOR_NOTE}
-${PROOF_FILES_RULE}
-Do not change scope, create a nested task or another worktree, or accept partial delivery. Inspect existing work and commits first; do not repeat a consumed one-shot or operator-gated action.
+${proofFilesNote(task)}Do not change scope, create a nested task or another worktree, or accept partial delivery. Inspect existing work and commits first; do not repeat a consumed one-shot or operator-gated action.
 When this continuation ends, report ready_for_review with prNumber, blocked/error, or one more progress_checkpoint with the exact local head. Every report carries a short headline (at most about 200 characters, plain language: what happened and what is next). Leave the worktree clean first. When the checkpoint budget is spent, continue to the PR: blocked and error are for execution failures, never another checkpoint.
 ${WORKSPACE_RULE}`;
 }

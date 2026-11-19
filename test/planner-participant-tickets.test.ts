@@ -71,7 +71,7 @@ test('startup with an archived recorded planner sends nothing and records the ti
       overrides: {}, defaultSlots: 4, liveAgentIds: new Set(), liveKnown: false, latestQaRuns: [],
       plannerTicketPending: f.tickets.pendingPlanners() }));
     assert.equal(settings.projects[0]?.plannerTicket, 'pending');
-    assert.ok(settings.projects[0]?.problems.includes('Planner ticket pending'));
+    assert.equal(settings.projects[0]?.problems.includes('Planner ticket pending'), false);
   } finally { f.store.close(); }
 });
 

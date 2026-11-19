@@ -251,6 +251,7 @@ export async function routePlannerEscalation(
   }
   const delegated = await delegateQuestion(ladder.resolution, t, {
     planners,
+    allowDecider: false,
     decisionId: id,
     context: { question, choices, context },
     signal: new AbortController().signal,

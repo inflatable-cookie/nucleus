@@ -13,6 +13,7 @@ import type {
   ExternalWorkspaceSourceExpectation,
   ExternalWorktreeSource,
 } from "./index";
+import type { ParticipantRuntime } from "../machine/participant-runtime";
 import type {
   CreationOwner,
   OwnerReviewContext,
@@ -88,7 +89,7 @@ export interface HostPolicyPort
   noLiveWorkspaceProcesses(
     workspaceId: string,
     runIds: readonly string[],
-    bbThreads?: readonly string[],
+    runtime?: ParticipantRuntime,
   ): Promise<string | null>;
   createCloseoutWorkspace(
     task: Task,

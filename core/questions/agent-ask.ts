@@ -314,7 +314,7 @@ export function parseAgentAskAnswer(
   detail: string,
 ): { who: string; answer: string } | null {
   const body = detail.slice(detail.indexOf(":") + 1).trim();
-  const match = /^answered by (.+?):\s*([\s\S]*)$/.exec(body);
+  const match = /^answered by (.+?):\s+([\s\S]*)$/.exec(body);
   return match ? { who: match[1]!.trim(), answer: match[2]!.trim() } : null;
 }
 

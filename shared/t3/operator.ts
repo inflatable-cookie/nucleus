@@ -11,7 +11,7 @@
  *   removed. "Ours" is the driver plus the command path, not the instance id,
  *   which a namesake shares;
  * - the two bearers are split by scope. The bearer the service keeps may read
- *   and operate threads and nothing else; the bearer that registers a provider
+ *   and operate threads and open previews; the bearer that registers a provider
  *   is minted for that one call and revoked immediately;
  * - a report never carries a secret. The bearer is a value this module receives
  *   and decides about; no function here returns it, and the status projection
@@ -34,10 +34,11 @@ export const T3_PROVIDER_ID = "nucleus";
 export const T3_PROVIDER_DISPLAY_NAME = "Nucleus";
 export const T3_SESSION_SUBJECT = "nucleus";
 export const T3_SESSION_LABEL = "nucleus";
-/** The service's bearer: read and operate threads, nothing that writes settings. */
+/** The service's bearer: operate threads and previews, never settings. */
 export const T3_RUNTIME_SCOPES = [
   "orchestration:read",
   "orchestration:operate",
+  "preview:operate",
 ] as const;
 /**
  * The install bearer's scope. The nightly derives the required scope from the

@@ -160,8 +160,8 @@ test("completed unanswered escalation windows stay terminal across maintenance a
     );
     assert.deepEqual(
       { asks, creates, archives },
-      // Task 1109: the task planner, the project planner, then the decider's own ask.
-      { asks: 3, creates: 1, archives: 1 },
+      // The one live task planner is asked; no planning decider is created.
+      { asks: 1, creates: 0, archives: 0 },
     );
     const events = f.store.eventsAll(task.id);
     assert.ok(
@@ -181,7 +181,7 @@ test("completed unanswered escalation windows stay terminal across maintenance a
     }
     assert.deepEqual(
       { asks, creates, archives },
-      { asks: 3, creates: 1, archives: 1 },
+      { asks: 1, creates: 0, archives: 0 },
     );
     assert.deepEqual(f.store.eventsAll(task.id), events);
     assert.deepEqual(

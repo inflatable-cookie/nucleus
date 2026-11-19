@@ -126,13 +126,22 @@ const acpCallerSchema = z
     sessionId: z.string().min(1).max(160),
   })
   .strict();
-const acpTurnSchema = acpCallerSchema
-  .extend({
-    waitMs: z.number().int().min(0).max(ACP_TURN_WAIT_MAX_MS).optional(),
-    /** An attach always answers with the current lifecycle line; a held poll only sends changes. */
-    attach: z.boolean().optional(),
-  })
-  .strict();
+const acpTurnFields = {
+  waitMs: z.number().int().min(0).max(ACP_TURN_WAIT_MAX_MS).optional(),
+  attach: z.boolean().optional(),
+};
+const acpTurnSchema = z.union([
+  acpCallerSchema.extend(acpTurnFields).strict(),
+  z.object({ kind: z.literal("inbox"), hostId: z.string().min(1).max(240), sessionId: z.string().min(1).max(160), ...acpTurnFields }).strict(),
+]);
+const acpAnswerFields = { id: z.string().min(1).max(160), version: z.number().int().positive() };
+const acpAnswerCaller = { kind: z.literal("inbox"), hostId: z.string().min(1).max(240), sessionId: z.string().min(1).max(160), ...acpAnswerFields };
+const acpAnswerSchema = z.union([
+  acpCallerSchema.extend({ ...acpAnswerFields, action: z.literal("accept"), answer: z.string().trim().min(1).max(48000) }).strict(),
+  acpCallerSchema.extend({ ...acpAnswerFields, action: z.literal("cancel"), requestId: z.string().min(1).max(160) }).strict(),
+  z.object({ ...acpAnswerCaller, action: z.literal("accept"), answer: z.string().trim().min(1).max(48000) }).strict(),
+  z.object({ ...acpAnswerCaller, action: z.literal("cancel"), requestId: z.string().min(1).max(160) }).strict(),
+]);
 const acpMessageSchema = acpCallerSchema
   .extend({
     eventId: z.string().regex(/^[a-f0-9]{64}$/),
@@ -353,12 +362,11 @@ export async function startCallbacks(
   const routes: Record<string, CallbackRoute> = {
     "/caller": {
       bodyBytes: SMALL_CALLBACK_BODY_BYTES,
-      handle: (input, token) =>
-        resolveTicketCaller(
-          engine.store,
-          callerTicketSchema.parse(input),
-          token,
-        ),
+      handle: (input, token) => {
+        const caller = resolveTicketCaller(engine.store, callerTicketSchema.parse(input), token);
+        engine.resolution.responsibleThreads.recordActivity(caller.caller);
+        return caller;
+      },
     },
     "/report": {
       bodyBytes: LARGE_CALLBACK_BODY_BYTES,
@@ -525,6 +533,14 @@ export async function startCallbacks(
       bodyBytes: SMALL_CALLBACK_BODY_BYTES,
       handle: (input, token) =>
         acpSessions(engine).turn(acpTurnSchema.parse(input), token),
+    },
+    "/acp-answer": {
+      bodyBytes: SMALL_CALLBACK_BODY_BYTES,
+      handle: (input, token) => {
+        const surface = acpSessions(engine);
+        if (!surface.answer) throw new Error("This process cannot answer ACP decisions");
+        return surface.answer(acpAnswerSchema.parse(input), token);
+      },
     },
     "/acp-message": {
       bodyBytes: SMALL_CALLBACK_BODY_BYTES,

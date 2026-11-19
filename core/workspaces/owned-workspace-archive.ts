@@ -11,6 +11,7 @@ import {
   bbThreadForAgent,
   bbWorkspaceThreads,
 } from "../machine/owned-tool-process-proof";
+import { participantRuntime } from "../machine/participant-runtime";
 import {
   readToolTimeline,
   liveToolIssue,
@@ -369,6 +370,14 @@ export class OwnedWorkspaceArchive {
                       );
                       if (ownThread && !bbThreads.includes(ownThread))
                         bbThreads.push(ownThread);
+                      // The task's own host runtime — a T3 ACP parent and its
+                      // role sessions — is not a tool of any participant.
+                      const runtime = participantRuntime({
+                        dataHome: this.host.dataDir(),
+                        tasks: [task],
+                        runs,
+                        bbThreads,
+                      });
                       for (const root of new Set([
                         directory,
                         ...temporaryDirectories,
@@ -377,7 +386,7 @@ export class OwnedWorkspaceArchive {
                           processes,
                           root!,
                           runIds,
-                          bbThreads,
+                          runtime,
                         );
                         if (why) return why;
                       }

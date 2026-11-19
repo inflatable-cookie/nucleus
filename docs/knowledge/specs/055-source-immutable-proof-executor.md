@@ -71,15 +71,16 @@ task**, in the task's own checkout, at the exact published head:
 For a proof-only qualification gated by release GO, Nucleus binds the exact release
 question and answer to the executor run: question id and text, verbatim answer,
 answerer, a planner relay's operator quote, the linked board decision id when
-present, and question/answer timestamps. A direct board answer's quote carries
+present, and question/answer timestamps. A direct operator answer's quote carries
 the verbatim answer with its answerer and timestamp. The prompt requires the
 executor to write this literal evidence to a mode-0600 receipt file before
 invoking the selector. Nucleus supplies recorded evidence only; the executor
 cannot invent missing authorization.
 
-The proof-only release GO question is an operator decision on the board; Nucleus
-does not prompt the retained reviewer or another agent to relay it. While that
-question is open the task waits on the operator, not the planner: the blocker
+The proof-only release GO question goes straight to the operator as a
+[Spec 032 decision](032-operator-decisions.md), with direct answers accepted
+from the board or authenticated T3 sessions. While the question is open the task
+waits on the operator. The blocker
 ladder neither consults nor escalates the GO-gate reviewer's blocked report, and
 `task.next` and the control entry refuse `route`, `restart`, `move` and
 `retry_effect`, because each would start or re-drive a run the GO has not

@@ -2480,10 +2480,13 @@ test("the required-proof instruction is fixed prompt text, rendered outside the 
     REQUIRED_PROOF_REVIEWER_NOTE,
     /required artifact named only by a run-scratch path[\s\S]*report `changes_required` with `reviewResponsibility: author`/,
   );
+  // nucleus#1382: the author note names the brief's own proof and the custody
+  // route only; the optional proof-file limits live in the proof-file paragraph.
   assert.match(
     REQUIRED_PROOF_AUTHOR_NOTE,
-    /TMPDIR is removed at release[\s\S]*through proofFiles[\s\S]*8 MiB per file; 32 MiB total[\s\S]*subset the brief allows[\s\S]*reviewResponsibility: environment/,
+    /never waive a proof this brief names as required[\s\S]*through proofFiles[\s\S]*report it missing rather than claiming the work is complete/,
   );
+  assert.doesNotMatch(REQUIRED_PROOF_AUTHOR_NOTE, /exceeds the limits|subset the brief allows|reviewResponsibility/);
 });
 
 test("brief-mode prompts and reviewer continuations carry the required-proof instruction", () => {
@@ -2600,7 +2603,11 @@ test("affected-test prompts are opt-in and use the repository command", () => {
       true,
     ),
   ];
-  for (const prompt of ordinary) assert.doesNotMatch(prompt, /Affected tests:/);
+  for (const prompt of ordinary)
+    assert.doesNotMatch(
+      prompt,
+      /affected[\s-]?tests|test:affected|test:baseline|effigy qa/i,
+    );
   const configured = "effigy test:affected --run";
   const optedIn = [
     workerPrompt(task, true, [], null, undefined, undefined, configured),
@@ -2638,15 +2645,22 @@ test("affected-test prompts are opt-in and use the repository command", () => {
   for (const prompt of optedIn)
     assert.match(prompt, /effigy test:affected --run/);
   for (const prompt of optedIn) {
-    assert.match(prompt, /effigy test:baseline <file>/);
-    assert.match(prompt, /queue-test-failures-<pid>-<ts>\.txt/);
+    assert.match(prompt, /the repository's baseline route/);
     assert.match(prompt, /it was already broken/);
     assert.match(
       prompt,
       /Only failures unique to your branch block review|Only failures unique to the branch block review/,
     );
     assert.match(prompt, /list the file and failing test/);
+    assert.doesNotMatch(prompt, /effigy test:baseline|effigy qa/);
   }
+  for (const prompt of optedIn.slice(0, 2))
+    assert.match(prompt, /this repository configures its own affected-tests command/);
+  assert.doesNotMatch(optedIn[2], /after you commit/);
+  assert.match(
+    optedIn[2],
+    /judge the author's `effigy test:affected --run` at this exact head from its reported command and file count/,
+  );
   assert.match(
     optedIn[2],
     /If that evidence is missing or names another head, run it once yourself/,

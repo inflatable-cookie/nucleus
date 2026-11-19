@@ -722,11 +722,10 @@ Busy time consumes the existing answer window.
   routes directly to the operator: only an explicit planner or decider `Decision: operator` with a
   reason creates the board decision, which shows that reason and the recommended answer. A delegate
   timeout, unusable answer or unknown delivery does not classify the question for the operator.
-  Nucleus-originated operator questions retain their own routing, including proof-only release GO,
-  which remains directly on the board. The planner prompt (or decider start)
+  Nucleus-originated operator questions retain their own routing. Proof-only release GO goes
+  directly to the operator as a [Spec 032 decision](032-operator-decisions.md). The planner prompt (or decider start)
   is sent and the ask is visible in task activity even when the tool already returned pending.
-  Proof-only release GO, the one operator-only kind Nucleus raises, is a Spec 032 decision linked to the task, shown on the
-  board and the task's composer pill; the operator's answer settles the waiting call and resumes the agent.
+  The release GO decision is linked to the task. The operator's answer settles the waiting call and resumes the agent.
   A delegate that classifies a question as the operator's escalates it the same way, with its
   reason recorded. Answers are recorded in activity with who answered, and the resume is recorded
   as `agent_ask_resumed`.
@@ -747,16 +746,14 @@ Busy time consumes the existing answer window.
   On a maintenance wake after restart, durable question payloads and decision links resume routing
   and settlement. An interrupted Nucleus-originated delegate send retains its existing board fallback
   rather than being repeated; an interrupted worker-owned ask stays pending without an operator
-  decision. A recorded board answer settles the linked Nucleus question. Older digest-only agent
+  decision. A recorded decision answer settles the linked Nucleus question. Older digest-only agent
   asks can resume routing when the worker retries with the same content. The proof-only release GO
-  question is the exception: it is board-only and never prompts an agent to relay the decision.
+  question goes directly to the operator on the decision's supported surfaces.
 - **Delegation fails closed.** `delegateDecision` refuses an operator-only kind, even though nothing
   raises one through it today, so a future route can't hand one to an agent by accident (2026-11-06).
-- **No native operator question to lose.** Nucleus raises no operator-only question on a native
-  surface: proof-only release GO goes directly to the board (task 572) and a stranded stop is a
-  delegated `process` question (task 687). The recovery that returned a lost native question to the
-  board is deleted, with the operator-only gates on the two raise paths. Answer settlement of a linked
-  board decision is unchanged, and recorded `operator_question` events stay readable.
+- **Operator questions use the decision record.** T3 cards display the existing decision and settle
+  through its record. A stranded stop is a delegated `process` question. Historical
+  `operator_question` events stay readable.
 
 ### Slice 13 — workers own their decisions (task 573)
 

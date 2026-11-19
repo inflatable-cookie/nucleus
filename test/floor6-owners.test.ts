@@ -70,8 +70,11 @@ test('the thread inventory decides ownership and idleness as typed facts', () =>
   assert.throws(() => workspaceThreadFacts([thread('unlabelled', { labels: {} })], 'task-1', new Set(), false), /unrelated thread/);
   assert.deepEqual(workspaceThreadFacts([thread('a', { labels: { 'nucleus.task': 'other' } })], 'task-1', new Set(['a']), false), { foreignAgentIds: [] },
     'an attached participant is not foreign');
-  for (const live of [{ activeTurn: 'turn-1' }, { pendingPermissions: [{}] }, { status: 'running' }]) {
+  for (const live of [{ activeTurn: 'turn-1' }, { pendingPermissions: [{}] }, { status: 'running' }, { status: 'paused' }]) {
     assert.throws(() => workspaceThreadFacts([thread('a', live)], 'task-1', new Set(), true), /become idle/, JSON.stringify(live));
+  }
+  for (const terminal of ['idle', 'error', 'closed', 'gone']) {
+    assert.deepEqual(workspaceThreadFacts([thread('a', { status: terminal })], 'task-1', new Set(), false), { foreignAgentIds: [] }, terminal);
   }
 });
 

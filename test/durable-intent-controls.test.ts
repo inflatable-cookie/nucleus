@@ -81,7 +81,7 @@ test("report_ready_planner_notice_intent is recorded before notification", async
       throw lostReply;
     },
   });
-  f.store.projectPlannerRecipient = () => "planner";
+  f.engine.resolution.plannerRungsFor = async () => ({ rungs: [{ agentId: "planner", rung: "task" }], projectFailed: false });
   f.engine.resolution.identifyOriginHost = async () => "host";
   const task = f.store.update(f.id, {
     completion: {

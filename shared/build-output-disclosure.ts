@@ -157,7 +157,7 @@ Prior build artifacts are not guaranteed retained: re-run every command whose ou
       ? `Nucleus recorded run-bound build output cleanup for this task${stateSummary ? ` (${stateSummary})` : ""}${crossWorkspace ? `, ${crossWorkspace} of them in another workspace` : ""}`
       : "",
     missingRunId ? `no run-bound cleanup record names run ${missingRunId}` : "",
-    "prior build artifacts are not guaranteed retained, so re-run any command whose output you rely on",
+    "earlier build outputs may be gone, so re-run a command whose output you rely on",
   ].filter(Boolean);
   const note = boundedBuildOutputNote(`${parts.join("; ")}. ${BUILD_OUTPUT_AUTHORITY_SENTENCE}`);
 

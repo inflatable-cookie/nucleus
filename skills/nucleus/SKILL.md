@@ -15,7 +15,10 @@ optional `note`). Briefs do not require verdict entries or pass gates. A `ready_
 report may name local proof files (screenshots, rendered images, recordings the
 brief requires) as `proofFiles: [{label, path}]`, where each path is an absolute
 path to a real regular file inside that task's own scratch or worktree, at most
-12 files, 8 MiB each and 32 MiB total. Nucleus copies them into its own
+12 files, 8 MiB each and 32 MiB total; larger evidence is summarised into compact
+evidence plus hashes, so the limits are packaging rather than a reason to stop.
+Delivering proof files is optional and depends on the brief naming visual or
+rendered proof. Nucleus copies them into its own
 per-head evidence directory. The retained reviewer can read the paths and hashes
 with `nucleus helper report context proofs`; nothing is uploaded to
 the forge, and no local path belongs in a PR body or comment. A report naming a
@@ -39,7 +42,7 @@ without messaging the thread: the planner that named itself takes it in that
 assignment's response, any other planner takes it in the response to its own next
 authenticated call, and only a thread observed live on a host with no
 calling-thread identity of its own receives one message. Reassigning or clearing the
-planner revokes it, and a planner with no ticket yet shows as pending on the board.
+planner revokes it. A missing participant ticket does not make the project a pending planner.
 A task's own planner receives the same ticket, keyed per thread and scoped to the
 tasks that name it, so it can answer on a host with its own caller identity;
 reparenting a task moves that scope and revokes the outgoing planner's ticket.
@@ -67,7 +70,7 @@ nucleus t3 uninstall   # remove our provider instance and our sessions
 
 - `install` finds the server from `<base>/userdata/server-runtime.json` (or
   `--endpoint`), mints a long-lived runtime bearer with only
-  `orchestration:read` and `orchestration:operate` and stores it owner-only in
+  `orchestration:read`, `orchestration:operate` and `preview:operate` and stores it owner-only in
   `<data home>/settings.json`; a short-lived install bearer registers the
   provider through T3's own `server.updateSettings` and is revoked at once.
   Running it again rotates the runtime bearer. It prints each step, and its
@@ -114,9 +117,9 @@ the other required selectors.
 The two agent verbs (task 1108). Name recipients by role, task or project; never an agent or
 thread ID. `ask` is a question that waits for an answer and escalates; `tell` is information only.
 - `ask` `to`: `"reviewer"` (your task's retained reviewer; falls through to the planner ladder),
-  `"planner"` (your task's planner ladder: planner, project planner, decider, then the board for
+  `"planner"` (your task's planner first, then a live responsible project thread, with the board for
   operator-only kinds). A worker's local `kind: "review"` ask reaches its retained reviewer first,
-  including when it names `"planner"`. Other addresses include `{"project": "<key or name>"}` (that project's fallback planner),
+  including when it names `"planner"`. Other addresses include `{"project": "<key or name>"}` (that project's responsible thread),
   `{"project": "...", "agent": "<name>"}` (one named project agent; refused with its state if
   archived or gone), or `{"task": "<reference>", "role": "planner"}` (another task's planner ladder).
 - `tell` `to`: `"reviewer"` or `"worker"` (your task's counterpart), `"planner"`, `"executor"` (this
@@ -126,7 +129,7 @@ thread ID. `ask` is a question that waits for an answer and escalates; `tell` is
 Nucleus delivers a `tell` labelled with your role and project. To a working T3 agent it steers into
 the running turn; to a working Paseo agent it waits until the agent is idle (papercut e629a20c,
 deprecated: Paseo cannot steer and is slated for retirement). Otherwise it queues for
-the recipient's next turn or the project inbox, or reports an uncertain delivery that must not be resent. A tell is
+the recipient's next turn, says to handle it yourself if no responsible thread is live, or reports an uncertain delivery that must not be resent. A tell is
 recorded before delivery and returns after at most a short inline delivery window; its receipt names
 the status and `recordedAt` time, plus `deliveredAt` when delivery is confirmed. If delivery is still
 running, retry the identical tell JSON to read the recorded outcome; it never sends the message
@@ -279,14 +282,19 @@ counts as evidence and treat any live-store verification as a planner follow-up.
 The reviewer judges the recorded counts; do not require the reviewer to open or
 query the live store, and do not frame that check as awaiting proof.
 
-Before review, each worker and revision also runs the affected test files its
-committed change can reach: `effigy test:affected --run` at the exact head
-(nucleus#1164, Tom 2026-11-12). If an affected file fails, rerun it alone on
-`origin/main` using the repository baseline route (in Nucleus, `effigy test:baseline <file>`). Read the printed `$TMPDIR/queue-test-failures-<pid>-<ts>.txt` failure summary rather than rerunning to recover failure names. When it fails there too, it was already broken: list the file and
-failing test in the report and PR rather than fixing it. Only failures unique
-to the branch block review, and the reviewer applies the same rule. The reviewer
-judges the author's reported command and file count at that head and reruns it
-when that evidence is missing. Full suites and `effigy qa` stay on milestone QA.
+The affected-tests rule applies only when the repository configures it. When
+`repository.get` shows an `affectedTests.command` for that repository, the
+worker and each revision run exactly that command once at the exact head after
+committing (nucleus#1164, Tom 2026-11-12; nucleus#1380, Tom 2026-11-19), and the
+reviewer judges it from the reported command and file count at that head,
+rerunning it when that evidence is missing. If an affected file fails, rerun it
+alone on the base branch with the repository's baseline route; if it fails there
+too it was already broken, so list the file and failing test in the report and
+PR rather than fixing it. Only failures unique to the branch block review, and
+anything wider than the affected set never does. Full suites stay on milestone
+QA. When the repository configures no affected-tests command there is no
+affected-tests requirement: the repository's AGENTS.md Validate section decides
+the covering checks, plus any proof the brief names (nucleus#1380).
 
 The repository's AGENTS.md Validate section selects which covering checks
 apply; it never waives a proof the brief names as required, and
@@ -397,23 +405,21 @@ acceptance; it creates no run, review verdict, allowance or other proof credit.
 
 #### Delegated answers and the task's planner
 
-A task's planning questions climb one ladder: the task planner first, then the
-project planner when it is a different thread, then a short-lived decider, then the
-board for operator-only kinds. The task planner is the thread that submitted or
-promoted the task, or the one a brief named with `queue.planner`; the project
-planner keeps project-level matters and is the fallback rung. A rung observed
-archived or gone is skipped at once. If a planner identity cannot be verified,
-the task and project show the cause and the next verified planner receives it.
-With no verified planner to try, the question waits. Re-run `project.set-planner`
-from the correct thread to restore routing.
+A task's own dispatching planner hears its planning questions first. If that
+thread is archived or gone, Nucleus resolves a live responsible thread for the
+project across active hosts. Project-addressed `ask` and `tell` use that same
+short-lived, activity-ranked shortlist. `project.set-planner` is a hint that
+ranks first only while its thread is live; it is not a project owner. If no live
+responsible thread exists, the receipt says to handle the matter yourself and
+Nucleus records that outcome. Planning questions do not start a decider;
+operator-only matters still reach the board. `project.get` shows the resolved
+thread, host, last interaction and cache age.
 
 Nucleus sends a short `<nucleus-system>` message to the planner. T3 queues it
 after an active turn.
 Answer by running the exact `nucleus question.answer` command in the message, then
 write nothing else in the thread. Chat output is never an answer. Busy time counts
-toward the ten-minute window; without an answer, the same question falls through
-to the next rung and then a short-lived decider. Deciders must meet the task's
-requested tier and the usage level's permission rule. A worker's review consult uses
+toward the answer window. Without an answer, planning stays with its sender. A worker's review consult uses
 the same command and stays with the retained reviewer while that thread is available.
 If there is no retained reviewer, the reviewer is confirmed gone or the reviewer
 requests a planning ruling, the question goes to the planner ladder.
@@ -459,12 +465,10 @@ Every PR has exactly one reviewer, the retained Nucleus reviewer. Never create e
 reviewer, review-lens or "independent native" reader agents, or workspaces for them; a
 needed native proof runs once through the task's `proof` route (Spec 058, Tom 2026-11-01).
 
-Set a project's fallback planner with `project.set-planner` (`key`, `agentId` or
-null). The planner may set itself; the calling thread is recorded as `setBy`. A
-thread that is not registered yet is registered under the default name `planner`.
-This grants nothing except answering a project's delegated questions when a task's
-own planner cannot, and receiving the project-level notices. A task's own planner
-is recorded on the task: its owner, or the thread a brief named with `queue.planner`.
+`project.set-planner` (`key`, `agentId` or null) remains accepted as a
+preferred-thread hint. It registers an unregistered thread as `planner`; a live
+hint ranks first in project resolution. The task's own planner remains its owner
+or the thread its brief named with `queue.planner`.
 
 A project's named agents are its non-task threads (Spec 060): `agent.register`
 (`project`, `name`, `purpose`; the CLI registers the calling thread, the board
@@ -472,8 +476,8 @@ names one live thread), `agent.unregister` (`project`, `name`) and `project.agen
 (`project`) for the list with each entry's host, live state, last seen and fallback
 marker. Names are unique per project, a thread holds one name, and renaming or
 reassigning a name revokes the old participant ticket. `project.set-planner`
-marks any registered agent as the fallback; clearing it leaves the thread
-registered, and the fallback cannot be unregistered while it holds that role.
+marks a registered agent as the preferred hint; clearing it leaves the thread
+registered, and the hint cannot be unregistered while it holds that role.
 Its address belongs to the role: `agent.register` refuses to give the fallback's
 name to another thread (move the fallback with `project.set-planner` instead),
 and a fallback whose preferred default name is taken registers under a free name
@@ -647,11 +651,9 @@ read's `digest` as an optional extra stale-edit fence alongside the required
 Projects are permanent
 records: `project.upsert`, `project.get`, `project.park`, `project.unpark`,
 `project.remove`, `projects`, `agent.register`, `agent.unregister`, `project.agents`.
-Project ownership is retired (Spec 058 cutover 5): `project.set-planner` marks
-the project's fallback planner — the registered agent that answers delegated
-questions and receives the project-level notices, and the thread `to: {project}`
-resolves to. It grants no authority, and there is no project owner to claim or
-assign.
+Projects have no singleton planner. `project.set-planner` is a live-thread
+preference, while the responsible-thread resolver selects among active project
+threads. It grants no authority, and there is no project owner to claim or assign.
 Repository settings (`repository.set`, `repository.get`, `repositories`) carry
 closeout authority, the prospective-merge validation command, formal-review
 login, the optional `affectedTests: { command }` used for worker and reviewer
@@ -1223,15 +1225,12 @@ new planner with `nucleus helper reparent` (or any route that changes the task's
 record and nests the group again. Any authenticated local caller may apply it (the caller is recorded on
 the control's audit line and on the record); it is presentation only, so it needs no owner authority.
 
-A project may name a fallback planner with `project.set-planner` (`key`, `agentId`
-or null; the calling thread is recorded as `setBy`, and an unregistered thread is
-registered under the default name `planner`). It answers a project's delegated
-questions when the asking task's own planner cannot, receives the project-level
-notices that once went to the retired owner, and is the thread `to: {project}`
-resolves to; it grants no verb, hold or acceptance authority. A task's planner is
-recorded on the task itself — its submitting owner, or the thread its brief named
-— and `nucleus helper reparent` moves it. `project.agents` lists the project's named,
-non-task threads, and `agent.register`/`agent.unregister` maintain them (Spec 060).
+A project may set a preferred thread with `project.set-planner` (`key`,
+`agentId` or null). This is a routing hint while the thread is live. Cross-project
+messages use the most active live responsible thread, or tell the sender to
+handle the matter when none exists. A task's own dispatching planner remains
+first for its questions. `project.agents` lists named non-task threads;
+`agent.register` and `agent.unregister` maintain explicit addresses (Spec 060).
 
 ## Review entry for external PRs
 
@@ -1255,7 +1254,7 @@ Northstar skill.
 - **Worker** implements one brief in the worktree Nucleus gives it, runs the
   covering checks, opens one PR, reports, and gets out of the way.
 - **Reviewer** checks the exact head against the brief and reports findings. It
-  does not run full `effigy qa`.
+  does not run the repository's full milestone QA.
 
 Coordination (recovery, review routing, merge, closeout) is Nucleus's job.
 
@@ -1311,9 +1310,10 @@ answers "what landed for X" and "why does this code look like this" before readi
 PRs; `queue.detail` reads one task and `queue.outcome` its permanent row.
 
 Full QA runs at a milestone, not per task: `project.qa.run`
-(`{repository, baseBranch}`) runs the repository's `qa` setting or `effigy qa` in
-a Nucleus-owned linked worktree of the registered checkout, with setup and teardown
-recorded as their own steps. `project.qa.get` and `project.qa.cancel` inspect and
+(`{repository, baseBranch}`) runs the repository's `qa` setting in a Nucleus-owned
+linked worktree of the registered checkout, with setup and teardown
+recorded as their own steps. Only a repository that sets no `qa` command runs
+Nucleus's own default. `project.qa.get` and `project.qa.cancel` inspect and
 cancel it, and `project.qa.dismiss { id, reason, caller }` clears a finished
 failure from the board without deleting its record. A request refused with a diagnostic starting "QA request preparation
 was interrupted" claimed no run; submit again with a new request ID only if the
@@ -1325,7 +1325,7 @@ The path contains the retained `failuresLog` text. Waiting keeps the same run an
 request ID and does not change admission; socket loss still needs reconciliation
 with `project.qa.request-status` using the printed request ID.
 
-On settlement, Nucleus messages the registered project planner and the known
+On settlement, Nucleus messages the resolved responsible thread and the known
 submitting agent with the state, failed and cancelled counts, and run ID. A
 non-TAP failure may have no test identities; inspect the failed step's retained
 output path in `project.qa.get`. The recorded timeout is the scheduler envelope;

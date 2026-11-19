@@ -943,7 +943,10 @@ export class QueueRuntime {
           this.scheduledQa ??= new ProjectQaSchedules(
             this.store,
             this.projectQaRunner(),
-            { canAdmit: () => !this.closing && this.anyHostConnected() },
+            {
+              canAdmit: () => !this.closing && this.anyHostConnected(),
+              refreshResponsibleThread: project => this.engine.resolution.responsibleThread(project),
+            },
           );
           void this.scheduledQa.tick();
         }
@@ -1350,6 +1353,7 @@ export class QueueRuntime {
     this.engine.acp = new AcpSessions(this.engine, {
       dataHome: this.dataDir,
       socketPath: this.paseo.socketPath,
+      answerDecision: input => this.questions.answerT3Decision(input),
     });
     // Local reads are safe as soon as the callback surface and SQLite owner
     // exist. Daemon connection, profile refresh, durable operation resume and
@@ -2385,6 +2389,7 @@ export class QueueRuntime {
       dataDir: this.dataDir,
       hostRunStateDir: this.hostRunStateDir,
       ownerInstance: this.owner,
+      responsibleThread: async project => (await this.engine.resolution.responsibleThread(project)).thread?.agentId ?? null,
       notify: async (agentId, messageId, text) => {
         const identity = parseAgentId(agentId);
         const hostId =
@@ -2634,7 +2639,7 @@ export class QueueRuntime {
       "../core/dispatch/caller-resolution"
     );
     const adapter = this.adapter as { helperPath?: string } | undefined;
-    return resolveHostCallerIdentity(
+    const identity = await resolveHostCallerIdentity(
       {
         onlineIds: () => this.hostRegistry.onlineIds(),
         observe: (hostId, nativeAgentId) =>
@@ -2650,6 +2655,8 @@ export class QueueRuntime {
       },
       input,
     );
+    this.engine.resolution.responsibleThreads.recordActivity(identity.caller);
+    return identity;
   }
 
   /** Catalogue tell for a host-verified thread that has no run or participant ticket. */

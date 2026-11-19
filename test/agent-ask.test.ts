@@ -654,12 +654,10 @@ test("a planner answer overtakes only the exact decisions it cites", async () =>
 
 for (const [who, options] of [
   ["planner", { planner: "Answer: Hold\nReason: Wait for the gate." }],
-  ["decider", { decider: "Answer: Hold\nReason: Wait for the gate." }],
 ] as const) {
   test(`bug 23: a ${who} hold on a binary ask stands as a hold`, async () => {
     const f = await askFixture({ waitMs: 5_000, ...options });
-    // Task 1109: the decider follows the planner rungs, so a silent rung uses a short window.
-    f.engine.resolution.delegatedAnswerWaitMs = who === "decider" ? 300 : 5_000;
+    f.engine.resolution.delegatedAnswerWaitMs = 5_000;
     try {
       eligibleDecider(f);
       if (who === "planner") registerPlanner(f, options.planner!);
@@ -704,7 +702,7 @@ test("bug 23: a binary ask the planner forwards reaches the operator instead of 
   }
 });
 
-test("bug 8: an ask skips an archived project planner; bug 25: planner, decider and reviewer read the task context", async () => {
+test("an archived planner is skipped, and live planner and reviewer prompts retain task context", async () => {
   const f = await askFixture({
     waitMs: 5_000,
     decider: "Answer: Use the fixture\nReason: Isolated.",
@@ -724,10 +722,11 @@ test("bug 8: an ask skips an archived project planner; bug 25: planner, decider 
       }),
     });
     const receipt = await f.receipt({ question: "Which fixture?" });
-    assert.equal(receipt.answer, "Use the fixture — Isolated.");
+    assert.equal(receipt.status, "pending");
+    assert.match(receipt.detail ?? "", /handle it yourself/);
     assert.deepEqual(f.delegated.planner, []);
-    assert.equal(f.store.projectByKey("app")?.planner, null);
-    assert.match(f.delegated.deciders[0]!.prompt, /Task context:\n {2}Task: /);
+    assert.equal(f.store.projectByKey("app")?.planner?.agentId, "planner-1", "the hint remains registered");
+    assert.deepEqual(f.delegated.deciders, []);
   } finally {
     await f.close();
   }
@@ -824,7 +823,7 @@ test("a scope hint is answered by the planner before any operator decision", asy
   }
 });
 
-test("a decider timeout after a scope hint leaves it pending without an operator decision", async () => {
+test("an unanswered scope question reaches the board without a decider", async () => {
   const f = await askFixture({ waitMs: 100 });
   try {
     registerPlanner(f, null);
@@ -857,22 +856,9 @@ test("a decider timeout after a scope hint leaves it pending without an operator
       kind: "scope",
     });
     assert.equal(receipt.status, "pending");
-    await until(() =>
-      f
-        .events("agent_ask_delegation_unknown")
-        .some((event) => event.detail.includes("decider timed out")),
-    );
-    assert.equal(
-      f.delegated.planner.length,
-      2,
-      "the task planner and then the project planner were asked before the decider",
-    );
-    assert.equal(
-      f.delegated.deciders.length,
-      1,
-      "the decider was reached before timing out",
-    );
-    assert.equal(f.events("agent_ask_decision").length, 0);
+    await until(() => f.events("agent_ask_decision").length > 0);
+    assert.equal(f.delegated.deciders.length, 0, "operator-only questions go to the board without a new decider");
+    assert.equal(f.events("agent_ask_decision").length, 1);
   } finally {
     await f.close();
   }
@@ -2389,7 +2375,7 @@ test("a matching delegated reply is applied once and task and reference lead the
   }
 });
 
-test("chat output without a command leaves the ask pending without re-presentation", async () => {
+test("chat output without a command leaves the sender to handle the question without re-presentation", async () => {
   const f = await askFixture({ waitMs: 50 });
   try {
     registerPlanner(f, null);
@@ -2407,12 +2393,12 @@ test("chat output without a command leaves the ask pending without re-presentati
     assert.equal(result.status, "pending");
     assert.equal(
       calls,
-      2,
-      "the task planner and the project planner were both asked",
+      1,
+      "the live task planner was asked",
     );
     assert.equal(f.events("agent_ask_answered").length, 0);
     await f.engine.resolution.resumeAskQuestions();
-    assert.equal(calls, 2, "a completed rung is a known miss, never re-asked");
+    assert.equal(calls, 1, "a completed rung is a known miss, never re-asked");
   } finally {
     await f.close();
   }

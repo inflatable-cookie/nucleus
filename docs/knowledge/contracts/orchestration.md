@@ -1113,8 +1113,8 @@ request identities and stored committed-handoff rows are not rewritten.
   icons beside it, with a chevron attached that opens a menu of Pause or Resume,
   Dispatch hold or Release dispatch hold, and Stop (Tom, 2026-11-05). Selecting a
   row performs that action immediately and closes the menu. The pause menu shows
-  how many runs are still bound and a `drained` flag; nothing new is added to the
-  header. Stop pauses, then stops active threads through `queue.stop-threads`.
+  how many runs are still bound and a `drained` flag below the actions, in a
+  scrollable list constrained to the viewport; nothing new is added to the header. Stop pauses, then stops active threads through `queue.stop-threads`.
   Pause and dispatch hold have separate one-click release controls and may both
   be on; pause wins.
 - Board dispatch hold is an operator-only persisted setting beside pause, read
@@ -1654,7 +1654,19 @@ request identities and stored committed-handoff rows are not rewritten.
 ### Prompts and instructions
 
 - Run prompts retain identity, brief, exact head and base, role duties, scratch and own report binding, named-proof and affected-test policy, and safety instructions. Nucleus counts characters where the renderers emit each section. The prompt-size event records totals and section counts, including the standing-rules pointer and proof summary when present.
-- Extended rules, validation, proof inventory and history live in the run's scratch. `nucleus helper report context [rules|validation|proofs|history]` reads the run's own snapshot over its authenticated callback; a different or stale binding is refused. The snapshot cannot grant authority or replace inline safety rules. Worker, reviewer and recovery standing guidance is shared with the corresponding Nucleus skill section. The rules include the blocked-report `cause` and `impediment` fields and, where the role can ask and tell, the CLI forms for hosts without MCP.
+- Extended rules, validation, proof inventory and history live in the run's scratch. `nucleus helper report context [rules|validation|proofs|history]` reads the run's own snapshot over its authenticated callback; a different or stale binding is refused. The snapshot cannot grant authority or replace inline safety rules. The index names the sections as reference material (nucleus#1382): read one if needed, nothing in them is owed for the turn unless the brief or a review finding names it, and a failed or refused optional read is never a blocker. Worker, reviewer and recovery standing guidance is shared with the corresponding Nucleus skill section. The rules include the blocked-report `cause` and `impediment` fields and, where the role can ask and tell, the CLI forms for hosts without MCP.
+- Prompt notes are optional unless the brief names them (nucleus#1382; Tom,
+  2026-11-19: prompts carry only what the turn needs). The run-bound build-output
+  note says only that earlier build outputs may be gone and to re-run a command
+  whose output it relies on, and names no history lookup. Proof files are
+  optional delivery for proof the brief names: a brief that names no visual or
+  rendered proof gets a paragraph saying there is nothing to deliver, and the
+  size limits are named as packaging (summarise larger evidence into compact
+  evidence plus hashes) rather than as a reason to stop. The classifier reads the
+  words an author writes for that evidence — screenshots, captures, pictures,
+  photos, renders, recordings, images, video files and before/after — and errs
+  towards the delivery paragraph, because the extra paragraph costs a line while
+  withholding the route loses the evidence.
 
 - Worker prompts separate action from status. Revision and resume requests
   store their text as `pendingWorkerInstruction`; dispatch copies it onto
@@ -1683,13 +1695,24 @@ request identities and stored committed-handoff rows are not rewritten.
   per-repository validation policy setting and its Nucleus-wide default are
   retired, and prompts carry one fixed line naming the section and milestone QA
   on main via `project.qa.run`.
-- The affected-test run (Tom, 2026-11-12, nucleus#1164) is the one standing
-  test run before review: the worker runs `effigy test:affected --run` at the
-  committed head after its commit, and the reviewer judges the reported command
-  and file count there. A missing or failing affected run is a review finding;
-  anything wider than the affected set never is. The worker, revision and
-  reviewer prompts carry `AFFECTED_RUN_RULE` and `AFFECTED_RUN_REVIEWER_NOTE`.
-- Skip full `effigy qa`/`ci` and repeat passes; raw `npx`/`cargo`/`bun`
+- The affected-test run belongs to the repository, never to Nucleus (Tom,
+  2026-11-12, nucleus#1164; nucleus#1380, Tom 2026-11-19: "we can't assume any
+  project has that selector.. hell, we shouldn't assume a project even has
+  effigy!"). Only a repository whose `repository.get` shows an
+  `affectedTests.command` carries the rule, and then the worker and each
+  revision run exactly that command at the committed head after their commit,
+  and the reviewer judges it from the reported command and file count there,
+  rerunning it when that evidence is missing. A missing or failing affected run
+  is a review finding; anything wider than the affected set never is. A
+  repository with no `affectedTests.command` has no affected-tests requirement:
+  its `AGENTS.md` Validate section decides the covering checks, plus any proof
+  the brief names, and a reviewer never blocks for a missing affected run. The
+  worker, revision and reviewer prompts carry `affectedRunRule` and
+  `affectedRunReviewerNote` only when that command is configured, and no prompt
+  or the Nucleus skill names an affected-tests, baseline or QA selector for
+  another repository.
+- Skip full `effigy qa`/`ci` and repeat passes where the repository has those
+  selectors; raw `npx`/`cargo`/`bun`
   validation has no exception. Formatting applies only to changed formatted
   source with a covering Effigy format selector; a missing selector is a
   papercut, not a review blocker. `effigy fmt` formats whole changed TypeScript
@@ -3515,6 +3538,23 @@ after the task finishes.
   arguments through the system JavaScript automation bridge and `sysctl`; an unavailable reader or
   denied kernel read stays unknown. Task sweeps also preserve plausible BB
   bridge runtimes with unknown identity and do not signal their process groups.
+  A T3 task's own ACP parent is participant runtime too (nucleus#1377). The
+  process that runs `nucleus-acp.mjs` is runtime when its parent is the connected
+  T3 server — the pid that server's own runtime descriptor records, under the
+  base directory of the stored connection whose origin the descriptor names —
+  and the ACP binding its own environment names, or its cwd resolves, is this
+  task's. Its native role sessions are runtime as its direct children, and as
+  direct children of the same connected server whose own readable
+  `T3CODE_THREAD_ID` names a recorded participant thread; a session's standing
+  MCP server — the Nucleus report helper, or a program started in its own `mcp`
+  server mode — is runtime with it. An unreadable environment, a parent that is
+  not that server, an unbound server pid and a binding for another task all
+  hold, and a command a session's tools start (`node build.mjs`) is work: a shell
+  is never a runtime. The same recognition protects these processes from run
+  cleanup — which also preserves a plausible ACP parent whose identity it cannot
+  read — and lets the owned-tool proof, review and closeout workspace proof pass
+  while the task is idle (nucleus#1343's host-qualified runtime set, extended per
+  host rather than a second path).
   Those runtimes take two facts from the listing, never a provider
   name list: the program is one the provider ships (inside an application bundle
   such as `Foo.app/Contents/…`, or beside the provider's own executable under

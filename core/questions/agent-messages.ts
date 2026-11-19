@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { formatAgentId, parseAgentId } from "../../shared/agent-identity";
+import { observationTimeout } from "../recovery/observation-timeout";
 import { digest, now } from "../store/store";
 import {
   agentMessageRecordSchema,
@@ -246,6 +248,7 @@ export class AgentMessages {
       input.participantId !== undefined
         ? this.participantSender(input.participantId, token)
         : this.runSender(input.taskId!, input.runId!, token);
+    if (sender.agentId && sender.hostId) this.resolution.responsibleThreads.recordActivity(parseAgentId(sender.agentId) ? sender.agentId : formatAgentId(sender.hostId, sender.agentId));
     const target = normalizeTellTarget(input.to, input.role);
     if (target.kind === "counterpart" && !sender.task)
       throw Error(
@@ -1003,8 +1006,11 @@ export class AgentMessages {
         detail: "A delivery is already in flight.",
       };
     let candidates: Array<{ agentId: string; hostId?: string }>;
+    let senderIsCandidate = false;
     try {
-      candidates = await this.threadCandidates(current);
+      const resolved = await this.threadCandidates(current);
+      candidates = resolved.candidates;
+      senderIsCandidate = resolved.senderIsCandidate;
     } catch (error) {
       if (
         error instanceof ProjectAgentTargetRefusal &&
@@ -1053,15 +1059,26 @@ export class AgentMessages {
         candidate.agentId,
         candidate.hostId,
       );
-      if (!hostId) continue;
+      if (!hostId) {
+        if (current.toProjectKey) this.resolution.responsibleThreads.cache.invalidate(current.toProjectKey);
+        continue;
+      }
       return this.notifyThread(current, candidate.agentId, hostId, label);
     }
-    const detail =
-      current.toRole === "agent"
-        ? `Agent ${current.toAgentName ?? "unknown"} is not live on its host; the message waits until it is reachable.`
-        : `No live planner for project ${current.toProjectKey}; the message waits in its inbox for the next live planner.`;
+    const detail = current.toRole === "agent"
+      ? `Agent ${current.toAgentName ?? "unknown"} is not live on its host; the message waits until it is reachable.`
+      : senderIsCandidate
+        ? `The sender is the only live responsible thread for ${current.toProjectKey}; handle it yourself.`
+        : `No live responsible thread for ${current.toProjectKey}; handle it yourself.`;
+    if (current.toRole !== "agent") {
+      store.transaction(() => {
+        store.putMessage({ ...current, status: "expired", error: detail });
+        store.event(current.fromTaskId, "agent_message_expired", `${current.id}: ${detail}`);
+        store.event(current.toTaskId, "agent_message_expired", `${current.id}: ${detail}`);
+      });
+    }
     return {
-      status: "queued",
+      status: current.toRole === "agent" ? "queued" : "expired",
       messageId: current.id,
       to: label,
       role,
@@ -1073,16 +1090,21 @@ export class AgentMessages {
   /** The threads a planner or agent message may reach, in order; each is re-read at delivery, never trusted from the record. */
   private async threadCandidates(
     record: AgentMessageRecord,
-  ): Promise<Array<{ agentId: string; hostId?: string }>> {
+  ): Promise<{
+    candidates: Array<{ agentId: string; hostId?: string }>;
+    /** The sender was itself a live responsible candidate for the project. */
+    senderIsCandidate: boolean;
+  }> {
     const key = record.toProjectKey!;
     if (record.toRole === "agent") {
       const target = await this.resolution.resolveProjectAgentTarget(
         key,
         record.toAgentName ?? null,
       );
-      return [{ agentId: target.agentId, hostId: target.hostId }];
+      return { candidates: [{ agentId: target.agentId, hostId: target.hostId }], senderIsCandidate: false };
     }
     const candidates: Array<{ agentId: string; hostId?: string }> = [];
+    let senderIsCandidate = false;
     if (record.toLadderTaskId) {
       try {
         const task = this.store.task(record.toLadderTaskId);
@@ -1092,20 +1114,20 @@ export class AgentMessages {
         /* the ladder's task is gone; the project's planner still answers */
       }
     }
-    try {
-      const fallback = await this.resolution.resolveProjectAgentTarget(
-        key,
-        null,
-      );
-      candidates.push({ agentId: fallback.agentId, hostId: fallback.hostId });
-    } catch {
-      /* no fallback planner is registered */
+    const project = this.store.projectByKey(key);
+    if (project) {
+      const resolved = await this.resolution.responsibleThread(project, record.fromAgentId ? { agentId: record.fromAgentId, hostId: record.fromHostId } : undefined);
+      if (resolved.thread) candidates.push({ agentId: resolved.thread.agentId, hostId: resolved.thread.hostId });
+      else senderIsCandidate = resolved.senderIsCandidate;
     }
-    return candidates.filter(
-      (candidate, index) =>
-        candidates.findIndex((other) => other.agentId === candidate.agentId) ===
-        index,
-    );
+    return {
+      candidates: candidates.filter(
+        (candidate, index) =>
+          candidates.findIndex((other) => other.agentId === candidate.agentId) ===
+          index,
+      ),
+      senderIsCandidate,
+    };
   }
 
   /** A thread's host when it is available and observed live (not archived, not gone); null otherwise. */
@@ -1114,7 +1136,7 @@ export class AgentMessages {
     hintHostId?: string,
   ): Promise<string | null> {
     const hostId =
-      hintHostId ?? (await this.resolution.identifyOriginHost(agentId));
+      hintHostId ?? parseAgentId(agentId)?.hostId ?? (await this.resolution.identifyOriginHost(agentId));
     if (
       !hostId ||
       !this.resolution.withHost(hostId, () =>
@@ -1122,8 +1144,10 @@ export class AgentMessages {
       )
     )
       return null;
-    if (await this.resolution.plannerThreadGone(agentId)) return null;
-    return hostId;
+    try {
+      const state = await observationTimeout(this.resolution.plannerPresence.threadRoute(agentId, hostId), 'Thread observation timed out', 2000);
+      return state.kind === "routable" ? hostId : null;
+    } catch { return null; }
   }
 
   /** One planner or agent delivery, fenced by an intent record so an unknown outcome is never resent. */
@@ -1186,6 +1210,7 @@ export class AgentMessages {
         deliveredAt: delivered.deliveredAt!,
       };
     } catch (error) {
+      if (record.toProjectKey) this.resolution.responsibleThreads.cache.invalidate(record.toProjectKey);
       this.settleLateMessage(intent, agentId, error);
       return this.failedSend(intent, label, record.toRole, error);
     } finally {

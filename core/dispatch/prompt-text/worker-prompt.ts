@@ -16,7 +16,7 @@ import {
   BLOCKED_REPORT_FIELDS,
   WORKER_REFUSED_REPORT_RULE,
 } from "./report-rules";
-import { PROOF_FILES_RULE, REQUIRED_PROOF_AUTHOR_NOTE } from "./proof-rules";
+import { REQUIRED_PROOF_AUTHOR_NOTE, proofFilesNote } from "./proof-rules";
 import {
   briefReportPolicy,
   interactiveWorkerBlock,
@@ -87,7 +87,7 @@ ${section("workspace", `Workspace: ${task.directory}. Use this existing workspac
 ${task.number ? `Start the PR title with the bare task number, for example \`${formatTaskNumber(task.number)}: ${task.title}\`. Do not use \`#${formatTaskNumber(task.number)}\` or \`${task.reference}\` in the PR title; GitHub autolinks #N to its own issues and PRs.\n` : ""}${section("history", continuationCleanup)}${task.retiredWorkers.length ? `You replace a stopped worker after bounded recovery. Preserve and inspect all existing files and commits; resume the brief rather than restarting it. Previous worker: ${task.retiredWorkers.at(-1)!.agentId}. Recovery instruction: ${task.retiredWorkers.at(-1)!.reason}. ${task.resumePrNumber ? `Reuse PR #${task.resumePrNumber}; do not create another PR.` : "Check for an existing PR on this branch and reuse it if present."} Current review findings: ${task.resolution.review?.summary ?? "none"}.` : ""}
 ${task.resolution.pendingWorkerInstruction ? `Authorized continuation action: ${task.resolution.pendingWorkerInstruction}\n` : ""}${bbBrowserCapabilityNotice(task)}${section("lane", queueLaneBlock(task))}${section("laneDocuments", queueLaneDocumentBlock(task, task.temporaryDirectory))}${queueSiblingBlock(task)}${queueCheckoutSiblingBlock(task)}${queueWorktreeLinkBlock(task, worktreeLinkRecordFailure)}${section("brief", queueBriefBlock(task))}Follow its scope and the repository's applicable instructions. Preserve unrelated files.
 ${interactiveWorkerBlock(task, session)}${section("workspace", `${WORKSPACE_RULE}\n${CHANGELOG_FRAGMENT_RULE}${runTemporaryPromptNote(task.temporaryDirectory)}`)}
-${section("validation", operatorValidationBlock(affectedTestsCommand))}${section("namedProof", `${REQUIRED_PROOF_AUTHOR_NOTE}\n${PROOF_FILES_RULE}\n`)}${contextPointer("worker", section, callbackCommand)}
+${section("validation", operatorValidationBlock(affectedTestsCommand))}${section("namedProof", `${REQUIRED_PROOF_AUTHOR_NOTE}\n${proofFilesNote(task)}`)}${contextPointer("worker", section, callbackCommand)}
 
 ${section("report", `${REPORT_BINDING_RULE}
 ${BLOCKED_REPORT_FIELDS}

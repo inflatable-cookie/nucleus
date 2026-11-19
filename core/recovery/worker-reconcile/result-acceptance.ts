@@ -51,20 +51,17 @@ async function announceReportReady(
     return true;
   });
   if (!applied) return;
-  const planner = store.projectPlannerRecipient(
-    store.projectFor(
-      current.repoPath,
-      normalizeRepositoryOrigin(current.repository ?? ""),
-    ),
-  );
   if (
-    !planner ||
     !adapter.notify ||
     store
       .eventsAll(current.id)
       .some((event) => event.kind === "report_ready_planner_notice_intent")
   )
     return;
+  const project = store.projectFor(current.repoPath, normalizeRepositoryOrigin(current.repository ?? ""));
+  const { rungs } = await resolution.plannerRungsFor(current);
+  const planner = rungs[0]?.agentId;
+  if (!planner || store.task(current.id).phase !== "report_ready") return;
   const messageId = `ns-report-ready-${current.id}-${completion.eventId}`;
   store.event(
     current.id,
@@ -89,6 +86,7 @@ async function announceReportReady(
     );
     store.event(current.id, "report_ready_planner_notice_delivered", planner);
   } catch (error) {
+    if (project) resolution.responsibleThreads.cache.invalidate(project.key);
     store.event(
       current.id,
       "report_ready_planner_notice_unknown",

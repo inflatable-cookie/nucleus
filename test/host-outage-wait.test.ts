@@ -175,6 +175,10 @@ function noticeFixture() {
   const adapter = {
     hostId: plannerHost,
     notify: async (agentId: string, messageId: string, text: string) => { sends.push({ agentId, messageId, text }); },
+    listLiveAgents: async () => store.projects().flatMap(project => {
+      const planner = project.planner && parseAgentId(project.planner.agentId);
+      return planner?.hostId === plannerHost ? [{ id: planner.nativeAgentId, title: '', workspaceId: 'synthetic-workspace' }] : [];
+    }),
     originAgent: async (id: string) => ({ id, workspaceId: 'synthetic-workspace', title: id, archived: false }),
     observe: async (id: string) => ({ id, workspaceId: 'synthetic-workspace', status: 'idle', active: false, permissions: false, error: '' }),
   } as unknown as Adapter;
@@ -261,7 +265,7 @@ test('a project that becomes affected later, or gains its planner later, still h
     f.ageOutage(180);
     await f.engine.wake();
     assert.deepEqual(f.sends.map(send => send.agentId), ['planner-a'], 'only the project with a planner was told');
-    assert.equal(f.store.notices().filter(notice => notice.kind === 'host_outage').length, 1);
+    assert.equal(f.store.notices().filter(notice => notice.kind === 'host_outage').length, 2);
 
     // A project that only submits work now is affected by the still-open outage.
     f.makeProject('project-b', plannerB);
@@ -326,7 +330,7 @@ test('a long-outage notice pending when its planner is unreachable is superseded
     const pending = f.store.notices().filter(notice => notice.kind === 'host_outage');
     assert.equal(pending.length, 1, 'the notice is raised for the project');
     assert.equal(pending[0]!.status, 'pending', 'and waits for its planner');
-    assert.match(pending[0]!.error, /Waiting for host paseo:synthetic-planner/);
+    assert.match(pending[0]!.error, /No live responsible thread/);
     const plannerSends = () => f.sends.filter(send => send.agentId === 'planner-a');
     assert.equal(plannerSends().length, 0);
     const recordedText = pending[0]!.text;

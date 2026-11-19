@@ -412,6 +412,8 @@ test("a T3 scope question lands on the board and recovery keeps it off the MCP r
       perThreadEnvironment: false,
     }),
     reportingViaMcp: false,
+    hostId: "paseo-host",
+    listLiveAgents: async () => [{ id: "planner", title: "Planner", workspaceId: "planner-ws" }],
     observe: observeIdle("ws", "worker"),
     originAgent: async (id: string) =>
       id === "planner"
@@ -423,6 +425,7 @@ test("a T3 scope question lands on the board and recovery keeps it off the MCP r
   } as unknown as HostAdapter;
   const engine = new Engine(store, adapter, 0);
   engine.identifyOriginHost = async () => "paseo-host";
+  engine.hostIds = () => ["paseo-host"];
   engine.hostAvailable = () => true;
   const task = store.insert(
     submissionSchema.parse({
@@ -1433,6 +1436,9 @@ test("a T3 MCP planner classifies a reviewer consult; the worker helper receives
       environment: {},
     }),
   });
+  const previousOwner = threadProjection("origin", directory);
+  previousOwner.thread.archivedAt = new Date().toISOString();
+  server.threads.set("origin", previousOwner);
   const planner = { id: "mcp:launch:synthetic-planner" };
   const projection = threadProjection(planner.id, directory);
   projection.thread.creationSource = "mcp";

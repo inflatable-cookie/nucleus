@@ -69,7 +69,9 @@ test('losing plugin presence while a host is connected raises a board fault and 
   const notified = new Promise<void>(resolve => { resolveNotified = resolve; });
   const raw = { client, isConnected: () => client.isConnected, hostId: 'host', socketPath: join(dir, 'callback.sock'), helperPath: join(dir, 'report.mjs'),
     connect: async () => { client.isConnected = true; }, close: async () => { client.isConnected = false; },
-    catalog: async () => ({ providers: [] }), observe: async () => ({ id: 'w', workspaceId: 'ws', status: 'idle', active: false, permissions: false, error: '' }),
+    catalog: async () => ({ providers: [] }),
+    listLiveAgents: async () => [{ id: 'planner-1', title: 'Planner', workspaceId: 'ws', directory: '/nucleus' }],
+    observe: async (id: string) => ({ id, workspaceId: 'ws', status: 'idle', active: false, permissions: false, error: '' }),
     notify: async (agentId: string, _id: string, text: string) => { notices.push({ agentId, text }); resolveNotified(); },
   } as unknown as Adapter;
   const runtime = new QueueRuntime({ dataDir: dir, adapterFactory: () => raw, timers: false, pluginLostGraceMs: 20 });
@@ -78,7 +80,6 @@ test('losing plugin presence while a host is connected raises a board fault and 
     await runtime.bootstrap;
     runtime.store.upsertProject({ key: 'nucleus', name: 'Nucleus', repositories: [{ origin: NUCLEUS_REPOSITORY_ORIGIN, path: '/nucleus' }] });
     runtime.store.setProjectPlanner({ key: 'nucleus', agentId: formatAgentId('host', 'planner-1'), setBy: 'test' });
-    assert.equal(runtime.store.projectPlannerRecipient(runtime.store.queueProject()), formatAgentId('host', 'planner-1'));
     runtime.hostPresenceClosed();
     // The notification also waits for Paseo call admission after bootstrap.
     await notified;

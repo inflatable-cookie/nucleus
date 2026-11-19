@@ -822,7 +822,7 @@ test("a live recovery episode keeps the parked report until it ends, and then th
   }
 });
 
-test("732: with no project planner an unanswered owner is followed by the decider once", async () => {
+test("732: an unanswered owner does not start a planning decider", async () => {
   const f = fixture();
   let ownerAsks = 0,
     deciderAsks = 0;
@@ -865,17 +865,12 @@ test("732: with no project planner an unanswered owner is followed by the decide
       },
     });
     await f.engine.wake();
-    await waitFor(
-      () => f.events(task.id, "planner_escalation_answered").length > 0,
-      ANSWERING_WINDOW_MS,
-      "the decider answer",
-    );
+    await waitFor(() => f.events(task.id, "planner_escalation_missed").some(event => event.detail.includes("no delegated answer")), ANSWERING_WINDOW_MS, "the unanswered planner");
     assert.equal(ownerAsks, 1);
-    assert.equal(deciderAsks, 1);
-    assert.equal(f.events(task.id, "planner_escalation_answered").length, 1);
+    assert.equal(deciderAsks, 0, "a planning escalation does not start a decider");
     await f.engine.wake();
     assert.equal(ownerAsks, 1);
-    assert.equal(deciderAsks, 1);
+    assert.equal(deciderAsks, 0);
   } finally {
     await f.close();
   }

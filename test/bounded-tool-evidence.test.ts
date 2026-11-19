@@ -15,6 +15,7 @@ import type { Resolution } from "../core/resolution";
 import type { AgentObservation } from "../core/host";
 import type { HostProcessFact, TimelinePage } from "../core/host/types";
 import { workspaceToolProcessIssue } from "../core/recovery/stall";
+import type { ParticipantRuntime } from "../core/machine/participant-runtime";
 import { toolTimelinePage } from "./support/tool-timeline";
 import { bbProcessFixture } from "./support/bb-process-fixture";
 import {
@@ -73,10 +74,10 @@ function fixture(t: TestContext, bb = false) {
     noLiveWorkspaceProcesses: async (
       _workspace: string,
       _runs: readonly string[],
-      threads: readonly string[] = [],
+      runtime: ParticipantRuntime = {},
     ) =>
       processes
-        ? workspaceToolProcessIssue(processes, directory, [task.runId], threads)
+        ? workspaceToolProcessIssue(processes, directory, [task.runId], runtime)
         : "host process listing is unreadable",
   };
   const resolution = {
@@ -243,12 +244,9 @@ test("the process reader checks the loaded image and its start identity", async 
     }),
   });
   assert.match(
-    workspaceToolProcessIssue(
-      [...runtime, impostor],
-      workspace,
-      ["run"],
-      ["thread"],
-    )!,
+    workspaceToolProcessIssue([...runtime, impostor], workspace, ["run"], {
+      bbThreads: ["thread"],
+    })!,
     /process 300 remains/,
   );
 });

@@ -216,6 +216,11 @@ infer a mechanical gate from prose.
   later retired that rendering, as recorded above. No refusal, schema, wire
   field, proof tuple, settings write or artifact verifier was added, and no
   architecture review is produced from prose headings.
+- **nucleus#1382 (2026-11-19).** The author note now keeps to the proof the
+  brief itself names; the proof-file delivery mechanics and their size limits
+  live in an optional paragraph, and a brief that names no visual or rendered
+  proof gets a paragraph saying there is nothing to deliver. The notes never read
+  as a required lookup or a reason to stop.
 - **What still refuses (after Spec 058 cutover 2).** Intake refuses the retired
   `reviewVerdicts`/`reviewPassGate`/`manualVerification` keys with the
   replacement named, and `queue.mergeHold` remains the one mechanical subject.

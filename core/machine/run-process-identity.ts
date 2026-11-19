@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
@@ -10,10 +10,7 @@ import {
   processStartIdentityLiveness,
   processStartIdentityLivenessAsync,
 } from "./process-identity-search";
-import {
-  linuxStartIdentity,
-  startIdentityMatches,
-} from "./start-identity";
+import { linuxStartIdentity, startIdentityMatches } from "./start-identity";
 
 const execFileAsync = promisify(execFile);
 const KEYS = [
@@ -112,6 +109,111 @@ export async function darwinBbThreadEnvironments(
   return result;
 }
 
+/** The environment keys an ACP task parent or a T3 session carries. */
+const ACP_ENVIRONMENT_KEYS = [
+  "NUCLEUS_ACP_SESSION",
+  "NUCLEUS_DATA_HOME",
+  "T3CODE_THREAD_ID",
+] as const;
+
+/**
+ * What one T3 process's own environment says about its identity. A null field is
+ * unknown, never an absence: nothing proves the process carries no thread, only
+ * that this read could not see one.
+ */
+export interface AcpProcessIdentity {
+  /** The T3 thread this process runs for, when its host passes one. */
+  t3ThreadId: string | null;
+  /** The explicit ACP binding pointer, when the host passed one. */
+  sessionPath: string | null;
+  /** The data home that resolves this process's checkout binding. */
+  dataHome: string | null;
+}
+
+/** One identity read per pid; null when that process's environment is unreadable. */
+export type AcpProcessIdentities = Map<number, AcpProcessIdentity | null>;
+
+/**
+ * Read only the identity variables a T3 task parent or role session carries, for
+ * a bounded pid set, and never retain a whole environment.
+ *
+ * A process whose read fails, or whose environment cannot be parsed, stays null,
+ * so a proof built on it holds instead of guessing. This is a synchronous read:
+ * the process proofs that consume it are synchronous decisions over one listing.
+ */
+export function readAcpProcessIdentities(
+  pids: readonly number[],
+  options: { platform?: NodeJS.Platform } = {},
+): AcpProcessIdentities {
+  const unique = [
+    ...new Set(pids.filter((pid) => Number.isSafeInteger(pid) && pid > 0)),
+  ];
+  const result: AcpProcessIdentities = new Map(
+    unique.map((pid) => [pid, null]),
+  );
+  if (!unique.length) return result;
+  const assign = (pid: number, values: Record<string, string>) =>
+    result.set(pid, {
+      t3ThreadId: values.T3CODE_THREAD_ID?.trim() || null,
+      sessionPath: values.NUCLEUS_ACP_SESSION?.trim() || null,
+      dataHome: values.NUCLEUS_DATA_HOME?.trim() || null,
+    });
+  const platform = options.platform ?? process.platform;
+  if (platform === "linux") {
+    for (const pid of unique) {
+      try {
+        const text = readFileSync(`/proc/${pid}/environ`, "utf8");
+        const values: Record<string, string> = {};
+        for (const entry of text.split("\0")) {
+          const at = entry.indexOf("=");
+          if (at <= 0) continue;
+          const key = entry.slice(0, at);
+          if ((ACP_ENVIRONMENT_KEYS as readonly string[]).includes(key))
+            values[key] = entry.slice(at + 1);
+        }
+        assign(pid, values);
+      } catch {
+        /* An unreadable environment stays unknown. */
+      }
+    }
+    return result;
+  }
+  if (platform === "darwin") {
+    try {
+      const listing = spawnSync(
+        "ps",
+        ["-E", "-ww", "-p", unique.join(","), "-o", "pid=,command="],
+        {
+          encoding: "utf8",
+          timeout: 5_000,
+          killSignal: "SIGKILL",
+          maxBuffer: 8 * 1024 * 1024,
+          env: { ...process.env, LC_ALL: "C", TZ: "UTC" },
+        },
+      );
+      if (listing.error || listing.signal || listing.status !== 0)
+        return result;
+      for (const line of (listing.stdout ?? "").split("\n")) {
+        const match = /^\s*(\d+)\s+(.*)$/.exec(line);
+        if (!match) continue;
+        const pid = Number(match[1]);
+        if (!result.has(pid)) continue;
+        const values: Record<string, string> = {};
+        for (const key of ACP_ENVIRONMENT_KEYS) {
+          const value = new RegExp(
+            `(?:^| )${key}=(.*?)(?= [A-Za-z_][A-Za-z_0-9]*=|$)`,
+          ).exec(match[2])?.[1];
+          if (value !== undefined) values[key] = value;
+        }
+        assign(pid, values);
+      }
+    } catch {
+      /* An unreadable listing proves nothing. */
+    }
+  }
+  return result;
+}
+
 /** The answer every custody decision reads: found, proved gone, or unobserved. */
 export type RunProcessLiveness = ReturnType<
   typeof processStartIdentityLiveness
@@ -134,20 +236,34 @@ export async function runProcessEnvironments(
   const result = new Map<number, RunProcessEnvironment | null>();
   const platform = options.platform ?? process.platform;
   if (platform === "linux") {
-    for (let offset = 0; offset < pids.length && !options.signal?.aborted; offset += 64) {
-      await Promise.all(pids.slice(offset, offset + 64).map(async pid => {
-        const text = await readFile(`/proc/${pid}/environ`, { encoding: "utf8", signal: options.signal }).catch(() => null);
-        const environment: RunProcessEnvironment = {};
-        for (const entry of text?.split("\0") ?? []) {
-          const at = entry.indexOf("=");
-          const key = entry.slice(0, at) as (typeof KEYS)[number];
-          if (at >= 0 && KEYS.includes(key)) environment[key] = entry.slice(at + 1);
-        }
-        result.set(pid, text === null ? null : environment);
-      }));
+    for (
+      let offset = 0;
+      offset < pids.length && !options.signal?.aborted;
+      offset += 64
+    ) {
+      await Promise.all(
+        pids.slice(offset, offset + 64).map(async (pid) => {
+          const text = await readFile(`/proc/${pid}/environ`, {
+            encoding: "utf8",
+            signal: options.signal,
+          }).catch(() => null);
+          const environment: RunProcessEnvironment = {};
+          for (const entry of text?.split("\0") ?? []) {
+            const at = entry.indexOf("=");
+            const key = entry.slice(0, at) as (typeof KEYS)[number];
+            if (at >= 0 && KEYS.includes(key))
+              environment[key] = entry.slice(at + 1);
+          }
+          result.set(pid, text === null ? null : environment);
+        }),
+      );
     }
   } else if (platform === "darwin") {
-    for (let offset = 0; offset < pids.length && !options.signal?.aborted; offset += 64) {
+    for (
+      let offset = 0;
+      offset < pids.length && !options.signal?.aborted;
+      offset += 64
+    ) {
       const chunk = pids.slice(offset, offset + 64);
       for (const pid of chunk) result.set(pid, null);
       try {
@@ -156,7 +272,13 @@ export async function runProcessEnvironments(
           : await execFileAsync(
               "ps",
               ["-E", "-ww", "-p", chunk.join(","), "-o", "pid=,command="],
-              { encoding: "utf8", timeout: 5_000, killSignal: "SIGKILL", maxBuffer: 4 * 1024 * 1024, signal: options.signal },
+              {
+                encoding: "utf8",
+                timeout: 5_000,
+                killSignal: "SIGKILL",
+                maxBuffer: 4 * 1024 * 1024,
+                signal: options.signal,
+              },
             ).then((result) => result.stdout);
         for (const line of stdout.split("\n")) {
           const match = /^\s*(\d+)\s+(.*)$/.exec(line);
@@ -257,20 +379,36 @@ export async function refreshedRunProcessLiveness(
   ];
   if (!unique.length) return table;
   const wanted = new Set(unique);
-  const identities = process.platform === "darwin"
-    ? await darwinProcessReadsAsync().startIdentities(unique, signal)
-    : new Map<number, string>();
+  const identities =
+    process.platform === "darwin"
+      ? await darwinProcessReadsAsync().startIdentities(unique, signal)
+      : new Map<number, string>();
   const zombies = new Set<number>();
   if (process.platform === "linux") {
-    const bootId = await readFile("/proc/sys/kernel/random/boot_id", { encoding: "utf8", signal })
-      .then(value => value.trim() || null, () => null);
-    for (let offset = 0; offset < unique.length && !signal?.aborted; offset += 64) {
-      await Promise.all(unique.slice(offset, offset + 64).map(async pid => {
-        const stat = await readFile(`/proc/${pid}/stat`, { encoding: "utf8", signal }).catch(() => null);
-        if (!stat) return;
-        if (stat.slice(stat.lastIndexOf(")") + 2).startsWith("Z")) zombies.add(pid);
-        identities.set(pid, linuxStartIdentity(pid, stat, bootId));
-      }));
+    const bootId = await readFile("/proc/sys/kernel/random/boot_id", {
+      encoding: "utf8",
+      signal,
+    }).then(
+      (value) => value.trim() || null,
+      () => null,
+    );
+    for (
+      let offset = 0;
+      offset < unique.length && !signal?.aborted;
+      offset += 64
+    ) {
+      await Promise.all(
+        unique.slice(offset, offset + 64).map(async (pid) => {
+          const stat = await readFile(`/proc/${pid}/stat`, {
+            encoding: "utf8",
+            signal,
+          }).catch(() => null);
+          if (!stat) return;
+          if (stat.slice(stat.lastIndexOf(")") + 2).startsWith("Z"))
+            zombies.add(pid);
+          identities.set(pid, linuxStartIdentity(pid, stat, bootId));
+        }),
+      );
     }
   }
   return (pid, startIdentity) => {
@@ -284,8 +422,6 @@ export async function refreshedRunProcessLiveness(
     if (zombies.has(pid) || !pidAlive(pid)) return "dead";
     const identity = identities.get(pid);
     if (!identity || identity.endsWith("@unknown")) return "unknown";
-    return startIdentityMatches(startIdentity, identity)
-      ? "alive"
-      : "dead";
+    return startIdentityMatches(startIdentity, identity) ? "alive" : "dead";
   };
 }

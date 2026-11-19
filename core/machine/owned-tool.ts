@@ -5,6 +5,7 @@ import {
   ownedToolAgentProcessTreeVerdict,
 } from "./owned-tool-process-proof";
 import { readHostUidProcesses } from "./host-process-listing";
+import { participantRuntime, storeDataHome } from "./participant-runtime";
 import type { Resolution } from "../resolution";
 import {
   formatLiveToolIssue,
@@ -120,6 +121,12 @@ export class OwnedTools {
         task && bbThreadForAgent(agentId, boundRun?.hostId ?? task.hostId)
           ? bbWorkspaceThreads(task, this.store.runs(task.id), workspaceId)
           : [];
+      const runtime = participantRuntime({
+        dataHome: storeDataHome(this.store),
+        tasks: task ? [task] : [],
+        runs: task ? this.store.runs(task.id) : [],
+        bbThreads,
+      });
       const hold = await boundedToolHold(
         read,
         this.resolution.host,
@@ -144,7 +151,7 @@ export class OwnedTools {
           const workspaceIssue = await this.adapter.noLiveWorkspaceProcesses(
             workspaceId,
             runIds,
-            bbThreads,
+            runtime,
           );
           if (workspaceIssue !== null)
             return (
@@ -158,7 +165,7 @@ export class OwnedTools {
               processes,
               directory!,
               runIds,
-              bbThreads,
+              runtime,
             );
             if (issue) return issue;
           }
@@ -246,16 +253,15 @@ export class OwnedTools {
         agentId,
         boundRun?.hostId ?? task.hostId,
       );
-      const bbThreads = bbThread
-        ? bbWorkspaceThreads(
-            task,
-            this.store.runs(task.id),
-            options.workspaceId,
-          )
-        : [];
+      const runtime = participantRuntime({
+        dataHome: storeDataHome(this.store),
+        tasks: [task],
+        runs: this.store.runs(task.id),
+        bbThreads: bbThread ? [bbThread] : [],
+      });
       const verdict = ownedToolAgentProcessTreeVerdict(runIds, processes, {
         noTurnLive: true,
-        bbThreads: bbThread ? [bbThread] : [],
+        runtime,
       });
       if (verdict.state === "empty") {
         const heldRunId = options.runId ?? verdict.runId;
@@ -276,7 +282,7 @@ export class OwnedTools {
         const workspaceIssue = await this.adapter.noLiveWorkspaceProcesses(
           options.workspaceId,
           runIds,
-          bbThreads,
+          runtime,
         );
         if (!workspaceIssue) {
           this.recordOwnedToolSettlement(

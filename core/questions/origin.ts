@@ -4,7 +4,7 @@ import {isDispositionActive,isOperatorOrigin,OPERATOR_BOARD_CALLER,taskOwner,tas
 import {normalizeRepositoryOrigin} from '../../shared/lanes';
 import type {Resolution} from '../resolution';
 import {digest,type Store} from '../store/store';
-/** A missing-origin fact can remain visible while a registered planner owns its notices. */
+/** A missing-origin fact can remain visible while a live project thread receives its notices. */
 export const missingOriginHasPlanner=(store:Store,task:Task):boolean=>task.originError.startsWith('Origin thread is missing')
  &&Boolean(store.projectPlannerRecipient(store.projectFor(task.repoPath,normalizeRepositoryOrigin(task.repository??''))));
 /** An open task: neither removed nor finished. Only an open task changes owner. */
@@ -156,8 +156,7 @@ export class OriginRouting {
      if(t.originError||t.originLookupError)this.store.update(t.id,{originError:'',originLookupError:''});
      return;
     }
-    // A missing origin remains a recorded fact. Its project/Queue planner can
-    // receive notices and reparent the task without stopping its work.
+    // A missing origin remains visible. A live project thread can receive its notices.
     const reason=t.originWorkspaceId
      ?`Origin thread is missing; reparent the task to its successor in workspace ${t.originWorkspaceId}`
      :'Origin thread is missing and its workspace was not recorded; reparent the task to its successor';
@@ -190,21 +189,16 @@ export class OriginRouting {
 const noticeId=(t:Task)=>digest(`${t.id}:${t.resolution.incident?.id??`waiting:${t.phase}:${t.reason}`}:${t.resolution.incident?.status==='escalated'?'escalated':'reconciling'}`);
 /** Why an origin notice waits when its task has no thread to receive it. */
 export const NO_ORIGIN_THREAD_WAIT = 'No origin thread: waiting for a planner; the operator reads this on the board';
-/**
- * Where a task's origin notices go: an explicit notification thread, else the
- * origin thread, else for an absent/non-thread origin the project's planner,
- * then the Queue planner (Spec 058 cutover 5; the retired owner field is never
- * read). Null means no thread exists: the notice waits visibly and is never
- * sent to a fictitious agent (consumer #687).
- */
+/** Missing and operator origins use the project's live responsible thread. */
+export function originUsesProject(task: Task): boolean {
+  return task.originError.startsWith('Origin thread is missing')
+    || (isOperatorOrigin(taskOwner(task)) && isOperatorOrigin(task.originAgentId));
+}
 export function originRecipient(store: Store, task: Task): string | null {
-  if(missingOriginHasPlanner(store,task))
+  if (originUsesProject(task))
     return store.projectPlannerRecipient(store.projectFor(task.repoPath, normalizeRepositoryOrigin(task.repository ?? '')));
-  // The task's one owner (Spec 040); a creator row not yet given an owner answers as itself.
   const owner = taskOwner(task);
-  if (!isOperatorOrigin(owner)) return owner;
-  if (!isOperatorOrigin(task.originAgentId)) return task.originAgentId;
-  return store.projectPlannerRecipient(store.projectFor(task.repoPath, normalizeRepositoryOrigin(task.repository ?? '')));
+  return isOperatorOrigin(owner) ? task.originAgentId : owner;
 }
 const noticeTarget=(store:Store,task:Task,notice:Notice):string|null=>notice.originEntry?originRecipient(store,task):notice.recipientAgentId||notice.agentId;
 
