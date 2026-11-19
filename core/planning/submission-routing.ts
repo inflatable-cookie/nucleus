@@ -5,10 +5,13 @@ import { ProtocolError } from "../../shared/service/protocol";
 
 /** The same review-routing refusal applies to checks, dry runs and intake. */
 export function assertSubmissionRouting(
-  engine: Pick<Engine, "independentReviewRoutingRefusal">,
+  engine: Pick<Engine, "independentReviewRoutingRefusal"> &
+    Partial<Pick<Engine, "submissionRoutingRefusal">>,
   submission: Submission,
 ): void {
-  const refusal = engine.independentReviewRoutingRefusal(submission);
+  const refusal = engine.submissionRoutingRefusal
+    ? engine.submissionRoutingRefusal(submission)
+    : engine.independentReviewRoutingRefusal(submission);
   if (refusal) throw new Error(refusal);
 }
 

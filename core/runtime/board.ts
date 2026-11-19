@@ -57,7 +57,9 @@ export interface BoardContext {
     Engine,
     "profiles" | "retiredObservationKey" | "queuedExternalWait"
   > &
-    Partial<Pick<Engine, "profilesFor">> & {
+    Partial<
+      Pick<Engine, "profilesFor" | "workerRoutingProfiles" | "routingHostViews">
+    > & {
       resolution: Pick<
         Engine["resolution"],
         "slotAdmissionReason" | "slotAdmissionReader"
@@ -629,6 +631,9 @@ export class RuntimeBoard {
       );
       return ownerTaskNext({
         ...facts,
+        hostProfiles:
+          this.context.engine.workerRoutingProfiles?.(task) ?? hostProfiles,
+        hostViews: this.context.engine.routingHostViews?.(task),
         waitTask: taskWithCurrentWait(
           this.context.store,
           task,

@@ -1373,7 +1373,13 @@ request identities and stored committed-handoff rows are not rewritten.
   slot. Queue scans continue past those waits; a recovered origin is proved before
   the review rejoins fair slot ordering. A fault outside a host still records `engineError`.
   Bounding calls that never return is tracked separately in nucleus#1347.
-- A queued task waiting for an unavailable host does not reserve an available
+- Before the first worker dispatch, the repository host and operator default are
+  preferences. Selection rotates profiles across online host catalogs, including
+  their options. A profile available on one host takes the task there; for a
+  multi-host profile the preferences choose the host. The dispatch intent records
+  the host and reason with the workspace intent. Once dispatched, every role and
+  later run stays on that host; an incompatible route is refused by name.
+- A queued task waiting for an unavailable fixed host does not reserve an available
   slot ahead of another host; its reservation returns when its host wait clears.
 - The wait is independent of the task's stop (nucleus#1198 review). When nothing
   more specific already stops the task the stop reads `host_unavailable`, naming
@@ -1385,7 +1391,8 @@ request identities and stored committed-handoff rows are not rewritten.
 - Nothing is sent to that host: no quantum, launch, continuation, notification,
   recovery or coordinator, and no stall, incident or escalation is raised from
   the outage. The wall-time budget pauses for the wait (Spec 058 budgets). New
-  dispatch for a project whose host is away waits the same way.
+  dispatch that already owns a host waits the same way. A first worker instead
+  considers the other online hosts.
 - When the host returns, the wait clears and observation re-proves each retained
   thread before anything is sent; the task continues on the same host and
   threads. Delivery that was unknown stays unknown — an outage is never a reason

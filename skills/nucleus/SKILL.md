@@ -610,7 +610,7 @@ CLI refuses `capacity` too, and a repeated call changes nothing. Never look for
 another way in, including invoking the plugin bridge yourself: that is the
 Settings surface, not an agent route, and an agent must not use it. If a limit
 blocks approved work, say which limit and why, and pick up other ready work.
-The same Settings control sets the default host kind for new tasks: `paseo`, `t3code`, `bb`, or planner host. Repository host overrides take precedence; an offline operator default falls through to the submitting planner's proven host. A task's host selection is recorded at acceptance and never changes later. Repository `hostKind` may be unset to inherit this default.
+The same Settings control sets the preferred host kind for new tasks: `paseo`, `t3code`, `bb`, or planner host. Repository host preferences come first, then the operator default and planner host. At first dispatch the worker profile is selected across online hosts; a profile that only one host can launch takes the task there. The chosen host is recorded with its reason and remains fixed for every later role and run. Repository `hostKind` may be unset to inherit the default preference.
 `queue.capacity-state` reads the values in force and the record of applied
 changes — each with its time, surface and full before and after values. This is
 accident prevention, not permission: a deliberate same-uid imitation of the

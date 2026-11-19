@@ -255,6 +255,13 @@ test("real admission gives one free slot to healthy hosts while a BB host waits,
         hostId,
         "handoff",
         "a".repeat(40),
+        {
+          hostSelection: {
+            hostId,
+            basis: "worker_profile",
+            reason: "Previously selected worker host",
+          },
+        },
       );
     const bb = add("bb:offline", "bb");
     const bb2 = add("bb:offline", "bb2");
