@@ -11,7 +11,7 @@ stand in for it; Tom, 2026-10-20).
 
 ## Where things live
 
-- Current state: `docs/README.md`
+- Docs entry point: `docs/README.md`
 - Knowledge (one owner per fact): `docs/knowledge/README.md`
 - Open questions: `docs/knowledge/questions.md`
 - Writing style for docs, PRs and reports: `docs/knowledge/contracts/writing-style.md`
