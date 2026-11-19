@@ -348,7 +348,32 @@ export class RestartControls {
         ? "stopped_reviewer"
         : restartShape(task, runs, role, this.store.eventsAll(task.id));
     const controlRefusal = unsettledControlRefusal(this.store, task);
-    if (controlRefusal) throw new RestartRefusal(controlRefusal);
+    if (controlRefusal) {
+      const reading =
+        !fresh && shape === "checkpoint_reviewer"
+          ? runs.find((run) => run.id === task.resolution.currentRunId)
+          : undefined;
+      const delivery = reading?.reviewDeliveries?.findLast(
+        (item) => item.status === "reserved" || item.status === "uncertain",
+      );
+      // This control may observe the exact earlier delivery it is fenced on.
+      // Even a positive answer stops here and never authorizes another send.
+      if (
+        reading &&
+        delivery &&
+        !unsettledControlRefusal(this.store, task, delivery.operationId)
+      ) {
+        const observed = await this.resolution.reconcileReviewDelivery(
+          reading,
+          delivery,
+        );
+        if (observed.status === "delivered") return this.store.task(task.id);
+        throw Error(
+          `Reviewer delivery ${delivery.deliveryId} remains uncertain; the durable hold is retained and no resend occurred`,
+        );
+      }
+      throw new RestartRefusal(controlRefusal);
+    }
     // nucleus#1195: the proof executor's one continuation is a re-report request,
     // never a relaunch, a fresh agent or a selector re-run.
     if (shape === "unreported_executor")

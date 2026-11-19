@@ -909,11 +909,16 @@ export function blockingRecoveryEffectsRefusal(
 export function unsettledControlRefusal(
   store: Store,
   task: Task,
+  observingOperationId?: string,
 ): string | null {
   return recoveryEffectsRefusal(
     blockingRecoveryEffects(store, task, { kinds: ["operation"] }).filter(
       (effect) => {
-        if (effect.state !== "uncertain") return false;
+        if (
+          effect.state !== "uncertain" ||
+          effect.identity === observingOperationId
+        )
+          return false;
         const operation = store.operation(effect.identity);
         return (
           operation?.kind === "task_control" &&
