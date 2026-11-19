@@ -9,7 +9,7 @@ import { holdLifecycleFollowUps } from "./support/hold-lifecycle-follow-ups";
 import { waitFor } from "./support/budgets";
 import { test } from "./support/sharded-test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -28,7 +28,9 @@ import {
 import { QueueRuntime } from "../service/runtime-owner";
 import { taskControlOperation } from "../core/verbs/task-control-key";
 import { type ResolutionAdapter } from "../core/resolution";
-import { ABSENT_WORKER_REASON } from "../core/recovery/task-reasons";
+import { ABSENT_WORKER_REASON, ProvenPreSendRefusalError } from "../core/recovery/task-reasons";
+import { CoordinatorEpisode } from "../core/recovery/coordinator-episode";
+import { holdPatch } from "../core/merge/merge-hold";
 import {
   REVIEW_AUTHORIZATION_REQUIRED,
   reviewCheckpointPathFor,
@@ -75,7 +77,7 @@ type Role = "worker" | "reviewer" | "coordinator";
 const profile = (id: string, model: string, roles: Role[]): Profile =>
   sharedProfile(id, model, { provider: "codex" });
 
-function fixture() {
+function fixture(hostId = "host") {
   const dir = mkdtempSync(join(tmpdir(), "ns-restart-"));
   const store = new Store(join(dir, "queue.sqlite"));
   store.setMeta("paused", false);
@@ -115,7 +117,7 @@ function fixture() {
       handoffPath: "handoff.md",
       originAgentId: "origin",
     }),
-    "host",
+    hostId,
     "handoff",
     base,
   );
@@ -159,6 +161,7 @@ function fixture() {
     _text: string,
   ) => {};
   const adapter = fakeAdapter({
+    hostId,
     catalog: async () => paseoCatalog(),
     validate: async () => base,
     verifyWorkspace: async () => {},
@@ -2637,6 +2640,101 @@ test("uncertain revision delivery is refused in next and control without releasi
     await f.close();
   }
 });
+
+for (const variant of ["proved", "unknown delivery", "no current refusal"] as const) {
+  test(`an escalated T3 worker restart follows next after hold release (${variant})`, async () => {
+    const f = fixture("t3code:synthetic");
+    try {
+      const directory = join(f.dir, "worktree");
+      mkdirSync(directory);
+      const prepared = f.store.update(f.taskId, {
+        phase: "dispatching", workspaceIntent: true, workspaceId: "workspace", directory,
+        profile: f.profiles.worker, profileGroup: "worker",
+      });
+      const create = f.adapter.createAgent;
+      let refusedRunId = "";
+      f.adapter.verifyWorkspace = async () => prepared.branch;
+      f.adapter.createAgent = async task => {
+        refusedRunId = task.runId!;
+        throw new ProvenPreSendRefusalError("T3Code model does not support the selected reasoning option");
+      };
+      await f.engine.launchAgent(prepared);
+      assert.ok(refusedRunId);
+      assert.equal(f.current().phase, "needs_attention");
+      assert.equal(JSON.parse(f.events("worker_creation_refused_before_send")[0]!.detail).runId, refusedRunId);
+      assert.equal(f.current().runId, null);
+      assert.equal(f.current().agentIntent, false);
+
+      const episode = new CoordinatorEpisode(f.engine.resolution);
+      const recovery = runSchema.parse({
+        id: "recovery-create", taskId: f.taskId, hostId: prepared.hostId, role: "recovery",
+        head, base, generation: 1, workspaceId: "workspace", profile: f.profiles.coord,
+        status: "uncertain", createdAt: new Date().toISOString(), active: false, released: false,
+        agentId: null, lastObservedAt: null, idleSince: null, completion: null,
+      });
+      f.store.putRun(recovery);
+      episode.escalate(f.current(), "The recovery creation is unavailable");
+      episode.save(f.current(), { runId: recovery.id });
+      f.engine.resolution.update(f.current(), { recoveryActive: true });
+      if (variant !== "unknown delivery")
+        episode.releaseRefusedCreation(f.current(), recovery, "Recovery was refused before send");
+      if (variant === "no current refusal")
+        f.store.event(f.taskId, "agent_intent", "a-later-worker-intent");
+
+      f.store.setMeta("paused", true);
+      f.store.update(f.taskId, holdPatch(f.current(), "dispatch", "operator", "Wait for host rollout",
+        { kind: "time", at: "2000-01-01T00:00:00.000Z" }), "hold");
+      const pass = await f.engine.auditPass(true);
+      assert.equal(pass.fault, null);
+      assert.ok(pass.visited.has(f.taskId));
+      assert.equal(f.events("hold_auto_released").length, 1);
+      assert.equal(f.current().resolution.recovery?.status, "escalated");
+      assert.equal(f.current().resolution.recoveryActive, true);
+
+      const view = f.next().verbs.find(verb => verb.verb === "restart")!;
+      if (variant !== "proved") {
+        assert.equal(view.available, false);
+        assert.match(view.refusal ?? "", /move to=work/);
+        const before = f.current();
+        await assert.rejects(f.control({ role: "worker" }), error => error instanceof Error && error.message === view.refusal);
+        assert.deepEqual(f.current(), before);
+        assert.equal(f.createdRunTokens.size, 0);
+        return;
+      }
+      assert.equal(view.available, true, JSON.stringify(view));
+      assert.equal(view.args?.role, "worker");
+      const input = taskControlInputSchema.parse({ ...view.args, caller: CALLER, reason: "Resume after the host rollout" });
+      const { key, payload } = taskControlOperation(input);
+      const start = () => f.engine.startOperation({ key, kind: "task_control", taskId: f.taskId, expectedVersion: input.version, payload });
+      const accepted = await start();
+      assert.ok("accepted" in accepted);
+      const operation = await f.engine.awaitOperation(accepted.operation.id);
+      assert.equal(operation.state, "succeeded", operation.diagnostic);
+      assert.equal(f.current().phase, "queued");
+      assert.equal(f.current().resolution.incident?.status, "resolved");
+      assert.equal(f.current().resolution.recoveryActive, false);
+      assert.equal(f.current().resolution.recovery, null);
+      assert.equal(f.events("resolution_retry").length, 0);
+      const replay = await start();
+      assert.ok("accepted" in replay);
+      assert.deepEqual(replay.operation, operation);
+      assert.equal(f.events("restart_requested").length, 1);
+
+      f.adapter.createAgent = create;
+      f.store.setMeta("paused", false);
+      await f.engine.wake();
+      await f.engine.wake();
+      assert.equal(f.current().phase, "working", f.current().reason);
+      assert.notEqual(f.current().runId, refusedRunId);
+      assert.equal(f.createdRunTokens.size, 1);
+      assert.equal(f.current().workspaceId, "workspace");
+      assert.equal(f.store.run(recovery.id)?.released, true);
+      assert.equal(f.events("restart_requested").length, 1);
+    } finally {
+      await f.close();
+    }
+  });
+}
 
 test("a parked absence without a creation intent offers ordinary admission", async () => {
   const f = fixture();

@@ -26,6 +26,7 @@ import {
   unservedParkedStep,
   workerRestartRefusal,
 } from "./owner-verbs";
+import { escalatedWorkerRestart } from "./owner-restart";
 import { hostFailureRefusalDetail } from "../host/errors";
 import { DurableFenceRefusal } from "../intake/run-settlement";
 import { digest, now } from "../store/store";
@@ -338,6 +339,28 @@ export class RestartControls {
           "refusal" in parked ? parked.refusal : undefined,
         ),
       );
+    }
+    if (role === "worker") {
+      const escalated = this.store.transaction(() => {
+        const current = this.store.task(task.id);
+        this.engine.requireOwnerControlCurrent(current, input.version, "Task changed; refresh before restarting");
+        const plan = escalatedWorkerRestart(
+          collectOwnerVerbFacts(this.store, current),
+          verifyEnclosingOperation(this.store, input, operationId),
+        );
+        if (!plan) return null;
+        if ("refusal" in plan) throw new RestartRefusal(plan.refusal);
+        const detail = `restart worker: ${reason}`;
+        this.engine.settleVerbFences(current.id, { detail, runIds: [] });
+        this.engine.resumeReleasedPrerequisiteWait(current.id);
+        const latest = this.store.task(current.id);
+        const ready = this.resolution.update(latest, {
+          stop: null,
+          ...(input.instruction ? { pendingWorkerInstruction: input.instruction } : {}),
+        });
+        return this.resolution.returnToDispatch(ready, true, `Restart requested: ${reason}`, "restart_requested");
+      });
+      if (escalated) return escalated;
     }
     const pending =
       role === "worker" ? workerCreationRestartWait(this.store, task) : null;

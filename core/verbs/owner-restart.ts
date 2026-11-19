@@ -1,5 +1,7 @@
 import { creationTermination } from "../store/store-task-funnel";
-import { unsettledControlRefusal } from "../recovery/recovery-effects";
+import { blockingRecoveryEffectsRefusal, unsettledControlRefusal } from "../recovery/recovery-effects";
+import { refusedRunIds } from "../recovery/refused-launch";
+import type { VerifiedEnclosingOperation } from "../planning/enclosing-operation";
 import {
   RETAINED_PREREQUISITE_REFUSAL,
   NO_RESOLUTION_RUN_REFUSAL,
@@ -209,6 +211,45 @@ export function parkedRestart(facts: OwnerVerbFacts): ParkedRestart {
     return { kind: "answer" };
   }
   return { refusal: `Nothing is parked while the task is ${task.phase}` };
+}
+
+/** An escalated worker park has no resolution step to retry. Re-admit only a proved unsent creation. */
+export function escalatedWorkerRestart(
+  facts: OwnerVerbFacts,
+  enclosing?: VerifiedEnclosingOperation,
+): { kind: "dispatch" } | { refusal: string } | null {
+  const { task, runs, events, store } = facts;
+  const recovery = task.resolution.recovery;
+  if (task.phase !== "needs_attention" || task.entrypoint !== "worker" ||
+      task.agentId || task.completion || prIdentity(task) || task.resolution.mergeIntent ||
+      recovery?.status !== "escalated")
+    return null;
+  const refuse = (reason: string) => ({
+    refusal: `${reason}. Use move to=work once the task's delivery and workspace are settled.`,
+  });
+  if (task.prerequisiteWait && !task.prerequisiteWait.releasedAt)
+    return { refusal: RETAINED_PREREQUISITE_REFUSAL };
+  if (task.agentIntent || task.runId || task.restartRunId || task.resolution.currentRunId || recovery.agentId ||
+      task.resolution.deferredVerb || runs.some(run => !run.released))
+    return refuse("A creation, run or recorded direction still owns the parked worker");
+  const effect = blockingRecoveryEffectsRefusal(store, task, { enclosing });
+  if (effect) return refuse(effect);
+  const refused = refusedRunIds(events);
+  if ((recovery.runId && !runs.some(run => run.id === recovery.runId)) ||
+      runs.some(run => run.agentId || run.completion || run.status !== "superseded" ||
+        !(run.absentProvenAt || refused.has(run.id))))
+    return refuse("The historical run lacks a settled creation");
+  const intent = events.findLast(event => event.kind === "agent_intent");
+  const refusal = events.findLast(event => event.kind === "worker_creation_refused_before_send");
+  if (intent && refusal && refusal.id > intent.id) {
+    try {
+      const evidence = JSON.parse(refusal.detail) as { runId?: unknown };
+      if (evidence.runId === intent.detail && intent.detail && !task.retiredWorkers.length &&
+          task.workspaceIntent && task.workspaceId && task.directory)
+        return { kind: "dispatch" };
+    } catch { /* An unreadable refusal proves nothing about this intent. */ }
+  }
+  return refuse("No pre-send refusal binds the latest worker creation");
 }
 
 /**
@@ -747,6 +788,13 @@ export const restart: OwnerVerb = {
         ),
       };
     }
+    const role = deriveRestartRole(task, runs);
+    const escalated = role === "worker" ? escalatedWorkerRestart(facts) : null;
+    if (escalated)
+      return "refusal" in escalated
+        ? { available: false, refusal: escalated.refusal }
+        : { available: true, args: { taskId: task.id, version: task.version, role: "worker" },
+            fill: ["reason"], note: "Return the worker to ordinary dispatch after its refused creation." };
     const controlRefusal = unsettledControlRefusal(facts.store, task);
     if (controlRefusal) return { available: false, refusal: controlRefusal };
     const pending = workerCreationRestartWait(facts.store, task);
@@ -768,7 +816,6 @@ export const restart: OwnerVerb = {
             note: `Reviewer ${exhausted.id} cannot finish the remaining reading. Nucleus verifies the exact PR head and observes the reviewer idle in its workspace before replacing it.${rejectedReadingNote(exhausted)}`,
           };
     }
-    const role = deriveRestartRole(task, runs);
     const shape = restartShape(task, runs, role, facts.events);
     const report =
       role === "reviewer" && shape !== "stalled_run"
