@@ -2295,7 +2295,9 @@ export class Store {
     project: Pick<Project, "planner"> | null | undefined,
   ): string | null {
     if (this.responsibleRecipient) {
-      return project && 'key' in project && typeof project.key === 'string' ? this.responsibleRecipient(project.key) : null;
+      return project && "key" in project && typeof project.key === "string"
+        ? this.responsibleRecipient(project.key)
+        : null;
     }
     return this.projectRegistry.projectPlannerRecipient(project);
   }

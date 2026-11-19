@@ -725,7 +725,11 @@ test("an archived planner is skipped, and live planner and reviewer prompts reta
     assert.equal(receipt.status, "pending");
     assert.match(receipt.detail ?? "", /handle it yourself/);
     assert.deepEqual(f.delegated.planner, []);
-    assert.equal(f.store.projectByKey("app")?.planner?.agentId, "planner-1", "the hint remains registered");
+    assert.equal(
+      f.store.projectByKey("app")?.planner?.agentId,
+      "planner-1",
+      "the hint remains registered",
+    );
     assert.deepEqual(f.delegated.deciders, []);
   } finally {
     await f.close();
@@ -857,7 +861,11 @@ test("an unanswered scope question reaches the board without a decider", async (
     });
     assert.equal(receipt.status, "pending");
     await until(() => f.events("agent_ask_decision").length > 0);
-    assert.equal(f.delegated.deciders.length, 0, "operator-only questions go to the board without a new decider");
+    assert.equal(
+      f.delegated.deciders.length,
+      0,
+      "operator-only questions go to the board without a new decider",
+    );
     assert.equal(f.events("agent_ask_decision").length, 1);
   } finally {
     await f.close();
@@ -2391,11 +2399,7 @@ test("chat output without a command leaves the sender to handle the question wit
       question: "How should this task proceed?",
     });
     assert.equal(result.status, "pending");
-    assert.equal(
-      calls,
-      1,
-      "the live task planner was asked",
-    );
+    assert.equal(calls, 1, "the live task planner was asked");
     assert.equal(f.events("agent_ask_answered").length, 0);
     await f.engine.resolution.resumeAskQuestions();
     assert.equal(calls, 1, "a completed rung is a known miss, never re-asked");
