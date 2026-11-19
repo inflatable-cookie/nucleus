@@ -113,7 +113,7 @@ export function runPromptContext(
                   ? { coordinatorGeneration: run.generation }
                   : {}),
               },
-        )}\nNUCLEUS_RESULT\n${run.role === "recovery" ? 'The coordinatorAction field is a JSON object, never summary text; use {"verb":"cannot","reason":"…"} with status blocked when no verb applies.\n' : ""}${PROVIDER_UNAVAILABLE_RULE} The ticket supplies task/run identity and authentication. Do not print its contents. Retry identical JSON after a delivery failure. Once accepted, stop work and finish your turn.`);
+        )}\nNUCLEUS_RESULT\n${run.role === "recovery" ? 'The coordinatorAction field is a JSON object, never summary text; use {"verb":"none","reason":"no action: <who> is live and progressing"} with status recovered when a live participant is doing the work, or {"verb":"cannot","reason":"…"} with status blocked when no verb applies.\n' : ""}${PROVIDER_UNAVAILABLE_RULE} The ticket supplies task/run identity and authentication. Do not print its contents. Retry identical JSON after a delivery failure. Once accepted, stop work and finish your turn.`);
   const recoveryHeadContext =
     run.role === "recovery"
       ? `Recovery reference head: ${run.head}\nDispatch planning base: ${task.planningBase || "not recorded"}\nLast accepted worker head: ${task.completion?.head ?? task.checkpoints?.records?.at(-1)?.head ?? "not recorded"}\n${workerExclusionBlock(task)}`

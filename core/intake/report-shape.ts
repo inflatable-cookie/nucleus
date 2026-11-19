@@ -1,6 +1,7 @@
-import type { Completion, Run, Task } from '../../shared/contracts';
-import { QUEUE_BRANCH_PATTERN } from '../git/index';
-import { proofResultRefusal } from './proof-settlement';
+import type { Completion, Run, Task } from "../../shared/contracts";
+import { retiredNarrowActionInstead } from "../../shared/schema/task-common";
+import { QUEUE_BRANCH_PATTERN } from "../git/index";
+import { proofResultRefusal } from "./proof-settlement";
 
 /**
  * The shape rules an accepted report must satisfy, read once from the authenticated
@@ -8,37 +9,88 @@ import { proofResultRefusal } from './proof-settlement';
  * intake both apply them, so the two entry points cannot drift: a rule added here
  * refuses at both.
  */
-export function completionRoute(status: Completion['status'], run: Run | null): 'checkpoint' | 'review_progress' | 'reviewer' | 'run' | 'worker' {
-  if (status === 'progress_checkpoint') return 'checkpoint';
-  if (status === 'review_in_progress') return 'review_progress';
-  if (run?.role === 'reviewer') return 'reviewer';
-  return run ? 'run' : 'worker';
+export function completionRoute(
+  status: Completion["status"],
+  run: Run | null,
+): "checkpoint" | "review_progress" | "reviewer" | "run" | "worker" {
+  if (status === "progress_checkpoint") return "checkpoint";
+  if (status === "review_in_progress") return "review_progress";
+  if (run?.role === "reviewer") return "reviewer";
+  return run ? "run" : "worker";
 }
 
 /** First role/status refusal after report-only policy has been checked. */
-export function completionRefusal(input: Completion, run: Run, task: Task, revisionReportOnly: boolean): string | null {
+export function completionRefusal(
+  input: Completion,
+  run: Run,
+  task: Task,
+  revisionReportOnly: boolean,
+): string | null {
   const role = run.role;
-  const allowed = role === 'recovery' ? ['recovered','escalate','blocked','error'] : role === 'reviewer' ? ['ready_to_merge', 'changes_required', 'blocked', 'error'] : role === 'revision' ? ['ready_for_review', ...(revisionReportOnly ? ['report_ready'] : []), 'blocked', 'error'] : role === 'executor' ? ['proof_executed', 'blocked', 'error'] : ['closed', 'blocked', 'error'];
-  if (input.closeoutCommit && (role !== 'closeout' || input.status !== 'closed')) return 'Published closeout commit requires a closed coordinator result';
-  if (input.providerUnavailable && !['blocked','error'].includes(input.status)) return 'Provider unavailability requires blocked/error status';
-  if (!allowed.includes(input.status)) return 'Result is not valid for this run role';
-  if (role === 'recovery' && (input.recoveryAction || input.replacementAgentId)) return 'recoveryAction is retired; report coordinatorAction {verb: restart|route|move|retry_effect|cannot, reason} instead';
-  if (role !== 'recovery' && (input.recoveryAction || input.coordinatorAction || input.replacementAgentId)) return 'Recovery action requires coordinator recovery run';
+  const allowed =
+    role === "recovery"
+      ? ["recovered", "escalate", "blocked", "error"]
+      : role === "reviewer"
+        ? ["ready_to_merge", "changes_required", "blocked", "error"]
+        : role === "revision"
+          ? [
+              "ready_for_review",
+              ...(revisionReportOnly ? ["report_ready"] : []),
+              "blocked",
+              "error",
+            ]
+          : role === "executor"
+            ? ["proof_executed", "blocked", "error"]
+            : ["closed", "blocked", "error"];
+  if (
+    input.closeoutCommit &&
+    (role !== "closeout" || input.status !== "closed")
+  )
+    return "Published closeout commit requires a closed coordinator result";
+  if (input.providerUnavailable && !["blocked", "error"].includes(input.status))
+    return "Provider unavailability requires blocked/error status";
+  if (!allowed.includes(input.status))
+    return "Result is not valid for this run role";
+  if (role === "recovery" && input.coordinatorAction) {
+    // A retired narrow shape is refused by name, with the owner verb that does its
+    // work now (nucleus#1388): the stored row stays parse-only history.
+    const instead = retiredNarrowActionInstead(input.coordinatorAction.verb);
+    if (instead)
+      return `${input.coordinatorAction.verb} is a retired narrow action; use ${instead}`;
+  }
+  if (role === "recovery" && (input.recoveryAction || input.replacementAgentId))
+    return "recoveryAction is retired; report coordinatorAction {verb: restart|route|move|retry_effect|none|cannot, reason} instead";
+  if (
+    role !== "recovery" &&
+    (input.recoveryAction ||
+      input.coordinatorAction ||
+      input.replacementAgentId)
+  )
+    return "Recovery action requires coordinator recovery run";
   const proofRefusal = proofResultRefusal(input, run);
   if (proofRefusal) return proofRefusal;
-  if (!['blocked', 'error', 'recovered', 'escalate'].includes(input.status) && !revisionReportOnly) {
-    if (role === 'revision') {
-      if (!input.prNumber) return 'Revision readiness requires a PR';
-      const expectedPr = task.resolution.revisionPrRepair ? null : task.resumePrNumber ?? task.completion?.prNumber;
-      if (expectedPr && input.prNumber !== expectedPr) return 'Revision must use the task PR';
-    } else if (input.head !== run.head) return 'Result must name the requested exact head';
-    if (role === 'reviewer' && !input.reviewCommentId && !input.reviewText) return 'Review requires full reviewText or a durable PR comment ID';
+  if (
+    !["blocked", "error", "recovered", "escalate"].includes(input.status) &&
+    !revisionReportOnly
+  ) {
+    if (role === "revision") {
+      if (!input.prNumber) return "Revision readiness requires a PR";
+      const expectedPr = task.resolution.revisionPrRepair
+        ? null
+        : (task.resumePrNumber ?? task.completion?.prNumber);
+      if (expectedPr && input.prNumber !== expectedPr)
+        return "Revision must use the task PR";
+    } else if (input.head !== run.head)
+      return "Result must name the requested exact head";
+    if (role === "reviewer" && !input.reviewCommentId && !input.reviewText)
+      return "Review requires full reviewText or a durable PR comment ID";
   }
   return null;
 }
 
 /** The queue branch names a report's prose carries, matched with the owner's branch shape. */
-const reportedBranches = () => new RegExp(`\\b${QUEUE_BRANCH_PATTERN}\\b`, 'gi');
+const reportedBranches = () =>
+  new RegExp(`\\b${QUEUE_BRANCH_PATTERN}\\b`, "gi");
 
 /**
  * A report may name its own task branch and no other: a headline or summary
@@ -46,9 +98,15 @@ const reportedBranches = () => new RegExp(`\\b${QUEUE_BRANCH_PATTERN}\\b`, 'gi')
  * before any PR identity is read. Both the callback path and the incident-report
  * path are pinned by `test/callback-client.test.ts`.
  */
-export function foreignBranchRefusal(input: Pick<Completion, 'headline' | 'summary'>, task: Pick<Task, 'branch'>): string | null {
-  const branches = `${input.headline ?? ''} ${input.summary}`.match(reportedBranches()) ?? [];
-  return branches.some(branch => branch !== task.branch) ? 'Report names another task branch' : null;
+export function foreignBranchRefusal(
+  input: Pick<Completion, "headline" | "summary">,
+  task: Pick<Task, "branch">,
+): string | null {
+  const branches =
+    `${input.headline ?? ""} ${input.summary}`.match(reportedBranches()) ?? [];
+  return branches.some((branch) => branch !== task.branch)
+    ? "Report names another task branch"
+    : null;
 }
 
 /**
@@ -56,10 +114,20 @@ export function foreignBranchRefusal(input: Pick<Completion, 'headline' | 'summa
  * the proofs it still needs, and nothing else. A report that carries either field
  * without that exact shape refuses before any proof is routed.
  */
-export function sourceApprovalRefusal(input: Completion, run: Pick<Run, 'role' | 'head'> | null | undefined): string | null {
+export function sourceApprovalRefusal(
+  input: Completion,
+  run: Pick<Run, "role" | "head"> | null | undefined,
+): string | null {
   if (!input.sourceApproved && !input.awaitingProofs) return null;
-  if (run?.role !== 'reviewer' || input.status !== 'blocked' || input.reviewResponsibility !== 'environment'
-    || !input.sourceApproved || !input.awaitingProofs?.length || input.head !== run.head || !input.reviewText)
-    return 'Source approval requires an exact-head environment blocked review with findings and named awaiting proofs; if only release gates remain, report ready_to_merge';
+  if (
+    run?.role !== "reviewer" ||
+    input.status !== "blocked" ||
+    input.reviewResponsibility !== "environment" ||
+    !input.sourceApproved ||
+    !input.awaitingProofs?.length ||
+    input.head !== run.head ||
+    !input.reviewText
+  )
+    return "Source approval requires an exact-head environment blocked review with findings and named awaiting proofs; if only release gates remain, report ready_to_merge";
   return null;
 }

@@ -20,6 +20,11 @@ import {
 import { plannerEscalations, type LadderEvent } from "../questions/ladder";
 import { closeEscalationFollowups } from "../questions/ladder/continuation";
 import {
+  reportNamesNoAction,
+  retiredNarrowAction,
+  retiredNarrowRefusal,
+} from "./coordinator-report";
+import {
   liveRecoveryWait,
   liveWorkingParticipant,
   observeRecoveryParticipants,
@@ -605,7 +610,7 @@ export class CoordinatorPass {
         if (
           accepted &&
           ((accepted.reportStatus === "recovered" &&
-            !accepted.coordinatorAction) ||
+            reportNamesNoAction(accepted)) ||
             (["blocked", "error"].includes(accepted.reportStatus) &&
               reported?.providerUnavailable !== true))
         ) {
@@ -631,7 +636,7 @@ export class CoordinatorPass {
           (live || liveWait) &&
           accepted?.status === "pending" &&
           accepted.reportStatus === "recovered" &&
-          !accepted.coordinatorAction
+          reportNamesNoAction(accepted)
         ) {
           this.store.transaction(() =>
             this.episode.settleLiveNoOp(
@@ -674,10 +679,60 @@ export class CoordinatorPass {
               `Recovery reported ${accepted.reportStatus}: ${accepted.summary}; handing it to the responsible-task planner ladder`,
             ),
           );
+          // The ladder's question is the report's own words, so a `cannot`'s
+          // reason joins them when the summary does not already carry it
+          // (planner ruling db7b10d9).
+          const reason =
+            accepted.coordinatorAction?.verb === "cannot"
+              ? accepted.coordinatorAction.reason
+              : null;
+          const handoff =
+            reason && !reported.summary.includes(reason)
+              ? { ...reported, summary: `${reported.summary}; ${reason}` }
+              : reported;
           await this.resolution.responsibleBlockerLadder(
             this.store.task(t.id),
-            { source: "recovery", runId: finishedRun.id, completion: reported },
+            { source: "recovery", runId: finishedRun.id, completion: handoff },
           );
+          continue;
+        }
+        // Only a genuinely retired narrow action applies nothing (nucleus#1388).
+        // It is recorded as not applied and its refusal names the owner verb that
+        // does the same work now; every other report keeps its own path below.
+        const retired =
+          accepted?.status === "pending" ? retiredNarrowAction(accepted) : null;
+        if (accepted && retired) {
+          this.episode.refuseAcceptedAction(
+            t,
+            run,
+            accepted,
+            retiredNarrowRefusal(retired),
+            needsAttention(this.store.task(t.id), this.store),
+          );
+          continue;
+        }
+        // A report that names no owner verb is a settled observation: the
+        // coordinator found the work live, or could not act and said why. Nucleus
+        // applies nothing, refuses nothing and raises no attention notice; the
+        // episode resolves with the report's own words (nucleus#1388). An
+        // escalating report keeps its escalation.
+        if (accepted?.status === "pending" && reportNamesNoAction(accepted)) {
+          if (accepted.reportStatus === "escalate")
+            this.store.transaction(() => {
+              const latest = this.store.run(finishedRun.id);
+              if (latest && !latest.released)
+                this.episode.settleFinishedRun(
+                  this.store.task(t.id),
+                  latest,
+                  "the coordinator escalated this stop",
+                );
+            });
+          else
+            this.episode.settleObservedNoAction(
+              this.store.task(t.id),
+              finishedRun,
+              accepted,
+            );
           continue;
         }
         if (accepted?.status === "pending" && accepted.coordinatorAction) {
@@ -716,16 +771,16 @@ export class CoordinatorPass {
               });
             return;
           }
-          // A pending accepted report without a coordinator owner verb is a legacy
-          // narrow recovery action (Spec 049 era). The owner verbs own every
-          // continuation now, so the stale action is recorded as not applied —
-          // audibly, with the escalation kept — and the run releases. The stale
-          // retry is never executed.
+          // A pending accepted report that reached here named a verb the shared
+          // plan no longer applies to (its episode, generation or task moved on).
+          // The stale report is recorded as not applied — audibly, with the
+          // escalation kept — and the run releases. The stale action is never
+          // executed; a report with no verb settled above as an observation.
           this.episode.refuseAcceptedAction(
             t,
             latestRun,
             action,
-            "narrow recovery actions are retired; continue with the owner verbs",
+            "the report's action no longer applies to this task stop; continue with the owner verbs",
             needsAttention(t, this.store),
           );
         });

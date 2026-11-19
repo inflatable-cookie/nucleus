@@ -6,9 +6,11 @@ import { now } from "../store/store";
  * The durable summary of a settled live no-op. Intake also accepts recovered
  * without an action; blocked reports use the same observed settlement path.
  */
-export const LIVE_RECOVERY_NOOP_PREFIX = 'live:';
+export const LIVE_RECOVERY_NOOP_PREFIX = "live:";
 
-export function isLiveRecoveryNoop(summary: string | null | undefined): boolean {
+export function isLiveRecoveryNoop(
+  summary: string | null | undefined,
+): boolean {
   return Boolean(summary && /^live:\s/i.test(summary.trim()));
 }
 
@@ -23,7 +25,7 @@ export function liveWorkingParticipant(
 ): LiveParticipant | null {
   const currentId = task.resolution.currentRunId;
   const ordered = [
-    ...(currentId ? runs.filter(run => run.id === currentId) : []),
+    ...(currentId ? runs.filter((run) => run.id === currentId) : []),
     ...runs,
   ];
   const run = ordered.find(
@@ -41,8 +43,37 @@ export function liveWorkingParticipant(
 }
 
 export function liveNoopSummary(run: LiveParticipant): string {
-  const who = run.role === 'revision' ? 'worker' : run.role;
+  const who = run.role === "revision" ? "worker" : run.role;
   return `${LIVE_RECOVERY_NOOP_PREFIX} ${who} is working, last activity ${run.lastObservedAt ?? run.createdAt}`;
+}
+
+/**
+ * The durable summary of a coordinator report that named no owner verb. The
+ * episode settles as observed: nothing is applied, nothing is refused, and the
+ * report's own words stay as its history (nucleus#1388). `reportStatus` keeps a
+ * `blocked` or `error` observation distinct from a recovered live one.
+ */
+export const OBSERVED_NO_ACTION_PREFIX = "observed:";
+
+export function observedNoActionSummary(report: {
+  reportStatus: string;
+  summary: string;
+  coordinatorAction?: { verb: string; reason?: string } | null;
+}): string {
+  // A `cannot`'s reason is its substantive statement: keep it visible even when
+  // the report's summary says something else (planner ruling db7b10d9).
+  const reason =
+    report.coordinatorAction?.verb === "cannot"
+      ? (report.coordinatorAction.reason ?? null)
+      : null;
+  const body =
+    reason && reason !== report.summary
+      ? `${report.summary} — ${reason}`
+      : report.summary;
+  return `${OBSERVED_NO_ACTION_PREFIX} ${report.reportStatus}, no action — ${body}`.slice(
+    0,
+    4000,
+  );
 }
 
 /**
@@ -51,9 +82,16 @@ export function liveNoopSummary(run: LiveParticipant): string {
  */
 export function reopenLiveNoopAfterStall(task: Task): boolean {
   const recovery = task.resolution.recovery;
-  if (!recovery || recovery.status !== 'resolved' || !isLiveRecoveryNoop(recovery.summary)) return false;
+  if (
+    !recovery ||
+    recovery.status !== "resolved" ||
+    !isLiveRecoveryNoop(recovery.summary)
+  )
+    return false;
   const stall = task.resolution.stalledTurnStop;
-  return Boolean(stall && stall.status !== 'stopped' && stall.status !== 'completed');
+  return Boolean(
+    stall && stall.status !== "stopped" && stall.status !== "completed",
+  );
 }
 
 /** Ordinary admission waits are healthy work even when no participant owns a slot. */

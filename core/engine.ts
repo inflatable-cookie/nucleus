@@ -1208,7 +1208,7 @@ export class Engine {
           "performTaskControl",
           "store",
         ],
-        ["attention", "recovery", "update"],
+        ["attention", "openPlannerEscalation", "recovery", "update"],
       ),
     );
     this.pausedStops = new PausedStops(this);
