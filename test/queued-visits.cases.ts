@@ -509,15 +509,6 @@ test("routing epochs notice catalog, pool, subscription, usage and demand change
           setAt: new Date().toISOString(),
         }),
     },
-    {
-      name: "demand offsets",
-      change: (f) =>
-        f.store.setMeta("demandRoleOffsets", {
-          worker: 1,
-          reviewer: 0,
-          coordinator: -2,
-        }),
-    },
   ];
   for (const scenario of scenarios) {
     const f = fixture();

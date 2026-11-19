@@ -57,7 +57,6 @@ export type HostEffect = z.infer<typeof hostEffectSchema>;
 export const selectionExplanationSchema = z.object({
   role: z.literal("worker"),
   complexity: capabilityLevelSchema,
-  roleOffset: z.number().int(),
   /** The tier this usage level starts a task of this complexity at (`workerStartTier`). */
   startTier: demandLevelSchema,
   /** How the first-attempt and step-up rules apply at dispatch (`workerStepLabel`). */

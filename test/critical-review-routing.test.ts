@@ -40,7 +40,7 @@ function fixture() {
       roles: ["worker", "reviewer"],
       weight: 1,
       scopes: ["general"],
-      capability: ["high", "low", "high", "very_high", "high"][i],
+      capability: ["worker", "mechanical", "worker", "heavyweight", "worker"][i],
       cost: i === 3 ? "very_high" : "low",
     }),
   );
@@ -112,7 +112,7 @@ test("critical automatic selection requires peer capability and different model 
     assert.equal(
       f.engine.resolution.select(priorPeerAuthor, "reviewer")?.profile.id,
       "cheap",
-      "frontier needs sign-off and no independent high reviewer remains, so the best permitted independent reviewer serves (Tom, 2026-11-18)",
+      "frontier needs sign-off and no independent Worker reviewer remains, so the best permitted independent reviewer serves (Tom, 2026-11-18)",
     );
     assert.equal(
       f.engine.resolution.select(
@@ -181,8 +181,14 @@ test("ordinary tasks keep ordinary routing and critical selection respects avail
     assert.equal(
       f.engine.resolution.select({ ...f.task, critical: false }, "reviewer")
         ?.profile.id,
+      "cheap",
+      "a noncritical reviewer at Normal runs one bracket below the Worker author (Tom, 2026-11-19)",
+    );
+    assert.equal(
+      f.engine.resolution.select({ ...f.task, critical: false }, "reviewer", [], new Set(), "high")
+        ?.profile.id,
       "peer",
-      "a noncritical reviewer at the default offset matches the worker's tier",
+      "at High the noncritical reviewer runs on the worker's bracket",
     );
     assert.equal(
       f.engine.resolution.select(f.task, "reviewer", ["peer"])?.profile.id,

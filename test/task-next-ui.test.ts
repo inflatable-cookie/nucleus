@@ -945,7 +945,7 @@ test("Spec 052: bundled dark task detail explains each named profile's usage pol
         );
         assert.match(
           line("worker", "frontier"),
-          /automatic selection: Frontier: above the task's requested medium tier, so an explicit route is required \(Maximum ended /,
+          /automatic selection: Frontier: above the task's Worker bracket, so an explicit route is required \(Maximum ended /,
         );
         await selectDetailTab(tree, "Overview");
         assert.equal(

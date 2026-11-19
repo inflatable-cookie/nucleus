@@ -172,7 +172,6 @@ export class RuntimeBoard {
       usage: this.context.store.usageView(),
       routingGrants: activeRoutingGrants(this.context.store),
       qaFence: this.context.store.qaFenceView(),
-      demandOffsets: this.context.store.demandRoleOffsets(),
       papercutProjectLimit:
         this.context.store.getMeta<number>("papercutProjectLimit") ??
         DEFAULT_PAPERCUT_PROJECT_LIMIT,

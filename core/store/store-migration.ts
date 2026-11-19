@@ -6,6 +6,11 @@ import {
   migrateProfileVocabulary,
 } from "./profile-vocabulary-migration";
 import type { HostVocabulary } from "../../shared/profile-vocabulary";
+import {
+  bracketFor,
+  migratePoolCapabilities,
+  type CapabilityBracketMigration,
+} from "./capability-bracket-migration";
 
 /** The record that the one-time canonical profile migration ran (task 1158). */
 export const PROFILE_VOCABULARY_MIGRATION_KEY = "profileVocabularyMigration";
@@ -13,6 +18,9 @@ export const PROFILE_VOCABULARY_MIGRATION_KEY = "profileVocabularyMigration";
 export const PROFILE_THINKING_MIGRATION_KEY = "profileThinkingMigration";
 /** The record of the canonical option migration's first run and of every run that changed a profile (nucleus#1386). */
 export const PROFILE_OPTION_MIGRATION_KEY = "profileOptionMigration";
+
+/** The record of the capability bracket migration's first run and of every run that changed something (nucleus#1385). */
+export const CAPABILITY_BRACKET_MIGRATION_KEY = "capabilityBracketMigration";
 
 /** The archive-key facts a migration reads and prunes; retention owns them. */
 export interface MigrationHooks {
@@ -58,6 +66,68 @@ export class StoreMigration {
     const stored = this.core.getMeta<Record<string, unknown>>("usageLevel");
     if (!stored || stored.level !== "minimal") return;
     this.core.setMeta("usageLevel", { ...stored, level: "low" });
+  }
+
+  /**
+   * Capability brackets (nucleus#1385, Tom 2026-11-19): the stored pool's
+   * capabilities and each task's recorded worker climb move from the five-point
+   * scale to Mechanical, Worker, Heavyweight and Frontier, and the retired
+   * role-demand offsets are dropped and noted. Idempotent, so it runs on every
+   * open: a row a rolled-back build wrote moves too, and a clean store is read
+   * and left as it was. The record is written on the first run, on any run that
+   * changes something, and on any run whose unrecognised values differ from the
+   * record's; an unrecognised value stays as stored and is listed.
+   */
+  migrateCapabilityBrackets(): void {
+    const record: CapabilityBracketMigration = { at: new Date().toISOString(), changes: [], unknown: [] };
+    const stored = this.core.getMeta<unknown[]>("pool");
+    if (Array.isArray(stored)) {
+      const { pool, changes, unknown } = migratePoolCapabilities(stored);
+      if (changes.length) this.core.setMeta("pool", pool);
+      record.changes.push(...changes);
+      record.unknown.push(...unknown);
+    }
+    const climbs = this.db
+      .prepare(
+        "SELECT id, json_extract(data,'$.resolution.workerClimb.from') AS climbFrom, json_extract(data,'$.resolution.workerClimb.to') AS climbTo FROM tasks WHERE json_type(data,'$.resolution.workerClimb')='object'",
+      )
+      .all() as Array<{ id: string; climbFrom: unknown; climbTo: unknown }>;
+    const update = this.db.prepare("UPDATE tasks SET data=json_set(data,?,?) WHERE id=?");
+    for (const row of climbs) {
+      for (const [field, value] of [["from", row.climbFrom], ["to", row.climbTo]] as const) {
+        const result = bracketFor(value);
+        if (result === "keep") continue;
+        if (result === "unknown") {
+          record.unknown.push({ id: row.id, field: `resolution.workerClimb.${field}`, value });
+          continue;
+        }
+        update.run(`$.resolution.workerClimb.${field}`, result.to, row.id);
+        record.changes.push({ id: row.id, field: `resolution.workerClimb.${field}`, from: String(value), to: result.to });
+      }
+    }
+    const offsets = this.core.getMeta<unknown>("demandRoleOffsets");
+    if (offsets !== undefined) {
+      record.droppedDemandRoleOffsets = offsets;
+      this.core.deleteMeta("demandRoleOffsets");
+    }
+    const previous = this.core.getMeta<CapabilityBracketMigration>(CAPABILITY_BRACKET_MIGRATION_KEY);
+    const changed = record.changes.length > 0 || offsets !== undefined;
+    // A run that finds a different set of unknown values records them too, so a
+    // value written after the first run is listed; the same set rewrites nothing.
+    const unknownMoved = JSON.stringify(previous?.unknown ?? []) !== JSON.stringify(record.unknown);
+    if (previous !== undefined && !changed && !unknownMoved) return;
+    // A later run keeps what earlier runs noted: their conversions and the
+    // dropped role offsets stay in the one record; `unknown` is the current scan.
+    if (previous) {
+      record.changes = [...(previous.changes ?? []), ...record.changes];
+      if (record.droppedDemandRoleOffsets === undefined && previous.droppedDemandRoleOffsets !== undefined)
+        record.droppedDemandRoleOffsets = previous.droppedDemandRoleOffsets;
+    }
+    this.core.setMeta(CAPABILITY_BRACKET_MIGRATION_KEY, record);
+    for (const item of record.unknown)
+      console.warn(
+        `[nucleus] ${item.id} keeps ${item.field} ${JSON.stringify(item.value)}: not a capability bracket, left as stored`,
+      );
   }
 
   /** Schema 59 (task 1302): subscription usage readings now belong to host apps and plugins. */

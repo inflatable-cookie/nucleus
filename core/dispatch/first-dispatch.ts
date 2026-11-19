@@ -191,7 +191,6 @@ export class FirstDispatch {
             "worker",
             this.store.recentCounts(),
             this.store.usageLevel(),
-            this.store.demandRoleOffsets(),
             true,
           );
     if (dispatchGate({ selectionAvailable: Boolean(selection) })) {

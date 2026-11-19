@@ -854,12 +854,6 @@ export const RPC_CATALOGUE: RpcCatalogueEntry[] = [
     mutating: true,
   },
   {
-    name: "queue.demand-offsets",
-    contract: contracts.configureDemandOffsets,
-    method: "configureDemandOffsets",
-    mutating: true,
-  },
-  {
     name: "queue.project-dispatch-limit",
     contract: contracts.configureProjectDispatchLimit,
     method: "configureProjectDispatchLimit",

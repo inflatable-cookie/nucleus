@@ -146,6 +146,12 @@ function fixture(
     coordinator = profile("coordinator");
   store.setMeta("paused", false);
   store.setMeta("hostId", "host"); // Queue #912: the one registered host
+  // Spec 052 (Tom, 2026-11-19): at Normal the reviewer runs one bracket below
+  // the worker, where the coordinator's Mechanical profile sits. The fixture runs
+  // at High, where the reviewer shares the worker's bracket, so each role keeps
+  // its own profile: worker the author, reviewer the reviewer, coordinator the
+  // Mechanical one.
+  store.setMeta("usageLevel", { level: "high", until: null, setAt: new Date().toISOString() });
   // These fixtures exercise the coordinator closeout on a repository with no manifest;
   // the project override pins agent closeout (Spec 022's Queue closeout is the default).
   store.putRepository(
@@ -154,8 +160,9 @@ function fixture(
     "fixture keeps agent closeout",
   );
   // Spec 053: ratings, not role switches, give each role its profile. The worker
-  // is the cheapest medium profile, the reviewer the next once the author is
-  // excluded, and only the coordinator's lower demand reaches the low profile.
+  // is the cheapest Worker profile, the reviewer the next once the author is
+  // excluded, and only the coordinator's Mechanical demand reaches the
+  // Mechanical profile.
   store.setMeta("pool", [
     {
       profileId: worker.id,
@@ -164,7 +171,7 @@ function fixture(
       roles: ["worker"],
       weight: 1,
       scopes: ["general"],
-      capability: "medium",
+      capability: "worker",
       cost: "low",
     },
     {
@@ -174,7 +181,7 @@ function fixture(
       roles: ["reviewer"],
       weight: 1,
       scopes: ["general"],
-      capability: "medium",
+      capability: "worker",
       cost: "medium",
     },
     {
@@ -184,7 +191,7 @@ function fixture(
       roles: ["coordinator"],
       weight: 1,
       scopes: ["general"],
-      capability: "low",
+      capability: "mechanical",
       cost: "very_low",
     },
   ]);
@@ -2017,7 +2024,7 @@ test("changes return to the same worker and re-review resumes the same reviewer"
     await f.close();
   }
 });
-test("Spec 052: an applied changes-required review climbs the next worker run one tier, and a retained reviewer below the climbed worker is replaced", async () => {
+test("Spec 052: an applied changes-required review climbs a high task from Worker to Heavyweight, and a retained reviewer below the level's reviewer bracket is replaced", async () => {
   const f = fixture(false, false, undefined, true);
   try {
     f.adapter.verifyResume = async () => {};
@@ -2035,6 +2042,8 @@ test("Spec 052: an applied changes-required review climbs the next worker run on
       });
       return { id, workspaceId: t.workspaceId ?? "workspace" };
     };
+    // Normal starts a high task on Worker; the step-up may climb it once to Heavyweight.
+    f.store.setMeta("usageLevel", { level: "normal", until: null, setAt: new Date().toISOString() });
     f.store.update(f.task.id, { complexity: "high" });
     const highWorker = profile("worker-high", "test/worker-high");
     f.engine.profiles = [...f.engine.profiles, highWorker];
@@ -2047,7 +2056,7 @@ test("Spec 052: an applied changes-required review climbs the next worker run on
         roles: ["worker"],
         weight: 1,
         scopes: ["general"],
-        capability: "high",
+        capability: "heavyweight",
         cost: "low",
       },
     ]);
@@ -2068,7 +2077,7 @@ test("Spec 052: an applied changes-required review climbs the next worker run on
     assert.equal(
       revision.profile?.id,
       highWorker.id,
-      "the revision runs on the high profile",
+      "the revision runs on the Heavyweight profile",
     );
     assert.notEqual(
       revision.agentId,
@@ -2104,16 +2113,16 @@ test("Spec 052: an applied changes-required review climbs the next worker run on
       revision.id,
       "the revision run is the task's current worker run",
     );
-    assert.equal(climbed.resolution.workerClimb?.to, "high");
-    assert.equal(climbed.resolution.workerClimb?.from, "medium");
+    assert.equal(climbed.resolution.workerClimb?.to, "heavyweight");
+    assert.equal(climbed.resolution.workerClimb?.from, "worker");
     assert.ok(
       f.store
         .events(f.task.id)
         .some((event) => event.kind === "worker_climb_armed"),
     );
-    // A later review round does not climb again: the worker already sits at the requested tier.
-    // The higher reviewer profile exists before the re-review is requested, so the
-    // retained medium reviewer is replaced by the profile selection itself.
+    // A later review round does not climb again: the worker already sits at the climb bracket.
+    // At High the reviewer runs on the worker's bracket, so a retained Worker
+    // reviewer is replaced by the Heavyweight one the selection itself picks.
     const highReviewer = profile("reviewer-high", "test/reviewer-high");
     f.engine.profiles = [...f.engine.profiles, highReviewer];
     f.store.setMeta("pool", [
@@ -2125,10 +2134,11 @@ test("Spec 052: an applied changes-required review climbs the next worker run on
         roles: ["reviewer"],
         weight: 1,
         scopes: ["general"],
-        capability: "high",
+        capability: "heavyweight",
         cost: "medium",
       },
     ]);
+    f.store.setMeta("usageLevel", { level: "high", until: null, setAt: new Date().toISOString() });
     f.store.update(f.task.id, {
       profile: highWorker,
       profileGroup: "worker-high",
@@ -2144,8 +2154,8 @@ test("Spec 052: an applied changes-required review climbs the next worker run on
           profile("reviewer"),
         ),
       ),
-      /reviewer profile reviewer is rated medium/,
-      "the retained reviewer reads below the tier this run needs",
+      /reviewer profile reviewer is rated worker, below the heavyweight bracket/,
+      "the retained reviewer reads below the bracket this run needs",
     );
     f.setHead("d".repeat(40));
     await f.report("ready_for_review");
@@ -2153,9 +2163,9 @@ test("Spec 052: an applied changes-required review climbs the next worker run on
     assert.equal(
       f.run().profile?.id,
       highReviewer.id,
-      "the retained medium reviewer is replaced above the climbed worker",
+      "the retained Worker reviewer is replaced on the climbed worker's bracket",
     );
-    // Maximum raises the retained reviewer floor to the top two tiers as well.
+    // Maximum raises the retained reviewer floor to Heavyweight and Frontier.
     f.store.setMeta("usageLevel", {
       level: "maximum",
       until: null,
@@ -2163,9 +2173,9 @@ test("Spec 052: an applied changes-required review climbs the next worker run on
     });
     assert.match(
       String(
-        f.engine.resolution.reviewerCapabilityIssue(f.current(), highReviewer),
+        f.engine.resolution.reviewerCapabilityIssue(f.current(), profile("reviewer")),
       ),
-      /top two tiers Maximum/,
+      /below Heavyweight and Frontier, which Maximum reserves/,
       "a retained reviewer below Maximum's tiers is replaced",
     );
     const unrated = profile("reviewer-unrated", "test/reviewer-unrated");
@@ -2184,7 +2194,7 @@ test("Spec 052: an applied changes-required review climbs the next worker run on
     ]);
     assert.match(
       String(f.engine.resolution.reviewerCapabilityIssue(f.current(), unrated)),
-      /unrated.*top two tiers Maximum/,
+      /unrated.*Heavyweight and Frontier, which Maximum reserves/,
       "an unrated retained reviewer is below Maximum's floor",
     );
     const topReviewer = profile("reviewer-top", "test/reviewer-top");
@@ -2198,7 +2208,7 @@ test("Spec 052: an applied changes-required review climbs the next worker run on
         roles: ["reviewer"],
         weight: 1,
         scopes: ["general"],
-        capability: "very_high",
+        capability: "frontier",
         cost: "medium",
       },
     ]);
@@ -2223,7 +2233,7 @@ test("Spec 052: an applied changes-required review climbs the next worker run on
     assert.equal(
       second.profile?.id,
       highWorker.id,
-      "the second revision stays at the requested tier",
+      "the second revision stays on Heavyweight",
     );
     assert.ok(
       f.store
@@ -3040,7 +3050,7 @@ test("responsible non-delivery gets one retained pushback, one same-capability p
         roles: ["worker"],
         weight: 1,
         scopes: ["general"],
-        capability: "medium",
+        capability: "worker",
         cost: "low",
       },
       {
@@ -3050,7 +3060,7 @@ test("responsible non-delivery gets one retained pushback, one same-capability p
         roles: ["worker"],
         weight: 1,
         scopes: ["general"],
-        capability: "medium",
+        capability: "worker",
         cost: "very_high",
       },
     ]);
@@ -3201,7 +3211,7 @@ test("responsible non-delivery gets one retained pushback, one same-capability p
     await f.close();
   }
 });
-test("Spec 052: a non-delivery alternate keeps the climbed tier in its permission filter", async () => {
+test("Spec 052: a non-delivery alternate keeps the climbed bracket in its permission filter", async () => {
   const dir = mkdtempSync(join(tmpdir(), "ns-nondelivery-climb-"));
   const store = new Store(join(dir, "queue.sqlite"));
   try {
@@ -3213,7 +3223,8 @@ test("Spec 052: a non-delivery alternate keeps the climbed tier in its permissio
         planningCommit: base,
         handoffPath: "h",
         originAgentId: "origin",
-        complexity: "very_high",
+        // A high task starts on Worker; Heavyweight is held at Normal until the climb.
+        complexity: "high",
       }),
       "host",
       "handoff",
@@ -3229,7 +3240,7 @@ test("Spec 052: a non-delivery alternate keeps the climbed tier in its permissio
         roles: ["worker"],
         weight: 1,
         scopes: ["general"],
-        capability: "very_high",
+        capability: "heavyweight",
         cost: "high",
       },
       {
@@ -3239,7 +3250,7 @@ test("Spec 052: a non-delivery alternate keeps the climbed tier in its permissio
         roles: ["worker"],
         weight: 1,
         scopes: ["general"],
-        capability: "very_high",
+        capability: "heavyweight",
         cost: "high",
       },
     ]);
@@ -3263,8 +3274,8 @@ test("Spec 052: a non-delivery alternate keeps the climbed tier in its permissio
           workerClimb: climb
             ? {
                 reviewRunId: "review-1",
-                from: "high" as const,
-                to: "very_high" as const,
+                from: "worker" as const,
+                to: "heavyweight" as const,
                 profileId: top.id,
                 at: "2026-11-17T00:00:00.000Z",
               }
@@ -3297,7 +3308,7 @@ test("Spec 052: a non-delivery alternate keeps the climbed tier in its permissio
     assert.equal(
       climbed.kind,
       "alternate",
-      "the very-high alternate is eligible on the climbed tier",
+      "the Heavyweight alternate is eligible on the climbed bracket",
     );
     assert.equal(
       climbed.kind === "alternate" ? climbed.profile.id : null,
@@ -3311,7 +3322,7 @@ test("Spec 052: a non-delivery alternate keeps the climbed tier in its permissio
     assert.equal(
       beforeClimb.kind,
       "handled",
-      "without the recorded climb the very-high alternate is filtered out",
+      "without the recorded climb the Heavyweight alternate is filtered out",
     );
   } finally {
     store.close();
@@ -3906,7 +3917,7 @@ test("versioned worker exclusion is shown to recovery coordinators and replaces 
         .pool()
         .map((entry) =>
           entry.profileId === "coordinator"
-            ? { ...entry, capability: "very_low" as const }
+            ? { ...entry, capability: "mechanical" as const }
             : entry,
         ),
       {
@@ -3916,7 +3927,7 @@ test("versioned worker exclusion is shown to recovery coordinators and replaces 
         roles: ["worker"],
         weight: 1,
         scopes: ["general"],
-        capability: "medium",
+        capability: "worker",
         cost: "low",
       },
     ]);
@@ -8320,7 +8331,7 @@ test("coordinator exhaustion is stored while paused, then replaced with a fenced
         group: "coord-backup",
         weight: 1,
         scopes: ["general"],
-        capability: "low",
+        capability: "mechanical",
         cost: "very_low",
       },
     ]);
@@ -8391,7 +8402,7 @@ test("closeout provider replacement refreshes main without repeating merge", asy
         group: "backup",
         weight: 1,
         scopes: ["general"],
-        capability: "low",
+        capability: "mechanical",
         cost: "very_low",
       },
     ]);
@@ -16920,7 +16931,7 @@ function signoffPool(f: ReturnType<typeof fixture>, frontier: string) {
       weight: 1,
       scopes: ["general"],
       cost: "low",
-      capability: "medium",
+      capability: "worker",
     },
     {
       profileId: cheapCoordinator.id,
@@ -16930,7 +16941,7 @@ function signoffPool(f: ReturnType<typeof fixture>, frontier: string) {
       weight: 1,
       scopes: ["general"],
       cost: "very_low",
-      capability: "low",
+      capability: "mechanical",
     },
   ]);
 }
