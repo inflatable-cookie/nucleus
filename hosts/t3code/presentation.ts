@@ -219,7 +219,8 @@ export class T3Presentation {
             Boolean(latest) &&
             ["failed", "interrupted"].includes(latest!.status),
         });
-      } catch {
+      } catch (error) {
+        if (isHostOperationTimeout(error)) throw error;
         /* an unreadable support thread names no step */
       }
     }
@@ -276,7 +277,8 @@ export class T3Presentation {
       if (this.core.state.read().rowTitles?.[threadId] !== desired) {
         try {
           await this.writeWorkerRow(threadId, desired);
-        } catch {
+        } catch (error) {
+          if (isHostOperationTimeout(error)) throw error;
           /* the step keeps for the next pass */
         }
       }
@@ -286,7 +288,8 @@ export class T3Presentation {
       if (attentionStep(step)) {
         try {
           await this.unsettleWorkerThread(threadId, task.id);
-        } catch {
+        } catch (error) {
+          if (isHostOperationTimeout(error)) throw error;
           /* the next pass retries */
         }
       }
@@ -428,14 +431,16 @@ export class T3Presentation {
       if (row.tag !== "settled" && row.tag !== "unknown") {
         try {
           await this.tagSupportThread(row);
-        } catch {
+        } catch (error) {
+          if (isHostOperationTimeout(error)) throw error;
           /* the record keeps for the next pass */
         }
       }
       if (row.card !== "settled" && row.card !== "unknown") {
         try {
           await this.recordCreatedThread(row);
-        } catch {
+        } catch (error) {
+          if (isHostOperationTimeout(error)) throw error;
           /* the record keeps for the next pass */
         }
       }
@@ -529,7 +534,8 @@ export class T3Presentation {
       let present: boolean;
       try {
         present = await this.cardPresent(workerId, row.threadId);
-      } catch {
+      } catch (error) {
+        if (isHostOperationTimeout(error)) throw error;
         return;
       }
       if (present) {
@@ -814,7 +820,10 @@ export class T3Presentation {
         const outcome = await this.reconcileSettleIntent(
           commandId,
           prior,
-        ).catch(() => null);
+        ).catch((error) => {
+          if (isHostOperationTimeout(error)) throw error;
+          return null;
+        });
         if (outcome !== "retired") return;
         continue; // Stale bind retired; re-read and settle the current latest.
       }
