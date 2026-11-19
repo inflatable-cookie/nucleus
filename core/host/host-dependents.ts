@@ -22,6 +22,17 @@ const LIVE_OPERATION_STATES = [
   "needs_attention",
 ] as const;
 
+function cleanupReason(uncertainty: unknown, reason: unknown): string {
+  if (uncertainty) {
+    try {
+      const value = JSON.parse(String(uncertainty)) as { reason?: unknown };
+      if (typeof value.reason === "string" && value.reason) return value.reason;
+    } catch { /* Report unreadable evidence without exposing its contents. */ }
+    return "ownership evidence is unreadable";
+  }
+  return reason ? String(reason) : "waiting for a process observation";
+}
+
 export function hostDependents(
   source: Store,
   host: { id: string; kind: HostKind; primary: boolean },
@@ -82,16 +93,16 @@ export function hostDependents(
     )
     .all(...LIVE_OPERATION_STATES, host.id))
     effects.push(
-      `${String(row.kind).replace(/_/g, " ")}${row.taskId ? ` for ${ref(String(row.taskId))}` : ""}: ${row.state === "needs_attention" ? `settlement lacks proof; owner should inspect operation ${String(row.id)} and reconcile its outcome` : `operation ${String(row.id)} is ${String(row.state)}`}${row.diagnostic ? ` (${String(row.diagnostic)})` : ""}`,
+      `${String(row.kind).replace(/_/g, " ")}${row.taskId ? ` for ${ref(String(row.taskId))}` : ""}: ${row.state === "needs_attention" ? `settlement lacks proof; owner should inspect operation ${String(row.id)} with operation-status and reconcile its outcome` : `operation ${String(row.id)} is ${String(row.state)}`}${row.diagnostic ? ` (${String(row.diagnostic)})` : ""}`,
     );
   for (const row of db
     .prepare(
-      `SELECT json_extract(value,'$.taskId') AS taskId, json_extract(value,'$.uncertainty') AS uncertainty, json_extract(value,'$.leftAlone.reason') AS reason FROM meta
+      `SELECT json_extract(value,'$.id') AS runId, json_extract(value,'$.taskId') AS taskId, json_extract(value,'$.uncertainty') AS uncertainty, json_extract(value,'$.leftAlone.reason') AS reason FROM meta
     WHERE key LIKE 'runProcessCleanup:%' AND json_extract(value,'$.pending')=1 AND json_extract(value,'$.hostId')=?
     ORDER BY key`,
     )
     .all(host.id))
-    effects.push(`process cleanup for ${ref(String(row.taskId))}: ${row.uncertainty ? (() => { try { return String(JSON.parse(String(row.uncertainty)).reason); } catch { return "ownership evidence is unreadable"; } })() : row.reason ? String(row.reason) : "waiting for a process observation"}; owner should restore host observation and wait for the next sweep`);
+    effects.push(`process cleanup for ${ref(String(row.taskId))}: ${cleanupReason(row.uncertainty, row.reason)}; owner should inspect run ${String(row.runId)} and restore process ownership observation; the sweep retries`);
   for (const task of source.finishedTasksOwingThreadCleanup(
     host.id,
     host.kind === "t3code",

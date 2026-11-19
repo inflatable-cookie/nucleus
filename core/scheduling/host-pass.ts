@@ -13,9 +13,11 @@ import { sanitizeHostFailureDetail, sanitizeHostFailureReason } from "../host";
 import { isTransportFailure } from "../../shared/transport";
 import {
   hasRecordedOperationSettlement,
+  historicalFenceRefusal,
   observedHostEffectEvidence,
 } from "../recovery/recovery-effects";
 import { operationIdForKey, operationInputHash } from "../store/store";
+import { submissionHash, legacySubmissionHash, explicitCriticalFalseSubmissionHash } from "../store/store-submissions";
 import { submissionSchema } from "../../shared/contracts";
 import { submissionRecordFromLegacy } from "../../shared/schema/settings/legacy";
 
@@ -328,7 +330,42 @@ export class HostPass {
                   .prepare("SELECT id FROM tasks WHERE submission=?")
                   .get(operation.submissionId)
               : undefined;
-          if (!taskRow) return;
+          if (!taskRow) {
+            // Retention preserves submission identity and terminal state in a
+            // tombstone after removing the task and its run history. Never infer
+            // a result from absence alone or replay a command.
+            if (operation.hostId !== host || operation.attempts !== 1 || operation.result ||
+                operation.id !== operationIdForKey(operation.key)) return;
+            const payload = this.store.operationPayload(operation.id) as { type?: string; submission?: unknown; control?: { action?: string; taskId?: string; version?: number } } | null;
+            if (!payload || operation.inputHash !== operationInputHash(payload)) return;
+            const tombstone = operation.kind === "submit" && operation.submissionId
+              ? this.store.db.prepare("SELECT id, input_hash, data FROM tombstones WHERE submission=?").get(operation.submissionId)
+              : operation.taskId ? this.store.db.prepare("SELECT id, input_hash, data FROM tombstones WHERE id=?").get(operation.taskId) : undefined;
+            if (!tombstone) return;
+            const record = JSON.parse(String(tombstone.data)) as { phase?: string };
+            if (!["done", "cancelled"].includes(record.phase ?? "")) return;
+            if (operation.kind === "task_control") {
+              // The same historical fence decision already used by recovery
+              // proves this execution refused before its effect.
+              if (!historicalFenceRefusal(operation) || payload.type !== "task_control" ||
+                  payload.control?.taskId !== operation.taskId || payload.control?.version !== operation.expectedVersion ||
+                  operation.effect?.kind !== "task_control" || operation.effect.target !== payload.control?.action ||
+                  operation.effect.status !== "uncertain" || operation.effect.result !== operation.diagnostic.slice(0, 2000)) return;
+              this.store.putOperation({ ...operation, state: "failed" });
+              return;
+            }
+            let parsed: ReturnType<typeof submissionSchema.safeParse>;
+            try { parsed = submissionSchema.safeParse(submissionRecordFromLegacy(payload.submission, "submit operation")); } catch { return; }
+            if (payload.type !== "submit" || !parsed.success || operation.effect || operation.taskId ||
+                operation.key !== `submit:${parsed.data.submissionId}` || operation.submissionId !== parsed.data.submissionId ||
+                ![submissionHash(parsed.data), legacySubmissionHash(parsed.data), explicitCriticalFalseSubmissionHash(parsed.data)].includes(String(tombstone.input_hash))) return;
+            operation = this.store.putOperation({ ...operation, taskId: String(tombstone.id) });
+            this.store.event(String(tombstone.id), "operation_superseded", JSON.stringify({
+              id: operation.id, inputHash: operation.inputHash, attempt: operation.attempts,
+              intentAt: operation.effect?.intentAt, evidence: `matching submission belongs to retained terminal tombstone ${record.phase}`,
+            }));
+            return;
+          }
           const task = this.store.task(String(taskRow.id));
           if (
             task.hostId !== host ||

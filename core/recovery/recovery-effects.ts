@@ -116,7 +116,7 @@ const HISTORICAL_FENCE_REFUSALS = [
   "Task execution participants or effects are not settled",
   "Task execution participants or effects changed during external merge proof",
 ];
-const historicalFenceRefusal = (operation: {
+export const historicalFenceRefusal = (operation: {
   kind: string;
   state: string;
   diagnostic?: string | null;

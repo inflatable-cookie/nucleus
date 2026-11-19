@@ -4,6 +4,7 @@ import {
   Store,
   operationIdForKey,
   operationInputHash,
+  qualifiedThreadArchiveEffectKey,
 } from "../core/store/store";
 import { Engine } from "../core/engine";
 import { enginePorts } from "../core/port-context";
@@ -849,13 +850,15 @@ test("a failed archive read after an idle observation shows its effect detail in
 });
 
 
-test("engine sweep reaches old terminal operations past settled history and names unbound waits", async (t) => {
-  const f = fixture(t, fakeAdapter({}));
+test("engine sweep settles live-shaped terminal and retained operations past history", async (t) => {
+  const f = fixture(t, fakeAdapter({ hostProcessListing: async () => [] }));
   const initial = f.store.insert(submission(), HOST, "handoff", "a".repeat(40));
   for (let i = 0; i < 80; i++) f.store.update(initial.id, { reason: `version ${i}` });
-  f.store.update(initial.id, { phase: "done" });
+  f.store.update(initial.id, { phase: "done", agentId: "legacy-worker", runId: "legacy-run" });
   const at = "2026-11-18T05:09:58.694Z";
   const end = "2026-11-18T05:10:04.311Z";
+  f.store.putThreadArchiveEffect(qualifiedThreadArchiveEffectKey(HOST, "legacy-worker"), "legacy-worker", { status: "archived", at: end });
+  f.store.queueRunProcessCleanup({ id: "legacy-run", taskId: initial.id, hostId: HOST });
   for (let i = 0; i < 75; i++) {
     const key = `history-${i}`;
     f.store.putOperation(queueOperationSchema.parse({ id: operationIdForKey(key), key, kind: "submit", inputHash: operationInputHash({}), state: "succeeded", hostId: HOST, createdAt: at }), {});
@@ -864,16 +867,53 @@ test("engine sweep reaches old terminal operations past settled history and name
   const key = "old-restart";
   const operation = queueOperationSchema.parse({ id: operationIdForKey(key), key, kind: "task_control", inputHash: operationInputHash(payload), state: "needs_attention", taskId: initial.id, expectedVersion: 77, createdAt: at, startedAt: at, settledAt: end, attempts: 1, diagnostic: "Transport", result: null, hostId: HOST, effect: { kind: "task_control", target: "restart", intentAt: at, status: "uncertain", result: "Transport" } });
   f.store.putOperation(operation, payload);
-  for (const [i, kind, diagnostic] of [[0, "task_control", "Task execution participants or effects are uncertain"], [1, "submit", "Liveness check timed out (15000ms)"], [2, "submit", "Transport not connected"]] as const) {
-    const key = `unbound-${i}`;
-    f.store.putOperation(queueOperationSchema.parse({ id: operationIdForKey(key), key, kind, inputHash: operationInputHash({}), state: "needs_attention", hostId: HOST, createdAt: at, settledAt: end, attempts: 1, diagnostic }), {});
+  const ids: string[] = [];
+  for (const [i, kind, diagnostic] of [[0, "task_control", "Task execution participants or effects are not settled: publication is uncertain"], [1, "submit", "Liveness check timed out (15000ms)"], [2, "submit", "Transport not connected"]] as const) {
+    const input = submission();
+    const task = f.store.insert(input, HOST, "handoff", "a".repeat(40));
+    const row = f.store.db.prepare("SELECT input_hash FROM tasks WHERE id=?").get(task.id)!;
+    f.store.db.prepare("INSERT INTO tombstones VALUES(?,?,?,?)").run(task.id, input.submissionId, row.input_hash, JSON.stringify({ id: task.id, submissionId: input.submissionId, phase: "done" }));
+    f.store.db.prepare("DELETE FROM tasks WHERE id=?").run(task.id);
+    const payload = kind === "submit" ? { type: "submit", submission: input } : { type: "task_control", control: { taskId: task.id, version: 88, action: "move", to: "closeout" } };
+    const key = kind === "submit" ? `submit:${input.submissionId}` : `move-${i}`;
+    const op = queueOperationSchema.parse({ id: operationIdForKey(key), key, kind, inputHash: operationInputHash(payload), state: "needs_attention", taskId: kind === "submit" ? null : task.id, submissionId: kind === "submit" ? input.submissionId : null, expectedVersion: kind === "submit" ? null : 88, hostId: HOST, createdAt: at, startedAt: at, settledAt: end, attempts: 1, diagnostic, effect: kind === "submit" ? null : { kind: "task_control", target: "move", intentAt: at, status: "uncertain", result: diagnostic } });
+    ids.push(op.id);
+    f.store.putOperation(op, payload);
   }
-  const pass = await f.engine.auditPass(false);
-  assert.equal(pass.fault, null);
+  await f.engine.sweepOnce();
   assert.equal(f.store.eventsAll(initial.id).filter(e => e.kind === "operation_superseded").length, 1);
-  const waits = hostDependents(f.store, { id: HOST, kind: "paseo", primary: true }).find(x => x.kind === "effect")!.names;
-  assert.equal(waits.length, 3);
-  assert.ok(waits.every(x => x.includes("settlement lacks proof") && x.includes("owner should inspect operation")));
-  await f.engine.auditPass(false);
+  assert.equal(f.store.operation(ids[0]!)?.state, "failed");
+  for (const id of ids.slice(1)) {
+    const op = f.store.operation(id)!;
+    assert.ok(op.taskId);
+    assert.equal(f.store.eventsAll(op.taskId!).filter(e => e.kind === "operation_superseded").length, 1);
+  }
+  assert.equal(f.store.getMeta<{pending:boolean}>("runProcessCleanup:legacy-run")?.pending, false);
+  assert.equal(hostDependents(f.store, { id: HOST, kind: "paseo", primary: true }).some(x => x.kind === "effect"), false);
+  await f.engine.sweepOnce();
   assert.equal(f.store.eventsAll(initial.id).filter(e => e.kind === "operation_superseded").length, 1);
+  for (const id of ids.slice(1)) assert.equal(f.store.eventsAll(f.store.operation(id)!.taskId!).filter(e => e.kind === "operation_superseded").length, 1);
+});
+
+test("sweep leaves conflicting tombstone and unreadable process ownership visible", async (t) => {
+  const f = fixture(t, fakeAdapter({ hostProcessListing: async () => null }));
+  const input = submission();
+  const task = f.store.insert(input, HOST, "handoff", "a".repeat(40));
+  f.store.update(task.id, { phase: "done", runId: "pending-run" });
+  f.store.setMeta("runProcessCleanup:pending-run", { id: "pending-run", taskId: task.id, hostId: HOST, pending: true, uncertainty: JSON.stringify({ reason: "process environment ownership is unreadable", processes: [] }) });
+  const removed = submission();
+  const removedTask = f.store.insert(removed, HOST, "handoff", "a".repeat(40));
+  f.store.db.prepare("INSERT INTO tombstones VALUES(?,?,?,?)").run(removedTask.id, removed.submissionId, "conflicting-digest", JSON.stringify({ id: removedTask.id, submissionId: removed.submissionId, phase: "done" }));
+  f.store.db.prepare("DELETE FROM tasks WHERE id=?").run(removedTask.id);
+  const payload = { type: "submit", submission: removed };
+  const key = `submit:${removed.submissionId}`;
+  const op = queueOperationSchema.parse({ id: operationIdForKey(key), key, kind: "submit", inputHash: operationInputHash(payload), state: "needs_attention", submissionId: removed.submissionId, hostId: HOST, createdAt: "2026-11-18T05:09:58.694Z", attempts: 1, diagnostic: "Transport not connected" });
+  f.store.putOperation(op, payload);
+  await f.engine.sweepOnce();
+  const names = hostDependents(f.store, { id: HOST, kind: "paseo", primary: true }).find(x => x.kind === "effect")!.names;
+  assert.ok(names.some(name => name.includes("settlement lacks proof") && name.includes(op.id)));
+  assert.ok(names.some(name => name.includes("process environment ownership is unreadable") && name.includes("pending-run")));
+  assert.equal(f.store.operation(op.id)?.taskId, null);
+  await f.engine.sweepOnce();
+  assert.equal(f.store.eventsAll(removedTask.id).filter(e => e.kind === "operation_superseded").length, 0);
 });
