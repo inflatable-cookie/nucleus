@@ -47,12 +47,16 @@ import { findT3Cli } from "../../shared/t3/operator";
 const checkout = fileURLToPath(new URL("../..", import.meta.url));
 const FAULT = "Nucleus is unreachable";
 const sha256 = (path: string) => createHash("sha256").update(readFileSync(path)).digest("hex");
+const decisionStatusOf = async (service: QueueService, id: string) =>
+  ((await service.debug({ target: "runtime", method: "getDecision", args: [{ id }] })) as { status: string }).status;
 
 type Message = { id: string; role: string; text: string };
 type Projection = {
   thread: { id: string; providerInstanceId: string };
   runs: Array<{ id: string; status: string; rootNodeId?: string | null }>;
   messages: Message[];
+  runtimeRequests: Array<{ id: string; kind: string; status: string }>;
+  turnItems: Array<{ type: string; requestId?: string; questions?: Array<{ id: string }> }>;
 };
 
 async function main() {
@@ -344,6 +348,52 @@ async function main() {
   }, "the second child to run under the held parent", 150_000);
   const resumed = await gapFacts("child-resumes-under-held-parent", 4_000, faultLines(await project(parent.threadId)), parentRun.id, child2.id);
   note("child-resumes", { child: child2.id, ...resumed });
+
+  // 5. open decision on the parent: a task-scoped decision the held parent raises as a card,
+  //    kept through a roll while the card is open.
+  const decisionId = (
+    (await service.debug({
+      target: "runtime",
+      method: "addDecision",
+      args: [{
+        question: "Proof parent decision?",
+        headline: "Proof parent decision",
+        choices: [{ label: "Yes", consequence: "Proceed" }, { label: "No", consequence: "Hold" }],
+        recommended: "Yes",
+        askedBy: "operator",
+        tasks: [task.id],
+        project: { origin: "proof/synthetic-repository", path: repository },
+      }],
+    })) as { id: string }
+  ).id;
+  // The host observes the parent's scope with no card present, so the next held poll raises it.
+  await service.debug({ target: "acp", method: "observedCards", args: [{ taskId: task.id }, []] });
+  const cardFor = (view: Projection | null) => {
+    if (!view) return null;
+    const pending = view.runtimeRequests.find((row) => row.kind === "user_input" && row.status === "pending");
+    if (!pending) return null;
+    const item = view.turnItems.find((row) => row.type === "user_input_request" && row.requestId === pending.id);
+    return item?.questions?.[0]?.id === `nucleus_${decisionId}_1` ? pending.id : null;
+  };
+  const postedCards = (view: Projection | null) =>
+    view ? view.turnItems.filter((row) => row.type === "user_input_request" && row.questions?.[0]?.id === `nucleus_${decisionId}_1`).length : -1;
+  const card = await until(async () => {
+    const view = await project(parent.threadId);
+    return cardFor(view) ? { requestId: cardFor(view)!, view } : null;
+  }, "the parent to raise the decision as a card", 120_000);
+  const postedBefore = postedCards(card.view);
+  note("parent-card-offered", { decision: decisionId, requestId: card.requestId, parentRun: parentRun.id });
+  await restartService(4_000);
+  await delay(8_000);
+  const afterGap = await project(parent.threadId);
+  assert.ok(afterGap, "the parent projection is readable after the gap");
+  const parentRunAfter = afterGap.runs.find((row) => row.id === parentRun.id);
+  assert.ok(parentRunAfter && activeStatuses.has(parentRunAfter.status as never), "the parent's run stays live with the card open");
+  assert.equal(cardFor(afterGap), card.requestId, "the same card stays live through the roll");
+  assert.equal(postedCards(afterGap), postedBefore, "the roll posts no further card");
+  assert.equal(await decisionStatusOf(service, decisionId), "open", "the decision stays open");
+  assert.equal(sha256(bindingPath), binding, "the same binding remains through the card's gap");
+  note("parent-open-decision-roll", { decision: decisionId, requestId: card.requestId, parentRun: parentRun.id, postedCards: postedBefore });
 
   // The parent's binding and session never changed, and its one run stayed the held run.
   assert.equal(parentThread().threadId, parent.threadId, "the same parent thread");

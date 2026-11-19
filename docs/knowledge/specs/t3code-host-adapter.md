@@ -981,8 +981,11 @@ fault line), and a second child created under the same held parent after the fir
 interrupted, with the same binding and session. One run of that proof failed the
 sustained step on the fault count (no new line), and two earlier runs did the same;
 the passing run's agent log shows one fault line per outage. That failure is not
-explained yet. The parent's own open decision is not proven on private T3: the decision
-card is raised by the service's own adapter, which the proof does not reach.
+explained yet. The same proof also covers the parent's own open decision: a task-scoped
+decision the held parent raises as a card stays the same card, on the same running run,
+through a roll, with one card posted and the decision still open. The proof raises it by
+marking the parent's scope observed through the service's own ACP surface, since the
+service's adapter runs in another process.
 
 **Completion wakes never reach the parent.** Every child is created with
 `completionWake: "settled_only"` and its delivery is disposed
