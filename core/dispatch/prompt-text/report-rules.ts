@@ -12,6 +12,8 @@
  */
 export const REPORT_BINDING_RULE = "Report only through this run's own binding. Never read or use another ticket file under the Nucleus data home. If your report is refused, report blocked with the refusal through your own binding; if that is refused too, state the refusal plainly. Never try another ticket or route to bypass a refusal.";
 
+export const BLOCKED_REPORT_FIELDS = "For blocked or error, include cause and impediment naming the concrete failure.";
+
 export const WORKER_REFUSED_REPORT_RULE = 'If Nucleus refuses your report because a field is malformed, read the refusal, correct the named field to the expected shape, and resend the same actual result in this turn. A refused report is not a task outcome; never report blocked or error because your own report was malformed.';
 
 /**

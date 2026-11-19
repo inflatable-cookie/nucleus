@@ -11,7 +11,7 @@ export type ContextSection = typeof CONTEXT_SECTIONS[number];
 export type RunContext = Record<ContextSection, string>;
 
 /** Extended text is advisory data. Safety and authority remain in the prompt and gates. */
-export function buildRunContext(task: Task, run: { id: string; role: Run['role'] | 'worker'; head: string }, mcp: boolean, affectedTestsCommand?: string): RunContext {
+export function buildRunContext(task: Task, run: { id: string; role: Run['role'] | 'worker'; head: string }, affectedTestsCommand?: string): RunContext {
   return {
     rules: roleRules(run.role),
     validation: `${operatorValidationBlock(affectedTestsCommand, run.role === 'reviewer')}\n${VALIDATION_RUN_RULE}`,

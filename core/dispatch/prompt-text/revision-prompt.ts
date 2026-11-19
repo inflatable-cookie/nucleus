@@ -48,11 +48,6 @@ import {
 } from "./revision-text";
 import type { RunPromptContext } from "./prompt-context";
 import { VALIDATION_RUN_RULE } from "./validation";
-import {
-  AUTHOR_BLOCKER_RULE,
-  responsibleAskInTurnRule,
-  responsibleBlockerLadderRule,
-} from "./report-rules";
 import { WORKSPACE_RULE } from "./workspace-text";
 
 /**
@@ -61,7 +56,7 @@ import { WORKSPACE_RULE } from "./workspace-text";
  * review findings at the exact head.
  */
 export function revisionRunPrompt(prompt: RunPromptContext): string {
-  const { task, run, mcp, scope, callback } = prompt;
+  const { task, run, scope, callback, section } = prompt;
   const reportOnly = prompt.reportPolicy.reportOnly;
   const notice = prompt.reportPolicyNotice;
   // Spec 058 slice 14: a run dispatched as a non-delivery push-back, or as its
@@ -79,7 +74,7 @@ export function revisionRunPrompt(prompt: RunPromptContext): string {
     const delivery = reportOnly
       ? "when the report is ready, write it to the Nucleus lane document named in the brief and return report_ready with artifact {key, version, digest}. Do not create a PR"
       : "when the full brief completes, open one PR and return ready_for_review with its prNumber";
-    return `${scope}${notice}${retryContext}${queueSiblingBlock(task)}${queueCheckoutSiblingBlock(task)}${queueWorktreeLinkBlock(task)}${queueBuildOutputSummary(task, task.completion?.runId ?? task.runId ?? null)}Resume this blocked pre-PR worker in the same workspace. Authorized action: ${run.instruction?.trim() || "Continue the original task in the retained workspace under its immutable instructions."}\nThis instruction is the complete new authority. Do not repeat a previously consumed one-shot action unless it is explicitly authorized above. Preserve existing evidence and cache. If this action only prepares the environment, continue into the approved work afterwards unless the instruction says to stop; never cross an operator-gated step it does not authorize. Continue until the outcome is delivered or an external cause stops you: ${delivery}. Report blocked or error only for that external cause, naming it — an unfinished task is never a reason to stop. Leave tracked files clean unless the authorized action explicitly requires a task change.\n${callback}`;
+    return `${scope}${notice}${section("history", retryContext)}${queueSiblingBlock(task)}${queueCheckoutSiblingBlock(task)}${queueWorktreeLinkBlock(task)}${section("history", queueBuildOutputSummary(task, task.completion?.runId ?? task.runId ?? null))}Resume this blocked pre-PR worker in the same workspace. Authorized action: ${run.instruction?.trim() || "Continue the original task in the retained workspace under its immutable instructions."}\nThis instruction is the complete new authority. Do not repeat a previously consumed one-shot action unless it is explicitly authorized above. Preserve existing evidence and cache. If this action only prepares the environment, continue into the approved work afterwards unless the instruction says to stop; never cross an operator-gated step it does not authorize. Continue until the outcome is delivered or an external cause stops you: ${delivery}. Report blocked or error only for that external cause, naming it — an unfinished task is never a reason to stop. Leave tracked files clean unless the authorized action explicitly requires a task change.\n${callback}`;
   }
   // The read-only identity confirmation is the intent the reservation consumed from
   // the task, so it is rendered from the reserved run, never from the cleared flag.
@@ -108,7 +103,7 @@ export function revisionRunPrompt(prompt: RunPromptContext): string {
   const findingsBlock = findings
     ? `Review findings: ${findings}\n${reviewReference(task)}\n`
     : "";
-  return `${scope}${notice}${retryContext}${queueSiblingBlock(task)}${queueBuildOutputSummary(task, task.completion?.runId ?? task.runId ?? null)}Resume implementation in this same workspace${task.resolution.revisionPrRepair ? "" : " and PR"}. Current action: ${action}. ${direction} A long revision may report progress_checkpoint with the exact local head exactly like the pre-PR worker: Nucleus continues this same run in this workspace, and revision checkpoints share the task's bounded checkpoint budget. ${task.resolution.revisionPrRepair ? `This identity repair is the sole exception to PR reuse: close mismatched PR #${task.completion!.prNumber} only after its head is preserved on ${task.branch}, then open exactly one replacement PR from ${task.branch}.` : `Confirm the current branch is still ${task.branch}; never rename it or switch to another task branch. Do not create a replacement PR.`} Continue until the outcome is delivered or an external cause stops you, then return ready_for_review with ${task.resolution.revisionPrRepair ? "the resulting" : `prNumber ${task.reviewEntry?.prNumber ?? task.resumePrNumber ?? task.completion?.prNumber}`}. Report blocked or error only for that external cause, naming it — an unfinished task is never a reason to stop. Leave the worktree clean.\n${findingsBlock}${reviewVerdictsBlock(task)}${scopedNotice}${callback}`;
+  return `${scope}${notice}${section("history", retryContext)}${queueSiblingBlock(task)}${section("history", queueBuildOutputSummary(task, task.completion?.runId ?? task.runId ?? null))}Resume implementation in this same workspace${task.resolution.revisionPrRepair ? "" : " and PR"}. Current action: ${action}. ${direction} A long revision may report progress_checkpoint with the exact local head exactly like the pre-PR worker: Nucleus continues this same run in this workspace, and revision checkpoints share the task's bounded checkpoint budget. ${task.resolution.revisionPrRepair ? `This identity repair is the sole exception to PR reuse: close mismatched PR #${task.completion!.prNumber} only after its head is preserved on ${task.branch}, then open exactly one replacement PR from ${task.branch}.` : `Confirm the current branch is still ${task.branch}; never rename it or switch to another task branch. Do not create a replacement PR.`} Continue until the outcome is delivered or an external cause stops you, then return ready_for_review with ${task.resolution.revisionPrRepair ? "the resulting" : `prNumber ${task.reviewEntry?.prNumber ?? task.resumePrNumber ?? task.completion?.prNumber}`}. Report blocked or error only for that external cause, naming it — an unfinished task is never a reason to stop. Leave the worktree clean.\n${section("history", findingsBlock + reviewVerdictsBlock(task))}${scopedNotice}${callback}`;
 }
 
 export function checkpointPrompt(task: Task, intent: CheckpointIntent) {

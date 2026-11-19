@@ -8,8 +8,8 @@ import type { HostAgentAttempt, HostAgentSpec } from "../../shared/host";
 import type { Profile, Run, Task } from "../../shared/contracts";
 import { sharedCargoEnvironment } from "../machine/cargo-cache";
 import { mergeAdmissionLaunchEnv } from "../qa/effigy-admission";
-import { runPrompt } from "./prompts";
-import { measureRunPrompt, writePromptSize } from "./prompt-text/measure";
+import { runPrompt, workerStartingHead } from "./prompts";
+import { measureRunPrompt, writePromptSize, type WorkerPromptMeasurement } from "./prompt-text/measure";
 import { buildRunContext, materializeRunContext } from "./prompt-text/context-store";
 import {
   runTemporaryEnvironment,
@@ -149,6 +149,7 @@ export function workerAgentSpec(
   token: string,
   prompt: string,
   legacyPrompt: string,
+  measurement?: WorkerPromptMeasurement,
 ): HostAgentSpec {
   const runId = task.runId!;
   const ticket = writeRunTicket(
@@ -184,10 +185,11 @@ export function workerAgentSpec(
       if (current.perThreadEnvironment === false)
         prepareRunScratch(current, task, runId, task.temporaryDirectory);
       const scratch = environment.TMPDIR ?? task.temporaryDirectory;
-      if (scratch && (current.perThreadEnvironment !== false || current.prepareRunScratch)) materializeRunContext(scratch, runId, buildRunContext(task, { id: runId, role: 'worker', head: task.planningCommit }, mcp));
+      if (scratch && (current.perThreadEnvironment !== false || current.prepareRunScratch)) materializeRunContext(scratch, runId, buildRunContext(task, { id: runId, role: 'worker', head: workerStartingHead(task) }, measurement?.affectedTestsCommand));
       materializeLaneDocuments(task.temporaryDirectory, task.laneDocumentPins);
       const selectedPrompt = retry ? legacyPrompt : prompt;
-      try { if (scratch) writePromptSize(scratch, runId, 'worker', measureRunPrompt(selectedPrompt, task, { head: task.planningCommit, temporaryDirectory: scratch }, mcp)); } catch { /* telemetry cannot prevent launch */ }
+      const size = retry ? measurement?.fallback : measurement?.primary;
+      try { if (scratch && size) writePromptSize(scratch, runId, 'worker', size); } catch { /* telemetry cannot prevent launch */ }
       return {
         requestId: retry ? `ns-agent-${runId}-socket` : `ns-agent-${runId}`,
         prompt: selectedPrompt,
@@ -254,16 +256,16 @@ export function runAgentSpec(
             ? run.temporaryDirectory
             : environment.TMPDIR,
       };
-      if (effectiveRun.temporaryDirectory && (current.perThreadEnvironment !== false || current.prepareRunScratch)) materializeRunContext(effectiveRun.temporaryDirectory, run.id, buildRunContext(task, run, mcp, affectedTestsCommand));
+      if (effectiveRun.temporaryDirectory && (current.perThreadEnvironment !== false || current.prepareRunScratch)) materializeRunContext(effectiveRun.temporaryDirectory, run.id, buildRunContext(task, run, affectedTestsCommand));
       materializeLaneDocuments(
         effectiveRun.temporaryDirectory,
         task.laneDocumentPins,
       );
-      const renderedPrompt = runPrompt(task, effectiveRun, current.helperPath, ticket, mcp, context, ownerContext, affectedTestsCommand);
-      try { if (effectiveRun.temporaryDirectory) writePromptSize(effectiveRun.temporaryDirectory, run.id, run.role, measureRunPrompt(renderedPrompt, task, effectiveRun, mcp, affectedTestsCommand)); } catch { /* telemetry cannot prevent launch */ }
+      const rendered = measureRunPrompt(section => runPrompt(task, effectiveRun, current.helperPath, ticket, mcp, context, ownerContext, affectedTestsCommand, section));
+      try { if (effectiveRun.temporaryDirectory) writePromptSize(effectiveRun.temporaryDirectory, run.id, run.role, rendered.size); } catch { /* telemetry cannot prevent launch */ }
       return {
         requestId: retry ? `ns-run-${run.id}-socket` : `ns-run-${run.id}`,
-        prompt: renderedPrompt,
+        prompt: rendered.prompt,
         labels: wireLabels({
           task: task.id,
           run: run.id,

@@ -11,16 +11,10 @@ import {
 } from "../../../shared/contracts";
 import { interactiveSessionOpen } from "../interactive";
 import {
-  AUTHOR_BLOCKER_RULE,
   PROVIDER_UNAVAILABLE_RULE,
   REPORT_BINDING_RULE,
-  RESPONSIBLE_FORCE_RULE,
-  RESPONSIBLE_OWNERSHIP_RULE,
+  BLOCKED_REPORT_FIELDS,
   WORKER_REFUSED_REPORT_RULE,
-  helperInvocation,
-  responsibleAskInTurnRule,
-  responsibleBlockerLadderRule,
-  responsibleMessageRule,
 } from "./report-rules";
 import { PROOF_FILES_RULE, REQUIRED_PROOF_AUTHOR_NOTE } from "./proof-rules";
 import {
@@ -30,7 +24,7 @@ import {
 } from "./revision-text";
 import {
   queueBriefBlock,
-  queueBuildOutputBlock, queueBuildOutputSummary,
+  queueBuildOutputSummary,
   queueCheckoutSiblingBlock,
   queueLaneBlock,
   queueLaneDocumentBlock,
@@ -44,7 +38,12 @@ import {
 } from "./workspace-text";
 import { operatorValidationBlock } from "./validation";
 import { contextPointer } from "./standing-rules";
-import { bbBrowserCapabilityNotice } from "./prompt-context";
+import { bbBrowserCapabilityNotice, runCallbackCommand } from "./prompt-context";
+import { unmeasuredSection, type PromptSection } from "./measure";
+
+export function workerStartingHead(task: Task): string {
+  return task.checkpoints?.records?.at(-1)?.head ?? task.completion?.head ?? (task.planningBase || task.planningCommit);
+}
 
 /** `runs` is the task's stored run history; the session decision must match reconcile's. */
 export function workerPrompt(
@@ -52,10 +51,12 @@ export function workerPrompt(
   mcp = false,
   runs: readonly Run[] = [],
   worktreeLinkRecordFailure: string | null = null,
-  helper?: string,
+  _helper?: string,
   ticket?: string,
   affectedTestsCommand?: string,
+  section: PromptSection = unmeasuredSection,
 ) {
+  const callbackCommand = runCallbackCommand(task.hostId, task.runId, ticket);
   const reportPolicy = briefReportPolicy(task);
   const reportOnly = reportPolicy.reportOnly;
   const session = interactiveSessionOpen(task, runs);
@@ -74,28 +75,29 @@ export function workerPrompt(
   const report = session
     ? "Only when the operator tells you to submit, "
     : "Before ending your turn, ";
-  return `You are the implementation worker for a plugin-managed Nucleus task.
+  return `${section("identity", `You are the implementation worker for a plugin-managed Nucleus task.
 Task: ${task.title}
-${task.number ? `Task number: ${task.reference} (${formatTaskNumber(task.number)})\n` : ""}Task ID: ${task.id}; run ID: ${task.runId}; base: ${task.baseBranch}; starting head: ${task.checkpoints?.records?.at(-1)?.head ?? task.completion?.head ?? (task.planningBase || task.planningCommit)}
+${task.number ? `Task number: ${task.reference} (${formatTaskNumber(task.number)})\n` : ""}Task ID: ${task.id}; run ID: ${task.runId}; base: ${task.baseBranch}; starting head: ${workerStartingHead(task)}${task.planningBase ? `; base commit: ${task.planningBase}` : ""}
 Completed prerequisite task IDs: ${task.dependsOn.join(", ") || "none"}
 Origin: the planner that submitted this task (reach it with ask or tell by role, never by thread ID); coordinator contact: ${task.coordinatorAgentId ? "the recorded coordinator (reach it with ask or tell)" : "operator via queue"}
-The plugin owns dispatch and lifecycle state. Do not start a coordinator, dispatch other workers, or merge.
+`)}The plugin owns dispatch and lifecycle state. Do not start a coordinator, dispatch other workers, or merge.
 This plugin-managed run is already dispatched by Nucleus under orchestrator dispatch authority. Do not reject or edit the Nucleus-held brief on that basis.
-Workspace: ${task.directory}. Use this existing workspace; do not create another worktree.
-${reportPolicyNotice(reportPolicy)}Your immutable queue-owned branch is ${task.branch}. Before editing, confirm \`git branch --show-current\` prints exactly ${task.branch}; otherwise report blocked. Never create, rename, or switch to a different task branch. ${reportOnly ? "This brief is report-only: no code change or PR is required." : `Push ${task.branch} and create the PR with explicit \`--head ${task.branch} --base ${task.baseBranch}\` arguments.`}
-${task.number ? `Start the PR title with the bare task number, for example \`${formatTaskNumber(task.number)}: ${task.title}\`. Do not use \`#${formatTaskNumber(task.number)}\` or \`${task.reference}\` in the PR title; GitHub autolinks #N to its own issues and PRs.\n` : ""}${continuationCleanup}${task.retiredWorkers.length ? `You replace a stopped worker after bounded recovery. Preserve and inspect all existing files and commits; resume the brief rather than restarting it. Previous worker: ${task.retiredWorkers.at(-1)!.agentId}. Recovery instruction: ${task.retiredWorkers.at(-1)!.reason}. ${task.resumePrNumber ? `Reuse PR #${task.resumePrNumber}; do not create another PR.` : "Check for an existing PR on this branch and reuse it if present."} Current review findings: ${task.resolution.review?.summary ?? "none"}.` : ""}
-${task.resolution.pendingWorkerInstruction ? `Authorized continuation action: ${task.resolution.pendingWorkerInstruction}\n` : ""}${bbBrowserCapabilityNotice(task)}${queueLaneBlock(task)}${queueLaneDocumentBlock(task, task.temporaryDirectory)}${queueSiblingBlock(task)}${queueCheckoutSiblingBlock(task)}${queueWorktreeLinkBlock(task, worktreeLinkRecordFailure)}${queueBriefBlock(task)}Follow its scope and the repository's applicable instructions. Preserve unrelated files.
-${interactiveWorkerBlock(task, session)}${WORKSPACE_RULE}\n${CHANGELOG_FRAGMENT_RULE}${runTemporaryPromptNote(task.temporaryDirectory)}
-${operatorValidationBlock(affectedTestsCommand)}${REQUIRED_PROOF_AUTHOR_NOTE}\n${PROOF_FILES_RULE}\n${contextPointer("worker")}
+${section("workspace", `Workspace: ${task.directory}. Use this existing workspace; do not create another worktree.
+`)}${reportPolicyNotice(reportPolicy)}Your immutable queue-owned branch is ${task.branch}. Before editing, confirm \`git branch --show-current\` prints exactly ${task.branch}; otherwise report blocked. Never create, rename, or switch to a different task branch. ${reportOnly ? "This brief is report-only: no code change or PR is required." : `Push ${task.branch} and create the PR with explicit \`--head ${task.branch} --base ${task.baseBranch}\` arguments.`}
+${task.number ? `Start the PR title with the bare task number, for example \`${formatTaskNumber(task.number)}: ${task.title}\`. Do not use \`#${formatTaskNumber(task.number)}\` or \`${task.reference}\` in the PR title; GitHub autolinks #N to its own issues and PRs.\n` : ""}${section("history", continuationCleanup)}${task.retiredWorkers.length ? `You replace a stopped worker after bounded recovery. Preserve and inspect all existing files and commits; resume the brief rather than restarting it. Previous worker: ${task.retiredWorkers.at(-1)!.agentId}. Recovery instruction: ${task.retiredWorkers.at(-1)!.reason}. ${task.resumePrNumber ? `Reuse PR #${task.resumePrNumber}; do not create another PR.` : "Check for an existing PR on this branch and reuse it if present."} Current review findings: ${task.resolution.review?.summary ?? "none"}.` : ""}
+${task.resolution.pendingWorkerInstruction ? `Authorized continuation action: ${task.resolution.pendingWorkerInstruction}\n` : ""}${bbBrowserCapabilityNotice(task)}${section("lane", queueLaneBlock(task))}${section("laneDocuments", queueLaneDocumentBlock(task, task.temporaryDirectory))}${queueSiblingBlock(task)}${queueCheckoutSiblingBlock(task)}${queueWorktreeLinkBlock(task, worktreeLinkRecordFailure)}${section("brief", queueBriefBlock(task))}Follow its scope and the repository's applicable instructions. Preserve unrelated files.
+${interactiveWorkerBlock(task, session)}${section("workspace", `${WORKSPACE_RULE}\n${CHANGELOG_FRAGMENT_RULE}${runTemporaryPromptNote(task.temporaryDirectory)}`)}
+${section("validation", operatorValidationBlock(affectedTestsCommand))}${section("namedProof", `${REQUIRED_PROOF_AUTHOR_NOTE}\n${PROOF_FILES_RULE}\n`)}${contextPointer("worker", section, callbackCommand)}
 
-${REPORT_BINDING_RULE}
+${section("report", `${REPORT_BINDING_RULE}
+${BLOCKED_REPORT_FIELDS}
 ${WORKER_REFUSED_REPORT_RULE}
 ${
   mcp
-    ? `${report}call the nucleus_report MCP tool with runId "${task.runId}", your status, a short headline and summary${reportOnly ? ", and artifact {key, version, digest} when reporting report_ready" : ", and prNumber when ready_for_review"}. Use structured tool arguments; the bridge supplies task identity and authentication. If the tool is absent, or its transport stays closed after one identical retry, feed taskId "${task.id}", runId "${task.runId}", the same status, headline, summary and ${reportOnly ? "artifact" : "prNumber"} JSON on stdin to ${helperInvocation(helper, ticket)} for this run only. Do not use it to bypass a rejected report. Require an accepted response before finishing.`
+    ? `${report}call the nucleus_report MCP tool with runId "${task.runId}", your status, a short headline and summary${reportOnly ? ", and artifact {key, version, digest} when reporting report_ready" : ", and prNumber when ready_for_review"}. Use structured tool arguments; the bridge supplies task identity and authentication. If the tool is absent, or its transport stays closed after one identical retry, feed taskId "${task.id}", runId "${task.runId}", the same status, headline, summary and ${reportOnly ? "artifact" : "prNumber"} JSON on stdin to ${callbackCommand} for this run only. Do not use it to bypass a rejected report. Require an accepted response before finishing.`
     : `${report}report through the packaged nucleus helper with this run's ticket. Never print the callback token.
 Feed actual JSON on stdin to:
-${helperInvocation(helper, ticket)} <<'NUCLEUS_RESULT'
+${callbackCommand} <<'NUCLEUS_RESULT'
 {"taskId":"${task.id}","runId":"${task.runId}","status":"blocked","headline":"One line on what is blocking and what comes next","summary":"Explain the concrete blocker here"}
 NUCLEUS_RESULT
 The ticket binds this report to exactly this run; a report for any other run is refused. Do not use it to bypass a rejected report. Require an accepted response before finishing.
@@ -113,5 +115,5 @@ A deliberate bounded checkpoint before any PR may report progress_checkpoint wit
 ${PROVIDER_UNAVAILABLE_RULE}
 ${reportOnly ? "report_ready requires the latest exact Nucleus lane document artifact {key, version, digest}; Nucleus verifies the task opt-in and lane document before accepting it." : `ready_for_review requires prNumber for a real open non-draft GitHub PR targeting ${task.baseBranch}, from ${task.branch}, whose pushed head equals your clean worktree HEAD. Recheck the current branch before reporting. If a PR cannot be created, report blocked with the reason; do not claim readiness.`}
 The bridge fills task and event identity. Retry the same JSON if delivery fails. After an accepted callback, stop editing and finish the turn; you may explain the result in your final message.
-`;
+`)}`;
 }

@@ -1407,7 +1407,7 @@ test("every worktree-facing prompt forbids the repository-shared git stash", () 
 });
 
 test("extended validation retains execution detail", () => {
-  const text = buildRunContext(handoffTask, { id: 'r', role: 'worker', head: 'a'.repeat(40) }, true).validation;
+  const text = buildRunContext(handoffTask, { id: 'r', role: 'worker', head: 'a'.repeat(40) }).validation;
   assert.match(text, /Never kill processes by pattern/); assert.match(text, /foreground/);
 });
 
@@ -1500,12 +1500,12 @@ test("workspace safety and source immutability stay in prompts", () => {
 });
 
 test("validation detail remains available to the worker", () => {
-  const text = buildRunContext(handoffTask, { id: 'r', role: 'worker', head: 'a'.repeat(40) }, true).validation;
+  const text = buildRunContext(handoffTask, { id: 'r', role: 'worker', head: 'a'.repeat(40) }).validation;
   assert.match(text, /foreground/); assert.match(text, /Ending the turn while one runs/);
 });
 
 test("extended validation keeps the completion rule", () => {
-  const text = buildRunContext(handoffTask, { id: 'r', role: 'worker', head: 'a'.repeat(40) }, true).validation;
+  const text = buildRunContext(handoffTask, { id: 'r', role: 'worker', head: 'a'.repeat(40) }).validation;
   assert.match(text, /Run each covering check once/); assert.match(text, /Only a check you would add beyond the brief/);
 });
 
@@ -2383,12 +2383,12 @@ test("revision prompts direct cleanup history to run context", () => {
 });
 
 test("build output history preserves recorded data in context", () => {
-  const ctx = buildRunContext(handoffTask, { id: 'r', role: 'revision', head: 'a'.repeat(40) }, true);
+  const ctx = buildRunContext(handoffTask, { id: 'r', role: 'revision', head: 'a'.repeat(40) });
   assert.match(ctx.history, /buildOutputCleanups/);
 });
 
 test("reviewer can read cleanup history from context", () => {
-  const ctx = buildRunContext(handoffTask, { id: 'r', role: 'reviewer', head: 'a'.repeat(40) }, true);
+  const ctx = buildRunContext(handoffTask, { id: 'r', role: 'reviewer', head: 'a'.repeat(40) });
   assert.match(ctx.history, /buildOutputCleanups/);
 });
 
@@ -2776,7 +2776,7 @@ test("recovery coordinator prompt carries the launch snapshot and the one refres
 });
 
 test("worker rules distinguish blockers from unfinished work", () => {
-  const ctx = buildRunContext(handoffTask, { id: 'r', role: 'worker', head: 'a'.repeat(40) }, true);
+  const ctx = buildRunContext(handoffTask, { id: 'r', role: 'worker', head: 'a'.repeat(40) });
   assert.match(ctx.rules, /concrete impediment/); assert.match(ctx.rules, /not unfinished work or context pressure/);
 });
 

@@ -1,3 +1,4 @@
+import type { WorkerPromptMeasurement } from './prompt-text/measure';
 import type { Task } from "../../shared/contracts";
 import type { HostAgentSpec } from "../../shared/host";
 import { removeMcpBinding, workerAgentSpec, type CreationOwner } from "./agent-creation";
@@ -10,9 +11,9 @@ export interface AgentPolicyHost {
 }
 export class AgentPolicy {
   constructor(private readonly host: AgentPolicyHost) {}
-  async createAgent(task: Task, token: string, prompt: string, legacyPrompt = prompt) {
+  async createAgent(task: Task, token: string, prompt: string, legacyPrompt = prompt, measurement?: WorkerPromptMeasurement) {
     if (!task.workspaceId || !task.profile || !task.runId) throw new Error("Dispatch identity is incomplete");
-    const spec = workerAgentSpec(() => this.host.creationOwner(), task, token, prompt, legacyPrompt);
+    const spec = workerAgentSpec(() => this.host.creationOwner(), task, token, prompt, legacyPrompt, measurement);
     const mcp = spec.mcpBindingPath !== null;
     let agent;
     try { agent = await this.host.nativeAgentCreate(spec, mcp, false); }

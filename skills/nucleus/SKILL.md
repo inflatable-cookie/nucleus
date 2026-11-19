@@ -16,8 +16,8 @@ report may name local proof files (screenshots, rendered images, recordings the
 brief requires) as `proofFiles: [{label, path}]`, where each path is an absolute
 path to a real regular file inside that task's own scratch or worktree, at most
 12 files, 8 MiB each and 32 MiB total. Nucleus copies them into its own
-per-head evidence directory, records their hashes and lists them with paths and
-hashes in the retained reviewer's prompt for that head; nothing is uploaded to
+per-head evidence directory. The retained reviewer can read the paths and hashes
+with `nucleus helper report context proofs`; nothing is uploaded to
 the forge, and no local path belongs in a PR body or comment. A report naming a
 path outside the task is refused and nothing is copied. The PR may say that
 evidence was delivered to the retained reviewer and give the hashes. Worker
@@ -1368,12 +1368,28 @@ Create and edit routing profiles in Settings → Profiles.
 
 ## Worker rules
 
-Own decisions within the brief and record material decisions and reasons in the PR's Decisions list. Approve binary choices by default, including budget extensions; only releases, outward actions and product or scope changes need a planning ruling. Ask the retained reviewer only when you cannot settle a blocker; ask the planner for a ruling in the same turn. If an ask is pending, collect the answer with the same question. Use tell to share information with a task role or planner; messages do not change authority. Never resend an unknown delivery. Report blocked only for a concrete impediment, not unfinished work or context pressure. For a push or PR creation, observe the branch or PR before each retry and back off from 5 to 60 seconds for about 15 minutes on transient forge failures. If force is the obvious exit, use nucleus task - to request move or retry_effect for your own task with force:true and observed evidence; never force a failed check when causality is unknown.
+Own decisions within the brief and record material decisions and reasons in the PR's Decisions list. Approve binary choices by default, including budget extensions. Bring product or scope changes, releases, outward actions and profiles that require board approval to the planner. For a board discussion, include the headline, two or three choices and consequences, your recommended choice and the details.
+
+Work around blockers within the approved scope first. If a second opinion is needed, ask the retained reviewer. Ask the planner once in the current turn when a ruling is needed. If the answer is pending, collect it later with the identical question. After one reviewer consult, report a remaining blocker with what you tried. Nucleus escalates once per cause to the project planner and joins repeats to the open escalation.
+
+Use the ask and tell tools or feed the same JSON on stdin to `nucleus ask -` ({to, question, …}) and `nucleus tell -` ({to, text, role?}) with your current run binding. Address task roles or planners by role. Messages communicate information. Never resend a message or re-ask a question whose delivery is unknown.
+
+Continue until you deliver or hit a concrete blocker. Push finished work before reporting blocked. For blocked or error include `cause` ({kind: 'external', name: '<short cause>'}, {kind: 'internal'} or {kind: 'unfinished'}) and `impediment` with the failed command or observed provider message. Classify admission, guard or budget refusals and proof or native-step failures as external. Unfinished work uses a checkpoint where allowed. A blocked or error report without an impediment or new commit can continue the same thread at most twice before the planner ladder.
+
+For a push or PR creation, observe the branch or PR before each retry and back off from 5 to 60 seconds for about 15 minutes on transient forge failures. Report the observed failure and elapsed wait if the retries are exhausted. For an obvious stuck thread or bookkeeping stop, request move or retry_effect with `nucleus task -`, force:true and observed evidence. For a failed forge check include the check, job URL and evidence that this diff could not have caused it. Force requires known causality.
 
 ## Reviewer rules
 
-Own the review judgment. Decide within the brief and ask the planner in the same turn when a planning ruling is needed; collect a pending answer with the same question. Never resend an unknown delivery. Report blocked only for a concrete impediment, not unfinished reading; use a review checkpoint for bounded unfinished reading. If force is the obvious exit, use nucleus task - to request move or retry_effect for your own task with force:true and observed evidence; never force a failed check when causality is unknown.
+Own the review judgment within the brief. Ask the planner once in the current turn when a ruling is needed. If the answer is pending, collect it later with the identical question. Use the ask and tell tools or feed the same JSON on stdin to `nucleus ask -` ({to, question, …}) and `nucleus tell -` ({to, text, role?}) with your current run binding. Address task roles or planners by role. Messages communicate information. Never resend a message or re-ask a question whose delivery is unknown.
+
+For blocked or error include `cause` ({kind: 'external', name: '<short cause>'}, {kind: 'internal'} or {kind: 'unfinished'}) and `impediment` with the failed command or observed provider message. Classify admission, guard or budget refusals and proof or native-step failures as external. Use a review checkpoint for unfinished reading within the checkpoint allowance.
+
+For an obvious stuck thread or bookkeeping stop, request move or retry_effect with `nucleus task -`, force:true and observed evidence. For a failed forge check include the check, job URL and evidence that this diff could not have caused it. Force requires known causality.
 
 ## Recovery rules
 
-Own the recovery judgment and choose one available owner verb from current evidence. Ask the planner when a ruling is needed and collect a pending answer with the same question. Never resend an unknown delivery. Use nucleus task - with force:true only for an obvious stuck thread or bookkeeping stop, with observed evidence; never force a failed check when causality is unknown.
+Own the recovery judgment and choose one available owner verb from current evidence. If a ruling or authority is missing, report coordinatorAction {verb: 'cannot', reason: '…'} and name what is missing. Recovery rulings go through the coordinator report. Never resend an unknown delivery.
+
+For blocked or error include `cause` ({kind: 'external', name: '<short cause>'}, {kind: 'internal'} or {kind: 'unfinished'}) and `impediment` with the failed command, observed provider message or missing authority. Classify admission, guard or budget refusals and proof or native-step failures as external.
+
+Use `nucleus task -` with force:true only for an obvious stuck thread or bookkeeping stop with observed evidence. For a failed forge check include the check, job URL and evidence that this diff could not have caused it. Force requires known causality.
