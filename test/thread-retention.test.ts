@@ -362,8 +362,16 @@ test("the batch cap bounds one pass and reports what it left for the next", asyn
       new Date(NOW - (10 - i) * DAY).toISOString(),
     );
 
-  host.add("recent", f.taskLabels(task.id, "worker"), new Date(NOW - DAY).toISOString());
-  host.add("boundary", f.taskLabels(task.id, "worker"), new Date(NOW - 3 * DAY).toISOString());
+  host.add(
+    "recent",
+    f.taskLabels(task.id, "worker"),
+    new Date(NOW - DAY).toISOString(),
+  );
+  host.add(
+    "boundary",
+    f.taskLabels(task.id, "worker"),
+    new Date(NOW - 3 * DAY).toISOString(),
+  );
 
   const fact = await runThreadRetentionPass({
     store: f.store,
@@ -374,8 +382,16 @@ test("the batch cap bounds one pass and reports what it left for the next", asyn
   });
 
   assert.equal(fact.deleted, 2, "no more than the cap is removed");
-  assert.equal(fact.eligible, 6, "recent archives are not yet eligible; the cutoff is inclusive");
-  assert.equal(fact.remaining, 4, "only old candidates left by the cap are reported");
+  assert.equal(
+    fact.eligible,
+    6,
+    "recent archives are not yet eligible; the cutoff is inclusive",
+  );
+  assert.equal(
+    fact.remaining,
+    4,
+    "only old candidates left by the cap are reported",
+  );
   assert.deepEqual(
     host.calls.deleted,
     ["thread-0", "thread-1"],

@@ -454,7 +454,14 @@ export interface T3StatusInput {
   /** `service.health`'s retention record, when the service answered. */
   retention?: {
     days: number;
-    hosts: Array<{ hostId: string; supported: boolean; at: string | null; deleted: number; remaining: number; error: string }>;
+    hosts: Array<{
+      hostId: string;
+      supported: boolean;
+      at: string | null;
+      deleted: number;
+      remaining: number;
+      error: string;
+    }>;
   } | null;
   now?: number;
 }
@@ -500,22 +507,37 @@ export interface T3StatusReport {
  * the two it is, and a host the pass could not reach keeps its last real run.
  */
 export function retentionFacts(
-  health: {
-    days: number;
-    hosts: Array<{ hostId: string; supported: boolean; at: string | null; deleted: number; remaining: number; error: string }>;
-  } | null | undefined,
+  health:
+    | {
+        days: number;
+        hosts: Array<{
+          hostId: string;
+          supported: boolean;
+          at: string | null;
+          deleted: number;
+          remaining: number;
+          error: string;
+        }>;
+      }
+    | null
+    | undefined,
   hostId: string | null,
 ): T3RetentionFacts {
-  const fact = hostId ? health?.hosts.find((entry) => entry.hostId === hostId) : undefined;
+  const fact = hostId
+    ? health?.hosts.find((entry) => entry.hostId === hostId)
+    : undefined;
   return {
     days: health?.days ?? DEFAULT_THREAD_RETENTION_DAYS,
     supported: fact?.supported ?? false,
     lastRunAt: fact?.at ?? null,
     deleted: fact?.deleted ?? 0,
     remaining: fact?.remaining ?? 0,
-    error: fact?.error
-      ?? (health
-        ? (hostId ? "no retention pass has recorded this host yet" : "the service reports no T3Code host")
+    error:
+      fact?.error ??
+      (health
+        ? hostId
+          ? "no retention pass has recorded this host yet"
+          : "the service reports no T3Code host"
         : "the Nucleus service is not running"),
   };
 }

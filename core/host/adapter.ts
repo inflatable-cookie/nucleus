@@ -1,19 +1,27 @@
-import type { RunUsageSource } from './types';
-import type { HostAdapterIdentity } from './contract/identity';
-import type { AgentObservation, HostObservation } from './contract/observation';
-import type { HostRunCreation } from './contract/run-creation';
-import type { HostThreadPresentation } from './contract/thread-presentation';
-import type { HostThreads } from './contract/threads';
-import type { HostWorkspaces } from './contract/workspaces';
-import type { HostDelivery } from './contract/delivery';
-import type { HostNativeQuestions } from './contract/questions';
-import type { HostForgeReads } from './contract/forge';
-import type { HostWorkspaceArchive } from './contract/workspace-archive';
+import type { RunUsageSource } from "./types";
+import type { HostAdapterIdentity } from "./contract/identity";
+import type { AgentObservation, HostObservation } from "./contract/observation";
+import type { HostRunCreation } from "./contract/run-creation";
+import type { HostThreadPresentation } from "./contract/thread-presentation";
+import type { HostThreads } from "./contract/threads";
+import type { HostWorkspaces } from "./contract/workspaces";
+import type { HostDelivery } from "./contract/delivery";
+import type { HostNativeQuestions } from "./contract/questions";
+import type { HostForgeReads } from "./contract/forge";
+import type { HostWorkspaceArchive } from "./contract/workspace-archive";
 
-export type { OriginAgent } from './contract/identity';
-export type { ArchivedThread } from './contract/threads';
-export type { AgentObservation } from './contract/observation';
-export type { ExternalWorkspacePlacement, ExternalWorktreeSource, ExternalWorkspaceCatalogEntry, ExternalWorkspaceCatalog, ExternalWorkspaceSourceExpectation, ExternalWorkspaceArchiveInput, ExternalWorkspaceArchiveOutcome } from './contract/workspace-archive';
+export type { OriginAgent } from "./contract/identity";
+export type { ArchivedThread } from "./contract/threads";
+export type { AgentObservation } from "./contract/observation";
+export type {
+  ExternalWorkspacePlacement,
+  ExternalWorktreeSource,
+  ExternalWorkspaceCatalogEntry,
+  ExternalWorkspaceCatalog,
+  ExternalWorkspaceSourceExpectation,
+  ExternalWorkspaceArchiveInput,
+  ExternalWorkspaceArchiveOutcome,
+} from "./contract/workspace-archive";
 
 /**
  * The host adapter contract: one composed interface over the capability groups
@@ -25,9 +33,18 @@ export type { ExternalWorkspacePlacement, ExternalWorktreeSource, ExternalWorksp
  * same capabilities today, and this one is the adapter-side surface the engine
  * calls.
  */
-export interface Adapter extends RunUsageSource, HostAdapterIdentity, HostObservation, HostRunCreation,
-  HostThreadPresentation, HostThreads, HostWorkspaces, HostDelivery, HostNativeQuestions, HostForgeReads,
-  HostWorkspaceArchive {
+export interface Adapter
+  extends RunUsageSource,
+    HostAdapterIdentity,
+    HostObservation,
+    HostRunCreation,
+    HostThreadPresentation,
+    HostThreads,
+    HostWorkspaces,
+    HostDelivery,
+    HostNativeQuestions,
+    HostForgeReads,
+    HostWorkspaceArchive {
   /** Host-neutral connection probe used by runtime lifecycle owners. */
   isConnected?(): boolean;
 }

@@ -1,4 +1,4 @@
-import type { Task } from '../../../shared/contracts';
+import type { Task } from "../../../shared/contracts";
 
 /**
  * One archived thread the retention pass may prune (orchestration contract,
@@ -17,7 +17,12 @@ export interface ArchivedThread {
 
 /** The threads themselves: creating one for a task, finding the ones that exist, stopping a turn, and archiving or deleting a finished thread. */
 export interface HostThreads {
-  createAgent(task: Task, token: string, prompt: string, legacyPrompt?: string): Promise<{ id: string; workspaceId: string | null }>;
+  createAgent(
+    task: Task,
+    token: string,
+    prompt: string,
+    legacyPrompt?: string,
+  ): Promise<{ id: string; workspaceId: string | null }>;
   findAgents(task: Task): Promise<{ id: string; workspaceId: string | null }[]>;
   /** Stop the assigned agent's current turn without delivering a follow-up message. */
   stopAgentTurn?(agentId: string): Promise<void>;
@@ -42,7 +47,9 @@ export interface HostThreads {
    * gone), otherwise the stamp it reports now — `null` when the operator
    * unarchived it, which always keeps the thread.
    */
-  threadArchiveState?(agentId: string): Promise<{ archivedAt: string | null; deleted: boolean } | null>;
+  threadArchiveState?(
+    agentId: string,
+  ): Promise<{ archivedAt: string | null; deleted: boolean } | null>;
   /**
    * Drop this adapter's own per-thread state for threads the retention pass has
    * proved removed, so the state file shrinks with the threads it describes.

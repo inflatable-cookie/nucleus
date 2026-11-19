@@ -342,7 +342,14 @@ interface ServiceRead {
   /** `service.health`'s archived-thread retention record, when the service answered. */
   retention: {
     days: number;
-    hosts: Array<{ hostId: string; supported: boolean; at: string | null; deleted: number; remaining: number; error: string }>;
+    hosts: Array<{
+      hostId: string;
+      supported: boolean;
+      at: string | null;
+      deleted: number;
+      remaining: number;
+      error: string;
+    }>;
   } | null;
   hosts: Array<{
     id: string;
@@ -814,9 +821,11 @@ async function status(
     `${report.service.available && report.service.connected ? "ok" : "!!"}  Nucleus service: ${report.service.available ? `${report.service.connected ? `${report.service.hostId} online` : "T3Code host offline"}${report.service.error ? `: ${report.service.error}` : ""}` : `not running: ${report.service.error}`}`,
     `${report.service.nativeParenting ? "  " : ""}Native parenting: ${report.service.nativeParenting || "(service not reporting)"}`,
     `  Projects opted into T3Code: ${report.projects.length ? report.projects.map((project) => project.name).join(", ") : "(none)"}`,
-    `  Archived thread retention: ${report.retention.days} day(s)${report.retention.supported
-      ? `; last pass ${report.retention.lastRunAt ?? "(not yet run)"}, removed ${report.retention.deleted}, ${report.retention.remaining} remaining${report.retention.error ? ` — ${report.retention.error}` : ""}`
-      : `; this host cannot prune archived threads${report.retention.error ? ` — ${report.retention.error}` : ""}`}`,
+    `  Archived thread retention: ${report.retention.days} day(s)${
+      report.retention.supported
+        ? `; last pass ${report.retention.lastRunAt ?? "(not yet run)"}, removed ${report.retention.deleted}, ${report.retention.remaining} remaining${report.retention.error ? ` — ${report.retention.error}` : ""}`
+        : `; this host cannot prune archived threads${report.retention.error ? ` — ${report.retention.error}` : ""}`
+    }`,
   ];
   return lines.join("\n");
 }

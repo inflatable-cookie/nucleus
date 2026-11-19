@@ -1003,7 +1003,9 @@ export class StoreTasks {
    * identity with neither a task nor a tombstone answers false: never a guess.
    */
   purgedTask(id: string): boolean {
-    return Boolean(this.db.prepare("SELECT id FROM tombstones WHERE id=?").get(id));
+    return Boolean(
+      this.db.prepare("SELECT id FROM tombstones WHERE id=?").get(id),
+    );
   }
   /**
    * Bounded exact identity lookup for bridge lifecycle hints (Contract 007). It matches only

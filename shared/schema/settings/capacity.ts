@@ -15,7 +15,10 @@ export const DEFAULT_PAPERCUT_PROJECT_LIMIT = 2;
 export const DEFAULT_GLOBAL_LIMIT = 32;
 
 /** Host-local dispatch limit overrides, indexed by Queue project key. */
-export const projectDispatchLimitOverridesSchema = z.record(z.string().min(1), z.number().int().min(0).max(64));
+export const projectDispatchLimitOverridesSchema = z.record(
+  z.string().min(1),
+  z.number().int().min(0).max(64),
+);
 
 /** Time a complete GitHub non-merge proof must stay stable before one guarded re-issue. */
 export const DEFAULT_UNCERTAIN_MERGE_RETRY_MS = 2 * 60 * 1000;
@@ -70,37 +73,84 @@ interface CapacityBound {
 
 /** Spec 006/040/041: every limit Settings owns, bounded and defaulted once. */
 export const capacityBounds = {
-  papercutProjectLimit: { min: 1, max: 32, fallback: DEFAULT_PAPERCUT_PROJECT_LIMIT },
-  paseoCallLimit: { min: 1, max: MAX_PASEO_CALL_LIMIT, fallback: DEFAULT_PASEO_CALL_LIMIT },
-  stallThresholdMinutes: { min: 1, max: MAX_STALL_THRESHOLD_MINUTES, fallback: DEFAULT_STALL_THRESHOLD_MINUTES },
-  holdReminderMinutes: { min: 1, max: MAX_HOLD_MINUTES, fallback: DEFAULT_HOLD_REMINDER_MINUTES },
-  holdEscalationMinutes: { min: 1, max: MAX_HOLD_MINUTES, fallback: DEFAULT_HOLD_ESCALATION_MINUTES },
-  laneDrainMinutes: { min: 1, max: MAX_HOLD_MINUTES, fallback: DEFAULT_LANE_DRAIN_MINUTES },
-  laneDrainEscalationMinutes: { min: 1, max: MAX_HOLD_MINUTES, fallback: DEFAULT_LANE_DRAIN_ESCALATION_MINUTES },
-  hostOutageNoticeMinutes: { min: 1, max: MAX_HOST_OUTAGE_NOTICE_MINUTES, fallback: DEFAULT_HOST_OUTAGE_NOTICE_MINUTES },
-  threadRetentionDays: { min: 1, max: MAX_THREAD_RETENTION_DAYS, fallback: DEFAULT_THREAD_RETENTION_DAYS },
+  papercutProjectLimit: {
+    min: 1,
+    max: 32,
+    fallback: DEFAULT_PAPERCUT_PROJECT_LIMIT,
+  },
+  paseoCallLimit: {
+    min: 1,
+    max: MAX_PASEO_CALL_LIMIT,
+    fallback: DEFAULT_PASEO_CALL_LIMIT,
+  },
+  stallThresholdMinutes: {
+    min: 1,
+    max: MAX_STALL_THRESHOLD_MINUTES,
+    fallback: DEFAULT_STALL_THRESHOLD_MINUTES,
+  },
+  holdReminderMinutes: {
+    min: 1,
+    max: MAX_HOLD_MINUTES,
+    fallback: DEFAULT_HOLD_REMINDER_MINUTES,
+  },
+  holdEscalationMinutes: {
+    min: 1,
+    max: MAX_HOLD_MINUTES,
+    fallback: DEFAULT_HOLD_ESCALATION_MINUTES,
+  },
+  laneDrainMinutes: {
+    min: 1,
+    max: MAX_HOLD_MINUTES,
+    fallback: DEFAULT_LANE_DRAIN_MINUTES,
+  },
+  laneDrainEscalationMinutes: {
+    min: 1,
+    max: MAX_HOLD_MINUTES,
+    fallback: DEFAULT_LANE_DRAIN_ESCALATION_MINUTES,
+  },
+  hostOutageNoticeMinutes: {
+    min: 1,
+    max: MAX_HOST_OUTAGE_NOTICE_MINUTES,
+    fallback: DEFAULT_HOST_OUTAGE_NOTICE_MINUTES,
+  },
+  threadRetentionDays: {
+    min: 1,
+    max: MAX_THREAD_RETENTION_DAYS,
+    fallback: DEFAULT_THREAD_RETENTION_DAYS,
+  },
 } as const satisfies Record<string, CapacityBound>;
 
 export type CapacityBoundField = keyof typeof capacityBounds;
 
 /** One limit's value schema, under the bound the catalogue records. */
 const capacityValue = (field: CapacityBoundField) =>
-  z.number().int().min(capacityBounds[field].min).max(capacityBounds[field].max);
+  z
+    .number()
+    .int()
+    .min(capacityBounds[field].min)
+    .max(capacityBounds[field].max);
 
-export const capacitySchema = z.object({
-  globalLimit: z.number().int().min(1).max(64), projectLimit: z.number().int().min(1).max(32),
-  // Optional so an older caller saving one group never resets the others.
-  papercutProjectLimit: capacityValue("papercutProjectLimit").optional(),
-  paseoCallLimit: capacityValue("paseoCallLimit").optional(),
-  stallThresholdMinutes: capacityValue("stallThresholdMinutes").optional(),
-  holdReminderMinutes: capacityValue("holdReminderMinutes").optional(),
-  holdEscalationMinutes: capacityValue("holdEscalationMinutes").optional(),
-  laneDrainMinutes: capacityValue("laneDrainMinutes").optional(),
-  laneDrainEscalationMinutes: capacityValue("laneDrainEscalationMinutes").optional(),
-  hostOutageNoticeMinutes: capacityValue("hostOutageNoticeMinutes").optional(),
-  threadRetentionDays: capacityValue("threadRetentionDays").optional(),
-  operatorDefaultHostKind: hostKindSchema.nullable().optional(),
-}).strict();
+export const capacitySchema = z
+  .object({
+    globalLimit: z.number().int().min(1).max(64),
+    projectLimit: z.number().int().min(1).max(32),
+    // Optional so an older caller saving one group never resets the others.
+    papercutProjectLimit: capacityValue("papercutProjectLimit").optional(),
+    paseoCallLimit: capacityValue("paseoCallLimit").optional(),
+    stallThresholdMinutes: capacityValue("stallThresholdMinutes").optional(),
+    holdReminderMinutes: capacityValue("holdReminderMinutes").optional(),
+    holdEscalationMinutes: capacityValue("holdEscalationMinutes").optional(),
+    laneDrainMinutes: capacityValue("laneDrainMinutes").optional(),
+    laneDrainEscalationMinutes: capacityValue(
+      "laneDrainEscalationMinutes",
+    ).optional(),
+    hostOutageNoticeMinutes: capacityValue(
+      "hostOutageNoticeMinutes",
+    ).optional(),
+    threadRetentionDays: capacityValue("threadRetentionDays").optional(),
+    operatorDefaultHostKind: hostKindSchema.nullable().optional(),
+  })
+  .strict();
 
 /**
  * Settings-only capacity writes (service-boundary contract, "Settings-only
@@ -121,7 +171,9 @@ export const capacityAuthorityValuesSchema = capacitySchema.extend({
   operatorDefaultHostKind: hostKindSchema.nullable(),
 });
 
-export type CapacityAuthorityValues = z.infer<typeof capacityAuthorityValuesSchema>;
+export type CapacityAuthorityValues = z.infer<
+  typeof capacityAuthorityValuesSchema
+>;
 
 /**
  * The capacity fields the board state carries, with the default an absent stored
@@ -129,15 +181,33 @@ export type CapacityAuthorityValues = z.infer<typeof capacityAuthorityValuesSche
  * bounds, so a limit has one answer wherever it is read.
  */
 export const capacityStateFields = {
-  papercutProjectLimit: capacityValue("papercutProjectLimit").default(capacityBounds.papercutProjectLimit.fallback),
-  paseoCallLimit: capacityValue("paseoCallLimit").default(capacityBounds.paseoCallLimit.fallback),
-  stallThresholdMinutes: capacityValue("stallThresholdMinutes").default(capacityBounds.stallThresholdMinutes.fallback),
-  holdReminderMinutes: capacityValue("holdReminderMinutes").default(capacityBounds.holdReminderMinutes.fallback),
-  holdEscalationMinutes: capacityValue("holdEscalationMinutes").default(capacityBounds.holdEscalationMinutes.fallback),
-  laneDrainMinutes: capacityValue("laneDrainMinutes").default(capacityBounds.laneDrainMinutes.fallback),
-  laneDrainEscalationMinutes: capacityValue("laneDrainEscalationMinutes").default(capacityBounds.laneDrainEscalationMinutes.fallback),
-  hostOutageNoticeMinutes: capacityValue("hostOutageNoticeMinutes").default(capacityBounds.hostOutageNoticeMinutes.fallback),
-  threadRetentionDays: capacityValue("threadRetentionDays").default(capacityBounds.threadRetentionDays.fallback),
+  papercutProjectLimit: capacityValue("papercutProjectLimit").default(
+    capacityBounds.papercutProjectLimit.fallback,
+  ),
+  paseoCallLimit: capacityValue("paseoCallLimit").default(
+    capacityBounds.paseoCallLimit.fallback,
+  ),
+  stallThresholdMinutes: capacityValue("stallThresholdMinutes").default(
+    capacityBounds.stallThresholdMinutes.fallback,
+  ),
+  holdReminderMinutes: capacityValue("holdReminderMinutes").default(
+    capacityBounds.holdReminderMinutes.fallback,
+  ),
+  holdEscalationMinutes: capacityValue("holdEscalationMinutes").default(
+    capacityBounds.holdEscalationMinutes.fallback,
+  ),
+  laneDrainMinutes: capacityValue("laneDrainMinutes").default(
+    capacityBounds.laneDrainMinutes.fallback,
+  ),
+  laneDrainEscalationMinutes: capacityValue(
+    "laneDrainEscalationMinutes",
+  ).default(capacityBounds.laneDrainEscalationMinutes.fallback),
+  hostOutageNoticeMinutes: capacityValue("hostOutageNoticeMinutes").default(
+    capacityBounds.hostOutageNoticeMinutes.fallback,
+  ),
+  threadRetentionDays: capacityValue("threadRetentionDays").default(
+    capacityBounds.threadRetentionDays.fallback,
+  ),
   operatorDefaultHostKind: hostKindSchema.nullable().default(DEFAULT_HOST_KIND),
 };
 
@@ -150,14 +220,16 @@ export const CAPACITY_CHANGE_LOG_LIMIT = 20;
  * meta — never an export or a contract 010 shape — and it is written in the same
  * transaction as the capacity meta keys it describes.
  */
-export const capacityChangeSchema = z.object({
-  version: z.number().int().positive(),
-  at: z.string().max(64),
-  // The transport surface, derived from the request frame, never from the body.
-  surface: z.enum(["paseo", "web", "bb"]),
-  before: capacityAuthorityValuesSchema,
-  after: capacityAuthorityValuesSchema,
-}).strict();
+export const capacityChangeSchema = z
+  .object({
+    version: z.number().int().positive(),
+    at: z.string().max(64),
+    // The transport surface, derived from the request frame, never from the body.
+    surface: z.enum(["paseo", "web", "bb"]),
+    before: capacityAuthorityValuesSchema,
+    after: capacityAuthorityValuesSchema,
+  })
+  .strict();
 
 export type CapacityChange = z.infer<typeof capacityChangeSchema>;
 
@@ -166,16 +238,26 @@ export type CapacityChange = z.infer<typeof capacityChangeSchema>;
  * values every live reader sees and the bounded record of applied changes, newest
  * last. It takes no input and invents nothing: it reports what the store holds.
  */
-export const capacityAuthorityStateSchema = z.object({
-  effective: capacityAuthorityValuesSchema,
-  changes: z.array(capacityChangeSchema).max(CAPACITY_CHANGE_LOG_LIMIT),
-}).strict();
+export const capacityAuthorityStateSchema = z
+  .object({
+    effective: capacityAuthorityValuesSchema,
+    changes: z.array(capacityChangeSchema).max(CAPACITY_CHANGE_LOG_LIMIT),
+  })
+  .strict();
 
-export type CapacityAuthorityState = z.infer<typeof capacityAuthorityStateSchema>;
+export type CapacityAuthorityState = z.infer<
+  typeof capacityAuthorityStateSchema
+>;
 
 /** Spec 053: how far each role's demand sits from the task's complexity, host-wide (Settings → Dispatch limits). */
 const demandOffsetSchema = z.number().int().min(-4).max(4);
 
-export const demandRoleOffsetsSchema = z.object({ worker: demandOffsetSchema, reviewer: demandOffsetSchema, coordinator: demandOffsetSchema }).strict();
+export const demandRoleOffsetsSchema = z
+  .object({
+    worker: demandOffsetSchema,
+    reviewer: demandOffsetSchema,
+    coordinator: demandOffsetSchema,
+  })
+  .strict();
 
 export type DemandRoleOffsets = z.infer<typeof demandRoleOffsetsSchema>;
