@@ -25,7 +25,7 @@ import { findProcessByCommandTokenAsync } from "../machine/process-identity";
 import { processGroupEmpty } from "../machine/process-group";
 import { processesForStartIdentity, processStartIdentityLiveness } from "../machine/process-identity-search";
 import { confirmStaleSupervisorHeartbeat, SUPERVISOR_STUCK_CONFIRMATION_MS } from "../machine/supervisor-watchdog";
-import { stopDetachedSupervisor } from "./supervisor-process";
+import { stopRecordedProcessGroup, stopSupervisorProcess } from "./supervisor-process";
 
 /**
  * #1393: how long the service lets a supervisor keep a run it has not settled
@@ -175,29 +175,18 @@ export class ProjectQaInspection {
           // Keep pre-stop evidence. The run token in each group's environment
           // proves which processes may be stopped.
           if (sameSupervisorAlive) observedLiveness = "live";
-          if (!await this.recordStillNamesStep(statePath, run.id, state.activeProcess)) return { kind: "running", state };
-          await this.limits.beforeStepStop?.(statePath);
-          if (!await this.recordStillNamesStep(statePath, run.id, state.activeProcess)) return { kind: "running", state };
-          const stopped = await stopDetachedSupervisor({
-            supervisorPid: state.pid,
-            ...(state.supervisorStartIdentity ? { supervisorStartIdentity: state.supervisorStartIdentity } : {}),
-            identityToken: state.identityToken, activeProcess: state.activeProcess,
-          });
-          if (stopped) {
-            const staleReason = `the supervisor heartbeat was stale for ${staleAgeMs}ms and unchanged across checks ${SUPERVISOR_STUCK_CONFIRMATION_MS}ms apart; its process groups were stopped`;
-            // A result written during the stop is the run's own settlement.
-            const lateResult = readHostRunResult(resultPath, run.id);
-            if (lateResult) return { kind: "settled", state, hostResult: lateResult };
-            // #1393: the stop proves the step's group is gone, so a step exit the
-            // supervisor recorded before it went quiet is an observable outcome.
-            // It settles failed from that exit, never as an unexplained loss.
-            const exit = state.activeProcess
-              ? readQaStepExit(stepExitPath, { runId: run.id, step: state.activeProcess.step, pid: state.activeProcess.pid }) : null;
-            if (exit) return { kind: "step_ended", state, step: exit.step, exit, emptyForMs: 0,
-              reason: `${staleReason}; ${exit.step} had already recorded ${exit.signal ? `${exit.signal}` : `exit code ${exit.exitCode}`} at ${exit.exitedAt}` };
-            return { kind: "dead", state, staleStop: true, reason: staleReason };
-          }
-          return { kind: "running", state };
+          const handover = await this.handOverSupervisor(state, run, statePath, resultPath);
+          if (!handover) return { kind: "running", state };
+          if (handover.hostResult) return { kind: "settled", state, hostResult: handover.hostResult };
+          const staleReason = `the supervisor heartbeat was stale for ${staleAgeMs}ms and unchanged across checks ${SUPERVISOR_STUCK_CONFIRMATION_MS}ms apart; it was stopped with its recorded step group`;
+          // #1393: a step exit the supervisor recorded before it went quiet is
+          // an observable outcome. It settles failed from that exit, never as an
+          // unexplained loss.
+          const exit = state.activeProcess
+            ? readQaStepExit(stepExitPath, { runId: run.id, step: state.activeProcess.step, pid: state.activeProcess.pid }) : null;
+          if (exit) return { kind: "step_ended", state, step: exit.step, exit, emptyForMs: 0,
+            reason: `${staleReason}; ${exit.step} had already recorded ${exit.signal ? `${exit.signal}` : `exit code ${exit.exitCode}`} at ${exit.exitedAt}` };
+          return { kind: "dead", state, staleStop: true, reason: staleReason };
         }
         if (liveness.state === "dead") {
           if (state.activeProcess && !processGroupEmpty(state.activeProcess.processGroupId))
@@ -270,18 +259,19 @@ export class ProjectQaInspection {
   }
 
   /**
-   * #1393: true only while the durable record still names this exact step
+   * #1393: true only when the durable record still names this exact step
    * process. Stopping a supervisor takes time, and the record read before the
    * stop may already be an earlier step: a newer record means the supervisor
    * moved on, so this observation decides nothing and the next poll reads the
-   * advance instead of stopping a step the run has not described yet.
+   * advance instead of stopping a step the run has not described yet. The answer
+   * is positive only: a record that cannot be read proves nothing about which
+   * step is running, so it holds the run rather than authorising a stop.
    */
   private async recordStillNamesStep(
     statePath: string, runId: string, active: QaSupervisionState["activeProcess"],
   ): Promise<boolean> {
     const read = readQaSupervisionStateFile(statePath);
-    // An unreadable or absent record is not an advance: neither proves a newer step.
-    if (read.kind !== "present") return true;
+    if (read.kind !== "present") return false;
     const fresh = read.value;
     if (fresh.runId !== runId) return false;
     if (!active) return fresh.activeProcess === null;
@@ -289,6 +279,39 @@ export class ProjectQaInspection {
       && fresh.activeProcess?.step === active.step
       && fresh.activeProcess?.pid === active.pid
       && fresh.activeProcess?.processGroupId === active.processGroupId;
+  }
+
+  /**
+   * #1393: take a run over from a supervisor that will not settle it. The
+   * supervisor is the only process that can start another step, so it is
+   * stopped first and alone; only then is the step group stopped, and only when
+   * the record still names it. The record is re-read before each of those
+   * decisions, and a record that advanced or cannot be read holds the run: a
+   * takeover never signals a group its durable record does not name.
+   *
+   * The answer is the record the verdict may rest on, or null for "hold"; a
+   * host result written during the handover is the run's own settlement.
+   */
+  private async handOverSupervisor(
+    state: QaSupervisionState, run: ProjectQaRun, statePath: string, resultPath: string,
+  ): Promise<{ hostResult: HostRunResult | null } | null> {
+    if (!await this.recordStillNamesStep(statePath, run.id, state.activeProcess)) return null;
+    await this.limits.beforeStepStop?.(statePath);
+    if (!await this.recordStillNamesStep(statePath, run.id, state.activeProcess)) return null;
+    const supervisorStopped = await stopSupervisorProcess({
+      supervisorPid: state.pid,
+      ...(state.supervisorStartIdentity ? { supervisorStartIdentity: state.supervisorStartIdentity } : {}),
+      identityToken: state.identityToken,
+    });
+    if (!supervisorStopped) return null;
+    const hostResult = readHostRunResult(resultPath, run.id);
+    if (hostResult) return { hostResult };
+    // Nothing can start a step now, but the record may still have advanced
+    // before the stop (a queued write landing late). Only a record that names
+    // this step may have its group stopped and be settled from.
+    if (!await this.recordStillNamesStep(statePath, run.id, state.activeProcess)) return null;
+    if (state.activeProcess && !await stopRecordedProcessGroup(state.activeProcess, state.identityToken)) return null;
+    return { hostResult: null };
   }
 
   /**
@@ -320,20 +343,12 @@ export class ProjectQaInspection {
     // The record read at the start of this inspection may be an earlier step by
     // now. Stopping on it would kill the step the supervisor has moved on to, so
     // an advance cancels the verdict instead.
-    if (!await this.recordStillNamesStep(statePath, run.id, active)) return { kind: "running", state };
-    await this.limits.beforeStepStop?.(statePath);
-    if (!await this.recordStillNamesStep(statePath, run.id, active)) return { kind: "running", state };
-    const exit = readQaStepExit(stepExitPath, { runId: run.id, step: active.step, pid: active.pid });
-    const stopped = await stopDetachedSupervisor({
-      supervisorPid: state.pid,
-      ...(state.supervisorStartIdentity ? { supervisorStartIdentity: state.supervisorStartIdentity } : {}),
-      identityToken: state.identityToken, activeProcess: active,
-    });
-    if (!stopped) return { kind: "running", state };
+    const handover = await this.handOverSupervisor(state, run, statePath, resultPath);
+    if (!handover) return { kind: "running", state };
     this.endedStepObservations.delete(observationKey);
     // A result written during the stop is the run's own settlement; use it.
-    const lateResult = readHostRunResult(resultPath, run.id);
-    if (lateResult) return { kind: "settled", state, hostResult: lateResult };
+    if (handover.hostResult) return { kind: "settled", state, hostResult: handover.hostResult };
+    const exit = readQaStepExit(stepExitPath, { runId: run.id, step: active.step, pid: active.pid });
     const ended = exit
       ? `${active.step} ended ${exit.signal ? `by ${exit.signal}` : `with exit code ${exit.exitCode}`} at ${exit.exitedAt}`
       : `${active.step} left no process group and recorded no exit`;

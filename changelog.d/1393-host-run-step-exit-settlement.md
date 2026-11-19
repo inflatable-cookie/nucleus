@@ -10,7 +10,9 @@ rather than a hold.
 
 The stale-heartbeat stop reads that recorded exit too, so a hung supervisor never
 discards an outcome its child had already reported: the run settles `failed` from
-the exit instead of `lost`. Both stops re-read the supervision record first, so a
-step the supervisor has already moved on to is never the group a stop is decided
-on. `lost` is reserved for a supervisor that died or an outcome that is genuinely
-unobservable — which still names the step and where its output ended.
+the exit instead of `lost`. A takeover stops the supervisor first and alone, then
+only the step group the supervision record still names, re-reading that record
+before each decision and requiring the answer to be positive: a record that
+advanced or cannot be read holds the run. `lost` is reserved for a supervisor that
+died or an outcome that is genuinely unobservable — which still names the step and
+where its output ended.

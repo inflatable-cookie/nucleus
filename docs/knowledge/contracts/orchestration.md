@@ -146,19 +146,26 @@ uncertain hold.
 
 When the supervisor is alive and the step it says is in flight has no process
 group left, `project-qa-inspection.ts` watches that emptiness for a short bound
-(`QA_STEP_EXIT_SETTLE_BOUND_MS`), then stops the supervisor under the same proof
-as the stale-heartbeat rule and hands the run to `project-qa-recovery.ts`. The
-stale-heartbeat stop reaches the same settlement: it also reads the step's
-recorded exit after the stop, so a hung supervisor never discards an outcome it
-had already written. With a recorded exit the run settles `failed` from the
-step's exit code or signal, with the step named as
+(`QA_STEP_EXIT_SETTLE_BOUND_MS`), then hands the run to
+`project-qa-recovery.ts`. The stale-heartbeat stop reaches the same settlement:
+it also reads the step's recorded exit after the stop, so a hung supervisor never
+discards an outcome it had already written. With a recorded exit the run settles
+`failed` from the step's exit code or signal, with the step named as
 `interruptedStep`/`failedStep` and the live output log's path, byte offset and
 last lines in its detail; with no recorded exit the outcome is genuinely
 unobservable and the run settles `lost`, carrying the same step and output
 pointer. `lost` therefore means a dead supervisor or an unobservable outcome,
-never a run that simply waited for its capacity deadline. Both stops re-read the
-record first, so a step the supervisor has already moved past is never the group
-a stop is decided on.
+never a run that simply waited for its capacity deadline.
+
+A takeover is ordered so it can only ever stop what the durable record names.
+`supervisor-process.ts` stops the supervisor first and alone, and only then is a
+step group stopped, through `stopRecordedProcessGroup`, which signals nothing
+outside that group: a process that inherited the run token in another group is a
+step the record does not describe and is never touched. The record is re-read
+before each of those decisions, and the answer must be positive — a record that
+advanced or cannot be read holds the run and the next poll re-inspects instead.
+With the supervisor dead, nothing can start a new step, so the group the record
+still names is the only one the takeover stops.
 
 `supervisor-process.ts` owns the detached supervisor's own process lifecycle — the
 launch shape and the stale stop with its proof — for milestone QA, project

@@ -22,7 +22,6 @@ import { supervisorLiveness, supervisorLivenessAsync } from "../machine/start-id
 export const SUPERVISOR_STOP_GRACE_MS = 250;
 /** Bounded proof window for process-group reaping after SIGKILL. */
 const SUPERVISOR_STOP_PROOF_WAIT_MS = 5_000;
-
 export interface DetachedSupervisorLaunch {
   /** The supervisor entry shipped beside the service. */
   entry: string;
@@ -66,6 +65,69 @@ export interface DetachedSupervisorStopTarget {
   identityToken: string;
   /** The step process group the supervisor published, when it published one. */
   activeProcess?: { pid: number; processGroupId: number; startIdentity: string } | null;
+}
+
+/** One recorded step group, addressed the way the executor published it. */
+export interface RecordedProcessGroup {
+  pid: number;
+  processGroupId: number;
+  startIdentity: string;
+}
+
+/**
+ * Signal one recorded step group only while its own proof holds: a live member
+ * carrying the run token, or the recorded leader at its recorded birth
+ * identity. Nothing outside the group is signalled, so a process that inherited
+ * the run token in a different group is never touched by this stop.
+ */
+async function stopRecordedGroup(active: RecordedProcessGroup, identityToken: string): Promise<boolean> {
+  const send = (name: NodeJS.Signals): void => {
+    signalProcessGroup(active.processGroupId, identityToken, name);
+    signalProcessGroupByLeader(active.processGroupId, active.pid, active.startIdentity, name);
+  };
+  if (processGroupEmpty(active.processGroupId)) return true;
+  send("SIGTERM");
+  if (await waitForProcessGroupEmpty(active.processGroupId, SUPERVISOR_STOP_GRACE_MS)) return true;
+  send("SIGKILL");
+  return waitForProcessGroupEmpty(active.processGroupId, SUPERVISOR_STOP_PROOF_WAIT_MS);
+}
+
+/**
+ * Stop one recorded step group and prove it empty. The supervisor is left
+ * alone: a caller that takes a run over stops the supervisor first, so no new
+ * step can start, and only then decides which group its durable record names.
+ */
+export function stopRecordedProcessGroup(active: RecordedProcessGroup, identityToken: string): Promise<boolean> {
+  return stopRecordedGroup(active, identityToken);
+}
+
+/**
+ * Stop one detached supervisor and prove it gone, without signalling the step
+ * group it published. That group is a separate process group, so a step the
+ * supervisor started keeps running when this returns: the caller owns the
+ * decision to stop it, and with the supervisor dead nothing new can start.
+ * SIGTERM reaches the supervisor, the grace passes, SIGKILL follows, and the
+ * answer is true only when its identity and its own group are proven gone.
+ */
+export async function stopSupervisorProcess(target: {
+  supervisorPid: number;
+  supervisorStartIdentity?: string;
+  identityToken: string;
+}): Promise<boolean> {
+  const { supervisorPid, supervisorStartIdentity, identityToken } = target;
+  const signalSupervisor = (signal: NodeJS.Signals): void => {
+    if (supervisorStartIdentity)
+      signalProcessGroupByLeader(supervisorPid, supervisorPid, supervisorStartIdentity, signal);
+    if (supervisorLiveness(supervisorPid, identityToken).state !== "live") return;
+    try { process.kill(supervisorPid, signal); } catch { /* the verified supervisor exited */ }
+  };
+  signalSupervisor("SIGTERM");
+  await new Promise(resolve => setTimeout(resolve, SUPERVISOR_STOP_GRACE_MS));
+  if (!processGroupEmpty(supervisorPid)) signalSupervisor("SIGKILL");
+  const groupEmpty = await waitForProcessGroupEmpty(supervisorPid, SUPERVISOR_STOP_PROOF_WAIT_MS);
+  const supervisor = await supervisorLivenessAsync(supervisorPid, identityToken);
+  const identity = supervisorStartIdentity ? processStartIdentityLiveness(supervisorPid, supervisorStartIdentity) : "unknown";
+  return (supervisor.state === "dead" || identity === "dead") && groupEmpty && processGroupEmpty(supervisorPid);
 }
 
 /**

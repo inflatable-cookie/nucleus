@@ -10,6 +10,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
+import { chmodSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -17,7 +18,7 @@ import { tmpdir } from "node:os";
 import { executeHookProgram, type ChildExitFacts } from "../core/machine/process-exec";
 import { minimalHookEnvironment } from "../core/hooks/hook-result";
 import { hostRunProcessStartIdentity } from "../core/machine/start-identity";
-import { overrideIdentityListing } from "../core/machine/process-identity-search";
+import { overrideIdentityListing, processStartIdentityEnvironment } from "../core/machine/process-identity-search";
 import { processGroupEmpty } from "../core/machine/process-group";
 import {
   qaRunLiveOutputPath,
@@ -253,6 +254,43 @@ test("a stale heartbeat does not discard a recorded step exit: the run settles f
   assert.match(verdict.reason, /heartbeat was stale for \d+ms/, "the stale stop is still named");
   assert.match(verdict.reason, /SIGKILL/, "and the step's own recorded exit travels with it");
   assert.throws(() => process.kill(f.supervisor.pid!, 0), /ESRCH/, "the stale supervisor was stopped");
+});
+
+test("a takeover signals only the group the record names, never another process carrying the run token", { skip: process.platform === "win32" }, async (t) => {
+  const f = await inspectionFixture(t, { boundMs: 0 });
+  // A process that inherited the run token in its own group is the shape of a
+  // step the supervisor started after the record we are acting on.
+  const carrier = spawn(process.execPath, ["-e", "setTimeout(() => {}, 120000)"], {
+    detached: true, stdio: "ignore",
+    env: { ...process.env, ...processStartIdentityEnvironment(f.identityToken) },
+  });
+  t.after(() => { try { process.kill(-carrier.pid!, "SIGKILL"); } catch { /* already gone */ } });
+  overrideIdentityListing(identity => identity === f.identityToken
+    ? { state: "found", processes: [{ pid: carrier.pid!, processGroupId: carrier.pid!,
+      startIdentity: hostRunProcessStartIdentity(carrier.pid!) }] }
+    : { state: "unknown" });
+  const verdict = await f.inspection.inspectSupervisor(f.run);
+  assert.equal(verdict.kind, "step_ended", JSON.stringify(verdict));
+  assert.throws(() => process.kill(f.supervisor.pid!, 0), /ESRCH/, "the supervisor was stopped");
+  assert.equal(process.kill(carrier.pid!, 0), true,
+    "a process carrying the run token in another group is never signalled by this takeover");
+});
+
+test("an unreadable recheck holds the run instead of taking it over", { skip: process.platform === "win32" }, async (t) => {
+  let refused = 0;
+  const f = await inspectionFixture(t, {
+    boundMs: 0,
+    beforeStepStop: statePath => {
+      // The record can be read at the start of the inspection and not when the
+      // stop is decided: that answer proves nothing about the running step.
+      refused++;
+      chmodSync(statePath, 0o644);
+    },
+  });
+  const verdict = await f.inspection.inspectSupervisor(f.run);
+  assert.equal(refused, 1, "the seam ran before the stop decision");
+  assert.equal(verdict.kind, "running", `an unreadable recheck holds the run: ${JSON.stringify(verdict)}`);
+  assert.equal(process.kill(f.supervisor.pid!, 0), true, "the supervisor was not stopped");
 });
 
 test("an outdated record never stops the later step the supervisor moved on to", { skip: process.platform === "win32" }, async (t) => {
