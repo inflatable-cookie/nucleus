@@ -786,3 +786,19 @@ test("an unbound directory opens an inert session but cannot prompt or load", as
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("an inbox session holds with its host identity and never forwards stale prompt text as a task message", async () => {
+  const transport = new ScriptedTransport();
+  const inbox = { format: "nucleus.acp.inbox" as const, version: 1 as const, kind: "inbox" as const,
+    hostId: "t3code:synthetic", sessionId: "6b1d4e1a-9c1f-4f80-9b0b-3a0e1a6f2c11", socketPath: "/nonexistent/callback.sock", token: "fixture-token" };
+  const client = harness({ agent: { resolve: async () => ({ binding: inbox, transport }) } });
+  try {
+    await client.lines.untilResult(client.request("session/load", { sessionId: inbox.sessionId, cwd: "/synthetic" }));
+    const prompt = client.request("session/prompt", { sessionId: inbox.sessionId, prompt: [{ type: "text", text: "stale card answer" }] });
+    await turnStarted(transport, 2);
+    assert.deepEqual(transport.turns[0], { kind: "inbox", hostId: inbox.hostId, sessionId: inbox.sessionId, waitMs: 0, attach: true });
+    assert.equal(transport.messages.length, 0);
+    client.notify("session/cancel", { sessionId: inbox.sessionId });
+    await client.lines.untilResult(prompt);
+  } finally { await client.closed(); }
+});

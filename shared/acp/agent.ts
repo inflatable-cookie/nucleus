@@ -21,7 +21,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { AcpBindingMissingError } from "./binding";
 import type { AcpBinding } from "./binding";
-import type { AcpMessageInput, AcpTurnInput, AcpTurnReply } from "./surface";
+import type { AcpCaller, AcpMessageInput, AcpTurnInput, AcpTurnReply } from "./surface";
 
 export type { AcpMessageInput, AcpTurnInput, AcpTurnReply };
 
@@ -54,9 +54,7 @@ export const ACP_MODELS = [
 ] as const;
 
 /** The turn request the transport sends: the surface's input with the wait always named. */
-export interface AcpTurnRequest extends AcpTurnInput {
-  waitMs: number;
-}
+export type AcpTurnRequest = AcpTurnInput & { waitMs: number };
 export type AcpMessageRequest = AcpMessageInput;
 export interface AcpMessageReply {
   receipt: { status: string; detail?: string };
@@ -117,7 +115,7 @@ const reasonOf = (error: unknown): string =>
 
 interface SessionState {
   sessionId: string;
-  taskId: string;
+  caller: AcpCaller;
   binding: AcpBinding;
   transport: AcpSessionTransport;
   /** Lifecycle lines the service already sent, waiting for the next prompt to show them. */
@@ -340,7 +338,7 @@ export class AcpAgent {
     const attached = await this.attach(source);
     const session: SessionState = {
       sessionId: binding.sessionId,
-      taskId: binding.taskId,
+      caller: callerFor(binding),
       binding,
       transport: source.transport,
       pending: attached.messages,
@@ -379,8 +377,7 @@ export class AcpAgent {
     try {
       return await transport.turn(
         {
-          taskId: binding.taskId,
-          sessionId: binding.sessionId,
+          ...callerFor(binding),
           waitMs: 0,
           attach: true,
         },
@@ -389,7 +386,7 @@ export class AcpAgent {
     } catch (error) {
       throw new AcpRefusal(
         -32000,
-        `Nucleus is unreachable for task ${binding.taskId}: ${reasonOf(error)}`,
+        `Nucleus is unreachable for this session: ${reasonOf(error)}`,
       );
     }
   }
@@ -439,7 +436,7 @@ export class AcpAgent {
       session.controller = new AbortController();
       for (const line of session.pending.splice(0))
         this.emit(send, sessionId, line);
-      if (!opening && !holding) {
+      if (!opening && !holding && session.caller.kind !== "inbox") {
         const forwarded = await this.forward(session, text, send);
         if (!forwarded) {
           this.result(send, id, { stopReason: "end_turn" });
@@ -463,12 +460,13 @@ export class AcpAgent {
     text: string,
     send: Send,
   ): Promise<boolean> {
+    if (session.caller.kind === "inbox") return false;
     const eventId = createHash("sha256")
       .update(`${session.sessionId}\0${text}`)
       .digest("hex");
     try {
       await session.transport.message({
-        taskId: session.taskId,
+        taskId: session.caller.taskId,
         sessionId: session.sessionId,
         eventId,
         text,
@@ -497,8 +495,7 @@ export class AcpAgent {
       try {
         const reply = await session.transport.turn(
           {
-            taskId: session.taskId,
-            sessionId: session.sessionId,
+            ...session.caller,
             waitMs: this.turnWaitMs,
           },
           session.controller.signal,
@@ -568,3 +565,10 @@ const yieldToEventLoop = (): Promise<void> =>
   new Promise((resolve) => {
     setImmediate(resolve).unref?.();
   });
+
+/** The binding, never prompt text, selects the scoped service surface. */
+function callerFor(binding: AcpBinding): AcpCaller {
+  return "kind" in binding && binding.kind === "inbox"
+    ? { kind: "inbox", hostId: binding.hostId, sessionId: binding.sessionId }
+    : { taskId: binding.taskId, sessionId: binding.sessionId };
+}

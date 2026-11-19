@@ -120,6 +120,7 @@ test("a host adapter's mint names the prompt rules its launched agent reads", as
     const binding = readAcpBinding(minted.bindingPath);
     assert.equal(binding.ignorePattern, 'Delegated task node:delegated-task:');
     assert.equal(binding.holdPattern, 'nucleus-hold-the-task-thread');
+    assert.ok("taskId" in binding);
     assert.equal(binding.taskId, fixture.taskId);
     // A mint without rules writes neither field: a host that has no such text is not
     // given a rule it never asked for.
@@ -170,6 +171,7 @@ test("a held turn answers with the lifecycle line once, stays quiet, then releas
     assert.equal(first.state, "hold");
     assert.deepEqual(first.messages, [acpLifecycleLine(fixture.store.task(fixture.taskId))]);
     assert.match(first.messages[0]!, /Working/);
+    assert.ok("task" in first);
     assert.match(String(first.task.reference), /#/, "the line is named by the task's durable reference");
     const quiet = await fixture.turn();
     assert.deepEqual(quiet.messages, [], "a held poll on an unchanged task says nothing");
@@ -444,3 +446,16 @@ async function until(predicate: () => boolean, timeoutMs = 10_000): Promise<void
     await new Promise(resolve => setTimeout(resolve, 10));
   }
 }
+
+test("an inbox session can hold its own turn but cannot use a task's message authority", async () => {
+  const fixture = await acpFixture();
+  try {
+    const inbox = fixture.acp.bindInbox({ hostId: "t3code:synthetic" });
+    const binding = readAcpBinding(inbox.bindingPath);
+    assert.ok("kind" in binding && binding.kind === "inbox");
+    const reply = await callbackRequest(binding, "/acp-turn", { kind: "inbox", hostId: inbox.hostId, sessionId: inbox.sessionId, waitMs: 0 });
+    assert.deepEqual(reply, { kind: "inbox", hostId: inbox.hostId, state: "hold", reason: "the inbox is open", messages: [] });
+    await assert.rejects(() => callbackRequest(binding, "/acp-message", { taskId: fixture.taskId, sessionId: fixture.sessionId, eventId: "a".repeat(64), text: "synthetic" }), /Unauthorized callback/);
+    await assert.rejects(() => callbackRequest(binding, "/acp-turn", { kind: "inbox", hostId: "t3code:other", sessionId: inbox.sessionId, waitMs: 0 }), /Unauthorized callback/);
+  } finally { await fixture.close(); }
+});

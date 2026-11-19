@@ -23,6 +23,7 @@ import { verifyAcpSession, mintAcpSession } from "./binding";
 import type { AcpMessageInput, AcpSessionBinding, AcpSessionSurface, AcpTurnInput, AcpTurnReply } from "../../shared/acp/surface";
 import { acpFinishedLine, acpLifecycleLine, acpLifecycleSignature, acpTaskFinished, acpTaskName } from "./lifecycle";
 import type { Engine } from "../engine";
+import { mintAcpInbox, verifyAcpInbox } from "./inbox-binding";
 
 /** How long one long-poll may wait; the agent asks again after this. */
 export const ACP_TURN_WAIT_MAX_MS = 25_000;
@@ -74,6 +75,11 @@ export class AcpSessions implements AcpSessionSurface {
       ...(input.holdPattern ? { holdPattern: input.holdPattern } : {}) });
   }
 
+  /** Create an inbox credential with no task authority. */
+  bindInbox(input: { hostId: string; ignorePattern?: string; holdPattern?: string }) {
+    return mintAcpInbox({ ...input, dataHome: this.dataHome, socketPath: this.options.socketPath });
+  }
+
   /**
    * Ask whether to keep holding this turn, and which lifecycle lines to show. An
    * attach (`attach: true`) always gets the current line: the agent may have been
@@ -81,6 +87,12 @@ export class AcpSessions implements AcpSessionSurface {
    * a reloaded thread has nothing else to display.
    */
   async turn(input: AcpTurnInput, token: string): Promise<AcpTurnReply> {
+    if (input.kind === "inbox") {
+      const record = verifyAcpInbox({ dataHome: this.dataHome, hostId: input.hostId, sessionId: input.sessionId }, token);
+      const waitMs = Math.max(0, Math.min(input.waitMs ?? 0, ACP_TURN_WAIT_MAX_MS));
+      if (!input.attach && waitMs) await this.wait(record.sessionId, waitMs);
+      return { kind: "inbox", hostId: record.hostId, state: "hold", reason: "the inbox is open", messages: [] };
+    }
     const record = verifyAcpSession({ dataHome: this.dataHome, taskId: input.taskId, sessionId: input.sessionId }, token);
     const waitMs = Math.max(0, Math.min(input.waitMs ?? 0, ACP_TURN_WAIT_MAX_MS));
     const deadline = Date.now() + waitMs;

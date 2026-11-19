@@ -123,13 +123,14 @@ const acpCallerSchema = z
     sessionId: z.string().min(1).max(160),
   })
   .strict();
-const acpTurnSchema = acpCallerSchema
-  .extend({
-    waitMs: z.number().int().min(0).max(ACP_TURN_WAIT_MAX_MS).optional(),
-    /** An attach always answers with the current lifecycle line; a held poll only sends changes. */
-    attach: z.boolean().optional(),
-  })
-  .strict();
+const acpTurnFields = {
+  waitMs: z.number().int().min(0).max(ACP_TURN_WAIT_MAX_MS).optional(),
+  attach: z.boolean().optional(),
+};
+const acpTurnSchema = z.union([
+  acpCallerSchema.extend(acpTurnFields).strict(),
+  z.object({ kind: z.literal("inbox"), hostId: z.string().min(1).max(240), sessionId: z.string().min(1).max(160), ...acpTurnFields }).strict(),
+]);
 const acpMessageSchema = acpCallerSchema
   .extend({
     eventId: z.string().regex(/^[a-f0-9]{64}$/),
