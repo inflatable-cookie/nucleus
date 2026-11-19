@@ -23,7 +23,7 @@ export const poolSchema = z.object({
   profileId: z.string(), enabled: z.boolean(), group: z.string().min(1).max(100),
   roles: z.array(z.enum(["worker", "reviewer", "coordinator"])).min(1).default(["worker"]),
   cost: costSchema.nullable().optional(),
-  /** The five-level profile rating (low..frontier) used to satisfy task demand. */
+  /** The profile capability bracket (mechanical..frontier) used to satisfy task demand. */
   capability: profileCapabilitySchema.nullable().optional(),
   weight: z.number().int().min(1).max(10), scopes: z.array(scopeSchema).min(1),
 }).strict();
