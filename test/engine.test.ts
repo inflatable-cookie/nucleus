@@ -2682,6 +2682,8 @@ test("a blocked completion keeps its block when the branch PR the worker pushed 
   const f = fixture();
   try {
     f.store.setMeta("paused", false);
+    f.adapter.askPlanner = async () => null;
+    f.engine.resolution.delegatedAnswerWaitMs = 100;
     const original = f.add();
     f.store.update(original.id, {
       phase: "blocked",

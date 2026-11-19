@@ -6,6 +6,7 @@ import { ANSWERING_WINDOW_MS, waitFor } from "./support/budgets";
 import { fixture } from "./support/responsible-lifecycle-fixture";
 import { plannerEscalations } from "../core/questions/ladder";
 import { RuntimeRepositories, type RepositoriesContext } from "../core/runtime/repositories";
+import { runSchema } from "../shared/contracts";
 import { formatAgentId } from "../shared/agent-identity";
 
 test("an unresolved T3 planner stays assigned and visible until the escalation can reach a planner", async () => {
@@ -35,6 +36,8 @@ test("an unresolved T3 planner stays assigned and visible until the escalation c
     const detail = f.current().resolution.stop!.detail;
     assert.ok(detail.includes(missing));
     assert.match(detail, /no matching thread on its T3 host.*Re-run project.set-planner/);
+    await resolution.blockerLadderStep(f.current());
+    assert.equal(f.current().resolution.stop?.detail, detail, "the lifecycle pass preserves the routing cause");
     assert.equal(f.store.projectByKey("example")?.planner?.agentId, missing);
     const project = await repositories.getProject({ key: "example" });
     assert.match(project?.plannerRoutingIssue ?? "", /Planner unroutable:/);
@@ -140,18 +143,23 @@ test("a review ask reaches the idle retained reviewer and accepts their late adv
 test("pending recovery leaves a progressing BB reviewer alone and escalates once that turn stops", async () => {
   const f = fixture({ hostId: "bb:synthetic" });
   try {
-    await f.engine.wake();
-    const run = f.run();
-    assert.equal(run.role, "reviewer");
     const current = f.current();
     const at = new Date().toISOString();
+    const run = runSchema.parse({
+      id: "synthetic-bb-review", taskId: current.id, role: "reviewer", generation: 1,
+      status: "running", active: true, released: false, agentId: "bb-reviewer",
+      lastObservedAt: null, completion: null, idleSince: null,
+      hostId: current.hostId, workspaceId: current.workspaceId, createdAt: at,
+      head: current.prHead, base: current.planningBase, profile: f.reviewer,
+    });
+    f.store.putRun(run);
     f.states.set(run.agentId!, {
       id: run.agentId!, workspaceId: run.workspaceId, status: "running", active: true,
-      activeTurnId: "synthetic-bb-review", updatedAt: at, permissions: false, error: "",
+      updatedAt: at, permissions: false, error: "",
     });
     f.store.update(current.id, {
-      reason: "Reviewer thread running",
-      resolution: { ...current.resolution, recovery: {
+      phase: "reviewing", reason: "Reviewer thread running",
+      resolution: { ...current.resolution, reviewerAgentId: run.agentId, currentRunId: run.id, recovery: {
         id: "pending-review-recovery", key: "review", generation: current.coordinatorGeneration,
         runId: null, agentId: null, status: "pending", summary: "", idleSince: null,
         incidentId: null, progress: null,

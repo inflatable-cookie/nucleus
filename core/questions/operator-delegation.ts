@@ -1,4 +1,4 @@
-import { nativeAgentId } from "../../shared/agent-identity";
+import { callerNativeId } from "../../shared/agent-identity";
 import { normalizeRepositoryOrigin } from '../../shared/lanes';
 import { holdsOf, type Task } from '../../shared/contracts';
 import { Decisions } from '../planning/decisions';
@@ -134,7 +134,7 @@ export class OperatorDelegation {
       const registered = await this.resolution.host.originAgent(plannerId);
       if (!registered || registered.archived) return;
       const observation = await this.resolution.host.observe(plannerId);
-      if (observation.id !== nativeAgentId(plannerId, scopedHost) || observation.status === 'closed') return;
+      if (observation.id !== callerNativeId(plannerId, scopedHost) || observation.status === 'closed') return;
     } catch { return; }
     const project = this.store.projectByKey(projectKey);
     if (!project || project.planner?.agentId !== plannerId) return;

@@ -23,7 +23,7 @@ export function plannerWindows(resolution: Resolution, baseId: string, rungs: Pl
     const delivery = resolution.delegatedDelivery(messageId);
     const current = rungs.find(item => item.rung === rung)?.agentId;
     const recipient = delivery?.recipientRef ?? delivery?.recipient;
-    const agentId = recipient && (!current || !sameCallerIdentity(current, recipient, delivery?.hostId)) ? recipient : current;
+    const agentId = recipient && (!current || !sameCallerIdentity(current, recipient)) ? recipient : current;
     return agentId ? [{ agentId, messageId, rung }] : [];
   });
 }

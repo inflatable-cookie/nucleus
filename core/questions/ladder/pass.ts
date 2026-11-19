@@ -13,7 +13,7 @@ import { escalationWaitDetail } from './waits';
 /** What a parked blocked or errored responsible task does on one advance pass. */
 export type BlockerLadderStep =
   | { kind: "classify" }
-  | { kind: "wait"; detail: string }
+  | { kind: "wait"; detail: string; holderAgentId?: string }
   /** An unknown-delivery escalation outlived the stall threshold: surface it, never resend it. */
   | { kind: "attention"; escalation: PlannerEscalation }
   | { kind: "continue" };
@@ -46,6 +46,8 @@ export function blockerLadderStep(facts: {
     (consult) => !consult.answered && !consult.unknown,
   );
   const latest = openEscalations.at(-1);
+  if (latest?.routingWait && !latest.decisionId)
+    return { kind: "wait", ...latest.routingWait };
   const wait = latest
     ? latest.decisionId
       ? escalationWaitDetail.operator(latest.id, latest.decisionId)

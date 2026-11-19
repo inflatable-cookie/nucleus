@@ -25,10 +25,14 @@ function fixture(options: { answers?: Record<string, string | null>; unknown?: s
     delegation: { requireHost: async (task: Task, recipient: string) => {
       if (options.lastHostDown === recipient) throw new DelegatedHostUnavailable('Delegated recipient host is unavailable or unknown');
     } },
-    askBound: async (_task: Task, recipient: string, input: { messageId: string }) => {
-      assert.ok(calls.intents.at(-1)?.startsWith('planner'), 'intent precedes delivery or observation');
+    askBound: async (_task: Task, recipient: string, input: { messageId: string; onIntent?: () => void }) => {
+      if (!delivered.has(input.messageId)) {
+        delivered.add(input.messageId);
+        input.onIntent?.();
+        assert.ok(calls.intents.at(-1)?.startsWith('planner'), 'intent precedes delivery');
+        calls.sends.push(recipient);
+      }
       calls.observations.push(recipient);
-      if (!delivered.has(input.messageId)) { calls.sends.push(recipient); delivered.add(input.messageId); }
       if (answers[recipient] === undefined) throw Error('delivery outcome unknown');
       if (options.abortOnAnswer) controller.abort();
       return answers[recipient];

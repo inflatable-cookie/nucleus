@@ -61,7 +61,7 @@ export class RecoveryLifecycle {
       this.context.attentionUnknownEscalation(t, first.escalation);
       return null;
     } else if (first.kind === 'wait') {
-      this.context.waiting(t, first.detail, 'escalated');
+      this.context.waiting(t, first.detail, 'escalated', { holderAgentId: first.holderAgentId });
       return null;
     } else if (first.kind === 'continue') {
       return t;
@@ -78,7 +78,7 @@ export class RecoveryLifecycle {
       unknownStall: stalledUnknownEscalation({ escalations: plannerEscalations(ladderEvents as LadderEvent[]), now: Date.now(), thresholdMs }),
     });
     if (after.kind === 'attention') { this.context.attentionUnknownEscalation(t, after.escalation); return null; }
-    if (after.kind === 'wait') { this.context.waiting(t, after.detail, 'escalated'); return null; }
+    if (after.kind === 'wait') { this.context.waiting(t, after.detail, 'escalated', { holderAgentId: after.holderAgentId }); return null; }
     return t;
   }
   attentionReplayApplies(t: Task): boolean {

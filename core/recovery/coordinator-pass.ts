@@ -132,7 +132,7 @@ export class CoordinatorPass {
        // Check the exact owner again before timing out a pending recovery.
        // A cached running flag alone also describes stalled turns.
        const owner = t.resolution.currentRunId ? this.store.run(t.resolution.currentRunId) : null;
-       const candidate = owner && (owner.role === 'reviewer' || owner.role === 'revision') &&
+       const candidate = owner?.taskId === t.id && (owner.role === 'reviewer' || owner.role === 'revision') &&
          !owner.released && !owner.completion ? owner : null;
        const initialWorker = !t.resolution.currentRunId && !t.completion;
        const agentId = candidate?.agentId ?? (initialWorker ? t.agentId : null);

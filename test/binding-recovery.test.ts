@@ -214,6 +214,10 @@ test('rule 2: new worker activity resets the lookup backoff', async () => {
 const PR_URL = 'https://github.com/example/repo/pull/51';
 /** The retained worker's own authenticated report, as the workspace release leaves it. */
 function reported(f: ReturnType<typeof fixture>, status: 'blocked' | 'error', report: Partial<Completion> = {}) {
+  f.adapter.originAgent = async id => id === 'origin'
+    ? { id, workspaceId: '/repo', title: 'Synthetic task owner', archived: false } : null;
+  f.adapter.askPlanner = async () => null;
+  f.engine.resolution.delegatedAnswerWaitMs = 100;
   const task = f.working({ idleSince: new Date(Date.now() - 2 * GRACE).toISOString() });
   const completion: Completion = { taskId: task.id, runId: task.runId!, eventId: `worker-${status}`, status,
     summary: 'Required tsc/tsx checks unrun (exit 127); the workspace toolchain is missing', ...report };

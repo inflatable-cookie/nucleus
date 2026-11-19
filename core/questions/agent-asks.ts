@@ -414,7 +414,7 @@ export class AgentAsks {
     const planningRuling = Boolean(
       lifecycle?.planningRuling || lifecycle?.reviewerMissed,
     );
-    if (ask.target === "reviewer" && !planningRuling)
+    if (ask.target === "reviewer" && !planningRuling && !lifecycle?.planner && !lifecycle?.deciderStarted)
       return this.resolution.routeReviewerAsk(task, ask);
     // The worker-supplied kind is only a hint. Every worker question is
     // classified by a planner or decider before any operator decision exists.
@@ -558,6 +558,8 @@ export class AgentAsks {
    * A known miss advances; unknown delivery stays pending.
    */
   async routeReviewerAsk(task: Task, ask: AgentAskShape): Promise<void> {
+    if (!task.resolution.reviewerAgentId && !this.resolution.delegatedDelivery(`ns-agent-ask-reviewer-${ask.id}`))
+      return this.resolution.routeAgentAsk(task, { ...ask, target: "planner" });
     if (
       !task.hostId ||
       !this.resolution.withHost(task.hostId, () =>
@@ -596,7 +598,7 @@ export class AgentAsks {
           const identity = this.adapter.originAgent
             ? await this.resolution.host.originAgent(reviewer)
             : undefined;
-          gone = Boolean(identity?.archived || identity?.deleted);
+          gone = identity === null || Boolean(identity?.archived || identity?.deleted);
           if (!gone) {
             const state = await this.resolution.host.observe(reviewer);
             gone = state.id === reviewer && ["closed", "gone"].includes(state.status);
@@ -605,6 +607,7 @@ export class AgentAsks {
           /* preserve the ordinary route */
         }
       }
+      if (!delivery && this.store.task(task.id).resolution.reviewerAgentId !== reviewer) return;
       const receivedDuringRead = expiredConsult && this.store.eventsAll(`delegation:${messageId}`).some(event => event.kind === "delegated_answer");
       if (gone && !receivedDuringRead) {
         if (delivery) this.store.event(`delegation:${messageId}`, "delegated_closed", NO_COMMAND_ANSWER_IN_WINDOW);

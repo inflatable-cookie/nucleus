@@ -8,14 +8,13 @@ import {
 } from "../../shared/contracts";
 import { sameCallerIdentity } from "../../shared/agent-identity";
 import { normalizeRepositoryOrigin } from "../../shared/lanes";
-import { unavailableGroupNames } from "../../shared/pool";
+import { demandRank, unavailableGroupNames } from "../../shared/pool";
 import { currentBrief } from "../planning/brief";
 import { parseNativeDelegatedReply } from "./question-delegation";
 import { plannerEscalations, type LadderEvent } from "./ladder";
 import { askLifecycle } from "./agent-ask-events";
 import type { Resolution } from "../resolution";
 import { requestedTier } from "../../shared/demand";
-import { demandRank } from "../../shared/pool";
 import { chooseProfile } from "../dispatch/routing";
 import { plannerParticipantTicketPath } from "../dispatch/participant-tickets";
 import { runTicketPath, writeRunTicket } from "../dispatch/agent-creation";
@@ -1298,7 +1297,9 @@ export class Delegation {
   private async taskPlannerRoute(task: Task): Promise<{ rung: PlannerRung | null; issue?: string }> {
     const planner = taskPlanner(task);
     if (!planner || isOperatorOrigin(planner)) return { rung: null };
-    const state = await this.resolution.plannerPresence.threadRoute(planner);
+    const originHost = planner === task.originAgentId || planner === task.notificationAgentId
+      ? task.originHostId : undefined;
+    const state = await this.resolution.plannerPresence.threadRoute(planner, originHost);
     if (state.kind === "unroutable") return { rung: null, issue: state.detail };
     return { rung: state.kind === "gone" ? null : { agentId: planner, rung: "task" } };
   }

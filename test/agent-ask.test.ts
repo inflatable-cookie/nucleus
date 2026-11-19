@@ -54,6 +54,7 @@ async function askFixture(
   };
   const adapter = {
     profiles: async () => [author],
+    originAgent: async (id: string) => ({ id, workspaceId: "ws", title: id, archived: false }),
     observe: async () => ({
       id: "worker",
       workspaceId: "ws",
@@ -1238,7 +1239,7 @@ test("a planner ask waits with a plain reason when the planner host is offline",
     assert.equal(pending.status, 'pending');
     assert.match(pending.detail!, /waiting for the planner's proven host to be available/i);
     assert.equal(f.events('agent_ask_host_wait').length, 1);
-    assert.match(f.events('agent_ask_host_wait')[0]!.detail, /Waiting for the planner's proven host to be available/);
+    assert.match(f.events('agent_ask_host_wait')[0]!.detail, /Planner unroutable: planner-1.*waiting for the planner's proven host to be available/i);
     assert.deepEqual(f.delegated.planner, []);
     assert.equal(f.engine.resolution.delegatedDelivery(`ns-agent-ask-${pending.askId}`), null);
   } finally { await f.close(); }

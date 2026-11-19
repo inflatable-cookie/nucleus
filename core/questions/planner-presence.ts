@@ -1,7 +1,7 @@
 import { type Project, type Task } from '../../shared/contracts';
 import type { Store } from '../store/store';
 import { hostKindOf } from '../../shared/host-kind';
-import { nativeAgentId } from '../../shared/agent-identity';
+import { callerNativeId } from '../../shared/agent-identity';
 import type { Resolution } from '../resolution';
 
 export type PlannerPresenceContext = Pick<Resolution, 'adapter' | 'host' | 'identifyOriginHost' | 'originHostAvailable' | 'plannerThreadGone' | 'projectPlannerFor' | 'taskPlannerFor' | 'store' | 'withHost'>;
@@ -25,23 +25,28 @@ export class PlannerPresence {
     return (await this.threadRoute(agentId)).kind === 'gone';
   }
 
-  async threadRoute(agentId: string): Promise<PlannerThreadRoute> {
+  async threadRoute(agentId: string, recordedHostId?: string | null): Promise<PlannerThreadRoute> {
     const unroutable = (cause: string): PlannerThreadRoute => ({ kind: 'unroutable', detail: unroutablePlannerDetail(agentId, cause) });
     try {
-      const hostId = await this.context.identifyOriginHost(agentId);
+      const hostId = recordedHostId ?? await this.context.identifyOriginHost(agentId);
       if (!hostId || !this.context.withHost(hostId, () => this.context.originHostAvailable(hostId)))
         return unroutable("waiting for the planner's proven host to be available");
+      const expected = callerNativeId(agentId, hostId);
+      if (!this.context.withHost(hostId, () => this.context.adapter.originAgent)) {
+        const observed = await this.context.withHost(hostId, () => this.context.host.observe(agentId));
+        if (observed.id !== expected) return unroutable('the host returned a different thread');
+        return { kind: observed.archived || observed.status === 'gone' ? 'gone' : 'routable' };
+      }
       const registered = await this.context.withHost(hostId, () => this.context.host.originAgent(agentId));
-      if (registered?.archived || registered?.deleted) return { kind: 'gone' };
       // On T3 the recorded ID can name a thread or an unrelated session. Only a
       // tombstone proves that an identity previously had a thread.
       if (!registered)
         return hostKindOf(hostId) === 't3code'
           ? unroutable('no matching thread on its T3 host')
           : { kind: 'gone' };
-      if (registered.id !== nativeAgentId(agentId, hostId))
+      if (registered.id !== expected)
         return unroutable('the host returned a different thread');
-      return { kind: 'routable' };
+      return { kind: registered.archived || registered.deleted ? 'gone' : 'routable' };
     } catch {
       return unroutable('the host could not verify the thread');
     }
