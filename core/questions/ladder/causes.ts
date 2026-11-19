@@ -1,5 +1,5 @@
-import type { Completion } from '../../../shared/contracts';
-import { digest } from '../../store/store';
+import type { Completion } from "../../../shared/contracts";
+import { digest } from "../../store/store";
 
 /**
  * One blocker cause, stable across re-reports of the same words. Every cause the
@@ -39,12 +39,22 @@ export const revisionCapCauseId = (
     ["blocker-cause", taskId, "revision_cap", String(revisionRuns)].join(":"),
   );
 
-/** Stable identity of one reviewer-checkpoint stop; the same cause joins one escalation. */
+/**
+ * Stable identity of one reviewer-checkpoint stop; the same cause joins one
+ * escalation. The reader is the episode: a reviewer replaced after one exhausted
+ * stop later exhausts again as a *new* cause, so its own escalation is opened
+ * instead of being suppressed by the answered one before it (nucleus#1372).
+ */
 export const reviewContinuationCauseId = (
   taskId: string,
   state: "exhausted" | "closed",
+  reader: string | null = null,
 ): string =>
-  digest(["blocker-cause", taskId, "review_continuation", state].join(":"));
+  digest(
+    ["blocker-cause", taskId, "review_continuation", state, reader ?? ""].join(
+      ":",
+    ),
+  );
 
 /** A provider failure is never a ladder blocker: the ordinary replacement settles it. */
 export const isProviderFailure = (

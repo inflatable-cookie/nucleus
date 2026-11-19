@@ -462,6 +462,28 @@ reviewer `route now` can also replace it under ordinary routing authorization.
 Both observe the exact PR head, binding and idle reader before acting. A live
 turn, pending permission or unsettled delivery still holds the original run.
 
+That reader is ruled out, so the ordinary sweep takes the same exit instead of
+leaving it to a person: once its own agent is observed settled at the recorded
+head, Queue performs `restart role=reviewer fresh` for it — the one rule `next`
+states, under the same retirement ceiling as every fresh replacement. Where the
+replacement cannot act, or the ceiling is spent, the pass opens the planner
+escalation (Spec 058) with that verb in the question and the refusal named on
+the wait, so the reader is answered on the pass that observes it and never sits
+silently (nucleus#1372: an exhausted reader sat idle for five hours while `next`
+offered the verb and nothing acted). The escalation is per reader: a
+replacement that later exhausts is its own cause, not a repeat of the answered
+escalation before it.
+
+A reader whose turn has not ended is not escalated ahead of that exit. The
+recovery route leaves a reader that reported it cannot finish to the lifecycle
+pass, which observes it settled first: escalating before then would park the
+planner on a reader that could simply be replaced, and would suppress that
+replacement. A turn that never ends is the ordinary stalled-run stop's business,
+and the reader keeps its visible `operator_needed` stop until it settles. A
+reader whose checkpoint budget is spent without a refused reading is different
+— it never reported that it cannot finish — so it still escalates through the
+ladder rather than being replaced automatically.
+
 A missing report keeps the retained reviewer. An idle reader can finish or
 redeliver on its existing credential. A fresh run earns its own verdict at the
 current head. The previous reader's progress stays with its run.

@@ -502,6 +502,7 @@ export class Engine {
           "reconcile",
           "recoverExhaustedWorkers",
           "removeSiblings",
+          "replaceExhaustedReviewers",
           "resetAuditHostAvailability",
           "resumePausedStops",
           "retiredObservationKey",
@@ -2304,6 +2305,10 @@ export class Engine {
   }
   continueAwaitingReviewers(tasks: Task[]): Promise<void> {
     return this.reviewerAutoContinue.continueAwaitingReviewers(tasks);
+  }
+  /** An exhausted reader is replaced fresh (or escalated) on the pass that observes it idle. */
+  replaceExhaustedReviewers(tasks: Task[]): Promise<void> {
+    return this.reviewerAutoContinue.replaceExhaustedReviewers(tasks);
   }
   applyDeferredOwnerVerbs(): Promise<void> {
     return this.deferredVerbs.applyDeferredOwnerVerbs();
