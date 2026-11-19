@@ -19,6 +19,9 @@ export type PlannerPresenceContext = Pick<
 
 export type PlannerThreadRoute =
   | { kind: "routable" | "gone" }
+  /** The read could not confirm the thread (host down, lookup failed, no T3 tombstone): not proof of absence. */
+  | { kind: "unverified"; detail: string }
+  /** The host answered with a different thread than the recorded identity. */
   | { kind: "unroutable"; detail: string };
 
 export function unroutablePlannerDetail(
@@ -58,6 +61,10 @@ export class PlannerPresence {
     agentId: string,
     recordedHostId?: string | null,
   ): Promise<PlannerThreadRoute> {
+    const unverified = (cause: string): PlannerThreadRoute => ({
+      kind: "unverified",
+      detail: unroutablePlannerDetail(agentId, cause),
+    });
     const unroutable = (cause: string): PlannerThreadRoute => ({
       kind: "unroutable",
       detail: unroutablePlannerDetail(agentId, cause),
@@ -71,7 +78,7 @@ export class PlannerPresence {
           this.context.originHostAvailable(hostId),
         )
       )
-        return unroutable(
+        return unverified(
           "waiting for the planner's proven host to be available",
         );
       const expected = callerNativeId(agentId, hostId);
@@ -94,10 +101,11 @@ export class PlannerPresence {
         this.context.host.originAgent(agentId),
       );
       // On T3 the recorded ID can name a thread or an unrelated session. Only a
-      // tombstone proves that an identity previously had a thread.
+      // tombstone proves that an identity previously had a thread, so a miss is
+      // unverified rather than gone.
       if (!registered)
         return hostKindOf(hostId) === "t3code"
-          ? unroutable("no matching thread on its T3 host")
+          ? unverified("no matching thread on its T3 host")
           : { kind: "gone" };
       if (registered.id !== expected)
         return unroutable("the host returned a different thread");
@@ -105,7 +113,7 @@ export class PlannerPresence {
         kind: registered.archived || registered.deleted ? "gone" : "routable",
       };
     } catch {
-      return unroutable("the host could not verify the thread");
+      return unverified("the host could not verify the thread");
     }
   }
 
@@ -120,7 +128,8 @@ export class PlannerPresence {
     if (latest?.agentId !== planner.agentId || latest.setAt !== planner.setAt)
       return null;
     const previousIssue = projectPlannerRoutingIssue(store, project);
-    if (state.kind === "unroutable" && previousIssue !== state.detail)
+    // An unverified read is still a routing issue for the project's planner assignment.
+    if ((state.kind === "unroutable" || state.kind === "unverified") && previousIssue !== state.detail)
       store.event(
         `project:${project.key}`,
         "project_planner_unroutable",
