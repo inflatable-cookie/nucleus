@@ -37,7 +37,20 @@ before it lapses; *archived* when the task finishes. The fallback paths and
 per-role settle rules described below are retired (implementation:
 nucleus#1366).
 Archived task threads are pruned by Nucleus's own retention pass (see the
-orchestration contract, "Archived thread retention"). The adapter does not patch T3,
+orchestration contract, "Archived thread retention").
+**Decisions reach the T3 operator in T3 (Tom, 2026-11-19: "how to bring
+decisions to the user in T3 - they appear on the nucleus board, but I don't
+actually look at it very much at all … We could also make use of the nucleus ACP
+model here, with a single Nucleus thread permanently on the board (pinned) that
+can surface decisions programatically without needing AI interaction at all, and
+could also manage loading the board UI in the browser in that workspace?").** A
+task-scoped question is raised by the Nucleus ACP agent on that task's parent
+thread as an ACP form elicitation, and the row unsnoozes. Every other decision
+goes to one pinned "Nucleus" inbox thread per T3 environment, a permanent
+`nucleus` ACP session the adapter creates, pins, holds and re-enters. It is never
+pruned or archived, and it opens the board in T3's browser pane. Planners don't
+raise native questions themselves. An answer given anywhere settles the T3 card
+exactly once (implementation: nucleus#1371). The adapter does not patch T3,
 attach Nucleus MCP servers, raise Nucleus questions inside threads or contribute
 T3 UI. A T3 thread reports through the packaged nucleus helper with the run
 ticket named in its prompt. Nucleus-raised questions go to the web board and
