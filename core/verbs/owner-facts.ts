@@ -1,15 +1,40 @@
 import { taskNeverDispatched, liveRun } from "../task-decision-rules";
-import { boardDispatchHoldApplies, BOARD_DISPATCH_HOLD_REASON } from "../../shared/board-dispatch-hold";
+import {
+  boardDispatchHoldApplies,
+  BOARD_DISPATCH_HOLD_REASON,
+} from "../../shared/board-dispatch-hold";
 import { supersededWorkerResult } from "../recovery/incident";
 import { holdOwnerOf, taskOwner } from "../../shared/contracts";
-import { holdsOf, incidentBindsCurrentWork, taskNextRunSchema, taskNextStopSchema, taskStopKind, taskStopClassification, taskStopRecord, currentTaskStop, taskVisibleReason, DISPATCH_WAIT_REASON, blockingHoldFence, WORKER_REPLACEMENT_CEILING, type Notice, type Profile, type Run, type Task, type TaskNext, type TaskNextStop } from "../../shared/contracts";
+import {
+  holdsOf,
+  incidentBindsCurrentWork,
+  taskNextRunSchema,
+  taskNextStopSchema,
+  taskStopKind,
+  taskStopClassification,
+  taskStopRecord,
+  currentTaskStop,
+  taskVisibleReason,
+  DISPATCH_WAIT_REASON,
+  blockingHoldFence,
+  WORKER_REPLACEMENT_CEILING,
+  type Notice,
+  type Profile,
+  type Run,
+  type Task,
+  type TaskNext,
+  type TaskNextStop,
+} from "../../shared/contracts";
 import { type HookRecord } from "../../shared/hooks";
 import type { TaskStopReason } from "../../shared/task-stop";
 import { noActionEscalationAtAcceptedHead } from "../recovery/task-reasons";
 import { taskBudget } from "../../shared/task-budget";
 import { type Store } from "../store/store";
 import { OWNER_STOP_HOLD_PREFIX } from "../merge/merge-hold";
-import { blockingRecoveryEffects, recoveryEffectsRefusal } from "../recovery/recovery-effects";
+import {
+  blockingRecoveryEffects,
+  recoveryEffectsRefusal,
+} from "../recovery/recovery-effects";
 import { recoveryBoundStatus } from "../recovery/recovery-bound";
 import { runFenceRefusal, runSettlementFence } from "../intake/run-settlement";
 import { supersededIdleBinding } from "../recovery/fence-settlement";
@@ -49,19 +74,46 @@ export interface OwnerVerbFacts {
   operatorBoard?: boolean;
 }
 
-export function collectOwnerVerbFacts(store: Store, task: Task, operationId?: string | null, reportingRunId?: string | null): OwnerVerbFacts {
-  return { store, task, runs: store.runs(task.id), events: store.eventsAll(task.id), notices: store.notices(task.id), hookRecords: store.hookEvents(task.id), operationId: operationId ?? null, reportingRunId: reportingRunId ?? null };
+export function collectOwnerVerbFacts(
+  store: Store,
+  task: Task,
+  operationId?: string | null,
+  reportingRunId?: string | null,
+): OwnerVerbFacts {
+  return {
+    store,
+    task,
+    runs: store.runs(task.id),
+    events: store.eventsAll(task.id),
+    notices: store.notices(task.id),
+    hookRecords: store.hookEvents(task.id),
+    operationId: operationId ?? null,
+    reportingRunId: reportingRunId ?? null,
+  };
 }
 
 export const prIdentity = (task: Task): boolean =>
-  Boolean(task.completion?.prNumber || task.resumePrNumber || task.prUrl || task.prHead);
+  Boolean(
+    task.completion?.prNumber ||
+      task.resumePrNumber ||
+      task.prUrl ||
+      task.prHead,
+  );
 
 /** The retained author's latest reported result, shared by stop, ladder and next. */
 export const latestAuthorResult = (task: Task, runs: Run[]) =>
-  runs.findLast(run => run.role === 'revision' && run.agentId === task.agentId && run.completion)?.completion ?? task.completion;
+  runs.findLast(
+    (run) =>
+      run.role === "revision" && run.agentId === task.agentId && run.completion,
+  )?.completion ?? task.completion;
 
 /** The PR and exact head a current authenticated ready result names, with the run and event that reported it. */
-type ReadyPrEvidence = { prNumber: number; head: string; runId: string; eventId: string };
+type ReadyPrEvidence = {
+  prNumber: number;
+  head: string;
+  runId: string;
+  eventId: string;
+};
 
 /**
  * Project-d #117 (Tom, 2026-10-23): the current applicable ready result of a
@@ -75,15 +127,44 @@ type ReadyPrEvidence = { prNumber: number; head: string; runId: string; eventId:
  * worker's own `ready_for_review` on its run. Store reads only: an identity
  * candidate, never review credit; `move to=review` still proves it on the forge.
  */
-export function currentReadyPrEvidence(task: Task, runs: Run[]): ReadyPrEvidence | null {
-  if (task.prUrl || task.resumePrNumber || task.reviewEntry?.prNumber || !task.agentId || !task.workspaceId) return null;
-  const latest = runs.filter(run => run.role === "revision").at(-1);
-  if (latest && (!latest.released || latest.agentId !== task.agentId || latest.workspaceId !== task.workspaceId)) return null;
+export function currentReadyPrEvidence(
+  task: Task,
+  runs: Run[],
+): ReadyPrEvidence | null {
+  if (
+    task.prUrl ||
+    task.resumePrNumber ||
+    task.reviewEntry?.prNumber ||
+    !task.agentId ||
+    !task.workspaceId
+  )
+    return null;
+  const latest = runs.filter((run) => run.role === "revision").at(-1);
+  if (
+    latest &&
+    (!latest.released ||
+      latest.agentId !== task.agentId ||
+      latest.workspaceId !== task.workspaceId)
+  )
+    return null;
   const result = latest ? latest.completion : task.completion;
   const runId = latest?.id ?? task.runId;
-  if (!result || !runId || result.status !== "ready_for_review" || result.taskId !== task.id || result.runId !== runId
-    || !result.prNumber || !result.head) return null;
-  return { prNumber: result.prNumber, head: result.head, runId, eventId: result.eventId };
+  if (
+    !result ||
+    !runId ||
+    result.status !== "ready_for_review" ||
+    result.taskId !== task.id ||
+    result.runId !== runId ||
+    !result.prNumber ||
+    !result.head
+  )
+    return null;
+  return {
+    prNumber: result.prNumber,
+    head: result.head,
+    runId,
+    eventId: result.eventId,
+  };
 }
 
 /**
@@ -94,50 +175,111 @@ export function currentReadyPrEvidence(task: Task, runs: Run[]): ReadyPrEvidence
  * nothing launches. One derivation, read by the verb, by the launch itself and
  * by the facts `next` reports.
  */
-export function unreleasedLaunchFence(store: Store, task: Task, role: Run["role"], agentId: string | null = task.resolution.reviewerAgentId ?? null): string | null {
+export function unreleasedLaunchFence(
+  store: Store,
+  task: Task,
+  role: Run["role"],
+  agentId: string | null = task.resolution.reviewerAgentId ?? null,
+): string | null {
   if (!agentId) return null;
-  const run = store.runs(task.id).findLast(candidate => !candidate.released && candidate.role === role && candidate.agentId === agentId);
+  const run = store
+    .runs(task.id)
+    .findLast(
+      (candidate) =>
+        !candidate.released &&
+        candidate.role === role &&
+        candidate.agentId === agentId,
+    );
   if (!run) return null;
-  const why = supersededIdleBinding(store, task.id, run).why
-    || (run.completion ? "its recorded result is not yet applied" : "its thread was not observed stopped");
+  const why =
+    supersededIdleBinding(store, task.id, run).why ||
+    (run.completion
+      ? "its recorded result is not yet applied"
+      : "its thread was not observed stopped");
   return `${role} run ${run.id} (agent ${agentId}) still owns the retained ${role} thread: ${why}; observation releases it once its thread is proven archived, gone or closed, or its own settlement applies`;
 }
 
 /** The engine's `neverDispatched` projection: no workspace, agent, run or PR was ever created. */
-export const neverDispatched = (facts: OwnerVerbFacts): boolean => taskNeverDispatched(facts.task, facts.runs);
+export const neverDispatched = (facts: OwnerVerbFacts): boolean =>
+  taskNeverDispatched(facts.task, facts.runs);
 
 export const escalatedEpisode = (task: Task, runs: Run[]): boolean =>
-  task.resolution.recovery?.status === "escalated"
-  || (incidentBindsCurrentWork(task, runs) && task.resolution.incident?.status === "escalated");
+  task.resolution.recovery?.status === "escalated" ||
+  (incidentBindsCurrentWork(task, runs) &&
+    task.resolution.incident?.status === "escalated");
 
 /** The structural form of the escalation resolver's live-work guard: an episode still backed by the task's own fault. */
-export const escalationBackedByLiveWork = (task: Task, runs: Run[]): boolean => {
-  if (task.resolution.recoveryActive || task.resolution.mergeIntent && !task.resolution.mergedCommit) return true;
+export const escalationBackedByLiveWork = (
+  task: Task,
+  runs: Run[],
+): boolean => {
+  if (
+    task.resolution.recoveryActive ||
+    (task.resolution.mergeIntent && !task.resolution.mergedCommit)
+  )
+    return true;
   if (noActionEscalationAtAcceptedHead(task)) return false;
-  if (["dispatching", "working", "awaiting_review", "reviewing", "changes_requested", "verifying", "merging", "syncing", "closing"].includes(task.phase)) return true;
+  if (
+    [
+      "dispatching",
+      "working",
+      "awaiting_review",
+      "reviewing",
+      "changes_requested",
+      "verifying",
+      "merging",
+      "syncing",
+      "closing",
+    ].includes(task.phase)
+  )
+    return true;
   if (task.phase === "done" || task.phase === "cancelled") return false;
   const recovery = task.resolution.recovery;
-  const currentFault = task.resolution.attention || ["blocked", "error", "needs_attention"].includes(task.phase);
+  const currentFault =
+    task.resolution.attention ||
+    ["blocked", "error", "needs_attention"].includes(task.phase);
   // An episode backed by an incident recorded against a released run is not
   // backed by live work: the fault it names was superseded.
-  return currentFault && (!recovery?.incidentId
-    || (incidentBindsCurrentWork(task, runs) && recovery.incidentId === task.resolution.incident?.id));
+  return (
+    currentFault &&
+    (!recovery?.incidentId ||
+      (incidentBindsCurrentWork(task, runs) &&
+        recovery.incidentId === task.resolution.incident?.id))
+  );
 };
 
 /** A blocked or errored worker report on the worker's own run (no run record exists for it). */
-export const workerBlockedOnOwnRun = (task: Task, facts: OwnerVerbFacts): boolean =>
-  Boolean(task.completion && ["blocked", "error"].includes(task.completion.status)
-    && task.completion.runId === task.runId && !facts.runs.some(run => run.id === task.runId));
+export const workerBlockedOnOwnRun = (
+  task: Task,
+  facts: OwnerVerbFacts,
+): boolean =>
+  Boolean(
+    task.completion &&
+      ["blocked", "error"].includes(task.completion.status) &&
+      task.completion.runId === task.runId &&
+      !facts.runs.some((run) => run.id === task.runId),
+  );
 
-export function ownerStoppedRunIds(events: OwnerVerbFacts["events"]): Set<string> {
+export function ownerStoppedRunIds(
+  events: OwnerVerbFacts["events"],
+): Set<string> {
   const ids = new Set<string>();
   for (const event of events) {
     try {
-      const detail = JSON.parse(event.detail) as { runIds?: unknown; runId?: unknown };
+      const detail = JSON.parse(event.detail) as {
+        runIds?: unknown;
+        runId?: unknown;
+      };
       if (event.kind === "owner_stopped" && Array.isArray(detail.runIds))
         for (const id of detail.runIds) if (typeof id === "string") ids.add(id);
-      if (event.kind === "owner_restart_instruction_sent" && typeof detail.runId === "string") ids.delete(detail.runId);
-    } catch { /* historical audit rows remain readable */ }
+      if (
+        event.kind === "owner_restart_instruction_sent" &&
+        typeof detail.runId === "string"
+      )
+        ids.delete(detail.runId);
+    } catch {
+      /* historical audit rows remain readable */
+    }
   }
   return ids;
 }
@@ -149,16 +291,29 @@ export function ownerStoppedRunIds(events: OwnerVerbFacts["events"]): Set<string
  * controls refuse the same uncertain occurrence instead of one of them
  * displacing work the other preserves (review 5696038429 finding 2).
  */
-export function retainedWorkerDeliveryRefusal(facts: OwnerVerbFacts): string | null {
+export function retainedWorkerDeliveryRefusal(
+  facts: OwnerVerbFacts,
+): string | null {
   const { task, runs, store } = facts;
-  const revisions = runs.filter(run => run.role === 'revision' && !run.released);
-  if (revisions.some(run => run.agentId !== task.agentId || run.workspaceId !== task.workspaceId) || revisions.length > 1)
+  const revisions = runs.filter(
+    (run) => run.role === "revision" && !run.released,
+  );
+  if (
+    revisions.some(
+      (run) =>
+        run.agentId !== task.agentId || run.workspaceId !== task.workspaceId,
+    ) ||
+    revisions.length > 1
+  )
     return "Another revision still owns this task; resolve the retained thread or delivery before replacing the worker";
   const revision = revisions[0];
   if (revision?.completion)
     return "The revision result is awaiting reconciliation; wait for it to settle before replacing the worker";
-  const effects = blockingRecoveryEffects(store, task).filter(item => item.runId !== null
-    && (item.runId === revision?.id || item.runId === task.runId));
+  const effects = blockingRecoveryEffects(store, task).filter(
+    (item) =>
+      item.runId !== null &&
+      (item.runId === revision?.id || item.runId === task.runId),
+  );
   return recoveryEffectsRefusal(effects);
 }
 
@@ -166,8 +321,14 @@ export function retainedWorkerDeliveryRefusal(facts: OwnerVerbFacts): string | n
  * The budget figure `next` reads (nucleus#1187): the same call the dispatch gates
  * and the views make, from the task row, its runs and its events.
  */
-export const ownerTaskBudget = (facts: OwnerVerbFacts) => taskBudget(facts.task, facts.runs, Date.now(), facts.events,
-  facts.store.canonicalRepository(facts.task.repoPath, facts.task.repository));
+export const ownerTaskBudget = (facts: OwnerVerbFacts) =>
+  taskBudget(
+    facts.task,
+    facts.runs,
+    Date.now(),
+    facts.events,
+    facts.store.canonicalRepository(facts.task.repoPath, facts.task.repository),
+  );
 
 /**
  * The one honest sentence `next` carries once a task has retired enough workers
@@ -187,12 +348,14 @@ export function replacementAllowanceNote(task: Task): string | null {
  * The handlers' displace mode refuses on exactly these.
  */
 export function durableRunFence(facts: OwnerVerbFacts): string | null {
-  const refusals = facts.runs.filter(run => !run.released)
-    .map(run => {
+  const refusals = facts.runs
+    .filter((run) => !run.released)
+    .map((run) => {
       const why = runSettlementFence(facts, run);
       return why ? runFenceRefusal(run, why) : null;
-    }).filter((refusal): refusal is string => refusal !== null);
-  return refusals.length ? refusals.join('; ') : null;
+    })
+    .filter((refusal): refusal is string => refusal !== null);
+  return refusals.length ? refusals.join("; ") : null;
 }
 
 /**
@@ -204,7 +367,13 @@ export function durableRunFence(facts: OwnerVerbFacts): string | null {
  */
 function initialWorkerBinding(facts: OwnerVerbFacts): TaskNext["activeRun"] {
   const { task, runs } = facts;
-  if (!task.runId || !task.agentId || task.resolution.currentRunId || runs.some(run => run.id === task.runId)) return null;
+  if (
+    !task.runId ||
+    !task.agentId ||
+    task.resolution.currentRunId ||
+    runs.some((run) => run.id === task.runId)
+  )
+    return null;
   // A later revision of the same worker delivered a result, so the initial run
   // is finished history whatever still carries its ID.
   if (supersededWorkerResult(task, runs)) return null;
@@ -214,38 +383,69 @@ function initialWorkerBinding(facts: OwnerVerbFacts): TaskNext["activeRun"] {
   // run ID is history and never outranks a later run, and an incident of
   // another role inherits the task's run ID without naming the worker live
   // (#381: an open coordinator incident showed the initial worker running).
-  const stall = task.resolution.stalledTurnStop?.runId === task.runId && task.resolution.stalledTurnStop.status !== "completed"
-    ? task.resolution.stalledTurnStop : null;
-  const ownerStoppedIdle = ownerStoppedRunIds(facts.events).has(task.runId)
-    && holdsOf(task).dispatch?.reason.startsWith(OWNER_STOP_HOLD_PREFIX)
-    && task.lastAgentStatus === "idle" && task.agentActive === false;
+  const stall =
+    task.resolution.stalledTurnStop?.runId === task.runId &&
+    task.resolution.stalledTurnStop.status !== "completed"
+      ? task.resolution.stalledTurnStop
+      : null;
+  const ownerStoppedIdle =
+    ownerStoppedRunIds(facts.events).has(task.runId) &&
+    holdsOf(task).dispatch?.reason.startsWith(OWNER_STOP_HOLD_PREFIX) &&
+    task.lastAgentStatus === "idle" &&
+    task.agentActive === false;
   const incident = task.resolution.incident;
-  const openIncident = incident && incident.status !== "resolved" && incident.role === "worker" && incident.runId === task.runId;
-  if (!["dispatching", "working"].includes(task.phase) && !ownerStoppedIdle && !stall && !openIncident && task.resolution.stop?.reason !== "run_stalled") return null;
+  const openIncident =
+    incident &&
+    incident.status !== "resolved" &&
+    incident.role === "worker" &&
+    incident.runId === task.runId;
+  if (
+    !["dispatching", "working"].includes(task.phase) &&
+    !ownerStoppedIdle &&
+    !stall &&
+    !openIncident &&
+    task.resolution.stop?.reason !== "run_stalled"
+  )
+    return null;
   // A stall Queue observed stopped has released the worker's lease, and a
   // recorded initial completion is a finished result: both are history named by
   // the stop, so no live binding remains (Queue #477 review 5675271170).
   const stopped = stall?.status === "stopped";
-  const completion = task.completion?.runId === task.runId ? task.completion : null;
+  const completion =
+    task.completion?.runId === task.runId ? task.completion : null;
   if (stopped || completion) return null;
   const ownerStopped = ownerStoppedRunIds(facts.events).has(task.runId);
-  const observedStopped = ownerStopped && task.lastAgentStatus === "idle" && task.agentActive === false;
+  const observedStopped =
+    ownerStopped &&
+    task.lastAgentStatus === "idle" &&
+    task.agentActive === false;
   return taskNextRunSchema.parse({
-    runId: task.runId, role: "worker", agentId: task.agentId,
-    profileId: task.profile?.id ?? null, profileName: task.profile?.name ?? null,
-    status: observedStopped ? "stopped" : "running", released: false, lastActivity: task.lastActivityAt ?? null, summary: null,
+    runId: task.runId,
+    role: "worker",
+    agentId: task.agentId,
+    profileId: task.profile?.id ?? null,
+    profileName: task.profile?.name ?? null,
+    status: observedStopped ? "stopped" : "running",
+    released: false,
+    lastActivity: task.lastActivityAt ?? null,
+    summary: null,
   });
 }
 
 export function ownerActiveRun(facts: OwnerVerbFacts): TaskNext["activeRun"] {
   const { task, runs } = facts;
-  const current = task.resolution.currentRunId ? facts.store.run(task.resolution.currentRunId) : null;
+  const current = task.resolution.currentRunId
+    ? facts.store.run(task.resolution.currentRunId)
+    : null;
   // A result is recorded before publication and application clear the current
   // binding, so the recorded current run is live only while it has neither
   // reported nor been released. That completed run's evidence stays readable
   // through the outcome and the stop, never as the active participant.
   const live = liveRun(current) ? current : null;
-  if (!live) { const initial = initialWorkerBinding(facts); if (initial) return initial; }
+  if (!live) {
+    const initial = initialWorkerBinding(facts);
+    if (initial) return initial;
+  }
   // A released or finished run is history: the stop, the outcome and the run
   // list still name it, but it is never the participant holding the task. Only
   // a run that has neither reported nor been released is live (Queue #477: a
@@ -253,13 +453,20 @@ export function ownerActiveRun(facts: OwnerVerbFacts): TaskNext["activeRun"] {
   // read as live).
   const run = live ?? runs.findLast(liveRun) ?? null;
   if (!run) return null;
-  const observedStopped = ownerStoppedRunIds(facts.events).has(run.id)
-    && run.agentId === task.agentId
-    && task.lastAgentStatus === "idle" && task.agentActive === false;
+  const observedStopped =
+    ownerStoppedRunIds(facts.events).has(run.id) &&
+    run.agentId === task.agentId &&
+    task.lastAgentStatus === "idle" &&
+    task.agentActive === false;
   return taskNextRunSchema.parse({
-    runId: run.id, role: run.role, agentId: run.agentId,
-    profileId: run.profile?.id ?? null, profileName: run.profile?.name ?? null,
-    status: observedStopped ? "stopped" : run.status, released: run.released, lastActivity: run.lastActivityAt ?? null,
+    runId: run.id,
+    role: run.role,
+    agentId: run.agentId,
+    profileId: run.profile?.id ?? null,
+    profileName: run.profile?.name ?? null,
+    status: observedStopped ? "stopped" : run.status,
+    released: run.released,
+    lastActivity: run.lastActivityAt ?? null,
     summary: run.completion?.summary ?? null,
   });
 }
@@ -273,7 +480,10 @@ export function ownerActiveRun(facts: OwnerVerbFacts): TaskNext["activeRun"] {
 function withRecoveryNote(text: string, note: string, limit = 2000): string {
   if (!note) return text.slice(0, limit);
   const room = Math.max(0, limit - note.length - 2);
-  const head = text.length > room ? `${text.slice(0, Math.max(0, room - 1)).trimEnd()}…` : text;
+  const head =
+    text.length > room
+      ? `${text.slice(0, Math.max(0, room - 1)).trimEnd()}…`
+      : text;
   return `${head} ${note}`.slice(0, limit);
 }
 
@@ -285,12 +495,26 @@ function withRecoveryNote(text: string, note: string, limit = 2000): string {
  * and this read never drift apart; this adds the reason, owner and evidence.
  */
 export function ownerTaskStop(facts: OwnerVerbFacts): TaskNextStop | null {
-  const { runs } = facts, task = facts.waitTask ?? facts.task;
+  const { runs } = facts,
+    task = facts.waitTask ?? facts.task;
   // One measurement (nucleus#1187): the stop this reads is the one the same
   // budget figure supports, so a pause the gates no longer see is not a stop here.
   const budget = ownerTaskBudget(facts);
-  if (!facts.store.getMeta("paused") && facts.store.getMeta("dispatchHeld") === true && boardDispatchHoldApplies(task) && !holdsOf(task).dispatch)
-    return { kind: "wait", reason: "held", suggestedVerbs: [], detail: BOARD_DISPATCH_HOLD_REASON, owner: "operator", evidence: "Board dispatch hold", since: task.updatedAt };
+  if (
+    !facts.store.getMeta("paused") &&
+    facts.store.getMeta("dispatchHeld") === true &&
+    boardDispatchHoldApplies(task) &&
+    !holdsOf(task).dispatch
+  )
+    return {
+      kind: "wait",
+      reason: "held",
+      suggestedVerbs: [],
+      detail: BOARD_DISPATCH_HOLD_REASON,
+      owner: "operator",
+      evidence: "Board dispatch hold",
+      since: task.updatedAt,
+    };
   const kind = taskStopKind(task, runs, budget);
   if (!kind) return null;
   const stored = currentTaskStop(task, budget);
@@ -301,62 +525,99 @@ export function ownerTaskStop(facts: OwnerVerbFacts): TaskNextStop | null {
   // typed here is the one `next` reports, so a budget pause the measured figure no
   // longer shows cannot come back as an operator wait (nucleus#1187).
   const visibleReason = taskVisibleReason(task, budget);
-  const reasonText = kind === "wait" && taskStopClassification(visibleReason).reason === "held" ? DISPATCH_WAIT_REASON : visibleReason;
-  const fallback: TaskStopReason = kind === "hold" ? "held"
-    : kind === "wait" ? (task.prerequisiteWait && !task.prerequisiteWait.releasedAt ? "prerequisite" : taskStopClassification(reasonText).reason)
-      : "operator_needed";
-  const classified = stored ?? taskStopRecord(fallback, reasonText || "Waiting to dispatch", null, task.createdAt);
+  const reasonText =
+    kind === "wait" && taskStopClassification(visibleReason).reason === "held"
+      ? DISPATCH_WAIT_REASON
+      : visibleReason;
+  const fallback: TaskStopReason =
+    kind === "hold"
+      ? "held"
+      : kind === "wait"
+        ? task.prerequisiteWait && !task.prerequisiteWait.releasedAt
+          ? "prerequisite"
+          : taskStopClassification(reasonText).reason
+        : "operator_needed";
+  const classified =
+    stored ??
+    taskStopRecord(
+      fallback,
+      reasonText || "Waiting to dispatch",
+      null,
+      task.createdAt,
+    );
   // Tom, 2026-10-27: the bounded recovery loop is the owner's to read, not only
   // to hit. The charged launch count and the work basis it is charged to are
   // stated in the existing stop detail once any coordinator run is counted, so
   // an owner sees what an ordinary restart or route preserves and why the
   // breaker is (or stays) exhausted. Derived read only: no new field or record.
-  const bound = runs.some(run => run.role === 'recovery') || task.resolution.recovery
-    ? recoveryBoundStatus(facts.store, task)
-    : { charged: 0, limit: 0, basis: '' };
-  const boundNote = bound.charged > 0
-    ? `Coordinator recovery: ${bound.charged} of ${bound.limit} launches are charged to the current work (${bound.basis}); a routine restart or route at unchanged work does not reset that count, and one explicit restart role=coordinator re-arms it.`
-    : '';
+  const bound =
+    runs.some((run) => run.role === "recovery") || task.resolution.recovery
+      ? recoveryBoundStatus(facts.store, task)
+      : { charged: 0, limit: 0, basis: "" };
+  const boundNote =
+    bound.charged > 0
+      ? `Coordinator recovery: ${bound.charged} of ${bound.limit} launches are charged to the current work (${bound.basis}); a routine restart or route at unchanged work does not reset that count, and one explicit restart role=coordinator re-arms it.`
+      : "";
   const latestAuthorReport = latestAuthorResult(task, runs);
   // Preserve independent stop reasons, but replace a detail copied from the
   // initial author result when a later revision has reported.
-  const earlierAuthorIncident = task.resolution.incident?.role === 'worker'
-    && task.resolution.incident.runId === task.completion?.runId && latestAuthorReport?.runId !== task.completion?.runId;
-  const stopDetail = task.completion && latestAuthorReport && (classified.detail === task.completion.summary || earlierAuthorIncident)
-    ? latestAuthorReport.summary : classified.detail;
+  const earlierAuthorIncident =
+    task.resolution.incident?.role === "worker" &&
+    task.resolution.incident.runId === task.completion?.runId &&
+    latestAuthorReport?.runId !== task.completion?.runId;
+  const stopDetail =
+    task.completion &&
+    latestAuthorReport &&
+    (classified.detail === task.completion.summary || earlierAuthorIncident)
+      ? latestAuthorReport.summary
+      : classified.detail;
   const stopFields = {
-    reason: classified.reason, since: classified.since,
+    reason: classified.reason,
+    since: classified.since,
     detail: withRecoveryNote(stopDetail, boundNote),
     suggestedVerbs: classified.suggestedVerbs,
   };
-  const checkpointed = (kind === "run" || kind === "wait") ? retainedCheckpointRun(runs) : null;
-  const resultFencedCheckpoint = checkpointed?.reviewCheckpoints?.length && reviewResultFencesRun(facts.store, task, checkpointed)
-    ? checkpointed : null;
-  if (resultFencedCheckpoint) stopFields.detail = `A reviewer result fences checkpoint ${resultFencedCheckpoint.reviewCheckpoints!.at(-1)!.ordinal} on run ${resultFencedCheckpoint.id}; continue with restart role=reviewer fresh or move to=review fresh.`;
+  const checkpointed =
+    kind === "run" || kind === "wait" ? retainedCheckpointRun(runs) : null;
+  const resultFencedCheckpoint =
+    checkpointed?.reviewCheckpoints?.length &&
+    reviewResultFencesRun(facts.store, task, checkpointed)
+      ? checkpointed
+      : null;
+  if (resultFencedCheckpoint)
+    stopFields.detail = `A reviewer result fences checkpoint ${resultFencedCheckpoint.reviewCheckpoints!.at(-1)!.ordinal} on run ${resultFencedCheckpoint.id}; continue with restart role=reviewer fresh or move to=review fresh.`;
   const fences = holdsOf(task);
   if (kind === "hold") {
     // A hold stop is its owner's gate whatever wait the task last recorded: a
     // held submission still carries its creation-time "Waiting for dispatch".
     // `taskStopKind` names a hold only while a fence exists. The fence named is the
     // one that blocks now (the board card shows the same one), else merge first.
-    const named = blockingHoldFence(task) ?? (fences.merge
-      ? { kind: "merge" as const, fence: fences.merge }
-      : { kind: "dispatch" as const, fence: fences.dispatch! });
+    const named =
+      blockingHoldFence(task) ??
+      (fences.merge
+        ? { kind: "merge" as const, fence: fences.merge }
+        : { kind: "dispatch" as const, fence: fences.dispatch! });
     const { fence } = named;
     return taskNextStopSchema.parse({
-      kind, ...stopFields, reason: "held", suggestedVerbs: [], since: fence.at,
+      kind,
+      ...stopFields,
+      reason: "held",
+      suggestedVerbs: [],
+      since: fence.at,
       // The hold stays truthful about its own reason and owner, and the charged
       // recovery count and work basis stay readable beside it (review
       // 5672912042): the owner must see what an ordinary restart preserves even
       // while a hold is the visible wait.
-      detail: withRecoveryNote(fence.reason, boundNote), owner: holdOwnerOf(task, fence.owner),
+      detail: withRecoveryNote(fence.reason, boundNote),
+      owner: holdOwnerOf(task, fence.owner),
       evidence: `${named.kind} hold generation ${fence.generation}${fence.until ? ` until ${fence.until}` : ""}`,
     });
   }
   if (kind === "incident") {
     const incident = task.resolution.incident!;
     return taskNextStopSchema.parse({
-      kind, ...stopFields,
+      kind,
+      ...stopFields,
       owner: taskOwner(task) || null,
       evidence: `incident ${incident.id} (${incident.cause}, ${incident.status}) on ${incident.runId ?? "no run"}: ${incident.detail}`,
     });
@@ -364,22 +625,40 @@ export function ownerTaskStop(facts: OwnerVerbFacts): TaskNextStop | null {
   if (kind === "recovery") {
     const recovery = task.resolution.recovery!;
     return taskNextStopSchema.parse({
-      kind, ...stopFields, owner: "coordinator",
+      kind,
+      ...stopFields,
+      owner: "coordinator",
       evidence: `recovery ${recovery.id} (${recovery.status}, generation ${recovery.generation}) on ${recovery.runId ?? "no run"}`,
     });
   }
-  if (kind === "attention") return taskNextStopSchema.parse({
-    kind, ...stopFields, owner: taskOwner(task) || null,
-    evidence: facts.notices.find(notice => notice.kind === "attention" && notice.status === "pending")?.text ?? null,
-  });
+  if (kind === "attention")
+    return taskNextStopSchema.parse({
+      kind,
+      ...stopFields,
+      owner: taskOwner(task) || null,
+      evidence:
+        facts.notices.find(
+          (notice) =>
+            notice.kind === "attention" && notice.status === "pending",
+        )?.text ?? null,
+    });
   if (kind === "run") {
     const checkpointed = retainedCheckpointRun(runs);
     if (checkpointed) {
       const ordinal = checkpointed.reviewCheckpoints!.at(-1)!.ordinal;
-      const resultFenced = reviewResultFencesRun(facts.store, task, checkpointed);
+      const resultFenced = reviewResultFencesRun(
+        facts.store,
+        task,
+        checkpointed,
+      );
       return taskNextStopSchema.parse({
-        kind, ...stopFields,
-        ...(resultFenced ? { detail: `A reviewer result fences checkpoint ${ordinal} on run ${checkpointed.id}; continue with restart role=reviewer fresh or move to=review fresh.` } : {}),
+        kind,
+        ...stopFields,
+        ...(resultFenced
+          ? {
+              detail: `A reviewer result fences checkpoint ${ordinal} on run ${checkpointed.id}; continue with restart role=reviewer fresh or move to=review fresh.`,
+            }
+          : {}),
         owner: taskOwner(task) || null,
         evidence: checkpointed.retainedAgentClosedAt
           ? `reviewer run ${checkpointed.id} (agent ${checkpointed.agentId}) holds checkpoint ${ordinal} at ${checkpointed.head}; its agent was observed closed in ${checkpointed.workspaceId} at ${checkpointed.retainedAgentClosedAt}, so the same-agent continuation is impossible`
@@ -389,28 +668,51 @@ export function ownerTaskStop(facts: OwnerVerbFacts): TaskNextStop | null {
       });
     }
     const author = latestAuthorReport;
-    if (author) return taskNextStopSchema.parse({
-      kind, ...stopFields, detail: author.summary || classified.detail, owner: taskOwner(task) || null,
-      evidence: `worker run ${author.runId} reported ${author.status} (${author.eventId})`,
-    });
+    if (author)
+      return taskNextStopSchema.parse({
+        kind,
+        ...stopFields,
+        detail: author.summary || classified.detail,
+        owner: taskOwner(task) || null,
+        evidence: `worker run ${author.runId} reported ${author.status} (${author.eventId})`,
+      });
     // No result recorded (a stalled initial worker or resolution run): name the
     // run the stop is about from stored bindings only.
-    const openIncidentRun = incidentBindsCurrentWork(task, runs) ? task.resolution.incident!.runId : null;
-    const runId = task.resolution.stalledTurnStop?.runId ?? openIncidentRun ?? task.resolution.currentRunId ?? task.runId;
-    const stored = runId ? runs.find(run => run.id === runId) : undefined;
-    const role = stored?.role ?? (runId && runId === task.runId ? "worker" : "run");
-    const agentId = stored?.agentId ?? (runId === task.runId ? task.agentId : null);
+    const openIncidentRun = incidentBindsCurrentWork(task, runs)
+      ? task.resolution.incident!.runId
+      : null;
+    const runId =
+      task.resolution.stalledTurnStop?.runId ??
+      openIncidentRun ??
+      task.resolution.currentRunId ??
+      task.runId;
+    const stored = runId ? runs.find((run) => run.id === runId) : undefined;
+    const role =
+      stored?.role ?? (runId && runId === task.runId ? "worker" : "run");
+    const agentId =
+      stored?.agentId ?? (runId === task.runId ? task.agentId : null);
     return taskNextStopSchema.parse({
-      kind, ...stopFields, owner: taskOwner(task) || null,
-      evidence: runId ? `${role} run ${runId}${agentId ? ` (agent ${agentId})` : ""} has no recorded result: ${classified.detail}` : classified.detail,
+      kind,
+      ...stopFields,
+      owner: taskOwner(task) || null,
+      evidence: runId
+        ? `${role} run ${runId}${agentId ? ` (agent ${agentId})` : ""} has no recorded result: ${classified.detail}`
+        : classified.detail,
     });
   }
-  if (task.prerequisiteWait && !task.prerequisiteWait.releasedAt) return taskNextStopSchema.parse({
-    kind, ...stopFields, detail: task.prerequisiteWait.reason, owner: "queue",
-    evidence: `waiting for ${task.prerequisiteWait.waitsFor.join(", ")}`,
-  });
+  if (task.prerequisiteWait && !task.prerequisiteWait.releasedAt)
+    return taskNextStopSchema.parse({
+      kind,
+      ...stopFields,
+      detail: task.prerequisiteWait.reason,
+      owner: "queue",
+      evidence: `waiting for ${task.prerequisiteWait.waitsFor.join(", ")}`,
+    });
   return taskNextStopSchema.parse({
-    kind, ...stopFields, owner: "queue", evidence: null,
+    kind,
+    ...stopFields,
+    owner: "queue",
+    evidence: null,
   });
 }
 
@@ -419,6 +721,11 @@ export function ownerTaskStop(facts: OwnerVerbFacts): TaskNextStop | null {
  * participant a continuation keeps. `next`'s stop and the recovery launch snapshot
  * both name it through this one finder.
  */
-export const retainedCheckpointRun = (runs: Run[]): Run | undefined => runs.find(run => run.role === "reviewer" && !run.released
-  && !run.completion && (run.reviewCheckpoints?.length ?? 0) > 0);
-
+export const retainedCheckpointRun = (runs: Run[]): Run | undefined =>
+  runs.find(
+    (run) =>
+      run.role === "reviewer" &&
+      !run.released &&
+      !run.completion &&
+      (run.reviewCheckpoints?.length ?? 0) > 0,
+  );

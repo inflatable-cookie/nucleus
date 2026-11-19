@@ -747,7 +747,10 @@ export class QueueRuntime {
     });
     this.cachedTaskDetail = createTaskDetailCache(this.store, {
       slotAdmissionReason: (task) =>
-        this.engine.resolution.slotAdmissionReason(task, task.phase === "needs_attention"),
+        this.engine.resolution.slotAdmissionReason(
+          task,
+          task.phase === "needs_attention",
+        ),
       externalWait: (task) => this.engine.queuedExternalWait(task),
       profiles: (task) => this.engine.profilesFor(task.hostId),
     });

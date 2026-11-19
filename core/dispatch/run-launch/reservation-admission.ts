@@ -5,10 +5,7 @@ import {
   isDispositionActive,
   workerExclusionRefusal,
 } from "../../../shared/contracts";
-import {
-  dispatchBlocked,
-  DISPATCH_HELD_REASON,
-} from "../capacity";
+import { dispatchBlocked, DISPATCH_HELD_REASON } from "../capacity";
 import { blockingRecoveryEffectsRefusal } from "../../recovery/recovery-effects";
 import {
   proofSingleFlightRefusal,

@@ -544,9 +544,13 @@ export class TaskWakes {
       (!routeUnavailableStop(task) || this.store.routingRetryAllowed(task)) &&
       !occupiesSlot(task) &&
       (task.phase === "queued" || recordedSlotWait(task)) &&
-      ["queued", "awaiting_review", "changes_requested", "reviewing", "closing"].includes(
-        task.phase,
-      );
+      [
+        "queued",
+        "awaiting_review",
+        "changes_requested",
+        "reviewing",
+        "closing",
+      ].includes(task.phase);
     const ready = (task: Task) =>
       Boolean(
         task.hostId &&
@@ -560,7 +564,11 @@ export class TaskWakes {
           !this.resolution.projectInFlightAdmissionReason(task))) &&
       !this.resolution.slotAdmissionReason(task);
     const tasks = this.store.admissionCandidates();
-    const next = fairSlotRequestOrder(tasks, candidate, tasks.filter(task => occupiesSlot(task))).find(ready);
+    const next = fairSlotRequestOrder(
+      tasks,
+      candidate,
+      tasks.filter((task) => occupiesSlot(task)),
+    ).find(ready);
     if (!next) return;
     markPhaseFact(
       this.store,

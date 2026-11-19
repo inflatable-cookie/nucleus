@@ -1,19 +1,24 @@
-import { profile } from './support/fakes';
-import { test } from 'node:test';
-import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { randomUUID } from 'node:crypto';
-import { Store } from '../core/store/store';
-import { Engine } from '../core/engine';
-import { occupiesSlot } from '../core/dispatch/capacity';
-import { liveNoopSummary } from '../core/recovery/live-noop';
-import { NO_RESOLUTION_RUN_REFUSAL } from '../core/verbs/verb-refusal-text';
+import { profile } from "./support/fakes";
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { randomUUID } from "node:crypto";
+import { Store } from "../core/store/store";
+import { Engine } from "../core/engine";
+import { occupiesSlot } from "../core/dispatch/capacity";
+import { liveNoopSummary } from "../core/recovery/live-noop";
+import { NO_RESOLUTION_RUN_REFUSAL } from "../core/verbs/verb-refusal-text";
 import {
-  runSchema, submissionSchema, taskControlInputSchema, type Completion, type Run, type Task,
-} from '../shared/contracts';
-import type { Adapter, AgentObservation } from '../core/host';
+  runSchema,
+  submissionSchema,
+  taskControlInputSchema,
+  type Completion,
+  type Run,
+  type Task,
+} from "../shared/contracts";
+import type { Adapter, AgentObservation } from "../core/host";
 
 /**
  * nucleus#1278: recovery stands down on a live task, a planner wait on a
@@ -22,10 +27,11 @@ import type { Adapter, AgentObservation } from '../core/host';
  * shapes from a721bbcc, baaa2daa and fedca2e8 with synthetic IDs.
  */
 
-const head = 'a'.repeat(40), base = 'b'.repeat(40);
-const worker = profile('worker', 'test/worker');
-const reviewer = profile('reviewer', 'test/reviewer');
-const coordinator = profile('coordinator', 'test/coordinator');
+const head = "a".repeat(40),
+  base = "b".repeat(40);
+const worker = profile("worker", "test/worker");
+const reviewer = profile("reviewer", "test/reviewer");
+const coordinator = profile("coordinator", "test/coordinator");
 // The wall-clock budget charges run starts against a 180-minute default limit:
 // pin the fixture's activity a few minutes ago so the limit never exhausts
 // mid-test, however long after 2026-11-16 the file runs (nucleus#1268). Fixed
@@ -35,129 +41,342 @@ const coordinator = profile('coordinator', 'test/coordinator');
 const lastActivity = new Date(Date.now() - 5 * 60 * 1000).toISOString();
 
 function fixture() {
-  const dir = mkdtempSync(join(tmpdir(), 'ns-1258-lifecycle-'));
-  const store = new Store(join(dir, 'queue.sqlite'));
-  store.setMeta('paused', false);
-  store.setMeta('globalLimit', 1);
-  store.setMeta('projectLimit', 1);
-  store.setMeta('pool', [
-    { profileId: worker.id, enabled: true, group: 'author', roles: ['worker'], weight: 1, scopes: ['general'] },
-    { profileId: reviewer.id, enabled: true, group: 'review', roles: ['reviewer'], weight: 1, scopes: ['general'] },
-    { profileId: coordinator.id, enabled: true, group: 'coordinate', roles: ['coordinator'], weight: 1, scopes: ['general'] },
+  const dir = mkdtempSync(join(tmpdir(), "ns-1258-lifecycle-"));
+  const store = new Store(join(dir, "queue.sqlite"));
+  store.setMeta("paused", false);
+  store.setMeta("globalLimit", 1);
+  store.setMeta("projectLimit", 1);
+  store.setMeta("pool", [
+    {
+      profileId: worker.id,
+      enabled: true,
+      group: "author",
+      roles: ["worker"],
+      weight: 1,
+      scopes: ["general"],
+    },
+    {
+      profileId: reviewer.id,
+      enabled: true,
+      group: "review",
+      roles: ["reviewer"],
+      weight: 1,
+      scopes: ["general"],
+    },
+    {
+      profileId: coordinator.id,
+      enabled: true,
+      group: "coordinate",
+      roles: ["coordinator"],
+      weight: 1,
+      scopes: ["general"],
+    },
   ]);
-  const submitted = store.insert(submissionSchema.parse({
-    submissionId: randomUUID(), title: 'Live recovery wait restart', repoPath: '/repo', planningCommit: base,
-    handoffPath: 'handoff.md', originAgentId: 'origin',
-  }), 'host', 'handoff', base);
+  const submitted = store.insert(
+    submissionSchema.parse({
+      submissionId: randomUUID(),
+      title: "Live recovery wait restart",
+      repoPath: "/repo",
+      planningCommit: base,
+      handoffPath: "handoff.md",
+      originAgentId: "origin",
+    }),
+    "host",
+    "handoff",
+    base,
+  );
+  store.update(
+    submitted.id,
+    {
+      phase: "reviewing",
+      planningBase: base,
+      workspaceIntent: true,
+      agentIntent: true,
+      workspaceId: "workspace",
+      directory: "/worktree",
+      agentId: "worker",
+      runId: "worker-run",
+      profile: worker,
+      workerModel: worker.model,
+      prHead: head,
+      prUrl: "https://github.com/example/repo/pull/7",
+      responsible: true,
+      completion: {
+        taskId: submitted.id,
+        runId: "worker-run",
+        eventId: "worker-ready",
+        status: "ready_for_review",
+        summary: "Ready",
+        prNumber: 7,
+      },
+    },
+    "dispatched",
+  );
+  const reviewerRun = (
+    id: string,
+    agentId: string,
+    patch: Partial<Run> = {},
+  ): Run =>
+    runSchema.parse({
+      id,
+      taskId: submitted.id,
+      role: "reviewer",
+      generation: 1,
+      head,
+      base,
+      agentId,
+      workspaceId: "workspace",
+      profile: reviewer,
+      status: "running",
+      createdAt: lastActivity,
+      briefVersion: submitted.briefVersions.at(-1)?.version ?? null,
+      lastObservedAt: lastActivity,
+      active: true,
+      idleSince: null,
+      completion: null,
+      released: false,
+      ...patch,
+    });
+  const tokens = new Map<string, string>([
+    ["reviewer-token", "reviewer-token"],
+  ]);
+  store.putRun(reviewerRun("review-run", "review-agent"));
+  store.setCredential("review-run", "reviewer-token");
   store.update(submitted.id, {
-    phase: 'reviewing', planningBase: base, workspaceIntent: true, agentIntent: true, workspaceId: 'workspace',
-    directory: '/worktree', agentId: 'worker', runId: 'worker-run', profile: worker, workerModel: worker.model,
-    prHead: head, prUrl: 'https://github.com/example/repo/pull/7', responsible: true,
-    completion: { taskId: submitted.id, runId: 'worker-run', eventId: 'worker-ready', status: 'ready_for_review', summary: 'Ready', prNumber: 7 },
-  }, 'dispatched');
-  const reviewerRun = (id: string, agentId: string, patch: Partial<Run> = {}): Run => runSchema.parse({
-    id, taskId: submitted.id, role: 'reviewer', generation: 1, head, base, agentId, workspaceId: 'workspace',
-    profile: reviewer, status: 'running', createdAt: lastActivity, briefVersion: submitted.briefVersions.at(-1)?.version ?? null,
-    lastObservedAt: lastActivity, active: true, idleSince: null, completion: null, released: false, ...patch,
+    resolution: {
+      ...store.task(submitted.id).resolution,
+      currentRunId: "review-run",
+      reviewerAgentId: "review-agent",
+      reviewerProfile: reviewer,
+    },
   });
-  const tokens = new Map<string, string>([['reviewer-token', 'reviewer-token']]);
-  store.putRun(reviewerRun('review-run', 'review-agent'));
-  store.setCredential('review-run', 'reviewer-token');
-  store.update(submitted.id, { resolution: { ...store.task(submitted.id).resolution, currentRunId: 'review-run', reviewerAgentId: 'review-agent', reviewerProfile: reviewer } });
 
   const states = new Map<string, AgentObservation>([
-    ['worker', { id: 'worker', workspaceId: 'workspace', status: 'idle', active: false, permissions: false, error: '', provider: 'test', model: worker.model }],
-    ['review-agent', { id: 'review-agent', workspaceId: 'workspace', status: 'running', active: true, permissions: false, error: '', provider: 'test', model: reviewer.model, activeTurnId: 'turn-1' }],
+    [
+      "worker",
+      {
+        id: "worker",
+        workspaceId: "workspace",
+        status: "idle",
+        active: false,
+        permissions: false,
+        error: "",
+        provider: "test",
+        model: worker.model,
+      },
+    ],
+    [
+      "review-agent",
+      {
+        id: "review-agent",
+        workspaceId: "workspace",
+        status: "running",
+        active: true,
+        permissions: false,
+        error: "",
+        provider: "test",
+        model: reviewer.model,
+        activeTurnId: "turn-1",
+      },
+    ],
   ]);
   const createdRuns: Run[] = [];
   const adapter = {
-    profiles: async () => [worker, reviewer, coordinator], validate: async () => base,
-    createWorkspace: async () => { throw new Error('fixtures do not create workspaces'); },
-    findWorkspaces: async () => [], findAgents: async () => [], findRunAgents: async () => [],
-    createAgent: async () => { throw new Error('fixtures do not create agents'); },
-    observe: async (id: string) => states.get(id) ?? { id, workspaceId: 'workspace', status: 'idle', active: false, permissions: false, error: '' },
-    archiveAgent: async () => {}, notify: async (id: string, messageId: string) => {
-      if (messageId.startsWith('ns-reviewer-report-')) {
+    profiles: async () => [worker, reviewer, coordinator],
+    validate: async () => base,
+    createWorkspace: async () => {
+      throw new Error("fixtures do not create workspaces");
+    },
+    findWorkspaces: async () => [],
+    findAgents: async () => [],
+    findRunAgents: async () => [],
+    createAgent: async () => {
+      throw new Error("fixtures do not create agents");
+    },
+    observe: async (id: string) =>
+      states.get(id) ?? {
+        id,
+        workspaceId: "workspace",
+        status: "idle",
+        active: false,
+        permissions: false,
+        error: "",
+      },
+    archiveAgent: async () => {},
+    notify: async (id: string, messageId: string) => {
+      if (messageId.startsWith("ns-reviewer-report-")) {
         const state = states.get(id);
-        if (state) states.set(id, { ...state, active: true, status: 'running' });
+        if (state)
+          states.set(id, { ...state, active: true, status: "running" });
       }
     },
-    originAgent: async (id: string) => ({ id, workspaceId: 'workspace', title: id, archived: false }),
+    originAgent: async (id: string) => ({
+      id,
+      workspaceId: "workspace",
+      title: id,
+      archived: false,
+    }),
     stopAgentTurn: async (id: string) => {
       const state = states.get(id);
-      if (state) states.set(id, { ...state, active: false, status: 'idle', activeTurnId: undefined });
+      if (state)
+        states.set(id, {
+          ...state,
+          active: false,
+          status: "idle",
+          activeTurnId: undefined,
+        });
     },
-    verifyPr: async () => ({ url: 'https://github.com/example/repo/pull/7', head: store.task(submitted.id).prHead ?? head }),
-    verifyPrIdentity: async () => ({ url: 'https://github.com/example/repo/pull/7', head: store.task(submitted.id).prHead ?? head, repository: 'example/repo', headRepository: 'example/repo' }),
-    verifyCleanQueueWorktree: async () => {}, verifyReview: async () => {},
-    mergeGate: async () => ({ head, base, wait: '' }), merge: async () => {},
-    merged: async () => ({ merged: false, commit: null, head, base: 'main' }),
-    syncMain: async () => head, verifyCloseout: async () => {},
+    verifyPr: async () => ({
+      url: "https://github.com/example/repo/pull/7",
+      head: store.task(submitted.id).prHead ?? head,
+    }),
+    verifyPrIdentity: async () => ({
+      url: "https://github.com/example/repo/pull/7",
+      head: store.task(submitted.id).prHead ?? head,
+      repository: "example/repo",
+      headRepository: "example/repo",
+    }),
+    verifyCleanQueueWorktree: async () => {},
+    verifyReview: async () => {},
+    mergeGate: async () => ({ head, base, wait: "" }),
+    merge: async () => {},
+    merged: async () => ({ merged: false, commit: null, head, base: "main" }),
+    syncMain: async () => head,
+    verifyCloseout: async () => {},
     createRun: async (_t: Task, r: Run, token: string) => {
-      createdRuns.push(r); tokens.set(r.id, token);
+      createdRuns.push(r);
+      tokens.set(r.id, token);
       const id = `agent-${r.id}`;
-      states.set(id, { id, workspaceId: r.workspaceId, status: 'running', active: true, permissions: false, error: '' });
+      states.set(id, {
+        id,
+        workspaceId: r.workspaceId,
+        status: "running",
+        active: true,
+        permissions: false,
+        error: "",
+      });
       return { id, workspaceId: r.workspaceId };
     },
     sendRun: async (_t: Task, r: Run, token: string) => {
-      createdRuns.push(r); tokens.set(r.id, token);
-      if (r.agentId) states.set(r.agentId, { ...(states.get(r.agentId) ?? { id: r.agentId, workspaceId: r.workspaceId, permissions: false, error: '' }), active: true, status: 'running' });
+      createdRuns.push(r);
+      tokens.set(r.id, token);
+      if (r.agentId)
+        states.set(r.agentId, {
+          ...(states.get(r.agentId) ?? {
+            id: r.agentId,
+            workspaceId: r.workspaceId,
+            permissions: false,
+            error: "",
+          }),
+          active: true,
+          status: "running",
+        });
     },
     supportsCoordinatorRecovery: true,
   } as unknown as Adapter & { supportsCoordinatorRecovery?: boolean };
   const engine = new Engine(store, adapter, 0);
   engine.profiles = [worker, reviewer, coordinator];
   return {
-    dir, store, engine, adapter, submitted, tokens, states, createdRuns, reviewerRun,
+    dir,
+    store,
+    engine,
+    adapter,
+    submitted,
+    tokens,
+    states,
+    createdRuns,
+    reviewerRun,
     current: () => store.task(submitted.id),
-    events: (kind: string) => store.eventsAll(submitted.id).filter(event => event.kind === kind),
-    coordinatorRuns: () => store.runs(submitted.id).filter(item => item.role === 'recovery'),
+    events: (kind: string) =>
+      store.eventsAll(submitted.id).filter((event) => event.kind === kind),
+    coordinatorRuns: () =>
+      store.runs(submitted.id).filter((item) => item.role === "recovery"),
     idle: (id: string) => {
       const state = states.get(id);
-      if (state) states.set(id, { ...state, active: false, status: 'idle', activeTurnId: undefined });
+      if (state)
+        states.set(id, {
+          ...state,
+          active: false,
+          status: "idle",
+          activeTurnId: undefined,
+        });
     },
-    close: async () => { await engine.stop(); store.close(); rmSync(dir, { recursive: true, force: true }); },
+    close: async () => {
+      await engine.stop();
+      store.close();
+      rmSync(dir, { recursive: true, force: true });
+    },
   };
 }
 
-test('recovery observes a live reviewer and reports the no-op; no escalation and no second recovery while the reviewer stays active', async () => {
+test("recovery observes a live reviewer and reports the no-op; no escalation and no second recovery while the reviewer stays active", async () => {
   const f = fixture();
   try {
     // Stall-shaped: the reviewer run still occupies the slot, but the host
     // observation is idle so recovery can lease and launch. The papercut is
     // the coordinator finding that occupant live after launch.
-    f.idle('review-agent');
+    f.idle("review-agent");
     f.store.update(f.submitted.id, {
-      reason: 'Stalled turn recorded',
+      reason: "Stalled turn recorded",
       resolution: { ...f.current().resolution, attention: true },
     });
     await f.engine.resolution.recovery.route(f.current());
     await f.engine.quiesce();
     const recovery = f.coordinatorRuns().at(-1);
-    assert.ok(recovery, `recovery launched to observe the live reviewer; stop=${f.current().resolution.stop?.reason ?? 'none'} reason=${f.current().reason}`);
-    const live = f.store.run('review-run')!;
+    assert.ok(
+      recovery,
+      `recovery launched to observe the live reviewer; stop=${f.current().resolution.stop?.reason ?? "none"} reason=${f.current().reason}`,
+    );
+    const live = f.store.run("review-run")!;
     const summary = liveNoopSummary(live);
     f.idle(recovery.agentId!);
-    f.states.set('review-agent', {
-      id: 'review-agent', workspaceId: 'workspace', status: 'running', active: true,
-      permissions: false, error: '', provider: 'test', model: reviewer.model, activeTurnId: 'turn-1',
+    f.states.set("review-agent", {
+      id: "review-agent",
+      workspaceId: "workspace",
+      status: "running",
+      active: true,
+      permissions: false,
+      error: "",
+      provider: "test",
+      model: reviewer.model,
+      activeTurnId: "turn-1",
     });
-    f.engine.resolution.complete({
-      eventId: randomUUID(), taskId: f.submitted.id, runId: recovery.id, status: 'recovered', summary,
-      coordinatorGeneration: recovery.generation,
-    } as Completion, f.tokens.get(recovery.id)!);
+    f.engine.resolution.complete(
+      {
+        eventId: randomUUID(),
+        taskId: f.submitted.id,
+        runId: recovery.id,
+        status: "recovered",
+        summary,
+        coordinatorGeneration: recovery.generation,
+      } as Completion,
+      f.tokens.get(recovery.id)!,
+    );
     await f.engine.resolution.recovery.pass(f.submitted.id);
-    assert.equal(f.events('planner_escalation').length, 0, 'live no-op opens no planner escalation');
-    assert.equal(f.current().resolution.recovery?.status, 'resolved');
-    assert.match(f.current().resolution.recovery?.summary ?? '', /^live: reviewer is working, last activity /);
+    assert.equal(
+      f.events("planner_escalation").length,
+      0,
+      "live no-op opens no planner escalation",
+    );
+    assert.equal(f.current().resolution.recovery?.status, "resolved");
+    assert.match(
+      f.current().resolution.recovery?.summary ?? "",
+      /^live: reviewer is working, last activity /,
+    );
     assert.match(f.current().reason, /reviewer thread running/);
-    assert.notEqual(f.current().resolution.stop?.reason, 'escalated');
+    assert.notEqual(f.current().resolution.stop?.reason, "escalated");
     assert.equal(f.current().resolution.attention, false);
     const count = f.coordinatorRuns().length;
     await f.engine.resolution.recovery.route(f.current());
     await f.engine.quiesce();
-    assert.equal(f.coordinatorRuns().length, count, 'no second recovery while the reviewer stays active');
-  } finally { await f.close(); }
+    assert.equal(
+      f.coordinatorRuns().length,
+      count,
+      "no second recovery while the reviewer stays active",
+    );
+  } finally {
+    await f.close();
+  }
 });
 
 for (const scenario of [
@@ -293,306 +512,646 @@ for (const scenario of [
   });
 }
 
-test('recovered without action and no live participant is refused; the stop is not cleared', async () => {
+test("recovered without action and no live participant is refused; the stop is not cleared", async () => {
   const f = fixture();
   try {
-    f.store.putRun({ ...f.store.run('review-run')!, released: true, active: false, status: 'finished' });
-    f.idle('review-agent');
+    f.store.putRun({
+      ...f.store.run("review-run")!,
+      released: true,
+      active: false,
+      status: "finished",
+    });
+    f.idle("review-agent");
     f.store.update(f.submitted.id, {
-      phase: 'blocked',
-      reason: 'Worker blocked: tests red',
+      phase: "blocked",
+      reason: "Worker blocked: tests red",
       resolution: {
         ...f.current().resolution,
         currentRunId: null,
         attention: true,
         stop: {
-          reason: 'operator_needed', detail: 'Worker blocked: tests red', since: lastActivity,
-          suggestedVerbs: ['restart', 'route', 'move'],
+          reason: "operator_needed",
+          detail: "Worker blocked: tests red",
+          since: lastActivity,
+          suggestedVerbs: ["restart", "route", "move"],
         },
       },
     });
     await f.engine.resolution.recovery.route(f.current());
     await f.engine.quiesce();
     const recovery = f.coordinatorRuns().at(-1);
-    assert.ok(recovery, `recovery launched; stop=${f.current().resolution.stop?.reason ?? 'none'} reason=${f.current().reason}`);
+    assert.ok(
+      recovery,
+      `recovery launched; stop=${f.current().resolution.stop?.reason ?? "none"} reason=${f.current().reason}`,
+    );
     f.idle(recovery.agentId!);
-    f.engine.resolution.complete({
-      eventId: randomUUID(), taskId: f.submitted.id, runId: recovery.id, status: 'recovered',
-      summary: 'Nothing to do', coordinatorGeneration: recovery.generation,
-    } as Completion, f.tokens.get(recovery.id)!);
+    f.engine.resolution.complete(
+      {
+        eventId: randomUUID(),
+        taskId: f.submitted.id,
+        runId: recovery.id,
+        status: "recovered",
+        summary: "Nothing to do",
+        coordinatorGeneration: recovery.generation,
+      } as Completion,
+      f.tokens.get(recovery.id)!,
+    );
     await f.engine.resolution.recovery.pass(f.submitted.id);
-    assert.ok(f.current().resolution.stop, 'no-live recovered-without-action must not clear the stop');
-    assert.notEqual(f.current().resolution.recovery?.action?.status, 'applied');
-    const refused = f.current().resolution.recovery?.action?.status === 'refused'
-      || f.current().resolution.recovery?.status === 'escalated'
-      || f.events('planner_escalation').length > 0;
-    assert.ok(refused, JSON.stringify({
-      recovery: f.current().resolution.recovery,
-      stop: f.current().resolution.stop,
-      escalations: f.events('planner_escalation').map(event => event.detail.slice(0, 160)),
-    }));
-  } finally { await f.close(); }
+    assert.ok(
+      f.current().resolution.stop,
+      "no-live recovered-without-action must not clear the stop",
+    );
+    assert.notEqual(f.current().resolution.recovery?.action?.status, "applied");
+    const refused =
+      f.current().resolution.recovery?.action?.status === "refused" ||
+      f.current().resolution.recovery?.status === "escalated" ||
+      f.events("planner_escalation").length > 0;
+    assert.ok(
+      refused,
+      JSON.stringify({
+        recovery: f.current().resolution.recovery,
+        stop: f.current().resolution.stop,
+        escalations: f
+          .events("planner_escalation")
+          .map((event) => event.detail.slice(0, 160)),
+      }),
+    );
+  } finally {
+    await f.close();
+  }
 });
 
 /** nucleus#1217: released reviewer, empty currentRunId, raising recovery gone, timed wait due. */
-function load1217Wait(f: ReturnType<typeof fixture>, kind: 'time' | 'task' = 'time') {
-  const recoveryId = 'recovery-1217';
-  const escalationId = 'c'.repeat(64);
-  const target = '2020-01-01T00:00:00.000Z';
+function load1217Wait(
+  f: ReturnType<typeof fixture>,
+  kind: "time" | "task" = "time",
+) {
+  const recoveryId = "recovery-1217";
+  const escalationId = "c".repeat(64);
+  const target = "2020-01-01T00:00:00.000Z";
   const stopDetail = `Escalation ${escalationId}: waiting until ${target}`;
   const waitId = randomUUID();
   let prerequisite: Task | null = null;
-  if (kind === 'task') {
-    prerequisite = f.store.insert(submissionSchema.parse({ submissionId: randomUUID(), title: 'Synthetic wait target', repoPath: '/upstream', planningCommit: base, brief: { text: 'Synthetic' }, originAgentId: 'origin' }), 'host', 'brief', base);
-    f.store.update(prerequisite.id, { phase: 'done' });
+  if (kind === "task") {
+    prerequisite = f.store.insert(
+      submissionSchema.parse({
+        submissionId: randomUUID(),
+        title: "Synthetic wait target",
+        repoPath: "/upstream",
+        planningCommit: base,
+        brief: { text: "Synthetic" },
+        originAgentId: "origin",
+      }),
+      "host",
+      "brief",
+      base,
+    );
+    f.store.update(prerequisite.id, { phase: "done" });
   }
-  f.store.putRun({ ...f.store.run('review-run')!, released: true, active: false, status: 'finished', completion: null });
-  f.idle('review-agent');
-  f.store.putRun(runSchema.parse({
-    id: recoveryId, taskId: f.submitted.id, role: 'recovery', generation: 1, head, base,
-    agentId: 'coord-1217', workspaceId: 'workspace', profile: coordinator, status: 'finished',
-    createdAt: lastActivity, lastObservedAt: lastActivity, active: false, idleSince: lastActivity,
-    completion: { eventId: 'esc-report', taskId: f.submitted.id, runId: recoveryId, status: 'blocked', summary: 'no justified recovery verb' },
+  f.store.putRun({
+    ...f.store.run("review-run")!,
     released: true,
-  }));
-  f.store.event(f.submitted.id, 'planner_escalation',
-    `${escalationId}: cause ${'d'.repeat(64)}; run ${recoveryId}; question ${'e'.repeat(64)} (80 chars); options Restart | Wait until a time`);
-  f.store.event(f.submitted.id, 'planner_escalation_payload',
-    `${escalationId}: ${JSON.stringify({ id: escalationId, runId: recoveryId, question: 'How should the task proceed?' })}`);
-  f.store.event(f.submitted.id, 'planner_escalation_answered',
-    `${escalationId}: answered by planner-1: Choice: Wait until a time\nReason: ${target}`);
-  f.store.event(f.submitted.id, 'planner_escalation_applied',
-    `${escalationId}: waiting until ${target}`);
-  f.store.event(f.submitted.id, 'planner_escalation_wait',
-    `${escalationId}: ${JSON.stringify({ kind, target: prerequisite?.id ?? target, ...(prerequisite ? { waitId } : {}), stopDetail, stopReason: 'lifecycle' })}`);
+    active: false,
+    status: "finished",
+    completion: null,
+  });
+  f.idle("review-agent");
+  f.store.putRun(
+    runSchema.parse({
+      id: recoveryId,
+      taskId: f.submitted.id,
+      role: "recovery",
+      generation: 1,
+      head,
+      base,
+      agentId: "coord-1217",
+      workspaceId: "workspace",
+      profile: coordinator,
+      status: "finished",
+      createdAt: lastActivity,
+      lastObservedAt: lastActivity,
+      active: false,
+      idleSince: lastActivity,
+      completion: {
+        eventId: "esc-report",
+        taskId: f.submitted.id,
+        runId: recoveryId,
+        status: "blocked",
+        summary: "no justified recovery verb",
+      },
+      released: true,
+    }),
+  );
+  f.store.event(
+    f.submitted.id,
+    "planner_escalation",
+    `${escalationId}: cause ${"d".repeat(64)}; run ${recoveryId}; question ${"e".repeat(64)} (80 chars); options Restart | Wait until a time`,
+  );
+  f.store.event(
+    f.submitted.id,
+    "planner_escalation_payload",
+    `${escalationId}: ${JSON.stringify({ id: escalationId, runId: recoveryId, question: "How should the task proceed?" })}`,
+  );
+  f.store.event(
+    f.submitted.id,
+    "planner_escalation_answered",
+    `${escalationId}: answered by planner-1: Choice: Wait until a time\nReason: ${target}`,
+  );
+  f.store.event(
+    f.submitted.id,
+    "planner_escalation_applied",
+    `${escalationId}: waiting until ${target}`,
+  );
+  f.store.event(
+    f.submitted.id,
+    "planner_escalation_wait",
+    `${escalationId}: ${JSON.stringify({ kind, target: prerequisite?.id ?? target, ...(prerequisite ? { waitId } : {}), stopDetail, stopReason: "lifecycle" })}`,
+  );
   f.store.update(f.submitted.id, {
-    phase: 'blocked',
-    ...(prerequisite ? { prerequisiteWait: { id: waitId, waitsFor: [prerequisite.id], reason: 'Waiting for synthetic target', releasedAt: null } } : {}),
+    phase: "blocked",
+    ...(prerequisite
+      ? {
+          prerequisiteWait: {
+            id: waitId,
+            waitsFor: [prerequisite.id],
+            reason: "Waiting for synthetic target",
+            releasedAt: null,
+          },
+        }
+      : {}),
     reason: stopDetail,
     resolution: {
       ...f.current().resolution,
       currentRunId: null,
       attention: true,
-      stop: { reason: 'lifecycle', detail: stopDetail, since: lastActivity, suggestedVerbs: [] },
+      stop: {
+        reason: "lifecycle",
+        detail: stopDetail,
+        since: lastActivity,
+        suggestedVerbs: [],
+      },
       recovery: {
-        id: 'episode-1217', key: 'blocked-live', generation: 1, runId: recoveryId, agentId: 'coord-1217',
-        status: 'escalated', summary: 'no justified recovery verb', idleSince: null, incidentId: null, progress: null,
+        id: "episode-1217",
+        key: "blocked-live",
+        generation: 1,
+        runId: recoveryId,
+        agentId: "coord-1217",
+        status: "escalated",
+        summary: "no justified recovery verb",
+        idleSince: null,
+        incidentId: null,
+        progress: null,
       },
     },
   });
   return { recoveryId, escalationId };
 }
 
-for (const kind of ['time', 'task'] as const) {
-test(`a ${kind} wait on a recovery escalation whose raising run has released wakes into the ordinary next step`, async () => {
-  const f = fixture();
-  try {
-    load1217Wait(f, kind);
-    const recoveriesBefore = f.coordinatorRuns().length;
-    await f.engine.resolution.ladder.resumeEscalationWaits(f.current());
-    assert.equal(f.events('planner_escalation_wake_refused').length, 0,
-      f.events('planner_escalation_wake_refused').map(event => event.detail).join('\n') || 'no refusal');
-    assert.equal(f.events('planner_escalation_woke').length, 1,
-      JSON.stringify(f.store.eventsAll(f.submitted.id).map(event => ({ kind: event.kind, detail: event.detail.slice(0, 160) }))));
-    const woke = f.events('planner_escalation_woke').at(-1)?.detail ?? '';
-    assert.doesNotMatch(woke, new RegExp(NO_RESOLUTION_RUN_REFUSAL));
-    assert.match(woke, /ordinary restart/, woke);
-    assert.doesNotMatch(f.current().reason, /wake was refused/);
-    assert.equal(f.current().phase, 'awaiting_review', `ordinary next must resume review; phase=${f.current().phase} reason=${f.current().reason}`);
-    await f.engine.wake();
-    assert.equal(f.coordinatorRuns().length, recoveriesBefore,
-      `wake must not start another recovery; runs=${f.coordinatorRuns().map(run => run.id).join(',')}`);
-  } finally { await f.close(); }
-});
+for (const kind of ["time", "task"] as const) {
+  test(`a ${kind} wait on a recovery escalation whose raising run has released wakes into the ordinary next step`, async () => {
+    const f = fixture();
+    try {
+      load1217Wait(f, kind);
+      const recoveriesBefore = f.coordinatorRuns().length;
+      await f.engine.resolution.ladder.resumeEscalationWaits(f.current());
+      assert.equal(
+        f.events("planner_escalation_wake_refused").length,
+        0,
+        f
+          .events("planner_escalation_wake_refused")
+          .map((event) => event.detail)
+          .join("\n") || "no refusal",
+      );
+      assert.equal(
+        f.events("planner_escalation_woke").length,
+        1,
+        JSON.stringify(
+          f.store.eventsAll(f.submitted.id).map((event) => ({
+            kind: event.kind,
+            detail: event.detail.slice(0, 160),
+          })),
+        ),
+      );
+      const woke = f.events("planner_escalation_woke").at(-1)?.detail ?? "";
+      assert.doesNotMatch(woke, new RegExp(NO_RESOLUTION_RUN_REFUSAL));
+      assert.match(woke, /ordinary restart/, woke);
+      assert.doesNotMatch(f.current().reason, /wake was refused/);
+      assert.equal(
+        f.current().phase,
+        "awaiting_review",
+        `ordinary next must resume review; phase=${f.current().phase} reason=${f.current().reason}`,
+      );
+      await f.engine.wake();
+      assert.equal(
+        f.coordinatorRuns().length,
+        recoveriesBefore,
+        `wake must not start another recovery; runs=${f
+          .coordinatorRuns()
+          .map((run) => run.id)
+          .join(",")}`,
+      );
+    } finally {
+      await f.close();
+    }
+  });
 
-test(`a ${kind} wait whose retained reviewer is closed resumes recovery without replacing that reviewer`, async () => {
-  const f = fixture();
-  try {
-    load1217Wait(f, kind);
-    f.states.set('review-agent', {
-      id: 'review-agent', workspaceId: 'workspace', status: 'closed', active: false,
-      permissions: false, error: '', provider: 'test', model: reviewer.model,
-    });
-    const recoveriesBefore = f.coordinatorRuns().length;
-    const reviewerRunsBefore = f.store.runs(f.submitted.id).filter(run => run.role === 'reviewer').map(run => run.id);
-    await f.engine.resolution.ladder.resumeEscalationWaits(f.current());
-    assert.equal(f.events('planner_escalation_wake_refused').length, 0,
-      f.events('planner_escalation_wake_refused').map(event => event.detail).join('\n') || 'no refusal');
-    assert.equal(f.events('planner_escalation_woke').length, 1,
-      JSON.stringify(f.store.eventsAll(f.submitted.id).map(event => ({ kind: event.kind, detail: event.detail.slice(0, 160) }))));
-    const woke = f.events('planner_escalation_woke').at(-1)?.detail ?? '';
-    assert.doesNotMatch(woke, /ordinary restart/, woke);
-    assert.match(woke, /ordinary recovery/, woke);
-    assert.doesNotMatch(f.current().reason, /wake was refused/);
-    assert.notEqual(f.current().phase, 'awaiting_review',
-      `closed reviewer must not be replaced; phase=${f.current().phase} reason=${f.current().reason}`);
-    assert.equal(f.current().resolution.reviewerAgentId, 'review-agent');
-    await f.engine.quiesce();
-    assert.equal(f.current().prerequisiteWait, null, 'the fulfilled wait no longer fences recovery');
-    assert.ok(f.coordinatorRuns().length > recoveriesBefore, 'a fresh recovery owns the remaining fault');
-    await f.engine.wake();
-    assert.equal(f.coordinatorRuns().length, recoveriesBefore + 1, 'one recovery resumes the ended wait');
-    const reviewerRuns = f.store.runs(f.submitted.id).filter(run => run.role === 'reviewer').map(run => run.id);
-    assert.deepEqual(reviewerRuns, reviewerRunsBefore, 'wake must not start a fresh reviewer');
-    assert.equal(f.createdRuns.filter(run => run.role === 'reviewer').length, 0);
-  } finally { await f.close(); }
-});
-
+  test(`a ${kind} wait whose retained reviewer is closed resumes recovery without replacing that reviewer`, async () => {
+    const f = fixture();
+    try {
+      load1217Wait(f, kind);
+      f.states.set("review-agent", {
+        id: "review-agent",
+        workspaceId: "workspace",
+        status: "closed",
+        active: false,
+        permissions: false,
+        error: "",
+        provider: "test",
+        model: reviewer.model,
+      });
+      const recoveriesBefore = f.coordinatorRuns().length;
+      const reviewerRunsBefore = f.store
+        .runs(f.submitted.id)
+        .filter((run) => run.role === "reviewer")
+        .map((run) => run.id);
+      await f.engine.resolution.ladder.resumeEscalationWaits(f.current());
+      assert.equal(
+        f.events("planner_escalation_wake_refused").length,
+        0,
+        f
+          .events("planner_escalation_wake_refused")
+          .map((event) => event.detail)
+          .join("\n") || "no refusal",
+      );
+      assert.equal(
+        f.events("planner_escalation_woke").length,
+        1,
+        JSON.stringify(
+          f.store.eventsAll(f.submitted.id).map((event) => ({
+            kind: event.kind,
+            detail: event.detail.slice(0, 160),
+          })),
+        ),
+      );
+      const woke = f.events("planner_escalation_woke").at(-1)?.detail ?? "";
+      assert.doesNotMatch(woke, /ordinary restart/, woke);
+      assert.match(woke, /ordinary recovery/, woke);
+      assert.doesNotMatch(f.current().reason, /wake was refused/);
+      assert.notEqual(
+        f.current().phase,
+        "awaiting_review",
+        `closed reviewer must not be replaced; phase=${f.current().phase} reason=${f.current().reason}`,
+      );
+      assert.equal(f.current().resolution.reviewerAgentId, "review-agent");
+      await f.engine.quiesce();
+      assert.equal(
+        f.current().prerequisiteWait,
+        null,
+        "the fulfilled wait no longer fences recovery",
+      );
+      assert.ok(
+        f.coordinatorRuns().length > recoveriesBefore,
+        "a fresh recovery owns the remaining fault",
+      );
+      await f.engine.wake();
+      assert.equal(
+        f.coordinatorRuns().length,
+        recoveriesBefore + 1,
+        "one recovery resumes the ended wait",
+      );
+      const reviewerRuns = f.store
+        .runs(f.submitted.id)
+        .filter((run) => run.role === "reviewer")
+        .map((run) => run.id);
+      assert.deepEqual(
+        reviewerRuns,
+        reviewerRunsBefore,
+        "wake must not start a fresh reviewer",
+      );
+      assert.equal(
+        f.createdRuns.filter((run) => run.role === "reviewer").length,
+        0,
+      );
+    } finally {
+      await f.close();
+    }
+  });
 }
 
-for (const kind of ['time', 'task'] as const) {
+for (const kind of ["time", "task"] as const) {
   test(`an ended ${kind} wait with an unreleased raising run resumes after a non-matching restart refusal`, async () => {
     const f = fixture();
     try {
       const { recoveryId } = load1217Wait(f, kind);
-      f.store.update(f.submitted.id, { coordinatorAgentId: 'coord-1217' });
-      f.store.putRun({ ...f.store.run(recoveryId)!, status: 'running', released: false });
-      f.states.set('coord-1217', { id: 'coord-1217', workspaceId: 'workspace', status: 'idle', active: false, permissions: false, error: '' });
+      f.store.update(f.submitted.id, { coordinatorAgentId: "coord-1217" });
+      f.store.putRun({
+        ...f.store.run(recoveryId)!,
+        status: "running",
+        released: false,
+      });
+      f.states.set("coord-1217", {
+        id: "coord-1217",
+        workspaceId: "workspace",
+        status: "idle",
+        active: false,
+        permissions: false,
+        error: "",
+      });
       const apply = f.engine.resolution.applyOperatorControl!;
-      const refusal = 'The parked restart no longer applies; re-read next';
+      const refusal = "The parked restart no longer applies; re-read next";
       let refused = false;
-      f.engine.resolution.applyOperatorControl = async input => {
-        if (!refused) { refused = true; throw Error(refusal); }
+      f.engine.resolution.applyOperatorControl = async (input) => {
+        if (!refused) {
+          refused = true;
+          throw Error(refusal);
+        }
         return apply(input);
       };
       await f.engine.resolution.ladder.resumeEscalationWaits(f.current());
       await f.engine.quiesce();
-      assert.equal(refused, true, 'the initial parked restart was refused');
+      assert.equal(refused, true, "the initial parked restart was refused");
       assert.doesNotMatch(refusal, new RegExp(NO_RESOLUTION_RUN_REFUSAL));
-      assert.equal(f.events('planner_escalation_wake_refused').length, 0);
-      assert.equal(f.events('planner_escalation_woke').length, 1);
+      assert.equal(f.events("planner_escalation_wake_refused").length, 0);
+      assert.equal(f.events("planner_escalation_woke").length, 1);
       assert.doesNotMatch(f.current().reason, /wake was refused/);
-      assert.equal(f.current().phase, 'reviewing', f.current().reason);
-      assert.equal(f.store.run(recoveryId)?.released, true, 'continuation settles the raising run through its existing gate');
+      assert.equal(f.current().phase, "reviewing", f.current().reason);
+      assert.equal(
+        f.store.run(recoveryId)?.released,
+        true,
+        "continuation settles the raising run through its existing gate",
+      );
       await f.engine.wake();
-      assert.equal(f.current().phase, 'reviewing', f.current().reason);
-      assert.equal(f.createdRuns.filter(run => run.role === 'reviewer').length, 1, 'ordinary review resumes exactly once');
-    } finally { await f.close(); }
+      assert.equal(f.current().phase, "reviewing", f.current().reason);
+      assert.equal(
+        f.createdRuns.filter((run) => run.role === "reviewer").length,
+        1,
+        "ordinary review resumes exactly once",
+      );
+    } finally {
+      await f.close();
+    }
   });
 }
 
-for (const kind of ['time', 'task'] as const) {
+for (const kind of ["time", "task"] as const) {
   test(`an ended ${kind} wait preserves an unsettled raising run's delivery fence`, async () => {
     const f = fixture();
     try {
       const { recoveryId } = load1217Wait(f, kind);
-      f.store.update(f.submitted.id, { coordinatorAgentId: 'coord-1217' });
-      f.store.putRun({ ...f.store.run(recoveryId)!, status: 'uncertain', completion: null, active: null, released: false });
-      f.store.setCredential(recoveryId, 'raising-token');
+      f.store.update(f.submitted.id, { coordinatorAgentId: "coord-1217" });
+      f.store.putRun({
+        ...f.store.run(recoveryId)!,
+        status: "uncertain",
+        completion: null,
+        active: null,
+        released: false,
+      });
+      f.store.setCredential(recoveryId, "raising-token");
       const observe = f.adapter.observe;
-      f.adapter.observe = async id => {
-        if (id === 'coord-1217') throw Error('Synthetic raising thread observation unavailable');
+      f.adapter.observe = async (id) => {
+        if (id === "coord-1217")
+          throw Error("Synthetic raising thread observation unavailable");
         return observe(id);
       };
       const apply = f.engine.resolution.applyOperatorControl!;
       let refused = false;
-      f.engine.resolution.applyOperatorControl = async input => {
-        if (!refused) { refused = true; throw Error('The parked restart no longer applies; re-read next'); }
+      f.engine.resolution.applyOperatorControl = async (input) => {
+        if (!refused) {
+          refused = true;
+          throw Error("The parked restart no longer applies; re-read next");
+        }
         return apply(input);
       };
       await f.engine.resolution.ladder.resumeEscalationWaits(f.current());
       await f.engine.quiesce();
-      assert.equal(f.events('planner_escalation_wake_refused').length, 0);
-      assert.equal(f.events('planner_escalation_woke').length, 1);
+      assert.equal(f.events("planner_escalation_wake_refused").length, 0);
+      assert.equal(f.events("planner_escalation_woke").length, 1);
       assert.doesNotMatch(f.current().reason, /wake was refused/);
-      assert.equal(f.store.run(recoveryId)?.released, false, 'uncertain delivery keeps the raising run bound');
-      assert.equal(f.createdRuns.length, 0, 'no participant is prompted through an unproven delivery fence');
-      assert.equal(f.coordinatorRuns().length, 1, 'no second recovery runs beside the unobservable one');
-    } finally { await f.close(); }
+      assert.equal(
+        f.store.run(recoveryId)?.released,
+        false,
+        "uncertain delivery keeps the raising run bound",
+      );
+      assert.equal(
+        f.createdRuns.length,
+        0,
+        "no participant is prompted through an unproven delivery fence",
+      );
+      assert.equal(
+        f.coordinatorRuns().length,
+        1,
+        "no second recovery runs beside the unobservable one",
+      );
+    } finally {
+      await f.close();
+    }
   });
 }
 
-for (const occupant of ['reviewer', 'recovery'] as const) {
-test(`reviewer restart keeps the task slot held by ${occupant} and returns to reviewing ahead of queued work`, async () => {
-  const f = fixture();
-  try {
-    f.store.putRun({ ...f.store.run('review-run')!, active: null });
-    f.states.set('review-agent', { id: 'review-agent', workspaceId: 'workspace', status: 'idle', active: false, permissions: false, error: '', provider: 'test', model: reviewer.model });
-    if (occupant === 'recovery') {
-      f.store.putRun({ ...f.store.run('review-run')!, active: false });
-      f.store.update(f.submitted.id, { reason: 'Reviewer provider failure', resolution: { ...f.current().resolution, attention: true } });
-      await f.engine.resolution.recovery.route(f.current());
-      await f.engine.quiesce();
-      assert.ok(f.coordinatorRuns().at(-1));
+for (const occupant of ["reviewer", "recovery"] as const) {
+  test(`reviewer restart keeps the task slot held by ${occupant} and returns to reviewing ahead of queued work`, async () => {
+    const f = fixture();
+    try {
+      f.store.putRun({ ...f.store.run("review-run")!, active: null });
+      f.states.set("review-agent", {
+        id: "review-agent",
+        workspaceId: "workspace",
+        status: "idle",
+        active: false,
+        permissions: false,
+        error: "",
+        provider: "test",
+        model: reviewer.model,
+      });
+      if (occupant === "recovery") {
+        f.store.putRun({ ...f.store.run("review-run")!, active: false });
+        f.store.update(f.submitted.id, {
+          reason: "Reviewer provider failure",
+          resolution: { ...f.current().resolution, attention: true },
+        });
+        await f.engine.resolution.recovery.route(f.current());
+        await f.engine.quiesce();
+        assert.ok(f.coordinatorRuns().at(-1));
+      }
+      const holding = f.current();
+      assert.equal(
+        occupiesSlot(holding, f.store.runs(holding.id)),
+        true,
+        "the reviewer run holds the only slot",
+      );
+      const queued = f.store.insert(
+        submissionSchema.parse({
+          submissionId: randomUUID(),
+          title: "Queued behind the live review",
+          repoPath: "/repo",
+          planningCommit: base,
+          handoffPath: "handoff.md",
+          originAgentId: "origin",
+        }),
+        "host",
+        "handoff",
+        base,
+      );
+      assert.match(
+        f.engine.resolution.slotAdmissionReason(f.store.task(queued.id)),
+        /1\/1 occupied/,
+        "the queued task waits behind the slot-holding review",
+      );
+      await f.engine.performTaskControl(
+        taskControlInputSchema.parse({
+          taskId: holding.id,
+          version: holding.version,
+          action: "restart",
+          role: "reviewer",
+          reason: "Owner restart of the idle reviewer",
+          caller: "owner-thread",
+        }),
+      );
+      const restarted = f.store.task(holding.id);
+      assert.equal(
+        occupiesSlot(restarted, f.store.runs(restarted.id)),
+        true,
+        "restart keeps the task's slot",
+      );
+      assert.equal(f.store.task(queued.id).phase, "queued");
+      assert.match(
+        f.engine.resolution.slotAdmissionReason(f.store.task(queued.id)),
+        /1\/1 occupied/,
+        "the queued task does not take the restarted task's slot",
+      );
+      await f.engine.wake();
+      assert.equal(
+        occupiesSlot(f.store.task(holding.id), f.store.runs(holding.id)),
+        true,
+      );
+      assert.equal(f.store.task(queued.id).phase, "queued");
+      assert.equal(f.current().phase, "reviewing", f.current().reason);
+      assert.equal(f.current().resolution.restartSlotHold, null);
+    } finally {
+      await f.close();
     }
-    const holding = f.current();
-    assert.equal(occupiesSlot(holding, f.store.runs(holding.id)), true, 'the reviewer run holds the only slot');
-    const queued = f.store.insert(submissionSchema.parse({
-      submissionId: randomUUID(), title: 'Queued behind the live review', repoPath: '/repo', planningCommit: base,
-      handoffPath: 'handoff.md', originAgentId: 'origin',
-    }), 'host', 'handoff', base);
-    assert.match(f.engine.resolution.slotAdmissionReason(f.store.task(queued.id)), /1\/1 occupied/,
-      'the queued task waits behind the slot-holding review');
-    await f.engine.performTaskControl(taskControlInputSchema.parse({
-      taskId: holding.id, version: holding.version, action: 'restart', role: 'reviewer',
-      reason: 'Owner restart of the idle reviewer', caller: 'owner-thread',
-    }));
-    const restarted = f.store.task(holding.id);
-    assert.equal(occupiesSlot(restarted, f.store.runs(restarted.id)), true, 'restart keeps the task\'s slot');
-    assert.equal(f.store.task(queued.id).phase, 'queued');
-    assert.match(f.engine.resolution.slotAdmissionReason(f.store.task(queued.id)), /1\/1 occupied/,
-      'the queued task does not take the restarted task\'s slot');
-    await f.engine.wake();
-    assert.equal(occupiesSlot(f.store.task(holding.id), f.store.runs(holding.id)), true);
-    assert.equal(f.store.task(queued.id).phase, 'queued');
-    assert.equal(f.current().phase, 'reviewing', f.current().reason);
-    assert.equal(f.current().resolution.restartSlotHold, null);
-  } finally { await f.close(); }
-});
-
+  });
 }
 
-test('a fenced restart hold does not keep the slot', async () => {
+test("a fenced restart hold does not keep the slot", async () => {
   const f = fixture();
   try {
-    f.store.putRun({ ...f.store.run('review-run')!, active: null });
-    f.states.set('review-agent', { id: 'review-agent', workspaceId: 'workspace', status: 'idle', active: false, permissions: false, error: '', provider: 'test', model: reviewer.model });
+    f.store.putRun({ ...f.store.run("review-run")!, active: null });
+    f.states.set("review-agent", {
+      id: "review-agent",
+      workspaceId: "workspace",
+      status: "idle",
+      active: false,
+      permissions: false,
+      error: "",
+      provider: "test",
+      model: reviewer.model,
+    });
     const holding = f.current();
-    const queued = f.store.insert(submissionSchema.parse({
-      submissionId: randomUUID(), title: 'Queued behind a fenced restart', repoPath: '/repo', planningCommit: base,
-      handoffPath: 'handoff.md', originAgentId: 'origin',
-    }), 'host', 'handoff', base);
-    await f.engine.performTaskControl(taskControlInputSchema.parse({
-      taskId: holding.id, version: holding.version, action: 'restart', role: 'reviewer',
-      reason: 'Owner restart of the idle reviewer', caller: 'owner-thread',
-    }));
+    const queued = f.store.insert(
+      submissionSchema.parse({
+        submissionId: randomUUID(),
+        title: "Queued behind a fenced restart",
+        repoPath: "/repo",
+        planningCommit: base,
+        handoffPath: "handoff.md",
+        originAgentId: "origin",
+      }),
+      "host",
+      "handoff",
+      base,
+    );
+    await f.engine.performTaskControl(
+      taskControlInputSchema.parse({
+        taskId: holding.id,
+        version: holding.version,
+        action: "restart",
+        role: "reviewer",
+        reason: "Owner restart of the idle reviewer",
+        caller: "owner-thread",
+      }),
+    );
     const restarted = f.store.task(holding.id);
     assert.equal(occupiesSlot(restarted, f.store.runs(restarted.id)), true);
     // The report request continues the current run; once its turn is observed
     // idle, a dispatch hold must not reserve a slot for an unstarted run.
-    f.store.putRun({ ...f.store.run('review-run')!, active: false });
+    f.store.putRun({ ...f.store.run("review-run")!, active: false });
     f.store.update(restarted.id, {
       held: true,
-      holds: { dispatch: { owner: 'operator', reason: 'Dispatch held', at: lastActivity, generation: 1, until: null } },
+      holds: {
+        dispatch: {
+          owner: "operator",
+          reason: "Dispatch held",
+          at: lastActivity,
+          generation: 1,
+          until: null,
+        },
+      },
     });
     const fenced = f.store.task(restarted.id);
-    assert.equal(occupiesSlot(fenced, f.store.runs(fenced.id)), false, 'a fenced restart hold occupies no slot');
-    assert.doesNotMatch(f.engine.resolution.slotAdmissionReason(f.store.task(queued.id)), /1\/1 occupied/,
-      f.engine.resolution.slotAdmissionReason(f.store.task(queued.id)));
-  } finally { await f.close(); }
+    assert.equal(
+      occupiesSlot(fenced, f.store.runs(fenced.id)),
+      false,
+      "a fenced restart hold occupies no slot",
+    );
+    assert.doesNotMatch(
+      f.engine.resolution.slotAdmissionReason(f.store.task(queued.id)),
+      /1\/1 occupied/,
+      f.engine.resolution.slotAdmissionReason(f.store.task(queued.id)),
+    );
+  } finally {
+    await f.close();
+  }
 });
 
 async function restartClosedReader(f: ReturnType<typeof fixture>) {
   const current = f.current();
-  f.store.putRun({ ...f.store.run('review-run')!, active: null });
-  f.states.set('review-agent', { ...f.states.get('review-agent')!, status: 'closed', active: false, activeTurnId: undefined });
-  await f.engine.performTaskControl(taskControlInputSchema.parse({
-    taskId: current.id, version: current.version, action: 'restart', role: 'reviewer', fresh: true,
-    reason: 'Restart the retained reader', caller: 'owner-thread',
-  }));
+  f.store.putRun({ ...f.store.run("review-run")!, active: null });
+  f.states.set("review-agent", {
+    ...f.states.get("review-agent")!,
+    status: "closed",
+    active: false,
+    activeTurnId: undefined,
+  });
+  await f.engine.performTaskControl(
+    taskControlInputSchema.parse({
+      taskId: current.id,
+      version: current.version,
+      action: "restart",
+      role: "reviewer",
+      fresh: true,
+      reason: "Restart the retained reader",
+      caller: "owner-thread",
+    }),
+  );
 }
 
-test('C3 sweep transfers the closed reader’s reservation to one new run', async () => {
+test("C3 sweep transfers the closed reader’s reservation to one new run", async () => {
   const f = fixture();
   try {
-    const waiting = f.store.insert(submissionSchema.parse({
-      submissionId: randomUUID(), title: 'Queued behind the restart', repoPath: '/repo', planningCommit: base,
-      handoffPath: 'handoff.md', originAgentId: 'origin',
-    }), 'host', 'handoff', base);
+    const waiting = f.store.insert(
+      submissionSchema.parse({
+        submissionId: randomUUID(),
+        title: "Queued behind the restart",
+        repoPath: "/repo",
+        planningCommit: base,
+        handoffPath: "handoff.md",
+        originAgentId: "origin",
+      }),
+      "host",
+      "handoff",
+      base,
+    );
     await restartClosedReader(f);
-    assert.equal(f.current().resolution.restartSlotHold?.fromRunId, 'review-run');
-    assert.equal(f.store.run('review-run')?.released, true);
-    assert.match(f.engine.resolution.slotAdmissionReason(f.store.task(waiting.id)), /1\/1 occupied/);
+    assert.equal(
+      f.current().resolution.restartSlotHold?.fromRunId,
+      "review-run",
+    );
+    assert.equal(f.store.run("review-run")?.released, true);
+    assert.match(
+      f.engine.resolution.slotAdmissionReason(f.store.task(waiting.id)),
+      /1\/1 occupied/,
+    );
 
     await f.engine.wake();
     assert.equal(f.current().resolution.restartSlotHold, null);
@@ -600,93 +1159,193 @@ test('C3 sweep transfers the closed reader’s reservation to one new run', asyn
     const replacement = f.store.run(f.createdRuns[0].id)!;
     assert.equal(replacement.id, f.current().resolution.currentRunId);
     assert.equal(replacement.head, head);
-    assert.equal(replacement.role, 'reviewer');
-    assert.equal(f.store.task(waiting.id).phase, 'queued');
+    assert.equal(replacement.role, "reviewer");
+    assert.equal(f.store.task(waiting.id).phase, "queued");
     await f.engine.wake();
     assert.equal(f.createdRuns.length, 1);
     assert.equal(f.current().resolution.currentRunId, replacement.id);
-  } finally { await f.close(); }
+  } finally {
+    await f.close();
+  }
 });
 
-test('C3 releases a fenced restart reservation without resurrecting a seventeenth slot', async () => {
+test("C3 releases a fenced restart reservation without resurrecting a seventeenth slot", async () => {
   const f = fixture();
   try {
     await restartClosedReader(f);
     const reserved = f.current();
-    assert.equal(reserved.resolution.restartSlotHold?.fromRunId, 'review-run');
-    f.store.putRun({ ...f.store.run('review-run')!, active: true, released: true, status: 'superseded' });
-    const occupied = () => f.store.activeCapacityTasks().filter(task => occupiesSlot(task)).length;
-    assert.equal(occupied(), 1, 'the durable restart transfer counts despite the released run');
+    assert.equal(reserved.resolution.restartSlotHold?.fromRunId, "review-run");
+    f.store.putRun({
+      ...f.store.run("review-run")!,
+      active: true,
+      released: true,
+      status: "superseded",
+    });
+    const occupied = () =>
+      f.store.activeCapacityTasks().filter((task) => occupiesSlot(task)).length;
+    assert.equal(
+      occupied(),
+      1,
+      "the durable restart transfer counts despite the released run",
+    );
 
-    const held = await f.engine.performTaskControl({
-      taskId: reserved.id, version: reserved.version, action: 'hold', kind: 'dispatch', reason: 'Wait for an owner answer',
-    }) as Task;
+    const held = (await f.engine.performTaskControl({
+      taskId: reserved.id,
+      version: reserved.version,
+      action: "hold",
+      kind: "dispatch",
+      reason: "Wait for an owner answer",
+    })) as Task;
     assert.equal(held.resolution.restartSlotHold, null);
-    assert.equal(f.events('restart_slot_released').length, 1);
-    f.store.setMeta('globalLimit', 16);
+    assert.equal(f.events("restart_slot_released").length, 1);
+    f.store.setMeta("globalLimit", 16);
     for (let i = 0; i < 16; i++) {
-      const task = f.store.insert(submissionSchema.parse({
-        submissionId: randomUUID(), title: `Live worker ${i}`, repoPath: `/synthetic-${i}`, planningCommit: base,
-        handoffPath: 'handoff.md', originAgentId: 'origin',
-      }), 'host', 'handoff', base);
-      f.store.update(task.id, { phase: 'working', agentId: `worker-${i}`, agentActive: true }, 'agent_state');
+      const task = f.store.insert(
+        submissionSchema.parse({
+          submissionId: randomUUID(),
+          title: `Live worker ${i}`,
+          repoPath: `/synthetic-${i}`,
+          planningCommit: base,
+          handoffPath: "handoff.md",
+          originAgentId: "origin",
+        }),
+        "host",
+        "handoff",
+        base,
+      );
+      f.store.update(
+        task.id,
+        { phase: "working", agentId: `worker-${i}`, agentActive: true },
+        "agent_state",
+      );
     }
     assert.equal(occupied(), 16);
-    const released = await f.engine.performTaskControl({
-      taskId: held.id, version: held.version, action: 'release', kind: 'dispatch',
-    }) as Task;
+    const released = (await f.engine.performTaskControl({
+      taskId: held.id,
+      version: held.version,
+      action: "release",
+      kind: "dispatch",
+    })) as Task;
     assert.equal(released.resolution.restartSlotHold, null);
-    assert.equal(occupied(), 16, 'releasing a fence re-enters ordinary admission');
-    assert.match(f.engine.resolution.slotAdmissionReason(f.current()), /16\/16 occupied/);
-    assert.equal(f.events('restart_slot_released').length, 1);
-  } finally { await f.close(); }
+    assert.equal(
+      occupied(),
+      16,
+      "releasing a fence re-enters ordinary admission",
+    );
+    assert.match(
+      f.engine.resolution.slotAdmissionReason(f.current()),
+      /16\/16 occupied/,
+    );
+    assert.equal(f.events("restart_slot_released").length, 1);
+  } finally {
+    await f.close();
+  }
 });
 
-for (const occupant of ['worker', 'recovery'] as const) {
-test(`worker restart keeps the task slot held by ${occupant} while another task is queued`, async () => {
-  const f = fixture();
-  try {
-    f.store.putRun({ ...f.store.run('review-run')!, released: true, active: false, status: 'finished' });
-    f.idle('review-agent');
-    f.store.putRun(runSchema.parse({
-      id: 'revision-run', taskId: f.submitted.id, role: 'revision', generation: 1, head, base,
-      agentId: 'worker', workspaceId: 'workspace', profile: worker, status: 'running',
-      createdAt: lastActivity, briefVersion: f.submitted.briefVersions.at(-1)?.version ?? null,
-      lastObservedAt: lastActivity, active: null, idleSince: lastActivity, completion: null, released: false,
-    }));
-    f.store.update(f.submitted.id, {
-      phase: 'changes_requested',
-      reason: 'Idle worker',
-      agentActive: false,
-      lastAgentStatus: 'idle',
-      resolution: { ...f.current().resolution, currentRunId: 'revision-run', reviewerAgentId: null, reviewerProfile: null },
-    });
-    if (occupant === 'recovery') {
-      f.store.putRun({ ...f.store.run('revision-run')!, active: false });
-      f.store.update(f.submitted.id, { reason: 'Worker provider failure', resolution: { ...f.current().resolution, attention: true } });
-      await f.engine.resolution.recovery.route(f.current());
-      await f.engine.quiesce();
-      assert.ok(f.coordinatorRuns().at(-1));
+for (const occupant of ["worker", "recovery"] as const) {
+  test(`worker restart keeps the task slot held by ${occupant} while another task is queued`, async () => {
+    const f = fixture();
+    try {
+      f.store.putRun({
+        ...f.store.run("review-run")!,
+        released: true,
+        active: false,
+        status: "finished",
+      });
+      f.idle("review-agent");
+      f.store.putRun(
+        runSchema.parse({
+          id: "revision-run",
+          taskId: f.submitted.id,
+          role: "revision",
+          generation: 1,
+          head,
+          base,
+          agentId: "worker",
+          workspaceId: "workspace",
+          profile: worker,
+          status: "running",
+          createdAt: lastActivity,
+          briefVersion: f.submitted.briefVersions.at(-1)?.version ?? null,
+          lastObservedAt: lastActivity,
+          active: null,
+          idleSince: lastActivity,
+          completion: null,
+          released: false,
+        }),
+      );
+      f.store.update(f.submitted.id, {
+        phase: "changes_requested",
+        reason: "Idle worker",
+        agentActive: false,
+        lastAgentStatus: "idle",
+        resolution: {
+          ...f.current().resolution,
+          currentRunId: "revision-run",
+          reviewerAgentId: null,
+          reviewerProfile: null,
+        },
+      });
+      if (occupant === "recovery") {
+        f.store.putRun({ ...f.store.run("revision-run")!, active: false });
+        f.store.update(f.submitted.id, {
+          reason: "Worker provider failure",
+          resolution: { ...f.current().resolution, attention: true },
+        });
+        await f.engine.resolution.recovery.route(f.current());
+        await f.engine.quiesce();
+        assert.ok(f.coordinatorRuns().at(-1));
+      }
+      const holding = f.current();
+      assert.equal(
+        occupiesSlot(holding, f.store.runs(holding.id)),
+        true,
+        "the idle revision run holds the only slot",
+      );
+      const queued = f.store.insert(
+        submissionSchema.parse({
+          submissionId: randomUUID(),
+          title: "Queued behind the idle worker",
+          repoPath: "/repo",
+          planningCommit: base,
+          handoffPath: "handoff.md",
+          originAgentId: "origin",
+        }),
+        "host",
+        "handoff",
+        base,
+      );
+      assert.match(
+        f.engine.resolution.slotAdmissionReason(f.store.task(queued.id)),
+        /1\/1 occupied/,
+        "the queued task waits behind the slot-holding worker",
+      );
+      await f.engine.performTaskControl(
+        taskControlInputSchema.parse({
+          taskId: holding.id,
+          version: holding.version,
+          action: "restart",
+          role: "worker",
+          reason: "Owner restart of the idle worker",
+          caller: "owner-thread",
+        }),
+      );
+      const restarted = f.store.task(holding.id);
+      assert.equal(
+        occupiesSlot(restarted, f.store.runs(restarted.id)),
+        true,
+        "worker restart keeps the task's slot",
+      );
+      assert.equal(f.store.task(queued.id).phase, "queued");
+      assert.match(
+        f.engine.resolution.slotAdmissionReason(f.store.task(queued.id)),
+        /1\/1 occupied/,
+        "the queued task does not take the restarted worker's slot",
+      );
+    } finally {
+      await f.close();
     }
-    const holding = f.current();
-    assert.equal(occupiesSlot(holding, f.store.runs(holding.id)), true, 'the idle revision run holds the only slot');
-    const queued = f.store.insert(submissionSchema.parse({
-      submissionId: randomUUID(), title: 'Queued behind the idle worker', repoPath: '/repo', planningCommit: base,
-      handoffPath: 'handoff.md', originAgentId: 'origin',
-    }), 'host', 'handoff', base);
-    assert.match(f.engine.resolution.slotAdmissionReason(f.store.task(queued.id)), /1\/1 occupied/,
-      'the queued task waits behind the slot-holding worker');
-    await f.engine.performTaskControl(taskControlInputSchema.parse({
-      taskId: holding.id, version: holding.version, action: 'restart', role: 'worker',
-      reason: 'Owner restart of the idle worker', caller: 'owner-thread',
-    }));
-    const restarted = f.store.task(holding.id);
-    assert.equal(occupiesSlot(restarted, f.store.runs(restarted.id)), true, 'worker restart keeps the task\'s slot');
-    assert.equal(f.store.task(queued.id).phase, 'queued');
-    assert.match(f.engine.resolution.slotAdmissionReason(f.store.task(queued.id)), /1\/1 occupied/,
-      'the queued task does not take the restarted worker\'s slot');
-  } finally { await f.close(); }
-});
+  });
 }
 test("a blocked recovery report on an idle fault still escalates", async () => {
   const f = fixture();

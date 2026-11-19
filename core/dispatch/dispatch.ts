@@ -165,7 +165,9 @@ export class Dispatch {
               .filter((task) => task.hostId && failedHosts.has(task.hostId))
               .length
           : 0;
-        const occupied = this.store.activeCapacityTasks().filter(task => occupiesSlot(task));
+        const occupied = this.store
+          .activeCapacityTasks()
+          .filter((task) => occupiesSlot(task));
         const candidates = queuedDispatchOrder(
           this.store.readyQueueHeads(
             limit + 2 + skipped + failedTasks.size,
@@ -193,7 +195,9 @@ export class Dispatch {
         const failed = results.find((result) => result.status === "rejected");
         if (failed) throw (failed as PromiseRejectedResult).reason;
         if (failedHosts.size + failedTasks.size === before) {
-          const stillQueued = start.filter(task => this.store.task(task.id).phase === "queued").length;
+          const stillQueued = start.filter(
+            (task) => this.store.task(task.id).phase === "queued",
+          ).length;
           if (stillQueued === 0 || stillQueued === start.length) break;
         }
       }

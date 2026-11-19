@@ -1,14 +1,22 @@
-import { test } from './support/sharded-test';
-import assert from 'node:assert/strict';
-import { taskBudget } from '../shared/task-budget';
-import { summarizeTask, taskDetailView } from '../shared/task-view';
-import { TASK_PROGRESSING_REASON } from '../shared/task-detail-summary';
-import { OPERATOR_BOARD_CALLER, runSchema } from '../shared/contracts';
-import { DISPATCH_WAIT_REASON } from '../shared/task-stop';
-import { slotRequestFenced } from '../core/dispatch/capacity';
-import { operatorQuestionFor } from '../core/questions/operator-question';
-import { ownerTaskNext, collectOwnerVerbFacts } from '../core/verbs/owner-verbs';
-import { base, fixture, head, tick } from './support/responsible-lifecycle-fixture';
+import { test } from "./support/sharded-test";
+import assert from "node:assert/strict";
+import { taskBudget } from "../shared/task-budget";
+import { summarizeTask, taskDetailView } from "../shared/task-view";
+import { TASK_PROGRESSING_REASON } from "../shared/task-detail-summary";
+import { OPERATOR_BOARD_CALLER, runSchema } from "../shared/contracts";
+import { DISPATCH_WAIT_REASON } from "../shared/task-stop";
+import { slotRequestFenced } from "../core/dispatch/capacity";
+import { operatorQuestionFor } from "../core/questions/operator-question";
+import {
+  ownerTaskNext,
+  collectOwnerVerbFacts,
+} from "../core/verbs/owner-verbs";
+import {
+  base,
+  fixture,
+  head,
+  tick,
+} from "./support/responsible-lifecycle-fixture";
 
 /**
  * Spec 058 budgets (nucleus#1153): the T3 trial (swallowtail#225/#226) stopped at
@@ -28,136 +36,298 @@ const settle = async (ready: () => boolean) => {
   assert.ok(ready());
 };
 
-test('a budget stop at awaiting_review names extend_budget and asks its question', async () => {
+test("a budget stop at awaiting_review names extend_budget and asks its question", async () => {
   const f = fixture({ responsible: true });
   try {
     // The worker reported and opened the PR hours ago; the wall-time limit is spent.
-    f.store.update(f.submitted.id, { budgetSince: iso(Date.now() - 4 * 60 * MINUTE) });
+    f.store.update(f.submitted.id, {
+      budgetSince: iso(Date.now() - 4 * 60 * MINUTE),
+    });
     f.recordRunStart(iso(Date.now() - 4 * 60 * MINUTE));
     await f.engine.wake();
     const stopped = f.current();
-    assert.equal(stopped.phase, 'awaiting_review');
-    assert.equal(stopped.resolution.stop?.reason, 'budget', `no review run starts over budget: ${stopped.reason}`);
-    assert.deepEqual(stopped.resolution.stop?.suggestedVerbs, ['extend_budget'],
-      'the pause names the verb that answers it');
+    assert.equal(stopped.phase, "awaiting_review");
+    assert.equal(
+      stopped.resolution.stop?.reason,
+      "budget",
+      `no review run starts over budget: ${stopped.reason}`,
+    );
+    assert.deepEqual(
+      stopped.resolution.stop?.suggestedVerbs,
+      ["extend_budget"],
+      "the pause names the verb that answers it",
+    );
     // The question is raised on the same pass that records the pause, not only by
     // the sweep's later support step.
     await settle(() => f.asks.length === 1);
     assert.match(f.asks[0]!.question, /reached its budget/);
-    assert.ok(f.asks[0]!.options.includes('Extend the budget'), f.asks[0]!.options.join(' | '));
-  } finally { await f.close(); }
+    assert.ok(
+      f.asks[0]!.options.includes("Extend the budget"),
+      f.asks[0]!.options.join(" | "),
+    );
+  } finally {
+    await f.close();
+  }
 });
 
-test('stored affected-test settings give the budget gate, task.next and detail the same medium limit', async () => {
+test("stored affected-test settings give the budget gate, task.next and detail the same medium limit", async () => {
   const f = fixture({ responsible: true });
   try {
     const task = f.current();
     const startedAt = iso(Date.now() - 200 * MINUTE);
-    f.store.update(task.id, { complexity: 'medium', budgetSince: startedAt });
+    f.store.update(task.id, { complexity: "medium", budgetSince: startedAt });
     f.recordRunStart(startedAt);
-    const repository = f.store.patchRepository({ origin: null, path: task.repoPath }, {
-      affectedTests: { command: 'effigy test:affected --run' },
+    const repository = f.store.patchRepository(
+      { origin: null, path: task.repoPath },
+      {
+        affectedTests: { command: "effigy test:affected --run" },
+      },
+    );
+    assert.deepEqual(repository.affectedTests, {
+      command: "effigy test:affected --run",
     });
-    assert.deepEqual(repository.affectedTests, { command: 'effigy test:affected --run' });
 
     const current = f.current();
-    const runs = f.store.runs(task.id), events = f.store.eventsAll(task.id);
-    const measured = taskBudget(current, runs, Date.now(), events,
-      f.store.canonicalRepository(current.repoPath, current.repository));
+    const runs = f.store.runs(task.id),
+      events = f.store.eventsAll(task.id);
+    const measured = taskBudget(
+      current,
+      runs,
+      Date.now(),
+      events,
+      f.store.canonicalRepository(current.repoPath, current.repository),
+    );
     assert.equal(measured.wallMs.limit, 360 * MINUTE);
-    assert.equal(measured.exhausted, null, '200 minutes remains within the affected-test medium allowance');
-    assert.equal(taskBudget(current, runs, Date.now(), events, null).wallMs.limit, 180 * MINUTE,
-      'the same stored medium task shape keeps the default limit without affected-test settings');
-    assert.equal(taskBudget({ ...current, resolution: { ...current.resolution, budgetExtensions: 1 } }, runs, Date.now(), events, repository).wallMs.limit,
-      720 * MINUTE, 'one extension adds the affected-test medium default');
+    assert.equal(
+      measured.exhausted,
+      null,
+      "200 minutes remains within the affected-test medium allowance",
+    );
+    assert.equal(
+      taskBudget(current, runs, Date.now(), events, null).wallMs.limit,
+      180 * MINUTE,
+      "the same stored medium task shape keeps the default limit without affected-test settings",
+    );
+    assert.equal(
+      taskBudget(
+        {
+          ...current,
+          resolution: { ...current.resolution, budgetExtensions: 1 },
+        },
+        runs,
+        Date.now(),
+        events,
+        repository,
+      ).wallMs.limit,
+      720 * MINUTE,
+      "one extension adds the affected-test medium default",
+    );
     const detail = taskDetailView(current, {}, runs, events, repository);
     assert.deepEqual(detail.budget?.wallMs.limit, measured.wallMs.limit);
     const next = ownerTaskNext(collectOwnerVerbFacts(f.store, current));
     assert.equal(next.reason, detail.reason);
-    assert.equal(next.verbs.find(view => view.verb === 'extend_budget')?.available, false);
+    assert.equal(
+      next.verbs.find((view) => view.verb === "extend_budget")?.available,
+      false,
+    );
 
     await f.engine.wake();
-    assert.notEqual(f.current().resolution.stop?.reason, 'budget', 'dispatch does not stop inside the 360-minute limit');
-    assert.ok(f.creates.length > 0, 'the ordinary launch gate allowed work to start');
-  } finally { await f.close(); }
+    assert.notEqual(
+      f.current().resolution.stop?.reason,
+      "budget",
+      "dispatch does not stop inside the 360-minute limit",
+    );
+    assert.ok(
+      f.creates.length > 0,
+      "the ordinary launch gate allowed work to start",
+    );
+  } finally {
+    await f.close();
+  }
 });
 
-test('a budget question is recorded for every phase, even with the task host offline', async () => {
+test("a budget question is recorded for every phase, even with the task host offline", async () => {
   const f = fixture({ responsible: true });
   try {
     // The host went offline (or a run carried another host's identity) after the
     // pause was recorded; neither may silence it: the board records questions
     // without the task's host (#1153).
-    f.engine.hostAvailable = id => id !== 'host';
-    f.store.update(f.submitted.id, { budgetSince: iso(Date.now() - 4 * 60 * MINUTE) });
+    f.engine.hostAvailable = (id) => id !== "host";
+    f.store.update(f.submitted.id, {
+      budgetSince: iso(Date.now() - 4 * 60 * MINUTE),
+    });
     f.recordRunStart(iso(Date.now() - 4 * 60 * MINUTE));
-    f.engine.resolution.recordStop(f.current(), 'budget', 'Budget reached: 180 minutes of wall time since the responsible lifecycle began');
-    assert.deepEqual(f.current().resolution.stop?.suggestedVerbs, ['extend_budget']);
+    f.engine.resolution.recordStop(
+      f.current(),
+      "budget",
+      "Budget reached: 180 minutes of wall time since the responsible lifecycle began",
+    );
+    assert.deepEqual(f.current().resolution.stop?.suggestedVerbs, [
+      "extend_budget",
+    ]);
     await f.engine.wake();
-    assert.equal(f.current().resolution.stop?.reason, 'budget');
-    await settle(() => f.store.listDecisions({ status: 'open', task: f.submitted.id }).length === 1);
-    const [decision] = f.store.listDecisions({ status: 'open', task: f.submitted.id });
+    assert.equal(f.current().resolution.stop?.reason, "budget");
+    await settle(
+      () =>
+        f.store.listDecisions({ status: "open", task: f.submitted.id })
+          .length === 1,
+    );
+    const [decision] = f.store.listDecisions({
+      status: "open",
+      task: f.submitted.id,
+    });
     assert.match(decision!.question, /reached its budget/);
-    assert.equal(f.asks.length, 0, 'no native prompt was attempted on an offline host');
-    assert.match(f.store.eventsAll(f.submitted.id).find(event => event.kind === 'operator_question_decision')!.detail, /offline/,
-      'the board question records why it is there instead of on the thread');
-  } finally { await f.close(); }
+    assert.equal(
+      f.asks.length,
+      0,
+      "no native prompt was attempted on an offline host",
+    );
+    assert.match(
+      f.store
+        .eventsAll(f.submitted.id)
+        .find((event) => event.kind === "operator_question_decision")!.detail,
+      /offline/,
+      "the board question records why it is there instead of on the thread",
+    );
+  } finally {
+    await f.close();
+  }
 });
 
 /** Place or release a dispatch hold the way the control path stores it. */
-const setDispatchHold = (f: ReturnType<typeof fixture>, reason: string | null, at: string) =>
-  f.store.update(f.current().id, reason
-    ? { held: true, mergeHold: false, holdOwner: 'operator', holdReason: reason, holdAt: at,
-        holds: { dispatch: { owner: 'operator', reason, at, generation: 1, until: null } } } as never
-    : { held: false, mergeHold: false, holdOwner: null, holdReason: null, holdAt: null, holds: {} } as never,
-  reason ? 'dispatch_held' : 'dispatch_released');
+const setDispatchHold = (
+  f: ReturnType<typeof fixture>,
+  reason: string | null,
+  at: string,
+) =>
+  f.store.update(
+    f.current().id,
+    reason
+      ? ({
+          held: true,
+          mergeHold: false,
+          holdOwner: "operator",
+          holdReason: reason,
+          holdAt: at,
+          holds: {
+            dispatch: {
+              owner: "operator",
+              reason,
+              at,
+              generation: 1,
+              until: null,
+            },
+          },
+        } as never)
+      : ({
+          held: false,
+          mergeHold: false,
+          holdOwner: null,
+          holdReason: null,
+          holdAt: null,
+          holds: {},
+        } as never),
+    reason ? "dispatch_held" : "dispatch_released",
+  );
 
-test('a dispatch hold does not spend the wall-time budget', async () => {
+test("a dispatch hold does not spend the wall-time budget", async () => {
   const f = fixture({ responsible: true });
   try {
     const start = Date.now() - 70 * MINUTE;
     f.store.update(f.submitted.id, { budgetSince: iso(start) });
     f.recordRunStart(iso(start));
-    setDispatchHold(f, 'waiting on the Nucleus fix for the wedged sweep', iso(start + 10 * MINUTE));
+    setDispatchHold(
+      f,
+      "waiting on the Nucleus fix for the wedged sweep",
+      iso(start + 10 * MINUTE),
+    );
     // The pass that observes the hold opens the pause interval...
     f.engine.resolution.settleBudgetClock(f.current());
     const opened = f.current().resolution.budgetClock!;
-    assert.ok(opened.since, 'the interval is open while the task is held');
+    assert.ok(opened.since, "the interval is open while the task is held");
     // ...and it is dated from the hold, not from the pass that noticed it.
-    f.store.update(f.current().id, { resolution: { ...f.current().resolution, budgetClock: { ...opened, since: iso(start + 10 * MINUTE) } } });
+    f.store.update(f.current().id, {
+      resolution: {
+        ...f.current().resolution,
+        budgetClock: { ...opened, since: iso(start + 10 * MINUTE) },
+      },
+    });
     setDispatchHold(f, null, iso(Date.now()));
     // Releasing the hold closes the interval: 60 of the 70 elapsed minutes were
     // Nucleus's, so the task has 10 minutes of its own work on the clock.
     f.engine.resolution.settleBudgetClock(f.current());
     const clock = f.current().resolution.budgetClock!;
-    assert.equal(clock.since, null, 'the clock runs again once the task can make progress');
+    assert.equal(
+      clock.since,
+      null,
+      "the clock runs again once the task can make progress",
+    );
     assert.equal(clock.pauses, 1);
-    assert.ok(Math.abs(clock.pausedMs - 60 * MINUTE) < MINUTE, `paused ${clock.pausedMs} ms`);
-    const budget = taskBudget(f.current(), f.store.runs(f.submitted.id), Date.now(), f.store.eventsAll(f.submitted.id));
-    assert.equal(budget.exhausted, null, 'the held hour never reaches the limit');
-    assert.ok(Math.abs(budget.wallMs.used - 10 * MINUTE) < MINUTE, `used ${budget.wallMs.used} ms`);
+    assert.ok(
+      Math.abs(clock.pausedMs - 60 * MINUTE) < MINUTE,
+      `paused ${clock.pausedMs} ms`,
+    );
+    const budget = taskBudget(
+      f.current(),
+      f.store.runs(f.submitted.id),
+      Date.now(),
+      f.store.eventsAll(f.submitted.id),
+    );
+    assert.equal(
+      budget.exhausted,
+      null,
+      "the held hour never reaches the limit",
+    );
+    assert.ok(
+      Math.abs(budget.wallMs.used - 10 * MINUTE) < MINUTE,
+      `used ${budget.wallMs.used} ms`,
+    );
     assert.ok(Math.abs(budget.wallMs.pausedMs - 60 * MINUTE) < MINUTE);
-    assert.equal(ownerTaskNext(collectOwnerVerbFacts(f.store, f.current())).verbs.find(view => view.verb === 'extend_budget')?.available, false);
+    assert.equal(
+      ownerTaskNext(collectOwnerVerbFacts(f.store, f.current())).verbs.find(
+        (view) => view.verb === "extend_budget",
+      )?.available,
+      false,
+    );
     // The intervals are durable telemetry, not only an in-memory discount.
-    assert.equal(f.events('budget_clock_paused').length, 1);
-    assert.equal(f.events('budget_clock_resumed').length, 1);
-    assert.match(taskDetailView(f.current(), {}, f.store.runs(f.submitted.id), f.store.eventsAll(f.submitted.id)).budget!.wallMs.pausedMs.toString(), /^359|^360/);
-  } finally { await f.close(); }
+    assert.equal(f.events("budget_clock_paused").length, 1);
+    assert.equal(f.events("budget_clock_resumed").length, 1);
+    assert.match(
+      taskDetailView(
+        f.current(),
+        {},
+        f.store.runs(f.submitted.id),
+        f.store.eventsAll(f.submitted.id),
+      ).budget!.wallMs.pausedMs.toString(),
+      /^359|^360/,
+    );
+  } finally {
+    await f.close();
+  }
 });
 
-test('a Nucleus-fault wait and an observation outage do not spend the wall-time budget', async () => {
+test("a Nucleus-fault wait and an observation outage do not spend the wall-time budget", async () => {
   const f = fixture({ responsible: true });
   try {
     const start = Date.now() - 100 * MINUTE;
     f.store.update(f.submitted.id, { budgetSince: iso(start) });
     f.recordRunStart(iso(start));
     // A Nucleus-side routing refusal: the task can start no run of its own.
-    f.engine.resolution.recordStop(f.current(), 'route_unavailable', 'No runnable profile for the reviewer role');
+    f.engine.resolution.recordStop(
+      f.current(),
+      "route_unavailable",
+      "No runnable profile for the reviewer role",
+    );
     f.engine.resolution.settleBudgetClock(f.current());
     const opened = f.current().resolution.budgetClock!;
-    assert.equal(opened.reason, 'the task waits on Nucleus: route_unavailable');
-    f.store.update(f.current().id, { resolution: { ...f.current().resolution, budgetClock: { ...opened, since: iso(start + 20 * MINUTE) } } });
-    f.engine.resolution.waiting(f.current(), 'Worker running', 'lifecycle');
+    assert.equal(opened.reason, "the task waits on Nucleus: route_unavailable");
+    f.store.update(f.current().id, {
+      resolution: {
+        ...f.current().resolution,
+        budgetClock: { ...opened, since: iso(start + 20 * MINUTE) },
+      },
+    });
+    f.engine.resolution.waiting(f.current(), "Worker running", "lifecycle");
     f.engine.resolution.settleBudgetClock(f.current());
     assert.equal(f.current().resolution.budgetClock!.since, null);
 
@@ -166,38 +336,98 @@ test('a Nucleus-fault wait and an observation outage do not spend the wall-time 
     // still wedged, so the board shows the pause instead of a rising clock. It is
     // dated from the observation, so no outage time depends on when a visit lands.
     const outageAt = iso(Date.now() - 40 * MINUTE);
-    f.store.event(f.submitted.id, 'observation_outage', 'Task quantum did not return within 120 s');
+    f.store.event(
+      f.submitted.id,
+      "observation_outage",
+      "Task quantum did not return within 120 s",
+    );
     const events = f.store.eventsAll(f.submitted.id);
-    f.store.db.prepare('UPDATE events SET at=? WHERE id=?').run(outageAt, events.findLast(event => event.kind === 'observation_outage')!.id);
+    f.store.db
+      .prepare("UPDATE events SET at=? WHERE id=?")
+      .run(
+        outageAt,
+        events.findLast((event) => event.kind === "observation_outage")!.id,
+      );
     const before = f.current().resolution.budgetClock!.pausedMs;
     f.engine.resolution.settleBudgetClock(f.current());
     const open = f.current().resolution.budgetClock!;
-    assert.equal(open.reason, 'the sweep could not observe this task (an observation outage)');
-    assert.equal(open.since, outageAt, 'the pause is dated from the outage, not from the visit');
-    assert.equal(f.events('budget_clock_paused').length, 2, 'the pause is visible in telemetry when it opens');
-    assert.equal(f.events('observation_resumed').length, 0, 'a visiting sweep does not claim the lane returned');
+    assert.equal(
+      open.reason,
+      "the sweep could not observe this task (an observation outage)",
+    );
+    assert.equal(
+      open.since,
+      outageAt,
+      "the pause is dated from the outage, not from the visit",
+    );
+    assert.equal(
+      f.events("budget_clock_paused").length,
+      2,
+      "the pause is visible in telemetry when it opens",
+    );
+    assert.equal(
+      f.events("observation_resumed").length,
+      0,
+      "a visiting sweep does not claim the lane returned",
+    );
     // While the lane is still wedged the budget charges none of the outage, and
     // further sweep visits keep the same interval open.
     f.engine.resolution.settleBudgetClock(f.current());
-    assert.equal(f.current().resolution.budgetClock!.since, outageAt, 'a later visit keeps the same pause');
-    assert.equal(f.events('budget_clock_paused').length, 2, 'a later visit writes no new pause');
-    const whileWedged = taskBudget(f.current(), f.store.runs(f.submitted.id), Date.now(), f.store.eventsAll(f.submitted.id));
-    assert.ok(whileWedged.wallMs.used < 30 * MINUTE, `used ${whileWedged.wallMs.used} ms while the lane is wedged`);
-    assert.ok(whileWedged.wallMs.pausedMs > 90 * MINUTE, `paused ${whileWedged.wallMs.pausedMs} ms`);
+    assert.equal(
+      f.current().resolution.budgetClock!.since,
+      outageAt,
+      "a later visit keeps the same pause",
+    );
+    assert.equal(
+      f.events("budget_clock_paused").length,
+      2,
+      "a later visit writes no new pause",
+    );
+    const whileWedged = taskBudget(
+      f.current(),
+      f.store.runs(f.submitted.id),
+      Date.now(),
+      f.store.eventsAll(f.submitted.id),
+    );
+    assert.ok(
+      whileWedged.wallMs.used < 30 * MINUTE,
+      `used ${whileWedged.wallMs.used} ms while the lane is wedged`,
+    );
+    assert.ok(
+      whileWedged.wallMs.pausedMs > 90 * MINUTE,
+      `paused ${whileWedged.wallMs.pausedMs} ms`,
+    );
     // The wedged quantum's own finish closes it.
     f.engine.resolution.settleBudgetClock(f.current(), { returned: true });
-    assert.ok(f.events('observation_resumed').length > 0, 'the returned lane closes its outage interval');
+    assert.ok(
+      f.events("observation_resumed").length > 0,
+      "the returned lane closes its outage interval",
+    );
     assert.equal(f.current().resolution.budgetClock!.since, null);
     const clock = f.current().resolution.budgetClock!;
-    assert.ok(Math.abs(clock.pausedMs - 120 * MINUTE) < 2 * MINUTE, `paused ${clock.pausedMs} ms`);
-    const budget = taskBudget(f.current(), f.store.runs(f.submitted.id), Date.now(), f.store.eventsAll(f.submitted.id));
-    assert.equal(budget.exhausted, null, `used ${budget.wallMs.used} ms of ${budget.wallMs.limit}`);
+    assert.ok(
+      Math.abs(clock.pausedMs - 120 * MINUTE) < 2 * MINUTE,
+      `paused ${clock.pausedMs} ms`,
+    );
+    const budget = taskBudget(
+      f.current(),
+      f.store.runs(f.submitted.id),
+      Date.now(),
+      f.store.eventsAll(f.submitted.id),
+    );
+    assert.equal(
+      budget.exhausted,
+      null,
+      `used ${budget.wallMs.used} ms of ${budget.wallMs.limit}`,
+    );
     assert.ok(budget.wallMs.used < 20 * MINUTE);
-    assert.ok(clock.pausedMs > before, 'the outage time is booked, not lost');
-  } finally { await f.close(); }
+    assert.ok(clock.pausedMs > before, "the outage time is booked, not lost");
+  } finally {
+    await f.close();
+  }
 });
 
-test('an outage that returns before any sweep visit still books the outage time', async () => {
+test("an outage that returns before any sweep visit still books the outage time", async () => {
   const f = fixture({ responsible: true });
   try {
     const start = Date.now() - 60 * MINUTE;
@@ -206,23 +436,53 @@ test('an outage that returns before any sweep visit still books the outage time'
     // The quantum overran its bound and returned before the next sweep visit could
     // open the interval: the return path alone has to account for the outage.
     const outageAt = iso(Date.now() - 30 * MINUTE);
-    f.store.event(f.submitted.id, 'observation_outage', 'Task quantum did not return within 120 s');
+    f.store.event(
+      f.submitted.id,
+      "observation_outage",
+      "Task quantum did not return within 120 s",
+    );
     const events = f.store.eventsAll(f.submitted.id);
-    f.store.db.prepare('UPDATE events SET at=? WHERE id=?').run(outageAt, events.findLast(event => event.kind === 'observation_outage')!.id);
+    f.store.db
+      .prepare("UPDATE events SET at=? WHERE id=?")
+      .run(
+        outageAt,
+        events.findLast((event) => event.kind === "observation_outage")!.id,
+      );
     f.engine.resolution.settleBudgetClock(f.current(), { returned: true });
     const clock = f.current().resolution.budgetClock!;
     assert.equal(clock.since, null);
-    assert.ok(Math.abs(clock.pausedMs - 30 * MINUTE) < MINUTE, `paused ${clock.pausedMs} ms`);
+    assert.ok(
+      Math.abs(clock.pausedMs - 30 * MINUTE) < MINUTE,
+      `paused ${clock.pausedMs} ms`,
+    );
     assert.equal(clock.pauses, 1);
-    assert.equal(f.events('budget_clock_paused').length, 0, 'the interval was never opened before the return');
-    assert.equal(f.events('observation_resumed').length, 1, 'the return closes the outage it observed');
-    const budget = taskBudget(f.current(), f.store.runs(f.submitted.id), Date.now(), f.store.eventsAll(f.submitted.id));
-    assert.ok(Math.abs(budget.wallMs.used - 30 * MINUTE) < MINUTE, `used ${budget.wallMs.used} ms`);
+    assert.equal(
+      f.events("budget_clock_paused").length,
+      0,
+      "the interval was never opened before the return",
+    );
+    assert.equal(
+      f.events("observation_resumed").length,
+      1,
+      "the return closes the outage it observed",
+    );
+    const budget = taskBudget(
+      f.current(),
+      f.store.runs(f.submitted.id),
+      Date.now(),
+      f.store.eventsAll(f.submitted.id),
+    );
+    assert.ok(
+      Math.abs(budget.wallMs.used - 30 * MINUTE) < MINUTE,
+      `used ${budget.wallMs.used} ms`,
+    );
     assert.ok(Math.abs(budget.wallMs.pausedMs - 30 * MINUTE) < MINUTE);
-  } finally { await f.close(); }
+  } finally {
+    await f.close();
+  }
 });
 
-test('a proven pre-send refusal does not spend the budget until an owner resumes the task', async () => {
+test("a proven pre-send refusal does not spend the budget until an owner resumes the task", async () => {
   const f = fixture({ responsible: true });
   try {
     const start = Date.now() - 90 * MINUTE;
@@ -230,32 +490,75 @@ test('a proven pre-send refusal does not spend the budget until an owner resumes
     f.recordRunStart(iso(start));
     // The exact durable shape a refused worker creation leaves (see the t3/identity
     // suite): the refusal event, the park in attention and the refused reason.
-    f.store.update(f.current().id, { phase: 'needs_attention', agentIntent: false, runId: null,
-      reason: 'Worker creation refused before send: no reasoning effort for this model',
-      resolution: { ...f.current().resolution, attention: true } }, 'worker_creation_refused_before_send',
-    'Worker creation refused before send: no reasoning effort for this model');
+    f.store.update(
+      f.current().id,
+      {
+        phase: "needs_attention",
+        agentIntent: false,
+        runId: null,
+        reason:
+          "Worker creation refused before send: no reasoning effort for this model",
+        resolution: { ...f.current().resolution, attention: true },
+      },
+      "worker_creation_refused_before_send",
+      "Worker creation refused before send: no reasoning effort for this model",
+    );
     f.engine.resolution.settleBudgetClock(f.current());
     const open = f.current().resolution.budgetClock!;
-    assert.equal(open.reason, 'a host-adapter refusal stopped the task before any send');
-    assert.ok(open.since, 'the refusal holds the clock');
+    assert.equal(
+      open.reason,
+      "a host-adapter refusal stopped the task before any send",
+    );
+    assert.ok(open.since, "the refusal holds the clock");
     // Later sweep visits keep the same interval open rather than reopening it.
-    const pausedEvents = f.events('budget_clock_paused').length;
+    const pausedEvents = f.events("budget_clock_paused").length;
     f.engine.resolution.settleBudgetClock(f.current());
     assert.equal(f.current().resolution.budgetClock!.reason, open.reason);
-    assert.equal(f.events('budget_clock_paused').length, pausedEvents, 'a later visit writes no new pause');
+    assert.equal(
+      f.events("budget_clock_paused").length,
+      pausedEvents,
+      "a later visit writes no new pause",
+    );
     // The task waits on the Nucleus/host fix for 40 minutes without spending its budget.
-    f.store.update(f.current().id, { resolution: { ...f.current().resolution,
-      budgetClock: { ...open, since: iso(Date.now() - 40 * MINUTE) } } });
-    const waiting = taskBudget(f.current(), f.store.runs(f.submitted.id), Date.now(), f.store.eventsAll(f.submitted.id));
-    assert.ok(Math.abs(waiting.wallMs.pausedMs - 40 * MINUTE) < MINUTE, `paused ${waiting.wallMs.pausedMs} ms`);
-    assert.equal(waiting.exhausted, null, `used ${waiting.wallMs.used} ms of ${waiting.wallMs.limit}`);
+    f.store.update(f.current().id, {
+      resolution: {
+        ...f.current().resolution,
+        budgetClock: { ...open, since: iso(Date.now() - 40 * MINUTE) },
+      },
+    });
+    const waiting = taskBudget(
+      f.current(),
+      f.store.runs(f.submitted.id),
+      Date.now(),
+      f.store.eventsAll(f.submitted.id),
+    );
+    assert.ok(
+      Math.abs(waiting.wallMs.pausedMs - 40 * MINUTE) < MINUTE,
+      `paused ${waiting.wallMs.pausedMs} ms`,
+    );
+    assert.equal(
+      waiting.exhausted,
+      null,
+      `used ${waiting.wallMs.used} ms of ${waiting.wallMs.limit}`,
+    );
     // The owner's resume resolves the attention episode; the clock runs again.
-    f.engine.resolution.operatorReturn(f.current(), { attention: false }, { phase: 'queued', reason: 'Waiting for dispatch' },
-      'restart', 'The owner resumed the task after the refused creation');
+    f.engine.resolution.operatorReturn(
+      f.current(),
+      { attention: false },
+      { phase: "queued", reason: "Waiting for dispatch" },
+      "restart",
+      "The owner resumed the task after the refused creation",
+    );
     f.engine.resolution.settleBudgetClock(f.current());
-    assert.equal(f.current().resolution.budgetClock!.since, null, 'the resumed task charges its own work again');
+    assert.equal(
+      f.current().resolution.budgetClock!.since,
+      null,
+      "the resumed task charges its own work again",
+    );
     assert.ok(f.current().resolution.budgetClock!.pausedMs >= 40 * MINUTE);
-  } finally { await f.close(); }
+  } finally {
+    await f.close();
+  }
 });
 
 /**
@@ -267,67 +570,178 @@ test('a proven pre-send refusal does not spend the budget until an owner resumes
  * released legacy hold that left no hold event, the worker's own run start, and the
  * clock pauses a recent Nucleus-side wait wrote.
  */
-test('a task whose only run has no run row is charged from its recorded run start, and its gate and views agree', async () => {
+test("a task whose only run has no run row is charged from its recorded run start, and its gate and views agree", async () => {
   const f = fixture({ responsible: true });
   try {
     // oxide#083 is high (1920 minutes of wall time): the old figure was 16982 of 1920.
-    f.store.update(f.submitted.id, { complexity: 'high' });
-    f.store.event(f.submitted.id, 'responsible_converted', 'legacy responsible conversion');
-    f.store.db.prepare('UPDATE events SET at=? WHERE id=?')
-      .run(iso(Date.now() - 12 * 24 * 60 * MINUTE), f.events('responsible_converted').at(-1)!.id);
+    f.store.update(f.submitted.id, { complexity: "high" });
+    f.store.event(
+      f.submitted.id,
+      "responsible_converted",
+      "legacy responsible conversion",
+    );
+    f.store.db
+      .prepare("UPDATE events SET at=? WHERE id=?")
+      .run(
+        iso(Date.now() - 12 * 24 * 60 * MINUTE),
+        f.events("responsible_converted").at(-1)!.id,
+      );
     // The legacy dispatch hold was released and left no hold event of its own.
-    f.store.update(f.submitted.id, { held: false, holdAt: iso(Date.now() - 11 * 24 * 60 * MINUTE),
-      holdOwner: 'operator', holdReason: 'waiting on the operator', holds: {} } as never, 'hold_released');
+    f.store.update(
+      f.submitted.id,
+      {
+        held: false,
+        holdAt: iso(Date.now() - 11 * 24 * 60 * MINUTE),
+        holdOwner: "operator",
+        holdReason: "waiting on the operator",
+        holds: {},
+      } as never,
+      "hold_released",
+    );
     f.recordRunStart(iso(Date.now() - 30 * MINUTE));
     // A recent Nucleus-side wait: the pause and resume the sweep recorded for it.
-    f.engine.resolution.recordStop(f.current(), 'route_unavailable', 'No runnable profile for the reviewer role');
+    f.engine.resolution.recordStop(
+      f.current(),
+      "route_unavailable",
+      "No runnable profile for the reviewer role",
+    );
     f.engine.resolution.settleBudgetClock(f.current());
-    f.engine.resolution.waiting(f.current(), 'Worker running', 'lifecycle');
+    f.engine.resolution.waiting(f.current(), "Worker running", "lifecycle");
     f.engine.resolution.settleBudgetClock(f.current());
-    assert.equal(f.events('budget_clock_paused').length, 1);
-    assert.equal(f.events('budget_clock_resumed').length, 1);
+    assert.equal(f.events("budget_clock_paused").length, 1);
+    assert.equal(f.events("budget_clock_resumed").length, 1);
 
-    const runs = f.store.runs(f.submitted.id), events = f.store.eventsAll(f.submitted.id);
+    const runs = f.store.runs(f.submitted.id),
+      events = f.store.eventsAll(f.submitted.id);
     const now = Date.now();
     const gate = taskBudget(f.current(), runs, now, events);
-    const detail = taskDetailView(f.current(), {}, runs, events, undefined, now);
-    const board = summarizeTask(f.current(), false, false, {}, runs, undefined, 'host', events, undefined, now);
-    assert.equal(gate.exhausted, null, `used ${gate.wallMs.used} ms of ${gate.wallMs.limit}`);
-    assert.ok(gate.wallMs.used < 31 * MINUTE, `the twelve held days are not charged: ${gate.wallMs.used} ms`);
+    const detail = taskDetailView(
+      f.current(),
+      {},
+      runs,
+      events,
+      undefined,
+      now,
+    );
+    const board = summarizeTask(
+      f.current(),
+      false,
+      false,
+      {},
+      runs,
+      undefined,
+      "host",
+      events,
+      undefined,
+      now,
+    );
+    assert.equal(
+      gate.exhausted,
+      null,
+      `used ${gate.wallMs.used} ms of ${gate.wallMs.limit}`,
+    );
+    assert.ok(
+      gate.wallMs.used < 31 * MINUTE,
+      `the twelve held days are not charged: ${gate.wallMs.used} ms`,
+    );
     // The gate, detail and board compare the same budget-clock instant.
-    assert.ok(Math.abs(detail.budget!.wallMs.used - gate.wallMs.used) < 1000, `detail ${detail.budget!.wallMs.used} vs gate ${gate.wallMs.used}`);
-    assert.equal(detail.budget!.effectiveTokens.used, gate.effectiveTokens.used, 'and its token figure');
-    assert.ok(Math.abs(board.budget![3] - gate.wallMs.used) < 1000, `board ${board.budget![3]} vs gate ${gate.wallMs.used}`);
-    assert.equal(board.budget![5], gate.exhausted, 'and the same exhaustion');
+    assert.ok(
+      Math.abs(detail.budget!.wallMs.used - gate.wallMs.used) < 1000,
+      `detail ${detail.budget!.wallMs.used} vs gate ${gate.wallMs.used}`,
+    );
+    assert.equal(
+      detail.budget!.effectiveTokens.used,
+      gate.effectiveTokens.used,
+      "and its token figure",
+    );
+    assert.ok(
+      Math.abs(board.budget![3] - gate.wallMs.used) < 1000,
+      `board ${board.budget![3]} vs gate ${gate.wallMs.used}`,
+    );
+    assert.equal(board.budget![5], gate.exhausted, "and the same exhaustion");
 
     // The stored pause the old measurement left on the row (review 5899747947): the
     // record is real, and its recorded question is still on the task. Both must
     // answer to the same figure that clears it, not fence the task on their own.
-    f.engine.resolution.recordStop(f.current(), 'budget',
-      'Budget reached: 1920 minutes of wall time since the responsible lifecycle began');
-    f.store.event(f.submitted.id, 'operator_question',
-      'budget-old: kind budget; stop budget; head none; question deadbeef (3 chars); options Extend the budget | Stop and keep the work');
-    assert.equal(slotRequestFenced(f.current()), true, 'the stored pause fences a dispatch request');
-    assert.equal(operatorQuestionFor(f.store, f.current()), null, 'the same figure raises no budget question');
+    f.engine.resolution.recordStop(
+      f.current(),
+      "budget",
+      "Budget reached: 1920 minutes of wall time since the responsible lifecycle began",
+    );
+    f.store.event(
+      f.submitted.id,
+      "operator_question",
+      "budget-old: kind budget; stop budget; head none; question deadbeef (3 chars); options Extend the budget | Stop and keep the work",
+    );
+    assert.equal(
+      slotRequestFenced(f.current()),
+      true,
+      "the stored pause fences a dispatch request",
+    );
+    assert.equal(
+      operatorQuestionFor(f.store, f.current()),
+      null,
+      "the same figure raises no budget question",
+    );
     const paused = ownerTaskNext(collectOwnerVerbFacts(f.store, f.current()));
-    assert.equal(paused.stop, null, 'the read reports no budget stop');
-    assert.equal(paused.reason, TASK_PROGRESSING_REASON, 'and not the pause text');
+    assert.equal(paused.stop, null, "the read reports no budget stop");
+    assert.equal(
+      paused.reason,
+      TASK_PROGRESSING_REASON,
+      "and not the pause text",
+    );
 
     // The pass clears the pause the figure no longer shows, with its question, and
     // the reviewer the old figure refused starts.
     await f.engine.wake();
     await f.engine.quiesce();
     const running = f.current();
-    assert.equal(running.resolution.stop, null, 'the pass cleared the pause the figure no longer shows');
-    assert.equal(f.events('budget_pause_cleared').length, 1);
-    assert.match(f.events('budget_pause_cleared')[0]!.detail, /^The measured budget no longer shows the pause/);
-    assert.equal(f.events('operator_question_superseded')[0]?.detail.startsWith('budget-old: The measured budget no longer shows the pause'), true);
-    assert.equal(f.events('native_question_dismiss_intent').some(event => event.detail.startsWith('budget-old:')), true);
-    assert.equal(slotRequestFenced(running), false, 'nothing fences the task any more');
-    assert.equal(f.reviewerRuns().length, 1, `a review run starts: ${running.reason}`);
-    assert.equal(f.asks.filter(ask => /budget/i.test(ask.question)).length, 0, 'no budget question is raised');
-    assert.equal(f.store.listDecisions({ status: 'open', task: f.submitted.id }).length, 0);
-  } finally { await f.close(); }
+    assert.equal(
+      running.resolution.stop,
+      null,
+      "the pass cleared the pause the figure no longer shows",
+    );
+    assert.equal(f.events("budget_pause_cleared").length, 1);
+    assert.match(
+      f.events("budget_pause_cleared")[0]!.detail,
+      /^The measured budget no longer shows the pause/,
+    );
+    assert.equal(
+      f
+        .events("operator_question_superseded")[0]
+        ?.detail.startsWith(
+          "budget-old: The measured budget no longer shows the pause",
+        ),
+      true,
+    );
+    assert.equal(
+      f
+        .events("native_question_dismiss_intent")
+        .some((event) => event.detail.startsWith("budget-old:")),
+      true,
+    );
+    assert.equal(
+      slotRequestFenced(running),
+      false,
+      "nothing fences the task any more",
+    );
+    assert.equal(
+      f.reviewerRuns().length,
+      1,
+      `a review run starts: ${running.reason}`,
+    );
+    assert.equal(
+      f.asks.filter((ask) => /budget/i.test(ask.question)).length,
+      0,
+      "no budget question is raised",
+    );
+    assert.equal(
+      f.store.listDecisions({ status: "open", task: f.submitted.id }).length,
+      0,
+    );
+  } finally {
+    await f.close();
+  }
 });
 
 /**
@@ -336,76 +750,171 @@ test('a task whose only run has no run row is charged from its recorded run star
  * under its limit, so the task never dispatched and the board asked about a pause
  * that was gone. The fence, the question and the reason now read one figure.
  */
-test('a stored budget pause the figure no longer shows does not fence a queued task', async () => {
+test("a stored budget pause the figure no longer shows does not fence a queued task", async () => {
   const f = fixture({ responsible: true });
   try {
-    f.store.update(f.submitted.id, { complexity: 'high', phase: 'queued', reason: DISPATCH_WAIT_REASON,
-      completion: null, agentIntent: false, prHead: null, prUrl: null }, 'requeued_fixture');
-    f.store.event(f.submitted.id, 'responsible_converted', 'legacy responsible conversion');
-    f.store.db.prepare('UPDATE events SET at=? WHERE id=?')
-      .run(iso(Date.now() - 12 * 24 * 60 * MINUTE), f.events('responsible_converted').at(-1)!.id);
+    f.store.update(
+      f.submitted.id,
+      {
+        complexity: "high",
+        phase: "queued",
+        reason: DISPATCH_WAIT_REASON,
+        completion: null,
+        agentIntent: false,
+        prHead: null,
+        prUrl: null,
+      },
+      "requeued_fixture",
+    );
+    f.store.event(
+      f.submitted.id,
+      "responsible_converted",
+      "legacy responsible conversion",
+    );
+    f.store.db
+      .prepare("UPDATE events SET at=? WHERE id=?")
+      .run(
+        iso(Date.now() - 12 * 24 * 60 * MINUTE),
+        f.events("responsible_converted").at(-1)!.id,
+      );
     f.recordRunStart(iso(Date.now() - 20 * MINUTE));
-    f.engine.resolution.recordStop(f.current(), 'budget',
-      'Budget reached: 1920 minutes of wall time since the responsible lifecycle began');
-    f.store.event(f.submitted.id, 'operator_question',
-      'budget-old: kind budget; stop budget; head none; question deadbeef (3 chars); options Extend the budget | Stop and keep the work');
-    assert.equal(taskBudget(f.current(), f.store.runs(f.submitted.id), Date.now(), f.store.eventsAll(f.submitted.id)).exhausted, null);
-    assert.equal(slotRequestFenced(f.current()), true, 'the stored pause fences the queued request');
-    assert.equal(operatorQuestionFor(f.store, f.current()), null, 'and raises no budget question');
+    f.engine.resolution.recordStop(
+      f.current(),
+      "budget",
+      "Budget reached: 1920 minutes of wall time since the responsible lifecycle began",
+    );
+    f.store.event(
+      f.submitted.id,
+      "operator_question",
+      "budget-old: kind budget; stop budget; head none; question deadbeef (3 chars); options Extend the budget | Stop and keep the work",
+    );
+    assert.equal(
+      taskBudget(
+        f.current(),
+        f.store.runs(f.submitted.id),
+        Date.now(),
+        f.store.eventsAll(f.submitted.id),
+      ).exhausted,
+      null,
+    );
+    assert.equal(
+      slotRequestFenced(f.current()),
+      true,
+      "the stored pause fences the queued request",
+    );
+    assert.equal(
+      operatorQuestionFor(f.store, f.current()),
+      null,
+      "and raises no budget question",
+    );
     // Read before any pass, the stop and the reason must not contradict each other
     // (review 5900239817): the task waits for dispatch, it does not wait on a person
     // carrying the cleared pause's text.
     const early = ownerTaskNext(collectOwnerVerbFacts(f.store, f.current()));
     assert.equal(early.reason, DISPATCH_WAIT_REASON);
-    assert.equal(early.stop?.kind, 'wait');
-    assert.equal(early.stop?.reason, 'capacity');
+    assert.equal(early.stop?.kind, "wait");
+    assert.equal(early.stop?.reason, "capacity");
     assert.equal(early.stop?.detail, DISPATCH_WAIT_REASON);
-    const earlyRuns = f.store.runs(f.submitted.id), earlyEvents = f.store.eventsAll(f.submitted.id);
-    const earlyBoard = summarizeTask(f.current(), false, false, {}, earlyRuns, undefined, 'host', earlyEvents);
-    assert.equal(earlyBoard.reason, DISPATCH_WAIT_REASON, 'the board reads the same reason as next');
+    const earlyRuns = f.store.runs(f.submitted.id),
+      earlyEvents = f.store.eventsAll(f.submitted.id);
+    const earlyBoard = summarizeTask(
+      f.current(),
+      false,
+      false,
+      {},
+      earlyRuns,
+      undefined,
+      "host",
+      earlyEvents,
+    );
+    assert.equal(
+      earlyBoard.reason,
+      DISPATCH_WAIT_REASON,
+      "the board reads the same reason as next",
+    );
 
     f.engine.resolution.settleBudgetClock(f.current());
     const cleared = f.current();
     assert.equal(cleared.resolution.stop, null);
     // A queued task's own wait is dispatch, the record every queued task carries.
     assert.equal(cleared.reason, DISPATCH_WAIT_REASON);
-    assert.equal(slotRequestFenced(cleared), false, 'the queued request is not fenced');
+    assert.equal(
+      slotRequestFenced(cleared),
+      false,
+      "the queued request is not fenced",
+    );
     const next = ownerTaskNext(collectOwnerVerbFacts(f.store, cleared));
-    assert.equal(next.stop?.kind, 'wait');
-    assert.equal(next.stop?.reason, 'capacity');
+    assert.equal(next.stop?.kind, "wait");
+    assert.equal(next.stop?.reason, "capacity");
     assert.equal(next.reason, DISPATCH_WAIT_REASON);
-    assert.doesNotMatch(next.stop?.detail ?? '', /Budget reached/);
-    assert.equal(f.events('operator_question_superseded').some(event => event.detail.startsWith('budget-old:')), true);
-  } finally { await f.close(); }
+    assert.doesNotMatch(next.stop?.detail ?? "", /Budget reached/);
+    assert.equal(
+      f
+        .events("operator_question_superseded")
+        .some((event) => event.detail.startsWith("budget-old:")),
+      true,
+    );
+  } finally {
+    await f.close();
+  }
 });
 
 /** nucleus#1187 acceptance 2: real runs over a limit still stop the task, and both reads agree. */
-test('a task with real runs over its wall-time budget is still stopped, and its gate and views agree', async () => {
+test("a task with real runs over its wall-time budget is still stopped, and its gate and views agree", async () => {
   const f = fixture({ responsible: true });
   try {
-    f.store.update(f.submitted.id, { complexity: 'low' });
+    f.store.update(f.submitted.id, { complexity: "low" });
     // A real resolution run that started two hours ago; the low wall limit is one hour.
-    f.store.putRun(runSchema.parse({ id: 'old-revision', taskId: f.submitted.id, role: 'revision', generation: 1,
-      head, base, agentId: 'worker', workspaceId: 'workspace', profile: null, status: 'finished',
-      createdAt: iso(Date.now() - 120 * MINUTE), lastObservedAt: null, active: false, idleSince: null,
-      completion: null, released: true }));
-    const runs = f.store.runs(f.submitted.id), events = f.store.eventsAll(f.submitted.id);
+    f.store.putRun(
+      runSchema.parse({
+        id: "old-revision",
+        taskId: f.submitted.id,
+        role: "revision",
+        generation: 1,
+        head,
+        base,
+        agentId: "worker",
+        workspaceId: "workspace",
+        profile: null,
+        status: "finished",
+        createdAt: iso(Date.now() - 120 * MINUTE),
+        lastObservedAt: null,
+        active: false,
+        idleSince: null,
+        completion: null,
+        released: true,
+      }),
+    );
+    const runs = f.store.runs(f.submitted.id),
+      events = f.store.eventsAll(f.submitted.id);
     const measuredAt = Date.now();
     const gate = taskBudget(f.current(), runs, measuredAt, events);
-    const detail = taskDetailView(f.current(), {}, runs, events, undefined, measuredAt);
-    assert.equal(gate.exhausted, 'wall_time');
+    const detail = taskDetailView(
+      f.current(),
+      {},
+      runs,
+      events,
+      undefined,
+      measuredAt,
+    );
+    assert.equal(gate.exhausted, "wall_time");
     assert.equal(detail.budget!.wallMs.used, gate.wallMs.used);
-    assert.equal(detail.budget!.exhausted, 'wall_time');
+    assert.equal(detail.budget!.exhausted, "wall_time");
     await f.engine.wake();
     const stopped = f.current();
-    assert.equal(stopped.resolution.stop?.reason, 'budget', stopped.reason);
+    assert.equal(stopped.resolution.stop?.reason, "budget", stopped.reason);
     assert.match(stopped.reason, /Budget reached: 60 minutes of wall time/);
-    assert.equal(f.reviewerRuns().length, 0, 'no run starts over budget');
+    assert.equal(f.reviewerRuns().length, 0, "no run starts over budget");
     const next = ownerTaskNext(collectOwnerVerbFacts(f.store, stopped));
-    assert.equal(next.stop?.reason, 'budget');
+    assert.equal(next.stop?.reason, "budget");
     assert.match(next.reason, /Budget reached/);
-    assert.equal(next.verbs.find(view => view.verb === 'extend_budget')?.available, true);
-  } finally { await f.close(); }
+    assert.equal(
+      next.verbs.find((view) => view.verb === "extend_budget")?.available,
+      true,
+    );
+  } finally {
+    await f.close();
+  }
 });
 
 /**
@@ -417,30 +926,73 @@ test('a task with real runs over its wall-time budget is still stopped, and its 
 test('the reason follows the current stop, so a cleared budget pause does not keep reading "Budget reached"', async () => {
   const f = fixture({ responsible: true });
   try {
-    f.store.update(f.submitted.id, { complexity: 'high' });
-    f.engine.resolution.recordStop(f.current(), 'budget',
-      'Budget reached: 16982 of 1920 minutes of wall time since the responsible lifecycle began');
+    f.store.update(f.submitted.id, { complexity: "high" });
+    f.engine.resolution.recordStop(
+      f.current(),
+      "budget",
+      "Budget reached: 16982 of 1920 minutes of wall time since the responsible lifecycle began",
+    );
     f.recordRunStart(iso(Date.now() - 30 * MINUTE));
     const paused = f.current();
-    assert.equal(paused.resolution.stop?.reason, 'budget', 'the recorded pause survives as history');
-    assert.equal(ownerTaskNext(collectOwnerVerbFacts(f.store, paused)).stop, null, 'the figure it named no longer shows a pause');
-    assert.equal(ownerTaskNext(collectOwnerVerbFacts(f.store, paused)).reason, TASK_PROGRESSING_REASON);
-    const runs = f.store.runs(f.submitted.id), events = f.store.eventsAll(f.submitted.id);
+    assert.equal(
+      paused.resolution.stop?.reason,
+      "budget",
+      "the recorded pause survives as history",
+    );
+    assert.equal(
+      ownerTaskNext(collectOwnerVerbFacts(f.store, paused)).stop,
+      null,
+      "the figure it named no longer shows a pause",
+    );
+    assert.equal(
+      ownerTaskNext(collectOwnerVerbFacts(f.store, paused)).reason,
+      TASK_PROGRESSING_REASON,
+    );
+    const runs = f.store.runs(f.submitted.id),
+      events = f.store.eventsAll(f.submitted.id);
     const detail = taskDetailView(paused, {}, runs, events);
-    assert.equal(detail.resolution.stop, null, 'task detail reads no stop either');
+    assert.equal(
+      detail.resolution.stop,
+      null,
+      "task detail reads no stop either",
+    );
     assert.equal(detail.reason, TASK_PROGRESSING_REASON);
-    assert.equal(summarizeTask(paused, false, false, {}, runs, undefined, 'host', events).reason, TASK_PROGRESSING_REASON);
+    assert.equal(
+      summarizeTask(paused, false, false, {}, runs, undefined, "host", events)
+        .reason,
+      TASK_PROGRESSING_REASON,
+    );
 
     // A genuine pause keeps its text: the same reason field is the recorded stop.
-    f.store.update(f.submitted.id, { complexity: 'low' });
-    f.store.putRun(runSchema.parse({ id: 'old-revision', taskId: f.submitted.id, role: 'revision', generation: 1,
-      head, base, agentId: 'worker', workspaceId: 'workspace', profile: null, status: 'finished',
-      createdAt: iso(Date.now() - 120 * MINUTE), lastObservedAt: null, active: false, idleSince: null,
-      completion: null, released: true }));
-    const stillPaused = ownerTaskNext(collectOwnerVerbFacts(f.store, f.current()));
-    assert.equal(stillPaused.stop?.reason, 'budget');
+    f.store.update(f.submitted.id, { complexity: "low" });
+    f.store.putRun(
+      runSchema.parse({
+        id: "old-revision",
+        taskId: f.submitted.id,
+        role: "revision",
+        generation: 1,
+        head,
+        base,
+        agentId: "worker",
+        workspaceId: "workspace",
+        profile: null,
+        status: "finished",
+        createdAt: iso(Date.now() - 120 * MINUTE),
+        lastObservedAt: null,
+        active: false,
+        idleSince: null,
+        completion: null,
+        released: true,
+      }),
+    );
+    const stillPaused = ownerTaskNext(
+      collectOwnerVerbFacts(f.store, f.current()),
+    );
+    assert.equal(stillPaused.stop?.reason, "budget");
     assert.match(stillPaused.reason, /Budget reached: 16982 of 1920/);
-  } finally { await f.close(); }
+  } finally {
+    await f.close();
+  }
 });
 
 /**
@@ -450,49 +1002,119 @@ test('the reason follows the current stop, so a cleared budget pause does not ke
  * one answer — not three — lets the same stage continue: the merge gate runs, and
  * no revision and no review is dispatched just because the pause cleared.
  */
-test('praxis#328: a budget stop at the merge stage keeps the stage, and one extension resumes the merge gate', async () => {
+test("praxis#328: a budget stop at the merge stage keeps the stage, and one extension resumes the merge gate", async () => {
   const f = fixture({ responsible: true });
   try {
     const startedAt = iso(Date.now() - 1925 * MINUTE);
     const task = f.current();
     // Real stored shape: the accepted exact head, the passed prospective-merge
     // validation, and the merge stage that owns the next step.
-    f.store.update(task.id, { complexity: 'very_high', budgetSince: startedAt, phase: 'merging' }, 'budget_fixture');
-    f.store.update(task.id, { resolution: { ...f.current().resolution, currentRunId: null, mergeBase: base,
-      mechanicalVerification: { at: startedAt, head, base },
-      reviews: [{ runId: 'review-1', agentId: 'reviewer-1', head, status: 'ready_to_merge', reviewId: 5906585656,
-        reviewCommentId: null, at: startedAt, verdicts: [] }],
-      review: { eventId: 'review-1', taskId: task.id, runId: 'review-1', status: 'ready_to_merge',
-        summary: 'Accepted at the reviewed head', head, prNumber: 1, reviewId: 5906585656 } } }, 'review_accepted_fixture');
+    f.store.update(
+      task.id,
+      { complexity: "very_high", budgetSince: startedAt, phase: "merging" },
+      "budget_fixture",
+    );
+    f.store.update(
+      task.id,
+      {
+        resolution: {
+          ...f.current().resolution,
+          currentRunId: null,
+          mergeBase: base,
+          mechanicalVerification: { at: startedAt, head, base },
+          reviews: [
+            {
+              runId: "review-1",
+              agentId: "reviewer-1",
+              head,
+              status: "ready_to_merge",
+              reviewId: 5906585656,
+              reviewCommentId: null,
+              at: startedAt,
+              verdicts: [],
+            },
+          ],
+          review: {
+            eventId: "review-1",
+            taskId: task.id,
+            runId: "review-1",
+            status: "ready_to_merge",
+            summary: "Accepted at the reviewed head",
+            head,
+            prNumber: 1,
+            reviewId: 5906585656,
+          },
+        },
+      },
+      "review_accepted_fixture",
+    );
     f.recordRunStart(startedAt);
-    const mergeRuns = () => f.store.runs(task.id).filter(run => run.role === 'revision' || run.role === 'reviewer');
+    const mergeRuns = () =>
+      f.store
+        .runs(task.id)
+        .filter((run) => run.role === "revision" || run.role === "reviewer");
     const beforeRuns = mergeRuns().length;
     // The dispatch funnel is the one writer of a budget pause; the task was over its
     // limit before its next step could start.
-    await f.engine.resolution.launch(f.current(), 'revision');
+    await f.engine.resolution.launch(f.current(), "revision");
     const stopped = f.current();
-    assert.equal(stopped.phase, 'merging', 'the pause keeps the stage it interrupted');
-    assert.equal(stopped.resolution.stop?.reason, 'budget', stopped.reason);
-    assert.deepEqual(stopped.resolution.stop?.suggestedVerbs, ['extend_budget']);
-    const paused = taskBudget(stopped, f.store.runs(stopped.id), Date.now(), f.store.eventsAll(stopped.id));
+    assert.equal(
+      stopped.phase,
+      "merging",
+      "the pause keeps the stage it interrupted",
+    );
+    assert.equal(stopped.resolution.stop?.reason, "budget", stopped.reason);
+    assert.deepEqual(stopped.resolution.stop?.suggestedVerbs, [
+      "extend_budget",
+    ]);
+    const paused = taskBudget(
+      stopped,
+      f.store.runs(stopped.id),
+      Date.now(),
+      f.store.eventsAll(stopped.id),
+    );
     assert.equal(paused.wallMs.limit, 960 * MINUTE);
-    assert.equal(paused.exhausted, 'wall_time');
+    assert.equal(paused.exhausted, "wall_time");
 
     // One answer.
-    await f.engine.performTaskControl({ taskId: stopped.id, version: stopped.version, action: 'extend_budget',
-      reason: 'Continue the merge at the accepted head', caller: OPERATOR_BOARD_CALLER });
+    await f.engine.performTaskControl({
+      taskId: stopped.id,
+      version: stopped.version,
+      action: "extend_budget",
+      reason: "Continue the merge at the accepted head",
+      caller: OPERATOR_BOARD_CALLER,
+    });
     const extended = f.current();
-    assert.equal(extended.resolution.stop, null, 'one extension clears the pause');
-    assert.equal(extended.phase, 'merging', 'and never moves the stage');
-    const resumed = taskBudget(extended, f.store.runs(extended.id), Date.now(), f.store.eventsAll(extended.id));
-    assert.equal(resumed.exhausted, null, `one answer always lets the task continue: ${resumed.wallMs.used} of ${resumed.wallMs.limit}`);
+    assert.equal(
+      extended.resolution.stop,
+      null,
+      "one extension clears the pause",
+    );
+    assert.equal(extended.phase, "merging", "and never moves the stage");
+    const resumed = taskBudget(
+      extended,
+      f.store.runs(extended.id),
+      Date.now(),
+      f.store.eventsAll(extended.id),
+    );
+    assert.equal(
+      resumed.exhausted,
+      null,
+      `one answer always lets the task continue: ${resumed.wallMs.used} of ${resumed.wallMs.limit}`,
+    );
     // The granted limit is one increment past the use, not past the old limit.
-    assert.equal(resumed.wallMs.limit, extended.resolution.budgetLimits!.wallMs);
-    assert.ok(resumed.wallMs.limit >= paused.wallMs.used + 960 * MINUTE, `granted ${resumed.wallMs.limit} for use ${paused.wallMs.used}`);
+    assert.equal(
+      resumed.wallMs.limit,
+      extended.resolution.budgetLimits!.wallMs,
+    );
+    assert.ok(
+      resumed.wallMs.limit >= paused.wallMs.used + 960 * MINUTE,
+      `granted ${resumed.wallMs.limit} for use ${paused.wallMs.used}`,
+    );
     assert.ok(resumed.wallMs.limit <= paused.wallMs.used + 961 * MINUTE);
     assert.equal(extended.resolution.budgetLimits!.effectiveTokens, 50_000_000);
     // The extension event records both figures, so the answer is auditable.
-    const event = f.events('budget_extended').at(-1)!;
+    const event = f.events("budget_extended").at(-1)!;
     assert.match(event.detail, /wall limit 960 -> 2885 minutes \(use 1925\)/);
     assert.match(event.detail, /token limit 25000000 -> 50000000 \(use 0\)/);
 
@@ -501,12 +1123,33 @@ test('praxis#328: a budget stop at the merge stage keeps the stage, and one exte
     await f.engine.wake();
     await f.engine.quiesce();
     const after = f.current();
-    assert.equal(f.mergeCalls, 1, `the merge gate resumed at the accepted head: ${after.reason}`);
-    assert.ok(after.resolution.mergeIntent, 'the merge intent was recorded at the accepted head');
-    assert.notEqual(after.resolution.stop?.reason, 'budget', 'the cleared pause is not re-stamped');
-    assert.equal(mergeRuns().length, beforeRuns, 'no revision and no review was dispatched');
-    assert.equal(after.phase === 'changes_requested', false, 'the stage never became a revision');
-  } finally { await f.close(); }
+    assert.equal(
+      f.mergeCalls,
+      1,
+      `the merge gate resumed at the accepted head: ${after.reason}`,
+    );
+    assert.ok(
+      after.resolution.mergeIntent,
+      "the merge intent was recorded at the accepted head",
+    );
+    assert.notEqual(
+      after.resolution.stop?.reason,
+      "budget",
+      "the cleared pause is not re-stamped",
+    );
+    assert.equal(
+      mergeRuns().length,
+      beforeRuns,
+      "no revision and no review was dispatched",
+    );
+    assert.equal(
+      after.phase === "changes_requested",
+      false,
+      "the stage never became a revision",
+    );
+  } finally {
+    await f.close();
+  }
 });
 
 /**
@@ -514,38 +1157,74 @@ test('praxis#328: a budget stop at the merge stage keeps the stage, and one exte
  * reviewer, not a revision. The reviewer thread recorded on the task stays the
  * one the next run continues, and no revision run appears.
  */
-test('a budget stop during review resumes the same retained reviewer, not a revision', async () => {
+test("a budget stop during review resumes the same retained reviewer, not a revision", async () => {
   const f = fixture({ responsible: true });
   try {
     // One review round and its revision, so the reviewer thread is retained.
     await f.reviews(1);
     await f.engine.wake();
-    assert.equal(f.run().role, 'revision');
+    assert.equal(f.run().role, "revision");
     const inFlight = f.current();
     const retainedAgent = inFlight.resolution.reviewerAgentId;
     const retainedProfile = inFlight.resolution.reviewerProfile?.id;
-    assert.ok(retainedAgent, 'the reviewer thread is retained on the task');
-    const revisions = f.store.runs(inFlight.id).filter(run => run.role === 'revision').length;
+    assert.ok(retainedAgent, "the reviewer thread is retained on the task");
+    const revisions = f.store
+      .runs(inFlight.id)
+      .filter((run) => run.role === "revision").length;
     // The wall clock is spent while the revision is in flight, so the review that
     // follows it meets the pause.
-    f.store.update(inFlight.id, { complexity: 'low', budgetSince: iso(Date.now() - 70 * MINUTE) }, 'budget_fixture');
+    f.store.update(
+      inFlight.id,
+      { complexity: "low", budgetSince: iso(Date.now() - 70 * MINUTE) },
+      "budget_fixture",
+    );
     f.recordRunStart(iso(Date.now() - 70 * MINUTE));
-    await f.report('ready_for_review');
+    await f.report("ready_for_review");
     const stopped = f.current();
-    assert.equal(stopped.phase, 'awaiting_review', 'the pause keeps the review stage');
-    assert.equal(stopped.resolution.stop?.reason, 'budget', stopped.reason);
+    assert.equal(
+      stopped.phase,
+      "awaiting_review",
+      "the pause keeps the review stage",
+    );
+    assert.equal(stopped.resolution.stop?.reason, "budget", stopped.reason);
 
     // One answer resumes that stage.
-    await f.engine.performTaskControl({ taskId: stopped.id, version: stopped.version, action: 'extend_budget',
-      reason: 'Continue the review', caller: OPERATOR_BOARD_CALLER });
+    await f.engine.performTaskControl({
+      taskId: stopped.id,
+      version: stopped.version,
+      action: "extend_budget",
+      reason: "Continue the review",
+      caller: OPERATOR_BOARD_CALLER,
+    });
     await f.engine.wake();
     await f.engine.quiesce();
     const resumed = f.current();
-    assert.equal(resumed.phase, 'reviewing', `the review stage resumes: ${resumed.reason}`);
-    assert.equal(f.run().role, 'reviewer', 'the resumed run is the reviewer, never a revision');
-    assert.equal(f.run().agentId, retainedAgent, 'the same retained reviewer thread continues');
-    assert.equal(resumed.resolution.reviewerProfile?.id, retainedProfile, 'and the same reviewer profile');
-    assert.equal(f.store.runs(resumed.id).filter(run => run.role === 'revision').length, revisions,
-      'no revision was dispatched by the cleared pause');
-  } finally { await f.close(); }
+    assert.equal(
+      resumed.phase,
+      "reviewing",
+      `the review stage resumes: ${resumed.reason}`,
+    );
+    assert.equal(
+      f.run().role,
+      "reviewer",
+      "the resumed run is the reviewer, never a revision",
+    );
+    assert.equal(
+      f.run().agentId,
+      retainedAgent,
+      "the same retained reviewer thread continues",
+    );
+    assert.equal(
+      resumed.resolution.reviewerProfile?.id,
+      retainedProfile,
+      "and the same reviewer profile",
+    );
+    assert.equal(
+      f.store.runs(resumed.id).filter((run) => run.role === "revision").length,
+      revisions,
+      "no revision was dispatched by the cleared pause",
+    );
+  } finally {
+    await f.close();
+  }
 });

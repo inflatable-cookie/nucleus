@@ -191,8 +191,12 @@ export class ReviewEntryAdmission {
           throw Error("Review-entry admission changed before binding");
         if (this.store.runs(current.id).some((run) => !run.released))
           throw Error("Review-entry admission changed before binding");
-        if (startsNoRuns(this.store) ||
-            this.store.getMeta<boolean>("dispatchHeld") && boardDispatchHoldApplies(current)) return null;
+        if (
+          startsNoRuns(this.store) ||
+          (this.store.getMeta<boolean>("dispatchHeld") &&
+            boardDispatchHoldApplies(current))
+        )
+          return null;
         const wait = this.store.dependencyWait(current);
         if (wait) return wait;
         assertReviewEntryUnowned(this.store, input, current.id);

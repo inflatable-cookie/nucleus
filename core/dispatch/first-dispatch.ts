@@ -304,8 +304,14 @@ export class FirstDispatch {
           throw new Error(
             "Dispatch gate changed; this task is no longer dispatchable",
           );
-        if (dispatchGate({ task: current, dispatchHeld: this.store.getMeta<boolean>("dispatchHeld") }) ||
-            this.store.dependencyWait(current) || this.resolution.slotAdmissionReason(current))
+        if (
+          dispatchGate({
+            task: current,
+            dispatchHeld: this.store.getMeta<boolean>("dispatchHeld"),
+          }) ||
+          this.store.dependencyWait(current) ||
+          this.resolution.slotAdmissionReason(current)
+        )
           return false;
         inFlightWait = this.resolution.projectInFlightAdmissionReason(current);
         if (inFlightWait) return false;

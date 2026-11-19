@@ -119,8 +119,18 @@ const workerHoldsSlot = (task: Task): boolean => {
   if (task.interactive === true) return true;
   // Once the worker's report has advanced into the PR lifecycle, the worker
   // observation belongs to the old turn. Any live continuation is a run row.
-  if (task.resolution.mergedCommit ||
-      task.completion && !["queued", "dispatching", "working", "blocked", "error", "needs_attention"].includes(task.phase))
+  if (
+    task.resolution.mergedCommit ||
+    (task.completion &&
+      ![
+        "queued",
+        "dispatching",
+        "working",
+        "blocked",
+        "error",
+        "needs_attention",
+      ].includes(task.phase))
+  )
     return false;
   // Prior to handover, a report can arrive while the worker is still running.
   if (task.agentActive === true) return true;
@@ -154,7 +164,8 @@ const workerHoldsSlot = (task: Task): boolean => {
 // agent it requests a slot through the ordinary fair-share order. Terminal
 // tasks never hold slots.
 export const occupiesSlot = (task: CapacityTask, runs: Run[] = []) =>
-  task.removedAt == null && !["done", "cancelled"].includes(task.phase) &&
+  task.removedAt == null &&
+  !["done", "cancelled"].includes(task.phase) &&
   (workerHoldsSlot(task) ||
     runs.some(runHoldsSlot) ||
     task.hasLiveRun === true ||
@@ -162,8 +173,11 @@ export const occupiesSlot = (task: CapacityTask, runs: Run[] = []) =>
 
 /** These transitions relinquish the held slot. The next launch must compete again. */
 export function restartSlotObsolete(task: Task): boolean {
-  return Boolean(task.resolution.mergedCommit || task.removedAt) ||
-    ["done", "cancelled"].includes(task.phase) || slotRequestFenced(task);
+  return (
+    Boolean(task.resolution.mergedCommit || task.removedAt) ||
+    ["done", "cancelled"].includes(task.phase) ||
+    slotRequestFenced(task)
+  );
 }
 
 /** Never-dispatched `queued` work. Every other slot request is in-flight. */
@@ -172,7 +186,10 @@ function isInFlightSlotRequest(task: Task): boolean {
 }
 
 /** Priority globally, oldest first on per-project ties, round-robin across projects. */
-function fairShareSlotOrder(requestsOldestFirst: Task[], occupiedStarts: Task[] = []): Task[] {
+function fairShareSlotOrder(
+  requestsOldestFirst: Task[],
+  occupiedStarts: Task[] = [],
+): Task[] {
   const projects = new Map<string, Task[]>();
   for (const task of requestsOldestFirst) {
     const queue = projects.get(task.repoPath) ?? [];
@@ -186,16 +203,25 @@ function fairShareSlotOrder(requestsOldestFirst: Task[], occupiedStarts: Task[] 
   // A queued start that already committed belongs to this project's turn.
   // Re-reading after that write must give the other projects their turns.
   const turns = new Map<string, number>();
-  const turnKey = (task: Task) => JSON.stringify([task.repoPath, task.queuePriority]);
+  const turnKey = (task: Task) =>
+    JSON.stringify([task.repoPath, task.queuePriority]);
   const served = (task: Task) => turns.get(turnKey(task)) ?? 0;
   const takeTurn = (task: Task) => turns.set(turnKey(task), served(task) + 1);
   for (const task of occupiedStarts) takeTurn(task);
   const result: Task[] = [];
   let cursor = 0;
   while (result.length < requestsOldestFirst.length) {
-    const heads = order.map(project => projects.get(project)![offsets.get(project)!]);
-    const priority = Math.max(...heads.flatMap(task => task ? [task.queuePriority] : []));
-    const fewestTurns = Math.min(...heads.flatMap(task => task?.queuePriority === priority ? [served(task)] : []));
+    const heads = order.map(
+      (project) => projects.get(project)![offsets.get(project)!],
+    );
+    const priority = Math.max(
+      ...heads.flatMap((task) => (task ? [task.queuePriority] : [])),
+    );
+    const fewestTurns = Math.min(
+      ...heads.flatMap((task) =>
+        task?.queuePriority === priority ? [served(task)] : [],
+      ),
+    );
     let selected = -1;
     for (let step = 0; step < order.length; step++) {
       const index = (cursor + step) % order.length;
@@ -232,7 +258,11 @@ export function fairSlotRequestOrder(
     ...fairShareSlotOrder(requests.filter(isInFlightSlotRequest)),
     ...fairShareSlotOrder(
       requests.filter((task) => !isInFlightSlotRequest(task)),
-      occupied.filter(task => !task.completion && (task.phase === "dispatching" || task.phase === "working")),
+      occupied.filter(
+        (task) =>
+          !task.completion &&
+          (task.phase === "dispatching" || task.phase === "working"),
+      ),
     ),
   ];
 }
@@ -318,7 +348,13 @@ export function capacityLimitFor(
   projectLimit: number = DEFAULT_PROJECT_LIMIT,
   papercuts: PapercutDispatchPolicy = defaultPapercutPolicy,
 ): CapacityLimit | null {
-  return occupiedCapacityLimit(task, tasks.filter(candidate => occupiesSlot(candidate)), globalLimit, projectLimit, papercuts);
+  return occupiedCapacityLimit(
+    task,
+    tasks.filter((candidate) => occupiesSlot(candidate)),
+    globalLimit,
+    projectLimit,
+    papercuts,
+  );
 }
 
 function occupiedCapacityLimit(
@@ -404,10 +440,7 @@ function memoFacts(
 }
 
 /** A prerequisite wait or an already occupied slot needs no admission. */
-function slotAdmissionExempt(
-  task: Task,
-  occupied = false,
-): boolean {
+function slotAdmissionExempt(task: Task, occupied = false): boolean {
   return (
     Boolean(
       task.phase === "changes_requested" && task.prerequisiteWait?.releasedAt,
@@ -419,11 +452,16 @@ function slotAdmissionExempt(
 
 /** These queued tasks are still visited for observation, but own no place in slot order. */
 export function queuedSlotObservationPending(task: Task): boolean {
-  return task.phase === "queued" && Boolean(
-    task.resolution.hostWait ||
-    task.resolution.stop?.reason === "host_unavailable" ||
-    (task.entrypoint === "review" && task.originHostId &&
-      task.originHostId !== task.hostId && task.resolution.stop?.reason === "origin_busy"),
+  return (
+    task.phase === "queued" &&
+    Boolean(
+      task.resolution.hostWait ||
+        task.resolution.stop?.reason === "host_unavailable" ||
+        (task.entrypoint === "review" &&
+          task.originHostId &&
+          task.originHostId !== task.hostId &&
+          task.resolution.stop?.reason === "origin_busy"),
+    )
   );
 }
 
@@ -489,8 +527,16 @@ export function decideSlotAdmission(
   requests: Task[],
   waiters: Task[],
 ): string {
-  return describeSlotAdmission(task, tasks.filter(candidate => occupiesSlot(candidate)), globalLimit,
-    projectLimitFor, papercuts, capacity, requests, waiters);
+  return describeSlotAdmission(
+    task,
+    tasks.filter((candidate) => occupiesSlot(candidate)),
+    globalLimit,
+    projectLimitFor,
+    papercuts,
+    capacity,
+    requests,
+    waiters,
+  );
 }
 
 function describeSlotAdmission(
@@ -560,7 +606,9 @@ function describeSlotAdmission(
           ),
           running = runningByProject.get(key) ?? 0;
         const reserved = (occupiedByProject.get(key) ?? 0) - running;
-        const occupants = occupied.filter(candidate => slotPoolKey(candidate, papercuts) === key);
+        const occupants = occupied.filter(
+          (candidate) => slotPoolKey(candidate, papercuts) === key,
+        );
         const labels = occupants
           .map((candidate) => waitLabel(candidate, task))
           .join(", ");
@@ -596,13 +644,16 @@ export class SlotAdmission {
   }>();
   /** Memoize ordering reads within one unchanged dispatch pass. */
   withDispatchPass<T>(pass: () => Promise<T>): Promise<T> {
-    return this.dispatchPass.run({ revision: -1, facts: this.orderingFacts() }, pass);
+    return this.dispatchPass.run(
+      { revision: -1, facts: this.orderingFacts() },
+      pass,
+    );
   }
 
   private orderingFacts() {
     return memoFacts({
-      integrationReady: task => this.resolution.holdsIntegrationTurn(task),
-      dependencyWait: task => this.store.dependencyWait(task),
+      integrationReady: (task) => this.resolution.holdsIntegrationTurn(task),
+      dependencyWait: (task) => this.store.dependencyWait(task),
     });
   }
 
@@ -627,25 +678,35 @@ export class SlotAdmission {
     runs: Run[],
     includeRecovery = false,
   ): (task: Task) => string {
-    const live = new Set(runs.filter(runHoldsSlot).map(run => run.taskId));
+    const live = new Set(runs.filter(runHoldsSlot).map((run) => run.taskId));
     const facts = this.orderingFacts();
     const view: SlotAdmissionView = {
-      tasks: tasks.map(task => ({ ...task, hasLiveRun: live.has(task.id) || (task as CapacityTask).hasLiveRun === true })),
+      tasks: tasks.map((task) => ({
+        ...task,
+        hasLiveRun:
+          live.has(task.id) || (task as CapacityTask).hasLiveRun === true,
+      })),
       occupied: [],
       requestFlags: new Map(),
       boardHeld: this.store.getMeta<boolean>("dispatchHeld") === true,
-      globalLimit: this.store.getMeta<number>("globalLimit") ?? DEFAULT_GLOBAL_LIMIT,
+      globalLimit:
+        this.store.getMeta<number>("globalLimit") ?? DEFAULT_GLOBAL_LIMIT,
       projectLimitFor: this.store.projectDispatchLimitResolver(),
       papercuts: this.store.papercutDispatchPolicy(),
       ...facts,
     };
-    view.occupied = view.tasks.filter(task => occupiesSlot(task));
+    view.occupied = view.tasks.filter((task) => occupiesSlot(task));
     // Explicit recovery reads can rank recovery requests. Ordinary starts and
     // their display use the same order for queued and review/revision work.
     const recoveryView = { ...view, requestFlags: new Map<string, boolean>() };
-    return task => {
+    return (task) => {
       const recovery = includeRecovery && task.phase === "needs_attention";
-      return this.resolution.slotAdmissionReason(task, recovery, undefined, recovery ? recoveryView : view);
+      return this.resolution.slotAdmissionReason(
+        task,
+        recovery,
+        undefined,
+        recovery ? recoveryView : view,
+      );
     };
   }
 
@@ -665,9 +726,17 @@ export class SlotAdmission {
     // operator action, so it is not currently requesting a revision slot.
     if (slotAdmissionExempt(task)) return "";
     const tasks = view?.tasks ?? this.store.admissionCandidates(task);
-    const occupied = view?.occupied ?? tasks.filter(candidate => occupiesSlot(candidate));
-    if (slotAdmissionExempt(task, occupied.some(candidate => candidate.id === task.id))) return "";
-    const boardHeld = view?.boardHeld ?? this.store.getMeta<boolean>("dispatchHeld") === true;
+    const occupied =
+      view?.occupied ?? tasks.filter((candidate) => occupiesSlot(candidate));
+    if (
+      slotAdmissionExempt(
+        task,
+        occupied.some((candidate) => candidate.id === task.id),
+      )
+    )
+      return "";
+    const boardHeld =
+      view?.boardHeld ?? this.store.getMeta<boolean>("dispatchHeld") === true;
     const globalLimit =
       view?.globalLimit ??
       this.store.getMeta<number>("globalLimit") ??
@@ -760,11 +829,17 @@ export class SlotAdmission {
           isRequest(candidate),
       );
     } else {
-      requests = view?.requests ?? fairSlotRequestOrder(tasks, isRequest, occupied);
+      requests =
+        view?.requests ?? fairSlotRequestOrder(tasks, isRequest, occupied);
       if (view) view.requests = requests;
     }
     // A board page can include a request beyond the bounded ranked heads.
-    if (view && !capacity && !tasks.some(candidate => candidate.id === task.id) && isRequest(task))
+    if (
+      view &&
+      !capacity &&
+      !tasks.some((candidate) => candidate.id === task.id) &&
+      isRequest(task)
+    )
       requests = [...requests, task];
     return describeSlotAdmission(
       task,
