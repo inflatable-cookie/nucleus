@@ -27,6 +27,28 @@ import {
 import { projectOfTarget, taskByReference } from "./agent-targets";
 import { ProjectAgentTargetRefusal } from "../planning/project-agents";
 
+/** The route a thread candidate was reached by. A refusal names that route, never another one. */
+type ThreadRouteKind = "project" | "rung" | "agent" | "reply";
+
+interface ThreadCandidate {
+  agentId: string;
+  hostId?: string;
+  kind: ThreadRouteKind;
+}
+
+const REFUSAL_LABEL: Record<ThreadRouteKind, string> = {
+  project: "Project message",
+  rung: "Task role message",
+  agent: "Agent message",
+  reply: "Reply message",
+};
+
+/** Re-label a pre-send refusal with the route that was refused; any other error passes through. */
+function relabelRefusal(error: unknown, kind: ThreadRouteKind): unknown {
+  if (!(error instanceof ProvenPreSendRefusalError)) return error;
+  return new ProvenPreSendRefusalError(error.reason, REFUSAL_LABEL[kind]);
+}
+
 /**
  * Spec 058 rollout step 3 (task 621), widened by the agent verbs (task 1108):
  * `tell`, the information-only message verb on every provider. A worker or
@@ -1258,7 +1280,7 @@ export class AgentMessages {
         replyTo: current.replyTo,
         detail: "A delivery is already in flight.",
       };
-    let candidates: Array<{ agentId: string; hostId?: string }>;
+    let candidates: ThreadCandidate[];
     let senderIsCandidate = false;
     try {
       const resolved = await this.threadCandidates(current);
@@ -1322,7 +1344,7 @@ export class AgentMessages {
         if (current.toProjectKey) this.resolution.responsibleThreads.cache.invalidate(current.toProjectKey);
         continue;
       }
-      return this.notifyThread(current, candidate.agentId, hostId, label);
+      return this.notifyThread(current, candidate.agentId, hostId, label, candidate.kind);
     }
     const detail = current.toRole === "agent"
       ? `Agent ${current.toAgentName ?? "unknown"} is not live on its host; the message waits until it is reachable.`
@@ -1351,7 +1373,7 @@ export class AgentMessages {
   private async threadCandidates(
     record: AgentMessageRecord,
   ): Promise<{
-    candidates: Array<{ agentId: string; hostId?: string }>;
+    candidates: ThreadCandidate[];
     /** The sender was itself a live responsible candidate for the project. */
     senderIsCandidate: boolean;
   }> {
@@ -1361,9 +1383,9 @@ export class AgentMessages {
         key,
         record.toAgentName ?? null,
       );
-      return { candidates: [{ agentId: target.agentId, hostId: target.hostId }], senderIsCandidate: false };
+      return { candidates: [{ agentId: target.agentId, hostId: target.hostId, kind: "agent" }], senderIsCandidate: false };
     }
-    const candidates: Array<{ agentId: string; hostId?: string }> = [];
+    const candidates: ThreadCandidate[] = [];
     let senderIsCandidate = false;
     // The sender is never a recipient of its own message, on any rung (Tom, 2026-11-19).
     const isSender = (agentId: string, hostId?: string | null) =>
@@ -1373,7 +1395,7 @@ export class AgentMessages {
       try {
         const task = this.store.task(record.toLadderTaskId);
         for (const rung of (await this.resolution.plannerRungsFor(task)).rungs)
-          if (!isSender(rung.agentId)) candidates.push({ agentId: rung.agentId });
+          if (!isSender(rung.agentId)) candidates.push({ agentId: rung.agentId, kind: "rung" });
       } catch {
         /* the ladder's task is gone; the project's planner still answers */
       }
@@ -1381,7 +1403,7 @@ export class AgentMessages {
     const project = this.store.projectByKey(key);
     if (project) {
       const resolved = await this.resolution.responsibleThread(project, record.fromAgentId ? { agentId: record.fromAgentId, hostId: record.fromHostId } : undefined);
-      if (resolved.thread) candidates.push({ agentId: resolved.thread.agentId, hostId: resolved.thread.hostId });
+      if (resolved.thread) candidates.push({ agentId: resolved.thread.agentId, hostId: resolved.thread.hostId, kind: "project" });
       else senderIsCandidate = resolved.senderIsCandidate;
     }
     return {
@@ -1466,7 +1488,7 @@ export class AgentMessages {
         label,
         "the sender's thread is archived or gone, so the reply expired rather than reviving it",
       );
-    return this.notifyThread(current, agentId, hostId, label);
+    return this.notifyThread(current, agentId, hostId, label, "reply");
   }
 
   /** A reply that can never arrive says so, on the record and on both endpoints, and never waits.**/
@@ -1505,6 +1527,7 @@ export class AgentMessages {
     agentId: string,
     hostId: string,
     label: string,
+    kind: ThreadRouteKind,
   ): Promise<AgentMessageReceipt> {
     const store = this.store;
     const intent: AgentMessageRecord = {
@@ -1563,7 +1586,7 @@ export class AgentMessages {
     } catch (error) {
       if (record.toProjectKey) this.resolution.responsibleThreads.cache.invalidate(record.toProjectKey);
       this.settleLateMessage(intent, agentId, error);
-      return this.failedSend(intent, label, record.toRole, error);
+      return this.failedSend(intent, label, record.toRole, relabelRefusal(error, kind));
     } finally {
       this.deliveringMessages.delete(record.id);
     }

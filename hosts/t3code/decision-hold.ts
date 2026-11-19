@@ -9,7 +9,7 @@ interface HoldContext {
   state: T3StateFile;
   reads: T3Reads;
   intents: T3IntentLedger;
-  unsettle(threadId: string, messageId: string): Promise<void>;
+  wake(threadId: string, messageId: string): Promise<void>;
 }
 
 export class T3DecisionHold {
@@ -58,7 +58,7 @@ export class T3DecisionHold {
   }
 
   private async send(threadId: string, commandId: string, messageId: string): Promise<void> {
-    await this.core.unsettle(threadId, messageId);
+    await this.core.wake(threadId, messageId);
     await this.core.intents.effect(commandId, "orchestration.dispatchCommand", {
       type: "message.dispatch", createdBy: "user", creationSource: "server", commandId, threadId, messageId,
       text: HOLD_MARKER, attachments: [], dispatchMode: { type: "queue_after_active" },

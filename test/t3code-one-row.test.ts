@@ -317,15 +317,20 @@ test('a later wait can snooze after an unknown send and its horizon expire', asy
   assert.equal(host.state.read().snoozes?.[parent.threadId]?.state, 'snoozed');
 });
 
-test('re-entry leaves a manually settled parent untouched', async t => {
+test('re-entry wakes a manually settled parent: it is unsettled before the re-entry message, never settled by Nucleus', async t => {
   const { host, server, spec, parentOf, acp } = await fixture(t);
   await host.createAgent(spec('worker-launch'));
   const parent = parentOf()!;
   acp.surface.release(`session:${taskId}`, "test");
   server.threads.get(parent.threadId)!.thread.settledOverride = 'settled';
   const before = server.commands.length;
-  await assert.rejects(host.createAgent(spec('reviewer-launch', 'reviewer')), /settled/i);
-  assert.equal(server.commands.slice(before).some(command => command.type === 'thread.unsettle' || command.type === 'message.dispatch'), false);
+  await host.createAgent(spec('reviewer-launch', 'reviewer'));
+  const sent = server.commands.slice(before).filter(command => command.threadId === parent.threadId);
+  const unsettle = sent.findIndex(command => command.type === 'thread.unsettle');
+  const dispatch = sent.findIndex(command => command.type === 'message.dispatch');
+  assert.ok(unsettle >= 0 && dispatch > unsettle, 'the parent is woken before the re-entry message is sent');
+  assert.equal(server.commands.slice(before).some(command => command.type === 'thread.settle'), false);
+  assert.equal(server.threads.get(parent.threadId)!.thread.settledOverride, 'active');
 });
 
 test('a snooze refused for a pending approval stays active with no retry loop', async t => {

@@ -598,6 +598,10 @@ export async function t3Fake(t: TestContext, directory: string) {
     interruptThreadReads: 0,
     disconnectMutation: false,
     disconnectAfterEffect: false,
+    /** One-shot faults for the next `thread.unsettle` commands, in order: "drops" or "lands". */
+    unsettleFaults: [] as Array<"drops" | "lands">,
+    /** Thread reads that still show a settled thread after an unsettle command (a delayed apply). */
+    unsettleLagReads: 0,
     refuseMutation: false,
     postEffectDefect: false,
     unsupportedProjectCreate: false,
@@ -1122,6 +1126,12 @@ export async function t3Fake(t: TestContext, directory: string) {
               _tag: "Fail",
               error: { _tag: "ThreadNotFoundError" },
             });
+          // A lagging unsettle becomes visible only after this many thread reads.
+          if (p.unsettleLagReads !== undefined && --p.unsettleLagReads <= 0) {
+            delete p.unsettleLagReads;
+            p.thread.settledOverride = "active";
+            p.thread.settledAt = null;
+          }
           if (controls.interruptThreadReads > 0) {
             controls.interruptThreadReads--;
             return send({ _tag: "Interrupt", requestId: request.id });
@@ -1382,10 +1392,19 @@ export async function t3Fake(t: TestContext, directory: string) {
               p.thread.settledOverride = "settled";
               p.thread.settledAt = payload.settledAt ?? STAMP;
               break;
-            case "thread.unsettle":
-              p.thread.settledOverride = "active";
-              p.thread.settledAt = null;
+            case "thread.unsettle": {
+              // One-shot faults, in command order: "drops" loses the command before T3
+              // applies it; "lands" applies it and then loses the reply (unknown delivery).
+              const fault = controls.unsettleFaults.shift();
+              if (fault === "drops") return socket.destroy();
+              if (controls.unsettleLagReads > 0) p.unsettleLagReads = controls.unsettleLagReads;
+              else {
+                p.thread.settledOverride = "active";
+                p.thread.settledAt = null;
+              }
+              if (fault === "lands") return socket.destroy();
               break;
+            }
             case "thread.snooze": {
               // The nightly's own guards (nucleus#1366): a wake time in the future,
               // no pending non-user-input approval, no queued user run, not archived.

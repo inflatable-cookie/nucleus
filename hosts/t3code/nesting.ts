@@ -118,7 +118,7 @@ export interface T3NestingContext {
   intents: T3IntentLedger;
   /** The one presentation call a re-entry needs: a settled thread does not start a run. */
   presentation: {
-    unsettleBeforeMessage(threadId: string, messageId: string): Promise<void>;
+    wakeBeforeDelivery(threadId: string, messageId: string): Promise<void>;
   };
   hostId(): string;
   requireConnection(): void;
@@ -713,7 +713,7 @@ export class T3Nesting {
       canonical([this.core.hostId(), parent.threadId, requestId]),
     );
     await this.core.presentation
-      .unsettleBeforeMessage(parent.threadId, identity("message", commandId));
+      .wakeBeforeDelivery(parent.threadId, identity("message", commandId));
     this.core.state.update((state) => {
       const current = state.parents?.[parent.taskId];
       if (!current) return;

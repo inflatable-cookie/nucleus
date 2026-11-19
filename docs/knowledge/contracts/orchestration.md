@@ -865,7 +865,13 @@ Each recipient thread is observed before a send, and an archived or gone thread 
 sent to. A `tell` to a planner with no live thread waits in its project's inbox (a
 queued record with `toProjectKey`) and is delivered by the sweep to the next live planner.
 A named agent that is archived or gone refuses at send. An `ask` routed to an archived
-rung moves on to the next rung.
+rung moves on to the next rung. A thread the operator settled by hand stays a live
+candidate: delivery to it goes through the T3 delivery gate, which unsettles it with a
+recorded command, reads it back and then sends (Tom, 2026-11-19; the
+[T3 adapter spec](../specs/t3code-host-adapter.md)). A proven pre-send refusal from that
+gate leaves the message queued and refused, and the next pass delivers it through the
+same path. A refusal names its route ("Project message", "Task role message", "Agent
+message", "Reply message").
 
 **EffectReconcile** (`core/recovery/effect-reconcile.ts`). Settles an unknown send from
 its exact message: reviewer deliveries, run creations and attention notices.

@@ -17,7 +17,10 @@ Cross-planner messages resolve to the most recently active live (not archived)
 thread that works on the project's repositories or has dispatched tasks to it,
 from a short-lived cache. If none exists, the sender handles the request itself.
 A task's own dispatching planner stays its first route. The registered fallback
-planner retires (implementation: nucleus#1373).
+planner retires (implementation: nucleus#1373). A thread the operator settled by
+hand stays a live candidate: a message to it is delivered by unsettling it first,
+reading it back and then sending (Tom, 2026-11-19: "I explicitly want nucleus to
+unsettle threads like that"). Nucleus never issues `thread.settle` (nucleus#1402).
 
 ## Problem
 
@@ -92,6 +95,14 @@ compatibility hint; it
 still registers an unknown thread under a free default name and retains its
 participant-ticket rules. Clearing the hint leaves the named agent registered.
 
+A thread the operator settled by hand is a live candidate like any other: the
+shortlist keeps it, and the ranking is unchanged. Delivery to it goes through the T3
+delivery gate (see the [T3 adapter spec](t3code-host-adapter.md)), which unsettles it,
+reads it back and then sends. A gate refusal before send (still settled after the
+read-back, or an unsettle awaiting its next read) is named for its route ("Project
+message", "Task role message") and the message stays queued for the next pass. A
+task's own rung and a named agent keep their current routing.
+
 Nucleus checks liveness before delivery. It clears the affected cache on delivery
 failure, host loss or a new dispatching thread. A closed observation discards
 the shortlist that contained it and prompts a fresh inventory on the next
@@ -145,3 +156,10 @@ the self handover, the board handover, unknown delivery and offline hosts.
 registry reuses. `test/settings-project-editor.test.ts` renders the board list. The resolver,
 cache and routing cases are in `test/responsible-thread-resolver.test.ts`,
 `test/responsible-thread-cache.test.ts` and `test/responsible-thread-routing.test.ts`.
+`test/t3code-settled-delivery.test.ts` proves the T3 delivery gate on the private
+server: the unsettle is recorded under the message identity and precedes the send; an
+already-visible thread gets no unsettle; an archived thread is fenced; a delayed
+unsettle is read back; an unsettle that never shows refuses before send and is not
+resent; a dropped or lost-reply unsettle is reconciled by a fresh read.
+`test/settled-thread-message-recovery.test.ts` proves a project message refused before
+send stays queued and the next sweep delivers it.
