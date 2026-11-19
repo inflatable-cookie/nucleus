@@ -1,15 +1,17 @@
 import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
 
 import type { HostProcessFact } from "../host/types";
 import { pidAlive } from "./pid";
+import { darwinProcessReadsAsync } from "./process-host-reads";
 import {
   processStartIdentityLiveness,
   processStartIdentityLivenessAsync,
 } from "./process-identity-search";
 import {
-  readHostRunStartIdentity,
+  linuxStartIdentity,
   startIdentityMatches,
 } from "./start-identity";
 
@@ -126,34 +128,26 @@ export async function runProcessEnvironments(
   options: {
     platform?: NodeJS.Platform;
     darwinRead?: (pids: readonly number[]) => Promise<string>;
+    signal?: AbortSignal;
   } = {},
 ): Promise<Map<number, RunProcessEnvironment | null>> {
   const result = new Map<number, RunProcessEnvironment | null>();
   const platform = options.platform ?? process.platform;
   if (platform === "linux") {
-    for (const pid of pids) {
-      try {
-        const entries = readFileSync(`/proc/${pid}/environ`, "utf8").split(
-          "\0",
-        );
-        result.set(
-          pid,
-          Object.fromEntries(
-            entries.flatMap((entry) => {
-              const at = entry.indexOf("=");
-              const key = entry.slice(0, at);
-              return KEYS.includes(key as (typeof KEYS)[number])
-                ? [[key, entry.slice(at + 1)]]
-                : [];
-            }),
-          ),
-        );
-      } catch {
-        result.set(pid, null);
-      }
+    for (let offset = 0; offset < pids.length && !options.signal?.aborted; offset += 64) {
+      await Promise.all(pids.slice(offset, offset + 64).map(async pid => {
+        const text = await readFile(`/proc/${pid}/environ`, { encoding: "utf8", signal: options.signal }).catch(() => null);
+        const environment: RunProcessEnvironment = {};
+        for (const entry of text?.split("\0") ?? []) {
+          const at = entry.indexOf("=");
+          const key = entry.slice(0, at) as (typeof KEYS)[number];
+          if (at >= 0 && KEYS.includes(key)) environment[key] = entry.slice(at + 1);
+        }
+        result.set(pid, text === null ? null : environment);
+      }));
     }
   } else if (platform === "darwin") {
-    for (let offset = 0; offset < pids.length; offset += 64) {
+    for (let offset = 0; offset < pids.length && !options.signal?.aborted; offset += 64) {
       const chunk = pids.slice(offset, offset + 64);
       for (const pid of chunk) result.set(pid, null);
       try {
@@ -162,7 +156,7 @@ export async function runProcessEnvironments(
           : await execFileAsync(
               "ps",
               ["-E", "-ww", "-p", chunk.join(","), "-o", "pid=,command="],
-              { encoding: "utf8", timeout: 5_000, maxBuffer: 4 * 1024 * 1024 },
+              { encoding: "utf8", timeout: 5_000, killSignal: "SIGKILL", maxBuffer: 4 * 1024 * 1024, signal: options.signal },
             ).then((result) => result.stdout);
         for (const line of stdout.split("\n")) {
           const match = /^\s*(\d+)\s+(.*)$/.exec(line);
@@ -202,7 +196,8 @@ export async function runProcessLivenessAsync(
 ): Promise<RunProcessLiveness> {
   const live = await processStartIdentityLivenessAsync(pid, identity);
   if (live !== "alive" || process.platform !== "linux") return live;
-  return linuxZombieIsDead(pid) ? "dead" : live;
+  const stat = await readFile(`/proc/${pid}/stat`, "utf8").catch(() => null);
+  return stat?.slice(stat.lastIndexOf(")") + 2).startsWith("Z") ? "dead" : live;
 }
 
 function linuxZombieIsDead(pid: number): boolean {
@@ -249,41 +244,47 @@ export function listedProcessLiveness(
 /**
  * The table's answers with a bounded fresh read for exactly these pids: signalling
  * one needs its identity proved now, not as of the sweep's listing. The read is
- * spawned (never `spawnSync`) and bounded by the caller; any pid it could not
- * read keeps the table's answer, because a failed read proves nothing.
+ * bounded by the caller. A PID that could not be read is unknown while the
+ * kernel still sees it, even if the original table held a positive identity.
  */
 export async function refreshedRunProcessLiveness(
   pids: readonly number[],
   table: RunProcessLivenessLookup,
+  signal?: AbortSignal,
 ): Promise<RunProcessLivenessLookup> {
   const unique = [
     ...new Set(pids.filter((pid) => Number.isSafeInteger(pid) && pid > 0)),
   ];
   if (!unique.length) return table;
-  const reads = await Promise.all(
-    unique.map((pid) =>
-      readHostRunStartIdentity(pid).catch(() => ({
-        kind: "unavailable" as const,
-      })),
-    ),
-  );
-  const observed = new Map(
-    unique.map((pid, index) => [pid, reads[index]!] as const),
-  );
+  const wanted = new Set(unique);
+  const identities = process.platform === "darwin"
+    ? await darwinProcessReadsAsync().startIdentities(unique, signal)
+    : new Map<number, string>();
+  const zombies = new Set<number>();
+  if (process.platform === "linux") {
+    const bootId = await readFile("/proc/sys/kernel/random/boot_id", { encoding: "utf8", signal })
+      .then(value => value.trim() || null, () => null);
+    for (let offset = 0; offset < unique.length && !signal?.aborted; offset += 64) {
+      await Promise.all(unique.slice(offset, offset + 64).map(async pid => {
+        const stat = await readFile(`/proc/${pid}/stat`, { encoding: "utf8", signal }).catch(() => null);
+        if (!stat) return;
+        if (stat.slice(stat.lastIndexOf(")") + 2).startsWith("Z")) zombies.add(pid);
+        identities.set(pid, linuxStartIdentity(pid, stat, bootId));
+      }));
+    }
+  }
   return (pid, startIdentity) => {
-    const read = observed.get(pid);
-    if (!read) return table(pid, startIdentity);
+    if (!wanted.has(pid)) return table(pid, startIdentity);
     if (
       !Number.isSafeInteger(pid) ||
       pid <= 0 ||
       !startIdentity.startsWith(`${pid}@`)
     )
       return "unknown";
-    if (read.kind === "gone") return "dead";
-    if (process.platform === "linux" && linuxZombieIsDead(pid)) return "dead";
-    if (read.kind === "unavailable") return pidAlive(pid) ? "unknown" : "dead";
-    if (read.identity.endsWith("@unknown")) return "unknown";
-    return startIdentityMatches(startIdentity, read.identity)
+    if (zombies.has(pid) || !pidAlive(pid)) return "dead";
+    const identity = identities.get(pid);
+    if (!identity || identity.endsWith("@unknown")) return "unknown";
+    return startIdentityMatches(startIdentity, identity)
       ? "alive"
       : "dead";
   };

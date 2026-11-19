@@ -179,6 +179,7 @@ function serveRuntime(runtime: QueueRuntime): void {
   port.on("message", (message: RequestMessage) => {
     const { kind, id } = message;
     let revisionBefore = -1;
+    const fixtureFaultBefore = state.projectionFault;
     const receivedAt = performance.now();
     const queueMs = Math.max(0, performance.timeOrigin + receivedAt - message.sentAt);
     let handlerMs = 0, publicationMs = 0, publishing = false;
@@ -191,14 +192,19 @@ function serveRuntime(runtime: QueueRuntime): void {
     const settle = (result: unknown) => {
       publishing = true;
       handlerMs = performance.now() - receivedAt;
-      const start = performance.now();
-      // A completed mutation must be visible before its reply. The publication
-      // budget only delays unchanged requests and periodic refreshes.
-      const failure = publishSnapshot(runtime.store.boardRevision() !== revisionBefore);
-      publicationMs = performance.now() - start;
-      if (failure) {
-        fail(new Error(`The board projection did not publish after this request settled (${failure.message}). Its outcome is uncertain: read current state before acting, and do not resubmit it blindly.`));
-        return;
+      // The tick owns refreshes for reads and unchanged replies. A changed
+      // board still reaches the parent before its mutation reply. If another
+      // request already sent that revision, it covered this reply too.
+      const revision = runtime.store.boardRevision();
+      const changed = revision !== revisionBefore && revision !== pushedBoardRevision;
+      if (changed || state.projectionFault !== fixtureFaultBefore) {
+        const start = performance.now();
+        const failure = publishSnapshot(true);
+        publicationMs = performance.now() - start;
+        if (failure) {
+          fail(new Error(`The board projection did not publish after this request settled (${failure.message}). Its outcome is uncertain: read current state before acting, and do not resubmit it blindly.`));
+          return;
+        }
       }
       succeed(result);
     };
