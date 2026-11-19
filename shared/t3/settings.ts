@@ -161,6 +161,34 @@ export function readT3RuntimeDescriptor(
   };
 }
 
+/**
+ * The origin an endpoint's transport actually reaches, keeping its security and
+ * port: an RPC client maps `ws`/`wss` onto `http`/`https`, and the running
+ * server's descriptor records the HTTP origin. A credential, query or fragment
+ * is refused rather than compared, because it names an endpoint this route never
+ * stores.
+ */
+export function t3HttpOrigin(endpoint: string): string {
+  const url = new URL(endpoint);
+  if (
+    !["http:", "https:", "ws:", "wss:"].includes(url.protocol) ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash
+  )
+    throw new Error(
+      "T3Code endpoint must be an HTTP or WebSocket URL without credentials, query or fragment",
+    );
+  url.protocol =
+    url.protocol === "ws:"
+      ? "http:"
+      : url.protocol === "wss:"
+        ? "https:"
+        : url.protocol;
+  return url.origin;
+}
+
 /** Whether two stored connections would connect the same service the same way. */
 export function sameT3Connection(
   a: { endpoint: string; bearer: string; probeThreadId?: string } | null,

@@ -1,4 +1,4 @@
-import type { WorkerPromptMeasurement } from '../dispatch/prompt-text/measure';
+import type { WorkerPromptMeasurement } from "../dispatch/prompt-text/measure";
 import { AgentPolicy } from "../dispatch/agent-policy";
 import { ReviewPolicy } from "../review/review-policy";
 import {
@@ -69,6 +69,7 @@ import type {
   RunUsageStream,
   RunUsageStreamEvent,
 } from "../telemetry/run-usage";
+import type { ParticipantRuntime } from "../machine/participant-runtime";
 import type {
   Adapter,
   AgentObservation,
@@ -232,12 +233,12 @@ export abstract class HostPolicies extends MachinePorts {
   noLiveWorkspaceProcesses(
     workspaceId: string,
     runIds: readonly string[],
-    bbThreads?: readonly string[],
+    runtime?: ParticipantRuntime,
   ): Promise<string | null> {
     return this.workspaceContinuation.noLiveWorkspaceProcesses(
       workspaceId,
       runIds,
-      bbThreads,
+      runtime,
     );
   }
 
@@ -340,7 +341,13 @@ export abstract class HostPolicies extends MachinePorts {
     legacyPrompt = prompt,
     measurement?: WorkerPromptMeasurement,
   ) {
-    return this.agentPolicy.createAgent(task, token, prompt, legacyPrompt, measurement);
+    return this.agentPolicy.createAgent(
+      task,
+      token,
+      prompt,
+      legacyPrompt,
+      measurement,
+    );
   }
 
   /**

@@ -19,7 +19,7 @@ import { pidAlive } from "./pid";
 import { now, type Store } from "../store/store";
 import type { Task } from "../../shared/contracts";
 import { readHostUidProcesses } from "./host-process-listing";
-import { possibleBbRuntimePids } from "./owned-tool-process-proof";
+import { possibleParticipantRuntimePids } from "./owned-tool-process-proof";
 import {
   isGroupBirthIdentity,
   paseoProcessOwnership,
@@ -319,7 +319,7 @@ export async function reapHostProcesses(input: {
   const protectedPids = protectedHostPids([
     ...(input.protectedPids ?? []),
     ...paseo.pids,
-    ...possibleBbRuntimePids(processes),
+    ...possibleParticipantRuntimePids(processes),
   ]);
   const protectedPgids = new Set([
     ...paseo.pgids,

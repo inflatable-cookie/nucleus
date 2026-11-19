@@ -9,6 +9,7 @@ import type { HostWorkspaceRef } from "../../../shared/host";
 import { existsSync } from "node:fs";
 import { git, queueCheckoutStatus } from "../../git/index";
 import { workspaceToolProcessIssue } from "../../recovery/stall";
+import type { ParticipantRuntime } from "../../machine/participant-runtime";
 import { capPaseoTitle } from "../workspace-title";
 import type {
   WorkspaceInventoryEntry,
@@ -55,7 +56,7 @@ export class WorkspaceContinuation {
   async noLiveWorkspaceProcesses(
     workspaceId: string,
     runIds: readonly string[],
-    bbThreads: readonly string[] = [],
+    runtime: ParticipantRuntime = {},
   ): Promise<string | null> {
     if (!runIds.length)
       return "the participant has no recorded run identity for process proof";
@@ -67,7 +68,7 @@ export class WorkspaceContinuation {
       return "the participant workspace directory is unreadable for process proof";
     const processes = await this.host.hostProcessListing();
     if (!processes) return "the host process listing is unreadable";
-    return workspaceToolProcessIssue(processes, directory, runIds, bbThreads);
+    return workspaceToolProcessIssue(processes, directory, runIds, runtime);
   }
   /** Check the exact retained task worktree before a deferred worker message is delivered. */
   async preflightWorkerContinuation(
