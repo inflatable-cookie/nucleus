@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { PluginRpcProvider } from '@getpaseo/plugin/client/host';
 import { mount, useNativeStubs, type HostNode } from './support/render';
 
 useNativeStubs();
@@ -17,11 +18,11 @@ test('queue actions precede a viewport-constrained scrolling run list', async ()
       projectLimitOverrides: {}, projectCapacities: [], qaFence: { fence: null },
     };
     const query = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    const ui = mount(h(QueryClientProvider, { client: query, children: h(BoardHeader, {
+    const ui = mount(h(QueryClientProvider, { client: query, children: h(PluginRpcProvider, { invoke: async () => ({}), children: h(BoardHeader, {
       c: colors, state: state as never, refetchState: async () => {}, busy: false,
       act: async () => {}, error: '', onDismissError: () => {}, readError: null,
       staleRead: null, inset: 12, settingsOpener: null, navigation: null, children: null,
-    }) }));
+    }) }) }));
     ui.press('Queue controls menu');
     const menu = ui.get('Queue controls');
     const children = menu.children.filter((node): node is HostNode => typeof node !== 'string');
