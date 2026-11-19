@@ -685,14 +685,16 @@ export class T3CodeHost implements Host {
         }
       }
     } catch (error) {
-      if (isHostOperationTimeout(error)) throw error; /* retry other faults next pass */
+      if (isHostOperationTimeout(error))
+        throw error; /* retry other faults next pass */
       if (error instanceof T3CompatibilityError) incompatible = error;
       else return;
     }
     try {
       await this.nesting.reconcile(tasks);
     } catch (error) {
-      if (isHostOperationTimeout(error)) throw error; /* retry other faults next pass */
+      if (isHostOperationTimeout(error))
+        throw error; /* retry other faults next pass */
       if (error instanceof T3CompatibilityError) incompatible ??= error;
     }
     if (incompatible) throw incompatible;

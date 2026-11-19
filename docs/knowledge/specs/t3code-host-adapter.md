@@ -899,6 +899,9 @@ How the previous occurrence is judged depends on its send (nucleus#1407):
 - An unsettled occurrence the window cannot show, because it is older than the
   window, is raised as an incompatibility. Nothing is resent, and re-entry waits.
   The sweep reports it after its nesting pass runs, not as a silent skip.
+  `effigy proof:t3code:window` runs this case on the installed nightly: an earlier
+  wake pushed outside the window, then a fresh decision (`--expect woken`, or
+  `--expect blocked` on the pre-fix code).
 
 **The inbox is idle between decisions (nucleus#1384).** Its ACP turn holds only
 while an operator decision is offered: the same host-scoped projection that raises

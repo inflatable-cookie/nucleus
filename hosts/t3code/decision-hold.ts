@@ -17,25 +17,48 @@ export class T3DecisionHold {
   constructor(private readonly core: HoldContext) {}
   async reconcile(threadId: string): Promise<void> {
     if (!(await this.core.reads.isObserved(threadId))) return;
-    const projection = await this.core.reads.readProjection(threadId, "observation");
-    if (projection.thread.deletedAt || projection.thread.archivedAt || projection.runs.some(run => activeStatuses.has(run.status))) return;
+    const projection = await this.core.reads.readProjection(
+      threadId,
+      "observation",
+    );
+    if (
+      projection.thread.deletedAt ||
+      projection.thread.archivedAt ||
+      projection.runs.some((run) => activeStatuses.has(run.status))
+    )
+      return;
     const previous = this.core.state.read().decisionHolds?.[threadId];
     let generation = 0;
     if (previous) {
       const intent = this.core.state.read().intents[previous.commandId];
-      if (!intent) { await this.send(threadId, previous.commandId, previous.messageId); return; }
+      if (!intent) {
+        await this.send(threadId, previous.commandId, previous.messageId);
+        return;
+      }
       // An acknowledged receipt proves the occurrence landed, and the observation above
       // proves no run is live or queued, so no history read is needed (nucleus#1407).
-      if (intent.status !== "settled" && !(await this.occurrenceFinished(threadId, previous.commandId, previous.messageId, intent.status === "unknown", intent.timedOut === true)))
+      if (
+        intent.status !== "settled" &&
+        !(await this.occurrenceFinished(
+          threadId,
+          previous.commandId,
+          previous.messageId,
+          intent.status === "unknown",
+          intent.timedOut === true,
+        ))
+      )
         return;
       generation = previous.generation + 1;
     } else if (!projection.runs.length) {
       // The launch may still be starting. A terminal run proves this is a re-entry.
       return;
     }
-    const commandId = identity("decision-hold", canonical([this.core.hostId(), threadId, generation]));
+    const commandId = identity(
+      "decision-hold",
+      canonical([this.core.hostId(), threadId, generation]),
+    );
     const messageId = identity("message", commandId);
-    this.core.state.update(state => {
+    this.core.state.update((state) => {
       state.decisionHolds ??= {};
       state.decisionHolds[threadId] = { generation, commandId, messageId };
     });
@@ -49,12 +72,20 @@ export class T3DecisionHold {
    * send still has a late reply in flight. Ambiguity that the window cannot settle is raised,
    * never skipped silently, and nothing is resent (nucleus#1407).
    */
-  private async occurrenceFinished(threadId: string, commandId: string, messageId: string, unknown: boolean, timedOut: boolean): Promise<boolean> {
+  private async occurrenceFinished(
+    threadId: string,
+    commandId: string,
+    messageId: string,
+    unknown: boolean,
+    timedOut: boolean,
+  ): Promise<boolean> {
     const read = await this.core.reads.readWindow(threadId);
-    const items = read.projection.turnItems.filter(item => item.type === "user_message" && item.messageId === messageId);
+    const items = read.projection.turnItems.filter(
+      (item) => item.type === "user_message" && item.messageId === messageId,
+    );
     if (items.length > 1) return false;
     if (items.length === 1) {
-      const run = read.projection.runs.find(row => row.id === items[0].runId);
+      const run = read.projection.runs.find((row) => row.id === items[0].runId);
       if (!run || activeStatuses.has(run.status)) return false;
       if (unknown) this.settleIntent(commandId, "settled");
       return true;
@@ -69,17 +100,28 @@ export class T3DecisionHold {
   }
 
   private settleIntent(commandId: string, status: "settled" | "refused"): void {
-    this.core.state.update(state => {
+    this.core.state.update((state) => {
       const current = state.intents[commandId];
       if (current?.status === "unknown") current.status = status;
     });
   }
 
-  private async send(threadId: string, commandId: string, messageId: string): Promise<void> {
+  private async send(
+    threadId: string,
+    commandId: string,
+    messageId: string,
+  ): Promise<void> {
     await this.core.wake(threadId, messageId);
     await this.core.intents.effect(commandId, "orchestration.dispatchCommand", {
-      type: "message.dispatch", createdBy: "user", creationSource: "server", commandId, threadId, messageId,
-      text: HOLD_MARKER, attachments: [], dispatchMode: { type: "queue_after_active" },
+      type: "message.dispatch",
+      createdBy: "user",
+      creationSource: "server",
+      commandId,
+      threadId,
+      messageId,
+      text: HOLD_MARKER,
+      attachments: [],
+      dispatchMode: { type: "queue_after_active" },
     });
   }
 }

@@ -196,7 +196,8 @@ export function shellThreadStatus(row: ShellRow): string {
   if (row.deletedAt) return "gone";
   if (row.archivedAt) return "closed";
   if (row.activeRunId || activeStatuses.has(row.status)) return row.status;
-  if (row.status === "idle" || finishedRunStatuses.has(row.status)) return "idle";
+  if (row.status === "idle" || finishedRunStatuses.has(row.status))
+    return "idle";
   return row.status;
 }
 
@@ -567,7 +568,13 @@ export class T3Reads {
 
   workspaceFor(thread: Projection["thread"]) {
     const inbox = this.core.state.read().inbox;
-    if (inbox && thread.id === inbox.threadId && thread.projectId === inbox.projectId && thread.worktreePath === null) return inbox.workspaceId;
+    if (
+      inbox &&
+      thread.id === inbox.threadId &&
+      thread.projectId === inbox.projectId &&
+      thread.worktreePath === null
+    )
+      return inbox.workspaceId;
     return (
       Object.values(this.core.state.read().workspaces).find(
         (w) =>
@@ -734,8 +741,12 @@ export class T3Reads {
         id: t.id,
         title: t.title,
         workspaceId: this.workspaceFor(t),
-        directory: t.worktreePath ?? projects.find(p => p.id === t.projectId)?.workspaceRoot ?? null,
-        repositoryRoot: projects.find(p => p.id === t.projectId)?.workspaceRoot ?? null,
+        directory:
+          t.worktreePath ??
+          projects.find((p) => p.id === t.projectId)?.workspaceRoot ??
+          null,
+        repositoryRoot:
+          projects.find((p) => p.id === t.projectId)?.workspaceRoot ?? null,
         updatedAt: t.updatedAt,
         labels: agentRecord(this.core.state.read(), t.id)?.labels ?? {},
       }));

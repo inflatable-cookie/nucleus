@@ -571,7 +571,11 @@ test("the card T3 shows pending is the presence the sweep reports, and a live ca
  * Quiet completed turns after a wake: a bounded window of the default twenty rows
  * no longer holds the wake's own row, so only the transcript could show it (nucleus#1407).
  */
-function quietTurns(projection: Record<string, any>, threadId: string, count: number) {
+function quietTurns(
+  projection: Record<string, any>,
+  threadId: string,
+  count: number,
+) {
   const runId: string = projection.runs.at(-1)!.id;
   for (let i = 0; i < count; i++)
     projection.turnItems.push(
@@ -650,5 +654,9 @@ test("an unsettled wake that landed inside the window is re-entered once, and an
       /snapshot window/.test(error.message),
     "the unproven occurrence is raised as evidence, not silently skipped",
   );
-  assert.equal(holdPosts(fake, inbox.threadId).length, 2, "nothing is replayed");
+  assert.equal(
+    holdPosts(fake, inbox.threadId).length,
+    2,
+    "nothing is replayed",
+  );
 });
