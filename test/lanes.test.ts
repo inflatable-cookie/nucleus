@@ -347,7 +347,7 @@ test('18. Prompts for zero, one and two lanes: zero unchanged, one byte-identica
   assert.doesNotMatch(workerPrompt(zero, true), /Lane context/);
   const one = { ...base, lanes: ['silo-adoption'], laneContext: [{ key: 'silo-adoption', title: 'Silo adoption', aim: 'Nucleus can see the line of work.' }] } as unknown as Task;
   // The pre-revision single-lane block, byte for byte.
-  assert.equal(queueLaneBlock(one), 'Lane context — not scope authority: Silo adoption\nNucleus can see the line of work.\nThe handoff or brief still governs this task\'s scope. The lane aim grants no additional authority.\n');
+  assert.equal(queueLaneBlock(one), 'Lane context — not scope authority: Silo adoption\nNucleus can see the line of work.\nThe brief still governs this task\'s scope. The lane aim grants no additional authority.\n');
   const two = { ...base, lanes: ['silo-adoption', 'beta-lane'], laneContext: [laneContext('silo-adoption'), laneContext('beta-lane')] } as unknown as Task;
   const block = queueLaneBlock(two);
   assert.equal((block.match(/Lane context — not scope authority:/g) ?? []).length, 2);
