@@ -28,7 +28,10 @@ import {
 import { QueueRuntime } from "../service/runtime-owner";
 import { taskControlOperation } from "../core/verbs/task-control-key";
 import { type ResolutionAdapter } from "../core/resolution";
-import { ABSENT_WORKER_REASON, ProvenPreSendRefusalError } from "../core/recovery/task-reasons";
+import {
+  ABSENT_WORKER_REASON,
+  ProvenPreSendRefusalError,
+} from "../core/recovery/task-reasons";
 import { CoordinatorEpisode } from "../core/recovery/coordinator-episode";
 import { holdPatch } from "../core/merge/merge-hold";
 import {
@@ -2641,49 +2644,89 @@ test("uncertain revision delivery is refused in next and control without releasi
   }
 });
 
-for (const variant of ["proved", "unknown delivery", "no current refusal"] as const) {
+for (const variant of [
+  "proved",
+  "unknown delivery",
+  "no current refusal",
+] as const) {
   test(`an escalated T3 worker restart follows next after hold release (${variant})`, async () => {
     const f = fixture("t3code:synthetic");
     try {
       const directory = join(f.dir, "worktree");
       mkdirSync(directory);
       const prepared = f.store.update(f.taskId, {
-        phase: "dispatching", workspaceIntent: true, workspaceId: "workspace", directory,
-        profile: f.profiles.worker, profileGroup: "worker",
+        phase: "dispatching",
+        workspaceIntent: true,
+        workspaceId: "workspace",
+        directory,
+        profile: f.profiles.worker,
+        profileGroup: "worker",
       });
       const create = f.adapter.createAgent;
       let refusedRunId = "";
       f.adapter.verifyWorkspace = async () => prepared.branch;
-      f.adapter.createAgent = async task => {
+      f.adapter.createAgent = async (task) => {
         refusedRunId = task.runId!;
-        throw new ProvenPreSendRefusalError("T3Code model does not support the selected reasoning option");
+        throw new ProvenPreSendRefusalError(
+          "T3Code model does not support the selected reasoning option",
+        );
       };
       await f.engine.launchAgent(prepared);
       assert.ok(refusedRunId);
       assert.equal(f.current().phase, "needs_attention");
-      assert.equal(JSON.parse(f.events("worker_creation_refused_before_send")[0]!.detail).runId, refusedRunId);
+      assert.equal(
+        JSON.parse(f.events("worker_creation_refused_before_send")[0]!.detail)
+          .runId,
+        refusedRunId,
+      );
       assert.equal(f.current().runId, null);
       assert.equal(f.current().agentIntent, false);
 
       const episode = new CoordinatorEpisode(f.engine.resolution);
       const recovery = runSchema.parse({
-        id: "recovery-create", taskId: f.taskId, hostId: prepared.hostId, role: "recovery",
-        head, base, generation: 1, workspaceId: "workspace", profile: f.profiles.coord,
-        status: "uncertain", createdAt: new Date().toISOString(), active: false, released: false,
-        agentId: null, lastObservedAt: null, idleSince: null, completion: null,
+        id: "recovery-create",
+        taskId: f.taskId,
+        hostId: prepared.hostId,
+        role: "recovery",
+        head,
+        base,
+        generation: 1,
+        workspaceId: "workspace",
+        profile: f.profiles.coord,
+        status: "uncertain",
+        createdAt: new Date().toISOString(),
+        active: false,
+        released: false,
+        agentId: null,
+        lastObservedAt: null,
+        idleSince: null,
+        completion: null,
       });
       f.store.putRun(recovery);
       episode.escalate(f.current(), "The recovery creation is unavailable");
       episode.save(f.current(), { runId: recovery.id });
       f.engine.resolution.update(f.current(), { recoveryActive: true });
       if (variant !== "unknown delivery")
-        episode.releaseRefusedCreation(f.current(), recovery, "Recovery was refused before send");
+        episode.releaseRefusedCreation(
+          f.current(),
+          recovery,
+          "Recovery was refused before send",
+        );
       if (variant === "no current refusal")
         f.store.event(f.taskId, "agent_intent", "a-later-worker-intent");
 
       f.store.setMeta("paused", true);
-      f.store.update(f.taskId, holdPatch(f.current(), "dispatch", "operator", "Wait for host rollout",
-        { kind: "time", at: "2000-01-01T00:00:00.000Z" }), "hold");
+      f.store.update(
+        f.taskId,
+        holdPatch(
+          f.current(),
+          "dispatch",
+          "operator",
+          "Wait for host rollout",
+          { kind: "time", at: "2000-01-01T00:00:00.000Z" },
+        ),
+        "hold",
+      );
       const pass = await f.engine.auditPass(true);
       assert.equal(pass.fault, null);
       assert.ok(pass.visited.has(f.taskId));
@@ -2691,21 +2734,35 @@ for (const variant of ["proved", "unknown delivery", "no current refusal"] as co
       assert.equal(f.current().resolution.recovery?.status, "escalated");
       assert.equal(f.current().resolution.recoveryActive, true);
 
-      const view = f.next().verbs.find(verb => verb.verb === "restart")!;
+      const view = f.next().verbs.find((verb) => verb.verb === "restart")!;
       if (variant !== "proved") {
         assert.equal(view.available, false);
         assert.match(view.refusal ?? "", /move to=work/);
         const before = f.current();
-        await assert.rejects(f.control({ role: "worker" }), error => error instanceof Error && error.message === view.refusal);
+        await assert.rejects(
+          f.control({ role: "worker" }),
+          (error) => error instanceof Error && error.message === view.refusal,
+        );
         assert.deepEqual(f.current(), before);
         assert.equal(f.createdRunTokens.size, 0);
         return;
       }
       assert.equal(view.available, true, JSON.stringify(view));
       assert.equal(view.args?.role, "worker");
-      const input = taskControlInputSchema.parse({ ...view.args, caller: CALLER, reason: "Resume after the host rollout" });
+      const input = taskControlInputSchema.parse({
+        ...view.args,
+        caller: CALLER,
+        reason: "Resume after the host rollout",
+      });
       const { key, payload } = taskControlOperation(input);
-      const start = () => f.engine.startOperation({ key, kind: "task_control", taskId: f.taskId, expectedVersion: input.version, payload });
+      const start = () =>
+        f.engine.startOperation({
+          key,
+          kind: "task_control",
+          taskId: f.taskId,
+          expectedVersion: input.version,
+          payload,
+        });
       const accepted = await start();
       assert.ok("accepted" in accepted);
       const operation = await f.engine.awaitOperation(accepted.operation.id);

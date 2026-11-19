@@ -343,7 +343,11 @@ export class RestartControls {
     if (role === "worker") {
       const escalated = this.store.transaction(() => {
         const current = this.store.task(task.id);
-        this.engine.requireOwnerControlCurrent(current, input.version, "Task changed; refresh before restarting");
+        this.engine.requireOwnerControlCurrent(
+          current,
+          input.version,
+          "Task changed; refresh before restarting",
+        );
         const plan = escalatedWorkerRestart(
           collectOwnerVerbFacts(this.store, current),
           verifyEnclosingOperation(this.store, input, operationId),
@@ -356,9 +360,16 @@ export class RestartControls {
         const latest = this.store.task(current.id);
         const ready = this.resolution.update(latest, {
           stop: null,
-          ...(input.instruction ? { pendingWorkerInstruction: input.instruction } : {}),
+          ...(input.instruction
+            ? { pendingWorkerInstruction: input.instruction }
+            : {}),
         });
-        return this.resolution.returnToDispatch(ready, true, `Restart requested: ${reason}`, "restart_requested");
+        return this.resolution.returnToDispatch(
+          ready,
+          true,
+          `Restart requested: ${reason}`,
+          "restart_requested",
+        );
       });
       if (escalated) return escalated;
     }
