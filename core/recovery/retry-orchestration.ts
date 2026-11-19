@@ -2,7 +2,7 @@ import type { Resolution } from '../resolution';
 import { now } from '../store/store';
 import { runHoldsSlot, type Completion, type Run, type Task } from '../../shared/contracts';
 import { occupiesSlot } from '../dispatch/capacity';
-import { CLOSEOUT_BASE_REFRESH_REASON, RetainedRunRefusal, ACCEPTED_PR_RECONCILIATION_REASON, NO_RESOLUTION_ACTION, OPERATOR_WORKER_REMAP_REASON, readyReviewAtHead } from './task-reasons';
+import { RetainedRunRefusal, ACCEPTED_PR_RECONCILIATION_REASON, NO_RESOLUTION_ACTION, OPERATOR_WORKER_REMAP_REASON, readyReviewAtHead } from './task-reasons';
 import { reviewAuthorizationRequired, REVIEW_AUTHORIZATION_REQUIRED } from '../review/review-continuation';
 import { RETAINED_PREREQUISITE_REFUSAL } from '../verbs/verb-refusal-text';
 import { pidAlive } from '../machine/process-identity';
@@ -11,7 +11,7 @@ import { blockedRetryRoute, retryAdmission, retryRoute, retrySpecialRoute, revis
 import { acceptedReviewAtUnchangedHead, retainedWorkerAdvancedReviewHead, retainedWorkerRemap, stoppedRevisionWithoutCallback } from './retry-evidence';
 
 /** Where a restart sends a parked task. */
-export type RetryRoutesContext = Pick<Resolution, 'adapter' | 'operatorReturn' | 'retainedWorkerProfileIssue' | 'retry' | 'reviewContinuationOwner' | 'settleVerbFences' | 'store' | 'update' | 'validationAlive'>;
+export type RetryRoutesContext = Pick<Resolution, 'adapter' | 'closeout' | 'operatorReturn' | 'retainedWorkerProfileIssue' | 'retry' | 'reviewContinuationOwner' | 'settleVerbFences' | 'store' | 'update' | 'validationAlive'>;
 
 /**
  * Applies retry decisions in one order: authorization, admission, retained-run
@@ -73,6 +73,12 @@ export class RetryRoutes {
       const resumeIntent = resumeUnpublished || Boolean(stopped.identityConfirmation);
       this.prepareRetry({ ...t, resolution: { ...t.resolution, currentRunId: null, attention: false } }, revise, instruction, operator, resumeIntent, prePr, scopedInstruction, reviewerInstruction, [...settleRunIds, stopped.id]);
       return () => this.resolution.retry(this.releaseStoppedRevision(t, stopped), revise, instruction, operator, resumeIntent, prePr, scopedInstruction, reviewerInstruction);
+    }
+    if (t.resolution.mergedCommit) {
+      if (revise || instruction !== undefined || reviewerInstruction !== undefined)
+        throw new Error('The task PR has merged; there is no worker or reviewer instruction to deliver');
+      const refresh = retryRoute(t, runs, false) === 'closeout';
+      return () => this.resolution.closeout.continueRecordedMerge(this.store.task(t.id), { kind: 'retry', refresh });
     }
     if (reviewerInstruction !== undefined) {
       const refusal = retryAdmission(t, { stage: 'reviewer-delivery', revise, operator, instruction, reviewerInstruction,
@@ -180,7 +186,6 @@ export class RetryRoutes {
       };
     }
     if (route === 'no-action') throw new Error(NO_RESOLUTION_ACTION);
-    if (route === 'closeout') return () => this.resolution.update(t, { currentRunId: null, attention: false }, { phase: 'syncing', reason: CLOSEOUT_BASE_REFRESH_REASON }, 'resolution_retry');
     // A held project validation is a failure to run, not a verdict. The gate reuses a settled
     // result for the same candidate so automatic passes never loop; an operator retry clears a
     // hold so the validation actually runs again.
@@ -190,7 +195,7 @@ export class RetryRoutes {
       (t.resolution.projectValidation?.state === 'running' && !(t.resolution.projectValidation.pid && pidAlive(t.resolution.projectValidation.pid)));
     const rerunHeldValidation = operator && heldOrLost;
     return () => this.resolution.update(t, { attention: false, ...(rerunHeldValidation ? { projectValidation: null } : {}),
-      ...(t.resolution.mergeIntent && !t.resolution.mergedCommit ? {} : { integrationTurn: null }) }, { reason: 'Resolution check retry requested' }, 'resolution_retry');
+      ...(t.resolution.mergeIntent ? {} : { integrationTurn: null }) }, { reason: 'Resolution check retry requested' }, 'resolution_retry');
   }
 
   resumeWorkerContinuation(t: Task, operator: boolean, continueWorker: (task: Task) => Task): Task {
