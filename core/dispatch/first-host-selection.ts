@@ -1,5 +1,6 @@
 import type { DemandRoleOffsets, PoolEntry, Profile, Task, UsageLevel } from '../../shared/contracts';
 import { chooseProfile } from './routing';
+import { workerProfileIsExcluded } from '../../shared/contracts';
 
 /** A catalog snapshot from an online host. Unread and offline hosts must be omitted. */
 export type WorkerHostCatalog = { hostId: string; profiles: Profile[] };
@@ -15,7 +16,7 @@ export function chooseFirstWorkerHost(
 ) {
   const profiles = new Map<string, Profile>();
   for (const host of hosts) for (const profile of host.profiles) {
-    if (!profile.available) continue;
+    if (!profile.available || workerProfileIsExcluded(task, profile.id)) continue;
     const existing = profiles.get(profile.id);
     profiles.set(profile.id, existing ? {
       ...existing,

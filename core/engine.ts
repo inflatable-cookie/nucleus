@@ -435,6 +435,15 @@ export class Engine {
     const hostId = task.hostId;
     if (!hostId || task.phase === "done" || task.phase === "cancelled")
       return null;
+    // A never-dispatched worker has only a host preference. An offline
+    // preference cannot fence selection on another online host.
+    if (task.phase === "queued" && task.entrypoint !== "review" && task.entrypoint !== "proof" &&
+        !task.workspaceId && !task.workspaceIntent && !task.agentId && this.store.runs(task.id).length === 0 &&
+        this.hostIds().some(id => id !== hostId && !this.auditUnavailableHosts.has(id) &&
+          this.profileCatalogKnownFor(id) && this.withHost(id, () => this.hostAvailable(id)))) {
+      this.resolution.clearHostWait(task);
+      return null;
+    }
     const online =
       !this.auditUnavailableHosts.has(hostId) &&
       this.withHost(hostId, () => this.hostAvailable(hostId));

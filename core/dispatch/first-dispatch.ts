@@ -21,6 +21,7 @@ import {
 import { startsNoRuns } from "../closeout/queue-drain";
 import type { Resolution } from "../resolution";
 import { chooseProfile, eligibilityReasons } from "./routing";
+import { chooseFirstWorkerHost } from "./first-host-selection";
 import { dispatchGate } from "./dispatch-decisions";
 import { USAGE_GATE_WAIT, usageGateBlocked } from "./usage-gate";
 
@@ -42,6 +43,9 @@ export type FirstDispatchContext = Pick<
   | "profileCatalogKnown"
   | "profilesFor"
   | "hostWait"
+  | "hostIds"
+  | "hostAvailable"
+  | "profileCatalogKnownFor"
   | "refreshCheckoutSiblings"
   | "stopped"
   | "store"
@@ -83,16 +87,32 @@ export class FirstDispatch {
     return this.context.resolution;
   }
   async dispatch(taskId: string, dispatchHeld: boolean): Promise<void> {
-    const hostId = this.store.task(taskId).hostId;
-    if (hostId)
-      return this.context.withHost(hostId, () =>
-        this.dispatchOnHost(taskId, dispatchHeld),
-      );
+    const task = this.store.task(taskId);
+    const firstWorker = task.entrypoint !== "review" && task.entrypoint !== "proof" &&
+      !task.workspaceId && !task.workspaceIntent && !task.agentId && this.store.runs(taskId).length === 0;
+    if (firstWorker) {
+      const ids = [...new Set([...this.context.hostIds(), ...(task.hostId ? [task.hostId] : [])])];
+      const hosts = ids.filter(id => this.context.withHost(id, () => this.context.hostAvailable(id)) &&
+        this.context.profileCatalogKnownFor(id)).map(hostId => ({ hostId, profiles: this.context.profilesFor(hostId) }));
+      const chosen = chooseFirstWorkerHost(task, hosts, this.store.pool(), this.store.counts(),
+        unavailableGroupNames(this.store.availability()), this.store.recentCounts(), this.store.usageLevel(), this.store.demandRoleOffsets());
+      if (chosen) return this.context.withHost(chosen.hostId, () => this.dispatchOnHost(taskId, dispatchHeld, chosen));
+      if (hosts.length) {
+        const profiles = hosts.flatMap(host => host.profiles.filter(profile => profile.available && !workerProfileIsExcluded(task, profile.id)));
+        this.context.note(task.id, eligibilityReasons(task, profiles, this.store.pool(), this.store.availability(), this.store.usageLevel(), profiles), "route_unavailable");
+        this.store.markRoutingAttempt(task.id);
+        return;
+      }
+      // With no online catalog, retain the existing named host wait.
+    }
+    if (task.hostId)
+      return this.context.withHost(task.hostId, () => this.dispatchOnHost(taskId, dispatchHeld));
     return this.dispatchOnHost(taskId, dispatchHeld);
   }
   private async dispatchOnHost(
     taskId: string,
     dispatchHeld: boolean,
+    firstSelection?: NonNullable<ReturnType<typeof chooseFirstWorkerHost>>,
   ): Promise<void> {
     if (
       dispatchGate({
@@ -103,7 +123,8 @@ export class FirstDispatch {
     const transientBefore = this.store.getMeta<GitTransientEpisode | null>(
       this.context.transientKey(taskId),
     );
-    const task = this.store.task(taskId);
+    const recorded = this.store.task(taskId);
+    const task = firstSelection ? { ...recorded, hostId: firstSelection.hostId } : recorded;
     if (!this.context.taskHostAvailable(task)) {
       // Tom, 2026-11-14 (T3 lane v18, host dropout option 1: wait): new dispatch
       // for a project on an unavailable host waits on that host too, with the
@@ -136,7 +157,7 @@ export class FirstDispatch {
         this.store.update(task.id, { reason: USAGE_GATE_WAIT });
       return;
     }
-    if (dispatchGate({ catalogKnown: this.context.profileCatalogKnown() }))
+    if (dispatchGate({ catalogKnown: firstSelection ? this.context.profileCatalogKnownFor(firstSelection.hostId) : this.context.profileCatalogKnown() }))
       return;
     const admission = this.context.admission;
     const owned = admission
@@ -177,7 +198,7 @@ export class FirstDispatch {
       (profile) => !workerProfileIsExcluded(task, profile.id),
     );
     const selection =
-      task.entrypoint === "proof"
+      firstSelection ?? (task.entrypoint === "proof"
         ? this.resolution.select(
             task,
             proofOnlyNeedsGo ? "reviewer" : "executor",
@@ -193,7 +214,7 @@ export class FirstDispatch {
             this.store.usageLevel(),
             this.store.demandRoleOffsets(),
             true,
-          );
+          ));
     if (dispatchGate({ selectionAvailable: Boolean(selection) })) {
       const reason =
         task.entrypoint === "proof"
@@ -259,7 +280,7 @@ export class FirstDispatch {
         startsNoRuns(this.store, this.context.stopped) ||
         latest.phase !== "queued" ||
         dispatchBlocked(latest) ||
-        latest.version !== task.version
+        latest.version !== recorded.version
       )
         return;
       const dependencyWait = this.store.dependencyWait(latest);
@@ -267,7 +288,7 @@ export class FirstDispatch {
       if (this.resolution.slotAdmissionReason(latest)) return;
       const preDispatch = await this.context.hooks.emit(
         "task.pre_dispatch",
-        latest,
+        firstSelection ? { ...latest, hostId: firstSelection.hostId } : latest,
         {
           event: "task.pre_dispatch",
           baseCommit: base,
@@ -294,7 +315,8 @@ export class FirstDispatch {
         // a hold, disposition fence or capacity change that landed while the
         // remote base and hook checks ran must win over this dispatch.
         const current = this.store.task(task.id);
-        if (current.version !== latest.version || startsNoRuns(this.store))
+        if (current.version !== latest.version || startsNoRuns(this.store) ||
+          (firstSelection && !this.context.hostAvailable(firstSelection.hostId)))
           return false;
         if (
           current.phase !== "queued" ||
@@ -319,6 +341,12 @@ export class FirstDispatch {
           task.id,
           {
             phase: "dispatching",
+            ...(firstSelection ? { hostId: firstSelection.hostId, hostSelection: {
+              hostId: firstSelection.hostId, basis: "worker_profile" as const,
+              reason: firstSelection.capableHostIds.length === 1
+                ? `Profile ${selection.profile.name} runs only on ${firstSelection.hostId}`
+                : `Profile ${selection.profile.name} runs on ${firstSelection.capableHostIds.join(", ")}; selected ${firstSelection.hostId}${firstSelection.hostId === recorded.hostId ? " by host preference" : ""}`,
+            } } : {}),
             profile: current.entrypoint === "proof" ? null : selection.profile,
             profileGroup:
               current.entrypoint === "proof" ? null : selection.entry.group,
