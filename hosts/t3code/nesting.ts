@@ -31,6 +31,7 @@
  * or never resent.
  */
 import { z } from "zod";
+import { T3_HOLD_TEXT } from "../../shared/acp/t3-hold";
 import { isHostOperationTimeout } from "../../core/host";
 import type { HostAgentAttempt, HostAgentSpec } from "../../shared/host";
 import type { Profile, Task } from "../../shared/contracts";
@@ -60,15 +61,7 @@ export const PARENT_DRIVER = "acpRegistry";
  * `parentPromptRules`), so the ACP agent holds that turn and forwards nothing. Exactly
  * one place decides what a person is, and it is configuration, never parsed remote text.
  */
-export const HOLD_MARKER = "Nucleus keeps this task thread open for its next role.";
-/**
- * The marker a parent launched before `HOLD_MARKER` was a plain sentence holds. Its
- * binding still names this pattern, so its re-entries must keep sending it.
- */
-export const LEGACY_HOLD_MARKER = "nucleus-hold-the-task-thread";
-/** The re-entry text one parent's binding holds; a parent without a recorded text is legacy. */
-export const holdTextFor = (parent: { taskId: string; holdText?: string }): string =>
-  parent.holdText ?? `${LEGACY_HOLD_MARKER}: ${parent.taskId}`;
+export const HOLD_MARKER = T3_HOLD_TEXT;
 
 /**
  * T3's own wordings for text that is not a person speaking to a task: a delegated
@@ -729,7 +722,7 @@ export class T3Nesting {
       commandId,
       threadId: parent.threadId,
       messageId: identity("message", commandId),
-      text: holdTextFor(parent),
+      text: HOLD_MARKER,
       attachments: [],
       dispatchMode: { type: "queue_after_active" },
     });

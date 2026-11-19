@@ -329,6 +329,8 @@ test("a released parent is re-entered by message before the next child, and disp
   const { host, server, acp, spec } = await fixture(t);
   await host.createAgent(spec("worker-create", "Do the work"));
   const parent = parentOf(host)!;
+  // A parent persisted before the readable prompt has no holdText and an old binding.
+  host.state.update(state => { delete state.parents!["synthetic-task"]!.holdText; });
   // The worker finished: the sweep releases the held turn, as the ACP agent ends it.
   finishChildren(host, server);
   await host.reconcileThreadTitles([
@@ -348,7 +350,8 @@ test("a released parent is re-entered by message before the next child, and disp
     (command) => command.threadId === parent.threadId,
   )!;
   assert.ok(hold, "the parent is re-entered by a message");
-  assert.match(hold.text, new RegExp(HOLD_MARKER));
+  assert.equal(hold.text, HOLD_MARKER);
+  assert.doesNotMatch(hold.text, /nucleus-hold|synthetic-task/);
   const run = server.threads.get(parent.threadId)!.runs.at(-1)!;
   assert.equal(run.status, "running");
   const request = commandsOf(server, "delegated_task.request").at(-1)!;

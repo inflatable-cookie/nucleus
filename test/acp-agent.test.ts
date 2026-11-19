@@ -11,6 +11,7 @@ import {
   type AcpTurnReply,
   type AcpTurnRequest,
 } from "../shared/acp/agent";
+import { isLegacyT3Hold, T3_HOLD_TEXT } from "../shared/acp/t3-hold";
 import { runAcpAgentFromEnvironment } from "../shared/acp/entry";
 import { acpBindingSchema, type AcpBinding } from "../shared/acp/binding";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -412,12 +413,18 @@ test("an injected ignore rule ends the prompt silently: no text shown, nothing f
   await client.closed();
 });
 
+test("legacy T3 compatibility reserves only the exact readable sentence for the old binding", () => {
+  assert.equal(isLegacyT3Hold("nucleus-hold-the-task-thread", T3_HOLD_TEXT), true);
+  assert.equal(isLegacyT3Hold("other", T3_HOLD_TEXT), false);
+  assert.equal(isLegacyT3Hold("nucleus-hold-the-task-thread", `${T3_HOLD_TEXT} Please help`), false);
+});
+
 test("an injected hold rule keeps the turn without showing or forwarding the host's re-entry", async () => {
   // A host that released the thread re-enters it to parent its next child: the prompt
   // is configuration, so it is never shown as the agent's words and never forwarded as
   // the operator's, but the turn is held — which is the whole point of the re-entry.
   const client = harness({
-    agent: { hold: (text) => text.includes("nucleus-hold-the-task-thread") },
+    agent: { hold: (text) => isLegacyT3Hold("nucleus-hold-the-task-thread", text) },
   });
   await client.lines.untilResult(
     client.request("session/new", { cwd: "/fixture/checkout" }),
@@ -432,7 +439,7 @@ test("an injected hold rule keeps the turn without showing or forwarding the hos
   const pollsBefore = client.transport.turns.length;
   const reentry = client.request("session/prompt", {
     sessionId: binding.sessionId,
-    prompt: [{ type: "text", text: "nucleus-hold-the-task-thread: task-1" }],
+    prompt: [{ type: "text", text: T3_HOLD_TEXT }],
   });
   await turnStarted(client.transport, pollsBefore + 1);
   assert.equal(

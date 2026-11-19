@@ -862,9 +862,8 @@ task is live and no decision needs a person, so it no longer reads as busy forev
 the next child, the parent is re-entered with a message whose text carries the
 adapter's plain sentence, `Nucleus keeps this task thread open for its next role.`,
 which T3 shows as the user bubble. The binding's `holdPattern` matches that sentence
-exactly, so the agent holds the turn and shows or forwards nothing. A parent launched
-before the sentence existed keeps the legacy `nucleus-hold-the-task-thread: <task>`
-text its binding names, recorded per parent as `holdText`. A manually settled parent is left alone; re-entry refuses until the operator
+exactly, so the agent holds the turn and shows or forwards nothing. A legacy parent uses the same sentence: the agent recognizes it for the old binding
+rule as well. A manually settled parent is left alone; re-entry refuses until the operator
 unsettles it. A parent T3 will not run leaves the task waiting with a reason.
 
 **Completion wakes never reach the parent.** Every child is created with

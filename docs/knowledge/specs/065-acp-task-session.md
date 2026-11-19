@@ -146,8 +146,8 @@ The hold rule for a host's re-entry is an exact match. On the installed nightly
 (`0.1.11-nightly.20261119.4928`) a `system`-created re-entry holds the run too, but T3
 shows it as a user bubble, so there is no quiet re-entry to use. Current parents hold the
 plain sentence the adapter sends (`Nucleus keeps this task thread open for its
-next role.`); a parent launched before that change keeps the legacy marker its
-binding names.
+next role.`). For a legacy T3 binding naming the old marker, the agent also
+holds that exact sentence, so re-entry never exposes the marker or task ID.
 
 ### 4. The operator's text is an operator message
 
