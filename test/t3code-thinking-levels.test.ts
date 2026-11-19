@@ -594,11 +594,18 @@ test("a role profile's options come from its own provider entry, never the paren
 
 
 test("the existing config read writes a bounded model capture when requested", async (t) => {
-  const { root, server } = await fixture(t, liveConfigModels, true);
+  const shapes = structuredClone(liveConfigModels);
+  const pi = shapes.find((provider) => provider.instanceId === "pi")!;
+  (pi.models as Array<{ slug: string; name: string }>).unshift(
+    ...Array.from({ length: 16 }, (_, i) => ({ slug: `synthetic-${i}`, name: `Synthetic ${i}` })),
+  );
+  const { root, server } = await fixture(t, shapes, true);
   const captured = JSON.parse(await readFile(join(root, "models.json"), "utf8"));
   const codex = captured.providers.find((p: { instanceId: string }) => p.instanceId === "codex");
   assert.deepEqual(codex.models.map((m: { slug: string }) => m.slug), ["gpt-6.1-terra", "gpt-6-luna"]);
-  assert.ok(captured.providers.some((p: { instanceId: string }) => p.instanceId === "pi"));
+  const capturedPi = captured.providers.find((p: { instanceId: string }) => p.instanceId === "pi");
+  assert.equal(capturedPi.models.length, 16);
+  assert.ok(capturedPi.models.some((m: { slug: string }) => m.slug === "opencode-go/muse-spark-1.3-contributor"));
   assert.ok(captured.providers.some((p: { instanceId: string }) => p.instanceId === "claudeAgent"));
   assert.equal(JSON.stringify(captured).includes("synthetic-bearer"), false);
   assert.equal(server.requests.filter((call) => call.tag === "server.getConfig").length, 2);

@@ -1315,5 +1315,7 @@ luna, Pi and Claude model entries from the adapter's existing config read. It
 contains no settings or environment identity, is limited to 16 models per provider
 and 256 KiB, and makes no additional T3 call. Set the path inside run scratch
 when collecting a capture; the file is overwritten on each config read. The
-committed fixture predates this writer and came from an ad hoc read-only adapter
-client and decoder against the configured host.
+committed codex, Pi and Claude model entries were compared with an isolated
+service runtime's own live T3 read on 2026-11-19 and were identical. The ACP
+parent entry came from the earlier ad hoc read-only client and decoder capture.
+The bounded Pi capture prioritizes the three fixture models before other entries.

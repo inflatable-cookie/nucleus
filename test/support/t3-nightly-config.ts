@@ -1,11 +1,10 @@
 /**
  * The nightly's own `server.getConfig` shapes for Tom's live T3 host
- * (nucleus#1375), captured in an ad hoc read-only connection using the adapter's
- * `server.getConfig` client and decoder with the host's configured session bearer.
- * This preceded the opt-in capture writer on the service adapter's existing read.
- * No mutation — nucleus#1364 invented these shapes from a
- * private server that had none of these providers configured, which is how the
- * codex carrier was missed.
+ * (nucleus#1375). The codex, pi and claudeAgent entries were compared with
+ * the bounded capture from an isolated service runtime's own T3 host read on
+ * 2026-11-19; every committed model entry was identical. The nucleus ACP parent
+ * entry remains from the earlier ad hoc read-only client and decoder capture.
+ * Neither capture mutated T3.
  *
  * Only provider, model and option facts are kept: instance ids, model slugs,
  * aliases and `optionDescriptors` (id, label, type, role, choices). The capture

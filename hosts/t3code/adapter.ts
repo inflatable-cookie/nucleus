@@ -319,13 +319,22 @@ export class T3CodeHost implements Host {
     if (this.modelCapturePath) {
       // Only model entries from the already decoded read; never settings, credentials
       // or environment identity. Bound both the number of entries and output bytes.
+      const piFixtureModels = new Set([
+        "default",
+        "opencode-go/deepseek-v4.1-flash",
+        "opencode-go/muse-spark-1.3-contributor",
+      ]);
       const providers = observed.providers
         .filter((provider) => ["codex", "pi", "claudeAgent"].includes(provider.instanceId))
         .slice(0, 3)
         .map(({ instanceId, status, models }) => ({
           instanceId, status,
-          models: models.filter((model) => instanceId !== "codex" ||
-            ["gpt-6.1-terra", "gpt-6-luna"].includes(model.slug)).slice(0, 16),
+          models: instanceId === "codex"
+            ? models.filter((model) => ["gpt-6.1-terra", "gpt-6-luna"].includes(model.slug))
+            : instanceId === "pi"
+              ? [...models.filter((model) => piFixtureModels.has(model.slug)),
+                  ...models.filter((model) => !piFixtureModels.has(model.slug))].slice(0, 16)
+              : models.slice(0, 16),
         }));
       const capture = JSON.stringify({ providers }, null, 2);
       if (Buffer.byteLength(capture) > 256 * 1024)
