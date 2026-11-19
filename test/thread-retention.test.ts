@@ -286,9 +286,8 @@ test("a planner thread, an unarchived thread, an unfinished task and a recent ar
     "only the cancelled task's archived thread is in scope",
   );
   assert.equal(fact.deleted, 1);
-  // The walk's scope keeps three candidates (the unarchived, recent and cancelled rows);
-  // each one's fresh read then drops the unarchived and the recent archive.
-  assert.equal(fact.eligible, 3);
+  // The walk counts old candidates; the fresh read drops the unarchived one.
+  assert.equal(fact.eligible, 2);
   for (const id of [
     "planner-1",
     "reviewer-unarchived",
@@ -363,6 +362,9 @@ test("the batch cap bounds one pass and reports what it left for the next", asyn
       new Date(NOW - (10 - i) * DAY).toISOString(),
     );
 
+  host.add("recent", f.taskLabels(task.id, "worker"), new Date(NOW - DAY).toISOString());
+  host.add("boundary", f.taskLabels(task.id, "worker"), new Date(NOW - 3 * DAY).toISOString());
+
   const fact = await runThreadRetentionPass({
     store: f.store,
     adapter: host.adapter,
@@ -372,8 +374,8 @@ test("the batch cap bounds one pass and reports what it left for the next", asyn
   });
 
   assert.equal(fact.deleted, 2, "no more than the cap is removed");
-  assert.equal(fact.eligible, 5);
-  assert.equal(fact.remaining, 3, "the rest is reported, not silently dropped");
+  assert.equal(fact.eligible, 6, "recent archives are not yet eligible; the cutoff is inclusive");
+  assert.equal(fact.remaining, 4, "only old candidates left by the cap are reported");
   assert.deepEqual(
     host.calls.deleted,
     ["thread-0", "thread-1"],
@@ -387,7 +389,7 @@ test("the batch cap bounds one pass and reports what it left for the next", asyn
     at: NOW + 60_000,
     batch: THREAD_RETENTION_BATCH,
   });
-  assert.equal(next.deleted, 3);
+  assert.equal(next.deleted, 4);
   assert.equal(next.remaining, 0);
 });
 

@@ -249,7 +249,10 @@ export async function runThreadRetentionPass(
   const protect = protectedThreads(store);
   const candidates: ArchivedThread[] = [];
   for (const row of rows)
-    if (retentionScope(store, row, cutoff, protect).eligible)
+    if (
+      Date.parse(row.archivedAt) <= cutoff &&
+      retentionScope(store, row, cutoff, protect).eligible
+    )
       candidates.push(row);
   fact.scanned = rows.length;
   fact.eligible = candidates.length;
