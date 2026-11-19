@@ -56,7 +56,6 @@ export type DispatchLimitsProps = {
   retryAuthority: () => void;
   refreshBoard: () => Promise<unknown>;
   saveUsage: (level: UsageLevel, until: string | null) => Promise<void>;
-  saveDemandOffsets: (value: UiQueueState["demandOffsets"]) => Promise<void>;
   saveCapacity: (values: api.CapacityAuthorityValues) => Promise<void>;
   saveProjectLimit: (
     value: ProjectLimitPatch & { projectKey: string },
@@ -244,19 +243,19 @@ function FrontierGrants({
 }
 
 /**
- * Spec 052 (Tom, 2026-11-17): what each level does to a task's start tier and
+ * Spec 052 (Tom, 2026-11-19): what each level does to a task's start bracket and
  * which runs need the operator's permission. The full sentence sits behind the
  * slider's (?).
  */
 const USAGE_EFFECT: Record<UsageLevel, string> = {
-  low: "Every task starts one tier below its complexity. High and very-high complexity work needs permission when it is submitted; the top two tiers need permission.",
+  low: "Every task starts one bracket below the one it may climb to. High and very-high complexity work needs permission when it is submitted. The reviewer runs one bracket below the worker.",
   normal:
-    "High and very-high complexity work starts one tier below its complexity. The top two tiers need permission, except climbing back to the task's own requested tier.",
-  high: "Every task starts at its requested tier. Frontier profiles need permission.",
+    "Low complexity runs on Mechanical, medium and high on Worker, very high on Heavyweight. A high task may step up to Heavyweight after review changes; Frontier needs permission. The reviewer runs one bracket below the worker.",
+  high: "High and very-high complexity start on Heavyweight. Frontier profiles need permission. The reviewer runs on the worker's bracket.",
   extra_high:
-    "Every task starts at its requested tier, and nothing needs permission.",
+    "Starts as at High, and nothing needs permission. The reviewer runs on the worker's bracket.",
   maximum:
-    "Workers and reviewers run on frontier or very-high models regardless of complexity, and nothing needs permission.",
+    "Workers and reviewers run on Heavyweight or Frontier regardless of complexity, and nothing needs permission.",
 };
 
 /** The levels that can carry an end time: above Normal, where returning to Normal means something. */
@@ -345,60 +344,6 @@ function UsageSlider({
         stopLabel={(stop) => `Usage ${USAGE_LABELS[stop].label}`}
         onChange={setLevel}
       />
-    </Section>
-  );
-}
-
-/** Spec 053: how far each role's demand sits from the task's complexity (Tom, 2026-10-22: "Build it in #592"). */
-function DemandOffsets({
-  c,
-  offsets,
-  save,
-}: {
-  c: Colors;
-  offsets: UiQueueState["demandOffsets"];
-  save: (value: UiQueueState["demandOffsets"]) => Promise<void>;
-}) {
-  const [draft, setDraft] = useState(offsets);
-  const auto = useSectionAutoSave(save);
-  useEffect(() => {
-    if (!auto.saver.busy && !auto.failed) setDraft(offsets);
-  }, [offsets.worker, offsets.reviewer, offsets.coordinator, auto.failed]);
-  // A short pause lets repeated − or + presses, or typed digits, land as one save.
-  const set = (role: keyof typeof offsets, value: number) => {
-    const next = { ...draft, [role]: value };
-    setDraft(next);
-    auto.enqueue(next, 400);
-  };
-  const signed = (value: number) =>
-    value > 0 ? `+${value}` : value < 0 ? `−${-value}` : "0";
-  return (
-    <Section
-      c={c}
-      title="Role demand"
-      label="Role demand offsets"
-      status={auto.status}
-      description="Each run needs the task's complexity plus its role's offset and the usage level's. Negative asks less of a role than the task."
-    >
-      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: space.sm }}>
-        {(["worker", "reviewer", "coordinator"] as const).map((role) => (
-          <NumberStepper
-            key={role}
-            card
-            c={c}
-            label={role[0].toUpperCase() + role.slice(1)}
-            a11yLabel={`${role} demand offset`}
-            value={draft[role]}
-            min={-4}
-            max={4}
-            format={signed}
-            decreaseLabel={`Lower ${role} demand`}
-            increaseLabel={`Raise ${role} demand`}
-            onChange={(value) => set(role, value)}
-            onCommit={() => void auto.saver.flush()}
-          />
-        ))}
-      </View>
     </Section>
   );
 }
@@ -928,11 +873,6 @@ export function DispatchLimits(props: DispatchLimitsProps) {
         state={state}
         busy={props.busy}
         saveProjectLimit={props.saveProjectLimit}
-      />
-      <DemandOffsets
-        c={c}
-        offsets={state.demandOffsets}
-        save={props.saveDemandOffsets}
       />
       <FrontierGrants c={c} state={state} refresh={props.refreshBoard} />
     </View>

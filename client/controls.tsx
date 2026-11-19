@@ -198,11 +198,11 @@ const fieldBox = (c: Colors, focused: boolean, multiline = false, invalid = fals
 });
 /**
  * A whole-number control: − and + buttons at the one control height with the bold number between them,
- * Role demand's look (Tom, 2026-11-08). The number is directly editable in place: a
+ * the stepper look (Tom, 2026-11-08). The number is directly editable in place: a
  * borderless text field the same width and font, digits only (a leading minus where
  * the range allows), clamped to the range when typing ends. Arrow up and down step
  * it while focused. A value in range reports as it is typed, so its owner autosaves
- * as before. `label` and `card` are optional: Role demand and Task slots show both,
+ * as before. `label` and `card` are optional: Task slots shows both,
  * a project override row shows the bare control. `stacked` puts the label on its own
  * line above a left-aligned control, for long labels such as the Advanced limits
  * (Tom, 2026-11-08). In either mode a label wraps only between words: inline, the

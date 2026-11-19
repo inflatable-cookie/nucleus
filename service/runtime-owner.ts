@@ -111,7 +111,6 @@ import type {
   SnapshotState,
   SnapshotInput,
   UsageLevel,
-  DemandRoleOffsets,
   Submission,
   PoolEntry,
   BulkDispositionRequest,
@@ -2291,9 +2290,6 @@ export class QueueRuntime {
   }
   async configureUsage(input: { level: UsageLevel; until?: string | null }) {
     return this.settingsOperations.configureUsage(input);
-  }
-  async configureDemandOffsets(input: DemandRoleOffsets) {
-    return this.settingsOperations.configureDemandOffsets(input);
   }
   capacityAuthorityState() {
     return this.settingsOperations.capacityAuthorityState();

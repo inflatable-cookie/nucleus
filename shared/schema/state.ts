@@ -71,7 +71,6 @@ export const stateSchema = z.object({
   usage: usageViewSchema.default({ level: "normal", setLevel: "normal", until: null, expired: false }),
   routingGrants: z.array(routingGrantViewSchema).default([]),
   qaFence: qaFenceViewSchema.default({ revision: 0, fence: null, expired: null }),
-  demandOffsets: z.object({ worker: z.number().int(), reviewer: z.number().int(), coordinator: z.number().int() }).strict().default({ worker: 0, reviewer: 0, coordinator: -2 }),
   // The dispatch and timing limits are zero-owner duplicates if this schema
   // re-bounds them: the group comes from the limits catalogue in
   // `shared/schema/settings/capacity.ts`, defaults included.

@@ -124,7 +124,6 @@ export class Dispatch {
         this.store.pool(),
         availability.map((group) => [group.group, groupIsUnavailable(group)]),
         this.store.usageLevel(),
-        this.store.demandRoleOffsets(),
       ]),
     );
     const limit =

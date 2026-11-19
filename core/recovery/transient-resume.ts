@@ -114,7 +114,7 @@ export class TransientResume {
     const routeTask = { ...task, preferredProfileId: '', requirePreferred: false, thinkingOptionId: '',
       profileRequests: { ...task.profileRequests, worker: undefined } };
     const select = (candidates: Profile[]) => chooseProfile(routeTask, candidates, pool, this.store.counts(), unavailable, 'worker',
-      this.store.recentCounts(), this.store.usageLevel(), this.store.demandRoleOffsets(), false);
+      this.store.recentCounts(), this.store.usageLevel(), false);
     return select(eligible.filter(candidate => !old || candidate.provider !== old.provider))
       ?? select(eligible);
   }
