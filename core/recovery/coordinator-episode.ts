@@ -411,7 +411,7 @@ export class CoordinatorEpisode {
         ? {
             ...incident,
             status: "resolved" as const,
-            detail: summary,
+            detail: `Recovery reported the trigger settled: ${action.summary}`,
             updatedAt: now(),
           }
         : incident;
