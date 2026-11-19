@@ -3197,7 +3197,13 @@ after the task finishes.
   Terminal restart controls are superseded only when the shared recovery decision
   proves their participants released. Proven submissions settle as the same
   occurrence in recovery and Hosts. Bounded host passes keep unresolved cleanup
-  controls visible.
+  controls visible. The host operation page selects needs-attention rows before
+  applying its bound, so settled history cannot delay a fresh service. A retained
+  terminal tombstone binds a matching submission by its stored input digest; a
+  historical pre-send fence refusal remains a refusal after task retention. The
+  operation retains occurrence-bound settlement evidence, so task-event retention
+  cannot revive it and a repeated key cannot reopen it. Neither path replays the command. Unproved occurrences and process cleanup waits name
+  their reason and an owner action on Hosts.
 - A done task's workspace is archived with every thread in it (Tom, 2026-09-27);
   only a running thread (active turn or pending permission) makes it wait. No
   unreleased task run may remain. Uncommitted files, unexpected or unpublished
@@ -3520,13 +3526,14 @@ after the task finishes.
   4-day expiry window (Tom, 2026-10-20; see [Closeout and
   outcomes](#closeout-and-outcomes)), deleting its events, runs, receipts,
   notices and hook records. These defer the purge: unreleased runs; a
-  pending archive intent or a merge without a recorded commit; an unfinished
-  build-output cleanup, workspace retirement or runtime retirement; an
+  pending archive intent or a merge without a recorded commit; a pending run-process
+  cleanup; an unfinished build-output cleanup, workspace retirement or runtime retirement; an
   external workspace archive in `intent` or `uncertain`; a done task's Nucleus-
   owned workspace, closeout workspace or review-source view not yet archived (a
   registered external workspace is never archived and owes none); a
   notice in `pending`, `intent` or `uncertain`; unsettled hook custody; and
-  an origin that never resolved. Pausing pauses retention.
+  an origin that never resolved. Pausing pauses retention. An unavailable process
+  listing updates existing cleanup waits but creates no intent for unobserved history.
   A task whose hook retention is not settled keeps its whole history: hook
   records carry the only proof of an isolated checkout's ownership.
 - A purge leaves a tombstone naming the task identity, submission identity,

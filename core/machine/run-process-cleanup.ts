@@ -5,15 +5,28 @@ import type { HostProcessFact } from "../host/types";
 import type { Run, Task } from "../../shared/contracts";
 import { readHostUidProcesses } from "./host-process-listing";
 import { pidAlive } from "./pid";
-import { runProcessEnvironments, listedProcessLiveness, refreshedRunProcessLiveness, type RunProcessEnvironment } from "./run-process-identity";
-import { protectedRunInfrastructure, rememberRunProcessHosts } from "./run-process-hosts";
+import {
+  runProcessEnvironments,
+  listedProcessLiveness,
+  refreshedRunProcessLiveness,
+  type RunProcessEnvironment,
+} from "./run-process-identity";
+import {
+  protectedRunInfrastructure,
+  rememberRunProcessHosts,
+} from "./run-process-hosts";
 import { RunProcessTable } from "./owned-tool-process-proof";
 import { protectedHostPids } from "./host-process-select";
 import { terminateHostProcessTargets } from "./host-process-reap";
 
 interface CleanupRun {
-  id: string; taskId: string; hostId?: string; agentId?: string | null; temporaryDirectory?: string;
-  pending?: boolean; uncertainty?: string;
+  id: string;
+  taskId: string;
+  hostId?: string;
+  agentId?: string | null;
+  temporaryDirectory?: string;
+  pending?: boolean;
+  uncertainty?: string;
   /** When this run last had a process stopped for it; a same-run respawn is left alone. */
   stoppedAt?: string;
   /** The one visible record of a process this run's cleanup deliberately left alone. */
@@ -21,8 +34,12 @@ interface CleanupRun {
 }
 const key = (id: string) => `runProcessCleanup:${id}`;
 const terminal = (phase: string) => ["done", "cancelled"].includes(phase);
-const settledTask = (task: Task) => Boolean(task.completion || terminal(task.phase) || task.removedAt);
-const settledRun = (run: Run, task: Task) => Boolean(run.released || run.completion || terminal(task.phase) || task.removedAt);
+const settledTask = (task: Task) =>
+  Boolean(task.completion || terminal(task.phase) || task.removedAt);
+const settledRun = (run: Run, task: Task) =>
+  Boolean(
+    run.released || run.completion || terminal(task.phase) || task.removedAt,
+  );
 
 /**
  * How long after a stop a process carrying the same run identity is left alone
@@ -38,37 +55,78 @@ export const CLEANUP_RESPAWN_WINDOW_MS = 10 * 60_000;
 export const RUN_PROCESS_READ_BOUND_MS = 20_000;
 
 /** Exact inherited ticket or scratch identity; a shared checkout is never ownership. */
-export function processBelongsToRun(fact: HostProcessFact, environment: RunProcessEnvironment | null | undefined,
-  run: CleanupRun, dataHome: string): boolean {
+export function processBelongsToRun(
+  fact: HostProcessFact,
+  environment: RunProcessEnvironment | null | undefined,
+  run: CleanupRun,
+  dataHome: string,
+): boolean {
   if (environment?.NUCLEUS_TICKET || environment?.NUCLEUS_CONTINUATION_TICKET) {
     const ticket = join(dataHome, "tickets", `${run.id}.json`);
-    if (environment.NUCLEUS_TICKET === ticket || environment.NUCLEUS_CONTINUATION_TICKET === ticket) return true;
+    if (
+      environment.NUCLEUS_TICKET === ticket ||
+      environment.NUCLEUS_CONTINUATION_TICKET === ticket
+    )
+      return true;
   }
   const scratch = run.temporaryDirectory;
   if (!scratch) return false;
-  if ([environment?.TMPDIR, environment?.TMP, environment?.TEMP].includes(scratch)) return true;
+  if (
+    [environment?.TMPDIR, environment?.TMP, environment?.TEMP].includes(scratch)
+  )
+    return true;
   if (!fact.command.includes(scratch)) return false;
   const escaped = scratch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`(?:^|[\\s='\"])${escaped}(?:/|$|[\\s'\"])`).test(fact.command);
+  return new RegExp(`(?:^|[\\s='\"])${escaped}(?:/|$|[\\s'\"])`).test(
+    fact.command,
+  );
 }
 
 /** Legacy non-host proof: an orphan executing a scratch artifact, not a host merely mentioning scratch. */
-export function orphanExecutesRunScratch(fact: Pick<HostProcessFact, "ppid" | "command">, scratch: string | undefined): boolean {
+export function orphanExecutesRunScratch(
+  fact: Pick<HostProcessFact, "ppid" | "command">,
+  scratch: string | undefined,
+): boolean {
   if (fact.ppid !== 1 || !scratch) return false;
-  const args = fact.command.trim().match(/(?:"[^"]*"|'[^']*'|\S+)/g)?.map(arg => arg.replace(/^["']|["']$/g, "")) ?? [];
+  const args =
+    fact.command
+      .trim()
+      .match(/(?:"[^"]*"|'[^']*'|\S+)/g)
+      ?.map((arg) => arg.replace(/^["']|["']$/g, "")) ?? [];
   const program = args[0];
-  if (!program || /\.app[\\/]Contents[\\/]/i.test(program)
-    || args.some(arg => /^--?(?:session[-_]id|working[-_](?:dir|directory))(?:=|$)/i.test(arg))) return false;
-  const inside = (arg: string | undefined) => Boolean(arg && isAbsolute(arg) && resolve(arg).startsWith(`${resolve(scratch)}/`));
+  if (
+    !program ||
+    /\.app[\\/]Contents[\\/]/i.test(program) ||
+    args.some((arg) =>
+      /^--?(?:session[-_]id|working[-_](?:dir|directory))(?:=|$)/i.test(arg),
+    )
+  )
+    return false;
+  const inside = (arg: string | undefined) =>
+    Boolean(
+      arg && isAbsolute(arg) && resolve(arg).startsWith(`${resolve(scratch)}/`),
+    );
   if (inside(program)) return true;
   const interpreter = basename(program).toLowerCase();
-  if (!/^(?:node|nodejs|bun|deno|python(?:3(?:\.\d+)?)?|sh|bash|zsh|dash|fish|perl|ruby)$/.test(interpreter)) return false;
+  if (
+    !/^(?:node|nodejs|bun|deno|python(?:3(?:\.\d+)?)?|sh|bash|zsh|dash|fish|perl|ruby)$/.test(
+      interpreter,
+    )
+  )
+    return false;
   // Only a direct script operand proves execution. Flags, loaders, config paths,
   // cwd and inline expressions cannot establish that a provider is a tool.
-  return inside(["bun", "deno"].includes(interpreter) && args[1] === "run" ? args[2] : args[1]);
+  return inside(
+    ["bun", "deno"].includes(interpreter) && args[1] === "run"
+      ? args[2]
+      : args[1],
+  );
 }
 
-type Ancestry = ReadonlyMap<number, Pick<HostProcessFact, "pid" | "ppid" | "state">>;
+type Ancestry = ReadonlyMap<
+  number,
+  Pick<HostProcessFact, "pid" | "ppid" | "state">
+>;
 
 /**
  * True while nothing above this process in the snapshot is alive: init (or
@@ -77,8 +135,11 @@ type Ancestry = ReadonlyMap<number, Pick<HostProcessFact, "pid" | "ppid" | "stat
  * thread's tools — whatever run identity that process carries. Only a process
  * whose whole ancestry has exited is an orphan a settled run can leave behind.
  */
-export function initRootedProcess(fact: Pick<HostProcessFact, "pid" | "ppid">, byPid: Ancestry,
-  alive: (pid: number) => boolean = pidAlive): boolean {
+export function initRootedProcess(
+  fact: Pick<HostProcessFact, "pid" | "ppid">,
+  byPid: Ancestry,
+  alive: (pid: number) => boolean = pidAlive,
+): boolean {
   const seen = new Set<number>([fact.pid]);
   let ppid = fact.ppid ?? 0;
   while (ppid > 1) {
@@ -89,7 +150,10 @@ export function initRootedProcess(fact: Pick<HostProcessFact, "pid" | "ppid">, b
     // nothing in the snapshot may claim that ancestry reached init.
     if (!parent) return !alive(ppid);
     // A zombie has stopped; only its own parent can reap it. Keep walking up.
-    if (parent.state?.startsWith("Z")) { ppid = parent.ppid ?? 0; continue; }
+    if (parent.state?.startsWith("Z")) {
+      ppid = parent.ppid ?? 0;
+      continue;
+    }
     return false;
   }
   return true;
@@ -101,27 +165,49 @@ function cleanupRuns(store: Store, hostId: string) {
   const live = new Map<string, CleanupRun>();
   const byTask = new Map<string, Task>();
   const intents = new Map<string, CleanupRun>();
-  const tasks = store.db.prepare("SELECT data FROM tasks WHERE json_extract(data,'$.hostId')=?").all(hostId);
+  const tasks = store.db
+    .prepare("SELECT data FROM tasks WHERE json_extract(data,'$.hostId')=?")
+    .all(hostId);
   for (const row of tasks) {
     const task: Task = JSON.parse(String(row.data));
     byTask.set(task.id, task);
     for (const retired of task.retiredWorkers ?? [])
-      settled.set(retired.runId, { id: retired.runId, taskId: task.id, hostId, agentId: retired.agentId });
+      settled.set(retired.runId, {
+        id: retired.runId,
+        taskId: task.id,
+        hostId,
+        agentId: retired.agentId,
+      });
     if (!task.runId) continue;
-    const run = { id: task.runId, taskId: task.id, hostId, agentId: task.agentId, temporaryDirectory: task.temporaryDirectory };
+    const run = {
+      id: task.runId,
+      taskId: task.id,
+      hostId,
+      agentId: task.agentId,
+      temporaryDirectory: task.temporaryDirectory,
+    };
     (settledTask(task) ? settled : live).set(run.id, run);
   }
-  for (const row of store.db.prepare("SELECT data FROM runs WHERE json_extract(data,'$.hostId')=?").all(hostId)) {
+  for (const row of store.db
+    .prepare("SELECT data FROM runs WHERE json_extract(data,'$.hostId')=?")
+    .all(hostId)) {
     const run: Run = JSON.parse(String(row.data));
     const task = byTask.get(run.taskId) ?? store.task(run.taskId);
     if (settledRun(run, task)) {
-      settled.set(run.id, run); live.delete(run.id);
-    } else { live.set(run.id, run); settled.delete(run.id); }
+      settled.set(run.id, run);
+      live.delete(run.id);
+    } else {
+      live.set(run.id, run);
+      settled.delete(run.id);
+    }
   }
-  for (const row of store.db.prepare("SELECT value FROM meta WHERE key GLOB 'runProcessCleanup:*'").all()) {
+  for (const row of store.db
+    .prepare("SELECT value FROM meta WHERE key GLOB 'runProcessCleanup:*'")
+    .all()) {
     const run: CleanupRun = JSON.parse(String(row.value));
     intents.set(run.id, run);
-    if (run.hostId === hostId && !live.has(run.id)) settled.set(run.id, { ...run, ...settled.get(run.id) });
+    if (run.hostId === hostId && !live.has(run.id))
+      settled.set(run.id, { ...run, ...settled.get(run.id) });
   }
   for (const id of live.keys()) settled.delete(id);
   return { settled: [...settled.values()], live: [...live.values()], intents };
@@ -129,42 +215,67 @@ function cleanupRuns(store: Store, hostId: string) {
 
 // A task lane and the periodic maintenance lane can reach the same run. Coalesce them per store.
 const running = new WeakMap<Store, Promise<void>>();
-export function sweepSettledRunProcesses(store: Store, hostId: string, options: {
-  taskId?: string; pendingOnly?: boolean; graceMs?: number;
-  readProcesses?: () => Promise<HostProcessFact[] | null>;
-  readEnvironments?: typeof runProcessEnvironments;
-  terminate?: typeof terminateHostProcessTargets;
-  /** Longest one process read may hold the sweep; tests shorten it. */
-  readBoundMs?: number;
-  /** How long a same-run respawn is left alone after a stop; tests shorten it. */
-  respawnWindowMs?: number;
-} = {}): Promise<void> {
+export function sweepSettledRunProcesses(
+  store: Store,
+  hostId: string,
+  options: {
+    taskId?: string;
+    pendingOnly?: boolean;
+    graceMs?: number;
+    readProcesses?: () => Promise<HostProcessFact[] | null>;
+    readEnvironments?: typeof runProcessEnvironments;
+    terminate?: typeof terminateHostProcessTargets;
+    /** Longest one process read may hold the sweep; tests shorten it. */
+    readBoundMs?: number;
+    /** How long a same-run respawn is left alone after a stop; tests shorten it. */
+    respawnWindowMs?: number;
+  } = {},
+): Promise<void> {
   const previous = running.get(store) ?? Promise.resolve();
-  const next = previous.catch(() => {}).then(() => sweep(store, hostId, options));
+  const next = previous
+    .catch(() => {})
+    .then(() => sweep(store, hostId, options));
   running.set(store, next);
-  void next.finally(() => { if (running.get(store) === next) running.delete(store); }).catch(() => {});
+  void next
+    .finally(() => {
+      if (running.get(store) === next) running.delete(store);
+    })
+    .catch(() => {});
   return next;
 }
 
 /** One read that never answers proves nothing; the sweep then answers unknown. */
-async function boundedRead<T>(read: (signal: AbortSignal) => Promise<T>, boundMs: number): Promise<T | null> {
+async function boundedRead<T>(
+  read: (signal: AbortSignal) => Promise<T>,
+  boundMs: number,
+): Promise<T | null> {
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
-      Promise.resolve().then(() => read(controller.signal)).catch(() => null),
-      new Promise<null>(resolve => {
-        timer = setTimeout(() => { resolve(null); controller.abort(); }, boundMs);
+      Promise.resolve()
+        .then(() => read(controller.signal))
+        .catch(() => null),
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => {
+          resolve(null);
+          controller.abort();
+        }, boundMs);
       }),
     ]);
-  } finally { if (timer) clearTimeout(timer); }
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 /**
  * Whether this host owes a settled run's process cleanup. A host with no owed
  * intent costs no process read: the quantum asks this before queueing a sweep.
  */
-export function hostOwesRunProcessCleanup(store: Store, hostId: string): boolean {
+export function hostOwesRunProcessCleanup(
+  store: Store,
+  hostId: string,
+): boolean {
   // The quantum needs only a pending occurrence. Read the matching intent
   // and its two indexed bindings instead of rebuilding the fleet's run list.
   const pending = store.db.prepare(`
@@ -187,26 +298,45 @@ export function hostOwesRunProcessCleanup(store: Store, hostId: string): boolean
       if (settledTask(task)) return true;
       continue;
     }
-    if (intent.hostId === hostId ||
-      (task?.hostId === hostId && task.retiredWorkers?.some(retired => retired.runId === intent.id))) return true;
+    if (
+      intent.hostId === hostId ||
+      (task?.hostId === hostId &&
+        task.retiredWorkers?.some((retired) => retired.runId === intent.id))
+    )
+      return true;
   }
   return false;
 }
 
 /** One process-table snapshot per sweep, shared by every run it settles. */
-async function snapshot(options: Parameters<typeof sweepSettledRunProcesses>[2]): Promise<HostProcessFact[] | null> {
+async function snapshot(
+  options: Parameters<typeof sweepSettledRunProcesses>[2],
+): Promise<HostProcessFact[] | null> {
   const readBoundMs = options?.readBoundMs ?? RUN_PROCESS_READ_BOUND_MS;
-  return boundedRead(() => options?.readProcesses
-    ? options.readProcesses()
-    : readHostUidProcesses().then(read => read.state === "listed" ? read.processes : null), readBoundMs);
+  return boundedRead(
+    () =>
+      options?.readProcesses
+        ? options.readProcesses()
+        : readHostUidProcesses().then((read) =>
+            read.state === "listed" ? read.processes : null,
+          ),
+    readBoundMs,
+  );
 }
 
-const factKey = (fact: { pid: number; startIdentity: string }) => `${fact.pid}@${fact.startIdentity}`;
+const factKey = (fact: { pid: number; startIdentity: string }) =>
+  `${fact.pid}@${fact.startIdentity}`;
 
-async function sweep(store: Store, hostId: string, options: Parameters<typeof sweepSettledRunProcesses>[2], round = 0,
-  startedAt = Date.now(), beforeStop?: ReadonlySet<string>): Promise<void> {
+async function sweep(
+  store: Store,
+  hostId: string,
+  options: Parameters<typeof sweepSettledRunProcesses>[2],
+  round = 0,
+  startedAt = Date.now(),
+  beforeStop?: ReadonlySet<string>,
+): Promise<void> {
   const candidates = cleanupRuns(store, hostId);
-  const runs = candidates.settled.filter(run => {
+  const runs = candidates.settled.filter((run) => {
     if (options?.taskId && run.taskId !== options.taskId) return false;
     const intent = candidates.intents.get(run.id);
     // A cleanup that proved itself complete is settled: no later sweep, hourly
@@ -216,15 +346,46 @@ async function sweep(store: Store, hostId: string, options: Parameters<typeof sw
     // also retries history that predates the intent.
     return !options?.pendingOnly || Boolean(intent);
   });
-  if (!runs.length && !candidates.live.some(run => !options?.taskId || run.taskId === options.taskId)) return;
+  for (const live of candidates.live) {
+    if (
+      (!options?.taskId || live.taskId === options.taskId) &&
+      candidates.intents.get(live.id)?.pending === true
+    )
+      deferReason(store, live, "run or its participant is active");
+  }
+  if (
+    !runs.length &&
+    !candidates.live.some(
+      (run) => !options?.taskId || run.taskId === options.taskId,
+    )
+  )
+    return;
   const facts = await snapshot(options);
-  if (!facts) return; // Intents and scratch survive an unavailable observation.
+  if (!facts) {
+    for (const run of runs)
+      if (candidates.intents.get(run.id)?.pending === true)
+        deferReason(store, run, "process table observation is unavailable");
+    return;
+  }
   const table = new RunProcessTable(facts);
-  const dirsRead = await boundedRead(async signal => { await table.readProgramDirectories(signal); return true; },
-    options?.readBoundMs ?? RUN_PROCESS_READ_BOUND_MS);
-  if (!dirsRead) return; // Executable identity also belongs to the observation window.
+  const dirsRead = await boundedRead(async (signal) => {
+    await table.readProgramDirectories(signal);
+    return true;
+  }, options?.readBoundMs ?? RUN_PROCESS_READ_BOUND_MS);
+  if (!dirsRead) {
+    for (const run of runs)
+      if (candidates.intents.get(run.id)?.pending === true)
+        deferReason(
+          store,
+          run,
+          "process executable observation is unavailable",
+        );
+    return; // Executable identity also belongs to the observation window.
+  }
   const known = [...candidates.settled, ...candidates.live];
-  const records = store.transaction(() => rememberRunProcessHosts(store, known, facts, table));
+  const records = store.transaction(() =>
+    rememberRunProcessHosts(store, known, facts, table),
+  );
   if (!runs.length) return;
   // Every liveness and identity answer below reads this one table. A sweep spawns
   // no synchronous `ps`: the profile's dominant stack was
@@ -233,29 +394,60 @@ async function sweep(store: Store, hostId: string, options: Parameters<typeof sw
   // bounded spawned read for exactly the targets.
   const tableLiveness = listedProcessLiveness(facts);
   const dataHome = dirname(store.path);
-  const live = facts.filter(fact => !fact.state?.startsWith("Z"));
+  const live = facts.filter((fact) => !fact.state?.startsWith("Z"));
   // The one ownership question this table answers: what init owns outright.
-  const rooted = new Set(live.filter(fact => initRootedProcess(fact, table.byPid)).map(fact => fact.pid));
+  const rooted = new Set(
+    live
+      .filter((fact) => initRootedProcess(fact, table.byPid))
+      .map((fact) => fact.pid),
+  );
   // A live non-init ancestor is an owner: these are never cleanup targets.
-  const liveAncestor = new Set(facts.filter(fact => !rooted.has(fact.pid) && !fact.state?.startsWith("Z")).map(fact => fact.pid));
-  const infrastructure = protectedRunInfrastructure(store, known, facts, table, records);
+  const liveAncestor = new Set(
+    facts
+      .filter((fact) => !rooted.has(fact.pid) && !fact.state?.startsWith("Z"))
+      .map((fact) => fact.pid),
+  );
+  const infrastructure = protectedRunInfrastructure(
+    store,
+    known,
+    facts,
+    table,
+    records,
+  );
   // One ownership read for the whole snapshot, shared by every run it settles:
   // never a read per run or per check.
-  const livePids = live.map(fact => fact.pid);
+  const livePids = live.map((fact) => fact.pid);
   const environments = livePids.length
-    ? await boundedRead(signal => (options?.readEnvironments ?? runProcessEnvironments)(livePids, { signal }), options?.readBoundMs ?? RUN_PROCESS_READ_BOUND_MS)
-      ?? new Map<number, RunProcessEnvironment | null>(livePids.map(pid => [pid, null]))
+    ? ((await boundedRead(
+        (signal) =>
+          (options?.readEnvironments ?? runProcessEnvironments)(livePids, {
+            signal,
+          }),
+        options?.readBoundMs ?? RUN_PROCESS_READ_BOUND_MS,
+      )) ??
+      new Map<number, RunProcessEnvironment | null>(
+        livePids.map((pid) => [pid, null]),
+      ))
     : new Map<number, RunProcessEnvironment | null>();
-  const protectedPids = protectedHostPids(new Set([...infrastructure, ...liveAncestor]));
-  const unprotected = live.filter(fact => !protectedPids.has(fact.pid));
-  const protectedFacts = facts.filter(fact => protectedPids.has(fact.pid));
-  const retainedFacts = live.filter(fact => liveAncestor.has(fact.pid) && environments.has(fact.pid));
-  const liveAgents = new Set(candidates.live.map(run => run.agentId));
+  const protectedPids = protectedHostPids(
+    new Set([...infrastructure, ...liveAncestor]),
+  );
+  const unprotected = live.filter((fact) => !protectedPids.has(fact.pid));
+  const protectedFacts = facts.filter((fact) => protectedPids.has(fact.pid));
+  const retainedFacts = live.filter(
+    (fact) => liveAncestor.has(fact.pid) && environments.has(fact.pid),
+  );
+  const liveAgents = new Set(candidates.live.map((run) => run.agentId));
   const claimedByLive = new Map<number, boolean>();
   // Unknown ownership is a property of this observation, shared even when
   // the unknown process has no command or belongs to another run.
-  const unknown = live.filter(fact => environments.get(fact.pid) == null
-    && (fact.startIdentity.endsWith("@unknown") || (tableLiveness(fact.pid, fact.startIdentity) !== "dead" && pidAlive(fact.pid))));
+  const unknown = live.filter(
+    (fact) =>
+      environments.get(fact.pid) == null &&
+      (fact.startIdentity.endsWith("@unknown") ||
+        (tableLiveness(fact.pid, fact.startIdentity) !== "dead" &&
+          pidAlive(fact.pid))),
+  );
   const respawnWindowMs = options?.respawnWindowMs ?? CLEANUP_RESPAWN_WINDOW_MS;
   // A process that was not in the snapshot this sweep started from appeared
   // while stopping: the live host started it again, so it is recorded once and
@@ -267,23 +459,45 @@ async function sweep(store: Store, hostId: string, options: Parameters<typeof sw
     // A run may have resumed while the OS reads were in flight.
     const stillSettled = () => {
       const current = store.run(run.id);
-      if (run.agentId && store.unreleasedRunsForAgent(run.agentId, hostId).some(other => other.id !== run.id && !other.completion)) return false;
+      if (
+        run.agentId &&
+        store
+          .unreleasedRunsForAgent(run.agentId, hostId)
+          .some((other) => other.id !== run.id && !other.completion)
+      )
+        return false;
       const task = store.task(run.taskId);
-      if (run.agentId && task.agentId === run.agentId && task.runId !== run.id && task.runId && !task.completion && !terminal(task.phase)) return false;
+      if (
+        run.agentId &&
+        task.agentId === run.agentId &&
+        task.runId !== run.id &&
+        task.runId &&
+        !task.completion &&
+        !terminal(task.phase)
+      )
+        return false;
       if (terminal(task.phase) || task.removedAt) return true;
       if (current) return Boolean(current.released || current.completion);
       return task.runId !== run.id || Boolean(task.completion);
     };
-    if (!stillSettled()) continue;
+    if (!stillSettled()) {
+      deferReason(store, run, "run or its participant is active");
+      continue;
+    }
     // A retained thread's next turn inherits its first launch environment. An
     // earlier ticket must never give custody over that next turn's tools.
-    if (run.agentId && liveAgents.has(run.agentId)) continue;
-    const ownedFacts = unprotected.filter(fact => {
+    if (run.agentId && liveAgents.has(run.agentId)) {
+      deferReason(store, run, "a live run shares this agent");
+      continue;
+    }
+    const ownedFacts = unprotected.filter((fact) => {
       const environment = environments.get(fact.pid);
       if (!processBelongsToRun(fact, environment, run, dataHome)) return false;
       let claimed = claimedByLive.get(fact.pid);
       if (claimed === undefined) {
-        claimed = candidates.live.some(live => processBelongsToRun(fact, environment, live, dataHome));
+        claimed = candidates.live.some((live) =>
+          processBelongsToRun(fact, environment, live, dataHome),
+        );
         claimedByLive.set(fact.pid, claimed);
       }
       return !claimed;
@@ -295,51 +509,138 @@ async function sweep(store: Store, hostId: string, options: Parameters<typeof sw
     // also remain owned evidence, but cannot authorize a signal. A per-run report
     // bridge whose provider has exited is the run's own leftover even when no
     // host was ever recorded for it.
-    const eligible = ownedFacts.filter(fact => rooted.has(fact.pid) && environments.get(fact.pid) != null
-      && !fact.startIdentity.endsWith("@unknown") && fact.command.trim()
-      && (records.has(run.id) || orphanExecutesRunScratch(fact, run.temporaryDirectory) || table.orphanedHelpers.has(fact.pid)));
+    const eligible = ownedFacts.filter(
+      (fact) =>
+        rooted.has(fact.pid) &&
+        environments.get(fact.pid) != null &&
+        !fact.startIdentity.endsWith("@unknown") &&
+        fact.command.trim() &&
+        (records.has(run.id) ||
+          orphanExecutesRunScratch(fact, run.temporaryDirectory) ||
+          table.orphanedHelpers.has(fact.pid)),
+    );
     const intent = store.getMeta<CleanupRun>(key(run.id));
     // A process this run already lost to a stop, seen again within the window, is
     // recorded once and left alone: the live host respawned it, so stopping it
     // again only repeats the same loop.
-    const lastStop = intent?.stoppedAt ? Date.parse(intent.stoppedAt) : Number.NaN;
-    if (eligible.length && Number.isFinite(lastStop) && lastStop < startedAt && startedAt - lastStop < respawnWindowMs) {
-      recordLeftAlone(store, run, hostId, "respawned-after-stop", eligible, startedAt);
+    const lastStop = intent?.stoppedAt
+      ? Date.parse(intent.stoppedAt)
+      : Number.NaN;
+    if (
+      eligible.length &&
+      Number.isFinite(lastStop) &&
+      lastStop < startedAt &&
+      startedAt - lastStop < respawnWindowMs
+    ) {
+      recordLeftAlone(
+        store,
+        run,
+        hostId,
+        "respawned-after-stop",
+        eligible,
+        startedAt,
+      );
       continue;
     }
-    const respawned = round > 0 ? eligible.filter(fact => !existed.has(factKey(fact))) : [];
-    if (respawned.length) recordLeftAlone(store, run, hostId, "respawned-after-stop", respawned, startedAt);
-    const owned = respawned.length ? eligible.filter(fact => !respawned.some(item => item.pid === fact.pid)) : eligible;
+    const respawned =
+      round > 0 ? eligible.filter((fact) => !existed.has(factKey(fact))) : [];
+    if (respawned.length)
+      recordLeftAlone(
+        store,
+        run,
+        hostId,
+        "respawned-after-stop",
+        respawned,
+        startedAt,
+      );
+    const owned = respawned.length
+      ? eligible.filter(
+          (fact) => !respawned.some((item) => item.pid === fact.pid),
+        )
+      : eligible;
     // Older runs may predate cleanup intents. Keep the same durable boundary
     // as releases written by the current store before signalling or removing scratch.
-    if (owned.length && !store.getMeta<CleanupRun>(key(run.id))) store.queueRunProcessCleanup({ ...run, hostId });
+    if (owned.length && !store.getMeta<CleanupRun>(key(run.id)))
+      store.queueRunProcessCleanup({ ...run, hostId });
     // One bounded spawned identity read for exactly these targets, so a signal
     // still rests on the recorded birth identity now rather than on the listing.
     const liveness = owned.length
-      ? await boundedRead(signal => refreshedRunProcessLiveness(owned.map(fact => fact.pid), tableLiveness, signal), options?.readBoundMs ?? RUN_PROCESS_READ_BOUND_MS)
-        ?? ((pid: number) => pidAlive(pid) ? "unknown" as const : "dead" as const)
+      ? ((await boundedRead(
+          (signal) =>
+            refreshedRunProcessLiveness(
+              owned.map((fact) => fact.pid),
+              tableLiveness,
+              signal,
+            ),
+          options?.readBoundMs ?? RUN_PROCESS_READ_BOUND_MS,
+        )) ??
+        ((pid: number) =>
+          pidAlive(pid) ? ("unknown" as const) : ("dead" as const)))
       : tableLiveness;
-    const result = await (options?.terminate ?? terminateHostProcessTargets)(owned.map(fact => ({ ...fact, cwd: fact.cwd ?? "", startTime: fact.startIdentity, via: "cwd" as const })),
-      { graceMs: options?.graceMs, identityLiveness: (pid, identity) => stillSettled() ? liveness(pid, identity) : "unknown" });
+    const result = await (options?.terminate ?? terminateHostProcessTargets)(
+      owned.map((fact) => ({
+        ...fact,
+        cwd: fact.cwd ?? "",
+        startTime: fact.startIdentity,
+        via: "cwd" as const,
+      })),
+      {
+        graceMs: options?.graceMs,
+        identityLiveness: (pid, identity) =>
+          stillSettled() ? liveness(pid, identity) : "unknown",
+      },
+    );
     // A target whose identity is proved dead has already exited: a re-read that
     // still lists it is not a survivor to retry, or a sweep would keep the
     // scratch of a process it just stopped.
-    const failed = result.failed.filter(fact => liveness(fact.pid, fact.startIdentity) !== "dead");
-    const ambiguous = ownedFacts.filter(fact => !eligible.some(target => target.pid === fact.pid));
-    const reason = unknown.length ? "process environment ownership is unreadable"
-      : ambiguous.some(fact => fact.startIdentity.endsWith("@unknown")) ? "owned process start identity is unreadable"
-      : ambiguous.length ? "process command or agent host identity has not been observed" : "owned processes could not be stopped";
-    const unresolved = unknown.length ? unknown : ambiguous.length ? ambiguous : failed;
-    const survivors = failed.map(fact => ({ pid: fact.pid, startIdentity: fact.startIdentity, reason: fact.reason }));
-    const uncertainty = unresolved.length ? JSON.stringify({
-      reason,
-      processes: unresolved.map(fact => ({ pid: fact.pid, startIdentity: fact.startIdentity })),
-      ...(survivors.length ? { survivors } : {}),
-    }) : undefined;
-    const repeated = uncertainty !== undefined && intent?.uncertainty === uncertainty;
-    if (result.terminated.length || (failed.length && !repeated)) store.event(run.taskId, "run_process_cleanup", JSON.stringify({ runId: run.id,
-      stopped: result.terminated.map(fact => ({ pid: fact.pid, startIdentity: fact.startIdentity })),
-      survivors }));
+    const failed = result.failed.filter(
+      (fact) => liveness(fact.pid, fact.startIdentity) !== "dead",
+    );
+    const ambiguous = ownedFacts.filter(
+      (fact) => !eligible.some((target) => target.pid === fact.pid),
+    );
+    const reason = unknown.length
+      ? "process environment ownership is unreadable"
+      : ambiguous.some((fact) => fact.startIdentity.endsWith("@unknown"))
+        ? "owned process start identity is unreadable"
+        : ambiguous.length
+          ? "process command or agent host identity has not been observed"
+          : "owned processes could not be stopped";
+    const unresolved = unknown.length
+      ? unknown
+      : ambiguous.length
+        ? ambiguous
+        : failed;
+    const survivors = failed.map((fact) => ({
+      pid: fact.pid,
+      startIdentity: fact.startIdentity,
+      reason: fact.reason,
+    }));
+    const uncertainty = unresolved.length
+      ? JSON.stringify({
+          reason,
+          processes: unresolved.map((fact) => ({
+            pid: fact.pid,
+            startIdentity: fact.startIdentity,
+          })),
+          ...(survivors.length ? { survivors } : {}),
+        })
+      : undefined;
+    const repeated =
+      uncertainty !== undefined && intent?.uncertainty === uncertainty;
+    if (result.terminated.length || (failed.length && !repeated))
+      store.event(
+        run.taskId,
+        "run_process_cleanup",
+        JSON.stringify({
+          runId: run.id,
+          stopped: result.terminated.map((fact) => ({
+            pid: fact.pid,
+            startIdentity: fact.startIdentity,
+          })),
+          survivors,
+        }),
+      );
     stopped ||= result.terminated.length > 0;
     if (result.terminated.length) recordStop(store, run, hostId, startedAt);
     if (uncertainty !== undefined) {
@@ -347,33 +648,90 @@ async function sweep(store: Store, hostId: string, options: Parameters<typeof sw
       continue;
     }
     if (result.terminated.length || respawned.length) continue;
-    if (!stillSettled()) continue;
+    if (!stillSettled()) {
+      deferReason(store, run, "run or its participant is active");
+      continue;
+    }
     // A live non-init ancestor still owns a process carrying this run's identity:
     // its next turn may use the scratch, so the leaf stays until that owner exits.
-    const retainedByAncestor = retainedFacts.filter(fact => processBelongsToRun(fact, environments.get(fact.pid), run, dataHome));
-    if (retainedByAncestor.length) { recordLeftAlone(store, run, hostId, "live-ancestor", retainedByAncestor, startedAt); continue; }
+    const retainedByAncestor = retainedFacts.filter((fact) =>
+      processBelongsToRun(fact, environments.get(fact.pid), run, dataHome),
+    );
+    if (retainedByAncestor.length) {
+      recordLeftAlone(
+        store,
+        run,
+        hostId,
+        "live-ancestor",
+        retainedByAncestor,
+        startedAt,
+      );
+      continue;
+    }
     // A protected standing runtime can still use the launch leaf. Retire that
     // leaf only after the host releases it, rather than breaking its next turn.
-    if (run.temporaryDirectory && protectedFacts.some(fact =>
-      [environments.get(fact.pid)?.TMPDIR, environments.get(fact.pid)?.TMP, environments.get(fact.pid)?.TEMP].includes(run.temporaryDirectory))) continue;
+    if (
+      run.temporaryDirectory &&
+      protectedFacts.some((fact) =>
+        [
+          environments.get(fact.pid)?.TMPDIR,
+          environments.get(fact.pid)?.TMP,
+          environments.get(fact.pid)?.TEMP,
+        ].includes(run.temporaryDirectory),
+      )
+    ) {
+      deferReason(
+        store,
+        run,
+        "a protected runtime still uses the scratch directory",
+      );
+      continue;
+    }
     if (run.temporaryDirectory) {
-      if (!store.getMeta<CleanupRun>(key(run.id))) store.queueRunProcessCleanup({ ...run, hostId });
-      if (!store.removeRunScratchAfterProcesses(run.temporaryDirectory)) continue;
+      if (!store.getMeta<CleanupRun>(key(run.id)))
+        store.queueRunProcessCleanup({ ...run, hostId });
+      if (!store.removeRunScratchAfterProcesses(run.temporaryDirectory)) {
+        deferReason(store, run, "scratch retirement was refused");
+        continue;
+      }
     }
     // Retain a displaced initial worker's identity for historical sweeps even
     // after its task row moves to another run; support runs also have run rows.
     if (store.getMeta<CleanupRun>(key(run.id))?.pending !== false)
-      store.setMeta(key(run.id), { id: run.id, taskId: run.taskId, hostId, agentId: run.agentId, temporaryDirectory: run.temporaryDirectory, pending: false });
+      store.setMeta(key(run.id), {
+        id: run.id,
+        taskId: run.taskId,
+        hostId,
+        agentId: run.agentId,
+        temporaryDirectory: run.temporaryDirectory,
+        pending: false,
+      });
   }
   // A tool can start another child while stopping. Re-read before deleting
   // scratch; a bounded pass retains anything still live for retry.
-  if (stopped && round < 8) await sweep(store, hostId, options, round + 1, startedAt, existed);
+  if (stopped && round < 8)
+    await sweep(store, hostId, options, round + 1, startedAt, existed);
 }
 
 /** Remember the one stop that makes a same-run respawn "seen again". */
-function recordStop(store: Store, run: CleanupRun, hostId: string, at: number): void {
-  const intent = store.getMeta<CleanupRun>(key(run.id)) ?? { id: run.id, taskId: run.taskId, hostId, agentId: run.agentId, temporaryDirectory: run.temporaryDirectory, pending: true };
-  store.setMeta(key(run.id), { ...intent, stoppedAt: new Date(at).toISOString() });
+function recordStop(
+  store: Store,
+  run: CleanupRun,
+  hostId: string,
+  at: number,
+): void {
+  const intent = store.getMeta<CleanupRun>(key(run.id)) ?? {
+    id: run.id,
+    taskId: run.taskId,
+    hostId,
+    agentId: run.agentId,
+    temporaryDirectory: run.temporaryDirectory,
+    pending: true,
+  };
+  store.setMeta(key(run.id), {
+    ...intent,
+    stoppedAt: new Date(at).toISOString(),
+  });
 }
 
 /**
@@ -381,20 +739,76 @@ function recordStop(store: Store, run: CleanupRun, hostId: string, at: number): 
  * ancestor is recorded once while it stands; a respawn after a stop is recorded
  * once per window, so repeated sweeps add nothing to the task timeline.
  */
-function recordLeftAlone(store: Store, run: CleanupRun, hostId: string, reason: string,
-  facts: Array<{ pid: number; startIdentity: string }>, at: number): void {
+function recordLeftAlone(
+  store: Store,
+  run: CleanupRun,
+  hostId: string,
+  reason: string,
+  facts: Array<{ pid: number; startIdentity: string }>,
+  at: number,
+): void {
   const intent = store.getMeta<CleanupRun>(key(run.id));
   const previous = intent?.leftAlone;
-  if (previous?.reason === reason && (reason === "live-ancestor" || at - Date.parse(previous.at) < CLEANUP_RESPAWN_WINDOW_MS)) return;
-  store.event(run.taskId, "run_process_cleanup_left_alone", JSON.stringify({ runId: run.id, reason,
-    processes: facts.map(fact => ({ pid: fact.pid, startIdentity: fact.startIdentity })) }));
-  store.setMeta(key(run.id), { ...(intent ?? { id: run.id, taskId: run.taskId, hostId, agentId: run.agentId,
-    temporaryDirectory: run.temporaryDirectory }), pending: intent?.pending ?? true, leftAlone: { reason, at: new Date(at).toISOString() } });
+  if (
+    previous?.reason === reason &&
+    (reason === "live-ancestor" ||
+      at - Date.parse(previous.at) < CLEANUP_RESPAWN_WINDOW_MS)
+  ) {
+    if (intent?.uncertainty)
+      store.setMeta(key(run.id), { ...intent, uncertainty: undefined });
+    return;
+  }
+  store.event(
+    run.taskId,
+    "run_process_cleanup_left_alone",
+    JSON.stringify({
+      runId: run.id,
+      reason,
+      processes: facts.map((fact) => ({
+        pid: fact.pid,
+        startIdentity: fact.startIdentity,
+      })),
+    }),
+  );
+  store.setMeta(key(run.id), {
+    ...(intent ?? {
+      id: run.id,
+      taskId: run.taskId,
+      hostId,
+      agentId: run.agentId,
+      temporaryDirectory: run.temporaryDirectory,
+    }),
+    pending: intent?.pending ?? true,
+    uncertainty: undefined,
+    leftAlone: { reason, at: new Date(at).toISOString() },
+  });
 }
 
-function deferCleanup(store: Store, run: CleanupRun, uncertainty: string): void {
+function deferCleanup(
+  store: Store,
+  run: CleanupRun,
+  uncertainty: string,
+): void {
   const prior = store.getMeta<CleanupRun>(key(run.id));
   if (prior?.uncertainty === uncertainty) return;
-  store.event(run.taskId, "run_process_cleanup_deferred", JSON.stringify({ runId: run.id, ...JSON.parse(uncertainty) }));
-  store.setMeta(key(run.id), { id: run.id, taskId: run.taskId, hostId: run.hostId, agentId: run.agentId, temporaryDirectory: run.temporaryDirectory, ...prior, pending: true, uncertainty });
+  store.event(
+    run.taskId,
+    "run_process_cleanup_deferred",
+    JSON.stringify({ runId: run.id, ...JSON.parse(uncertainty) }),
+  );
+  store.setMeta(key(run.id), {
+    id: run.id,
+    taskId: run.taskId,
+    hostId: run.hostId,
+    agentId: run.agentId,
+    temporaryDirectory: run.temporaryDirectory,
+    ...prior,
+    pending: true,
+    uncertainty,
+  });
+}
+
+/** A named wait retains the same uncertainty format as per-process failures. */
+function deferReason(store: Store, run: CleanupRun, reason: string): void {
+  deferCleanup(store, run, JSON.stringify({ reason, processes: [] }));
 }
