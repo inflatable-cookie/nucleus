@@ -1536,9 +1536,20 @@ open.
   presence that returns inside the grace is silent. The web board is the
   operator-visible surface (the plugin board is gone with the plugin). A
   CLI-started service never granted presence, so this path does not fire.
-- **Only the bridge starts the daemon.** An ordinary CLI call reads it over the
-  authenticated socket and refuses with `unavailable` when nothing is running;
-  it never spawns, upgrades, reads SQLite or falls back on its own.
+- **Only the bridge and the T3Code launcher start the daemon.** The Paseo bridge
+  spawns it as before. A configured local T3Code host has one more starter
+  (Tom, 2026-11-19, nucleus#1394): T3 probes its registered `nucleus-acp` launcher
+  on its own cold start, with no thread, and that launcher starts the detached
+  daemon when the stored T3 endpoint is loopback, no service identity names a live
+  process, no service roll is in progress and no fresh bridge spawn claim exists.
+  It takes its own exclusive claim (`queue-service.t3-launch.json`), so repeated
+  and concurrent probes start one daemon, and it never waits for the daemon to
+  answer. A probe during a roll starts nothing; the roll owns the replacement.
+  The daemon's own clock, grace and run fence are unchanged. Its started daemon
+  never holds bridge presence, so the lost-plugin fault never fires for it. An
+  ordinary CLI call reads the daemon over the authenticated socket and refuses with
+  `unavailable` when nothing is running; it never spawns, upgrades, reads SQLite or
+  falls back on its own.
 
 Proofs: `test/host-idle-lifecycle.test.ts` (the grace, reconnect cancellation,
 a live run holding it and the shutdown following its settlement, restart
