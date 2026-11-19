@@ -36,6 +36,33 @@ export interface ResponsibleShortlist {
   observedAt: number;
 }
 
+/**
+ * How one shortlisted thread answered its last observation. Only `gone` drops a
+ * candidate from the shortlist; `unverified` (a slow or failed read, or a host
+ * that could not answer) keeps its rank, and `unroutable` (the host named a
+ * different thread) is never picked (Tom, 2026-11-19; nucleus#1383).
+ */
+export type ResponsibleObservationState = 'routable' | 'unverified' | 'unroutable';
+
+export interface ResponsibleObservation {
+  state: ResponsibleObservationState;
+  /** Why the thread is not verified or not routable; null when routable. */
+  detail: string | null;
+  /** When the observation finished. */
+  observedAt: string;
+}
+
+/** A shortlisted thread with its last observation; `project.get` shows every one of these. */
+export interface ResponsibleCandidate extends ResponsibleThread {
+  observation: ResponsibleObservation | null;
+}
+
+/**
+ * The bound on one planner-thread read on a busy Paseo daemon. A read that does
+ * not finish in time is unverified, never gone, so a busy planner keeps its rank.
+ */
+export const RESPONSIBLE_OBSERVATION_MS = 5_000;
+
 const DEFAULT_TTL_MS = 3 * 60_000;
 const DEFAULT_HOST_TIMEOUT_MS = 2_000;
 

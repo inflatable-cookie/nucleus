@@ -96,15 +96,29 @@ Nucleus checks liveness before delivery. It clears the affected cache on deliver
 failure, host loss or a new dispatching thread. A closed observation discards
 the shortlist that contained it and prompts a fresh inventory on the next
 lookup. Verified survivors remain available to notice producers during that
-refresh. A thread or host that does not answer within its bound drops out of
-that pass. When no candidate
-is live, `ask` and `tell` record and return that the sender should handle the
-matter; planning questions do not start a decider. Operator-only matters go to
-the board. A task's own dispatching planner remains its first rung. `project.get`
-and the project settings view show the resolved thread, host, ranking reasons
-(registered planner, dispatcher, named agent, repository worker), last
-interaction and cache age. Explicit named addressing remains independent of this
-resolver.
+refresh.
+
+Each shortlisted thread gets one observation, bounded by
+`RESPONSIBLE_OBSERVATION_MS` (5 seconds, sized for a busy Paseo daemon). Only a
+positive archived, closed or gone answer drops a candidate. A different-thread
+answer makes it `unroutable`, so it is never picked. A read that times out,
+fails or cannot confirm the thread (host down, no T3 tombstone) is `unverified`:
+it keeps its rank and is picked like a routable one. Delivery then goes through
+the ordinary tell path, which queues for a busy recipient and records an unknown
+outcome; it is never reported as "handle it yourself". The sender is removed
+from the shortlist before the pick, so a `tell` from a thread to its own project
+never reaches that thread, whatever the sender's own read says.
+
+When no candidate other than the sender is left, or every candidate is
+positively gone, `ask` and `tell` record and return that the sender should
+handle the matter; planning questions do not start a decider. Operator-only
+matters go to the board. A task's own dispatching planner remains its first
+rung. `project.get` and the project settings view show the resolved thread and
+the full shortlist, each thread with its host, ranking reasons (registered
+planner, dispatcher, named agent, repository worker), last interaction and its
+observation (state, detail and when it was taken), plus the cache age. Explicit
+named addressing remains independent of this resolver: an unreadable named
+agent is still never sent to.
 
 ### 4. Addressing by name
 

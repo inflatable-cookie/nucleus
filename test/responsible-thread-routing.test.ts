@@ -198,7 +198,7 @@ test('an unreadable candidate leaves a verified recipient available to synchrono
     const resolution = f.engine.resolution, project = f.store.projectByKey('example')!;
     const original = resolution.plannerPresence.threadRoute.bind(resolution.plannerPresence);
     resolution.plannerPresence.threadRoute = async (id, hostId) =>
-      id === formatAgentId('paseo-synthetic', 'other') ? { kind: 'unroutable', detail: 'Host observation failed' } : original(id, hostId);
+      id === formatAgentId('paseo-synthetic', 'other') ? { kind: 'unverified', detail: 'Host observation failed' } : original(id, hostId);
     const own = formatAgentId('paseo-synthetic', 'own');
     for (let i = 0; i < 2; i++) {
       assert.equal((await resolution.responsibleThread(project)).thread?.agentId, own);
@@ -213,5 +213,82 @@ test('an unreadable candidate leaves a verified recipient available to synchrono
     await resolution.responsibleThread(project);
     assert.equal(f.inventories(), 2);
 
+  } finally { f.store.close(); }
+});
+
+test('a registered planner whose read exceeds the budget is still picked and delivered, marked unverified', async () => {
+  const f = fixture();
+  try {
+    const resolution = f.engine.resolution;
+    const planner = formatAgentId('paseo-synthetic', 'own');
+    f.store.setProjectPlanner({ key: 'example', agentId: planner, setBy: 'operator' });
+    resolution.responsibleObservationMs = 20;
+    const original = resolution.plannerPresence.threadRoute.bind(resolution.plannerPresence);
+    resolution.plannerPresence.threadRoute = async (id, hostId) => {
+      if (id === planner) await new Promise(done => setTimeout(done, 200));
+      return original(id, hostId);
+    };
+    const { RuntimeRepositories } = await import('../core/runtime/repositories');
+    const repositories = new RuntimeRepositories({ store: f.store, engine: f.engine, markStoreAccess() {} } as never);
+    const project = await repositories.getProject({ key: 'example' });
+    assert.equal(project?.responsibleThread?.thread?.agentId, planner);
+    const top = project!.responsibleThread!.shortlist[0]!;
+    assert.equal(top.agentId, planner);
+    assert.equal(top.observation?.state, 'unverified');
+    assert.match(top.observation?.detail ?? '', /timed out/);
+    assert.equal((await f.tell(1)).status, 'delivered');
+    assert.deepEqual(f.sent, ['own']);
+  } finally { f.store.close(); }
+});
+
+test('the sender is removed before the pick, even when its own read is slow or unverified', async () => {
+  const f = fixture();
+  try {
+    const resolution = f.engine.resolution;
+    const sender = formatAgentId('paseo-synthetic', 'worker');
+    f.store.setProjectPlanner({ key: 'example', agentId: sender, setBy: 'operator' });
+    f.threads.push({ id: 'worker', title: 'worker', workspaceId: null, directory: repo, updatedAt: '2099-06-01T00:00:00Z' });
+    resolution.responsibleObservationMs = 20;
+    const original = resolution.plannerPresence.threadRoute.bind(resolution.plannerPresence);
+    resolution.plannerPresence.threadRoute = async (id, hostId) => {
+      if (id === sender) await new Promise(done => setTimeout(done, 200));
+      return original(id, hostId);
+    };
+    // The sender is the registered planner and ranks first; it is never picked, so the dispatcher B answers.
+    assert.equal((await f.tell(1)).status, 'delivered');
+    assert.deepEqual(f.sent, ['own']);
+  } finally { f.store.close(); }
+});
+
+test('a candidate that answers as a different thread is never picked', async () => {
+  const f = fixture();
+  try {
+    const resolution = f.engine.resolution;
+    const original = resolution.plannerPresence.threadRoute.bind(resolution.plannerPresence);
+    resolution.plannerPresence.threadRoute = async (id, hostId) =>
+      id === formatAgentId('paseo-synthetic', 'own') ? { kind: 'unroutable', detail: 'the host returned a different thread' } : original(id, hostId);
+    assert.equal((await f.tell(1)).status, 'delivered');
+    assert.deepEqual(f.sent, ['other']);
+  } finally { f.store.close(); }
+});
+
+test('project.get shows the shortlist with each observation, and a positively archived candidate leaves it', async () => {
+  const f = fixture();
+  try {
+    const { RuntimeRepositories } = await import('../core/runtime/repositories');
+    const repositories = new RuntimeRepositories({ store: f.store, engine: f.engine, markStoreAccess() {} } as never);
+    const first = await repositories.getProject({ key: 'example' });
+    const shortlist = first!.responsibleThread!.shortlist;
+    assert.deepEqual(shortlist.map(thread => thread.agentId), [formatAgentId('paseo-synthetic', 'own'), formatAgentId('paseo-synthetic', 'other')]);
+    for (const thread of shortlist) {
+      assert.equal(thread.observation?.state, 'routable');
+      assert.equal(thread.observation?.detail, null);
+      assert.ok(!Number.isNaN(Date.parse(thread.observation!.observedAt)));
+    }
+    // A positively archived candidate is dropped on the next read, without a fresh inventory.
+    f.archived.add('other');
+    const second = await repositories.getProject({ key: 'example' });
+    assert.deepEqual(second!.responsibleThread!.shortlist.map(thread => thread.agentId), [formatAgentId('paseo-synthetic', 'own')]);
+    assert.equal(second!.responsibleThread!.thread?.agentId, formatAgentId('paseo-synthetic', 'own'));
   } finally { f.store.close(); }
 });

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { formatAgentId, parseAgentId } from "../../shared/agent-identity";
+import { formatAgentId, parseAgentId, sameCallerIdentity } from "../../shared/agent-identity";
 import { observationTimeout } from "../recovery/observation-timeout";
 import { digest, now } from "../store/store";
 import {
@@ -1055,9 +1055,13 @@ export class AgentMessages {
       };
     }
     for (const candidate of candidates) {
+      // A project thread that cannot be confirmed in time still gets the tell
+      // path, which queues for a busy recipient. A named agent does not: an
+      // unreadable thread is never sent to (spec 060, section 4).
       const hostId = await this.liveThreadHost(
         candidate.agentId,
         candidate.hostId,
+        current.toRole !== "agent",
       );
       if (!hostId) {
         if (current.toProjectKey) this.resolution.responsibleThreads.cache.invalidate(current.toProjectKey);
@@ -1105,11 +1109,15 @@ export class AgentMessages {
     }
     const candidates: Array<{ agentId: string; hostId?: string }> = [];
     let senderIsCandidate = false;
+    // The sender is never a recipient of its own message, on any rung (Tom, 2026-11-19).
+    const isSender = (agentId: string, hostId?: string | null) =>
+      Boolean(record.fromAgentId) &&
+      sameCallerIdentity(agentId, record.fromAgentId, hostId, record.fromHostId);
     if (record.toLadderTaskId) {
       try {
         const task = this.store.task(record.toLadderTaskId);
         for (const rung of (await this.resolution.plannerRungsFor(task)).rungs)
-          candidates.push({ agentId: rung.agentId });
+          if (!isSender(rung.agentId)) candidates.push({ agentId: rung.agentId });
       } catch {
         /* the ladder's task is gone; the project's planner still answers */
       }
@@ -1130,24 +1138,32 @@ export class AgentMessages {
     };
   }
 
-  /** A thread's host when it is available and observed live (not archived, not gone); null otherwise. */
+  /**
+   * A thread's host when the thread is not positively gone and not a different
+   * thread. With `tolerateUnverified`, a read that is slow, failed or inconclusive
+   * still yields the host, so the tell path delivers or queues it. Without it,
+   * only a routable thread yields a host.
+   */
   private async liveThreadHost(
     agentId: string,
-    hintHostId?: string,
+    hintHostId: string | undefined,
+    tolerateUnverified: boolean,
   ): Promise<string | null> {
     const hostId =
       hintHostId ?? parseAgentId(agentId)?.hostId ?? (await this.resolution.identifyOriginHost(agentId));
+    if (!hostId) return null;
     if (
-      !hostId ||
+      !tolerateUnverified &&
       !this.resolution.withHost(hostId, () =>
         this.resolution.originHostAvailable(hostId),
       )
     )
       return null;
     try {
-      const state = await observationTimeout(this.resolution.plannerPresence.threadRoute(agentId, hostId), 'Thread observation timed out', 2000);
-      return state.kind === "routable" ? hostId : null;
-    } catch { return null; }
+      const state = await observationTimeout(this.resolution.plannerPresence.threadRoute(agentId, hostId), 'Thread observation timed out', this.resolution.responsibleObservationMs);
+      if (state.kind === "routable") return hostId;
+      return state.kind === "unverified" && tolerateUnverified ? hostId : null;
+    } catch { return tolerateUnverified ? hostId : null; }
   }
 
   /** One planner or agent delivery, fenced by an intent record so an unknown outcome is never resent. */
