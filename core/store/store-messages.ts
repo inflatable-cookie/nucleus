@@ -28,6 +28,18 @@ export class StoreMessages {
     return row ? parseMessage(row.data) : null;
   }
 
+  /**
+   * The one message whose reply handle this is (nucleus#1387). A handle is issued to
+   * exactly one message, so the newest match is also the only match.
+   */
+  messageByReplyTo(replyTo: string): AgentMessageRecord | null {
+    if (!replyTo) return null;
+    const row = this.core.db
+      .prepare("SELECT data FROM task_messages WHERE json_extract(data,'$.replyTo')=? ORDER BY rowid DESC LIMIT 1")
+      .get(replyTo) as { data: string } | undefined;
+    return row ? parseMessage(row.data) : null;
+  }
+
   putMessage(record: AgentMessageRecord) {
     this.core.db.prepare("INSERT INTO task_messages VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data")
       .run(record.id, record.fromTaskId, record.toTaskId, JSON.stringify(record));

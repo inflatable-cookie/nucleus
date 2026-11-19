@@ -1633,6 +1633,9 @@ export class Store {
   message(id: string): AgentMessageRecord | null {
     return this.messagesStore.message(id);
   }
+  messageByReplyTo(replyTo: string): AgentMessageRecord | null {
+    return this.messagesStore.messageByReplyTo(replyTo);
+  }
   putMessage(record: AgentMessageRecord) {
     return this.messagesStore.putMessage(record);
   }

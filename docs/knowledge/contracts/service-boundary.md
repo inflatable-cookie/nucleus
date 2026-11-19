@@ -262,6 +262,23 @@ run ticket `caller.resolve` locates from the verified thread, a participant tick
 the host-verified identity via `agent.tell`. `nucleus ask` still needs a run ticket.
 A slow host answers "The host is slow; retry" instead of hanging. A bare legacy project-planner ID binds to a matching
 native ID on Paseo regardless of the historical setter, and never to another host.
+
+Every delivered message carries its own reply route (nucleus#1387). Nucleus issues
+one opaque `replyTo` handle per recorded message, bound to the sender's identity as
+the sending ticket or host verification proved it, and the delivered text carries
+the exact line `Reply: nucleus tell {to:{reply:"<handle>"}}`. `tell` and `ask`
+accept `{reply}` in `to`; the service resolves it to that message's sender and
+delivers through the ordinary path — queued for a busy recipient, steered into a
+live turn, with an unknown outcome recorded as unknown and never resent. A handle
+is an address, not a credential: it reaches exactly the sender of that one message,
+it can be used by that message's recorded recipient only, it expires seven days
+after it was issued, and it grants only the right to deliver a message there. A
+reply is itself an ordinary message, so it carries its own handle and the
+conversation continues both ways. The sender's thread is re-observed on every
+reply; an archived or gone sender refuses with that fact and is never revived
+(Tom, 2026-11-11). Only a planner or named project agent can answer a question
+through a handle (`ask`), because that answer is the project rung's own; a task
+role or a plain host thread is answered with `tell`.
 The same ticket covers a task's own planner (task 1109): keyed per proven host and
 thread rather than per task, handed over by the same two routes, and valid only
 while a live task still names that thread as its planner. Reparenting moves the

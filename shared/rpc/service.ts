@@ -17,11 +17,11 @@ export const serviceState = defineRpc({ name: "queue.service-state", input: z.ob
 export const callerResolve = defineRpc({ name: "caller.resolve", input: z.object({ hostKind: hostKindSchema, nativeAgentId: z.string().min(1), hostScope: z.string().trim().min(1).max(500).optional() }).strict(), output: z.object({ caller: z.string().min(1), hostId: z.string().min(1), source: z.literal("host"), runTicket: z.string().min(1).optional(), participantTicket: z.string().min(1).optional() }).strict() });
 
 const agentTellReceipt = z.union([
-  z.object({ status: z.literal("delivered"), messageId: z.string(), to: z.string(), role: z.string(), recordedAt: z.string(), deliveredAt: z.string() }).strict(),
-  z.object({ status: z.literal("queued"), messageId: z.string(), to: z.string(), role: z.string(), recordedAt: z.string(), detail: z.string() }).strict(),
-  z.object({ status: z.literal("uncertain"), messageId: z.string(), to: z.string(), role: z.string(), recordedAt: z.string(), detail: z.string() }).strict(),
-  z.object({ status: z.literal("expired"), messageId: z.string(), to: z.string(), role: z.string(), recordedAt: z.string(), detail: z.string() }).strict(),
-  z.object({ status: z.literal("duplicate"), messageId: z.string(), detail: z.string() }).strict(),
+  z.object({ status: z.literal("delivered"), messageId: z.string(), to: z.string(), role: z.string(), recordedAt: z.string(), deliveredAt: z.string(), replyTo: z.string().nullable() }).strict(),
+  z.object({ status: z.literal("queued"), messageId: z.string(), to: z.string(), role: z.string(), recordedAt: z.string(), detail: z.string(), replyTo: z.string().nullable() }).strict(),
+  z.object({ status: z.literal("uncertain"), messageId: z.string(), to: z.string(), role: z.string(), recordedAt: z.string(), detail: z.string(), replyTo: z.string().nullable() }).strict(),
+  z.object({ status: z.literal("expired"), messageId: z.string(), to: z.string(), role: z.string(), recordedAt: z.string(), detail: z.string(), replyTo: z.string().nullable() }).strict(),
+  z.object({ status: z.literal("duplicate"), messageId: z.string(), detail: z.string(), replyTo: z.string().nullable() }).strict(),
 ]);
 
 /**
