@@ -2319,7 +2319,7 @@ test("an owner restart with an intent but no sent receipt reports unknown delive
   }
 });
 
-test("a real lost restart settles after its old worker is isolated and released", async () => {
+test("the sweep settles a real lost restart after its old worker is isolated and released", async () => {
   const f = fixture();
   try {
     retainedWorker(f, "retained_worker", false);
@@ -2357,9 +2357,24 @@ test("a real lost restart settles after its old worker is isolated and released"
     assert.ok("accepted" in accepted);
     const operation = await f.engine.awaitOperation(accepted.operation.id);
     assert.equal(operation.state, "needs_attention");
+    assert.equal(operation.effect?.target, "restart");
     assert.equal(operation.effect?.status, "uncertain");
+    assert.equal(operation.attempts, 1);
+    assert.match(operation.diagnostic, /Transport/);
+    assert.equal(operation.result, null);
+    assert.equal(operation.preSendReceipt ?? null, null);
     assert.equal(f.events("owner_control").length, 0);
-    const waiting = () => f.next().verbs.some(view => !view.available && view.refusal?.includes(operation.id));
+    const sweep = async () => {
+      const pass = await f.engine.auditPass(true);
+      assert.equal(pass.fault, null);
+      assert.ok(pass.visited.has(f.taskId));
+    };
+    const waiting = () =>
+      f
+        .next()
+        .verbs.some(
+          (view) => !view.available && view.refusal?.includes(operation.id),
+        );
     assert.equal(waiting(), true);
     const offered = () =>
       f
@@ -2378,6 +2393,15 @@ test("a real lost restart settles after its old worker is isolated and released"
       f.control({ reason: "A second restart" }),
       /operation .*uncertain/,
     );
+    await sweep();
+    assert.deepEqual(f.store.operation(operation.id), operation);
+    assert.equal(f.events("operation_superseded").length, 0);
+    assert.equal(
+      waiting(),
+      true,
+      "a host answer leaves the original target unknown",
+    );
+    assert.equal(offered(), false);
     assert.equal(sends, 1);
     await new Promise((resolve) => setTimeout(resolve, 10));
     const alternate = profile("worker-alt", "test/worker-alt", ["worker"]);
@@ -2449,6 +2473,7 @@ test("a real lost restart settles after its old worker is isolated and released"
     assert.equal(f.events("worker_replacement").length, 1);
     assert.notEqual(f.current().agentId, "worker-agent");
     const replaced = f.current();
+    f.store.setMeta("paused", true);
     f.store.update(f.taskId, { retiredWorkers: [] });
     assert.equal(
       waiting(),
@@ -2465,11 +2490,32 @@ test("a real lost restart settles after its old worker is isolated and released"
       "a replacement using the old agent is not isolated",
     );
     f.store.update(f.taskId, { agentId: replaced.agentId });
+    await sweep();
+    const settled = f.store.operation(operation.id)!;
+    const { settlement, ...receipt } = settled;
+    const { settlement: _, ...initialReceipt } = operation;
+    assert.deepEqual(receipt, initialReceipt);
+    assert.ok(settlement);
+    const { evidence, kind, ...binding } = settlement;
+    assert.equal(kind, "superseded");
+    assert.deepEqual(binding, {
+      id: operation.id,
+      inputHash: operation.inputHash,
+      attempt: operation.attempts,
+      intentAt: operation.effect!.intentAt,
+    });
+    assert.match(
+      evidence,
+      /worker-run on worker-agent was retired by worker replacement/,
+    );
     assert.equal(waiting(), false);
-    f.engine.reconcileBlockedEffects(f.taskId);
+    assert.equal(offered(), false);
     assert.equal(f.events("operation_superseded").length, 1);
-    f.engine.reconcileBlockedEffects(f.taskId);
+    await sweep();
+    assert.deepEqual(f.store.operation(operation.id), settled);
     assert.equal(f.events("operation_superseded").length, 1);
+    assert.equal(waiting(), false);
+    assert.equal(offered(), false);
     const repeated = await f.engine.startOperation({
       key,
       kind: "task_control",
@@ -2478,7 +2524,8 @@ test("a real lost restart settles after its old worker is isolated and released"
       payload,
     });
     assert.ok("accepted" in repeated);
-    assert.equal(repeated.operation.state, "needs_attention");
+    assert.deepEqual(repeated.operation, settled);
+    assert.equal(f.events("owner_control").length, 0);
     assert.equal(sends, 1);
   } finally {
     await f.close();
