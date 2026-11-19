@@ -30,7 +30,8 @@ import {
   HostUnknownDeliveryError,
   hostFailureRefusalDetail,
 } from "../core/host";
-import { T3CompatibilityError } from "../hosts/t3code/contracts";
+import { T3CompatibilityError, shellThread } from "../hosts/t3code/contracts";
+import { activeStatuses, shellThreadStatus } from "../hosts/t3code/reads";
 import {
   workspaceThreadFacts,
   type WorkspaceThreadInventoryHost,
@@ -2701,6 +2702,47 @@ test("the workspace inventory reads T3's finished, archived and removed threads 
     { foreignAgentIds: [foreign.id] },
     "an allowed idle foreign thread is named, not treated as the task's",
   );
+});
+
+test("every raw status the shell decoder admits reaches the archive proof as its own answer (nucleus#1381)", () => {
+  // The shell decoder accepts only this closed enum, so no row the service reads can
+  // carry any other raw status. Each value is walked through the same mapping the
+  // inventory uses and the archive facts that decide the workspace.
+  const finishedRun = ["idle", "completed", "interrupted", "failed", "cancelled", "rolled_back"];
+  const liveRun = ["preparing", "queued", "starting", "running", "waiting"];
+  assert.deepEqual(
+    [...shellThread.shape.status.options].sort(),
+    [...finishedRun, ...liveRun].sort(),
+    "the mapping covers the whole shell enum; a new T3 status must be classified here",
+  );
+  for (const status of shellThread.shape.status.options) {
+    const row = { id: "pilot-row", status, activeRunId: null, archivedAt: null, deletedAt: null } as unknown as Parameters<typeof shellThreadStatus>[0];
+    const mapped = shellThreadStatus(row);
+    const entries = [
+      {
+        agent: {
+          id: "pilot-row",
+          workspaceId: "ws",
+          labels: { "nucleus.task": "task-1381-pilot" },
+          status: mapped,
+          activeTurn: !!row.activeRunId || activeStatuses.has(status),
+          pendingPermissions: [],
+        },
+      },
+    ];
+    if (finishedRun.includes(status))
+      assert.deepEqual(
+        workspaceThreadFacts(entries, "task-1381-pilot", new Set(), false),
+        { foreignAgentIds: [] },
+        `${status} is terminal`,
+      );
+    else
+      assert.throws(
+        () => workspaceThreadFacts(entries, "task-1381-pilot", new Set(), false),
+        /become idle/,
+        `${status} holds the archive`,
+      );
+  }
 });
 
 test("a finished task's follow-up child leaves observation with its task, and a live task's keeps its row (nucleus#1381)", async (t) => {
