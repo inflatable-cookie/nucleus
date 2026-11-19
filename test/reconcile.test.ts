@@ -1979,7 +1979,8 @@ for (const foundImmediately of [true, false]) {
         );
         deliveries.push(messageId);
       };
-      f.adapter.notify = foundImmediately ? undefined : notify;
+      if (foundImmediately) Reflect.deleteProperty(f.adapter, "notify");
+      else f.adapter.notify = notify;
       await f.engine.performTaskControl({
         taskId: f.task.id,
         version: f.current().version,
