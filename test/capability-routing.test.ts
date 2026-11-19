@@ -12,7 +12,7 @@ import {join} from 'node:path';
 import {Store} from '../core/store/store';
 import {Engine} from '../core/engine';
 import {chooseProfile,eligibilityReasons,validateNamedProfile} from '../core/dispatch/routing';
-import {parseNorthstarDocument,submissionQueueFields} from '../core/planning/handoff';
+import {parseBriefDocument,submissionQueueFields} from '../core/planning/handoff';
 import {
   capabilityLevelSchema,outcomeSchema,poolRecordFromLegacy,poolSchema,scopeSchema,
   submissionRecordFromLegacy,submissionSchema,taskControlInputSchema,usageLevels,type Profile,type PoolEntry,type Task,type UsageLevel,
@@ -232,12 +232,12 @@ test('outcome routing records scope and complexity',()=>{
 
 test('brief frontmatter parses legacy capability and current scope+complexity; a document with both is refused',()=>{
   const wrap=(queue:string)=>`---\ntitle: Frontmatter fixture\nqueue_approval: "Tom approves"\nqueue:\n${queue}---\n\n## Outcome\n\nBuild it.\n`;
-  const legacy=parseNorthstarDocument(wrap('  capability: mechanical\n'),'brief');
+  const legacy=parseBriefDocument(wrap('  capability: mechanical\n'),'brief');
   assert.equal(legacy.queue.scope,'mechanical');
-  const current=parseNorthstarDocument(wrap('  scope: complex\n  complexity: very_high\n'),'brief');
+  const current=parseBriefDocument(wrap('  scope: complex\n  complexity: very_high\n'),'brief');
   assert.equal(current.queue.scope,'complex');assert.equal(current.queue.complexity,'very_high');
-  assert.throws(()=>parseNorthstarDocument(wrap('  capability: general\n  scope: general\n'),'brief'),/both the legacy "capability" and the current "scope"/);
-  assert.throws(()=>parseNorthstarDocument(wrap('  scope: complex\n  complexity: enormous\n'),'brief'),/Invalid brief frontmatter/);
+  assert.throws(()=>parseBriefDocument(wrap('  capability: general\n  scope: general\n'),'brief'),/both the legacy "capability" and the current "scope"/);
+  assert.throws(()=>parseBriefDocument(wrap('  scope: complex\n  complexity: enormous\n'),'brief'),/Invalid brief frontmatter/);
   const submission=submissionSchema.parse({submissionId:'frontmatter',title:'Frontmatter fixture',repoPath:'/repo',planningCommit:'a'.repeat(40),originAgentId:'origin',brief:{text:wrap('  scope: complex\n  complexity: very_high\n'),mediaType:'text/markdown',digest:'sha256:'+'c'.repeat(64)},...submissionQueueFields(current.queue)});
   assert.equal(submission.scope,'complex');assert.equal(submission.complexity,'very_high');
 });

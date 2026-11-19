@@ -9,6 +9,16 @@ Governing refs: [Spec 058](058-responsible-tasks.md) (delegated answers and the
 project planner), [service-boundary contract](../contracts/service-boundary.md)
 (caller tickets).
 
+**Direction change (Tom, 2026-11-19).** "I want to get more away from the idea of
+long-running singleton planner threads - I don't want projects in nucleus to have
+\"a planner\", rather just be able to spin up a thread somewhere without ceremony,
+plan some stuff, dispatch the workers, and delete the thread when it's done."
+Cross-planner messages resolve to the most recently active live (not archived)
+thread that works on the project's repositories or has dispatched tasks to it,
+from a short-lived cache. If none exists, the sender handles the request itself.
+A task's own dispatching planner stays its first route. The registered fallback
+planner retires (implementation: nucleus#1373).
+
 ## Problem
 
 A complex project runs several planner-type threads in one orchestration

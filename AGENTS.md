@@ -58,8 +58,6 @@ all fragments into the changelog and removes the folded files.
   The worker owns its blockers with the retained reviewer as its second opinion,
   the planner ladder takes planning rulings, and one retained recovery thread
   handles operational faults.
-- Nucleus implements the legacy handoff protocol for consumer repositories; in
-  this repository's code, tests, specs and skill those paths are product.
 
 ## Guardrails
 
@@ -81,7 +79,7 @@ all fragments into the changelog and removes the folded files.
   project names because they will be public.
 - Never run `git stash`: `refs.stash` is shared by every worktree. Commit work
   in progress on the task branch. See the [orchestration contract](docs/knowledge/contracts/orchestration.md).
-- Never edit a submitted handoff; clarify in the owning spec, or resubmit and
+- Never edit a submitted brief; clarify in the owning spec, or resubmit and
   supersede.
 - No release mutations, CI workflow edits or live acceptance runs that create
   GitHub or native application resources without operator authorization.

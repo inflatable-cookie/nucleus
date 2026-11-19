@@ -55,8 +55,7 @@ import {
   heldReviewEntry,
   hostedOrigin,
   ownerRevisionFixture,
-  ownedRevisableTask,
-} from "./support/review-entry-fixture";
+  ownedRevisableTask, seedFixtureLead } from "./support/review-entry-fixture";
 
 test("review-entry input is strict, normalizes declared models and forbids review bypass", () => {
   assert.deepEqual(input().authorDeclaration.models, ["openai/gpt-5"]);
@@ -331,6 +330,7 @@ test("legacy task adoption data is stripped while the task remains readable", ()
   const fixture = exactProofFixture();
   try {
     const store = new Store(join(fixture.root, "legacy.sqlite"));
+    seedFixtureLead(store, fixture.repo, fixture.planningCommit);
     try {
       const task = store.insert(
         {
@@ -365,6 +365,7 @@ test("legacy task adoption data is stripped while the task remains readable", ()
 test("Spec 021 #5 review entry assigns a number atomically with task and operation", async () => {
   const fixture = exactProofFixture(),
     store = new Store(join(fixture.root, "queue.sqlite"));
+    seedFixtureLead(store, fixture.repo, fixture.planningCommit);
   const operation = queueOperationSchema.parse({
     id: operationId,
     key: "review-entry-proof",
@@ -556,7 +557,7 @@ test("Queue-approved brief binds in an isolated workspace; shared canonical mode
   }
 });
 
-test("Queue-held brief preview allows a PR predating planning while a handoff still requires head ancestry", async () => {
+test("Queue-held brief preview allows a PR predating planning; the brief pins planning, not head ancestry", async () => {
   const brief = queueHeldBriefFixture(),
     briefStore = new Store(join(brief.root, "brief.sqlite"));
   approveBrief(briefStore, brief);
@@ -585,42 +586,13 @@ test("Queue-held brief preview allows a PR predating planning while a handoff st
     briefStore.close();
     rmSync(brief.root, { recursive: true, force: true });
   }
-
-  const handoff = exactProofFixture(),
-    handoffStore = new Store(join(handoff.root, "handoff.sqlite"));
-  try {
-    writeFileSync(join(handoff.repo, "README.md"), "current main advanced\n");
-    runGit(handoff.repo, "add", "README.md");
-    runGit(handoff.repo, "commit", "-m", "advance planning main");
-    const currentMain = runGit(handoff.repo, "rev-parse", "HEAD");
-    runGit(handoff.repo, "push", "origin", "main");
-    const handoffInput = reviewEntryInputSchema.parse({
-      ...handoff.reviewInput,
-      submission: {
-        ...handoff.reviewInput.submission,
-        planningCommit: currentMain,
-      },
-      expectedBaseCommit: currentMain,
-    });
-    const preview = await previewReviewEntry(
-      handoffStore,
-      handoff.adapter,
-      handoffInput,
-    );
-    assert.equal(preview.eligible, false);
-    assert.match(
-      preview.refusals[0]?.explanation ?? "",
-      /reviewed head does not descend from the planning commit/,
-    );
-  } finally {
-    handoffStore.close();
-    rmSync(handoff.root, { recursive: true, force: true });
-  }
 });
+
 
 test("review admission rechecks dependencies after the awaited pre-dispatch hook", async () => {
   const fixture = exactProofFixture(),
     store = new Store(join(fixture.root, "queue.sqlite"));
+    seedFixtureLead(store, fixture.repo, fixture.planningCommit);
   const parent = store.insert(
     submissionSchema.parse({
       ...fixture.reviewInput.submission,
@@ -1220,6 +1192,7 @@ test("intake-owned review workspaces use guarded cleanup; external ownership sta
   for (const ownership of ["external", "intake"] as const) {
     const f = exactProofFixture(),
       store = new Store(":memory:");
+    seedFixtureLead(store, f.repo, f.planningCommit);
     let archives = 0;
     const intake = reviewEntryInputSchema.parse({
       ...f.reviewInput,
@@ -1416,6 +1389,7 @@ test("papercut-tagged approved lead review entry retains its papercut slot class
 test("a typed pre-binding refusal whose explanation says uncertain settles as a definite failure", async () => {
   const fixture = exactProofFixture(),
     store = new Store(join(fixture.root, "queue.sqlite"));
+    seedFixtureLead(store, fixture.repo, fixture.planningCommit);
   const adapter: ReviewEntryAdapter = {
     ...fixture.adapter,
     inspectReviewEntry: async () => ({
@@ -1452,6 +1426,7 @@ test("an attention-held pre-binding review entry rearms under its original ID, k
   const fixture = exactProofFixture(),
     path = join(fixture.root, "queue.sqlite");
   let store = new Store(path);
+  seedFixtureLead(store, fixture.repo, fixture.planningCommit);
   try {
     const held = heldReviewEntry(store, fixture, "pr268-shaped");
     const reconciled = await reconcileReviewEntryOperation(
@@ -1520,6 +1495,7 @@ test("an attention-held pre-binding review entry rearms under its original ID, k
 test("reconciliation refuses changed input, unknown effects, conflicting operations, live origins, moved heads and racing bindings without rearming", async () => {
   const fixture = exactProofFixture(),
     store = new Store(join(fixture.root, "queue.sqlite"));
+    seedFixtureLead(store, fixture.repo, fixture.planningCommit);
   const held = heldReviewEntry(store, fixture, "refusal-matrix"),
     current = () => store.operation(held.id)!;
   try {
@@ -1640,6 +1616,7 @@ test("reconciliation refuses changed input, unknown effects, conflicting operati
 test("reconciliation ignores unrelated settled history but refuses an unfinished review entry on the same workspace, branch or PR", async () => {
   const fixture = exactProofFixture(),
     store = new Store(join(fixture.root, "queue.sqlite"));
+    seedFixtureLead(store, fixture.repo, fixture.planningCommit);
   try {
     const held = heldReviewEntry(store, fixture, "scope-held");
     store.putOperation(
@@ -1747,6 +1724,7 @@ test("reconciliation ignores unrelated settled history but refuses an unfinished
 test("reconciliation refuses a review-entry operation whose branch or PR is already bound to another task", async () => {
   const fixture = exactProofFixture(),
     store = new Store(join(fixture.root, "queue.sqlite"));
+    seedFixtureLead(store, fixture.repo, fixture.planningCommit);
   try {
     const held = heldReviewEntry(store, fixture, "branch-conflict");
     const owner = queueOperationSchema.parse({

@@ -2,6 +2,7 @@ import { taskStopVerbsFor } from "../../shared/task-stop";
 import {
   reviewContinuationState,
   reviewFenceHoldsCoordinators,
+  reviewerCannotFinish,
 } from "../review/review-continuation";
 import { isSshAuthExhausted } from "../../shared/ssh-auth";
 import { randomBytes, randomUUID } from "node:crypto";
@@ -36,7 +37,10 @@ import {
 } from "./recovery-context";
 import { groupIsUnavailable, supersedingRouteProfile } from "../../shared/pool";
 import { requiredCheckPollMetaKey } from "../forge/checks";
-import { ProvenPreSendRefusalError, creationFailureSummary } from "./task-reasons";
+import {
+  ProvenPreSendRefusalError,
+  creationFailureSummary,
+} from "./task-reasons";
 import { refusedLaunchProfiles } from "./refused-launch";
 import { unreleasedExecutorRun } from "../qa/proof-admission";
 import {
@@ -220,11 +224,22 @@ export class CoordinatorRoute {
     // A reviewer past its checkpoint budget has stopped; a coordinator cannot continue it. The same
     // holds when the reviewer's own agent was positively observed closed: no same-run continuation
     // can land. The task escalates through the planner ladder (Spec 058 cutover 5).
+    //
+    // A reader that *reported* it cannot finish is the one exception: the lifecycle
+    // pass owns it. Once that reader's own agent is observed settled, that pass
+    // replaces it fresh at the same head, or escalates with that verb when the
+    // replacement cannot act. Escalating it here, before its turn ends, would
+    // pre-empt that ordinary exit and park the planner on a reader that could
+    // simply be replaced (nucleus#1372).
     if (reviewContinuationState(t, this.store) === "exhausted") {
-      this.resolution.openReviewContinuationEscalation(
-        this.store.task(t.id),
-        "exhausted",
-      );
+      const reader = t.resolution.currentRunId
+        ? this.store.run(t.resolution.currentRunId)
+        : null;
+      if (!(reader && reviewerCannotFinish(reader)))
+        this.resolution.openReviewContinuationEscalation(
+          this.store.task(t.id),
+          "exhausted",
+        );
       return null;
     }
     if (reviewContinuationState(t, this.store) === "closed") {

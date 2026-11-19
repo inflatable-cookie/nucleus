@@ -17,7 +17,7 @@ same planning. Nothing about the handover is written into the repository.
 1. **Start the successor** in the same workspace, with the same provider and
    model settings and the `Chatterbox=true` label. Tell it to load
    `nucleus` for planning. Documentation structure stays in `northstar`.
-2. **Brief it in its first prompt.** There is no handoff file. Keep the brief
+2. **Brief it in its first prompt.** The brief is Queue-held, not a repository file. Keep the brief
    short:
    - the current state;
    - what's in flight;

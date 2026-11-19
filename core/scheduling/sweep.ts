@@ -65,6 +65,7 @@ export type SweepContext = Pick<
   | "reconcile"
   | "recoverExhaustedWorkers"
   | "removeSiblings"
+  | "replaceExhaustedReviewers"
   | "resetAuditHostAvailability"
   | "resumePausedStops"
   | "retiredObservationKey"
@@ -138,9 +139,13 @@ export class Sweep {
         this.engine,
         [
           "adapter",
+          "hostAvailable",
+          "hostIds",
           "migrateProjectOwnersToPlanners",
           "removeSiblings",
+          "stopped",
           "store",
+          "withHost",
         ],
         [],
       ),
@@ -508,6 +513,15 @@ export class Sweep {
       await this.fleetStep("continueAwaitingReviewers", () =>
         this.engine.continueAwaitingReviewers(preflight),
       );
+      // A reader that reported it cannot finish is answered on the pass that
+      // observes it settled: a fresh replacement through the same owner verb the
+      // board offers, or its planner escalation. It never sits silently
+      // (nucleus#1372). A drain starts no run, so its replacement waits with
+      // every other launch.
+      if (!startsNoRuns(this.engine.store, this.engine.stopped))
+        await this.fleetStep("replaceExhaustedReviewers", () =>
+          this.engine.replaceExhaustedReviewers(preflight),
+        );
       await this.fleetStep("lifecycle", () =>
         this.engine.lifecycle.enqueuePass(),
       );

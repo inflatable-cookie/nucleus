@@ -1,15 +1,47 @@
 import { activeGroupLimit, PROFILE_CAPABILITY_LEVELS } from "../shared/pool";
-import { profileAvailability, hostModelFor, type NucleusProfile } from "../shared/profiles";
-import type { PoolEntry, Profile, Project, RepositorySettings, UiQueueState } from "../shared/contracts";
-import type { HostCatalog, HostFeature, HostModel, HostProvider } from "../shared/host";
+import {
+  profileAvailability,
+  hostModelFor,
+  type NucleusProfile,
+} from "../shared/profiles";
+import type {
+  PoolEntry,
+  Profile,
+  Project,
+  RepositorySettings,
+  UiQueueState,
+} from "../shared/contracts";
+import type {
+  HostCatalog,
+  HostFeature,
+  HostModel,
+  HostProvider,
+} from "../shared/host";
 import * as api from "../shared/contracts";
+import {
+  isCanonicalProvider,
+  thinkingCarriers,
+} from "../shared/profile-vocabulary";
+import { HOST_VOCABULARIES } from "../hosts/vocabularies";
 
-export const COST_LEVELS = ["very_low", "low", "medium", "high", "very_high"] as const;
-export const levelLabel = (level: string) => level.charAt(0).toUpperCase() + level.slice(1).replaceAll("_", " ");
+export const COST_LEVELS = [
+  "very_low",
+  "low",
+  "medium",
+  "high",
+  "very_high",
+] as const;
+export const levelLabel = (level: string) =>
+  level.charAt(0).toUpperCase() + level.slice(1).replaceAll("_", " ");
 /** Below this editor width (a phone) paired fields stack; Paseo's settings column keeps them side by side. */
 export const PAIRED_MIN_WIDTH = 460;
 export const HOST_DEFAULT = { value: "", label: "Host default" };
-export const PLAIN_KEYS: Record<string, string> = { xhigh: "Extra high", xlow: "Extra low", max: "Maximum", min: "Minimum" };
+export const PLAIN_KEYS: Record<string, string> = {
+  xhigh: "Extra high",
+  xlow: "Extra low",
+  max: "Maximum",
+  min: "Minimum",
+};
 /**
  * A host option in plain words: the host's display label when it reads as words,
  * else its raw key spelled out ("xhigh" reads "Extra high", "full_access" "Full access").
@@ -20,47 +52,118 @@ export function plainWords(label: string | undefined, id: string): string {
   if (/\s/.test(text) || /^[A-Z]/.test(text)) return text;
   const known = PLAIN_KEYS[text.toLowerCase()];
   if (known) return known;
-  const words = text.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ").trim().toLowerCase();
+  const words = text
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .trim()
+    .toLowerCase();
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
 export type ProfileDraft = {
-  name: string; provider: string; model: string;
-  modeId: string | null; thinkingOptionId: string | null;
+  name: string;
+  provider: string;
+  model: string;
+  modeId: string | null;
+  thinkingOptionId: string | null;
   featureValues: Record<string, unknown>;
 };
 
-export const emptyProfileDraft = (): ProfileDraft => ({ name: "", provider: "", model: "", modeId: null, thinkingOptionId: null, featureValues: {} });
-export const profileDraft = (profile: Pick<NucleusProfile, "name" | "provider" | "model" | "modeId" | "thinkingOptionId" | "featureValues">): ProfileDraft => ({
-  name: profile.name, provider: profile.provider, model: profile.model,
-  modeId: profile.modeId ?? null, thinkingOptionId: profile.thinkingOptionId ?? null,
+export const emptyProfileDraft = (): ProfileDraft => ({
+  name: "",
+  provider: "",
+  model: "",
+  modeId: null,
+  thinkingOptionId: null,
+  featureValues: {},
+});
+export const profileDraft = (
+  profile: Pick<
+    NucleusProfile,
+    | "name"
+    | "provider"
+    | "model"
+    | "modeId"
+    | "thinkingOptionId"
+    | "featureValues"
+  >,
+): ProfileDraft => ({
+  name: profile.name,
+  provider: profile.provider,
+  model: profile.model,
+  modeId: profile.modeId ?? null,
+  thinkingOptionId: profile.thinkingOptionId ?? null,
   featureValues: profile.featureValues ?? {},
 });
-
 
 /**
  * The canonical provider a stored profile names in the form's vocabulary, or null
  * when no registered host can run it. The vocabulary is every host's catalog in
  * canonical values (`profile.vocabulary`, task 1158).
  */
-export function namedProvider(provider: string, catalog: HostCatalog | undefined) {
-  return catalog && provider ? catalog.providers.find(candidate => candidate.key === provider) ?? null : null;
+export function namedProvider(
+  provider: string,
+  catalog: HostCatalog | undefined,
+) {
+  return catalog && provider
+    ? (catalog.providers.find((candidate) => candidate.key === provider) ??
+        null)
+    : null;
 }
 
 /** Each profile on each registered host (`profile.compatibility`), the read the CLI shares. */
-export type CompatibilityRead = { hosts: api.ProfileCompatibilityHost[]; rows: api.ProfileCompatibilityRow[] };
+export type CompatibilityRead = {
+  hosts: api.ProfileCompatibilityHost[];
+  rows: api.ProfileCompatibilityRow[];
+};
 
 /**
  * The one quiet status a profile row may show for the hosts (task 1158): nothing
  * while it runs on every registered host, else the hosts it can't run on with
- * each reason, for the icon's popover. Only when Nucleus serves more than one host.
+ * each reason, for the icon's popover. With one host the reason stands alone (it
+ * names the host): a level that host can't express is still a per-host note on
+ * the row, never only "Unavailable" (nucleus#1365).
  */
-export function hostCompatibilityNote(read: CompatibilityRead | undefined, profileId: string): string {
-  if (!read?.hosts || read.hosts.length < 2) return "";
-  return read.hosts.flatMap(host => {
-    const row = read.rows.find(item => item.profileId === profileId && item.hostId === host.hostId);
-    return row?.status === "unavailable" ? [`Not on ${host.label}: ${row.reason}`] : [];
-  }).join("\n");
+export function hostCompatibilityNote(
+  read: CompatibilityRead | undefined,
+  profileId: string,
+): string {
+  if (!read?.hosts?.length) return "";
+  const single = read.hosts.length === 1;
+  return read.hosts
+    .flatMap((host) => {
+      const row = read.rows.find(
+        (item) => item.profileId === profileId && item.hostId === host.hostId,
+      );
+      return row?.status === "unavailable"
+        ? [single ? row.reason : `Not on ${host.label}: ${row.reason}`]
+        : [];
+    })
+    .join("\n");
+}
+
+/**
+ * Stored option values that carry this provider's thinking on some host but are
+ * not a feature the editor shows (nucleus#1365): a carrier the migration kept
+ * because it had no canonical match or disagreed with the level. The editor shows
+ * them under its one Thinking control, and choosing a level there clears them.
+ */
+export function hiddenThinkingValues(
+  provider: string,
+  featureValues: Record<string, unknown>,
+  shown: readonly HostFeature[],
+): [string, unknown][] {
+  if (!isCanonicalProvider(provider)) return [];
+  const carriers = new Set(
+    Object.values(HOST_VOCABULARIES).flatMap((vocabulary) => {
+      const entry = vocabulary.providers[provider];
+      return entry ? [...thinkingCarriers(vocabulary, entry)] : [];
+    }),
+  );
+  return Object.entries(featureValues).filter(
+    ([option]) =>
+      carriers.has(option) && !shown.some((feature) => feature.id === option),
+  );
 }
 
 /**
@@ -71,7 +174,12 @@ export function hostCompatibilityNote(read: CompatibilityRead | undefined, profi
 export function providerShortReason(provider: HostProvider): string {
   const text = provider.problem.trim();
   const lower = text.toLowerCase();
-  if (/\b(sign[- ]?in|sign[- ]?on|unauthenticated|auth(?:entication)?|log[- ]?in)\b/.test(lower)) return "needs sign-in";
+  if (
+    /\b(sign[- ]?in|sign[- ]?on|unauthenticated|auth(?:entication)?|log[- ]?in)\b/.test(
+      lower,
+    )
+  )
+    return "needs sign-in";
   if (/\bdisabled\b/.test(lower)) return "unavailable";
   const first = text.split(/[.!\n]/)[0]?.trim() ?? "";
   if (!first) return "unavailable";
@@ -80,39 +188,81 @@ export function providerShortReason(provider: HostProvider): string {
 
 export function providerOptionLabel(provider: HostProvider): string {
   const label = provider.label || provider.key;
-  return provider.available ? label : `${label} · ${providerShortReason(provider)}`;
+  return provider.available
+    ? label
+    : `${label} · ${providerShortReason(provider)}`;
 }
 
 /** Project display name for a repository path: the project name, else its origin, never the path. */
-export function projectNameForPath(path: string, projects: readonly Project[], repositories: readonly RepositorySettings[]): string {
-  const project = projects.find(candidate => candidate.repositories.some(repo => repo.path === path));
+export function projectNameForPath(
+  path: string,
+  projects: readonly Project[],
+  repositories: readonly RepositorySettings[],
+): string {
+  const project = projects.find((candidate) =>
+    candidate.repositories.some((repo) => repo.path === path),
+  );
   if (project) return project.name;
-  const row = repositories.find(candidate => candidate.repository.path === path);
+  const row = repositories.find(
+    (candidate) => candidate.repository.path === path,
+  );
   if (row?.repository.origin) return row.repository.origin;
   return "this project";
 }
 
 export function featureFingerprint(model: HostModel | null): string {
   if (!model) return "";
-  return JSON.stringify(model.features.map(feature => ({
-    id: feature.id, type: feature.type, value: feature.value,
-    options: feature.type === "select" ? feature.options.map(option => option.id) : [],
-  })));
+  return JSON.stringify(
+    model.features.map((feature) => ({
+      id: feature.id,
+      type: feature.type,
+      value: feature.value,
+      options:
+        feature.type === "select"
+          ? feature.options.map((option) => option.id)
+          : [],
+    })),
+  );
 }
 
-export function defaultPoolEntry(profile: Pick<Profile, "id" | "provider" | "model">): PoolEntry {
-  return { profileId: profile.id, enabled: false, roles: ["worker"], group: profile.provider === "omp" ? `omp-${profile.model.split("/")[0]}` : profile.provider, weight: 1, scopes: ["general"] };
+export function defaultPoolEntry(
+  profile: Pick<Profile, "id" | "provider" | "model">,
+): PoolEntry {
+  return {
+    profileId: profile.id,
+    enabled: false,
+    roles: ["worker"],
+    group:
+      profile.provider === "omp"
+        ? `omp-${profile.model.split("/")[0]}`
+        : profile.provider,
+    weight: 1,
+    scopes: ["general"],
+  };
 }
 
 /**
  * A row's status, only when something needs a look: unavailable, else a paused
  * subscription group. By request and its status are retired (Tom, 2026-11-09).
  */
-export function profileRowStatus(profile: Pick<Profile, "available">, entry: PoolEntry, state: UiQueueState): { problem: string } {
-  return { problem: !profile.available ? "Unavailable" : activeGroupLimit(state.availability, entry.group) ? "Subscription paused" : "" };
+export function profileRowStatus(
+  profile: Pick<Profile, "available">,
+  entry: PoolEntry,
+  state: UiQueueState,
+): { problem: string } {
+  return {
+    problem: !profile.available
+      ? "Unavailable"
+      : activeGroupLimit(state.availability, entry.group)
+        ? "Subscription paused"
+        : "",
+  };
 }
 
-export function modelWords(profile: Pick<Profile, "provider" | "model">, catalog: HostCatalog | undefined): string {
+export function modelWords(
+  profile: Pick<Profile, "provider" | "model">,
+  catalog: HostCatalog | undefined,
+): string {
   const provider = namedProvider(profile.provider, catalog);
   const model = provider ? hostModelFor(profile.model, provider) : null;
   return model?.label || profile.model || "no model";
@@ -121,7 +271,10 @@ export function modelWords(profile: Pick<Profile, "provider" | "model">, catalog
 export type CatalogRead = { cwd: string; catalog: HostCatalog };
 
 /** How long ago the stored catalog was read from the host, for the Refresh tooltip. */
-export function catalogAge(readAt: string | undefined, nowMs = Date.now()): string {
+export function catalogAge(
+  readAt: string | undefined,
+  nowMs = Date.now(),
+): string {
   const at = readAt ? Date.parse(readAt) : NaN;
   if (!Number.isFinite(at)) return "";
   const minutes = Math.floor(Math.max(0, nowMs - at) / 60_000);
@@ -134,15 +287,25 @@ export function catalogAge(readAt: string | undefined, nowMs = Date.now()): stri
 
 export function identityCreateInput(draft: ProfileDraft) {
   return {
-    name: draft.name.trim(), provider: draft.provider, model: draft.model,
+    name: draft.name.trim(),
+    provider: draft.provider,
+    model: draft.model,
     ...(draft.modeId ? { modeId: draft.modeId } : {}),
-    ...(draft.thinkingOptionId ? { thinkingOptionId: draft.thinkingOptionId } : {}),
-    ...(Object.keys(draft.featureValues).length ? { featureValues: draft.featureValues } : {}),
+    ...(draft.thinkingOptionId
+      ? { thinkingOptionId: draft.thinkingOptionId }
+      : {}),
+    ...(Object.keys(draft.featureValues).length
+      ? { featureValues: draft.featureValues }
+      : {}),
   };
 }
 
 export function identityValid(draft: ProfileDraft) {
-  return draft.name.trim().length > 0 && draft.provider.length > 0 && draft.model.length > 0;
+  return (
+    draft.name.trim().length > 0 &&
+    draft.provider.length > 0 &&
+    draft.model.length > 0
+  );
 }
 
 /** One live profile row: name, labelled attention icons when needed, on/off and Edit. */

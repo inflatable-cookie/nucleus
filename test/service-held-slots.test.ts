@@ -40,7 +40,7 @@ async function startService(fixture: string, options: { admission?: AdmissionOpt
 
 const insert = (submissionId: string) => ({ target: 'store', method: 'insert', args: [submissionSchema.parse({
   submissionId, title: 'A blocked call cannot starve reads', repoPath: '/fixture', planningCommit: base,
-  handoffPath: `docs/handoffs/${submissionId}.md`, originAgentId: 'origin',
+  handoffPath: `tasks/${submissionId}.md`, originAgentId: 'origin',
 }), 'fixture-host', 'Handoff', base] });
 
 /** Poll health until `accept` holds; the executor publishes health on a one-second tick. */

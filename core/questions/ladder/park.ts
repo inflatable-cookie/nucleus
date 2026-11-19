@@ -1,19 +1,38 @@
-import type { Completion, Task } from '../../../shared/contracts';
-import { clipDecisionQuestion, isDispositionActive, taskControlInputSchema } from '../../../shared/contracts';
-import { automaticRetryForbidden } from '../../../shared/automatic-retry';
-import { digest } from '../../store/store';
-import { openProofOnlyGo } from '../../qa/proof-only-go';
-import { proofWaitApplies } from '../../qa/proof-wait';
-import { reportsExternalCause } from '../../recovery/non-delivery';
-import { blockingRecoveryEffects } from '../../recovery/recovery-effects';
-import { readyReviewAtHead } from '../../recovery/task-reasons';
-import { collectOwnerVerbFacts, ownerVerbViews } from '../../verbs/owner-verbs';
-import { blockerCauseId, isProviderFailure, reviewContinuationCauseId } from './causes';
-import type { Ladder } from './ladder';
-import { plannerEscalationOwnerSuffix, plannerEscalationSuggestedVerbs } from './proof';
-import { plannerEscalationQuestion, reviewContinuationEscalationQuestion } from './questions';
-import { findOpenPlannerEscalation, plannerEscalations, reviewerConsults, type LadderEvent } from './records';
-import { escalationWaitDetail } from './waits';
+import type { Completion, Task } from "../../../shared/contracts";
+import {
+  clipDecisionQuestion,
+  isDispositionActive,
+  taskControlInputSchema,
+} from "../../../shared/contracts";
+import { automaticRetryForbidden } from "../../../shared/automatic-retry";
+import { digest } from "../../store/store";
+import { openProofOnlyGo } from "../../qa/proof-only-go";
+import { proofWaitApplies } from "../../qa/proof-wait";
+import { reportsExternalCause } from "../../recovery/non-delivery";
+import { blockingRecoveryEffects } from "../../recovery/recovery-effects";
+import { readyReviewAtHead } from "../../recovery/task-reasons";
+import { collectOwnerVerbFacts, ownerVerbViews } from "../../verbs/owner-verbs";
+import {
+  blockerCauseId,
+  isProviderFailure,
+  reviewContinuationCauseId,
+} from "./causes";
+import type { Ladder } from "./ladder";
+import {
+  plannerEscalationOwnerSuffix,
+  plannerEscalationSuggestedVerbs,
+} from "./proof";
+import {
+  plannerEscalationQuestion,
+  reviewContinuationEscalationQuestion,
+} from "./questions";
+import {
+  findOpenPlannerEscalation,
+  plannerEscalations,
+  reviewerConsults,
+  type LadderEvent,
+} from "./records";
+import { escalationWaitDetail } from "./waits";
 
 /**
  * The ladder's park: what a stuck responsible task does when a run ends blocked or
@@ -24,7 +43,13 @@ import { escalationWaitDetail } from './waits';
 
 /** One rung of the ladder: which report raised it and the run that saw it. */
 export type BlockerLadderInput = {
-  source: 'worker' | 'revision' | 'executor' | 'reviewer' | 'recovery' | 'closeout';
+  source:
+    | "worker"
+    | "revision"
+    | "executor"
+    | "reviewer"
+    | "recovery"
+    | "closeout";
   runId: string | null;
   completion: Completion;
 };
@@ -39,11 +64,15 @@ export type BlockerLadderInput = {
  * escalation instead of starting another turn or ask. Returns true when the
  * ladder owns the park, so the caller writes no ordinary blocked stop.
  */
-export async function responsibleBlockerLadder(ladder: Ladder, parked: Task, input: BlockerLadderInput): Promise<boolean> {
+export async function responsibleBlockerLadder(
+  ladder: Ladder,
+  parked: Task,
+  input: BlockerLadderInput,
+): Promise<boolean> {
   let t = parked;
   // Queue #691: a finished task has no ladder. Returning true tells the caller the park is
   // not its to write, so a late blocked report never moves a done task to blocked.
-  if (['done', 'cancelled'].includes(t.phase)) return true;
+  if (["done", "cancelled"].includes(t.phase)) return true;
   if (isDispositionActive(t) || ladder.resolution.paused()) return false;
   const completion = input.completion;
   // A provider failure is never a ladder blocker: the failover sweep and the
@@ -56,23 +85,59 @@ export async function responsibleBlockerLadder(ladder: Ladder, parked: Task, inp
   // A recovery report about an otherwise ready lifecycle step is not a
   // planning question. Reuse the ordinary move only when the current view
   // offers it, and never step over an uncertain delivery or merge response.
-  if (input.source === 'recovery' && ladder.resolution.applyOperatorControl && t.completion?.status === 'ready_for_review'
-    && t.prHead && !t.resolution.mergeIntent && !t.resolution.mergedCommit
-    && !blockingRecoveryEffects(ladder.store, t, { noticeKinds: 'all' }).length) {
+  if (
+    input.source === "recovery" &&
+    ladder.resolution.applyOperatorControl &&
+    t.completion?.status === "ready_for_review" &&
+    t.prHead &&
+    !t.resolution.mergeIntent &&
+    !t.resolution.mergedCommit &&
+    !blockingRecoveryEffects(ladder.store, t, { noticeKinds: "all" }).length
+  ) {
     const runs = ladder.store.runs(t.id);
-    const reader = runs.some(run => run.role === 'reviewer' && !run.released);
+    const reader = runs.some((run) => run.role === "reviewer" && !run.released);
     const target = readyReviewAtHead(t)
-      ? 'merge' : t.phase === 'awaiting_review' && !reader && !t.resolution.review ? 'review' : null;
-    const available = target && ownerVerbViews(collectOwnerVerbFacts(ladder.store, t, null, input.runId))
-      .some(view => view.verb === 'move' && view.available && view.args?.to === target && !(view.fill ?? []).includes('qualification'));
+      ? "merge"
+      : t.phase === "awaiting_review" && !reader && !t.resolution.review
+        ? "review"
+        : null;
+    const available =
+      target &&
+      ownerVerbViews(
+        collectOwnerVerbFacts(ladder.store, t, null, input.runId),
+      ).some(
+        (view) =>
+          view.verb === "move" &&
+          view.available &&
+          view.args?.to === target &&
+          !(view.fill ?? []).includes("qualification"),
+      );
     if (target && available) {
       try {
-        await ladder.resolution.applyOperatorControl(taskControlInputSchema.parse({ taskId: t.id, version: t.version, action: 'move', to: target,
-          reason: `Resume the already-ready ${target} step after recovery` }));
-        ladder.store.event(t.id, 'planner_escalation_avoided', `Recovery found the ${target} step ready; its ordinary gates remain in force`);
+        await ladder.resolution.applyOperatorControl(
+          taskControlInputSchema.parse({
+            taskId: t.id,
+            version: t.version,
+            action: "move",
+            to: target,
+            reason: `Resume the already-ready ${target} step after recovery`,
+          }),
+        );
+        ladder.store.event(
+          t.id,
+          "planner_escalation_avoided",
+          `Recovery found the ${target} step ready; its ordinary gates remain in force`,
+        );
         return true;
       } catch (error) {
-        ladder.store.event(t.id, 'planner_escalation_automatic_refused', `${target}: ${error instanceof Error ? error.message : String(error)}`.slice(0, 4000));
+        ladder.store.event(
+          t.id,
+          "planner_escalation_automatic_refused",
+          `${target}: ${error instanceof Error ? error.message : String(error)}`.slice(
+            0,
+            4000,
+          ),
+        );
         t = ladder.store.task(t.id);
       }
     }
@@ -80,10 +145,19 @@ export async function responsibleBlockerLadder(ladder: Ladder, parked: Task, inp
   // The lane reads honestly while the ladder holds it, and the completed run's
   // lease ends here: without clearing it, every later pass would replay this
   // completion into a second consult or escalation.
-  if ((completion.status === 'blocked' || completion.status === 'error')
-    && (t.phase !== completion.status || t.resolution.currentRunId || t.resolution.attention))
-    t = ladder.resolution.update(t, { currentRunId: null, integrationTurn: null, attention: false },
-      { phase: completion.status, reason: completion.summary.slice(0, 4000) }, 'blocker_ladder_park', completion.summary.slice(0, 2000));
+  if (
+    (completion.status === "blocked" || completion.status === "error") &&
+    (t.phase !== completion.status ||
+      t.resolution.currentRunId ||
+      t.resolution.attention)
+  )
+    t = ladder.resolution.update(
+      t,
+      { currentRunId: null, integrationTurn: null, attention: false },
+      { phase: completion.status, reason: completion.summary.slice(0, 4000) },
+      "blocker_ladder_park",
+      completion.summary.slice(0, 2000),
+    );
   // effigy#697: a GO-gate reviewer's blocked report is the release GO's wait, not a
   // planning question. No consult, escalation or route offer applies; only the answer.
   if (holdProofOnlyGoWait(ladder, t)) return true;
@@ -91,34 +165,82 @@ export async function responsibleBlockerLadder(ladder: Ladder, parked: Task, inp
   const cause = blockerCauseId(t.id, completion);
   const open = findOpenPlannerEscalation(events as LadderEvent[], cause);
   if (open) {
-    const attach = `${open.id}: attach run ${input.runId ?? 'worker'}; ${cause}`;
-    if (!events.some(event => event.kind === 'planner_escalation_attached' && event.detail === attach))
-      ladder.store.event(t.id, 'planner_escalation_attached', attach);
-    ladder.resolution.waiting(ladder.store.task(t.id), `${escalationWaitDetail.attached(open.id)}; reported cause: ${completion.summary.slice(0, 2000)}`,
-      'escalated', { suggestedVerbs: plannerEscalationSuggestedVerbs(t) });
+    const attach = `${open.id}: attach run ${input.runId ?? "worker"}; ${cause}`;
+    if (
+      !events.some(
+        (event) =>
+          event.kind === "planner_escalation_attached" &&
+          event.detail === attach,
+      )
+    )
+      ladder.store.event(t.id, "planner_escalation_attached", attach);
+    ladder.resolution.waiting(
+      ladder.store.task(t.id),
+      `${escalationWaitDetail.attached(open.id)}; reported cause: ${completion.summary.slice(0, 2000)}`,
+      "escalated",
+      { suggestedVerbs: plannerEscalationSuggestedVerbs(t) },
+    );
     return true;
   }
   const consults = reviewerConsults(events as LadderEvent[]);
-  const continuation = input.runId ? ladder.store.run(input.runId)?.revisionCause === 'consult' : false;
-  const consulted = consults.find(consult => consult.cause === cause)
-    ?? (continuation ? consults.findLast(consult => consult.answered) : undefined);
+  const continuation = input.runId
+    ? ladder.store.run(input.runId)?.revisionCause === "consult"
+    : false;
+  const consulted =
+    consults.find((consult) => consult.cause === cause) ??
+    (continuation
+      ? consults.findLast((consult) => consult.answered)
+      : undefined);
   // A cause genuinely outside the task never needs a second opinion: it goes
   // straight to the planner. A consulted cause skips the second ask too.
-  const secondOpinionMakesSense = input.source === 'worker' || input.source === 'revision';
-  if (secondOpinionMakesSense && !consulted && !automaticRetryForbidden(t, ladder.store.runs(t.id)) && !reportsExternalCause(completion, events, input.runId ?? 'worker')) {
+  const secondOpinionMakesSense =
+    input.source === "worker" || input.source === "revision";
+  if (
+    secondOpinionMakesSense &&
+    !consulted &&
+    !automaticRetryForbidden(t, ladder.store.runs(t.id)) &&
+    !reportsExternalCause(completion, events, input.runId ?? "worker")
+  ) {
     const reviewer = t.resolution.reviewerAgentId;
-    if ((reviewer && ladder.adapter.askReviewer) || (!reviewer && ladder.adapter.createConsultReviewer && ladder.adapter.askReviewer)) {
-      ladder.resolution.openReviewerConsult(ladder.store.task(t.id), { cause, runId: input.runId, completion, reviewer });
+    if (
+      (reviewer && ladder.adapter.askReviewer) ||
+      (!reviewer &&
+        ladder.adapter.createConsultReviewer &&
+        ladder.adapter.askReviewer)
+    ) {
+      ladder.resolution.openReviewerConsult(ladder.store.task(t.id), {
+        cause,
+        runId: input.runId,
+        completion,
+        reviewer,
+      });
       return true;
     }
-    ladder.store.event(t.id, 'reviewer_consult_unavailable', `${cause}: reviewer consult adapter unavailable; planner must decide the next step`);
+    ladder.store.event(
+      t.id,
+      "reviewer_consult_unavailable",
+      `${cause}: reviewer consult adapter unavailable; planner must decide the next step`,
+    );
   }
-  const advice = consulted?.advice
-    ?? (consulted ? 'The retained reviewer was consulted for this cause but gave no usable advice in time.' : null);
+  const advice =
+    consulted?.advice ??
+    (consulted
+      ? "The retained reviewer was consulted for this cause but gave no usable advice in time."
+      : null);
   const question = `${plannerEscalationQuestion(t, completion, advice)}${plannerEscalationOwnerSuffix(t)}`;
-  ladder.resolution.openPlannerEscalation(ladder.store.task(t.id), { cause, runId: input.runId,
-    question, payload: { cause, runId: input.runId ?? null, source: input.source, question }, causeDetail: completion.summary,
-    suggestedVerbs: plannerEscalationSuggestedVerbs(t) });
+  ladder.resolution.openPlannerEscalation(ladder.store.task(t.id), {
+    cause,
+    runId: input.runId,
+    question,
+    payload: {
+      cause,
+      runId: input.runId ?? null,
+      source: input.source,
+      question,
+    },
+    causeDetail: completion.summary,
+    suggestedVerbs: plannerEscalationSuggestedVerbs(t),
+  });
   return true;
 }
 
@@ -130,37 +252,90 @@ export async function responsibleBlockerLadder(ladder: Ladder, parked: Task, inp
  */
 export function holdProofOnlyGoWait(ladder: Ladder, t: Task): boolean {
   // Every quantum calls this, so the task's own fields gate the run and event reads.
-  if (!t.requiresOperatorGo || t.phase !== 'blocked') return false;
-  const question = openProofOnlyGo(t, ladder.store.runs(t.id), ladder.store.eventsAll(t.id));
+  if (!t.requiresOperatorGo || t.phase !== "blocked") return false;
+  const question = openProofOnlyGo(
+    t,
+    ladder.store.runs(t.id),
+    ladder.store.eventsAll(t.id),
+  );
   if (!question) return false;
-  ladder.resolution.waiting(ladder.store.task(t.id), escalationWaitDetail.proofGo(t.proofOnly?.commit ?? 'the merged commit', question), 'escalated');
+  ladder.resolution.waiting(
+    ladder.store.task(t.id),
+    escalationWaitDetail.proofGo(
+      t.proofOnly?.commit ?? "the merged commit",
+      question,
+    ),
+    "escalated",
+  );
   return true;
 }
 
 /** Run the executor rung after its completion transaction commits. */
-export async function settleCompletedExecutorBlocker(ladder: Ladder, input: Completion): Promise<void> {
-  if (!['blocked', 'error'].includes(input.status)) return;
+export async function settleCompletedExecutorBlocker(
+  ladder: Ladder,
+  input: Completion,
+): Promise<void> {
+  if (!["blocked", "error"].includes(input.status)) return;
   const run = ladder.store.run(input.runId);
-  if (!run || run.role !== 'executor' || run.taskId !== input.taskId || run.completion?.eventId !== input.eventId) return;
+  if (
+    !run ||
+    run.role !== "executor" ||
+    run.taskId !== input.taskId ||
+    run.completion?.eventId !== input.eventId
+  )
+    return;
   const task = ladder.store.task(input.taskId);
   // Only escalate when settlement left this responsible task parked on the
   // reported result. A proof run returned to its worker or review lane has an
   // actionable owner and does not need planner intervention.
-  if (task.responsible !== true || task.phase !== input.status || task.reason !== input.summary || task.resolution.currentRunId) return;
-  await ladder.resolution.responsibleBlockerLadder(task, { source: 'executor', runId: run.id, completion: input });
+  if (
+    task.responsible !== true ||
+    task.phase !== input.status ||
+    task.reason !== input.summary ||
+    task.resolution.currentRunId
+  )
+    return;
+  await ladder.resolution.responsibleBlockerLadder(task, {
+    source: "executor",
+    runId: run.id,
+    completion: input,
+  });
 }
 
 /** Keep a completed result and hand a forbidden automatic relaunch to the planner. */
-export function suppressAutomaticRetry(ladder: Ladder, t: Task, site: string, evidence: string, runId: string | null = null): boolean {
+export function suppressAutomaticRetry(
+  ladder: Ladder,
+  t: Task,
+  site: string,
+  evidence: string,
+  runId: string | null = null,
+): boolean {
   if (!automaticRetryForbidden(t, ladder.store.runs(t.id))) return false;
-  const cause = `automatic-retry-suppressed:${site}:${runId ?? 'task'}`;
+  const cause = `automatic-retry-suppressed:${site}:${runId ?? "task"}`;
   const events = ladder.store.eventsAll(t.id);
-  if (events.some(event => event.kind === 'automatic_retry_suppressed' && event.detail.startsWith(`${cause}:`))) return true;
+  if (
+    events.some(
+      (event) =>
+        event.kind === "automatic_retry_suppressed" &&
+        event.detail.startsWith(`${cause}:`),
+    )
+  )
+    return true;
   const kept = evidence.slice(0, 3000);
-  ladder.store.event(t.id, 'automatic_retry_suppressed', `${cause}: kept evidence: ${kept}`);
-  const question = clipDecisionQuestion(`The owner forbids automatic retry at ${site}. Preserve the completed result and decide the next existing owner action. Evidence: ${kept}`);
-  ladder.resolution.openPlannerEscalation(ladder.store.task(t.id), { cause, runId, question,
-    payload: { cause, runId, site, evidence: kept, question } });
+  ladder.store.event(
+    t.id,
+    "automatic_retry_suppressed",
+    `${cause}: kept evidence: ${kept}`,
+  );
+  const question = clipDecisionQuestion(
+    `The owner forbids automatic retry at ${site}. Preserve the completed result and decide the next existing owner action. Evidence: ${kept}`,
+  );
+  ladder.resolution.openPlannerEscalation(ladder.store.task(t.id), {
+    cause,
+    runId,
+    question,
+    payload: { cause, runId, site, evidence: kept, question },
+  });
   return true;
 }
 
@@ -168,22 +343,63 @@ export function suppressAutomaticRetry(ladder: Ladder, t: Task, site: string, ev
  * Spec 058 cutover 5 (follow-up A): a reviewer-checkpoint stop — budget exhausted or the
  * reviewer's agent observed closed — escalates through the planner ladder instead of an owner
  * disposition. At most one escalation per cause: the recovery sweep re-reports the same stop
- * every pass, so an existing escalation is never opened again for the same episode —
- * an ordinary verb that disposes of the task changes the stop and opens a fresh cause. Returns
- * the cause id.
+ * every pass, so an existing escalation is never opened again for the same reader. The reader
+ * is the episode, so a reviewer that later exhausts after a replacement is a fresh cause and
+ * never sits under the answered escalation for the reader before it (nucleus#1372). Returns
+ * the cause id; `detail` names on the wait why an automatic exit could not be taken.
  */
-export function openReviewContinuationEscalation(ladder: Ladder, t: Task, state: 'exhausted' | 'closed'): string {
-  const cause = reviewContinuationCauseId(t.id, state);
-  if (plannerEscalations(ladder.store.eventsAll(t.id) as LadderEvent[]).some(escalation => escalation.cause === cause)) return cause;
+export function openReviewContinuationEscalation(
+  ladder: Ladder,
+  t: Task,
+  state: "exhausted" | "closed",
+  detail = "",
+): string {
+  const reader = t.resolution.currentRunId ?? null;
+  const cause = reviewContinuationCauseId(t.id, state, reader);
+  if (
+    plannerEscalations(ladder.store.eventsAll(t.id) as LadderEvent[]).some(
+      (escalation) => escalation.cause === cause,
+    )
+  )
+    return cause;
   const question = reviewContinuationEscalationQuestion(t, state);
-  ladder.resolution.openPlannerEscalation(t, { cause, runId: null, question, payload: { cause, runId: null, reviewContinuation: state, question } });
+  ladder.resolution.openPlannerEscalation(t, {
+    cause,
+    runId: null,
+    question,
+    payload: {
+      cause,
+      runId: null,
+      reviewContinuation: state,
+      reader,
+      question,
+    },
+    ...(detail ? { causeDetail: detail } : {}),
+  });
   return cause;
 }
 
 /** A second refused coordinator choice reaches the existing planner ladder. */
-export function escalateRefusedCoordinator(ladder: Ladder, t: Task, reason: string): void {
-  const cause = digest(`coordinator-refused:${t.id}:${t.resolution.recovery?.id ?? ''}`);
-  if (findOpenPlannerEscalation(ladder.store.eventsAll(t.id) as LadderEvent[], cause)) return;
+export function escalateRefusedCoordinator(
+  ladder: Ladder,
+  t: Task,
+  reason: string,
+): void {
+  const cause = digest(
+    `coordinator-refused:${t.id}:${t.resolution.recovery?.id ?? ""}`,
+  );
+  if (
+    findOpenPlannerEscalation(
+      ladder.store.eventsAll(t.id) as LadderEvent[],
+      cause,
+    )
+  )
+    return;
   const question = `${reason} Decide which owner verb should continue this task.`;
-  ladder.resolution.openPlannerEscalation(t, { cause, runId: t.resolution.recovery?.runId ?? null, question, payload: { cause, reason, question } });
+  ladder.resolution.openPlannerEscalation(t, {
+    cause,
+    runId: t.resolution.recovery?.runId ?? null,
+    question,
+    payload: { cause, reason, question },
+  });
 }

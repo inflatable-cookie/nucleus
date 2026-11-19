@@ -517,6 +517,50 @@ export class BbThreads {
       ),
     ];
   }
+  /**
+   * The retention pass's archived inventory: this host's archived Nucleus threads
+   * that this service created (the local record names them), walked page by page
+   * to the inventory's own positive end. `null` when the walk cannot be proved
+   * complete, so a partial list is never read as the whole archived set.
+   */
+  async archivedThreads(): Promise<Array<{
+    id: string;
+    workspaceId: string | null;
+    archivedAt: string;
+    labels: Record<string, string>;
+  }> | null> {
+    const state = this.ports.state();
+    const archived: Array<{
+      id: string;
+      workspaceId: string | null;
+      archivedAt: string;
+      labels: Record<string, string>;
+    }> = [];
+    for (let offset = 0; offset < 100_000; offset += 200) {
+      const page = await this.read<{ complete: boolean; rows: BbRow[] }>(
+        "thread.inventory",
+        {
+          originPluginId: "nucleus",
+          includeHidden: true,
+          archived: true,
+          offset,
+        },
+      );
+      if (page.complete !== page.rows.length < 200) return null;
+      for (const row of page.rows) {
+        const agent = state.agents[row.threadId];
+        if (row.archivedAt === null || !agent) continue;
+        archived.push({
+          id: row.threadId,
+          workspaceId: agent.workspaceId,
+          archivedAt: new Date(row.archivedAt).toISOString(),
+          labels: agent.labels,
+        });
+      }
+      if (page.complete) return archived;
+    }
+    return null;
+  }
   async archiveAgent(id: string, depth = 0): Promise<void> {
     const owned = this.ports.state().agents[id];
     if (!owned)

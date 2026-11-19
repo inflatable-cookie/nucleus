@@ -18,6 +18,7 @@ import { assertPinnedBrief, validateSubmission, verifyBriefWorkerIdentity } from
 import { dirtyWorktreeError } from "./git-stash";
 import { verifyRecordedOrigin } from "./git-proof";
 import type { Store } from "../store/store";
+import { COMMITTED_HANDOFF_RETIRED } from "../planning/brief";
 
 /**
  * A refused private-root cleanup after the integration operation had already
@@ -178,7 +179,7 @@ export async function validateDispatch(task: Task, observe?: IntegrationFastForw
 }
 async function validateDispatchCheckout(task: Task, unchanged: () => Promise<void> = async () => {}, observe?: IntegrationFastForwardObserver) {
   const { handoffText } = await validateSubmission(task);
-  if (handoffText !== task.handoffText) throw new Error("Planning handoff content changed");
+  if (handoffText !== task.handoffText) throw new Error("Planning brief content changed");
   if (await git(task.repoPath, "branch", "--show-current") !== task.baseBranch) throw new Error("Integration checkout is on a different branch");
   if (await gitStatus(task.repoPath, "status", "--porcelain")) throw new Error("Integration checkout is dirty; preserve it and resolve before dispatch");
   const remotes = await git(task.repoPath, "remote");
@@ -206,10 +207,9 @@ async function validateDispatchCheckout(task: Task, unchanged: () => Promise<voi
   await requireGitAncestry(task.repoPath, task.planningCommit, base,
     "Integration branch does not contain the submitted planning commit");
 
-  // Brief mode: planning identity is ancestry, checked above; the pinned brief lives in Queue.
-  if (task.brief) { assertPinnedBrief(task); return base; }
-  const currentHandoff = await git(task.repoPath, "show", `${base}:${task.handoffPath}`);
-  if (currentHandoff !== task.handoffText) throw new Error("Handoff was superseded on the integration branch; submit updated planning");
+  // Planning identity is ancestry, checked above; the pinned brief lives in Queue.
+  if (!task.brief) throw new Error(COMMITTED_HANDOFF_RETIRED);
+  assertPinnedBrief(task);
   return base;
 }
 /**
@@ -233,8 +233,8 @@ export async function proveRebindableDispatchBase(task: Task, directory: string,
   const relation = await gitAncestry(directory, task.planningBase, newBase);
   if (relation === 'unknown') throw new Error("Proposed dispatch base ancestry cannot be read; re-record nothing until the checkout reads");
   if (relation !== 'ancestor') throw new Error("Proposed dispatch base does not descend from the recorded base; a rewrite is never re-recorded");
-  if (task.brief) { assertPinnedBrief(task); return newBase; }
-  if (await git(directory, "show", `${newBase}:${task.handoffPath}`) !== task.handoffText) throw new Error("Worker handoff at the proposed base does not match the submitted handoff");
+  if (!task.brief) throw new Error(COMMITTED_HANDOFF_RETIRED);
+  assertPinnedBrief(task);
   return newBase;
 }
 export async function verifyWorkspace(task: Task, directory: string) {
@@ -246,7 +246,7 @@ export async function verifyWorkspace(task: Task, directory: string) {
   // an owner restart or absent-executor reconciliation re-detaches the clean
   // checkout at the proof commit instead of fast-forwarding it to the base tip
   // ahead of the executor. Equality with that recorded commit is the source
-  // proof; the branch-ancestry and handoff checks below assume the planning
+  // proof; the branch-ancestry and brief checks below assume the planning
   // worktree and do not apply.
   if (task.proofOnly) {
     const target = taskCheckoutTarget(task);
@@ -285,11 +285,8 @@ export async function verifyWorkspace(task: Task, directory: string) {
       if (head !== task.planningBase) throw new Error("Worker worktree could not be fast-forwarded to the recorded dispatch base");
     }
   }
-  if (task.brief) {
-    await verifyBriefWorkerIdentity(task, directory, head);
-    return task.branch;
-  }
-  if (await git(directory, "show", `HEAD:${task.handoffPath}`) !== task.handoffText) throw new Error("Worker handoff does not match the submitted handoff");
+  if (!task.brief) throw new Error(COMMITTED_HANDOFF_RETIRED);
+  await verifyBriefWorkerIdentity(task, directory, head);
   return task.branch;
 }
 /**
@@ -316,9 +313,8 @@ export async function verifyResume(task: Task) {
   if (await git(task.directory, "rev-parse", "--git-common-dir") !== await git(task.repoPath, "rev-parse", "--path-format=absolute", "--git-common-dir")) throw new Error("Continuation worktree belongs to another repository");
   const branch = await currentWorkerBranch(task, task.directory);
   if (branch !== task.branch || task.branch === task.baseBranch) throw new Error("Continuation branch changed; inspect before replacing the worker");
-  if (task.brief) {
-    await verifyBriefWorkerIdentity(task, task.directory, "HEAD", "Continuation planning identity changed");
-  } else if (await git(task.directory, "show", `${task.planningCommit}:${task.handoffPath}`) !== task.handoffText) throw new Error("Continuation planning identity changed");
+  if (!task.brief) throw new Error(COMMITTED_HANDOFF_RETIRED);
+  await verifyBriefWorkerIdentity(task, task.directory, "HEAD", "Continuation planning identity changed");
   // Dirty files and unpublished commits are the work being resumed. Never reset them.
   return await git(task.directory, "rev-parse", "HEAD");
 }

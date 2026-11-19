@@ -117,7 +117,7 @@ async function startService(fixture: string, fixtureState: Record<string, unknow
 
 const insert = (submissionId: string) => ({ target: 'store', method: 'insert', args: [submissionSchema.parse({
   submissionId, title: 'Persistence faults', repoPath: '/fixture', planningCommit: base,
-  handoffPath: `docs/handoffs/${submissionId}.md`, originAgentId: 'origin',
+  handoffPath: `tasks/${submissionId}.md`, originAgentId: 'origin',
 }), 'fixture-host', 'Handoff', base] });
 
 const requestCode = (error: unknown) => error instanceof ServiceRequestError ? error.code : null;

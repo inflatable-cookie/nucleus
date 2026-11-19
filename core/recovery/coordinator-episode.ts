@@ -734,6 +734,92 @@ export class CoordinatorEpisode {
       ? run
       : null;
   }
+  /**
+   * Agentless creations no live episode names whose recorded attempt has
+   * terminated (nucleus#1370). Resuming ordinary recovery from an answered
+   * escalation, an operator return or a superseded episode drops the episode
+   * record without settling the creation it recorded, so the run outlives its
+   * binding. Its attempt is still on the task's own journal, which is why the
+   * sweep can still prove it terminated; only those shapes cost a host lookup.
+   */
+  orphanedCreations(t: Task): Run[] {
+    const bound = t.resolution.recovery?.runId ?? null;
+    return this.store
+      .runs(t.id)
+      .filter(
+        (run) =>
+          run.id !== bound &&
+          agentlessCreation(run) &&
+          Boolean(
+            creationTermination(this.store, run, this.resolution.graceMs),
+          ),
+      );
+  }
+  /**
+   * Release an agentless creation no episode names once its recorded attempt has
+   * terminated and its exact lookup is empty. Only the credential and the run
+   * settle; an incident that names this run resolves with it, and the live
+   * episode (if another one has since bound the run) keeps `releaseAbsent`.
+   */
+  releaseOrphaned(observed: RecoveryCreationObservation): Task | null {
+    if (!this.store.db.isTransaction)
+      return this.store.transaction(() => this.releaseOrphaned(observed));
+    if (observed.lookup.kind !== "absent" || !observed.proof) return null;
+    const { task, run } = observed,
+      current = this.store.task(task.id),
+      latest = this.store.run(run.id);
+    if (
+      !agentlessCreation(latest) ||
+      latest.taskId !== current.id ||
+      latest.hostId !== run.hostId ||
+      latest.workspaceId !== run.workspaceId ||
+      latest.generation !== run.generation ||
+      latest.createdAt !== run.createdAt ||
+      current.resolution.recovery?.runId === latest.id ||
+      readCreationAttempt(this.store, latest)?.attemptId !==
+        observed.proof.attemptId ||
+      current.removedAt ||
+      isDispositionActive(current) ||
+      isDispositionComplete(current) ||
+      ["done", "cancelled"].includes(current.phase) ||
+      this.resolution.stopped() ||
+      !this.resolution.hostAvailable(current, latest)
+    )
+      return null;
+    const at = now(),
+      summary =
+        "Exact lookup found no recovery agent after its creation producer stopped",
+      incident = current.resolution.incident;
+    this.store.deleteCredential(latest.id);
+    this.store.putRun({
+      ...latest,
+      status: "superseded",
+      released: true,
+      active: false,
+      absentProvenAt: at,
+    });
+    return this.resolution.update(
+      current,
+      {
+        // The episode that recorded this creation is gone; a task left active
+        // with no episode would keep reading as a live recovery.
+        ...(current.resolution.recovery ? {} : { recoveryActive: false }),
+        ...(incident?.runId === latest.id && incident.status !== "resolved"
+          ? {
+              incident: {
+                ...incident,
+                status: "resolved" as const,
+                detail: summary,
+                updatedAt: at,
+              },
+            }
+          : {}),
+      },
+      {},
+      "absent_recovery_released",
+      JSON.stringify({ runId: latest.id, ...observed.proof }),
+    );
+  }
   /** Recheck the occurrence that was observed before binding or releasing it. */
   currentCreation({ task, run }: RecoveryCreationObservation) {
     const current = this.store.task(task.id),

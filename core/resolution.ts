@@ -2386,8 +2386,9 @@ export class Resolution {
   openReviewContinuationEscalation(
     t: Task,
     state: "exhausted" | "closed",
+    detail = "",
   ): string {
-    return this.ladder.openReviewContinuationEscalation(t, state);
+    return this.ladder.openReviewContinuationEscalation(t, state, detail);
   }
   escalateRefusedCoordinator(t: Task, reason: string): void {
     return this.ladder.escalateRefusedCoordinator(t, reason);

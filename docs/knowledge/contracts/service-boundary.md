@@ -32,7 +32,7 @@ imports or receives `QueueRuntime`. Usage and backup revision keys stay with the
 board instance. These service modules are outside the plugin bridge import graph.
 
 `core/runtime/planning.ts` owns lead reads and mutations, source promotion,
-plans, lanes, draft checks and handoff submission. `PlanningContext` supplies the
+plans, lanes, draft checks and brief submission. `PlanningContext` supplies the
 store, a restricted engine view, lead operations, the existing lead-board cache
 and live startup and origin-agent access. It never imports or receives
 `QueueRuntime`; construction and operation-handler registration stay in the owner.
@@ -761,11 +761,11 @@ sides); `test/request-ledger.test.ts` (the journal's store proofs);
 `test/question-delegation.test.ts` (the delegated answer's bounded bridge
 wait).
 
-Handoff submission captures the approved committed instruction locally and
-returns a durable operation receipt without waiting for remote validation.
+Brief submission captures the approved brief locally and returns a durable
+operation receipt without waiting for remote validation.
 Acceptance is not validation or dispatch. Pushed-planning, dependency, hook and
 recipient checks run inside the operation; unavailable Git or Paseo leaves it
-pending for paced retry and invalid planning fails visibly. Quiet handoffs
+pending for paced retry and invalid planning fails visibly. Quiet submissions
 resolve no recipients. Dry-run awaits validation and stores nothing. Read the
 operation status for the task ID before using it as a prerequisite.
 Backpressure means no operation was accepted.
@@ -924,7 +924,7 @@ leave them alone. A transaction never populates a cached view.
 
 Task rows stay slim ([orchestration](orchestration.md) "Task rows stay slim").
 Instruction text shared with a brief version is resolved from that version by its
-exact digest. A distinct handoff or brief keeps its own bytes in the task row;
+exact digest. A distinct brief keeps its own bytes in the task row;
 reads verify referenced bytes. Review findings shared with a run completion are
 resolved from that run and checked against their digest. Distinct findings stay
 with the review. Lane-document pins resolve by key, version and digest from
@@ -1023,7 +1023,7 @@ board revision, so the bounded acknowledgement carries no planning keys. A run,
 event, observation or telemetry write moves none of them.
 
 Every projection has a response-size bound and pagination or a narrower cursor
-before history can exceed it. The service never serializes full task, handoff,
+before history can exceed it. The service never serializes full task, brief,
 event or run history to derive a card or count. SQLite and full-history
 validation run behind one service-local asynchronous executor with short,
 serialized transactions; callers never scan the database on the request loop.

@@ -21,7 +21,24 @@ import {queueOperationSchema,type QueueOperation} from "../../shared/operations"
 
 
 export const base='b'.repeat(40),head='a'.repeat(40),operationId='c'.repeat(64);
-export const submission=()=>submissionSchema.parse({submissionId:'external-pr',title:'External PR',repoPath:'/repo',planningCommit:base,handoffPath:'docs/handoff.md',originAgentId:'origin'});
+/** The fixture's Queue-held brief: the only instruction source (committed handoffs are retired, nucleus#1368). */
+export const fixtureBriefText='Review fixture brief.\n';
+export const FIXTURE_LEAD='approved-review-brief';
+/** The operator's approval of the fixture brief: a brief review entry needs its approved lead (Queue-held brief approval). */
+const FIXTURE_APPROVAL={version:1,digest:briefDigest(fixtureBriefText),approver:'operator (board)',approvedAt:new Date().toISOString(),note:'Checked scope',relayed:false};
+export const fixtureApproval=()=>FIXTURE_APPROVAL;
+const fixtureBrief={brief:{text:fixtureBriefText,mediaType:'text/markdown',digest:briefDigest(fixtureBriefText)},planningSource:{kind:'lead' as const,id:FIXTURE_LEAD},leadProvenance:{version:1,approval:fixtureApproval(),earlierDigests:[]}};
+/** Seed the approved lead the fixture brief names, checked at the fixture's planning commit. */
+export function seedFixtureLead(store:Store,repo:string,planningCommit:string){
+  // Idempotent: a restarted runtime reopens the same store, which already holds the lead.
+  try{store.lead(FIXTURE_LEAD);return;}catch{/* not seeded yet */}
+  const stamp=new Date().toISOString(),approval=fixtureApproval();
+  store.addLead({id:FIXTURE_LEAD,title:'Approved review scope',body:fixtureBriefText,
+    repositories:[{origin:'https://github.com/example/repo',path:repo}],lanes:[],tags:[],papercut:null,closure:null,author:'operator',
+    state:'open',version:1,digest:approval.digest,check:{ok:true,message:'Checked against pushed planning',checkedAt:stamp,planningCommit},
+    approval,originAgentId:'origin',baseBranch:'main',dropReason:null,targets:[],source:null,createdAt:stamp,updatedAt:stamp,closedAt:null},'operator');
+}
+export const submission=()=>submissionSchema.parse({submissionId:'external-pr',title:'External PR',repoPath:'/repo',planningCommit:base,handoffPath:'',...fixtureBrief,originAgentId:'origin'});
 export const input=()=>reviewEntryInputSchema.parse({submission:submission(),workspaceId:'workspace',prNumber:41,expectedBranch:'feature/external',expectedHead:head,expectedBaseCommit:base,authority:'Operator approved takeover',authorDeclaration:{models:['OpenAI/GPT-5','openai/gpt-5'],githubAuthor:'external-author',authoringSystem:'external-agent',attestedBy:'operator',provenance:'Provider records and author report'}});
 export const record=()=>reviewEntryRecordSchema.parse({operationId,prNumber:41,repository:'example/repo',branch:'feature/external',workspaceId:'workspace',verifiedHead:head,verifiedBase:base,planningCommit:base,authority:'Operator approved takeover',authorDeclaration:input().authorDeclaration,checkedAt:new Date().toISOString(),preserveWorkspace:true});
 /**
@@ -35,14 +52,14 @@ export function exactProofFixture(){
   const root=realpathSync(mkdtempSync(join(tmpdir(),'ns-review-entry-proof-'))),origin=hostedOrigin(root),repo=join(root,'repo'),workspace=join(root,'workspace');
   execFileSync('git',['init','--bare',origin],{stdio:'ignore'});execFileSync('git',['init','-b','main',repo],{stdio:'ignore'});
   runGit(repo,'config','user.name','Queue Fixture');runGit(repo,'config','user.email','queue@example.test');
-  mkdirSync(join(repo,'docs'));writeFileSync(join(repo,'docs','handoff.md'),'fixture handoff\n');writeFileSync(join(repo,'README.md'),'base\n');
+  writeFileSync(join(repo,'README.md'),'base\n');
   runGit(repo,'add','.');runGit(repo,'commit','-m','planning');const planningCommit=runGit(repo,'rev-parse','HEAD');
   runGit(repo,'remote','add','origin',origin);runGit(repo,'push','-u','origin','main');
   runGit(repo,'worktree','add','-b','feature/external',workspace,'main');
   writeFileSync(join(workspace,'README.md'),'external change\n');runGit(workspace,'add','README.md');runGit(workspace,'commit','-m','external implementation');
   const expectedHead=runGit(workspace,'rev-parse','HEAD');runGit(workspace,'push','-u','origin','feature/external');
   const githubRemote='ssh://git@github.com/example/repo.git';runGit(repo,'config','remote.origin.url',githubRemote);runGit(repo,'config',`url.${origin}.insteadOf`,githubRemote);
-  const reviewInput=reviewEntryInputSchema.parse({submission:{submissionId:'proof-fixture',title:'Proof fixture',repoPath:repo,planningCommit,handoffPath:'docs/handoff.md',originAgentId:'origin'},workspaceId:'workspace',prNumber:41,expectedBranch:'feature/external',expectedHead,expectedBaseCommit:planningCommit,authority:'Operator approved takeover',authorDeclaration:{models:['openai/gpt-5'],githubAuthor:'external-author',authoringSystem:'external-agent',attestedBy:'operator',provenance:'Fixture attestation'}});
+  const reviewInput=reviewEntryInputSchema.parse({submission:{submissionId:'proof-fixture',title:'Proof fixture',repoPath:repo,planningCommit,handoffPath:'',...fixtureBrief,originAgentId:'origin'},workspaceId:'workspace',prNumber:41,expectedBranch:'feature/external',expectedHead,expectedBaseCommit:planningCommit,authority:'Operator approved takeover',authorDeclaration:{models:['openai/gpt-5'],githubAuthor:'external-author',authoringSystem:'external-agent',attestedBy:'operator',provenance:'Fixture attestation'}});
   const adapter:ReviewEntryAdapter={hostId:'host',inspectReviewEntry:async()=>({directory:workspace,originWorkspaceId:'origin-workspace',busyReason:''}),originAgent:async id=>({id,workspaceId:'origin-workspace',title:'Origin',archived:false}),reviewEntryGithubCommand:async(_file,args)=>args[1].includes('/pulls/')?JSON.stringify({state:'open',merged_at:null,draft:false,head:{repo:{full_name:'example/repo'},ref:'feature/external',sha:expectedHead},base:{repo:{full_name:'example/repo'},ref:'main'},user:{login:'external-author'},html_url:'https://github.com/example/repo/pull/41'}):JSON.stringify({permissions:{push:true}})};
   return {root,repo,workspace,planningCommit,expectedHead,reviewInput,adapter};
 }
@@ -82,14 +99,14 @@ export function ownerRevisionFixture(){
   const root=realpathSync(mkdtempSync(join(tmpdir(),'ns-owner-revision-'))),origin=hostedOrigin(root),repo=join(root,'repo'),workspace=join(root,'workspace');
   execFileSync('git',['init','--bare',origin],{stdio:'ignore'});execFileSync('git',['init','-b','main',repo],{stdio:'ignore'});
   runGit(repo,'config','user.name','Queue Fixture');runGit(repo,'config','user.email','queue@example.test');
-  mkdirSync(join(repo,'docs'));writeFileSync(join(repo,'docs','handoff.md'),'fixture handoff\n');writeFileSync(join(repo,'README.md'),'base\n');
+  writeFileSync(join(repo,'README.md'),'base\n');
   runGit(repo,'add','.');runGit(repo,'commit','-m','planning');const planningCommit=runGit(repo,'rev-parse','HEAD');
   runGit(repo,'remote','add','origin',origin);runGit(repo,'push','-u','origin','main');
   runGit(repo,'worktree','add','-b','feature/external',workspace,'main');
   writeFileSync(join(workspace,'feature.txt'),'external change\n');runGit(workspace,'add','feature.txt');runGit(workspace,'commit','-m','external implementation');
   const oldHead=runGit(workspace,'rev-parse','HEAD');runGit(workspace,'push','-u','origin','feature/external');
   const githubRemote='ssh://git@github.com/example/repo.git';runGit(repo,'config','remote.origin.url',githubRemote);runGit(repo,'config',`url.${origin}.insteadOf`,githubRemote);
-  const reviewInput=reviewEntryInputSchema.parse({submission:{submissionId:'owner-revision',title:'Owner revision fixture',repoPath:repo,planningCommit,handoffPath:'docs/handoff.md',originAgentId:'origin'},workspaceId:'workspace',prNumber:41,expectedBranch:'feature/external',expectedHead:oldHead,expectedBaseCommit:planningCommit,authority:'Operator approved takeover',authorDeclaration:{models:['openai/gpt-5'],githubAuthor:'external-author',authoringSystem:'external-agent',attestedBy:'operator',provenance:'Fixture attestation'}});
+  const reviewInput=reviewEntryInputSchema.parse({submission:{submissionId:'owner-revision',title:'Owner revision fixture',repoPath:repo,planningCommit,handoffPath:'',...fixtureBrief,originAgentId:'origin'},workspaceId:'workspace',prNumber:41,expectedBranch:'feature/external',expectedHead:oldHead,expectedBaseCommit:planningCommit,authority:'Operator approved takeover',authorDeclaration:{models:['openai/gpt-5'],githubAuthor:'external-author',authoringSystem:'external-agent',attestedBy:'operator',provenance:'Fixture attestation'}});
   const owner='owner-thread',reviewer:Profile={id:'reviewer',name:'Reviewer',provider:'codex',model:'gpt-6-luna',notes:'',available:true,problem:'',supportedThinking:[]};
   // Task 408: the same PR may be merged outside Queue. `mergeCommit` is the
   // merge commit the forge reports while merged; `onMerge`/`onObserve` let a
@@ -108,6 +125,7 @@ export function ownerRevisionFixture(){
   const creates:Run[]=[];
   const tokens=new Map<string,string>();
   let store=new Store(join(root,'queue.sqlite'));
+  seedFixtureLead(store,repo,planningCommit);
   /**
    * The mocked remote identity every flow reads: one adapter per engine or
    * runtime, sharing the fixture's Git state and observation map. The callback
@@ -178,6 +196,8 @@ export function ownerRevisionFixture(){
     // Queue #912: a runtime registers its host only when the adapter's connection port reports connected (`hostConnected`);
     // without it every host-routed control waits for the host instead of refusing.
     const runtime=new QueueRuntime({dataDir:join(root,`runtime-${randomUUID()}`),adapterFactory:()=>({...buildAdapter(),client:{isConnected:true}}),timers:false});
+    // The runtime's own store holds the approved lead the fixture brief names.
+    seedFixtureLead(runtime.store,repo,planningCommit);
     return runtime;
   };
   const pushRevision=(message='owner revised source')=>{

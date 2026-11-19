@@ -3,14 +3,19 @@ import { BRIEF_MAX_LENGTH, type BriefVersion, type Submission, type Task } from 
 
 /**
  * Spec 020 brief mode. A brief is submitted as content and pinned by Queue; the
- * repository holds no copy. Handoff-mode tasks never reach this module's checks.
+ * repository holds no copy. It is the only instruction source: committed handoffs
+ * are retired (nucleus#1368).
  */
 export const briefDigest = (text: string) => `sha256:${createHash("sha256").update(text).digest("hex")}`;
 export const isBriefMode = (input: Pick<Submission, "brief">) => Boolean(input.brief);
 
-/** Exactly one instruction source: a committed handoff path or a Queue-held brief. */
-export function assertOneInstructionSource(input: Pick<Submission, "brief" | "handoffPath">) {
-  if (Boolean(input.brief) === Boolean(input.handoffPath)) throw new Error("A submission carries exactly one of handoffPath or brief");
+/** The refusal for any committed-handoff submission or dispatch; the route is a Queue-held brief. */
+export const COMMITTED_HANDOFF_RETIRED = "Committed handoffs are retired. Submit the work as a Nucleus-held brief with lead.submit (or nucleus helper submit --brief <file>).";
+
+/** A submission carries a Queue-held brief; a committed handoff path is refused. */
+export function assertBriefInstructionSource(input: Pick<Submission, "brief" | "handoffPath">) {
+  if (input.handoffPath) throw new Error(COMMITTED_HANDOFF_RETIRED);
+  if (!input.brief) throw new Error("A submission carries a Queue-held brief");
 }
 
 /** Validate the submitted brief content and return its computed digest. */

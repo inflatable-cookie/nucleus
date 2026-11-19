@@ -5,7 +5,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {QueueRuntime} from '../service/runtime-owner';
 import {git} from '../core/git/index';
-import {parseNorthstarDocument} from '../core/planning/handoff';
+import {parseBriefDocument} from '../core/planning/handoff';
 import {workerPrompt} from '../core/dispatch/prompts';
 import {briefDigest} from '../core/planning/brief';
 import {buildOutcomeRecord, digest as storeDigest, operationInputHash, Store} from '../core/store/store';
@@ -96,7 +96,7 @@ weighted(3)('a promoted report-only lead gets the report-only prompt and can rep
   f.runtime.store.upsertLane({key:'other-notes',title:'Other notes',aim:'Side notes',repositories:[{origin:'acme/fixture',path:f.repo}]});
   const first=f.runtime.store.editLaneDocument({key:'web-health',version:0,text:'## Findings\nObserved.\n',author:'planner'});
   const body=`---\ntitle: Report the web health\nqueue:\n  complexity: low\n  lanes: [web-health, other-notes]\n  reportOnly: true\n  reportLane: web-health\n---\n\n## Outcome\nWrite the report to web-health.\n`;
-  assert.throws(()=>parseNorthstarDocument(body,'brief'),/queue_approval/);
+  assert.throws(()=>parseBriefDocument(body,'brief'),/queue_approval/);
   const lead=await f.runtime.addLead({repositories:[{origin:f.repo,path:f.repo}],title:'Report the web health',body,lanes:['web-health'],author:'planner'});
   assert.equal(lead.check?.ok,true,lead.check?.message);
   f.runtime.approveLead({id:lead.id,version:lead.version,digest:lead.digest!,approver:'operator (board)',note:'',relayed:false});
@@ -253,7 +253,7 @@ weighted(3)('Spec 026 row 7: an approved lead and a papercut promote directly to
   assert.equal(f.runtime.store.lead(cut.id).targets[0]?.reference,promoted.taskId);
   assert.equal(f.runtime.getPapercut({id:cut.id}).draftId,null);
   const papercutTask=f.runtime.store.task(promoted.taskId);
-  assert.equal(parseNorthstarDocument(papercutTask.brief!.text,'brief').queue_approval,'planner: Tom authorized');
+  assert.equal(parseBriefDocument(papercutTask.brief!.text,'brief').queue_approval,'planner: Tom authorized');
   assert.match(papercutTask.brief!.text,/## Happened\n\nIt failed/);
   const amended=await f.runtime.engine.performTaskControl({taskId:papercutTask.id,version:papercutTask.version,action:'amend_brief',
     brief:`${papercutTask.brief!.text}\nClarify the papercut fix.\n`,reason:'Clarified the fix'});
@@ -353,7 +353,7 @@ weighted(3)('papercut promotion defaults to the saved plan current lane and pres
 
 test('brief and promoted source task titles over 200 characters are refused',async t=>{
   const f=await fixture(t),longTitle='x'.repeat(201),overlongBrief=text.replace('title: Draft fixture',`title: ${longTitle}`);
-  assert.throws(()=>parseNorthstarDocument(overlongBrief,'draft'),/Invalid draft frontmatter: title: Title must be 200 characters or fewer/);
+  assert.throws(()=>parseBriefDocument(overlongBrief,'draft'),/Invalid draft frontmatter: title: Title must be 200 characters or fewer/);
   const lead=await f.runtime.addLead({repositories:[{origin:f.repo,path:f.repo}],title:'Short lead',body:overlongBrief,lanes:[],author:'planner'});
   await assert.rejects(f.runtime.promoteLeadToTask({id:lead.id,note:'',board:true}),/Invalid draft frontmatter: title: Title must be 200 characters or fewer/);
   const cut=f.runtime.addPapercut({repository:{origin:f.repo,path:f.repo},title:longTitle,happened:'It failed.',impact:'A user waited.',filedBy:'planner'});

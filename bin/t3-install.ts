@@ -339,6 +339,19 @@ interface ServiceRead {
         sessionId: string | null;
       })
     | null;
+  /** `service.health`'s archived-thread retention record, when the service answered. */
+  retention: {
+    days: number;
+    hosts: Array<{
+      hostId: string;
+      supported: boolean;
+      at: string | null;
+      checkedAt?: string | null;
+      deleted: number;
+      remaining: number;
+      error: string;
+    }>;
+  } | null;
   hosts: Array<{
     id: string;
     state: string;
@@ -373,6 +386,7 @@ async function readService(dataDir: string): Promise<ServiceRead> {
         nativeParenting?: string;
 
       };
+      threadRetention?: ServiceRead["retention"];
     };
     const hostList = (await client
       .request("host.list", {})
@@ -396,6 +410,7 @@ async function readService(dataDir: string): Promise<ServiceRead> {
             nativeParenting: t3.nativeParenting ?? "",
           }
         : null,
+      retention: health.threadRetention ?? null,
       hosts,
       repositories,
       error: "",
@@ -404,6 +419,7 @@ async function readService(dataDir: string): Promise<ServiceRead> {
     return {
       available: false,
       t3: null,
+      retention: null,
       hosts: null,
       repositories: null,
       error: error instanceof Error ? error.message : String(error),
@@ -794,6 +810,7 @@ async function status(
         name: row.repository.origin ?? basename(row.repository.path || ""),
         hostKind: row.hostKind ?? "paseo",
       })) ?? null,
+    retention: service.retention,
   });
   if (context.options.json) return { command: "status", ...report };
   const lines = [
@@ -803,6 +820,11 @@ async function status(
     `${report.service.available && report.service.connected ? "ok" : "!!"}  Nucleus service: ${report.service.available ? `${report.service.connected ? `${report.service.hostId} online` : "T3Code host offline"}${report.service.error ? `: ${report.service.error}` : ""}` : `not running: ${report.service.error}`}`,
     `${report.service.nativeParenting ? "  " : ""}Native parenting: ${report.service.nativeParenting || "(service not reporting)"}`,
     `  Projects opted into T3Code: ${report.projects.length ? report.projects.map((project) => project.name).join(", ") : "(none)"}`,
+    `  Archived thread retention: ${report.retention.days} day(s)${
+      report.retention.supported
+        ? `; last pass ${report.retention.lastRunAt ?? "(not yet run)"}, removed ${report.retention.deleted}, ${report.retention.remaining} remaining${report.retention.error ? ` — ${report.retention.error}${report.retention.checkedAt ? `; last checked ${report.retention.checkedAt}` : ""}` : ""}`
+        : `; this host cannot prune archived threads${report.retention.error ? ` — ${report.retention.error}${report.retention.checkedAt ? `; last checked ${report.retention.checkedAt}` : ""}` : ""}`
+    }`,
   ];
   return lines.join("\n");
 }

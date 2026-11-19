@@ -232,8 +232,8 @@ bridge claims service presence through `service.nucleus-bridge-presence` alone
 connection until it is granted. The cutover window's host-inventory gate and the
 legacy `service.host-presence` RPC are gone. The bridge pins the data directory
 it resolved for the service it spawns (`--data-dir`), as the main channel does.
-The retired skill alias is deleted from the package; the name survives only
-in submitted handoffs, which may still carry `queue_dispatch: northstar-queue`.
+The retired skill alias is deleted from the package; the name survives only in
+stored records, which keep their bytes.
 The capacity authority's privileged paths are the Nucleus ones
 (`/usr/local/libexec/nucleus`, `/Library/Application Support/Nucleus`,
 `/etc/nucleus`); none is installed on this machine, so the rename needed no

@@ -435,9 +435,8 @@ dependencies, notes and holds, completion subscriptions and the task's owner.
 Enforces [Lanes](#lanes), [Holds](#holds) and
 [Owners and notices](#owners-and-notices). Delegates remain on Engine.
 
-**BriefControls** (`core/verbs/brief.ts`). Re-pins a committed handoff's
-instruction, amends a Nucleus-held brief, and refuses brief text that still
-declares a stage plan. `brief-routing.ts` owns the routing, merge-hold and
+**BriefControls** (`core/verbs/brief.ts`). Amends a Nucleus-held brief and
+refuses brief text that still declares a stage plan. `brief-routing.ts` owns the routing, merge-hold and
 interactive diff an amendment may apply before dispatch; `brief-proof.ts` owns the
 author-side proof declaration's retirement, clearing and re-declaration; and
 `brief-amendment.ts` owns the delivery of an amendment to a live thread — a typed
@@ -948,24 +947,23 @@ confident, for a later pass:
 
 ### Submission and instruction source
 
-- A submission pins its committed handoff identity and originating thread, and
-  carries exactly one instruction source: a committed `handoffPath` or a `brief`
-  held by Nucleus ([Spec 020](../specs/020-briefs-stored-in-queue.md)).
+- A submission pins its brief identity and originating thread. Its instruction
+  source is a `brief` held by Nucleus ([Spec 020](../specs/020-briefs-stored-in-queue.md));
+  a committed `handoffPath` is retired and refused (nucleus#1368).
 - Nucleus pins a brief by digest within 128 KB and writes nothing to the
   repository. Brief mode needs a v5 control manifest at the planning commit, or
-  none; v1–v4 are refused because their hooks read committed handoffs.
+  none; v1–v4 are refused because their hook schemas predate brief mode.
 - `planningCommit` stays required and pushed. In brief mode it must be an
   ancestor of the pushed base at submission, the current base at dispatch and
-  the worker head at launch and continuation; handoff mode compares handoff
-  bytes instead.
+  the worker head at launch and continuation.
 - Prompts carry the brief inline, labelled as Nucleus-held, and tell the worker
   not to commit it. Operator `amend_brief` (text and reason) pins a new version
   before merge and is refused after it; each run records the version it was
   given. A live worker or reviewer is told of the amendment as a message queued
   behind its current step (not an interrupt); an open `ask` is answered
   with the new brief. The next run is given the new version. `amend_brief` with
-  no text re-pins a handoff and refuses brief tasks.
-- Adoption requires a committed handoff and takes over an existing isolated
+  no text is refused: there is no committed instruction to re-pin.
+- Adoption requires a Queue-held brief and takes over an existing isolated
   worker without resetting files or inventing review approval; externally owned
   workspaces are preserved.
 - The outcome row records the final brief version, its digest and earlier
@@ -1029,7 +1027,7 @@ through its recorded `northstar.*` labels wherever an archived or terminal
 record is inspected, and a split identity is refused rather than guessed.
 Callback environments carry only `NUCLEUS_*`; a ticket authenticates its run, and a helper refuses a report whose explicit task or run identity differs from that ticket. Worker readiness verifies the PR identity before recording a completion and refuses a foreign queue branch named in the report. A move to work clears an unbound result only when the forge positively identifies a different branch; unknown or unavailable evidence remains held, and the cleared event remains history.
 Agents report only through their own run's binding; they never read or use another ticket under the data home. A refused report is reported as blocked through the same binding, not bypassed through another ticket or route; if that also refuses, the agent states the refusal. Retained threads keep their original MCP binding path. Before a new run's continuation is sent, Nucleus atomically rebinds that path to the new run; releasing an earlier run deletes the path only while its contents still name that released run. A confirmed dispatched run whose stopped thread has a missing known local MCP binding records a named report failure after the reporting grace and follows the existing recovery path, without reading another ticket. Uncertain dispatches keep their existing hold. Historical events,
-request identities and submitted handoffs are not rewritten.
+request identities and stored committed-handoff rows are not rewritten.
 
 - Completion authentication binds task and run. One worker creation mints
   exactly one run identity, shared by the task, the callback credential and the
@@ -1596,11 +1594,22 @@ request identities and submitted handoffs are not rewritten.
   is ever signalled, whatever run identity it carries, and its scratch is kept
   until that owner exits (nucleus#1306). Only a process whose whole ancestry has
   exited is an orphan cleanup may stop; an ancestor this uid's table does not
-  list counts as live until the OS proves it exited. A process stopped for a run
-  and seen again under the same run inside a ten-minute window is recorded once
-  (`run_process_cleanup_left_alone`) and left alone, so a host that respawns a
-  helper is never chased; a process the same sweep did not see when it started is
-  the same evidence and is treated the same way. One sweep takes one process-table
+  list counts as live until the OS proves it exited. A provider host the host
+  daemon started and keeps — the provider's own `app-server` or tool-host shape,
+  whose parent carries none of the run's identity — is host infrastructure, not a
+  released run's live ancestor: it inherits the launching thread's ticket and
+  scratch in its environment, so it still names that run after the run released,
+  but it owns neither and neither holds the scratch nor repeats a record
+  (nucleus#1372). Its own run-owned children keep the protection above. A process
+  stopped for a run and seen again under the same run inside a ten-minute window
+  is recorded once (`run_process_cleanup_left_alone`) and left alone, so a host
+  that respawns a helper is never chased; a process the same sweep did not see
+  when it started is the same evidence and is treated the same way. A left-alone
+  decision is written once and again only when it changes — another reason, or an
+  added or replaced process — and re-queueing the same obligation on a release,
+  replacement or idle observation never erases the recorded decision, so a
+  settled run's timeline cannot grow a repeated record (nucleus#1358 wrote 770
+  identical ones). One sweep takes one process-table
   snapshot and one ownership-environment read for every run it settles, bounded so
   a read that never answers cannot hold it, and a run whose cleanup proved itself
   complete is never scanned again — hourly or per pass. Every liveness and
@@ -1655,7 +1664,7 @@ request identities and submitted handoffs are not rewritten.
   2026-10-23): findings and review references render only for a recorded review
   summary with text. A restart's reason stays audit text, never instruction.
 - `move to=work` may carry one operator-approved `instruction` for an open
-  unmerged PR; it binds to exactly one revision run beside the handoff and
+  unmerged PR; it binds to exactly one revision run beside the brief and
   findings and is never replayed. Without one, the worker gets the pending
   instruction or the review findings.
 - Lane, sibling, link and cleanup disclosures in prompts are context, not
@@ -2641,10 +2650,12 @@ movement invalidates source approval and preserves the normal readiness gates.
   `repository_settings` ([Spec 022](../specs/022-queue-projects-without-manifests.md)).
 - Nucleus closeout writes the outcome row and moves to `done` in one transaction,
   with no run, workspace, hook, commit or push.
-- Hook closeout, for consumers on the legacy Northstar layout, publishes
-  Markdown under `docs/logs`, `docs/roadmaps` and `docs/handoffs` plus the root
-  `docs/README.md`, then verifies pushed state. Agent closeout is the manifest
-  fallback when no closeout hook is bound.
+- Hook closeout runs the repository's `task.closeout` hook, which may publish
+  the integration writes its manifest allows, then verifies pushed state. Agent
+  closeout is the manifest fallback when no closeout hook is bound; it publishes
+  nothing, so any file change on the integration head after the merge is refused.
+  Closeout admits no path of its own: a merged PR's files are ordinary source
+  (nucleus#1368).
 - Every terminal path writes one host-neutral outcome row in the terminal
   transaction. Outcome rows are permanent; completed live-task history expires
   after 4 days (Tom, 2026-10-20) with unresolved effects protected.
@@ -3737,9 +3748,67 @@ can go stale, exactly like that. It needs to be managed by Nucleus scheduling").
   setting, 3 days by default, shown in Settings. The last run, its count and any
   failure appear in `service.health`.
 - Each host adapter deletes through its host's own API (Paseo `deleteAgent`, T3
-  `thread.delete`, BB's equivalent if it has one).
+  `thread.delete`). A host without a removal call is read and counted, never
+  pruned (see below).
 - Scope is the same on every host: only threads Nucleus created for a task that
   is now `done` or `cancelled`, archived for longer than the retention. Never a
   planner thread, a thread of an unfinished task or an open decision, or one the
   operator unarchived.
 - Implementation: nucleus#1367.
+
+The pass is `core/workspaces/thread-retention.ts`. `SweepMaintenance` starts it
+hourly, only while Nucleus is unpaused, and removes at most
+`THREAD_RETENTION_BATCH` (200) threads per host per pass, oldest archive stamp
+first, so the existing backlog drains over sweeps instead of in one burst. The
+pass runs detached: `SweepMaintenance` starts it and does not await it, and at
+most one runs at a time. Its walk over an archived backlog of ~12k threads is
+therefore never on the audit drain's path, so post-bootstrap reconciliation
+(which waits on that drain) settles inside its window and a service start does
+not report it unsettled (nucleus#1369). A stopped engine ends the pass before
+its next host call. The
+window is the `threadRetentionDays` Settings value (Settings → Dispatch limits →
+Advanced, bounded 1–90, default 3) and is recorded with every write in the
+capacity change journal.
+
+A host prunes only when its adapter supplies the two optional reads beside
+`deleteAgent`: `archivedThreads` (one walk of every archived thread Nucleus
+created, under the current `nucleus.*` and the pre-Nucleus `northstar.*` labels,
+which answers `null` rather than a partial list) and `threadArchiveState` (one
+thread's fresh stamp, immediately before removal). A host that has the walk but
+no removal call (BB) is still read: its pass records `at`, `scanned` and
+`eligible`, leaves `supported` false, and names in `error` that nothing was
+removed. A host with neither is reported as unable to list, with its reason,
+never as a clean zero. Availability is read in the host's own context, so a
+connected secondary host is never read as away. After a removal the pass
+calls the adapter's optional `forgetThreads`, so a host's own state file drops
+the per-thread entries it no longer describes.
+
+The scope is read from the store: a task label naming a task in `done` or
+`cancelled`, or one whose history was purged (the purge tombstone is the proof a
+finished task leaves behind). A thread the walk lists is re-read first; an
+unarchived thread, a re-archived thread inside the window, an absent thread or an
+unreadable one removes nothing. Each removal has one durable intent keyed by host
+and thread, written before the call: an unknown delivery is never re-sent blind,
+the next pass reads the thread fresh, and only a thread the host still reports
+archived is retried, at most three times.
+
+`service.health.threadRetention` carries the window, the batch cap and one fact
+per host (`at`, `checkedAt`, `scanned`, `eligible`, `deleted`, `absent`, `failed`,
+`remaining`, `truncated`, `error`). `at` is the last pass that read the host;
+`checkedAt` is the last pass that looked at it, read or away. A host that is away
+keeps its last real read in `at`, names why this pass skipped it, and carries that
+pass's time in `checkedAt` (nucleus#1369). `nucleus t3 status` prints the window with
+that host's last pass.
+
+Provider sessions are not part of this pass. A Paseo thread's provider session
+(the agent run's own Codex session) is owned by the host's agent record, has no
+absence proof in the host contract, and can be resumed by a thread the operator
+keeps; removing one blind could lose a session that is still live. Deleting a
+thread leaves its provider session to the host's own retention.
+
+Paseo and T3 prune through their adapters (`archivedThreads`,
+`threadArchiveState`, `deleteAgent`). T3's walk is its synchronized archived
+inventory, filtered to threads with a Nucleus launch record. BB lists its
+archived Nucleus threads from `thread.inventory` (archived, complete walk) and
+prunes nothing: BB's `threads.delete` needs a host operation and its own cascade
+proof before it may prune anything (nucleus#1367, nucleus#1369).

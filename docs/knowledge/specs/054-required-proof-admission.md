@@ -181,8 +181,7 @@ code and no schema migration.
 Alongside it, one **non-overridable instruction** (prose, deliberately not
 enforcement) is delivered outside the policy text, next to the existing
 `HEAVY_VALIDATION_NOTE`/`REVIEWER_NO_FINDING_FOR_UNRUN_TESTS` constants. It
-renders for brief- and handoff-mode tasks alike, because a committed handoff
-names its proofs the same way:
+renders for brief-mode tasks, since a brief names its proofs in prose:
 
 - worker and revision prompts: "A repository validation policy selects which
   covering checks apply; it never waives a proof this brief names as required.
@@ -231,9 +230,9 @@ infer a mechanical gate from prose.
   no acceptance supplies a fabricated verdict.
 - **Evidence.** `test/prompts.test.ts` fails if the instruction is missing under
   a default, an omitting or a contradicting policy, for worker, revision,
-  reviewer, checkpoint and reviewer-continuation prompts in handoff mode;
+  reviewer, checkpoint and reviewer-continuation prompts in brief mode;
   `test/review-verdicts.test.ts` covers ordinary verdicts and legacy rows
-  reviewing without a verdict gate, while blocked/error findings stay recordable; `test/briefs.test.ts` compares the re-frozen handoff-mode
+  reviewing without a verdict gate, while blocked/error findings stay recordable; `test/briefs.test.ts` compares the re-frozen brief-mode
   prompt bytes against `test/fixtures/handoff-prompts.json`, whose frozen inputs
   are unchanged. Existing delivered turns are not silently reprompted: only new
   dispatch and new continuations render the instruction.

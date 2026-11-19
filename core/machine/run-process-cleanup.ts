@@ -29,8 +29,16 @@ interface CleanupRun {
   uncertainty?: string;
   /** When this run last had a process stopped for it; a same-run respawn is left alone. */
   stoppedAt?: string;
-  /** The one visible record of a process this run's cleanup deliberately left alone. */
-  leftAlone?: { reason: string; at: string };
+  /**
+   * The one visible record of a process this run's cleanup deliberately left
+   * alone, with the exact processes that decision was made for: the same
+   * decision over the same processes writes nothing new.
+   */
+  leftAlone?: {
+    reason: string;
+    at: string;
+    processes?: Array<{ pid: number; startIdentity: string }>;
+  };
 }
 const key = (id: string) => `runProcessCleanup:${id}`;
 const terminal = (phase: string) => ["done", "cancelled"].includes(phase);
@@ -53,6 +61,35 @@ export const CLEANUP_RESPAWN_WINDOW_MS = 10 * 60_000;
  * its intents and scratch for a later pass instead of wedging the host lane.
  */
 export const RUN_PROCESS_READ_BOUND_MS = 20_000;
+
+/**
+ * A provider host the host daemon started and keeps across runs: the provider's
+ * own `app-server`/tool-host shape, whose parent carries none of this run's
+ * identity. The daemon hands it the thread's launch environment, so it still
+ * carries that run's ticket and scratch after the run released — it was started
+ * for that thread — but it owns neither. It is host infrastructure: never a
+ * released run's live ancestor, so its inherited identity neither holds the
+ * scratch nor repeats a left-alone record (nucleus#1372).
+ *
+ * Only a readable parent environment answers this: an unreadable one keeps the
+ * conservative live-ancestor hold, because nothing then rules out a run's own
+ * owner. A provider host some run's own process started is not one of these: its
+ * parent carries that run's identity and the existing runtime protection owns it.
+ */
+export function hostDaemonProviderHost(
+  fact: Pick<HostProcessFact, "pid" | "ppid">,
+  providerHosts: ReadonlySet<number>,
+  environments: ReadonlyMap<number, RunProcessEnvironment | null>,
+  table: Readonly<{ byPid: ReadonlyMap<number, HostProcessFact> }>,
+  run: CleanupRun,
+  dataHome: string,
+): boolean {
+  if (!providerHosts.has(fact.pid)) return false;
+  const parent = table.byPid.get(fact.ppid ?? 0);
+  const environment = environments.get(fact.ppid ?? 0);
+  if (!parent || environment == null) return false;
+  return !processBelongsToRun(parent, environment, run, dataHome);
+}
 
 /** Exact inherited ticket or scratch identity; a shared checkout is never ownership. */
 export function processBelongsToRun(
@@ -414,6 +451,9 @@ async function sweep(
     table,
     records,
   );
+  // The provider hosts the host daemon started and keeps, decided from this
+  // snapshot alone: they inherit a thread's run identity without owning it.
+  const providerHosts = table.providerHostPids();
   // One ownership read for the whole snapshot, shared by every run it settles:
   // never a read per run or per check.
   const livePids = live.map((fact) => fact.pid);
@@ -654,8 +694,20 @@ async function sweep(
     }
     // A live non-init ancestor still owns a process carrying this run's identity:
     // its next turn may use the scratch, so the leaf stays until that owner exits.
-    const retainedByAncestor = retainedFacts.filter((fact) =>
-      processBelongsToRun(fact, environments.get(fact.pid), run, dataHome),
+    // A provider host the daemon keeps carries that identity only because it was
+    // handed this thread's environment; it is host infrastructure, so it never
+    // holds a released run's scratch (nucleus#1372).
+    const retainedByAncestor = retainedFacts.filter(
+      (fact) =>
+        !hostDaemonProviderHost(
+          fact,
+          providerHosts,
+          environments,
+          table,
+          run,
+          dataHome,
+        ) &&
+        processBelongsToRun(fact, environments.get(fact.pid), run, dataHome),
     );
     if (retainedByAncestor.length) {
       recordLeftAlone(
@@ -672,12 +724,21 @@ async function sweep(
     // leaf only after the host releases it, rather than breaking its next turn.
     if (
       run.temporaryDirectory &&
-      protectedFacts.some((fact) =>
-        [
-          environments.get(fact.pid)?.TMPDIR,
-          environments.get(fact.pid)?.TMP,
-          environments.get(fact.pid)?.TEMP,
-        ].includes(run.temporaryDirectory),
+      protectedFacts.some(
+        (fact) =>
+          !hostDaemonProviderHost(
+            fact,
+            providerHosts,
+            environments,
+            table,
+            run,
+            dataHome,
+          ) &&
+          [
+            environments.get(fact.pid)?.TMPDIR,
+            environments.get(fact.pid)?.TMP,
+            environments.get(fact.pid)?.TEMP,
+          ].includes(run.temporaryDirectory),
       )
     ) {
       deferReason(
@@ -735,9 +796,12 @@ function recordStop(
 }
 
 /**
- * Record the one process set this run's cleanup left alone, and why. A live
- * ancestor is recorded once while it stands; a respawn after a stop is recorded
- * once per window, so repeated sweeps add nothing to the task timeline.
+ * Record the one process set this run's cleanup left alone, and why. One
+ * decision, one record: the same reason over the same processes writes nothing
+ * new on a later pass, whatever re-queued the obligation in between. A different
+ * decision — another reason, or an added or replaced process — is written; a
+ * same-run respawn after a stop keeps its own ten-minute window, so repeated
+ * sweeps add nothing to the task timeline (nucleus#1372).
  */
 function recordLeftAlone(
   store: Store,
@@ -749,8 +813,12 @@ function recordLeftAlone(
 ): void {
   const intent = store.getMeta<CleanupRun>(key(run.id));
   const previous = intent?.leftAlone;
+  const processes = facts
+    .map((fact) => ({ pid: fact.pid, startIdentity: fact.startIdentity }))
+    .sort((left, right) => left.pid - right.pid);
   if (
     previous?.reason === reason &&
+    sameProcesses(previous.processes, processes) &&
     (reason === "live-ancestor" ||
       at - Date.parse(previous.at) < CLEANUP_RESPAWN_WINDOW_MS)
   ) {
@@ -764,10 +832,7 @@ function recordLeftAlone(
     JSON.stringify({
       runId: run.id,
       reason,
-      processes: facts.map((fact) => ({
-        pid: fact.pid,
-        startIdentity: fact.startIdentity,
-      })),
+      processes,
     }),
   );
   store.setMeta(key(run.id), {
@@ -780,8 +845,25 @@ function recordLeftAlone(
     }),
     pending: intent?.pending ?? true,
     uncertainty: undefined,
-    leftAlone: { reason, at: new Date(at).toISOString() },
+    leftAlone: { reason, at: new Date(at).toISOString(), processes },
   });
+}
+
+/** The same left-alone decision names exactly these processes. */
+function sameProcesses(
+  recorded: Array<{ pid: number; startIdentity: string }> | undefined,
+  current: Array<{ pid: number; startIdentity: string }>,
+): boolean {
+  // A record written before the process set was kept proves only its reason.
+  if (!recorded) return false;
+  return (
+    recorded.length === current.length &&
+    recorded.every(
+      (fact, index) =>
+        fact.pid === current[index]!.pid &&
+        fact.startIdentity === current[index]!.startIdentity,
+    )
+  );
 }
 
 function deferCleanup(

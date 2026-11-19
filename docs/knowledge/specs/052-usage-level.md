@@ -42,7 +42,16 @@ profiles.
   ids, one ordered thinking scale (`off` … `ultra`) and one set of runtime modes
   (`plan`, `supervised`, `accept-edits`, `auto`, `auto-review`, `full-access`).
   Feature values are the provider's own options. Profiles store only canonical
-  values; create and update refuse anything else. Each host adapter owns one
+  values; create and update refuse anything else. A profile stores its thinking
+  level once, in `thinkingOptionId`, and its mode once, in `modeId`
+  (nucleus#1365, Tom 2026-11-19: "There should only ever be one field for this
+  setting in the profile settings UI"): an option a host's table uses to carry
+  either (a provider's `thinkingOption`, the host's `thinkingSelects` such as
+  T3's `reasoningEffort`, a mode's option values) is never a feature field in
+  the editor, which shows one Thinking and one Mode control in canonical values.
+  A stored feature value on such an option makes the profile unavailable on that
+  host with the reason named, and the migration below moves stored thinking
+  carriers to the level. Each host adapter owns one
   table (`hosts/paseo/vocabulary.ts`, `hosts/t3code/vocabulary.ts`) that
   translates canonical values to its own: Paseo spells Claude's `full-access` as
   `bypassPermissions` and `supervised` as `default`, and carries Grok's
@@ -71,7 +80,15 @@ profiles.
   on one, with each host's reason in its popover. Stored profiles moved to the
   canonical vocabulary once on open (`profileVocabularyMigration` records what
   changed); a profile with a value the migration doesn't know is left as stored
-  and reported. The per-profile host setting (nucleus#1151) and the provider map
+  and reported. On every open the service then moves a thinking level held in a
+  host carrier (`featureValues.thinking`, `effort`, `reasoningEffort`,
+  `reasoning`) or a host spelling in `thinkingOptionId` (`ultrathink`, BB's
+  `none`) to the canonical level, read back through every host table
+  (`hosts/vocabularies.ts`); `profileThinkingMigration` records the first run and
+  any run that changed a profile. A value no table maps, or two values that
+  disagree, stays as stored and reported, and shows on the profile as that host's
+  reason. The task card reads a routing snapshot's level back through its host's
+  table, so it shows the canonical level, not the host's spelling. The per-profile host setting (nucleus#1151) and the provider map
   (2026-11-08) are retired.
 - The
   earlier migration copied Paseo's `config.agentProfiles` once with

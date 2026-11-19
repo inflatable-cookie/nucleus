@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { stringify } from 'yaml';
-import { parseNorthstarDocument, submissionQueueFields } from '../core/planning/handoff';
+import { parseBriefDocument, submissionQueueFields } from '../core/planning/handoff';
 import { stageDeclarationSchema, stageDeclarationFromBrief, stageListSchema } from '../core/stages';
 import { stageHistoryFixture } from './support/stage-history';
 
@@ -33,13 +33,13 @@ test('350 paths declared once compile to the identical inline plan, gates and se
 
 test('admission and runtime use the same compiled stage definitions and omit local declarations from submission', () => {
   const brief = text({ stages: refs, subjectSets, goal: true });
-  const admitted = parseNorthstarDocument(brief, 'brief');
+  const admitted = parseBriefDocument(brief, 'brief');
   const runtime = stageDeclarationFromBrief(brief)!;
   assert.deepEqual(admitted.queue.stages, runtime.stages);
   assert.deepEqual(runtime, stageDeclarationFromBrief(text({ stages, goal: true })));
   const fields = submissionQueueFields(admitted.queue);
   for (const key of ['stages', 'subjectSets', 'goal']) assert.equal(Object.hasOwn(fields, key), false);
-  assert.equal(Object.hasOwn(parseNorthstarDocument(text({}), 'brief').queue, 'stages'), false);
+  assert.equal(Object.hasOwn(parseBriefDocument(text({}), 'brief').queue, 'stages'), false);
 });
 
 test('unknown refs, cycles, unsupported versions, ambiguous replacements and duplicate additions fail admission and runtime', () => {
@@ -54,7 +54,7 @@ test('unknown refs, cycles, unsupported versions, ambiguous replacements and dup
     { subjectSets },
   ];
   for (const queue of invalid) {
-    assert.throws(() => parseNorthstarDocument(text(queue), 'brief'));
+    assert.throws(() => parseBriefDocument(text(queue), 'brief'));
     assert.equal(stageDeclarationFromBrief(text(queue)), null);
   }
 });

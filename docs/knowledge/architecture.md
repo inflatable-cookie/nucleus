@@ -353,8 +353,8 @@ owner to the rules it enforces.
   and nothing else: lanes, routing, worker exclusions, dependencies, notes and
   holds, completion subscriptions and the task's owner. Same-name `Engine` methods
   delegate to it.
-- `core/verbs/brief.ts` re-pins a committed handoff's instruction, amends a
-  Nucleus-held brief and refuses brief text that still declares a stage plan.
+- `core/verbs/brief.ts` amends a Nucleus-held brief and refuses brief text that
+  still declares a stage plan.
   Same-name `Engine` methods delegate to it.
 - `core/recovery/task-stops.ts` writes a task's stops, incidents and attention, and
   closes attention episodes and escalations. Same-name `Resolution` methods
@@ -527,7 +527,9 @@ owner to the rules it enforces.
   `recovery.ts` is the `Recovery` surface `Resolution` constructs and wires the
   stages together. `coordinator-route.ts` decides whether a task needs a
   coordinator and launches it; `coordinator-pass.ts` observes that exact run until
-  it reports; `coordinator-episode.ts` owns the episode's durable bookkeeping
+  it reports, and releases any agentless creation whose attempt has terminated
+  once its exact lookup is empty even when no episode names it any more;
+  `coordinator-episode.ts` owns the episode's durable bookkeeping
   (bindings, refusal, release, escalation). `coordinator-report.ts` holds the pure
   report rules — `taskProgressDigest`, `coordinatorReportMatches`,
   `coordinatorActionPlan` (a report to verb arguments, or the refusal naming why it

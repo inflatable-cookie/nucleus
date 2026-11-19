@@ -3,12 +3,27 @@ import type { Engine } from "../engine";
 import { reapHookCheckouts } from "../hooks/hook-cleanup";
 import { removeTaskProofFiles } from "../intake/proof-files";
 import { pruneLiveDataHomeBackupCopies } from "../store/data-home-retention";
-import { RECLAIM_DRAIN_BUDGET_MS, RECLAIM_DRAIN_FREE_PAGES, RECLAIM_DRAIN_MAX_PAGES } from "../store/store";
+import {
+  RECLAIM_DRAIN_BUDGET_MS,
+  RECLAIM_DRAIN_FREE_PAGES,
+  RECLAIM_DRAIN_MAX_PAGES,
+} from "../store/store";
+import { runThreadRetention } from "../workspaces/thread-retention";
 
 const HOUR_MS = 3_600_000;
 const DAY_MS = 86_400_000;
 
-export type SweepMaintenanceContext = Pick<Engine, 'adapter' | 'migrateProjectOwnersToPlanners' | 'removeSiblings' | 'store'>;
+export type SweepMaintenanceContext = Pick<
+  Engine,
+  | "adapter"
+  | "hostAvailable"
+  | "hostIds"
+  | "migrateProjectOwnersToPlanners"
+  | "removeSiblings"
+  | "stopped"
+  | "store"
+  | "withHost"
+>;
 
 /**
  * The audit pass's periodic maintenance: the hourly and daily store chores and
@@ -24,37 +39,104 @@ export type SweepMaintenanceContext = Pick<Engine, 'adapter' | 'migrateProjectOw
 export class SweepMaintenance {
   /** Last hourly hook-checkout and data-home retention pass. */
   lastHookCleanupAt = 0;
+  /** The archived-thread pass in flight, if any: at most one runs at a time. */
+  threadRetentionRun: Promise<void> | null = null;
   constructor(readonly context: SweepMaintenanceContext) {}
-  private get store() { return this.context.store; }
+  private get store() {
+    return this.context.store;
+  }
+
+  /**
+   * Start the archived-thread pass without awaiting it. Its outcome is recorded
+   * under `threadRetentionError` (cleared on success) and per host under
+   * `threadRetention`, so `service.health` shows a failed or stalled pass; nothing
+   * waits on it, so a long walk never holds the audit drain or a service start.
+   */
+  private startThreadRetention(at: number): void {
+    this.threadRetentionRun = runThreadRetention({
+      store: this.store,
+      hostIds: this.context.hostIds(),
+      hostAvailable: (hostId) => this.context.hostAvailable(hostId),
+      withHost: (hostId, work) => this.context.withHost(hostId, work),
+      adapter: this.context.adapter,
+      at,
+      stopped: () => Boolean(this.context.stopped),
+    })
+      .then(() => {
+        this.store.setMeta("threadRetentionError", "");
+      })
+      .catch((error) => {
+        try {
+          this.store.setMeta("threadRetentionError", String(error));
+        } catch {
+          /* the store is closed: the next service start reads the pass again */
+        }
+      })
+      .finally(() => {
+        this.threadRetentionRun = null;
+      });
+  }
 
   async run(at = Date.now()): Promise<void> {
-    const paused = Boolean(this.store.getMeta('paused'));
+    const paused = Boolean(this.store.getMeta("paused"));
     if (at - this.lastHookCleanupAt >= HOUR_MS) {
       this.lastHookCleanupAt = at;
       await reapHookCheckouts(this.store);
       try {
         const removed = pruneLiveDataHomeBackupCopies(dirname(this.store.path));
-        if (removed.length) this.store.setMeta("dataHomeRetention", { checkedAt: new Date(at).toISOString(), removed });
-      } catch (error) { this.store.setMeta("dataHomeRetentionError", String(error)); }
+        if (removed.length)
+          this.store.setMeta("dataHomeRetention", {
+            checkedAt: new Date(at).toISOString(),
+            removed,
+          });
+      } catch (error) {
+        this.store.setMeta("dataHomeRetentionError", String(error));
+      }
     }
-    if (!paused && at - (this.store.getMeta<number>('lastRetentionAt') ?? 0) >= DAY_MS) {
+    if (
+      !paused &&
+      at - (this.store.getMeta<number>("lastRetentionAt") ?? 0) >= DAY_MS
+    ) {
       try {
         // Audit B5: a hook record is the only proof of an isolated checkout's ownership,
         // so the task's owned checkouts are reaped before its hook rows go. A task that
         // still owns an existing checkout keeps its whole history for the next pass.
         const candidates = this.store.retentionCandidates(at);
-        if (candidates.length) await reapHookCheckouts(this.store, { taskIds: new Set(candidates.map(task => task.id)) });
+        if (candidates.length)
+          await reapHookCheckouts(this.store, {
+            taskIds: new Set(candidates.map((task) => task.id)),
+          });
         this.store.purgeOldTasks(at, (taskId, runIds) => {
           this.context.adapter.purgeReportingFiles?.(taskId, runIds);
           void this.context.removeSiblings(taskId);
-          try { removeTaskProofFiles(this.store.task(taskId)); }
-          catch { /* Evidence whose recorded paths cannot be proved is left in place. */ }
+          try {
+            removeTaskProofFiles(this.store.task(taskId));
+          } catch {
+            /* Evidence whose recorded paths cannot be proved is left in place. */
+          }
         });
         // Lean store 2 (task 987): the same windows the schema-52 migration applied, so rows that
         // outlive their task or run are pruned as they age out, not only once.
         this.store.transaction(() => this.store.pruneRetainedRows(at));
-        this.store.setMeta('retentionError', '');
-      } catch (error) { this.store.setMeta('retentionError', String(error)); this.store.setMeta('lastRetentionAt', at); }
+        this.store.setMeta("retentionError", "");
+      } catch (error) {
+        this.store.setMeta("retentionError", String(error));
+        this.store.setMeta("lastRetentionAt", at);
+      }
+    }
+    // Orchestration contract, "Archived thread retention": the service schedules
+    // one retention pass itself, never a system job (Tom, 2026-11-19). Hourly, with
+    // a batch cap per host, so the archived backlog drains over sweeps instead of
+    // in one burst against a host. It runs detached (see `startThreadRetention`):
+    // the first pass walks every archived thread on every host, and the audit pass
+    // this maintenance sits in is what the bootstrap's reconciliation waits on.
+    if (
+      !paused &&
+      !this.threadRetentionRun &&
+      at - (this.store.getMeta<number>("lastThreadRetentionAt") ?? 0) >= HOUR_MS
+    ) {
+      this.store.setMeta("lastThreadRetentionAt", at);
+      this.startThreadRetention(at);
     }
     // Lean store 4 (task 989): freed pages are released on every maintenance tick, not only
     // after a prune, while free pages exceed the drain threshold — one bounded pass per tick
@@ -64,27 +146,54 @@ export class SweepMaintenance {
     // hourly and daily prunes are the only releases, so a steady store is not touched every
     // sweep. One chunk is one short write transaction, so the writer is never held for the
     // whole budget at once.
-    if (!paused && this.store.storeFacts().freePages > RECLAIM_DRAIN_FREE_PAGES) {
-      try { this.store.reclaimFreedPages({ maxPages: RECLAIM_DRAIN_MAX_PAGES, budgetMs: RECLAIM_DRAIN_BUDGET_MS }); }
-      catch { /* the pass records its own fault on the store */ }
+    if (
+      !paused &&
+      this.store.storeFacts().freePages > RECLAIM_DRAIN_FREE_PAGES
+    ) {
+      try {
+        this.store.reclaimFreedPages({
+          maxPages: RECLAIM_DRAIN_MAX_PAGES,
+          budgetMs: RECLAIM_DRAIN_BUDGET_MS,
+        });
+      } catch {
+        /* the pass records its own fault on the store */
+      }
     }
     // Spec 019: idle lanes close themselves; an hourly, bounded store pass that touches no task.
-    if (!paused && at - (this.store.getMeta<number>('lastLaneIdleAt') ?? 0) >= HOUR_MS) {
-      this.store.setMeta('lastLaneIdleAt', at);
-      try { this.store.closeIdleLanes(); this.store.setMeta('laneIdleError', ''); }
-      catch (error) { this.store.setMeta('laneIdleError', String(error)); }
+    if (
+      !paused &&
+      at - (this.store.getMeta<number>("lastLaneIdleAt") ?? 0) >= HOUR_MS
+    ) {
+      this.store.setMeta("lastLaneIdleAt", at);
+      try {
+        this.store.closeIdleLanes();
+        this.store.setMeta("laneIdleError", "");
+      } catch (error) {
+        this.store.setMeta("laneIdleError", String(error));
+      }
     }
     // Spec 058 cutover 5: the one-time owner→planner migration runs before the drain
     // pass below, so notice routing never reads the retired owner machinery.
     if (!paused) {
-      try { await this.context.migrateProjectOwnersToPlanners(); this.store.setMeta('projectOwnerError', ''); }
-      catch (error) { this.store.setMeta('projectOwnerError', String(error)); }
+      try {
+        await this.context.migrateProjectOwnersToPlanners();
+        this.store.setMeta("projectOwnerError", "");
+      } catch (error) {
+        this.store.setMeta("projectOwnerError", String(error));
+      }
     }
     // Spec 041: drained lanes and boards prompt their plan owner and escalate; hourly, bounded, no task touched.
-    if (!paused && at - (this.store.getMeta<number>('lastLaneDrainAt') ?? 0) >= HOUR_MS) {
-      this.store.setMeta('lastLaneDrainAt', at);
-      try { this.store.evaluateLaneDrains(); this.store.setMeta('laneDrainError', ''); }
-      catch (error) { this.store.setMeta('laneDrainError', String(error)); }
+    if (
+      !paused &&
+      at - (this.store.getMeta<number>("lastLaneDrainAt") ?? 0) >= HOUR_MS
+    ) {
+      this.store.setMeta("lastLaneDrainAt", at);
+      try {
+        this.store.evaluateLaneDrains();
+        this.store.setMeta("laneDrainError", "");
+      } catch (error) {
+        this.store.setMeta("laneDrainError", String(error));
+      }
     }
   }
 }

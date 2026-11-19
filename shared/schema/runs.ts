@@ -125,7 +125,7 @@ export const runSchema = z.object({
   }).strict().optional(),
   // Spec 039: one operator reason bound to exactly one fresh reviewer run.
   reviewReason: z.string().trim().min(1).max(4000).nullable().optional(),
-  // The Queue-held brief version this run was given; absent for handoff-mode tasks.
+  // The Queue-held brief version this run was given; absent for a task with no pinned brief.
   briefVersion: z.number().int().positive().nullable().optional(),
   // The lane document versions this run was given; absent when the task links none.
   laneDocuments: z.array(laneDocumentRefSchema).optional(),

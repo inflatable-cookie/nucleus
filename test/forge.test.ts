@@ -8,6 +8,9 @@ import {join} from 'node:path';
 import {git,githubRepositoryFromRemote,verifyWorkspace,verifyResume} from '../core/git/index';
 import {assertPullRequestIdentity,branchRequiresUpToDate,classifyGithubMerge,classifyUncertainMergeProof,exactIntendedMerge,findAnyOpenBranchPr,integrationBaseGate,reportedOrExactMergeCommit,syncMain,uniqueMarkedReviewComment,validateReviewComment,verifyContinuedProgress,verifyInspectedRevisionHead} from '../core/forge/index';
 import {Store} from '../core/store/store';
+import {briefDigest} from '../core/planning/brief';
+// A Queue-held brief pinned on a fixture task: the only instruction route (nucleus#1368).
+const briefPin=(text:string)=>({brief:{text,mediaType:'text/markdown',digest:briefDigest(text)},briefVersions:[{version:1,digest:briefDigest(text),mediaType:'text/markdown',text,reason:'Submitted',pinnedAt:'2026-11-19T00:00:00.000Z'}],handoffText:text,handoffPath:''});
 import {submissionSchema} from '../shared/contracts';
 
 test('GitHub origin parser accepts HTTPS, SCP-style, and SSH URL remotes',()=>{
@@ -85,7 +88,7 @@ test('worker workspace preflight requires the queue-owned branch',async()=>{
  const dir=mkdtempSync(join(tmpdir(),'ns-worker-branch-'));
  try{
   await git(dir,'init');writeFileSync(join(dir,'handoff.md'),'scope');await git(dir,'add','handoff.md');await git(dir,'commit','-m','planning');
-  const planningBase=await git(dir,'rev-parse','HEAD'),task={planningBase,handoffPath:'handoff.md',handoffText:'scope',branch:'ns-task',baseBranch:'main'} as any;
+  const planningBase=await git(dir,'rev-parse','HEAD'),task={planningBase,planningCommit:planningBase,...briefPin('scope'),branch:'ns-task',baseBranch:'main'} as any;
   await git(dir,'checkout','-b','ns-task');assert.equal(await verifyWorkspace(task,dir),'ns-task');
   await git(dir,'branch','-m','ns-prettier-name');await assert.rejects(verifyWorkspace(task,dir),/queue-owned branch ns-task/);
  }finally{rmSync(dir,{recursive:true,force:true})}
@@ -98,7 +101,7 @@ test('continuation worktree verification preserves dirty files and unpublished c
   writeFileSync(join(root,'handoff.md'),'scope');await git(root,'add','handoff.md');await git(root,'commit','-m','planning');await git(root,'push','-u','origin','main');
   const planningBase=await git(root,'rev-parse','HEAD'),worker=join(dir,'worker'),branch='ns-task';
   await git(root,'worktree','add','-b',branch,worker,'main');
-  const task={repoPath:root,directory:worker,planningCommit:planningBase,planningBase,handoffPath:'handoff.md',handoffText:'scope',branch,baseBranch:'main'} as any;
+  const task={repoPath:root,directory:worker,planningCommit:planningBase,planningBase,...briefPin('scope'),branch,baseBranch:'main'} as any;
   writeFileSync(join(worker,'unstaged.txt'),'dirty work');writeFileSync(join(worker,'staged.txt'),'staged work');await git(worker,'add','staged.txt');
   writeFileSync(join(worker,'committed.txt'),'unpublished commit');await git(worker,'add','committed.txt');await git(worker,'commit','-m','unpublished');
   const before=await git(worker,'status','--porcelain');
@@ -119,7 +122,7 @@ test('continuation reattaches a clean detached queue head only when local and re
   const planning=await git(root,'rev-parse','HEAD'),branch='ns-task',worker=join(dir,'worker');await git(root,'worktree','add','-b',branch,worker,'main');
   writeFileSync(join(worker,'feature.txt'),'task');await git(worker,'add','feature.txt');await git(worker,'commit','-m','task work');await git(worker,'push','-u','origin',branch);
   const head=await git(worker,'rev-parse','HEAD');
-  const task={repoPath:root,directory:worker,planningCommit:planning,planningBase:planning,handoffPath:'handoff.md',handoffText:'scope',branch,baseBranch:'main'} as any;
+  const task={repoPath:root,directory:worker,planningCommit:planning,planningBase:planning,...briefPin('scope'),branch,baseBranch:'main'} as any;
 
   await git(worker,'checkout','--detach',planning);
   await assert.rejects(verifyResume(task),/Continuation branch changed/);
@@ -338,52 +341,41 @@ test('exact merge-intent recovery recognizes only the recorded two-parent merge 
  }finally{rmSync(dir,{recursive:true,force:true})}
 });
 
-test('published closeout accepts a clean docs-only descendant, rejects unpublished or out-of-scope changes',async()=>{
- const {mkdirSync}=await import('node:fs');const {verifyCloseoutPublication}=await import('../core/forge/index');
- const dir=mkdtempSync(join(tmpdir(),'ns-closeout-publish-'));let store:Store|undefined;
+test('closeout of a merged PR that edits docs/README.md is ordinary source: no closeout step, no closeout files',async()=>{
+ const {verifyCloseoutPublication}=await import('../core/forge/index');
+ const dir=mkdtempSync(join(tmpdir(),'ns-closeout-ordinary-'));let store:Store|undefined;
  try{
-  await git(dir,'init','--bare','remote.git');await git(dir,'clone',join(dir,'remote.git'),'main');const root=join(dir,'main');await git(root,'checkout','-b','main');
-  mkdirSync(join(root,'docs/handoffs'),{recursive:true});writeFileSync(join(root,'result.txt'),'merged work');writeFileSync(join(root,'docs/handoffs/task.md'),'committed handoff');await git(root,'add','result.txt','docs/handoffs/task.md');await git(root,'commit','-m','merged task');await git(root,'push','-u','origin','main');const baseline=await git(root,'rev-parse','HEAD');
-  store=new Store(join(dir,'queue.sqlite'));const original=store.insert(submissionSchema.parse({submissionId:'closeout',title:'Closeout',repoPath:root,planningCommit:baseline,handoffPath:'docs/handoffs/task.md',originAgentId:'origin'}),'host','handoff',baseline);
+  await git(dir,'init','--bare','remote.git');await git(dir,'clone',join(dir,'remote.git'),'main');const root=join(dir,'main');await git(root,'checkout','-b','main');await git(root,'config','user.name','Queue test');await git(root,'config','user.email','queue@example.invalid');
+  // The merged PR's own files, docs/README.md included, are ordinary source before the baseline.
+  mkdirSync(join(root,'docs'));writeFileSync(join(root,'result.txt'),'merged work');writeFileSync(join(root,'docs/README.md'),'# Docs\n');await git(root,'add','.');await git(root,'commit','-m','merged task');await git(root,'push','-u','origin','main');const baseline=await git(root,'rev-parse','HEAD');
+  store=new Store(join(dir,'queue.sqlite'));const original=store.insert(submissionSchema.parse({submissionId:'closeout',title:'Closeout',repoPath:root,planningCommit:baseline,originAgentId:'origin',brief:{text:'Brief',mediaType:'text/markdown',digest:briefDigest('Brief')}}),'host','Brief',baseline);
   const task=store.update(original.id,{resolution:{...original.resolution,mergedCommit:baseline,syncedCommit:baseline}});
   assert.equal(await verifyCloseoutPublication(task),baseline);
-  mkdirSync(join(root,'docs/logs'),{recursive:true});writeFileSync(join(root,'docs/logs/closeout.md'),'Task merged; review accepted; unrelated failures recorded.');rmSync(join(root,'docs/handoffs/task.md'));await git(root,'add','docs/logs/closeout.md','docs/handoffs/task.md');await git(root,'commit','-m','closeout');const published=await git(root,'rev-parse','HEAD');
-  const report={eventId:'closeout',taskId:task.id,runId:'run',status:'closed' as const,summary:'Closed',closeoutCommit:published};
-  await assert.rejects(verifyCloseoutPublication(task,report),/published/);await git(root,'push');
-  await assert.rejects(verifyCloseoutPublication(task),/report the published/);assert.equal(await verifyCloseoutPublication(task,report),published);
-  writeFileSync(join(root,'result.txt'),'unrelated implementation edit');await assert.rejects(verifyCloseoutPublication(task,report),/not clean/);await git(root,'add','result.txt');await git(root,'commit','-m','outside closeout');await git(root,'push');
-  await assert.rejects(verifyCloseoutPublication(task,{...report,closeoutCommit:await git(root,'rev-parse','HEAD')}),/outside canonical closeout/);
+  // Nucleus closeout writes only the outcome row: a closeout commit that touches any path is refused, docs/README.md included.
+  writeFileSync(join(root,'docs/README.md'),'# Docs\n\nCloseout edit\n');await git(root,'add','docs/README.md');await git(root,'commit','-m','closeout edit');await git(root,'push');
+  const edited=await git(root,'rev-parse','HEAD');
+  await assert.rejects(verifyCloseoutPublication(task,{eventId:'closeout',taskId:task.id,runId:'run',status:'closed',summary:'Closed',closeoutCommit:edited}),/changed files; closeout writes only the outcome row/);
  }finally{store?.close();rmSync(dir,{recursive:true,force:true})}
 });
 
-test('published closeout accepts the exact root docs front door and fences nearby paths',async()=>{
- const {mkdirSync,symlinkSync}=await import('node:fs');const {verifyCloseoutPublication}=await import('../core/forge/index');
- const dir=mkdtempSync(join(tmpdir(),'ns-closeout-front-door-'));let store:Store|undefined;
+test('published closeout refuses an unpublished head and any closeout commit that changes files',async()=>{
+ const {verifyCloseoutPublication}=await import('../core/forge/index');
+ const dir=mkdtempSync(join(tmpdir(),'ns-closeout-publish-'));let store:Store|undefined;
  try{
-  await git(dir,'init','--bare','remote.git');await git(dir,'clone',join(dir,'remote.git'),'main');const root=join(dir,'main');await git(root,'checkout','-b','main');
-  mkdirSync(join(root,'docs/handoffs'),{recursive:true});writeFileSync(join(root,'README.md'),'# Queue');writeFileSync(join(root,'docs/README.md'),'# Docs\n');writeFileSync(join(root,'docs/handoffs/task.md'),'committed handoff');await git(root,'add','README.md','docs/README.md','docs/handoffs/task.md');await git(root,'commit','-m','merged task');await git(root,'push','-u','origin','main');const baseline=await git(root,'rev-parse','HEAD');
-  store=new Store(join(dir,'queue.sqlite'));const original=store.insert(submissionSchema.parse({submissionId:'closeout-front-door',title:'Closeout front door',repoPath:root,planningCommit:baseline,handoffPath:'docs/handoffs/task.md',originAgentId:'origin'}),'host','handoff',baseline);
+  await git(dir,'init','--bare','remote.git');await git(dir,'clone',join(dir,'remote.git'),'main');const root=join(dir,'main');await git(root,'checkout','-b','main');await git(root,'config','user.name','Queue test');await git(root,'config','user.email','queue@example.invalid');
+  writeFileSync(join(root,'result.txt'),'merged work');await git(root,'add','result.txt');await git(root,'commit','-m','merged task');await git(root,'push','-u','origin','main');const baseline=await git(root,'rev-parse','HEAD');
+  store=new Store(join(dir,'queue.sqlite'));const original=store.insert(submissionSchema.parse({submissionId:'closeout-publish',title:'Closeout',repoPath:root,planningCommit:baseline,originAgentId:'origin'}),'host','handoff',baseline);
   const task=store.update(original.id,{resolution:{...original.resolution,mergedCommit:baseline,syncedCommit:baseline}});
-  mkdirSync(join(root,'docs/logs'),{recursive:true});writeFileSync(join(root,'docs/logs/closeout.md'),'Task merged; review accepted.');writeFileSync(join(root,'docs/README.md'),'# Docs\n\n- [Logs](logs/README.md)\n');rmSync(join(root,'docs/handoffs/task.md'));await git(root,'add','docs/README.md','docs/logs/closeout.md','docs/handoffs/task.md');await git(root,'commit','-m','closeout');const published=await git(root,'rev-parse','HEAD');await git(root,'push');
-  const report={eventId:'closeout',taskId:task.id,runId:'run',status:'closed' as const,summary:'Closed',closeoutCommit:published};
-  assert.equal(await verifyCloseoutPublication(task,report),published);
-  writeFileSync(join(root,'docs/OTHER.md'),'unrelated root docs page');await git(root,'add','docs/OTHER.md');await git(root,'commit','-m','unrelated root docs page');await git(root,'push');
-  await assert.rejects(verifyCloseoutPublication(task,{...report,closeoutCommit:await git(root,'rev-parse','HEAD')}),/outside canonical closeout/);
-  rmSync(join(root,'docs/OTHER.md'));rmSync(join(root,'docs/README.md'));symlinkSync('../README.md',join(root,'docs/README.md'));await git(root,'add','docs/README.md','docs/OTHER.md');await git(root,'commit','-m','symlink front door');await git(root,'push');
-  await assert.rejects(verifyCloseoutPublication(task,{...report,closeoutCommit:await git(root,'rev-parse','HEAD')}),/preserve regular Markdown files/);
- }finally{store?.close();rmSync(dir,{recursive:true,force:true})}
-});
-
-test('published closeout rejects deletion of canonical Markdown other than its submitted handoff',async()=>{
- const {mkdirSync}=await import('node:fs');const {verifyCloseoutPublication}=await import('../core/forge/index');
- const dir=mkdtempSync(join(tmpdir(),'ns-closeout-delete-'));let store:Store|undefined;
- try{
-  await git(dir,'init','--bare','remote.git');await git(dir,'clone',join(dir,'remote.git'),'main');const root=join(dir,'main');await git(root,'checkout','-b','main');
-  mkdirSync(join(root,'docs/logs'),{recursive:true});writeFileSync(join(root,'docs/logs/retained.md'),'retained evidence');await git(root,'add','docs/logs/retained.md');await git(root,'commit','-m','merged task');await git(root,'push','-u','origin','main');const baseline=await git(root,'rev-parse','HEAD');
-  store=new Store(join(dir,'queue.sqlite'));const original=store.insert(submissionSchema.parse({submissionId:'closeout-delete',title:'Closeout deletion',repoPath:root,planningCommit:baseline,handoffPath:'docs/handoffs/task.md',originAgentId:'origin'}),'host','handoff',baseline);
-  const task=store.update(original.id,{resolution:{...original.resolution,mergedCommit:baseline,syncedCommit:baseline}});
-  rmSync(join(root,'docs/logs/retained.md'));await git(root,'add','docs/logs/retained.md');await git(root,'commit','-m','delete evidence');await git(root,'push');
-  await assert.rejects(verifyCloseoutPublication(task,{eventId:'closeout',taskId:task.id,runId:'run',status:'closed',summary:'Closed',closeoutCommit:await git(root,'rev-parse','HEAD')}),/preserve regular Markdown files/);
+  assert.equal(await verifyCloseoutPublication(task),baseline);
+  // A closeout commit that is not pushed cannot be reported as published.
+  mkdirSync(join(root,'docs'));writeFileSync(join(root,'docs/note.md'),'note\n');await git(root,'add','docs/note.md');await git(root,'commit','-m','closeout');const published=await git(root,'rev-parse','HEAD');
+  await assert.rejects(verifyCloseoutPublication(task,{eventId:'closeout',taskId:task.id,runId:'run',status:'closed',summary:'Closed',closeoutCommit:published}),/published|changed files/);
+  // Pushed, but still a file change: refused, and an empty closeout is accepted.
+  await git(root,'push');
+  await assert.rejects(verifyCloseoutPublication(task,{eventId:'closeout',taskId:task.id,runId:'run',status:'closed',summary:'Closed',closeoutCommit:published}),/changed files/);
+  await git(root,'reset','--hard','HEAD~1');await git(root,'push','--force');
+  await git(root,'commit','--allow-empty','-m','closeout without files');await git(root,'push');const empty=await git(root,'rev-parse','HEAD');
+  assert.equal(await verifyCloseoutPublication(task,{eventId:'closeout',taskId:task.id,runId:'run',status:'closed',summary:'Closed',closeoutCommit:empty}),empty);
  }finally{store?.close();rmSync(dir,{recursive:true,force:true})}
 });
 
@@ -449,7 +441,7 @@ test('continued progress proves canonical published descendant in the retained w
   writeFileSync(wrapper,'#!/bin/sh\nif [ "$1" = ls-remote ] && [ "$2" = origin ]; then exec /usr/bin/git ls-remote "$NS_TEST_REMOTE" "$3"; fi\nexec /usr/bin/git "$@"\n');chmodSync(wrapper,0o755);
   process.env.NS_TEST_REMOTE=join(dir,'remote.git');process.env.PATH=`${bin}:${savedPath ?? ''}`;
   const head=await git(worker,'rev-parse','HEAD'), url='https://github.com/example/repo/pull/1';
-  const task={id,repoPath:root,directory:worker,workspaceId:'workspace',agentId:'author',branch,baseBranch:'main',planningCommit:planning,handoffPath:'handoff.md',handoffText:'scope',prUrl:url} as any;
+  const task={id,repoPath:root,directory:worker,workspaceId:'workspace',agentId:'author',branch,baseBranch:'main',planningCommit:planning,...briefPin('scope'),prUrl:url} as any;
   let forgeHead=head, repository='example/repo';
   const lookup=async()=>({url,head:forgeHead,repository:'example/repo',headRepository:repository});
   const prove=(ancestors=[planning])=>verifyContinuedProgress(task,1,head,ancestors,{},lookup);

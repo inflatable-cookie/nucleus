@@ -48,7 +48,7 @@ async function startRehearsal() {
       const terminal = i % 4 === 3;
       const submission = submissionSchema.parse({
         submissionId: id, title: `Rehearsal task ${i}`, repoPath: `/fixture/repo-${i % 20}`,
-        planningCommit: 'a'.repeat(40), handoffPath: `docs/handoffs/${id}.md`, originAgentId: 'origin-worker',
+        planningCommit: 'a'.repeat(40), handoffPath: `tasks/${id}.md`, originAgentId: 'origin-worker',
         coordinatorAgentId: 'origin-coordinator', scope: 'general',
       });
       const retired = i === 5 ? [{ agentId: 'agent-1', runId: `run-${id}`, profile: { id: 'p', name: 'P', provider: 'fixture', model: 'm', notes: '', available: true, problem: '', supportedThinking: [] }, reason: 'Rehearsal retired worker' }] : [];

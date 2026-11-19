@@ -17,7 +17,7 @@ import { assertReviewResponsibility, latestReviewVerdicts, reviewRecordFor } fro
 import { reviewPublicationBody, reviewVerdictTable, publishFormalReview } from '../core/forge/index';
 import { git } from '../core/git/index';
 import { runPrompt } from '../core/dispatch/prompts';
-import { parseNorthstarDocument, submissionQueueFields } from '../core/planning/handoff';
+import { parseBriefDocument, submissionQueueFields } from '../core/planning/handoff';
 import type { Adapter } from '../core/host';
 import { type ResolutionAdapter } from '../core/resolution';
 import { isAcceptedReview } from '../core/recovery/task-reasons';
@@ -69,18 +69,18 @@ test('an approval omits reviewResponsibility; unfinished coverage is review_in_p
 
 test('retired verdict, gate and manual-verification frontmatter is refused with the replacement named', () => {
   const document = (queue: string) => `---\ntitle: Brief\nqueue_approval: "operator approved"\nqueue:\n${queue}---\n\nBody.\n`;
-  assert.throws(() => parseNorthstarDocument(document('  reviewVerdicts: true\n'), 'brief'), /queue\.reviewVerdicts is no longer available; state the outcome and acceptance in prose.*queue\.mergeHold/);
-  assert.throws(() => parseNorthstarDocument(document('  reviewVerdicts: [spec, tests]\n'), 'brief'), /queue\.reviewVerdicts is no longer available/);
-  assert.throws(() => parseNorthstarDocument(document('  reviewPassGate: [publication]\n'), 'brief'), /queue\.reviewPassGate is no longer available; state the acceptance conditions in prose.*queue\.mergeHold/);
-  assert.throws(() => parseNorthstarDocument(document('  manualVerification: true\n'), 'brief'), /queue\.manualVerification is no longer available/);
+  assert.throws(() => parseBriefDocument(document('  reviewVerdicts: true\n'), 'brief'), /queue\.reviewVerdicts is no longer available; state the outcome and acceptance in prose.*queue\.mergeHold/);
+  assert.throws(() => parseBriefDocument(document('  reviewVerdicts: [spec, tests]\n'), 'brief'), /queue\.reviewVerdicts is no longer available/);
+  assert.throws(() => parseBriefDocument(document('  reviewPassGate: [publication]\n'), 'brief'), /queue\.reviewPassGate is no longer available; state the acceptance conditions in prose.*queue\.mergeHold/);
+  assert.throws(() => parseBriefDocument(document('  manualVerification: true\n'), 'brief'), /queue\.manualVerification is no longer available/);
   // reviewContinuationIds is retired with the automatic-review-loop concept: it
   // still parses inertly on historical briefs (bounded, unique ids) and no code reads it.
-  const continuation = parseNorthstarDocument(document('  reviewContinuationIds: [scope]\n'), 'brief');
+  const continuation = parseBriefDocument(document('  reviewContinuationIds: [scope]\n'), 'brief');
   assert.deepEqual(submissionQueueFields(continuation.queue).reviewContinuationIds, ['scope']);
-  assert.throws(() => parseNorthstarDocument(document('  reviewContinuationIds: []\n'), 'brief'), /reviewContinuationIds/);
-  assert.throws(() => parseNorthstarDocument(document('  reviewContinuationIds: [a, a]\n'), 'brief'), /unique/);
+  assert.throws(() => parseBriefDocument(document('  reviewContinuationIds: []\n'), 'brief'), /reviewContinuationIds/);
+  assert.throws(() => parseBriefDocument(document('  reviewContinuationIds: [a, a]\n'), 'brief'), /unique/);
   // A brief with neither field keeps today's shape.
-  const plain = parseNorthstarDocument(document('  scope: general\n'), 'brief');
+  const plain = parseBriefDocument(document('  scope: general\n'), 'brief');
   assert.equal(plain.queue.reviewPassGate, undefined);
   assert.equal(plain.queue.reviewVerdicts, undefined);
   assert.equal(plain.queue.manualVerification, undefined);

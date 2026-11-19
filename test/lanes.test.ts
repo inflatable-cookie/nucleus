@@ -9,7 +9,7 @@ import { CURRENT_SCHEMA, Store, digest } from '../core/store/store';
 import { Engine } from '../core/engine';
 import { workerPrompt } from '../core/dispatch/prompts';
 import { runPrompt, checkpointPrompt, queueLaneBlock } from '../core/dispatch/prompts';
-import { parseNorthstarDocument, submissionQueueFields } from '../core/planning/handoff';
+import { parseBriefDocument, submissionQueueFields } from '../core/planning/handoff';
 import { submissionSchema, projectSchema, taskControlInputSchema, type Profile, type Run, type Task } from '../shared/contracts';
 import { pipelineBoard } from '../shared/pipeline-board';
 import { LANE_IDLE_CLOSE_MS, LANE_IDLE_CLOSE_NOTE } from '../core/planning/lanes';
@@ -248,15 +248,15 @@ test('12. Removing a repository that still has live tasks in the lane is refused
 
 test('13. Submission with a list of two lane keys, and with queue.lanes; lane and lanes together refused', () => {
   const frontmatter = (queue: string) => `---\ntitle: Laned\nqueue_approval: "Tom"\nqueue:\n${queue}\n---\n\nBrief body.\n`;
-  const lane = parseNorthstarDocument(frontmatter('  lane: [alpha, beta]\n  scope: mechanical'), 'brief');
+  const lane = parseBriefDocument(frontmatter('  lane: [alpha, beta]\n  scope: mechanical'), 'brief');
   assert.deepEqual(submissionQueueFields(lane.queue).lanes, ['alpha', 'beta']);
-  const lanes = parseNorthstarDocument(frontmatter('  lanes: [alpha, beta]\n  scope: mechanical'), 'brief');
+  const lanes = parseBriefDocument(frontmatter('  lanes: [alpha, beta]\n  scope: mechanical'), 'brief');
   assert.deepEqual(submissionQueueFields(lanes.queue).lanes, ['alpha', 'beta']);
-  const single = parseNorthstarDocument(frontmatter('  lane: alpha\n  scope: mechanical'), 'brief');
+  const single = parseBriefDocument(frontmatter('  lane: alpha\n  scope: mechanical'), 'brief');
   assert.deepEqual(submissionQueueFields(single.queue).lanes, ['alpha']);
-  const none = parseNorthstarDocument(frontmatter('  lane: null\n  scope: mechanical'), 'brief');
+  const none = parseBriefDocument(frontmatter('  lane: null\n  scope: mechanical'), 'brief');
   assert.deepEqual(submissionQueueFields(none.queue).lanes, []);
-  const both = parseNorthstarDocument(frontmatter('  lane: alpha\n  lanes: [beta]\n  scope: mechanical'), 'brief');
+  const both = parseBriefDocument(frontmatter('  lane: alpha\n  lanes: [beta]\n  scope: mechanical'), 'brief');
   assert.throws(() => submissionQueueFields(both.queue), /not both/);
 
   const parsed = submissionSchema.parse({ submissionId: 'two', title: 'Two', repoPath: '/repo-a', planningCommit: head, handoffPath: 't.md', originAgentId: 'origin', lanes: ['alpha', 'beta'] });
@@ -347,7 +347,7 @@ test('18. Prompts for zero, one and two lanes: zero unchanged, one byte-identica
   assert.doesNotMatch(workerPrompt(zero, true), /Lane context/);
   const one = { ...base, lanes: ['silo-adoption'], laneContext: [{ key: 'silo-adoption', title: 'Silo adoption', aim: 'Nucleus can see the line of work.' }] } as unknown as Task;
   // The pre-revision single-lane block, byte for byte.
-  assert.equal(queueLaneBlock(one), 'Lane context — not scope authority: Silo adoption\nNucleus can see the line of work.\nThe handoff or brief still governs this task\'s scope. The lane aim grants no additional authority.\n');
+  assert.equal(queueLaneBlock(one), 'Lane context — not scope authority: Silo adoption\nNucleus can see the line of work.\nThe brief still governs this task\'s scope. The lane aim grants no additional authority.\n');
   const two = { ...base, lanes: ['silo-adoption', 'beta-lane'], laneContext: [laneContext('silo-adoption'), laneContext('beta-lane')] } as unknown as Task;
   const block = queueLaneBlock(two);
   assert.equal((block.match(/Lane context — not scope authority:/g) ?? []).length, 2);

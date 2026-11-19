@@ -743,9 +743,8 @@ never switched or merged with the release tree. Planning ancestry, pinned brief,
 PR base, exact-head independent review and merge proofs remain required. Git
 refuses a base already owned by another worktree. Dirty or changed main, a
 diverged release ref and pause before synchronization refuse without replacing
-local work. Same-base checkout behavior is unchanged. Legacy committed handoffs
-and integration-writing closeout authorities still require their selected-base
-checkout; this routing does not grant those hooks permission to write main.
+local work. Same-base checkout behavior is unchanged. Integration-writing closeout
+authorities still require their selected-base checkout; this routing does not grant those hooks permission to write main.
 
 Private checkout add and no-force remove run under the bounded slow-Git ceiling
 (`GIT_SLOW_TIMEOUT_MS`, 600 s), not the 30-second read gate, because linked

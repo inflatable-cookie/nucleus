@@ -28,7 +28,7 @@ export function assertReviewSourceBinding(task: Task, run: Run, workspaceIdAccep
 }
 /**
  * The brief a pinned view was read under. A Queue-held brief is the task's current
- * pinned text; handoff mode records null on both sides. An amended brief therefore
+ * pinned text; a task with no pinned brief records null on both sides. An amended brief therefore
  * refuses the view it was not read under.
  */
 function pinnedViewBrief(task:Task){

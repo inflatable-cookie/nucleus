@@ -1,7 +1,7 @@
 import { runPrompt, checkpointPrompt, workerPrompt } from '../../core/dispatch/prompts';
 import { handoffTask, retiredTask, prePrTask, runs, intent } from './handoff-prompt-cases';
 /**
- * Render every handoff-mode prompt shape from the frozen inputs. After a prompt
+ * Render every brief-mode prompt shape from the frozen inputs. After a prompt
  * change, regenerate handoff-prompts.json from this: JSON.stringify(result, null, 2)
  * plus a trailing newline. briefs.test.ts compares the frozen bytes.
  */

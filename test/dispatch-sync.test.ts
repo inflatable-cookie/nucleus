@@ -72,14 +72,19 @@ async function commit(
 }
 
 const handoff = "plan";
+/** A Queue-held brief pinned at the handoff text: the only instruction source (committed handoffs are retired). */
+const pinnedBrief = (text: string) => ({
+  brief: { text, mediaType: "text/markdown", digest: briefDigest(text) },
+});
 const dispatchTask = (repo: string, planningCommit: string) =>
   ({
     repoPath: repo,
     baseBranch: "main",
     branch: "ns-task",
     planningCommit,
-    handoffPath: "docs/handoff.md",
+    handoffPath: "", ...pinnedBrief(handoff),
     handoffText: handoff,
+    briefVersions: [{ version: 1, digest: briefDigest(handoff), mediaType: "text/markdown", text: handoff, reason: "Submitted", pinnedAt: "2026-09-26T00:00:00.000Z" }],
   }) as unknown as Task;
 
 async function reviewLockfileFixture(
@@ -234,7 +239,7 @@ async function reviewLockfileFixture(
       title: "Review changed dependencies",
       repoPath: repo,
       planningCommit: planning,
-      handoffPath: "docs/handoff.md",
+      handoffPath: "", ...pinnedBrief(handoff),
       originAgentId: "origin",
     }),
     "host",
@@ -770,7 +775,7 @@ test("a new task gets a private install from the lockfile advanced by dispatch",
       title: "New task after lockfile merge",
       repoPath: repo,
       planningCommit: planning,
-      handoffPath: "docs/handoff.md",
+      handoffPath: "", ...pinnedBrief(handoff),
       originAgentId: "origin",
     }),
     "host",
@@ -1121,7 +1126,7 @@ test("a diverged integration branch still refuses dispatch", async (t) => {
  * because a workspace is visible. Nothing is pinned to the old base in that state, so the base may
  * be re-recorded, but only onto a head that provably carries the same work.
  */
-test("a dispatch base may be re-recorded only onto a descendant carrying the submitted handoff", async (t) => {
+test("a dispatch base may be re-recorded only onto a descendant; the pinned brief is the identity, not repository bytes", async (t) => {
   const { repo } = await makeRepo(t);
   const planning = await commit(repo, "planning", {
     "docs/handoff.md": handoff,
@@ -1152,9 +1157,10 @@ test("a dispatch base may be re-recorded only onto a descendant carrying the sub
   await git(repo, "add", "-A");
   await git(repo, "commit", "-q", "-m", "handoff changed");
   const rewritten = await git(repo, "rev-parse", "HEAD");
-  await assert.rejects(
-    () => proveRebindableDispatchBase(task, repo, rewritten),
-    /does not match the submitted handoff/,
+  assert.equal(
+    await proveRebindableDispatchBase(task, repo, rewritten),
+    rewritten,
+    "a descendant that edits repository bytes still re-records: the pinned brief is the identity",
   );
 
   await assert.rejects(
@@ -1240,7 +1246,7 @@ function dispatchFixture(
       title: "Task",
       repoPath: repo,
       planningCommit: planningBase,
-      handoffPath: "docs/handoff.md",
+      handoffPath: "", ...pinnedBrief(handoff),
       originAgentId: "origin",
     }),
     "host",
@@ -1721,177 +1727,6 @@ test("a rebind-displaced collision stays releasable after the worker is dispatch
   }
 });
 
-test("repin refuses an undispatched handoff and points to resubmission and supersession", async (t) => {
-  const { repo } = await makeRepo(t);
-  const planning = await commit(repo, "planning", {
-    "docs/handoff.md": handoff,
-  });
-  const f = dispatchFixture(repo, planning);
-  try {
-    const queued = f.store.update(f.task.id, {
-      phase: "queued",
-      workspaceIntent: false,
-      workspaceId: null,
-      directory: null,
-      runId: null,
-      profile: null,
-      profileGroup: null,
-      instruction: {
-        path: "docs/handoff.md",
-        commit: planning,
-        digest: "sha256:" + "0".repeat(64),
-        mediaType: "text/markdown",
-      },
-    });
-    await assert.rejects(
-      f.engine.performTaskControl({
-        taskId: queued.id,
-        version: queued.version,
-        action: "amend_brief",
-        reason: "Re-pin the instruction",
-      }),
-      /resubmit.*supersede/,
-    );
-    assert.equal(f.store.task(queued.id).version, queued.version);
-  } finally {
-    await f.close();
-  }
-});
-
-test("repin changes only the pin while a stopped revision still holds the lane", async (t) => {
-  const { repo } = await makeRepo(t);
-  const planning = await commit(repo, "planning", {
-    "docs/handoff.md": handoff,
-  });
-  const amended = await commit(repo, "amend the handoff", {
-    "docs/handoff.md": handoff + "\nAmended ruling.\n",
-  });
-  const f = dispatchFixture(repo, planning, {
-    phase: "changes_requested",
-    reason: "Revision thread running",
-    runId: "initial",
-    prUrl: "https://example.invalid/pr/1",
-    prHead: "a".repeat(40),
-    instruction: {
-      path: "docs/handoff.md",
-      commit: planning,
-      digest: "sha256:" + "0".repeat(64),
-      mediaType: "text/markdown",
-    },
-  });
-  try {
-    const current = f.store.task(f.task.id);
-    f.store.putRun({
-      id: "stopped",
-      taskId: current.id,
-      role: "revision",
-      generation: 1,
-      head: "a".repeat(40),
-      base: planning,
-      agentId: "dead",
-      workspaceId: current.workspaceId,
-      instruction: null,
-      profile: null,
-      profileGroup: null,
-      status: "running",
-      createdAt: new Date().toISOString(),
-      lastObservedAt: null,
-      active: false,
-      idleSince: null,
-      completion: null,
-      released: false,
-    } as any);
-    f.store.update(current.id, {
-      resolution: {
-        ...current.resolution,
-        currentRunId: "stopped",
-        attention: true,
-        review: {
-          eventId: "r",
-          taskId: current.id,
-          runId: "rev",
-          status: "changes_required",
-          summary: "fix",
-          head: "b".repeat(40),
-        } as any,
-      },
-    });
-    const before = f.store.task(f.task.id);
-    const repinned = await f.engine.performTaskControl({
-      taskId: before.id,
-      version: before.version,
-      action: "amend_brief",
-      reason: "Re-pin the instruction",
-    });
-    assert.equal(repinned.instruction?.commit, amended);
-    assert.equal(
-      repinned.phase,
-      "changes_requested",
-      "g05.180: the stopped revision keeps its lane",
-    );
-    assert.equal(repinned.resolution.attention, true);
-    assert.equal(repinned.resolution.currentRunId, "stopped");
-  } finally {
-    await f.close();
-  }
-});
-
-test("repin still re-runs the pre-merge gate for a lane held there with an accepted review", async (t) => {
-  const { repo } = await makeRepo(t);
-  const planning = await commit(repo, "planning", {
-    "docs/handoff.md": handoff,
-  });
-  const amended = await commit(repo, "amend the handoff", {
-    "docs/handoff.md": handoff + "\nAmended ruling.\n",
-  });
-  const head = "a".repeat(40);
-  const f = dispatchFixture(repo, planning, {
-    phase: "needs_attention",
-    reason:
-      "Repository hook lifecycle-gate task.pre_merge holds this transition: instruction changed",
-    runId: "initial",
-    prUrl: "https://example.invalid/pr/1",
-    prHead: head,
-    instruction: {
-      path: "docs/handoff.md",
-      commit: planning,
-      digest: "sha256:" + "0".repeat(64),
-      mediaType: "text/markdown",
-    },
-  });
-  try {
-    const current = f.store.task(f.task.id);
-    f.store.update(current.id, {
-      resolution: {
-        ...current.resolution,
-        currentRunId: null,
-        attention: true,
-        review: {
-          eventId: "r",
-          taskId: current.id,
-          runId: "rev",
-          status: "ready_to_merge",
-          summary: "ok",
-          head,
-          reviewCommentId: 1,
-        } as any,
-      },
-    });
-    const before = f.store.task(f.task.id);
-    const repinned = await f.engine.performTaskControl({
-      taskId: before.id,
-      version: before.version,
-      action: "amend_brief",
-      reason: "Re-pin the instruction",
-    });
-    assert.equal(repinned.instruction?.commit, amended);
-    assert.equal(repinned.phase, "verifying");
-    assert.equal(repinned.resolution.attention, false);
-  } finally {
-    await f.close();
-  }
-});
-
 test("release brief dispatch and merged-base sync preserve registered main throughout", async (t) => {
   const { root, repo } = await makeRepo(t);
   const released = await commit(repo, "released v0.5.1", {
@@ -2026,7 +1861,7 @@ test("release routing refuses dirty main, owned base worktrees, divergence and i
       repoPath: repo,
       brief: null,
     }),
-    /exactly one/,
+    /carries a Queue-held brief/,
   );
 });
 
@@ -2244,9 +2079,9 @@ test("release forge gates retain clean, owned, origin and closeout publication b
   );
   await git(writer, "config", "user.name", "Queue test");
   await git(writer, "config", "user.email", "queue@example.invalid");
-  const published = await commit(writer, "canonical closeout", {
-    "docs/logs/closeout.md": "closed",
-  });
+  // Closeout publishes no files: the closeout commit is empty.
+  await git(writer, "commit", "--allow-empty", "-m", "canonical closeout");
+  const published = await git(writer, "rev-parse", "HEAD");
   await git(writer, "push", "origin", "release/v0.5");
   await git(repo, "fetch", "origin", "release/v0.5");
   await git(repo, "branch", "-f", "release/v0.5", published);
@@ -2265,7 +2100,7 @@ test("release forge gates retain clean, owned, origin and closeout publication b
       ...result,
       closeoutCommit: invalid,
     } as typeof result),
-    /outside canonical closeout/,
+    /changed files/,
   );
   assert.equal(await git(repo, "branch", "--show-current"), "main");
   assert.equal(await git(repo, "rev-parse", "HEAD"), main);

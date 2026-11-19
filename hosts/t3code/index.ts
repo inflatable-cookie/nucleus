@@ -256,6 +256,12 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
     reconcileTaskRow(taskId: string, attention: TaskAttention) {
       return this.native.reconcileTaskRow(taskId, attention);
     }
+    archivedThreads() {
+      return this.native.archivedThreads();
+    }
+    threadArchiveState(id: string) {
+      return this.native.threadArchiveState(id);
+    }
     reconcileThreadTitles(tasks: readonly Task[]) {
       return this.native.reconcileThreadTitles(tasks);
     }

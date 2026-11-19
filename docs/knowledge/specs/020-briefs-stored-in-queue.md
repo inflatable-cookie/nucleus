@@ -1,6 +1,6 @@
 # 020 — Briefs stored in Nucleus
 
-Status: implemented
+Status: implemented. Committed-handoff mode is retired (nucleus#1368); the handoff columns and rows below record the contract before that.
 Owner: Nucleus runtime and protocol maintainers
 Created: 2026-09-26
 Decision owner: Tom
@@ -10,15 +10,15 @@ Governing refs: Northstar Spec 042 item 2,
 
 ## Problem
 
-A Nucleus task runs from a handoff committed under `docs/handoffs/` at a pushed
-planning commit. Every identity check compares those bytes in the repository:
+A Nucleus task ran from a handoff committed under a `docs/` path at a pushed
+planning commit; that route is retired (nucleus#1368). Every identity check compares those bytes in the repository:
 capture, submission validation, dispatch, the worker worktree and continuation.
 Under Spec 042 repositories hold no process records, so a brief has to be
 submitted as content and pinned by Nucleus, not committed and later deleted.
 
 ## Brief mode
 
-A submission carries either `handoffPath` (today) or `brief`, never both.
+A submission carries a `brief`. A committed `handoffPath` is refused (nucleus#1368).
 
 ```json
 { "brief": { "text": "…", "mediaType": "text/markdown" }, "planningCommit": "…" }
@@ -30,7 +30,7 @@ A submission carries either `handoffPath` (today) or `brief`, never both.
   was written against, and it keeps planning ancestry exact.
 - **Eligibility.** Brief mode is allowed only when the repository's manifest at
   the planning commit is v5 (Spec 018), or there is no manifest. v1–v4 lifecycle
-  hooks read committed handoffs, so brief mode on them is refused at dry run and
+  hooks predate brief mode, so brief mode on them is refused at dry run and
   at submission. Lead checks and brief admission also run the independent-review
   routing preflight ([Spec 030](030-routing-changes.md)) so a required
   worker/reviewer pair that shares a model fails before Ready and before any
@@ -39,8 +39,7 @@ A submission carries either `handoffPath` (today) or `brief`, never both.
   file. Its frontmatter needs only `title`, `queue_approval` and optional `queue:`
   routing (amended 2026-09-26 at the Northstar Chatterbox's request: the
   handoff-transport fields are not required). Nucleus imposes no section structure;
-  the body only has to be non-empty. The file need not be committed or under
-  `docs/handoffs/`. It records the current
+  the body only has to be non-empty. The file need not be committed. It records the current
   clean, pushed integration head as the planning commit. `--dry-run` returns the
   digest.
 - **Storage.** The task stores one copy of that text, keyed by its digest, and

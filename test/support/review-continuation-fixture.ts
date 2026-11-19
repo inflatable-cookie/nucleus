@@ -350,7 +350,12 @@ export function fixture(
   // The raw callback receipt, before the wake it schedules: only for an oracle
   // that must observe that intermediate state (it never settles the wake).
   const reportUnsettled = (
-    checkpoint: { covered: string[]; remaining: string[]; notes?: string },
+    checkpoint: {
+      covered: string[];
+      remaining: string[];
+      notes?: string;
+      exhausted?: true;
+    },
     eventId: string = randomUUID(),
     atHead: string = head,
   ) =>

@@ -132,7 +132,6 @@ import {
   DEFAULT_UNCERTAIN_MERGE_RETRY_MS,
   UNCERTAIN_MERGE_PROOF_TIMEOUT_MS,
   sourcePromotionInputSchema,
-  submissionSchema,
   submitInstruction as submitInstructionRpc,
   reviewEntryReconcileInputSchema,
   BACKUP_DUE_CHECK_MS,
@@ -170,6 +169,7 @@ import {
   originReviewProof,
   withOriginReviewAdapter,
 } from "../core/review/origin-review-adapter";
+import { COMMITTED_HANDOFF_RETIRED } from "../core/planning/brief";
 import { Papercuts } from "../core/planning/papercut-operations";
 import { Leads } from "../core/planning/leads";
 import { Decisions } from "../core/planning/decisions";
@@ -205,6 +205,7 @@ import {
 } from "../core/qa/effigy-admission";
 import { hostRunAdmissionSocketPath } from "../core/host-runs/host-run-paths";
 import type { Papercut } from "../shared/contracts";
+import { HOST_VOCABULARIES } from "../hosts/vocabularies";
 
 /**
  * Sweep cadence. Every step of a task's tail that has no callback of its own waits
@@ -510,6 +511,9 @@ export class QueueRuntime {
         migrationStartedAt,
       );
     });
+    // nucleus#1365: stored profiles carry thinking in one canonical field, mapped
+    // back through every host's table before anything reads them.
+    this.store.migrateProfileThinking(Object.values(HOST_VOCABULARIES));
     this.capacityChanges = new CapacityChangeJournal(this.store);
     // Keyed mutations are journaled around their handlers so a replacement can
     // answer a response lost mid-roll (request ledger, service-boundary contract).
@@ -2052,14 +2056,9 @@ export class QueueRuntime {
     return operation;
   }
 
-  async submitInstruction(input: z.infer<typeof submitInstructionRpc.input>) {
-    return this.submit(
-      submissionSchema.parse({
-        ...input,
-        handoffPath: input.instruction.path,
-        planningCommit: input.instruction.commit,
-      }),
-    );
+  /** A committed instruction artifact is a committed handoff by another name: retired (nucleus#1368). */
+  async submitInstruction(_input: z.infer<typeof submitInstructionRpc.input>): Promise<never> {
+    throw new Error(COMMITTED_HANDOFF_RETIRED);
   }
   configurePool({ entries }: { entries: PoolEntry[] }) {
     return this.settingsOperations.configurePool({ entries });
