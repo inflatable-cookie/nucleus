@@ -511,11 +511,15 @@ export class RoleSelection {
     // requests can never certify a head through its own author's model.
     // Optional requests and automatic selection keep preferring independence.
     const ownerRouted = Boolean(explicitReviewer && isOwnerRoutedReviewer(t, explicitReviewer));
-    const profiles = this.resolution.profiles().filter(p => role !== 'reviewer' || reviewerIndependent && model(p.model) !== 'default' && !excludedProfiles.has(p.id) && reviewerIndependence({
+    // An excluded profile is excluded for every role this call selects: a host
+    // that refused it before send does not see it proposed to recovery either
+    // (nucleus#1364).
+    const profiles = this.resolution.profiles().filter(p => !excludedProfiles.has(p.id))
+      .filter(p => role !== 'reviewer' || reviewerIndependent && model(p.model) !== 'default' && reviewerIndependence({
       site: 'profile', authors, currentAuthorModels, reviewerModel: model(p.model),
       namedRequired: p.id === explicitReviewer, ownerRouted,
     }) !== 'collision')
-      .filter(p => role !== 'executor' || (p.model !== 'default' && !excludedProfiles.has(p.id)
+      .filter(p => role !== 'executor' || (p.model !== 'default'
         && !(t.entrypoint === 'proof' && t.resolution.reviewerProfile && model(p.model) === model(t.resolution.reviewerProfile.model))));
     return chooseProfile({ ...t, preferredProfileId: '', requirePreferred: false, thinkingOptionId: '', scope: role === 'coordinator' && !honouredRequest(t.profileRequests?.coordinator, pool, usage, requestedTier(t.complexity), climbedTier(t)) ? 'general' as const : t.scope }, profiles, pool, this.store.counts(), unavailable, role === 'executor' ? 'worker' : role,this.store.recentCounts(),usage,this.store.demandRoleOffsets());
   }

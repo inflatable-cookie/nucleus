@@ -1,4 +1,6 @@
 import { fakeAdapter, profile } from "./support/fakes";
+import { refusedLaunchProfiles } from "../core/recovery/refused-launch";
+import { ProvenPreSendRefusalError } from "../core/recovery/task-reasons";
 import { RECOVERY_ESCALATION_FAILURE_PREFIX } from "../core/recovery/task-reasons";
 import { ForgeOutageError } from "../core/forge/forge-health";
 import { test } from "./support/sharded-test";
@@ -18949,6 +18951,97 @@ test("C5 leaves a changes-requested verdict behind a released wait for an explic
     const notice = `prerequisite-wait:${released.prerequisiteWait.id}`;
     assert.equal(f.notices.filter((id) => id === notice).length, 1);
     assert.deepEqual(f.notices, notices);
+  } finally {
+    await f.close();
+  }
+});
+
+test("a coordinator creation the host refused before send settles at once and the owner restart re-arms recovery (nucleus#1364)", async () => {
+  const f = fixture();
+  try {
+    enableRecovery(f);
+    let calls = 0;
+    f.adapter.createRun = async () => {
+      calls++;
+      throw new ProvenPreSendRefusalError(
+        'T3Code model gpt-6-luna has no reasoning option "xhigh"',
+      );
+    };
+    attention(f, "Worker creation refused before send");
+    await f.engine.wake();
+    assert.equal(calls, 1, "one coordinator launch attempt");
+    const run = f.store
+      .runs(f.task.id)
+      .find((candidate) => candidate.role === "recovery")!;
+    // A proven pre-send refusal releases the intent at once: nothing crossed the
+    // send boundary, so no exact-creation lookup can find anything and no
+    // delivery can arrive for it.
+    assert.equal(f.store.run(run.id)?.released, true);
+    assert.equal(f.store.run(run.id)?.status, "superseded");
+    assert.throws(() => f.store.authenticate(run.id, "unknown-token"));
+    const refused = f.current();
+    assert.match(
+      refused.resolution.recovery?.summary ?? "",
+      /Coordinator recovery unavailable: .*gpt-6-luna/,
+      "the escalation names the refusal",
+    );
+    assert.equal(refused.resolution.recovery?.status, "escalated");
+    assert.equal(
+      refused.resolution.recovery?.runId,
+      run.id,
+      "the episode keeps the occurrence it refused",
+    );
+    // The refused profile is not asked for again by the retry of this episode.
+    assert.deepEqual(
+      [...refusedLaunchProfiles(f.store, f.task.id)],
+      [run.profile!.id],
+    );
+    // Recovery asks for another eligible profile rather than repeating this
+    // launch; with no other coordinator profile it waits with the route named,
+    // never with an intent nobody can deliver.
+    const alternate = f.engine.resolution.select(
+      refused,
+      "coordinator",
+      [],
+      refusedLaunchProfiles(f.store, f.task.id),
+    );
+    assert.ok(alternate, "another eligible profile can act");
+    assert.notEqual(
+      alternate.profile.id,
+      run.profile!.id,
+      "the refused profile is not asked for again",
+    );
+    // A second pass launches nothing: no intent is left to look up or resend.
+    await f.engine.wake();
+    assert.equal(calls, 1);
+    // The owner's restart applies over the refusal and clears it with the re-arm.
+    const restarted = await f.engine.performTaskControl({
+      taskId: f.task.id,
+      version: f.current().version,
+      action: "restart",
+      role: "coordinator",
+      reason:
+        "Retry recovery after the T3 host refused the coordinator creation",
+    });
+    assert.equal(restarted.resolution.recovery ?? null, null);
+    assert.deepEqual([...refusedLaunchProfiles(f.store, f.task.id)], []);
+    assert.ok(
+      f.engine.resolution.select(f.store.task(f.task.id), "coordinator"),
+      "the re-armed episode may ask that profile again",
+    );
+    // The re-armed pass asks again and this host refuses again: the second
+    // occurrence settles exactly like the first, and the automatic loop keeps
+    // no intent of its own to wait on.
+    await f.engine.wake();
+    assert.equal(calls, 2);
+    for (const refused of f.store
+      .runs(f.task.id)
+      .filter((candidate) => candidate.role === "recovery"))
+      assert.equal(
+        refused.released,
+        true,
+        `recovery run ${refused.id} is settled`,
+      );
   } finally {
     await f.close();
   }

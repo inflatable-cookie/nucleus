@@ -1,6 +1,7 @@
 import type { LaunchThreadContext } from '../launch';
 import { proofExecutor } from '../../recovery/task-reasons';
 import { coordinative } from '../../recovery/task-reasons';
+import { refusedLaunchProfiles } from '../../recovery/refused-launch';
 import { observeAssignedThread } from './assigned-thread';
 import { applyCoordinatorThread } from './coordinator-thread';
 import { reconcileExecutorThread } from './executor-thread';
@@ -38,7 +39,11 @@ export class RunLaunchThread {
       // Every fresh critical reviewer re-judges the current worker's rating.
       if (role === 'reviewer' && reviewerThreadDecision({ stage: 'critical_fresh', critical: Boolean(t.critical), explicitProfile: Boolean(options.profile) }) === 'fresh') profile = null;
       if (!profile) {
-        const selection = ctx.select(t, role === 'reviewer' ? 'reviewer' : proofExecutor(role) ? 'executor' : 'coordinator');
+        // A recovery that a host refused before send asks for another eligible
+        // profile instead of repeating the identical launch; an owner restart
+        // re-arms recovery and clears that set (nucleus#1364).
+        const selection = ctx.select(t, role === 'reviewer' ? 'reviewer' : proofExecutor(role) ? 'executor' : 'coordinator',
+          [], coordinative({ role } as Run) ? refusedLaunchProfiles(this.store, t.id) : undefined);
         if ((role === 'reviewer' ? reviewerThreadDecision({ stage: 'select', hasProfile: false, selected: Boolean(selection) }) : selection ? 'reselect' : 'wait') === 'wait') {
           ctx.waiting(t, `No eligible ${role === 'reviewer' ? 'independent reviewer' : proofExecutor(role) ? 'proof executor' : 'coordinator'} profile; check the profile pool${proofExecutor(role) ? ctx.usageCeilingNote(t, 'worker') : ctx.requiredRouteNote(t, role as 'reviewer' | 'coordinator') || ctx.usageCeilingNote(t, role as 'reviewer' | 'coordinator')}`, 'route_unavailable');
           return;

@@ -1,0 +1,2 @@
+- A T3-hosted task launches the profile it selected: the canonical thinking level reaches Pi's `thinking` option, Claude's `effort` or the provider's reasoning select whichever way the profile stores it, a level the model does not report settles to the nearest one it does, and selection no longer borrows another host's profile catalog.
+- A coordinator creation the T3 host refuses before send releases its intent at once, so the owner's `restart` re-arms recovery; until then recovery asks for a different eligible profile instead of repeating the refusal.
