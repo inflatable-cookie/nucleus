@@ -510,3 +510,61 @@ test("a repeated host fault keeps one stable wait and diagnostic", async (t) => 
     1,
   );
 });
+
+test("a T3 presentation timeout stops retained rows and the next host runs", async (t) => {
+  const { T3Presentation } = await import("../hosts/t3code/presentation");
+  const { T3RpcError } = await import("../hosts/t3code/rpc");
+  const { WIRE_LABEL_KEYS } = await import("../shared/wire-labels");
+  const f = fixture(t);
+  const taskId = f.offline.id;
+  const labels = (role?: string) => ({
+    [WIRE_LABEL_KEYS.task]: taskId,
+    ...(role ? { [WIRE_LABEL_KEYS.role]: role } : {}),
+  });
+  const state = {
+    agents: {
+      worker: { labels: labels(), title: "worker" },
+      first: { labels: labels("reviewer") },
+      second: { labels: labels("recovery") },
+    },
+    intents: {},
+    supportCurrent: {},
+    rowTitles: {},
+  };
+  let reads = 0;
+  let inventory = 0;
+  const presentation = new T3Presentation({
+    state: { read: () => state },
+    intents: { confirmedDeletion: () => false },
+    requireConnection: () => {},
+    reads: {
+      isObserved: async () => {
+        inventory++;
+        return true;
+      },
+      readProjection: async () => {
+        reads++;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        throw new T3RpcError("timeout", "orchestration.read");
+      },
+    },
+  } as never) as any;
+  presentation.retireDeletedPresentationIntents = () => {};
+  const visited: string[] = [];
+  const adapter = {
+    reconcileThreadTitles: async (tasks: any[]) => {
+      if (f.engine.activeHostId === OFFLINE_HOST)
+        await presentation.reconcileWorkerRows(tasks);
+      else if (f.engine.activeHostId) visited.push(f.engine.activeHostId);
+    },
+  };
+  f.engine.resolveHostAdapter = () => adapter as unknown as Adapter;
+  const result = await f.engine.auditPass(true);
+  assert.equal(result.fault, null);
+  assert.equal(inventory, 1, "the first support identity answered inventory");
+  assert.equal(reads, 1, "a timeout stops the remaining retained row reads");
+  assert.ok(
+    visited.includes(HEALTHY_HOST),
+    "the next host runs in the same pass",
+  );
+});

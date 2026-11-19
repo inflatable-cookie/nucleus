@@ -30,6 +30,7 @@
  * or never resent.
  */
 import { z } from "zod";
+import { isHostOperationTimeout } from "../../core/host/errors";
 import type { HostAgentAttempt, HostAgentSpec } from "../../shared/host";
 import type { Profile, Task } from "../../shared/contracts";
 import type { AcpSessionSurface } from "../../shared/acp/surface";
@@ -386,7 +387,9 @@ export class T3Nesting {
         task.phase === "done" ||
         task.phase === "cancelled"
       ) {
-        await this.archiveParent(parent).catch(() => undefined);
+        await this.archiveParent(parent).catch((error) => {
+          if (isHostOperationTimeout(error)) throw error;
+        });
         continue;
       }
       // A parent that left observation is read no further: its task is over, and the
@@ -398,7 +401,8 @@ export class T3Nesting {
           parent.threadId,
           "observation",
         );
-      } catch {
+      } catch (error) {
+        if (isHostOperationTimeout(error)) throw error;
         continue;
       }
       if (projection.thread.deletedAt) {
@@ -737,7 +741,9 @@ export class T3Nesting {
       if (child.origin !== "app_owned") continue;
       const delivery = child.completionDelivery?.state;
       if (delivery !== "pending" && delivery !== "claimed") continue;
-      await this.dispose(parent, child.id).catch(() => undefined);
+      await this.dispose(parent, child.id).catch((error) => {
+        if (isHostOperationTimeout(error)) throw error;
+      });
     }
   }
 

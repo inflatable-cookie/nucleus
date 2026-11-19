@@ -1145,10 +1145,20 @@ per effect, never per class, so `archiveAgent` and `reconcileSettledThreads`
 are abandoned at the ordinary bound like every other effect (nucleus#1179 review
 5889669364). A call past its deadline is abandoned as unknown: the caller
 receives an unknown-delivery answer naming the holder and how long it held, the
-class and total slots are released, and the call is never resent. A late answer
-from the host belongs to nothing and is discarded, and an abandoned effect that
-starts another request has it refused rather than sent outside the admission it
-no longer holds.
+class and total slots are released, and the call is never resent. A late effect
+answer stays correlated to the original request and can settle its retained
+intent; late reads are discarded. An abandoned effect that starts another
+request has it refused rather than sent outside the admission it no longer holds.
+BB's reverse channel retains timed-out effect requests on one shared connection,
+with bounded capacity; exhausting that capacity refuses new writes before send
+while fresh recovery reads remain available. T3 retains the original attempt's
+ownership in durable intent while its reply is pending, so replacing the ledger
+or taking a fresh read cannot authorize a second send. Socket backpressure refuses
+only the new BB request as unsent; earlier writes on the connection remain
+unknown. Paseo's admission deadline fences any send that has not started yet:
+it sends only on an immediately available transport and retains the response
+waiter for an already-issued send, including a late acknowledgement. A timeout
+ends nested host polling for the pass instead of starting more host requests.
 `service.health.admission` names every held slot past five seconds (`heldSlots`:
 class, holder, age, deadline) and the last abandoned call, and logs a wait for a
 slot with the oldest holder and its age. `heldSlots` names the admitted effect

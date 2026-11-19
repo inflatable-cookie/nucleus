@@ -1,24 +1,55 @@
-import { mkdirSync, readFileSync, writeFileSync, renameSync, openSync, fsyncSync, closeSync, lstatSync, unlinkSync } from 'node:fs';
-import { dirname } from 'node:path';
-import { createHash, randomUUID } from 'node:crypto';
-import { z } from 'zod';
-import { sanitizeHostDeliveryDiagnostic } from '../../core/host';
+import {
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+  renameSync,
+  openSync,
+  fsyncSync,
+  closeSync,
+  lstatSync,
+  unlinkSync,
+} from "node:fs";
+import { dirname } from "node:path";
+import { createHash, randomUUID } from "node:crypto";
+import { z } from "zod";
+import { sanitizeHostDeliveryDiagnostic } from "../../core/host";
 
-const workspace = z.object({ id: z.string(), directory: z.string(), projectId: z.string(), title: z.string(), archivedAt: z.string().optional() });
+const workspace = z.object({
+  id: z.string(),
+  directory: z.string(),
+  projectId: z.string(),
+  title: z.string(),
+  archivedAt: z.string().optional(),
+});
 /**
  * The command kinds this host records. One entry's kind is a typed fact, not a
  * fact re-derived from the stored wire: the six readers that used to JSON-parse
  * `payload` for `type` now ask the ledger.
  */
 const intentKind = z.enum([
-  'launchThread', 'project.create', 'project.update',
-  'thread.settle', 'thread.unsettle', 'thread.metadata.update', 'thread.delete', 'thread.stop', 'thread.archive',
-  'thread.tag.set', 'thread.created.record',
-  'message.dispatch', 'runtime-request.respond', 'thread.user-input.dismiss',
-  'delegated_task.request', 'delegated_task.completion-delivery.dispose',
+  "launchThread",
+  "project.create",
+  "project.update",
+  "thread.settle",
+  "thread.unsettle",
+  "thread.metadata.update",
+  "thread.delete",
+  "thread.stop",
+  "thread.archive",
+  "thread.tag.set",
+  "thread.created.record",
+  "message.dispatch",
+  "runtime-request.respond",
+  "thread.user-input.dismiss",
+  "delegated_task.request",
+  "delegated_task.completion-delivery.dispose",
 ]);
 export type T3IntentKind = z.infer<typeof intentKind>;
-const agent = z.object({ id: z.string(), workspaceId: z.string(), labels: z.record(z.string(), z.string()), title: z.string().optional(),
+const agent = z.object({
+  id: z.string(),
+  workspaceId: z.string(),
+  labels: z.record(z.string(), z.string()),
+  title: z.string().optional(),
   /**
    * The parent thread this role thread was created as a delegated child of, recorded
    * at creation. A role thread of a parented task that is *not* a child (a fallback
@@ -26,7 +57,8 @@ const agent = z.object({ id: z.string(), workspaceId: z.string(), labels: z.reco
    * "nested child" stays a recorded fact and is never inferred from the task
    * (nucleus#1305 review).
    */
-  parentThreadId: z.string().optional() });
+  parentThreadId: z.string().optional(),
+});
 /**
  * A thread this host no longer observes (nucleus#1328): exactly what an exact settle
  * or lookup still reads, and what its own row still needs — the launch identity, the
@@ -37,13 +69,34 @@ const agent = z.object({ id: z.string(), workspaceId: z.string(), labels: z.reco
  * the one fact that keeps a removed thread out of observation after its live record is
  * gone.
  */
-const retiredAgent = z.object({ workspaceId: z.string(), labels: z.record(z.string(), z.string()),
-  parentThreadId: z.string().optional(), title: z.string().optional(), deletedAt: z.string().optional() });
-const diagnostic = z.object({ command: z.string().optional(), field: z.string().optional(), reason: z.string().optional(), guidance: z.string().optional() }).strict().refine(value => {
-  const clean = sanitizeHostDeliveryDiagnostic(value);
-  return clean.command === value.command && clean.field === value.field && clean.reason === value.reason && clean.guidance === value.guidance;
+const retiredAgent = z.object({
+  workspaceId: z.string(),
+  labels: z.record(z.string(), z.string()),
+  parentThreadId: z.string().optional(),
+  title: z.string().optional(),
+  deletedAt: z.string().optional(),
 });
-const intent = z.object({ payload: z.string(), status: z.enum(['unknown', 'settled', 'refused', 'moot']), result: z.unknown().optional(),
+const diagnostic = z
+  .object({
+    command: z.string().optional(),
+    field: z.string().optional(),
+    reason: z.string().optional(),
+    guidance: z.string().optional(),
+  })
+  .strict()
+  .refine((value) => {
+    const clean = sanitizeHostDeliveryDiagnostic(value);
+    return (
+      clean.command === value.command &&
+      clean.field === value.field &&
+      clean.reason === value.reason &&
+      clean.guidance === value.guidance
+    );
+  });
+const intent = z.object({
+  payload: z.string(),
+  status: z.enum(["unknown", "settled", "refused", "moot"]),
+  result: z.unknown().optional(),
   // The digest of `payload`, recorded when a terminal entry's body is compacted
   // to its receipt: a replay must still tell the same command from a changed one,
   // and the body itself is no longer kept (see `compactHistory`).
@@ -61,15 +114,29 @@ const intent = z.object({ payload: z.string(), status: z.enum(['unknown', 'settl
   // Unknown presentation delivery stays unknown historically, but needs no more work.
   retiredByDeletion: z.string().optional(),
   diagnostic: diagnostic.optional(),
-  response: z.object({ agentId: z.string(), workspaceId: z.string(), requestId: z.string(), input: z.string() }).optional() });
+  timedOut: z.boolean().optional(),
+  response: z
+    .object({
+      agentId: z.string(),
+      workspaceId: z.string(),
+      requestId: z.string(),
+      input: z.string(),
+    })
+    .optional(),
+});
 /**
  * One accepted worker handover whose thread had not yet ended its turn: the
  * settle waits for the named run (or the next run to end) instead of settling a
  * live turn, and the ordinary host sweep retries it. Presentation only; the
  * durable settle itself is the `intents` ledger entry written before the send.
  */
-const settleIntent = z.object({ agentId: z.string(), runId: z.string(), commandId: z.string(),
-  expectedLatestRunId: z.string().optional(), recordedAt: z.string() });
+const settleIntent = z.object({
+  agentId: z.string(),
+  runId: z.string(),
+  commandId: z.string(),
+  expectedLatestRunId: z.string().optional(),
+  recordedAt: z.string(),
+});
 /**
  * One support thread the one-row model still owes work on: its `nucleus-support`
  * tag and the `thread_created` card in the worker's conversation. Both are
@@ -77,11 +144,16 @@ const settleIntent = z.object({ agentId: z.string(), runId: z.string(), commandI
  * reply is reconciled by a fresh read (the card's presence, or the recorded tag
  * intent) and never resent blindly.
  */
-const supportRow = z.object({ taskId: z.string(), threadId: z.string(), role: z.string(), recordedAt: z.string(),
+const supportRow = z.object({
+  taskId: z.string(),
+  threadId: z.string(),
+  role: z.string(),
+  recordedAt: z.string(),
   /** The tag's outcome once known; `unknown` delivery is never resent. */
-  tag: z.enum(['pending', 'settled', 'unknown']).optional(),
+  tag: z.enum(["pending", "settled", "unknown"]).optional(),
   /** The card's outcome once known; a readback proves it without a resend. */
-  card: z.enum(['pending', 'settled', 'unknown']).optional() });
+  card: z.enum(["pending", "settled", "unknown"]).optional(),
+});
 /**
  * One task's parent thread: the Nucleus ACP session that owns the task's row, the
  * checkout binding the launched agent resolves, and the facts the sweep needs to
@@ -89,14 +161,30 @@ const supportRow = z.object({ taskId: z.string(), threadId: z.string(), role: z.
  * a sweep releases one turn once; `fallbackUntil` parks the native path after a child
  * this host could not create, so the rest of the task's roles do not pay the wait.
  */
-const parentThread = z.object({ taskId: z.string(), threadId: z.string(), sessionId: z.string(), bindingPath: z.string(),
-  workspaceId: z.string(), projectId: z.string(), directory: z.string(), createdAt: z.string(),
+const parentThread = z.object({
+  taskId: z.string(),
+  threadId: z.string(),
+  sessionId: z.string(),
+  bindingPath: z.string(),
+  workspaceId: z.string(),
+  projectId: z.string(),
+  directory: z.string(),
+  createdAt: z.string(),
   /** The task's own state title, the base the row's step rides after. */
-  title: z.string().optional(), archivedAt: z.string().optional(), releasedAt: z.string().optional(),
+  title: z.string().optional(),
+  archivedAt: z.string().optional(),
+  releasedAt: z.string().optional(),
   /** Set when this host re-entered the thread; a create inside its grace window keeps the turn. */
-  holdingSince: z.string().optional(), fallbackUntil: z.string().optional() });
-const schema = z.object({ version: z.literal(1), hostId: z.string(), lastPassedVersion: z.string(),
-  workspaces: z.record(z.string(), workspace), agents: z.record(z.string(), agent), intents: z.record(z.string(), intent),
+  holdingSince: z.string().optional(),
+  fallbackUntil: z.string().optional(),
+});
+const schema = z.object({
+  version: z.literal(1),
+  hostId: z.string(),
+  lastPassedVersion: z.string(),
+  workspaces: z.record(z.string(), workspace),
+  agents: z.record(z.string(), agent),
+  intents: z.record(z.string(), intent),
   /**
    * The threads this host no longer observes, by native thread id: the launch
    * identity an exact lookup answers from, with no live record and no reads
@@ -141,7 +229,7 @@ const schema = z.object({ version: z.literal(1), hostId: z.string(), lastPassedV
    * What this host read from T3's own settings at connect, never written back:
    * whether support threads are hidden by the client's tag setting.
    */
-  supportThreads: z.enum(['hidden', 'setting_off', 'tag_missing']).optional(),
+  supportThreads: z.enum(["hidden", "setting_off", "tag_missing"]).optional(),
   /**
    * The task's parent thread on the Nucleus ACP provider, by task id. Role threads
    * are that thread's native subagent children, so the parent is the task's one
@@ -155,10 +243,17 @@ const schema = z.object({ version: z.literal(1), hostId: z.string(), lastPassedV
    * for the next pass, never as a task decision (a task keeps working on top-level
    * role threads, which is the fallback).
    */
-  nesting: z.object({ state: z.enum(['nested', 'fallback']), reason: z.string(), at: z.string() }).optional() });
+  nesting: z
+    .object({
+      state: z.enum(["nested", "fallback"]),
+      reason: z.string(),
+      at: z.string(),
+    })
+    .optional(),
+});
 export type T3State = z.infer<typeof schema>;
 export type T3SettleIntent = z.infer<typeof settleIntent>;
-export type T3AgentRecord = T3State['agents'][string];
+export type T3AgentRecord = T3State["agents"][string];
 export type T3RetiredAgent = z.infer<typeof retiredAgent>;
 
 /**
@@ -166,7 +261,10 @@ export type T3RetiredAgent = z.infer<typeof retiredAgent>;
  * task and role, and the workspace it was launched into. A retired thread answers an
  * exact lookup from this record alone, without a native read.
  */
-export function agentRecord(state: T3State, threadId: string): T3AgentRecord | T3RetiredAgent | undefined {
+export function agentRecord(
+  state: T3State,
+  threadId: string,
+): T3AgentRecord | T3RetiredAgent | undefined {
   return state.agents[threadId] ?? state.retiredAgents?.[threadId];
 }
 
@@ -177,23 +275,48 @@ export function agentRecord(state: T3State, threadId: string): T3AgentRecord | T
  * that comes back has the record it had (nucleus#1328 review).
  */
 export function retiredRecord(record: T3AgentRecord): T3RetiredAgent {
-  return { workspaceId: record.workspaceId, labels: record.labels,
-    ...(record.parentThreadId === undefined ? {} : { parentThreadId: record.parentThreadId }),
-    ...(record.title === undefined ? {} : { title: record.title }) };
+  return {
+    workspaceId: record.workspaceId,
+    labels: record.labels,
+    ...(record.parentThreadId === undefined
+      ? {}
+      : { parentThreadId: record.parentThreadId }),
+    ...(record.title === undefined ? {} : { title: record.title }),
+  };
 }
 
 /** The live record a retired entry comes back as, with nothing lost in the round trip. */
-export function restoredRecord(id: string, record: T3RetiredAgent): T3AgentRecord {
-  return { id, workspaceId: record.workspaceId, labels: record.labels,
-    ...(record.parentThreadId === undefined ? {} : { parentThreadId: record.parentThreadId }),
-    ...(record.title === undefined ? {} : { title: record.title }) };
+export function restoredRecord(
+  id: string,
+  record: T3RetiredAgent,
+): T3AgentRecord {
+  return {
+    id,
+    workspaceId: record.workspaceId,
+    labels: record.labels,
+    ...(record.parentThreadId === undefined
+      ? {}
+      : { parentThreadId: record.parentThreadId }),
+    ...(record.title === undefined ? {} : { title: record.title }),
+  };
 }
 
 /** One command payload as recorded in the ledger, and the kind it is. */
-type RecordedWire = { method?: string; payload?: { type?: unknown; threadId?: unknown; commandId?: unknown; requestId?: unknown; title?: unknown } };
+type RecordedWire = {
+  method?: string;
+  payload?: {
+    type?: unknown;
+    threadId?: unknown;
+    commandId?: unknown;
+    requestId?: unknown;
+    title?: unknown;
+  };
+};
 
 /** The kind of one ledger entry, derived once from the wire when a legacy entry has none. */
-export function intentKindOf(intent: T3State['intents'][string]): T3IntentKind | undefined {
+export function intentKindOf(
+  intent: T3State["intents"][string],
+): T3IntentKind | undefined {
   if (intent.kind) return intent.kind;
   return kindOfWire(intent.payload);
 }
@@ -201,9 +324,16 @@ export function intentKindOf(intent: T3State['intents'][string]): T3IntentKind |
 function kindOfWire(encoded: string): T3IntentKind | undefined {
   try {
     const wire = JSON.parse(encoded) as RecordedWire;
-    if (wire.method === 'orchestration.launchThread') return 'launchThread';
-    if (wire.method === 'projects.mutate') return wire.payload?.type === 'project.update' ? 'project.update' : 'project.create';
-    if (wire.method !== 'orchestration.dispatchCommand' || typeof wire.payload?.type !== 'string') return undefined;
+    if (wire.method === "orchestration.launchThread") return "launchThread";
+    if (wire.method === "projects.mutate")
+      return wire.payload?.type === "project.update"
+        ? "project.update"
+        : "project.create";
+    if (
+      wire.method !== "orchestration.dispatchCommand" ||
+      typeof wire.payload?.type !== "string"
+    )
+      return undefined;
     return wire.payload.type as T3IntentKind;
   } catch {
     return undefined;
@@ -211,11 +341,13 @@ function kindOfWire(encoded: string): T3IntentKind | undefined {
 }
 
 /** The thread one entry addresses, from the record or, for a legacy entry, from its wire. */
-export function intentThreadId(intent: T3State['intents'][string]): string | undefined {
+export function intentThreadId(
+  intent: T3State["intents"][string],
+): string | undefined {
   if (intent.threadId) return intent.threadId;
   try {
     const payload = (JSON.parse(intent.payload) as RecordedWire).payload;
-    return typeof payload?.threadId === 'string' ? payload.threadId : undefined;
+    return typeof payload?.threadId === "string" ? payload.threadId : undefined;
   } catch {
     return undefined;
   }
@@ -234,11 +366,16 @@ export const RETAINED_INTENT_BODIES = 64;
  * handful of small entries, and none of them is the file's weight.
  */
 const BODY_LOOKUP_KINDS: ReadonlySet<T3IntentKind> = new Set([
-  'thread.delete', 'runtime-request.respond', 'thread.user-input.dismiss', 'project.create', 'project.update',
+  "thread.delete",
+  "runtime-request.respond",
+  "thread.user-input.dismiss",
+  "project.create",
+  "project.update",
 ]);
 
 /** The digest a compacted entry keeps of the exact wire it recorded. */
-export const payloadDigest = (encoded: string): string => createHash('sha256').update(encoded).digest('hex');
+export const payloadDigest = (encoded: string): string =>
+  createHash("sha256").update(encoded).digest("hex");
 
 /**
  * What a replay of this command still reads from its recorded answer once the body
@@ -246,9 +383,9 @@ export const payloadDigest = (encoded: string): string => createHash('sha256').u
  * every other caller ignores the answer, so `undefined` is what a caller sees.
  */
 function replayReceipt(kind: T3IntentKind, result: unknown): unknown {
-  if (kind !== 'launchThread') return undefined;
+  if (kind !== "launchThread") return undefined;
   const threadId = (result as { threadId?: unknown } | null)?.threadId;
-  return typeof threadId === 'string' ? { threadId } : undefined;
+  return typeof threadId === "string" ? { threadId } : undefined;
 }
 
 /**
@@ -271,18 +408,37 @@ function compactHistory(state: T3State): void {
   // later pass nor a reader parses the stored wire again.
   for (const key of keys) {
     const intent = state.intents[key];
-    if (!intent.kind) { const kind = intentKindOf(intent); if (kind) intent.kind = kind; }
-    if (!intent.threadId) { const threadId = intentThreadId(intent); if (threadId) intent.threadId = threadId; }
+    if (!intent.kind) {
+      const kind = intentKindOf(intent);
+      if (kind) intent.kind = kind;
+    }
+    if (!intent.threadId) {
+      const threadId = intentThreadId(intent);
+      if (threadId) intent.threadId = threadId;
+    }
   }
-  const terminal = keys.filter(key => state.intents[key].status !== 'unknown');
+  const terminal = keys.filter(
+    (key) => state.intents[key].status !== "unknown",
+  );
   // Only the commands beyond the newest window are compacted. A record with fewer
   // than the window (`length - RETAINED_INTENT_BODIES` negative) keeps every body:
   // a host's first commands must not lose what a retry within the window replays.
   const compacted = Math.max(0, terminal.length - RETAINED_INTENT_BODIES);
   for (const key of terminal.slice(0, compacted)) {
     const intent = state.intents[key];
-    if (intent.payloadDigest || intent.status === 'refused' || !intent.kind || BODY_LOOKUP_KINDS.has(intent.kind)) continue;
-    state.intents[key] = { ...intent, payload: '', payloadDigest: payloadDigest(intent.payload), result: replayReceipt(intent.kind, intent.result) };
+    if (
+      intent.payloadDigest ||
+      intent.status === "refused" ||
+      !intent.kind ||
+      BODY_LOOKUP_KINDS.has(intent.kind)
+    )
+      continue;
+    state.intents[key] = {
+      ...intent,
+      payload: "",
+      payloadDigest: payloadDigest(intent.payload),
+      result: replayReceipt(intent.kind, intent.result),
+    };
   }
 }
 
@@ -304,31 +460,59 @@ export class T3StateFile {
   private loaded: T3State | null = null;
   constructor(readonly path: string) {}
   /** The loaded record; the file is read and validated once, on the first call. */
-  read(): T3State { return this.loaded ?? (this.loaded = this.load()); }
+  read(): T3State {
+    return this.loaded ?? (this.loaded = this.load());
+  }
   private load(): T3State {
     try {
       const stat = lstatSync(this.path);
-      if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o077) || process.getuid && stat.uid !== process.getuid()) throw Error('Unsafe T3Code state file');
-      return schema.parse(JSON.parse(readFileSync(this.path, 'utf8')));
+      if (
+        !stat.isFile() ||
+        stat.isSymbolicLink() ||
+        stat.mode & 0o077 ||
+        (process.getuid && stat.uid !== process.getuid())
+      )
+        throw Error("Unsafe T3Code state file");
+      return schema.parse(JSON.parse(readFileSync(this.path, "utf8")));
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { version: 1, hostId: '', lastPassedVersion: '', workspaces: {}, agents: {}, intents: {} };
-      throw Error('T3Code durable state is unreadable');
+      if ((error as NodeJS.ErrnoException).code === "ENOENT")
+        return {
+          version: 1,
+          hostId: "",
+          lastPassedVersion: "",
+          workspaces: {},
+          agents: {},
+          intents: {},
+        };
+      throw Error("T3Code durable state is unreadable");
     }
   }
   update<T>(fn: (state: T3State) => T): T {
     mkdirSync(dirname(this.path), { recursive: true, mode: 0o700 });
     const lock = `${this.path}.lock`;
-    const fd = openSync(lock, 'wx', 0o600);
+    const fd = openSync(lock, "wx", 0o600);
     const temporary = `${this.path}.${randomUUID()}`;
     try {
-      const state = this.read(), result = fn(state);
+      const state = this.read(),
+        result = fn(state);
       compactHistory(state);
-      writeFileSync(temporary, JSON.stringify(schema.parse(state)), { flag: 'wx', mode: 0o600 });
-      const file = openSync(temporary, 'r');
-      try { fsyncSync(file); } finally { closeSync(file); }
+      writeFileSync(temporary, JSON.stringify(schema.parse(state)), {
+        flag: "wx",
+        mode: 0o600,
+      });
+      const file = openSync(temporary, "r");
+      try {
+        fsyncSync(file);
+      } finally {
+        closeSync(file);
+      }
       renameSync(temporary, this.path);
-      const directory = openSync(dirname(this.path), 'r');
-      try { fsyncSync(directory); } finally { closeSync(directory); }
+      const directory = openSync(dirname(this.path), "r");
+      try {
+        fsyncSync(directory);
+      } finally {
+        closeSync(directory);
+      }
       return result;
     } catch (error) {
       // A refused or failed write leaves the file as it was; drop the in-memory
@@ -337,13 +521,19 @@ export class T3StateFile {
       this.loaded = null;
       throw error;
     } finally {
-      closeSync(fd); unlinkSync(lock);
+      closeSync(fd);
+      unlinkSync(lock);
     }
   }
 }
 
 export function canonical(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
-  if (value && typeof value === 'object') return `{${Object.entries(value).filter(([,v]) => v !== undefined).sort(([a],[b]) => a.localeCompare(b)).map(([k,v]) => `${JSON.stringify(k)}:${canonical(v)}`).join(',')}}`;
+  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+  if (value && typeof value === "object")
+    return `{${Object.entries(value)
+      .filter(([, v]) => v !== undefined)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([k, v]) => `${JSON.stringify(k)}:${canonical(v)}`)
+      .join(",")}}`;
   return JSON.stringify(value);
 }

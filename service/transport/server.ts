@@ -25,17 +25,37 @@ import { timingSafeEqual, createHash, randomBytes } from "node:crypto";
 import { z } from "zod";
 import type { RuntimeHealth, RuntimeOwnerOptions } from "../runtime-owner";
 import type { AdmissionOptions } from "../../core/host/admission";
-import { ExecutorError, PersistenceExecutor, type ExecutorFault, type ExecutorOptions } from "../executor/executor";
-import { callCatalogueMethod, CapacityWriteRefusalError, MethodNotServedError, parseCatalogueInput, parseCatalogueOutput } from "./dispatch";
+import {
+  ExecutorError,
+  PersistenceExecutor,
+  type ExecutorFault,
+  type ExecutorOptions,
+} from "../executor/executor";
+import {
+  callCatalogueMethod,
+  CapacityWriteRefusalError,
+  MethodNotServedError,
+  parseCatalogueInput,
+  parseCatalogueOutput,
+} from "./dispatch";
 import { RPC_CATALOGUE } from "../../shared/rpc-catalogue";
 import { rpcContractDigests } from "../../shared/rpc-contracts";
 import type { UiBoard } from "../../shared/contracts";
 import { formatSchemaRefusal } from "../../shared/schema-refusal";
 import { WEB_SURFACE } from "../../shared/web-surface";
 import {
-  PROTOCOL_VERSION, MAX_CONNECTIONS, MAX_IN_FLIGHT, MAX_FRAME_BYTES, DEFAULT_IDLE_TIMEOUT_MS,
-  ProtocolError, createFrameReader, encodeFrame, parseRequest,
-  type ServiceErrorCode, type ServiceRequest, type ServiceResponse,
+  PROTOCOL_VERSION,
+  MAX_CONNECTIONS,
+  MAX_IN_FLIGHT,
+  MAX_FRAME_BYTES,
+  DEFAULT_IDLE_TIMEOUT_MS,
+  ProtocolError,
+  createFrameReader,
+  encodeFrame,
+  parseRequest,
+  type ServiceErrorCode,
+  type ServiceRequest,
+  type ServiceResponse,
 } from "../../shared/service/protocol";
 import {
   currentLoginSession,
@@ -53,6 +73,7 @@ import {
   HostExecutorUnavailableError,
   HostOperationRefusedError,
   HostOperationUnknownDeliveryError,
+  HostOperationTimeoutError,
 } from "../host-executor";
 import {
   HOST_EXECUTOR_METHOD,
@@ -61,31 +82,69 @@ import {
   type HostOperationName,
   type HostOperationOutcome,
 } from "../../shared/host-operation";
-import { parseHostExecutorDeclaration, parseHostOperationRequest } from "../../shared/service/host-channel";
+import {
+  parseHostExecutorDeclaration,
+  parseHostOperationRequest,
+} from "../../shared/service/host-channel";
 import { bbPluginBuildPin } from "../../shared/bb-plugin-build";
 import { compiledIdentity } from "../../shared/runtime.mjs";
 import { getWorkRoot } from "../../core/workspaces/work-root.mjs";
 import { probeDiagnostics } from "../bb-host";
-import { WEB_BOARD_DEFAULT_PORT, WebBoard, defaultWebBundleDir, uiLinkInputSchema, type WebBoardHost, type WebBoardOptions } from "../web/web-board";
+import {
+  WEB_BOARD_DEFAULT_PORT,
+  WebBoard,
+  defaultWebBundleDir,
+  uiLinkInputSchema,
+  type WebBoardHost,
+  type WebBoardOptions,
+} from "../web/web-board";
 
-export { SERVICE_BUILD, currentServiceBuildId } from "../../shared/service/build";
+export {
+  SERVICE_BUILD,
+  currentServiceBuildId,
+} from "../../shared/service/build";
 import { currentServiceBuildId } from "../../shared/service/build";
 
-const authInputSchema = z.object({ credential: z.string().regex(/^[a-f0-9]{64}$/) }).strict();
+const authInputSchema = z
+  .object({ credential: z.string().regex(/^[a-f0-9]{64}$/) })
+  .strict();
 /** A recovery ask names one request key; anything else fails closed. */
-const requestOutcomeInputSchema = z.object({ key: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,120}$/) }).strict();
-const bbHostOperationEnvelope = z.object({ hostId: z.string().regex(/^bb:[a-f0-9]{32}$/), op: z.string(), input: z.unknown() }).strict();
-const bbParentChangedEnvelope = z.object({ threadId: z.string().min(1).max(160), parentThreadId: z.string().min(1).max(160).nullable(), at: z.string().datetime({ offset: true }) }).strict();
+const requestOutcomeInputSchema = z
+  .object({ key: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,120}$/) })
+  .strict();
+const bbHostOperationEnvelope = z
+  .object({
+    hostId: z.string().regex(/^bb:[a-f0-9]{32}$/),
+    op: z.string(),
+    input: z.unknown(),
+  })
+  .strict();
+const bbParentChangedEnvelope = z
+  .object({
+    threadId: z.string().min(1).max(160),
+    parentThreadId: z.string().min(1).max(160).nullable(),
+    at: z.string().datetime({ offset: true }),
+  })
+  .strict();
 const SERVICE_RPC_CONTRACTS = rpcContractDigests();
 function configuredWebPort(): number {
   const configured = process.env.NUCLEUS_WEB_PORT;
-  if (configured === undefined || configured.trim() === "") return WEB_BOARD_DEFAULT_PORT;
+  if (configured === undefined || configured.trim() === "")
+    return WEB_BOARD_DEFAULT_PORT;
   const port = Number(configured);
-  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("NUCLEUS_WEB_PORT must be an integer from 1 to 65535");
+  if (!Number.isInteger(port) || port < 1 || port > 65535)
+    throw new Error("NUCLEUS_WEB_PORT must be an integer from 1 to 65535");
   return port;
 }
 /** A bridge roll names the builds so the drain can record it on the tasks it may interrupt. */
-const drainInputSchema = z.object({ roll: z.object({ fromBuild: z.string().max(64), toBuild: z.string().max(64) }).strict().optional() }).passthrough();
+const drainInputSchema = z
+  .object({
+    roll: z
+      .object({ fromBuild: z.string().max(64), toBuild: z.string().max(64) })
+      .strict()
+      .optional(),
+  })
+  .passthrough();
 
 /**
  * The bound on a just-declared executor's identity probe. The plugin answers from
@@ -159,13 +218,20 @@ interface Connection {
   hostExecutor: HostExecutorLink | null;
 }
 
-function serviceError(code: ServiceErrorCode, error: unknown): { code: ServiceErrorCode; message: string } {
-  if (error instanceof ProtocolError) return { code: error.code, message: error.message };
+function serviceError(
+  code: ServiceErrorCode,
+  error: unknown,
+): { code: ServiceErrorCode; message: string } {
+  if (error instanceof ProtocolError)
+    return { code: error.code, message: error.message };
   // A policy refusal is a definite, healthy answer, never an internal fault.
-  if (error instanceof CapacityWriteRefusalError) return { code: "refused", message: error.message };
-  if (error instanceof ExecutorError && error.code === "refused") return { code: "refused", message: error.message };
+  if (error instanceof CapacityWriteRefusalError)
+    return { code: "refused", message: error.message };
+  if (error instanceof ExecutorError && error.code === "refused")
+    return { code: "refused", message: error.message };
   const message = error instanceof Error ? error.message : String(error);
-  if (error instanceof z.ZodError) return { code: "invalid_input", message: formatSchemaRefusal(error) };
+  if (error instanceof z.ZodError)
+    return { code: "invalid_input", message: formatSchemaRefusal(error) };
   return { code: "internal", message };
 }
 
@@ -192,21 +258,24 @@ export class QueueService {
   /** Whether this service watches host presence and closes after the idle grace. */
   private readonly hostLifecycle: boolean;
   private readonly hostLifecycleIntervalMs: number;
-  private readonly catalogue = new Map(RPC_CATALOGUE.map(entry => [entry.name, entry]));
+  private readonly catalogue = new Map(
+    RPC_CATALOGUE.map((entry) => [entry.name, entry]),
+  );
 
   constructor(readonly options: ServiceOptions = {}) {
     this.idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
     // Serving the host-run endpoint is what makes this process the daemon: it
     // is the long-lived owner a host attaches to, so it is the one that closes
     // after the last host leaves.
-    this.hostLifecycle = options.hostLifecycle ?? options.owner?.hostRunEndpoint === true;
+    this.hostLifecycle =
+      options.hostLifecycle ?? options.owner?.hostRunEndpoint === true;
     this.hostLifecycleIntervalMs = options.hostLifecycleIntervalMs ?? 5_000;
     this.dataDir = options.owner?.dataDir ?? dataHome();
     this.socketPath = serviceSocketPath(this.dataDir);
     // The executor proves the prior owner is gone and takes the lease inside
     // start(); an ambiguous live owner fails closed before any socket exists.
     this.executor = new PersistenceExecutor(this.executorOptions());
-    this.executor.onFailure = fault => this.recordExecutorFault(fault);
+    this.executor.onFailure = (fault) => this.recordExecutorFault(fault);
   }
 
   /**
@@ -218,36 +287,63 @@ export class QueueService {
     if (fault.kind === "projection") return;
     try {
       writeServiceExecutorFault(this.dataDir, {
-        at: fault.at, kind: fault.kind, exitCode: fault.exitCode, pid: process.pid,
-        buildId: currentServiceBuildId(), message: fault.message, stack: fault.stack,
+        at: fault.at,
+        kind: fault.kind,
+        exitCode: fault.exitCode,
+        pid: process.pid,
+        buildId: currentServiceBuildId(),
+        message: fault.message,
+        stack: fault.stack,
       });
-    } catch { /* the in-memory fault still refuses health and requests */ }
-    try { this.options.onExecutorDeath?.(); }
-    catch { /* the service still fails closed */ }
+    } catch {
+      /* the in-memory fault still refuses health and requests */
+    }
+    try {
+      this.options.onExecutorDeath?.();
+    } catch {
+      /* the service still fails closed */
+    }
   }
 
   /** Cloneable executor options; handler functions stay on the worker side (fixtures). */
   private executorOptions(): ExecutorOptions {
     const owner: RuntimeOwnerOptions = this.options.owner ?? {};
-    const { adapterFactory: _adapterFactory, instrumentStore: _instrumentStore, ...cloneable } = owner;
-    void _adapterFactory; void _instrumentStore;
+    const {
+      adapterFactory: _adapterFactory,
+      instrumentStore: _instrumentStore,
+      ...cloneable
+    } = owner;
+    void _adapterFactory;
+    void _instrumentStore;
     const admission = cloneable.admission
-      ? (Object.fromEntries(Object.entries(cloneable.admission).filter(([, value]) => typeof value !== "function")) as AdmissionOptions)
+      ? (Object.fromEntries(
+          Object.entries(cloneable.admission).filter(
+            ([, value]) => typeof value !== "function",
+          ),
+        ) as AdmissionOptions)
       : undefined;
     return {
       owner: { ...cloneable, ...(admission ? { admission } : {}) },
       fixture: this.options.fixture,
       fixtureState: this.options.fixtureState ?? {},
       debug: this.options.debug === true,
-      ...(this.options.standbyFor ? { standbyFor: this.options.standbyFor } : {}),
-      ...(this.options.heldSlotWarnMs !== undefined ? { heldSlotWarnMs: this.options.heldSlotWarnMs } : {}),
+      ...(this.options.standbyFor
+        ? { standbyFor: this.options.standbyFor }
+        : {}),
+      ...(this.options.heldSlotWarnMs !== undefined
+        ? { heldSlotWarnMs: this.options.heldSlotWarnMs }
+        : {}),
     };
   }
 
   /** True once this process has bound the service socket; only then may it remove the socket file. */
   private boundSocket = false;
-  get buildId() { return currentServiceBuildId(); }
-  get drainingNow() { return this.draining; }
+  get buildId() {
+    return currentServiceBuildId();
+  }
+  get drainingNow() {
+    return this.draining;
+  }
 
   /** Fixture-only debug channel: seed and inspect the executor store. */
   debug(op: unknown): Promise<unknown> {
@@ -274,26 +370,46 @@ export class QueueService {
       try {
         await new Promise<void>((resolve, reject) => {
           const server = createServer();
-          server.on("error", error => { reject(error instanceof Error ? error : new Error(String(error))); });
-          server.on("connection", socket => this.acceptConnection(socket));
+          server.on("error", (error) => {
+            reject(error instanceof Error ? error : new Error(String(error)));
+          });
+          server.on("connection", (socket) => this.acceptConnection(socket));
           server.listen(socketFile, () => {
             // Long socket paths bind without error on macOS but create no file; the
             // service must fail closed instead of running with an unreachable socket.
-            if (!existsSync(socketFile)) { reject(new Error(`Service socket path exceeds the local transport length bound: ${socketFile}`)); return; }
+            if (!existsSync(socketFile)) {
+              reject(
+                new Error(
+                  `Service socket path exceeds the local transport length bound: ${socketFile}`,
+                ),
+              );
+              return;
+            }
             chmodSync(socketFile, 0o600);
             this.boundSocket = true;
             this.server = server;
             writeServiceInfo(this.dataDir, {
-              protocolVersion: PROTOCOL_VERSION, buildId: currentServiceBuildId(), socketPath: socketFile,
-              credential: this.credential, pid: process.pid, startedAt: this.startedAt,
+              protocolVersion: PROTOCOL_VERSION,
+              buildId: currentServiceBuildId(),
+              socketPath: socketFile,
+              credential: this.credential,
+              pid: process.pid,
+              startedAt: this.startedAt,
               sessionId: currentLoginSession(),
               ...(this.web?.address ? { httpPort: this.web.address.port } : {}),
             });
-            onLoginSessionFault(() => { void this.stop(); });
-            this.idleTimer = setInterval(() => this.closeIdleConnections(), Math.min(this.idleTimeoutMs, 30_000));
+            onLoginSessionFault(() => {
+              void this.stop();
+            });
+            this.idleTimer = setInterval(
+              () => this.closeIdleConnections(),
+              Math.min(this.idleTimeoutMs, 30_000),
+            );
             this.idleTimer.unref?.();
             if (this.hostLifecycle) {
-              this.hostLifecycleTimer = setInterval(() => { void this.checkHostLifecycle(); }, this.hostLifecycleIntervalMs);
+              this.hostLifecycleTimer = setInterval(() => {
+                void this.checkHostLifecycle();
+              }, this.hostLifecycleIntervalMs);
               this.hostLifecycleTimer.unref?.();
             }
             // A detached service must remain discoverable through the identity it
@@ -302,7 +418,12 @@ export class QueueService {
             // and must release its private store instead of becoming an orphan.
             this.ownershipTimer = setInterval(() => {
               const current = readServiceInfo(this.dataDir);
-              if (!current || current.pid !== process.pid || current.buildId !== currentServiceBuildId() || current.socketPath !== this.socketPath) {
+              if (
+                !current ||
+                current.pid !== process.pid ||
+                current.buildId !== currentServiceBuildId() ||
+                current.socketPath !== this.socketPath
+              ) {
                 void this.stop();
               }
             }, this.options.ownershipCheckMs ?? 5_000);
@@ -322,23 +443,39 @@ export class QueueService {
     const configuredPort = this.options.webBoard?.port ?? configuredWebPort();
     const sessionFile = join(this.dataDir, "web-sessions.json");
     await this.migrateWebSessions(sessionFile);
-    const web = new WebBoard({ host: this.webHost(), bundleDir: defaultWebBundleDir(), ...this.options.webBoard, port: configuredPort, sessionFile });
+    const web = new WebBoard({
+      host: this.webHost(),
+      bundleDir: defaultWebBundleDir(),
+      ...this.options.webBoard,
+      port: configuredPort,
+      sessionFile,
+    });
     try {
       await web.listen();
-      if (web.usedFallbackPort) console.error(`Nucleus board preferred port ${configuredPort} was occupied; using ${web.address?.port}.`);
+      if (web.usedFallbackPort)
+        console.error(
+          `Nucleus board preferred port ${configuredPort} was occupied; using ${web.address?.port}.`,
+        );
       return web;
     } catch (error) {
-      console.error(`Nucleus board HTTP server did not start; the socket still serves: ${error instanceof Error ? error.message : String(error)}`);
+      console.error(
+        `Nucleus board HTTP server did not start; the socket still serves: ${error instanceof Error ? error.message : String(error)}`,
+      );
       return null;
     }
   }
 
   /** Move the previous work-root session store only after its data-home copy is verified. */
   private async migrateWebSessions(sessionFile: string): Promise<void> {
-    const oldFile = join(getWorkRoot(this.dataDir), "nucleus-web-sessions.json");
+    const oldFile = join(
+      getWorkRoot(this.dataDir),
+      "nucleus-web-sessions.json",
+    );
     if (!existsSync(oldFile)) return;
     if (existsSync(sessionFile)) {
-      console.error(`Nucleus board found both session stores; using ${sessionFile} and leaving ${oldFile} in place.`);
+      console.error(
+        `Nucleus board found both session stores; using ${sessionFile} and leaving ${oldFile} in place.`,
+      );
       return;
     }
 
@@ -349,7 +486,8 @@ export class QueueService {
     await rename(temporary, sessionFile);
     await chmod(sessionFile, 0o600);
     const copied = await readFile(sessionFile);
-    if (!contents.equals(copied)) throw new Error("The migrated web session file did not verify");
+    if (!contents.equals(copied))
+      throw new Error("The migrated web session file did not verify");
     unlinkSync(oldFile);
   }
 
@@ -365,8 +503,8 @@ export class QueueService {
       call: (method, input) => this.webCall(method, input),
       board: () => this.executor.current().board,
       unavailable: () => this.executor.unavailableReason(),
-      subscribe: listener => this.executor.onSnapshot(listener),
-      isMutating: method => this.catalogue.get(method)?.mutating ?? false,
+      subscribe: (listener) => this.executor.onSnapshot(listener),
+      isMutating: (method) => this.catalogue.get(method)?.mutating ?? false,
     };
   }
 
@@ -378,10 +516,21 @@ export class QueueService {
   private async webCall(method: string, input: unknown): Promise<unknown> {
     const entry = this.catalogue.get(method);
     if (!entry) throw new MethodNotServedError(method);
-    const parsed = await (entry.contract.input as { parseAsync?: (value: unknown) => Promise<unknown> }).parseAsync?.(input) ?? input;
+    const parsed =
+      (await (
+        entry.contract.input as {
+          parseAsync?: (value: unknown) => Promise<unknown>;
+        }
+      ).parseAsync?.(input)) ?? input;
     if (method === "queue.ui-snapshot") return this.serveBoard(parsed);
     const raw = await this.executor.rpc(method, parsed, WEB_SURFACE);
-    return await (entry.contract.output as { parseAsync?: (value: unknown) => Promise<unknown> })?.parseAsync?.(raw) ?? raw;
+    return (
+      (await (
+        entry.contract.output as {
+          parseAsync?: (value: unknown) => Promise<unknown>;
+        }
+      )?.parseAsync?.(raw)) ?? raw
+    );
   }
 
   /** The loopback address of the local web board, or null when it is not listening. Tests and diagnostics read it. */
@@ -397,7 +546,11 @@ export class QueueService {
    */
   private async checkHostLifecycle() {
     if (this.draining || this.hostLifecyclePending) return;
-    if ([...this.connections].some(connection => connection.hostPresence && !connection.closing)) {
+    if (
+      [...this.connections].some(
+        (connection) => connection.hostPresence && !connection.closing,
+      )
+    ) {
       return;
     }
     this.hostLifecyclePending = true;
@@ -405,23 +558,45 @@ export class QueueService {
     try {
       const due = await this.executor.callHandler("hostShutdownDue", {});
       if (due === true) {
-        if (presenceRevision !== this.hostPresenceRevision || [...this.connections].some(connection => connection.hostPresence && !connection.closing)) await this.executor.callHandler("cancelHostShutdown", {});
+        if (
+          presenceRevision !== this.hostPresenceRevision ||
+          [...this.connections].some(
+            (connection) => connection.hostPresence && !connection.closing,
+          )
+        )
+          await this.executor.callHandler("cancelHostShutdown", {});
         else {
-          console.log("Nucleus service stopping: the last host closed more than the idle grace ago and no host run is live");
+          console.log(
+            "Nucleus service stopping: the last host closed more than the idle grace ago and no host run is live",
+          );
           await this.stop();
         }
       }
-    } catch { /* An unavailable executor is unknown, never permission to stop. */ }
-    finally { this.hostLifecyclePending = false; }
+    } catch {
+      /* An unavailable executor is unknown, never permission to stop. */
+    } finally {
+      this.hostLifecyclePending = false;
+    }
   }
 
   private closeIdleConnections() {
     const now = Date.now();
     for (const connection of this.connections) {
-      const idleFor = now - Math.max((connection.socket as Socket & { _nsLastSeen?: number })._nsLastSeen ?? now, 0);
+      const idleFor =
+        now -
+        Math.max(
+          (connection.socket as Socket & { _nsLastSeen?: number })
+            ._nsLastSeen ?? now,
+          0,
+        );
       // A host executor is a long-lived role like the presence claim: idleness is
       // its normal state, so the idle sweep never closes it.
-      if (!connection.hostPresence && !connection.hostExecutor && idleFor >= this.idleTimeoutMs && connection.inFlight === 0) {
+      if (
+        !connection.hostPresence &&
+        !connection.hostExecutor &&
+        idleFor >= this.idleTimeoutMs &&
+        connection.inFlight === 0
+      ) {
         connection.socket.end();
         connection.closing = true;
       }
@@ -433,21 +608,55 @@ export class QueueService {
       socket.destroy();
       return;
     }
-    const connection: Connection = { socket, authed: false, inFlight: 0, closing: false, hostPresence: false, hostExecutor: null };
+    const connection: Connection = {
+      socket,
+      authed: false,
+      inFlight: 0,
+      closing: false,
+      hostPresence: false,
+      hostExecutor: null,
+    };
     this.connections.add(connection);
     (socket as Socket & { _nsLastSeen?: number })._nsLastSeen = Date.now();
     const reader = createFrameReader(
-      frame => { void this.handleFrame(connection, frame); },
-      error => { this.respond(connection, { v: PROTOCOL_VERSION, id: "protocol", error: serviceError(error.code, error) }, true); socket.destroy(); },
+      (frame) => {
+        void this.handleFrame(connection, frame);
+      },
+      (error) => {
+        this.respond(
+          connection,
+          {
+            v: PROTOCOL_VERSION,
+            id: "protocol",
+            error: serviceError(error.code, error),
+          },
+          true,
+        );
+        socket.destroy();
+      },
     );
-    socket.on("data", chunk => { (socket as Socket & { _nsLastSeen?: number })._nsLastSeen = Date.now(); reader.feed(chunk); });
+    socket.on("data", (chunk) => {
+      (socket as Socket & { _nsLastSeen?: number })._nsLastSeen = Date.now();
+      reader.feed(chunk);
+    });
     socket.on("error", () => {});
     socket.on("close", () => {
       this.connections.delete(connection);
-      this.releaseHostExecutor(connection, "the host executor connection closed");
+      this.releaseHostExecutor(
+        connection,
+        "the host executor connection closed",
+      );
       if (connection.hostPresence) this.hostPresenceRevision++;
-      if (connection.hostPresence && !this.draining && ![...this.connections].some(other => other.hostPresence && !other.closing))
-        void this.executor.callHandler("hostPresenceClosed", {}).catch(() => {});
+      if (
+        connection.hostPresence &&
+        !this.draining &&
+        ![...this.connections].some(
+          (other) => other.hostPresence && !other.closing,
+        )
+      )
+        void this.executor
+          .callHandler("hostPresenceClosed", {})
+          .catch(() => {});
     });
   }
 
@@ -456,38 +665,99 @@ export class QueueService {
     // A frame without a method on a declared executor connection is that
     // connection's answer to one reverse request. It settles exactly that
     // operation; anything else falls through to the ordinary request path.
-    if (connection.hostExecutor && typeof (frame as { method?: unknown } | null)?.method !== "string" && connection.hostExecutor.settle(frame)) return;
+    if (
+      connection.hostExecutor &&
+      typeof (frame as { method?: unknown } | null)?.method !== "string" &&
+      connection.hostExecutor.settle(frame)
+    )
+      return;
     const parsed = parseRequest(frame);
     if (!parsed.ok) {
-      const id = typeof (frame as { id?: unknown })?.id === "string" ? (frame as { id: string }).id : "protocol";
-      this.respond(connection, { v: PROTOCOL_VERSION, id, error: serviceError(parsed.error.code, parsed.error) }, true);
+      const id =
+        typeof (frame as { id?: unknown })?.id === "string"
+          ? (frame as { id: string }).id
+          : "protocol";
+      this.respond(
+        connection,
+        {
+          v: PROTOCOL_VERSION,
+          id,
+          error: serviceError(parsed.error.code, parsed.error),
+        },
+        true,
+      );
       return;
     }
     const request = parsed.request;
     if (!connection.authed && request.method !== "service.auth") {
       // Fail closed: an unauthenticated connection gets one typed rejection and is closed.
-      this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, error: { code: "unauthenticated", message: "Authenticate before any other method" } }, true, request.method);
+      this.respond(
+        connection,
+        {
+          v: PROTOCOL_VERSION,
+          id: request.id,
+          error: {
+            code: "unauthenticated",
+            message: "Authenticate before any other method",
+          },
+        },
+        true,
+        request.method,
+      );
       return;
     }
     if (this.draining) {
-      this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, error: { code: "draining", message: "Service is draining; a replacement build will follow" } }, false, request.method);
+      this.respond(
+        connection,
+        {
+          v: PROTOCOL_VERSION,
+          id: request.id,
+          error: {
+            code: "draining",
+            message: "Service is draining; a replacement build will follow",
+          },
+        },
+        false,
+        request.method,
+      );
       return;
     }
     try {
       switch (request.method) {
-        case "service.auth": return await this.handleAuth(connection, request);
+        case "service.auth":
+          return await this.handleAuth(connection, request);
         case "service.nucleus-bridge-presence": {
           // The one bridge presence claim: a second bridge waits on standby
           // until this connection closes, and a stale claim cannot be stolen.
-          const occupied = [...this.connections].some(other => other !== connection && other.hostPresence && !other.closing);
-          if (occupied) return this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, result: { active: false } }, false, request.method);
+          const occupied = [...this.connections].some(
+            (other) =>
+              other !== connection && other.hostPresence && !other.closing,
+          );
+          if (occupied)
+            return this.respond(
+              connection,
+              {
+                v: PROTOCOL_VERSION,
+                id: request.id,
+                result: { active: false },
+              },
+              false,
+              request.method,
+            );
           if (!connection.hostPresence) {
             this.hostPresenceRevision++;
             connection.hostPresence = true;
             // A newly granted single claim is presence returning: clear the plugin-lost fault.
-            void this.executor.callHandler("hostPresenceOpened", {}).catch(() => {});
+            void this.executor
+              .callHandler("hostPresenceOpened", {})
+              .catch(() => {});
           } else connection.hostPresence = true;
-          return this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, result: { active: true } }, false, request.method);
+          return this.respond(
+            connection,
+            { v: PROTOCOL_VERSION, id: request.id, result: { active: true } },
+            false,
+            request.method,
+          );
         }
         case "service.health": {
           // The registered executor's own health read is its liveness heartbeat (Spec
@@ -495,65 +765,243 @@ export class QueueService {
           // answered). It changes no answer and no connection: a heartbeat that never
           // arrives, or arrives late, is reported in health and never closes the link.
           const executor = connection.hostExecutor;
-          if (executor && this.hostExecutors.get(executor.hostId) === executor) {
-            this.notifyHostRuntime("bbHostHeartbeat", { hostId: executor.hostId, at: new Date().toISOString() });
+          if (
+            executor &&
+            this.hostExecutors.get(executor.hostId) === executor
+          ) {
+            this.notifyHostRuntime("bbHostHeartbeat", {
+              hostId: executor.hostId,
+              at: new Date().toISOString(),
+            });
           }
-          return this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, result: this.health() }, false, request.method);
+          return this.respond(
+            connection,
+            { v: PROTOCOL_VERSION, id: request.id, result: this.health() },
+            false,
+            request.method,
+          );
         }
         // The reverse host-operation role (Spec 062, decision 1). Additive: a client
         // that never declares it sees the service exactly as before, and the one
         // presence claim, roll recovery and the catalogue path never read it.
-        case HOST_EXECUTOR_METHOD: return this.handleHostExecutor(connection, request);
+        case HOST_EXECUTOR_METHOD:
+          return this.handleHostExecutor(connection, request);
         case "service.bb-host-operation": {
           const envelope = bbHostOperationEnvelope.safeParse(request.input);
-          if (!envelope.success) return this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, error: serviceError("invalid_input", envelope.error) }, false, request.method);
-          const parsed = parseHostOperationRequest({ op: envelope.data.op, input: envelope.data.input });
-          if (!parsed.ok) return this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, error: { code: parsed.failure.code, message: parsed.failure.message } }, false, request.method);
+          if (!envelope.success)
+            return this.respond(
+              connection,
+              {
+                v: PROTOCOL_VERSION,
+                id: request.id,
+                error: serviceError("invalid_input", envelope.error),
+              },
+              false,
+              request.method,
+            );
+          const parsed = parseHostOperationRequest({
+            op: envelope.data.op,
+            input: envelope.data.input,
+          });
+          if (!parsed.ok)
+            return this.respond(
+              connection,
+              {
+                v: PROTOCOL_VERSION,
+                id: request.id,
+                error: {
+                  code: parsed.failure.code,
+                  message: parsed.failure.message,
+                },
+              },
+              false,
+              request.method,
+            );
           let result: HostOperationOutcome;
           try {
-            result = await this.sendHostOperation(envelope.data.hostId, parsed.value.op, parsed.value.input);
+            result = await this.sendHostOperation(
+              envelope.data.hostId,
+              parsed.value.op,
+              parsed.value.input,
+            );
           } catch (error) {
-            const mapped = error instanceof HostOperationRefusedError
-              ? { code: error.failure.code, message: error.failure.message }
-              : error instanceof HostExecutorUnavailableError
-                ? { code: "refused" as const, message: error.message }
-                : serviceError("internal", error);
-            return this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, error: mapped }, false, request.method);
+            if (error instanceof HostOperationTimeoutError) {
+              this.respond(
+                connection,
+                {
+                  v: PROTOCOL_VERSION,
+                  id: request.id,
+                  error: { code: "timeout", message: error.message },
+                  continuation: true,
+                },
+                false,
+                request.method,
+              );
+              connection.inFlight++;
+              void error.late
+                .then(
+                  (result) =>
+                    this.respond(
+                      connection,
+                      { v: PROTOCOL_VERSION, id: request.id, result },
+                      false,
+                      request.method,
+                    ),
+                  (failure) =>
+                    this.respond(
+                      connection,
+                      {
+                        v: PROTOCOL_VERSION,
+                        id: request.id,
+                        error: serviceError("internal", failure),
+                      },
+                      false,
+                      request.method,
+                    ),
+                )
+                .finally(() => {
+                  connection.inFlight--;
+                });
+              return;
+            }
+            const mapped =
+              error instanceof HostOperationRefusedError
+                ? { code: error.failure.code, message: error.failure.message }
+                : error instanceof HostExecutorUnavailableError
+                  ? { code: "refused" as const, message: error.message }
+                  : serviceError("internal", error);
+            return this.respond(
+              connection,
+              { v: PROTOCOL_VERSION, id: request.id, error: mapped },
+              false,
+              request.method,
+            );
           }
-          return this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, result }, false, request.method);
+          return this.respond(
+            connection,
+            { v: PROTOCOL_VERSION, id: request.id, result },
+            false,
+            request.method,
+          );
         }
         case "service.bb-parent-changed": {
           const executor = connection.hostExecutor;
           if (!executor || this.hostExecutors.get(executor.hostId) !== executor)
-            return this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, error: { code: "refused", message: "A registered BB host executor is required" } }, false, request.method);
+            return this.respond(
+              connection,
+              {
+                v: PROTOCOL_VERSION,
+                id: request.id,
+                error: {
+                  code: "refused",
+                  message: "A registered BB host executor is required",
+                },
+              },
+              false,
+              request.method,
+            );
           const parsed = bbParentChangedEnvelope.safeParse(request.input);
-          if (!parsed.success) return this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, error: serviceError("invalid_input", parsed.error) }, false, request.method);
-          const result = await this.executor.callHandler("bbParentChanged", { ...parsed.data, hostId: executor.hostId });
-          return this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, result }, false, request.method);
+          if (!parsed.success)
+            return this.respond(
+              connection,
+              {
+                v: PROTOCOL_VERSION,
+                id: request.id,
+                error: serviceError("invalid_input", parsed.error),
+              },
+              false,
+              request.method,
+            );
+          const result = await this.executor.callHandler("bbParentChanged", {
+            ...parsed.data,
+            hostId: executor.hostId,
+          });
+          return this.respond(
+            connection,
+            { v: PROTOCOL_VERSION, id: request.id, result },
+            false,
+            request.method,
+          );
         }
         case "service.request-outcome": {
           // Roll recovery: the replacement answers what happened to one keyed
           // request the old service received before it drained. A store read,
           // like every other catalogue call; unknown keys answer `not_received`.
           const parsed = requestOutcomeInputSchema.safeParse(request.input);
-          if (!parsed.success) return this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, error: serviceError("invalid_input", parsed.error) }, false, request.method);
-          const outcome = await this.executor.callHandler("requestOutcome", parsed.data) as { status?: unknown } | null;
-          return this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, result: outcome ?? { status: "not_received" } }, false, request.method);
+          if (!parsed.success)
+            return this.respond(
+              connection,
+              {
+                v: PROTOCOL_VERSION,
+                id: request.id,
+                error: serviceError("invalid_input", parsed.error),
+              },
+              false,
+              request.method,
+            );
+          const outcome = (await this.executor.callHandler(
+            "requestOutcome",
+            parsed.data,
+          )) as { status?: unknown } | null;
+          return this.respond(
+            connection,
+            {
+              v: PROTOCOL_VERSION,
+              id: request.id,
+              result: outcome ?? { status: "not_received" },
+            },
+            false,
+            request.method,
+          );
         }
-        case "service.drain": return this.handleDrainRequest(connection, request);
-        case "service.profile": return this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, result: await this.executor.callHandler("cpuProfile", request.input) }, false, request.method);
+        case "service.drain":
+          return this.handleDrainRequest(connection, request);
+        case "service.profile":
+          return this.respond(
+            connection,
+            {
+              v: PROTOCOL_VERSION,
+              id: request.id,
+              result: await this.executor.callHandler(
+                "cpuProfile",
+                request.input,
+              ),
+            },
+            false,
+            request.method,
+          );
         // Bridge lifecycle hints are validated and acknowledged here, not on the
         // public plugin RPC surface: they are scheduling signals only. The exact
         // identity mapping runs inside the persistence executor.
-        case "service.lifecycle-signal": return this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, result: await this.executor.callHandler("lifecycleSignal", request.input) }, false, request.method);
+        case "service.lifecycle-signal":
+          return this.respond(
+            connection,
+            {
+              v: PROTOCOL_VERSION,
+              id: request.id,
+              result: await this.executor.callHandler(
+                "lifecycleSignal",
+                request.input,
+              ),
+            },
+            false,
+            request.method,
+          );
         // The board link is minted here, in the process that serves the board: a
         // token exists only in this process's memory. Owner-socket callers only.
-        case "service.ui-link": return this.handleUiLink(connection, request);
-        default: return await this.handleCatalogueMethod(connection, request);
+        case "service.ui-link":
+          return this.handleUiLink(connection, request);
+        default:
+          return await this.handleCatalogueMethod(connection, request);
       }
     } catch (error) {
       const mapped = serviceError("internal", error);
-      this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, error: mapped }, false, request.method);
+      this.respond(
+        connection,
+        { v: PROTOCOL_VERSION, id: request.id, error: mapped },
+        false,
+        request.method,
+      );
     }
   }
 
@@ -590,9 +1038,31 @@ export class QueueService {
         request.method,
       );
     const parsed = parseHostExecutorDeclaration(request.input);
-    if (!parsed.ok) return this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, error: { code: "invalid_input", message: parsed.failure.message } }, false, request.method);
+    if (!parsed.ok)
+      return this.respond(
+        connection,
+        {
+          v: PROTOCOL_VERSION,
+          id: request.id,
+          error: { code: "invalid_input", message: parsed.failure.message },
+        },
+        false,
+        request.method,
+      );
     if (connection.hostExecutor) {
-      return this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, error: { code: "refused", message: `This connection already executes host operations for ${connection.hostExecutor.hostId}` } }, false, request.method);
+      return this.respond(
+        connection,
+        {
+          v: PROTOCOL_VERSION,
+          id: request.id,
+          error: {
+            code: "refused",
+            message: `This connection already executes host operations for ${connection.hostExecutor.hostId}`,
+          },
+        },
+        false,
+        request.method,
+      );
     }
     const hostId = hostIdFromDataDir(parsed.value.host.dataDir);
     // Spec 062, phase 7: the plugin is pinned to the service build. Refuse a plugin
@@ -627,7 +1097,9 @@ export class QueueService {
     const link = new HostExecutorLink({
       hostId,
       declaration: parsed.value,
-      write: frame => { connection.socket.write(encodeFrame(frame)); },
+      write: (frame) => {
+        connection.socket.write(encodeFrame(frame));
+      },
       deadlineMs: BB_IDENTITY_PROBE_DEADLINE_MS,
     });
     // The probe's answer comes back on this same connection, so the link holds the
@@ -700,7 +1172,8 @@ export class QueueService {
       // The plugin went away while the runtime was recording the identity. The claim it
       // just accepted belongs to a connection that no longer exists, so it is released
       // here instead of being left registered and reading online.
-      const reason = "the connection closed while its identity was being verified";
+      const reason =
+        "the connection closed while its identity was being verified";
       connection.hostExecutor = null;
       link.close(reason);
       this.releaseHostExecutor(link, reason);
@@ -733,9 +1206,7 @@ export class QueueService {
    * and a passed deadline all leave the identity unproven, and the reason names the
    * field the schema refused so health can say which one.
    */
-  private async probeHostIdentity(
-    link: HostExecutorLink,
-  ): Promise<
+  private async probeHostIdentity(link: HostExecutorLink): Promise<
     | {
         ok: true;
         dataDir: string;
@@ -795,7 +1266,10 @@ export class QueueService {
     field: string;
     reason: string;
   }) {
-    this.notifyHostRuntime("bbHostRejected", { ...input, at: new Date().toISOString() });
+    this.notifyHostRuntime("bbHostRejected", {
+      ...input,
+      at: new Date().toISOString(),
+    });
   }
 
   /**
@@ -810,12 +1284,20 @@ export class QueueService {
   private notifyHostRuntime(handler: string, input: unknown): void {
     try {
       void this.executor.callHandler(handler, input).catch(() => {});
-    } catch { /* the executor is gone; nothing to tell it */ }
+    } catch {
+      /* the executor is gone; nothing to tell it */
+    }
   }
 
   /** Detach one executor link from the registry and settle its work as unknown delivery. */
-  private releaseHostExecutor(connectionOrLink: Connection | HostExecutorLink, reason: string) {
-    const link = connectionOrLink instanceof HostExecutorLink ? connectionOrLink : connectionOrLink.hostExecutor;
+  private releaseHostExecutor(
+    connectionOrLink: Connection | HostExecutorLink,
+    reason: string,
+  ) {
+    const link =
+      connectionOrLink instanceof HostExecutorLink
+        ? connectionOrLink
+        : connectionOrLink.hostExecutor;
     if (!link) return;
     const registered = this.hostExecutors.get(link.hostId) === link;
     link.close(reason);
@@ -834,19 +1316,30 @@ export class QueueService {
       connection.hostExecutor = null;
       // A replaced executor connection is finished: the plugin that held it is
       // reloading, so its socket goes and its replacement declares afresh.
-      if (!connection.socket.destroyed) { connection.closing = true; connection.socket.destroy(); }
+      if (!connection.socket.destroyed) {
+        connection.closing = true;
+        connection.socket.destroy();
+      }
     }
   }
 
   /** The host identities currently holding an executor connection, for adapters and tests. */
-  hostExecutorIds(): string[] { return [...this.hostExecutors.keys()].sort(); }
+  hostExecutorIds(): string[] {
+    return [...this.hostExecutors.keys()].sort();
+  }
 
   /**
    * What one declared executor connection announces, or null when none holds it.
    * `connectedAt` is the evidence a reload produced a new connection rather than a
    * resumed one, and the declared data directory is what identity is re-proved from.
    */
-  hostExecutorStatus(hostId: string): { hostId: string; dataDir: string; bbVersion: string; sdkVersion: string; connectedAt: string } | null {
+  hostExecutorStatus(hostId: string): {
+    hostId: string;
+    dataDir: string;
+    bbVersion: string;
+    sdkVersion: string;
+    connectedAt: string;
+  } | null {
     const link = this.hostExecutors.get(hostId);
     if (!link) return null;
     return { hostId, ...link.declaration.host, connectedAt: link.connectedAt };
@@ -857,7 +1350,11 @@ export class QueueService {
    * nothing to this: no catalogue method, no dispatch path and no host registration
    * calls it, so the only callers are the proof and its tests.
    */
-  sendHostOperation(hostId: string, op: HostOperationName, input: unknown): Promise<HostOperationOutcome> {
+  sendHostOperation(
+    hostId: string,
+    op: HostOperationName,
+    input: unknown,
+  ): Promise<HostOperationOutcome> {
     const link = this.hostExecutors.get(hostId);
     if (!link) return Promise.reject(new HostExecutorUnavailableError(hostId));
     return link.request(op, input);
@@ -866,52 +1363,157 @@ export class QueueService {
   private async handleAuth(connection: Connection, request: ServiceRequest) {
     const input = authInputSchema.safeParse(request.input);
     const expected = createHash("sha256").update(this.credential).digest();
-    const provided = input.success ? createHash("sha256").update(input.data.credential).digest() : Buffer.alloc(32);
+    const provided = input.success
+      ? createHash("sha256").update(input.data.credential).digest()
+      : Buffer.alloc(32);
     const match = timingSafeEqual(expected, provided);
     if (!input.success || !match) {
-      this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, error: { code: "unauthenticated", message: "Service credential rejected" } }, true, request.method);
+      this.respond(
+        connection,
+        {
+          v: PROTOCOL_VERSION,
+          id: request.id,
+          error: {
+            code: "unauthenticated",
+            message: "Service credential rejected",
+          },
+        },
+        true,
+        request.method,
+      );
       return;
     }
     connection.authed = true;
-    this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, result: { ok: true, buildId: currentServiceBuildId(), protocolVersion: PROTOCOL_VERSION, pid: process.pid } }, false, request.method);
+    this.respond(
+      connection,
+      {
+        v: PROTOCOL_VERSION,
+        id: request.id,
+        result: {
+          ok: true,
+          buildId: currentServiceBuildId(),
+          protocolVersion: PROTOCOL_VERSION,
+          pid: process.pid,
+        },
+      },
+      false,
+      request.method,
+    );
   }
 
   /** `nucleus ui`: mint one board link, or revoke every outstanding token. */
   private async handleUiLink(connection: Connection, request: ServiceRequest) {
     const parsed = uiLinkInputSchema.safeParse(request.input ?? {});
     if (!parsed.success) {
-      this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, error: { code: "invalid_input", message: formatSchemaRefusal(parsed.error) } }, false, request.method);
+      this.respond(
+        connection,
+        {
+          v: PROTOCOL_VERSION,
+          id: request.id,
+          error: {
+            code: "invalid_input",
+            message: formatSchemaRefusal(parsed.error),
+          },
+        },
+        false,
+        request.method,
+      );
       return;
     }
     const web = this.web;
     if (!web) {
-      this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, error: { code: "unavailable", message: "The local board server is not listening; the service log says why it did not start. The queue still serves over the socket." } }, false, request.method);
+      this.respond(
+        connection,
+        {
+          v: PROTOCOL_VERSION,
+          id: request.id,
+          error: {
+            code: "unavailable",
+            message:
+              "The local board server is not listening; the service log says why it did not start. The queue still serves over the socket.",
+          },
+        },
+        false,
+        request.method,
+      );
       return;
     }
-    const result = parsed.data.action === "revoke"
-      ? { revoked: await web.revokeAll() }
-      : { ...web.issueLink(parsed.data.ttlMinutes), portFallback: web.usedFallbackPort, port: web.address?.port };
-    this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, result }, false, request.method);
+    const result =
+      parsed.data.action === "revoke"
+        ? { revoked: await web.revokeAll() }
+        : {
+            ...web.issueLink(parsed.data.ttlMinutes),
+            portFallback: web.usedFallbackPort,
+            port: web.address?.port,
+          };
+    this.respond(
+      connection,
+      { v: PROTOCOL_VERSION, id: request.id, result },
+      false,
+      request.method,
+    );
   }
 
-  private async handleCatalogueMethod(connection: Connection, request: ServiceRequest) {
+  private async handleCatalogueMethod(
+    connection: Connection,
+    request: ServiceRequest,
+  ) {
     // `via: "bb"` is transport provenance only the BB plugin's own retained
     // host-executor connection may carry (Spec 062, phase 6); on any other
     // connection it is refused before the method runs, never downgraded.
     if (request.via === "bb" && !connection.hostExecutor) {
-      this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, error: { code: "invalid_input", message: "Request surface `bb` is served only on the BB plugin's host-executor connection" } }, false, request.method);
+      this.respond(
+        connection,
+        {
+          v: PROTOCOL_VERSION,
+          id: request.id,
+          error: {
+            code: "invalid_input",
+            message:
+              "Request surface `bb` is served only on the BB plugin's host-executor connection",
+          },
+        },
+        false,
+        request.method,
+      );
       return;
     }
     const entry = this.catalogue.get(request.method);
     if (!entry) {
-      this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, error: { code: "method_unknown", message: `Unknown method ${request.method}` } }, false, request.method);
+      this.respond(
+        connection,
+        {
+          v: PROTOCOL_VERSION,
+          id: request.id,
+          error: {
+            code: "method_unknown",
+            message: `Unknown method ${request.method}`,
+          },
+        },
+        false,
+        request.method,
+      );
       return;
     }
     let input: unknown;
     try {
-      input = await (entry.contract.input as { parseAsync?: (value: unknown) => Promise<unknown> }).parseAsync?.(request.input) ?? request.input;
+      input =
+        (await (
+          entry.contract.input as {
+            parseAsync?: (value: unknown) => Promise<unknown>;
+          }
+        ).parseAsync?.(request.input)) ?? request.input;
     } catch (error) {
-      this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, error: serviceError("invalid_input", error) }, false, request.method);
+      this.respond(
+        connection,
+        {
+          v: PROTOCOL_VERSION,
+          id: request.id,
+          error: serviceError("invalid_input", error),
+        },
+        false,
+        request.method,
+      );
       return;
     }
     // The compact board projection is a revisioned cached read: it is answered
@@ -919,14 +1521,44 @@ export class QueueService {
     // SQLite work, so a delayed database operation cannot delay it (Spec 013).
     if (request.method === "queue.ui-snapshot") {
       try {
-        this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, result: this.serveBoard(input) }, false, request.method);
+        this.respond(
+          connection,
+          {
+            v: PROTOCOL_VERSION,
+            id: request.id,
+            result: this.serveBoard(input),
+          },
+          false,
+          request.method,
+        );
       } catch (error) {
-        this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, error: serviceError("internal", error) }, false, request.method);
+        this.respond(
+          connection,
+          {
+            v: PROTOCOL_VERSION,
+            id: request.id,
+            error: serviceError("internal", error),
+          },
+          false,
+          request.method,
+        );
       }
       return;
     }
     if (connection.inFlight >= MAX_IN_FLIGHT) {
-      this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, error: { code: "busy", message: "Too many in-flight requests on this connection" } }, false, request.method);
+      this.respond(
+        connection,
+        {
+          v: PROTOCOL_VERSION,
+          id: request.id,
+          error: {
+            code: "busy",
+            message: "Too many in-flight requests on this connection",
+          },
+        },
+        false,
+        request.method,
+      );
       return;
     }
     connection.inFlight++;
@@ -935,11 +1567,35 @@ export class QueueService {
       // Settings-only capacity rule. Nothing else reads it. A client-minted request
       // key rides only for a mutating call, where the executor journals it so a
       // replacement can answer a lost response's real outcome.
-      const raw = await this.executor.rpc(request.method, input, request.via, entry.mutating ? request.key : undefined);
-      const result = await (entry.contract.output as { parseAsync?: (value: unknown) => Promise<unknown> })?.parseAsync?.(raw) ?? raw;
-      this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, result }, false, request.method);
+      const raw = await this.executor.rpc(
+        request.method,
+        input,
+        request.via,
+        entry.mutating ? request.key : undefined,
+      );
+      const result =
+        (await (
+          entry.contract.output as {
+            parseAsync?: (value: unknown) => Promise<unknown>;
+          }
+        )?.parseAsync?.(raw)) ?? raw;
+      this.respond(
+        connection,
+        { v: PROTOCOL_VERSION, id: request.id, result },
+        false,
+        request.method,
+      );
     } catch (error) {
-      this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, error: serviceError("internal", error) }, false, request.method);
+      this.respond(
+        connection,
+        {
+          v: PROTOCOL_VERSION,
+          id: request.id,
+          error: serviceError("internal", error),
+        },
+        false,
+        request.method,
+      );
     } finally {
       connection.inFlight--;
     }
@@ -952,21 +1608,59 @@ export class QueueService {
     const reason = this.executor.unavailableReason();
     if (reason) throw new ProtocolError("unavailable", reason);
     const board = this.executor.current().board;
-    if (!board) throw new ProtocolError("unavailable", "The persistence executor has not published a board projection yet");
-    const input_ = parseCatalogueInput("queue.ui-snapshot", input) as { revision?: number };
+    if (!board)
+      throw new ProtocolError(
+        "unavailable",
+        "The persistence executor has not published a board projection yet",
+      );
+    const input_ = parseCatalogueInput("queue.ui-snapshot", input) as {
+      revision?: number;
+    };
     if (input_?.revision !== undefined && input_.revision === board.revision) {
-      return { unchanged: true as const, revision: board.revision, connected: board.connected, paused: board.paused, dispatchHeld: board.dispatchHeld, drained: board.drained, boundRuns: board.boundRuns, quiet: board.quiet, activeWorkers: board.activeWorkers, unsettled: board.unsettled, stoppedThreads: board.stoppedThreads, resumedThreads: board.resumedThreads, error: board.error };
+      return {
+        unchanged: true as const,
+        revision: board.revision,
+        connected: board.connected,
+        paused: board.paused,
+        dispatchHeld: board.dispatchHeld,
+        drained: board.drained,
+        boundRuns: board.boundRuns,
+        quiet: board.quiet,
+        activeWorkers: board.activeWorkers,
+        unsettled: board.unsettled,
+        stoppedThreads: board.stoppedThreads,
+        resumedThreads: board.resumedThreads,
+        error: board.error,
+      };
     }
     return board;
   }
 
   private handleDrainRequest(connection: Connection, request: ServiceRequest) {
     if (this.draining) {
-      this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, result: { ok: true, draining: true } }, false, request.method);
+      this.respond(
+        connection,
+        {
+          v: PROTOCOL_VERSION,
+          id: request.id,
+          result: { ok: true, draining: true },
+        },
+        false,
+        request.method,
+      );
       return;
     }
     this.draining = true;
-    this.respond(connection, { v: PROTOCOL_VERSION, id: request.id, result: { ok: true, draining: true } }, false, request.method);
+    this.respond(
+      connection,
+      {
+        v: PROTOCOL_VERSION,
+        id: request.id,
+        result: { ok: true, draining: true },
+      },
+      false,
+      request.method,
+    );
     const roll = drainInputSchema.safeParse(request.input ?? {}).data?.roll;
     this.drained = (async () => {
       // Drain to a durable safe point: stop new work and connections, drain the
@@ -979,9 +1673,22 @@ export class QueueService {
       this.hostLifecycleTimer && clearInterval(this.hostLifecycleTimer);
       // Best effort: detached validation supervisors survive this drain and
       // persist their result for the replacement service to reconcile.
-      if (roll) { try { await this.executor.callHandler("recordServiceRoll", roll); } catch { /* the roll proceeds */ } }
-      try { await this.executor.drain(); } catch { /* the durable safe point is what the executor already committed; release proceeds */ }
-      for (const connection of this.connections) { connection.closing = true; connection.socket.destroy(); }
+      if (roll) {
+        try {
+          await this.executor.callHandler("recordServiceRoll", roll);
+        } catch {
+          /* the roll proceeds */
+        }
+      }
+      try {
+        await this.executor.drain();
+      } catch {
+        /* the durable safe point is what the executor already committed; release proceeds */
+      }
+      for (const connection of this.connections) {
+        connection.closing = true;
+        connection.socket.destroy();
+      }
       this.connections.clear();
       // Only the process that bound the socket removes it: a replacement that never
       // started must not unlink the live owner's socket when it is stopped.
@@ -993,19 +1700,41 @@ export class QueueService {
     })();
   }
 
-  private respond(connection: Connection, response: ServiceResponse, fatal = false, method = "protocol") {
+  private respond(
+    connection: Connection,
+    response: ServiceResponse,
+    fatal = false,
+    method = "protocol",
+  ) {
     if (connection.socket.destroyed || connection.socket.writableEnded) return;
-    if (connection.socket.bufferSize > 32 * 1024 * 1024) { connection.socket.destroy(); return; }
+    if (connection.socket.bufferSize > 32 * 1024 * 1024) {
+      connection.socket.destroy();
+      return;
+    }
     try {
       connection.socket.write(encodeFrame(response));
-      if (fatal) { connection.closing = true; connection.socket.end(); }
+      if (fatal) {
+        connection.closing = true;
+        connection.socket.end();
+      }
     } catch (error) {
-      if (error instanceof ProtocolError && error.code === "oversize" && error.frameBytes !== undefined) {
+      if (
+        error instanceof ProtocolError &&
+        error.code === "oversize" &&
+        error.frameBytes !== undefined
+      ) {
         // One owner-only latest record stays bounded even if a caller repeats the refusal.
         const path = join(this.dataDir, "oversize-response.json");
         try {
-          writeOwnedJson(path, { at: new Date().toISOString(), method, bytes: error.frameBytes, ceiling: MAX_FRAME_BYTES });
-        } catch { /* diagnostic is advisory */ }
+          writeOwnedJson(path, {
+            at: new Date().toISOString(),
+            method,
+            bytes: error.frameBytes,
+            ceiling: MAX_FRAME_BYTES,
+          });
+        } catch {
+          /* diagnostic is advisory */
+        }
         const sizeMb = (error.frameBytes / 1_000_000).toFixed(1);
         const sizeBytes = error.frameBytes.toLocaleString("en-US");
         const ceilingBytes = MAX_FRAME_BYTES.toLocaleString("en-US");
@@ -1021,7 +1750,9 @@ export class QueueService {
           connection.closing = true;
           connection.socket.end(encodeFrame(boundedError));
           return;
-        } catch { /* the bounded error frame should always fit; preserve fail-closed behavior if it cannot be written */ }
+        } catch {
+          /* the bounded error frame should always fit; preserve fail-closed behavior if it cannot be written */
+        }
       }
       connection.socket.destroy();
     }
@@ -1031,7 +1762,10 @@ export class QueueService {
     const reason = this.executor.unavailableReason();
     if (reason) throw new ProtocolError("unavailable", reason);
     if (this.executor.current().revision < 0) {
-      throw new ProtocolError("unavailable", "The persistence executor has not published health yet");
+      throw new ProtocolError(
+        "unavailable",
+        "The persistence executor has not published health yet",
+      );
     }
     const runtime = this.executor.current().health;
     return {
@@ -1048,7 +1782,10 @@ export class QueueService {
 
   /** Resolves once a requested drain has fully released socket, store and lease. */
   drainedPromise(): Promise<void> {
-    return this.drained ?? (this.draining ? new Promise(() => {}) : Promise.resolve());
+    return (
+      this.drained ??
+      (this.draining ? new Promise(() => {}) : Promise.resolve())
+    );
   }
 
   /** Stop the service from a test or supervisor; drain to a durable safe point. */
@@ -1061,9 +1798,16 @@ export class QueueService {
         this.server?.close();
         this.idleTimer && clearInterval(this.idleTimer);
         this.ownershipTimer && clearInterval(this.ownershipTimer);
-      this.hostLifecycleTimer && clearInterval(this.hostLifecycleTimer);
-        try { await this.executor.drain(); } catch { /* release proceeds against the committed durable state */ }
-        for (const connection of this.connections) { connection.closing = true; connection.socket.destroy(); }
+        this.hostLifecycleTimer && clearInterval(this.hostLifecycleTimer);
+        try {
+          await this.executor.drain();
+        } catch {
+          /* release proceeds against the committed durable state */
+        }
+        for (const connection of this.connections) {
+          connection.closing = true;
+          connection.socket.destroy();
+        }
         this.connections.clear();
         // Only the process that bound the socket removes it: a replacement that never
         // started must not unlink the live owner's socket when it is stopped.
@@ -1076,7 +1820,8 @@ export class QueueService {
   }
 
   private removeOwnedIdentity() {
-    if (readServiceInfo(this.dataDir)?.pid === process.pid) removeServiceInfo(this.dataDir);
+    if (readServiceInfo(this.dataDir)?.pid === process.pid)
+      removeServiceInfo(this.dataDir);
   }
 
   /** Prove a dead prior owner left reclaimable files; caller holds the lease. */

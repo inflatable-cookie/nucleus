@@ -37,11 +37,17 @@ import {
   parseHostOperationRequest,
   type Parsed,
 } from "../shared/service/host-channel";
-import { PROTOCOL_VERSION, type ServiceRequest } from "../shared/service/protocol";
+import {
+  PROTOCOL_VERSION,
+  type ServiceRequest,
+} from "../shared/service/protocol";
 
 /** A request the plugin answered with a bounded refusal: the write could not have landed. */
 export class HostOperationRefusedError extends Error {
-  constructor(readonly op: HostOperationName, readonly failure: HostOperationFailure) {
+  constructor(
+    readonly op: HostOperationName,
+    readonly failure: HostOperationFailure,
+  ) {
     super(`Host operation ${op} refused (${failure.code}): ${failure.message}`);
     this.name = "HostOperationRefusedError";
   }
@@ -52,9 +58,24 @@ export class HostOperationRefusedError extends Error {
  * never resend on the strength of this error (Spec 062, decision 6).
  */
 export class HostOperationUnknownDeliveryError extends Error {
-  constructor(readonly op: HostOperationName, reason: string) {
+  constructor(
+    readonly op: HostOperationName,
+    reason: string,
+  ) {
     super(`Host operation ${op} has unknown delivery: ${reason}`);
     this.name = "HostOperationUnknownDeliveryError";
+  }
+}
+
+/** The caller's deadline elapsed; the original request still owns its reply. */
+export class HostOperationTimeoutError extends HostOperationUnknownDeliveryError {
+  constructor(
+    op: HostOperationName,
+    deadlineMs: number,
+    readonly late: Promise<HostOperationOutcome>,
+  ) {
+    super(op, `no answer within ${deadlineMs} ms; delivery remains unknown`);
+    this.name = "HostOperationTimeoutError";
   }
 }
 
@@ -66,11 +87,31 @@ export class HostExecutorUnavailableError extends Error {
   }
 }
 
+// Reads have no durable effect to reconcile after the caller stops waiting.
+const HOST_READS = new Set<HostOperationName>([
+  "identity.probe",
+  "workspace.inspect",
+  "thread.observe",
+  "thread.cascade",
+  "thread.inventory",
+  "thread.read",
+  "thread.metadata",
+  "thread.interactions",
+  "thread.timeline",
+  "provider.catalog",
+  "environment.list",
+  "terminal.list",
+  "call.counters",
+]);
+
 interface PendingOperation {
   op: HostOperationName;
   resolve: (outcome: HostOperationOutcome) => void;
   reject: (error: Error) => void;
   timer: NodeJS.Timeout;
+  timedOut: boolean;
+  resolveLate: (outcome: HostOperationOutcome) => void;
+  rejectLate: (error: Error) => void;
 }
 
 export interface HostExecutorLinkOptions {
@@ -92,9 +133,9 @@ export class HostExecutorLink {
   readonly declaration: HostExecutorDeclaration;
   readonly connectedAt = new Date().toISOString();
   private readonly pending = new Map<string, PendingOperation>();
+  private readonly expiredReads = new Set<string>();
   private readonly write: (frame: unknown) => void;
   private readonly deadlineMs: number;
-  private readonly now: () => number;
   private closed = false;
 
   constructor(options: HostExecutorLinkOptions) {
@@ -102,34 +143,91 @@ export class HostExecutorLink {
     this.declaration = options.declaration;
     this.write = options.write;
     this.deadlineMs = options.deadlineMs ?? HOST_OPERATION_DEADLINE_MS;
-    this.now = options.now ?? Date.now;
   }
 
-  get inFlight(): number { return this.pending.size; }
-  get isClosed(): boolean { return this.closed; }
+  get inFlight(): number {
+    return this.pending.size;
+  }
+  get isClosed(): boolean {
+    return this.closed;
+  }
 
   /**
    * Write one operation and await its bounded answer. The input is validated before
    * anything is written, so a malformed request is refused here and never becomes an
    * uncertain write on the host.
    */
-  request(op: HostOperationName, input: unknown): Promise<HostOperationOutcome> {
-    const parsed: Parsed<{ op: HostOperationName; input: unknown }> = parseHostOperationRequest({ op, input });
-    if (!parsed.ok) return Promise.reject(new HostOperationRefusedError(op, parsed.failure));
-    if (this.closed) return Promise.reject(new HostExecutorUnavailableError(this.hostId));
+  request(
+    op: HostOperationName,
+    input: unknown,
+  ): Promise<HostOperationOutcome> {
+    const parsed: Parsed<{ op: HostOperationName; input: unknown }> =
+      parseHostOperationRequest({ op, input });
+    if (!parsed.ok)
+      return Promise.reject(new HostOperationRefusedError(op, parsed.failure));
+    // Keep correlation bounded. Capacity exhaustion refuses before another write;
+    // it never turns an unresolved operation into a reason to resend it.
+    const retained = [...this.pending.values()].filter(
+      (pending) => pending.timedOut,
+    ).length;
+    const active = this.pending.size - retained;
+    if (
+      this.closed ||
+      active >= 1024 ||
+      (!HOST_READS.has(op) && retained >= 1024)
+    )
+      return Promise.reject(new HostExecutorUnavailableError(this.hostId));
     const id = `host-op-${randomUUID()}`;
+    let resolveLate!: (outcome: HostOperationOutcome) => void;
+    let rejectLate!: (error: Error) => void;
+    const late = new Promise<HostOperationOutcome>((resolve, reject) => {
+      resolveLate = resolve;
+      rejectLate = reject;
+    });
+    // A caller may choose observation rather than consume the late answer.
+    void late.catch(() => {});
     return new Promise<HostOperationOutcome>((resolve, reject) => {
       const timer = setTimeout(() => {
-        if (!this.pending.delete(id)) return;
-        reject(new HostOperationUnknownDeliveryError(op, `no answer within ${this.deadlineMs} ms; ${this.now()} is not proof it did not land`));
+        const pending = this.pending.get(id);
+        if (!pending) return;
+        pending.timedOut = true;
+        if (HOST_READS.has(op)) {
+          this.pending.delete(id);
+          this.expiredReads.add(id);
+          if (this.expiredReads.size > 1024)
+            this.expiredReads.delete(this.expiredReads.values().next().value!);
+          rejectLate(
+            new HostOperationUnknownDeliveryError(
+              op,
+              "late read results are discarded",
+            ),
+          );
+        }
+        reject(new HostOperationTimeoutError(op, this.deadlineMs, late));
       }, this.deadlineMs);
       timer.unref?.();
-      this.pending.set(id, { op, resolve, reject, timer });
-      const frame: ServiceRequest = { v: PROTOCOL_VERSION, id, method: HOST_OPERATION_METHOD, input: parsed.value };
+      this.pending.set(id, {
+        op,
+        resolve,
+        reject,
+        timer,
+        timedOut: false,
+        resolveLate,
+        rejectLate,
+      });
+      const frame: ServiceRequest = {
+        v: PROTOCOL_VERSION,
+        id,
+        method: HOST_OPERATION_METHOD,
+        input: parsed.value,
+      };
       try {
         this.write(frame);
       } catch {
-        this.settleOperation(id, "the connection failed before the request was written");
+        this.settleOperation(
+          id,
+          "the connection failed before the request was written",
+        );
       }
     });
   }
@@ -141,10 +239,16 @@ export class HostExecutorLink {
    */
   settle(frame: unknown): boolean {
     if (typeof frame !== "object" || frame === null) return false;
-    const answer = frame as { v?: unknown; id?: unknown; result?: unknown; error?: unknown };
-    if (answer.v !== PROTOCOL_VERSION || typeof answer.id !== "string") return false;
+    const answer = frame as {
+      v?: unknown;
+      id?: unknown;
+      result?: unknown;
+      error?: unknown;
+    };
+    if (answer.v !== PROTOCOL_VERSION || typeof answer.id !== "string")
+      return false;
     const pending = this.pending.get(answer.id);
-    if (!pending) return false;
+    if (!pending) return this.expiredReads.delete(answer.id);
     if (answer.error !== undefined) {
       const failure = parseHostOperationFailure(answer.error);
       if (!failure) {
@@ -155,9 +259,16 @@ export class HostExecutorLink {
       // `unavailable` or `internal` answer comes from a call that may have
       // committed, so it must never read as permission to send the work again.
       if (isHostOperationNonDelivery(failure.code)) {
-        this.settleOperation(answer.id, null, new HostOperationRefusedError(pending.op, failure));
+        this.settleOperation(
+          answer.id,
+          null,
+          new HostOperationRefusedError(pending.op, failure),
+        );
       } else {
-        this.settleOperation(answer.id, `the host answered ${failure.code} after the request was written: ${failure.message}`);
+        this.settleOperation(
+          answer.id,
+          `the host answered ${failure.code} after the request was written: ${failure.message}`,
+        );
       }
       return true;
     }
@@ -173,17 +284,36 @@ export class HostExecutorLink {
   /** The connection went away: every in-flight operation is unknown delivery. */
   close(reason = "the connection closed"): void {
     this.closed = true;
+    this.expiredReads.clear();
     for (const [id] of this.pending) this.settleOperation(id, reason);
   }
 
-  private settleOperation(id: string, unknownReason: string | null, error?: Error | null, outcome?: HostOperationOutcome) {
+  private settleOperation(
+    id: string,
+    unknownReason: string | null,
+    error?: Error | null,
+    outcome?: HostOperationOutcome,
+  ) {
     const pending = this.pending.get(id);
     if (!pending) return;
     this.pending.delete(id);
     clearTimeout(pending.timer);
-    if (error) pending.reject(error);
-    else if (unknownReason !== null) pending.reject(new HostOperationUnknownDeliveryError(pending.op, unknownReason));
-    else if (outcome) pending.resolve(outcome);
-    else pending.reject(new HostOperationUnknownDeliveryError(pending.op, "the answer carried neither a result nor a refusal"));
+    const failure =
+      error ??
+      (unknownReason !== null
+        ? new HostOperationUnknownDeliveryError(pending.op, unknownReason)
+        : outcome
+          ? null
+          : new HostOperationUnknownDeliveryError(
+              pending.op,
+              "the answer carried neither a result nor a refusal",
+            ));
+    if (failure) {
+      pending.reject(failure);
+      pending.rejectLate(failure);
+    } else if (outcome) {
+      pending.resolve(outcome);
+      pending.resolveLate(outcome);
+    }
   }
 }

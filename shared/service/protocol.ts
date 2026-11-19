@@ -75,6 +75,8 @@ export interface ServiceResponse {
   id: string;
   result?: unknown;
   error?: ServiceError;
+  /** A timed-out host operation can still deliver its correlated final response. */
+  continuation?: boolean;
 }
 
 export const REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,120}$/;
@@ -90,7 +92,11 @@ export const METHOD_PATTERN = /^[a-z][a-z0-9._-]{0,120}$/;
 export const REQUEST_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,120}$/;
 
 export class ProtocolError extends Error {
-  constructor(readonly code: ServiceErrorCode, message: string, readonly frameBytes?: number) {
+  constructor(
+    readonly code: ServiceErrorCode,
+    message: string,
+    readonly frameBytes?: number,
+  ) {
     super(message);
   }
 }
@@ -98,7 +104,12 @@ export class ProtocolError extends Error {
 /** Encode one framed message; throws instead of producing an oversized frame. */
 export function encodeFrame(value: unknown): Buffer {
   const body = Buffer.from(JSON.stringify(value), "utf8");
-  if (body.length > MAX_FRAME_BYTES) throw new ProtocolError("oversize", `Frame of ${body.length} bytes exceeds the ${MAX_FRAME_BYTES} byte protocol bound`, body.length);
+  if (body.length > MAX_FRAME_BYTES)
+    throw new ProtocolError(
+      "oversize",
+      `Frame of ${body.length} bytes exceeds the ${MAX_FRAME_BYTES} byte protocol bound`,
+      body.length,
+    );
   const head = Buffer.alloc(4);
   head.writeUInt32BE(body.length, 0);
   return Buffer.concat([head, body]);
@@ -109,7 +120,11 @@ export function encodeFrame(value: unknown): Buffer {
  * abort function that fails the connection; oversized or malformed frames fail
  * closed and stop the stream.
  */
-export function createFrameReader(onFrame: (frame: unknown) => void, onFail: (error: ProtocolError) => void, maxBytes = MAX_FRAME_BYTES) {
+export function createFrameReader(
+  onFrame: (frame: unknown) => void,
+  onFail: (error: ProtocolError) => void,
+  maxBytes = MAX_FRAME_BYTES,
+) {
   let buffer: Buffer<ArrayBufferLike> = Buffer.alloc(0);
   let failed = false;
   const fail = (error: ProtocolError) => {
@@ -125,40 +140,141 @@ export function createFrameReader(onFrame: (frame: unknown) => void, onFail: (er
       while (true) {
         if (buffer.length < 4) return;
         const length = buffer.readUInt32BE(0);
-        if (length > maxBytes) { fail(new ProtocolError("oversize", `Frame of ${length} bytes exceeds the ${maxBytes} byte protocol bound`)); return; }
+        if (length > maxBytes) {
+          fail(
+            new ProtocolError(
+              "oversize",
+              `Frame of ${length} bytes exceeds the ${maxBytes} byte protocol bound`,
+            ),
+          );
+          return;
+        }
         if (buffer.length < 4 + length) return;
         const body = buffer.subarray(4, 4 + length);
         buffer = buffer.subarray(4 + length);
         let frame: unknown;
-        try { frame = JSON.parse(body.toString("utf8")); } catch (error) {
-          fail(new ProtocolError("invalid_input", `Frame is not valid JSON: ${error instanceof Error ? error.message : String(error)}`));
+        try {
+          frame = JSON.parse(body.toString("utf8"));
+        } catch (error) {
+          fail(
+            new ProtocolError(
+              "invalid_input",
+              `Frame is not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
+            ),
+          );
           return;
         }
-        try { onFrame(frame); } catch (error) { fail(new ProtocolError("invalid_input", `Frame handler failed: ${error instanceof Error ? error.message : String(error)}`)); return; }
+        try {
+          onFrame(frame);
+        } catch (error) {
+          fail(
+            new ProtocolError(
+              "invalid_input",
+              `Frame handler failed: ${error instanceof Error ? error.message : String(error)}`,
+            ),
+          );
+          return;
+        }
       }
     },
-    get failed() { return failed; },
+    get failed() {
+      return failed;
+    },
     fail,
   };
 }
 
 /** Stable build identity: generation, protocol, served methods and backend source. */
-export function buildIdentity(generation: string, methodNames: readonly string[], sourceDigest: string): string {
-  return createHash("sha256").update(JSON.stringify([generation, PROTOCOL_VERSION, [...methodNames].sort(), sourceDigest])).digest("hex").slice(0, 16);
+export function buildIdentity(
+  generation: string,
+  methodNames: readonly string[],
+  sourceDigest: string,
+): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify([
+        generation,
+        PROTOCOL_VERSION,
+        [...methodNames].sort(),
+        sourceDigest,
+      ]),
+    )
+    .digest("hex")
+    .slice(0, 16);
 }
 
 /** Parse and validate a request envelope; returns a typed protocol error instead of throwing. */
-export function parseRequest(frame: unknown): { ok: true; request: ServiceRequest } | { ok: false; error: ProtocolError } {
-  if (typeof frame !== "object" || frame === null) return { ok: false, error: new ProtocolError("invalid_input", "Request is not an object") };
+export function parseRequest(
+  frame: unknown,
+): { ok: true; request: ServiceRequest } | { ok: false; error: ProtocolError } {
+  if (typeof frame !== "object" || frame === null)
+    return {
+      ok: false,
+      error: new ProtocolError("invalid_input", "Request is not an object"),
+    };
   const candidate = frame as Record<string, unknown>;
-  if (candidate.v !== PROTOCOL_VERSION) return { ok: false, error: new ProtocolError("protocol_version", `Unsupported protocol version ${JSON.stringify(candidate.v)}`) };
-  if (typeof candidate.id !== "string" || !REQUEST_ID_PATTERN.test(candidate.id)) return { ok: false, error: new ProtocolError("invalid_input", "Request id is missing or out of bounds") };
-  if (typeof candidate.method !== "string" || !METHOD_PATTERN.test(candidate.method)) return { ok: false, error: new ProtocolError("invalid_input", "Request method is missing or out of bounds") };
+  if (candidate.v !== PROTOCOL_VERSION)
+    return {
+      ok: false,
+      error: new ProtocolError(
+        "protocol_version",
+        `Unsupported protocol version ${JSON.stringify(candidate.v)}`,
+      ),
+    };
+  if (
+    typeof candidate.id !== "string" ||
+    !REQUEST_ID_PATTERN.test(candidate.id)
+  )
+    return {
+      ok: false,
+      error: new ProtocolError(
+        "invalid_input",
+        "Request id is missing or out of bounds",
+      ),
+    };
+  if (
+    typeof candidate.method !== "string" ||
+    !METHOD_PATTERN.test(candidate.method)
+  )
+    return {
+      ok: false,
+      error: new ProtocolError(
+        "invalid_input",
+        "Request method is missing or out of bounds",
+      ),
+    };
   // One optional bounded field; any other surface value fails closed rather than
   // being guessed at.
   const via = candidate.via;
-  if (via !== undefined && via !== "paseo" && via !== "bb") return { ok: false, error: new ProtocolError("invalid_input", "Request surface `via` is not a known surface") };
+  if (via !== undefined && via !== "paseo" && via !== "bb")
+    return {
+      ok: false,
+      error: new ProtocolError(
+        "invalid_input",
+        "Request surface `via` is not a known surface",
+      ),
+    };
   const key = candidate.key;
-  if (key !== undefined && (typeof key !== "string" || !REQUEST_KEY_PATTERN.test(key))) return { ok: false, error: new ProtocolError("invalid_input", "Request key is missing or out of bounds") };
-  return { ok: true, request: { v: PROTOCOL_VERSION, id: candidate.id, method: candidate.method, input: candidate.input ?? null, ...(via === "paseo" || via === "bb" ? { via } : {}), ...(typeof key === "string" ? { key } : {}) } };
+  if (
+    key !== undefined &&
+    (typeof key !== "string" || !REQUEST_KEY_PATTERN.test(key))
+  )
+    return {
+      ok: false,
+      error: new ProtocolError(
+        "invalid_input",
+        "Request key is missing or out of bounds",
+      ),
+    };
+  return {
+    ok: true,
+    request: {
+      v: PROTOCOL_VERSION,
+      id: candidate.id,
+      method: candidate.method,
+      input: candidate.input ?? null,
+      ...(via === "paseo" || via === "bb" ? { via } : {}),
+      ...(typeof key === "string" ? { key } : {}),
+    },
+  };
 }

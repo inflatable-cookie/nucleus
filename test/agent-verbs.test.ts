@@ -1413,3 +1413,40 @@ test("the old names stay as aliases with the same arguments and result", async (
     await f.close();
   }
 });
+
+test("a timed-out tell settles its original receipt from a late delivery acknowledgement", async () => {
+  const f = await verbFixture();
+  try {
+    let release!: () => void;
+    const late = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let sends = 0;
+    f.adapter.notify = async () => {
+      sends++;
+      const error = new Error("host timed out") as Error & {
+        late: Promise<void>;
+        lateDelivery: boolean;
+      };
+      error.late = late;
+      error.lateDelivery = true;
+      throw error;
+    };
+    const args = { to: f.sibling.id, text: "Synthetic late acknowledgement" };
+    const answer = await f.cli("tell", args);
+    const receipt = JSON.parse(answer.stdout) as { messageId: string };
+    assert.equal(f.store.message(receipt.messageId)?.status, "uncertain");
+    release();
+    for (
+      let i = 0;
+      i < 100 && f.store.message(receipt.messageId)?.status !== "delivered";
+      i++
+    )
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(f.store.message(receipt.messageId)?.status, "delivered");
+    await f.cli("tell", args);
+    assert.equal(sends, 1);
+  } finally {
+    await f.close();
+  }
+});

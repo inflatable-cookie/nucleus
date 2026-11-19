@@ -1,3 +1,4 @@
+import { isHostOperationTimeout } from "./errors";
 import {
   callerNativeId,
   foreignIdentityRefusal,
@@ -152,7 +153,14 @@ export function routeHostAdapter(
               : error instanceof HostTransportFault
                 ? error
                 : new HostTransportFault(hostId, error);
-          engine.markAuditHostUnavailable(hostId);
+          const source =
+            error instanceof HostTransportFault ? error.cause : error;
+          engine.markAuditHostUnavailable(
+            hostId,
+            isHostOperationTimeout(source) && source instanceof Error
+              ? source.message
+              : undefined,
+          );
           engine.hostOutages.observe(hostId, false);
           for (const task of engine.store.tasks()) {
             if (

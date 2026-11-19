@@ -13,58 +13,134 @@
  * census names the reader and each writer's fixed text and looks for them in all
  * runtime roots named by the layout contract: moving code keeps them, rewording does not.
  */
-import { test, type TestContext } from 'node:test';
-import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { Store, operationIdForKey, operationInputHash } from '../core/store/store';
-import { Engine, ExternalMergeRefusal } from '../core/engine';
-import { ABSENT_WORKER_REASON, ACCEPTED_PR_RECONCILIATION_REASON, EXTERNAL_MERGE_CHECK_RECOVERED_REASON, EXTERNAL_MERGE_CHECK_REASON_PREFIX, PRE_AGENT_LAUNCH_FAILURE_REASON, ProvenPreSendRefusalError, RetainedRunRefusal } from '../core/recovery/task-reasons';
-import { BACKPRESSURE_DEFERRAL, isBackpressureDeferral } from '../core/host/admission';
-import { ForgeOutageError } from '../core/forge/forge-health';
-import { GitReadTimeoutError, SubmissionUnavailableError, WORKER_BRANCH_REFUSAL_PREFIX, WORKER_DIRTY_REFUSAL_PREFIX, WORKER_PR_IDENTITY_REFUSAL, WorkerSourceRefusal } from '../core/git/index';
-import { hookHoldReason, isHookHoldReason } from '../core/hooks/hooks';
-import { OWNER_STOP_HOLD_PREFIX } from '../core/merge/merge-hold';
-import { RestartRefusal } from '../core/verbs/owner-verbs';
-import { proofSingleFlightRefusal, ProofSingleFlightError } from '../core/qa/proof-admission';
-import { ProofExecutionRefusal } from '../core/qa/proof-refusal';
-import { RepositoryRekeyRefused } from '../core/planning/repository-rekey';
-import { ReviewEntryRefusal } from '../core/review/review-entry';
-import { DurableFenceRefusal, runFenceRefusal } from '../core/intake/run-settlement';
-import { taskControlOperation } from '../core/verbs/task-control-key';
-import { LoginSessionFaultError } from '../shared/session-fault';
-import { TaskChangedRefusal } from '../shared/task-version';
-import { CAPACITY_WAIT_PREFIX, QA_CAPACITY_WAIT_PREFIX } from '../shared/wait-state';
-import { queueOperationSchema } from '../shared/operations';
-import { RETAINED_WORKER_PROFILE_REASON, runSchema, submissionSchema, taskControlInputSchema, type Run, type Task } from '../shared/contracts';
-import type { Adapter } from '../core/host';
-import { runtimeSourceRoots } from './support/runtime-source-roots';
+import { test, type TestContext } from "node:test";
+import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import {
+  Store,
+  operationIdForKey,
+  operationInputHash,
+} from "../core/store/store";
+import { Engine, ExternalMergeRefusal } from "../core/engine";
+import {
+  ABSENT_WORKER_REASON,
+  ACCEPTED_PR_RECONCILIATION_REASON,
+  EXTERNAL_MERGE_CHECK_RECOVERED_REASON,
+  EXTERNAL_MERGE_CHECK_REASON_PREFIX,
+  PRE_AGENT_LAUNCH_FAILURE_REASON,
+  ProvenPreSendRefusalError,
+  RetainedRunRefusal,
+} from "../core/recovery/task-reasons";
+import {
+  BACKPRESSURE_DEFERRAL,
+  isBackpressureDeferral,
+} from "../core/host/admission";
+import { ForgeOutageError } from "../core/forge/forge-health";
+import {
+  GitReadTimeoutError,
+  SubmissionUnavailableError,
+  WORKER_BRANCH_REFUSAL_PREFIX,
+  WORKER_DIRTY_REFUSAL_PREFIX,
+  WORKER_PR_IDENTITY_REFUSAL,
+  WorkerSourceRefusal,
+} from "../core/git/index";
+import { hookHoldReason, isHookHoldReason } from "../core/hooks/hooks";
+import { OWNER_STOP_HOLD_PREFIX } from "../core/merge/merge-hold";
+import { RestartRefusal } from "../core/verbs/owner-verbs";
+import {
+  proofSingleFlightRefusal,
+  ProofSingleFlightError,
+} from "../core/qa/proof-admission";
+import { ProofExecutionRefusal } from "../core/qa/proof-refusal";
+import { RepositoryRekeyRefused } from "../core/planning/repository-rekey";
+import { ReviewEntryRefusal } from "../core/review/review-entry";
+import {
+  DurableFenceRefusal,
+  runFenceRefusal,
+} from "../core/intake/run-settlement";
+import { taskControlOperation } from "../core/verbs/task-control-key";
+import { LoginSessionFaultError } from "../shared/session-fault";
+import { TaskChangedRefusal } from "../shared/task-version";
+import {
+  CAPACITY_WAIT_PREFIX,
+  QA_CAPACITY_WAIT_PREFIX,
+} from "../shared/wait-state";
+import { queueOperationSchema } from "../shared/operations";
+import {
+  RETAINED_WORKER_PROFILE_REASON,
+  runSchema,
+  submissionSchema,
+  taskControlInputSchema,
+  type Run,
+  type Task,
+} from "../shared/contracts";
+import type { Adapter } from "../core/host";
+import { runtimeSourceRoots } from "./support/runtime-source-roots";
 
-const head = 'a'.repeat(40), base = 'b'.repeat(40);
+const head = "a".repeat(40),
+  base = "b".repeat(40);
 const at = new Date(Date.now() - 3_600_000).toISOString();
 type Loose = any;
 
 function fixture(t: TestContext, adapter: Loose = {}) {
-  const store = new Store(':memory:');
+  const store = new Store(":memory:");
   const engine = new Engine(store, adapter as Adapter, 60_000);
   engine.currentServiceBuildId = () => "injected-build";
-  store.setMeta('paused', false);
-  store.setMeta('globalLimit', 0);
-  t.after(async () => { await engine.stop(); store.close(); });
+  store.setMeta("paused", false);
+  store.setMeta("globalLimit", 0);
+  t.after(async () => {
+    await engine.stop();
+    store.close();
+  });
   const add = (fields: Loose = {}): Task => {
-    const task = store.insert(submissionSchema.parse({ submissionId: randomUUID(), title: 'Pin', repoPath: '/fixture',
-      planningCommit: base, handoffPath: 'handoff.md', originAgentId: 'origin' }), 'host', 'handoff', base);
+    const task = store.insert(
+      submissionSchema.parse({
+        submissionId: randomUUID(),
+        title: "Pin",
+        repoPath: "/fixture",
+        planningCommit: base,
+        handoffPath: "handoff.md",
+        originAgentId: "origin",
+      }),
+      "host",
+      "handoff",
+      base,
+    );
     return Object.keys(fields).length ? store.update(task.id, fields) : task;
   };
-  return { store, engine, add, resolution: engine.resolution as Loose, internals: engine as Loose };
+  return {
+    store,
+    engine,
+    add,
+    resolution: engine.resolution as Loose,
+    internals: engine as Loose,
+  };
 }
 
 function putRun(store: Store, taskId: string, fields: Loose = {}): Run {
-  const run = runSchema.parse({ id: randomUUID(), taskId, role: 'reviewer', generation: 1, head, base, agentId: 'agent', workspaceId: 'ws',
-    profile: null, profileGroup: 'group', status: 'running', createdAt: at, lastObservedAt: null, active: false,
-    idleSince: at, completion: null, released: false, ...fields });
+  const run = runSchema.parse({
+    id: randomUUID(),
+    taskId,
+    role: "reviewer",
+    generation: 1,
+    head,
+    base,
+    agentId: "agent",
+    workspaceId: "ws",
+    profile: null,
+    profileGroup: "group",
+    status: "running",
+    createdAt: at,
+    lastObservedAt: null,
+    active: false,
+    idleSince: at,
+    completion: null,
+    released: false,
+    ...fields,
+  });
   store.putRun(run);
   return run;
 }
@@ -74,14 +150,29 @@ function putRun(store: Store, taskId: string, fields: Loose = {}): Run {
 // ---------------------------------------------------------------------------
 
 /** Run one real task-control operation whose handler throws `error`. */
-async function settle(t: TestContext, error: unknown, control: Loose = { action: 'stop', reason: 'Pin' }, before?: (id: string, store: Store) => void) {
+async function settle(
+  t: TestContext,
+  error: unknown,
+  control: Loose = { action: "stop", reason: "Pin" },
+  before?: (id: string, store: Store) => void,
+) {
   const f = fixture(t);
   const task = f.add();
   let thrown = 0;
-  const parsed = taskControlInputSchema.parse({ taskId: task.id, version: task.version, ...control });
-  const accepted = await f.engine.startOperation({ key: `pin-${randomUUID()}`, kind: 'task_control', deferSchedule: true,
-    payload: { type: 'task_control', control: parsed }, taskId: task.id, expectedVersion: task.version }) as Loose;
-  assert.ok('accepted' in accepted);
+  const parsed = taskControlInputSchema.parse({
+    taskId: task.id,
+    version: task.version,
+    ...control,
+  });
+  const accepted = (await f.engine.startOperation({
+    key: `pin-${randomUUID()}`,
+    kind: "task_control",
+    deferSchedule: true,
+    payload: { type: "task_control", control: parsed },
+    taskId: task.id,
+    expectedVersion: task.version,
+  })) as Loose;
+  assert.ok("accepted" in accepted);
   f.internals.performOperation = async () => {
     thrown += 1;
     before?.(accepted.operation.id, f.store);
@@ -89,102 +180,193 @@ async function settle(t: TestContext, error: unknown, control: Loose = { action:
   };
   f.engine.scheduleAcceptedOperation(accepted.operation.id);
   const operation = await f.engine.awaitOperation(accepted.operation.id);
-  assert.equal(thrown, 1, 'the handler override must have fired');
+  assert.equal(thrown, 1, "the handler override must have fired");
   return operation;
 }
-const armBoundary = (id: string, store: Store) => { store.putOperation({ ...store.operation(id)!, preSendBoundaryStartedAt: at }); };
+const armBoundary = (id: string, store: Store) => {
+  store.putOperation({ ...store.operation(id)!, preSendBoundaryStartedAt: at });
+};
 
 // Words the prose classifier reads as uncertain. A typed refusal carrying them
 // proves the class wins; `Unknown` below proves the words alone would not settle it.
-const FRIGHTENING = 'its delivery is unknown and the connection timed out';
+const FRIGHTENING = "its delivery is unknown and the connection timed out";
 
 const TYPED: [string, () => Error][] = [
-  ['ProvenPreSendRefusalError', () => new ProvenPreSendRefusalError(FRIGHTENING)],
-  ['ReviewEntryRefusal', () => new ReviewEntryRefusal('workspace_busy', FRIGHTENING)],
-  ['ExternalMergeRefusal', () => new ExternalMergeRefusal(FRIGHTENING)],
-  ['RestartRefusal', () => new RestartRefusal(FRIGHTENING)],
-  ['RepositoryRekeyRefused', () => new RepositoryRekeyRefused('invalid_input' as Loose, [], FRIGHTENING)],
-  ['RetainedRunRefusal', () => new RetainedRunRefusal(FRIGHTENING)],
-  ['DurableFenceRefusal', () => new DurableFenceRefusal(FRIGHTENING)],
+  [
+    "ProvenPreSendRefusalError",
+    () => new ProvenPreSendRefusalError(FRIGHTENING),
+  ],
+  [
+    "ReviewEntryRefusal",
+    () => new ReviewEntryRefusal("workspace_busy", FRIGHTENING),
+  ],
+  ["ExternalMergeRefusal", () => new ExternalMergeRefusal(FRIGHTENING)],
+  ["RestartRefusal", () => new RestartRefusal(FRIGHTENING)],
+  [
+    "RepositoryRekeyRefused",
+    () => new RepositoryRekeyRefused("invalid_input" as Loose, [], FRIGHTENING),
+  ],
+  ["RetainedRunRefusal", () => new RetainedRunRefusal(FRIGHTENING)],
+  ["DurableFenceRefusal", () => new DurableFenceRefusal(FRIGHTENING)],
 ];
 
 for (const [name, make] of TYPED) {
-  test(`operation state: ${name} settles failed with a receipt, whatever its prose says`, async t => {
+  test(`operation state: ${name} settles failed with a receipt, whatever its prose says`, async (t) => {
     const operation = await settle(t, make());
-    assert.equal(operation.state, 'failed');
-    assert.equal(operation.effect?.status, 'reconciled');
-    assert.equal(operation.preSendReceipt?.boundary, 'pre-send-refusal-v1');
-    assert.equal(operation.preSendReceipt?.buildId, 'injected-build');
+    assert.equal(operation.state, "failed");
+    assert.equal(operation.effect?.status, "reconciled");
+    assert.equal(operation.preSendReceipt?.boundary, "pre-send-refusal-v1");
+    assert.equal(operation.preSendReceipt?.buildId, "injected-build");
   });
-  test(`operation state: ${name} stays failed past an armed pre-send boundary, with no new receipt`, async t => {
+  test(`operation state: ${name} stays failed past an armed pre-send boundary, with no new receipt`, async (t) => {
     const operation = await settle(t, make(), undefined, armBoundary);
-    assert.equal(operation.state, 'failed');
+    assert.equal(operation.state, "failed");
     assert.equal(operation.preSendReceipt, undefined);
   });
-  test(`operation state: rewrapping ${name} into a plain Error makes it uncertain`, async t => {
+  test(`operation state: rewrapping ${name} into a plain Error makes it uncertain`, async (t) => {
     const operation = await settle(t, new Error(make().message));
-    assert.equal(operation.state, 'needs_attention');
-    assert.equal(operation.effect?.status, 'uncertain');
+    assert.equal(operation.state, "needs_attention");
+    assert.equal(operation.effect?.status, "uncertain");
   });
 }
 
-test('operation state: the typed set is exactly these eight classes', () => {
+test("operation state: the typed set is exactly these eight classes", () => {
   // ParkedRestartPreSendRefusal is private to its file, so the set is read from
   // source rather than thrown. test/restart.cases.ts drives that class.
-  const body = /const typedPreSendRefusal = \(error: unknown\): boolean =>([\s\S]*?);\n/.exec(source())?.[1];
-  assert.ok(body, 'typedPreSendRefusal is gone or reshaped');
-  assert.deepEqual([...body.matchAll(/instanceof (\w+)/g)].map(match => match[1]).sort(), [
-    'DurableFenceRefusal', 'ExternalMergeRefusal', 'ParkedRestartPreSendRefusal', 'ProvenPreSendRefusalError',
-    'RepositoryRekeyRefused', 'RestartRefusal', 'RetainedRunRefusal', 'ReviewEntryRefusal']);
+  const body =
+    /const typedPreSendRefusal = \(error: unknown\): boolean =>([\s\S]*?);\n/.exec(
+      source(),
+    )?.[1];
+  assert.ok(body, "typedPreSendRefusal is gone or reshaped");
+  assert.deepEqual(
+    [...body.matchAll(/instanceof (\w+)/g)].map((match) => match[1]).sort(),
+    [
+      "DurableFenceRefusal",
+      "ExternalMergeRefusal",
+      "ParkedRestartPreSendRefusal",
+      "ProvenPreSendRefusalError",
+      "RepositoryRekeyRefused",
+      "RestartRefusal",
+      "RetainedRunRefusal",
+      "ReviewEntryRefusal",
+    ],
+  );
 });
 
-test('operation state: a typed error outside the set takes the prose classifier', async t => {
-  const refusal = new ProofExecutionRefusal('live_run', FRIGHTENING);
-  assert.equal((await settle(t, refusal)).state, 'needs_attention');
-  assert.equal((await settle(t, new ProofExecutionRefusal('live_run', 'Nothing frightening'))).state, 'failed');
+test("operation state: a typed error outside the set takes the prose classifier", async (t) => {
+  const refusal = new ProofExecutionRefusal("live_run", FRIGHTENING);
+  assert.equal((await settle(t, refusal)).state, "needs_attention");
+  assert.equal(
+    (
+      await settle(
+        t,
+        new ProofExecutionRefusal("live_run", "Nothing frightening"),
+      )
+    ).state,
+    "failed",
+  );
 });
 
-for (const word of ['uncertain', 'unknown', 'timed out', 'timeout', 'connection', 'socket', 'transport', 'interrupted', 'ambiguous', 'UNKNOWN']) {
-  test(`operation state: an untyped failure saying "${word}" stays uncertain`, async t => {
+for (const word of [
+  "uncertain",
+  "unknown",
+  "timed out",
+  "timeout",
+  "connection",
+  "socket",
+  "transport",
+  "interrupted",
+  "ambiguous",
+  "UNKNOWN",
+]) {
+  test(`operation state: an untyped failure saying "${word}" stays uncertain`, async (t) => {
     const operation = await settle(t, new Error(`The call hit ${word} here`));
-    assert.equal(operation.state, 'needs_attention');
-    assert.equal(operation.effect?.status, 'uncertain');
+    assert.equal(operation.state, "needs_attention");
+    assert.equal(operation.effect?.status, "uncertain");
     assert.equal(operation.diagnostic, `The call hit ${word} here`);
   });
 }
 
-test('operation state: any other untyped failure settles failed, and an armed boundary overrides that', async t => {
-  const plain = await settle(t, new Error('A plain refusal'));
-  assert.equal(plain.state, 'failed');
-  assert.equal(plain.effect?.status, 'reconciled');
+test("operation state: any other untyped failure settles failed, and an armed boundary overrides that", async (t) => {
+  const plain = await settle(t, new Error("A plain refusal"));
+  assert.equal(plain.state, "failed");
+  assert.equal(plain.effect?.status, "reconciled");
   assert.equal(plain.preSendReceipt, undefined);
-  assert.equal((await settle(t, new Error('A plain refusal'), undefined, armBoundary)).state, 'needs_attention');
+  assert.equal(
+    (await settle(t, new Error("A plain refusal"), undefined, armBoundary))
+      .state,
+    "needs_attention",
+  );
 });
 
-test('operation state: the owned-tool hold refusal needs its exact text, its own verb and no boundary', async t => {
-  const retry = { action: 'retry_effect', effect: 'owned_tool.run-1', reason: 'Pin' };
+test("operation state: the owned-tool hold refusal needs its exact text, its own verb and no boundary", async (t) => {
+  const retry = {
+    action: "retry_effect",
+    effect: "owned_tool.run-1",
+    reason: "Pin",
+  };
   // The writer's own shape, in engine.ts: `Owned-tool hold ${runId} remains: ${hold}`.
-  const refusal = 'Owned-tool hold run-1 remains: its state is unknown';
-  assert.equal((await settle(t, new Error(refusal), retry)).state, 'failed');
-  assert.equal((await settle(t, new Error('Owned-tool hold run-1 persists: its state is unknown'), retry)).state, 'needs_attention');
-  assert.equal((await settle(t, new Error(refusal), { action: 'stop', reason: 'Pin' })).state, 'needs_attention');
-  assert.equal((await settle(t, new Error(refusal), retry, armBoundary)).state, 'needs_attention');
+  const refusal = "Owned-tool hold run-1 remains: its state is unknown";
+  assert.equal((await settle(t, new Error(refusal), retry)).state, "failed");
+  assert.equal(
+    (
+      await settle(
+        t,
+        new Error("Owned-tool hold run-1 persists: its state is unknown"),
+        retry,
+      )
+    ).state,
+    "needs_attention",
+  );
+  assert.equal(
+    (await settle(t, new Error(refusal), { action: "stop", reason: "Pin" }))
+      .state,
+    "needs_attention",
+  );
+  assert.equal(
+    (await settle(t, new Error(refusal), retry, armBoundary)).state,
+    "needs_attention",
+  );
 });
 
 for (const [name, error, state, diagnostic] of [
-  ['SubmissionUnavailableError defers', new SubmissionUnavailableError('The source is unavailable'), 'pending', 'Submission validation deferred: The source is unavailable'],
-  ['a transport failure defers', new Error('Transport not connected'), 'pending', 'Submission validation deferred: Transport not connected'],
-  ['anything else fails', new Error('A plain refusal'), 'failed', 'A plain refusal'],
+  [
+    "SubmissionUnavailableError defers",
+    new SubmissionUnavailableError("The source is unavailable"),
+    "pending",
+    "Submission validation deferred: The source is unavailable",
+  ],
+  [
+    "a transport failure defers",
+    new Error("Transport not connected"),
+    "pending",
+    "Submission validation deferred: Transport not connected",
+  ],
+  [
+    "anything else fails",
+    new Error("A plain refusal"),
+    "failed",
+    "A plain refusal",
+  ],
 ] as const) {
-  test(`operation state: on submit, ${name}`, async t => {
+  test(`operation state: on submit, ${name}`, async (t) => {
     const f = fixture(t);
     f.internals.submissionReady = () => true;
     let thrown = 0;
-    f.internals.performOperation = async () => { thrown += 1; throw error; };
+    f.internals.performOperation = async () => {
+      thrown += 1;
+      throw error;
+    };
     f.internals.deferGitTransient = () => false;
-    const payload = { type: 'submit', submission: { title: 'Pin' } };
+    const payload = { type: "submit", submission: { title: "Pin" } };
     // Queue #912: an accepted submit waits for a proven host; this fixture has one.
-    const accepted = f.store.acceptOperation({ key: `pin-${randomUUID()}`, kind: 'submit', inputHash: operationInputHash(payload), payload, hostId: 'host' }) as Loose;
+    const accepted = f.store.acceptOperation({
+      key: `pin-${randomUUID()}`,
+      kind: "submit",
+      inputHash: operationInputHash(payload),
+      payload,
+      hostId: "host",
+    }) as Loose;
     const id = accepted.operation.id;
     await f.internals.runOperation(id);
     assert.equal(thrown, 1);
@@ -198,69 +380,129 @@ for (const [name, error, state, diagnostic] of [
 // Rule 7: error classes in the `advance` funnel
 // ---------------------------------------------------------------------------
 
-async function advanceThrows(t: TestContext, error: Error, resolutionFields: Loose = {}, phase: 'verifying' | 'merging' = 'verifying') {
+async function advanceThrows(
+  t: TestContext,
+  error: Error,
+  resolutionFields: Loose = {},
+  phase: "verifying" | "merging" = "verifying",
+) {
   const f = fixture(t);
   const task = f.add({ phase, prNumber: 1, prHead: head });
-  f.store.update(task.id, { resolution: { ...f.store.task(task.id).resolution, ...resolutionFields } });
+  f.store.update(task.id, {
+    resolution: { ...f.store.task(task.id).resolution, ...resolutionFields },
+  });
   let thrown = 0;
-  f.resolution.verification = f.resolution.advanceMerging = async () => { thrown += 1; throw error; };
+  f.resolution.verification = f.resolution.advanceMerging = async () => {
+    thrown += 1;
+    throw error;
+  };
   f.resolution.gitTransientFailure = () => false;
   await f.resolution.advance(f.store.task(task.id));
-  assert.equal(thrown, 1, 'the funnel must have been reached');
+  assert.equal(thrown, 1, "the funnel must have been reached");
   return f.store.task(task.id);
 }
 
-test('advance funnel: outages and read timeouts wait; they raise no attention', async t => {
-  for (const error of [new ForgeOutageError(new Error('forge down')), new GitReadTimeoutError(['fetch'], 10, new Error('slow'))]) {
+test("advance funnel: outages and read timeouts wait; they raise no attention", async (t) => {
+  for (const error of [
+    new ForgeOutageError(new Error("forge down")),
+    new GitReadTimeoutError(["fetch"], 10, new Error("slow")),
+  ]) {
     const task = await advanceThrows(t, error);
     assert.equal(task.resolution.attention, false, error.constructor.name);
-    assert.equal(task.resolution.stop?.reason, 'external_unavailable', error.constructor.name);
+    assert.equal(
+      task.resolution.stop?.reason,
+      "external_unavailable",
+      error.constructor.name,
+    );
     assert.equal(task.reason, error.message);
   }
 });
 
-test('advance funnel: a login session fault defers to the environment, not attention', async t => {
-  const task = await advanceThrows(t, new LoginSessionFaultError(new Error('session gone')));
+test("advance funnel: a login session fault defers to the environment, not attention", async (t) => {
+  const task = await advanceThrows(
+    t,
+    new LoginSessionFaultError(new Error("session gone")),
+  );
   assert.equal(task.resolution.attention, false);
-  assert.match(task.reason, /^Host login session is gone; replacing the Nucleus service rather than charging this task: /);
+  assert.match(
+    task.reason,
+    /^Host login session is gone; replacing the Nucleus service rather than charging this task: /,
+  );
 });
 
-test('advance funnel: rewrapping the same fault as a plain Error raises attention', async t => {
-  for (const original of [new ForgeOutageError(new Error('forge down')), new GitReadTimeoutError(['fetch'], 10, new Error('slow'))]) {
+test("advance funnel: rewrapping the same fault as a plain Error raises attention", async (t) => {
+  for (const original of [
+    new ForgeOutageError(new Error("forge down")),
+    new GitReadTimeoutError(["fetch"], 10, new Error("slow")),
+  ]) {
     const task = await advanceThrows(t, new Error(original.message));
     assert.equal(task.resolution.attention, true, original.constructor.name);
   }
 });
 
-test('advance funnel: the merged-identity refusal is matched exactly, ahead of the pending-merge wait', async t => {
-  const mergeIntent = { mergeIntent: true, mergeHead: head, mergeBase: base, mergeResponseOutcome: 'pending' };
-  const exact = await advanceThrows(t, new Error('Merged PR identity differs from the approved task'), mergeIntent, 'merging');
+test("advance funnel: the merged-identity refusal is matched exactly, ahead of the pending-merge wait", async (t) => {
+  const mergeIntent = {
+    mergeIntent: true,
+    mergeHead: head,
+    mergeBase: base,
+    mergeResponseOutcome: "pending",
+  };
+  const exact = await advanceThrows(
+    t,
+    new Error("Merged PR identity differs from the approved task"),
+    mergeIntent,
+    "merging",
+  );
   assert.equal(exact.resolution.attention, true);
-  assert.equal(exact.resolution.mergeResponseOutcome, 'pending');
-  const reworded = await advanceThrows(t, new Error('Merged PR identity differs from the task'), mergeIntent, 'merging');
+  assert.equal(exact.resolution.mergeResponseOutcome, "pending");
+  const reworded = await advanceThrows(
+    t,
+    new Error("Merged PR identity differs from the task"),
+    mergeIntent,
+    "merging",
+  );
   assert.equal(reworded.resolution.attention, false);
-  assert.equal(reworded.resolution.mergeResponseOutcome, 'uncertain');
-  assert.equal(reworded.reason, 'Merge response is uncertain; checking GitHub before considering one guarded re-issue');
+  assert.equal(reworded.resolution.mergeResponseOutcome, "uncertain");
+  assert.equal(
+    reworded.reason,
+    "Merge response is uncertain; checking GitHub before considering one guarded re-issue",
+  );
 });
 
 // ---------------------------------------------------------------------------
 // Rule 6: refusal text
 // ---------------------------------------------------------------------------
 
-test('version hint: only the typed stale-version refusal gets it, and it keeps its class', async t => {
+test("version hint: only the typed stale-version refusal gets it, and it keeps its class", async (t) => {
   const f = fixture(t);
   const task = f.add();
-  const stale = taskControlInputSchema.parse({ taskId: task.id, version: task.version, action: 'stop', reason: 'Pin' });
-  f.store.update(task.id, { reason: 'moved on' });
+  const stale = taskControlInputSchema.parse({
+    taskId: task.id,
+    version: task.version,
+    action: "stop",
+    reason: "Pin",
+  });
+  f.store.update(task.id, { reason: "moved on" });
   const current = f.store.task(task.id).version;
   const hint = `(the task is now version ${current}; read next again and reassess before retrying)`;
   const throwing = async (error: Error) => {
-    f.internals.performTaskControlApplied = async () => { throw error; };
-    return f.internals.appliedWithVersionHint(stale).then(() => assert.fail('must refuse'), (caught: Error) => caught);
+    f.internals.performTaskControlApplied = async () => {
+      throw error;
+    };
+    return f.internals.appliedWithVersionHint(stale).then(
+      () => assert.fail("must refuse"),
+      (caught: Error) => caught,
+    );
   };
 
   // The stale-version fact is the typed refusal, never the refusal's words.
-  const typed = await throwing(new TaskChangedRefusal('Task changed; refresh before retrying', stale.version, current));
+  const typed = await throwing(
+    new TaskChangedRefusal(
+      "Task changed; refresh before retrying",
+      stale.version,
+      current,
+    ),
+  );
   assert.ok(typed instanceof TaskChangedRefusal);
   assert.equal(typed.message, `Task changed; refresh before retrying ${hint}`);
   assert.equal(typed.expected, stale.version);
@@ -269,23 +511,47 @@ test('version hint: only the typed stale-version refusal gets it, and it keeps i
   assert.match(typed.message, COORDINATOR_VERSION_RETRY);
 
   // Prose that happens to read like a stale version gets no hint: no reader parses it.
-  const plain = new Error('Task changed; refresh before retrying');
+  const plain = new Error("Task changed; refresh before retrying");
   assert.equal(await throwing(plain), plain);
-  const proven = new ProvenPreSendRefusalError('Task changed; refresh before retrying');
+  const proven = new ProvenPreSendRefusalError(
+    "Task changed; refresh before retrying",
+  );
   assert.equal(await throwing(proven), proven);
-  const restart = new RestartRefusal('Task changed; refresh before retrying');
-  assert.equal(await throwing(restart), restart, 'a typed subclass passes through untouched');
-  const other = new Error('Task moved; refresh before retrying');
-  assert.equal(await throwing(other), other, 'other prose passes through untouched');
+  const restart = new RestartRefusal("Task changed; refresh before retrying");
+  assert.equal(
+    await throwing(restart),
+    restart,
+    "a typed subclass passes through untouched",
+  );
+  const other = new Error("Task moved; refresh before retrying");
+  assert.equal(
+    await throwing(other),
+    other,
+    "other prose passes through untouched",
+  );
 
   const fresh = taskControlInputSchema.parse({ ...stale, version: current });
-  const same = new TaskChangedRefusal('Task changed; refresh before retrying', fresh.version, current);
-  f.internals.performTaskControlApplied = async () => { throw same; };
-  await assert.rejects(f.internals.appliedWithVersionHint(fresh), (caught: Error) => caught === same, 'a current version gets no hint');
+  const same = new TaskChangedRefusal(
+    "Task changed; refresh before retrying",
+    fresh.version,
+    current,
+  );
+  f.internals.performTaskControlApplied = async () => {
+    throw same;
+  };
+  await assert.rejects(
+    f.internals.appliedWithVersionHint(fresh),
+    (caught: Error) => caught === same,
+    "a current version gets no hint",
+  );
 });
 
-const moveRefusals = ['Task changed during the move; read next', 'Task or run changed; refresh before retrying',
-  'A run started during the move; refresh before retrying', 'A run changed during the move; refresh before retrying'];
+const moveRefusals = [
+  "Task changed during the move; read next",
+  "Task or run changed; refresh before retrying",
+  "A run started during the move; refresh before retrying",
+  "A run changed during the move; refresh before retrying",
+];
 
 async function moveThrowing(t: TestContext, message: string, cancels: boolean) {
   const f = fixture(t);
@@ -295,206 +561,435 @@ async function moveThrowing(t: TestContext, message: string, cancels: boolean) {
   let calls = 0;
   f.internals.moveToWork = async () => {
     calls += 1;
-    if (calls > 1) return f.store.update(task.id, { reason: 'replanned' });
-    if (cancels) f.store.event(task.id, 'owner_stop_sent', 'run');
+    if (calls > 1) return f.store.update(task.id, { reason: "replanned" });
+    if (cancels) f.store.event(task.id, "owner_stop_sent", "run");
     throw new Error(message);
   };
-  const input = taskControlInputSchema.parse({ taskId: task.id, version: task.version, action: 'move', to: 'work', reason: 'Pin' });
-  const result = await f.internals.applyTaskControlMove(input, <T>(value: T) => value).then(() => 'replanned', (error: Error) => error.message);
-  return { result, calls, replans: f.store.eventsAll(task.id).filter(event => event.kind === 'owner_move_replanned') };
+  const input = taskControlInputSchema.parse({
+    taskId: task.id,
+    version: task.version,
+    action: "move",
+    to: "work",
+    reason: "Pin",
+  });
+  const result = await f.internals
+    .applyTaskControlMove(input, <T>(value: T) => value)
+    .then(
+      () => "replanned",
+      (error: Error) => error.message,
+    );
+  return {
+    result,
+    calls,
+    replans: f.store
+      .eventsAll(task.id)
+      .filter((event) => event.kind === "owner_move_replanned"),
+  };
 }
 
 for (const message of moveRefusals) {
-  test(`move: "${message}" re-plans once after this move cancelled a turn`, async t => {
+  test(`move: "${message}" re-plans once after this move cancelled a turn`, async (t) => {
     const { result, calls, replans } = await moveThrowing(t, message, true);
-    assert.equal(result, 'replanned');
+    assert.equal(result, "replanned");
     assert.equal(calls, 2);
     assert.equal(replans.length, 1);
     assert.equal(replans[0]!.detail, message);
   });
 }
 
-test('move: with no cancelled turn, or other prose, the refusal stands', async t => {
+test("move: with no cancelled turn, or other prose, the refusal stands", async (t) => {
   assert.deepEqual((await moveThrowing(t, moveRefusals[0]!, false)).calls, 1);
-  const reworded = await moveThrowing(t, 'The task changed during the move; read next', true);
-  assert.equal(reworded.result, 'The task changed during the move; read next');
+  const reworded = await moveThrowing(
+    t,
+    "The task changed during the move; read next",
+    true,
+  );
+  assert.equal(reworded.result, "The task changed during the move; read next");
   assert.equal(reworded.calls, 1);
 });
 
-test('proof race: each real single-flight refusal stands down quietly; other prose throws', async t => {
-  const executor = (fields: Loose = {}) => ({ id: 'run-1', role: 'executor', head, released: false, status: 'running', completion: null, ...fields }) as Loose;
-  const unreleased = proofSingleFlightRefusal({ entrypoint: 'task' } as Loose, [executor()], head);
-  const spent = proofSingleFlightRefusal({ entrypoint: 'proof', proofOnly: { commit: head } } as Loose, [executor({ released: true, status: 'completed' })], head);
-  const reserved = proofSingleFlightRefusal({ entrypoint: 'task' } as Loose, [executor({ released: true, status: 'completed' })], head);
-  assert.equal(unreleased, 'An author-side proof execution is already dispatched and unreleased (run-1); inspect it with task.detail');
-  assert.equal(spent, 'This proof-only qualification already spent its one execution (run-1, completed); it is never repeated, refunded or reset. Inspect it with task.detail');
-  assert.equal(reserved, `An author-side proof execution was already reserved at ${head}; inspect it with task.detail`);
+test("proof race: each real single-flight refusal stands down quietly; other prose throws", async (t) => {
+  const executor = (fields: Loose = {}) =>
+    ({
+      id: "run-1",
+      role: "executor",
+      head,
+      released: false,
+      status: "running",
+      completion: null,
+      ...fields,
+    }) as Loose;
+  const unreleased = proofSingleFlightRefusal(
+    { entrypoint: "task" } as Loose,
+    [executor()],
+    head,
+  );
+  const spent = proofSingleFlightRefusal(
+    { entrypoint: "proof", proofOnly: { commit: head } } as Loose,
+    [executor({ released: true, status: "completed" })],
+    head,
+  );
+  const reserved = proofSingleFlightRefusal(
+    { entrypoint: "task" } as Loose,
+    [executor({ released: true, status: "completed" })],
+    head,
+  );
+  assert.equal(
+    unreleased,
+    "An author-side proof execution is already dispatched and unreleased (run-1); inspect it with task.detail",
+  );
+  assert.equal(
+    spent,
+    "This proof-only qualification already spent its one execution (run-1, completed); it is never repeated, refunded or reset. Inspect it with task.detail",
+  );
+  assert.equal(
+    reserved,
+    `An author-side proof execution was already reserved at ${head}; inspect it with task.detail`,
+  );
 
   const launch = async (failure: () => Error) => {
     const f = fixture(t);
-    const task = f.add({ entrypoint: 'proof', proofOnly: { commit: head } });
+    const task = f.add({ entrypoint: "proof", proofOnly: { commit: head } });
     let thrown = 0;
-    f.resolution.select = () => ({ profile: { id: 'profile' } });
-    f.resolution.proofExecution = async () => { thrown += 1; throw failure(); };
-    const outcome = await f.internals.launchProofOnly(task).then(() => 'quiet', (error: Error) => error.message);
-    assert.equal(thrown, 1, 'the race must have been reached');
+    f.resolution.select = () => ({ profile: { id: "profile" } });
+    f.resolution.proofExecution = async () => {
+      thrown += 1;
+      throw failure();
+    };
+    const outcome = await f.internals.launchProofOnly(task).then(
+      () => "quiet",
+      (error: Error) => error.message,
+    );
+    assert.equal(thrown, 1, "the race must have been reached");
     return outcome;
   };
   for (const message of [unreleased!, spent!, reserved!])
-    assert.equal(await launch(() => new ProofSingleFlightError(message)), 'quiet', message);
-  assert.equal(await launch(() => new Error('A proof execution is already running')), 'A proof execution is already running',
-    'only the typed single-flight refusal stands down; other prose still surfaces');
+    assert.equal(
+      await launch(() => new ProofSingleFlightError(message)),
+      "quiet",
+      message,
+    );
+  assert.equal(
+    await launch(() => new Error("A proof execution is already running")),
+    "A proof execution is already running",
+    "only the typed single-flight refusal stands down; other prose still surfaces",
+  );
 });
 
-test('store fence: exactly the real fence messages relabel a legacy refusal', async t => {
+test("store fence: exactly the real fence messages relabel a legacy refusal", async (t) => {
   const f = fixture(t);
   const task = f.add();
   const run = putRun(f.store, task.id);
-  const control = taskControlInputSchema.parse({ taskId: task.id, version: task.version, action: 'restart', role: 'reviewer', reason: 'Pin' });
+  const control = taskControlInputSchema.parse({
+    taskId: task.id,
+    version: task.version,
+    action: "restart",
+    role: "reviewer",
+    reason: "Pin",
+  });
   const { key, payload } = taskControlOperation(control);
-  const id = operationIdForKey(key), inputHash = operationInputHash(payload);
-  const put = (diagnostic: string) => f.store.putOperation(queueOperationSchema.parse({ id, key, kind: 'task_control', inputHash, state: 'needs_attention',
-    taskId: task.id, expectedVersion: control.version, createdAt: at, startedAt: at, settledAt: at, attempts: 1, diagnostic,
-    effect: { kind: 'task_control', target: 'restart', intentAt: at, status: 'uncertain', result: diagnostic.slice(0, 2000), resultAt: at } }), payload);
+  const id = operationIdForKey(key),
+    inputHash = operationInputHash(payload);
+  const put = (diagnostic: string) =>
+    f.store.putOperation(
+      queueOperationSchema.parse({
+        id,
+        key,
+        kind: "task_control",
+        inputHash,
+        state: "needs_attention",
+        taskId: task.id,
+        expectedVersion: control.version,
+        createdAt: at,
+        startedAt: at,
+        settledAt: at,
+        attempts: 1,
+        diagnostic,
+        effect: {
+          kind: "task_control",
+          target: "restart",
+          intentAt: at,
+          status: "uncertain",
+          result: diagnostic.slice(0, 2000),
+          resultAt: at,
+        },
+      }),
+      payload,
+    );
 
-  const delivery = runFenceRefusal(run, 'its delivery is unknown');
-  const effect = runFenceRefusal(run, 'a publication is pending');
-  const verb = f.internals.verbRunFenceRefusal({ run, why: 'its turn is live' });
-  assert.equal(delivery, `A reviewer run (${run.id}) holds a durable side effect Queue will not act over blindly (its delivery is unknown); restart re-creates it under the same run, or wait for reconciliation to settle it`);
-  assert.equal(runFenceRefusal(run, 'run-delivery x'), `A reviewer run (${run.id}) holds a durable side effect Queue will not act over blindly (run-delivery x); restart re-creates it under the same run, or wait for reconciliation to settle it`);
-  assert.equal(effect, `A reviewer run (${run.id}) holds a durable side effect Queue will not act over blindly (a publication is pending); wait for that delivery or effect to settle, or retry_effect it`);
-  assert.equal(verb, `A reviewer run (${run.id}) still owns this task: its turn is live`);
+  const delivery = runFenceRefusal(run, "its delivery is unknown");
+  const effect = runFenceRefusal(run, "a publication is pending");
+  const verb = f.internals.verbRunFenceRefusal({
+    run,
+    why: "its turn is live",
+  });
+  assert.equal(
+    delivery,
+    `A reviewer run (${run.id}) holds a durable side effect Queue will not act over blindly (its delivery is unknown); restart re-creates it under the same run, or wait for reconciliation to settle it`,
+  );
+  assert.equal(
+    runFenceRefusal(run, "run-delivery x"),
+    `A reviewer run (${run.id}) holds a durable side effect Queue will not act over blindly (run-delivery x); restart re-creates it under the same run, or wait for reconciliation to settle it`,
+  );
+  assert.equal(
+    effect,
+    `A reviewer run (${run.id}) holds a durable side effect Queue will not act over blindly (a publication is pending); wait for that delivery or effect to settle, or retry_effect it`,
+  );
+  assert.equal(
+    verb,
+    `A reviewer run (${run.id}) still owns this task: its turn is live`,
+  );
   for (const diagnostic of [delivery, effect, verb]) {
     put(diagnostic);
     const settled = f.store.reconcileTaskControlPreSend(id, inputHash);
-    assert.equal(settled.state, 'failed', diagnostic);
+    assert.equal(settled.state, "failed", diagnostic);
     assert.ok(settled.preSendReconciledAt, diagnostic);
   }
   for (const diagnostic of [
-    verb.replace('still owns this task', 'owns this task'),
-    delivery.replace('will not act over blindly', 'will not act blindly'),
-    effect.replace(', or retry_effect it', ''),
-    runFenceRefusal({ ...run, id: 'ghost' }, 'its delivery is unknown'),
+    verb.replace("still owns this task", "owns this task"),
+    delivery.replace("will not act over blindly", "will not act blindly"),
+    effect.replace(", or retry_effect it", ""),
+    runFenceRefusal({ ...run, id: "ghost" }, "its delivery is unknown"),
   ]) {
     put(diagnostic);
-    assert.throws(() => f.store.reconcileTaskControlPreSend(id, inputHash), /^Error: The diagnostic is not one of Queue's own pre-send refusal messages; delivery remains uncertain$/, diagnostic);
+    assert.throws(
+      () => f.store.reconcileTaskControlPreSend(id, inputHash),
+      /^Error: The diagnostic is not one of Queue's own pre-send refusal messages; delivery remains uncertain$/,
+      diagnostic,
+    );
   }
 });
 
 for (const [name, refusal, repair] of [
-  ['the PR identity refusal', new WorkerSourceRefusal('pr_identity', WORKER_PR_IDENTITY_REFUSAL), true],
-  ['the dirty worktree refusal', new WorkerSourceRefusal('worktree_dirty', `${WORKER_DIRTY_REFUSAL_PREFIX}untracked file`), false],
-  ['the branch refusal', new WorkerSourceRefusal('worktree_branch', `${WORKER_BRANCH_REFUSAL_PREFIX}ns-1`), false],
+  [
+    "the PR identity refusal",
+    new WorkerSourceRefusal("pr_identity", WORKER_PR_IDENTITY_REFUSAL),
+    true,
+  ],
+  [
+    "the dirty worktree refusal",
+    new WorkerSourceRefusal(
+      "worktree_dirty",
+      `${WORKER_DIRTY_REFUSAL_PREFIX}untracked file`,
+    ),
+    false,
+  ],
+  [
+    "the branch refusal",
+    new WorkerSourceRefusal(
+      "worktree_branch",
+      `${WORKER_BRANCH_REFUSAL_PREFIX}ns-1`,
+    ),
+    false,
+  ],
 ] as const) {
-  test(`ready report: ${name} returns the task to its worker`, t => {
+  test(`ready report: ${name} returns the task to its worker`, (t) => {
     const f = fixture(t);
-    const task = f.add({ phase: 'awaiting_review', branch: 'ns-1' });
-    assert.equal(f.resolution.responsiblePrReportRefused(task, 'run-1', 7, refusal), true);
+    const task = f.add({ phase: "awaiting_review", branch: "ns-1" });
+    assert.equal(
+      f.resolution.responsiblePrReportRefused(task, "run-1", 7, refusal),
+      true,
+    );
     const after = f.store.task(task.id);
-    assert.equal(after.phase, 'changes_requested');
+    assert.equal(after.phase, "changes_requested");
     assert.equal(Boolean(after.resolution.revisionPrRepair), repair);
     assert.equal(after.resolution.pendingWorkerInstruction, after.reason);
     assert.ok(after.reason.includes(refusal.message));
-    assert.equal(f.store.eventsAll(task.id).at(-1)?.kind, 'responsible_pr_report_refused');
+    assert.equal(
+      f.store.eventsAll(task.id).at(-1)?.kind,
+      "responsible_pr_report_refused",
+    );
   });
 }
 
-test('ready report: only the typed refusal is a report refusal', t => {
+test("ready report: only the typed refusal is a report refusal", (t) => {
   const f = fixture(t);
-  const task = f.add({ phase: 'awaiting_review', branch: 'ns-1' });
+  const task = f.add({ phase: "awaiting_review", branch: "ns-1" });
   // A message is never a route: the same words on an untyped error change nothing.
-  for (const message of [WORKER_PR_IDENTITY_REFUSAL, `${WORKER_DIRTY_REFUSAL_PREFIX}untracked file`, `${WORKER_BRANCH_REFUSAL_PREFIX}ns-1`, "PR must be open and ready"])
-    assert.equal(f.resolution.responsiblePrReportRefused(task, 'run-1', 7, new Error(message)), false, message);
-  assert.equal(f.resolution.responsiblePrReportRefused(task, 'run-1', 7, new WorkerSourceRefusal('pr_identity', WORKER_PR_IDENTITY_REFUSAL).message), false, 'not an Error');
-  assert.equal(f.store.task(task.id).phase, 'awaiting_review');
+  for (const message of [
+    WORKER_PR_IDENTITY_REFUSAL,
+    `${WORKER_DIRTY_REFUSAL_PREFIX}untracked file`,
+    `${WORKER_BRANCH_REFUSAL_PREFIX}ns-1`,
+    "PR must be open and ready",
+  ])
+    assert.equal(
+      f.resolution.responsiblePrReportRefused(
+        task,
+        "run-1",
+        7,
+        new Error(message),
+      ),
+      false,
+      message,
+    );
+  assert.equal(
+    f.resolution.responsiblePrReportRefused(
+      task,
+      "run-1",
+      7,
+      new WorkerSourceRefusal("pr_identity", WORKER_PR_IDENTITY_REFUSAL)
+        .message,
+    ),
+    false,
+    "not an Error",
+  );
+  assert.equal(f.store.task(task.id).phase, "awaiting_review");
 });
 
-test('message recipient: only the ambiguous reference refusal escapes the lookup', t => {
+test("message recipient: only the ambiguous reference refusal escapes the lookup", (t) => {
   const f = fixture(t);
   const from = f.add();
   const lookup = (message: string) => {
-    f.store.taskIdByNumber = (() => { throw new Error(message); }) as Loose;
-    return f.resolution.messageRecipientTask(from, 'repo#1');
+    f.store.taskIdByNumber = (() => {
+      throw new Error(message);
+    }) as Loose;
+    return f.resolution.messageRecipientTask(from, "repo#1");
   };
-  assert.throws(() => lookup('Ambiguous task reference; use repository and number'), /^Error: Ambiguous task reference; use repository and number$/);
-  assert.throws(() => lookup('Task reference not found'), (error: Error) => !error.message.startsWith('Ambiguous task reference'));
+  assert.throws(
+    () => lookup("Ambiguous task reference; use repository and number"),
+    /^Error: Ambiguous task reference; use repository and number$/,
+  );
+  assert.throws(
+    () => lookup("Task reference not found"),
+    (error: Error) => !error.message.startsWith("Ambiguous task reference"),
+  );
 });
 
-test('durable send: only the exact agent-gone text takes the gone branch', async t => {
+test("durable send: only the exact agent-gone text takes the gone branch", async (t) => {
   const f = fixture(t);
   const send = async (message: string) => {
     const seen: string[] = [];
     const outcome = await f.resolution.sendDurably({
-      recipient: 'agent', observe: async () => { throw new Error(message); },
-      lookupWait: (text: string) => `lookup: ${text}`, busyWait: () => 'busy', wait: (reason: string) => seen.push(reason), gone: () => seen.push('gone'),
-      confirm: () => assert.fail('a failed lookup never sends'), target: () => assert.fail('a failed lookup never sends'), mark: () => assert.fail('a failed lookup never sends'),
+      recipient: "agent",
+      observe: async () => {
+        throw new Error(message);
+      },
+      lookupWait: (text: string) => `lookup: ${text}`,
+      busyWait: () => "busy",
+      wait: (reason: string) => seen.push(reason),
+      gone: () => seen.push("gone"),
+      confirm: () => assert.fail("a failed lookup never sends"),
+      target: () => assert.fail("a failed lookup never sends"),
+      mark: () => assert.fail("a failed lookup never sends"),
     });
-    assert.equal(outcome, 'done');
+    assert.equal(outcome, "done");
     return seen;
   };
-  assert.deepEqual(await send('Agent was not found'), ['gone']);
-  assert.deepEqual(await send('Agent not found'), ['lookup: Agent not found']);
+  assert.deepEqual(await send("Agent was not found"), ["gone"]);
+  assert.deepEqual(await send("Agent not found"), ["lookup: Agent not found"]);
 });
 
 // ---------------------------------------------------------------------------
 // Rule 6: reason text the lifecycle reads back
 // ---------------------------------------------------------------------------
 
-test('waiting: a running reason clears the stop instead of recording one', t => {
+test("waiting: a running reason clears the stop instead of recording one", (t) => {
   const f = fixture(t);
   const task = f.add();
-  f.resolution.waiting(task, 'Waiting on the forge', 'external_unavailable');
-  assert.equal(f.store.task(task.id).resolution.stop?.reason, 'external_unavailable');
-  for (const reason of ['Reviewer thread running', 'Worker running']) {
-    f.resolution.waiting(f.store.task(task.id), 'Waiting on the forge', 'external_unavailable');
-    f.resolution.waiting(f.store.task(task.id), reason, 'lifecycle');
+  f.resolution.waiting(task, "Waiting on the forge", "external_unavailable");
+  assert.equal(
+    f.store.task(task.id).resolution.stop?.reason,
+    "external_unavailable",
+  );
+  for (const reason of ["Reviewer thread running", "Worker running"]) {
+    f.resolution.waiting(
+      f.store.task(task.id),
+      "Waiting on the forge",
+      "external_unavailable",
+    );
+    f.resolution.waiting(f.store.task(task.id), reason, "lifecycle");
     const after = f.store.task(task.id);
     assert.equal(after.reason, reason);
     assert.equal(after.resolution.stop, null, reason);
   }
-  f.resolution.waiting(f.store.task(task.id), 'Reviewer thread is running', 'lifecycle');
-  assert.equal(f.store.task(task.id).resolution.stop?.reason, 'lifecycle');
+  f.resolution.waiting(
+    f.store.task(task.id),
+    "Reviewer thread is running",
+    "lifecycle",
+  );
+  assert.equal(f.store.task(task.id).resolution.stop?.reason, "lifecycle");
 });
 
-test('attention: only the external merge check prefix remembers the phase it parked', t => {
+test("attention: only the external merge check prefix remembers the phase it parked", (t) => {
   const f = fixture(t);
-  const parked = f.add({ phase: 'verifying', reason: 'Before the check' });
-  f.resolution.attention(parked, `${EXTERNAL_MERGE_CHECK_REASON_PREFIX} forge down`);
-  assert.deepEqual(f.store.task(parked.id).resolution.externalMergePreAttention, { phase: 'verifying', reason: 'Before the check' });
-  const other = f.add({ phase: 'verifying', reason: 'Before the check' });
-  f.resolution.attention(other, 'External merge probe: forge down');
-  assert.equal(f.store.task(other.id).resolution.externalMergePreAttention ?? null, null);
+  const parked = f.add({ phase: "verifying", reason: "Before the check" });
+  f.resolution.attention(
+    parked,
+    `${EXTERNAL_MERGE_CHECK_REASON_PREFIX} forge down`,
+  );
+  assert.deepEqual(
+    f.store.task(parked.id).resolution.externalMergePreAttention,
+    { phase: "verifying", reason: "Before the check" },
+  );
+  const other = f.add({ phase: "verifying", reason: "Before the check" });
+  f.resolution.attention(other, "External merge probe: forge down");
+  assert.equal(
+    f.store.task(other.id).resolution.externalMergePreAttention ?? null,
+    null,
+  );
 });
 
-test('hook hold: the writer and reader agree on the text', () => {
-  const reason = hookHoldReason({ records: [{ hookId: 'pre-merge', event: 'merge', error: 'refused' }] } as Loose);
-  assert.equal(reason, 'Repository hook pre-merge merge holds this transition: refused');
+test("hook hold: the writer and reader agree on the text", () => {
+  const reason = hookHoldReason({
+    records: [{ hookId: "pre-merge", event: "merge", error: "refused" }],
+  } as Loose);
+  assert.equal(
+    reason,
+    "Repository hook pre-merge merge holds this transition: refused",
+  );
   assert.equal(isHookHoldReason(reason), true);
-  assert.equal(isHookHoldReason('Repository hook pre-merge holds the transition: refused'), false);
+  assert.equal(
+    isHookHoldReason("Repository hook pre-merge holds the transition: refused"),
+    false,
+  );
 });
 
-test('stopping: a drain waiter rejects with the exact text test support recognises', async t => {
+test("stopping: a drain waiter rejects with the exact text test support recognises", async (t) => {
   const f = fixture(t);
   // Observe before stopping: the rejection lands during the stop.
-  const outcome = f.internals.ensureSweep('drain').then(() => 'covered', (error: Error) => error.message);
+  const outcome = f.internals.ensureSweep("drain").then(
+    () => "covered",
+    (error: Error) => error.message,
+  );
   await f.engine.stop();
-  assert.equal(await outcome, 'Nucleus engine stopped before the requested reconciliation drain covered the fleet');
+  assert.equal(
+    await outcome,
+    "Nucleus engine stopped before the requested reconciliation drain covered the fleet",
+  );
 });
 
-test('prefixes and reasons that code compares are byte-identical', () => {
-  assert.deepEqual({ OWNER_STOP_HOLD_PREFIX, CAPACITY_WAIT_PREFIX, QA_CAPACITY_WAIT_PREFIX, RETAINED_WORKER_PROFILE_REASON, BACKPRESSURE_DEFERRAL,
-    EXTERNAL_MERGE_CHECK_REASON_PREFIX, EXTERNAL_MERGE_CHECK_RECOVERED_REASON, ACCEPTED_PR_RECONCILIATION_REASON, ABSENT_WORKER_REASON, PRE_AGENT_LAUNCH_FAILURE_REASON }, {
-    OWNER_STOP_HOLD_PREFIX: 'Owner stop:',
-    CAPACITY_WAIT_PREFIX: 'Waiting for a project slot…',
-    QA_CAPACITY_WAIT_PREFIX: 'Waiting for QA capacity (position ',
-    RETAINED_WORKER_PROFILE_REASON: 'Retained worker profile is disabled or unavailable',
-    BACKPRESSURE_DEFERRAL: 'Paseo admission backpressure: ',
-    EXTERNAL_MERGE_CHECK_REASON_PREFIX: 'External merge check:',
-    EXTERNAL_MERGE_CHECK_RECOVERED_REASON: 'External merge check recovered; resuming task',
-    ACCEPTED_PR_RECONCILIATION_REASON: 'Operator requested accepted-PR workspace reconciliation',
-    ABSENT_WORKER_REASON: 'Agent creation is uncertain or placement differs; no replacement launched',
-    PRE_AGENT_LAUNCH_FAILURE_REASON: 'Transient worker launch failed before an agent was created',
-  });
+test("prefixes and reasons that code compares are byte-identical", () => {
+  assert.deepEqual(
+    {
+      OWNER_STOP_HOLD_PREFIX,
+      CAPACITY_WAIT_PREFIX,
+      QA_CAPACITY_WAIT_PREFIX,
+      RETAINED_WORKER_PROFILE_REASON,
+      BACKPRESSURE_DEFERRAL,
+      EXTERNAL_MERGE_CHECK_REASON_PREFIX,
+      EXTERNAL_MERGE_CHECK_RECOVERED_REASON,
+      ACCEPTED_PR_RECONCILIATION_REASON,
+      ABSENT_WORKER_REASON,
+      PRE_AGENT_LAUNCH_FAILURE_REASON,
+    },
+    {
+      OWNER_STOP_HOLD_PREFIX: "Owner stop:",
+      CAPACITY_WAIT_PREFIX: "Waiting for a project slot…",
+      QA_CAPACITY_WAIT_PREFIX: "Waiting for QA capacity (position ",
+      RETAINED_WORKER_PROFILE_REASON:
+        "Retained worker profile is disabled or unavailable",
+      BACKPRESSURE_DEFERRAL: "Paseo admission backpressure: ",
+      EXTERNAL_MERGE_CHECK_REASON_PREFIX: "External merge check:",
+      EXTERNAL_MERGE_CHECK_RECOVERED_REASON:
+        "External merge check recovered; resuming task",
+      ACCEPTED_PR_RECONCILIATION_REASON:
+        "Operator requested accepted-PR workspace reconciliation",
+      ABSENT_WORKER_REASON:
+        "Agent creation is uncertain or placement differs; no replacement launched",
+      PRE_AGENT_LAUNCH_FAILURE_REASON:
+        "Transient worker launch failed before an agent was created",
+    },
+  );
   assert.equal(isBackpressureDeferral(`${BACKPRESSURE_DEFERRAL}full`), true);
 });
 
@@ -502,60 +997,85 @@ test('prefixes and reasons that code compares are byte-identical', () => {
 // Rule 7: readers and writers that look interchangeable and are not
 // ---------------------------------------------------------------------------
 
-test('don\'t normalise: store.events is the newest 100; eventsAll is everything, oldest first', t => {
+test("don't normalise: store.events is the newest 100; eventsAll is everything, oldest first", (t) => {
   const f = fixture(t);
   const task = f.add();
   const before = f.store.eventsAll(task.id).length;
-  for (let index = 0; index < 120; index += 1) f.store.event(task.id, 'pin', String(index));
-  const all = f.store.eventsAll(task.id), recent = f.store.events(task.id);
+  for (let index = 0; index < 120; index += 1)
+    f.store.event(task.id, "pin", String(index));
+  const all = f.store.eventsAll(task.id),
+    recent = f.store.events(task.id);
   assert.equal(all.length, before + 120);
   assert.equal(recent.length, 100);
-  assert.equal(all.at(-1)!.detail, '119', 'eventsAll ends with the newest');
-  assert.equal(recent[0]!.detail, '119', 'events starts with the newest');
-  assert.equal(recent.at(-1)!.detail, '20');
+  assert.equal(all.at(-1)!.detail, "119", "eventsAll ends with the newest");
+  assert.equal(recent[0]!.detail, "119", "events starts with the newest");
+  assert.equal(recent.at(-1)!.detail, "20");
 });
 
 // The split map says only `Resolution.update` nulls the stop. Today both do on a
 // reason or phase change (store.ts `lifecycleChanged`). What differs, and must not
 // be normalised, is the merge and the event.
-test('don\'t normalise: both updates null the stop on a reason or phase change, and keep it otherwise', t => {
+test("don't normalise: both updates null the stop on a reason or phase change, and keep it otherwise", (t) => {
   const f = fixture(t);
-  const stop = { reason: 'lifecycle', detail: 'Pin', since: at, suggestedVerbs: [] };
+  const stop = {
+    reason: "lifecycle",
+    detail: "Pin",
+    since: at,
+    suggestedVerbs: [],
+  };
   const stopped = () => {
     const task = f.add();
-    return f.store.update(task.id, { resolution: { ...f.store.task(task.id).resolution, stop } as Loose });
+    return f.store.update(task.id, {
+      resolution: { ...f.store.task(task.id).resolution, stop } as Loose,
+    });
   };
   const viaStore = stopped();
-  f.store.update(viaStore.id, { reason: 'Changed' });
+  f.store.update(viaStore.id, { reason: "Changed" });
   assert.equal(f.store.task(viaStore.id).resolution.stop, null);
   const viaResolution = stopped();
-  f.resolution.update(viaResolution, {}, { reason: 'Changed' });
+  f.resolution.update(viaResolution, {}, { reason: "Changed" });
   assert.equal(f.store.task(viaResolution.id).resolution.stop, null);
   const storeKeeps = stopped();
-  f.store.update(storeKeeps.id, { reason: storeKeeps.reason, title: 'Other' });
-  assert.equal(f.store.task(storeKeeps.id).resolution.stop?.reason, 'lifecycle');
+  f.store.update(storeKeeps.id, { reason: storeKeeps.reason, title: "Other" });
+  assert.equal(
+    f.store.task(storeKeeps.id).resolution.stop?.reason,
+    "lifecycle",
+  );
   const resolutionKeeps = stopped();
   f.resolution.update(resolutionKeeps, {}, { reason: resolutionKeeps.reason });
-  assert.equal(f.store.task(resolutionKeeps.id).resolution.stop?.reason, 'lifecycle');
+  assert.equal(
+    f.store.task(resolutionKeeps.id).resolution.stop?.reason,
+    "lifecycle",
+  );
 });
 
-test('don\'t normalise: Resolution.update merges onto the current row and records an event; store.update takes the caller\'s resolution and records none', t => {
+test("don't normalise: Resolution.update merges onto the current row and records an event; store.update takes the caller's resolution and records none", (t) => {
   const f = fixture(t);
   const task = f.add();
   const stale = f.store.task(task.id);
-  f.store.update(task.id, { resolution: { ...stale.resolution, revisionPrRepair: true } });
+  f.store.update(task.id, {
+    resolution: { ...stale.resolution, revisionPrRepair: true },
+  });
 
-  f.resolution.update(stale, { pendingWorkerInstruction: 'Merged' });
+  f.resolution.update(stale, { pendingWorkerInstruction: "Merged" });
   const merged = f.store.task(task.id);
-  assert.equal(merged.resolution.revisionPrRepair, true, 'the stale read loses nothing');
-  assert.equal(merged.resolution.pendingWorkerInstruction, 'Merged');
-  assert.equal(f.store.eventsAll(task.id).at(-1)?.kind, 'resolution');
+  assert.equal(
+    merged.resolution.revisionPrRepair,
+    true,
+    "the stale read loses nothing",
+  );
+  assert.equal(merged.resolution.pendingWorkerInstruction, "Merged");
+  assert.equal(f.store.eventsAll(task.id).at(-1)?.kind, "resolution");
 
   const events = f.store.eventsAll(task.id).length;
   f.store.update(task.id, { resolution: stale.resolution });
   const replaced = f.store.task(task.id);
-  assert.notEqual(replaced.resolution.revisionPrRepair, true, 'the stale resolution overwrites');
-  assert.notEqual(replaced.resolution.pendingWorkerInstruction, 'Merged');
+  assert.notEqual(
+    replaced.resolution.revisionPrRepair,
+    true,
+    "the stale resolution overwrites",
+  );
+  assert.notEqual(replaced.resolution.pendingWorkerInstruction, "Merged");
   assert.equal(f.store.eventsAll(task.id).length, events);
 });
 
@@ -563,22 +1083,29 @@ test('don\'t normalise: Resolution.update merges onto the current row and record
 // Census: parse sites a fixture can't reach cheaply
 // ---------------------------------------------------------------------------
 
-const root = fileURLToPath(new URL('..', import.meta.url));
-const sourceFiles = (dir: string): string[] => readdirSync(dir).flatMap(name => {
-  const path = join(dir, name);
-  if (statSync(path).isDirectory()) return sourceFiles(path);
-  return /\.(?:ts|mjs)$/.test(name) && !/\.d\.(?:ts|mts)$/.test(name) ? [path] : [];
-});
+const root = fileURLToPath(new URL("..", import.meta.url));
+const sourceFiles = (dir: string): string[] =>
+  readdirSync(dir).flatMap((name) => {
+    const path = join(dir, name);
+    if (statSync(path).isDirectory()) return sourceFiles(path);
+    return /\.(?:ts|mjs)$/.test(name) && !/\.d\.(?:ts|mts)$/.test(name)
+      ? [path]
+      : [];
+  });
 let cached: string | null = null;
 /** All runtime sources: a move between folders keeps every pin below. */
 function source(): string {
   const roots = runtimeSourceRoots(root);
-  cached ??= [...new Set(roots)].flatMap(dir => sourceFiles(join(root, dir))).map(path => readFileSync(path, 'utf8')).join('\n');
+  cached ??= [...new Set(roots)]
+    .flatMap((dir) => sourceFiles(join(root, dir)))
+    .map((path) => readFileSync(path, "utf8"))
+    .join("\n");
   return cached;
 }
 const occurrences = (text: string, part: string) => text.split(part).length - 1;
 
-const COORDINATOR_VERSION_RETRY = /^Task changed; refresh before (?:retrying|restarting) \(the task is now version \d+; read next again and reassess before retrying\)$/;
+const COORDINATOR_VERSION_RETRY =
+  /^Task changed; refresh before (?:retrying|restarting) \(the task is now version \d+; read next again and reassess before retrying\)$/;
 
 interface ParsedText {
   site: string;
@@ -593,96 +1120,393 @@ interface ParsedText {
 }
 
 const PARSED: ParsedText[] = [
-  { site: 'uncertainOperationError', re: /uncertain|unknown|timed out|timeout|connection|socket|transport|interrupted|ambiguous/i, sample: 'its delivery is unknown' },
-  { site: 'owned-tool retry refusal', re: /^Owned-tool hold .+ remains:/, sample: 'Owned-tool hold run-1 remains: live', writers: ['Owned-tool hold ${runId} remains: ${hold}'], reads: ['startsWith("owned_tool.")'] },
-  { site: 'coordinator version retry', re: COORDINATOR_VERSION_RETRY, sample: 'Task changed; refresh before retrying (the task is now version 3; read next again and reassess before retrying)',
-    writers: ['Task changed; refresh before retrying', '${message} (the task is now version ${current}; read next again and reassess before retrying)'] },
+  {
+    site: "uncertainOperationError",
+    re: /uncertain|unknown|timed out|timeout|connection|socket|transport|interrupted|ambiguous/i,
+    sample: "its delivery is unknown",
+  },
+  {
+    site: "owned-tool retry refusal",
+    re: /^Owned-tool hold .+ remains:/,
+    sample: "Owned-tool hold run-1 remains: live",
+    writers: ["Owned-tool hold ${runId} remains: ${hold}"],
+    reads: ['startsWith("owned_tool.")'],
+  },
+  {
+    site: "coordinator version retry",
+    re: COORDINATOR_VERSION_RETRY,
+    sample:
+      "Task changed; refresh before retrying (the task is now version 3; read next again and reassess before retrying)",
+    writers: [
+      "Task changed; refresh before retrying",
+      "${message} (the task is now version ${current}; read next again and reassess before retrying)",
+    ],
+  },
   // The stale-version hint is decided by the typed refusal, so only its writers
   // are pinned; nucleus#1218 removed the message reader.
-  { site: 'version hint', writers: ['Task changed; refresh before retrying', '${message} (the task is now version ${current}; read next again and reassess before retrying)'] },
-  { site: 'move replan', re: /^(Task changed|Task or run changed|A run started during the move|A run changed during the move)/, sample: 'A run changed during the move; refresh before retrying',
-    writers: ['Task changed during the move; read next', 'Task or run changed; refresh before retrying', 'A run started during the move', 'A run changed during the move; refresh before retrying'] },
-  { site: 'proof single flight', sample: 'An author-side proof execution was already reserved at abc',
-    writers: ['is already dispatched and unreleased (', 'already spent its one execution (', 'was already reserved at ${head}'],
-    reads: ['error instanceof ProofSingleFlightError'] },
-  { site: 'reviewer crash', re: /^The reviewer (?:thread stopped|callback reminder expired)/, sample: 'The reviewer thread stopped without a callback; inspect the thread',
-    writers: ['`The ${role} thread stopped without a callback; inspect the thread`', '`The ${role} callback reminder expired`'] },
+  {
+    site: "version hint",
+    writers: [
+      "Task changed; refresh before retrying",
+      "${message} (the task is now version ${current}; read next again and reassess before retrying)",
+    ],
+  },
+  {
+    site: "move replan",
+    re: /^(Task changed|Task or run changed|A run started during the move|A run changed during the move)/,
+    sample: "A run changed during the move; refresh before retrying",
+    writers: [
+      "Task changed during the move; read next",
+      "Task or run changed; refresh before retrying",
+      "A run started during the move",
+      "A run changed during the move; refresh before retrying",
+    ],
+  },
+  {
+    site: "proof single flight",
+    sample: "An author-side proof execution was already reserved at abc",
+    writers: [
+      "is already dispatched and unreleased (",
+      "already spent its one execution (",
+      "was already reserved at ${head}",
+    ],
+    reads: ["error instanceof ProofSingleFlightError"],
+  },
+  {
+    site: "reviewer crash",
+    re: /^The reviewer (?:thread stopped|callback reminder expired)/,
+    sample:
+      "The reviewer thread stopped without a callback; inspect the thread",
+    writers: [
+      "`The ${role} thread stopped without a callback; inspect the thread`",
+      "`The ${role} callback reminder expired`",
+    ],
+  },
   // nucleus#1257: the writer (`callback-reminders`) and the reader (`Lifecycle`)
   // ask `task-reasons` for the sentence pair, so one owner holds the words.
-  { site: 'missing callback', reads: ['missingCallbackStopReasonFor(t.reason, completed.role)'] },
-  { site: 'store fence', re: /^A ([a-z]+) run \(([^)]+)\) (?:holds a durable side effect Queue will not act over blindly \(.+\); (?:restart re-creates it under the same run, or wait for reconciliation to settle it|wait for that delivery or effect to settle, or retry_effect it)|still owns this task: .+)$/,
-    sample: 'A worker run (run-1) still owns this task: live' },
-  { site: 'proof hold', reads: ['`Proofs Queue cannot run, left for the planner or operator at ${pr.head}:`', 'proofHold.reason.startsWith(proofHoldPrefix)'],
-    writers: ['`Proofs Queue cannot run, left for the planner or operator at ${head}: ${proofs}. Run them through the proof verb or accept the head, then release this merge hold.`'] },
+  {
+    site: "missing callback",
+    reads: ["missingCallbackStopReasonFor(t.reason, completed.role)"],
+  },
+  {
+    site: "store fence",
+    re: /^A ([a-z]+) run \(([^)]+)\) (?:holds a durable side effect Queue will not act over blindly \(.+\); (?:restart re-creates it under the same run, or wait for reconciliation to settle it|wait for that delivery or effect to settle, or retry_effect it)|still owns this task: .+)$/,
+    sample: "A worker run (run-1) still owns this task: live",
+  },
+  {
+    site: "proof hold",
+    reads: [
+      "`Proofs Queue cannot run, left for the planner or operator at ${pr.head}:`",
+      "proofHold.reason.startsWith(proofHoldPrefix)",
+    ],
+    writers: [
+      "`Proofs Queue cannot run, left for the planner or operator at ${head}: ${proofs}. Run them through the proof verb or accept the head, then release this merge hold.`",
+    ],
+  },
   // nucleus#1218: the retry window's fence facts are derived, not read from the
   // refusal's words, so only the refusal's own sentence stays pinned.
-  { site: 'auto-continue fence cleared', writers: ['An unresolved task incident or recovery fence blocks reviewer continuation'] },
-  { site: 'review recovery wait', reads: ['reviewEffectWaitRefusal(t) === refusal',
-      '/^(?:Ordinary review|Review-entry) waits for (.+); settle it with retry_effect before continuing$/'],
-    writers: ["`${run.ordinaryDetached?'Ordinary review':'Review-entry'} waits for ${recoveryEffectsRefusal(error.effects)}; settle it with retry_effect before continuing`"] },
+  {
+    site: "auto-continue fence cleared",
+    writers: [
+      "An unresolved task incident or recovery fence blocks reviewer continuation",
+    ],
+  },
+  {
+    site: "review recovery wait",
+    reads: [
+      "reviewEffectWaitRefusal(t) === refusal",
+      "/^(?:Ordinary review|Review-entry) waits for (.+); settle it with retry_effect before continuing$/",
+    ],
+    writers: [
+      "`${run.ordinaryDetached?'Ordinary review':'Review-entry'} waits for ${recoveryEffectsRefusal(error.effects)}; settle it with retry_effect before continuing`",
+    ],
+  },
   // The classifier keeps the authored sentence; the reconciler reads the structured stop.
-  { site: 'blocked effect attention',
-    reads: ['detail.startsWith(BLOCKED_EFFECT_ATTENTION_PREFIX)', "stop.suggestedVerbs[0] === 'retry_effect'"],
-    writers: ['BLOCKED_EFFECT_ATTENTION_PREFIX = "An uncertain side effect blocks review"', '`${BLOCKED_EFFECT_ATTENTION_PREFIX}: ${recoveryEffectsRefusal(blocked)}'] },
+  {
+    site: "blocked effect attention",
+    reads: [
+      "detail.startsWith(BLOCKED_EFFECT_ATTENTION_PREFIX)",
+      "stop.suggestedVerbs[0] === 'retry_effect'",
+    ],
+    writers: [
+      'BLOCKED_EFFECT_ATTENTION_PREFIX = "An uncertain side effect blocks review"',
+      "`${BLOCKED_EFFECT_ATTENTION_PREFIX}: ${recoveryEffectsRefusal(blocked)}",
+    ],
+  },
   // The check's resume rule moved to its own owner; the parked-phase and accepted-PR
   // readers are the same two facts at their new site.
-  { site: 'external merge check', reads: ['task.reason.startsWith(EXTERNAL_MERGE_CHECK_REASON_PREFIX) || task.reason === EXTERNAL_MERGE_CHECK_RECOVERED_REASON', 't.reason === ACCEPTED_PR_RECONCILIATION_REASON'] },
-  { site: 'revision repair', reads: ['t.reason === WORKER_PR_IDENTITY_REFUSAL'], writers: ["WORKER_PR_IDENTITY_REFUSAL = \"PR must be open, ready, and match the task's branch and base\""] },
+  {
+    site: "external merge check",
+    reads: [
+      "task.reason.startsWith(EXTERNAL_MERGE_CHECK_REASON_PREFIX) || task.reason === EXTERNAL_MERGE_CHECK_RECOVERED_REASON",
+      "t.reason === ACCEPTED_PR_RECONCILIATION_REASON",
+    ],
+  },
+  {
+    site: "revision repair",
+    reads: ["t.reason === WORKER_PR_IDENTITY_REFUSAL"],
+    writers: [
+      'WORKER_PR_IDENTITY_REFUSAL = "PR must be open, ready, and match the task\'s branch and base"',
+    ],
+  },
   // The checkout refusal is typed at its throw site, so the reader is the class
   // and its codes; the prose below is what the worker reads.
-  { site: 'ready report checkout',
-    writers: ["WORKER_DIRTY_REFUSAL_PREFIX = 'Worker must leave a clean worktree before review: '", "WORKER_BRANCH_REFUSAL_PREFIX = 'Worker must remain on queue-owned branch '"],
-    reads: ["error.code === 'pr_identity'", "new WorkerSourceRefusal('worktree_dirty'", "new WorkerSourceRefusal('worktree_branch'", "new WorkerSourceRefusal('pr_identity'"] },
-  { site: 'waiting running', re: /\bthread running$/, sample: 'Reviewer thread running' },
+  {
+    site: "ready report checkout",
+    writers: [
+      "WORKER_DIRTY_REFUSAL_PREFIX = 'Worker must leave a clean worktree before review: '",
+      "WORKER_BRANCH_REFUSAL_PREFIX = 'Worker must remain on queue-owned branch '",
+    ],
+    reads: [
+      "error.code === 'pr_identity'",
+      "new WorkerSourceRefusal('worktree_dirty'",
+      "new WorkerSourceRefusal('worktree_branch'",
+      "new WorkerSourceRefusal('pr_identity'",
+    ],
+  },
+  {
+    site: "waiting running",
+    re: /\bthread running$/,
+    sample: "Reviewer thread running",
+  },
   // The owned-tool proof decides on its typed issue fact, so no reader matches
   // this refusal's text any more; the writer's sentence stays pinned.
-  { site: 'tool issue', sample: 'observed tool call x is running', writers: [' and is running'] },
+  {
+    site: "tool issue",
+    sample: "observed tool call x is running",
+    writers: [" and is running"],
+  },
   // The host's gone-thread fact is typed at one reader now (nucleus#1222): every
   // site asks isAgentGoneRefusal, and only the host's own throw sites still write
   // the host's words. A reword at one reader would leave the others standing, so
   // the typed reader carries a floor.
-  { site: 'agent gone', reads: ['isAgentGoneRefusal(error)'], writers: ['AGENT_NOT_FOUND = \'Agent was not found\'', 'throw new Error("Agent was not found")', "throw Error('Agent was not found')"] },
+  {
+    site: "agent gone",
+    reads: ["isAgentGoneRefusal(error)"],
+    writers: [
+      'AGENT_NOT_FOUND = "Agent was not found"',
+      'throw new Error("Agent was not found")',
+      "throw Error('Agent was not found')",
+    ],
+  },
   // Task 1090: empty awaitingProofs on source approval names the ready_to_merge
   // route so a reviewer that finished source review with only release gates
   // remaining is not left without a report. Both throw sites stay byte-identical.
-  { site: 'source approval empty proofs', writers: ["return 'Source approval requires an exact-head environment blocked review with findings and named awaiting proofs; if only release gates remain, report ready_to_merge'"] },
-  { site: 'ambiguous reference', reads: ["error.message.startsWith('Ambiguous task reference')"], writers: ['Ambiguous task reference; use repository and number'] },
-  { site: 'provider MCP refusal', re: /Provider '.+' does not support MCP servers/, sample: "Provider 'x' does not support MCP servers" },
+  {
+    site: "source approval empty proofs",
+    writers: [
+      "return 'Source approval requires an exact-head environment blocked review with findings and named awaiting proofs; if only release gates remain, report ready_to_merge'",
+    ],
+  },
+  {
+    site: "ambiguous reference",
+    reads: ["error.message.startsWith('Ambiguous task reference')"],
+    writers: ["Ambiguous task reference; use repository and number"],
+  },
+  {
+    site: "provider MCP refusal",
+    re: /Provider '.+' does not support MCP servers/,
+    sample: "Provider 'x' does not support MCP servers",
+  },
   // nucleus#1230: the refusing pool is a typed limit (`capacityLimitFor`), so no reader
   // compares this sentence; it stays pinned as the limit's written name.
-  { site: 'global capacity', writers: ['Global concurrent task-slot limit reached'] },
-  { site: 'transient provider wait', reads: ['stop.detail.startsWith(TRANSIENT_PROVIDER_WAIT)'], writers: ["const TRANSIENT_PROVIDER_WAIT = 'Transient provider error'"] },
-  { site: 'unverified provider refusal', reads: ['stop.detail.startsWith(`Reviewer run ${run.id} provider refusal is unverified`)'], writers: ['`Reviewer run ${run.id} provider refusal is unverified: ${read.gap}`'] },
-  { site: 'legacy delegated answerer', re: /^(planner|decider) (.*)$/, sample: 'planner agent-1' },
-  { site: 'delegated answerer id', re: /^(?:delegated )?(?:planner|decider)\s+(\S+)$/, sample: 'delegated planner agent-1' },
-  { site: 'decision link', re: /decision ([^;\s]+)/, sample: 'q-1: decision d-1; linked', writers: ['decision ${'] },
-  { site: 'decision link, bounded', re: /decision ([^;\s]+)/, sample: 'q-1: decision d-1; linked' },
-  { site: 'ladder decision link', re: /decision ([0-9a-f-]{36})/, sample: 'e-1: decision 00000000-0000-4000-8000-000000000000' },
+  {
+    site: "global capacity",
+    writers: ["Global concurrent task-slot limit reached"],
+  },
+  {
+    site: "transient provider wait",
+    reads: ["stop.detail.startsWith(TRANSIENT_PROVIDER_WAIT)"],
+    writers: ["const TRANSIENT_PROVIDER_WAIT = 'Transient provider error'"],
+  },
+  {
+    site: "unverified provider refusal",
+    reads: [
+      "stop.detail.startsWith(`Reviewer run ${run.id} provider refusal is unverified`)",
+    ],
+    writers: [
+      "`Reviewer run ${run.id} provider refusal is unverified: ${read.gap}`",
+    ],
+  },
+  {
+    site: "legacy delegated answerer",
+    re: /^(planner|decider) (.*)$/,
+    sample: "planner agent-1",
+  },
+  {
+    site: "delegated answerer id",
+    re: /^(?:delegated )?(?:planner|decider)\s+(\S+)$/,
+    sample: "delegated planner agent-1",
+  },
+  {
+    site: "decision link",
+    re: /decision ([^;\s]+)/,
+    sample: "q-1: decision d-1; linked",
+    writers: ["decision ${"],
+  },
+  {
+    site: "decision link, bounded",
+    re: /decision ([^;\s]+)/,
+    sample: "q-1: decision d-1; linked",
+  },
+  {
+    site: "ladder decision link",
+    re: /decision ([0-9a-f-]{36})/,
+    sample: "e-1: decision 00000000-0000-4000-8000-000000000000",
+  },
   // The ask lifecycle is decoded once, so its identity line is read by one regex.
-  { site: 'ask run', re: /\brun (\S+) \(/, sample: 'a-1: kind scope; run r-1 (worker); agent x', writers: ['${ask.id}: kind ${ask.kind}; run ${run.id} (${run.role}); agent ${run.agentId ?? \'unknown\'}; question ${digest(ask.question)} (${ask.question.length} chars)'] },
-  { site: 'ask run and agent', re: /run (\S+) \([^)]+\); agent ([^;\s]+)/, sample: 'a-1: kind scope; run r-1 (worker); agent x; question d (1 chars)' },
-  { site: 'ask joined', re: /queue question (\S+)/, sample: 'a-1: queue question q-1', writers: ['${ask.id}: queue question ${joined}', ': queue question ${decision.id}'], reads: ["split('queue question ')"] },
-  { site: 'ask delegated planner', re: /planner (\S+);/, sample: 'a-1: task planner p-1; asked', writers: ["${rung === 'task' ? 'task planner' : 'project planner'} ${agentId}; asked"], reads: ['body.startsWith(" task planner ")', 'body.startsWith(" project planner ")'] },
-  { site: 'ask delegated reviewer', re: /reviewer (\S+);/, sample: 'a-1: reviewer r-1; consult', writers: ['${ask.id}: reviewer ${reviewer}; consult'] },
-  { site: 'ask delegated decider', reads: ['`${fact.id}: decider`'], writers: ['decider requested'] },
-  { site: 'ladder cause', re: /cause ([0-9a-f]{64})/, sample: `e-1: cause ${'f'.repeat(64)}; run r-1; question d (1 chars)`, writers: ['${id}: cause ${input.cause}; run ${input.runId ?? \'worker\'}; question ${digest('] },
+  {
+    site: "ask run",
+    re: /\brun (\S+) \(/,
+    sample: "a-1: kind scope; run r-1 (worker); agent x",
+    writers: [
+      "${ask.id}: kind ${ask.kind}; run ${run.id} (${run.role}); agent ${run.agentId ?? 'unknown'}; question ${digest(ask.question)} (${ask.question.length} chars)",
+    ],
+  },
+  {
+    site: "ask run and agent",
+    re: /run (\S+) \([^)]+\); agent ([^;\s]+)/,
+    sample: "a-1: kind scope; run r-1 (worker); agent x; question d (1 chars)",
+  },
+  {
+    site: "ask joined",
+    re: /queue question (\S+)/,
+    sample: "a-1: queue question q-1",
+    writers: [
+      "${ask.id}: queue question ${joined}",
+      ": queue question ${decision.id}",
+    ],
+    reads: ["split('queue question ')"],
+  },
+  {
+    site: "ask delegated planner",
+    re: /planner (\S+);/,
+    sample: "a-1: task planner p-1; asked",
+    writers: [
+      "${rung === 'task' ? 'task planner' : 'project planner'} ${agentId}; asked",
+    ],
+    reads: [
+      'body.startsWith(" task planner ")',
+      'body.startsWith(" project planner ")',
+    ],
+  },
+  {
+    site: "ask delegated reviewer",
+    re: /reviewer (\S+);/,
+    sample: "a-1: reviewer r-1; consult",
+    writers: ["${ask.id}: reviewer ${reviewer}; consult"],
+  },
+  {
+    site: "ask delegated decider",
+    reads: ["`${fact.id}: decider`"],
+    writers: ["decider requested"],
+  },
+  {
+    site: "ladder cause",
+    re: /cause ([0-9a-f]{64})/,
+    sample: `e-1: cause ${"f".repeat(64)}; run r-1; question d (1 chars)`,
+    writers: [
+      "${id}: cause ${input.cause}; run ${input.runId ?? 'worker'}; question ${digest(",
+    ],
+  },
   // nucleus#1242: the payload is the record, so the intent line is read once, as its fallback.
-  { site: 'ladder run', re: /run (\S+?);/, sample: 'e-1: cause x; run r-1; question d (1 chars)' },
-  { site: 'ladder ordinary answer', reads: ['`${id}: answered by ordinary `'], writers: ['${escalation.id}: answered by ordinary ${action}: task control moved the task', '${id}: answered by ordinary progress: the task merged or ended first'] },
-  { site: 'escalation missed', reads: ['`${escalation.id}: no delegated answer was produced;`', '`${id}: no delegated answer was produced;`', "startsWith('no delegated answer was produced;')"],
-    writers: ['${id}: no delegated answer was produced; the escalation stays open for the planner', '${decision.id}: no delegated answer was produced; the question stays on its existing surface'] },
-  { site: 'escalation waiting', reads: ['current.resolution.stop?.reason !== expected.stopReason', 'current.resolution.stop.detail !== expected.stopDetail'], writers: ['`Escalation ${id}: waiting for operator decision ${wait.target}`', '`Escalation ${id}: waiting until ${wait.target}`', '`Escalation ${id}: waiting for task ${prerequisite.reference ?? prerequisite.id} to settle`'] },
-  { site: 'operator question kinds', reads: ["record.intent?.kind === 'release'", "event.detail.includes('kind budget')"], writers: ['${question.id}: kind ${question.kind}; stop ${task.resolution.stop?.reason ?? \'none\'}; head ${task.prHead ?? \'none\'}; question ${digest('] },
-  { site: 'operator question intent', reads: ['intent.questionDigest === digest(question.question)', 'intent.questionLength === question.question.length', 'options ${intentOptions(options)}'] },
-  { site: 'held proof answer', reads: ["event.detail.includes('Leave held for the planner')", "result.reply.choice === 'Leave held for the planner'"], writers: ["label: 'Leave held for the planner'"] },
-  { site: 'proof GO answer', reads: ['`${questionId}: GO — run the qualification`', "answer.startsWith('GO — run the qualification')"], writers: ["label: 'GO — run the qualification'"] },
-  { site: 'absent catalog archive', reads: ["event.detail.includes('observed absent from the catalog and disk without a Queue archive intent')"] },
+  {
+    site: "ladder run",
+    re: /run (\S+?);/,
+    sample: "e-1: cause x; run r-1; question d (1 chars)",
+  },
+  {
+    site: "ladder ordinary answer",
+    reads: ["`${id}: answered by ordinary `"],
+    writers: [
+      "${escalation.id}: answered by ordinary ${action}: task control moved the task",
+      "${id}: answered by ordinary progress: the task merged or ended first",
+    ],
+  },
+  {
+    site: "escalation missed",
+    reads: [
+      "`${escalation.id}: no delegated answer was produced;`",
+      "`${id}: no delegated answer was produced;`",
+      "startsWith('no delegated answer was produced;')",
+    ],
+    writers: [
+      "${id}: no delegated answer was produced; the escalation stays open for the planner",
+      "${decision.id}: no delegated answer was produced; the question stays on its existing surface",
+    ],
+  },
+  {
+    site: "escalation waiting",
+    reads: [
+      "current.resolution.stop?.reason !== expected.stopReason",
+      "current.resolution.stop.detail !== expected.stopDetail",
+    ],
+    writers: [
+      "`Escalation ${id}: waiting for operator decision ${wait.target}`",
+      "`Escalation ${id}: waiting until ${wait.target}`",
+      "`Escalation ${id}: waiting for task ${prerequisite.reference ?? prerequisite.id} to settle`",
+    ],
+  },
+  {
+    site: "operator question kinds",
+    reads: [
+      "record.intent?.kind === 'release'",
+      "event.detail.includes('kind budget')",
+    ],
+    writers: [
+      "${question.id}: kind ${question.kind}; stop ${task.resolution.stop?.reason ?? 'none'}; head ${task.prHead ?? 'none'}; question ${digest(",
+    ],
+  },
+  {
+    site: "operator question intent",
+    reads: [
+      "intent.questionDigest === digest(question.question)",
+      "intent.questionLength === question.question.length",
+      "options ${intentOptions(options)}",
+    ],
+  },
+  {
+    site: "held proof answer",
+    reads: [
+      "event.detail.includes('Leave held for the planner')",
+      "result.reply.choice === 'Leave held for the planner'",
+    ],
+    writers: ["label: 'Leave held for the planner'"],
+  },
+  {
+    site: "proof GO answer",
+    reads: [
+      "`${questionId}: GO — run the qualification`",
+      "answer.startsWith('GO — run the qualification')",
+    ],
+    writers: ["label: 'GO — run the qualification'"],
+  },
+  {
+    site: "absent catalog archive",
+    reads: [
+      "event.detail.includes('observed absent from the catalog and disk without a Queue archive intent')",
+    ],
+  },
   // The absent-creation budget is read from the record's own scope, so the
   // legacy sentence it still recognises and the record writer are pinned;
   // nucleus#1243 removed the reader that matched the replacement sentence.
-  { site: 'absent creation', re: /^Confirmed absent (\w+) creation/, sample: 'Confirmed absent reviewer creation; Nucleus issued one replacement',
-    writers: ['`${role}:${runId}: ${text}`'] },
-  { site: 'route stop replay', reads: ["kind LIKE 'route_stop_%'"], writers: ['"route_stop_settled"', '"route_stop_intent"', '"route_stop_uncertain"', '"route_stop_sent"'] },
+  {
+    site: "absent creation",
+    re: /^Confirmed absent (\w+) creation/,
+    sample:
+      "Confirmed absent reviewer creation; Nucleus issued one replacement",
+    writers: ["`${role}:${runId}: ${text}`"],
+  },
+  {
+    site: "route stop replay",
+    reads: ["kind LIKE 'route_stop_%'"],
+    writers: [
+      '"route_stop_settled"',
+      '"route_stop_intent"',
+      '"route_stop_uncertain"',
+      '"route_stop_sent"',
+    ],
+  },
 ];
 
 /**
@@ -691,26 +1515,26 @@ const PARSED: ParsedText[] = [
  */
 const SITES: Record<string, number> = {
   "${rung === 'task' ? 'task planner' : 'project planner'} ${agentId}; asked": 3,
-  'decider requested': 3,
-  'Task changed; refresh before retrying': 38,
-  'Task or run changed; refresh before retrying': 3,
-  'A run started during the move': 4,
-  'was already reserved at ${head}': 2,
-  'The ${role} thread stopped without a callback; inspect the thread': 1,
-  'callback reminder expired': 3,
-  'An unresolved task incident or recovery fence blocks reviewer continuation': 2,
-  't.reason === ACCEPTED_PR_RECONCILIATION_REASON': 2,
+  "decider requested": 3,
+  "Task changed; refresh before retrying": 38,
+  "Task or run changed; refresh before retrying": 3,
+  "A run started during the move": 4,
+  "was already reserved at ${head}": 2,
+  "The ${role} thread stopped without a callback; inspect the thread": 1,
+  "callback reminder expired": 3,
+  "An unresolved task incident or recovery fence blocks reviewer continuation": 2,
+  "t.reason === ACCEPTED_PR_RECONCILIATION_REASON": 2,
   "PR must be open, ready, and match the task's branch and base": 1,
-  'Worker must remain on queue-owned branch ${task.branch}': 5,
-  '/decision (\\S+)/': 3,
-  'decision ${': 13,
-  '/decision ([^;\\s]+)/': 3,
-  '`${askId}: queue question `': 4,
-  '${ask.id}: queue question ${joined}': 2,
-  '/cause ([0-9a-f]{64})/': 1,
-  '${id}: cause ${input.cause}; run ${input.runId ?? \'worker\'}; question ${digest(': 1,
-  '/run (\\S+?);/': 1,
-  '${question.id}: kind ${question.kind}; stop ${task.resolution.stop?.reason ?? \'none\'}; head ${task.prHead ?? \'none\'}; question ${digest(': 1,
+  "Worker must remain on queue-owned branch ${task.branch}": 5,
+  "/decision (\\S+)/": 3,
+  "decision ${": 13,
+  "/decision ([^;\\s]+)/": 3,
+  "`${askId}: queue question `": 4,
+  "${ask.id}: queue question ${joined}": 2,
+  "/cause ([0-9a-f]{64})/": 1,
+  "${id}: cause ${input.cause}; run ${input.runId ?? 'worker'}; question ${digest(": 1,
+  "/run (\\S+?);/": 1,
+  "${question.id}: kind ${question.kind}; stop ${task.resolution.stop?.reason ?? 'none'}; head ${task.prHead ?? 'none'}; question ${digest(": 1,
   '"route_stop_settled"': 2,
   '"route_stop_intent"': 2,
   "return 'Source approval requires an exact-head environment blocked review with findings and named awaiting proofs; if only release gates remain, report ready_to_merge'": 1,
@@ -720,14 +1544,17 @@ for (const row of PARSED) {
   test(`census: ${row.site}`, () => {
     const present = (text: string, what: string) => {
       const floor = SITES[text] ?? 1;
-      assert.ok(occurrences(source(), text) >= floor, `${what} is gone or reworded at a site (want ${floor}): ${text}`);
+      assert.ok(
+        occurrences(source(), text) >= floor,
+        `${what} is gone or reworded at a site (want ${floor}): ${text}`,
+      );
     };
     if (row.re) {
-      present(`/${row.re.source}/${row.re.flags}`, 'reader');
+      present(`/${row.re.source}/${row.re.flags}`, "reader");
       assert.match(row.sample!, row.re);
     }
-    for (const text of row.reads ?? []) present(text, 'reader text');
-    for (const text of row.writers ?? []) present(text, 'writer text');
+    for (const text of row.reads ?? []) present(text, "reader text");
+    for (const text of row.writers ?? []) present(text, "writer text");
   });
 }
 
@@ -738,7 +1565,8 @@ for (const row of PARSED) {
  * A move keeps the counts, and a new kind or a new site needs no edit here. A PR
  * that deletes a reader or writer lowers its floor deliberately.
  */
-const EVENT_KINDS = `absent_creation_replaced:2:1 absent_worker_retry:2:1 adopted:1:0 agent_ask:2:3 agent_ask_answered:2:7 agent_ask_decision:1:3 agent_ask_delegated:1:2
+const EVENT_KINDS =
+  `absent_creation_replaced:2:1 absent_worker_retry:2:1 adopted:1:0 agent_ask:2:3 agent_ask_answered:2:7 agent_ask_decision:1:3 agent_ask_delegated:1:2
 agent_ask_delegation_missed:1:3 agent_ask_delegation_unknown:1:3 agent_ask_joined:1:1 agent_ask_planning_ruling:1:1 agent_ask_resumed:1:2
 agent_ask_reviewer_missed:1:2 agent_ask_stale_answered:1:2 agent_ask_superseded:3:3 agent_created:1:1 agent_intent:1:3 automatic_retry_suppressed:1:1
 blocked_pr_identity_deferred:1:1 blocked_review_evidence:1:1 blocker_ladder_classified:1:1 callback_reminder:3:10 callback_reminder_extended:2:1
@@ -770,40 +1598,57 @@ revision_requested:4:3 role_replacement:1:6 routing_signoff:1:7 run_completion:1
 runnable_proof_refused:1:1 runnable_proof_started:1:1 shell_notice_cleared:1:1 shell_notice_shown:1:1 state:2:40 submitted:1:1 telemetry_recovery:1:2
 telemetry_stage:1:5 transport_deferred:1:3 unchanged_check_revision_refused:2:1 unfinished_continuation:2:2 unfinished_pushback:2:2
 unused_workspace_archive_intent:1:1 worker_resume_requested:5:5 workspace_archived:2:4 workspace_cleanup_wait:1:1 workspace_contents_discarded:2:3
-workspace_created:1:3 workspace_creation_auto_replay:1:1 workspace_released:1:2`.split(/\s+/).map(row => {
-  const [kind, reads, writes] = row.split(':');
-  return { kind: kind!, reads: Number(reads), writes: Number(writes) };
-});
+workspace_created:1:3 workspace_creation_auto_replay:1:1 workspace_released:1:2`
+    .split(/\s+/)
+    .map((row) => {
+      const [kind, reads, writes] = row.split(":");
+      return { kind: kind!, reads: Number(reads), writes: Number(writes) };
+    });
 /** Written from a template, so their literal count is zero: the reader names the kinds, the template builds them. */
-const KIND_TEMPLATES = ['`review_delivery_${status}`'];
+const KIND_TEMPLATES = ["`review_delivery_${status}`"];
 
-const directRead = /\bevent\.kind\s*[!=]==?\s*(['"])([a-z][a-z0-9_]+)\1/g, listRead = /\[([^\]\n]+)\]\.includes\(event\.kind\)/g;
+const directRead = /\bevent\.kind\s*[!=]==?\s*(['"])([a-z][a-z0-9_]+)\1/g,
+  listRead = /\[([^\]\n]+)\]\.includes\(event\.kind\)/g;
 /** A decoded lifecycle reads its kinds as `switch` cases, which is the same reading fact. */
 const switchRead = /\bcase\s*(['"])([a-z][a-z0-9_]+)\1\s*:/g;
 /**
  * A shared record reader takes its kind as an argument, either with the events it
  * reads or as the kind a helper was handed. Both are one reading site for the kind.
  */
-const recordRead = /\b(?:recordsOf|firstOf|lastOf|eventDetail|eventsOfKind)\(\s*(?:events\s*,\s*)?(['"])([a-z][a-z0-9_]+)\1/g;
+const recordRead =
+  /\b(?:recordsOf|firstOf|lastOf|eventDetail|eventsOfKind)\(\s*(?:events\s*,\s*)?(['"])([a-z][a-z0-9_]+)\1/g;
 /** A decoded lifecycle reads the kinds one id wrote as the set it built. */
 const kindsRead = /\bkinds\.has\(\s*(['"])([a-z][a-z0-9_]+)\1\s*\)/g;
 
-test('census: no pinned event kind lost a reader', () => {
+test("census: no pinned event kind lost a reader", () => {
   const reads = new Map<string, number>();
   const read = (kind: string) => reads.set(kind, (reads.get(kind) ?? 0) + 1);
   for (const match of source().matchAll(directRead)) read(match[2]!);
-  for (const match of source().matchAll(listRead)) for (const kind of match[1]!.matchAll(/['"]([a-z][a-z0-9_]+)['"]/g)) read(kind[1]!);
+  for (const match of source().matchAll(listRead))
+    for (const kind of match[1]!.matchAll(/['"]([a-z][a-z0-9_]+)['"]/g))
+      read(kind[1]!);
   for (const match of source().matchAll(switchRead)) read(match[2]!);
   for (const match of source().matchAll(recordRead)) read(match[2]!);
   for (const match of source().matchAll(kindsRead)) read(match[2]!);
-  const lost = EVENT_KINDS.filter(row => (reads.get(row.kind) ?? 0) < row.reads).map(row => `${row.kind}: ${reads.get(row.kind) ?? 0} of ${row.reads}`);
-  assert.deepEqual(lost, [], 'a reader was renamed or removed');
+  const lost = EVENT_KINDS.filter(
+    (row) => (reads.get(row.kind) ?? 0) < row.reads,
+  ).map((row) => `${row.kind}: ${reads.get(row.kind) ?? 0} of ${row.reads}`);
+  assert.deepEqual(lost, [], "a reader was renamed or removed");
 });
 
-test('census: no pinned event kind lost a writer', () => {
-  const rest = source().replace(directRead, '').replace(listRead, '').replace(switchRead, '');
-  const count = (kind: string) => occurrences(rest, `'${kind}'`) + occurrences(rest, `"${kind}"`) + occurrences(rest, `\`${kind}\``);
-  const lost = EVENT_KINDS.filter(row => count(row.kind) < row.writes).map(row => `${row.kind}: ${count(row.kind)} of ${row.writes}`);
-  assert.deepEqual(lost, [], 'a writer was renamed or removed');
-  for (const template of KIND_TEMPLATES) assert.ok(rest.includes(template), template);
+test("census: no pinned event kind lost a writer", () => {
+  const rest = source()
+    .replace(directRead, "")
+    .replace(listRead, "")
+    .replace(switchRead, "");
+  const count = (kind: string) =>
+    occurrences(rest, `'${kind}'`) +
+    occurrences(rest, `"${kind}"`) +
+    occurrences(rest, `\`${kind}\``);
+  const lost = EVENT_KINDS.filter((row) => count(row.kind) < row.writes).map(
+    (row) => `${row.kind}: ${count(row.kind)} of ${row.writes}`,
+  );
+  assert.deepEqual(lost, [], "a writer was renamed or removed");
+  for (const template of KIND_TEMPLATES)
+    assert.ok(rest.includes(template), template);
 });

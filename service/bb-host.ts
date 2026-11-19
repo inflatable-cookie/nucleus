@@ -115,7 +115,6 @@ type RegisteredHost = { adapter: Adapter; admission: Admission };
 const META_KEY = "bbHostIdentity";
 const WORKSPACES_KEY = "bbWorkspaces";
 
-
 /** The durable identity one BB server keeps across service restarts. */
 interface RecordedIdentity {
   hostId: string;
@@ -144,36 +143,83 @@ export function createBbWorkspaceAdapter(
   connected: () => boolean,
   dataDir = "",
   store?: Store,
-  requestOperation?: (op: HostOperationName, input: unknown) => Promise<HostOperationOutcome>,
+  requestOperation?: (
+    op: HostOperationName,
+    input: unknown,
+  ) => Promise<HostOperationOutcome>,
 ) {
-  async function operation(op: HostOperationName, input: unknown): Promise<HostOperationOutcome> {
+  // One service connection per BB adapter: late operations share it rather than
+  // each retaining a separate socket while their answer is unknown.
+  let serviceClient: ServiceClient | undefined;
+  let serviceClientIdentity: string | undefined;
+  async function operation(
+    op: HostOperationName,
+    input: unknown,
+  ): Promise<HostOperationOutcome> {
     let online: boolean;
-    try { online = connected(); }
-    catch (error) { throw new BbHostOperationNotSentError(error instanceof Error ? error.message : String(error)); }
-    if (!online) throw new BbHostOperationNotSentError("BB host executor is offline");
+    try {
+      online = connected();
+    } catch (error) {
+      throw new BbHostOperationNotSentError(
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+    if (!online)
+      throw new BbHostOperationNotSentError("BB host executor is offline");
     if (requestOperation) return requestOperation(op, input);
     let client: ServiceClient;
     try {
       const info = readServiceInfo(dataDir);
       if (!info) throw new Error("Nucleus service identity is unavailable");
-      client = new ServiceClient({ socketPath: info.socketPath, credential: info.credential });
+      const identity = JSON.stringify([info.socketPath, info.credential]);
+      if (serviceClientIdentity !== identity) {
+        serviceClient?.close();
+        serviceClient = new ServiceClient({
+          socketPath: info.socketPath,
+          credential: info.credential,
+        });
+        serviceClientIdentity = identity;
+      }
+      client = serviceClient!;
       await client.connect();
     } catch (error) {
-      throw new BbHostOperationNotSentError(error instanceof Error ? error.message : String(error));
+      serviceClient = undefined;
+      serviceClientIdentity = undefined;
+      throw new BbHostOperationNotSentError(
+        error instanceof Error ? error.message : String(error),
+      );
     }
-    try {
-      return await client.request("service.bb-host-operation", { hostId, op, input }, 25_000) as HostOperationOutcome;
-    } finally { client.close(); }
+    return (await client.request(
+      "service.bb-host-operation",
+      { hostId, op, input },
+      25_000,
+    )) as HostOperationOutcome;
   }
-  const workspaces = (): Record<string, BbWorkspaceRecord> => store?.getMeta<Record<string, BbWorkspaceRecord>>(WORKSPACES_KEY) ?? {};
+  const workspaces = (): Record<string, BbWorkspaceRecord> =>
+    store?.getMeta<Record<string, BbWorkspaceRecord>>(WORKSPACES_KEY) ?? {};
   const getWorkspace = (id: string) => workspaces()[id];
-  const putWorkspace = (record: BbWorkspaceRecord) => { if (!store) throw new Error("BB workspace store is unavailable"); store.setMeta(WORKSPACES_KEY, { ...workspaces(), [record.id]: record }); };
-  const removeWorkspace = (id: string) => { if (!store) throw new Error("BB workspace store is unavailable"); const next = workspaces(); delete next[id]; store.setMeta(WORKSPACES_KEY, next); };
+  const putWorkspace = (record: BbWorkspaceRecord) => {
+    if (!store) throw new Error("BB workspace store is unavailable");
+    store.setMeta(WORKSPACES_KEY, { ...workspaces(), [record.id]: record });
+  };
+  const removeWorkspace = (id: string) => {
+    if (!store) throw new Error("BB workspace store is unavailable");
+    const next = workspaces();
+    delete next[id];
+    store.setMeta(WORKSPACES_KEY, next);
+  };
   async function workspaceAvailable(id: string): Promise<boolean> {
     let record = getWorkspace(id);
-    if (!record || record.archivedAt || !existsSync(record.directory)) return false;
-    const result = await operation("workspace.inspect", { repositoryRoot: record.repositoryRoot, ...(record.projectId ? { projectId: record.projectId } : {}) });
-    const inspected = result.value as { projectId: string | null; projectFound: boolean };
+    if (!record || record.archivedAt || !existsSync(record.directory))
+      return false;
+    const result = await operation("workspace.inspect", {
+      repositoryRoot: record.repositoryRoot,
+      ...(record.projectId ? { projectId: record.projectId } : {}),
+    });
+    const inspected = result.value as {
+      projectId: string | null;
+      projectFound: boolean;
+    };
     if (inspected.projectFound && inspected.projectId && !record.projectId) {
       record = { ...record, projectId: inspected.projectId };
       putWorkspace(record);
@@ -181,14 +227,29 @@ export function createBbWorkspaceAdapter(
     if (!inspected.projectFound) return false;
     if (record.environmentId) {
       const read = await operation("environment.list", {});
-      const rows = (read.value as { environments: Array<{ environmentId: string; path: string; status: string }> }).environments;
-      return rows.some(row => row.environmentId === record.environmentId && row.path === record.directory && row.status !== "destroyed");
+      const rows = (
+        read.value as {
+          environments: Array<{
+            environmentId: string;
+            path: string;
+            status: string;
+          }>;
+        }
+      ).environments;
+      return rows.some(
+        (row) =>
+          row.environmentId === record.environmentId &&
+          row.path === record.directory &&
+          row.status !== "destroyed",
+      );
     }
     return true;
   }
   const native = {
     hostId,
-    operation, records: workspaces, put: putWorkspace,
+    operation,
+    records: workspaces,
+    put: putWorkspace,
     isConnected: connected,
     capabilities: () => ({
       reportingViaMcp: false,
@@ -203,68 +264,152 @@ export function createBbWorkspaceAdapter(
     findAgents: async () => refusal("thread lookup"),
     archiveAgent: async () => refusal("thread archive"),
     validate: async () => refusal("workspace validation"),
-    workspaceIdAccepted: (id: unknown) => typeof id === "string" && /^bb-worktree-[a-f0-9]{40}$/.test(id),
+    workspaceIdAccepted: (id: unknown) =>
+      typeof id === "string" && /^bb-worktree-[a-f0-9]{40}$/.test(id),
     async repositoryProject(root: string) {
       const repositoryRoot = realpathSync(root);
       const result = await operation("workspace.inspect", { repositoryRoot });
-      const value = result.value as { projectId: string | null; projectFound: boolean };
-      return { ...(value.projectFound && value.projectId ? { projectId: value.projectId } : {}), workspaceRoot: repositoryRoot };
+      const value = result.value as {
+        projectId: string | null;
+        projectFound: boolean;
+      };
+      return {
+        ...(value.projectFound && value.projectId
+          ? { projectId: value.projectId }
+          : {}),
+        workspaceRoot: repositoryRoot,
+      };
     },
     async createWorkspace(task: Task) {
-      if (!task.directory) throw new ProvenPreSendRefusalError("BB workspace creation requires the task's recorded worktree directory");
+      if (!task.directory)
+        throw new ProvenPreSendRefusalError(
+          "BB workspace creation requires the task's recorded worktree directory",
+        );
       const directory = realpathSync(task.directory);
       const repositoryRoot = realpathSync(task.repoPath);
       const id = workspaceHandleForPath(directory);
       const old = getWorkspace(id);
       if (old) {
-        if (old.directory !== directory || old.repositoryRoot !== repositoryRoot) throw new Error("BB workspace identity conflict");
+        if (
+          old.directory !== directory ||
+          old.repositoryRoot !== repositoryRoot
+        )
+          throw new Error("BB workspace identity conflict");
         const { archivedAt, ...active } = old;
         if (archivedAt) putWorkspace(active);
         if (active.projectId) return { id, directory };
-        const inspected = await operation("workspace.inspect", { repositoryRoot });
-        const project = inspected.value as { projectId: string | null; projectFound: boolean };
-        if (!project.projectFound || !project.projectId) throw new Error("BB workspace creation remains unknown; project inspection found no matching project, so it was not resent");
+        const inspected = await operation("workspace.inspect", {
+          repositoryRoot,
+        });
+        const project = inspected.value as {
+          projectId: string | null;
+          projectFound: boolean;
+        };
+        if (!project.projectFound || !project.projectId)
+          throw new Error(
+            "BB workspace creation remains unknown; project inspection found no matching project, so it was not resent",
+          );
         putWorkspace({ ...active, projectId: project.projectId });
         return { id, directory };
       }
       // Record custody before the SDK write. If its reply is lost, a later create
       // adopts the project by a fresh exact-root read and never repeats the write.
-      putWorkspace({ id, directory, repositoryRoot, projectId: "", title: task.title });
+      putWorkspace({
+        id,
+        directory,
+        repositoryRoot,
+        projectId: "",
+        title: task.title,
+      });
       let result: HostOperationOutcome;
-      try { result = await operation("workspace.create", { repositoryRoot, workspacePath: directory, name: basename(repositoryRoot) || task.title }); }
-      catch (error) {
+      try {
+        result = await operation("workspace.create", {
+          repositoryRoot,
+          workspacePath: directory,
+          name: basename(repositoryRoot) || task.title,
+        });
+      } catch (error) {
         // A local failure before the service request, or a typed refusal before the
         // SDK write, proves the project create could not have landed. Unknown
         // outcomes keep the reservation so a later call must observe, never resend.
-        if (error instanceof BbHostOperationNotSentError || (error instanceof ServiceRequestError && (error.code === "invalid_input" || error.code === "refused"))) removeWorkspace(id);
+        if (
+          error instanceof BbHostOperationNotSentError ||
+          (error instanceof ServiceRequestError &&
+            (error.code === "invalid_input" ||
+              error.code === "refused" ||
+              error.code === "busy"))
+        )
+          removeWorkspace(id);
         throw error;
       }
-      const value = result.value as { projectId: string; handle: string; path: string; spawned: number };
-      if (value.handle !== id || value.path !== directory || value.spawned !== 0) throw new Error("BB workspace.create returned a mismatched handle or spawned a thread");
-      putWorkspace({ id, directory, repositoryRoot, projectId: value.projectId, title: task.title });
+      const value = result.value as {
+        projectId: string;
+        handle: string;
+        path: string;
+        spawned: number;
+      };
+      if (
+        value.handle !== id ||
+        value.path !== directory ||
+        value.spawned !== 0
+      )
+        throw new Error(
+          "BB workspace.create returned a mismatched handle or spawned a thread",
+        );
+      putWorkspace({
+        id,
+        directory,
+        repositoryRoot,
+        projectId: value.projectId,
+        title: task.title,
+      });
       return { id, directory };
     },
     async findWorkspaces(task: Task) {
       if (!task.directory) return [];
       const directory = realpathSync(task.directory);
-      return Object.values(workspaces()).filter(item => item.directory === directory && item.projectId && !item.archivedAt).map(item => ({ id: item.id, directory: item.directory }));
+      return Object.values(workspaces())
+        .filter(
+          (item) =>
+            item.directory === directory && item.projectId && !item.archivedAt,
+        )
+        .map((item) => ({ id: item.id, directory: item.directory }));
     },
     workspaceAvailable,
     workspaceRef(id: string): HostWorkspaceRef {
       let available = false;
       return {
-        get directory() { return getWorkspace(id)?.directory ?? null; },
-        async refresh() { available = await workspaceAvailable(id); return available; },
-        current() { const record = getWorkspace(id); return available && record ? { projectRootPath: record.directory, workspaceDirectory: record.directory, projectId: record.projectId, workspaceKind: "external" } : null; },
+        get directory() {
+          return getWorkspace(id)?.directory ?? null;
+        },
+        async refresh() {
+          available = await workspaceAvailable(id);
+          return available;
+        },
+        current() {
+          const record = getWorkspace(id);
+          return available && record
+            ? {
+                projectRootPath: record.directory,
+                workspaceDirectory: record.directory,
+                projectId: record.projectId,
+                workspaceKind: "external",
+              }
+            : null;
+        },
         async archive() {
           const record = getWorkspace(id);
           const archivedAt = record?.archivedAt ?? new Date().toISOString();
-          if (record && !record.archivedAt) putWorkspace({ ...record, archivedAt });
+          if (record && !record.archivedAt)
+            putWorkspace({ ...record, archivedAt });
           return { archivedAt, error: null };
         },
       };
     },
-    async taskWorkspaceArchived(id: string) { const record = getWorkspace(id); return !record || Boolean(record.archivedAt); },
+    async taskWorkspaceArchived(id: string) {
+      const record = getWorkspace(id);
+      return !record || Boolean(record.archivedAt);
+    },
     verifyResume: async () => refusal("resume verification"),
     verifyCheckpoint: async () => refusal("checkpoint verification"),
     verifyReplacementSource: async () =>
@@ -277,32 +422,73 @@ export function createBbWorkspaceAdapter(
 }
 
 export function createBbHostAdapter(
-  hostId: string, connected: () => boolean, dataDir = "", store?: Store,
-  requestOperation?: (op: HostOperationName, input: unknown) => Promise<HostOperationOutcome>,
+  hostId: string,
+  connected: () => boolean,
+  dataDir = "",
+  store?: Store,
+  requestOperation?: (
+    op: HostOperationName,
+    input: unknown,
+  ) => Promise<HostOperationOutcome>,
 ): Adapter {
-  const native = createBbWorkspaceAdapter(hostId, connected, dataDir, store, requestOperation);
+  const native = createBbWorkspaceAdapter(
+    hostId,
+    connected,
+    dataDir,
+    store,
+    requestOperation,
+  );
   if (!store) return native as unknown as Adapter;
-  return composeBbAdapter({ hostId, connected, dataDir, store, workspaces: native, operation: native.operation,
-    records: native.records, put: native.put,
-    notSent: error => error instanceof BbHostOperationNotSentError || (error instanceof ServiceRequestError && (error.code === "invalid_input" || error.code === "refused")),
+  return composeBbAdapter({
+    hostId,
+    connected,
+    dataDir,
+    store,
+    workspaces: native,
+    operation: native.operation,
+    records: native.records,
+    put: native.put,
+    notSent: (error) =>
+      error instanceof BbHostOperationNotSentError ||
+      (error instanceof ServiceRequestError &&
+        (error.code === "invalid_input" ||
+          error.code === "refused" ||
+          error.code === "busy")),
   });
 }
 
 /** Record a parentChanged event only when its source is a Nucleus thread on that BB host. */
-export function recordBbPresentationParentChange(store: Store, hostId: string, threadId: string, parentThreadId: string | null, at: string): string | null {
-  const agents = store.getMeta<{ agents?: Record<string, { task?: string }> }>("bbThreads")?.agents;
+export function recordBbPresentationParentChange(
+  store: Store,
+  hostId: string,
+  threadId: string,
+  parentThreadId: string | null,
+  at: string,
+): string | null {
+  const agents = store.getMeta<{ agents?: Record<string, { task?: string }> }>(
+    "bbThreads",
+  )?.agents;
   const taskId = agents?.[threadId]?.task;
   if (!taskId) return null;
   const task = store.task(taskId);
   if (task.hostId !== hostId || task.removedAt) return null;
   // A drop under one of the task's own threads is not a new parent for the group:
   // the group cannot nest under itself, so the recorded parent stands.
-  if (parentThreadId !== null && agents?.[parentThreadId]?.task === taskId) return null;
+  if (parentThreadId !== null && agents?.[parentThreadId]?.task === taskId)
+    return null;
   // The same parent again (a second thread of a dragged group) is the same record.
-  if (task.presentationParent && task.presentationParent.parentThreadId === parentThreadId) return taskId;
+  if (
+    task.presentationParent &&
+    task.presentationParent.parentThreadId === parentThreadId
+  )
+    return taskId;
   const by = "operator (BB drag and drop)";
-  store.update(taskId, { presentationParent: { parentThreadId, at, by } }, "presentation_parent_changed",
-    `BB operator moved task presentation under ${parentThreadId ?? "no parent"}; planner and authority unchanged`);
+  store.update(
+    taskId,
+    { presentationParent: { parentThreadId, at, by } },
+    "presentation_parent_changed",
+    `BB operator moved task presentation under ${parentThreadId ?? "no parent"}; planner and authority unchanged`,
+  );
   return taskId;
 }
 
@@ -358,7 +544,9 @@ export class BbHostConnection {
       hosts: [...this.records.values()].map((record) => ({
         ...record,
         online: this.session?.id === record.hostId,
-        heartbeatStale: this.session?.id === record.hostId && this.stale(record.lastHeartbeatAt),
+        heartbeatStale:
+          this.session?.id === record.hostId &&
+          this.stale(record.lastHeartbeatAt),
       })),
       offlineReason: this.session ? "" : this.offlineReason,
       lastRefusal: this.lastRefusal,
@@ -373,7 +561,8 @@ export class BbHostConnection {
    * records and history are untouched. Call inside the registry's write transaction.
    */
   forget(hostId: string): void {
-    if (this.session?.id === hostId) throw new Error(`BB host ${hostId} is online`);
+    if (this.session?.id === hostId)
+      throw new Error(`BB host ${hostId} is online`);
     this.records.delete(hostId);
     if (this.recorded()?.hostId === hostId) {
       this.store.deleteMeta(META_KEY);
@@ -502,12 +691,20 @@ export class BbHostConnection {
     if (!this.session || this.session.id !== hostId) return;
     const record = this.records.get(hostId);
     if (!record) return;
-    this.records.set(hostId, { ...record, lastHeartbeatAt: at, heartbeatStale: false });
+    this.records.set(hostId, {
+      ...record,
+      lastHeartbeatAt: at,
+      heartbeatStale: false,
+    });
     this.store.advanceRevision();
   }
 
   private stale(lastHeartbeatAt: string | null): boolean {
-    if (!lastHeartbeatAt) return this.now() - Date.parse(this.session?.connectedAt ?? "") > BB_HEARTBEAT_STALE_MS;
+    if (!lastHeartbeatAt)
+      return (
+        this.now() - Date.parse(this.session?.connectedAt ?? "") >
+        BB_HEARTBEAT_STALE_MS
+      );
     return this.now() - Date.parse(lastHeartbeatAt) > BB_HEARTBEAT_STALE_MS;
   }
 

@@ -3,7 +3,7 @@
  * not a Nucleus decision, so it lives here beside the other host failure kinds
  * and every reader asks `isAgentGoneRefusal` instead of comparing the text.
  */
-export const AGENT_NOT_FOUND = 'Agent was not found';
+export const AGENT_NOT_FOUND = "Agent was not found";
 
 /** True when a host call failed because that thread is gone. */
 export function isAgentGoneRefusal(error: unknown): boolean {
@@ -20,10 +20,15 @@ export class ArchiveNotDeliveredError extends Error {
 export class ProvenPreSendRefusalError extends Error {
   constructor(readonly reason: string) {
     super(`Reviewer continuation refused before send: ${reason}`);
-    this.name = 'ProvenPreSendRefusalError';
+    this.name = "ProvenPreSendRefusalError";
   }
 }
-export interface HostDeliveryDiagnostic { command?: string; field?: string; reason?: string; guidance?: string }
+export interface HostDeliveryDiagnostic {
+  command?: string;
+  field?: string;
+  reason?: string;
+  guidance?: string;
+}
 
 /**
  * Remote error tags the nightly can send. Only these known tags may be named in
@@ -31,9 +36,12 @@ export interface HostDeliveryDiagnostic { command?: string; field?: string; reas
  * list before anything is retained.
  */
 export const SAFE_REMOTE_TAGS: readonly string[] = [
-  'EnvironmentAuthorizationError', 'OrchestrationV2DispatchCommandError',
-  'OrchestrationV2GetThreadProjectionError', 'OrchestrationV2GetShellSnapshotError',
-  'OrchestrationV2ThreadLaunchError', 'ProjectMutationError',
+  "EnvironmentAuthorizationError",
+  "OrchestrationV2DispatchCommandError",
+  "OrchestrationV2GetThreadProjectionError",
+  "OrchestrationV2GetShellSnapshotError",
+  "OrchestrationV2ThreadLaunchError",
+  "ProjectMutationError",
 ];
 
 /**
@@ -47,11 +55,14 @@ export const SAFE_REMOTE_TAGS: readonly string[] = [
  * from its own constants and the fixed tag list.
  */
 export function sanitizeHostFailureReason(input: unknown): string | undefined {
-  if (typeof input !== 'string' || !input || input.length > 160) return undefined;
-  return /^HTTP [1-5]\d{2}$/.test(input)
-    || /^[A-Z][A-Za-z0-9]{1,78}Error$/.test(input)
-    || /^[a-z][a-z0-9_]{0,62}$/.test(input)
-    || /^[A-Z][A-Za-z0-9]{1,78}Error:[a-z][a-z0-9_]{0,62}$/.test(input) ? input : undefined;
+  if (typeof input !== "string" || !input || input.length > 160)
+    return undefined;
+  return /^HTTP [1-5]\d{2}$/.test(input) ||
+    /^[A-Z][A-Za-z0-9]{1,78}Error$/.test(input) ||
+    /^[a-z][a-z0-9_]{0,62}$/.test(input) ||
+    /^[A-Z][A-Za-z0-9]{1,78}Error:[a-z][a-z0-9_]{0,62}$/.test(input)
+    ? input
+    : undefined;
 }
 
 /**
@@ -61,7 +72,7 @@ export function sanitizeHostFailureReason(input: unknown): string | undefined {
  * only remote-derived fields are bounded, and this is not one.
  */
 export function sanitizeHostGuidance(input: unknown): string | undefined {
-  return typeof input === 'string' && input ? input : undefined;
+  return typeof input === "string" && input ? input : undefined;
 }
 
 /**
@@ -74,7 +85,8 @@ export function sanitizeHostGuidance(input: unknown): string | undefined {
  * only the error name).
  */
 export function sanitizeHostFailureDetail(input: unknown): string | undefined {
-  if (typeof input !== 'string' || !input || input.length > 200) return undefined;
+  if (typeof input !== "string" || !input || input.length > 200)
+    return undefined;
   return /^[A-Za-z][A-Za-z0-9 .:_\-]{0,199}$/.test(input) ? input : undefined;
 }
 
@@ -89,45 +101,80 @@ export function sanitizeHostFailureDetail(input: unknown): string | undefined {
  * `ECONNREFUSED` and a numeric or library code all appear as the host wrote them.
  */
 export function hostFailureRefusalDetail(error: unknown): string {
-  const record = error && typeof error === 'object' ? error as { name?: unknown; message?: unknown; code?: unknown; method?: unknown } : {};
+  const record =
+    error && typeof error === "object"
+      ? (error as {
+          name?: unknown;
+          message?: unknown;
+          code?: unknown;
+          method?: unknown;
+        })
+      : {};
   /**
    * One field of the failure as the amended rule keeps it: a code or method is
    * present or it is not — no character class decides that — so any string or
    * number is kept, first line only and clipped to the field's bound.
    */
   const held = (value: unknown, limit: number): string | undefined => {
-    const text = typeof value === 'number' && Number.isFinite(value) ? String(value) : value;
-    if (typeof text !== 'string') return undefined;
-    const line = text.split('\n')[0]!.trim();
+    const text =
+      typeof value === "number" && Number.isFinite(value)
+        ? String(value)
+        : value;
+    if (typeof text !== "string") return undefined;
+    const line = text.split("\n")[0]!.trim();
     return line ? line.slice(0, limit) : undefined;
   };
-  const name = held(record.name, 80) ?? 'Error';
+  const name = held(record.name, 80) ?? "Error";
   const code = held(record.code, 80);
   const method = held(record.method, 80);
-  const kind = `${name}${code && code !== name ? ` ${code}` : ''}${method ? ` ${method}` : ''}`;
+  const kind = `${name}${code && code !== name ? ` ${code}` : ""}${method ? ` ${method}` : ""}`;
   const line = held(record.message, 200);
   return line ? `${kind}: ${line}` : kind;
 }
 
 /** Native names plus a bounded, shape-restricted reason and bounded guidance: never arbitrary remote text. */
-export function sanitizeHostDeliveryDiagnostic(input: unknown): HostDeliveryDiagnostic {
-  const value = input && typeof input === 'object' ? input as Record<string, unknown> : {};
-  const command = typeof value.command === 'string' && /^[A-Za-z][A-Za-z0-9_.:-]{0,99}$/.test(value.command) ? value.command : undefined;
-  const field = typeof value.field === 'string' && value.field.length <= 128
-    && /^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*|\[\d{1,6}\])*$/.test(value.field)
-    && value.field.split(/\.|\[/).length <= 8 ? value.field : undefined;
+export function sanitizeHostDeliveryDiagnostic(
+  input: unknown,
+): HostDeliveryDiagnostic {
+  const value =
+    input && typeof input === "object"
+      ? (input as Record<string, unknown>)
+      : {};
+  const command =
+    typeof value.command === "string" &&
+    /^[A-Za-z][A-Za-z0-9_.:-]{0,99}$/.test(value.command)
+      ? value.command
+      : undefined;
+  const field =
+    typeof value.field === "string" &&
+    value.field.length <= 128 &&
+    /^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*|\[\d{1,6}\])*$/.test(
+      value.field,
+    ) &&
+    value.field.split(/\.|\[/).length <= 8
+      ? value.field
+      : undefined;
   const reason = sanitizeHostFailureReason(value.reason);
   const guidance = sanitizeHostGuidance(value.guidance);
-  return { ...(command ? { command } : {}), ...(field ? { field } : {}), ...(reason ? { reason } : {}), ...(guidance ? { guidance } : {}) };
+  return {
+    ...(command ? { command } : {}),
+    ...(field ? { field } : {}),
+    ...(reason ? { reason } : {}),
+    ...(guidance ? { guidance } : {}),
+  };
 }
 
 /** Diagnostic evidence is not proof of non-delivery and never permits a resend. */
 export class HostUnknownDeliveryError extends Error {
   readonly diagnostic: HostDeliveryDiagnostic;
+  late?: Promise<unknown>;
+  lateDelivery?: boolean;
   constructor(diagnostic?: HostDeliveryDiagnostic) {
     const clean = sanitizeHostDeliveryDiagnostic(diagnostic);
-    super(`Host delivery is unknown; command was not resent${clean.command ? `; command ${clean.command}` : ''}${clean.field ? `; field ${clean.field}` : ''}${clean.reason ? `; reason ${clean.reason}` : ''}${clean.guidance ? `; guidance ${clean.guidance}` : ''}`);
-    this.name = 'HostUnknownDeliveryError';
+    super(
+      `Host delivery is unknown; command was not resent${clean.command ? `; command ${clean.command}` : ""}${clean.field ? `; field ${clean.field}` : ""}${clean.reason ? `; reason ${clean.reason}` : ""}${clean.guidance ? `; guidance ${clean.guidance}` : ""}`,
+    );
+    this.name = "HostUnknownDeliveryError";
     this.diagnostic = clean;
   }
 }
@@ -144,12 +191,35 @@ export class HostCallAbandonedError extends HostUnknownDeliveryError {
   readonly cls: string;
   readonly holder: string;
   readonly deadlineMs: number;
-  constructor(input: { call: string; holder: string; ageMs: number; deadlineMs: number }) {
-    super({ command: `paseo.${input.call}`, reason: 'host_call_past_deadline',
-      guidance: `${input.holder} held its admission slot for ${Math.round(input.ageMs)} ms, past its ${input.deadlineMs} ms deadline. The outcome is unknown and the call was not resent; reconcile it from recorded state before asking again.` });
-    this.name = 'HostCallAbandonedError';
+  constructor(input: {
+    call: string;
+    holder: string;
+    ageMs: number;
+    deadlineMs: number;
+  }) {
+    super({
+      command: `paseo.${input.call}`,
+      reason: "host_call_past_deadline",
+      guidance: `${input.holder} held its admission slot for ${Math.round(input.ageMs)} ms, past its ${input.deadlineMs} ms deadline. The outcome is unknown and the call was not resent; reconcile it from recorded state before asking again.`,
+    });
+    this.name = "HostCallAbandonedError";
     this.cls = input.call;
     this.holder = input.holder;
     this.deadlineMs = input.deadlineMs;
   }
+}
+
+/** A host deadline expired; let the host pass stop and preserve its wait. */
+export function isHostOperationTimeout(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return (
+    [
+      "ServiceHostTimeoutError",
+      "HostOperationTimeoutError",
+      "HostCallAbandonedError",
+    ].includes(error.name) ||
+    (error.name === "T3RpcError" &&
+      (error as Error & { code?: string }).code === "timeout") ||
+    (error.cause !== error && isHostOperationTimeout(error.cause))
+  );
 }
