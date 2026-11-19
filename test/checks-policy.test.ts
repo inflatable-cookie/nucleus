@@ -817,7 +817,7 @@ for (const reportedHead of ['', head, 'd'.repeat(40)]) {
       // round: it parks with one planner escalation and still blocks merge.
       await f.engine.wake();
       assert.ok(['escalated', 'operator_needed'].includes(f.current().resolution.stop?.reason ?? ''), 'the unchanged refusal remains parked in planner escalation');
-      assert.match(f.current().reason, /Waiting with the planner/);
+      assert.match(f.current().reason, /blocker escalation/i, 'the visible wait identifies the open escalation');
       assert.equal(f.counts().merges, 0, 'the failed check still blocks merge');
       assert.equal(f.current().resolution.review?.eventId, reReview.eventId, 'the intervening re-review is accepted at the same head');
       assert.equal(f.current().resolution.revisionRuns, 0, 'the identical observation spends no semantic round');
