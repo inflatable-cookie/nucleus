@@ -63,10 +63,13 @@ test('a brief with no visual proof says there are no proof files to deliver, wit
   const noProof = '## Outcome\n\nChange the parser and run the tests.\n';
   assert.equal(briefNamesVisualProof(task(noProof)), false);
   const rendered = prompts(noProof);
-  for (const [role, prompt] of Object.entries(rendered)) {
+  // Authors deliver proof files; the reviewer only reads the recorded inventory.
+  for (const role of ['worker', 'workerContinuation', 'revision'] as const) {
+    const prompt = rendered[role];
     assert.ok(prompt.includes(PROOF_FILES_NONE_NOTE), `${role} prompt says there is nothing to deliver`);
     assert.ok(!prompt.includes(PROOF_FILES_RULE), `${role} prompt carries no delivery mechanics it does not need`);
   }
+  assert.doesNotMatch(rendered.reviewer, /there are none to deliver|They are optional delivery/);
   assert.match(PROOF_FILES_NONE_NOTE, /there are none to deliver/);
   assert.doesNotMatch(PROOF_FILES_NONE_NOTE, REQUIREMENT_WORDS);
 });
@@ -80,10 +83,14 @@ test('a brief that names visual proof carries the optional delivery mechanics, a
   assert.match(paragraph, /summarise larger evidence into compact evidence plus hashes/);
   assert.doesNotMatch(paragraph, REQUIREMENT_WORDS);
   assert.doesNotMatch(paragraph, /exceeds the limits|Deliver the subset the brief allows|reviewResponsibility/);
-  for (const [role, prompt] of Object.entries(rendered)) {
+  for (const role of ['worker', 'workerContinuation', 'revision'] as const) {
+    const prompt = rendered[role];
     assert.ok(prompt.includes(PROOF_FILES_RULE), `${role} prompt carries the delivery mechanics`);
     assert.doesNotMatch(prompt, /exceeds the limits|Deliver the subset the brief allows/);
   }
+  // The reviewer's inventory summary still carries no requirement language.
+  assert.match(rendered.reviewer, /1 proof file recorded for head[\s\S]*context proofs/);
+  assert.doesNotMatch(optionalLines(rendered.reviewer).join('\n'), /required|must/i);
   // The old wording attached the limits to "required" delivery, which is what a
   // worker read as a reason to stop before writing any code.
   assert.match(PROOF_FILES_SIZE_REFUSAL, /packaging, never a reason to stop/);

@@ -2484,7 +2484,7 @@ test("the required-proof instruction is fixed prompt text, rendered outside the 
   // route only; the optional proof-file limits live in the proof-file paragraph.
   assert.match(
     REQUIRED_PROOF_AUTHOR_NOTE,
-    /never waive a proof this brief names as required[\s\S]*report it missing rather than claiming the work is complete[\s\S]*through proofFiles/,
+    /never waive a proof this brief names as required[\s\S]*through proofFiles[\s\S]*report it missing rather than claiming the work is complete/,
   );
   assert.doesNotMatch(REQUIRED_PROOF_AUTHOR_NOTE, /exceeds the limits|subset the brief allows|reviewResponsibility/);
 });

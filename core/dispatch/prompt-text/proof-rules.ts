@@ -62,7 +62,7 @@ export const PROOF_FILES_RULE = `Proof files for the retained reviewer. They are
  * a useful artifact, so a wrong reading of the brief never withholds evidence and
  * never blocks the turn.
  */
-export const PROOF_FILES_NONE_NOTE = "Proof files for the retained reviewer: this brief names no visual or rendered proof, so there are none to deliver. If one turns out to be useful, deliver it the same way (proofFiles: [{label, path}] with the current pushed PR HEAD) and say why in your report. Size limits are packaging, never a reason to stop.";
+export const PROOF_FILES_NONE_NOTE = "Proof files for the retained reviewer: this brief names no visual or rendered proof, so there are none to deliver. If one turns out to be useful, deliver it the same way (proofFiles: [{label, path}] with top-level head equal to the current pushed PR HEAD; a revision may start at an earlier head, so report the head it now pushed, not the run's starting head) and say why in your report. Size limits are packaging, never a reason to stop.";
 
 /**
  * Whether the brief asks for visual or rendered proof. The match is generous on
