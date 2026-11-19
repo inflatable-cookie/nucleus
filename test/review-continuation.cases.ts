@@ -2181,17 +2181,17 @@ weighted(1)(
       engine.wakeTask = async () => {};
       engine.wakeRepository = async () => {};
       let observationApplied = false;
-      f.adapter.verifyPr = async () => {
-        queueMicrotask(() =>
+      const requireCurrent = f.engine.requireOwnerControlCurrent.bind(f.engine);
+      f.engine.requireOwnerControlCurrent = (task, version, message) => {
+        requireCurrent(task, version, message);
+        if (message === "Task changed during PR head verification; refresh before retrying") {
           queueMicrotask(() => {
-            f.store.update(blocked.id, {
-              reason: "Concurrent observation after verification",
-            });
+            f.store.update(blocked.id, { reason: "Concurrent observation after verification" });
             observationApplied = true;
-          }),
-        );
-        return { head, url: blocked.prUrl! };
+          });
+        }
       };
+      f.adapter.verifyPr = async () => ({ head, url: blocked.prUrl! });
       const result = await engine.performTaskControlApplied(
         taskControlInputSchema.parse({
           taskId: blocked.id,
@@ -2514,6 +2514,9 @@ weighted(1)(
         summary: "Legacy author finding",
         reviewText: "A concrete defect",
       };
+      // Keep the reporting turn live until the duplicate receipt is read;
+      // release revokes its credential (orchestration contract, run identity).
+      f.states.set("review-agent", { ...f.states.get("review-agent")!, status: "running", active: true });
       const receipt = await f.engine.complete(report, "token");
       assert.deepEqual(f.run().completion, report);
       assert.deepEqual(await f.engine.complete(report, "token"), receipt);

@@ -1260,6 +1260,10 @@ weighted(9)(
       coordinatorRecovery: true,
     });
     try {
+      // A blocked review is pre-merge. A verified merge now supersedes the
+      // reviewer result and proceeds to closeout (Spec 066 I18).
+      f.store.update(f.taskId, { resolution: { ...f.current().resolution, mergedCommit: null, syncedCommit: null } });
+      f.adapter.merged = async () => ({ merged: false, commit: null, head: "6".repeat(40), base: "main" });
       const repair = await f.advanceRemote("blocked-repair");
       await f.engine.wake();
       const held = f.current();

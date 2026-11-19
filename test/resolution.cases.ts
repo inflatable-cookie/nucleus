@@ -6805,7 +6805,8 @@ test("blocked closeout can resynchronize main and retry on the retained coordina
     await f.report("blocked");
     assert.equal(f.current().phase, "blocked");
     f.engine.resolution.retry(f.current());
-    assert.equal(f.current().phase, "syncing");
+    // Spec 066 I18 resumes at closeout when synchronization is already recorded.
+    assert.equal(f.current().phase, "closing");
     await f.engine.wake();
     await f.engine.wake();
     assert.equal(f.run().agentId, coordinator);
@@ -9337,6 +9338,8 @@ test("successful closeout archives owned workspaces once; pause and shared work 
   try {
     const archived: string[] = [];
     Object.assign(f.adapter, {
+      // A retry must observe the recorded workspace before attempting another archive.
+      taskWorkspaceArchived: async () => false,
       archiveTaskWorkspace: async (
         t: any,
         id: string,
@@ -10497,6 +10500,8 @@ test("a done task with an idle foreign thread archives and records the thread id
     const archived: string[] = [];
     const allowIdle: boolean[] = [];
     Object.assign(f.adapter, {
+      // A retry must observe the recorded workspace before attempting another archive.
+      taskWorkspaceArchived: async () => false,
       archiveTaskWorkspace: async (
         _t: unknown,
         _id: string,
@@ -14097,7 +14102,7 @@ test("scoped revise fails closed on empty instructions, merged PRs and absent PR
           false,
           "Rebase the PR",
         ),
-      /unmerged task PR/,
+      /task PR has merged/,
     );
     f.store.update(f.task.id, {
       resolution: { ...f.current().resolution, mergedCommit: null },

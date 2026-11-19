@@ -82,6 +82,9 @@ test('Sol #611 P2: a replay never borrows an archive it did not cause, and its s
   const control = { taskId: f.task().id, version: f.task().version, action: 'retry_effect' as const, effect: 'workspace_archive.ws',
     caller: 'operator (board)', reason: 'A stale retry of an already archived workspace' };
   const operationId = accept('borrow', control);
+  // A replay has a stale version. Current-version retries can observe the
+  // already-archived workspace directly (Spec 066 I29).
+  f.store.update(f.task().id, { reason: 'A later independent task update' });
   await new Promise(resolve => setTimeout(resolve, 5));
   // Another workspace archives after the operation was accepted.
   f.store.event(f.task().id, 'workspace_archived', 'workspace_archived; workspace other-ws');
