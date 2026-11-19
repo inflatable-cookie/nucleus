@@ -164,7 +164,7 @@ function fixture(
       roles: ["worker"],
       weight: 1,
       scopes: ["general"],
-      capability: "medium",
+      capability: "worker",
       cost: "low",
     },
     {
@@ -174,7 +174,7 @@ function fixture(
       roles: ["reviewer"],
       weight: 1,
       scopes: ["general"],
-      capability: "medium",
+      capability: "worker",
       cost: "medium",
     },
     {
@@ -184,7 +184,7 @@ function fixture(
       roles: ["coordinator"],
       weight: 1,
       scopes: ["general"],
-      capability: "low",
+      capability: "mechanical",
       cost: "very_low",
     },
   ]);
@@ -2047,7 +2047,7 @@ test("Spec 052: an applied changes-required review climbs the next worker run on
         roles: ["worker"],
         weight: 1,
         scopes: ["general"],
-        capability: "high",
+        capability: "worker",
         cost: "low",
       },
     ]);
@@ -2125,7 +2125,7 @@ test("Spec 052: an applied changes-required review climbs the next worker run on
         roles: ["reviewer"],
         weight: 1,
         scopes: ["general"],
-        capability: "high",
+        capability: "worker",
         cost: "medium",
       },
     ]);
@@ -2198,7 +2198,7 @@ test("Spec 052: an applied changes-required review climbs the next worker run on
         roles: ["reviewer"],
         weight: 1,
         scopes: ["general"],
-        capability: "very_high",
+        capability: "heavyweight",
         cost: "medium",
       },
     ]);
@@ -3040,7 +3040,7 @@ test("responsible non-delivery gets one retained pushback, one same-capability p
         roles: ["worker"],
         weight: 1,
         scopes: ["general"],
-        capability: "medium",
+        capability: "worker",
         cost: "low",
       },
       {
@@ -3050,7 +3050,7 @@ test("responsible non-delivery gets one retained pushback, one same-capability p
         roles: ["worker"],
         weight: 1,
         scopes: ["general"],
-        capability: "medium",
+        capability: "worker",
         cost: "very_high",
       },
     ]);
@@ -3229,7 +3229,7 @@ test("Spec 052: a non-delivery alternate keeps the climbed tier in its permissio
         roles: ["worker"],
         weight: 1,
         scopes: ["general"],
-        capability: "very_high",
+        capability: "heavyweight",
         cost: "high",
       },
       {
@@ -3239,7 +3239,7 @@ test("Spec 052: a non-delivery alternate keeps the climbed tier in its permissio
         roles: ["worker"],
         weight: 1,
         scopes: ["general"],
-        capability: "very_high",
+        capability: "heavyweight",
         cost: "high",
       },
     ]);
@@ -3906,7 +3906,7 @@ test("versioned worker exclusion is shown to recovery coordinators and replaces 
         .pool()
         .map((entry) =>
           entry.profileId === "coordinator"
-            ? { ...entry, capability: "very_low" as const }
+            ? { ...entry, capability: "mechanical" as const }
             : entry,
         ),
       {
@@ -3916,7 +3916,7 @@ test("versioned worker exclusion is shown to recovery coordinators and replaces 
         roles: ["worker"],
         weight: 1,
         scopes: ["general"],
-        capability: "medium",
+        capability: "worker",
         cost: "low",
       },
     ]);
@@ -8320,7 +8320,7 @@ test("coordinator exhaustion is stored while paused, then replaced with a fenced
         group: "coord-backup",
         weight: 1,
         scopes: ["general"],
-        capability: "low",
+        capability: "mechanical",
         cost: "very_low",
       },
     ]);
@@ -8391,7 +8391,7 @@ test("closeout provider replacement refreshes main without repeating merge", asy
         group: "backup",
         weight: 1,
         scopes: ["general"],
-        capability: "low",
+        capability: "mechanical",
         cost: "very_low",
       },
     ]);
@@ -16920,7 +16920,7 @@ function signoffPool(f: ReturnType<typeof fixture>, frontier: string) {
       weight: 1,
       scopes: ["general"],
       cost: "low",
-      capability: "medium",
+      capability: "worker",
     },
     {
       profileId: cheapCoordinator.id,
@@ -16930,7 +16930,7 @@ function signoffPool(f: ReturnType<typeof fixture>, frontier: string) {
       weight: 1,
       scopes: ["general"],
       cost: "very_low",
-      capability: "low",
+      capability: "mechanical",
     },
   ]);
 }

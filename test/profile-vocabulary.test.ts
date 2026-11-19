@@ -272,7 +272,7 @@ test('each host\'s routing snapshot carries its translation, selection and routi
   try {
     // Only Opus and the plan-mode Codex are enabled; Opus is rated high at medium cost.
     const pool = storedPool().map(entry => ({ ...entry, enabled: entry.profileId === 'shape-4' || entry.profileId === 'shape-10',
-      ...(entry.profileId === 'shape-4' ? { capability: 'high' as const, cost: 'medium' as const } : {}) }));
+      ...(entry.profileId === 'shape-4' ? { capability: 'worker' as const, cost: 'medium' as const } : {}) }));
     store.setProfiles(poolShapes.map((_, index) => stored(index)));
     store.setMeta('pool', pool);
     await engine.refresh();
@@ -328,9 +328,9 @@ test('routingPolicy explains a medium task landing on the cheapest profile that 
     // them, and a low-rated profile is not in the set at all (the level starts a
     // medium task at its requested tier now, Tom 2026-11-17).
     const pool = [
-      poolSchema.parse({ profileId: 'pricey', enabled: true, group: 'g1', roles: ['worker'], weight: 1, scopes: ['general'], cost: 'very_high', capability: 'medium' }),
-      poolSchema.parse({ profileId: 'cheap', enabled: true, group: 'g2', roles: ['worker'], weight: 1, scopes: ['general'], cost: 'very_low', capability: 'medium' }),
-      poolSchema.parse({ profileId: 'lowrated', enabled: true, group: 'g3', roles: ['worker'], weight: 4, scopes: ['general'], cost: 'very_low', capability: 'low' }),
+      poolSchema.parse({ profileId: 'pricey', enabled: true, group: 'g1', roles: ['worker'], weight: 1, scopes: ['general'], cost: 'very_high', capability: 'worker' }),
+      poolSchema.parse({ profileId: 'cheap', enabled: true, group: 'g2', roles: ['worker'], weight: 1, scopes: ['general'], cost: 'very_low', capability: 'worker' }),
+      poolSchema.parse({ profileId: 'lowrated', enabled: true, group: 'g3', roles: ['worker'], weight: 4, scopes: ['general'], cost: 'very_low', capability: 'mechanical' }),
     ];
     store.setMeta('pool', pool);
     store.setProfiles(['pricey', 'cheap', 'lowrated'].map(id => ({ id, name: id, provider: 'test', model: `test/${id}`, notes: '' })));

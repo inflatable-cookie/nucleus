@@ -88,7 +88,7 @@ export function fixture(
       roles: ["worker"],
       scopes: ["general"],
       weight: 1,
-      capability: "low",
+      capability: "mechanical",
     },
     {
       profileId: higher.id,
@@ -97,7 +97,7 @@ export function fixture(
       roles: ["worker"],
       scopes: ["general"],
       weight: 1,
-      capability: "medium",
+      capability: "worker",
     },
     {
       profileId: reviewer.id,
@@ -106,7 +106,7 @@ export function fixture(
       roles: ["reviewer"],
       scopes: ["general"],
       weight: 1,
-      capability: "medium",
+      capability: "worker",
       cost: "low",
     },
     {
@@ -116,7 +116,7 @@ export function fixture(
       roles: ["coordinator"],
       scopes: ["general"],
       weight: 1,
-      capability: "low",
+      capability: "mechanical",
       cost: "very_low",
     },
   ];

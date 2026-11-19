@@ -60,7 +60,7 @@ function fixture(seed: "queued" | "review" | "force" = "force") {
       roles: ["worker"],
       weight: 1,
       scopes: ["general"],
-      capability: "medium",
+      capability: "worker",
       cost: "low",
     },
     {
@@ -70,7 +70,7 @@ function fixture(seed: "queued" | "review" | "force" = "force") {
       roles: ["reviewer"],
       weight: 1,
       scopes: ["general"],
-      capability: "medium",
+      capability: "worker",
       cost: "medium",
     },
     {
@@ -80,7 +80,7 @@ function fixture(seed: "queued" | "review" | "force" = "force") {
       roles: ["coordinator"],
       weight: 1,
       scopes: ["general"],
-      capability: "low",
+      capability: "mechanical",
       cost: "very_low",
     },
   ]);

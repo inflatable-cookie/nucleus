@@ -58,7 +58,7 @@ test('an unsigned request for a frontier profile pins nothing and never waits; a
 test('Spec 052: a recorded climb carries the tier exception into request reconciliation', () => {
   const f = fixture(); try {
     const wide = profile('wide');
-    f.store.setMeta('pool', [...pool, poolSchema.parse({ profileId: 'wide', enabled: true, group: 'wide', roles: ['worker', 'reviewer'], weight: 1, scopes: ['general'], cost: 'medium', capability: 'very_high' })]);
+    f.store.setMeta('pool', [...pool, poolSchema.parse({ profileId: 'wide', enabled: true, group: 'wide', roles: ['worker', 'reviewer'], weight: 1, scopes: ['general'], cost: 'medium', capability: 'heavyweight' })]);
     const reconcile = (id: string) => reconcileRoutingSignoffs(f.store, f.decisions, id, [...profiles, wide]);
     const task = f.submit({ complexity: 'very_high', profileRequests: { worker: { profileId: 'wide', reason: 'The next round needs it', required: false } } });
     reconcile(task.id);

@@ -43,7 +43,7 @@ test('invalid enum values are refused on the pool rating, task complexity and sc
   assert.throws(()=>poolSchema.parse({profileId:'p',enabled:true,group:'g',roles:['worker'],weight:1,scopes:['general'],capability:2}));
   assert.throws(()=>submissionSchema.parse({submissionId:'s',title:'t',repoPath:'/r',planningCommit:'a'.repeat(40),handoffPath:'h',originAgentId:'o',complexity:'huge'}));
   assert.throws(()=>scopeSchema.parse('optional'));
-  const parsed=poolSchema.parse({profileId:'p',enabled:true,group:'g',roles:['worker'],weight:1,scopes:['general'],capability:'very_high'});
+  const parsed=poolSchema.parse({profileId:'p',enabled:true,group:'g',roles:['worker'],weight:1,scopes:['general'],capability:'heavyweight'});
   assert.equal(parsed.capability,'very_high');
   assert.equal(submissionSchema.parse({submissionId:'s',title:'t',repoPath:'/r',planningCommit:'a'.repeat(40),handoffPath:'h',originAgentId:'o',complexity:null}).complexity,null,'complexity clears explicitly');
 });
@@ -142,7 +142,7 @@ test('Spec 052: the coordinator offset survives every level, including Maximum',
   // Maximum reserves workers and reviewers for the top two tiers, not the
   // coordinator: with no top-tier profile the coordinator still has a pick.
   const mediumProfile=profile('mid');
-  const mediumOnly=[poolSchema.parse({profileId:'mid',enabled:true,group:'mid',roles:['coordinator'],weight:1,scopes:['general'],capability:'medium',cost:'medium'})];
+  const mediumOnly=[poolSchema.parse({profileId:'mid',enabled:true,group:'mid',roles:['coordinator'],weight:1,scopes:['general'],capability:'worker',cost:'medium'})];
   assert.equal(ids(chooseProfile(taskOf({complexity:'very_high'}),[mediumProfile],mediumOnly,{},new Set(),'coordinator',{},'maximum')),'mid','the coordinator keeps its offset at Maximum');
   assert.equal(chooseProfile(taskOf({complexity:'very_high'}),[mediumProfile],mediumOnly,{},new Set(),'worker',{},'maximum'),null,'a worker still needs a top-tier profile at Maximum');
   assert.equal(chooseProfile(taskOf({complexity:'very_high'}),[mediumProfile],mediumOnly,{},new Set(),'reviewer',{},'maximum'),null,'a reviewer still needs a top-tier profile at Maximum');
@@ -208,7 +208,7 @@ test('submission and pool records rename the legacy keys and refuse a record car
   const legacy=submissionSchema.parse(submissionRecordFromLegacy({...base,capability:'mechanical'}));
   assert.equal(legacy.scope,'mechanical');assert.equal(legacy.complexity,undefined);
   assert.throws(()=>submissionRecordFromLegacy({...base,capability:'general',scope:'complex'}),/both the legacy "capability" and the current "scope"/);
-  const poolLegacy=poolSchema.parse(poolRecordFromLegacy({profileId:'p',enabled:true,group:'g',roles:['worker'],weight:1,capabilities:['general','complex'],cost:'low',capability:'low'}));
+  const poolLegacy=poolSchema.parse(poolRecordFromLegacy({profileId:'p',enabled:true,group:'g',roles:['worker'],weight:1,capabilities:['general','complex'],cost:'low',capability:'mechanical'}));
   assert.deepEqual(poolLegacy.scopes,['general','complex']);assert.equal(poolLegacy.capability,'low');assert.equal(poolLegacy.cost,'low');
   assert.throws(()=>poolRecordFromLegacy({profileId:'p',enabled:true,group:'g',roles:['worker'],weight:1,capabilities:['general'],scopes:['complex']}),/both the legacy "capabilities" and the current "scopes"/);
   assert.equal(saveProfileSettings([poolLegacy],{...poolLegacy,group:'g2'}).at(-1)!.capability,'low','pool saves never drop the rating or cost');
@@ -265,11 +265,11 @@ test('Spec 053 cost lean (Tom, 2026-11-04): cost shifts the share within the set
 });
 test('Spec 053 cost lean: equal cost follows configured weight; a very_low-cost profile gets 16 times a very_high-cost one',()=>{
   const profiles=[profile('heavy'),profile('light')];
-  const pool=[poolSchema.parse({profileId:'heavy',enabled:true,group:'heavy',roles:['worker'],weight:2,scopes:['general'],cost:'medium',capability:'high'}),
-    poolSchema.parse({profileId:'light',enabled:true,group:'light',roles:['worker'],weight:1,scopes:['general'],cost:'medium',capability:'high'})];
+  const pool=[poolSchema.parse({profileId:'heavy',enabled:true,group:'heavy',roles:['worker'],weight:2,scopes:['general'],cost:'medium',capability:'worker'}),
+    poolSchema.parse({profileId:'light',enabled:true,group:'light',roles:['worker'],weight:1,scopes:['general'],cost:'medium',capability:'worker'})];
   assert.deepEqual(simulate(taskOf({complexity:'high'}),profiles,pool,30),{heavy:20,light:10},'weight 2 to weight 1 at equal cost');
-  const costs=[poolSchema.parse({profileId:'cheap',enabled:true,group:'cheap',roles:['worker'],weight:1,scopes:['general'],cost:'very_low',capability:'very_high'}),
-    poolSchema.parse({profileId:'dear',enabled:true,group:'dear',roles:['worker'],weight:1,scopes:['general'],cost:'very_high',capability:'very_high'})];
+  const costs=[poolSchema.parse({profileId:'cheap',enabled:true,group:'cheap',roles:['worker'],weight:1,scopes:['general'],cost:'very_low',capability:'heavyweight'}),
+    poolSchema.parse({profileId:'dear',enabled:true,group:'dear',roles:['worker'],weight:1,scopes:['general'],cost:'very_high',capability:'heavyweight'})];
   const ratio=simulate(taskOf({complexity:'very_high'}),[profile('cheap'),profile('dear')],costs,170,new Set(),'maximum');
   assert.deepEqual(ratio,{cheap:160,dear:10},'16 : 1 by the cost lean, and the frontier profile still runs at its predictable share');
 });
@@ -286,7 +286,7 @@ test('Spec 053 cost lean: an unavailable group leaves the set and the rest rotat
 
 test('deterministic ties break by profile id and stay stable across repeated selection',()=>{
   const profiles=[profile('b-agent'),profile('a-agent')];
-  const pool=profiles.map(p=>poolSchema.parse({profileId:p.id,enabled:true,group:'same',roles:['worker'],weight:1,scopes:['general'],capability:'high'}));
+  const pool=profiles.map(p=>poolSchema.parse({profileId:p.id,enabled:true,group:'same',roles:['worker'],weight:1,scopes:['general'],capability:'worker'}));
   const task=taskOf({complexity:'high'});
   for(let round=0;round<5;round++)assert.equal(ids(chooseProfile(task,profiles,pool,{},new Set())),'a-agent');
   assert.equal(ids(chooseProfile(task,[...profiles].reverse(),[...pool].reverse(),{},new Set())),'a-agent');
@@ -325,7 +325,7 @@ test('nucleus#1139: a task\'s host catalog keeps profiles it cannot run out of s
   const luna=profile('luna','opencode-go/deepseek-v4.1-flash',{thinkingOptionId:'medium',supportedThinking:['medium'],provider:'pi'});
   const sol=profile('sol','opencode-go/deepseek-v4.1-flash',{thinkingOptionId:'high',supportedThinking:['high'],provider:'pi'});
   const all=[luna,sol];
-  const pool=all.map((p,i)=>poolSchema.parse({profileId:p.id,enabled:true,group:`g-${i}`,roles:['worker'],weight:1,scopes:['general','mechanical','complex'],capability:'medium'}));
+  const pool=all.map((p,i)=>poolSchema.parse({profileId:p.id,enabled:true,group:`g-${i}`,roles:['worker'],weight:1,scopes:['general','mechanical','complex'],capability:'worker'}));
   const primaryAdapter={profiles:async()=>all,observe:observeIdle('ws','agent'),catalog:async()=>({providers:[]}),vocabulary:paseoVocabulary} as unknown as Adapter;
   const t3Adapter={profiles:async()=>[],observe:observeIdle('ws','agent'),catalog:async()=>t3Catalog,vocabulary:t3codeVocabulary} as unknown as Adapter;
   const dir=mkdtempSync(join(tmpdir(),'ns-host-routing-')),store=new Store(join(dir,'db'));

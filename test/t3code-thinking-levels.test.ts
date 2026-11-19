@@ -127,7 +127,7 @@ const pool = (): PoolEntry[] =>
       roles: ["worker", "coordinator"],
       weight: 1,
       scopes: ["general"],
-      capability: "medium",
+      capability: "worker",
       cost: "medium",
     }),
   );

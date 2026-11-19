@@ -31,8 +31,8 @@ function fixture() {
   store.setMeta('paused', false);
   store.putRepository({ origin: null, path: '/repo' }, 'agent', 'fixture keeps agent closeout');
   store.setMeta('pool', [
-    { profileId: worker.id, enabled: true, group: 'author', roles: ['worker'], weight: 1, scopes: ['general'], capability: 'medium', cost: 'low' },
-    { profileId: reviewer.id, enabled: true, group: 'review', roles: ['reviewer'], weight: 1, scopes: ['general'], capability: 'medium', cost: 'medium' },
+    { profileId: worker.id, enabled: true, group: 'author', roles: ['worker'], weight: 1, scopes: ['general'], capability: 'worker', cost: 'low' },
+    { profileId: reviewer.id, enabled: true, group: 'review', roles: ['reviewer'], weight: 1, scopes: ['general'], capability: 'worker', cost: 'medium' },
   ]);
   const submitted = store.insert(submissionSchema.parse({
     submissionId: randomUUID(), title: 'Task', repoPath: '/repo', planningCommit: base, handoffPath: 'handoff.md', originAgentId: 'origin',

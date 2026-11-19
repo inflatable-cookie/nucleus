@@ -342,10 +342,10 @@ test('task 1002: the store step drops stored By request flags and reads very_low
     const path = join(dir, 'queue.sqlite');
     const first = new Store(path);
     first.setMeta('pool', [
-      { profileId: 'sol', enabled: true, group: 'openai', roles: ['worker'], weight: 1, scopes: ['general'], cost: 'very_high', capability: 'very_high', byRequest: true },
-      { profileId: 'opus', enabled: true, group: 'anthropic', roles: ['worker'], weight: 1, scopes: ['general'], cost: 'very_high', capability: 'very_high', byRequest: true },
-      { profileId: 'muse', enabled: true, group: 'muse', roles: ['worker'], weight: 1, scopes: ['general'], cost: 'very_low', capability: 'very_low' },
-      { profileId: 'glm', enabled: true, group: 'zai', roles: ['worker'], weight: 1, scopes: ['general'], cost: 'low', capability: 'low' },
+      { profileId: 'sol', enabled: true, group: 'openai', roles: ['worker'], weight: 1, scopes: ['general'], cost: 'very_high', capability: 'heavyweight', byRequest: true },
+      { profileId: 'opus', enabled: true, group: 'anthropic', roles: ['worker'], weight: 1, scopes: ['general'], cost: 'very_high', capability: 'heavyweight', byRequest: true },
+      { profileId: 'muse', enabled: true, group: 'muse', roles: ['worker'], weight: 1, scopes: ['general'], cost: 'very_low', capability: 'mechanical' },
+      { profileId: 'glm', enabled: true, group: 'zai', roles: ['worker'], weight: 1, scopes: ['general'], cost: 'low', capability: 'mechanical' },
     ]);
     first.close();
     const reopened = new Store(path);
@@ -359,7 +359,7 @@ test('task 1002: the store step drops stored By request flags and reads very_low
       assert.equal(policy('opus'), 'allowed', 'Opus rated very_high is automatic at High too; only frontier needs permission there');
       assert.equal(automaticSelection({ cost: 'very_high', capability: 'frontier' }, 'high'), 'request_tier', 'a frontier profile still needs permission at High');
     } finally { reopened.close(); }
-    const stale = configurePool.input.parse({ entries: [{ profileId: 'sol', enabled: true, group: 'openai', roles: ['worker'], weight: 1, scopes: ['general'], byRequest: true, capability: 'very_low' }] });
+    const stale = configurePool.input.parse({ entries: [{ profileId: 'sol', enabled: true, group: 'openai', roles: ['worker'], weight: 1, scopes: ['general'], byRequest: true, capability: 'mechanical' }] });
     assert.deepEqual([('byRequest' in stale.entries[0]!), stale.entries[0]!.capability], [false, 'low'], 'an older client write reads without the flag');
     assert.throws(() => poolSchema.parse({ profileId: 'x', enabled: true, group: 'x', roles: ['worker'], weight: 1, scopes: ['general'], byRequest: true }), 'the pool schema no longer accepts the flag');
   } finally { rmSync(dir, { recursive: true, force: true }); }

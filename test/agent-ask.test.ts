@@ -277,7 +277,7 @@ function eligibleDecider(f: Awaited<ReturnType<typeof askFixture>>): void {
       roles: ["coordinator"],
       scopes: ["general"],
       weight: 1,
-      capability: "medium",
+      capability: "worker",
       cost: "very_low",
     },
   ]);
@@ -783,7 +783,7 @@ test("an unanswered scope question reaches the board without a decider", async (
         roles: ["coordinator"],
         scopes: ["general"],
         weight: 1,
-        capability: "medium",
+        capability: "worker",
         cost: "very_low",
       },
     ]);

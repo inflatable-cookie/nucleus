@@ -93,7 +93,7 @@ const tiered=(ids:Record<string,{cost:Level|null;capability?:Exclude<Level,'very
 });
 // The live shape: a heavily weighted cheap profile, a very_high-cost Sol-class
 // profile and a frontier Opus-class one. The task's complexity is unset (medium).
-const live=tiered({cheap:{cost:'very_low',capability:'low',weight:4},mid:{cost:'medium',capability:'medium'},pricey:{cost:'high',capability:'high'},'frontier-a':{cost:'very_high',capability:'very_high'},'frontier-b':{cost:'very_high',capability:'frontier'}});
+const live=tiered({cheap:{cost:'very_low',capability:'mechanical',weight:4},mid:{cost:'medium',capability:'worker'},pricey:{cost:'high',capability:'worker'},'frontier-a':{cost:'very_high',capability:'heavyweight'},'frontier-b':{cost:'very_high',capability:'frontier'}});
 const pick=(usage:'low'|'normal'|'high'|'extra_high'|'maximum',recent:Record<string,number>={},unavailable=new Set<string>(),request?:{profileId:string;reason:string})=>{
   const f=fixture();try{
     const task=f.store.update(f.task.id,{profileRequests:request?profileRequestsSchema.parse({worker:{...request,required:false,signoff:SIGNED}}):undefined});
@@ -148,7 +148,7 @@ test('Spec 052: a role left without a profile by the level permission says so an
     // The author's own model cannot review it; the only other reviewer is at the
     // task's requested very-high tier, which needs permission at Normal and Low
     // until a recorded climb.
-    const reviewPool=tiered({author:{cost:'low'},critic:{cost:'high',capability:'very_high'}});
+    const reviewPool=tiered({author:{cost:'low'},critic:{cost:'high',capability:'heavyweight'}});
     f.store.setMeta('pool',reviewPool.pool);const engine=new Engine(f.store,{} as Adapter);engine.profiles=reviewPool.profiles;
     const task={...f.task,workerModel:'author',complexity:'very_high' as const};
     assert.equal(engine.resolution.select(task,'reviewer'),null);

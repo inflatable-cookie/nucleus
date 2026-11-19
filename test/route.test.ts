@@ -84,7 +84,7 @@ function fixture() {
   const authorrev = profile("authorrev", "author-model", ["reviewer"]);
   // Spec 053: the rating, not the role switch, keeps coord to coordinator demand.
   const coord = profile("coord", "coord-model", ["coordinator"], undefined, {
-    capability: "low",
+    capability: "mechanical",
     cost: "very_low",
   });
   // Spec 052: a frontier profile automatic selection never lands on below Maximum (task 577 routes to it).

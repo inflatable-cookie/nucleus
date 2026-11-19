@@ -123,8 +123,8 @@ test('052 permission: each level gates exactly the runs the level table names', 
   // The requested-tier exception belongs only to a recorded climb, never to a
   // first attempt before any review climbed (Tom, 2026-11-17).
   for (const level of ['low', 'normal'] as const) {
-    assert.equal(requestOnly({ cost: 'very_high', capability: 'very_high' }, level, 'very_high'), true, `${level}: no climb recorded`);
-    assert.equal(requestOnly({ cost: 'very_high', capability: 'very_high' }, level, 'very_high', 'very_high'), false, `${level}: the recorded climb`);
+    assert.equal(requestOnly({ cost: 'very_high', capability: 'heavyweight' }, level, 'very_high'), true, `${level}: no climb recorded`);
+    assert.equal(requestOnly({ cost: 'very_high', capability: 'heavyweight' }, level, 'very_high', 'very_high'), false, `${level}: the recorded climb`);
     assert.equal(requestOnly({ cost: 'very_high', capability: 'frontier' }, level, 'very_high', 'very_high'), true, `${level}: frontier is always an explicit route`);
   }
   // A lower tier never needs permission, whatever the level.
