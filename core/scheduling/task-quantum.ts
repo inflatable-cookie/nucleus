@@ -202,11 +202,10 @@ export class TaskQuantum {
         await this.context.adapter.preflightWorkspaceStorage?.(task);
       if (task.prerequisiteWait && !task.prerequisiteWait.releasedAt) {
         const wait = this.context.store.reconcilePrerequisiteWait(task.id);
+        task = this.context.store.task(taskId);
         if (
-          wait !== "none" &&
-          !this.context.prerequisiteWaitYieldsToLiveWork(
-            this.context.store.task(task.id),
-          )
+          wait === "waiting" &&
+          !this.context.prerequisiteWaitYieldsToLiveWork(task)
         ) {
           quantum.pausedForPrerequisiteWait = true;
           return;
