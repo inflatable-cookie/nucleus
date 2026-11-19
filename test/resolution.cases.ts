@@ -14863,9 +14863,9 @@ test("C4 sweep releases a settled agentless creation its replaced episode no lon
       .run(new Date(Date.now() - 180_000).toISOString(), f.task.id);
     f.adapter.findRunAgents = async () => [];
     const restartVerb = () =>
-      ownerTaskNext(
-        collectOwnerVerbFacts(f.store, f.current()),
-      ).verbs.find((verb) => verb.verb === "restart");
+      ownerTaskNext(collectOwnerVerbFacts(f.store, f.current())).verbs.find(
+        (verb) => verb.verb === "restart",
+      );
     // The orphan is what refuses the owner restart while it is unreleased.
     await assert.rejects(
       restartC4(f),
@@ -14892,10 +14892,7 @@ test("C4 sweep releases a settled agentless creation its replaced episode no lon
     };
     await f.engine.resolution.recovery.pass(f.task.id);
     assert.deepEqual(
-      [
-        f.store.run(orphan.id)?.released,
-        f.store.run(replaced.id)?.released,
-      ],
+      [f.store.run(orphan.id)?.released, f.store.run(replaced.id)?.released],
       [false, false],
       "a dispatch hold that lands during the lookup keeps every creation owned",
     );
@@ -14973,9 +14970,12 @@ test("C4 keeps an orphaned creation whose recorded attempt never settled", async
     };
     f.store.putRun(orphan);
     f.store.setCredential(orphan.id, "orphan-token");
+    const reserved = readCreationAttempt(f.store, f.store.run(orphan.id)!);
+    assert.ok(reserved, "the real run writer reserved the creation attempt");
     assert.equal(
-      readCreationAttempt(f.store, f.store.run(orphan.id)!)?.settlement,
+      reserved.settlement,
       null,
+      "no settlement is ever recorded for this attempt",
     );
     await f.engine.resolution.recovery.pass(f.task.id);
     assert.equal(f.store.run(orphan.id)?.released, false);
@@ -19169,7 +19169,8 @@ test("a coordinator creation the host refused before send settles at once and th
       "the episode keeps the occurrence it refused",
     );
     // Intervening events cannot hide the refusal from routing or restart.
-    for (let i = 0; i < 101; i++) f.store.event(f.task.id, "other", "later activity");
+    for (let i = 0; i < 101; i++)
+      f.store.event(f.task.id, "other", "later activity");
     // The refused profile is not asked for again by the retry of this episode.
     assert.deepEqual(
       [...refusedLaunchProfiles(f.store, f.task.id)],
@@ -19233,12 +19234,25 @@ test("recovery excludes a worker-refused profile before selecting a coordinator"
     attention(f, "Worker creation refused before send");
     const selected = f.engine.resolution.select(f.current(), "coordinator");
     assert.ok(selected);
-    f.store.event(f.task.id, "worker_creation_refused_before_send",
-      JSON.stringify({ runId: "worker-run", profileId: selected.profile.id, reason: "host refused" }));
-    for (let i = 0; i < 101; i++) f.store.event(f.task.id, "other", "later activity");
+    f.store.event(
+      f.task.id,
+      "worker_creation_refused_before_send",
+      JSON.stringify({
+        runId: "worker-run",
+        profileId: selected.profile.id,
+        reason: "host refused",
+      }),
+    );
+    for (let i = 0; i < 101; i++)
+      f.store.event(f.task.id, "other", "later activity");
     const excluded = refusedLaunchProfiles(f.store, f.task.id);
     assert.ok(excluded.has(selected.profile.id));
-    const alternate = f.engine.resolution.select(f.current(), "coordinator", [], excluded);
+    const alternate = f.engine.resolution.select(
+      f.current(),
+      "coordinator",
+      [],
+      excluded,
+    );
     assert.ok(alternate);
     assert.notEqual(alternate.profile.id, selected.profile.id);
   } finally {
