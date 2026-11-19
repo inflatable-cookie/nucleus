@@ -83,7 +83,6 @@ const state = (overrides: Record<string, unknown> = {}) =>
     projectLimit: 5,
     projectLimitOverrides: {},
     projectCapacities: [],
-    demandOffsets: { worker: 0, reviewer: 0, coordinator: -2 },
     ...overrides,
   }) as never;
 const noop = async () => undefined;
@@ -103,7 +102,6 @@ async function mountLimits(overrides: Record<string, unknown> = {}) {
     },
     refreshBoard: noop,
     saveUsage: noop,
-    saveDemandOffsets: noop,
     saveCapacity: noop,
     saveProjectLimit: noop,
     ...overrides,
@@ -207,9 +205,9 @@ test("a full record adds nothing to the screen: Frontier grants is the last sect
       "Usage level",
       "Task slots",
       "Project overrides",
-      "Role demand",
       "Frontier grants",
     ]);
+    assert.doesNotMatch(ui.text(), /Role demand/, "the Role demand section is gone (Tom, 2026-11-19)");
   } finally {
     done();
   }
@@ -499,7 +497,7 @@ test("the number control steps inside its bounds, and typing reaches the same ow
   assert.equal(top.get(label).props.keyboardType, "number-pad");
 });
 
-test("the number control looks like a bold number: no box, Role demand width, optional label and card", async () => {
+test("the number control looks like a bold number: no box, a fixed width, optional label and card", async () => {
   const { NumberStepper } = await import("../client/controls");
   const signed = (value: number) =>
     value > 0 ? `+${value}` : value < 0 ? `−${-value}` : "0";
@@ -524,7 +522,7 @@ test("the number control looks like a bold number: no box, Role demand width, op
     "at rest the number reads in its own format",
   );
   assert.equal(input.props.style.borderWidth, 0, "no visible box");
-  assert.equal(input.props.style.width, 24, "as wide as Role demand's number");
+  assert.equal(input.props.style.width, 24, "as wide as a two-digit number");
   assert.equal(input.props.style.fontWeight, "600");
   assert.match(card.text(), /Coordinator/, "the label shows");
   assert.ok(
@@ -785,7 +783,7 @@ test("an inline label never shrinks into its words: a tight card wraps the contr
   );
 });
 
-test("Advanced limits stack every label; Task slots and Role demand keep theirs inline, at narrow and wide sizes", async () => {
+test("Advanced limits stack every label; Task slots keep theirs inline, at narrow and wide sizes", async () => {
   const { ui, done } = await mountLimits();
   try {
     ui.press("Advanced limits");
@@ -809,9 +807,6 @@ test("Advanced limits stack every label; Task slots and Role demand keep theirs 
       "Global",
       "Per project",
       "Papercuts",
-      "Worker",
-      "Reviewer",
-      "Coordinator",
     ]) {
       const text = textNode(ui, name);
       assert.ok(text, `${name} shows`);

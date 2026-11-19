@@ -35,7 +35,7 @@ ticket or route to bypass it. All other helpers connect directly to Nucleus;
 
 The CLI and helpers identify the calling thread in this order: an explicit Nucleus ticket (`NUCLEUS_TICKET`); the current run's ticket, located from the thread's own identity even when the shell environment is stale; then the host-verified thread identity. A slow host never times out silently: the caller hears "The host is slow; retry". An explicit ticket wins for every verb that records a caller (`decision.add`, `lead.submit`, `question.answer`, `tell`): Nucleus records the ticket's thread as asker and delivery target, never an MCP session or host scope from the environment. Any recognised caller can `tell` a project planner or task role, including a host-only identity and a task-planner ticket. `ask` still needs a run ticket.
 
-`NUCLEUS_TICKET` names the run or participant ticket; use the path delivered to this thread. An invalid or revoked ticket refuses. If the ticket file is missing, Nucleus verifies the calling thread on its host. T3Code supplies `T3CODE_THREAD_ID` and `T3CODE_DESKTOP_HOST_SCOPE`. The exact thread must exist on one online T3 host, including IDs starting with `mcp:`. A bare session with no thread is refused. Run `nucleus project.set-planner -` with just the project `key` to assign yourself from that same verified identity. BB uses `BB_THREAD_ID`; Nucleus verifies the exact thread through one registered online BB host before recording the host-qualified caller. Paseo uses `PASEO_AGENT_ID`. If multiple host identities are present, T3Code takes precedence over BB, and BB over Paseo; an incomplete T3 or BB identity refuses instead of falling through. If no source exists, the refusal names the sources tried. These identities identify the caller only; they do not grant authority beyond a Nucleus ticket's existing scope. Online BB hosts can carry submission ingress, while dispatch still follows repository host settings or the operator default. Explicit operator and relayed-note paths keep their existing meaning. A decision answer is delivered to that recorded asker or queued with a visible wait (attempts > 0); an identity Nucleus cannot route is shown on the decision.
+`NUCLEUS_TICKET` names the run or participant ticket; use the path delivered to this thread. A ticket that names an earlier run of this same retained thread — the shell's stale value, or an older MCP binding or helper argv — acts as the thread's current run, so it needs no repair; only another thread's ticket, a task with no current run, or a revoked ticket is refused, and that refusal names the run in force and the ticket path that settles it. An invalid or revoked ticket refuses. If the ticket file is missing, Nucleus verifies the calling thread on its host. T3Code supplies `T3CODE_THREAD_ID` and `T3CODE_DESKTOP_HOST_SCOPE`. The exact thread must exist on one online T3 host, including IDs starting with `mcp:`. A bare session with no thread is refused. Run `nucleus project.set-planner -` with just the project `key` to assign yourself from that same verified identity. BB uses `BB_THREAD_ID`; Nucleus verifies the exact thread through one registered online BB host before recording the host-qualified caller. Paseo uses `PASEO_AGENT_ID`. If multiple host identities are present, T3Code takes precedence over BB, and BB over Paseo; an incomplete T3 or BB identity refuses instead of falling through. If no source exists, the refusal names the sources tried. These identities identify the caller only; they do not grant authority beyond a Nucleus ticket's existing scope. Online BB hosts can carry submission ingress, while dispatch still follows repository host settings or the operator default. Explicit operator and relayed-note paths keep their existing meaning. A decision answer is delivered to that recorded asker or queued with a visible wait (attempts > 0); an identity Nucleus cannot route is shown on the decision.
 
 Assigning a planner issues an owner-only participant ticket and hands its path over
 without messaging the thread: the planner that named itself takes it in that
@@ -487,36 +487,46 @@ such as `planner-2`.
 
 Every new task names `queue.complexity` (Spec 053). A submission, brief check or
 promotion without it is refused with a message naming the field. Complexity is
-how capable a model the work needs, not how long it is. Each run's demand is
-that complexity moved by its role (the coordinator needs two steps less by
-default; the operator sets these offsets in Settings) and by the usage level.
-Nucleus rotates among every profile rated at or above the demand, leaning toward
-cheaper ones, so rate honestly: `medium` for ordinary work, `high` for subtle or
-cross-cutting changes, `very_high` only when the strongest model is needed.
+how capable a model the work needs, not how long it is. Profiles carry one of
+four capability brackets: **Mechanical**, **Worker**, **Heavyweight** and
+**Frontier** (Tom, 2026-11-19). At `normal`, `very_low` and `low` work runs on
+Mechanical, `medium` and `high` on Worker, and `very_high` on Heavyweight. The
+difference between `medium` and `high` is the step-up: a `medium` task stays on
+Worker, while a `high` task may climb once to Heavyweight after a review asks for
+changes, and a `very_high` one to Frontier (sign-off below Extra high). Roles have no
+offsets: the reviewer's bracket follows the usage level and the coordinator runs
+on Mechanical when one is available. Nucleus rotates among the profiles at the
+run's bracket, leaning toward cheaper ones, so rate honestly: `medium` for
+ordinary work, `high` for subtle or cross-cutting changes that may need a
+Heavyweight second attempt, `very_high` only when the work needs Heavyweight from
+the start.
 
 ### Usage level
 
 The operator sets a host-wide usage level (Settings → Dispatch limits slider, or
 `queue.usage`): `low`, `normal` (default), `high`, `extra_high` or `maximum`,
 with an optional `until` when it returns to normal (Tom, 2026-11-17; `minimal` is
-gone and a stored value reads as `low`). Tiers are the capability scale profiles
-carry; the top two are `frontier` (Opus-class) and `very_high` (Sol
-extra-high-class). Where a task starts and what needs permission:
+gone and a stored value reads as `low`). The levels move a task by whole
+brackets; "the top two" are Heavyweight and Frontier. Where a task starts and
+what needs permission:
 
-| Level | Worker starts | Permission |
-| --- | --- | --- |
-| `low` | one tier below its complexity | high and very-high complexity work needs permission when it is submitted (a board decision holds the task); any run on the top two tiers needs permission, except the recorded climb back to the task's requested tier |
-| `normal` | high and very-high complexity one tier below; lower complexities at the requested tier | any run on the top two tiers needs permission, except the recorded climb back to the task's own requested tier |
-| `high` | at the requested tier | frontier needs permission |
-| `extra_high` | at the requested tier | none |
-| `maximum` | workers and reviewers on frontier or very-high models whatever the complexity | none |
+| Level | Worker starts | Reviewer | Permission |
+| --- | --- | --- | --- |
+| `low` | one bracket below the one it may climb to | one bracket below the worker | high and very-high complexity work needs permission when it is submitted (a board decision holds the task); Frontier needs permission, and Heavyweight unless the task starts or climbs there |
+| `normal` | Mechanical, Worker or Heavyweight by complexity (above) | one bracket below the worker | Frontier needs permission, and Heavyweight unless the task starts or climbs there |
+| `high` | `high` and `very_high` on Heavyweight; lower as at `normal` | the worker's bracket | Frontier needs permission |
+| `extra_high` | as at `high` | the worker's bracket | none |
+| `maximum` | workers and reviewers on Heavyweight or Frontier whatever the complexity | the worker's bracket | none |
 
-A request for a profile the level's permission rule holds (a top-tier profile
-above the task's requested tier at `low` or `normal`, or frontier at `high`) is a
-question to the operator, not a pin. An applied review that asks for changes lets
-the next worker run climb one tier toward the task's requested tier, on a fresh
-worker agent, and records that climb for the round. A profile above the task's
-requested tier is never automatic; an explicit request reaches it: Nucleus opens a decision on the board, and
+A Mechanical worker gets a Mechanical reviewer, and a `critical` task still
+prefers a reviewer at least as capable as the worker.
+
+A request for a profile the level's permission rule holds (Frontier, or a
+Heavyweight profile the task neither starts nor climbs on, at `low` or `normal`;
+Frontier at `high`) is a question to the operator, not a pin. An applied review
+that asks for changes lets the next worker run climb one bracket, on a fresh
+worker agent, and records that climb for the round. A profile above the bracket
+the task may climb to is never automatic for a worker; an explicit request reaches it: Nucleus opens a decision on the board, and
 the role runs on automatic selection until the operator approves, picks another
 profile or declines. Nothing waits for the answer, except the `low` submission
 gate described above. Prefer setting `complexity` over naming a profile; ask for
@@ -600,7 +610,7 @@ CLI refuses `capacity` too, and a repeated call changes nothing. Never look for
 another way in, including invoking the plugin bridge yourself: that is the
 Settings surface, not an agent route, and an agent must not use it. If a limit
 blocks approved work, say which limit and why, and pick up other ready work.
-The same Settings control sets the default host kind for new tasks: `paseo`, `t3code`, `bb`, or planner host. Repository host overrides take precedence; an offline operator default falls through to the submitting planner's proven host. A task's host selection is recorded at acceptance and never changes later. Repository `hostKind` may be unset to inherit this default.
+The same Settings control sets the preferred host kind for new tasks: `paseo`, `t3code`, `bb`, or planner host. Repository host preferences come first, then the operator default and planner host. At first dispatch the worker profile is selected across online hosts; a profile that only one host can launch takes the task there. The chosen host is recorded with its reason and remains fixed for every later role and run. Repository `hostKind` may be unset to inherit the default preference.
 `queue.capacity-state` reads the values in force and the record of applied
 changes — each with its time, surface and full before and after values. This is
 accident prevention, not permission: a deliberate same-uid imitation of the
@@ -1372,7 +1382,7 @@ Own decisions within the brief and record material decisions and reasons in the 
 
 Work around blockers within the approved scope first. If a second opinion is needed, ask the retained reviewer. Ask the planner once in the current turn when a ruling is needed. If the answer is pending, collect it later with the identical question. After one reviewer consult, report a remaining blocker with what you tried. Nucleus escalates once per cause to the project planner and joins repeats to the open escalation.
 
-Use the ask and tell tools or feed the same JSON on stdin to `nucleus ask -` ({to, question, …}) and `nucleus tell -` ({to, text, role?}) with your current run binding. On BB, use the report command with the continuation variables from your prompt, adding `ask` or `message` to pass the same JSON. Address task roles or planners by role. Messages communicate information. Never resend a message or re-ask a question whose delivery is unknown.
+Use the ask and tell tools or feed the same JSON on stdin to `nucleus ask -` ({to, question, …}) and `nucleus tell -` ({to, text, role?}) with your current run binding. On BB, use the report command with the continuation variables from your prompt, adding `ask` or `message` to pass the same JSON. Address task roles or planners by role; a delivered message also carries its own reply route, so answer its sender with `nucleus tell -` and `{"to":{"reply":"<handle>"},"text":"…"}` (the message's `Reply:` line names the handle, and `ask` accepts the same `{reply}` for a planner or project agent). Messages communicate information. Never resend a message or re-ask a question whose delivery is unknown.
 
 Continue until you deliver or hit a concrete impediment. Push finished work before reporting blocked. For blocked or error include `cause` ({kind: 'external', name: '<short cause>'}, {kind: 'internal'} or {kind: 'unfinished'}) and `impediment` with the failed command or observed provider message. Classify admission, guard or budget refusals and proof or native-step failures as external. Unfinished work and context pressure call for continued work or a checkpoint where allowed. A blocked or error report without an impediment or new commit can continue the same thread at most twice before the planner ladder.
 
@@ -1380,7 +1390,7 @@ For a push or PR creation, observe the branch or PR before each retry and back o
 
 ## Reviewer rules
 
-Own the review judgment within the brief. Ask the planner once in the current turn when a ruling is needed. If the answer is pending, collect it later with the identical question. Use the ask and tell tools or feed the same JSON on stdin to `nucleus ask -` ({to, question, …}) and `nucleus tell -` ({to, text, role?}) with your current run binding. On BB, use the report command with the continuation variables from your prompt, adding `ask` or `message` to pass the same JSON. Address task roles or planners by role. Messages communicate information. Never resend a message or re-ask a question whose delivery is unknown.
+Own the review judgment within the brief. Ask the planner once in the current turn when a ruling is needed. If the answer is pending, collect it later with the identical question. Use the ask and tell tools or feed the same JSON on stdin to `nucleus ask -` ({to, question, …}) and `nucleus tell -` ({to, text, role?}) with your current run binding. On BB, use the report command with the continuation variables from your prompt, adding `ask` or `message` to pass the same JSON. Address task roles or planners by role; a delivered message also carries its own reply route, so answer its sender with `nucleus tell -` and `{"to":{"reply":"<handle>"},"text":"…"}` (the message's `Reply:` line names the handle, and `ask` accepts the same `{reply}` for a planner or project agent). Messages communicate information. Never resend a message or re-ask a question whose delivery is unknown.
 
 For blocked or error include `cause` ({kind: 'external', name: '<short cause>'}, {kind: 'internal'} or {kind: 'unfinished'}) and `impediment` with the failed command or observed provider message. Classify admission, guard or budget refusals and proof or native-step failures as external. Use a review checkpoint for unfinished reading within the checkpoint allowance.
 
@@ -1388,7 +1398,7 @@ For an obvious stuck thread or bookkeeping stop, request move or retry_effect wi
 
 ## Recovery rules
 
-Own the recovery judgment and choose one available owner verb from current evidence. If a ruling or authority is missing, report coordinatorAction {verb: 'cannot', reason: '…'} and name what is missing. Recovery rulings go through the coordinator report. Never resend an unknown delivery.
+Own the recovery judgment and choose one available owner verb from current evidence. When a live participant is doing the work, report coordinatorAction {verb: 'none', reason: 'no action: <who> is live and progressing'} and nothing is applied or escalated. If a ruling or authority is missing, report coordinatorAction {verb: 'cannot', reason: '…'} and name what is missing: it settles the episode as observed and opens the planner-ladder question that says someone else must act. Recovery rulings go through the coordinator report. Never resend an unknown delivery.
 
 For blocked or error include `cause` ({kind: 'external', name: '<short cause>'}, {kind: 'internal'} or {kind: 'unfinished'}) and `impediment` with the failed command, observed provider message or missing authority. Classify admission, guard or budget refusals and proof or native-step failures as external.
 

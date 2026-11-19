@@ -1,3 +1,7 @@
+import {
+  escalationChoiceBinding,
+  escalationVerbChoices,
+} from "../core/questions/ladder";
 import { profile, observeIdle } from "./support/fakes";
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -1877,6 +1881,271 @@ test("move merge is refused without an accepted head review and enters verificat
     const audit = JSON.parse(f.events("owner_control")[0].detail);
     assert.deepEqual(audit.identities.move, { to: "merge" });
     assert.equal(audit.phaseAfter, "verifying");
+  } finally {
+    await f.close();
+  }
+});
+
+test("closeout shows and applies the same refusal while a merge intent owns the result", async () => {
+  const f = fixture();
+  try {
+    dispatched(f, {
+      phase: "merging",
+      resolution: {
+        ...f.task().resolution,
+        mergeIntent: true,
+        mergeHead: head,
+      },
+    });
+    const before = f.task();
+    const view = f.views("move")[3]!;
+    assert.equal(view.available, false);
+    assert.equal(
+      view.refusal,
+      "move closeout: Only an unmerged dispatched task can accept an external merge",
+    );
+    const input = taskControlInputSchema.parse({
+      action: "move",
+      to: "closeout",
+      taskId: f.taskId,
+      version: before.version,
+      reason: "Check the merge outcome",
+      caller: CALLER,
+    });
+    for (let attempt = 0; attempt < 2; attempt++)
+      await assert.rejects(
+        f.engine.performTaskControl(input),
+        /Only an unmerged dispatched task can accept an external merge/,
+      );
+    assert.deepEqual(f.task(), before);
+    assert.equal(f.events("external_merge_observed").length, 0);
+  } finally {
+    await f.close();
+  }
+});
+
+for (const variant of [
+  "short label",
+  "full label",
+  "changed head",
+  "changed run",
+] as const) {
+  test(`question.answer uses the recorded review choice with ${variant}`, async () => {
+    const f = fixture();
+    try {
+      const task = dispatched(f);
+      const offer = escalationVerbChoices(
+        f.next().verbs,
+        escalationChoiceBinding(f.facts()),
+      ).find((choice) => choice.verb === "move" && choice.args.to === "review");
+      assert.ok(offer?.label.startsWith("Move to review: "));
+      const id = "recorded-review-offer";
+      const questionId = `ns-escalation-${id}`;
+      f.store.event(
+        task.id,
+        "planner_escalation",
+        `${id}: cause ${"c".repeat(64)}; run worker; question pending`,
+      );
+      f.store.event(
+        task.id,
+        "planner_escalation_offered",
+        `${id}: ${JSON.stringify([offer])}`,
+      );
+      f.engine.resolution.openDelegatedQuestion(
+        task,
+        questionId,
+        "planner",
+        `Choose how to continue
+- ${offer!.label}`,
+        30_000,
+        "planner",
+        task.hostId!,
+      );
+      const input = {
+        questionId,
+        choice: variant === "full label" ? offer!.label : "Move to review",
+        reason: "Resume at the recorded head",
+      };
+      const answer = (caller = "planner") =>
+        Promise.resolve().then(() =>
+          f.engine.resolution.answerDelegatedQuestion(input, caller),
+        );
+      await assert.rejects(
+        answer("different-planner"),
+        /Only the delegated recipient/,
+      );
+      if (variant === "changed head")
+        f.store.update(task.id, { prHead: "c".repeat(40) });
+      if (variant === "changed run")
+        f.store.update(task.id, { runId: "different-run" });
+      if (variant.startsWith("changed")) {
+        await assert.rejects(answer(), /run or PR binding changed/);
+        assert.equal(f.events("owner_control").length, 0);
+        return;
+      }
+      assert.equal((await answer()).answer, offer!.label);
+      assert.equal((await answer()).answer, offer!.label);
+      assert.equal(f.events("planner_escalation_applied").length, 1);
+      assert.equal(f.events("owner_control").length, 1);
+      assert.equal(f.task().prHead, task.prHead);
+    } finally {
+      await f.close();
+    }
+  });
+}
+
+for (const followup of [false, true]) {
+  for (const drift of ["unchanged", "changed head", "changed run"] as const) {
+    test(`question.answer fences a pre-roll ${followup ? "follow-up" : "initial offer"} with ${drift}`, async () => {
+      const f = fixture();
+      try {
+        const task = dispatched(f);
+        const legacyOffer = escalationVerbChoices(f.next().verbs).find(
+          (choice) => choice.verb === "move" && choice.args.to === "review",
+        )!;
+        assert.ok(legacyOffer.label.startsWith("Move to review: "));
+        assert.ok(!("binding" in legacyOffer));
+        const id = "legacy-review-offer";
+        const initialId = `ns-escalation-${id}`;
+        const followupId = `ns-escalation-refusal-${id}`;
+        const questionId = followup ? followupId : initialId;
+        const writeFollowup = (offer: typeof legacyOffer) => {
+          f.store.event(
+            task.id,
+            "planner_escalation_followup_offered",
+            `${id}: ${JSON.stringify({
+              questionId: followupId,
+              choices: [offer.label],
+              ownerChoices: [offer],
+            })}`,
+          );
+        };
+        f.store.event(
+          task.id,
+          "planner_escalation",
+          `${id}: cause ${"c".repeat(64)}; run ${task.runId}; question pending`,
+        );
+        f.store.event(
+          task.id,
+          "planner_escalation_offered",
+          `${id}: ${JSON.stringify([legacyOffer])}`,
+        );
+        if (followup) writeFollowup(legacyOffer);
+        const openQuestion = (question: string, offer: typeof legacyOffer) =>
+          f.engine.resolution.openDelegatedQuestion(
+            f.task(),
+            question,
+            "planner",
+            `Choose how to continue
+- ${offer.label}`,
+            30_000,
+            "planner",
+            task.hostId!,
+          );
+        openQuestion(questionId, legacyOffer);
+        if (drift === "changed head")
+          f.store.update(task.id, { prHead: "c".repeat(40) });
+        if (drift === "changed run")
+          f.store.update(task.id, { runId: "replacement-run" });
+        const answer = (question: string) =>
+          Promise.resolve().then(() =>
+            f.engine.resolution.answerDelegatedQuestion(
+              {
+                questionId: question,
+                choice: "Move to review",
+                reason: "Resume review",
+              },
+              "planner",
+            ),
+          );
+        const before = f.task();
+        await assert.rejects(
+          answer(questionId),
+          /no recorded run or PR binding/,
+        );
+        await assert.rejects(
+          answer(questionId),
+          /no recorded run or PR binding/,
+        );
+        assert.equal(f.events("planner_escalation_answer_pending").length, 0);
+        assert.equal(f.events("owner_control").length, 0);
+        assert.equal(f.task().prHead, before.prHead);
+        assert.equal(f.task().runId, before.runId);
+
+        if (!followup && drift === "unchanged") {
+          const fresh = escalationVerbChoices(
+            f.next().verbs,
+            escalationChoiceBinding(f.facts()),
+          ).find(
+            (choice) => choice.verb === "move" && choice.args.to === "review",
+          )!;
+          writeFollowup(fresh);
+          openQuestion(followupId, fresh);
+          assert.equal((await answer(followupId)).answer, fresh.label);
+          assert.equal((await answer(followupId)).answer, fresh.label);
+          assert.equal(f.events("owner_control").length, 1);
+          assert.equal(f.events("planner_escalation_applied").length, 1);
+        }
+      } finally {
+        await f.close();
+      }
+    });
+  }
+}
+
+test("a held restart loses its old stop after its target moves and the hold releases", async () => {
+  const f = fixture();
+  try {
+    const task = dispatched(f);
+    const run = reviewerRun(f);
+    const input = taskControlInputSchema.parse({
+      action: "restart",
+      taskId: task.id,
+      version: f.task().version,
+      role: "reviewer",
+      caller: CALLER,
+      reason: "Continue the retained reviewer",
+    });
+    const deferred = f.engine.deferOwnerVerb(f.task(), input, "held", {
+      runId: run.id,
+      head,
+    });
+    const parked = f.engine.resolution.recordStop(
+      deferred,
+      "operator_needed",
+      deferred.reason,
+    );
+    f.store.putRun({ ...run, released: true, status: "superseded" });
+    f.store.update(task.id, {
+      resolution: { ...f.task().resolution, currentRunId: null },
+    });
+    f.store.setMeta("paused", true);
+    assert.equal((await f.engine.auditPass(true)).fault, null);
+    assert.ok(f.task().resolution.deferredVerb);
+    f.store.setMeta("paused", false);
+    assert.equal((await f.engine.auditPass(true)).fault, null);
+    assert.equal(f.task().resolution.deferredVerb, null);
+    assert.doesNotMatch(f.next().reason, /delivered once Nucleus is released/);
+    assert.doesNotMatch(
+      f.next().stop?.detail ?? "",
+      /delivered once Nucleus is released/,
+    );
+    assert.equal(f.events("deferred_verb_refused").length, 1);
+    // The old service dropped the intent but left this exact stop and reason.
+    f.store.update(task.id, {
+      reason: parked.reason,
+      resolution: { ...f.task().resolution, stop: parked.resolution.stop },
+    });
+    assert.equal((await f.engine.auditPass(true)).fault, null);
+    assert.equal(f.events("deferred_verb_stop_cleared").length, 1);
+    assert.doesNotMatch(
+      f.next().stop?.detail ?? "",
+      /delivered once Nucleus is released/,
+    );
+    assert.equal((await f.engine.auditPass(true)).fault, null);
+    assert.equal(f.events("deferred_verb_refused").length, 1);
+    assert.equal(f.events("deferred_verb_stop_cleared").length, 1);
+    assert.equal(f.events("owner_verb_resumed").length, 0);
   } finally {
     await f.close();
   }
@@ -4298,6 +4567,7 @@ test("next omits an overwritten released delivery after its real observer settle
       status: "uncertain",
       released: true,
     });
+    f.store.setMeta("paused", true);
     const offered = () =>
       f
         .next()
@@ -4308,12 +4578,49 @@ test("next omits an overwritten released delivery after its real observer settle
             JSON.stringify(item.args).includes(`run-delivery.${run.id}`),
         );
     assert.equal(offered(), false);
-    f.engine.reconcileBlockedEffects(f.taskId);
+    assert.equal((await f.engine.auditPass(true)).fault, null);
     assert.equal(f.store.run(run.id)?.status, "superseded");
     assert.equal(f.events("run_delivery_superseded").length, 1);
-    f.engine.reconcileBlockedEffects(f.taskId);
+    assert.equal((await f.engine.auditPass(true)).fault, null);
     assert.equal(f.events("run_delivery_superseded").length, 1);
     assert.equal(offered(), false);
+  } finally {
+    await f.close();
+  }
+});
+
+test("the sweep owns released-run delivery while an incomplete timeline proves nothing", async () => {
+  const f = fixture();
+  try {
+    dispatched(f);
+    const run = reviewerRun(f, { status: "uncertain", released: true });
+    f.store.setMeta("paused", true);
+    let incomplete = true;
+    f.adapter.agentTimelinePage = async () => ({
+      ...toolTimelinePage(f.timelineEntries),
+      hasOlder: incomplete,
+    });
+    const wait = () =>
+      f
+        .views("retry_effect")
+        .find((view) => view.refusal?.startsWith(`run-delivery ${run.id} `))
+        ?.refusal;
+    assert.match(wait() ?? "", /exact timeline on a sweep/);
+    assert.equal((await f.engine.auditPass(true)).fault, null);
+    assert.equal(f.store.run(run.id)?.status, "uncertain");
+    assert.equal(f.events("run_delivery_not_delivered").length, 0);
+    assert.ok(wait());
+
+    incomplete = false;
+    assert.equal((await f.engine.auditPass(true)).fault, null);
+    assert.equal(f.store.run(run.id)?.status, "superseded");
+    assert.equal(f.store.run(run.id)?.released, true);
+    assert.equal(f.events("run_delivery_not_delivered").length, 1);
+    assert.equal(f.events("run_delivery_superseded").length, 1);
+    assert.equal(wait(), undefined);
+    assert.equal((await f.engine.auditPass(true)).fault, null);
+    assert.equal(f.events("run_delivery_not_delivered").length, 1);
+    assert.equal(f.events("run_delivery_superseded").length, 1);
   } finally {
     await f.close();
   }
@@ -4698,6 +5005,64 @@ test("retry_effect does not report an invalid projected hook as settled", async 
   }
 });
 
+test("next refuses an unsupported publication record instead of offering a retry that cannot act", async () => {
+  const f = fixture();
+  try {
+    const run = reviewerRun(f, {
+      status: "finished",
+      released: true,
+      completion: {
+        eventId: "unpublished-record",
+        taskId: f.taskId,
+        runId: "review-run",
+        status: "ready_to_merge",
+        head,
+        summary: "Approved",
+        reviewText: "Exact approved findings",
+      },
+    });
+    f.store.setMeta(`reviewPublication:${run.id}`, { hash: "d".repeat(64) });
+    f.store.update(f.taskId, {
+      phase: "needs_attention",
+      reason: "Publication intent needs inspection",
+      resolution: { ...f.task().resolution, attention: true },
+    });
+    const effect = `review_publication.${run.id}`;
+    const refusal = f
+      .next()
+      .verbs.find(
+        (item) =>
+          item.verb === "retry_effect" &&
+          !item.available &&
+          item.refusal?.includes(effect),
+      )?.refusal;
+    assert.ok(refusal);
+    const invoke = () =>
+      f.engine.performTaskControl(
+        taskControlInputSchema.parse({
+          action: "retry_effect",
+          taskId: f.taskId,
+          version: f.task().version,
+          effect,
+          reason: "Observe the recorded publication",
+          caller: CALLER,
+        }),
+      );
+    await assert.rejects(
+      invoke(),
+      (error) => error instanceof Error && error.message === refusal,
+    );
+    assert.ok(
+      ownerPendingEffects(f.facts()).some(
+        (item) => item.effect === effect && item.kind === "recovery_effect",
+      ),
+      "the unsupported publication remains listed instead of being reported as settled",
+    );
+  } finally {
+    await f.close();
+  }
+});
+
 test("publication retry excludes its reporting run but fences other retained runs", async () => {
   const f = fixture();
   try {
@@ -4812,65 +5177,6 @@ test("publication retry excludes its reporting run but fences other retained run
       recovery.id,
     );
     assert.equal(f.store.run(review.id)?.completion?.reviewId, 42);
-  } finally {
-    await f.close();
-  }
-});
-
-test("next refuses an unsupported publication record instead of offering a retry that cannot act", async () => {
-  const f = fixture();
-  try {
-    const run = reviewerRun(f, {
-      status: "finished",
-      released: true,
-      completion: {
-        eventId: "unpublished-record",
-        taskId: f.taskId,
-        runId: "review-run",
-        status: "ready_to_merge",
-        head,
-        summary: "Approved",
-        reviewText: "Exact approved findings",
-      },
-    });
-    f.store.setMeta(`reviewPublication:${run.id}`, { hash: "d".repeat(64) });
-    f.store.update(f.taskId, {
-      phase: "needs_attention",
-      reason: "Publication intent needs inspection",
-      resolution: { ...f.task().resolution, attention: true },
-    });
-    const effect = `review_publication.${run.id}`;
-    assert.ok(
-      f
-        .next()
-        .verbs.find(
-          (item) =>
-            item.verb === "retry_effect" &&
-            !item.available &&
-            item.refusal?.includes(effect),
-        ),
-    );
-    const invoke = () =>
-      f.engine.performTaskControl(
-        taskControlInputSchema.parse({
-          action: "retry_effect",
-          taskId: f.taskId,
-          version: f.task().version,
-          effect,
-          reason: "Observe the recorded publication",
-          caller: CALLER,
-        }),
-      );
-    await assert.rejects(
-      invoke(),
-      /Formal publication recovery is unavailable/,
-    );
-    assert.ok(
-      ownerPendingEffects(f.facts()).some(
-        (item) => item.effect === effect && item.kind === "recovery_effect",
-      ),
-      "the unsupported publication remains listed instead of being reported as settled",
-    );
   } finally {
     await f.close();
   }
@@ -5028,6 +5334,7 @@ test("retry_effect settles an uncertain retry operation after its named effect i
 test("next drops a displaced restart after its old target is released", async () => {
   const f = fixture();
   try {
+    f.store.setMeta("paused", true);
     dispatched(f);
     const run = reviewerRun(f, {
       id: "old-review",
@@ -5091,9 +5398,9 @@ test("next drops a displaced restart after its old target is released", async ()
       true,
     );
     assert.equal(waiting(), false);
-    f.engine.reconcileBlockedEffects(f.taskId);
+    assert.equal((await f.engine.auditPass(true)).fault, null);
     assert.equal(f.events("operation_superseded").length, 1);
-    f.engine.reconcileBlockedEffects(f.taskId);
+    assert.equal((await f.engine.auditPass(true)).fault, null);
     assert.equal(f.events("operation_superseded").length, 1);
     assert.equal(waiting(), false);
   } finally {

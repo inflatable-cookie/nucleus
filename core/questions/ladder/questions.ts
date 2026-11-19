@@ -1,5 +1,6 @@
-import type { Completion, Task, TaskNextVerb } from '../../../shared/contracts';
-import { taskContextLines } from '../question-delegation';
+import type { OwnerVerbFacts } from "../../verbs/owner-facts";
+import type { Completion, Task, TaskNextVerb } from "../../../shared/contracts";
+import { taskContextLines } from "../question-delegation";
 
 /**
  * What the ladder asks, and the window it asks in. One owner for the consult and
@@ -18,13 +19,12 @@ export const PLANNER_ESCALATION_CHOICES = [
   "Wait until a time (put an ISO timestamp in Reason)",
   "Wait for an operator decision (put its ID in Reason)",
 ] as const;
-type PlannerEscalationChoice =
-  (typeof PLANNER_ESCALATION_CHOICES)[number];
+type PlannerEscalationChoice = (typeof PLANNER_ESCALATION_CHOICES)[number];
 
 /** A proof-only task has no worker, so escalation never offers a worker return. */
-export function plannerEscalationChoicesFor(
-  task: { entrypoint?: Task["entrypoint"] },
-): readonly PlannerEscalationChoice[] {
+export function plannerEscalationChoicesFor(task: {
+  entrypoint?: Task["entrypoint"];
+}): readonly PlannerEscalationChoice[] {
   if (task.entrypoint === "proof")
     return PLANNER_ESCALATION_CHOICES.filter(
       (choice) => choice !== "Return to the worker with a new approach",
@@ -37,9 +37,36 @@ export type EscalationVerbChoice = {
   label: string;
   verb: string;
   args: Record<string, unknown>;
+  binding?: string;
 };
+
+/** The participants and source an offered direction can act on. */
+export function escalationChoiceBinding({
+  task,
+  runs,
+}: Pick<OwnerVerbFacts, "task" | "runs">): string {
+  return JSON.stringify([
+    task.hostId,
+    task.workspaceId,
+    task.agentId,
+    task.runId,
+    task.resolution.currentRunId,
+    task.prUrl,
+    task.prHead,
+    runs
+      .filter((run) => !run.released)
+      .map((run) => [
+        run.id,
+        run.hostId,
+        run.agentId,
+        run.workspaceId,
+        run.head,
+      ]),
+  ]);
+}
 export function escalationVerbChoices(
   views: readonly TaskNextVerb[],
+  binding?: string,
 ): EscalationVerbChoice[] {
   return views.flatMap((view) => {
     if (
@@ -71,12 +98,17 @@ export function escalationVerbChoices(
           : view.verb === "restart"
             ? `Restart ${String(args.role ?? "the stopped step")}${args.fresh ? " with a fresh agent" : ""}`
             : `Route ${String(args.role)} to ${String(args.profileId)}`;
-    const description = view.note?.replace(/\s+/g, " ").trim().slice(0, 300).trim();
+    const description = view.note
+      ?.replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 300)
+      .trim();
     return [
       {
         label: description ? `${target}: ${description}` : target,
         verb: view.verb,
         args,
+        ...(binding !== undefined ? { binding } : {}),
       },
     ];
   });
@@ -92,7 +124,11 @@ export function reviewerConsultQuestion(
 }
 
 /** The prompt a mid-turn reviewer-target `nucleus_ask` delivers to the retained reviewer. */
-export const reviewerAskPrompt = (question: string, title: string, context: readonly string[] = []): string =>
+export const reviewerAskPrompt = (
+  question: string,
+  title: string,
+  context: readonly string[] = [],
+): string =>
   `The worker for "${title}" asks you, as its retained reviewer, for a second opinion — a consult, not a review round. If you can name a safe action within the approved outcome, recommend it directly; the worker owns that decision and any bounded diagnostic. Answer with your advice; Nucleus returns it to the worker in turn. Only when this needs a planning ruling, use question.answer with the one-line answer text Decision: planner — <reason>. Do not start a review round or give merge approval.\n\nQuestion: ${[question, ...taskContextLines(context)].join("\n")}`;
 
 /** The escalation question the delegate answers: the task, the blocker, the reviewer's view, the options. */

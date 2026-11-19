@@ -12,7 +12,7 @@ import {
   type HostRunAccountingProducerRecord,
   type HostRunInternalRecord,
 } from "../../shared/contracts";
-import { HostRunScheduler, type HostRunHandler } from "../../core/host-runs/host-run-scheduler";
+import { HOST_RUN_HOOK_DIED_BEFORE_ADMIT_REASON, HostRunScheduler, type HostRunHandler } from "../../core/host-runs/host-run-scheduler";
 import { hostRunAdmissionSocketPath } from "../../core/host-runs/host-run-paths";
 import { hostRunSocketAnswers } from "../../core/host-runs/host-run-files";
 import { pidAlive } from "../../core/machine/process-identity";
@@ -485,7 +485,7 @@ export class EffigyAdmissionEndpoint {
       return;
     }
     if (record.state === "queued" || record.state === "admitted") {
-      try { this.scheduler.cancelQueued(record.id, "admission hook died before admit", record.epoch); }
+      try { this.scheduler.cancelQueued(record.id, HOST_RUN_HOOK_DIED_BEFORE_ADMIT_REASON, record.epoch); }
       catch { /* already settled or stale epoch */ }
       this.stopWatch(reservationId);
       return;

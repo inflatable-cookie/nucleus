@@ -667,6 +667,12 @@ export async function t3Fake(t: TestContext, directory: string) {
      * the same deletion fact (nucleus#1305 review).
      */
     shellTombstones: false,
+    /**
+     * The shell row status a thread reports, by native thread id, when it is not the
+     * run-derived one: a finished run's own app state (`completed`, `interrupted`, ...)
+     * is what the nightly's shell carries after the run ends (nucleus#1381).
+     */
+    shellStatuses: {} as Record<string, string>,
   };
   /** Command receipts make a replayed project mutation answer with its recorded outcome. */
   const projectReceipts = new Map<
@@ -761,10 +767,12 @@ export async function t3Fake(t: TestContext, directory: string) {
     const pending = p.runtimeRequests.find(
       (request: Value) => request.status === "pending",
     );
+    // An app state override is a finished thread's own status: it has no live run.
+    const overridden = controls.shellStatuses[p.thread.id];
     const value: Value = {
       ...p.thread,
-      activeRunId: active?.id ?? null,
-      status: active?.status ?? "idle",
+      activeRunId: overridden === undefined ? (active?.id ?? null) : null,
+      status: overridden ?? active?.status ?? "idle",
       pendingRuntimeRequest: pending
         ? {
             id: pending.id,
@@ -1327,7 +1335,7 @@ export async function t3Fake(t: TestContext, directory: string) {
                     rootNodeId: `node:root:${payload.commandId}`,
                   }),
                 );
-              if (p.thread.providerInstanceId === "nucleus" && payload.text === "nucleus-hold-the-task-thread") {
+              if (p.thread.providerInstanceId === "nucleus" && /^(Nucleus keeps this task thread open for its next role\.|nucleus-hold-the-task-thread)/.test(payload.text)) {
                 const active = p.runs.find((run: Value) => ["preparing", "starting", "running", "waiting"].includes(run.status));
                 if (active) p.turnItems.push(syntheticTurnItem(payload.threadId, p.turnItems.length, { type: "user_message", messageId: payload.messageId, runId: active.id }));
               }

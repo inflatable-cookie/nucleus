@@ -58,16 +58,16 @@ test('an unsigned request for a frontier profile pins nothing and never waits; a
 test('Spec 052: a recorded climb carries the tier exception into request reconciliation', () => {
   const f = fixture(); try {
     const wide = profile('wide');
-    f.store.setMeta('pool', [...pool, poolSchema.parse({ profileId: 'wide', enabled: true, group: 'wide', roles: ['worker', 'reviewer'], weight: 1, scopes: ['general'], cost: 'medium', capability: 'very_high' })]);
+    f.store.setMeta('pool', [...pool, poolSchema.parse({ profileId: 'wide', enabled: true, group: 'wide', roles: ['worker', 'reviewer'], weight: 1, scopes: ['general'], cost: 'medium', capability: 'heavyweight' })]);
     const reconcile = (id: string) => reconcileRoutingSignoffs(f.store, f.decisions, id, [...profiles, wide]);
-    const task = f.submit({ complexity: 'very_high', profileRequests: { worker: { profileId: 'wide', reason: 'The next round needs it', required: false } } });
+    const task = f.submit({ complexity: 'high', profileRequests: { worker: { profileId: 'wide', reason: 'The next round needs it', required: false } } });
     reconcile(task.id);
-    assert.equal(f.store.task(task.id).profileRequests?.worker?.signoff?.status, 'pending', 'without a climb the very-high tier needs the board');
-    // The recorded climb covers the task's own requested very-high tier: a fresh
-    // request for it needs no question and no pending sign-off.
+    assert.equal(f.store.task(task.id).profileRequests?.worker?.signoff?.status, 'pending', 'without a climb a high task needs the board for Heavyweight');
+    // The recorded climb to Heavyweight covers it: a fresh request for that
+    // bracket needs no question and no pending sign-off.
     const current = f.store.task(task.id);
-    f.store.update(task.id, { profileRequests: { worker: { profileId: 'wide', reason: 'The climbed tier', required: false } },
-      resolution: { ...current.resolution, workerClimb: { reviewRunId: 'review-1', from: 'high', to: 'very_high', profileId: 'wide', at: '2026-11-17T00:00:00.000Z' } } });
+    f.store.update(task.id, { profileRequests: { worker: { profileId: 'wide', reason: 'The climbed bracket', required: false } },
+      resolution: { ...current.resolution, workerClimb: { reviewRunId: 'review-1', from: 'worker', to: 'heavyweight', profileId: 'wide', at: '2026-11-17T00:00:00.000Z' } } });
     reconcile(task.id);
     const settled = f.store.task(task.id).profileRequests?.worker;
     assert.equal(settled?.signoff, undefined, 'the recorded climb needs no second sign-off');

@@ -779,7 +779,13 @@ missing collection cannot stand in for a real one (nucleus#1188). Archived
 threads are retired participants: they report the terminal
 closed state with `archived` carried on its own field, so archive proofs and
 workspace teardown read a terminal state while retained reads still see the
-retirement.
+retirement. The workspace thread inventory reads the same terminal states as the
+single-thread read (nucleus#1381): a finished run (`completed`, `interrupted`,
+`failed`, `cancelled`, `rolled_back`) reads `idle`, an archived thread `closed`
+and a tombstoned one `gone`. A live run, a pending request or any other status
+holds the archive. A delegated follow-up child leaves observation with its task,
+as its parent does, so a finished task's follow-up reads as retired, not as a
+live row.
 
 On T3 startup, active runs are cancelled and live approvals expire. Pending
 questions may remain pending with `responseCapability: {type: "message"}`.
@@ -890,8 +896,10 @@ checkout is refused with a visible reason, never silently re-homed.
 turn while the service says to. The adapter releases it when no role child of the
 task is live and no decision needs a person, so it no longer reads as busy forever. Before
 the next child, the parent is re-entered with a message whose text carries the
-adapter's `nucleus-hold-the-task-thread` marker; the binding's `holdPattern` names
-that marker, so the agent holds the turn and shows or forwards nothing. A manually settled parent is left alone; re-entry refuses until the operator
+adapter's plain sentence, `Nucleus keeps this task thread open for its next role.`,
+which T3 shows as the user bubble. The binding's `holdPattern` matches that sentence
+exactly, so the agent holds the turn and shows or forwards nothing. A legacy parent uses the same sentence: the agent recognizes it for the old binding
+rule as well. A manually settled parent is left alone; re-entry refuses until the operator
 unsettles it. A parent T3 will not run leaves the task waiting with a reason.
 
 **Completion wakes never reach the parent.** Every child is created with
@@ -1316,6 +1324,16 @@ when readback proves its postcondition; external disappearance without Nucleus's
 own delete does not retire presentation intents. Regression tests instrument
 `readStream` and exercise repeated real sweeps alongside another task's cleanup.
 
+nucleus#1378's held-turn proof (`effigy proof:t3code:held-turn`) runs the parent
+transcript on the installed nightly: the initial launch, same-state writes, several
+milestones within one held turn, the production release and re-entry, the closeout,
+and the wire's paragraph breaks. On `0.1.11-nightly.20261119.4928`, a re-entry created
+with `createdBy: "system"` is accepted and holds the run, but T3 renders it as a
+visible user bubble. No quiet re-entry exists on `message.dispatch`, so the visible
+plain sentence is the prompt. The proof releases the held turn through a fixture-only
+`acp` debug target, because the adapter in that proof does not own the service's ACP
+surface.
+
 The private proof starts an unmodified checkout of the target nightly revision,
 or its bundled server copied into fresh run scratch, with separate home, data,
 configuration and synthetic Git project/worktree. A local scripted provider drives questions, approvals and a
@@ -1344,8 +1362,9 @@ read responses and actual lifecycle operations on the private nightly.
 
 When the server cannot be reached, uninstall refuses without changes and says the stored runtime bearer remains active; start T3Code and retry.
 
-The opt-in `NUCLEUS_T3_MODEL_CAPTURE` path writes the decoded codex terra and
-luna, Pi and Claude model entries from the adapter's existing config read. It
+The opt-in `NUCLEUS_T3_MODEL_CAPTURE` path writes the decoded codex, Pi and
+Claude model entries from the adapter's existing config read (every codex model
+since nucleus#1386, so a later capture carries `gpt-6.2-astra`). It
 contains no settings or environment identity, is limited to 16 models per provider
 and 256 KiB, and makes no additional T3 call. Set the path inside run scratch
 when collecting a capture; the file is overwritten on each config read. The

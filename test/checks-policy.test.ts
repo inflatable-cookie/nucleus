@@ -1495,7 +1495,7 @@ function fixture(uncertainMergeRetryMs?: number) {
       roles: ["worker"],
       weight: 1,
       scopes: ["general"],
-      capability: "medium",
+      capability: "worker",
       cost: "low",
     },
     {
@@ -1505,7 +1505,7 @@ function fixture(uncertainMergeRetryMs?: number) {
       roles: ["reviewer"],
       weight: 1,
       scopes: ["general"],
-      capability: "medium",
+      capability: "worker",
       cost: "medium",
     },
     {
@@ -1515,7 +1515,7 @@ function fixture(uncertainMergeRetryMs?: number) {
       roles: ["coordinator"],
       weight: 1,
       scopes: ["general"],
-      capability: "low",
+      capability: "mechanical",
       cost: "very_low",
     },
   ]);

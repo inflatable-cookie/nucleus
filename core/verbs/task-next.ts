@@ -1,4 +1,5 @@
 import { REMOVED_TASK_REFUSAL } from "./control-refusals";
+import { taskNeverDispatched } from "../task-decision-rules";
 import { workerStepLabel } from "../../shared/demand";
 import { holdOwnerOf } from "../../shared/contracts";
 import {
@@ -461,6 +462,10 @@ export function assembleOwnerTaskNext(
   const fences = holdsOf(task);
   const verbs = [...ownerVerbViews(planned), ...holdViews(task)];
   const stop = ownerTaskStop(facts);
+  if (stop)
+    stop.suggestedVerbs = stop.suggestedVerbs.filter((verb) =>
+      verbs.some((view) => view.verb === verb && view.available),
+    );
   const reviewerSwap = reviewerSwapView(facts);
   const checkpointWait =
     stop?.reason === "lifecycle" && Boolean(retainedCheckpointRun(facts.runs));
@@ -531,11 +536,29 @@ export function assembleOwnerTaskNext(
         }
       : {}),
     ...(reviewerSwap ? { reviewerSwap } : {}),
-    routingPolicy: facts.store.routingPolicy(
-      task,
-      Date.now(),
-      facts.hostProfiles ?? [],
-    ),
+    routingPolicy: {
+      ...facts.store.routingPolicy(
+        facts.hostViews &&
+          task.entrypoint === "worker" &&
+          task.hostSelection?.basis !== "worker_profile" &&
+          !task.profile &&
+          taskNeverDispatched(task, facts.runs)
+          ? { ...task, hostId: "" }
+          : task,
+        Date.now(),
+        facts.hostProfiles ?? [],
+      ),
+      ...(facts.hostViews ? { hosts: facts.hostViews } : {}),
+      ...(task.hostSelection?.basis === "worker_profile" &&
+      task.hostSelection.reason
+        ? {
+            hostSelection: {
+              hostId: task.hostSelection.hostId,
+              reason: task.hostSelection.reason,
+            },
+          }
+        : {}),
+    },
     ...(task.workerExclusions.length
       ? { workerExclusions: task.workerExclusions }
       : {}),
@@ -548,7 +571,14 @@ export function assembleOwnerTaskNext(
     ...(task.retiredWorkers.length
       ? { replacement: taskNextReplacementView(task) }
       : {}),
-    ...(task.hostId ? { host: task.hostId } : {}),
+    ...(task.hostId
+      ? task.entrypoint === "worker" &&
+        task.hostSelection?.basis !== "worker_profile" &&
+        !task.profile &&
+        taskNeverDispatched(task, facts.runs)
+        ? { hostPreference: task.hostId }
+        : { host: task.hostId }
+      : {}),
     ...(task.worktreeLinks ? { worktreeLinks: task.worktreeLinks } : {}),
   };
 }

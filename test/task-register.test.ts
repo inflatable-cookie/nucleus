@@ -65,8 +65,8 @@ async function gitDirs() {
 
 function poolFor(profiles: Profile[]): PoolEntry[] {
   return profiles.map(entry => entry.id === 'reviewer'
-    ? { profileId: entry.id, enabled: true, group: 'review', roles: ['reviewer'], scopes: ['general'], weight: 1, capability: 'medium', cost: 'low' } as PoolEntry
-    : { profileId: entry.id, enabled: true, group: 'author', roles: ['worker'], scopes: ['general'], weight: 1, capability: 'low' } as PoolEntry);
+    ? { profileId: entry.id, enabled: true, group: 'review', roles: ['reviewer'], scopes: ['general'], weight: 1, capability: 'worker', cost: 'low' } as PoolEntry
+    : { profileId: entry.id, enabled: true, group: 'author', roles: ['worker'], scopes: ['general'], weight: 1, capability: 'mechanical' } as PoolEntry);
 }
 
 /** Full engine fixture: real git worktrees, stubbed Paseo surface for review and merge. */

@@ -1,8 +1,8 @@
-import { parseDelegateReply } from '../question-delegation';
+import { parseDelegateReply } from "../question-delegation";
 import {
   PLANNER_ESCALATION_CHOICES,
   type EscalationVerbChoice,
-} from './questions';
+} from "./questions";
 
 /**
  * What a delegate's reply means. The last lines win, and a reply arrives in one of
@@ -20,7 +20,7 @@ export function parseEscalationReply(
   text: string | null | undefined,
   choices: readonly string[],
 ): EscalationReply | null {
-  return parseDelegateReply(text, 'escalation', choices);
+  return parseDelegateReply(text, "escalation", choices);
 }
 
 type EscalationControl =
@@ -51,35 +51,61 @@ export function escalationAnswerControl(answer: string): EscalationControl {
 }
 
 /** Decode the legacy text boundary once; settlement consumes a typed choice. */
-export function decodeEscalationChoice(answer: string, offered: readonly EscalationVerbChoice[]):
-  | { kind: 'owner'; choice: EscalationVerbChoice; reason: string }
-  | { kind: 'task' | 'time' | 'decision'; reason: string }
-  | { kind: 'other'; reason: string } {
-  const reason = answer.includes(' — ') ? answer.slice(answer.indexOf(' — ') + 3).trim() : answer.trim();
-  const choice = offered.find(item => answer === item.label || answer.startsWith(`${item.label} — `));
-  if (choice) return { kind: 'owner', choice, reason };
-  if (answer.startsWith('Wait for a task (')) return { kind: 'task', reason };
-  if (answer.startsWith('Wait until a time (')) return { kind: 'time', reason };
-  if (answer.startsWith('Wait for an operator decision (')) return { kind: 'decision', reason };
-  return { kind: 'other', reason };
+export function decodeEscalationChoice(
+  answer: string,
+  offered: readonly EscalationVerbChoice[],
+):
+  | { kind: "owner"; choice: EscalationVerbChoice; reason: string }
+  | { kind: "task" | "time" | "decision"; reason: string }
+  | { kind: "other"; reason: string } {
+  const choice =
+    offered.find((item) => answer === item.label) ??
+    offered
+      .filter((item) => answer.startsWith(`${item.label} — `))
+      .reduce<
+        EscalationVerbChoice | undefined
+      >((longest, item) => (!longest || item.label.length > longest.label.length ? item : longest), undefined);
+  if (choice)
+    return {
+      kind: "owner",
+      choice,
+      reason: answer.slice(choice.label.length + 3).trim() || choice.label,
+    };
+  const reason = answer.includes(" — ")
+    ? answer.slice(answer.indexOf(" — ") + 3).trim()
+    : answer.trim();
+  if (answer.startsWith("Wait for a task (")) return { kind: "task", reason };
+  if (answer.startsWith("Wait until a time (")) return { kind: "time", reason };
+  if (answer.startsWith("Wait for an operator decision ("))
+    return { kind: "decision", reason };
+  return { kind: "other", reason };
 }
 
 /** The first ISO-8601 timestamp with a timezone in the reason; the rest is a note. */
 export function extractFirstIsoTimestamp(text: string): string | null {
-  const match = text.match(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})/);
+  const match = text.match(
+    /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})/,
+  );
   return match ? match[0] : null;
 }
 
 /** Ordered task-reference candidates in the reason; the first that resolves is the target. */
 export function extractTaskReferenceCandidates(text: string): string[] {
-  const matches = text.match(/(?:[A-Za-z0-9_.-]+#\d+|\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b|#\d+|\b\d+\b)/g);
+  const matches = text.match(
+    /(?:[A-Za-z0-9_.-]+#\d+|\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b|#\d+|\b\d+\b)/g,
+  );
   return matches ?? [];
 }
 
 /** Ordered decision-ID candidates in the reason; the first that resolves is the target. */
 export function extractDecisionIdCandidates(text: string): string[] {
-  const uuids = text.match(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi);
+  const uuids = text.match(
+    /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi,
+  );
   if (uuids?.length) return uuids;
-  const first = text.trim().split(/\s+/)[0]?.replace(/^[“"'(\[]+|[”"')\].,;]+$/g, '');
+  const first = text
+    .trim()
+    .split(/\s+/)[0]
+    ?.replace(/^[“"'(\[]+|[”"')\].,;]+$/g, "");
   return first ? [first] : [];
 }

@@ -20,12 +20,17 @@ import {
 } from "../store/store-task-funnel";
 import { creationLookup } from "./absent-creation/restarts";
 import { CREATION_REFUSED_BEFORE_SEND, refusedRunIds } from "./refused-launch";
-import { taskProgressDigest } from "./coordinator-report";
+import {
+  taskProgressDigest,
+  reportNamesNoAction,
+  reportSettlesAsObservation,
+} from "./coordinator-report";
 import { recoveryApplicationsInFlight } from "./coordinator-settlement";
 import {
   liveNoopSummary,
   liveRecoveryWait,
   liveWorkingParticipant,
+  observedNoActionSummary,
 } from "./live-noop";
 
 /**
@@ -175,6 +180,7 @@ export class CoordinatorEpisode {
       eventId: completion.eventId,
       runId: run.id,
       reportStatus: completion.status,
+      recoveryAction: completion.recoveryAction ?? null,
       coordinatorAction: completion.coordinatorAction ?? null,
       summary: completion.summary,
       status: "pending",
@@ -305,9 +311,16 @@ export class CoordinatorEpisode {
       released: true,
       status: "finished",
     });
-    const summary = live
-      ? liveNoopSummary(live)
-      : `live: task is waiting; ${wait!.reason}`;
+    // A `cannot` on live work still settles as a live no-op with no question; its
+    // own reason stays visible in the record instead of being dropped
+    // (nucleus#1388 review, follow-up B).
+    const cannotReason =
+      action.coordinatorAction?.verb === "cannot"
+        ? action.coordinatorAction.reason
+        : null;
+    const summary = `${
+      live ? liveNoopSummary(live) : `live: task is waiting; ${wait!.reason}`
+    }${cannotReason ? `; cannot: ${cannotReason}` : ""}`;
     const recovery = current.resolution.recovery;
     const incident = current.resolution.incident;
     const ownsIncident = Boolean(
@@ -360,6 +373,78 @@ export class CoordinatorEpisode {
       this.store.task(t.id),
       wait?.reason ?? threadRunningReason(live!.role),
       wait?.stop ?? "lifecycle",
+    );
+    recordResultApplied(this.store, t.id, latest.id);
+  }
+  /**
+   * A report that named no owner verb settles the episode as observed: there is
+   * nothing to apply, so nothing is refused and no attention notice is raised. The
+   * report's own words are kept as the episode's summary and the run releases with
+   * its completion. The stop it answered stays exactly as recorded, so a later pass
+   * over the same unchanged facts reads this resolved episode instead of opening
+   * another one (nucleus#1388).
+   */
+  settleObservedNoAction(
+    t: Task,
+    run: Run,
+    action: RecoveryActionBinding,
+  ): void {
+    if (!this.store.db.isTransaction)
+      return this.store.transaction(() =>
+        this.settleObservedNoAction(t, run, action),
+      );
+    if (resultApplied(this.store, t.id, run.id)) return;
+    const current = this.store.task(t.id);
+    const latest = this.store.run(run.id);
+    if (
+      !latest ||
+      latest.released ||
+      current.resolution.recovery?.runId !== latest.id
+    )
+      return;
+    const completion = this.completionFromBinding(current, latest, action);
+    this.store.putRun({
+      ...latest,
+      completion,
+      released: true,
+      status: "finished",
+    });
+    const recovery = current.resolution.recovery;
+    const incident = current.resolution.incident;
+    const summary = observedNoActionSummary(action);
+    // Only a recovered observation says its trigger is gone. A blocked, errored or
+    // escalated one names a fault the episode keeps as it is.
+    const settledIncident =
+      action.reportStatus === "recovered" &&
+      recovery?.incidentId &&
+      incident?.id === recovery.incidentId &&
+      incident.status === "reconciling"
+        ? {
+            ...incident,
+            status: "resolved" as const,
+            detail: `Recovery reported the trigger settled: ${action.summary}`,
+            updatedAt: now(),
+          }
+        : incident;
+    this.resolution.update(
+      current,
+      {
+        recoveryActive: false,
+        ...(recovery
+          ? {
+              recovery: {
+                ...recovery,
+                status: "resolved" as const,
+                summary,
+                action: { ...action, status: "applied" as const },
+              },
+            }
+          : {}),
+        incident: settledIncident,
+      },
+      {},
+      "recovery_observed_no_action",
+      summary,
     );
     recordResultApplied(this.store, t.id, latest.id);
   }
@@ -500,6 +585,13 @@ export class CoordinatorEpisode {
         ? this.bindingFrom(latest, incident)
         : null;
     if (action && action.status === "pending") {
+      // A report that named no owner verb, or a `cannot`, has nothing to apply: it
+      // releases as the observation it is. Only a report that named a verb this
+      // release superseded is recorded as not applied (nucleus#1388).
+      if (reportSettlesAsObservation(action)) {
+        this.settleObservedNoAction(current, latest, action);
+        return;
+      }
       // refuseAcceptedAction records the release with the episode closed and the
       // accepted action marked not applied; the stale retry is never executed.
       this.refuseAcceptedAction(

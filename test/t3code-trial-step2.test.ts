@@ -413,7 +413,9 @@ test("a T3 scope question lands on the board and recovery keeps it off the MCP r
     }),
     reportingViaMcp: false,
     hostId: "paseo-host",
-    listLiveAgents: async () => [{ id: "planner", title: "Planner", workspaceId: "planner-ws" }],
+    listLiveAgents: async () => [
+      { id: "planner", title: "Planner", workspaceId: "planner-ws" },
+    ],
     observe: observeIdle("ws", "worker"),
     originAgent: async (id: string) =>
       id === "planner"
@@ -648,8 +650,9 @@ test("repository hostKind selects the online host of that kind; switching back l
       },
       () => [],
     );
-    assert.equal(view.host, "t3code:env");
-    assert.equal(taskNextSchema.parse(view).host, "t3code:env");
+    assert.equal(view.host, undefined);
+    assert.equal(view.hostPreference, "t3code:env");
+    assert.equal(taskNextSchema.parse(view).hostPreference, "t3code:env");
   } finally {
     await runtime.drain();
   }
@@ -755,6 +758,13 @@ test("host resolution prefers repository override, then online operator default,
     basis: "planner_host",
     reason: "Planner host",
   });
+  const missingPreference = resolveIngressHost({
+    repositoryHostKind: "bb",
+    operatorDefaultHostKind: "paseo",
+    registered: ["paseo-primary"],
+    online: ["paseo-primary"],
+  });
+  assert.equal(missingPreference.hostId, "paseo-primary");
 });
 
 test("the helper ask, message and answer subcommands post to the ticket-bound routes", async () => {

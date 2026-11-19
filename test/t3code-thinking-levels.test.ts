@@ -127,7 +127,7 @@ const pool = (): PoolEntry[] =>
       roles: ["worker", "coordinator"],
       weight: 1,
       scopes: ["general"],
-      capability: "medium",
+      capability: "worker",
       cost: "medium",
     }),
   );
@@ -140,7 +140,10 @@ async function fixture(
   const root = mkdtempSync(join(tmpdir(), "t3-thinking-"));
   const directory = await realpath(root);
   const server = await t3Fake(t, directory);
-  server.controls.providers = [...structuredClone(providerShapes as typeof liveConfigModels), nucleusProvider];
+  server.controls.providers = [
+    ...structuredClone(providerShapes as typeof liveConfigModels),
+    nucleusProvider,
+  ];
   const acp = acpStub(server.threads);
   const host = new T3CodeHost({
     endpoint: server.endpoint,
@@ -594,35 +597,86 @@ test("a role profile's options come from its own provider entry, never the paren
   );
 });
 
-
 test("the existing config read writes a bounded model capture when requested", async (t) => {
   const shapes = structuredClone(liveConfigModels);
   const pi = shapes.find((provider) => provider.instanceId === "pi")!;
   (pi.models as Array<{ slug: string; name: string }>).unshift(
-    ...Array.from({ length: 16 }, (_, i) => ({ slug: `synthetic-${i}`, name: `Synthetic ${i}` })),
+    ...Array.from({ length: 16 }, (_, i) => ({
+      slug: `synthetic-${i}`,
+      name: `Synthetic ${i}`,
+    })),
   );
+  // Every codex model is captured, not only the fixture's two (nucleus#1386).
+  const codexShape = shapes.find(
+    (provider) => provider.instanceId === "codex",
+  )!;
+  (codexShape.models as unknown[]).push({
+    slug: "synthetic-codex",
+    name: "Synthetic codex",
+    capabilities: { optionDescriptors: [] },
+  });
   const { root, server } = await fixture(t, shapes, true);
-  const captured = JSON.parse(await readFile(join(root, "models.json"), "utf8"));
-  const codex = captured.providers.find((p: { instanceId: string }) => p.instanceId === "codex");
-  assert.deepEqual(codex.models.map((m: { slug: string }) => m.slug), ["gpt-6.1-terra", "gpt-6-luna"]);
-  const capturedPi = captured.providers.find((p: { instanceId: string }) => p.instanceId === "pi");
+  const captured = JSON.parse(
+    await readFile(join(root, "models.json"), "utf8"),
+  );
+  const codex = captured.providers.find(
+    (p: { instanceId: string }) => p.instanceId === "codex",
+  );
+  assert.deepEqual(
+    codex.models.map((m: { slug: string }) => m.slug),
+    ["gpt-6.1-terra", "gpt-6-luna", "synthetic-codex"],
+  );
+  const capturedPi = captured.providers.find(
+    (p: { instanceId: string }) => p.instanceId === "pi",
+  );
   assert.equal(capturedPi.models.length, 16);
-  assert.ok(capturedPi.models.some((m: { slug: string }) => m.slug === "opencode-go/muse-spark-1.3-contributor"));
-  assert.ok(captured.providers.some((p: { instanceId: string }) => p.instanceId === "claudeAgent"));
+  assert.ok(
+    capturedPi.models.some(
+      (m: { slug: string }) =>
+        m.slug === "opencode-go/muse-spark-1.3-contributor",
+    ),
+  );
+  assert.ok(
+    captured.providers.some(
+      (p: { instanceId: string }) => p.instanceId === "claudeAgent",
+    ),
+  );
   assert.equal(JSON.stringify(captured).includes("synthetic-bearer"), false);
-  assert.equal(server.requests.filter((call) => call.tag === "server.getConfig").length, 2);
+  assert.equal(
+    server.requests.filter((call) => call.tag === "server.getConfig").length,
+    2,
+  );
 });
 
 test("a generic variant without levels remains a feature beside the real carrier", async (t) => {
   const shapes = structuredClone(liveConfigModels);
   const model = shapes[0]!.models[0]!;
   model.capabilities!.optionDescriptors.unshift({
-    id: "variant", label: "Variant", type: "select",
-    options: [{ id: "standard", label: "Standard" }, { id: "fast", label: "Fast" }],
+    id: "variant",
+    label: "Variant",
+    type: "select",
+    options: [
+      { id: "standard", label: "Standard" },
+      { id: "fast", label: "Fast" },
+    ],
   } as never);
   const { catalog, host } = await fixture(t, shapes);
-  const entry = catalog.providers.find((p) => p.key === "codex")!.models.find((m) => m.id === model.slug)!;
+  const entry = catalog.providers
+    .find((p) => p.key === "codex")!
+    .models.find((m) => m.id === model.slug)!;
   assert.ok(entry.features.some((f) => f.id === "variant"));
   assert.ok(entry.thinkingOptions.some((o) => o.id === "high"));
-  assert.deepEqual(host.modelSelectionOptions({ ...profiles[0]!, provider: "codex", model: model.slug, thinkingOptionId: "high" } as Profile, shapes[0] as never, model as never), [{ id: "reasoningEffort", value: "high" }]);
+  assert.deepEqual(
+    host.modelSelectionOptions(
+      {
+        ...profiles[0]!,
+        provider: "codex",
+        model: model.slug,
+        thinkingOptionId: "high",
+      } as Profile,
+      shapes[0] as never,
+      model as never,
+    ),
+    [{ id: "reasoningEffort", value: "high" }],
+  );
 });

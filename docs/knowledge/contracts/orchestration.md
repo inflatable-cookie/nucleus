@@ -1251,7 +1251,7 @@ request identities and stored committed-handoff rows are not rewritten.
   task's `routingPolicy` (on `queue.detail` and `next`, both read against the
   task host's snapshot) lists the enabled pool profiles its host rules out or
   translates (`host.effects`) and how automatic worker
-  selection reads now (`selection`: complexity, role and usage offsets, the
+  selection reads now (`selection`: complexity, the usage level's start bracket, the
   first-attempt step, the demand, the profiles meeting it ordered by recent use
   over effective weight, and why the leader wins). An earlier migration
   copied the host's profile list once with ids unchanged without overwriting
@@ -1270,20 +1270,23 @@ request identities and stored committed-handoff rows are not rewritten.
 - Enabled flag, provider and group availability and thinking support are the
   eligibility gates; every profile can work, review and coordinate
   ([Spec 053](../specs/053-demand-based-selection.md), Tom, 2026-10-21).
-- Demand is the task's `complexity` (required on new submissions; `medium` when
-  absent), moved by the role offset and the usage level. Selection keeps every
-  eligible profile whose `capability` meets demand, else the most capable
+- Demand is a capability bracket (Mechanical, Worker, Heavyweight, Frontier)
+  from the task's `complexity` (required on new submissions; `medium` when
+  absent), the usage level and the step-up; the reviewer's bracket follows the
+  usage level and the coordinator runs on Mechanical when one is available
+  ([Spec 052](../specs/052-usage-level.md), Tom 2026-11-19). Selection keeps every
+  eligible profile at the demand's bracket, else the nearest above or the most capable
   eligible profiles, then rotates over the last 50 assignments by recent use
   over effective weight: configured weight times a cost lean that doubles per
   cost step down (Spec 053, Tom, 2026-11-04: cost leans, it doesn't exclude).
 - Frontier profiles, and profiles the usage level's permission rule holds, need a
   per-role request with a reason and the operator's board sign-off unless the
-  usage level puts them in automatic selection: frontier only at Maximum
+  usage level puts them in automatic selection: Frontier only at Extra high and Maximum
   ([Spec 052](../specs/052-usage-level.md), Tom 2026-11-09). Worker authorization does
   not authorize frontier review or coordination.
 - For Nucleus's own implementation and review work, request frontier profiles
   while usage allows, per role with a reason (Tom, 2026-10-18).
-- A coordinator's `route` never names a very_high-cost (Sol-class) profile;
+- A coordinator's `route` never names a profile the level holds (a Heavyweight or Frontier profile at Normal);
   availability and environment blocks are not capability failures (Tom,
   2026-10-01 and 2026-10-15). Owners may route there with a reason and board
   sign-off. A coordinator never routes to a profile the level's permission rule holds either.
@@ -1370,7 +1373,13 @@ request identities and stored committed-handoff rows are not rewritten.
   slot. Queue scans continue past those waits; a recovered origin is proved before
   the review rejoins fair slot ordering. A fault outside a host still records `engineError`.
   Bounding calls that never return is tracked separately in nucleus#1347.
-- A queued task waiting for an unavailable host does not reserve an available
+- Before the first worker dispatch, the repository host and operator default are
+  preferences. Selection rotates profiles across online host catalogs, including
+  their options. A profile available on one host takes the task there; for a
+  multi-host profile the preferences choose the host. The dispatch intent records
+  the host and reason with the workspace intent. Once dispatched, every role and
+  later run stays on that host; an incompatible route is refused by name.
+- A queued task waiting for an unavailable fixed host does not reserve an available
   slot ahead of another host; its reservation returns when its host wait clears.
 - The wait is independent of the task's stop (nucleus#1198 review). When nothing
   more specific already stops the task the stop reads `host_unavailable`, naming
@@ -1382,7 +1391,8 @@ request identities and stored committed-handoff rows are not rewritten.
 - Nothing is sent to that host: no quantum, launch, continuation, notification,
   recovery or coordinator, and no stall, incident or escalation is raised from
   the outage. The wall-time budget pauses for the wait (Spec 058 budgets). New
-  dispatch for a project whose host is away waits the same way.
+  dispatch that already owns a host waits the same way. A first worker instead
+  considers the other online hosts.
 - When the host returns, the wait clears and observation re-proves each retained
   thread before anything is sent; the task continues on the same host and
   threads. Delivery that was unknown stays unknown — an outage is never a reason
@@ -2236,7 +2246,9 @@ reports, grants or spends that history.
   records unread items for the owner.
 - An open incident fences a retained continuation only while it binds the
   current work; an incident recorded against a released run cannot hold the
-  reader.
+  reader. A released reviewer's applied blocked or error result belongs to that
+  run. A replacement already bound to the same head can continue its own
+  authenticated checkpoint once its agent is idle.
 - A delivered continuation has had its turn. The exits are the reviewer's own
   verdict or next checkpoint, an owner `stop` of that turn followed by `restart
   role=reviewer`, `route role=reviewer` to a profile with capacity, or a fresh
@@ -2943,18 +2955,35 @@ movement invalidates source approval and preserves the normal readiness gates.
 
 - Nucleus records one current stop per task (`{reason, detail, since,
   suggestedVerbs}`). A coordinator returns one typed `coordinatorAction`
-  (`restart`, `route`, `move`, `retry_effect` or `cannot`) with its recovery run
-  identity; Nucleus applies it through the shared verb registry. A recovered
-  report with no action, or a blocked/error report on healthy work, settles as
-  a no-op when Nucleus observes an active turn, advancing activity, or a project
-  slot or prerequisite wait. The initial worker and resolution participants use
-  the same rule; the report's wording does not decide whether work is live.
-  The task keeps its phase and ordinary wait, and its timeline records
-  “recovery: task live, nothing to do”. No escalation opens and recovery does not
-  repeat while the work remains live. A genuine fault still takes the existing
-  escalation path, including a verified provider-exhaustion report.
-  A recovered report with no action and no live work is refused: the coordinator
-  must name an action or `cannot`.
+  (`restart`, `route`, `move`, `retry_effect`, `none` or `cannot`) with its
+  recovery run identity; Nucleus applies it through the shared verb registry. A
+  live participant is reported as `{verb: "none", reason: "no action: <who> is
+  live and progressing"}`, and a report that names no action at all means the
+  same thing. A recovered report with no action, or a blocked/error report on
+  healthy work, settles as a no-op when Nucleus observes an active turn,
+  advancing activity, or a project slot or prerequisite wait. The initial worker
+  and resolution participants use the same rule; the report's wording does not
+  decide whether work is live. The task keeps its phase and ordinary wait, and
+  its timeline records “recovery: task live, nothing to do”. No escalation opens
+  and recovery does not repeat while the work remains live. A genuine fault still
+  takes the existing escalation path, including a verified provider-exhaustion
+  report.
+- A report that names no owner verb and that Nucleus cannot see as live settles
+  the episode as an observation too (nucleus#1388): the episode resolves with the
+  report's own words (`observed: <status>, no action — <summary>`), nothing is
+  applied, and no refusal or attention notice is raised. The stop it answered and
+  its work identity are left as they were, so a later pass over the same unchanged
+  facts answers from the resolved episode and opens no new coordinator; the loop
+  breaker still bounds a report that does act. An escalating report keeps its
+  escalation. A `cannot` with a reason settles the same way — its reason stays
+  visible, no refusal is recorded and no “not applied” wording is written — and
+  the same report opens the planner-ladder question with that reason, because
+  someone else must act (planner ruling db7b10d9, 2026-11-18). A live no-action
+  report asks nobody. Only a stored narrow action shape is refused *as retired*,
+  naming the owner verb that replaced it: the Spec 049 `recoveryAction` values
+  (`retry`, `revise`, `resume_worker`, `reassign_origin`, `reconcile`) and the four
+  narrow task controls folded into the owner verbs on 2026-10-19 (`restart`,
+  `move to=work`, `restart role=reviewer` and `amend_brief` with no text).
 - A planner-selected time or task wait resumes ordinary work when its condition
   settles, even if the recovery run that raised the escalation has ended or is
   missing. Wake follows the available continuation from `next`; when no retained

@@ -74,7 +74,7 @@ export function HostDefault({
       c={c}
       title="Default host"
       status={auto.status}
-      description="New tasks use this host when their repository has no override. If it is offline, Nucleus uses the planner's host. Existing tasks keep their host."
+      description="This is a preference, not a limit: the selected worker profile may run on another host. Dispatched tasks keep their host."
     >
       <DropdownSelect
         c={c}

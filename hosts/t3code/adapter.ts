@@ -219,7 +219,8 @@ export class T3CodeHost implements Host {
   constructor(options: T3CodeConfig) {
     this.acp = options.acp ?? (() => null);
     this.probeThreadId = options.probeThreadId;
-    this.modelCapturePath = options.modelCapturePath ?? process.env.NUCLEUS_T3_MODEL_CAPTURE;
+    this.modelCapturePath =
+      options.modelCapturePath ?? process.env.NUCLEUS_T3_MODEL_CAPTURE;
     this.rpc = new T3RpcClient(options);
     this.state = new T3StateFile(options.statePath);
     this.reads = new T3Reads({
@@ -243,17 +244,40 @@ export class T3CodeHost implements Host {
       intents: this.intents,
       parentThreadOf: (taskId) => this.nesting.parentOf(taskId)?.threadId,
     });
-    this.decisionHold = new T3DecisionHold({ hostId: () => this.hostId, state: this.state, reads: this.reads, intents: this.intents,
-      unsettle: (threadId, messageId) => this.presentation.unsettleBeforeMessage(threadId, messageId) });
-    this.decisionCards = new T3DecisionCards({ acp: this.acp, reads: this.reads,
-      respond: async (threadId, workspaceId, requestId, response) => this.respondRuntimeRequest(threadId, workspaceId, requestId, response),
+    this.decisionHold = new T3DecisionHold({
+      hostId: () => this.hostId,
+      state: this.state,
+      reads: this.reads,
+      intents: this.intents,
+      unsettle: (threadId, messageId) =>
+        this.presentation.unsettleBeforeMessage(threadId, messageId),
+    });
+    this.decisionCards = new T3DecisionCards({
+      acp: this.acp,
+      reads: this.reads,
+      respond: async (threadId, workspaceId, requestId, response) =>
+        this.respondRuntimeRequest(threadId, workspaceId, requestId, response),
     });
     this.inbox = new T3Inbox({
-      hostId: () => this.hostId, acp: this.acp, state: this.state, reads: this.reads, rpc: this.rpc, intents: this.intents, boardLink: options.boardLink,
+      hostId: () => this.hostId,
+      acp: this.acp,
+      state: this.state,
+      reads: this.reads,
+      rpc: this.rpc,
+      intents: this.intents,
+      boardLink: options.boardLink,
       runningTasks: () => this.activeTaskIds.size,
-      workspace: async directory => {
-        const created = await this.createWorkspace({ title: "Nucleus", requestId: `inbox:${this.hostId}`, directory, project: { workspaceRoot: directory } });
-        return { id: created.id, projectId: this.state.read().workspaces[created.id]!.projectId };
+      workspace: async (directory) => {
+        const created = await this.createWorkspace({
+          title: "Nucleus",
+          requestId: `inbox:${this.hostId}`,
+          directory,
+          project: { workspaceRoot: directory },
+        });
+        return {
+          id: created.id,
+          projectId: this.state.read().workspaces[created.id]!.projectId,
+        };
       },
     });
     this.nesting = new T3Nesting({
@@ -313,7 +337,9 @@ export class T3CodeHost implements Host {
    * T3's own provider/model/option vocabulary — no endpoint, credential or
    * environment identity.
    */
-  private async retainModelShapes(observed: z.infer<typeof config>): Promise<void> {
+  private async retainModelShapes(
+    observed: z.infer<typeof config>,
+  ): Promise<void> {
     const line = observed.providers
       .filter((provider) => provider.enabled && provider.models.length)
       .slice(0, 12)
@@ -330,16 +356,28 @@ export class T3CodeHost implements Host {
         "opencode-go/muse-spark-1.3-contributor",
       ]);
       const providers = observed.providers
-        .filter((provider) => ["codex", "pi", "claudeAgent"].includes(provider.instanceId))
+        .filter((provider) =>
+          ["codex", "pi", "claudeAgent"].includes(provider.instanceId),
+        )
         .slice(0, 3)
         .map(({ instanceId, status, models }) => ({
-          instanceId, status,
-          models: instanceId === "codex"
-            ? models.filter((model) => ["gpt-6.1-terra", "gpt-6-luna"].includes(model.slug))
-            : instanceId === "pi"
-              ? [...models.filter((model) => piFixtureModels.has(model.slug)),
-                  ...models.filter((model) => !piFixtureModels.has(model.slug))].slice(0, 16)
-              : models.slice(0, 16),
+          instanceId,
+          status,
+          // Every codex model, so a later capture carries the options of models
+          // the fixtures don't yet hold, such as gpt-6.2-astra (nucleus#1386).
+          models:
+            instanceId === "codex"
+              ? models.slice(0, 16)
+              : instanceId === "pi"
+                ? [
+                    ...models.filter((model) =>
+                      piFixtureModels.has(model.slug),
+                    ),
+                    ...models.filter(
+                      (model) => !piFixtureModels.has(model.slug),
+                    ),
+                  ].slice(0, 16)
+                : models.slice(0, 16),
         }));
       const capture = JSON.stringify({ providers }, null, 2);
       if (Buffer.byteLength(capture) > 256 * 1024)
@@ -443,7 +481,12 @@ export class T3CodeHost implements Host {
    */
   async reconcileObservation(): Promise<void> {
     const state = this.state.read();
-    const tracked = Object.keys(state.agents),
+    // A delegated follow-up child is a real thread in the task's workspace with its
+    // own launch identity, so it leaves observation with its task too (nucleus#1381).
+    const tracked = [
+        ...Object.keys(state.agents),
+        ...Object.keys(state.followUps ?? {}),
+      ],
       retiredIds = Object.keys(state.retiredAgents ?? {});
     if (!tracked.length && !retiredIds.length) return;
     const retire: string[] = [],
@@ -458,10 +501,11 @@ export class T3CodeHost implements Host {
     this.state.update((next) => {
       next.retiredAgents ??= {};
       for (const id of retire) {
-        const record = next.agents[id];
+        const record = next.agents[id] ?? next.followUps?.[id];
         if (!record) continue;
         next.retiredAgents[id] = retiredRecord(record);
         delete next.agents[id];
+        if (next.followUps) delete next.followUps[id];
       }
       for (const id of restore) {
         const record = next.retiredAgents?.[id];
@@ -593,7 +637,9 @@ export class T3CodeHost implements Host {
   ): Promise<void> {
     if (!this.connected) return;
     const pending = this.acp()?.pendingDecisionKey?.(taskId);
-    const shown = pending ? { state: "attention" as const, cause: "Decision needs an operator" } : attention;
+    const shown = pending
+      ? { state: "attention" as const, cause: "Decision needs an operator" }
+      : attention;
     // The inbox's title counts tasks executing on this host: attention "active", once each.
     if (shown.state === "active") this.activeTaskIds.add(taskId);
     else this.activeTaskIds.delete(taskId);
@@ -608,15 +654,27 @@ export class T3CodeHost implements Host {
       if (state.inbox) {
         // The inbox is idle between decisions (nucleus#1384): re-enter it only while an
         // offer is open, and release it only once its own cards are settled on T3.
-        const cards = await this.decisionCards.reconcile(state.inbox.threadId, state.inbox.workspaceId);
+        const cards = await this.decisionCards.reconcile(
+          state.inbox.threadId,
+          state.inbox.workspaceId,
+        );
         const acp = this.acp();
-        if (acp?.pendingInboxDecisionKey?.(this.hostId)) await this.decisionHold.reconcile(state.inbox.threadId);
-        else if (cards.settled) acp?.release(state.inbox.sessionId, "no operator decision is open for the inbox");
+        if (acp?.pendingInboxDecisionKey?.(this.hostId))
+          await this.decisionHold.reconcile(state.inbox.threadId);
+        else if (cards.settled)
+          acp?.release(
+            state.inbox.sessionId,
+            "no operator decision is open for the inbox",
+          );
       }
       for (const parent of Object.values(state.parents ?? {})) {
         if (!parent.archivedAt) {
-          await this.decisionCards.reconcile(parent.threadId, parent.workspaceId);
-          if (this.acp()?.pendingDecisionKey?.(parent.taskId)) await this.decisionHold.reconcile(parent.threadId);
+          await this.decisionCards.reconcile(
+            parent.threadId,
+            parent.workspaceId,
+          );
+          if (this.acp()?.pendingDecisionKey?.(parent.taskId))
+            await this.decisionHold.reconcile(parent.threadId);
         }
       }
       await this.nesting.reconcile(tasks);
@@ -962,7 +1020,9 @@ export class T3CodeHost implements Host {
       provider?.models.find((m) => m.slug === spec.profile.model),
     );
     if (!provider)
-      throw new ProvenPreSendRefusalError(`T3Code provider ${spec.profile.provider} is unavailable`);
+      throw new ProvenPreSendRefusalError(
+        `T3Code provider ${spec.profile.provider} is unavailable`,
+      );
     this.launchRuntimeMode(spec.profile, provider.supportedRuntimeModes);
     const title = this.presentation.numberedThreadTitle(
       spec.taskNumber,
@@ -1060,7 +1120,10 @@ export class T3CodeHost implements Host {
     const features = Object.entries(profile.featureValues ?? {});
     const requested = thinkingLevelFor(profile, translation);
     if (!provider || !model) {
-      if (provider && (provider.status !== "ready" || !providerReportsOptions(provider)))
+      if (
+        provider &&
+        (provider.status !== "ready" || !providerReportsOptions(provider))
+      )
         throw new HostSnapshotPendingError(
           `T3Code reports no ${profile.provider} model ${profile.model} yet`,
         );
@@ -1456,7 +1519,8 @@ export class T3CodeHost implements Host {
             request.kind === "user_input"
               ? response.answers
                 ? !!response.decision
-                : response.decision !== "cancel" && response.decision !== "decline"
+                : response.decision !== "cancel" &&
+                  response.decision !== "decline"
               : !response.decision || !!response.answers
           )
             throw new ProvenPreSendRefusalError(

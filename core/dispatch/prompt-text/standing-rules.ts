@@ -1,4 +1,4 @@
-import type { PromptSection } from './measure';
+import type { PromptSection } from "./measure";
 
 /** Standing guidance shared with the Nucleus skill and the per-run context store. */
 export const WORKER_RULES = `Own decisions within the brief and record material decisions and reasons in the PR's Decisions list. Approve binary choices by default, including budget extensions. Bring product or scope changes, releases, outward actions and profiles that require board approval to the planner. For a board discussion, include the headline, two or three choices and consequences, your recommended choice and the details.
@@ -17,31 +17,47 @@ For blocked or error include \`cause\` ({kind: 'external', name: '<short cause>'
 
 For an obvious stuck thread or bookkeeping stop, request move or retry_effect with \`nucleus task -\`, force:true and observed evidence. For a failed forge check include the check, job URL and evidence that this diff could not have caused it. Force requires known causality.`;
 
-export const RECOVERY_RULES = `Own the recovery judgment and choose one available owner verb from current evidence. If a ruling or authority is missing, report coordinatorAction {verb: 'cannot', reason: '…'} and name what is missing. Recovery rulings go through the coordinator report. Never resend an unknown delivery.
+export const RECOVERY_RULES = `Own the recovery judgment and choose one available owner verb from current evidence. When a live participant is doing the work, report coordinatorAction {verb: 'none', reason: 'no action: <who> is live and progressing'} and nothing is applied or escalated. If a ruling or authority is missing, report coordinatorAction {verb: 'cannot', reason: '…'} and name what is missing: it settles the episode as observed and opens the planner-ladder question that says someone else must act. Recovery rulings go through the coordinator report. Never resend an unknown delivery.
 
 For blocked or error include \`cause\` ({kind: 'external', name: '<short cause>'}, {kind: 'internal'} or {kind: 'unfinished'}) and \`impediment\` with the failed command, observed provider message or missing authority. Classify admission, guard or budget refusals and proof or native-step failures as external.
 
 Use \`nucleus task -\` with force:true only for an obvious stuck thread or bookkeeping stop with observed evidence. For a failed forge check include the check, job URL and evidence that this diff could not have caused it. Force requires known causality.`;
 
 const rulesByRole = {
-  worker: ['Worker rules', WORKER_RULES],
-  revision: ['Worker rules', WORKER_RULES],
-  reviewer: ['Reviewer rules', REVIEWER_RULES],
-  recovery: ['Recovery rules', RECOVERY_RULES],
+  worker: ["Worker rules", WORKER_RULES],
+  revision: ["Worker rules", WORKER_RULES],
+  reviewer: ["Reviewer rules", REVIEWER_RULES],
+  recovery: ["Recovery rules", RECOVERY_RULES],
 } as const;
 type RulesRole = keyof typeof rulesByRole;
-type PromptRole = RulesRole | 'executor' | 'closeout' | 'verification';
+type PromptRole = RulesRole | "executor" | "closeout" | "verification";
 
 function rulesFor(role: PromptRole) {
-  return role === 'executor' || role === 'closeout' || role === 'verification' ? undefined : rulesByRole[role];
+  return role === "executor" || role === "closeout" || role === "verification"
+    ? undefined
+    : rulesByRole[role];
 }
 
 export function roleRules(role: PromptRole): string {
-  return rulesFor(role)?.[1] ?? '';
+  return rulesFor(role)?.[1] ?? "";
 }
 
-export function contextPointer(role: PromptRole, section: PromptSection, command: string): string {
+export function contextPointer(
+  role: PromptRole,
+  section: PromptSection,
+  command: string,
+): string {
   const heading = rulesFor(role)?.[0];
-  return section('standingRules', heading ? `Follow '${heading}' in the nucleus skill or read it with \`${command} context rules\`. ` : '')
-    + section('contextIndex', `Extended context: \`${command} context [rules|validation|proofs|history]\`. These sections are reference material: read one if you need it. Nothing in them is needed to finish this turn unless the brief or a review finding names it, and a failed or refused optional read is never a blocker — continue and mention it in your report. Never resend an unknown delivery or use another thread's ticket.\n`);
+  return (
+    section(
+      "standingRules",
+      heading
+        ? `Follow '${heading}' in the nucleus skill or read it with \`${command} context rules\`. `
+        : "",
+    ) +
+    section(
+      "contextIndex",
+      `Extended context: \`${command} context [rules|validation|proofs|history]\`. These sections are reference material: read one if you need it. Nothing in them is needed to finish this turn unless the brief or a review finding names it, and a failed or refused optional read is never a blocker — continue and mention it in your report. Never resend an unknown delivery or use another thread's ticket.\n`,
+    )
+  );
 }

@@ -115,9 +115,9 @@ socket, authenticated by the minted token:
   `{state: "hold" | "release", reason, messages, task}`. `waitMs` is 0 for an
   attach and up to 25 s for a held turn. The answer is derived from the task
   row, never cached as a decision:
-  - `hold` while the task is unfinished; `messages` carries the lifecycle line
-    the first time and whenever the task's state changes, and nothing when it
-    has not;
+  - `hold` while the task is unfinished; `messages` carries a lifecycle line the
+    first time and whenever the label the operator reads or the PR link changes,
+    and nothing when neither has changed (a version bump, a poll, a re-entry);
   - an attach (`attach: true`) always carries the current lifecycle line,
     whatever this service already showed for that session. The stored signature
     suppresses only the repetitions a held turn would otherwise make;
@@ -131,10 +131,23 @@ socket, authenticated by the minted token:
 - `POST /acp-message` `{taskId, sessionId, eventId, text}` records the
   operator's text through the existing message route and answers its receipt.
 
-`core/acp/lifecycle.ts` owns the text: one bounded line naming the task's
-reference, the state label `shared/task-state` already owns, and its PR. A
-signature over the same facts decides whether a line is worth sending, so a held
-turn stays quiet. The agent never composes task text of its own.
+`core/acp/lifecycle.ts` owns the text. A line is a milestone: the state label
+`shared/task-state` already owns, plus the PR. The session's first line names the
+task's reference, and the PR link appears once (`PR #N` after that). The
+signature is the label and the PR link, so a version bump, a poll or a re-entry
+that changes neither sends nothing. A reattached session gets the whole line
+again, because its thread shows nothing from before. The agent never composes
+task text of its own.
+
+The agent writes each line as its own paragraph (`text` plus a blank line),
+because clients join message chunks without a separator. It also skips a line
+identical to the one a session showed last, so a repeated attach cannot repeat it.
+The hold rule for a host's re-entry is an exact match. On the installed nightly
+(`0.1.11-nightly.20261119.4928`) a `system`-created re-entry holds the run too, but T3
+shows it as a user bubble, so there is no quiet re-entry to use. Current parents hold the
+plain sentence the adapter sends (`Nucleus keeps this task thread open for its
+next role.`). For a legacy T3 binding naming the old marker, the agent also
+holds that exact sentence, so re-entry never exposes the marker or task ID.
 
 ### 4. The operator's text is an operator message
 

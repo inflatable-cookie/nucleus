@@ -1,12 +1,14 @@
 /**
- * Spec 053: demand-based profile selection. Each run's demand is the task's
- * complexity, moved by a role offset and the usage level; selection takes every
- * available profile rated at or above the demand and rotates among them, cost
- * leaning the share toward cheaper ones (Spec 053, Tom 2026-11-04).
- * This module is the formula, shared by selection (server/routing.ts) and the
- * board's preview.
+ * Spec 053: demand-based profile selection. Each run's demand is a capability
+ * bracket: the task's complexity moved by the usage level and, for a worker,
+ * the one step-up; selection takes the available profiles at that bracket and
+ * rotates among them, cost leaning the share toward cheaper ones (Spec 053,
+ * Tom 2026-11-04). There are no role offsets (Tom, 2026-11-19): the reviewer's
+ * bracket follows the usage level and the coordinator runs on Mechanical.
+ * This module is the formula, shared by selection (core/dispatch/routing.ts)
+ * and the board's preview.
  */
-import type { CapabilityLevel, DemandLevel, DemandRoleOffsets, PoolEntry, ProfileCapability, UsageLevel } from "./contracts";
+import type { CapabilityLevel, DemandLevel, PoolEntry, ProfileCapability, UsageLevel } from "./contracts";
 import { CAPABILITY_LEVELS, DEMAND_LEVELS, USAGE_LABELS, capabilityRank, demandRank, honouredRequest, requestOnly } from "./pool";
 import { taskAuthorModelKeys } from "./authors";
 
@@ -19,68 +21,82 @@ export const COMPLEXITY_REQUIRED = "queue.complexity is required: very_low, low,
 export function complexityRefusal(submission: { complexity?: CapabilityLevel | null }): string | null {
   return submission.complexity ? null : COMPLEXITY_REQUIRED;
 }
-/** Default role offsets (Tom, 2026-10-21: reviewer "Match the task"); Settings → Dispatch limits changes them. */
-export const DEMAND_ROLE_OFFSETS: DemandRoleOffsets = { worker: 0, reviewer: 0, coordinator: -2 };
+
+const bracket = (rank: number): DemandLevel => DEMAND_LEVELS[Math.max(0, Math.min(DEMAND_LEVELS.length - 1, rank))];
 
 /**
- * The tier a task asks for: its complexity on the profile capability scale
- * (Spec 052, Tom 2026-11-17). Very-low complexity still asks for the cheapest
- * tier a profile carries; a task never asks for `frontier` by complexity alone,
- * which is an explicit request above the requested tier.
+ * The task's own bracket (Tom, 2026-11-19): very-low and low complexity are
+ * Mechanical, medium and high are Worker, very high is Heavyweight. Unset reads
+ * as medium. Deciders run here (nucleus#1362).
+ */
+export function complexityBracket(complexity: CapabilityLevel | null | undefined): DemandLevel {
+  switch (complexity ?? "medium") {
+    case "very_low": case "low": return "mechanical";
+    case "medium": case "high": return "worker";
+    case "very_high": return "heavyweight";
+  }
+}
+
+/**
+ * The bracket a task may climb to (Tom, 2026-11-19): its own bracket, one
+ * above for high and very-high complexity. The step-up decides the difference:
+ * a medium task stays on Worker, a high task may climb once to Heavyweight and
+ * a very-high one to Frontier (which still needs sign-off below Extra high).
  */
 export function requestedTier(complexity: CapabilityLevel | null | undefined): DemandLevel {
-  const rank = demandRank(complexity ?? "medium");
-  return DEMAND_LEVELS[Math.max(demandRank("low"), Math.min(demandRank("very_high"), rank))];
+  const own = demandRank(complexityBracket(complexity));
+  return bracket(complexity === "high" || complexity === "very_high" ? own + 1 : own);
 }
 
 /**
- * Where a task's worker starts at each usage level (Tom, 2026-11-17):
- * Low starts every task one tier below its complexity; Normal starts high and
- * very-high complexity one tier below and everything lower at its requested
- * tier; High and Extra high start at the requested tier; Maximum puts workers
- * and reviewers on very-high or frontier profiles whatever the complexity.
+ * Where a task's worker starts at each usage level, in whole brackets (Tom,
+ * 2026-11-19). Low starts every task one bracket below the one it may climb to;
+ * Normal starts it on its own bracket; High and Extra high start it at the
+ * bracket it may climb to, up to Heavyweight; Maximum puts workers and
+ * reviewers on Heavyweight or Frontier whatever the complexity.
  */
 export function workerStartTier(usage: UsageLevel, complexity: CapabilityLevel | null | undefined): DemandLevel {
-  const rank = demandRank(complexity ?? "medium");
-  const start = usage === "low" ? rank - 1
-    : usage === "normal" ? (rank >= demandRank("high") ? rank - 1 : rank)
-    : usage === "maximum" ? demandRank("very_high")
-    : rank;
-  return DEMAND_LEVELS[Math.max(0, Math.min(demandRank("frontier"), start))];
+  const requested = demandRank(requestedTier(complexity));
+  switch (usage) {
+    case "low": return bracket(requested - 1);
+    case "normal": return complexityBracket(complexity);
+    case "high": case "extra_high": return bracket(Math.min(requested, demandRank("heavyweight")));
+    case "maximum": return "heavyweight";
+  }
 }
 
+/** Whether the reviewer runs one bracket below the worker at this level (Tom, 2026-11-19: Low and Normal). */
+export const reviewerBelowWorker = (usage: UsageLevel): boolean => usage === "low" || usage === "normal";
+
 /**
- * One run's demand: the level's start tier moved by the role offset. The
- * reviewer offset is relative to the worker's tier, so a negative offset lets a
- * reviewer run below it (Tom, 2026-11-18: "a reviewer should be able to be lower
- * tier"); a critical task floors its reviewer at the worker in `reviewerDemand`.
- * A coordinator keeps its configured offset under every level, Maximum included
- * (Tom, 2026-11-17).
+ * One run's demand before any worker ran: the worker starts at the level's
+ * bracket, the reviewer one bracket below it at Low and Normal and on it
+ * above, and the coordinator always on Mechanical (Tom, 2026-11-19:
+ * "Coordinator should always be mechanical if available").
  */
-export function runDemand(complexity: CapabilityLevel | null | undefined, role: DemandRole, usage: UsageLevel, offsets: DemandRoleOffsets = DEMAND_ROLE_OFFSETS): DemandLevel {
+export function runDemand(complexity: CapabilityLevel | null | undefined, role: DemandRole, usage: UsageLevel): DemandLevel {
+  if (role === "coordinator") return "mechanical";
   const start = demandRank(workerStartTier(usage, complexity));
-  const worker = start + offsets.worker;
-  const rank = role === "reviewer" ? worker + offsets.reviewer : role === "worker" ? worker : start + offsets.coordinator;
-  return DEMAND_LEVELS[Math.max(0, Math.min(demandRank("frontier"), rank))];
+  return bracket(role === "reviewer" && reviewerBelowWorker(usage) ? start - 1 : start);
 }
 
 /**
- * The reviewer's demand: the worker's actual tier (or its calculated demand
- * before a worker ran) moved by the reviewer offset. Only a critical task
- * floors it at the worker's actual tier, as its brief asks for a reviewer at
- * least as capable as the worker (Tom, 2026-11-18).
+ * The reviewer's demand (Tom, 2026-11-19): one bracket below the worker's
+ * actual profile (or its start bracket before a worker ran) at Low and Normal,
+ * the worker's bracket at High, Extra high and Maximum. A Mechanical worker
+ * gets a Mechanical reviewer. Only a critical task floors it at the worker's
+ * bracket, as its brief asks for a reviewer at least as capable as the worker.
  */
 export function reviewerDemand(task: { complexity?: CapabilityLevel | null; critical?: boolean | null; profile?: { id?: string; [key: string]: unknown } | null },
-  pool: readonly Pick<PoolEntry, "profileId" | "capability">[], usage: UsageLevel, offsets: DemandRoleOffsets = DEMAND_ROLE_OFFSETS): DemandLevel {
-  const worker = workerActualTier(task, pool) ?? runDemand(task.complexity, "worker", usage, offsets);
-  const moved = demandRank(worker) + offsets.reviewer;
-  const rank = task.critical ? Math.max(moved, demandRank(worker)) : moved;
-  return DEMAND_LEVELS[Math.max(0, Math.min(demandRank("frontier"), rank))];
+  pool: readonly Pick<PoolEntry, "profileId" | "capability">[], usage: UsageLevel): DemandLevel {
+  const worker = demandRank(workerActualTier(task, pool) ?? workerStartTier(usage, task.complexity));
+  const moved = reviewerBelowWorker(usage) ? worker - 1 : worker;
+  return bracket(task.critical ? Math.max(moved, worker) : moved);
 }
 
 /**
- * The worker's actual tier from the profile it selected (an unrated entry
- * counts as medium). Reviewer selection floors against this actual rating, not
+ * The worker's actual bracket from the profile it selected (an unrated entry
+ * counts as Worker). Reviewer selection floors against this actual rating, not
  * the calculated demand: a run that rotated onto a stronger profile is reviewed
  * by at least that capability (Tom, 2026-11-17).
  */
@@ -109,9 +125,9 @@ export function workerClimbTarget(task: {
   if (task.resolution?.workerClimb?.reviewRunId === review.runId) return null;
   const requested = requestedTier(task.complexity);
   const start = workerStartTier(usage, task.complexity);
-  // The step-up exists because the level started the task below its requested
-  // tier. A task the level starts at the requested tier (a High/Extra-high run,
-  // or a configured role offset that moved a lower run) does not climb.
+  // The step-up exists because the level started the task below the bracket it
+  // may climb to. A task the level starts there (a medium task, or a high task
+  // at High) does not climb.
   if (demandRank(start) >= demandRank(requested)) return null;
   // One step from the tier the worker actually ran on: a first run that used
   // the shortfall path must climb to the missing intermediate tier, never skip
@@ -136,9 +152,9 @@ export function climbedTier(task: { complexity?: CapabilityLevel | null;
 }
 
 /**
- * The highest tier automatic selection may reach at this level: frontier at
- * Maximum (which runs workers and reviewers on the top two tiers regardless of
- * complexity), the task's own requested tier otherwise. Going above the
+ * The highest bracket automatic selection may reach at this level: Frontier at
+ * Maximum (which runs workers and reviewers on Heavyweight or Frontier
+ * regardless of complexity), the bracket the task may climb to otherwise. Going above the
  * requested tier is an explicit planner or operator route (Tom, 2026-11-17).
  */
 export function usageCeiling(usage: UsageLevel, requested: DemandLevel): DemandLevel {
@@ -174,8 +190,8 @@ export function workerStepLabel(usage: UsageLevel, reviewed: boolean): string {
 export const COST_LEAN = 2;
 /** An unrated cost counts as medium. */
 const rated = (value: CapabilityLevel | null | undefined): number => capabilityRank(value ?? "medium");
-/** A profile's rank on the demand scale; unrated counts as medium. */
-const profileRank = (value: ProfileCapability | null | undefined): number => demandRank(value ?? "medium");
+/** A profile's rank on the bracket scale; unrated counts as Worker. */
+export const profileRank = (value: ProfileCapability | null | undefined): number => demandRank(value ?? "worker");
 /** The cost lean for a profile: COST_LEAN per step below very_high. */
 export const costLean = (cost: CapabilityLevel | null | undefined): number => COST_LEAN ** (CAPABILITY_LEVELS.length - 1 - rated(cost));
 /** The divisor rotation uses: configured weight times the cost lean. */
@@ -186,8 +202,8 @@ export const effectiveWeight = (weight: number, cost: CapabilityLevel | null | u
  * rotation). Automatic selection reaches the run's own tier: profiles rated at
  * that tier rotate by the cost lean. When none carries the tier, the nearest
  * tier above is the bail-out, and a shortfall takes the most capable profile at
- * or below the ceiling. Maximum is its own rule: workers and reviewers use the
- * top two tiers whatever the complexity, and no lower tier is a substitute.
+ * or below the ceiling. Maximum is its own rule: workers and reviewers use
+ * Heavyweight and Frontier whatever the complexity, and no lower tier is a substitute.
  * The ceiling keeps automatic selection from reaching above the task's own
  * requested tier, which is an explicit route. `topOnly` is Maximum's separate
  * rule and applies to workers and reviewers only, never a coordinator.
@@ -196,7 +212,7 @@ export function selectionTier<T extends { capability?: ProfileCapability | null 
   demand: DemandLevel, entries: readonly T[], topOnly: boolean, ceiling: DemandLevel,
 ): { tier: T[]; shortfall: boolean } {
   if (topOnly) {
-    const top = entries.filter(entry => entry.capability === "very_high" || entry.capability === "frontier");
+    const top = entries.filter(entry => entry.capability === "heavyweight" || entry.capability === "frontier");
     return { tier: top, shortfall: !top.length };
   }
   const max = demandRank(ceiling);
@@ -270,7 +286,7 @@ type PreviewTask = Parameters<typeof taskAuthorModelKeys>[0] & {
  */
 export function taskDemandPreview(task: PreviewTask, pool: readonly PoolEntry[],
   profiles: ReadonlyArray<{ id: string; model: string; available: boolean }>, usage: UsageLevel, unavailableGroups: ReadonlySet<string>,
-  offsets: DemandRoleOffsets = DEMAND_ROLE_OFFSETS, reviewed = false,
+  reviewed = false,
 ): DemandPreviewRow[] {
   const candidates: DemandCandidate[] = pool.flatMap(entry => {
     const profile = profiles.find(item => item.id === entry.profileId);
@@ -281,12 +297,12 @@ export function taskDemandPreview(task: PreviewTask, pool: readonly PoolEntry[],
   const climb = workerClimbTarget(task, pool, usage);
   const climbed = climbedTier(task);
   return (["worker", "reviewer", "coordinator"] as const).map(role => {
-    const fullDemand = runDemand(task.complexity, role, usage, offsets);
-    const roleDemand = role === "reviewer" ? reviewerDemand(task, pool, usage, offsets) : fullDemand;
+    const fullDemand = runDemand(task.complexity, role, usage);
+    const roleDemand = role === "reviewer" ? reviewerDemand(task, pool, usage) : fullDemand;
     const demand = role === "worker" ? (climb ? climb.to : reviewed ? workerStepUp(roleDemand, requested) : roleDemand) : roleDemand;
-    const ceiling = role === "coordinator" ? requested
-      : role === "reviewer" || usage === "maximum" ? "frontier"
-      : requested;
+    // A coordinator takes the lowest permitted bracket with a profile, so only
+    // a worker is bounded by the bracket the task may climb to.
+    const ceiling = role === "worker" && usage !== "maximum" ? requested : "frontier";
     const exception = role === "worker" ? climb?.to ?? climbed : climbed;
     const raw = task.profileRequests?.[role] ?? null;
     const request = raw ? { profileId: raw.profileId, replaces: Boolean(honouredRequest(raw, pool, usage, requested, exception)) } : null;

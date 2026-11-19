@@ -62,15 +62,29 @@ export type ProjectSettingsRepository = z.infer<
   typeof projectSettingsRepositorySchema
 >;
 
+const responsibleThreadFieldsSchema = {
+  agentId: z.string(),
+  hostId: z.string(),
+  lastInteraction: z.string().nullable(),
+  /** Why this thread was chosen: registration, dispatch, repository work. */
+  reasons: z.array(z.enum(RESPONSIBLE_THREAD_REASONS)),
+};
+
+export const responsibleObservationViewSchema = z.object({
+  /** routable; unverified (slow, failed or inconclusive read, kept in rank); unroutable (a different thread). */
+  state: z.enum(["routable", "unverified", "unroutable"]),
+  detail: z.string().nullable(),
+  observedAt: z.string(),
+}).strict();
+
 export const responsibleThreadViewSchema = z.object({
-  thread: z.object({
-    agentId: z.string(),
-    hostId: z.string(),
-    lastInteraction: z.string().nullable(),
-    /** Why this thread was chosen: registration, dispatch, repository work. */
-    reasons: z.array(z.enum(RESPONSIBLE_THREAD_REASONS)),
-  }).strict().nullable(),
+  thread: z.object(responsibleThreadFieldsSchema).strict().nullable(),
   cacheAgeMs: z.number().nonnegative(),
+  /** Every shortlisted thread in rank order, with its last observation; null when it was not read. */
+  shortlist: z.array(z.object({
+    ...responsibleThreadFieldsSchema,
+    observation: responsibleObservationViewSchema.nullable(),
+  }).strict()),
 }).strict();
 
 export const projectSettingsRowSchema = z

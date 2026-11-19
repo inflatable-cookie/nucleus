@@ -178,6 +178,27 @@ export const activeStatuses = new Set([
   "waiting",
 ]);
 const inventoryReadAttempts = 5;
+/** T3's finished-run app states: a run that ended is an idle thread to every reader. */
+const finishedRunStatuses = new Set([
+  "completed",
+  "interrupted",
+  "failed",
+  "cancelled",
+  "rolled_back",
+]);
+/**
+ * One shell row's status as Nucleus reads it, the same answer `observe` gives:
+ * a tombstone is `gone`, an archived thread is `closed`, a live run keeps its own
+ * status (so it holds), a finished run and an idle thread are `idle`, and any other
+ * status is returned unchanged so it holds too (nucleus#1381).
+ */
+export function shellThreadStatus(row: ShellRow): string {
+  if (row.deletedAt) return "gone";
+  if (row.archivedAt) return "closed";
+  if (row.activeRunId || activeStatuses.has(row.status)) return row.status;
+  if (row.status === "idle" || finishedRunStatuses.has(row.status)) return "idle";
+  return row.status;
+}
 
 /** The connection and durable state a read needs; one host owns both. */
 export interface T3ReadContext {
@@ -554,9 +575,9 @@ export class T3Reads {
       id: t.id,
       workspaceId: this.workspaceFor(t),
       labels: agentRecord(this.core.state.read(), t.id)?.labels ?? {},
-      // The shell's own status, even for an archived thread: `archived` rides
-      // its own flag, and the workspace archive proof reads terminal states.
-      status: t.deletedAt ? "gone" : t.status,
+      // The same terminal normalisation the single-thread read reports, so the
+      // workspace archive proof reads one answer for both (nucleus#1381).
+      status: shellThreadStatus(t),
       archived: !!t.archivedAt,
       activeTurn: !!t.activeRunId || activeStatuses.has(t.status),
       pendingPermissionKinds: t.pendingRuntimeRequest
@@ -728,15 +749,9 @@ export class T3Reads {
       id,
       workspaceId: this.workspaceFor(row) ?? record?.workspaceId ?? null,
       archived: !!row.archivedAt,
-      // The same status an observed thread reports: a finished run reads as idle, an
-      // archived thread as closed and a removed one as gone.
-      status: row.deletedAt
-        ? "gone"
-        : row.archivedAt
-          ? "closed"
-          : active
-            ? row.status
-            : "idle",
+      // The same status the workspace inventory reports: a finished run reads as idle,
+      // an archived thread as closed and a removed one as gone.
+      status: shellThreadStatus(row),
       active,
       permissions: !!row.pendingRuntimeRequest,
       error: row.lastError ?? "",

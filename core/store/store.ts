@@ -112,7 +112,6 @@ import {
   type BoardLead,
   type BoardLeadLink,
   type Decision,
-  type DemandRoleOffsets,
   type HostRunAccountingRetirement,
   type HostRunEscapedDescendant,
   type HostRunInternalRecord,
@@ -337,7 +336,8 @@ export class Store {
       completePapercutsForTask: (task) =>
         store.planningStore.completePapercutsForTask(task),
       noteGrantRun: (task, role) => store.noteGrantRun(task, role),
-      receipt: (input, token) => store.receipt(input, token),
+      receipt: (input, token, credentialRunId) =>
+        store.receipt(input, token, credentialRunId),
       setCompletionReceipt: (id, task, run, hash, response) =>
         store.setCompletionReceipt(id, task, run, hash, response),
       threadArchiveEffect: (agentId, hostId) =>
@@ -848,6 +848,10 @@ export class Store {
    */
   migrateProfileThinking(vocabularies: readonly HostVocabulary[]): void {
     this.migrationStore.migrateProfileThinking(vocabularies);
+  }
+  /** Stored profiles' shared provider options under canonical keys, through every host's table (nucleus#1386). */
+  migrateProfileOptions(vocabularies: readonly HostVocabulary[]): void {
+    this.migrationStore.migrateProfileOptions(vocabularies);
   }
   close() {
     this.taskChanged(null);
@@ -1537,10 +1541,6 @@ export class Store {
         .all(taskId) as { taskId: string }[]
     ).map((row) => row.taskId);
   }
-  /** Spec 053: the host-wide role offsets, defaulting to worker 0, reviewer 0, coordinator −2. */
-  demandRoleOffsets(): DemandRoleOffsets {
-    return this.configStore.demandRoleOffsets();
-  }
   /** Spec 052: the stored usage setting, if the operator set one. */
   usageSetting(): UsageSetting | null {
     return this.configStore.usageSetting();
@@ -1627,6 +1627,9 @@ export class Store {
   }
   message(id: string): AgentMessageRecord | null {
     return this.messagesStore.message(id);
+  }
+  messageByReplyTo(replyTo: string): AgentMessageRecord | null {
+    return this.messagesStore.messageByReplyTo(replyTo);
   }
   putMessage(record: AgentMessageRecord) {
     return this.messagesStore.putMessage(record);
@@ -2294,7 +2297,9 @@ export class Store {
     project: Pick<Project, "planner"> | null | undefined,
   ): string | null {
     if (this.responsibleRecipient) {
-      return project && 'key' in project && typeof project.key === 'string' ? this.responsibleRecipient(project.key) : null;
+      return project && "key" in project && typeof project.key === "string"
+        ? this.responsibleRecipient(project.key)
+        : null;
     }
     return this.projectRegistry.projectPlannerRecipient(project);
   }
@@ -2483,6 +2488,28 @@ export class Store {
   reconcileTaskControlPreSend(id: string, inputHash: string): QueueOperation {
     return this.preSendStore.reconcileTaskControlPreSend(id, inputHash);
   }
+  settleTaskPreSendReceipts(taskId: string): void {
+    this.transaction(() => {
+      const rows = this.db
+        .prepare(
+          `SELECT id FROM operations WHERE taskId=? AND kind='task_control'
+        AND state='needs_attention' AND json_type(data,'$.preSendReceipt')='object'`,
+        )
+        .all(taskId);
+      for (const row of rows)
+        this.preSendStore.settleTaskControlPreSend(String(row.id), taskId);
+    });
+  }
+  taskIdsWithPreSendReceipts(after: string, limit: number): string[] {
+    const rows = this.db
+      .prepare(
+        `SELECT DISTINCT taskId FROM operations
+      WHERE kind='task_control' AND state='needs_attention' AND taskId>?
+        AND json_type(data,'$.preSendReceipt')='object' ORDER BY taskId LIMIT ?`,
+      )
+      .all(after, limit);
+    return rows.map((row) => String(row.taskId));
+  }
   operations(
     filter: {
       states?: QueueOperation["state"][];
@@ -2542,8 +2569,9 @@ export class Store {
   receipt(
     input: Completion,
     token: string,
+    credentialRunId?: string,
   ): { accepted: true; eventId: string } | null {
-    return this.authStore.receipt(input, token);
+    return this.authStore.receipt(input, token, credentialRunId);
   }
   /** The task and run write funnels; see `store-task-funnel.ts` for the rules they own. */
   insert(

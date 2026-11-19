@@ -309,7 +309,6 @@ function planWorkerFailover(
     task.complexity,
     "worker",
     store.usageLevel(),
-    store.demandRoleOffsets(),
   );
   // An outage alone must not promote work to a stronger fallback. An explicit
   // request is already subject to the normal route/sign-off rules.
@@ -319,7 +318,7 @@ function planWorkerFailover(
     ? pool.filter(
         (entry) =>
           entry.profileId === explicitlyRequested ||
-          demandRank(entry.capability ?? "medium") <= demandRank(demand),
+          demandRank(entry.capability ?? "worker") <= demandRank(demand),
       )
     : pool;
   const selected = chooseProfile(
@@ -331,7 +330,6 @@ function planWorkerFailover(
     "worker",
     store.recentCounts(),
     store.usageLevel(),
-    store.demandRoleOffsets(),
   );
   if (!selected) {
     // Spec 036 durable continuation (also papercut bdd9307a): an
@@ -379,7 +377,6 @@ function planWorkerFailover(
         "worker",
         store.recentCounts(),
         store.usageLevel(),
-        store.demandRoleOffsets(),
       )
     ) {
       return decideWorkerFailover({

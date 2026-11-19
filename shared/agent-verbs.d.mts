@@ -10,7 +10,7 @@ export declare const askInputShape: Record<string, z.ZodType>;
 export declare const tellInputShape: Record<string, z.ZodType>;
 
 /** A recipient as a caller names it: a keyword, a task reference, or an object. */
-export type VerbTarget = 'reviewer' | 'worker' | 'planner' | 'executor' | string | { project: string; agent?: string } | { task: string; role?: TaskRole };
+export type VerbTarget = 'reviewer' | 'worker' | 'planner' | 'executor' | string | { project: string; agent?: string } | { task: string; role?: TaskRole } | { reply: string };
 export type TaskRole = 'worker' | 'reviewer' | 'planner' | 'executor';
 
 export type AskTarget =
@@ -18,13 +18,15 @@ export type AskTarget =
   | { kind: 'reviewer' }
   | { kind: 'planner' }
   | { kind: 'project'; project: string; agent: string | null }
-  | { kind: 'task'; task: string; role: 'planner' };
+  | { kind: 'task'; task: string; role: 'planner' }
+  | { kind: 'reply'; reply: string };
 
 export type TellTarget =
   | { kind: 'counterpart'; role: 'reviewer' | 'worker' | 'executor' }
   | { kind: 'planner' }
   | { kind: 'task'; task: string; role: TaskRole }
-  | { kind: 'project'; project: string; agent: string | null };
+  | { kind: 'project'; project: string; agent: string | null }
+  | { kind: 'reply'; reply: string };
 
 export declare function normalizeAskTarget(to: VerbTarget | undefined, legacyTarget?: 'reviewer' | 'planner'): AskTarget;
 export declare function normalizeTellTarget(to: VerbTarget | undefined, role?: TaskRole): TellTarget;

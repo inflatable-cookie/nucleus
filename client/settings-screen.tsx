@@ -41,7 +41,7 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
   const fetchProjectSettings = useRpc(api.projectSettings), upsertProject = useRpc(api.projectUpsert);
   const fetchOwnerCandidates = useRpc(api.projectOwnerCandidates), setProjectPlanner = useRpc(api.projectSetPlanner), parkProject = useRpc(api.projectPark), unparkProject = useRpc(api.projectUnpark);
   const registerProjectAgent = useRpc(api.agentRegister), unregisterProjectAgent = useRpc(api.agentUnregister);
-  const setProfile = useRpc(api.configureProfile), setPool = useRpc(api.configurePool), setAvailability = useRpc(api.availabilityControl), setDemandOffsets = useRpc(api.configureDemandOffsets), setUsage = useRpc(api.configureUsage), setCapacity = useRpc(api.configureCapacity), setRepository = useRpc(api.repositorySet), setProjectLimit = useRpc(api.configureProjectDispatchLimit);
+  const setProfile = useRpc(api.configureProfile), setPool = useRpc(api.configurePool), setAvailability = useRpc(api.availabilityControl), setUsage = useRpc(api.configureUsage), setCapacity = useRpc(api.configureCapacity), setRepository = useRpc(api.repositorySet), setProjectLimit = useRpc(api.configureProjectDispatchLimit);
   const fetchBackups = useRpc(api.backupList), makeBackup = useRpc(api.backupNow);
   const repositoryBlockers = useRpc(api.projectRemovalBlockers), removeProjectRepository = useRpc(api.projectRemoveRepository), mergeProject = useRpc(api.projectMerge), mergeCheck = useRpc(api.projectMergeCheck);
   const previewRemoval = useRpc(api.projectManagementPreview), removeProject = useRpc(api.projectManage), resetRemoval = useRpc(api.projectResetCancellation);
@@ -107,7 +107,7 @@ export function QueueSettingsScreen({ theme }: BoardSurfaceProps) {
     {settingsTab === "capacity" && state && <ScrollView style={{ flex: 1, minHeight: 0 }} contentContainerStyle={{ paddingBottom: inset, width: "100%", maxWidth: 780 }}>
       <DispatchLimits c={c} state={state} busy={busy} authority={capacityStateQuery.data} authorityError={capacityStateQuery.error}
         retryAuthority={() => void capacityStateQuery.refetch()} refreshBoard={() => stateQuery.refetch()}
-        saveUsage={(level, until) => persist(() => setUsage({ level, until }))} saveDemandOffsets={value => persist(() => setDemandOffsets(value))}
+        saveUsage={(level, until) => persist(() => setUsage({ level, until }))}
         saveCapacity={value => persist(async () => { await setCapacity(value); await queryClient.refetchQueries({ queryKey: ["nucleus", "capacity-state"], exact: true }); })}
         saveProjectLimit={value => persist(() => setProjectLimit(value))} />
     </ScrollView>}

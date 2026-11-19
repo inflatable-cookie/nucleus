@@ -1,4 +1,7 @@
-import { CONTEXT_SECTIONS, readRunContext } from '../../core/dispatch/prompt-text/context-store';
+import {
+  CONTEXT_SECTIONS,
+  readRunContext,
+} from "../../core/dispatch/prompt-text/context-store";
 import { resolveTicketCaller } from "../../core/dispatch/participant-tickets";
 import { createServer, type IncomingMessage } from "node:http";
 import {
@@ -129,15 +132,54 @@ const acpTurnFields = {
 };
 const acpTurnSchema = z.union([
   acpCallerSchema.extend(acpTurnFields).strict(),
-  z.object({ kind: z.literal("inbox"), hostId: z.string().min(1).max(240), sessionId: z.string().min(1).max(160), ...acpTurnFields }).strict(),
+  z
+    .object({
+      kind: z.literal("inbox"),
+      hostId: z.string().min(1).max(240),
+      sessionId: z.string().min(1).max(160),
+      ...acpTurnFields,
+    })
+    .strict(),
 ]);
-const acpAnswerFields = { id: z.string().min(1).max(160), version: z.number().int().positive() };
-const acpAnswerCaller = { kind: z.literal("inbox"), hostId: z.string().min(1).max(240), sessionId: z.string().min(1).max(160), ...acpAnswerFields };
+const acpAnswerFields = {
+  id: z.string().min(1).max(160),
+  version: z.number().int().positive(),
+};
+const acpAnswerCaller = {
+  kind: z.literal("inbox"),
+  hostId: z.string().min(1).max(240),
+  sessionId: z.string().min(1).max(160),
+  ...acpAnswerFields,
+};
 const acpAnswerSchema = z.union([
-  acpCallerSchema.extend({ ...acpAnswerFields, action: z.literal("accept"), answer: z.string().trim().min(1).max(48000) }).strict(),
-  acpCallerSchema.extend({ ...acpAnswerFields, action: z.literal("cancel"), requestId: z.string().min(1).max(160) }).strict(),
-  z.object({ ...acpAnswerCaller, action: z.literal("accept"), answer: z.string().trim().min(1).max(48000) }).strict(),
-  z.object({ ...acpAnswerCaller, action: z.literal("cancel"), requestId: z.string().min(1).max(160) }).strict(),
+  acpCallerSchema
+    .extend({
+      ...acpAnswerFields,
+      action: z.literal("accept"),
+      answer: z.string().trim().min(1).max(48000),
+    })
+    .strict(),
+  acpCallerSchema
+    .extend({
+      ...acpAnswerFields,
+      action: z.literal("cancel"),
+      requestId: z.string().min(1).max(160),
+    })
+    .strict(),
+  z
+    .object({
+      ...acpAnswerCaller,
+      action: z.literal("accept"),
+      answer: z.string().trim().min(1).max(48000),
+    })
+    .strict(),
+  z
+    .object({
+      ...acpAnswerCaller,
+      action: z.literal("cancel"),
+      requestId: z.string().min(1).max(160),
+    })
+    .strict(),
 ]);
 const acpMessageSchema = acpCallerSchema
   .extend({
@@ -360,7 +402,11 @@ export async function startCallbacks(
     "/caller": {
       bodyBytes: SMALL_CALLBACK_BODY_BYTES,
       handle: (input, token) => {
-        const caller = resolveTicketCaller(engine.store, callerTicketSchema.parse(input), token);
+        const caller = resolveTicketCaller(
+          engine.store,
+          callerTicketSchema.parse(input),
+          token,
+        );
         engine.resolution.responsibleThreads.recordActivity(caller.caller);
         return caller;
       },
@@ -448,13 +494,23 @@ export async function startCallbacks(
     "/run-context": {
       bodyBytes: SMALL_CALLBACK_BODY_BYTES,
       handle: (input, token) => {
-        const request = dependencyCallerSchema.extend({ section: z.enum(CONTEXT_SECTIONS).optional() }).strict().parse(input);
-        engine.authenticateAgentControl(request.callerTaskId, request.callerRunId, token);
-        const task = engine.store.task(request.callerTaskId);
-        const run = engine.store.run(request.callerRunId);
-        const directory = run?.temporaryDirectory ?? (task.runId === request.callerRunId ? task.temporaryDirectory : null);
-        if (!directory) throw new Error('Run context scratch is unavailable');
-        return readRunContext(directory, request.callerRunId, request.section);
+        const request = dependencyCallerSchema
+          .extend({ section: z.enum(CONTEXT_SECTIONS).optional() })
+          .strict()
+          .parse(input);
+        // The caller binding resolves a retained thread's stale ticket to the
+        // run that acts for it, so the context read is that run's own (nucleus#1376).
+        const { task, run } = engine.authenticateAgentControl(
+          request.callerTaskId,
+          request.callerRunId,
+          token,
+        );
+        const runId = run?.id ?? request.callerRunId;
+        const directory =
+          run?.temporaryDirectory ??
+          (task.runId === runId ? task.temporaryDirectory : null);
+        if (!directory) throw new Error("Run context scratch is unavailable");
+        return readRunContext(directory, runId, request.section);
       },
     },
     "/task-next": {
@@ -525,7 +581,8 @@ export async function startCallbacks(
       bodyBytes: SMALL_CALLBACK_BODY_BYTES,
       handle: (input, token) => {
         const surface = acpSessions(engine);
-        if (!surface.answer) throw new Error("This process cannot answer ACP decisions");
+        if (!surface.answer)
+          throw new Error("This process cannot answer ACP decisions");
         return surface.answer(acpAnswerSchema.parse(input), token);
       },
     },

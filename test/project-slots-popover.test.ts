@@ -6,7 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 // entry. A static import keeps them in the same module cache the client bundle's
 // own SDK imports resolve to (one React context instance).
 import { PluginRpcProvider } from "@getpaseo/plugin/client/host";
-import { mount, useNativeStubs } from "./support/render";
+import { mount, useNativeStubs, type HostNode } from "./support/render";
 import { taskSummarySchema } from "../shared/contracts";
 
 useNativeStubs();
@@ -216,69 +216,39 @@ test("665 the header keeps the summary line and the slot count opens a popover w
       "the popover never uses a full-screen Modal",
     );
     // Dismissal ordering, not just coverage: the outside-press layer sits
-    // above the header controls and the board, while the menu wrapper sits
-    // above the layer — so presses anywhere outside the panel reach the layer
-    // first, and scroll and presses on the capped menu still land on the menu.
+    // above the header controls and the board, while the open menu renders in
+    // the shell's popover layer above the layer — so presses anywhere outside
+    // the panel reach the layer first, and scroll and presses on the capped
+    // menu still land on the menu.
     // (The stub renderer has no hit testing; the layering is the interaction.)
     const overlayZ =
       (ui.get("Close project slot usage").props.style as { zIndex?: number })
         .zIndex ?? 0;
-    const menuWrappers = ui.ofType("View").filter((node) => {
-      const style = node.props.style as
-        | { position?: string; zIndex?: number }
-        | undefined;
-      return (
-        style?.position === "relative" &&
-        typeof style?.zIndex === "number" &&
-        style.zIndex > 0
-      );
-    });
-    assert.equal(
-      menuWrappers.length,
-      1,
-      "one positioned menu wrapper orders the dropdown",
-    );
-    const menuZ = menuWrappers[0].props.style.zIndex as number;
     assert.ok(
       overlayZ > 20,
       "the outside-press layer covers the header controls (nav row zIndex 20) and the board",
     );
+    // Queue #1391: the popover renders in the shell's top layer, above the
+    // board columns, instead of climbing a z-index ladder inside the header —
+    // an anchored dropdown there is painted over by the column cards, and no
+    // zIndex leaves the header's stacking context.
+    const { POPOVER_LAYER_ID } = await import("../client/popover");
+    const layer = ui
+      .ofType("View")
+      .find((node) => node.props.testID === POPOVER_LAYER_ID);
+    assert.ok(layer, "the board shell mounts one popover layer");
+    const inLayer = (root: HostNode, label: string): boolean =>
+      root.children.some(
+        (child) =>
+          typeof child !== "string" &&
+          (child.props.accessibilityLabel === label || inLayer(child, label)),
+      );
     assert.ok(
-      menuZ > overlayZ,
-      "the slot menu paints above the dismissal layer, keeping scroll and presses",
+      layer && inLayer(layer, "Projects using slots"),
+      "the slot popover renders in the top layer, above the board columns",
     );
-    // The wrapper zIndex is trapped inside the title+controls row unless that
-    // row raises too. Old code left the row unstacked, so the nav row (20)
-    // painted over the popover the same way it painted over the pause menu.
     const slotMenu = ui.get("Projects using slots");
-    const root = ui.ofType("View")[0];
-    const chain: (typeof slotMenu)[] = [];
-    const walk = (node: typeof slotMenu): boolean => {
-      if (node === slotMenu) return true;
-      for (const child of node.children) {
-        if (typeof child !== "string" && walk(child)) {
-          chain.push(node);
-          return true;
-        }
-      }
-      return false;
-    };
-    walk(root);
-    const headerRow = chain.find(
-      (node) =>
-        (node.props.style as { justifyContent?: string } | undefined)
-          ?.justifyContent === "space-between",
-    );
-    assert.ok(
-      headerRow,
-      "the slot popover lives under the title+controls header row",
-    );
-    const headerZ = (headerRow!.props.style as { zIndex?: number }).zIndex ?? 0;
-    assert.ok(headerZ > 20, "the header row itself stacks above the nav row");
-    assert.ok(
-      headerZ > overlayZ,
-      "raising the header row keeps the slot popover above the outside-press layer",
-    );
+    assert.ok(slotMenu, "the slot popover opens");
     assert.ok(ui.get("apple, 2 of 4 slots, 5 of 8 in flight"));
     assert.ok(ui.get("zebra, 2 of 4 slots, 0 of 8 in flight"));
     assert.ok(ui.get("project-e, 1 of 4 slots, 1 of 8 in flight"));

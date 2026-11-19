@@ -10,11 +10,14 @@ import { sameCallerIdentity } from "../../shared/agent-identity";
 import { normalizeRepositoryOrigin } from "../../shared/lanes";
 import { demandRank, unavailableGroupNames } from "../../shared/pool";
 import { currentBrief } from "../planning/brief";
-import { parseNativeDelegatedReply } from "./question-delegation";
+import {
+  offeredChoice,
+  parseNativeDelegatedReply,
+} from "./question-delegation";
 import { plannerEscalations, type LadderEvent } from "./ladder";
 import { askLifecycle } from "./agent-ask-events";
 import type { Resolution } from "../resolution";
-import { requestedTier } from "../../shared/demand";
+import { complexityBracket } from "../../shared/demand";
 import { chooseProfile } from "../dispatch/routing";
 import { plannerParticipantTicketPath } from "../dispatch/participant-tickets";
 import { runTicketPath, writeRunTicket } from "../dispatch/agent-creation";
@@ -539,26 +542,16 @@ export class Delegation {
         .filter((line) => line.startsWith("- "))
         .map((line) => line.slice(2));
     const submittedAnswer = (input.answer ?? input.choice)?.trim();
-    const shortWaitChoices =
-      isEscalation && submittedAnswer
-        ? choices.filter((choice) => {
-            const shortLabel = choice.replace(/\s*\([^)]*\)$/, "");
-            return (
-              shortLabel === submittedAnswer &&
-              /^(?:Wait for a task|Wait until a time|Wait for an operator decision)$/.test(
-                shortLabel,
-              )
-            );
-          })
-        : [];
     const answer =
-      shortWaitChoices.length === 1 ? shortWaitChoices[0] : submittedAnswer;
+      (submittedAnswer &&
+        offeredChoice(choices, submittedAnswer, isEscalation)) ??
+      submittedAnswer;
     const normalizedInput =
-      shortWaitChoices.length === 1
-        ? input.choice
+      answer === submittedAnswer
+        ? input
+        : input.choice
           ? { ...input, choice: answer }
-          : { ...input, answer }
-        : input;
+          : { ...input, answer };
     const recorded = events.findLast(
       (event) => event.kind === "delegated_answer",
     );
@@ -1345,7 +1338,9 @@ export class Delegation {
       planner,
       originHost,
     );
-    if (state.kind === "unroutable") return { rung: null, issue: state.detail };
+    // A task's own planner that cannot be confirmed stays an issue, as before; only the project shortlist tolerates unverified reads.
+    if (state.kind === "unroutable" || state.kind === "unverified")
+      return { rung: null, issue: state.detail };
     return {
       rung: state.kind === "gone" ? null : { agentId: planner, rung: "task" },
     };
@@ -1385,8 +1380,9 @@ export class Delegation {
   }
 
   /**
-   * Deciders use automatic selection at the task's requested tier. Ordinary
-   * coordinator offsets cannot authorize a weaker decider. Availability is the store's typed rows through the
+   * Deciders use automatic selection at the task's own bracket
+   * (`complexityBracket`, nucleus#1362): the coordinator's Mechanical demand
+   * cannot authorize a weaker decider. Availability is the store's typed rows through the
    * shared group rule, never a decode of the durable table here.
    */
   deciderProfile(task: Task): Profile | null {
@@ -1394,11 +1390,11 @@ export class Delegation {
     const profiles = this.profiles().filter(
       (profile) => profile.model !== "default",
     );
-    const tier = requestedTier(task.complexity);
+    const tier = complexityBracket(task.complexity);
     const pool = this.store
       .pool()
       .filter(
-        (entry) => demandRank(entry.capability ?? "medium") >= demandRank(tier),
+        (entry) => demandRank(entry.capability ?? "worker") >= demandRank(tier),
       );
     return (
       chooseProfile(
@@ -1416,7 +1412,6 @@ export class Delegation {
         "coordinator",
         this.store.recentCounts(),
         this.store.usageLevel(),
-        this.store.demandRoleOffsets(),
       )?.profile ?? null
     );
   }

@@ -50,12 +50,13 @@ convention.
 - Aim at the outcome. A capable worker picks the steps.
 - Leave model choice to Queue. Every brief needs `complexity` (`very_low` to
   `very_high`): how capable a model the work needs, not its size. Use `medium`
-  for ordinary work, `high` for subtle or cross-cutting changes, and
-  `very_high` only when the strongest model is needed. Request a profile
-  (`profileRequests`) only when the work needs it, with a reason the operator
-  can judge. A request for a profile the usage level's permission rule holds
-  (a top-tier profile above the task's requested tier at Low or Normal, or
-  frontier at High) opens a decision for the operator, and the role runs on
+  for ordinary work (Worker profiles), `high` for subtle or cross-cutting
+  changes (starts on Worker and may step up to Heavyweight after review
+  changes), and `very_high` only when the work needs Heavyweight from the
+  start. Request a profile (`profileRequests`) only when the work needs it,
+  with a reason the operator can judge. A request for a profile the usage
+  level's permission rule holds (Frontier, or a Heavyweight profile the task
+  neither starts nor climbs on, at Low or Normal; Frontier at High) opens a decision for the operator, and the role runs on
   automatic selection meanwhile; nothing waits for the answer. Only the operator answers those
   decisions; never answer or withdraw them for them.
 - Keep it short. If it needs pages of context, that context belongs in

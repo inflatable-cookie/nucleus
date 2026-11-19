@@ -1,14 +1,55 @@
 import { taskAttention } from "./task-attention";
-import { sameCallerIdentity } from './agent-identity';
-import type { Task, Run, Project, RepositorySettings, TaskDetail, TaskSummary, Completion, CompletionPolicy, CompletionMembership, WorkerExclusion, OwnerAcceptanceRecord, HoldKind, UnchangedBoard, AwaitingProof, ProofRoute } from "./contracts";
+import { sameCallerIdentity } from "./agent-identity";
+import type {
+  Task,
+  Run,
+  Project,
+  RepositorySettings,
+  TaskDetail,
+  TaskSummary,
+  Completion,
+  CompletionPolicy,
+  CompletionMembership,
+  WorkerExclusion,
+  OwnerAcceptanceRecord,
+  HoldKind,
+  UnchangedBoard,
+  AwaitingProof,
+  ProofRoute,
+} from "./contracts";
 import type { Incident } from "./incident";
 import { isDispositionComplete } from "./disposition";
-import { holdsOf, syncHoldProjection, taskHoldKind, holdOwnerOf, taskOwner, holdFencesView, holdEscalated, isOperatorOrigin } from "./holds";
-import { deriveWaitState, prerequisiteReasonEntries, type WaitStateContext, type WaitStateView } from "./wait-state";
-import { taskBudget, taskBudgetBoardView, type BudgetEvent, type TaskBudgetView } from "./task-budget";
+import {
+  holdsOf,
+  syncHoldProjection,
+  taskHoldKind,
+  holdOwnerOf,
+  taskOwner,
+  holdFencesView,
+  holdEscalated,
+  isOperatorOrigin,
+} from "./holds";
+import {
+  deriveWaitState,
+  prerequisiteReasonEntries,
+  type WaitStateContext,
+  type WaitStateView,
+} from "./wait-state";
+import {
+  taskBudget,
+  taskBudgetBoardView,
+  type BudgetEvent,
+  type TaskBudgetView,
+} from "./task-budget";
 import { reportHeadline, TASK_PROGRESSING_REASON } from "./task-detail-summary";
 import { taskSummarySchema } from "./schema/task-view";
-import { DISPATCH_WAIT_REASON, isWaitingTaskStop, legacyStopHolderAgentId, type TaskStopRecord, type TaskStopKind } from "./task-stop";
+import {
+  DISPATCH_WAIT_REASON,
+  isWaitingTaskStop,
+  legacyStopHolderAgentId,
+  type TaskStopRecord,
+  type TaskStopKind,
+} from "./task-stop";
 export * from "./task-stop";
 
 /**
@@ -24,31 +65,81 @@ export * from "./task-stop";
  * owner (`originRecipient`); every other creator or self entry is delivered to
  * its recorded recipient.
  */
-export function completionMembership(policy: CompletionPolicy): CompletionMembership[] {
-  const members = new Map<string, {agentId:string;workspaceId:string;sources:Set<"origin"|"creator"|"self">;originEntry:boolean}>();
-  const add = (agentId:string, workspaceId:string, source:"origin"|"creator"|"self", originEntry=false) => {
-    const key = [...members.keys()].find(id => sameCallerIdentity(id,agentId)) ?? agentId;
-    const member=members.get(key)??{agentId:key,workspaceId,sources:new Set(),originEntry:false};
-    member.workspaceId=workspaceId;member.sources.add(source);member.originEntry ||= originEntry;members.set(key,member);
+export function completionMembership(
+  policy: CompletionPolicy,
+): CompletionMembership[] {
+  const members = new Map<
+    string,
+    {
+      agentId: string;
+      workspaceId: string;
+      sources: Set<"origin" | "creator" | "self">;
+      originEntry: boolean;
+    }
+  >();
+  const add = (
+    agentId: string,
+    workspaceId: string,
+    source: "origin" | "creator" | "self",
+    originEntry = false,
+  ) => {
+    const key =
+      [...members.keys()].find((id) => sameCallerIdentity(id, agentId)) ??
+      agentId;
+    const member = members.get(key) ?? {
+      agentId: key,
+      workspaceId,
+      sources: new Set(),
+      originEntry: false,
+    };
+    member.workspaceId = workspaceId;
+    member.sources.add(source);
+    member.originEntry ||= originEntry;
+    members.set(key, member);
   };
   // The owner's entry is keyed by the creator and delivered to whoever owns the
   // task now (`originEntry`). A creator that nominated itself, or the owner's own
   // subscription choice, is that same entry, never a literal copy of a thread that
   // may since have handed the task on (Tom, 2026-10-26: one owner field).
-  const owner=taskOwner(policy),origin=policy.originAgentId,ownerEntry=(agentId:string)=>sameCallerIdentity(agentId,origin)||sameCallerIdentity(agentId,owner);
-  if(policy.notifyOriginOnCloseout && policy.originWorkspaceId)add(origin,policy.originWorkspaceId,"origin",true);
-  for(const recipient of policy.creatorCompletionRecipients){
-    if(ownerEntry(recipient.agentId))add(origin,policy.originWorkspaceId??recipient.workspaceId,"creator",true);
-    else add(recipient.agentId,recipient.workspaceId,"creator");
+  const owner = taskOwner(policy),
+    origin = policy.originAgentId,
+    ownerEntry = (agentId: string) =>
+      sameCallerIdentity(agentId, origin) || sameCallerIdentity(agentId, owner);
+  if (policy.notifyOriginOnCloseout && policy.originWorkspaceId)
+    add(origin, policy.originWorkspaceId, "origin", true);
+  for (const recipient of policy.creatorCompletionRecipients) {
+    if (ownerEntry(recipient.agentId))
+      add(
+        origin,
+        policy.originWorkspaceId ?? recipient.workspaceId,
+        "creator",
+        true,
+      );
+    else add(recipient.agentId, recipient.workspaceId, "creator");
   }
-  for(const override of policy.completionSubscriptionOverrides){
-    const key=ownerEntry(override.agentId)?origin:override.agentId;
-    if(override.subscribed)add(key,key===origin?policy.originWorkspaceId??override.workspaceId:override.workspaceId,"self",key===origin);
-    else for (const id of members.keys()) if (sameCallerIdentity(id,key)) members.delete(id);
+  for (const override of policy.completionSubscriptionOverrides) {
+    const key = ownerEntry(override.agentId) ? origin : override.agentId;
+    if (override.subscribed)
+      add(
+        key,
+        key === origin
+          ? (policy.originWorkspaceId ?? override.workspaceId)
+          : override.workspaceId,
+        "self",
+        key === origin,
+      );
+    else
+      for (const id of members.keys())
+        if (sameCallerIdentity(id, key)) members.delete(id);
   }
-  return [...members.values()].sort((a,b)=>a.agentId.localeCompare(b.agentId)).map(member=>({
-    agentId:member.agentId,workspaceId:member.workspaceId,sources:[...member.sources].sort() as ("origin"|"creator"|"self")[],originEntry:member.originEntry,
-  }));
+  return [...members.values()]
+    .sort((a, b) => a.agentId.localeCompare(b.agentId))
+    .map((member) => ({
+      agentId: member.agentId,
+      workspaceId: member.workspaceId,
+      sources: [...member.sources].sort() as ("origin" | "creator" | "self")[],
+      originEntry: member.originEntry,
+    }));
 }
 
 /**
@@ -56,15 +147,28 @@ export function completionMembership(policy: CompletionPolicy): CompletionMember
  * author round at its head (task 539); this reads it as external for a parked
  * record, which is what a bare string meant before the route existed.
  */
-export const awaitingProofRoute = (proof: AwaitingProof): ProofRoute => typeof proof === 'string' ? 'external' : proof.route;
+export const awaitingProofRoute = (proof: AwaitingProof): ProofRoute =>
+  typeof proof === "string" ? "external" : proof.route;
 
-export const awaitingProofText = (proof: AwaitingProof): string => typeof proof === 'string' ? proof : proof.proof;
+export const awaitingProofText = (proof: AwaitingProof): string =>
+  typeof proof === "string" ? proof : proof.proof;
 
-export const awaitingProofTexts = (proofs: readonly AwaitingProof[] | null | undefined): string[] => (proofs ?? []).map(awaitingProofText);
+export const awaitingProofTexts = (
+  proofs: readonly AwaitingProof[] | null | undefined,
+): string[] => (proofs ?? []).map(awaitingProofText);
 
-export function workerExclusionFor(task: Pick<Task, "workerExclusions">, agentId: string | null | undefined, profileId: string | null | undefined): WorkerExclusion | null {
-  return task.workerExclusions.find(exclusion => Boolean(exclusion.agentId && exclusion.agentId === agentId)
-    || Boolean(exclusion.profileId && exclusion.profileId === profileId)) ?? null;
+export function workerExclusionFor(
+  task: Pick<Task, "workerExclusions">,
+  agentId: string | null | undefined,
+  profileId: string | null | undefined,
+): WorkerExclusion | null {
+  return (
+    task.workerExclusions.find(
+      (exclusion) =>
+        Boolean(exclusion.agentId && exclusion.agentId === agentId) ||
+        Boolean(exclusion.profileId && exclusion.profileId === profileId),
+    ) ?? null
+  );
 }
 
 /**
@@ -72,42 +176,68 @@ export function workerExclusionFor(task: Pick<Task, "workerExclusions">, agentId
  * and reservation both refuse the same turn, so both name it with this text
  * rather than each composing its own sentence.
  */
-export function workerExclusionRefusal(task: Pick<Task, "workerExclusions">, agentId: string | null | undefined, profileId: string | null | undefined): string | null {
+export function workerExclusionRefusal(
+  task: Pick<Task, "workerExclusions">,
+  agentId: string | null | undefined,
+  profileId: string | null | undefined,
+): string | null {
   const exclusion = workerExclusionFor(task, agentId, profileId);
   if (!exclusion) return null;
-  const identity = exclusion.agentId ? `agent ${exclusion.agentId}` : `profile ${exclusion.profileId}`;
+  const identity = exclusion.agentId
+    ? `agent ${exclusion.agentId}`
+    : `profile ${exclusion.profileId}`;
   return `Planner/operator exclusion prevents another turn for ${identity}: ${exclusion.reason}`;
 }
 
-export function workerProfileIsExcluded(task: Pick<Task, "workerExclusions">, profileId: string): boolean {
-  return task.workerExclusions.some(exclusion => exclusion.profileId === profileId);
+export function workerProfileIsExcluded(
+  task: Pick<Task, "workerExclusions">,
+  profileId: string,
+): boolean {
+  return task.workerExclusions.some(
+    (exclusion) => exclusion.profileId === profileId,
+  );
 }
 
 /**
  * The task fields the acceptance helper reads; a full task or a test shape satisfies it.
  */
-type AcceptanceTask = Pick<Task, "prHead" | "reviewEntry" | "resumePrNumber" | "completion" | "resolution">;
-
+type AcceptanceTask = Pick<
+  Task,
+  "prHead" | "reviewEntry" | "resumePrNumber" | "completion" | "resolution"
+>;
 
 /**
  * The qualified owner acceptance that authorizes merging right now, or null.
  * It must still bind the task's current PR head and the recorded review's exact
  * identity, so a changed head or a re-reviewed task leaves only history.
  */
-export function qualifiedOwnerAcceptance(task: AcceptanceTask): OwnerAcceptanceRecord | null {
+export function qualifiedOwnerAcceptance(
+  task: AcceptanceTask,
+): OwnerAcceptanceRecord | null {
   const review = task.resolution.review;
   if (!review || !task.prHead) return null;
-  const prNumber = task.reviewEntry?.prNumber ?? task.resumePrNumber ?? task.completion?.prNumber ?? null;
-  for (const record of [...(task.resolution.ownerAcceptances ?? [])].reverse()) {
+  const prNumber =
+    task.reviewEntry?.prNumber ??
+    task.resumePrNumber ??
+    task.completion?.prNumber ??
+    null;
+  for (const record of [
+    ...(task.resolution.ownerAcceptances ?? []),
+  ].reverse()) {
     if (record.kind !== "reviewed" || !record.review) continue;
     if (record.head !== task.prHead || record.prNumber !== prNumber) continue;
     const bound = record.review;
-    if (bound.runId !== review.runId || bound.eventId !== review.eventId || bound.head !== review.head || bound.status !== review.status) continue;
+    if (
+      bound.runId !== review.runId ||
+      bound.eventId !== review.eventId ||
+      bound.head !== review.head ||
+      bound.status !== review.status
+    )
+      continue;
     return record;
   }
   return null;
 }
-
 
 /**
  * The explicit operator source acceptance (2026-10-20) that authorizes merging
@@ -115,19 +245,35 @@ export function qualifiedOwnerAcceptance(task: AcceptanceTask): OwnerAcceptanceR
  * never a review identity — so a changed head leaves only history and a new
  * head needs a fresh disposition.
  */
-export function operatorSourceAcceptance(task: AcceptanceTask): OwnerAcceptanceRecord | null {
+export function operatorSourceAcceptance(
+  task: AcceptanceTask,
+): OwnerAcceptanceRecord | null {
   if (!task.prHead) return null;
-  const prNumber = task.reviewEntry?.prNumber ?? task.resumePrNumber ?? task.completion?.prNumber ?? null;
-  for (const record of [...(task.resolution.ownerAcceptances ?? [])].reverse()) {
-    if (record.kind !== "operator_source" || record.head !== task.prHead || record.prNumber !== prNumber) continue;
+  const prNumber =
+    task.reviewEntry?.prNumber ??
+    task.resumePrNumber ??
+    task.completion?.prNumber ??
+    null;
+  for (const record of [
+    ...(task.resolution.ownerAcceptances ?? []),
+  ].reverse()) {
+    if (
+      record.kind !== "operator_source" ||
+      record.head !== task.prHead ||
+      record.prNumber !== prNumber
+    )
+      continue;
     return record;
   }
   return null;
 }
 
-
 /** The kinds of recorded evidence that let a merge count for a task (task 993). */
-export type MergeEvidenceKind = "ready_to_merge" | "source_approved" | "owner_reviewed" | "operator_source";
+export type MergeEvidenceKind =
+  | "ready_to_merge"
+  | "source_approved"
+  | "owner_reviewed"
+  | "operator_source";
 
 /**
  * The recorded review evidence at one exact head that lets a merge count for
@@ -138,17 +284,38 @@ export type MergeEvidenceKind = "ready_to_merge" | "source_approved" | "owner_re
  * review, or an explicit operator source acceptance. A verdict at another head
  * is history, never this head's evidence.
  */
-export function mergeReviewEvidenceAt(task: AcceptanceTask, head: string): { kind: MergeEvidenceKind; detail: string } | null {
+export function mergeReviewEvidenceAt(
+  task: AcceptanceTask,
+  head: string,
+): { kind: MergeEvidenceKind; detail: string } | null {
   const review = task.resolution.review;
   if (review?.status === "ready_to_merge" && review.head === head)
-    return { kind: "ready_to_merge", detail: `the recorded ready_to_merge review of run ${review.runId} at ${head}` };
-  if (review?.sourceApproved === true && review.awaitingProofs?.length && review.head === head)
-    return { kind: "source_approved", detail: `the recorded reviewer source approval at ${head}, awaiting its proof(s): ${awaitingProofTexts(review.awaitingProofs).join("; ")}` };
+    return {
+      kind: "ready_to_merge",
+      detail: `the recorded ready_to_merge review of run ${review.runId} at ${head}`,
+    };
+  if (
+    review?.sourceApproved === true &&
+    review.awaitingProofs?.length &&
+    review.head === head
+  )
+    return {
+      kind: "source_approved",
+      detail: `the recorded reviewer source approval at ${head}, awaiting its proof(s): ${awaitingProofTexts(review.awaitingProofs).join("; ")}`,
+    };
   const atHead: AcceptanceTask = { ...task, prHead: head };
   const reviewed = qualifiedOwnerAcceptance(atHead);
-  if (reviewed) return { kind: "owner_reviewed", detail: `the qualified owner acceptance at ${head} (${reviewed.reason.slice(0, 200)})` };
+  if (reviewed)
+    return {
+      kind: "owner_reviewed",
+      detail: `the qualified owner acceptance at ${head} (${reviewed.reason.slice(0, 200)})`,
+    };
   const source = operatorSourceAcceptance(atHead);
-  if (source) return { kind: "operator_source", detail: `the operator source acceptance at ${head}${source.missingEvidence ? ` (missing evidence recorded: ${source.missingEvidence.slice(0, 200)})` : ""}` };
+  if (source)
+    return {
+      kind: "operator_source",
+      detail: `the operator source acceptance at ${head}${source.missingEvidence ? ` (missing evidence recorded: ${source.missingEvidence.slice(0, 200)})` : ""}`,
+    };
   return null;
 }
 
@@ -158,7 +325,10 @@ export function mergeReviewEvidenceAt(task: AcceptanceTask, head: string): { kin
  * precedence shows instead. Release retires it in the same write; rows released
  * before that read the same way without being rewritten.
  */
-export function currentTaskStop(task: Task, budget?: TaskBudgetView | null): TaskStopRecord | null {
+export function currentTaskStop(
+  task: Task,
+  budget?: TaskBudgetView | null,
+): TaskStopRecord | null {
   const stop = task.resolution.stop;
   // A budget pause is current only while the measured budget still shows it: the
   // pause's condition is the figure every gate and view reads (nucleus#1187), so a
@@ -177,10 +347,16 @@ export function currentTaskStop(task: Task, budget?: TaskBudgetView | null): Tas
  * — dispatch for a queued task, progress for any other — so the reason, the stop
  * and the board badge never contradict each other (nucleus#1187).
  */
-export function taskVisibleReason(task: Task, budget: TaskBudgetView | null | undefined): string {
+export function taskVisibleReason(
+  task: Task,
+  budget: TaskBudgetView | null | undefined,
+): string {
   const stop = task.resolution.stop;
-  if (stop?.reason !== "budget" || !budget || budget.exhausted) return task.reason;
-  return task.phase === "queued" ? DISPATCH_WAIT_REASON : TASK_PROGRESSING_REASON;
+  if (stop?.reason !== "budget" || !budget || budget.exhausted)
+    return task.reason;
+  return task.phase === "queued"
+    ? DISPATCH_WAIT_REASON
+    : TASK_PROGRESSING_REASON;
 }
 
 /**
@@ -194,14 +370,21 @@ export function taskVisibleReason(task: Task, budget: TaskBudgetView | null | un
  * naming no run, or an identity this task cannot read, keeps its existing
  * handling: absence of proof is never a newer binding.
  */
-export function runBindsCurrentWork(runs: Run[], runId: string | null | undefined): boolean {
+export function runBindsCurrentWork(
+  runs: Run[],
+  runId: string | null | undefined,
+): boolean {
   if (!runId) return true;
-  const run = runs.find(candidate => candidate.id === runId);
+  const run = runs.find((candidate) => candidate.id === runId);
   return !run || !run.released;
 }
 
 /** Whether an open incident still names the current work; a released run's fault is history. */
-export function incidentBindsCurrentWork(task: Task, runs: Run[] = [], incident: Incident | null | undefined = task.resolution.incident): boolean {
+export function incidentBindsCurrentWork(
+  task: Task,
+  runs: Run[] = [],
+  incident: Incident | null | undefined = task.resolution.incident,
+): boolean {
   if (!incident || incident.status === "resolved") return false;
   return runBindsCurrentWork(runs, incident.runId);
 }
@@ -218,11 +401,23 @@ export function episodeBindsCurrentWork(task: Task): boolean {
  * checkpointed run, then a wait. Null while the task progresses. The full
  * reason, owner and evidence live in `task.next`; this names the category.
  */
-export function taskStopKind(task: Task, runs: Run[] = [], budget?: TaskBudgetView | null, waitState?: WaitStateView | null): TaskStopKind | null {
+export function taskStopKind(
+  task: Task,
+  runs: Run[] = [],
+  budget?: TaskBudgetView | null,
+  waitState?: WaitStateView | null,
+): TaskStopKind | null {
   const fences = holdsOf(task);
   if (fences.dispatch || fences.merge) return "hold";
-  if (waitState?.state === "waiting_prerequisite" &&
-    taskAttention({ phase: task.phase, held: task.held, prerequisiteOperator: waitState.owner === "operator" }).state === "attention") return "attention";
+  if (
+    waitState?.state === "waiting_prerequisite" &&
+    taskAttention({
+      phase: task.phase,
+      held: task.held,
+      prerequisiteOperator: waitState.owner === "operator",
+    }).state === "attention"
+  )
+    return "attention";
   const stop = currentTaskStop(task, budget);
   if (stop) {
     if (stop.reason === "run_stalled") return "run";
@@ -234,14 +429,31 @@ export function taskStopKind(task: Task, runs: Run[] = [], budget?: TaskBudgetVi
   // A prerequisite wait names what the task waits for, so a task parked in an
   // attention phase by it is waiting, not attention (the one attention
   // projection, nucleus#1366). The operator-correctable cases stay attention.
-  const prerequisiteWait = waitState?.state === "waiting_prerequisite" ||
-    (!waitState && Boolean(task.prerequisiteWait && !task.prerequisiteWait.releasedAt));
-  if (prerequisiteWait && taskAttention({ phase: task.phase, held: task.held, prerequisiteWait }).state === "waiting") return "wait";
+  const prerequisiteWait =
+    waitState?.state === "waiting_prerequisite" ||
+    (!waitState &&
+      Boolean(task.prerequisiteWait && !task.prerequisiteWait.releasedAt));
+  if (
+    prerequisiteWait &&
+    taskAttention({ phase: task.phase, held: task.held, prerequisiteWait })
+      .state === "waiting"
+  )
+    return "wait";
   if (task.phase === "needs_attention") return "attention";
   // A checkpointed reviewer or a reported block is the stop even before any
   // incident bookkeeping exists; the runs are the evidence, never a flag pair.
-  if (runs.some(run => run.role === "reviewer" && !run.released && !run.completion && (run.reviewCheckpoints?.length ?? 0) > 0)) return "run";
-  if (["blocked", "error"].includes(task.phase) && task.completion) return "run";
+  if (
+    runs.some(
+      (run) =>
+        run.role === "reviewer" &&
+        !run.released &&
+        !run.completion &&
+        (run.reviewCheckpoints?.length ?? 0) > 0,
+    )
+  )
+    return "run";
+  if (["blocked", "error"].includes(task.phase) && task.completion)
+    return "run";
   if (task.phase === "queued") return "wait";
   return null;
 }
@@ -253,17 +465,30 @@ export function taskStopKind(task: Task, runs: Run[] = [], budget?: TaskBudgetVi
  * so neither disagrees with the other or with a gate (nucleus#1187, nucleus#1252).
  */
 function taskDisplayFacts(
-  task: Task, context: WaitStateContext, runs: Run[], events: BudgetEvent[],
-  repository: Pick<RepositorySettings, "affectedTests"> | null | undefined, now: number,
+  task: Task,
+  context: WaitStateContext,
+  runs: Run[],
+  events: BudgetEvent[],
+  repository: Pick<RepositorySettings, "affectedTests"> | null | undefined,
+  now: number,
 ) {
   const holds = holdsOf(task);
-  const budget = !['done', 'cancelled'].includes(task.phase) ? taskBudget(task, runs, now, events, repository) : null;
+  const budget = !["done", "cancelled"].includes(task.phase)
+    ? taskBudget(task, runs, now, events, repository)
+    : null;
   const reason = taskVisibleReason(task, budget);
   const holdKind = taskHoldKind(task);
-  const waitState = deriveWaitState({
-    phase: task.phase, reason, holdKind, holdOwner: holdOwnerOf(task, holds.merge?.owner ?? task.holdOwner),
-    originAgentId: taskOwner(task), mergeHeld: Boolean(holds.merge),
-  }, context);
+  const waitState = deriveWaitState(
+    {
+      phase: task.phase,
+      reason,
+      holdKind,
+      holdOwner: holdOwnerOf(task, holds.merge?.owner ?? task.holdOwner),
+      originAgentId: taskOwner(task),
+      mergeHeld: Boolean(holds.merge),
+    },
+    context,
+  );
   return { holds, budget, reason, holdKind, waitState };
 }
 
@@ -271,22 +496,57 @@ function taskDisplayFacts(
  * Add the bounded, derived hold and wait fields at the task detail boundary.
  * Spec 043 (a): the wait state is a read, never a scheduling decision.
  */
-export function taskDetailView(task: Task, context: WaitStateContext = {}, runs: Run[] = [], events: BudgetEvent[] = [], repository?: Pick<RepositorySettings, "affectedTests"> | null, now = Date.now()): TaskDetail {
-  const { holds, budget, reason, holdKind, waitState } = taskDisplayFacts(task, context, runs, events, repository, now);
+export function taskDetailView(
+  task: Task,
+  context: WaitStateContext = {},
+  runs: Run[] = [],
+  events: BudgetEvent[] = [],
+  repository?: Pick<RepositorySettings, "affectedTests"> | null,
+  now = Date.now(),
+): TaskDetail {
+  const { holds, budget, reason, holdKind, waitState } = taskDisplayFacts(
+    task,
+    context,
+    runs,
+    events,
+    repository,
+    now,
+  );
   const stop = currentTaskStop(task, budget);
-  return { ...task, reason, resolution: stop === task.resolution.stop ? task.resolution : { ...task.resolution, stop }, holds: syncHoldProjection(holds).holds, ...(holdKind ? { holdKind } : {}), ...(waitState ? { waitState } : {}), ...(budget ? { budget } : {}) };
+  return {
+    ...task,
+    reason,
+    resolution:
+      stop === task.resolution.stop
+        ? task.resolution
+        : { ...task.resolution, stop },
+    holds: syncHoldProjection(holds).holds,
+    ...(holdKind ? { holdKind } : {}),
+    ...(waitState ? { waitState } : {}),
+    ...(budget ? { budget } : {}),
+  };
 }
 
-export function taskHasUnreleasedRun(task: Task, hasUnreleasedResolutionRun = false): boolean {
+export function taskHasUnreleasedRun(
+  task: Task,
+  hasUnreleasedResolutionRun = false,
+): boolean {
   // A completed disposition proves its owned worker threads were drained. Older
   // task projections can still retain agentIntent/runId, or a run row that never got
   // an agent, so neither may resurrect a slot after cancellation has settled. Checked
   // first: cancelled project-a #1636 held a project slot for a week through a stuck
   // unreleased recovery run (2026-09-26 to 2026-10-03).
-  if (isDispositionComplete(task) && ["done", "cancelled"].includes(task.phase)) return false;
+  if (isDispositionComplete(task) && ["done", "cancelled"].includes(task.phase))
+    return false;
   if (hasUnreleasedResolutionRun) return true;
-  return task.agentActive === true || Boolean(task.agentIntent &&
-    (!task.agentId || task.agentActive !== false && task.completion === null));
+  return (
+    task.agentActive === true ||
+    Boolean(
+      task.agentIntent &&
+        (!task.agentId ||
+          (task.agentActive !== false && task.completion === null)),
+    )
+  );
 }
 
 /**
@@ -298,69 +558,244 @@ export function taskHasUnreleasedRun(task: Task, hasUnreleasedResolutionRun = fa
  * unknown delivery, so it keeps holding until the settlement sweep releases it.
  */
 export function runHoldsSlot(run: Run): boolean {
-  if (run.released || run.status === "finished" || run.status === "superseded" || run.completion) return false;
+  if (
+    run.released ||
+    run.status === "finished" ||
+    run.status === "superseded" ||
+    run.completion
+  )
+    return false;
   if (run.active === false) return false;
-  return run.agentId != null || run.status === "intent" || run.status === "uncertain";
+  return (
+    run.agentId != null || run.status === "intent" || run.status === "uncertain"
+  );
 }
 
-export function isParkedTask(task: Task, hasUnreleasedResolutionRun = false): boolean {
-  return ["needs_attention", "awaiting_review", "changes_requested", "verifying"].includes(task.phase) &&
-    !taskHasUnreleasedRun(task, hasUnreleasedResolutionRun) && !task.resolution.recoveryActive && !task.resolution.mergeIntent;
+export function isParkedTask(
+  task: Task,
+  hasUnreleasedResolutionRun = false,
+): boolean {
+  return (
+    [
+      "needs_attention",
+      "awaiting_review",
+      "changes_requested",
+      "verifying",
+    ].includes(task.phase) &&
+    !taskHasUnreleasedRun(task, hasUnreleasedResolutionRun) &&
+    !task.resolution.recoveryActive &&
+    !task.resolution.mergeIntent
+  );
 }
 
 /** Task numbers are shown zero-filled to at least three digits (004, 049, 1631); storage stays an integer. */
-export const formatTaskNumber = (number: number) => String(number).padStart(3, "0");
+export const formatTaskNumber = (number: number) =>
+  String(number).padStart(3, "0");
 
-export const taskNumberLabel = (task: Pick<Task, "number" | "reference">, repositoryNeeded: boolean) =>
-  task.number ? repositoryNeeded ? task.reference ?? `#${formatTaskNumber(task.number)}` : `#${formatTaskNumber(task.number)}` : "";
+export const taskNumberLabel = (
+  task: Pick<Task, "number" | "reference">,
+  repositoryNeeded: boolean,
+) =>
+  task.number
+    ? repositoryNeeded
+      ? (task.reference ?? `#${formatTaskNumber(task.number)}`)
+      : `#${formatTaskNumber(task.number)}`
+    : "";
 
-export function summarizeTask(task: Task, includeRepository = false, hasUnreleasedResolutionRun = false, waitContext: WaitStateContext = {}, taskRuns: Run[] = [], waitingOn?: string, defaultHostId?: string, events: BudgetEvent[] = [], repository?: Pick<RepositorySettings, "affectedTests"> | null, now = Date.now()): TaskSummary {
+export function summarizeTask(
+  task: Task,
+  includeRepository = false,
+  hasUnreleasedResolutionRun = false,
+  waitContext: WaitStateContext = {},
+  taskRuns: Run[] = [],
+  waitingOn?: string,
+  defaultHostId?: string,
+  events: BudgetEvent[] = [],
+  repository?: Pick<RepositorySettings, "affectedTests"> | null,
+  now = Date.now(),
+): TaskSummary {
   // The board reads the same derived facts, budget figure and wait the detail and
   // the gates read (nucleus#1187).
-  const { budget, reason, holdKind, waitState } = taskDisplayFacts(task, waitContext, taskRuns, events, repository, now);
-  const stop = taskStopKind(task, taskRuns, budget, waitState), stopRecord = currentTaskStop(task, budget);
+  const { budget, reason, holdKind, waitState } = taskDisplayFacts(
+    task,
+    waitContext,
+    taskRuns,
+    events,
+    repository,
+    now,
+  );
+  const stop = taskStopKind(task, taskRuns, budget, waitState),
+    stopRecord = currentTaskStop(task, budget);
   // Keep a short board reason plus the wait label and actor class. Full stop,
   // hold and wait detail, prerequisite occupant lists and long instructions
   // remain available from task detail.
-  const boardWaitState = waitState ? {
-    state: waitState.state,
-    owner: waitState.state === "waiting_prerequisite" && waitState.owner !== "operator" && waitState.owner !== "Queue" ? "prerequisites" : waitState.owner,
-    nextAction: waitState.state === "waiting_prerequisite"
-      ? waitState.owner === "operator" ? "Correct the prerequisite list" : "Wait for prerequisites to finish"
-      : waitState.nextAction.slice(0, 120),
-    ...(waitState.decisionId ? { decisionId: waitState.decisionId } : {}),
-  } : null;
+  const boardWaitState = waitState
+    ? {
+        state: waitState.state,
+        owner:
+          waitState.state === "waiting_prerequisite" &&
+          waitState.owner !== "operator" &&
+          waitState.owner !== "Queue"
+            ? "prerequisites"
+            : waitState.owner,
+        nextAction:
+          waitState.state === "waiting_prerequisite"
+            ? waitState.owner === "operator"
+              ? "Correct the prerequisite list"
+              : "Wait for prerequisites to finish"
+            : waitState.nextAction.slice(0, 120),
+        ...(waitState.decisionId ? { decisionId: waitState.decisionId } : {}),
+      }
+    : null;
   const fences = holdFencesView(task);
   return taskSummarySchema.parse({
     ...(boardWaitState ? { waitState: boardWaitState } : {}),
     ...(waitingOn ? { waitingOn } : {}),
-    id: task.id, title: task.title, repoPath: task.repoPath, ...(includeRepository ? { repository: task.repository || task.repoPath } : {}), version: task.version, number: task.number, reference: task.reference, entrypoint:task.entrypoint,
-    ...(defaultHostId && task.hostId === defaultHostId ? {} : { hostId: task.hostId }),
-    ...((() => { const ids = [...new Set([task.agentId, ...taskRuns.filter(run => !run.released && run.role === "reviewer" && (!run.hostId || run.hostId === task.hostId)).map(run => run.agentId)].filter((id): id is string => Boolean(id)))]; return ids.length ? { questionAgentIds: ids } : {}; })()),
+    id: task.id,
+    title: task.title,
+    repoPath: task.repoPath,
+    ...(includeRepository
+      ? { repository: task.repository || task.repoPath }
+      : {}),
+    version: task.version,
+    number: task.number,
+    reference: task.reference,
+    entrypoint: task.entrypoint,
+    ...(defaultHostId && task.hostId === defaultHostId
+      ? {}
+      : { hostId: task.hostId }),
+    ...(task.hostSelection?.basis === "worker_profile" &&
+    task.hostSelection.reason
+      ? { hostReason: task.hostSelection.reason }
+      : {}),
+    ...(task.entrypoint === "worker" &&
+    task.phase === "queued" &&
+    !task.workspaceIntent &&
+    !task.workspaceId &&
+    !task.agentId &&
+    !task.runId &&
+    !task.profile &&
+    !taskRuns.length &&
+    task.hostSelection?.basis !== "worker_profile"
+      ? { hostPending: true as const }
+      : {}),
+    ...(() => {
+      const ids = [
+        ...new Set(
+          [
+            task.agentId,
+            ...taskRuns
+              .filter(
+                (run) =>
+                  !run.released &&
+                  run.role === "reviewer" &&
+                  (!run.hostId || run.hostId === task.hostId),
+              )
+              .map((run) => run.agentId),
+          ].filter((id): id is string => Boolean(id)),
+        ),
+      ];
+      return ids.length ? { questionAgentIds: ids } : {};
+    })(),
     ...(task.interactive ? { interactive: true as const } : {}),
-    phase: task.phase, reason: reason.slice(0, 160), held: task.held,
+    phase: task.phase,
+    reason: reason.slice(0, 160),
+    held: task.held,
     ...(holdKind ? { holdKind } : {}),
     ...(fences ? { holds: fences } : {}),
-    ...(task.held ? { hold: { owner: holdOwnerOf(task, task.holdOwner).slice(0, 80), reason: (task.holdReason ?? "not recorded").slice(0, 160), since: task.holdAt, ...(task.holdBlocking ? { blockingSince: task.holdBlocking.since } : {}) } } : {}),
+    ...(task.held
+      ? {
+          hold: {
+            owner: holdOwnerOf(task, task.holdOwner).slice(0, 80),
+            reason: (task.holdReason ?? "not recorded").slice(0, 160),
+            since: task.holdAt,
+            ...(task.holdBlocking
+              ? { blockingSince: task.holdBlocking.since }
+              : {}),
+          },
+        }
+      : {}),
     ...(holdEscalated(task) ? { holdEscalated: true } : {}),
     ...(stop ? { stop } : {}),
-    ...(stopRecord ? { stopRecord: { ...stopRecord, detail: stopRecord.detail.slice(0, 160) } } : {}),
-    ...(task.resolution.hostWait ? { hostWait: { hostId: task.resolution.hostWait.hostId, since: task.resolution.hostWait.since } } : {}),
+    ...(stopRecord
+      ? {
+          stopRecord: {
+            ...stopRecord,
+            detail: stopRecord.detail.slice(0, 160),
+          },
+        }
+      : {}),
+    ...(task.resolution.hostWait
+      ? {
+          hostWait: {
+            hostId: task.resolution.hostWait.hostId,
+            since: task.resolution.hostWait.since,
+          },
+        }
+      : {}),
     ...(task.completion ? { headline: reportHeadline(task.completion) } : {}),
     ...(budget ? { budget: taskBudgetBoardView(budget) } : {}),
     parked: isParkedTask(task, hasUnreleasedResolutionRun),
-    dependsOn: task.dependsOn, queuePriority: task.queuePriority,
-    ...(task.profile ? { profile: { name: task.profile.name } } : {}), ...(task.prUrl ? { prUrl: task.prUrl } : {}),
-    ...(task.resumePrNumber !== null ? { resumePrNumber: task.resumePrNumber } : {}),
-    ...(task.completion?.prNumber ? { completionPrNumber: task.completion.prNumber } : {}),
-    ...(task.originError ? { originError: task.originError } : {}), ...(task.originLookupError ? { originLookupError: task.originLookupError } : {}),
-    lanes: task.lanes, ...(task.disposition ? { disposition: { kind: task.disposition.kind, status: task.disposition.status, reason: task.disposition.reason.slice(0, 160) } } : {}),
-    ...(task.profileRequests?.worker?.profileId ? { workerRequest: task.profileRequests.worker.profileId } : {}),
-    ...(task.profileRequests?.reviewer?.profileId ? { reviewerRequest: task.profileRequests.reviewer.profileId } : {}),
-    resolution: { ...(task.resolution.attention ? { attention: true as const } : {}), ...(task.resolution.mergedCommit ? { mergedCommit: task.resolution.mergedCommit } : {}),
-      ...(task.resolution.workspaceArchiveRetries[0] ? { archiveRetry: { ...task.resolution.workspaceArchiveRetries[0], workspaceId: task.resolution.workspaceArchiveRetries[0].workspaceId.slice(0, 80), error: task.resolution.workspaceArchiveRetries[0].error.slice(0, 160) } } : {}),
-      escalated: task.resolution.incident?.status === "escalated" || task.resolution.recovery?.status === "escalated" || undefined },
-    ...(task.pausedStop || taskRuns.some(run => !run.released && !run.completion && run.pausedStop) ? { pausedStop: true as const } : {}),
+    dependsOn: task.dependsOn,
+    queuePriority: task.queuePriority,
+    ...(task.profile ? { profile: { name: task.profile.name } } : {}),
+    ...(task.prUrl ? { prUrl: task.prUrl } : {}),
+    ...(task.resumePrNumber !== null
+      ? { resumePrNumber: task.resumePrNumber }
+      : {}),
+    ...(task.completion?.prNumber
+      ? { completionPrNumber: task.completion.prNumber }
+      : {}),
+    ...(task.originError ? { originError: task.originError } : {}),
+    ...(task.originLookupError
+      ? { originLookupError: task.originLookupError }
+      : {}),
+    lanes: task.lanes,
+    ...(task.disposition
+      ? {
+          disposition: {
+            kind: task.disposition.kind,
+            status: task.disposition.status,
+            reason: task.disposition.reason.slice(0, 160),
+          },
+        }
+      : {}),
+    ...(task.profileRequests?.worker?.profileId
+      ? { workerRequest: task.profileRequests.worker.profileId }
+      : {}),
+    ...(task.profileRequests?.reviewer?.profileId
+      ? { reviewerRequest: task.profileRequests.reviewer.profileId }
+      : {}),
+    resolution: {
+      ...(task.resolution.attention ? { attention: true as const } : {}),
+      ...(task.resolution.mergedCommit
+        ? { mergedCommit: task.resolution.mergedCommit }
+        : {}),
+      ...(task.resolution.workspaceArchiveRetries[0]
+        ? {
+            archiveRetry: {
+              ...task.resolution.workspaceArchiveRetries[0],
+              workspaceId:
+                task.resolution.workspaceArchiveRetries[0].workspaceId.slice(
+                  0,
+                  80,
+                ),
+              error: task.resolution.workspaceArchiveRetries[0].error.slice(
+                0,
+                160,
+              ),
+            },
+          }
+        : {}),
+      escalated:
+        task.resolution.incident?.status === "escalated" ||
+        task.resolution.recovery?.status === "escalated" ||
+        undefined,
+    },
+    ...(task.pausedStop ||
+    taskRuns.some((run) => !run.released && !run.completion && run.pausedStop)
+      ? { pausedStop: true as const }
+      : {}),
   });
 }
 
@@ -375,62 +810,130 @@ export function summarizeTask(task: Task, includeRepository = false, hasUnreleas
  * decision itself in the compact board projection.
  */
 export function visibleTaskSummaries(
-  tasks: Task[], projects: Project[] = [], runs: Run[] = [],
+  tasks: Task[],
+  projects: Project[] = [],
+  runs: Run[] = [],
   decisionByTask: ReadonlyMap<string, string> = new Map(),
   waitContextByTask: ReadonlyMap<string, WaitStateContext> = new Map(),
   defaultHostId?: string,
   eventsByTask: ReadonlyMap<string, BudgetEvent[]> = new Map(),
-  repositorySettingsByTask: ReadonlyMap<string, Pick<RepositorySettings, "affectedTests"> | null> = new Map(),
+  repositorySettingsByTask: ReadonlyMap<
+    string,
+    Pick<RepositorySettings, "affectedTests"> | null
+  > = new Map(),
 ): TaskSummary[] {
-  const visible = tasks.filter(task => !["done", "cancelled"].includes(task.phase) || Boolean(task.originError || task.originLookupError || task.resolution.workspaceArchiveRetries.length));
+  const visible = tasks.filter(
+    (task) =>
+      !["done", "cancelled"].includes(task.phase) ||
+      Boolean(
+        task.originError ||
+          task.originLookupError ||
+          task.resolution.workspaceArchiveRetries.length,
+      ),
+  );
   const identities = new Map<string, Set<string>>();
-  const projectForTask = (task: Task) => projects.find(project => project.repositories.some(repo =>
-    repo.path === task.repoPath && (!task.repository || task.repository === task.repoPath || !repo.origin || repo.origin === task.repository)));
-  const references = new Map(tasks.map(task => [task.id, task.phase === "done" ? "" : task.reference || (task.number ? `#${formatTaskNumber(task.number)}` : "")]));
+  const projectForTask = (task: Task) =>
+    projects.find((project) =>
+      project.repositories.some(
+        (repo) =>
+          repo.path === task.repoPath &&
+          (!task.repository ||
+            task.repository === task.repoPath ||
+            !repo.origin ||
+            repo.origin === task.repository),
+      ),
+    );
+  const references = new Map(
+    tasks.map((task) => [
+      task.id,
+      task.phase === "done"
+        ? ""
+        : task.reference ||
+          (task.number ? `#${formatTaskNumber(task.number)}` : ""),
+    ]),
+  );
   for (const task of visible) {
     const found = identities.get(task.repoPath) ?? new Set<string>();
     found.add(task.repository || task.repoPath);
     identities.set(task.repoPath, found);
   }
-  return visible.map(task => {
+  return visible.map((task) => {
     const pathIdentifiesMember = Boolean(projectForTask(task));
-    const taskRuns = runs.filter(run => run.taskId === task.id);
-    const hasUnreleasedRun = taskRuns.some(run => !run.released);
-    const until = task.holdUntil?.kind === "task" ? references.get(task.holdUntil.taskId) : undefined;
+    const taskRuns = runs.filter((run) => run.taskId === task.id);
+    const hasUnreleasedRun = taskRuns.some((run) => !run.released);
+    const until =
+      task.holdUntil?.kind === "task"
+        ? references.get(task.holdUntil.taskId)
+        : undefined;
     // The reference token is short; an unbounded `[\w.-]+` scan over a long
     // reason backtracks quadratically and stalls the board build. The cheap
     // '#' probe skips the regex entirely when no reference can be present.
     const reasonText = task.holdReason ?? task.reason;
-    const reasonRef = reasonText.includes("#") ? reasonText.match(/(?:[\w.-]{1,40}#\d{1,9}|#\d{1,9})/)?.[0] : undefined;
+    const reasonRef = reasonText.includes("#")
+      ? reasonText.match(/(?:[\w.-]{1,40}#\d{1,9}|#\d{1,9})/)?.[0]
+      : undefined;
     const waitContext = waitContextByTask.get(task.id);
     // The prerequisite a hold reason names is the generated entry's own typed id,
     // decoded by the reason's owner; the declared dependencies are the fallback.
-    const firstWaitingId = waitContext?.dependencyWait ? prerequisiteReasonEntries(reasonText).find(entry => entry.id)?.id : undefined;
-    const dependency = firstWaitingId ? references.get(firstWaitingId) : waitContext?.dependencyWait ? task.dependsOn.map(id => references.get(id)).find(Boolean) : undefined;
-    const summary = summarizeTask(task, !pathIdentifiesMember || (identities.get(task.repoPath)?.size ?? 0) > 1, hasUnreleasedRun,
-      { ...waitContext, decisionId: decisionByTask.get(task.id) ?? null }, taskRuns, until || reasonRef || dependency || undefined, defaultHostId, eventsByTask.get(task.id) ?? [], repositorySettingsByTask.get(task.id));
-    const owner = summary.waitState?.state === "merge_hold"
-      ? summary.holds?.merge?.owner ?? summary.holds?.dispatch?.owner
-      : summary.holds?.dispatch?.owner ?? summary.holds?.merge?.owner;
+    const firstWaitingId = waitContext?.dependencyWait
+      ? prerequisiteReasonEntries(reasonText).find((entry) => entry.id)?.id
+      : undefined;
+    const dependency = firstWaitingId
+      ? references.get(firstWaitingId)
+      : waitContext?.dependencyWait
+        ? task.dependsOn.map((id) => references.get(id)).find(Boolean)
+        : undefined;
+    const summary = summarizeTask(
+      task,
+      !pathIdentifiesMember || (identities.get(task.repoPath)?.size ?? 0) > 1,
+      hasUnreleasedRun,
+      { ...waitContext, decisionId: decisionByTask.get(task.id) ?? null },
+      taskRuns,
+      until || reasonRef || dependency || undefined,
+      defaultHostId,
+      eventsByTask.get(task.id) ?? [],
+      repositorySettingsByTask.get(task.id),
+    );
+    const owner =
+      summary.waitState?.state === "merge_hold"
+        ? (summary.holds?.merge?.owner ?? summary.holds?.dispatch?.owner)
+        : (summary.holds?.dispatch?.owner ?? summary.holds?.merge?.owner);
     const project = projectForTask(task);
-    const displayOwner = owner ? isOperatorOrigin(owner) ? "you"
-      : project?.planner?.agentId === owner ? `${project.name} planner` : "a planner thread" : undefined;
+    const displayOwner = owner
+      ? isOperatorOrigin(owner)
+        ? "you"
+        : project?.planner?.agentId === owner
+          ? `${project.name} planner`
+          : "a planner thread"
+      : undefined;
     // The typed holder the stop's own writer recorded. A stop written before that
     // field existed reads through the record owner's legacy decode, so an existing
     // escalation keeps naming the planner or owner it waits with.
-    const escalationHolder = summary.stopRecord?.holderAgentId ?? legacyStopHolderAgentId(summary.stopRecord?.detail);
+    const escalationHolder =
+      summary.stopRecord?.holderAgentId ??
+      legacyStopHolderAgentId(summary.stopRecord?.detail);
     const stopDisplayOwner = escalationHolder
-      ? project?.planner?.agentId === escalationHolder ? `${project.name} planner`
-        : taskOwner(task) === escalationHolder ? isOperatorOrigin(escalationHolder) ? "you" : "the task owner"
+      ? project?.planner?.agentId === escalationHolder
+        ? `${project.name} planner`
+        : taskOwner(task) === escalationHolder
+          ? isOperatorOrigin(escalationHolder)
+            ? "you"
+            : "the task owner"
           : "a planner thread"
       : undefined;
-    return { ...summary, ...(displayOwner ? { holdDisplayOwner: displayOwner } : {}), ...(stopDisplayOwner ? { stopDisplayOwner } : {}) };
+    return {
+      ...summary,
+      ...(displayOwner ? { holdDisplayOwner: displayOwner } : {}),
+      ...(stopDisplayOwner ? { stopDisplayOwner } : {}),
+    };
   });
 }
 
 /** Drop full verdict evidence from bounded task projections; `queue.detail` retains the immutable records. */
 export function compactTaskVerdicts(task: Task): Task {
-  const compactCompletion = (completion: Completion | null): Completion | null =>
+  const compactCompletion = (
+    completion: Completion | null,
+  ): Completion | null =>
     completion?.verdicts?.length ? { ...completion, verdicts: [] } : completion;
   const resolution = task.resolution;
   return {
@@ -440,22 +943,44 @@ export function compactTaskVerdicts(task: Task): Task {
       ...resolution,
       review: compactCompletion(resolution.review),
       verification: compactCompletion(resolution.verification),
-      reviews: resolution.reviews.map(review => ({ ...review, verdicts: [] })),
-      reviewSupersessions: resolution.reviewSupersessions.map(record => ({
-        ...record, review: compactCompletion(record.review)!, verification: compactCompletion(record.verification),
+      reviews: resolution.reviews.map((review) => ({
+        ...review,
+        verdicts: [],
+      })),
+      reviewSupersessions: resolution.reviewSupersessions.map((record) => ({
+        ...record,
+        review: compactCompletion(record.review)!,
+        verification: compactCompletion(record.verification),
       })),
     },
   };
 }
 
 /** Drop instruction-sized fields that belong on `queue.detail`. */
-export function compactLiveTask(task: Task): Omit<Task, "handoffText" | "brief" | "briefVersions" | "laneContext" | "laneDocumentPins"> & { holdKind?: HoldKind } {
+export function compactLiveTask(
+  task: Task,
+): Omit<
+  Task,
+  "handoffText" | "brief" | "briefVersions" | "laneContext" | "laneDocumentPins"
+> & { holdKind?: HoldKind } {
   const compactTask = compactTaskVerdicts(task);
-  const { handoffText: _handoffText, brief: _brief, briefVersions: _briefVersions, laneContext: _laneContext, laneDocumentPins: _laneDocumentPins, ...compact } = compactTask;
+  const {
+    handoffText: _handoffText,
+    brief: _brief,
+    briefVersions: _briefVersions,
+    laneContext: _laneContext,
+    laneDocumentPins: _laneDocumentPins,
+    ...compact
+  } = compactTask;
   const holdKind = taskHoldKind(task);
   return holdKind ? { ...compact, holdKind } : compact;
 }
 
 export function isUnchangedBoard(value: unknown): value is UnchangedBoard {
-  return typeof value === "object" && value !== null && "unchanged" in value && (value as { unchanged: unknown }).unchanged === true;
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "unchanged" in value &&
+    (value as { unchanged: unknown }).unchanged === true
+  );
 }

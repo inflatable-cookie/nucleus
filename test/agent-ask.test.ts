@@ -277,7 +277,7 @@ function eligibleDecider(f: Awaited<ReturnType<typeof askFixture>>): void {
       roles: ["coordinator"],
       scopes: ["general"],
       weight: 1,
-      capability: "medium",
+      capability: "worker",
       cost: "very_low",
     },
   ]);
@@ -381,6 +381,60 @@ test("a pi-shaped worker asks through nucleus_ask and gets the planner answer in
       "an answered question never asks again",
     );
     assert.equal(f.events("agent_ask").length, 1);
+  } finally {
+    await f.close();
+  }
+});
+
+test("a retained worker's stale initial-run ticket asks as the revision run current on its thread", async () => {
+  // nucleus#1376: the shell keeps the ticket it exported at dispatch. The ask
+  // binding proves the thread, not the shell variable, so the question is the
+  // current revision run's.
+  const f = await askFixture({ initialRun: true });
+  try {
+    registerPlanner(
+      f,
+      "Answer: Keep the public API\nReason: The brief fixes the public shape",
+    );
+    f.store.putRun({
+      id: "run-revision",
+      taskId: f.task.id,
+      role: "revision",
+      generation: 1,
+      head,
+      agentId: "worker",
+      hostId: "host",
+      workspaceId: "ws",
+      profile: f.author,
+      status: "running",
+      createdAt: new Date().toISOString(),
+      lastObservedAt: null,
+      active: true,
+      idleSince: null,
+      completion: null,
+      released: false,
+    } as unknown as Run);
+    f.store.update(f.task.id, {
+      resolution: {
+        ...f.store.task(f.task.id).resolution,
+        currentRunId: "run-revision",
+      },
+    });
+    const receipt = await f.receipt({
+      question: "Which approach should the revision use?",
+      choices: ["Keep the public API", "Re-read the whole diff"],
+      kind: "process",
+    });
+    assert.equal(receipt.status, "answered");
+    assert.equal(
+      receipt.answer,
+      "Keep the public API — The brief fixes the public shape",
+    );
+    assert.match(
+      f.events("agent_ask")[0]!.detail,
+      /run run-revision \(revision\); agent worker/,
+      "the durable ask belongs to the run that is current, not the stale ticket's",
+    );
   } finally {
     await f.close();
   }
@@ -671,7 +725,11 @@ test("an archived planner is skipped, and live planner and reviewer prompts reta
     assert.equal(receipt.status, "pending");
     assert.match(receipt.detail ?? "", /handle it yourself/);
     assert.deepEqual(f.delegated.planner, []);
-    assert.equal(f.store.projectByKey("app")?.planner?.agentId, "planner-1", "the hint remains registered");
+    assert.equal(
+      f.store.projectByKey("app")?.planner?.agentId,
+      "planner-1",
+      "the hint remains registered",
+    );
     assert.deepEqual(f.delegated.deciders, []);
   } finally {
     await f.close();
@@ -783,7 +841,7 @@ test("an unanswered scope question reaches the board without a decider", async (
         roles: ["coordinator"],
         scopes: ["general"],
         weight: 1,
-        capability: "medium",
+        capability: "worker",
         cost: "very_low",
       },
     ]);
@@ -803,7 +861,11 @@ test("an unanswered scope question reaches the board without a decider", async (
     });
     assert.equal(receipt.status, "pending");
     await until(() => f.events("agent_ask_decision").length > 0);
-    assert.equal(f.delegated.deciders.length, 0, "operator-only questions go to the board without a new decider");
+    assert.equal(
+      f.delegated.deciders.length,
+      0,
+      "operator-only questions go to the board without a new decider",
+    );
     assert.equal(f.events("agent_ask_decision").length, 1);
   } finally {
     await f.close();
@@ -2337,11 +2399,7 @@ test("chat output without a command leaves the sender to handle the question wit
       question: "How should this task proceed?",
     });
     assert.equal(result.status, "pending");
-    assert.equal(
-      calls,
-      1,
-      "the live task planner was asked",
-    );
+    assert.equal(calls, 1, "the live task planner was asked");
     assert.equal(f.events("agent_ask_answered").length, 0);
     await f.engine.resolution.resumeAskQuestions();
     assert.equal(calls, 1, "a completed rung is a known miss, never re-asked");

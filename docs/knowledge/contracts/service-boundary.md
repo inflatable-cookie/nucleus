@@ -228,7 +228,24 @@ participant ticket first, then a host-supplied identity; caller records are
 host-qualified and existing bare Paseo IDs retain their legacy interpretation.
 An explicit ticket is the asker and delivery target for every verb that records a
 caller (`decision.add`, `lead.submit`, `question.answer`, `tell`); Nucleus records
-the ticket's thread. A missing ticket file uses host verification. A T3
+the ticket's thread. A missing ticket file uses host verification. Nucleus proves
+the thread behind a run ticket, not the shell variable that names it: a retained
+thread whose environment still exports an earlier run's ticket (or whose session
+holds an earlier MCP binding or helper argv) acts as that thread's current run
+when both name the same proven host, agent and retained line. `core/dispatch/acting-run.ts`
+owns that resolution, and every callback path reads it — the caller route, the
+run-context read, `nucleus_report`, `ask`, `tell`, the final report and self-force.
+It refuses exactly three shapes: a ticket for another thread or another task,
+and a task with no current run (both naming the run in force and the fix), and a
+credential its own row revoked (the store's own unauthorized refusal, checked
+before any resolution). Ownership is the task's own run row or the durable run id
+its task row carries, so a thread's credential never speaks for a task it was
+not issued for. A proof executor is never resolved across runs, and two runs on
+different retained lines — a worker's and a reviewer's on the same workspace —
+are never substituted for each other. The resolution is
+recorded once per ticket and run as `stale_ticket_resolved`, so a stale shell has
+a visible cause instead of an inferred one, and each dispatch prompt states its
+own run's ticket path (nucleus#1376). A T3
 `mcp:` identity must match an exact thread on one registered online host.
 `project.set-planner` on the CLI defaults its omitted `agentId` to the verified
 caller. A decision answer is delivered to that recorded asker or queued with a visible wait
@@ -245,6 +262,23 @@ run ticket `caller.resolve` locates from the verified thread, a participant tick
 the host-verified identity via `agent.tell`. `nucleus ask` still needs a run ticket.
 A slow host answers "The host is slow; retry" instead of hanging. A bare legacy project-planner ID binds to a matching
 native ID on Paseo regardless of the historical setter, and never to another host.
+
+Every delivered message carries its own reply route (nucleus#1387). Nucleus issues
+one opaque `replyTo` handle per recorded message, bound to the sender's identity as
+the sending ticket or host verification proved it, and the delivered text carries
+the exact line `Reply: nucleus tell {to:{reply:"<handle>"}}`. `tell` and `ask`
+accept `{reply}` in `to`; the service resolves it to that message's sender and
+delivers through the ordinary path — queued for a busy recipient, steered into a
+live turn, with an unknown outcome recorded as unknown and never resent. A handle
+is an address, not a credential: it reaches exactly the sender of that one message,
+it can be used by that message's recorded recipient only, it expires seven days
+after it was issued, and it grants only the right to deliver a message there. A
+reply is itself an ordinary message, so it carries its own handle and the
+conversation continues both ways. The sender's thread is re-observed on every
+reply; an archived or gone sender refuses with that fact and is never revived
+(Tom, 2026-11-11). Only a planner or named project agent can answer a question
+through a handle (`ask`), because that answer is the project rung's own; a task
+role or a plain host thread is answered with `tell`.
 The same ticket covers a task's own planner (task 1109): keyed per proven host and
 thread rather than per task, handed over by the same two routes, and valid only
 while a live task still names that thread as its planner. Reparenting moves the
@@ -440,7 +474,7 @@ The runtime build packages both bundles together.
     snapshot polling while this channel is connected and resumes it after a
     disconnect; an unavailable event still triggers a read to expose the failure.
 - **Surface.** Web calls carry `via: "web"`. The Settings writes (`queue.capacity`,
-  `queue.pool`, `queue.profile`, `queue.availability`, `queue.demand-offsets`,
+  `queue.pool`, `queue.profile`, `queue.availability`,
   `queue.usage`, `queue.project-dispatch-limit`,
   `queue.routing-grant`, `repository.set`, `backup.now`,
   `profile.create`, `profile.update`, `profile.remove`;
@@ -1395,7 +1429,7 @@ reads that entry: the legacy unqualified `hostId`, the retired
 observation scope and the daemon-identity guard all read it, so a BB or T3 host
 that connects earlier still never displaces the host those records belong to.
 
-New task host routing is fixed when the task is accepted: explicit task host, an explicit repository `hostKind` override, the operator default host kind (seeded as `paseo`), then the proven submitting planner host. The operator default lives in Settings → Hosts (nucleus#1325; it was under Dispatch limits) and is writable only through `queue.capacity`, so the CLI and other non-Settings routes refuse it just like other capacity fields. An offline operator default falls through to the planner host and records that reason; a task with no available host stays pinned to the host it wanted and waits visibly. A schema migration converts stored repository `paseo` defaults to inherit while preserving explicit T3Code and BB overrides. Existing task host identity never changes when either setting changes.
+New worker tasks carry an ingress host preference at acceptance; it does not restrict the first worker's profile. At first dispatch, selection considers eligible profiles across online host catalogs. For a profile that runs on several hosts, the explicit preference, repository `hostKind`, operator default (seeded as `paseo`), and planner host settle the choice in that order. The chosen host and reason are recorded with the workspace intent and stay fixed for every subsequent role and run. The operator default lives in Settings → Hosts and is writable only through `queue.capacity`. A schema migration converts stored repository `paseo` defaults to inherit while preserving explicit T3Code and BB preferences. Review-entry and proof-only tasks keep their existing host admission.
 
 **Removing a host** (Settings → Hosts, nucleus#1325; Tom, 2026-11-18). A disconnect
 never removes a host: it proves nothing about outstanding effects. The operator

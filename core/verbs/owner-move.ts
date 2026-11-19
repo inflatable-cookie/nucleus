@@ -1,4 +1,7 @@
-import { reviewerReportRequestRefusal } from "./reviewer-report";
+import {
+  reviewerReportBindingRefusal,
+  reviewerReportRequestRefusal,
+} from "./reviewer-report";
 import {
   MOVE_WORK_AUTHOR_REFUSAL,
   MOVE_WORK_REPLACEMENT_REFUSAL,
@@ -7,7 +10,12 @@ import {
 } from "./control-refusals";
 import { RETAINED_PREREQUISITE_REFUSAL } from "./verb-refusal-text";
 import { readyReviewAtHead } from "../recovery/task-reasons";
-import { moveStateRefusal } from "./control-refusals";
+import {
+  closeoutEffectRefusal,
+  closeoutMoveStateRefusal,
+  moveStateRefusal,
+  recordedCloseoutRefusal,
+} from "./control-refusals";
 import {
   DISPOSITION_CONTROL_REFUSAL,
   REMOVED_TASK_REFUSAL,
@@ -18,7 +26,6 @@ import { proofOnlyReceiptAwaitingReview } from "../qa/proof-records";
 import { z } from "zod";
 import {
   isDispositionActive,
-  mergeReviewEvidenceAt,
   taskControlInputSchema,
   taskNextVerbSchema,
   type Run,
@@ -183,7 +190,7 @@ function moveViews(facts: OwnerVerbFacts): TaskNextVerb[] {
           verb: "move",
           action: "move",
           available: false,
-          refusal: `move ${to}: ${outcome.refusal}. A planner or operator can use force with a reason`,
+          refusal: `move ${to}: ${outcome.refusal}`,
         });
   const gate = (to: MoveTarget): OwnerVerbApplicability | null => {
     const refusal = moveStateRefusal(task, to);
@@ -310,10 +317,9 @@ function moveViews(facts: OwnerVerbFacts): TaskNextVerb[] {
         (state === "awaiting" &&
           reviewResultFencesRun(facts.store, task, reader))
       ) {
-        const reportRefusal = reviewerReportRequestRefusal(
-          reader,
-          facts.events,
-        );
+        const reportRefusal =
+          reviewerReportBindingRefusal(task, runs, reader) ??
+          reviewerReportRequestRefusal(reader, facts.events);
         return reportRefusal
           ? { available: false, refusal: reportRefusal }
           : {
@@ -461,17 +467,12 @@ function moveViews(facts: OwnerVerbFacts): TaskNextVerb[] {
   const closeout = ((): OwnerVerbApplicability & { note?: string } => {
     const shared = gate("closeout");
     if (shared) return shared;
-    if (["done", "cancelled"].includes(task.phase))
-      return { available: false, refusal: `The task is ${task.phase}` };
-    if (
-      (!neverDispatchedReviewEntry &&
-        ["queued", "dispatching"].includes(task.phase)) ||
-      !prIdentity(task)
-    )
-      return {
-        available: false,
-        refusal: "Moving to closeout requires a dispatched task with a PR",
-      };
+    const stored = closeoutMoveStateRefusal(
+      task,
+      neverDispatchedReviewEntry,
+      prIdentity(task),
+    );
+    if (stored) return { available: false, refusal: stored };
     if (neverDispatchedReviewEntry)
       return {
         available: true,
@@ -479,29 +480,13 @@ function moveViews(facts: OwnerVerbFacts): TaskNextVerb[] {
         note: "This task never dispatched and its PR merged outside Nucleus: no reviewer, review, verification or proof exists at the merged head, and the merge is an observed fact, never acceptance. move closeout observes the merged head, branch and merge commit at the forge, proves the merged head descends from the intake and recorded source heads, and records your explicit operator source acceptance (qualification) of that exact head with the missing evidence; without it the task stays held.",
       };
     if (task.resolution.mergedCommit) {
-      const head = task.resolution.mergeHead;
-      if (
-        !head ||
-        (reviewRequiredForTask(facts.store, task) &&
-          !mergeReviewEvidenceAt(task, head))
-      )
-        return {
-          available: false,
-          refusal:
-            "The recorded merge needs its exact head and matching review evidence",
-        };
+      const evidence = recordedCloseoutRefusal(
+        task,
+        reviewRequiredForTask(facts.store, task),
+      );
+      if (evidence) return { available: false, refusal: evidence };
       const refusal =
-        durableRunFence(facts) ??
-        blockingRecoveryEffectsRefusal(facts.store, task, {
-          kinds: [
-            "operation",
-            "hook",
-            "run-delivery",
-            "review-delivery",
-            "publication",
-            "attention-notice",
-          ],
-        });
+        durableRunFence(facts) ?? closeoutEffectRefusal(facts.store, task);
       return refusal
         ? { available: false, refusal }
         : {
@@ -515,6 +500,10 @@ function moveViews(facts: OwnerVerbFacts): TaskNextVerb[] {
         available: false,
         refusal: `Run ${live.id} delivery is unknown; reconcile it before accepting the external merge`,
       };
+    if (!neverDispatchedReviewEntry) {
+      const refusal = closeoutEffectRefusal(facts.store, task);
+      if (refusal) return { available: false, refusal };
+    }
     const fence = durableRunFence(facts);
     const effects = blockingRecoveryEffectsRefusal(facts.store, task, {
       noticeKinds: "all",

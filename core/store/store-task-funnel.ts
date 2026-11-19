@@ -262,6 +262,7 @@ export interface TaskFunnelServices {
   receipt(
     input: Completion,
     token: string,
+    credentialRunId?: string,
   ): { accepted: true; eventId: string } | null;
   setCompletionReceipt(
     id: string,
@@ -564,18 +565,48 @@ export class StoreTaskFunnel {
         expected,
         task.version,
       );
-    if (change.hostId !== undefined && change.hostId !== task.hostId)
+    // First dispatch binds the chosen worker host together with its workspace intent.
+    // Once any run or workspace intent exists, no ordinary update can move it.
+    const bindsWorkerHost =
+      kind === "dispatch_intent" &&
+      task.phase === "queued" &&
+      task.hostSelection?.basis !== "worker_profile" &&
+      !task.profile &&
+      change.phase === "dispatching" &&
+      !task.workspaceId &&
+      !task.workspaceIntent &&
+      !task.directory &&
+      !task.agentIntent &&
+      !task.agentId &&
+      !task.runId &&
+      !task.completion &&
+      !task.prUrl &&
+      !task.prHead &&
+      !task.resumePrNumber &&
+      !task.retiredWorkers.length &&
+      !task.resolution.currentRunId &&
+      this.services.db
+        .prepare("SELECT 1 FROM runs WHERE taskId=? LIMIT 1")
+        .get(id) === undefined &&
+      change.hostSelection?.basis === "worker_profile" &&
+      change.hostSelection.hostId === change.hostId;
+    if (
+      change.hostId !== undefined &&
+      change.hostId !== task.hostId &&
+      !bindsWorkerHost
+    )
       throw new Error("Task host cannot be changed by an update");
     if (
       change.hostSelection !== undefined &&
       JSON.stringify(change.hostSelection) !==
-        JSON.stringify(task.hostSelection)
+        JSON.stringify(task.hostSelection) &&
+      !bindsWorkerHost
     )
       throw new Error("Task host selection cannot be changed by an update");
-    // The existing row already carries this immutable field. Remove even an
-    // explicitly undefined key so observation-only writes remain observations.
-    const { hostSelection: _selection, ...remainingChange } = change;
-    change = remainingChange;
+    if (!bindsWorkerHost) {
+      const { hostSelection: _selection, ...remainingChange } = change;
+      change = remainingChange;
+    }
     if (
       change.originHostId !== undefined &&
       change.originHostId !== task.originHostId &&

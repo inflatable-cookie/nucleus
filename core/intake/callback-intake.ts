@@ -42,6 +42,7 @@ import {
 } from "../review/review-entry";
 import { assertReviewResponsibility } from "../review/review-verdicts";
 import { digest, now } from "../store/store";
+import { reportRunFor } from "../dispatch/acting-run";
 import { recordProofFiles } from "./proof-files";
 import {
   recordSupersededRunRefusal,
@@ -140,17 +141,35 @@ export class CallbackIntake {
       ),
     );
   }
-  async complete(input: Completion, token: string) {
-    const sourceRun = this.store.run(input.runId);
-    this.store.authenticate(input.runId, token);
+  async complete(
+    input: Completion,
+    token: string,
+    credentialRunId = input.runId,
+  ) {
+    const presentedRunId = credentialRunId;
+    const presented = this.store.run(presentedRunId);
+    this.store.authenticate(presentedRunId, token);
     const identityTask = this.store.task(input.taskId);
     if (
-      sourceRun
-        ? sourceRun.taskId !== identityTask.id
-        : identityTask.runId !== input.runId
+      presented
+        ? presented.taskId !== identityTask.id
+        : identityTask.runId !== presentedRunId
     )
       throw new Error("Stale report: task and run identity do not match");
-    const priorReceipt = this.store.receipt(proofFilesRemoved(input), token);
+    // Every gate and receipt below reads the run this report belongs to: a
+    // retained thread's stale ticket is its current run's report
+    // (nucleus#1376). The credential that arrived stays the presented run's, so
+    // it is named wherever authentication or a receipt is checked. A settled run
+    // answers its own identical retry here; acceptance applies every liveness
+    // rule below, so a settled run never acquires a second result.
+    const sourceRun = reportRunFor(this.store, identityTask, presentedRunId);
+    if (sourceRun && sourceRun.id !== presentedRunId)
+      input = { ...input, runId: sourceRun.id };
+    const priorReceipt = this.store.receipt(
+      proofFilesRemoved(input),
+      token,
+      presentedRunId,
+    );
     if (priorReceipt) return priorReceipt;
     let verifiedPr: { url: string; head: string } | null = null;
     // A worker report is bound to this task by typed identity: the canonical source,
@@ -214,8 +233,8 @@ export class CallbackIntake {
         sourceRun.taskId === input.taskId &&
         sourceRun.proofExecution
       ) {
-        this.store.authenticate(input.runId, token);
-        const duplicate = this.store.receipt(input, token);
+        this.store.authenticate(presentedRunId, token);
+        const duplicate = this.store.receipt(input, token, presentedRunId);
         if (duplicate) return duplicate;
         if (input.proofResult)
           startEvidence =
@@ -261,7 +280,12 @@ export class CallbackIntake {
             startEvidence = `Effigy admission ${record.id} at ${record.launchedAt ?? record.admittedAt}`;
         }
       }
-      const receipt = this.resolution.complete(input, token, startEvidence);
+      const receipt = this.resolution.complete(
+        input,
+        token,
+        startEvidence,
+        presentedRunId,
+      );
       void this.engine.cleanContext(() => this.engine.wakeTask(input.taskId));
       await this.resolution.settleCompletedExecutorBlocker(input);
       void this.engine.cleanContext(() => this.engine.wakeTask(input.taskId));
@@ -287,7 +311,7 @@ export class CallbackIntake {
       sourceRun.role !== "executor" &&
       ["done", "cancelled"].includes(this.store.task(input.taskId).phase)
     ) {
-      return this.resolution.complete(input, token);
+      return this.resolution.complete(input, token, undefined, presentedRunId);
     }
     // Spec 037/1090: a source approval is one exact shape, refused before any
     // proof routing or reviewer evidence is recorded.
@@ -295,7 +319,7 @@ export class CallbackIntake {
     if (sourceRefusal) throw Error(sourceRefusal);
     // Handover reviews use the task workspace.
     if (sourceRun?.role === "reviewer") {
-      const duplicate = this.store.receipt(input, token);
+      const duplicate = this.store.receipt(input, token, presentedRunId);
       if (duplicate) return duplicate;
       const sourceTask = this.store.task(input.taskId);
       if (sourceTask.reviewEntry) {
@@ -334,8 +358,8 @@ export class CallbackIntake {
     // pass, so the role can never claim source-immutable proof after mutating source.
     // A blocked or error result is always recordable: conservative evidence is not a pass.
     if (sourceRun?.role === "executor" && input.status === "proof_executed") {
-      this.store.authenticate(input.runId, token);
-      const duplicate = this.store.receipt(input, token);
+      this.store.authenticate(presentedRunId, token);
+      const duplicate = this.store.receipt(input, token, presentedRunId);
       if (duplicate) return duplicate;
       const refusal = proofResultRefusal(input, sourceRun);
       if (refusal) throw new Error(refusal);
@@ -367,18 +391,16 @@ export class CallbackIntake {
         sourceRun.head,
         false,
       );
-    const runRoute = completionRoute(
-      input.status,
-      this.store.run(input.runId) ?? null,
-    );
+    const runRoute = completionRoute(input.status, sourceRun);
     if (runRoute === "run" || runRoute === "reviewer") {
       if (isDispositionActive(this.store.task(input.taskId))) {
-        return recordLateCallbackEvidence(this.store, input, token);
+        return recordLateCallbackEvidence(
+          this.store,
+          { ...input, runId: presentedRunId },
+          token,
+        );
       }
-      if (
-        completionRoute(input.status, this.store.run(input.runId) ?? null) ===
-        "reviewer"
-      ) {
+      if (completionRoute(input.status, sourceRun) === "reviewer") {
         const apply = acceptRunCompletion;
         return this.engine.reviewerContinuationInFlight(
           input.taskId,
@@ -389,7 +411,7 @@ export class CallbackIntake {
       }
       return acceptRunCompletion();
     }
-    const duplicate = this.store.receipt(input, token);
+    const duplicate = this.store.receipt(input, token, presentedRunId);
     if (duplicate) return duplicate;
     if (
       !["ready_for_review", "report_ready", "blocked", "error"].includes(
