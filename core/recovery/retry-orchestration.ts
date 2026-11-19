@@ -213,10 +213,20 @@ export class RetryRoutes {
         );
     }
     if (t.resolution.mergedCommit) {
-      if (revise || instruction !== undefined || reviewerInstruction !== undefined)
-        throw new Error('The task PR has merged; there is no worker or reviewer instruction to deliver');
-      const refresh = retryRoute(t, runs, false) === 'closeout';
-      return () => this.resolution.closeout.continueRecordedMerge(this.store.task(t.id), { kind: 'retry', refresh });
+      if (
+        revise ||
+        instruction !== undefined ||
+        reviewerInstruction !== undefined
+      )
+        throw new Error(
+          "The task PR has merged; there is no worker or reviewer instruction to deliver",
+        );
+      const refresh = retryRoute(t, runs, false) === "closeout";
+      return () =>
+        this.resolution.closeout.continueRecordedMerge(this.store.task(t.id), {
+          kind: "retry",
+          refresh,
+        });
     }
     if (reviewerInstruction !== undefined) {
       const refusal = retryAdmission(t, {
@@ -560,9 +570,7 @@ export class RetryRoutes {
         {
           attention: false,
           ...(rerunHeldValidation ? { projectValidation: null } : {}),
-          ...(t.resolution.mergeIntent
-            ? {}
-            : { integrationTurn: null }),
+          ...(t.resolution.mergeIntent ? {} : { integrationTurn: null }),
         },
         { reason: "Resolution check retry requested" },
         "resolution_retry",
