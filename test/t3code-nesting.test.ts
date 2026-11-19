@@ -15,7 +15,10 @@ import {
   childThreadId,
 } from "../hosts/t3code/nesting";
 import type { AcpSessionSurface } from "../shared/acp/surface";
-import { ProvenPreSendRefusalError } from "../core/host";
+import {
+  HostSnapshotPendingError,
+  ProvenPreSendRefusalError,
+} from "../core/host";
 import type { HostAgentSpec } from "../shared/host";
 import type { Profile, Task } from "../shared/contracts";
 import {
@@ -800,5 +803,122 @@ test("a guard that turned false before the child send refuses it before delivery
     () => host.createAgent(guarded),
     (error: unknown) => error instanceof ProvenPreSendRefusalError,
   );
+  assert.equal(commandOf(server, "delegated_task.request"), undefined);
+});
+
+test("a nested role's options come from its own provider, not the parent provider's model", async (t) => {
+  const { host, server, spec, workspace } = await fixture(t);
+  // The live shape: the Nucleus ACP parent provider reports models with no
+  // options at all, and codex carries the role's level on `reasoningEffort`.
+  // Judging the codex profile against the parent's model entry refused every
+  // nested role launch on the pilot (nucleus#1375).
+  server.controls.providers = [
+    nucleusProvider,
+    {
+      instanceId: "codex",
+      displayName: "Codex",
+      driver: "codex",
+      enabled: true,
+      status: "ready",
+      models: [
+        {
+          slug: "gpt-6.1-terra",
+          name: "GPT-6.1 Terra",
+          capabilities: {
+            optionDescriptors: [
+              {
+                id: "reasoningEffort",
+                label: "Reasoning",
+                type: "select",
+                options: [
+                  { id: "low", label: "Low", isDefault: true },
+                  { id: "medium", label: "Medium" },
+                  { id: "high", label: "High" },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+    },
+  ];
+  const codex: Profile = {
+    ...profile,
+    provider: "codex",
+    model: "gpt-6.1-terra",
+    thinkingOptionId: "high",
+  };
+  const created = await host.createAgent({
+    ...spec("worker-create", "Do the work"),
+    profile: codex,
+  });
+  const request = commandOf(server, "delegated_task.request")!;
+  assert.deepEqual(request.modelSelection, {
+    instanceId: "codex",
+    model: "gpt-6.1-terra",
+    options: [{ id: "reasoningEffort", value: "high" }],
+  });
+  assert.equal(created.id, childThreadId(request.commandId));
+  assert.equal(
+    parentOf(host)!.workspaceId,
+    workspace.id,
+    "the parent thread is still the task's own",
+  );
+});
+
+test("a nested role whose provider has not settled its options waits before any parent is launched", async (t) => {
+  const { host, server, spec } = await fixture(t);
+  server.controls.providers = [
+    { ...nucleusProvider },
+    {
+      instanceId: "codex",
+      displayName: "Codex",
+      driver: "codex",
+      enabled: true,
+      status: "ready",
+      models: [
+        {
+          slug: "gpt-6.1-terra",
+          name: "GPT-6.1 Terra",
+          capabilities: { optionDescriptors: [] },
+        },
+      ],
+    },
+  ];
+  const codex: Profile = {
+    ...profile,
+    provider: "codex",
+    model: "gpt-6.1-terra",
+    thinkingOptionId: "high",
+  };
+  await assert.rejects(
+    () =>
+      host.createAgent({
+        ...spec("worker-create", "Do the work"),
+        profile: codex,
+      }),
+    (error: unknown) => error instanceof HostSnapshotPendingError,
+  );
+  assert.equal(
+    parentOf(host),
+    undefined,
+    "the fence runs before the parent thread exists, so no held turn is left behind",
+  );
+  assert.equal(commandOf(server, "delegated_task.request"), undefined);
+});
+
+
+test("a nested role refuses a missing model on a settled provider before creating a parent", async (t) => {
+  const { host, server, spec } = await fixture(t);
+  server.controls.providers = [nucleusProvider, {
+    instanceId: "codex", displayName: "Codex", driver: "codex", enabled: true, status: "ready",
+    models: [{ slug: "other", name: "Other", capabilities: { optionDescriptors: [
+      { id: "reasoningEffort", label: "Reasoning", type: "select", options: [{ id: "high", label: "High" }] },
+    ] } }],
+  }];
+  await assert.rejects(() => host.createAgent({ ...spec("worker-create", "Work"),
+    profile: { ...profile, provider: "codex", model: "missing", thinkingOptionId: "high" },
+  }), (error: unknown) => error instanceof ProvenPreSendRefusalError && /does not report model missing/.test(error.message));
+  assert.equal(parentOf(host), undefined);
   assert.equal(commandOf(server, "delegated_task.request"), undefined);
 });

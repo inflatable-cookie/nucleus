@@ -1,3 +1,4 @@
+import { measureRunPrompt, recordPromptSize } from './prompt-text/measure';
 import { randomBytes, randomUUID } from "node:crypto";
 import { workerProfileIsExcluded } from "../../shared/contracts";
 import type { Task } from "../../shared/contracts";
@@ -15,6 +16,7 @@ import { workerPrompt } from "./prompts";
 import { runTicketPath } from "./agent-creation";
 import {
   ABSENT_WORKER_REASON,
+  HostSnapshotPendingError,
   PRE_AGENT_LAUNCH_FAILURE_REASON,
   PROFILE_CATALOG_PENDING_REASON,
   ProvenPreSendRefusalError,
@@ -275,30 +277,17 @@ export class WorkerLauncher {
         helper && prepared.runId
           ? runTicketPath({ helperPath: helper }, prepared.runId)
           : undefined;
-      const agent = await this.adapter.createAgent(
-        prepared,
-        token,
-        workerPrompt(
-          prepared,
-          Boolean(this.adapter.reportingViaMcp),
-          this.store.runs(prepared.id),
-          worktreeLinkRecordFailure,
-          helper,
-          ticket,
-          this.store.canonicalRepository(prepared.repoPath, prepared.repository)
-            ?.affectedTests?.command,
-        ),
-        workerPrompt(
-          prepared,
-          false,
-          this.store.runs(prepared.id),
-          worktreeLinkRecordFailure,
-          helper,
-          ticket,
-          this.store.canonicalRepository(prepared.repoPath, prepared.repository)
-            ?.affectedTests?.command,
-        ),
-      );
+      const runs = this.store.runs(prepared.id);
+      const affectedTestsCommand = this.store.canonicalRepository(prepared.repoPath, prepared.repository)
+        ?.affectedTests?.command;
+      const render = (mcp: boolean) => measureRunPrompt(section =>
+        workerPrompt(prepared, mcp, runs, worktreeLinkRecordFailure, helper, ticket, affectedTestsCommand, section));
+      const primary = render(Boolean(this.adapter.reportingViaMcp));
+      const fallback = this.adapter.reportingViaMcp ? render(false) : primary;
+      const agent = await this.adapter.createAgent(prepared, token, primary.prompt, fallback.prompt, {
+        primary: primary.size, fallback: fallback.size, affectedTestsCommand,
+      });
+      recordPromptSize(this.store, task.id, runId, prepared.temporaryDirectory);
       this.store.update(
         task.id,
         { agentId: agent.id },
@@ -333,6 +322,44 @@ export class WorkerLauncher {
             );
           });
         throw error;
+      }
+      // A host whose catalogue has not settled this model's options has not
+      // refused the profile: nothing was sent, so the creation is released and the
+      // next pass reads a settled snapshot and retries (nucleus#1375). This is the
+      // host wait, not the pre-send refusal below.
+      if (error instanceof HostSnapshotPendingError) {
+        const current = this.store.task(task.id);
+        if (
+          current.agentIntent &&
+          !current.agentId &&
+          current.runId === runId
+        ) {
+          this.store.transaction(() => {
+            this.store.deleteCredential(runId);
+            this.store.update(
+              task.id,
+              {
+                agentIntent: false,
+                restartRunId: runId,
+                runId: null,
+                briefRuns: current.briefRuns.filter(
+                  (item) => item.runId !== runId,
+                ),
+                laneDocumentRuns: (current.laneDocumentRuns ?? []).filter(
+                  (item) => item.runId !== runId,
+                ),
+              },
+              "agent_create_snapshot_pending",
+              error.detail,
+            );
+          });
+          this.resolution.waiting(
+            this.store.task(task.id),
+            `Waiting for T3Code to settle the host catalogue: ${error.detail}`,
+            "lifecycle",
+          );
+          return;
+        }
       }
       // A proven pre-send refusal is not an absent creation: nothing was sent,
       // so there is nothing for exact-lookup reconciliation to find and a

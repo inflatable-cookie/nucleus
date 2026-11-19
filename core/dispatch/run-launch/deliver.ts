@@ -1,3 +1,4 @@
+import { recordPromptSize } from '../prompt-text/measure';
 import type { LaunchDeliverContext } from '../launch';
 import type { LaunchMachinePorts } from './machine';
 import { dispatchBlocked } from '../capacity';
@@ -13,7 +14,7 @@ import { isPromptTooLargeError, redactDiagnostic } from '../../recovery/provider
 import { BlockingRecoveryEffectsError, blockingRecoveryEffects, blockingRecoveryEffectsRefusal, recoveryEffectsRefusal } from '../../recovery/recovery-effects';
 import { settleObservedHostEffectOperations } from '../../recovery/effect-gates';
 import { assertReviewEntryWriterYielded, reviewEntryInputForTask, type ReviewEntryAdapter } from '../../review/review-entry';
-import { ABSENT_RESOLUTION_REASON, ProvenPreSendRefusalError, coordinative, message, proofExecutor } from '../../recovery/task-reasons';
+import { ABSENT_RESOLUTION_REASON, HostSnapshotPendingError, ProvenPreSendRefusalError, coordinative, message, proofExecutor } from '../../recovery/task-reasons';
 import { isDispositionActive, type Profile, type Run, type Task } from '../../../shared/contracts';
 import { threadRunningReason } from '../../intake/thread-waits';
 import { declaredLaneDocumentKeys } from '../../planning/brief-lane-documents';
@@ -111,6 +112,7 @@ export class RunLaunchDeliver {
         } : undefined;
         dispatchInvoked = true;
         await this.adapter.sendRun!(fresh, savedRun, token, null, ownerReviewContext(this.store, fresh, savedRun), sendGuard, this.store.canonicalRepository(fresh.repoPath, fresh.repository)?.affectedTests?.command);
+        recordPromptSize(this.store, fresh.id, savedRun.id, savedRun.temporaryDirectory);
         if (proofExecutor(run.role)) {
           // Task 582: a continued executor turn is still its own run and its
           // own receipt; the retained thread carries no authority or credit
@@ -166,6 +168,7 @@ export class RunLaunchDeliver {
         })() : undefined;
         const created = await this.adapter.createRun!(fresh, savedRun, token, null,
           ownerReviewContext(this.store, fresh, savedRun), launchGuard, this.store.canonicalRepository(fresh.repoPath, fresh.repository)?.affectedTests?.command); agentId = created.id;
+        recordPromptSize(this.store, fresh.id, savedRun.id, savedRun.temporaryDirectory);
         // Review-entry creation follows a fresh writer-yield, exact local
         // checkout and open-PR-head proof immediately before this native send.
         this.store.putRun({ ...this.store.run(run.id)!, agentId });
@@ -219,6 +222,23 @@ export class RunLaunchDeliver {
             {phase:role==='reviewer'?'reviewing':latest.phase},'review_waiting_on_effects',recoveryEffectsRefusal(error.effects)??'');
         });
         this.resolution.waiting(this.store.task(t.id),waitReason,'lifecycle');
+        return;
+      }
+      // A host that has not settled its model options has not refused this run:
+      // nothing crossed the send boundary, so the run is released and the task
+      // waits for the next pass to read a settled snapshot (nucleus#1375).
+      if (error instanceof HostSnapshotPendingError) {
+        this.store.transaction(() => {
+          const latestRun = this.store.run(run.id);
+          if (latestRun && !latestRun.released)
+            this.store.putRun({ ...latestRun, status: 'superseded', released: true, active: false });
+          if (!agentId) this.store.deleteCredential(run.id);
+          const latest = this.store.task(t.id);
+          if (latest.resolution.currentRunId === run.id)
+            this.resolution.update(latest, { currentRunId: null, attention: false },
+              { phase: role === 'reviewer' ? 'reviewing' : latest.phase }, 'review_waiting_on_host_snapshot', error.detail);
+        });
+        this.resolution.waiting(this.store.task(t.id), `Waiting for T3Code to settle the host catalogue: ${error.detail}`, 'lifecycle');
         return;
       }
       // A provider size rejection proves the prompt was refused before send:

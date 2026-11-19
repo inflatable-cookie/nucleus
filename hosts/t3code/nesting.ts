@@ -126,6 +126,7 @@ export interface T3NestingContext {
    */
   modelSelectionOptionsFor(
     profile: Profile,
+    provider: ConfigProvider | undefined,
     model: ConfigModel | undefined,
   ): Array<{ id: string; value: string | boolean }>;
   /** The role's runtime mode as the role's provider offers it. */
@@ -245,6 +246,11 @@ export class T3Nesting {
       );
     const provider = this.parentProvider(input.observed);
     if (!provider.ok) return this.unavailable(taskId, provider.reason);
+    // Resolve the role's model and mode before a parent can be launched.
+    const options = this.core.modelSelectionOptionsFor(
+      input.profile, input.roleProvider, input.roleModel,
+    );
+    const runtimeMode = this.core.roleRuntimeMode(input.roleProvider, input.profile);
     const existing = this.parentOf(taskId);
     if (existing) {
       // A child with no workspace strategy inherits the parent's checkout, and one
@@ -302,14 +308,6 @@ export class T3Nesting {
         taskId,
         "the task's parent thread did not reach a live run; restart the task or move it to another host",
       );
-    const options = this.core.modelSelectionOptionsFor(
-      input.profile,
-      input.roleModel,
-    );
-    const runtimeMode = this.core.roleRuntimeMode(
-      input.roleProvider,
-      input.profile,
-    );
     const payload = {
       type: "delegated_task.request",
       createdBy: "user",

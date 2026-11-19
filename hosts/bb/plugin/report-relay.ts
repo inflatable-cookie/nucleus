@@ -36,7 +36,7 @@ import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 export const REPORT_RELAY_PATH = "/report";
 
 /** The callback routes a packaged helper uses; anything else is refused before a ticket is read. */
-export const REPORT_RELAY_ROUTES = ["/complete", "/ask", "/message", "/answer", "/task-next"] as const;
+export const REPORT_RELAY_ROUTES = ["/complete", "/ask", "/message", "/answer", "/task-next", "/run-context"] as const;
 export type ReportRelayRoute = (typeof REPORT_RELAY_ROUTES)[number];
 
 /** The largest body this route accepts: the callback `/complete` bound plus its envelope. */
@@ -145,7 +145,7 @@ export function relayRequest(body: unknown, ticket: RelayTicket): RelayRequest {
   if (taskId !== undefined && taskId !== ticket.taskId) throw new ReportRelayRefusal("The relay names another task");
   if (runId !== undefined && runId !== ticket.runId) throw new ReportRelayRefusal("The relay names another run");
   if (!plainObject(payload)) throw new ReportRelayRefusal("The relay payload is not an object");
-  if (route === "/task-next") {
+  if (route === "/task-next" || route === "/run-context") {
     if (payload.callerTaskId !== ticket.taskId || payload.callerRunId !== ticket.runId)
       throw new ReportRelayRefusal("The relay names another caller");
   } else if (payload.taskId !== ticket.taskId || payload.runId !== ticket.runId) {

@@ -1,4 +1,7 @@
-export { ProvenPreSendRefusalError } from '../../host/errors';
+export {
+  ProvenPreSendRefusalError,
+  HostSnapshotPendingError,
+} from '../../host/errors';
 
 /**
  * The refusal classes an owner path throws before it writes anything, and the

@@ -1,3 +1,4 @@
+import { recordPromptSize } from '../dispatch/prompt-text/measure';
 import { taskStopVerbsFor } from "../../shared/task-stop";
 import {
   reviewContinuationState,
@@ -38,6 +39,7 @@ import {
 import { groupIsUnavailable, supersedingRouteProfile } from "../../shared/pool";
 import { requiredCheckPollMetaKey } from "../forge/checks";
 import {
+  HostSnapshotPendingError,
   ProvenPreSendRefusalError,
   creationFailureSummary,
 } from "./task-reasons";
@@ -897,8 +899,10 @@ export class CoordinatorRoute {
       }
       if (heldForDispatch) return null;
       if (waitingForCapacity) return null;
-      if (agentId)
+      if (agentId) {
         await this.resolution.adapter.sendRun!(t, run, token, context);
+        recordPromptSize(this.store, t.id, run.id, run.temporaryDirectory);
+      }
       else {
         const created = await this.resolution.adapter.createRun!(
           t,
@@ -907,6 +911,7 @@ export class CoordinatorRoute {
           context,
         );
         agentId = created.id;
+        recordPromptSize(this.store, t.id, run.id, run.temporaryDirectory);
         this.store.putRun({ ...run, agentId });
         if (created.workspaceId !== workspaceId)
           throw Error("Recovery agent created in wrong workspace");
@@ -922,6 +927,24 @@ export class CoordinatorRoute {
       this.episode.save(t, { agentId });
       return null;
     } catch (error) {
+      // A host that has not settled its model options has not refused this
+      // creation: nothing crossed the send boundary, so the pending run is
+      // released and the task waits for the next pass's settled snapshot
+      // (nucleus#1375). The episode keeps its run identity.
+      if (error instanceof HostSnapshotPendingError) {
+        if (attempted)
+          this.episode.releaseRefusedCreation(
+            this.store.task(t.id),
+            attempted,
+            error.detail,
+          );
+        this.episode.wait(
+          this.store.task(t.id),
+          `Waiting for T3Code to settle the host catalogue: ${error.detail}`,
+          "lifecycle",
+        );
+        return null;
+      }
       // A proven pre-send refusal never crossed the send boundary: settle that
       // occurrence now (run, credential and the episode's agent binding) rather
       // than leaving an intent nobody can deliver. The escalation keeps the

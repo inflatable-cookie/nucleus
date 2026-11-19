@@ -306,7 +306,7 @@ test("a Paseo worker prompt still names nucleus_report MCP; a T3 prompt names th
     ticket = "/data/tickets/run-t3.json";
   const paseo = workerPrompt(helperTask, true);
   assert.match(paseo, /call the nucleus_report MCP tool with runId "run-t3"/);
-  assert.match(paseo, /call the ask MCP tool once inside the current turn/);
+  assert.match(paseo, /Worker rules.*context rules/);
   const t3 = workerPrompt(helperTask, false, [], null, helper, ticket);
   assert.match(
     t3,
@@ -317,8 +317,7 @@ test("a Paseo worker prompt still names nucleus_report MCP; a T3 prompt names th
     t3,
     /The ticket binds this report to exactly this run; a report for any other run is refused/,
   );
-  assert.match(t3, /feed the question JSON on stdin to `nucleus ask`/);
-  assert.match(t3, /feed JSON \{to, role, text\} on stdin to `nucleus tell`/);
+  assert.match(t3, /Worker rules.*context rules/);
   const reviewer = runPrompt(
     helperTask,
     {

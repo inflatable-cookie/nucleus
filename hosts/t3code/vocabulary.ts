@@ -12,8 +12,14 @@ import type { CanonicalProvider } from "../../shared/profile-vocabulary";
  * the nightly's `server.getConfig`. T3 names Claude's instance `claudeAgent`; it
  * carries Claude's thinking as the `effort` option (its top level `ultrathink`),
  * Pi's as `thinking` and FX's as `effort`; the rest ride the reasoning option.
- * The reasoning select is `reasoningEffort` on every stock driver (`reasoning`
- * on older ones); those ids carry the level and never show as a feature.
+ *
+ * The reasoning option ids are T3's own: its client reads a level from
+ * `reasoningEffort`, `effort`, `reasoning`, `variant`, `reasoning_effort`,
+ * `thinking_level` or `thinking`, or from a select the provider marks
+ * `role: "reasoning"` (nucleus#1375 read the live client and server). A stock
+ * codex model reports `reasoningEffort` with no `role`, which is why the id list
+ * — not the role alone — decides. Those ids carry the level and never show as a
+ * feature.
  * Its four runtime modes are the same for every provider; a provider that reports
  * a subset narrows them through the catalog.
  */
@@ -60,7 +66,15 @@ export const t3codeProviderOf = (key: string): CanonicalProvider | null =>
 export const t3codeVocabulary: HostVocabulary = {
   kind: "t3code",
   label: "T3Code",
-  thinkingSelects: ["reasoningEffort", "reasoning"],
+  thinkingSelects: [
+    "reasoningEffort",
+    "effort",
+    "reasoning",
+    "variant",
+    "reasoning_effort",
+    "thinking_level",
+    "thinking",
+  ],
   providers: {
     codex: reasoning("codex"),
     claude: {

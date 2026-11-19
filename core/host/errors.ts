@@ -32,6 +32,18 @@ export class ProvenPreSendRefusalError extends Error {
     this.name = "ProvenPreSendRefusalError";
   }
 }
+/**
+ * The host's own catalogue is not settled yet: a provider is still probing, or it
+ * reports no model options at all. Nothing was sent, so a launch waits for the
+ * next pass to read a settled snapshot instead of refusing the profile
+ * (nucleus#1375). A settled snapshot that truly lacks a carrier still refuses.
+ */
+export class HostSnapshotPendingError extends Error {
+  constructor(readonly detail: string) {
+    super(`Host catalogue is not settled: ${detail}`);
+    this.name = "HostSnapshotPendingError";
+  }
+}
 export interface HostDeliveryDiagnostic {
   command?: string;
   field?: string;

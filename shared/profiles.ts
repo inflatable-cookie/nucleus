@@ -158,7 +158,13 @@ function availabilityOn(
       supportedThinking: [],
     };
   const supportedThinking = model.thinkingOptions.map((option) => option.id);
+  // A host that has not settled this model's options has not answered for the
+  // thinking level or the feature values either: unknown, never negative, so
+  // selection keeps the profile and the launch fence waits for a settled snapshot
+  // (nucleus#1375). The runtime-mode list is a provider fact, not a model probe.
+  const unsettled = model.unsettled === true;
   if (
+    !unsettled &&
     profile.thinkingOptionId &&
     !supportedThinking.includes(profile.thinkingOptionId)
   )
@@ -180,8 +186,9 @@ function availabilityOn(
     };
   // A deferred read answers nothing about feature values: unknown, never
   // negative. The launch context resolves them with the real project
-  // directory, and a host that always answers (T3Code) never defers.
-  if (catalog.featuresDeferred !== true)
+  // directory, and a host that always answers (T3Code) never defers. The same
+  // holds for a model option report the host has not settled yet.
+  if (catalog.featuresDeferred !== true && !unsettled)
     for (const [option, value] of Object.entries(profile.featureValues ?? {})) {
       const feature = model.features.find((candidate) => candidate.id === option);
       if (!feature)
@@ -285,7 +292,10 @@ export function profileCompatibility(
     answer.problem === "Configured thinking level is not supported" ||
     (Boolean(carrier) &&
       Boolean(profile.thinkingOptionId) &&
-      answer.problem === `Configured option ${carrier} does not offer that value`);
+      (answer.problem === `Configured option ${carrier} does not offer that value` ||
+        // A model that reports no carrier at all: the level is the operator's
+        // fact, not the option's spelling (nucleus#1375).
+        answer.problem === `Configured option ${carrier} is not supported`));
   return {
     ...answer,
     status: answer.available ? "works" : "unavailable",
@@ -324,7 +334,7 @@ function hostReason(
   if (problem === "Configured thinking level is not supported") return `${label}'s ${values.model} has no thinking level ${values.thinkingOptionId}`;
   if (/^Model \S+ is not available from provider/.test(problem)) return `${label}'s ${providerKey} has no model ${values.model}`;
   const option = /^Configured option (\S+) (is not supported|needs a boolean value|does not offer that value)$/.exec(problem);
-  if (option && carrier && level && option[1] === carrier && option[2] === "does not offer that value")
+  if (option && carrier && level && option[1] === carrier && option[2] !== "needs a boolean value")
     return `${label}'s ${values.model} has no thinking level ${level}`;
   if (option) return option[2] === "is not supported" ? `${label}'s ${values.model} has no option ${option[1]}`
     : option[2] === "needs a boolean value" ? `${label}'s ${values.model} option ${option[1]} needs on or off`

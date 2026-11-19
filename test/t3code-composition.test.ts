@@ -35,6 +35,7 @@ class NativeHost {
   threadShapePending = false;
   compatibilityFailure = "";
   nativeParentingStatus = "native parenting not used yet";
+  modelShapes = "codex(ready): synthetic-model [reasoningEffort:select]";
   connects = 0;
   closes = 0;
   probe: string | undefined;
@@ -113,6 +114,7 @@ test("second host registers separately, retains its admission on reconnect, and 
       version: first.version,
       threadShapePending: false,
       nativeParenting: first.nativeParentingStatus,
+      modelShapes: first.modelShapes,
     });
 
     first.connected = false;
@@ -152,6 +154,7 @@ test("an empty T3 host registers online while its thread shape is pending", asyn
       version: empty.version,
       threadShapePending: true,
       nativeParenting: empty.nativeParentingStatus,
+      modelShapes: empty.modelShapes,
     });
   } finally {
     manager.close();

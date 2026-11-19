@@ -1,3 +1,4 @@
+import type { WorkerPromptMeasurement } from '../dispatch/prompt-text/measure';
 import { AgentPolicy } from "../dispatch/agent-policy";
 import { ReviewPolicy } from "../review/review-policy";
 import {
@@ -337,8 +338,9 @@ export abstract class HostPolicies extends MachinePorts {
     token: string,
     prompt: string,
     legacyPrompt = prompt,
+    measurement?: WorkerPromptMeasurement,
   ) {
-    return this.agentPolicy.createAgent(task, token, prompt, legacyPrompt);
+    return this.agentPolicy.createAgent(task, token, prompt, legacyPrompt, measurement);
   }
 
   /**

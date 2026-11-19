@@ -30,6 +30,8 @@ interface NativeConnection {
   readonly version: string;
   readonly threadShapePending?: boolean;
   readonly compatibilityFailure?: string;
+  /** Provider model option descriptors from the last config read (nucleus#1375). */
+  readonly modelShapes?: string;
   connect(probeThreadId?: string): Promise<void>;
   close(): void;
 }
@@ -128,6 +130,7 @@ export class T3HostConnection {
     version: string;
     threadShapePending: boolean;
     nativeParenting: string;
+    modelShapes: string;
     lastDisconnectReason: T3DisconnectReason | null;
     lastProtocolError: T3ProtocolError | null;
   } {
@@ -143,6 +146,7 @@ export class T3HostConnection {
       version: this.versionValue,
       threadShapePending: connected && this.host?.threadShapePending === true,
       nativeParenting: connected ? (this.host?.nativeParentingStatus ?? "") : "",
+      modelShapes: connected ? (this.host?.modelShapes ?? "") : "",
     };
   }
 

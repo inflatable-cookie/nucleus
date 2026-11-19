@@ -416,33 +416,65 @@ The nightly carries each model's configurable options in
 `server.getConfig`: `capabilities.optionDescriptors` — a select with its
 choices or a boolean toggle, `currentValue` when the provider reports one
 (`packages/contracts/src/model.ts`, nightly
-`0.1.10-nightly.20261111.4529`, app commit `d2c25950b4d9`). The catalog maps
-them onto the shared shape: the reasoning select becomes `thinkingOptions` —
-T3 marks a provider's own thought-level control `role: "reasoning"`, and every
-stock driver (Codex, Grok, Muse, Kiro) names its reasoning select
-`reasoningEffort` — with `defaultThinkingOptionId` from the default choice or
-`currentValue`; other selects and booleans become catalog features; model
-`aliases` carry through.
+`0.1.10-nightly.20261111.4529`, app commit `d2c25950b4d9`). A model's
+`capabilities` is `NullOr(ModelCapabilities)` and a provider's `status` is one of
+`ready | warning | error | disabled`, so a model whose options are not known yet
+reports `null` or no descriptors. `hosts/t3code/thinking.ts` owns the one decision
+of which option carries a model's thinking level (nucleus#1375): the catalog
+publishes from it and the pre-send fence resolves from it, over the same model
+entry, so a profile selection keeps is never refused by the fence.
+
+The carrier is the option this adapter's table names for the provider (`thinking`
+for Pi, `effort` for Claude and FX) when the model reports it, else a select T3
+itself reads a level from: a select marked `role: "reasoning"`, or one whose id is
+in `vocabulary.thinkingSelects` — `reasoningEffort`, `effort`, `reasoning`,
+`variant`, `reasoning_effort`, `thinking_level`, `thinking`, which is T3's own
+client list (nucleus#1375 read it from the installed bundle). A stock codex model
+reports `reasoningEffort` with no `role`, which is why the id list, not the role
+alone, decides. An id-only match must offer at least one canonical level; otherwise
+it remains a feature. The catalog maps a generic reasoning select to
+`thinkingOptions` (with `defaultThinkingOptionId` from the default choice or
+`currentValue`), the table's own carrier stays a feature the way it always was,
+and other selects and booleans become catalog features; model `aliases` carry
+through.
 
 At launch the adapter maps the profile's thinking level and feature values into
 `ModelSelection.options` (`[{ id, value }]`;
 `packages/contracts/src/modelSelection.ts`, values `string | boolean`). The
 canonical thinking level reaches the model's carrier whichever way the profile
-stores it and whichever descriptor carries it (nucleus#1364): a level stored as
-`thinkingOptionId` and a level a translated feature carries
-(`translated: ["thinking"]`) are the same fact, and it is sent on the option this
-adapter's table names for the provider (`thinking` for Pi, `effort` for Claude
-and FX) or, for a provider with no table carrier, on the reasoning select
-(`role: "reasoning"`, or the stock `reasoningEffort`). A canonical level the
-model's carrier does not offer settles to the nearest level it does offer, by the
-one ordered-scale rule in `shared/profile-vocabulary.ts` (distance decides, a tie
-takes the lower level, so a translated level never silently buys more than the
-profile asked for); the real nightly's `gpt-6-luna` offers low..max, Muse 1.3
-offers minimal..xhigh, and DeepSeek 4.1 Flash offers low, high and max. A level
-therefore never fails at send. A model whose snapshot reports no carrier at all
-is still refused before send with the option named, and any other feature value
-the model does not report is refused with the option and value named — no silent
-dropping, no post-send guess. Selection keeps such a profile out of a host-bound
+stores it (nucleus#1364): a level stored as `thinkingOptionId` and a level a
+translated feature carries (`translated: ["thinking"]`) are the same fact. A
+canonical level the model's carrier does not offer settles to the nearest level it
+does offer, by the one ordered-scale rule in `shared/profile-vocabulary.ts`
+(distance decides, a tie takes the lower level, so a translated level never
+silently buys more than the profile asked for); the live nightly's
+`gpt-6.1-terra` offers low..ultra, `gpt-6-luna` offers low..max, Muse 1.3 offers
+minimal..xhigh, and DeepSeek 4.1 Flash offers low, high and max. A level therefore
+never fails at send.
+
+A snapshot that cannot answer yet is a **host wait**, never a refusal: the
+provider is not `ready`, or it reports no model option on any model (T3's initial
+and re-probe snapshots do exactly that). The adapter raises
+`HostSnapshotPendingError`, dispatch releases the creation and the task waits on
+its host for the next pass to read a settled snapshot. Selection treats such a
+model as `unsettled`: it publishes the table's levels and keeps the profile, so
+dispatch is never parked on an answer the host has not given. A settled snapshot
+that truly reports no carrier — Pi's `default` model reports none while other Pi
+models do — is refused before send with the option named **and the model's real
+option descriptors** (`serviceTier:select, cyberAccessProgram:select`, or `none`),
+and selection keeps that profile out of a host-bound task. `service.health`'s
+`t3code.modelShapes` line carries the same descriptors (id, type, role) for every
+provider the last read reported, so a refusal is diagnosable from the host's own
+facts. Any other feature value the model does not report is refused with the
+option and value named — no silent dropping, no post-send guess.
+
+A nested role's options are resolved against **the role profile's own provider
+entry**, never the parent provider's: the `nucleus` ACP parent provider reports
+models with no options at all, and judging a codex profile by that entry refused
+every nested role launch on the pilot (nucleus#1375). The fence runs before the
+parent thread is created, so a wait or a refusal leaves no held turn behind.
+
+Selection keeps such a profile out of a host-bound
 task in the first place: the engine keeps a
 routing-profile snapshot per registered host, built from that host's own
 catalog, and dispatch, worker creation, reviewer selection and the
@@ -1223,3 +1255,13 @@ local provider. Its evidence distinguishes source drift, injected incompatible
 read responses and actual lifecycle operations on the private nightly.
 
 When the server cannot be reached, uninstall refuses without changes and says the stored runtime bearer remains active; start T3Code and retry.
+
+The opt-in `NUCLEUS_T3_MODEL_CAPTURE` path writes the decoded codex terra and
+luna, Pi and Claude model entries from the adapter's existing config read. It
+contains no settings or environment identity, is limited to 16 models per provider
+and 256 KiB, and makes no additional T3 call. Set the path inside run scratch
+when collecting a capture; the file is overwritten on each config read. The
+committed codex, Pi and Claude model entries were compared with an isolated
+service runtime's own live T3 read on 2026-11-19 and were identical. The ACP
+parent entry came from the earlier ad hoc read-only client and decoder capture.
+The bounded Pi capture prioritizes the three fixture models before other entries.
