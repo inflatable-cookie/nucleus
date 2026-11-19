@@ -408,6 +408,10 @@ export class Resolution {
           'Responsible thread observation timed out', 2000);
       } catch { return { kind: 'unroutable' as const, detail: 'Host observation timed out' }; }
     }));
+    // A dispatch, host change or failed delivery may invalidate while these
+    // observations are in flight. Never send on that older snapshot.
+    if (this.responsibleThreads.cache.peek(project.key) !== shortlist)
+      throw new Error('Responsible thread inventory was invalidated during observation');
     if (states.some(state => state.kind !== 'routable')) this.responsibleThreads.cache.invalidate(project.key);
     const index = states.findIndex(state => state.kind === 'routable');
     const thread = index < 0 ? null : candidates[index]!;

@@ -851,7 +851,7 @@ test("MCP run: ask to the reviewer with no retained reviewer falls through to th
   }
 });
 
-test("MCP run: ask to a project by key is answered by that project's fallback planner", async () => {
+test("MCP run: ask to a project by key reaches its preferred live thread", async () => {
   const f = await verbFixture();
   try {
     const receipt = await f.ask({
@@ -926,7 +926,7 @@ test("MCP run: ask to another task's planner routes to that task's own ladder", 
   }
 });
 
-test("an ask whose project fallback is archived moves on: no archived thread is asked and the skip is recorded", async () => {
+test("an ask with no live responsible thread leaves the sender to handle it", async () => {
   const f = await verbFixture({ askWaitMs: 1_500 });
   try {
     f.archived.add("planner-1");

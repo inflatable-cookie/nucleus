@@ -359,7 +359,7 @@ test('Spec 041: a project drain notice uses the current plan at delivery intent'
   } finally { await f.close(); }
 });
 
-test('Spec 041: the drain prompt is delivered to the owner thread once, and a gone owner is superseded while escalation still covers the answer', async () => {
+test('Spec 041: a drain prompt sends once and stays visible when no responsible thread is live', async () => {
   const f = fixture();
   try {
     f.store.setMeta('paused', false);

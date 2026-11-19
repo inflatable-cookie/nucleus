@@ -502,7 +502,7 @@ export class AgentAsks {
       }
       result = await delegateQuestion(this.resolution, task, {
         planners,
-        allowDecider: isOperatorOnlyAsk(ask.kind),
+        allowDecider: false,
         decisionId: ask.id,
         context,
         signal: new AbortController().signal,
@@ -583,7 +583,7 @@ export class AgentAsks {
     else if (!unknown && !unavailable && !this.stopped()) {
       if (!isOperatorOnlyAsk(ask.kind))
         this.store.event(task.id, 'agent_ask_self_handle', `${ask.id}: No responsible thread answered; handle it yourself.`);
-      else this.store.event(task.id, "agent_ask_delegation_missed", `${ask.id}: no planner classification was produced; awaiting an explicit classification`);
+      else this.resolution.askOperatorDecision(task, ask, 'No responsible thread answered');
     }
   }
 

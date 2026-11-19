@@ -118,3 +118,22 @@ test('ask planner reaches the task planner first, then a live project thread aft
     } finally { f.store.close(); }
   }
 });
+
+
+test('an invalidation during live observation fences the stale recipient', async () => {
+  const f = fixture();
+  try {
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const original = f.engine.resolution.plannerPresence.threadRoute.bind(f.engine.resolution.plannerPresence);
+    let observing!: () => void;
+    const started = new Promise<void>(resolve => { observing = resolve; });
+    f.engine.resolution.plannerPresence.threadRoute = async (...args) => { observing(); await gate; return original(...args); };
+    const pending = f.engine.resolution.responsibleThread(f.store.projectByKey('example')!);
+    await started;
+    f.engine.resolution.responsibleThreads.cache.invalidate('example');
+    release();
+    await assert.rejects(pending, /invalidated during observation/);
+    assert.deepEqual(f.sent, []);
+  } finally { f.store.close(); }
+});
