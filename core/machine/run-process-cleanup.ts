@@ -335,7 +335,13 @@ async function sweep(
   const facts = await snapshot(store, options);
   if (!facts) {
     for (const run of runs)
-      deferCleanup(store, run, "process table observation is unavailable", []);
+      if (store.getMeta<CleanupRun>(key(run.id))?.pending === true)
+        deferCleanup(
+          store,
+          run,
+          "process table observation is unavailable",
+          [],
+        );
     return;
   }
   rememberRunProcessHosts(store, candidates.known, facts);

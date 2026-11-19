@@ -3518,13 +3518,14 @@ after the task finishes.
   4-day expiry window (Tom, 2026-10-20; see [Closeout and
   outcomes](#closeout-and-outcomes)), deleting its events, runs, receipts,
   notices and hook records. These defer the purge: unreleased runs; a
-  pending archive intent or a merge without a recorded commit; an unfinished
-  build-output cleanup, workspace retirement or runtime retirement; an
+  pending archive intent or a merge without a recorded commit; a pending run-process
+  cleanup; an unfinished build-output cleanup, workspace retirement or runtime retirement; an
   external workspace archive in `intent` or `uncertain`; a done task's Nucleus-
   owned workspace, closeout workspace or review-source view not yet archived (a
   registered external workspace is never archived and owes none); a
   notice in `pending`, `intent` or `uncertain`; unsettled hook custody; and
-  an origin that never resolved. Pausing pauses retention.
+  an origin that never resolved. Pausing pauses retention. An unavailable process
+  listing updates existing cleanup waits but creates no intent for unobserved history.
   A task whose hook retention is not settled keeps its whole history: hook
   records carry the only proof of an isolated checkout's ownership.
 - A purge leaves a tombstone naming the task identity, submission identity,

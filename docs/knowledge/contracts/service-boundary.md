@@ -1413,7 +1413,8 @@ one host and is Settings-only on the same transports as `queue.capacity`
   `hostId`. Needs-attention operations that lack settlement proof name the operation
   and ask the owner to inspect and reconcile it. Pending process cleanups name their
   recorded uncertainty or the observation they await. The check runs again inside
-  the write's transaction. Repositories whose
+  the write's transaction. Project removal and repository re-key count only
+  occurrences without a matching durable settlement. Repositories whose
   `hostKind` routes to its kind are shown and never refuse: they route to a kind,
   not to this host. Host runs (contract 010) carry no host identity, so they never
   bind one.

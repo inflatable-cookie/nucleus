@@ -187,9 +187,34 @@ export const operationAcceptanceSchema = z.union([
 ]);
 export type OperationAcceptance = z.infer<typeof operationAcceptanceSchema>;
 
+/** Settlement applies only to the exact recorded occurrence, never a later attempt. */
+export function operationOccurrenceSettlement(
+  operation: Pick<
+    QueueOperation,
+    "id" | "inputHash" | "attempts" | "effect" | "settlement" | "state"
+  >,
+): "superseded" | "refused" | null {
+  const value = operation.settlement;
+  return operation.state === "needs_attention" &&
+    value &&
+    value.id === operation.id &&
+    value.inputHash === operation.inputHash &&
+    value.attempt === operation.attempts &&
+    value.intentAt === (operation.effect?.intentAt ?? null) &&
+    Boolean(value.evidence)
+    ? value.kind
+    : null;
+}
+
 /** Compact queued/running/attention state for board, detail and control feedback. */
 export function operationStateLabel(
-  operation: Pick<QueueOperation, "kind" | "state" | "diagnostic">,
+  operation: Pick<QueueOperation, "kind" | "state" | "diagnostic"> &
+    Partial<
+      Pick<
+        QueueOperation,
+        "id" | "inputHash" | "attempts" | "effect" | "settlement"
+      >
+    >,
 ) {
   const kind =
     operation.kind === "submit"
@@ -205,6 +230,14 @@ export function operationStateLabel(
               : operation.kind === "repository_rekey"
                 ? "Repository re-key"
                 : "Operation";
+  const settlement =
+    operation.id &&
+    operation.inputHash &&
+    operation.attempts !== undefined &&
+    operation.effect !== undefined
+      ? operationOccurrenceSettlement(operation as QueueOperation)
+      : null;
+  if (settlement) return `${kind} ${settlement}`;
   if (operation.state === "pending") return `${kind} queued`;
   if (operation.state === "running") return `${kind} running`;
   if (operation.state === "needs_attention") return `${kind} needs attention`;

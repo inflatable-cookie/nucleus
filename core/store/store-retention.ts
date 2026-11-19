@@ -89,12 +89,14 @@ export class StoreRetention {
     const cutoff = at - TASK_HISTORY_RETENTION_MS;
     const purged: string[] = [];
     this.core.transaction(() => {
+      const pendingProcessTasks = this.pendingProcessTasks();
       for (const row of this.db.prepare("SELECT * FROM tasks").all()) {
         // A schema-45 row names its text and observations by reference, so the read
         // resolves them exactly as every public read does.
         const task = this.hooks.numberedTask(String(row.data));
         const runs = this.hooks.runs(task.id);
-        if (!this.retentionEligible(task, runs, cutoff)) continue;
+        if (!this.retentionEligible(task, runs, cutoff, pendingProcessTasks))
+          continue;
         // Audit B5: hook records carry the only proof of an isolated checkout's ownership,
         // so a task whose hook retention is not settled keeps its whole history. The
         // hourly reaper runs before the purge and marks the rows it settled; whatever is
@@ -234,21 +236,45 @@ export class StoreRetention {
   retentionCandidates(at = Date.now()): Task[] {
     const cutoff = at - TASK_HISTORY_RETENTION_MS;
     const candidates: Task[] = [];
+    const pendingProcessTasks = this.pendingProcessTasks();
     for (const row of this.db
       .prepare("SELECT data FROM tasks ORDER BY rowid")
       .all()) {
       // Resolved exactly as a public read, so a schema-45 row's text and observation
       // references are never mistaken for missing task facts.
       const task = this.hooks.numberedTask(String(row.data));
-      if (!this.retentionEligible(task, this.hooks.runs(task.id), cutoff))
+      if (
+        !this.retentionEligible(
+          task,
+          this.hooks.runs(task.id),
+          cutoff,
+          pendingProcessTasks,
+        )
+      )
         continue;
       candidates.push(task);
     }
     return candidates;
   }
 
+  private pendingProcessTasks(): Set<string> {
+    return new Set(
+      this.db
+        .prepare(
+          "SELECT json_extract(value,'$.taskId') AS taskId FROM meta WHERE key LIKE 'runProcessCleanup:%' AND json_extract(value,'$.pending')=1",
+        )
+        .all()
+        .map((row) => String(row.taskId)),
+    );
+  }
+
   /** Shared settled-history rule; purge additionally waits for hook cleanup, which candidates feed. */
-  retentionEligible(task: Task, runs: Run[], cutoff: number): boolean {
+  retentionEligible(
+    task: Task,
+    runs: Run[],
+    cutoff: number,
+    pendingProcessTasks = this.pendingProcessTasks(),
+  ): boolean {
     if (
       !task.removedAt &&
       (task.originError ||
@@ -277,6 +303,8 @@ export class StoreRetention {
       (task.resolution.mergeIntent && !task.resolution.mergedCommit)
     )
       return false;
+    // Process ownership and scratch evidence must survive until the host settles it.
+    if (pendingProcessTasks.has(task.id)) return false;
     if (
       task.resolution.buildOutputCleanups.some(
         (record) => record.state !== "complete",

@@ -14,7 +14,10 @@ import { fakeAdapter, submission, observeIdle } from "./support/fakes";
 import { catchUpFinishedTaskThreads } from "../core/workspaces/thread-archive";
 import { archiveProbeKey } from "../core/workspaces/thread-archive-effect";
 import { hostDependents } from "../core/host/host-dependents";
-import { queueOperationSchema } from "../shared/operations";
+import {
+  operationStateLabel,
+  queueOperationSchema,
+} from "../shared/operations";
 import { recoveryEffects } from "../core/recovery/recovery-effects";
 import {
   collectOwnerVerbFacts,
@@ -1200,6 +1203,20 @@ test("a reasonless scratch cleanup records the retirement guard on the engine sw
         x.includes("inspect the scratch retirement guard"),
     ),
   );
+  // The maintenance pass must preserve pending cleanup and its ownership facts.
+  assert.ok(
+    !f.store.purgeOldTasks(Date.now() + 15 * 86400000).includes(task.id),
+  );
+  assert.equal(
+    f.store.getMeta<{ pending: boolean }>("runProcessCleanup:guarded-run")
+      ?.pending,
+    true,
+  );
+  assert.ok(
+    hostDependents(f.store, { id: HOST, kind: "paseo", primary: true }).some(
+      (x) => x.kind === "effect",
+    ),
+  );
   const before = f.store
     .eventsAll(task.id)
     .filter((x) => x.kind === "run_process_cleanup_deferred").length;
@@ -1209,6 +1226,18 @@ test("a reasonless scratch cleanup records the retirement guard on the engine sw
       .eventsAll(task.id)
       .filter((x) => x.kind === "run_process_cleanup_deferred").length,
     before,
+  );
+  (
+    f.store as unknown as { runScratchRemover: (path: string) => boolean }
+  ).runScratchRemover = () => true;
+  await f.engine.sweepOnce();
+  assert.equal(
+    f.store.getMeta<{ pending: boolean }>("runProcessCleanup:guarded-run")
+      ?.pending,
+    false,
+  );
+  assert.ok(
+    f.store.purgeOldTasks(Date.now() + 15 * 86400000).includes(task.id),
   );
 });
 
@@ -1274,5 +1303,96 @@ test("a bound submission stays settled after its task is retained", async (t) =>
       (x) => x.kind === "effect",
     ),
     false,
+  );
+});
+
+test("settled submission stops blocking project removal but mismatched proof stays a blocker", async (t) => {
+  const f = fixture(t, fakeAdapter({}));
+  const project = f.store.upsertProject({
+    key: "fixture-project",
+    name: "Fixture",
+    repositories: [{ path: "/repo", origin: null }],
+  });
+  const input = submission();
+  const task = f.store.insert(input, HOST, "handoff", "a".repeat(40));
+  f.store.update(task.id, { phase: "done" });
+  const payload = { type: "submit", submission: input };
+  const key = `submit:${input.submissionId}`;
+  const op = queueOperationSchema.parse({
+    id: operationIdForKey(key),
+    key,
+    kind: "submit",
+    inputHash: operationInputHash(payload),
+    state: "needs_attention",
+    taskId: task.id,
+    submissionId: input.submissionId,
+    repoPath: input.repoPath,
+    hostId: HOST,
+    createdAt: "2026-11-18T05:09:58.694Z",
+    attempts: 1,
+    diagnostic: "Transport",
+  });
+  f.store.putOperation(op, payload);
+  await f.engine.sweepOnce();
+  const settled = f.store.operation(op.id)!;
+  assert.equal(operationStateLabel(settled), "Submission superseded");
+  assert.ok(
+    !f.store
+      .projectManagementPreview({ key: project.key })
+      .items.some((x) => x.kind === "operation"),
+  );
+  f.store.putOperation({
+    ...settled,
+    settlement: { ...settled.settlement!, attempt: 2 },
+  });
+  const blocked = f.store.projectManagementPreview({ key: project.key });
+  assert.ok(
+    blocked.items.some((x) => x.kind === "operation" && x.id === op.id),
+  );
+  assert.equal(
+    operationStateLabel(f.store.operation(op.id)!),
+    "Submission needs attention",
+  );
+  assert.throws(
+    () =>
+      f.store.manageRemoveProject({
+        key: project.key,
+        version: project.version,
+        digest: blocked.digest,
+        reason: "fixture",
+      }),
+    /operations must settle/,
+  );
+  f.store.putOperation(settled);
+  const preview = f.store.projectManagementPreview({ key: project.key });
+  f.store.manageRemoveProject({
+    key: project.key,
+    version: project.version,
+    digest: preview.digest,
+    reason: "fixture",
+  });
+  assert.equal(f.store.projectByKey(project.key), null);
+});
+
+test("an unavailable process table does not create cleanup intents for unrecorded history", async (t) => {
+  const f = fixture(t, fakeAdapter({ hostProcessListing: async () => null }));
+  const task = f.store.insert(submission(), HOST, "handoff", "a".repeat(40));
+  f.store.update(task.id, { phase: "done" });
+  f.store.db
+    .prepare("UPDATE tasks SET data=json_set(data,'$.runId',?) WHERE id=?")
+    .run("historical-run", task.id);
+  assert.equal(f.store.getMeta("runProcessCleanup:historical-run"), undefined);
+  await f.engine.sweepOnce();
+  assert.equal(f.store.getMeta("runProcessCleanup:historical-run"), undefined);
+  assert.equal(
+    f.store
+      .eventsAll(task.id)
+      .filter((x) => x.kind === "run_process_cleanup_deferred").length,
+    0,
+  );
+  assert.ok(
+    !hostDependents(f.store, { id: HOST, kind: "paseo", primary: true }).some(
+      (x) => x.kind === "effect",
+    ),
   );
 });
