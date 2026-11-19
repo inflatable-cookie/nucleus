@@ -20,7 +20,11 @@ import {
 } from "../store/store-task-funnel";
 import { creationLookup } from "./absent-creation/restarts";
 import { CREATION_REFUSED_BEFORE_SEND, refusedRunIds } from "./refused-launch";
-import { taskProgressDigest, reportNamesNoAction } from "./coordinator-report";
+import {
+  taskProgressDigest,
+  reportNamesNoAction,
+  reportSettlesAsObservation,
+} from "./coordinator-report";
 import { recoveryApplicationsInFlight } from "./coordinator-settlement";
 import {
   liveNoopSummary,
@@ -574,10 +578,10 @@ export class CoordinatorEpisode {
         ? this.bindingFrom(latest, incident)
         : null;
     if (action && action.status === "pending") {
-      // A report that named no owner verb has nothing to apply: it releases as the
-      // observation it is. Only a report that named a verb this release superseded
-      // is recorded as not applied (nucleus#1388).
-      if (reportNamesNoAction(action)) {
+      // A report that named no owner verb, or a `cannot`, has nothing to apply: it
+      // releases as the observation it is. Only a report that named a verb this
+      // release superseded is recorded as not applied (nucleus#1388).
+      if (reportSettlesAsObservation(action)) {
         this.settleObservedNoAction(current, latest, action);
         return;
       }

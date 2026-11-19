@@ -711,30 +711,116 @@ test("a blocked report saying it cannot act, with no verb, settles with its reas
   }
 });
 
+/** The pass observes the coordinator run this fixture launched for one stop. */
+async function launchedCoordinator(
+  f: ReturnType<typeof fixture>,
+  stopDetail = "Worker blocked: tests red",
+  responsible = true,
+) {
+  f.idle("review-agent");
+  f.store.update(f.submitted.id, {
+    phase: "blocked",
+    reason: stopDetail,
+    responsible,
+    resolution: {
+      ...f.current().resolution,
+      currentRunId: null,
+      attention: true,
+      stop: {
+        reason: "operator_needed",
+        detail: stopDetail,
+        since: lastActivity,
+        suggestedVerbs: ["restart", "route", "move"],
+      },
+    },
+  });
+  await f.engine.resolution.recovery.route(f.current());
+  await f.engine.quiesce();
+  const recovery = f.coordinatorRuns().at(-1);
+  assert.ok(
+    recovery,
+    `recovery launched; stop=${f.current().resolution.stop?.reason ?? "none"}`,
+  );
+  f.idle(recovery.agentId!);
+  return recovery;
+}
+
+test("a real {verb: cannot} report settles as observed and asks the planner with its reason", async () => {
+  const f = fixture();
+  try {
+    // Not a responsible task: the coordinator's own report settles the episode and
+    // asks the planner ladder; a responsible task's ladder is covered separately.
+    const recovery = await launchedCoordinator(
+      f,
+      "Worker blocked: tests red",
+      false,
+    );
+    f.engine.resolution.complete(
+      {
+        eventId: randomUUID(),
+        taskId: f.submitted.id,
+        runId: recovery.id,
+        status: "blocked",
+        summary: "The required tool is missing from the host",
+        coordinatorAction: {
+          verb: "cannot",
+          reason: "The required tool is missing from the host",
+        },
+        coordinatorGeneration: recovery.generation,
+      },
+      f.tokens.get(recovery.id)!,
+    );
+    // The handler runs from the pass through the authenticated report binding.
+    await f.engine.resolution.recovery.pass(f.submitted.id);
+    assert.equal(
+      f.current().resolution.recovery?.status,
+      "resolved",
+      JSON.stringify(f.current().resolution.recovery),
+    );
+    assert.match(
+      f.current().resolution.recovery?.summary ?? "",
+      /^observed: blocked, no action — The required tool is missing from the host/,
+    );
+    assert.equal(f.current().resolution.recovery?.action?.status, "applied");
+    assert.equal(
+      f.events("coordinator_action_refused").length,
+      0,
+      "a cannot report writes no refusal event",
+    );
+    assert.doesNotMatch(
+      f.current().resolution.recovery?.summary ?? "",
+      /was not applied|retired/,
+    );
+    assert.equal(
+      f.events("planner_escalation").length,
+      1,
+      "the missing decision reaches the planner ladder",
+    );
+    assert.match(
+      f
+        .events("planner_escalation_question")
+        .map((event) => event.detail)
+        .join("\n"),
+      /The required tool is missing from the host/,
+      "the question carries the coordinator's reason",
+    );
+    assert.equal(f.store.run(recovery.id)?.released, true);
+    // The ladder's wait is the task's stop, so the fault keeps a visible exit.
+    assert.equal(f.current().resolution.stop?.reason, "escalated");
+    // Unchanged facts still answer from the resolved episode.
+    const runs = f.coordinatorRuns().length;
+    await f.engine.resolution.recovery.route(f.current());
+    await f.engine.resolution.recovery.pass(f.submitted.id);
+    assert.equal(f.coordinatorRuns().length, runs);
+  } finally {
+    await f.close();
+  }
+});
+
 test("a stored legacy narrow action is refused as retired and names the owner verb", async () => {
   const f = fixture();
   try {
-    f.idle("review-agent");
-    f.store.update(f.submitted.id, {
-      phase: "blocked",
-      reason: "Worker blocked: tests red",
-      resolution: {
-        ...f.current().resolution,
-        currentRunId: null,
-        attention: true,
-        stop: {
-          reason: "operator_needed",
-          detail: "Worker blocked: tests red",
-          since: lastActivity,
-          suggestedVerbs: ["restart", "route", "move"],
-        },
-      },
-    });
-    await f.engine.resolution.recovery.route(f.current());
-    await f.engine.quiesce();
-    const recovery = f.coordinatorRuns().at(-1);
-    assert.ok(recovery);
-    f.idle(recovery.agentId!);
+    const recovery = await launchedCoordinator(f);
     // A Spec 049-era report: the retired `recoveryAction` field, no verb. Intake
     // refuses that field today, so the record is written as stored history and the
     // pass must still refuse it as retired rather than settling it as an observation.

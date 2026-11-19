@@ -116,6 +116,21 @@ export function reportNamesNoAction(
 }
 
 /**
+ * Whether a report settles the episode as an observation rather than applying an
+ * owner verb. A `cannot` is one too (planner ruling db7b10d9): its reason is the
+ * observation and the ladder is asked separately. A retired narrow shape never
+ * settles this way.
+ */
+export function reportSettlesAsObservation(
+  binding: Pick<RecoveryActionBinding, "recoveryAction" | "coordinatorAction">,
+): boolean {
+  return (
+    reportNamesNoAction(binding) ||
+    (!binding.recoveryAction && binding.coordinatorAction?.verb === "cannot")
+  );
+}
+
+/**
  * The owner verb a coordinator's report asks for, as the arguments to apply, or
  * the refusal naming why it no longer applies. Every string here is the owner's
  * own: the plan reads the same views `next` shows, so a coordinator cannot invent

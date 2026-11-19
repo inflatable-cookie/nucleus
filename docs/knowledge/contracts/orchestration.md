@@ -2965,10 +2965,14 @@ movement invalidates source approval and preserves the normal readiness gates.
   its work identity are left as they were, so a later pass over the same unchanged
   facts answers from the resolved episode and opens no new coordinator; the loop
   breaker still bounds a report that does act. An escalating report keeps its
-  escalation. Only a stored narrow action shape is refused *as retired*, naming the
-  owner verb that replaced it: the Spec 049 `recoveryAction` values (`retry`,
-  `revise`, `resume_worker`, `reassign_origin`, `reconcile`) and the four narrow
-  task controls folded into the owner verbs on 2026-10-19 (`restart`,
+  escalation. A `cannot` with a reason settles the same way — its reason stays
+  visible, no refusal is recorded and no “not applied” wording is written — and
+  the same report opens the planner-ladder question with that reason, because
+  someone else must act (planner ruling db7b10d9, 2026-11-18). A live no-action
+  report asks nobody. Only a stored narrow action shape is refused *as retired*,
+  naming the owner verb that replaced it: the Spec 049 `recoveryAction` values
+  (`retry`, `revise`, `resume_worker`, `reassign_origin`, `reconcile`) and the four
+  narrow task controls folded into the owner verbs on 2026-10-19 (`restart`,
   `move to=work`, `restart role=reviewer` and `amend_brief` with no text).
 - A planner-selected time or task wait resumes ordinary work when its condition
   settles, even if the recovery run that raised the escalation has ended or is

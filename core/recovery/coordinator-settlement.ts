@@ -1,4 +1,5 @@
 import { resultApplied, recordResultApplied } from "../intake/applied-result";
+import { digest } from "../store/store";
 import type { Task, Run, RecoveryActionBinding } from "../../shared/contracts";
 import type { Engine } from "../engine";
 import type { Resolution } from "../resolution";
@@ -32,7 +33,10 @@ export type RecoverySettlementContext = Pick<
   | "performTaskControl"
   | "store"
 > & {
-  readonly resolution: Pick<Resolution, "attention" | "recovery" | "update">;
+  readonly resolution: Pick<
+    Resolution,
+    "attention" | "openPlannerEscalation" | "recovery" | "update"
+  >;
 };
 export class RecoverySettlement {
   constructor(readonly engine: RecoverySettlementContext) {}
@@ -41,6 +45,54 @@ export class RecoverySettlement {
   }
   get resolution() {
     return this.engine.resolution;
+  }
+  /**
+   * A coordinator that reports `cannot` settles the episode as observed with its
+   * own reason visible, and the same report opens the planner-ladder question that
+   * says someone else must act (planner ruling db7b10d9, nucleus#1388). The episode
+   * resolves rather than escalating, no refusal is recorded, and the ladder's wait
+   * becomes the task's stop with its own exit.
+   */
+  private settleCannot(
+    task: Task,
+    run: Run,
+    binding: RecoveryActionBinding,
+    reason: string,
+  ): void {
+    try {
+      this.store.recordVerbOutcome(
+        task.id,
+        "cannot",
+        "applied",
+        "coordinator",
+        { coordinatorRun: run.id, reason: reason.slice(0, 600) },
+        `coordinator:${binding.eventId}`,
+      );
+    } catch {
+      /* the settlement stands even if its record could not be written */
+    }
+    this.resolution.recovery.settleObservedNoAction(task, run, binding);
+    const settled = this.store.task(task.id);
+    if (
+      settled.resolution.recovery?.action?.eventId !== binding.eventId ||
+      settled.resolution.recovery.action.status !== "applied"
+    )
+      return;
+    const question = `The coordinator cannot settle this stop: ${reason}`;
+    this.resolution.openPlannerEscalation(settled, {
+      cause: digest(
+        `coordinator-cannot:${settled.id}:${settled.resolution.recovery?.id ?? ""}`,
+      ),
+      runId: run.id,
+      question,
+      payload: {
+        cause: "coordinator-cannot",
+        reason,
+        question,
+        report: binding.eventId,
+      },
+      suggestedVerbs: settled.resolution.stop?.suggestedVerbs,
+    });
   }
   /** Apply one coordinator report as the corresponding Spec 050 owner verb. */
   async applyCoordinatorAction(
@@ -249,9 +301,11 @@ export class RecoverySettlement {
             return;
           }
         }
-        // The coordinator cannot settle it: the owner decides. Escalating keeps
-        // the stop from reopening another coordinator episode (consumer-b #639).
-        finish("refused", action.reason);
+        // The coordinator cannot act, so the episode settles as the observation it
+        // is and the missing decision reaches the planner ladder (nucleus#1388,
+        // planner ruling db7b10d9). Nothing is refused and no attention notice is
+        // raised; the report's own reason stays visible in both records.
+        this.settleCannot(task, run, binding, action.reason);
         return;
       }
 

@@ -58,8 +58,19 @@ export const OBSERVED_NO_ACTION_PREFIX = "observed:";
 export function observedNoActionSummary(report: {
   reportStatus: string;
   summary: string;
+  coordinatorAction?: { verb: string; reason?: string } | null;
 }): string {
-  return `${OBSERVED_NO_ACTION_PREFIX} ${report.reportStatus}, no action — ${report.summary}`.slice(
+  // A `cannot`'s reason is its substantive statement: keep it visible even when
+  // the report's summary says something else (planner ruling db7b10d9).
+  const reason =
+    report.coordinatorAction?.verb === "cannot"
+      ? (report.coordinatorAction.reason ?? null)
+      : null;
+  const body =
+    reason && reason !== report.summary
+      ? `${report.summary} — ${reason}`
+      : report.summary;
+  return `${OBSERVED_NO_ACTION_PREFIX} ${report.reportStatus}, no action — ${body}`.slice(
     0,
     4000,
   );

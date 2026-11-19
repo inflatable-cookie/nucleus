@@ -11110,9 +11110,12 @@ test("a coordinator waits for the current revision worker rather than escalating
   }
 });
 
-test("a coordinator that cannot settle a stop escalates it to the owner, and stop churn asks no second coordinator (consumer-b #639, review #542)", async () => {
+test("a coordinator that cannot settle a stop settles the episode as observed and asks the planner with its reason (consumer-b #639, planner ruling db7b10d9)", async () => {
   const f = fixture();
   try {
+    // Past the ready review/merge step, so this blocked report is a planning
+    // question rather than an automatically resumed lifecycle step (#1003).
+    f.store.update(f.task.id, { phase: "verifying" });
     enableRecovery(f);
     attention(f);
     await f.engine.wake();
@@ -11122,7 +11125,7 @@ test("a coordinator that cannot settle a stop escalates it to the owner, and sto
         eventId: randomUUID(),
         taskId: f.task.id,
         runId: r.id,
-        status: "recovered",
+        status: "blocked",
         summary: "Nothing I can do here",
         coordinatorAction: { verb: "cannot", reason: "Needs an owner ruling" },
         coordinatorGeneration: r.generation,
@@ -11130,30 +11133,54 @@ test("a coordinator that cannot settle a stop escalates it to the owner, and sto
       f.tokens.get(r.id)!,
     );
     f.idle(r.agentId!, r.workspaceId);
-    for (let pass = 0; pass < 4; pass++) {
-      await f.engine.wake();
-      // The stop churns between a wait and a stop for the same condition (review #542).
-      f.engine.resolution.waiting(
-        f.current(),
-        `No eligible independent reviewer profile; churn ${pass}`,
-        "route_unavailable",
-      );
-    }
-    assert.equal(f.current().resolution.recovery?.status, "escalated");
+    await f.engine.resolution.recovery.pass(f.task.id);
+    // nucleus#1388: the report settles as observed with its reason visible; nothing
+    // is refused, and the same report opens the planner question that says someone
+    // else must act.
     assert.match(
       f.current().resolution.recovery?.summary ?? "",
-      /cannot settle this stop: Needs an owner ruling/,
+      /^observed: blocked, no action — Nothing I can do here — Needs an owner ruling/,
+      "the report and its reason stay visible",
+    );
+    assert.equal(f.current().resolution.recovery?.action?.status, "applied");
+    assert.equal(
+      f.store
+        .events(f.task.id)
+        .filter((event) => event.kind === "coordinator_action_refused").length,
+      0,
+      "a cannot report is never a refusal",
     );
     assert.equal(
-      f.store.runs(f.task.id).filter((item) => item.role === "recovery").length,
+      f.store
+        .events(f.task.id)
+        .filter((event) => event.kind === "planner_escalation").length,
       1,
-      "no second coordinator for an escalated stop",
+      "the missing decision reaches the planner ladder once",
+    );
+    assert.match(
+      f.store
+        .events(f.task.id)
+        .filter((event) => event.kind === "planner_escalation_question")
+        .map((event) => event.detail)
+        .join("\n"),
+      /Needs an owner ruling/,
+      "the question carries the coordinator's reason",
+    );
+    const runs = f.store
+      .runs(f.task.id)
+      .filter((item) => item.role === "recovery").length;
+    // The ladder's wait holds the task: another pass asks nothing new.
+    await f.engine.resolution.recovery.route(f.current());
+    await f.engine.resolution.recovery.pass(f.task.id);
+    assert.equal(
+      f.store.runs(f.task.id).filter((item) => item.role === "recovery").length,
+      runs,
+      "a settled stop asks no second coordinator",
     );
   } finally {
     await f.close();
   }
 });
-
 test("three coordinator runs that applied nothing stop coordinator recovery and escalate to the owner; only an explicit coordinator restart re-arms it (Tom, 2026-10-27)", async () => {
   const { COORDINATOR_LOOP_LIMIT, COORDINATOR_LOOP_SUMMARY } = await import(
     "../core/recovery/recovery-bound"
@@ -12281,7 +12308,11 @@ test("an observe race cannot wipe an accepted recovery completion or describe it
     // settled instead of being read as no result.
     assert.equal(finished.completion?.status, "blocked");
     assert.equal(finished.released, true);
-    assert.equal(f.current().resolution.recovery?.action?.status, "refused");
+    assert.equal(
+      f.current().resolution.recovery?.action?.status,
+      "applied",
+      "a cannot report settles as observed instead of being refused",
+    );
     assert.ok(
       !f.store
         .events(f.task.id)
@@ -16439,7 +16470,11 @@ test("a publication fault and coordinator cannot stay settled across wakes and e
     await f.engine.wake();
     const settled = f.current(),
       count = f.creates.length;
-    assert.equal(settled.resolution.recovery?.action?.status, "refused");
+    assert.equal(settled.resolution.recovery?.action?.status, "applied");
+    assert.match(
+      settled.resolution.recovery?.summary ?? "",
+      /^observed: blocked, no action — Owner must choose revision/,
+    );
     assert.equal(
       f.store
         .events(f.task.id)

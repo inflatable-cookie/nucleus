@@ -679,9 +679,20 @@ export class CoordinatorPass {
               `Recovery reported ${accepted.reportStatus}: ${accepted.summary}; handing it to the responsible-task planner ladder`,
             ),
           );
+          // The ladder's question is the report's own words, so a `cannot`'s
+          // reason joins them when the summary does not already carry it
+          // (planner ruling db7b10d9).
+          const reason =
+            accepted.coordinatorAction?.verb === "cannot"
+              ? accepted.coordinatorAction.reason
+              : null;
+          const handoff =
+            reason && !reported.summary.includes(reason)
+              ? { ...reported, summary: `${reported.summary}; ${reason}` }
+              : reported;
           await this.resolution.responsibleBlockerLadder(
             this.store.task(t.id),
-            { source: "recovery", runId: finishedRun.id, completion: reported },
+            { source: "recovery", runId: finishedRun.id, completion: handoff },
           );
           continue;
         }
