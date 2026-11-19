@@ -172,7 +172,7 @@ export const projectQaSettlement = {
   },
 
   /** Apply the supervisor's own result record, or derive it when the result file is gone. */
-  async settleFromSupervisor(this: QaSettleContext, run: ProjectQaRun, state: QaSupervisionState | null, hostResult: HostRunResult | null): Promise<ProjectQaRun> {
+  async settleFromSupervisor(this: QaSettleContext, run: ProjectQaRun, state: QaSupervisionState | null, hostResult: HostRunResult | null, closeInterrupted = false): Promise<ProjectQaRun> {
     const result = state?.result ?? null;
     if (!result && !hostResult) return run;
     if ((run.teardownRetryAttempt ?? 0) > 0) return this.settleTeardownRetry(run, state);
@@ -182,10 +182,11 @@ export const projectQaSettlement = {
     const finalState = result?.state ?? (cancelRequest ? "cancelled" : hostResult?.signal ? "timed_out" : hostResult?.exitCode === 0 ? "passed" : "failed");
     const finishedAt = result?.finishedAt ?? hostResult?.endedAt ?? now();
     const durationMs = result?.durationMs ?? hostResult?.wallMs ?? Math.max(0, Date.parse(finishedAt) - Date.parse(run.startedAt));
-    const detail = result?.detail ?? (cancelRequest
+    let detail = result?.detail ?? (cancelRequest
       ? `QA cancelled: ${cancelRequest.reason}`
       : hostResult?.signal ? `QA terminated by ${hostResult.signal}.`
         : hostResult?.exitCode === 0 ? "QA passed." : `QA failed with exit ${hostResult?.exitCode}.`);
+    if (closeInterrupted) detail += "\nThe supervisor was stopped after publishing its result; the live log may be missing up to the run token's length in final bytes.";
     const settled = await this.settle(run, {
       state: finalState, exitCode: result?.exitCode ?? hostResult?.exitCode ?? null, durationMs, detail,
       checkoutCleanupPending: result?.checkoutCleanupPending,

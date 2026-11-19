@@ -54,7 +54,7 @@ export function detachedSupervisorIo(
       (entry): entry is [string, string] => typeof entry[1] === "string",
     ),
   );
-  const { resultPath, cancelPath, planPath, cpuCoveragePath, heartbeatPath, stepExitPath } =
+  const { resultPath, cancelPath, planPath, cpuCoveragePath, heartbeatPath, stepExitPath, phasePath } =
     qaSupervisionPaths(plan.runRoot, plan.runId, plan.attempt);
   let current: QaSupervisionState | null = null;
   let timer: NodeJS.Timeout | null = null;
@@ -128,6 +128,7 @@ export function detachedSupervisorIo(
     },
   });
   return {
+    phase: (phase) => writeQaJsonAsync(phasePath, { runId: plan.runId, phase }, { durable: false }),
     environment: async (eventId, root) => {
       if (!plan.hostRunToken) {
         const launchedAt = Date.parse(plan.startedAt);

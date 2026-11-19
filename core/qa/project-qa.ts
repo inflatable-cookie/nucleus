@@ -193,8 +193,8 @@ export class ProjectQaRunner {
     return projectQaSettlement.settle.call(this, run, outcome);
   }
   /** Internal to the QA owners: apply a settled supervisor's result. */
-  settleFromSupervisor(run: ProjectQaRun, state: QaSupervisionState | null, hostResult: HostRunResult | null): Promise<ProjectQaRun> {
-    return projectQaSettlement.settleFromSupervisor.call(this, run, state, hostResult);
+  settleFromSupervisor(run: ProjectQaRun, state: QaSupervisionState | null, hostResult: HostRunResult | null, closeInterrupted?: boolean): Promise<ProjectQaRun> {
+    return projectQaSettlement.settleFromSupervisor.call(this, run, state, hostResult, closeInterrupted);
   }
   /** Internal to the QA owners: settle a launch that never reached a supervisor step. */
   settleLaunchFailure(runId: string, error: unknown): Promise<ProjectQaRun | null> {

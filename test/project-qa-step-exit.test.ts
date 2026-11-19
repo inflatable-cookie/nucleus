@@ -12,7 +12,7 @@ import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { chmodSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { executeHookProgram, type ChildExitFacts } from "../core/machine/process-exec";
@@ -28,6 +28,7 @@ import {
   qaSupervisionPlanSchema,
   readQaStepExit,
   readQaSupervision,
+  readQaPhase,
   writeQaSupervision,
   writeQaSupervisionPlan,
   type QaStepExit,
@@ -125,6 +126,32 @@ test("a step exiting non-zero records its exit code on the step and on its own e
   assert.equal(exit!.signal, null);
   assert.equal(exit!.processGroupId, exit!.pid, "a detached step leader's pid is its group id");
   assert.ok(Number.isFinite(Date.parse(exit!.exitedAt)));
+});
+
+test("a detached staged supervisor publishes a result after a long final burst", { skip: process.platform === "win32", timeout: 60_000 }, async (t) => {
+  const f = await pipelineFixture(t, [process.execPath, "-e", "process.stdout.write('x'.repeat(1024 * 1024) + '\\nfinal burst complete\\n')"]);
+  f.plan.stages = [
+    { name: "first", argv: [process.execPath, "-e", "console.log('first stage')"], timeoutMs: 30_000 },
+    { name: "last", argv: f.run.argv, timeoutMs: 30_000 },
+  ];
+  writeQaSupervisionPlan(f.paths.planPath, f.plan);
+  const child = spawn(process.execPath, ["--import", "tsx", "bin/queue-qa-supervisor.mjs", f.paths.planPath, f.plan.identityToken],
+    { cwd: process.cwd(), env: process.env, stdio: ["ignore", "ignore", "pipe"] });
+  let stderr = "";
+  child.stderr!.setEncoding("utf8");
+  child.stderr!.on("data", chunk => { stderr += chunk; });
+  t.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL"); });
+  const exit = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
+    child.once("error", reject);
+    child.once("close", (code, signal) => resolve({ code, signal }));
+  });
+  assert.deepEqual(exit, { code: 0, signal: null }, stderr);
+  const state = readQaSupervision(f.paths.statePath);
+  assert.equal(state?.result?.state, "passed");
+  assert.equal(readQaPhase(f.paths.phasePath, f.run.runId), "live-output-close");
+  assert.deepEqual(state?.steps.map(step => step.name), ["first", "last"]);
+  const live = await readFile(qaRunLiveOutputPath(f.run.runRoot, f.run.runId), "utf8");
+  assert.match(live, /final burst complete\n$/);
 });
 
 test("a step group killed from outside settles the run failed with that signal and its output", { skip: process.platform === "win32" }, async (t) => {
@@ -240,6 +267,16 @@ test("a supervisor that settles nothing after its step's group emptied hands the
   assert.match(verdict.reason, /process group \d+ was empty for \d+ms/);
   assert.throws(() => process.kill(f.supervisor.pid!, 0), /ESRCH/, "the unresponsive supervisor was stopped with proof");
   assert.equal(readQaStepExit(f.paths.stepExitPath, { runId: f.runId, step: "qa" })?.signal, "SIGKILL");
+});
+
+test("a published QA result settles after its supervisor stalls in final close", { skip: process.platform === "win32" }, async (t) => {
+  const f = await inspectionFixture(t, { boundMs: 0 });
+  writeQaSupervision(f.paths.statePath, { ...f.state, inFlight: null, activeProcess: null,
+    result: { state: "passed", exitCode: 0, durationMs: 1000, detail: "finished", finishedAt: new Date().toISOString(), hostResult: null } });
+  const verdict = await f.inspection.inspectSupervisor(f.run);
+  assert.equal(verdict.kind, "settled", JSON.stringify(verdict));
+  if (verdict.kind === "settled") assert.equal(verdict.state?.result?.state, "passed");
+  assert.throws(() => process.kill(f.supervisor.pid!, 0), /ESRCH/);
 });
 
 test("a stale heartbeat does not discard a recorded step exit: the run settles from it instead of lost", { skip: process.platform === "win32" }, async (t) => {
@@ -459,6 +496,7 @@ test("an ended step settles failed from its own exit, with the step, the signal 
     inFlight: "qa", steps: [], failedStep: null, logWriteErrors: [], escapedDescendants: [],
     detail: "setup output", escapedDescendantsOld: undefined, cancelReason: null,
   };
+  await writeQaJsonAsync(qaSupervisionPaths(runRoot, runId).phasePath, { runId, phase: "step-logs" });
   const { context, settled } = recoveryFixture(run, state, runRoot);
   await projectQaRecovery.settleEndedStep.call(context as any, run as any, {
     kind: "step_ended", state: state as any, step: "qa", emptyForMs: 31_000, reason: "qa ended by SIGTERM",
@@ -478,6 +516,8 @@ test("an ended step settles failed from its own exit, with the step, the signal 
   assert.match(outcome.detail, /qa ended by SIGTERM/);
   assert.match(outcome.detail, /Live output log: .*\.live\.log at byte \d+/);
   assert.match(outcome.detail, /stage line two/, "the last output lines travel with the settlement");
+  assert.match(outcome.detail, /Last supervisor phase: step-logs/);
+  assert.match(outcome.detail, /final bytes may have been withheld/);
   assert.match(outcome.detail, /settled this run failed/);
   assert.doesNotMatch(outcome.detail, /lost this QA run/);
   assert.equal(outcome.steps.find((step: any) => step.name === "qa")?.signal, "SIGTERM");

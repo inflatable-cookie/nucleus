@@ -16,7 +16,7 @@ import { tailWithTruncationMarker } from "../machine/output-retention";
 import { now, type Store } from "../store/store";
 import type { HostRunEscapedDescendant, ProjectQaLogWriteError, ProjectQaRun, ProjectQaStep, ProjectQaStepName } from "../../shared/contracts";
 import {
-  qaRunLiveOutputPath, qaStepLogPaths, qaSupervisionPaths, readQaOutputPointer, readQaSupervisionPlan, readQaSupervision,
+  qaRunLiveOutputPath, qaStepLogPaths, qaSupervisionPaths, readQaOutputPointer, readQaSupervisionPlan, readQaSupervision, readQaPhase, readQaSupervisorExit,
   removeQaSupervisionFiles, writeQaStepLog,
   type QaSupervisionState,
 } from "./project-qa-supervision-files";
@@ -86,8 +86,21 @@ export function qaOutputPointerDetail(runRoot: string, runId: string, step: Proj
   const live = readQaOutputPointer(qaRunLiveOutputPath(runRoot, runId));
   const lines = [`Live output log: ${qaRunLiveOutputPath(runRoot, runId)}${live ? ` at byte ${live.bytes}` : " (no readable live log)"}.`];
   if (live?.tail) lines.push(`Last output lines:\n${live.tail}`);
+  lines.push("The supervisor did not close the live log normally; up to the run token's length in final bytes may have been withheld by redaction.");
   lines.push(`No step log for ${step} was written; the live log is the run's output record.`);
   return lines.join("\n");
+}
+
+/** Allow the detached parent to publish its child's exit after the OS reports death. */
+async function supervisorExitDetail(runRoot: string, run: ProjectQaRun, state: QaSupervisionState | null): Promise<string> {
+  const paths = qaSupervisionPaths(runRoot, run.id, run.teardownRetryAttempt ?? 0);
+  let exit = readQaSupervisorExit(paths.supervisorExitPath, run.id, state?.pid);
+  for (let i = 0; !exit && i < 20; i++) {
+    await new Promise(resolve => setTimeout(resolve, 50));
+    exit = readQaSupervisorExit(paths.supervisorExitPath, run.id, state?.pid);
+  }
+  return exit?.signal ? `signal ${exit.signal}` : exit?.code !== null && exit?.code !== undefined ? `exit code ${exit.code}`
+    : exit?.error ? `launch error ${exit.error}` : "unknown";
 }
 
 export const projectQaRecovery = {
@@ -106,9 +119,10 @@ export const projectQaRecovery = {
 
   async reconcileLostRun(this: QaRecoveryContext, run: ProjectQaRun, state: QaSupervisionState | null, reason: string, escapedDescendants: HostRunEscapedDescendant[] = []): Promise<void> {
     const interruptedStep = state?.inFlight ?? null;
+    const supervisorExit = await supervisorExitDetail(this.qaRepositoryRootPath(run.key), run, state);
     await this.settleAbandoned(run, state, {
       state: "lost", exitCode: null, interruptedStep, hostResult: null,
-      account: interruptedStep ? `The ${interruptedStep} step was in flight when the supervisor died.` : "",
+      account: `${interruptedStep ? `The ${interruptedStep} step was in flight when the supervisor died. ` : ""}Last supervisor phase: ${readQaPhase(qaSupervisionPaths(this.qaRepositoryRootPath(run.key), run.id, run.teardownRetryAttempt ?? 0).phasePath, run.id) ?? "unknown"}; supervisor exit: ${supervisorExit}. The live log may be missing up to the run token's length in final bytes.`,
       closing: `Queue backend lost this QA run (${reason}).`,
     }, escapedDescendants);
   },
@@ -132,6 +146,7 @@ export const projectQaRecovery = {
       return;
     }
     const startedAt = state.activeProcess?.startedAt ?? run.startedAt;
+    const supervisorExit = await supervisorExitDetail(this.qaRepositoryRootPath(run.key), run, state);
     const wallMs = Math.max(0, Date.parse(exit.exitedAt) - Date.parse(startedAt));
     const hostResult = hostRunResultSchema.parse({
       format: "host.run.result", version: 1, runId: run.id, epoch: run.hostRunEpoch ?? 1,
@@ -154,7 +169,7 @@ export const projectQaRecovery = {
       state: "failed", exitCode: exit.signal ? null : exit.exitCode,
       interruptedStep: exit.step, hostResult,
       ...(endedStep ? { steps: [...state.steps, endedStep], failedStep: exit.step } : { failedStep: state.failedStep ?? exit.step }),
-      account: `The supervisor left this run unsettled: ${reason}.\n${output}`,
+      account: `The supervisor left this run unsettled: ${reason}. Last supervisor phase: ${readQaPhase(qaSupervisionPaths(this.qaRepositoryRootPath(run.key), run.id).phasePath, run.id) ?? "unknown"}; supervisor exit: ${supervisorExit}.\n${output}`,
       closing: "Queue settled this run failed from the step's own recorded exit; it is not lost, because the step's exit code or signal and its output were recorded.",
     }, state.escapedDescendants);
   },

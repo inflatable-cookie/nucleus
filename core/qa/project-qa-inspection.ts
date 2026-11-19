@@ -14,6 +14,7 @@ import {
   readQaHeartbeat,
   readHostRunResult,
   readQaStepExit,
+  readQaSupervisorExit,
   qaSupervisionPaths,
   type QaFileRead,
   type QaSupervisionState,
@@ -43,7 +44,7 @@ export const QA_STEP_EXIT_SETTLE_BOUND_MS = 30_000;
  * an unreadable plan or heartbeat is never a run that never started.
  */
 export type SupervisorInspection =
-  | { kind: "settled"; state: QaSupervisionState | null; hostResult: HostRunResult | null }
+  | { kind: "settled"; state: QaSupervisionState | null; hostResult: HostRunResult | null; closeInterrupted?: boolean }
   | { kind: "running"; state: QaSupervisionState | null; reason?: string }
   | { kind: "unstarted"; state: null; plan: QaSupervisionPlan }
   | {
@@ -110,6 +111,7 @@ export class ProjectQaInspection {
   private readonly staleSupervisorObservations = new Map<string, { heartbeatAt: string; firstObservedAt: number }>();
   /** #1393: when this service first saw each run's recorded step group empty. */
   private readonly endedStepObservations = new Map<string, { processGroupId: number; firstObservedAt: number }>();
+  private readonly publishedResultObservations = new Map<string, { pid: number; firstObservedAt: number }>();
   constructor(readonly hostRuns: Pick<HostRunScheduler, "get">, readonly qaRepositoryRootPath: (key: string) => string,
     readonly serviceHistory?: Pick<Store, "getMeta">, readonly limits: {
       stepSettleBoundMs?: number;
@@ -130,7 +132,7 @@ export class ProjectQaInspection {
 
   async inspectSupervisor(run: ProjectQaRun): Promise<SupervisorInspection> {
     const attempt = run.teardownRetryAttempt ?? 0;
-    const { statePath, planPath, resultPath, heartbeatPath, stepExitPath } = qaSupervisionPaths(this.qaRepositoryRootPath(run.key), run.id, attempt);
+    const { statePath, planPath, resultPath, heartbeatPath, stepExitPath, supervisorExitPath } = qaSupervisionPaths(this.qaRepositoryRootPath(run.key), run.id, attempt);
     const stateRead = this.supervisionFacts.read(statePath);
     const planRead = this.supervisionPlans.read(planPath);
     // A record this process cannot read is evidence that is missing, not evidence
@@ -149,6 +151,10 @@ export class ProjectQaInspection {
     const plan = planRead.kind === "present" ? planRead.value : null;
     const validPlan = plan?.runId === run.id && plan.key === run.key ? plan : null;
     const hostResult = readHostRunResult(resultPath, run.id);
+    // New runs have a separate monitor as the launch pid. Wait for it to
+    // finish publishing its receipt before recovery removes the run files.
+    const monitorPending = async (): Promise<boolean> => Boolean(state && run.pid && run.pid !== state.pid
+      && (await supervisorLivenessAsync(run.pid, state.identityToken)).state !== "dead");
     const inspect = async (): Promise<SupervisorInspection> => {
       if (hostResult || state?.result) {
         const result = hostResult ?? state?.result?.hostResult ?? null;
@@ -157,9 +163,36 @@ export class ProjectQaInspection {
         const supervisorDead = state && identityToken
           ? (await this.supervisorLiveness.read(state.pid, identityToken, state.supervisorStartIdentity, true)).state === "dead"
           : identityToken ? (await findProcessByCommandTokenAsync(identityToken)).state === "absent" : false;
-        if (!identityToken || !supervisorDead || processGroupId && !processGroupEmpty(processGroupId))
+        if (!identityToken || processGroupId && !processGroupEmpty(processGroupId))
           return { kind: "running", state };
-        return { kind: "settled", state, hostResult: result };
+        if (!supervisorDead) {
+          // Publication precedes the best-effort live-log close. A blocked
+          // close must not retain an already completed run indefinitely, even
+          // when the heartbeat itself is still advancing.
+          if (!state) return { kind: "running", state };
+          const key = `${run.id}:${attempt}`;
+          const previous = this.publishedResultObservations.get(key);
+          const firstObservedAt = previous?.pid === state.pid ? previous.firstObservedAt : Date.now();
+          this.publishedResultObservations.set(key, { pid: state.pid, firstObservedAt });
+          if (Date.now() - firstObservedAt < (this.limits.stepSettleBoundMs ?? QA_STEP_EXIT_SETTLE_BOUND_MS))
+            return { kind: "running", state };
+          const fresh = readQaSupervisionStateFile(statePath);
+          if (fresh.kind !== "present" || fresh.value.pid !== state.pid || fresh.value.identityToken !== identityToken
+              || fresh.value.activeProcess && !processGroupEmpty(fresh.value.activeProcess.processGroupId)
+              || (!fresh.value.result && !readHostRunResult(resultPath, run.id))) return { kind: "running", state };
+          if (!await stopSupervisorProcess({ supervisorPid: state.pid, supervisorStartIdentity: state.supervisorStartIdentity, identityToken }))
+            return { kind: "running", state };
+          if (await monitorPending()) return { kind: "running", state };
+          this.publishedResultObservations.delete(key);
+          const finalState = readQaSupervisionStateFile(statePath);
+          return { kind: "settled", state: finalState.kind === "present" ? finalState.value : state, closeInterrupted: true,
+            hostResult: readHostRunResult(resultPath, run.id) ?? result };
+        }
+        if (await monitorPending()) return { kind: "running", state };
+        this.publishedResultObservations.delete(`${run.id}:${attempt}`);
+        const supervisorExit = state ? readQaSupervisorExit(supervisorExitPath, run.id, state.pid) : null;
+        return { kind: "settled", state, hostResult: result,
+          ...(!supervisorExit || supervisorExit.code !== 0 ? { closeInterrupted: true } : {}) };
       }
       if (state) {
         const liveness = await this.supervisorLiveness.read(state.pid, state.identityToken, state.supervisorStartIdentity);
@@ -189,6 +222,7 @@ export class ProjectQaInspection {
           return { kind: "dead", state, staleStop: true, reason: staleReason };
         }
         if (liveness.state === "dead") {
+          if (await monitorPending()) return { kind: "running", state };
           if (state.activeProcess && !processGroupEmpty(state.activeProcess.processGroupId))
             return { kind: "running", state };
           if (!state.activeProcess && state.inFlight) {
@@ -209,6 +243,8 @@ export class ProjectQaInspection {
         return { kind: "running", state };
       }
       if (!validPlan) return { kind: "dead", state: null, reason: "no supervisor was started for this run" };
+      const supervisorExit = readQaSupervisorExit(supervisorExitPath, run.id);
+      if (supervisorExit) return { kind: "dead", state: null, reason: `the supervisor exited before its first state (${supervisorExit.signal ?? supervisorExit.error ?? `exit code ${supervisorExit.code}`})` };
       // The supervisor's first write precedes checkout preparation and every
       // QA side effect. Resume only when the host-run record also proves no QA
       // step process was launched; this remains true across a restart after the

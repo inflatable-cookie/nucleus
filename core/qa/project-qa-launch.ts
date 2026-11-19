@@ -61,7 +61,8 @@ export const projectQaLaunch = {
    */
   spawnQaSupervisor(this: QaLaunchContext, planPath: string, identityToken: string, temporaryDirectory?: string): number {
     return spawnDetachedSupervisor({
-      entry: this.supervisorEntry(), argv: [planPath, identityToken],
+      entry: fileURLToPath(new URL("../../bin/queue-qa-supervisor.mjs", import.meta.url)),
+      argv: ["--monitor", this.supervisorEntry(), planPath, identityToken],
       environment: withRunTemporaryDirectory({}, temporaryDirectory),
       failureMessage: "Project QA could not start its detached supervisor",
     });

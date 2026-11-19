@@ -151,6 +151,7 @@ export interface QaPipelineIdentity { pid: number; identityToken: string }
 
 /** How one pipeline executes its steps and records progress; the service fakes the first two in tests. */
 export interface QaPipelineIo {
+  phase?(phase: string): void | Promise<void>;
   environment?(eventId: string, root: string): Promise<Record<string, string>> | Record<string, string>;
   hook(script: string, root: string, onSpawn?: (process: QaSpawnedProcess) => void, cancelable?: boolean, env?: Record<string, string>): Promise<ExecutionOutcome>;
   command(stage: ProjectQaStage, root: string, onSpawn?: (process: QaSpawnedProcess) => void, cancelable?: boolean, env?: Record<string, string>, onOutput?: (stream: "stdout" | "stderr", chunk: Buffer) => void): Promise<ExecutionOutcome>;
@@ -263,11 +264,15 @@ export async function runProjectQaPipeline(base: QaPipelineIdentity, run: QaPipe
   // The operator's live view of this run: every stage's output as it arrives.
   // Best effort by construction; the step logs and the result stay the record.
   let liveOutput: Awaited<ReturnType<typeof openQaLiveOutput>> = null;
+  const phase = async (next: string) => {
+    try { await io.phase?.(next); } catch { /* diagnostic boundaries cannot fail a run */ }
+  };
   try {
     // Publish the run's identity before anything can take time, so a service
     // restart in this window finds a live supervisor rather than an orphan.
     await io.persist(state);
     stop = io.begin?.(state);
+    await phase("starting");
     liveOutput = await openQaLiveOutput(qaRunLiveOutputPath(run.runRoot, run.runId), () => run.hostRunToken);
     let stateName: ProjectQaRun["state"] = "hold";
     let exitCode: number | null = null;
@@ -302,9 +307,8 @@ export async function runProjectQaPipeline(base: QaPipelineIdentity, run: QaPipe
       // Task 590: QA stage steps trim passing output before failure lines, so
       // their excerpt markers name that shape instead of beginning-and-end.
       await spawnPersistence;
+      await phase("step-logs");
       const shapeNote = tapCollector ? FAILURE_FIRST_RETENTION_NOTE : undefined;
-      state.activeProcess = null;
-      state.pendingProcessIdentity = null;
       // #121: keep each step's full output (already tail-capped at the step's
       // maxOutputBytes by the executor) in a log beside the run, so a short
       // excerpt can never be the only record of a long compile or clippy run.
@@ -327,6 +331,7 @@ export async function runProjectQaPipeline(base: QaPipelineIdentity, run: QaPipe
       // the failures log survives whatever the caps keep or evict. Executors
       // that predate the streaming sink fall back to the retained buffers.
       if (run.stages.some(stage => stage.name === name)) {
+        await phase("tap-finalize");
         const collector = tapCollector ?? null;
         const extracted = collector?.result() ?? null;
         const redacted = run.hostRunToken && extracted ? extracted.replaceAll(run.hostRunToken, "[REDACTED]") : extracted;
@@ -342,6 +347,8 @@ export async function runProjectQaPipeline(base: QaPipelineIdentity, run: QaPipe
             omittedIdentities: 0, truncated: false, diagnosticsTruncated: false }];
         }
       }
+      state.activeProcess = null;
+      state.pendingProcessIdentity = null;
     };
     try {
       if (await updateCancellation()) {
@@ -384,6 +391,7 @@ export async function runProjectQaPipeline(base: QaPipelineIdentity, run: QaPipe
           run.checkoutAdmission?.();
           const env = await io.environment?.(`project-qa:${run.runId}`, run.checkoutPath);
           state.inFlight = stage.name; state.pendingProcessIdentity = base.identityToken; await io.persist(state);
+          await phase("step-output");
           const tapCollector = new StreamingTapFailures(run.hostRunToken, Math.floor(PROJECT_QA_FAILURES_BYTES / Math.max(1, run.stages.length)));
           const execution = await io.command(stage, run.checkoutPath, onSpawn(stage.name), true, env,
             (_stream, chunk) => { tapCollector.push(chunk); liveOutput?.write(chunk); });
@@ -409,6 +417,7 @@ export async function runProjectQaPipeline(base: QaPipelineIdentity, run: QaPipe
       if (stateName !== "cancelled") state.detail = `${setupFailed ? "QA worktree setup" : "QA checkout or launch"} failed: ${String(error)}${state.detail ? `\n${state.detail}` : ""}`;
       setupFailed = true;
     }
+    await phase("teardown");
     try {
       // A failed setup can leave partial state, so teardown runs whenever the
       // disposable worktree exists, including after setup and QA failures.
@@ -441,6 +450,7 @@ export async function runProjectQaPipeline(base: QaPipelineIdentity, run: QaPipe
     // descendants that are rooted in its Queue-owned QA worktree, so the
     // scheduler can prove them dead and release capacity. Escapees outside
     // the worktree keep today's hold.
+    await phase("escapee-reap");
     await reapPipelineEscapees(state, run);
     await io.persist(state);
     // Each step's own output is recorded above, but the run's shared tail can
@@ -457,6 +467,7 @@ export async function runProjectQaPipeline(base: QaPipelineIdentity, run: QaPipe
       state.detail = `${state.detail}${state.detail ? "\n" : ""}TAP failure inventory:\n${coverage}`;
     }
     const durationMs = io.now() - run.startedAtMs;
+    await phase("checkout-cleanup");
     try {
       if (!teardownFailed && (!run.checkoutAdmission || checkoutPrepared)) await removeQaWorkspace({ registeredPath: run.registeredPath, checkoutPath: run.checkoutPath, admission: run.checkoutAdmission, expectedHead: run.base });
       else if (run.checkoutAdmission && !checkoutPrepared) {
@@ -503,11 +514,13 @@ export async function runProjectQaPipeline(base: QaPipelineIdentity, run: QaPipe
       escapedDescendants: state.escapedDescendants,
     }) : null;
     const cpuCoverage = hostResult && cpu ? cpu.cpuCoverage : undefined;
+    await phase("host-result");
     if (hostResult && cpuCoverage) {
       try { await io.writeCpuCoverage?.(hostRunCpuCoverageSidecar({ runId: run.runId, epoch: run.epoch, ...(primary?.processGroupId ? { step: primary.name } : {}) }, hostResult.cpuMs, cpuCoverage)); }
       catch { /* the reason stays unknown */ }
     }
     if (hostResult) await io.writeHostResult?.(hostResult);
+    await phase("result-publication");
     state.result = { state: stateName, exitCode, durationMs, detail: state.detail,
       failureIndexes: state.failureIndexes ?? [], finishedAt, hostResult, ...(checkoutCleanupPending ? { checkoutCleanupPending } : {}) };
     await io.persist(state);
@@ -516,6 +529,9 @@ export async function runProjectQaPipeline(base: QaPipelineIdentity, run: QaPipe
       hostResult, ...(cpuCoverage ? { cpuCoverage } : {}), escapedDescendants: state.escapedDescendants, cancelReason: state.cancelReason,
       ...(checkoutCleanupPending ? { checkoutCleanupPending } : {}) };
   } finally {
+    // The settled result is already durable at this point. A failed earlier
+    // publication must not be masked by diagnostic persistence in cleanup.
+    if (state.result) await phase("live-output-close").catch(() => {});
     await liveOutput?.close();
     await stop?.();
   }
