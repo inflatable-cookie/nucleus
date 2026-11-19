@@ -1381,7 +1381,10 @@ connection, sidebar read and board signal phases 0–5 landed:
   (an attention phase, a resolution marked for attention, an origin fault), an escalated hold or
   stop, or a native question — `critical` while any is failing or waiting on the operator,
   `warning` for escalations alone, labelled "N tasks need you", and `null` once they settle. The
-  `settings` sub-path renders the board's Settings, which the board header's Settings button opens.
+  `settings` sub-path wraps the shared Settings screen in `StandaloneSettingsScreen` (responsive
+  horizontal insets, readable 780-point column width, and a leading Back control that returns to the
+  board route Settings was opened from when available, falling back to the global board), which the
+  board header's Settings button opens.
 - **5d, the per-project board.** The route is `project/<nucleus-project-key>`. `bb.sidebar-groups`
   now names each Nucleus project with its planner and named-agent thread ids, its repository paths
   and the BB project ids its recorded workspace handles name, archived handles included (`projects`);
@@ -1395,7 +1398,7 @@ connection, sidebar read and board signal phases 0–5 landed:
   rows carry one "Board" menu item linking to the route when the read names their BB project (patch
   0001 plus the fork's own `NucleusProjectBoardMenuItem`), and planner and named-agent rows carry a
   "Project board" thread action.
-- **Settings** render in a `settingsSection` (`nucleus-settings`) as the board's own Settings screen.
+- **Settings** render raw (`QueueSettingsScreen`) in BB's host-owned `settingsSection` (`nucleus-settings`) without standalone framing or a Back control, while the panel's `settings` sub-path uses `StandaloneSettingsScreen`.
 - **Pills.** One static composer customization draws the pills the shared modules register
   (`registerDecisionPills`, `registerNativeQuestionPills`, unchanged) for the composer's thread, and
   each opens its popover in the plugin's composer popup. An app overlay mounts the board host they
@@ -1478,7 +1481,7 @@ Paseo stays Tom's call.
 | Sidebar and its task groups | The Paseo sidebar draws Nucleus task rows and groups | A vendor copy of BB's own `thread-list` (decision 5a), with the task group header's state line, collapsed-by-default task groups and their own `expandedTaskGroups` preference | **met, by a different mechanism** — BB's list is forked because its group row is the operator's unit; Paseo's list is its own host surface. Both draw the same shared state helper | `test/bb-sidebar-vendored.test.ts`, the fork's `nucleusTaskGroups.test.tsx`, `effigy bb:sidebar-tests`, `effigy proof:bb:sidebar` |
 | Global board | The shared board from `client/shell/` | The same board in a `navPanel` (`nucleus-board`) with a `warning`/`critical` attention badge and its label, drained as tasks settle | **met** | `test/bb-board-surfaces.test.ts`, `test/bb-board-model.test.ts` |
 | Per-project board | The shared board filtered by project | A fixed `Board` tab on a Nucleus project's planner and named-agent threads plus a `project/<nucleus-project-key>` sub-path route; a multi-repository project shows every repository | **met, by a different mechanism** — BB's route key is the Nucleus project, never a BB project, because one Nucleus project spans repositories | `test/bb-board-surfaces.test.ts`, `test/bb-board-model.test.ts`, `test/bb-sidebar-groups.test.ts` |
-| Settings | The board's Settings screen | The same Settings in a `settingsSection`, calling the catalogue through `boardCall` with `via: "bb"`; a capacity change records `surface: "bb"` | **met** | `test/bb-board-surfaces.test.ts`, `test/bb-board-bridge.test.ts`, `test/bb-host-channel.test.ts` |
+| Settings | The board's Settings screen | The shared `QueueSettingsScreen` raw in BB's `settingsSection` and wrapped in `StandaloneSettingsScreen` at the panel's `settings` sub-path, calling the catalogue through `boardCall` with `via: "bb"`; a capacity change records `surface: "bb"` | **met** | `test/bb-board-surfaces.test.ts`, `test/bb-board-bridge.test.ts`, `test/bb-host-channel.test.ts` |
 | Decision pills | Composer pills from the shared registrations | The same registrations in BB's composer, opening in the plugin's popup | **met** | `test/bb-board-surfaces.test.ts` |
 | Native question pills | The host's own question surface | The pills read `question.native-list` and answer through `question.native-answer`; the plugin never writes a BB interaction | **met, by a different mechanism** — BB's interactions are written by its own agent runtime, so the plugin reads and answers through the catalogue | `test/bb-board-surfaces.test.ts`, `test/bb-board-bridge.test.ts` |
 | Usage | None since nucleus#1302 | BB's own provider-usage card, plus the operator's Usage Pace plugin if he installs it | **met by the host** — Nucleus contributes no usage UI on either host; a missing host display belongs in a host plugin, not here | decision 5e; nucleus#1302 |

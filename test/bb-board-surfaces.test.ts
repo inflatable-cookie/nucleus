@@ -479,14 +479,38 @@ test("the board renders in its rail panel and every call reaches the service as 
   );
 });
 
-test("Settings opens from the panel route, from the board header and as a settings section", async () => {
+test("Settings opens from the panel route with standalone framing and Back navigation, and stays raw in the host-owned settingsSection", async () => {
   await load();
   const { runtime, navigations, registered } = runtimeFor();
-  const settings = mount(h(runtime.BoardPanel, { subPath: "settings" }));
+  // Direct entry at the Settings route wraps QueueSettingsScreen in the standalone layout and falls back to the global board on Back.
+  const direct = mount(h(runtime.BoardPanel, { subPath: "settings" }));
   await settle(
-    () => settings.query("Nucleus settings") !== undefined,
-    "the Settings route",
+    () => direct.query("Nucleus settings") !== undefined,
+    "the direct Settings route",
   );
+  assert.ok(
+    direct.query("Standalone Nucleus settings"),
+    "panel Settings route uses standalone framing",
+  );
+  assert.ok(
+    direct.query("Nucleus settings column"),
+    "panel Settings route constrains column width",
+  );
+  const backButton = direct.get("Back to board");
+  assert.equal(
+    backButton.props.style.backgroundColor,
+    "var(--secondary)",
+    "Back control uses BB theme tokens",
+  );
+  direct.press("Back to board");
+  assert.deepEqual(
+    navigations.at(-1),
+    { path: "board", options: undefined },
+    "direct-entry Back falls back to the global board",
+  );
+  direct.update(h(() => null));
+
+  // Opening Settings from the global board opens the Settings route and returns to the global board.
   const board = mount(h(runtime.BoardPanel, { subPath: "" }));
   await settle(() => board.query("Settings") !== undefined, "the board header");
   board.press("Settings");
@@ -495,6 +519,95 @@ test("Settings opens from the panel route, from the board header and as a settin
     { path: "board", options: { subPath: "settings" } },
     "the header's Settings button opens the board's Settings route",
   );
+  const fromBoard = mount(h(runtime.BoardPanel, { subPath: "settings" }));
+  await settle(
+    () => fromBoard.query("Back to board") !== undefined,
+    "the Settings route from board",
+  );
+  fromBoard.press("Back to board");
+  assert.deepEqual(navigations.at(-1), { path: "board", options: undefined });
+  fromBoard.update(h(() => null));
+  board.update(h(() => null));
+
+  // Opening Settings from a project board (including at a specific section) returns to that project's board.
+  const projectBoard = mount(
+    h(runtime.BoardPanel, { subPath: "project/synthetic" }),
+  );
+  await settle(
+    () => projectBoard.query("Projects, Synthetic") !== undefined,
+    "the project board selector",
+  );
+  projectBoard.press("Projects, Synthetic");
+  await settle(
+    () => projectBoard.query("Project settings") !== undefined,
+    "the project settings button",
+  );
+  projectBoard.press("Project settings");
+  assert.deepEqual(
+    navigations.at(-1),
+    { path: "board", options: { subPath: "settings" } },
+    "opening Settings from a project board routes to Settings",
+  );
+  const fromProject = mount(h(runtime.BoardPanel, { subPath: "settings" }));
+  await settle(
+    () =>
+      fromProject.query("Projects")?.props.accessibilityState?.selected ===
+      true,
+    "Settings opens at the hinted Projects section",
+  );
+  fromProject.press("Back to board");
+  assert.deepEqual(
+    navigations.at(-1),
+    { path: "board", options: { subPath: "project/synthetic" } },
+    "Back returns to the project board context Settings was opened from",
+  );
+  fromProject.update(h(() => null));
+  projectBoard.update(h(() => null));
+
+  // Opening Settings from a thread's ProjectBoardTab also returns to that project's board.
+  const projectTab = mount(
+    h(runtime.ProjectBoardTab, { threadId: "thr_lead" }),
+  );
+  await settle(
+    () => projectTab.query("Projects, Synthetic") !== undefined,
+    "the project tab selector",
+  );
+  projectTab.press("Projects, Synthetic");
+  await settle(
+    () => projectTab.query("Project settings") !== undefined,
+    "the project tab settings button",
+  );
+  projectTab.press("Project settings");
+  const fromTab = mount(h(runtime.BoardPanel, { subPath: "settings" }));
+  await settle(
+    () => fromTab.query("Back to board") !== undefined,
+    "the Settings route from project tab",
+  );
+  fromTab.press("Back to board");
+  assert.deepEqual(navigations.at(-1), {
+    path: "board",
+    options: { subPath: "project/synthetic" },
+  });
+  fromTab.update(h(() => null));
+  projectTab.update(h(() => null));
+
+  // Visiting the global board clears any prior project return context so a later direct Settings entry falls back to the board.
+  const resetBoard = mount(h(runtime.BoardPanel, { subPath: "" }));
+  await settle(
+    () => resetBoard.query("Settings") !== undefined,
+    "the global board after project",
+  );
+  resetBoard.update(h(() => null));
+  const laterDirect = mount(h(runtime.BoardPanel, { subPath: "settings" }));
+  await settle(
+    () => laterDirect.query("Back to board") !== undefined,
+    "later direct Settings",
+  );
+  laterDirect.press("Back to board");
+  assert.deepEqual(navigations.at(-1), { path: "board", options: undefined });
+  laterDirect.update(h(() => null));
+
+  // Host-owned settingsSection keeps raw embed without standalone framing or Back control.
   assert.ok(
     registered["settings:nucleus-settings"],
     "Settings register as a settings section",
@@ -504,6 +617,17 @@ test("Settings opens from the panel route, from the board header and as a settin
     () => section.query("Nucleus settings") !== undefined,
     "the settings section",
   );
+  assert.equal(
+    section.query("Standalone Nucleus settings"),
+    undefined,
+    "settingsSection keeps raw embed free of standalone framing",
+  );
+  assert.equal(
+    section.query("Back to board"),
+    undefined,
+    "settingsSection keeps host-owned navigation without a Back control",
+  );
+  section.update(h(() => null));
 });
 
 test("a decision pill appears on the asking thread, opens its popover and resolves", async () => {
