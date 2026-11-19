@@ -36,12 +36,12 @@ import { createTaskDetailCache } from '../core/telemetry/task-detail';
 import { collectOwnerVerbFacts, ownerTaskNext } from '../core/verbs/owner-verbs';
 import { USAGE_GATE_APPROVE, USAGE_GATE_WAIT, reconcileUsageGate, usageGateBlocked } from '../core/dispatch/usage-gate';
 import { automaticReachable, automaticSelection, automaticSelectionTag, demandRank, describeAutomaticSelection, requestOnly, topTier } from '../shared/pool';
-import { workerStartTier } from '../shared/demand';
+import { requestedTier, workerStartTier } from '../shared/demand';
 import { configurePool, poolSchema, submissionSchema, usageLevels, type Profile, type Task, type UsageLevel, type UsageView } from '../shared/contracts';
 
 const costs = ['very_low', 'low', 'medium', 'high', 'very_high', null] as const;
 const policyProfile = (id: string): Profile => ({ id, name: id, provider: 'test', model: `test/${id}`, available: true, problem: '', notes: '', supportedThinking: [] });
-const capabilities = [null, 'low', 'medium', 'high', 'very_high', 'frontier'] as const;
+const capabilities = [null, 'mechanical', 'worker', 'heavyweight', 'frontier'] as const;
 const policyEntry = (profileId: string, cost: typeof costs[number], capability: typeof capabilities[number], extra: Record<string, unknown> = {}) =>
   poolSchema.parse({ profileId, enabled: true, group: profileId, roles: ['worker', 'reviewer', 'coordinator'], weight: 1, scopes: ['general'], cost, capability, ...extra });
 
@@ -49,11 +49,12 @@ test('Spec 052 diagnostics: the explanation matches what chooseProfile does, for
   const store = new Store(':memory:');
   try {
     const task = store.insert(submissionSchema.parse({ submissionId: 'matrix', title: 'Matrix', repoPath: '/repo', planningCommit: 'a'.repeat(40), handoffPath: 'h.md', originAgentId: 'origin', complexity: 'high' }), 'host', 'handoff', 'a'.repeat(40));
-    for (const level of usageLevels) for (const cost of costs) for (const capability of capabilities) for (const requested of ['medium', 'very_high'] as const) {
+    for (const level of usageLevels) for (const cost of costs) for (const capability of capabilities) for (const complexity of ['medium', 'high', 'very_high'] as const) {
+      const requested = requestedTier(complexity);
       const entry = policyEntry('p', cost, capability), profiles = [policyProfile('p')];
       const automatic = automaticSelection(entry, level, requested);
-      const label = `${level}/${cost}/${capability}/${requested}`;
-      const adopt = task.complexity === requested ? task : store.update(task.id, { complexity: requested });
+      const label = `${level}/${cost}/${capability}/${complexity}`;
+      const adopt = task.complexity === complexity ? task : store.update(task.id, { complexity });
       for (const role of ['worker', 'reviewer', 'coordinator'] as const) {
         const automaticRole = automaticSelection(entry, level, requested, undefined, role);
         const picked = chooseProfile(adopt, profiles, [entry], {}, new Set(), role, {}, level)?.profile.id ?? null;
@@ -82,7 +83,7 @@ test('Spec 052 diagnostics: the explanation matches what chooseProfile does, for
       assert.equal(automatic === 'request_tier', !automaticReachable(entry, level, requested), label);
       const usage: UsageView = { level, setLevel: level, until: null, expired: false };
       const text = describeAutomaticSelection(entry, usage, iso => iso, requested);
-      assert.equal(/permission|request-only|explicit route|below the top two tiers/.test(text), automatic === 'request_tier', `${label}: "${text}"`);
+      assert.equal(/permission|request-only|explicit route|below Heavyweight and Frontier/.test(text), automatic === 'request_tier', `${label}: "${text}"`);
       assert.equal(automaticSelectionTag(entry, level, requested) !== '', automatic === 'request_tier', label);
       assert.ok(automaticSelectionTag(entry, level, requested).length <= 16, `${label}: the button tag stays short enough not to overflow a compact chooser`);
     }
@@ -112,7 +113,7 @@ test('Spec 052 diagnostics: next and a cached detail read explain the policy fre
     store.setMeta('pool', [
       policyEntry('frontier', 'very_high', 'frontier'),
       policyEntry('cheap-flag', 'low', 'frontier'),
-      policyEntry('pricey', 'high', 'high'),
+      policyEntry('pricey', 'high', 'heavyweight'),
       policyEntry('off', 'very_high', 'frontier', { enabled: false }),
     ]);
     const inserted = store.insert(submissionSchema.parse({ submissionId: 'policy', title: 'Policy', repoPath: '/repo', planningCommit: 'a'.repeat(40), handoffPath: 'h.md', originAgentId: 'origin', complexity: 'medium',
@@ -139,16 +140,16 @@ test('Spec 052 diagnostics: next and a cached detail read explain the policy fre
 
     const normal = rows(after);
     assert.equal(normal['worker:frontier']!.automatic, 'request_tier');
-    assert.match(normal['worker:frontier']!.explanation, new RegExp(String.raw`^Recorded worker run used it \(history, not today's policy\); automatic selection: Frontier: above the task's requested medium tier, so an explicit route is required \(Maximum ended ${until}\)$`));
-    assert.equal(normal['reviewer:pricey']!.automatic, 'allowed', 'a reviewer is not capped at the task\'s requested tier (Tom, 2026-11-18)');
+    assert.match(normal['worker:frontier']!.explanation, new RegExp(String.raw`^Recorded worker run used it \(history, not today's policy\); automatic selection: Frontier: above the task's Worker bracket, so an explicit route is required \(Maximum ended ${until}\)$`));
+    assert.equal(normal['reviewer:pricey']!.automatic, 'request_tier', 'Heavyweight needs permission at Normal for a medium task');
     assert.equal(normal['worker:cheap-flag']!.automatic, 'request_tier', 'below Maximum a frontier profile needs a request whatever its cost');
-    assert.match(normal['worker:cheap-flag']!.explanation, /^Worker preference; automatic selection: Frontier: above the task's requested medium tier, so an explicit route is required \(Maximum ended .*\); a preference alone does not select it$/);
+    assert.match(normal['worker:cheap-flag']!.explanation, /^Worker preference; automatic selection: Frontier: above the task's Worker bracket, so an explicit route is required \(Maximum ended .*\); a preference alone does not select it$/);
     store.setMeta('usageLevel', { level: 'high', until: null, setAt: '2026-10-19T00:00:00.000Z' });
-    assert.equal(rows(after)['reviewer:pricey']!.automatic, 'allowed', 'a reviewer is not capped at the task\'s requested tier; at High only frontier needs a request (Tom, 2026-11-18)');
+    assert.equal(rows(after)['reviewer:pricey']!.automatic, 'allowed', 'a reviewer is not capped at the task\'s Worker bracket; at High only Frontier needs a request (Tom, 2026-11-18)');
     assert.equal(rows(after)['worker:cheap-flag']!.automatic, 'request_tier', 'at High frontier still needs a request');
     store.setMeta('usageLevel', { level: 'extra_high', until: null, setAt: '2026-10-19T00:00:00.000Z' });
-    assert.equal(rows(after)['worker:cheap-flag']!.automatic, 'request_tier', 'at Extra high a frontier profile still sits above the requested tier');
-    assert.match(rows(after)['worker:cheap-flag']!.explanation, /above the task's requested medium tier/);
+    assert.equal(rows(after)['worker:cheap-flag']!.automatic, 'request_tier', 'at Extra high a Frontier profile still sits above a medium task\'s Worker bracket');
+    assert.match(rows(after)['worker:cheap-flag']!.explanation, /above the task's Worker bracket/);
     store.setMeta('usageLevel', { level: 'maximum', until, setAt: '2026-10-19T00:00:00.000Z' });
 
     // task.next reads the same projection; nothing about the task or settings changes.
@@ -172,24 +173,24 @@ test('Spec 052 diagnostics: next and a cached detail read explain the policy fre
   } finally { store.close(); }
 });
 
-test('Spec 052: the board explains a recorded climb at the tier it earned', () => {
+test('Spec 052: the board explains a recorded climb at the bracket it earned', () => {
   const store = new Store(':memory:');
   try {
-    store.setMeta('pool', [policyEntry('wide', 'medium', 'very_high'), policyEntry('frontier', 'very_high', 'frontier')]);
-    const inserted = store.insert(submissionSchema.parse({ submissionId: 'climbed-board', title: 'Climbed', repoPath: '/repo', planningCommit: 'a'.repeat(40), handoffPath: 'h.md', originAgentId: 'origin', complexity: 'very_high' }), 'host', 'handoff', 'a'.repeat(40));
+    store.setMeta('pool', [policyEntry('wide', 'medium', 'heavyweight'), policyEntry('frontier', 'very_high', 'frontier')]);
+    const inserted = store.insert(submissionSchema.parse({ submissionId: 'climbed-board', title: 'Climbed', repoPath: '/repo', planningCommit: 'a'.repeat(40), handoffPath: 'h.md', originAgentId: 'origin', complexity: 'high' }), 'host', 'handoff', 'a'.repeat(40));
     const task = store.update(inserted.id, { profile: policyProfile('wide'), completion: null });
     store.setMeta('usageLevel', { level: 'normal', until: null, setAt: '2026-11-17T00:00:00.000Z' });
     const before = store.routingPolicy(store.task(task.id), Date.now());
-    assert.equal(before.requested, 'very_high');
+    assert.equal(before.requested, 'heavyweight', 'a high task may climb to Heavyweight');
     assert.equal(before.climbTier, null);
-    assert.equal(before.profiles.find(row => row.profileId === 'wide')?.automatic, 'request_tier', 'before the climb the requested very-high tier is held');
-    assert.match(before.profiles.find(row => row.profileId === 'wide')!.explanation, /top two tiers need permission at Normal/);
+    assert.equal(before.profiles.find(row => row.profileId === 'wide')?.automatic, 'request_tier', 'before the climb Heavyweight is held');
+    assert.match(before.profiles.find(row => row.profileId === 'wide')!.explanation, /Heavyweight: needs permission at Normal/);
     store.update(task.id, { resolution: { ...store.task(task.id).resolution,
-      workerClimb: { reviewRunId: 'review-1', from: 'high', to: 'very_high', profileId: 'wide', at: '2026-11-17T00:00:00.000Z' } } });
+      workerClimb: { reviewRunId: 'review-1', from: 'worker', to: 'heavyweight', profileId: 'wide', at: '2026-11-17T00:00:00.000Z' } } });
     const climbed = store.routingPolicy(store.task(task.id), Date.now());
-    assert.equal(climbed.climbTier, 'very_high');
+    assert.equal(climbed.climbTier, 'heavyweight');
     const row = climbed.profiles.find(item => item.profileId === 'wide')!;
-    assert.equal(row.automatic, 'allowed', 'the recorded climb covers the requested very-high tier');
+    assert.equal(row.automatic, 'allowed', 'the recorded climb covers Heavyweight');
     assert.match(row.explanation, /Automatic at Normal/);
   } finally { store.close(); }
 });
@@ -220,18 +221,18 @@ test('052 migration: a stored minimal level reads as low, and normal, high and m
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('052: on Low, submitting a high or very-high complexity task opens a decision and holds it until approved, then it starts one tier below and can climb back', () => {
+test('052: on Low, submitting a high or very-high complexity task opens a decision and holds it until approved, then it starts one bracket below and can climb back', () => {
   const store = new Store(':memory:');
   try {
     const entries = [
-      policyEntry('a-high', 'medium', 'high'),
-      policyEntry('z-very-high', 'medium', 'very_high'),
+      policyEntry('a-worker', 'medium', 'worker'),
+      policyEntry('z-heavyweight', 'medium', 'heavyweight'),
       policyEntry('frontier', 'very_high', 'frontier'),
     ];
     const profiles = entries.map(entry => policyProfile(entry.profileId));
     store.setMeta('pool', entries);
     store.setMeta('usageLevel', { level: 'low', until: null, setAt: '2026-11-17T00:00:00.000Z' });
-    const task = store.insert(submissionSchema.parse({ submissionId: 'gated', title: 'Gated', repoPath: '/repo', planningCommit: 'a'.repeat(40), handoffPath: 'h.md', originAgentId: 'origin', complexity: 'very_high' }), 'host', 'handoff', 'a'.repeat(40));
+    const task = store.insert(submissionSchema.parse({ submissionId: 'gated', title: 'Gated', repoPath: '/repo', planningCommit: 'a'.repeat(40), handoffPath: 'h.md', originAgentId: 'origin', complexity: 'high' }), 'host', 'handoff', 'a'.repeat(40));
     const decisions = new Decisions(store);
     reconcileUsageGate(store, decisions, task.id);
     const gated = store.task(task.id);
@@ -243,7 +244,7 @@ test('052: on Low, submitting a high or very-high complexity task opens a decisi
     const decision = decisions.get({ id: gated.usageGate!.decisionId! });
     assert.equal(decision.status, 'open', 'one decision is open on the board');
     assert.deepEqual(decision.links.tasks, [task.id], 'and it is tied to the task');
-    assert.equal(workerStartTier('low', 'very_high'), 'high', 'the task starts one tier below');
+    assert.equal(workerStartTier('low', 'high'), 'worker', 'the task starts one bracket below Heavyweight');
 
     // Approve on the board: the fence clears and the task may dispatch.
     decisions.answer({ id: decision.id, version: decision.version, answer: USAGE_GATE_APPROVE, answeredBy: 'operator (board)', relayed: false, note: '' });
@@ -253,19 +254,19 @@ test('052: on Low, submitting a high or very-high complexity task opens a decisi
     assert.equal(approved.holds.dispatch, undefined, 'the gate clears its own fence');
     assert.equal(approved.reason, 'Waiting for dispatch');
     assert.equal(usageGateBlocked(approved, 'low'), false, 'the approved task dispatches');
-    // It runs one tier below its very-high complexity, and a revision after review changes climbs back to very_high.
-    assert.equal(chooseProfile(approved, profiles, entries, {}, new Set(), 'worker', {}, 'low', undefined, true)?.profile.id, 'a-high');
+    // It runs on Worker, and a revision after review changes climbs to Heavyweight.
+    assert.equal(chooseProfile(approved, profiles, entries, {}, new Set(), 'worker', {}, 'low', true)?.profile.id, 'a-worker');
     const reviewing = { ...approved, resolution: { ...approved.resolution, review: { eventId: 'review-1', taskId: approved.id, runId: 'review-1', status: 'changes_required' as const, summary: 'Fix the defect', head: 'a'.repeat(40) } } };
-    assert.equal(chooseProfile(reviewing, profiles, entries, {}, new Set(), 'worker', {}, 'low', undefined, false)?.profile.id, 'z-very-high');
-    assert.ok(!chooseProfile(reviewing, profiles, entries, {}, new Set(), 'worker', {}, 'low', undefined, false)?.profile.id.includes('frontier'),
-      'a frontier run above the requested tier still needs its own request');
+    assert.equal(chooseProfile(reviewing, profiles, entries, {}, new Set(), 'worker', {}, 'low', false)?.profile.id, 'z-heavyweight');
+    assert.ok(!chooseProfile(reviewing, profiles, entries, {}, new Set(), 'worker', {}, 'low', false)?.profile.id.includes('frontier'),
+      'a Frontier run above the climb bracket still needs its own request');
   } finally { store.close(); }
 });
 
 test('052: a declined Low gate keeps the task held, and lowering its complexity releases it and withdraws the question', () => {
   const store = new Store(':memory:');
   try {
-    const entries = [policyEntry('a-high', 'medium', 'high'), policyEntry('z-very-high', 'medium', 'very_high')];
+    const entries = [policyEntry('a-worker', 'medium', 'worker'), policyEntry('z-heavyweight', 'medium', 'heavyweight')];
     store.setMeta('pool', entries);
     store.setMeta('usageLevel', { level: 'low', until: null, setAt: '2026-11-17T00:00:00.000Z' });
     const task = store.insert(submissionSchema.parse({ submissionId: 'gated-declined', title: 'Gated', repoPath: '/repo', planningCommit: 'a'.repeat(40), handoffPath: 'h.md', originAgentId: 'origin', complexity: 'high' }), 'host', 'handoff', 'a'.repeat(40));
@@ -336,31 +337,30 @@ test('052: a pre-existing board hold is never replaced by the Low gate, and appr
   } finally { store.close(); }
 });
 
-test('task 1002: the store step drops stored By request flags and reads very_low capability as low; a stale write drops the flag too', () => {
+test('task 1002 and nucleus#1385: the store step drops stored By request flags and moves five-point capabilities to brackets; a stale write does too', () => {
   const dir = mkdtempSync(join(process.env.TMPDIR ?? tmpdir(), 'ns-by-request-'));
   try {
     const path = join(dir, 'queue.sqlite');
     const first = new Store(path);
     first.setMeta('pool', [
-      { profileId: 'sol', enabled: true, group: 'openai', roles: ['worker'], weight: 1, scopes: ['general'], cost: 'very_high', capability: 'heavyweight', byRequest: true },
-      { profileId: 'opus', enabled: true, group: 'anthropic', roles: ['worker'], weight: 1, scopes: ['general'], cost: 'very_high', capability: 'heavyweight', byRequest: true },
-      { profileId: 'muse', enabled: true, group: 'muse', roles: ['worker'], weight: 1, scopes: ['general'], cost: 'very_low', capability: 'mechanical' },
-      { profileId: 'glm', enabled: true, group: 'zai', roles: ['worker'], weight: 1, scopes: ['general'], cost: 'low', capability: 'mechanical' },
+      { profileId: 'sol', enabled: true, group: 'openai', roles: ['worker'], weight: 1, scopes: ['general'], cost: 'very_high', capability: 'very_high', byRequest: true },
+      { profileId: 'deepseek', enabled: true, group: 'deepseek', roles: ['worker'], weight: 1, scopes: ['general'], cost: 'low', capability: 'high', byRequest: true },
+      { profileId: 'muse', enabled: true, group: 'muse', roles: ['worker'], weight: 1, scopes: ['general'], cost: 'very_low', capability: 'very_low' },
+      { profileId: 'glm', enabled: true, group: 'zai', roles: ['worker'], weight: 1, scopes: ['general'], cost: 'low', capability: 'medium' },
     ]);
     first.close();
     const reopened = new Store(path);
     try {
       const raw = reopened.getMeta<Record<string, unknown>[]>('pool')!;
       assert.equal(raw.some(entry => 'byRequest' in entry), false, 'no stored profile carries a by-request flag after the store step');
-      assert.deepEqual(raw.map(entry => entry.capability), ['very_high', 'very_high', 'low', 'low'], 'only very_low changes; Opus stays very_high until the operator moves it');
-      assert.deepEqual(reopened.pool().map(entry => [entry.profileId, entry.cost, entry.capability]), [['sol', 'very_high', 'very_high'], ['opus', 'very_high', 'very_high'], ['muse', 'very_low', 'low'], ['glm', 'low', 'low']]);
-      const policy = (id: string) => automaticSelection(reopened.pool().find(entry => entry.profileId === id)!, 'high');
-      assert.equal(policy('sol'), 'allowed', 'Sol (very_high tier) is automatic at High');
-      assert.equal(policy('opus'), 'allowed', 'Opus rated very_high is automatic at High too; only frontier needs permission there');
-      assert.equal(automaticSelection({ cost: 'very_high', capability: 'frontier' }, 'high'), 'request_tier', 'a frontier profile still needs permission at High');
+      assert.deepEqual(raw.map(entry => entry.capability), ['heavyweight', 'worker', 'mechanical', 'worker']);
+      assert.deepEqual(reopened.pool().map(entry => [entry.profileId, entry.cost, entry.capability]),
+        [['sol', 'very_high', 'heavyweight'], ['deepseek', 'low', 'worker'], ['muse', 'very_low', 'mechanical'], ['glm', 'low', 'worker']]);
+      assert.equal(automaticSelection(reopened.pool().find(entry => entry.profileId === 'sol')!, 'high'), 'allowed', 'Heavyweight is automatic at High');
+      assert.equal(automaticSelection({ cost: 'very_high', capability: 'frontier' }, 'high'), 'request_tier', 'a Frontier profile still needs permission at High');
     } finally { reopened.close(); }
-    const stale = configurePool.input.parse({ entries: [{ profileId: 'sol', enabled: true, group: 'openai', roles: ['worker'], weight: 1, scopes: ['general'], byRequest: true, capability: 'mechanical' }] });
-    assert.deepEqual([('byRequest' in stale.entries[0]!), stale.entries[0]!.capability], [false, 'low'], 'an older client write reads without the flag');
+    const stale = configurePool.input.parse({ entries: [{ profileId: 'sol', enabled: true, group: 'openai', roles: ['worker'], weight: 1, scopes: ['general'], byRequest: true, capability: 'very_low' }] });
+    assert.deepEqual([('byRequest' in stale.entries[0]!), stale.entries[0]!.capability], [false, 'mechanical'], 'an older client write reads without the flag, on its bracket');
     assert.throws(() => poolSchema.parse({ profileId: 'x', enabled: true, group: 'x', roles: ['worker'], weight: 1, scopes: ['general'], byRequest: true }), 'the pool schema no longer accepts the flag');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

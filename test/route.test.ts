@@ -49,7 +49,7 @@ const profile = (
   roles: Role[] = ["worker"],
   group?: string,
   rating: {
-    capability?: "low" | "frontier";
+    capability?: "mechanical" | "frontier";
     cost?: "very_low" | "very_high";
   } = {},
 ) => ({
@@ -97,6 +97,10 @@ function fixture() {
     "pool",
     all.map((item) => item.entry),
   );
+  // The reviewer runs on the worker's bracket at High (one below at Normal, Tom
+  // 2026-11-19), so the independent Worker-rated luna, not the Mechanical
+  // coordinator profile, is the natural reviewer these routes are measured against.
+  store.setMeta("usageLevel", { level: "high", until: null, setAt: new Date().toISOString() });
   const submitted = store.insert(
     submissionSchema.parse({
       submissionId: randomUUID(),

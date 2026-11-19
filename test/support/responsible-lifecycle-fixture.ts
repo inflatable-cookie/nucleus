@@ -121,11 +121,6 @@ export function fixture(
     },
   ];
   store.setMeta("pool", pool);
-  store.setMeta("demandRoleOffsets", {
-    worker: -1,
-    reviewer: 0,
-    coordinator: -2,
-  });
   store.setMeta("paused", false);
   // #912: the single registered host ingress and delegated routing select.
   store.setMeta("hostId", hostId);
