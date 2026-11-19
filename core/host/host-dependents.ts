@@ -67,7 +67,7 @@ export function hostDependents(
   const states = LIVE_OPERATION_STATES.map(() => "?").join(",");
   for (const row of db
     .prepare(
-      `SELECT operations.kind AS kind, operations.taskId AS taskId FROM operations
+      `SELECT operations.id AS id, operations.kind AS kind, operations.state AS state, operations.taskId AS taskId, json_extract(operations.data,'$.diagnostic') AS diagnostic FROM operations
     LEFT JOIN tasks ON tasks.id=operations.taskId OR (operations.kind='submit' AND operations.taskId IS NULL
       AND tasks.submission=json_extract(operations.data,'$.submissionId'))
     WHERE operations.state IN (${states}) AND COALESCE(json_extract(operations.data,'$.hostId'),json_extract(tasks.data,'$.hostId'))=?
@@ -82,16 +82,16 @@ export function hostDependents(
     )
     .all(...LIVE_OPERATION_STATES, host.id))
     effects.push(
-      `${String(row.kind).replace(/_/g, " ")}${row.taskId ? ` for ${ref(String(row.taskId))}` : ""}`,
+      `${String(row.kind).replace(/_/g, " ")}${row.taskId ? ` for ${ref(String(row.taskId))}` : ""}: ${row.state === "needs_attention" ? `settlement lacks proof; owner should inspect operation ${String(row.id)} and reconcile its outcome` : `operation ${String(row.id)} is ${String(row.state)}`}${row.diagnostic ? ` (${String(row.diagnostic)})` : ""}`,
     );
   for (const row of db
     .prepare(
-      `SELECT json_extract(value,'$.taskId') AS taskId FROM meta
+      `SELECT json_extract(value,'$.taskId') AS taskId, json_extract(value,'$.uncertainty') AS uncertainty, json_extract(value,'$.leftAlone.reason') AS reason FROM meta
     WHERE key LIKE 'runProcessCleanup:%' AND json_extract(value,'$.pending')=1 AND json_extract(value,'$.hostId')=?
     ORDER BY key`,
     )
     .all(host.id))
-    effects.push(`process cleanup for ${ref(String(row.taskId))}`);
+    effects.push(`process cleanup for ${ref(String(row.taskId))}: ${row.uncertainty ? (() => { try { return String(JSON.parse(String(row.uncertainty)).reason); } catch { return "ownership evidence is unreadable"; } })() : row.reason ? String(row.reason) : "waiting for a process observation"}; owner should restore host observation and wait for the next sweep`);
   for (const task of source.finishedTasksOwingThreadCleanup(
     host.id,
     host.kind === "t3code",

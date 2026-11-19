@@ -344,11 +344,11 @@ test("terminal submit binds only its matching submission; cleanup controls stay 
       .filter((event) => event.kind === "operation_superseded").length,
     1,
   );
-  assert.deepEqual(
+  assert.match(
     hostDependents(f.store, { id: HOST, kind: "paseo", primary: true }).find(
       (item) => item.kind === "effect",
-    )?.names,
-    [`task control for ${f.store.numberFor(task.id)?.reference ?? task.id}`],
+    )!.names[0]!,
+    /task control.*settlement lacks proof/,
   );
   await pass();
   assert.equal(
@@ -846,4 +846,34 @@ test("a failed archive read after an idle observation shows its effect detail in
       (view.refusal ?? "").includes("synthetic archive read unavailable"),
     ),
   );
+});
+
+
+test("engine sweep reaches old terminal operations past settled history and names unbound waits", async (t) => {
+  const f = fixture(t, fakeAdapter({}));
+  const initial = f.store.insert(submission(), HOST, "handoff", "a".repeat(40));
+  for (let i = 0; i < 80; i++) f.store.update(initial.id, { reason: `version ${i}` });
+  f.store.update(initial.id, { phase: "done" });
+  const at = "2026-11-18T05:09:58.694Z";
+  const end = "2026-11-18T05:10:04.311Z";
+  for (let i = 0; i < 75; i++) {
+    const key = `history-${i}`;
+    f.store.putOperation(queueOperationSchema.parse({ id: operationIdForKey(key), key, kind: "submit", inputHash: operationInputHash({}), state: "succeeded", hostId: HOST, createdAt: at }), {});
+  }
+  const payload = { type: "task_control", control: { action: "restart", taskId: initial.id, version: 77 } };
+  const key = "old-restart";
+  const operation = queueOperationSchema.parse({ id: operationIdForKey(key), key, kind: "task_control", inputHash: operationInputHash(payload), state: "needs_attention", taskId: initial.id, expectedVersion: 77, createdAt: at, startedAt: at, settledAt: end, attempts: 1, diagnostic: "Transport", result: null, hostId: HOST, effect: { kind: "task_control", target: "restart", intentAt: at, status: "uncertain", result: "Transport" } });
+  f.store.putOperation(operation, payload);
+  for (const [i, kind, diagnostic] of [[0, "task_control", "Task execution participants or effects are uncertain"], [1, "submit", "Liveness check timed out (15000ms)"], [2, "submit", "Transport not connected"]] as const) {
+    const key = `unbound-${i}`;
+    f.store.putOperation(queueOperationSchema.parse({ id: operationIdForKey(key), key, kind, inputHash: operationInputHash({}), state: "needs_attention", hostId: HOST, createdAt: at, settledAt: end, attempts: 1, diagnostic }), {});
+  }
+  const pass = await f.engine.auditPass(false);
+  assert.equal(pass.fault, null);
+  assert.equal(f.store.eventsAll(initial.id).filter(e => e.kind === "operation_superseded").length, 1);
+  const waits = hostDependents(f.store, { id: HOST, kind: "paseo", primary: true }).find(x => x.kind === "effect")!.names;
+  assert.equal(waits.length, 3);
+  assert.ok(waits.every(x => x.includes("settlement lacks proof") && x.includes("owner should inspect operation")));
+  await f.engine.auditPass(false);
+  assert.equal(f.store.eventsAll(initial.id).filter(e => e.kind === "operation_superseded").length, 1);
 });

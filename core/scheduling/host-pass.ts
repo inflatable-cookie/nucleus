@@ -297,11 +297,11 @@ export class HostPass {
     // submission cannot starve later work. Settled occurrences stay history.
     await this.step(host, "settleTerminalOperations", () => {
       const cursor = this.terminalOperationCursor.get(host) ?? 0;
-      // Page by SQLite rowid first. Filtering and event reads happen only
-      // after this bounded read, even when all old operations are settled.
+      // Page unresolved candidates, not the entire historical ledger. A fresh
+      // service must not spend thousands of passes walking settled operations.
       const candidates = this.store.db
         .prepare(
-          "SELECT rowid AS position, id FROM operations WHERE rowid>? ORDER BY rowid LIMIT 25",
+          "SELECT rowid AS position, id FROM operations WHERE rowid>? AND state='needs_attention' AND kind IN ('submit','task_control') ORDER BY rowid LIMIT 25",
         )
         .all(cursor);
       this.terminalOperationCursor.set(

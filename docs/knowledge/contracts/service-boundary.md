@@ -1410,7 +1410,10 @@ one host and is Settings-only on the same transports as `queue.capacity`
   it: a live task, an unreleased run, or an unsettled effect (a pending, running or
   needs-attention operation; a pending run-process cleanup; a finished task still
   owing thread cleanup). The primary Paseo host also counts records with no
-  `hostId`. The check runs again inside the write's transaction. Repositories whose
+  `hostId`. Needs-attention operations that lack settlement proof name the operation
+  and ask the owner to inspect and reconcile it. Pending process cleanups name their
+  recorded uncertainty or the observation they await. The check runs again inside
+  the write's transaction. Repositories whose
   `hostKind` routes to its kind are shown and never refuse: they route to a kind,
   not to this host. Host runs (contract 010) carry no host identity, so they never
   bind one.
