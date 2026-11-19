@@ -14814,6 +14814,147 @@ test("C4 transport deadline keeps a live producer owned until the native call en
   }
 });
 
+test("C4 sweep releases a settled agentless creation its replaced episode no longer names", async () => {
+  const f = fixture();
+  const first = startC4(f);
+  try {
+    const { run: orphan, token } = await first.started;
+    first.finish();
+    await first.route;
+    assert.equal(f.current().resolution.recovery?.runId, orphan.id);
+    assert.equal(f.store.run(orphan.id)?.released, false);
+    // A settled escalation wait resumes ordinary recovery by dropping the
+    // episode and routing again (questions/ladder/resume.ts). The replacement
+    // binds its own creation and drops the first run's episode binding while
+    // that creation is still an unreleased intent (nucleus#1370's live shape).
+    f.engine.resolution.update(
+      f.current(),
+      { recovery: null, recoveryActive: false, stop: null, attention: true },
+      { reason: "Escalation wait ended; no parked step to resume" },
+      "planner_escalation_wake",
+      "test",
+    );
+    const second = startC4(f);
+    const { run: replaced } = await second.started;
+    second.finish();
+    await second.route;
+    assert.equal(f.current().resolution.recovery?.runId, replaced.id);
+    assert.notEqual(replaced.id, orphan.id);
+    assert.deepEqual(
+      [
+        f.store.run(orphan.id)?.role,
+        f.store.run(orphan.id)?.status,
+        f.store.run(orphan.id)?.agentId,
+        f.store.run(orphan.id)?.released,
+      ],
+      ["recovery", "intent", null, false],
+    );
+    // Both producers settled their attempt as thrown. Age both settlements past
+    // the lookup grace so only the release gate decides the outcome.
+    for (const id of [orphan.id, replaced.id])
+      assert.equal(
+        readCreationAttempt(f.store, f.store.run(id)!)?.settlement?.outcome,
+        "threw",
+      );
+    f.store.db
+      .prepare(
+        "UPDATE events SET at=? WHERE taskId=? AND kind='creation_attempt_settled'",
+      )
+      .run(new Date(Date.now() - 180_000).toISOString(), f.task.id);
+    f.adapter.findRunAgents = async () => [];
+    const restartVerb = () =>
+      ownerTaskNext(
+        collectOwnerVerbFacts(f.store, f.current()),
+      ).verbs.find((verb) => verb.verb === "restart");
+    // The orphan is what refuses the owner restart while it is unreleased.
+    await assert.rejects(
+      restartC4(f),
+      /Resolve the other retained runs before restarting coordinator recovery/,
+    );
+    await f.engine.resolution.recovery.pass(f.task.id);
+    assert.equal(f.store.run(replaced.id)?.released, true);
+    assert.equal(
+      f.store.run(orphan.id)?.released,
+      true,
+      "the creation its replaced episode no longer names is released too",
+    );
+    assert.ok(f.store.run(orphan.id)?.absentProvenAt);
+    assert.throws(() => f.store.authenticate(orphan.id, token), /Unauthorized/);
+    const released = f.store
+      .eventsAll(f.task.id)
+      .filter((event) => event.kind === "absent_recovery_released")
+      .map((event) => JSON.parse(event.detail));
+    assert.deepEqual(
+      released.map((event) => event.runId).sort(),
+      [orphan.id, replaced.id].sort(),
+    );
+    for (const event of released)
+      assert.equal(event.terminatedBy, "call_settled");
+    // A repeated pass adds nothing.
+    const eventCount = f.store.eventsAll(f.task.id).length;
+    await f.engine.resolution.recovery.pass(f.task.id);
+    assert.equal(f.store.eventsAll(f.task.id).length, eventCount);
+    // The orphan no longer holds every owner verb: next offers an applicable
+    // restart, and the restart applies.
+    const restart = restartVerb();
+    assert.equal(restart?.available, true, restart?.refusal);
+    const version = f.current().version;
+    const restarted = await restartC4(f);
+    assert.ok(
+      restarted.version > version,
+      `the applied restart moved the task: ${restarted.reason}`,
+    );
+  } finally {
+    first.finish();
+    await first.route;
+    await f.close();
+  }
+});
+
+test("C4 keeps an orphaned creation whose recorded attempt never settled", async () => {
+  const f = fixture();
+  try {
+    enableRecovery(f);
+    // The real run writer reserves the attempt on its journal; no settlement is
+    // ever recorded and this process is still its producer.
+    const orphan: Run = {
+      id: "orphaned-unsettled",
+      taskId: f.task.id,
+      role: "recovery",
+      generation: f.current().coordinatorGeneration,
+      head,
+      base,
+      agentId: null,
+      workspaceId: "workspace",
+      profile: profile("coordinator"),
+      status: "intent",
+      createdAt: new Date().toISOString(),
+      lastObservedAt: null,
+      active: null,
+      idleSince: null,
+      completion: null,
+      released: false,
+    };
+    f.store.putRun(orphan);
+    f.store.setCredential(orphan.id, "orphan-token");
+    assert.equal(
+      readCreationAttempt(f.store, f.store.run(orphan.id)!)?.settlement,
+      null,
+    );
+    await f.engine.resolution.recovery.pass(f.task.id);
+    assert.equal(f.store.run(orphan.id)?.released, false);
+    assert.doesNotThrow(() => f.store.authenticate(orphan.id, "orphan-token"));
+    assert.equal(
+      f.store
+        .eventsAll(f.task.id)
+        .some((event) => event.kind === "absent_recovery_released"),
+      false,
+    );
+  } finally {
+    await f.close();
+  }
+});
+
 test("C4 needs a complete online lookup and a recorded producer identity", async () => {
   const f = fixture();
   const launch = startC4(f);

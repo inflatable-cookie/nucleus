@@ -162,6 +162,43 @@ export class CoordinatorPass {
         }
         continue;
       }
+      // A creation whose episode was replaced (an answered escalation resumed
+      // ordinary recovery, an operator return, a superseded episode) is still a
+      // recorded attempt on the task's own journal, so it is released by the
+      // same producer-termination rule instead of holding every owner verb
+      // forever (nucleus#1370). Only a terminated attempt is looked up; an
+      // unsettled producer, a non-empty lookup or an offline host keeps it owned.
+      if (
+        !this.resolution.startsNoRuns() &&
+        !isDispositionActive(t) &&
+        !isDispositionComplete(t) &&
+        !["done", "cancelled"].includes(t.phase) &&
+        !dispatchBlocked(t) &&
+        !reviewFenceHoldsCoordinators(t, this.store)
+      ) {
+        let released = false;
+        for (const creation of this.episode.orphanedCreations(t)) {
+          let observed: Awaited<ReturnType<typeof observeRecoveryCreation>>;
+          try {
+            observed = await observeRecoveryCreation(
+              this.resolution,
+              t,
+              creation,
+            );
+          } catch {
+            // An unreadable lookup proves nothing: the creation stays owned.
+            continue;
+          }
+          if (this.resolution.startsNoRuns()) return;
+          if (this.episode.releaseOrphaned(observed)) released = true;
+        }
+        // A release is a task write: re-read before the episode path compares
+        // its own observation against this task's version.
+        if (released) {
+          t = this.store.task(t.id);
+          incident = t.resolution.recovery;
+        }
+      }
       // Before anyone acts on a stall episode, re-observe the exact participant.
       // A resumed turn or owned tool settles the obsolete episode and its question.
       const fault = t.resolution.incident;
