@@ -947,7 +947,8 @@ export class QueueRuntime {
             this.projectQaRunner(),
             {
               canAdmit: () => !this.closing && this.anyHostConnected(),
-              refreshResponsibleThread: project => this.engine.resolution.responsibleThread(project),
+              refreshResponsibleThread: (project) =>
+                this.engine.resolution.responsibleThread(project),
             },
           );
           void this.scheduledQa.tick();
@@ -1355,7 +1356,7 @@ export class QueueRuntime {
     this.engine.acp = new AcpSessions(this.engine, {
       dataHome: this.dataDir,
       socketPath: this.paseo.socketPath,
-      answerDecision: input => this.questions.answerT3Decision(input),
+      answerDecision: (input) => this.questions.answerT3Decision(input),
     });
     // Local reads are safe as soon as the callback surface and SQLite owner
     // exist. Daemon connection, profile refresh, durable operation resume and
@@ -2063,7 +2064,9 @@ export class QueueRuntime {
   }
 
   /** A committed instruction artifact is a committed handoff by another name: retired (nucleus#1368). */
-  async submitInstruction(_input: z.infer<typeof submitInstructionRpc.input>): Promise<never> {
+  async submitInstruction(
+    _input: z.infer<typeof submitInstructionRpc.input>,
+  ): Promise<never> {
     throw new Error(COMMITTED_HANDOFF_RETIRED);
   }
   configurePool({ entries }: { entries: PoolEntry[] }) {
@@ -2391,7 +2394,9 @@ export class QueueRuntime {
       dataDir: this.dataDir,
       hostRunStateDir: this.hostRunStateDir,
       ownerInstance: this.owner,
-      responsibleThread: async project => (await this.engine.resolution.responsibleThread(project)).thread?.agentId ?? null,
+      responsibleThread: async (project) =>
+        (await this.engine.resolution.responsibleThread(project)).thread
+          ?.agentId ?? null,
       notify: async (agentId, messageId, text) => {
         const identity = parseAgentId(agentId);
         const hostId =

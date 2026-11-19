@@ -141,7 +141,10 @@ export interface CanonicalOptionDefinition {
   valueLabels: Record<string, string>;
 }
 
-const onOff = (label: string, description: string): CanonicalOptionDefinition => ({
+const onOff = (
+  label: string,
+  description: string,
+): CanonicalOptionDefinition => ({
   label,
   description,
   values: ["off", "on"],
@@ -158,7 +161,11 @@ export const CANONICAL_OPTION_DEFINITIONS: Record<
     description: "Processing speed. Faster tiers use more of the subscription.",
     values: ["default", "priority", "ultrafast"],
     defaultValue: "default",
-    valueLabels: { default: "Normal", priority: "Fast", ultrafast: "Ultrafast" },
+    valueLabels: {
+      default: "Normal",
+      priority: "Fast",
+      ultrafast: "Ultrafast",
+    },
   },
   "plan-mode": onOff("Plan mode", "Planning-only collaboration mode."),
   "cyber-access": {
@@ -644,7 +651,10 @@ function canonicalOptionFeature(
 }
 
 /** One canonical option control from several hosts: every value at least one host offers. */
-function mergeOptionFeature(known: HostFeature, other: HostFeature): HostFeature {
+function mergeOptionFeature(
+  known: HostFeature,
+  other: HostFeature,
+): HostFeature {
   if (
     !isCanonicalOption(known.id) ||
     known.type !== "select" ||

@@ -1332,8 +1332,9 @@ read responses and actual lifecycle operations on the private nightly.
 
 When the server cannot be reached, uninstall refuses without changes and says the stored runtime bearer remains active; start T3Code and retry.
 
-The opt-in `NUCLEUS_T3_MODEL_CAPTURE` path writes the decoded codex terra and
-luna, Pi and Claude model entries from the adapter's existing config read. It
+The opt-in `NUCLEUS_T3_MODEL_CAPTURE` path writes the decoded codex, Pi and
+Claude model entries from the adapter's existing config read (every codex model
+since nucleus#1386, so a later capture carries `gpt-6.2-astra`). It
 contains no settings or environment identity, is limited to 16 models per provider
 and 256 KiB, and makes no additional T3 call. Set the path inside run scratch
 when collecting a capture; the file is overwritten on each config read. The

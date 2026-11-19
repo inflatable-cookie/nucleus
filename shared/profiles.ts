@@ -1,6 +1,19 @@
 import { z } from "zod";
 import type { HostCatalog, HostProvider } from "./host";
-import { CANONICAL_OPTION_DEFINITIONS, canonicalOptionValue, canonicalOptionValueLabel, isCanonicalOption, isCanonicalProvider, isRuntimeMode, isThinkingLevel, canonicalThinkingLevels, optionCarriedBy, translateProfile, type HostVocabulary, type LaunchValues } from "./profile-vocabulary";
+import {
+  CANONICAL_OPTION_DEFINITIONS,
+  canonicalOptionValue,
+  canonicalOptionValueLabel,
+  isCanonicalOption,
+  isCanonicalProvider,
+  isRuntimeMode,
+  isThinkingLevel,
+  canonicalThinkingLevels,
+  optionCarriedBy,
+  translateProfile,
+  type HostVocabulary,
+  type LaunchValues,
+} from "./profile-vocabulary";
 
 /**
  * A Nucleus-owned profile record. Nucleus keeps its own list; the host only
@@ -29,9 +42,30 @@ export const nucleusProfileSchema = z
   .strict();
 export type NucleusProfile = z.infer<typeof nucleusProfileSchema>;
 
-const canonicalProvider = z.string().min(1).max(240).refine(isCanonicalProvider, { error: issue => `Provider ${String(issue.input)} is not in Nucleus's vocabulary` });
-const canonicalMode = z.string().min(1).max(240).refine(isRuntimeMode, { error: issue => `Runtime mode ${String(issue.input)} is not in Nucleus's vocabulary` });
-const canonicalThinking = z.string().min(1).max(240).refine(isThinkingLevel, { error: issue => `Thinking level ${String(issue.input)} is not in Nucleus's vocabulary` });
+const canonicalProvider = z
+  .string()
+  .min(1)
+  .max(240)
+  .refine(isCanonicalProvider, {
+    error: (issue) =>
+      `Provider ${String(issue.input)} is not in Nucleus's vocabulary`,
+  });
+const canonicalMode = z
+  .string()
+  .min(1)
+  .max(240)
+  .refine(isRuntimeMode, {
+    error: (issue) =>
+      `Runtime mode ${String(issue.input)} is not in Nucleus's vocabulary`,
+  });
+const canonicalThinking = z
+  .string()
+  .min(1)
+  .max(240)
+  .refine(isThinkingLevel, {
+    error: (issue) =>
+      `Thinking level ${String(issue.input)} is not in Nucleus's vocabulary`,
+  });
 
 /** A profile as a caller creates one: the id is generated when absent; values are canonical. */
 export const nucleusProfileInputSchema = z
@@ -83,8 +117,11 @@ export const profileImportRecordSchema = z
 export type ProfileImportRecord = z.infer<typeof profileImportRecordSchema>;
 
 /** The provider of a host catalog with this host key, or null. */
-export function hostProviderFor(key: string, catalog: HostCatalog): HostProvider | null {
-  return catalog.providers.find(candidate => candidate.key === key) ?? null;
+export function hostProviderFor(
+  key: string,
+  catalog: HostCatalog,
+): HostProvider | null {
+  return catalog.providers.find((candidate) => candidate.key === key) ?? null;
 }
 
 /** The host model a stored profile names, by id or one of its aliases. */
@@ -119,10 +156,17 @@ export function profileAvailability(
   profile: AvailabilityFields,
   catalog: HostCatalog,
 ): ProfileAvailability {
-  return availabilityOn(profile, hostProviderFor(profile.provider, catalog), catalog);
+  return availabilityOn(
+    profile,
+    hostProviderFor(profile.provider, catalog),
+    catalog,
+  );
 }
 
-type AvailabilityFields = Pick<NucleusProfile, "provider" | "model" | "thinkingOptionId" | "modeId" | "featureValues">;
+type AvailabilityFields = Pick<
+  NucleusProfile,
+  "provider" | "model" | "thinkingOptionId" | "modeId" | "featureValues"
+>;
 
 /** The availability answer for a profile whose host provider is already resolved (or absent). */
 function availabilityOn(
@@ -173,14 +217,20 @@ function availabilityOn(
       problem: "Configured thinking level is not supported",
       supportedThinking,
     };
-  if (profile.modeId && profile.modeId !== "default" && !model.modes.some((mode) => mode.id === profile.modeId))
+  if (
+    profile.modeId &&
+    profile.modeId !== "default" &&
+    !model.modes.some((mode) => mode.id === profile.modeId)
+  )
     return {
       available: false,
       // Name the mode and the host's own list: a profile T3Code cannot run is
       // ineligible with its reason visible, never silently changed at launch
       // (nucleus#1143).
       problem: `Configured runtime mode ${profile.modeId} is not one of this host's modes${
-        model.modes.length ? ` (${model.modes.map((mode) => mode.id).join(", ")})` : ""
+        model.modes.length
+          ? ` (${model.modes.map((mode) => mode.id).join(", ")})`
+          : ""
       }`,
       supportedThinking,
     };
@@ -193,8 +243,15 @@ function availabilityOn(
       // A canonical option at the provider's default is never sent, so a model
       // without the control still runs it (nucleus#1386). Launch values carry
       // host spellings; only a canonical catalog read sees the canonical key.
-      if (isCanonicalOption(option) && (value == null || value === CANONICAL_OPTION_DEFINITIONS[option].defaultValue)) continue;
-      const feature = model.features.find((candidate) => candidate.id === option);
+      if (
+        isCanonicalOption(option) &&
+        (value == null ||
+          value === CANONICAL_OPTION_DEFINITIONS[option].defaultValue)
+      )
+        continue;
+      const feature = model.features.find(
+        (candidate) => candidate.id === option,
+      );
       if (!feature)
         return {
           available: false,
@@ -208,7 +265,10 @@ function availabilityOn(
             problem: `Configured option ${option} needs a boolean value`,
             supportedThinking,
           };
-      } else if (typeof value !== "string" || !feature.options.some((choice) => choice.id === value))
+      } else if (
+        typeof value !== "string" ||
+        !feature.options.some((choice) => choice.id === value)
+      )
         return {
           available: false,
           problem: `Configured option ${option} does not offer that value`,
@@ -228,16 +288,25 @@ export function routingProfiles(
   profiles: NucleusProfile[],
   catalog: HostCatalog,
   vocabulary: HostVocabulary,
-): import('./contracts').Profile[] {
+): import("./contracts").Profile[] {
   return profiles.map((profile) => {
     const answer = profileCompatibility(profile, catalog, vocabulary);
     return {
-      id: profile.id, name: profile.name, provider: answer.launch.provider, model: answer.launch.model,
+      id: profile.id,
+      name: profile.name,
+      provider: answer.launch.provider,
+      model: answer.launch.model,
       ...(answer.launch.modeId ? { modeId: answer.launch.modeId } : {}),
-      ...(answer.launch.thinkingOptionId ? { thinkingOptionId: answer.launch.thinkingOptionId } : {}),
-      ...(answer.launch.featureValues ? { featureValues: answer.launch.featureValues } : {}),
+      ...(answer.launch.thinkingOptionId
+        ? { thinkingOptionId: answer.launch.thinkingOptionId }
+        : {}),
+      ...(answer.launch.featureValues
+        ? { featureValues: answer.launch.featureValues }
+        : {}),
       notes: profile.notes,
-      available: answer.available, problem: answer.problem, supportedThinking: answer.supportedThinking,
+      available: answer.available,
+      problem: answer.problem,
+      supportedThinking: answer.supportedThinking,
       ...(answer.translated.length ? { translated: answer.translated } : {}),
     };
   });
@@ -271,42 +340,82 @@ export function profileCompatibility(
   // carries thinking as one of its own option values (T3's claude `effort`, its
   // pi `thinking`) reports them from that option, not as the model's native
   // levels, so a caller reading only the routing snapshot still sees them.
-  const supportedThinking = canonicalThinkingLevelsOn(profile.provider, profile.model, catalog, vocabulary);
-  const withLevels = (answer: Omit<ProfileCompatibility, 'status' | 'reason' | 'translated' | 'launch'>) =>
-    supportedThinking ? { ...answer, supportedThinking } : answer;
+  const supportedThinking = canonicalThinkingLevelsOn(
+    profile.provider,
+    profile.model,
+    catalog,
+    vocabulary,
+  );
+  const withLevels = (
+    answer: Omit<
+      ProfileCompatibility,
+      "status" | "reason" | "translated" | "launch"
+    >,
+  ) => (supportedThinking ? { ...answer, supportedThinking } : answer);
   const translation = translateProfile(vocabulary, profile);
   if (!translation.ok)
-    return { ...withLevels({ available: false, problem: translation.reason, supportedThinking: [] }), status: "unavailable",
-      reason: translation.reason, translated: [], launch: translation.launch };
+    return {
+      ...withLevels({
+        available: false,
+        problem: translation.reason,
+        supportedThinking: [],
+      }),
+      status: "unavailable",
+      reason: translation.reason,
+      translated: [],
+      launch: translation.launch,
+    };
   const launch = translation.launch;
   const provider = hostProviderFor(launch.provider, catalog);
   const answer = withLevels(availabilityOn(launch, provider, catalog));
   // The option this host's table uses to carry a thinking level is not a plain
   // feature: a value it does not offer is a thinking level the host lacks, and
   // the reason names the level rather than the carrier's spelling (nucleus#1364).
-  const entry = isCanonicalProvider(profile.provider) ? vocabulary.providers[profile.provider] : undefined;
+  const entry = isCanonicalProvider(profile.provider)
+    ? vocabulary.providers[profile.provider]
+    : undefined;
   const carrier = entry?.thinkingOption;
   // An option the table uses to carry a canonical option (speed): a value the
   // model does not offer, or a model without the option, is that canonical value
   // the host lacks, named in the operator's words on the profile (nucleus#1386).
-  const optionProblem = !answer.available && entry
-    ? /^Configured option (\S+) (?:is not supported|does not offer that value)$/.exec(answer.problem)
-    : null;
-  const carried = optionProblem && entry ? optionCarriedBy(entry, optionProblem[1]!) : null;
-  const optionReason = carried && entry && optionProblem
-    ? `${vocabulary.label}'s ${launch.model} has no ${CANONICAL_OPTION_DEFINITIONS[carried].label.toLowerCase()} ${canonicalOptionValueLabel(carried,
-      canonicalOptionValue(entry.options![carried]!, carried, launch.featureValues?.[optionProblem[1]!]) ?? launch.featureValues?.[optionProblem[1]!])}`
-    : null;
+  const optionProblem =
+    !answer.available && entry
+      ? /^Configured option (\S+) (?:is not supported|does not offer that value)$/.exec(
+          answer.problem,
+        )
+      : null;
+  const carried =
+    optionProblem && entry ? optionCarriedBy(entry, optionProblem[1]!) : null;
+  const optionReason =
+    carried && entry && optionProblem
+      ? `${vocabulary.label}'s ${launch.model} has no ${CANONICAL_OPTION_DEFINITIONS[carried].label.toLowerCase()} ${canonicalOptionValueLabel(
+          carried,
+          canonicalOptionValue(
+            entry.options![carried]!,
+            carried,
+            launch.featureValues?.[optionProblem[1]!],
+          ) ?? launch.featureValues?.[optionProblem[1]!],
+        )}`
+      : null;
   const reason = answer.available
     ? ""
-    : optionReason ?? hostReason(answer.problem, vocabulary.label, launch.provider, launch, carrier, profile.thinkingOptionId);
+    : (optionReason ??
+      hostReason(
+        answer.problem,
+        vocabulary.label,
+        launch.provider,
+        launch,
+        carrier,
+        profile.thinkingOptionId,
+      ));
   // The two shapes a thinking level takes an unavailable answer in: the level
   // field itself, and the table carrier that holds it as a feature value.
   const thinkingProblem =
     answer.problem === "Configured thinking level is not supported" ||
     (Boolean(carrier) &&
       Boolean(profile.thinkingOptionId) &&
-      (answer.problem === `Configured option ${carrier} does not offer that value` ||
+      (answer.problem ===
+        `Configured option ${carrier} does not offer that value` ||
         // A model that reports no carrier at all: the level is the operator's
         // fact, not the option's spelling (nucleus#1375).
         answer.problem === `Configured option ${carrier} is not supported`));
@@ -316,7 +425,10 @@ export function profileCompatibility(
     // A level the carrier does not offer is reported as the thinking level the
     // host lacks, on the profile the board and selection read, not only on the
     // compatibility row.
-    problem: !answer.available && (thinkingProblem || optionReason) ? reason : answer.problem,
+    problem:
+      !answer.available && (thinkingProblem || optionReason)
+        ? reason
+        : answer.problem,
     reason,
     translated: translation.translated,
     launch,
@@ -324,10 +436,16 @@ export function profileCompatibility(
 }
 
 /** The canonical levels this host can run for one provider's model; null when the host does not report it. */
-function canonicalThinkingLevelsOn(provider: string, modelId: string, catalog: HostCatalog, vocabulary: HostVocabulary) {
+function canonicalThinkingLevelsOn(
+  provider: string,
+  modelId: string,
+  catalog: HostCatalog,
+  vocabulary: HostVocabulary,
+) {
   if (!isCanonicalProvider(provider)) return null;
   const entry = vocabulary.providers[provider];
-  const host = entry && catalog.providers.find(candidate => candidate.key === entry.key);
+  const host =
+    entry && catalog.providers.find((candidate) => candidate.key === entry.key);
   const model = host && hostModelFor(modelId, host);
   return entry && model ? canonicalThinkingLevels(entry, model) : null;
 }
@@ -341,17 +459,37 @@ function hostReason(
   carrier?: string,
   level?: string,
 ): string {
-  const missing = /^Provider (\S+) is not available on this host$/.exec(problem);
+  const missing = /^Provider (\S+) is not available on this host$/.exec(
+    problem,
+  );
   if (missing) return `${label} has no ${missing[1]} provider`;
-  const mode = /^Configured runtime mode (\S+) is not one of this host's modes(?: \((.*)\))?$/.exec(problem);
-  if (mode) return `${label}'s ${providerKey} has no mode ${mode[1]}${mode[2] ? ` (it offers ${mode[2]})` : ""}`;
-  if (problem === "Configured thinking level is not supported") return `${label}'s ${values.model} has no thinking level ${values.thinkingOptionId}`;
-  if (/^Model \S+ is not available from provider/.test(problem)) return `${label}'s ${providerKey} has no model ${values.model}`;
-  const option = /^Configured option (\S+) (is not supported|needs a boolean value|does not offer that value)$/.exec(problem);
-  if (option && carrier && level && option[1] === carrier && option[2] !== "needs a boolean value")
+  const mode =
+    /^Configured runtime mode (\S+) is not one of this host's modes(?: \((.*)\))?$/.exec(
+      problem,
+    );
+  if (mode)
+    return `${label}'s ${providerKey} has no mode ${mode[1]}${mode[2] ? ` (it offers ${mode[2]})` : ""}`;
+  if (problem === "Configured thinking level is not supported")
+    return `${label}'s ${values.model} has no thinking level ${values.thinkingOptionId}`;
+  if (/^Model \S+ is not available from provider/.test(problem))
+    return `${label}'s ${providerKey} has no model ${values.model}`;
+  const option =
+    /^Configured option (\S+) (is not supported|needs a boolean value|does not offer that value)$/.exec(
+      problem,
+    );
+  if (
+    option &&
+    carrier &&
+    level &&
+    option[1] === carrier &&
+    option[2] !== "needs a boolean value"
+  )
     return `${label}'s ${values.model} has no thinking level ${level}`;
-  if (option) return option[2] === "is not supported" ? `${label}'s ${values.model} has no option ${option[1]}`
-    : option[2] === "needs a boolean value" ? `${label}'s ${values.model} option ${option[1]} needs on or off`
-    : `${label}'s ${values.model} option ${option[1]} has no value ${String(values.featureValues?.[option[1]!])}`;
+  if (option)
+    return option[2] === "is not supported"
+      ? `${label}'s ${values.model} has no option ${option[1]}`
+      : option[2] === "needs a boolean value"
+        ? `${label}'s ${values.model} option ${option[1]} needs on or off`
+        : `${label}'s ${values.model} option ${option[1]} has no value ${String(values.featureValues?.[option[1]!])}`;
   return problem.replace("this host", label);
 }

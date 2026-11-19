@@ -1,5 +1,4 @@
 import type { HostCatalog, HostFeature, HostModel } from "../../shared/host";
-import { liveConfigModels } from "./t3-nightly-config";
 
 /**
  * Paseo's own feature read for codex and claude models (nucleus#1386), copied
@@ -65,8 +64,20 @@ export const paseoOptionCatalog = (): HostCatalog => ({
       available: true,
       problem: "",
       models: [
-        model("gpt-6.2-astra", "Astra", [speed(true), planMode], codexLevels, codexModes),
-        model("gpt-6.1-terra", "Terra", [speed(false), planMode], codexLevels, codexModes),
+        model(
+          "gpt-6.2-astra",
+          "Astra",
+          [speed(true), planMode],
+          codexLevels,
+          codexModes,
+        ),
+        model(
+          "gpt-6.1-terra",
+          "Terra",
+          [speed(false), planMode],
+          codexLevels,
+          codexModes,
+        ),
       ],
     },
     {
@@ -86,23 +97,3 @@ export const paseoOptionCatalog = (): HostCatalog => ({
     },
   ],
 });
-
-/**
- * T3's codex entries with `gpt-6.2-astra` beside them. The capture
- * (`t3-nightly-config.ts`) reports the same `serviceTier` and
- * `cyberAccessProgram` descriptors for every codex model it carries, and the
- * live host reports `gpt-6.2-astra` too (its compatibility row names the model);
- * Astra's entry here is terra's descriptors under Astra's slug, not a new probe.
- */
-export const t3ConfigWithAstra = () => {
-  const shapes = structuredClone(liveConfigModels);
-  const codex = shapes.find((provider) => provider.instanceId === "codex")!;
-  const models = codex.models as Array<(typeof codex.models)[number]>;
-  const terra = models.find((entry) => entry.slug === "gpt-6.1-terra")!;
-  (models as unknown[]).unshift({
-    ...structuredClone(terra),
-    slug: "gpt-6.2-astra",
-    name: "GPT-6.2 Astra",
-  });
-  return shapes;
-};

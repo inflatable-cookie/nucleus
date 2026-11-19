@@ -26,10 +26,8 @@ import { withCanonicalOption } from "../client/settings-profile-helpers";
 import type { Profile } from "../shared/contracts";
 import { t3Fake } from "./support/t3code-fake";
 import { acpStub, nucleusProvider } from "./support/t3code-acp";
-import {
-  paseoOptionCatalog,
-  t3ConfigWithAstra,
-} from "./support/paseo-option-catalog";
+import { paseoOptionCatalog } from "./support/paseo-option-catalog";
+import { liveConfigModels } from "./support/t3-nightly-config";
 
 /**
  * nucleus#1386 (Tom, 2026-11-19: "the Astra profile currently complains that T3
@@ -75,6 +73,17 @@ const migrated = (raw: unknown): NucleusProfile =>
   nucleusProfileSchema.parse(
     migrateProfileOptions([raw], vocabularies).profiles[0],
   );
+/**
+ * The Astra profile on T3's real captured codex entry (planner ruling 7fdd9dcb):
+ * no T3 `gpt-6.2-astra` entry has been captured, and every captured codex model
+ * reports the same `serviceTier` and `cyberAccessProgram` options, so the
+ * profile's options run against `gpt-6.1-terra`. Paseo runs it on its real
+ * `gpt-6.2-astra` entry.
+ */
+const onT3Terra = (profile: NucleusProfile): NucleusProfile => ({
+  ...profile,
+  model: "gpt-6.1-terra",
+});
 const withSpeed = (profile: NucleusProfile, speed: string): NucleusProfile => ({
   ...profile,
   featureValues: { ...profile.featureValues, speed },
@@ -84,7 +93,10 @@ async function t3Fixture(t: TestContext) {
   const root = mkdtempSync(join(tmpdir(), "profile-options-t3-"));
   const directory = await realpath(root);
   const server = await t3Fake(t, directory);
-  server.controls.providers = [...t3ConfigWithAstra(), nucleusProvider];
+  server.controls.providers = [
+    ...structuredClone(liveConfigModels),
+    nucleusProvider,
+  ];
   const acp = acpStub(server.threads);
   const host = new T3CodeHost({
     endpoint: server.endpoint,
@@ -120,8 +132,18 @@ test("the migration moves every host spelling to its canonical key once, keeping
     featureValues: { service_tier: "priority", serviceTier: "default" },
     notes: "",
   };
+  // Each option settles on its own: an unreadable cyber access value stays and is
+  // listed, and the understood speed still moves.
+  const mixed = {
+    id: "synthetic-mixed",
+    name: "Mixed",
+    provider: "codex",
+    model: "gpt-6.2-astra",
+    featureValues: { service_tier: "priority", cyberAccessProgram: "elevated" },
+    notes: "",
+  };
   const { profiles, record } = migrateProfileOptions(
-    [astra, claudeFast, unmatched, clash],
+    [astra, claudeFast, unmatched, clash, mixed],
     vocabularies,
   );
   const byId = Object.fromEntries(
@@ -137,18 +159,47 @@ test("the migration moves every host spelling to its canonical key once, keeping
     { speed: "priority", ultracode: "off" },
     "claude's fast mode is the same Speed setting; T3's ultracode id is its own canonical key",
   );
-  assert.deepEqual(byId["synthetic-turbo"], unmatched, "an unmatched value stays as stored");
-  assert.deepEqual(byId["synthetic-clash"], clash, "two spellings that disagree stay as stored");
+  assert.deepEqual(
+    byId["synthetic-turbo"],
+    unmatched,
+    "an unmatched value stays as stored",
+  );
+  assert.deepEqual(
+    byId["synthetic-clash"],
+    clash,
+    "two spellings that disagree stay as stored",
+  );
+  assert.deepEqual(
+    byId["synthetic-mixed"]!.featureValues,
+    { cyberAccessProgram: "elevated", speed: "priority" },
+    "the known option moves while the unmatched one stays",
+  );
+  const listed = [
+    ["synthetic-turbo", "featureValues.service_tier", "turbo"],
+    ["synthetic-clash", "featureValues.service_tier", "priority"],
+    ["synthetic-clash", "featureValues.serviceTier", "default"],
+    ["synthetic-mixed", "featureValues.cyberAccessProgram", "elevated"],
+  ];
   assert.deepEqual(
     record.unknown.map((item) => [item.profileId, item.field, item.value]),
-    [
-      ["synthetic-turbo", "featureValues.service_tier", "turbo"],
-      ["synthetic-clash", "featureValues.serviceTier", "default"],
-    ],
+    listed,
+  );
+  assert.deepEqual(
+    record.changes.map((change) => change.profileId),
+    ["synthetic-astra", "synthetic-opus-fast", "synthetic-mixed"],
   );
   const again = migrateProfileOptions(profiles, vocabularies);
   assert.deepEqual(again.profiles, profiles, "a second run changes nothing");
   assert.deepEqual(again.record.changes, []);
+  assert.deepEqual(
+    again.record.unknown.map((item) => [
+      item.profileId,
+      item.field,
+      item.value,
+    ]),
+    listed,
+    "what stays unmatched is listed again, unchanged",
+  );
 });
 
 test("the store runs the option migration once and records it; a second open changes nothing", (t) => {
@@ -185,12 +236,16 @@ test("the store runs the option migration once and records it; a second open cha
 test("the migrated Astra profile runs on both hosts and sends no default", async (t) => {
   const { catalog } = await t3Fixture(t);
   const profile = migrated(astra);
-  for (const [vocabulary, read] of [
-    [paseoVocabulary, paseoOptionCatalog()],
-    [t3codeVocabulary, catalog],
+  for (const [vocabulary, read, values] of [
+    [paseoVocabulary, paseoOptionCatalog(), profile],
+    [t3codeVocabulary, catalog, onT3Terra(profile)],
   ] as const) {
-    const answer = profileCompatibility(profile, read, vocabulary);
-    assert.equal(answer.status, "works", `${vocabulary.label}: ${answer.reason}`);
+    const answer = profileCompatibility(values, read, vocabulary);
+    assert.equal(
+      answer.status,
+      "works",
+      `${vocabulary.label}: ${answer.reason}`,
+    );
     assert.equal(
       answer.launch.featureValues,
       undefined,
@@ -202,14 +257,26 @@ test("the migrated Astra profile runs on both hosts and sends no default", async
 test("speed priority launches on both hosts with each host's own spelling", async (t) => {
   const { host, server, directory, catalog } = await t3Fixture(t);
   const profile = withSpeed(migrated(astra), "priority");
-  const [paseo] = routingProfiles([profile], paseoOptionCatalog(), paseoVocabulary);
+  const [paseo] = routingProfiles(
+    [profile],
+    paseoOptionCatalog(),
+    paseoVocabulary,
+  );
   assert.equal(paseo!.available, true, paseo!.problem);
   assert.deepEqual(paseo!.featureValues, { service_tier: "priority" });
   assert.deepEqual(paseo!.translated, ["speed"]);
 
-  const [t3] = routingProfiles([profile], catalog, t3codeVocabulary);
+  const [t3] = routingProfiles([onT3Terra(profile)], catalog, t3codeVocabulary);
   assert.equal(t3!.available, true, t3!.problem);
   assert.deepEqual(t3!.featureValues, { serviceTier: "priority" });
+  // Luna, T3's other captured codex entry, carries it the same way.
+  const [luna] = routingProfiles(
+    [{ ...profile, model: "gpt-6-luna" }],
+    catalog,
+    t3codeVocabulary,
+  );
+  assert.equal(luna!.available, true, luna!.problem);
+  assert.deepEqual(luna!.featureValues, { serviceTier: "priority" });
   const workspace = await host.createWorkspace({
     title: "Synthetic worktree",
     requestId: "workspace-intent",
@@ -255,21 +322,33 @@ test("speed priority launches on both hosts with each host's own spelling", asyn
 test("a speed T3 can't express excludes the profile from T3 selection with a per-host note, never a send refusal", async (t) => {
   const { catalog } = await t3Fixture(t);
   const profile = withSpeed(migrated(astra), "ultrafast");
-  const [paseo] = routingProfiles([profile], paseoOptionCatalog(), paseoVocabulary);
+  const [paseo] = routingProfiles(
+    [profile],
+    paseoOptionCatalog(),
+    paseoVocabulary,
+  );
   assert.equal(paseo!.available, true, "Paseo's Astra offers ultrafast");
   assert.deepEqual(paseo!.featureValues, { service_tier: "ultrafast" });
 
-  const answer = profileCompatibility(profile, catalog, t3codeVocabulary);
+  const answer = profileCompatibility(
+    onT3Terra(profile),
+    catalog,
+    t3codeVocabulary,
+  );
   assert.equal(answer.status, "unavailable");
   assert.equal(answer.reason, "T3Code can't express speed Ultrafast for codex");
-  const [t3] = routingProfiles([profile], catalog, t3codeVocabulary);
+  const [t3] = routingProfiles([onT3Terra(profile)], catalog, t3codeVocabulary);
   assert.equal(t3!.available, false, "selection excludes it on T3");
   assert.equal(t3!.problem, "T3Code can't express speed Ultrafast for codex");
 
   // A model the table can carry but that does not offer the value is the same
   // canonical fact on that host, named in the operator's words.
   const terra = { ...profile, model: "gpt-6.1-terra" };
-  const onPaseo = profileCompatibility(terra, paseoOptionCatalog(), paseoVocabulary);
+  const onPaseo = profileCompatibility(
+    terra,
+    paseoOptionCatalog(),
+    paseoVocabulary,
+  );
   assert.equal(onPaseo.status, "unavailable");
   assert.equal(onPaseo.reason, "Paseo's gpt-6.1-terra has no speed Ultrafast");
   assert.equal(onPaseo.problem, onPaseo.reason);
@@ -281,11 +360,14 @@ test("the editor shows one Speed control from both hosts and choosing it clears 
     canonicalCatalog(paseoVocabulary, paseoOptionCatalog()),
     canonicalCatalog(t3codeVocabulary, catalog),
   ]);
-  const astraModel = merged.providers
-    .find((provider) => provider.key === "codex")!
-    .models.find((model) => model.id === "gpt-6.2-astra")!;
+  const codex = merged.providers.find((provider) => provider.key === "codex")!;
+  // Terra is reported by both hosts: Paseo's `service_tier` and T3's
+  // `serviceTier` merge into the one Speed control.
+  const terraModel = codex.models.find(
+    (model) => model.id === "gpt-6.1-terra",
+  )!;
   assert.deepEqual(
-    astraModel.features.map((feature) => [feature.id, feature.label]),
+    terraModel.features.map((feature) => [feature.id, feature.label]),
     [
       ["speed", "Speed"],
       ["plan-mode", "Plan mode"],
@@ -293,10 +375,19 @@ test("the editor shows one Speed control from both hosts and choosing it clears 
     ],
     "no service_tier, serviceTier, plan_mode or cyberAccessProgram",
   );
+  const astraModel = codex.models.find(
+    (model) => model.id === "gpt-6.2-astra",
+  )!;
+  assert.deepEqual(
+    astraModel.features.map((feature) => feature.id),
+    ["speed", "plan-mode"],
+  );
   const speed = astraModel.features[0]!;
   assert.equal(speed.type, "select");
   assert.deepEqual(
-    speed.type === "select" ? speed.options.map((option) => [option.id, option.label]) : [],
+    speed.type === "select"
+      ? speed.options.map((option) => [option.id, option.label])
+      : [],
     [
       ["default", "Normal"],
       ["priority", "Fast"],
@@ -307,12 +398,25 @@ test("the editor shows one Speed control from both hosts and choosing it clears 
     .find((provider) => provider.key === "claude")!
     .models.find((model) => model.id === "claude-opus-5-5")!;
   assert.ok(opus.features.some((feature) => feature.id === "speed"));
-  assert.ok(!opus.features.some((feature) => ["fast_mode", "fastMode"].includes(feature.id)));
+  assert.ok(
+    !opus.features.some((feature) =>
+      ["fast_mode", "fastMode"].includes(feature.id),
+    ),
+  );
 
   // The editor judges the canonical profile against the canonical catalog.
-  assert.equal(profileAvailability(withSpeed(migrated(astra), "priority"), merged).available, true);
+  assert.equal(
+    profileAvailability(withSpeed(migrated(astra), "priority"), merged)
+      .available,
+    true,
+  );
   assert.deepEqual(
-    withCanonicalOption("codex", { service_tier: "turbo", plan_mode: false }, "speed", "priority"),
+    withCanonicalOption(
+      "codex",
+      { service_tier: "turbo", plan_mode: false },
+      "speed",
+      "priority",
+    ),
     { plan_mode: false, speed: "priority" },
   );
 });
