@@ -311,9 +311,16 @@ export class CoordinatorEpisode {
       released: true,
       status: "finished",
     });
-    const summary = live
-      ? liveNoopSummary(live)
-      : `live: task is waiting; ${wait!.reason}`;
+    // A `cannot` on live work still settles as a live no-op with no question; its
+    // own reason stays visible in the record instead of being dropped
+    // (nucleus#1388 review, follow-up B).
+    const cannotReason =
+      action.coordinatorAction?.verb === "cannot"
+        ? action.coordinatorAction.reason
+        : null;
+    const summary = `${
+      live ? liveNoopSummary(live) : `live: task is waiting; ${wait!.reason}`
+    }${cannotReason ? `; cannot: ${cannotReason}` : ""}`;
     const recovery = current.resolution.recovery;
     const incident = current.resolution.incident;
     const ownsIncident = Boolean(

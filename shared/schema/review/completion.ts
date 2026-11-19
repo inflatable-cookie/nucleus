@@ -1,6 +1,9 @@
 import { z } from "zod";
 import { laneDocumentRefSchema, type LaneDocumentRef } from "../briefs";
-import { recoveryActionSchema } from "../task-common";
+import {
+  recoveryActionSchema,
+  retiredNarrowCoordinatorActions,
+} from "../task-common";
 import { REPORT_HEADLINE_STORED_MAX } from "../../task-detail-summary";
 import {
   proofFileListSchema,
@@ -89,6 +92,15 @@ export const coordinatorActionSchema = z.discriminatedUnion("verb", [
   z
     .object({
       verb: z.literal("none"),
+      reason: z.string().trim().min(1).max(4000),
+    })
+    .strict(),
+  // Retired narrow actions, kept parse-only for stored rows the recovery pass must
+  // refuse as retired with the owner verb that replaced them. Intake refuses a new
+  // report naming one by name (nucleus#1388).
+  z
+    .object({
+      verb: z.enum(retiredNarrowCoordinatorActions),
       reason: z.string().trim().min(1).max(4000),
     })
     .strict(),

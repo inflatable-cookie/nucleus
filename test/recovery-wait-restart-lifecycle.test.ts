@@ -817,6 +817,46 @@ test("a real {verb: cannot} report settles as observed and asks the planner with
   }
 });
 
+test("a stored legacy retry_resolution coordinator action is refused as retired and names restart", async () => {
+  const f = fixture();
+  try {
+    const recovery = await launchedCoordinator(f);
+    // Brief v2 acceptance: a real legacy narrow report. `retry_resolution` was a
+    // task control folded into `restart` on 2026-10-19; a stored coordinator report
+    // naming it must be refused as retired, naming the verb that replaced it.
+    f.store.putRun({
+      ...f.store.run(recovery.id)!,
+      completion: {
+        eventId: randomUUID(),
+        taskId: f.submitted.id,
+        runId: recovery.id,
+        status: "recovered",
+        summary: "Retry the resolution check",
+        coordinatorAction: { verb: "retry_resolution", reason: "Retry" },
+        coordinatorGeneration: recovery.generation,
+      } as Completion,
+    });
+    await f.engine.resolution.recovery.pass(f.submitted.id);
+    assert.equal(
+      f.current().resolution.recovery?.action?.status,
+      "refused",
+      JSON.stringify(f.current().resolution.recovery),
+    );
+    assert.match(
+      f.current().resolution.recovery?.summary ?? "",
+      /retry_resolution is a retired narrow action and applies nothing; use restart/,
+    );
+    assert.match(
+      f.events("recovery_escalated").at(-1)?.detail ?? "",
+      /retry_resolution is a retired narrow action and applies nothing; use restart/,
+      "the retired refusal is recorded through the not-applied path",
+    );
+    assert.equal(f.store.run(recovery.id)?.released, true);
+  } finally {
+    await f.close();
+  }
+});
+
 test("a stored legacy narrow action is refused as retired and names the owner verb", async () => {
   const f = fixture();
   try {

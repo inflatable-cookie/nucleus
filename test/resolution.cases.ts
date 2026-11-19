@@ -12423,6 +12423,30 @@ test("a retired recoveryAction report is refused at intake and binds nothing, so
       null,
       "nothing is stored",
     );
+    // A retired narrow coordinator action is refused by name too, with the owner
+    // verb that replaced it (nucleus#1388): only a stored legacy row reaches the
+    // recovery pass's retired refusal.
+    assert.throws(
+      () =>
+        f.engine.resolution.complete(
+          {
+            eventId: randomUUID(),
+            taskId: f.task.id,
+            runId: recovery.id,
+            status: "recovered",
+            summary: "Retry the resolution check",
+            coordinatorAction: { verb: "retry_resolution", reason: "Retry" },
+            coordinatorGeneration: recovery.generation,
+          },
+          token,
+        ),
+      /retry_resolution is a retired narrow action; use restart/,
+    );
+    assert.equal(
+      f.store.run(recovery.id)?.completion,
+      null,
+      "nothing is stored",
+    );
     f.engine.resolution.complete(
       {
         eventId: randomUUID(),

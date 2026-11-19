@@ -71,27 +71,31 @@ export class RecoverySettlement {
     } catch {
       /* the settlement stands even if its record could not be written */
     }
-    this.resolution.recovery.settleObservedNoAction(task, run, binding);
-    const settled = this.store.task(task.id);
-    if (
-      settled.resolution.recovery?.action?.eventId !== binding.eventId ||
-      settled.resolution.recovery.action.status !== "applied"
-    )
-      return;
-    const question = `The coordinator cannot settle this stop: ${reason}`;
-    this.resolution.openPlannerEscalation(settled, {
-      cause: digest(
-        `coordinator-cannot:${settled.id}:${settled.resolution.recovery?.id ?? ""}`,
-      ),
-      runId: run.id,
-      question,
-      payload: {
-        cause: "coordinator-cannot",
-        reason,
+    // The settlement and the question are one durable act: a crash between them
+    // used to leave the episode resolved with nobody asked (review follow-up C).
+    this.store.transaction(() => {
+      this.resolution.recovery.settleObservedNoAction(task, run, binding);
+      const settled = this.store.task(task.id);
+      if (
+        settled.resolution.recovery?.action?.eventId !== binding.eventId ||
+        settled.resolution.recovery.action.status !== "applied"
+      )
+        return;
+      const question = `The coordinator cannot settle this stop: ${reason}`;
+      this.resolution.openPlannerEscalation(settled, {
+        cause: digest(
+          `coordinator-cannot:${settled.id}:${settled.resolution.recovery?.id ?? ""}`,
+        ),
+        runId: run.id,
         question,
-        report: binding.eventId,
-      },
-      suggestedVerbs: settled.resolution.stop?.suggestedVerbs,
+        payload: {
+          cause: "coordinator-cannot",
+          reason,
+          question,
+          report: binding.eventId,
+        },
+        suggestedVerbs: settled.resolution.stop?.suggestedVerbs,
+      });
     });
   }
   /** Apply one coordinator report as the corresponding Spec 050 owner verb. */

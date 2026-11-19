@@ -10,6 +10,7 @@ import type {
 } from "../../shared/contracts";
 import { requestOnly } from "../../shared/pool";
 import { requestedTier } from "../../shared/demand";
+import { retiredNarrowActionInstead } from "../../shared/schema/task-common";
 import type { ResolutionChanges } from "./task-stops";
 
 /** A worker return cannot be valid after review; a held lifecycle check is the only cheap recovery left. */
@@ -58,27 +59,6 @@ export function coordinatorReportMatches(t: Task): boolean {
   return Boolean(progress && progress === taskProgressDigest(t));
 }
 
-/**
- * The retired narrow actions, each with the owner verb that does its work now.
- * A stored report naming one applies nothing: it is refused *as retired*, and the
- * refusal names the verb to use instead (nucleus#1388). Only these shapes are
- * retired; a report that names no action is a settled observation.
- */
-const RETIRED_NARROW_ACTIONS: Record<string, string> = {
-  // Spec 049 coordinator recovery actions, kept readable on old completions and
-  // bindings (`completion.recoveryAction`); nothing applies them.
-  retry: "restart",
-  revise: "move to=work",
-  resume_worker: "restart role=worker",
-  reassign_origin: "restart role=coordinator",
-  reconcile: "restart",
-  // The four narrow task controls folded into the owner verbs (Tom, 2026-10-19).
-  continue_review: "restart role=reviewer",
-  retry_resolution: "restart",
-  resolve_escalation: "restart",
-  repin_instruction: "amend_brief with no text",
-};
-
 /** A retired narrow action a stored report names, and the owner verb that replaced it. */
 export type RetiredNarrowAction = { action: string; instead: string };
 
@@ -89,7 +69,7 @@ export function retiredNarrowAction(
     binding.recoveryAction ?? null,
     binding.coordinatorAction?.verb ?? null,
   ]) {
-    const instead = name ? RETIRED_NARROW_ACTIONS[name] : undefined;
+    const instead = name ? retiredNarrowActionInstead(name) : null;
     if (name && instead) return { action: name, instead };
   }
   return null;

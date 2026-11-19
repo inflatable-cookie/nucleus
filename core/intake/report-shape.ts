@@ -1,4 +1,5 @@
 import type { Completion, Run, Task } from "../../shared/contracts";
+import { retiredNarrowActionInstead } from "../../shared/schema/task-common";
 import { QUEUE_BRANCH_PATTERN } from "../git/index";
 import { proofResultRefusal } from "./proof-settlement";
 
@@ -50,6 +51,13 @@ export function completionRefusal(
     return "Provider unavailability requires blocked/error status";
   if (!allowed.includes(input.status))
     return "Result is not valid for this run role";
+  if (role === "recovery" && input.coordinatorAction) {
+    // A retired narrow shape is refused by name, with the owner verb that does its
+    // work now (nucleus#1388): the stored row stays parse-only history.
+    const instead = retiredNarrowActionInstead(input.coordinatorAction.verb);
+    if (instead)
+      return `${input.coordinatorAction.verb} is a retired narrow action; use ${instead}`;
+  }
   if (role === "recovery" && (input.recoveryAction || input.replacementAgentId))
     return "recoveryAction is retired; report coordinatorAction {verb: restart|route|move|retry_effect|none|cannot, reason} instead";
   if (
