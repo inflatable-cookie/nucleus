@@ -9,6 +9,8 @@ import {
 import { CriticalReviewFallback } from "./dispatch/critical-review-fallback";
 import { ValidationRetry } from "./qa/validation-retry";
 import { PlannerPresence } from "./questions/planner-presence";
+import { ResponsibleThreadResolver } from "./questions/responsible-thread-resolver";
+import { normalizeRepositoryOrigin } from "../shared/lanes";
 import { OrphanRuns } from "./recovery/orphan-runs";
 import { ProgressContinuation } from "./review/progress-continuation";
 import { SchedulingLifecycle } from "./scheduling/lifecycle";
@@ -372,6 +374,19 @@ export class Resolution {
   readonly validationRetry = new ValidationRetry(
     portsContext(this, ["store", "update"]),
   );
+
+  readonly responsibleThreads = new ResponsibleThreadResolver({
+    hostIds: () => {
+      const ids = this.hostPorts.ids?.() ?? [];
+      const ambient = (this.adapter as { hostId?: string }).hostId;
+      return [...new Set([...ids, ...(ambient ? [ambient] : [])])];
+    },
+    hostOnline: id => this.hostPorts.online(id),
+    inventory: id => this.withHost(id, () => this.host.listLiveAgents()),
+    tasks: () => this.store.allTasks(),
+    runs: () => this.store.runs(),
+    projectFor: (path, origin) => this.store.projectFor(path, normalizeRepositoryOrigin(origin ?? '')),
+  });
 
   readonly plannerPresence = new PlannerPresence(
     portsContext(this, [

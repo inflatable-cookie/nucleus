@@ -930,6 +930,7 @@ export class Engine {
       workerProviderUnavailable: (task) => this.workerProviderUnavailable(task),
       withHost: (id, fn) => this.withHost(id, fn),
       online: (id) => this.hostOnline(id),
+      ids: () => this.hostIds(),
       inventoryMatches: (id) => this.inventoryHostMatches(id),
       originAvailable: (id) => this.hostAvailable(id),
       // A host-dependent call arriving just after a roll waits out the runtime's

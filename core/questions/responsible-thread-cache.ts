@@ -63,7 +63,9 @@ export class ResponsibleThreadCache {
     if (current) return current;
     const generation = this.generations.get(projectKey) ?? 0;
     const read = this.collect(hosts).then(result => {
-      if ((this.generations.get(projectKey) ?? 0) === generation) this.entries.set(projectKey, result);
+      if ((this.generations.get(projectKey) ?? 0) !== generation)
+        throw new Error('Responsible thread inventory was invalidated');
+      this.entries.set(projectKey, result);
       return result;
     }).finally(() => {
       if (this.pending.get(projectKey) === read) this.pending.delete(projectKey);

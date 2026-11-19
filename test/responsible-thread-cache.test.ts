@@ -24,7 +24,7 @@ test('caches briefly, invalidates, and prevents an old inventory restoring the c
   cache.invalidate('project');
   const fresh = await cache.resolve('project', [host]);
   finish([fact('old', '2026-01-01')]);
-  await old;
+  await assert.rejects(old, /inventory was invalidated/);
   assert.deepEqual(await cache.resolve('project', [host]), fresh);
   assert.equal(calls, 2);
   now = 101;

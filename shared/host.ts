@@ -325,6 +325,10 @@ export interface HostLiveAgent {
   workspaceId: WorkspaceId | null;
   /** Wire labels when the host listing carries them; used to classify planner candidates. */
   labels?: Record<string, string>;
+  /** Native working directory and repository root, when the host reports them. */
+  directory?: string | null;
+  repositoryRoot?: string | null;
+  updatedAt?: string | null;
 }
 
 /**
