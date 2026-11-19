@@ -1140,8 +1140,8 @@ Git budget and the 1,432-second archive maximum. The observation inventory pass
 gets the long bound as a whole because a legitimate walk accumulates pages, while
 each page keeps the ordinary bound, so one stuck page is abandoned in a minute
 and the pass itself may finish (nucleus#1179 review 5890172363). The exemption is
-per effect, never per class, so `archiveAgent` and `reconcileSettledThreads`
-(cleanup) and `recoverTaskWorkspace` and `createCloseoutWorkspace` (workspace)
+per effect, never per class, so `archiveAgent` (cleanup) and
+`recoverTaskWorkspace` and `createCloseoutWorkspace` (workspace)
 are abandoned at the ordinary bound like every other effect (nucleus#1179 review
 5889669364). A call past its deadline is abandoned as unknown: the caller
 receives an unknown-delivery answer naming the holder and how long it held, the
