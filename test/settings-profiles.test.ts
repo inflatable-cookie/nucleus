@@ -56,7 +56,7 @@ const catalog: StoredHostCatalog = {
     },
     {
       key: 'claude', label: 'Claude', available: true, problem: '',
-      models: [{ id: 'claude-1', label: 'Claude 1', aliases: [], thinkingOptions: [], defaultThinkingOptionId: null, modes: [], features: [] }],
+      models: [{ id: 'claude-1', label: 'Claude 1', aliases: [], thinkingOptions: [], defaultThinkingOptionId: null, modes: [], features: [{ type: 'toggle', id: 'fast', label: 'Fast', value: false }] }],
     },
     {
       key: 'cursor', label: 'Cursor', available: false, problem: 'Sign in required to use Cursor.',
@@ -275,10 +275,10 @@ test('the add flow uses dropdowns, Host default plain text, and a short unavaila
     ui.press('Provider: Cursor · needs sign-in');
     await settle(() => Boolean(ui.query('Model, Choose a model')));
     choose(ui, 'Model', 'Cursor 1, cursor-1', 'Choose a model');
-    assert.equal(ui.query('Mode, Host default'), undefined, 'an empty mode list is not a dropdown');
-    assert.equal(ui.query('Thinking, Host default'), undefined, 'an empty thinking list is not a dropdown');
+    assert.equal(ui.get('Mode, Host default').type, 'Text', 'an empty mode list is plain text, not a dropdown');
+    assert.equal(ui.get('Thinking, Host default').type, 'Text', 'an empty thinking list is plain text, not a dropdown');
     const hostDefault = ui.ofType('Text').filter(node => node.children.join('') === 'Host default');
-    assert.equal(hostDefault.length, 1, 'only Thinking remains when Mode has no host choice');
+    assert.equal(hostDefault.length, 2, 'Mode and Thinking stay one plain control each when the host offers no choice');
     assert.equal(ui.query('Notes'), undefined);
     assert.doesNotMatch(ui.text(), /\/app|Feature values come from one project directory|Available on this host|Changes save automatically/);
   } finally { ui.update(h('View', null)); }
@@ -587,14 +587,16 @@ test('a refused Remove or Duplicate names the reason and keeps the profile', asy
 });
 
 
-test('task 1158: a profile shows one quiet icon naming the hosts it cannot run on, and nothing with one host', async () => {
+test('task 1158: a profile shows one quiet icon naming the hosts it cannot run on, and the reason alone with one host', async () => {
   const { hostCompatibilityNote } = await load();
   const hosts = [{ hostId: 'paseo:1', kind: 'paseo', label: 'Paseo', online: true, readAt: null }, { hostId: 't3code:1', kind: 't3code', label: 'T3Code', online: true, readAt: null }];
   const rows = [
     { profileId: 'imported', hostId: 'paseo:1', status: 'works', reason: '', translated: [], launch: null },
     { profileId: 'imported', hostId: 't3code:1', status: 'unavailable', reason: "T3Code can't run claude in mode plan", translated: [], launch: null },
   ];
-  assert.equal(hostCompatibilityNote({ hosts: hosts.slice(0, 1), rows } as never, 'imported'), '', 'one host shows nothing');
+  assert.equal(hostCompatibilityNote({ hosts: hosts.slice(0, 1), rows } as never, 'imported'), '', 'one host it runs on shows nothing');
+  // nucleus#1365: with one host, the reason it can't run there still shows, naming the host.
+  assert.equal(hostCompatibilityNote({ hosts: hosts.slice(1), rows } as never, 'imported'), "T3Code can't run claude in mode plan");
   assert.equal(hostCompatibilityNote({ hosts, rows } as never, 'imported'), "Not on T3Code: T3Code can't run claude in mode plan");
   assert.equal(hostCompatibilityNote({ hosts, rows: rows.slice(0, 1) } as never, 'imported'), '', 'works everywhere shows nothing');
   const state = fixture();
@@ -696,8 +698,9 @@ test('model option fields flow two to a row, an odd last one spans the row, and 
     assert.match(ui.text(), /Host default/, 'an empty thinking list stays plain text beside Mode');
     choose(ui, 'Provider', 'Claude', 'Codex');
     choose(ui, 'Model', 'Claude 1, claude-1', 'Choose a model');
-    await settle(() => rows().length === 1 && rows()[0].length === 1);
-    assert.equal(rows()[0][0].props.style.flex, 1, 'a lone option spans the row');
+    // Mode and Thinking are always one control each (nucleus#1365); the one feature is the odd last.
+    await settle(() => rows().length === 2 && rows()[1].length === 1);
+    assert.equal(rows()[1][0].props.style.flex, 1, 'a lone option spans the row');
   } finally { ui.update(h('View', null)); }
 });
 

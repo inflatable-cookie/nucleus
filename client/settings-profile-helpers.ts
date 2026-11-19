@@ -3,6 +3,8 @@ import { profileAvailability, hostModelFor, type NucleusProfile } from "../share
 import type { PoolEntry, Profile, Project, RepositorySettings, UiQueueState } from "../shared/contracts";
 import type { HostCatalog, HostFeature, HostModel, HostProvider } from "../shared/host";
 import * as api from "../shared/contracts";
+import { isCanonicalProvider, thinkingCarriers } from "../shared/profile-vocabulary";
+import { HOST_VOCABULARIES } from "../hosts/vocabularies";
 
 export const COST_LEVELS = ["very_low", "low", "medium", "high", "very_high"] as const;
 export const levelLabel = (level: string) => level.charAt(0).toUpperCase() + level.slice(1).replaceAll("_", " ");
@@ -53,14 +55,32 @@ export type CompatibilityRead = { hosts: api.ProfileCompatibilityHost[]; rows: a
 /**
  * The one quiet status a profile row may show for the hosts (task 1158): nothing
  * while it runs on every registered host, else the hosts it can't run on with
- * each reason, for the icon's popover. Only when Nucleus serves more than one host.
+ * each reason, for the icon's popover. With one host the reason stands alone (it
+ * names the host): a level that host can't express is still a per-host note on
+ * the row, never only "Unavailable" (nucleus#1365).
  */
 export function hostCompatibilityNote(read: CompatibilityRead | undefined, profileId: string): string {
-  if (!read?.hosts || read.hosts.length < 2) return "";
+  if (!read?.hosts?.length) return "";
+  const single = read.hosts.length === 1;
   return read.hosts.flatMap(host => {
     const row = read.rows.find(item => item.profileId === profileId && item.hostId === host.hostId);
-    return row?.status === "unavailable" ? [`Not on ${host.label}: ${row.reason}`] : [];
+    return row?.status === "unavailable" ? [single ? row.reason : `Not on ${host.label}: ${row.reason}`] : [];
   }).join("\n");
+}
+
+/**
+ * Stored option values that carry this provider's thinking on some host but are
+ * not a feature the editor shows (nucleus#1365): a carrier the migration kept
+ * because it had no canonical match or disagreed with the level. The editor shows
+ * them under its one Thinking control, and choosing a level there clears them.
+ */
+export function hiddenThinkingValues(provider: string, featureValues: Record<string, unknown>, shown: readonly HostFeature[]): [string, unknown][] {
+  if (!isCanonicalProvider(provider)) return [];
+  const carriers = new Set(Object.values(HOST_VOCABULARIES).flatMap(vocabulary => {
+    const entry = vocabulary.providers[provider];
+    return entry ? [...thinkingCarriers(vocabulary, entry)] : [];
+  }));
+  return Object.entries(featureValues).filter(([option]) => carriers.has(option) && !shown.some(feature => feature.id === option));
 }
 
 /**

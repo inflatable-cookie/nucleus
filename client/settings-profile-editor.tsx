@@ -10,7 +10,7 @@ import { hostModelFor, profileAvailability, type NucleusProfile } from "../share
 import { PROFILE_CAPABILITY_LEVELS } from "../shared/pool";
 import type { HostCatalog, HostFeature, HostModel, HostProvider } from "../shared/host";
 import type { PoolEntry, Profile, Project, RepositorySettings, UiQueueState } from "../shared/contracts";
-import { COST_LEVELS, HOST_DEFAULT, PAIRED_MIN_WIDTH, defaultPoolEntry, emptyProfileDraft, featureFingerprint, hostCompatibilityNote, identityCreateInput, identityValid, levelLabel, modelWords, namedProvider, plainWords, profileDraft, profileRowStatus, projectNameForPath, providerOptionLabel, type CatalogRead, type CompatibilityRead, type ProfileDraft } from "./settings-profile-helpers";
+import { COST_LEVELS, HOST_DEFAULT, PAIRED_MIN_WIDTH, defaultPoolEntry, emptyProfileDraft, featureFingerprint, hostCompatibilityNote, identityCreateInput, hiddenThinkingValues, identityValid, levelLabel, modelWords, namedProvider, plainWords, profileDraft, profileRowStatus, projectNameForPath, providerOptionLabel, type CatalogRead, type CompatibilityRead, type ProfileDraft } from "./settings-profile-helpers";
 
 export function ProfileRow({ c, profile, board, stored, compatibility, catalog, catalogs, directory, projects, repositories, state, busy, editing, poolSave, actionStatus, onEdit, onCreated, onDuplicate, onRemove, onChooseDirectory }: {
   c: Colors; profile: NucleusProfile | Profile; board: Profile | null; stored: NucleusProfile | null; compatibility: CompatibilityRead | undefined; catalog: HostCatalog | undefined;
@@ -134,6 +134,15 @@ export function ProfileEditor({ c, catalog, catalogs, directory, projects, repos
       featureValues: Object.fromEntries((next?.features ?? []).map(feature => [feature.id, feature.value])),
     });
   };
+  // A thinking carrier the migration kept (no canonical match, or a clash) is not
+  // a feature the catalog shows; it is shown under Thinking, and choosing any
+  // Thinking option replaces it, keeping every other feature value (nucleus#1365).
+  const hiddenThinking = model ? hiddenThinkingValues(draft.provider, draft.featureValues, model.features) : [];
+  const unlistedThinking = Boolean(model && draft.thinkingOptionId && !model.thinkingOptions.some(option => option.id === draft.thinkingOptionId));
+  const chooseThinking = (value: string) => applyIdentity({
+    thinkingOptionId: value || null,
+    ...(hiddenThinking.length ? { featureValues: Object.fromEntries(Object.entries(draft.featureValues).filter(([option]) => !hiddenThinking.some(([hidden]) => hidden === option))) } : {}),
+  });
   const featureValue = (feature: HostFeature) => Object.prototype.hasOwnProperty.call(draft.featureValues, feature.id) ? draft.featureValues[feature.id] : feature.value;
   const setFeature = (feature: HostFeature, value: unknown) => applyIdentity({ featureValues: { ...draft.featureValues, [feature.id]: value } });
   const differing = catalogs.length > 1 ? [...new Set(catalogs.map(read => {
@@ -163,9 +172,15 @@ export function ProfileEditor({ c, catalog, catalogs, directory, projects, repos
     { key: "mode", node: model.modes.length
       ? <DropdownSelect label="Mode" value={draft.modeId ?? ""} options={[HOST_DEFAULT, ...model.modes.map(mode => ({ value: mode.id, label: plainWords(mode.label, mode.id) }))]} onChange={value => applyIdentity({ modeId: value || null })} c={c} disabled={busy} />
       : hostDefault("Mode") },
-    { key: "thinking", node: model.thinkingOptions.length
-      ? <DropdownSelect label="Thinking" value={draft.thinkingOptionId ?? ""} options={[HOST_DEFAULT, ...model.thinkingOptions.map(option => ({ value: option.id, label: plainWords(option.label, option.id) }))]}
-          onChange={value => applyIdentity({ thinkingOptionId: value || null })} c={c} disabled={busy} />
+    { key: "thinking", node: model.thinkingOptions.length || hiddenThinking.length || unlistedThinking
+      ? <View style={{ gap: space.xxs }}>
+          <DropdownSelect label="Thinking" value={draft.thinkingOptionId ?? ""} options={[HOST_DEFAULT, ...model.thinkingOptions.map(option => ({ value: option.id, label: plainWords(option.label, option.id) })),
+            ...(unlistedThinking ? [{ value: draft.thinkingOptionId!, label: `${draft.thinkingOptionId} · unavailable` }] : [])]}
+            onChange={chooseThinking} c={c} disabled={busy} />
+          {hiddenThinking.length > 0 && <Text accessibilityLabel="Stored thinking option" style={{ color: c.statusWarning, fontSize: typeScale.metadata.fontSize, flexShrink: 1 }}>
+            Also stored: {hiddenThinking.map(([option, value]) => `${option} ${typeof value === "string" ? value : JSON.stringify(value)}`).join(", ")}. Choose a level to replace it.
+          </Text>}
+        </View>
       : hostDefault("Thinking") },
     ...model.features.map(feature => ({ key: `feature:${feature.id}`, node: feature.type === "toggle"
       ? <View style={{ gap: space.xxs }}>

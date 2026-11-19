@@ -15,6 +15,7 @@ import { canonicalCatalog, mergeCanonicalCatalogs } from '../shared/profile-voca
 import type { HostCatalog } from '../shared/host';
 import { t3Fake } from './support/t3code-fake';
 import { nightlyProviders, paseoCatalog } from './support/pool-shapes';
+import { HOST_RUN_FIXTURE_EVENT_TIMEOUT_MS, waitFor } from './support/budgets';
 
 /**
  * nucleus#1365: the profile editor shows one Thinking and one Mode control in
@@ -35,10 +36,10 @@ async function t3Catalog(t: TestContext): Promise<HostCatalog> {
   return host.catalog();
 }
 
-async function editor(catalog: HostCatalog, initial: Record<string, unknown>) {
+async function editor(catalog: HostCatalog, initial: Record<string, unknown>, calls: Array<{ method: string; input: any }> = []) {
   const { ProfileEditor } = await import('../client/settings-profile-editor');
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const invoke = async () => ({});
+  const invoke = async (method: string, input: any) => { calls.push({ method, input }); return { profile: { notes: '', ...input } }; };
   return mount(h(QueryClientProvider, { client, children: h(PluginRpcProvider, { invoke: invoke as never, children: h(ProfileEditor as never, {
     c: colors, catalog, catalogs: [], directory: null, projects: [], repositories: [], initial: { notes: '', ...initial }, entry: null, state: null,
     busy: false, poolSaveStatus: '', onChooseDirectory: () => {},
@@ -69,4 +70,27 @@ test('a model with no modes still shows its one Mode control, as Host default', 
   assert.equal(controls(ui, 'Mode').length, 1);
   assert.equal(ui.get('Mode, Host default').type, 'Text');
   assert.equal(controls(ui, 'Thinking').length, 1);
+});
+
+test('a thinking carrier the migration kept shows under the one Thinking control, and choosing a level replaces it and keeps other options', async t => {
+  const merged = mergeCanonicalCatalogs([canonicalCatalog(paseoVocabulary, paseoCatalog()), canonicalCatalog(t3codeVocabulary, await t3Catalog(t))]);
+  // The migration left this clash as stored: level low, T3's Pi carrier max.
+  const calls: Array<{ method: string; input: any }> = [];
+  const ui = await editor(merged, { id: 'synthetic-clash', name: 'Disagree', provider: 'pi', model: 'opencode-go/deepseek-v4.1-flash', thinkingOptionId: 'low', featureValues: { thinking: 'max', extra: true } }, calls);
+  assert.equal(controls(ui, 'Thinking').length, 1, 'still one Thinking control');
+  assert.match(ui.get('Stored thinking option').children.join(''), /Also stored: thinking max/);
+  ui.press('Thinking, Low');
+  ui.press('Thinking: High');
+  await waitFor(() => calls.some(call => call.method === 'profile.update'), HOST_RUN_FIXTURE_EVENT_TIMEOUT_MS, 'the edit to save');
+  const update = calls.find(call => call.method === 'profile.update')!.input;
+  assert.deepEqual([update.thinkingOptionId, update.featureValues], ['high', { extra: true }], 'the carrier goes, other options stay');
+  assert.equal(ui.query('Stored thinking option'), undefined);
+});
+
+test('a stored level outside this model\'s list shows as unavailable in the one Thinking control, so another level can replace it', async () => {
+  const ui = await editor(canonicalCatalog(paseoVocabulary, paseoCatalog()), { id: 'synthetic-odd', name: 'Odd', provider: 'claude', model: 'claude-opus-5-5', thinkingOptionId: 'ultracode' });
+  assert.equal(controls(ui, 'Thinking').length, 1);
+  ui.press(/^Thinking, /);
+  assert.ok(ui.query('Thinking: ultracode · unavailable'));
+  assert.ok(ui.query('Thinking: Medium'));
 });
