@@ -667,6 +667,12 @@ export async function t3Fake(t: TestContext, directory: string) {
      * the same deletion fact (nucleus#1305 review).
      */
     shellTombstones: false,
+    /**
+     * The shell row status a thread reports, by native thread id, when it is not the
+     * run-derived one: a finished run's own app state (`completed`, `interrupted`, ...)
+     * is what the nightly's shell carries after the run ends (nucleus#1381).
+     */
+    shellStatuses: {} as Record<string, string>,
   };
   /** Command receipts make a replayed project mutation answer with its recorded outcome. */
   const projectReceipts = new Map<
@@ -764,7 +770,7 @@ export async function t3Fake(t: TestContext, directory: string) {
     const value: Value = {
       ...p.thread,
       activeRunId: active?.id ?? null,
-      status: active?.status ?? "idle",
+      status: controls.shellStatuses[p.thread.id] ?? active?.status ?? "idle",
       pendingRuntimeRequest: pending
         ? {
             id: pending.id,

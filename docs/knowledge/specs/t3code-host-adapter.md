@@ -778,7 +778,13 @@ missing collection cannot stand in for a real one (nucleus#1188). Archived
 threads are retired participants: they report the terminal
 closed state with `archived` carried on its own field, so archive proofs and
 workspace teardown read a terminal state while retained reads still see the
-retirement.
+retirement. The workspace thread inventory reads the same terminal states as the
+single-thread read (nucleus#1381): a finished run (`completed`, `interrupted`,
+`failed`, `cancelled`, `rolled_back`) reads `idle`, an archived thread `closed`
+and a tombstoned one `gone`. A live run, a pending request or any other status
+holds the archive. A delegated follow-up child leaves observation with its task,
+as its parent does, so a finished task's follow-up reads as retired, not as a
+live row.
 
 On T3 startup, active runs are cancelled and live approvals expire. Pending
 questions may remain pending with `responseCapability: {type: "message"}`.

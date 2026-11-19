@@ -31,6 +31,10 @@ import {
   hostFailureRefusalDetail,
 } from "../core/host";
 import { T3CompatibilityError } from "../hosts/t3code/contracts";
+import {
+  workspaceThreadFacts,
+  type WorkspaceThreadInventoryHost,
+} from "../core/workspaces/owned-workspace-threads";
 import { isTransportFailure } from "../shared/transport";
 import type { HostAgentSpec } from "../shared/host";
 import {
@@ -2629,6 +2633,120 @@ test("one task worktree archives while another T3 task keeps the repository proj
     false,
     "individual worktree archive never mutates the shared registration",
   );
+});
+
+test("the workspace inventory reads T3's finished, archived and removed threads as terminal and holds a live or unrelated one (nucleus#1381)", async (t) => {
+  const { host, server, spec } = await fixture(t);
+  const pilotTask = "task-1381-pilot";
+  const launch = (requestId: string, taskId: string, runId: string) => ({
+    ...spec(),
+    attempt: () => ({
+      requestId,
+      prompt: "Synthetic prompt",
+      labels: storedT3Labels("worker", { taskId, runId }),
+      environment: {},
+    }),
+  });
+  // The pilot's shape: a finished worker, its follow-up child, an archived thread
+  // and a removed one, plus a live run and an unrelated task's thread.
+  const worker = await host.createAgent(launch("pilot-worker", pilotTask, "pilot-run"));
+  const followUp = await host.createAgent(launch("pilot-follow-up", pilotTask, "follow-up-run"));
+  const archived = await host.createAgent(launch("pilot-archived", pilotTask, "archived-run"));
+  const removed = await host.createAgent(launch("pilot-removed", pilotTask, "removed-run"));
+  const live = await host.createAgent(launch("pilot-live", pilotTask, "live-run"));
+  const foreign = await host.createAgent(launch("foreign", "other-task", "foreign-run"));
+  server.controls.shellStatuses = {
+    [worker.id]: "completed",
+    [followUp.id]: "interrupted",
+    [archived.id]: "failed",
+    [removed.id]: "cancelled",
+    [live.id]: "running",
+  };
+  await host.archiveAgent(archived.id);
+  server.controls.shellTombstones = true;
+  server.threads.get(removed.id)!.thread.deletedAt = "2026-11-19T00:00:00.000Z";
+
+  // The workspace inventory the archive proof reads, through the adapter's own mapping.
+  const adapter = createAdapter(HostPolicies as unknown as HostPolicyConstructor, host) as unknown as WorkspaceThreadInventoryHost;
+  const page = await adapter.workspaceHost.archiveThreadPage({
+    filter: { includeArchived: true },
+    page: { limit: 200 },
+  });
+  const rows = new Map(page.entries.map((entry) => [entry.agent.id, entry.agent]));
+  assert.equal(rows.get(worker.id)?.status, "idle", "a completed run is idle");
+  assert.equal(rows.get(followUp.id)?.status, "idle", "an interrupted run is idle");
+  assert.equal(rows.get(archived.id)?.status, "closed", "an archived thread is closed");
+  assert.equal(rows.get(removed.id)?.status, "gone", "a removed thread is gone");
+  assert.equal(rows.get(live.id)?.activeTurn, true, "a live run still holds");
+  const entriesOf = (ids: string[]) => ids.map((id) => ({ agent: rows.get(id)! }));
+  const finished = [worker.id, followUp.id, archived.id, removed.id];
+  assert.deepEqual(
+    workspaceThreadFacts(entriesOf(finished), pilotTask, new Set(), false),
+    { foreignAgentIds: [] },
+    "the pilot's finished, archived and removed threads archive",
+  );
+  assert.throws(
+    () => workspaceThreadFacts(entriesOf([...finished, live.id]), pilotTask, new Set(), false),
+    /become idle/,
+    "a live run holds the archive",
+  );
+  assert.throws(
+    () => workspaceThreadFacts(entriesOf([...finished, foreign.id]), pilotTask, new Set(), false),
+    /unrelated thread/,
+    "an unrelated thread in the workspace is preserved",
+  );
+  assert.deepEqual(
+    workspaceThreadFacts(entriesOf([...finished, foreign.id]), pilotTask, new Set(), true),
+    { foreignAgentIds: [foreign.id] },
+    "an allowed idle foreign thread is named, not treated as the task's",
+  );
+});
+
+test("a finished task's follow-up child leaves observation with its task, and a live task's keeps its row (nucleus#1381)", async (t) => {
+  const { host, workspace, spec } = await fixture(t);
+  const finishedTask = "task-1381-finished";
+  const liveTask = "task-1381-live";
+  const launch = (requestId: string, taskId: string, runId: string) => ({
+    ...spec(),
+    attempt: () => ({
+      requestId,
+      prompt: "Synthetic prompt",
+      labels: storedT3Labels("worker", { taskId, runId }),
+      environment: {},
+    }),
+  });
+  await host.createAgent(launch("finished-worker", finishedTask, "finished-run"));
+  await host.createAgent(launch("live-worker", liveTask, "live-run"));
+  const parentOf = (taskId: string) => host.state.read().parents?.[taskId]?.threadId;
+  const finishedParent = parentOf(finishedTask);
+  assert.ok(finishedParent, "the finished task has a parent thread");
+  const reminder = "thread:delegated-task:ns-reminder-1381";
+  const liveFollowUp = "thread:delegated-task:ns-run-1381";
+  host.state.update((state) => {
+    state.followUps = {
+      [reminder]: {
+        workspaceId: workspace.id,
+        labels: storedT3Labels("worker", { taskId: finishedTask, runId: "reminder-run" }),
+        parentThreadId: finishedParent!,
+      },
+      [liveFollowUp]: {
+        workspaceId: workspace.id,
+        labels: storedT3Labels("worker", { taskId: liveTask, runId: "live-follow-up-run" }),
+        parentThreadId: parentOf(liveTask)!,
+      },
+    };
+  });
+
+  await host.beginHostPass([
+    { id: finishedTask, phase: "done", removedAt: null } as never,
+    { id: liveTask, phase: "implementing", removedAt: null } as never,
+  ]);
+  host.endHostPass();
+
+  const state = host.state.read();
+  assert.equal(state.followUps?.[reminder], undefined, "the finished task's reminder is no longer a live-looking row");
+  assert.equal(state.retiredAgents?.[reminder]?.workspaceId, workspace.id, "its launch identity is kept for the workspace inventory");
+  assert.ok(state.followUps?.[liveFollowUp], "a live task's follow-up stays observed");
 });
 
 test("createWorkspace reuses the preserved project registration after a task workspace archive", async (t) => {

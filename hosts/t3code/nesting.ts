@@ -404,7 +404,12 @@ export class T3Nesting {
     const role = this.core.state.read().agents[threadId];
     if (role && followUpId !== threadId) {
       this.core.state.update((state) => {
-        if (state.agents[followUpId] || state.followUps?.[followUpId]) return;
+        if (
+          state.agents[followUpId] ||
+          state.followUps?.[followUpId] ||
+          state.retiredAgents?.[followUpId]
+        )
+          return;
         state.followUps = {
           ...state.followUps,
           [followUpId]: {

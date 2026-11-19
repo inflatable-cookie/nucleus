@@ -274,7 +274,7 @@ export function agentRecord(
  * (`nesting.taskOfChild`), and `title` is the state title its row rides on, so a thread
  * that comes back has the record it had (nucleus#1328 review).
  */
-export function retiredRecord(record: T3AgentRecord): T3RetiredAgent {
+export function retiredRecord(record: T3ThreadIdentity): T3RetiredAgent {
   return {
     workspaceId: record.workspaceId,
     labels: record.labels,
