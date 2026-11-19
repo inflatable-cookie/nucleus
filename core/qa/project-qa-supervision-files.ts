@@ -167,8 +167,6 @@ export const qaSupervisionStateSchema = z.object({
   identityToken: z.string().min(16).max(128),
   startedAt: z.string().min(1),
   heartbeatAt: z.string().min(1),
-  /** Last durable pipeline boundary, for diagnosing a supervisor that stops. */
-  phase: z.enum(["starting", "step-output", "step-logs", "tap-finalize", "teardown", "escapee-reap", "checkout-cleanup", "host-result", "result-publication", "live-output-close"]).optional(),
   /** The step currently running, so a proven-dead supervisor names what was in flight. */
   inFlight: projectQaStepNameSchema.nullable(),
   /** Published from the spawn event; pendingProcessIdentity covers the publication window. */
@@ -206,7 +204,7 @@ export function qaRunRootPath(dataDir: string, key: string): string {
 }
 
 /** The per-run supervision and plan paths under one repository's QA root. A retry attempt uses its own file names. */
-export function qaSupervisionPaths(runRoot: string, runId: string, attempt = 0): { statePath: string; planPath: string; resultPath: string; cancelPath: string; cpuCoveragePath: string; heartbeatPath: string; stepExitPath: string } {
+export function qaSupervisionPaths(runRoot: string, runId: string, attempt = 0): { statePath: string; planPath: string; resultPath: string; cancelPath: string; cpuCoveragePath: string; heartbeatPath: string; stepExitPath: string; phasePath: string } {
   const stem = attempt > 0 ? `${runId}.retry-${attempt}` : runId;
   return {
     heartbeatPath: join(runRoot, `${stem}.heartbeat.json`),
@@ -216,7 +214,16 @@ export function qaSupervisionPaths(runRoot: string, runId: string, attempt = 0):
     resultPath: join(runRoot, `${stem}.result.json`),
     cancelPath: join(runRoot, `${stem}.cancel.json`),
     stepExitPath: join(runRoot, `${stem}.stepexit.json`),
+    phasePath: join(runRoot, `${stem}.phase.json`),
   };
+}
+
+/** The diagnostic phase is separate so older strict supervision readers still work. */
+export function readQaPhase(path: string, runId: string): string | null {
+  return readOwnerOnlyJson(path, value => {
+    const record = z.object({ runId: z.literal(runId), phase: z.string().min(1).max(80) }).strict().parse(value);
+    return record.phase;
+  });
 }
 
 /**
@@ -389,8 +396,8 @@ export function writeQaStepLog(path: string, buffer: Buffer): { bytes: number | 
 
 /** Remove a settled run's per-run plan and supervision files; the store owns the record now. */
 export function removeQaSupervisionFiles(runRoot: string, runId: string, attempt = 0): void {
-  const { statePath, planPath, cancelPath, cpuCoveragePath, heartbeatPath, stepExitPath } = qaSupervisionPaths(runRoot, runId, attempt);
-  for (const path of [statePath, planPath, cancelPath, cpuCoveragePath, heartbeatPath, stepExitPath]) rmSync(path, { force: true });
+  const { statePath, planPath, cancelPath, cpuCoveragePath, heartbeatPath, stepExitPath, phasePath } = qaSupervisionPaths(runRoot, runId, attempt);
+  for (const path of [statePath, planPath, cancelPath, cpuCoveragePath, heartbeatPath, stepExitPath, phasePath]) rmSync(path, { force: true });
 }
 
 export interface QaFilePruningContext {

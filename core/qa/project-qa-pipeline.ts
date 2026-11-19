@@ -151,6 +151,7 @@ export interface QaPipelineIdentity { pid: number; identityToken: string }
 
 /** How one pipeline executes its steps and records progress; the service fakes the first two in tests. */
 export interface QaPipelineIo {
+  phase?(phase: string): void | Promise<void>;
   environment?(eventId: string, root: string): Promise<Record<string, string>> | Record<string, string>;
   hook(script: string, root: string, onSpawn?: (process: QaSpawnedProcess) => void, cancelable?: boolean, env?: Record<string, string>): Promise<ExecutionOutcome>;
   command(stage: ProjectQaStage, root: string, onSpawn?: (process: QaSpawnedProcess) => void, cancelable?: boolean, env?: Record<string, string>, onOutput?: (stream: "stdout" | "stderr", chunk: Buffer) => void): Promise<ExecutionOutcome>;
@@ -255,7 +256,7 @@ export async function runProjectQaPipeline(base: QaPipelineIdentity, run: QaPipe
   const state: QaSupervisionState = {
     schema: QA_SUPERVISION_SCHEMA, schema_version: QA_SUPERVISION_SCHEMA_VERSION,
     runId: run.runId, key: run.key, pid: base.pid, supervisorStartIdentity: hostRunProcessStartIdentity(base.pid), identityToken: base.identityToken,
-    startedAt: run.startedAt, heartbeatAt: new Date(io.now()).toISOString(), phase: "starting",
+    startedAt: run.startedAt, heartbeatAt: new Date(io.now()).toISOString(),
     inFlight: null, activeProcess: null, pendingProcessIdentity: null, steps: [], failedStep: null, logWriteErrors: [], detail: "",
     failuresLog: "", failureIndexes: [], escapedDescendants: [], cancelReason: null, result: null,
   };
@@ -263,15 +264,15 @@ export async function runProjectQaPipeline(base: QaPipelineIdentity, run: QaPipe
   // The operator's live view of this run: every stage's output as it arrives.
   // Best effort by construction; the step logs and the result stay the record.
   let liveOutput: Awaited<ReturnType<typeof openQaLiveOutput>> = null;
-  const phase = async (next: NonNullable<QaSupervisionState["phase"]>) => {
-    state.phase = next;
-    try { await io.persist(state); } catch { /* diagnostic boundaries cannot fail a run */ }
+  const phase = async (next: string) => {
+    try { await io.phase?.(next); } catch { /* diagnostic boundaries cannot fail a run */ }
   };
   try {
     // Publish the run's identity before anything can take time, so a service
     // restart in this window finds a live supervisor rather than an orphan.
     await io.persist(state);
     stop = io.begin?.(state);
+    await phase("starting");
     liveOutput = await openQaLiveOutput(qaRunLiveOutputPath(run.runRoot, run.runId), () => run.hostRunToken);
     let stateName: ProjectQaRun["state"] = "hold";
     let exitCode: number | null = null;
@@ -389,7 +390,8 @@ export async function runProjectQaPipeline(base: QaPipelineIdentity, run: QaPipe
           if (await updateCancellation()) { stateName = "cancelled"; break; }
           run.checkoutAdmission?.();
           const env = await io.environment?.(`project-qa:${run.runId}`, run.checkoutPath);
-          state.inFlight = stage.name; state.pendingProcessIdentity = base.identityToken; await phase("step-output");
+          state.inFlight = stage.name; state.pendingProcessIdentity = base.identityToken; await io.persist(state);
+          await phase("step-output");
           const tapCollector = new StreamingTapFailures(run.hostRunToken, Math.floor(PROJECT_QA_FAILURES_BYTES / Math.max(1, run.stages.length)));
           const execution = await io.command(stage, run.checkoutPath, onSpawn(stage.name), true, env,
             (_stream, chunk) => { tapCollector.push(chunk); liveOutput?.write(chunk); });
