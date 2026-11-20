@@ -511,6 +511,7 @@ export class StoreTaskFunnel {
           at: now(),
           generation: 1,
           until: null,
+          plannerAnswer: null,
         };
       }
       Object.assign(task, syncHoldProjection(composedHolds));

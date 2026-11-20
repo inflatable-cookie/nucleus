@@ -1,5 +1,5 @@
 import type { Task } from "../../shared/contracts";
-import { holdsOf, taskHoldKind } from "../../shared/holds";
+import { holdFencesView, taskHoldKind } from "../../shared/holds";
 import { taskAttention, type TaskAttention } from "../../shared/task-attention";
 import { isTerminalPhase } from "../../shared/task-state";
 import { taskDetailView, taskHasUnreleasedRun } from "../../shared/task-view";
@@ -25,7 +25,9 @@ export function taskRowAttention(store: Store, task: Task): TaskAttention {
   return taskAttention({
     phase: task.phase,
     held: task.held,
-    holds: holdsOf(task),
+    // The fences as the board reads them: resolved owner, and the planner's nudge
+    // answer for a planner's own hold (nucleus#1419).
+    holds: holdFencesView(task),
     holdKind: taskHoldKind(task),
     attention: task.resolution.attention,
     originFault: Boolean(task.originError || task.originLookupError),

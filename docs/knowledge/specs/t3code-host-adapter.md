@@ -340,7 +340,7 @@ already present.
 | Archive | `thread.archive` through dispatch | Receipt followed by archived-state observation |
 | Remove | `thread.delete` through dispatch at closeout, never `onlyIfUnused` | Durable intent, then `deletedAt` or absence from a complete inventory proves removal; an unknown outcome is never resent |
 | Snooze a waiting row | `thread.snooze` through dispatch with `snoozedUntil` in the future | One bounded horizon, read back from `snoozedUntil`; deterministic command identity per wait episode and horizon; a refusal is "stay active" for that episode, never a retry loop |
-| Report a row that stays hidden | No command: one durable `row_hidden` notice per continuous snooze episode (30 minutes) or hold generation (3 hours) | The task, its age, its wait, its last transition and one supported action; unknown when the row cannot be read; superseded when the episode ends |
+| Report a row that stays hidden | No command: one durable `row_hidden` notice per continuous snooze episode (30 minutes) or hold generation (3 hours), and the planner's answer window for its own hold (30 minutes) | The task, its age, its wait, its last transition and one supported action; unknown when the row cannot be read; superseded when the episode ends; an unanswered planner hold shows the row again |
 | Show a row again | `thread.unsnooze` through dispatch with `reason: "user"` | Only a row this host snoozed; a person who must act or a running role gets the row back immediately through the title/row projection drain and the host pass. The snooze record stays until a fresh T3 read proves `snoozedUntil` is cleared; a settled unsnooze that still reads snoozed is re-observed and retried as a new occurrence, while an unknown delivery is never resent blindly. Operator snoozes and manual settles are never touched |
 | Continue a manually settled thread | Unsettle, then send | A message, decision, follow-up or re-entry for a thread the operator settled unsettles it first and then delivers (Tom, 2026-11-19). Refusing before send is retired |
 | Archive workspace | Mark the task's T3 worktree handle archived in adapter state | Observation reads the handle's `archivedAt`; the shared project registration remains registered and available |
@@ -392,10 +392,17 @@ task's parent row is driven by the one attention projection the board and
   attention changes, instead of waiting for the next periodic sweep; `HostPass`
   also reconciles active and attention rows ahead of waiting and finished rows.
 - *waiting* — the task waits on nothing Nucleus is running and needs no one: the
-  row is snoozed. An owner hold with a release condition and an unresolved
-  completable prerequisite wait are waiting with their named cause. An operator-owned
-  prerequisite correction remains attention.
+  row is snoozed. An owner hold with a release condition, a planner's own hold
+  and an unresolved completable prerequisite wait are waiting with their named
+  cause. An operator-owned hold with no release condition and an operator-owned
+  prerequisite correction remain attention.
 - *finished* — the row's snooze is retired and the terminal lane archives it.
+
+A planner's own hold parks the row the way a releasing hold does (nucleus#1419):
+the planner already said the task waits, so the row must not ask anyone for
+anything while that park is answered. It stops being a park when the planner's
+nudge for that hold generation goes unanswered (see *A planner's own hold parks the
+row until its nudge goes unanswered*, below).
 
 The horizon is bounded (48 hours) and the ordinary sweep renews it with 24 hours
 left, so the row never wakes itself while the task still waits. The command
@@ -428,10 +435,11 @@ as it is, and a repeated pass inside the horizon writes nothing.
 **A row that stays hidden says so to the planner (nucleus#1417).** The row's snooze
 is normally the design working: a task that waits on nothing Nucleus runs is
 deliberately hidden. It stops being normal when the wait has gone on quietly, so
-the host reconciles the row's visibility on every pass after its presentation step
-(`rowSnoozeVisibility`): only a snooze this host recorded is Nucleus-owned, a row
-T3 reads unsnoozed or an operator snoozed or settled is clear, and a row the host
-cannot read is unknown rather than clear.
+the host reconciles the row's visibility on every pass before its presentation
+step (`rowSnoozeVisibility`): only a snooze this host recorded is Nucleus-owned, a
+row T3 reads unsnoozed or an operator snoozed or settled is clear, and a row the
+host cannot read is unknown rather than clear. Reading first is what lets the pass
+that decides an escalation present the row it just woke, in that same pass.
 
 A Nucleus-owned snooze is one continuous episode, from the first snooze until a
 fresh read proves the row shown, the task closes out, or a genuinely new wait
@@ -467,6 +475,37 @@ where it has one; it changes no hold, owner, release condition or escalation. A
 Spec 040 hold prompt that already reached this planner for the same generation is
 reused instead of repeated. Time under the hold never accrues toward the wait
 episode: the 30-minute clock starts again at the first pass after release.
+
+**A planner's own hold parks the row until its nudge goes unanswered
+(nucleus#1419).** An effective hold from the planner is the planner's own park,
+whether or not it names a release condition, so it snoozes the task row like any
+other wait while the work is quiet (Tom, 2026-11-20). An operator-owned hold keeps its
+existing treatment, and a running role, an independent call for a person, an origin
+fault or a pending question or permission keeps the row visible whatever the hold
+says. The fence stores the nudge and the answer in `plannerAnswer`: the generation's
+start, the due time (its start plus the three-hour hold bound), the durable notice
+that carries the nudge, when that notice was confirmed delivered, and — once the
+window closes — the moment it went unanswered and the delivery fault when delivery
+was never confirmed. The nudge is raised only while the row is hidden, is the one
+`row_hidden` notice of the existing hold rule, and reuses the Spec 040 prompt
+instead of repeating it.
+
+From the later of the due time and a confirmed delivery the planner has thirty
+minutes to `release` the hold or `keep_hold` it into a fresh generation. A release
+ends the hold, and the ordinary wait rule takes the row over; a keep is a new
+generation, which starts a fresh hidden clock, nudge and answer window (Spec 040's
+`keep_hold` also restarts the fence's own start time). Neither one is an
+escalation. When the window closes with the hold still in place the task is
+attention again for that generation: the row is unsnoozed through the ordinary
+read-back path and stays visible until the planner releases or keeps that
+generation, and the pass records `row_hidden_hold_unanswered`. When
+delivery was never confirmed the pass records `row_hidden_hold_undelivered` with
+the notice path's own reason and the fence keeps that `deliveryFault`, so the row
+is shown and the fault with it. Ordinary reads, sweeps, unchanged state and
+callback noise are not an answer. Nothing here releases, lifts, keeps or changes a
+hold because a timer fired: only the planner's own `release` or `keep_hold` answers
+it, and a self-lifting hold ([Spec 046](046-self-lifting-merge-holds.md)) names its
+own end so it is never measured by this window.
 
 A settled thread starts no run, and T3 does not clear a manual settle on
 `message.dispatch`. So every message, decision, re-entry and follow-up goes through

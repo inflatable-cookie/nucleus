@@ -45,6 +45,9 @@ import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { T3RpcClient, T3RpcError } from "../../hosts/t3code/rpc";
 import { createAdapter, createHost } from "../../hosts/t3code";
+import { holdPatch, keepPatch } from "../../core/merge/merge-hold";
+import { HiddenRows } from "../../core/scheduling/hidden-row";
+import { taskRowAttention } from "../../core/workspaces/task-row-attention";
 import { canonical } from "../../hosts/t3code/state";
 import { pipelineBoard } from "../../shared/pipeline-board";
 import {
@@ -1138,7 +1141,333 @@ async function main() {
       result: "passed",
     });
 
-    // 10. Real ACP parent + same native child going idle and resuming on the real wire,
+    // 10. A planner's own manual hold on the real wire (nucleus#1419): the row is
+    //     snoozed while the hold parks it, the nudge and the answer window decide
+    //     whether it stays hidden, and the hold itself is never touched.
+    const holdThreadId = crypto.randomUUID();
+    await rpc.call("orchestration.launchThread", {
+      commandId: crypto.randomUUID(),
+      threadId: holdThreadId,
+      projectId,
+      title: "Proof hold row",
+      modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+      runtimeMode: "approval-required",
+      interactionMode: "default",
+      workspaceStrategy: { type: "existing_worktree", worktreePath: worktree },
+    });
+    const readRow = async (threadId: string) => {
+      const value = (await rpc!.readStream(
+        "orchestration.subscribeThread",
+        { threadId },
+        (chunk) => (chunk as { kind?: string }).kind === "snapshot",
+      )) as {
+        projection: { thread: { snoozedUntil: string | null } };
+      };
+      return value.projection.thread;
+    };
+    const holdDbPath = join(root, "hold-proof.sqlite");
+    let holdStore = new Store(holdDbPath);
+    holdStore.setMeta("paused", false);
+    const holdPlanning = "d".repeat(40);
+    const holdTask = holdStore.insert(
+      submissionSchema.parse({
+        submissionId: "proof-planner-hold",
+        title: "Approved, waiting for the upgrade day",
+        repoPath: repository,
+        planningCommit: holdPlanning,
+        brief: { text: "Synthetic planner hold proof" },
+        originAgentId: "proof-planner",
+      }),
+      host.hostId,
+      "handoff",
+      holdPlanning,
+    );
+    const holdTaskId = holdTask.id;
+    host.state.update((state) => {
+      state.parents = {
+        ...state.parents,
+        [holdTaskId]: {
+          taskId: holdTaskId,
+          threadId: holdThreadId,
+          sessionId: `session:${holdTaskId}`,
+          bindingPath: join(root, "acp", `${holdTaskId}.json`),
+          workspaceId,
+          projectId,
+          directory: worktree,
+          createdAt: new Date().toISOString(),
+          title: "1419 proof",
+        },
+      };
+    });
+    holdStore.update(holdTask.id, { phase: "needs_attention" });
+    holdStore.update(
+      holdTask.id,
+      holdPatch(
+        holdStore.task(holdTask.id),
+        "dispatch",
+        "proof-planner",
+        "Underlay reference approved; held until Effigy v0.15 upgrade day",
+        null,
+      ),
+    );
+    const holdNow = () => holdStore.task(holdTask.id);
+    const pass = async () => {
+      await new HiddenRows({ store: holdStore, adapter: host! }).observe(
+        host!.hostId!,
+      );
+      await host!.reconcileTaskRow(
+        holdTask.id,
+        taskRowAttention(holdStore, holdStore.task(holdTask.id)),
+      );
+    };
+    const holdEvents = () =>
+      holdStore
+        .events(holdTask.id)
+        .filter((event) => event.kind.startsWith("row_hidden_hold_"));
+    const seedAnswer = (
+      answer: {
+        since: string;
+        dueAt: string;
+        noticeId: string;
+        deliveredAt: string | null;
+        unansweredAt: string | null;
+        deliveryFault: string;
+      },
+      notice: { status: "delivered" | "pending"; error: string },
+    ) => {
+      const fence = holdNow().holds!.dispatch!;
+      holdStore.putNotice({
+        id: answer.noticeId,
+        taskId: holdTask.id,
+        agentId: "proof-planner",
+        recipientAgentId: "",
+        workspaceId: null,
+        sources: [],
+        originEntry: true,
+        kind: "row_hidden",
+        status: notice.status,
+        error: notice.error,
+        text: "Nucleus: a hold still hides a task row on T3",
+      });
+      holdStore.update(holdTask.id, {
+        holds: { dispatch: { ...fence, plannerAnswer: answer } },
+      });
+    };
+
+    // (a) The manual-hold shape: a quiet planner-owned hold snoozes the real row.
+    await pass();
+    const heldRow = await until(
+      async () => (await readRow(holdThreadId)).snoozedUntil,
+      "the planner-held row's snoozedUntil",
+    );
+    assert.ok(Date.parse(heldRow) > Date.now(), "the hold's row is snoozed");
+    assert.equal(
+      (await host.rowSnoozeVisibility(holdTask.id)).kind,
+      "snoozed",
+      "real T3 proves the planner's hold hides the row",
+    );
+    assert.equal(taskRowAttention(holdStore, holdNow()).state, "waiting");
+    steps.push({ step: "planner-hold-row-snoozed", result: "passed" });
+
+    // (b) A keep inside the answer window answers the nudge: a fresh generation
+    //     with a fresh clock, and the hold keeps its own reason and owner.
+    seedAnswer(
+      {
+        since: new Date(Date.now() - 4 * 60 * 60_000).toISOString(),
+        dueAt: new Date(Date.now() - 3 * 60 * 60_000).toISOString(),
+        noticeId: `row-hidden-hold:${holdTask.id}:dispatch:1`,
+        deliveredAt: new Date(Date.now() - 10 * 60_000).toISOString(),
+        unansweredAt: null,
+        deliveryFault: "",
+      },
+      { status: "delivered", error: "" },
+    );
+    await pass();
+    assert.equal(
+      holdEvents().length,
+      0,
+      "an answer window that is still open escalates nothing",
+    );
+    holdStore.update(
+      holdTask.id,
+      keepPatch(
+        holdStore.task(holdTask.id),
+        "dispatch",
+        "Upgrade day moved, still approved",
+        "proof-planner",
+      ),
+    );
+    assert.equal(holdNow().holdGeneration, 2);
+    assert.equal(
+      holdNow().holds!.dispatch!.plannerAnswer,
+      null,
+      "the fresh keep clears the answered generation",
+    );
+    await pass();
+    assert.equal(holdEvents().length, 0, "the keep is the answer");
+    assert.ok(
+      (await readRow(holdThreadId)).snoozedUntil,
+      "the kept hold keeps its row snoozed on real T3",
+    );
+    steps.push({ step: "planner-hold-timely-keep", result: "passed" });
+
+    // (c) An unanswered nudge shows the row again without touching the hold.
+    seedAnswer(
+      {
+        since: new Date(Date.now() - 4 * 60 * 60_000).toISOString(),
+        dueAt: new Date(Date.now() - 3 * 60 * 60_000).toISOString(),
+        noticeId: `row-hidden-hold:${holdTask.id}:dispatch:2`,
+        deliveredAt: new Date(Date.now() - 2 * 60 * 60_000).toISOString(),
+        unansweredAt: null,
+        deliveryFault: "",
+      },
+      { status: "delivered", error: "" },
+    );
+    await pass();
+    assert.equal(holdEvents().length, 1);
+    assert.equal(holdEvents()[0]!.kind, "row_hidden_hold_unanswered");
+    await until(
+      async () => (await readRow(holdThreadId)).snoozedUntil === null,
+      "the escalated row shown again",
+    );
+    assert.equal(
+      taskRowAttention(holdStore, holdNow()).state,
+      "attention",
+      "the task needs its planner for this hold generation",
+    );
+    assert.deepEqual(
+      {
+        generation: holdNow().holdGeneration,
+        reason: holdNow().holdReason,
+        held: holdNow().held,
+      },
+      {
+        generation: 2,
+        reason: "Upgrade day moved, still approved",
+        held: true,
+      },
+      "a timer never releases the hold",
+    );
+    await pass();
+    assert.equal(
+      (await readRow(holdThreadId)).snoozedUntil,
+      null,
+      "the escalated generation stays visible",
+    );
+    steps.push({ step: "planner-hold-unanswered-shows-row", result: "passed" });
+
+    // (d) A nudge that never reached the planner shows the task and the fault.
+    holdStore.update(
+      holdTask.id,
+      keepPatch(
+        holdStore.task(holdTask.id),
+        "dispatch",
+        "Upgrade day moved again",
+        "proof-planner",
+      ),
+    );
+    seedAnswer(
+      {
+        since: new Date(Date.now() - 4 * 60 * 60_000).toISOString(),
+        dueAt: new Date(Date.now() - 3 * 60 * 60_000).toISOString(),
+        noticeId: `row-hidden-hold:${holdTask.id}:dispatch:3`,
+        deliveredAt: null,
+        unansweredAt: null,
+        deliveryFault: "",
+      },
+      { status: "pending", error: "Waiting for the planner's turn to end" },
+    );
+    await pass();
+    const undelivered = holdEvents()[0]!;
+    assert.equal(undelivered.kind, "row_hidden_hold_undelivered");
+    assert.match(undelivered.detail, /Waiting for the planner's turn to end/);
+    assert.match(
+      holdNow().holds!.dispatch!.plannerAnswer!.deliveryFault,
+      /Waiting for the planner's turn to end/,
+      "the fence keeps the delivery fault",
+    );
+    const undeliveredProjection = taskRowAttention(holdStore, holdNow());
+    assert.equal(undeliveredProjection.state, "attention");
+    assert.match(
+      undeliveredProjection.state === "attention"
+        ? undeliveredProjection.cause
+        : "",
+      /not delivered to the planner/,
+    );
+    await until(
+      async () => (await readRow(holdThreadId)).snoozedUntil === null,
+      "the undelivered nudge's row shown again",
+    );
+    steps.push({
+      step: "planner-hold-undelivered-shows-row",
+      result: "passed",
+    });
+
+    // (e) A restart resumes the same generation: no second escalation, the row
+    //     stays visible, and a fresh explicit keep snoozes it again.
+    holdStore.close();
+    holdStore = new Store(holdDbPath);
+    await pass();
+    assert.equal(
+      holdEvents().length,
+      2,
+      "a restart records no second escalation for the generation",
+    );
+    assert.equal(
+      (await readRow(holdThreadId)).snoozedUntil,
+      null,
+      "the restarted service keeps the escalated row visible",
+    );
+    holdStore.update(
+      holdTask.id,
+      keepPatch(
+        holdStore.task(holdTask.id),
+        "dispatch",
+        "Upgrade day confirmed",
+        "proof-planner",
+      ),
+    );
+    await pass();
+    assert.equal(holdEvents().length, 2, "the keep escalates nothing");
+    const resnoozed = await until(
+      async () => (await readRow(holdThreadId)).snoozedUntil,
+      "the fresh generation's snoozed row",
+    );
+    assert.ok(
+      resnoozed && Date.parse(resnoozed) > Date.now(),
+      "a fresh keep starts a fresh episode that snoozes the real row again",
+    );
+    steps.push({
+      step: "planner-hold-restart-and-fresh-keep",
+      result: "passed",
+    });
+
+    // (f) An independent question keeps the row visible whatever the hold says.
+    holdStore.update(holdTask.id, {
+      resolution: { ...holdNow().resolution, attention: true },
+    });
+    await pass();
+    await until(
+      async () => (await readRow(holdThreadId)).snoozedUntil === null,
+      "the independently visible row",
+    );
+    assert.equal(
+      taskRowAttention(holdStore, holdNow()).state,
+      "attention",
+      "an independent call for a person stays visible",
+    );
+    holdStore.update(holdTask.id, {
+      resolution: { ...holdNow().resolution, attention: false },
+    });
+    await pass();
+    assert.ok(
+      (await readRow(holdThreadId)).snoozedUntil,
+      "with the question answered the planner's hold parks the row again",
+    );
+    holdStore.close();
+    steps.push({ step: "planner-hold-independent-question", result: "passed" });
+
+    // 11. Real ACP parent + same native child going idle and resuming on the real wire,
     //     measuring the reconcile path from role going active to the row showing.
     service = new QueueService({
       owner: { dataDir: nucleusData, timers: false },

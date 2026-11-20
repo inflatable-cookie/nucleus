@@ -1,8 +1,21 @@
-import { sameCallerIdentity } from './agent-identity';
+import { sameCallerIdentity } from "./agent-identity";
 import type { Task, TaskHolds, HoldFence, HoldKind } from "./contracts";
+import type { PlannerHoldAnswer } from "./schema/task-holds";
 
 /** Fields `holdsOf` reads, including the legacy single-hold projection. */
-export type HoldFields = Pick<Task, "held" | "phase" | "mergeHold" | "holdOwner" | "holdReason" | "holdAt" | "holdGeneration" | "holdUntil" | "holdBlocking" | "originAgentId"> & { holds?: TaskHolds; notificationAgentId?: string | null };
+export type HoldFields = Pick<
+  Task,
+  | "held"
+  | "phase"
+  | "mergeHold"
+  | "holdOwner"
+  | "holdReason"
+  | "holdAt"
+  | "holdGeneration"
+  | "holdUntil"
+  | "holdBlocking"
+  | "originAgentId"
+> & { holds?: TaskHolds; notificationAgentId?: string | null };
 
 /**
  * The independent fences on a task. Stored `holds` win while the task is held;
@@ -23,13 +36,29 @@ export function holdsOf(task: HoldFields): TaskHolds {
     at: task.holdAt ?? "",
     generation: task.holdGeneration || 1,
     until: task.holdUntil ?? null,
+    plannerAnswer: null,
     ...(task.holdBlocking ? { blocking: task.holdBlocking } : {}),
   };
-  return task.mergeHold === true || task.phase !== "queued" ? { merge: fence } : { dispatch: fence };
+  return task.mergeHold === true || task.phase !== "queued"
+    ? { merge: fence }
+    : { dispatch: fence };
 }
 
 /** Project the two fences onto the Spec 040 legacy fields. Merge is primary when both exist. */
-export function syncHoldProjection(holds: TaskHolds): Pick<Task, "holds" | "held" | "mergeHold" | "holdOwner" | "holdReason" | "holdAt" | "holdGeneration" | "holdBlocking" | "holdUntil"> {
+export function syncHoldProjection(
+  holds: TaskHolds,
+): Pick<
+  Task,
+  | "holds"
+  | "held"
+  | "mergeHold"
+  | "holdOwner"
+  | "holdReason"
+  | "holdAt"
+  | "holdGeneration"
+  | "holdBlocking"
+  | "holdUntil"
+> {
   const next: TaskHolds = {
     ...(holds.dispatch ? { dispatch: holds.dispatch } : {}),
     ...(holds.merge ? { merge: holds.merge } : {}),
@@ -71,18 +100,29 @@ export function defaultHoldKind(task: Pick<Task, "phase">): HoldKind {
 export const OPERATOR_BOARD_CALLER = "operator (board)";
 
 /** The operator's own identities: never a Paseo thread, so never an origin to route or a workspace to inherit (consumer #687). */
-export const OPERATOR_IDENTITIES: ReadonlySet<string> = new Set(["operator", OPERATOR_BOARD_CALLER]);
+export const OPERATOR_IDENTITIES: ReadonlySet<string> = new Set([
+  "operator",
+  OPERATOR_BOARD_CALLER,
+]);
 
-export const isOperatorOrigin = (id: string | null | undefined): boolean => Boolean(id) && OPERATOR_IDENTITIES.has(id!.trim());
+export const isOperatorOrigin = (id: string | null | undefined): boolean =>
+  Boolean(id) && OPERATOR_IDENTITIES.has(id!.trim());
 
 /** Display-only owner text may contain one of the operator identities. */
-const OPERATOR_OWNER_IDENTITIES = new Set([...OPERATOR_IDENTITIES, "tom"].map(identity => identity.toLowerCase()));
+const OPERATOR_OWNER_IDENTITIES = new Set(
+  [...OPERATOR_IDENTITIES, "tom"].map((identity) => identity.toLowerCase()),
+);
 export const isOperatorOwner = (owner: string | null | undefined): boolean =>
   Boolean(owner) && OPERATOR_OWNER_IDENTITIES.has(owner!.trim().toLowerCase());
 
 /** Hold facts accepted by shared task-state presentation, including the old single-kind view. */
-export function taskStateHolds(task: { held: boolean; holdKind?: HoldKind; holds?: { dispatch?: unknown; merge?: unknown } }) {
-  const dispatch = Boolean(task.holds?.dispatch) || task.holdKind === "dispatch";
+export function taskStateHolds(task: {
+  held: boolean;
+  holdKind?: HoldKind;
+  holds?: { dispatch?: unknown; merge?: unknown };
+}) {
+  const dispatch =
+    Boolean(task.holds?.dispatch) || task.holdKind === "dispatch";
   const merge = Boolean(task.holds?.merge) || task.holdKind === "merge";
   return { dispatch, merge, any: task.held || dispatch || merge };
 }
@@ -92,7 +132,8 @@ export function taskStateHolds(task: { held: boolean; holdKind?: HoldKind; holds
  * planner of the project that holds this origin, whatever that project's key is.
  * The slug is the repository's real name on the forge; it never renames here.
  */
-export const QUEUE_REPOSITORY_ORIGIN = "inflatable-cookie/paseo-northstar-queue";
+export const QUEUE_REPOSITORY_ORIGIN =
+  "inflatable-cookie/paseo-northstar-queue";
 
 export const NUCLEUS_REPOSITORY_ORIGIN = "inflatable-cookie/nucleus";
 
@@ -102,7 +143,10 @@ export const NUCLEUS_REPOSITORY_ORIGIN = "inflatable-cookie/nucleus";
  * field; the creator (`originAgentId`) is history and answers only for a row
  * written before the owner field was backfilled. Reparenting writes only this.
  */
-export function taskOwner(task: { notificationAgentId?: string | null; originAgentId: string }): string {
+export function taskOwner(task: {
+  notificationAgentId?: string | null;
+  originAgentId: string;
+}): string {
   return task.notificationAgentId || task.originAgentId;
 }
 
@@ -112,7 +156,11 @@ export function taskOwner(task: { notificationAgentId?: string | null; originAge
  * reparenting moves it. The operator answers no delegated question and is never a
  * planner thread; callers check `isOperatorOrigin` on the result.
  */
-export function taskPlanner(task: { plannerAgentId?: string | null; notificationAgentId?: string | null; originAgentId: string }): string {
+export function taskPlanner(task: {
+  plannerAgentId?: string | null;
+  notificationAgentId?: string | null;
+  originAgentId: string;
+}): string {
   return task.plannerAgentId || taskOwner(task);
 }
 
@@ -124,32 +172,106 @@ export function taskPlanner(task: { plannerAgentId?: string | null; notification
 export const TASK_OWNER_HOLD = "task-owner";
 
 /** The thread a hold fence answers to: the task owner for an owner-placed hold, else the recorded owner. */
-export function holdOwnerOf(task: { notificationAgentId?: string | null; originAgentId: string }, owner: string | null | undefined): string {
+export function holdOwnerOf(
+  task: { notificationAgentId?: string | null; originAgentId: string },
+  owner: string | null | undefined,
+): string {
   return !owner || owner === TASK_OWNER_HOLD ? taskOwner(task) : owner;
 }
 
 /** The owner value a new hold fence stores: the marker when the placing thread owns the task. */
-export function storedHoldOwner(task: { notificationAgentId?: string | null; originAgentId: string }, owner: string): string {
-  return owner !== TASK_OWNER_HOLD && !isOperatorOrigin(owner) && sameCallerIdentity(owner, taskOwner(task)) ? TASK_OWNER_HOLD : owner;
+export function storedHoldOwner(
+  task: { notificationAgentId?: string | null; originAgentId: string },
+  owner: string,
+): string {
+  return owner !== TASK_OWNER_HOLD &&
+    !isOperatorOrigin(owner) &&
+    sameCallerIdentity(owner, taskOwner(task))
+    ? TASK_OWNER_HOLD
+    : owner;
 }
-
 
 /**
  * Compact board view of each present fence; omitted entirely when neither is set.
  * `until` rides along because a hold with a release condition is a wait, not
  * attention, and the board reads that from the same projection a host does
- * (nucleus#1366).
+ * (nucleus#1366). `unanswered` is the planner's own hold whose nudge went
+ * unanswered (nucleus#1419): that fence needs its owner again, so the board and a
+ * host row read the same view and reach the same answer.
  */
-export function holdFencesView(task: HoldFields): { dispatch?: { owner: string; reason: string; since: string; until?: HoldFence["until"] }; merge?: { owner: string; reason: string; since: string; until?: HoldFence["until"] } } | undefined {
+export function holdFencesView(task: HoldFields): HoldFenceView | undefined {
   const holds = holdsOf(task);
   if (!holds.dispatch && !holds.merge) return undefined;
-  const view = (fence: HoldFence) => ({ owner: holdOwnerOf(task, fence.owner), reason: fence.reason.slice(0, 600), since: fence.at, until: fence.until ?? null });
+  const view = (fence: HoldFence): HoldFenceSummary => {
+    const unanswered = plannerAnswerUnanswered(fence);
+    return {
+      owner: holdOwnerOf(task, fence.owner),
+      reason: fence.reason.slice(0, 600),
+      since: fence.at,
+      until: fence.until ?? null,
+      ...(unanswered ? { unanswered } : {}),
+    };
+  };
   return {
     ...(holds.dispatch ? { dispatch: view(holds.dispatch) } : {}),
     ...(holds.merge ? { merge: view(holds.merge) } : {}),
   };
 }
 
+/** One fence as the board and a host row read it (nucleus#1366, nucleus#1419). */
+export type HoldFenceSummary = {
+  owner: string;
+  reason: string;
+  since: string;
+  until?: HoldFence["until"];
+  unanswered?: "planner" | "delivery";
+};
+
+export type HoldFenceView = {
+  dispatch?: HoldFenceSummary;
+  merge?: HoldFenceSummary;
+};
+
+/**
+ * Why a hold fence's nudge went unanswered, or null: the planner never answered
+ * the hold after its nudge, or that nudge never reached the planner
+ * (nucleus#1419). Reads both the stored fence and the board view of it.
+ */
+export function plannerAnswerUnanswered(fence: {
+  plannerAnswer?: PlannerHoldAnswer | null;
+  unanswered?: "planner" | "delivery" | null;
+}): "planner" | "delivery" | null {
+  if (fence.unanswered) return fence.unanswered;
+  const answer = fence.plannerAnswer;
+  if (!answer?.unansweredAt) return null;
+  return answer.deliveryFault ? "delivery" : "planner";
+}
+
+/**
+ * The blocking fence a planner placed, with the owner it answers to, or null. A
+ * hold from the operator's board is the operator's to release and keeps its
+ * existing attention (nucleus#1419), so it is never a planner's park.
+ */
+export function plannerHoldFence(
+  task: HoldFields,
+): { kind: HoldKind; fence: HoldFence; owner: string } | null {
+  const blocking = blockingHoldFence(task);
+  if (!blocking) return null;
+  const owner = holdOwnerOf(task, blocking.fence.owner);
+  return isOperatorOwner(owner) ? null : { ...blocking, owner };
+}
+
+/**
+ * The planner's own hold that only its owner can end: a blocking fence a planner
+ * placed with no release condition. A hold that names its end lifts itself, so it
+ * is never the hold this answer cycle measures (nucleus#1419).
+ */
+export function plannerHoldNeedingAnswer(
+  task: HoldFields,
+): { kind: HoldKind; fence: HoldFence; owner: string } | null {
+  const hold = plannerHoldFence(task);
+  return hold && !hold.fence.until ? hold : null;
+}
 
 /** A visible hold blocks dispatch only while a dispatch fence is present. */
 export function taskHoldKind(task: HoldFields): HoldKind | null {
@@ -160,16 +282,27 @@ export function taskHoldKind(task: HoldFields): HoldKind | null {
 }
 
 /** Phases a dispatch fence blocks: the task has not started. */
-export const DISPATCH_BLOCKED_PHASES: readonly Task["phase"][] = ["queued", "dispatching"];
+export const DISPATCH_BLOCKED_PHASES: readonly Task["phase"][] = [
+  "queued",
+  "dispatching",
+];
 
 /** Phases a merge fence blocks: the task is ready to merge. */
-export const MERGE_BLOCKED_PHASES: readonly Task["phase"][] = ["verifying", "merging"];
+export const MERGE_BLOCKED_PHASES: readonly Task["phase"][] = [
+  "verifying",
+  "merging",
+];
 
 /** Shared client/server derivation; parked tasks wait on their live fence, dispatch first. */
-export function blockingHoldKind(phase: Task['phase'], dispatch: boolean, merge: boolean): HoldKind | null {
-  const parked = phase === 'blocked' || phase === 'needs_attention';
-  if (dispatch && (parked || DISPATCH_BLOCKED_PHASES.includes(phase))) return 'dispatch';
-  if (merge && (parked || MERGE_BLOCKED_PHASES.includes(phase))) return 'merge';
+export function blockingHoldKind(
+  phase: Task["phase"],
+  dispatch: boolean,
+  merge: boolean,
+): HoldKind | null {
+  const parked = phase === "blocked" || phase === "needs_attention";
+  if (dispatch && (parked || DISPATCH_BLOCKED_PHASES.includes(phase)))
+    return "dispatch";
+  if (merge && (parked || MERGE_BLOCKED_PHASES.includes(phase))) return "merge";
   return null;
 }
 
@@ -177,17 +310,41 @@ export function blockingHoldKind(phase: Task['phase'], dispatch: boolean, merge:
  * The fence that is the task's wait right now, or null. When both fences block,
  * the dispatch fence is the wait; the merge fence stays on the task beside it.
  */
-export function blockingHoldFence(task: HoldFields): { kind: HoldKind; fence: HoldFence } | null {
+export function blockingHoldFence(
+  task: HoldFields,
+): { kind: HoldKind; fence: HoldFence } | null {
   const holds = holdsOf(task);
-  const kind = blockingHoldKind(task.phase, Boolean(holds.dispatch), Boolean(holds.merge));
+  const kind = blockingHoldKind(
+    task.phase,
+    Boolean(holds.dispatch),
+    Boolean(holds.merge),
+  );
   return kind ? { kind, fence: holds[kind]! } : null;
 }
 
 /** Spec 040: a merge hold that is still the last blocker at the reviewed head and has waited past the escalation time. */
-export function holdEscalated(task: Pick<Task, "held" | "phase" | "prHead" | "holdOwner" | "holdBlocking" | "holdGeneration"> & Partial<HoldFields>): boolean {
+export function holdEscalated(
+  task: Pick<
+    Task,
+    | "held"
+    | "phase"
+    | "prHead"
+    | "holdOwner"
+    | "holdBlocking"
+    | "holdGeneration"
+  > &
+    Partial<HoldFields>,
+): boolean {
   const merge = holdsOf(task as HoldFields).merge;
   const b = merge?.blocking ?? task.holdBlocking;
   const generation = merge?.generation ?? task.holdGeneration;
   const owner = merge?.owner ?? task.holdOwner;
-  return Boolean(merge) && Boolean(b?.escalatedAt) && b!.head === task.prHead && b!.generation === generation && (task.phase === "verifying" || task.phase === "merging") && !isOperatorOrigin(owner);
+  return (
+    Boolean(merge) &&
+    Boolean(b?.escalatedAt) &&
+    b!.head === task.prHead &&
+    b!.generation === generation &&
+    (task.phase === "verifying" || task.phase === "merging") &&
+    !isOperatorOrigin(owner)
+  );
 }
