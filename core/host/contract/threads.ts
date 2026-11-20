@@ -18,6 +18,10 @@ export interface ArchivedThread {
 
 /** The threads themselves: creating one for a task, finding the ones that exist, stopping a turn, and archiving or deleting a finished thread. */
 export interface HostThreads {
+  /** Restore this task's retained host parent only within an admitted owner restart. */
+  restoreTaskParent?(task: Task, operationId: string, stillAllowed: () => boolean, beforeSend: () => void): Promise<void>;
+  /** Observe the same interrupted restore occurrence without sending another command. */
+  observeTaskParentRestore?(task: Task, operationId: string): Promise<"not_found" | "live" | "pending">;
   createAgent(
     task: Task,
     token: string,

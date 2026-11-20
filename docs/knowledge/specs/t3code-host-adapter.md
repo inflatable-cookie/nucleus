@@ -1200,8 +1200,10 @@ absent or tombstoned are the same fact. Before a role create, the adapter re-rea
 this exact parent and checks its project and worktree against the retained binding.
 An incomplete inventory or changed binding refuses the create. An exact live read
 clears an older finished marker after a manual unarchive; old markers alone cannot
-distinguish an archive from deletion. A finished task's held turn is released at
-once — the create grace window is for live work — and its parent is archived.
+distinguish an archive from deletion. A live task keeps the binding even if a
+sweep observes deletion, so a later role cannot launch a replacement parent. A
+finished task's held turn is released at once — the create grace window is for live
+work — and its parent is archived.
 
 **A deleted child does not hold the turn.** The release decision reads one complete
 inventory: a child absent from it, or listed there as a `deletedAt` tombstone, is

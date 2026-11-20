@@ -77,6 +77,12 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
         );
       };
     }
+    restoreTaskParent(task: Task, operationId: string, stillAllowed: () => boolean, beforeSend: () => void) {
+      return this.native.nesting.restoreForRestart(task, operationId, stillAllowed, beforeSend);
+    }
+    observeTaskParentRestore(task: Task, operationId: string) {
+      return this.native.nesting.observeRestartRestore(task, operationId);
+    }
     get hostId() {
       return this.native.hostId;
     }
