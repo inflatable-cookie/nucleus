@@ -1,6 +1,5 @@
 /** A fresh, durable occurrence re-enters an idle ACP thread when it needs a held turn. */
-import { T3CompatibilityError } from "./contracts";
-import { activeStatuses, type T3Reads } from "./reads";
+import { activeStatuses, type Projection, type T3Reads } from "./reads";
 import { canonical, type T3StateFile } from "./state";
 import { identity, type T3IntentLedger } from "./intents";
 import { HOLD_MARKER } from "./nesting";
@@ -17,7 +16,7 @@ export class T3DecisionHold {
   constructor(private readonly core: HoldContext) {}
   async reconcile(threadId: string): Promise<void> {
     if (!(await this.core.reads.isObserved(threadId))) return;
-    let projection = await this.core.reads.readProjection(
+    const projection = await this.core.reads.readProjection(
       threadId,
       "observation",
     );
@@ -35,58 +34,20 @@ export class T3DecisionHold {
         await this.send(threadId, previous.commandId, previous.messageId);
         return;
       }
-      // Check the newest bounded window first so long threads keep advancing when the
-      // previous hold message is still visible; only fall back to the full transcript
-      // when absent so unknown-delivery absence is never guessed from a bounded slice.
-      projection = await this.core.reads.readProjection(threadId, "window");
-      let items = projection.turnItems.filter(
-        (item) =>
-          item.type === "user_message" && item.messageId === previous.messageId,
-      );
-      let settledBeforeWindow = false;
-      if (items.length === 0) {
-        try {
-          projection = await this.core.reads.readProjection(
-            threadId,
-            "transcript",
-          );
-          items = projection.turnItems.filter(
-            (item) =>
-              item.type === "user_message" &&
-              item.messageId === previous.messageId,
-          );
-        } catch (error) {
-          if (
-            !(error instanceof T3CompatibilityError) ||
-            error.field !== "subscribeThread: incomplete projection" ||
-            intent.status !== "settled" ||
-            !projection.turnItems.some((item) => item.type === "user_message")
-          ) {
-            throw error;
-          }
-          // Settled in an earlier turn that has since scrolled past the bounded window
-          // while all runs on the thread are now inactive.
-          settledBeforeWindow = true;
-        }
-      }
-      if (items.length > 1) return;
-      if (items.length === 1) {
-        const runId = items[0].runId;
-        const run = projection.runs.find((row) => row.id === runId);
-        if (!run || activeStatuses.has(run.status)) return;
-        if (intent?.status === "unknown")
-          this.core.state.update((state) => {
-            const current = state.intents[previous.commandId];
-            if (current?.status === "unknown") current.status = "settled";
-          });
-      } else if (!settledBeforeWindow) {
-        if (!intent || intent.status === "settled" || intent.timedOut) return;
-        if (intent.status === "unknown")
-          this.core.state.update((state) => {
-            const current = state.intents[previous.commandId];
-            if (current?.status === "unknown") current.status = "refused";
-          });
-      }
+      // An acknowledged receipt is final. The observation above proves no run is live or
+      // queued, so an acknowledged wake needs no history read, however far it has moved
+      // out of T3's window (nucleus#1407).
+      if (
+        intent.status !== "settled" &&
+        !(await this.unsettledOccurrenceFinished(
+          threadId,
+          previous.commandId,
+          previous.messageId,
+          intent.status === "unknown",
+          intent.timedOut === true,
+        ))
+      )
+        return;
       generation = previous.generation + 1;
     } else if (!projection.runs.length) {
       // The launch may still be starting. A terminal run proves this is a re-entry.
@@ -102,6 +63,48 @@ export class T3DecisionHold {
       state.decisionHolds[threadId] = { generation, commandId, messageId };
     });
     await this.send(threadId, commandId, messageId);
+  }
+
+  /**
+   * Whether an unsettled occurrence (unknown, refused or timed out) is decided, so the next
+   * occurrence may go. The newest window is read first: finding the occurrence there is
+   * exact. Absence is read from the full transcript, the only read that can prove it; a
+   * paged transcript throws its incompatibility, so absence is never inferred from a bounded
+   * suffix and nothing is resent (nucleus#1407). A timed-out send still has a late reply in flight.
+   */
+  private async unsettledOccurrenceFinished(
+    threadId: string,
+    commandId: string,
+    messageId: string,
+    unknown: boolean,
+    timedOut: boolean,
+  ): Promise<boolean> {
+    let read: Projection = await this.core.reads.readProjection(
+      threadId,
+      "window",
+    );
+    let items = occurrenceOf(read, messageId);
+    if (items.length === 0) {
+      read = await this.core.reads.readProjection(threadId, "transcript");
+      items = occurrenceOf(read, messageId);
+    }
+    if (items.length > 1) return false;
+    if (items.length === 1) {
+      const run = read.runs.find((row) => row.id === items[0].runId);
+      if (!run || activeStatuses.has(run.status)) return false;
+      if (unknown) this.settleIntent(commandId, "settled");
+      return true;
+    }
+    if (timedOut) return false;
+    if (unknown) this.settleIntent(commandId, "refused");
+    return true;
+  }
+
+  private settleIntent(commandId: string, status: "settled" | "refused"): void {
+    this.core.state.update((state) => {
+      const current = state.intents[commandId];
+      if (current?.status === "unknown") current.status = status;
+    });
   }
 
   private async send(
@@ -122,4 +125,11 @@ export class T3DecisionHold {
       dispatchMode: { type: "queue_after_active" },
     });
   }
+}
+
+/** The user messages carrying one occurrence's message id in a read. */
+function occurrenceOf(read: Projection, messageId: string) {
+  return read.turnItems.filter(
+    (item) => item.type === "user_message" && item.messageId === messageId,
+  );
 }

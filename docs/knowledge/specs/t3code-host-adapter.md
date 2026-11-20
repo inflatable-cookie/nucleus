@@ -885,9 +885,25 @@ offer. A held poll raises the cards once the host has confirmed their absence.
 A T3 restart cancels the held run but can leave an old card answerable through a
 message continuation. On load the agent does not treat that text as an answer;
 it reads open decisions again. The adapter clears stale cards from the service's
-record. Re-entry uses a durable occurrence generation: an uncertain send is read
-before another occurrence is considered, and a later confirmed restart uses a
-new command identity. The same rule governs the inbox's re-entry.
+record. Re-entry uses a durable occurrence generation, and a later confirmed
+restart uses a new command identity. The same rule governs the inbox's re-entry.
+How the previous occurrence is judged depends on its send (nucleus#1407):
+
+- An acknowledged receipt (settled) is final. The fresh observation that shows no
+  live or queued run is enough for the next occurrence, however far the old one
+  has moved out of T3's window. No history read is made for it.
+- An unsettled occurrence (unknown, refused or timed out) is decided from its own
+  user message. The newest window is read first: finding the message there is
+  exact. Absence is read from the full transcript, which alone proves it. A timed-out
+  send waits for its late reply. A bounded window never proves absence.
+- An unsettled occurrence older than the window cannot be proven either way. The
+  paged transcript raises `subscribeThread: incomplete projection`, nothing is
+  resent, and re-entry waits. The sweep reports it after its nesting pass runs,
+  not as a silent skip.
+  `effigy proof:t3code:window` runs this case on the installed nightly: an earlier
+  wake pushed outside the window, a T3 daemon restart that keeps the inbox thread,
+  binding and credential, then a fresh decision (`--expect woken`, or `--expect
+  blocked` on the pre-fix code). Its evidence names the source revision it ran.
 
 **The inbox is idle between decisions (nucleus#1384).** Its ACP turn holds only
 while an operator decision is offered: the same host-scoped projection that raises
