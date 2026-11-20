@@ -111,9 +111,10 @@ test("a high-demand decider refuses probes and validates a draft without recordi
     await f.engine.wake();
     const worker = f.run();
     const resolution = f.engine.resolution;
+    // A decider runs at the task's own bracket (nucleus#1362; 44579afb7): very high is Heavyweight.
     f.store.update(f.submitted.id, {
       plannerAgentId: "operator",
-      complexity: "high",
+      complexity: "very_high",
     });
     const pool = f.store
       .pool()
@@ -126,14 +127,16 @@ test("a high-demand decider refuses probes and validates a draft without recordi
     );
     f.store.setMeta("pool", [
       ...pool,
-      { ...pool[0], profileId: f.higher.id, capability: "worker", group: "high" },
+      { ...pool[0], profileId: f.higher.id, capability: "heavyweight", group: "high" },
     ]);
     resolution.delegatedAnswerWaitMs = ANSWERING_WINDOW_MS;
     resolution.agentAskWaitMs = 5_000;
     resolution.agentAskPollMs = 20;
     let validated = false;
     f.adapter.askPlanner = async (recipient, { messageId }) => {
-      assert.equal(recipient, "decider-1");
+      // The live origin thread is the project's responsible planner (Spec 060 section 3); it gives
+      // no answer here, so the ladder reaches the decider.
+      if (recipient !== "decider-1") return null;
       const logs = () => [
         f.store.eventsAll(`delegation:${messageId}`),
         f.store.eventsAll(f.submitted.id),

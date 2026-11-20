@@ -415,7 +415,7 @@ test('Spec 041: a drain prompt sends once and stays visible when no responsible 
       await f3.engine.resolution.deliverDrainNotices();
       const notice = f3.store.notices('lane:alpha')[0]!;
       assert.equal(notice.status, 'pending');
-      assert.match(notice.error, /No live responsible thread/);
+      assert.match(notice.error, /The responsible thread is no longer available/);
       f3.store.setMeta('laneDrainEscalationMinutes', 90);
       const lane = f3.store.laneByKey('alpha')!;
       f3.store.db.prepare('UPDATE lanes SET data=? WHERE key=?').run(JSON.stringify({ ...lane, drain: { ...lane.drain!, since: minutesAgo(91) } }), 'alpha');
