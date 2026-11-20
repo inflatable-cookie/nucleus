@@ -1,0 +1,1 @@
+The board's project selector opens each project's actions from a disclosure chevron into a compact panel attached to the row, and Rename now edits the name in place with Save, Cancel, Enter and Escape.

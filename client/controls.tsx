@@ -18,7 +18,7 @@ const popover = (c: Colors) => ({ borderWidth: 1, borderColor: roles(c).border, 
  * own bounds, so no clipping parent can cut it off and focusing never moves the
  * layout; it takes the control's corners.
  */
-function FocusRing({ c, visible, corner = radius.control, corners }: { c: Colors; visible: boolean; corner?: number; /** Per-corner radii, for a joined button. */ corners?: ViewStyle }) {
+export function FocusRing({ c, visible, corner = radius.control, corners }: { c: Colors; visible: boolean; corner?: number; /** Per-corner radii, for a joined button. */ corners?: ViewStyle }) {
   if (!visible) return null;
   return <View pointerEvents="none" style={{ position: "absolute", top: 0, bottom: 0, left: 0, right: 0, borderRadius: corner, ...corners, borderWidth: 2, borderColor: roles(c).focus }} />;
 }
@@ -27,7 +27,7 @@ function FocusRing({ c, visible, corner = radius.control, corners }: { c: Colors
  * parent cuts it, and on a text field after a click. Every control here that sets it
  * shows focus itself, with the ring or the control frame's focus border.
  */
-const noOutline = (): ViewStyle => (globalThis as { document?: unknown }).document
+export const noOutline = (): ViewStyle => (globalThis as { document?: unknown }).document
   // A DOM host (React Native Web). Chrome's focus-visible outline is `outline-style: auto`,
   // which ignores a zero width; React Native's types know no `none`, but React Native Web
   // passes it through to CSS. Native hosts have no browser outline and no `none` value.
