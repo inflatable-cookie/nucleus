@@ -89,6 +89,7 @@ test("one host inbox is launched once and pinned outside task retention", async 
   assert.deepEqual(preview[0].payload, {
     threadId: inbox.threadId,
     url: "http://127.0.0.1:1234/#token=synthetic",
+    runtime: "server",
     reveal: true,
   });
   assert.equal(
