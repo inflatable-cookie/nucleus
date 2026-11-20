@@ -565,6 +565,53 @@ export function hasRecordedOperationSettlement(
   });
 }
 
+/**
+ * A run Queue released from its own authenticated completion after the send.
+ * The release alone is not proof: the agent may still be open and able to take
+ * a late restart. It is displaced once the host proves its thread archived,
+ * which is the same per-agent archive proof the ordinary archive path accepts.
+ */
+function releasedAfterArchivedCompletion(
+  store: Store,
+  task: Task,
+  run: Run,
+  events: ReturnType<Store["eventsAll"]>,
+  boundary: number,
+): boolean {
+  if (!run.agentId || run.status !== "finished" || !authenticatedCompletion(store, run))
+    return false;
+  if (store.threadArchiveEffect(run.agentId, task.hostId)?.status !== "archived")
+    return false;
+  return events.some(
+    (event) =>
+      Date.parse(event.at) > boundary &&
+      event.kind === "run_released_from_recorded_completion" &&
+      event.detail === `${run.role} ${run.id}`,
+  );
+}
+
+/**
+ * An uncertain restart whose only remaining step is observation. The sweep's
+ * observer owns it, and no owner retry can settle it before it does, so it is
+ * not offered as a `retry_effect`. A restart with a proved no-write journal is
+ * a different case and keeps its ordinary retry.
+ */
+export function observationOnlyRestartOperation(
+  store: Store,
+  operationId: string,
+): boolean {
+  const operation = store.operation(operationId);
+  return Boolean(
+    operation &&
+      operation.kind === "task_control" &&
+      operation.state === "needs_attention" &&
+      operation.effect?.kind === "task_control" &&
+      operation.effect.target === "restart" &&
+      !store.unwrittenMergeMoveProof(operation.id) &&
+      !(operation.result && operation.effect.status === "reconciled"),
+  );
+}
+
 /** Positive task-bound evidence that a control no longer owns the current step. */
 export function observedHostEffectEvidence(
   store: Store,
@@ -798,12 +845,13 @@ export function observedHostEffectEvidence(
         !runs.some(
           (other) => !other.released && other.agentId === run.agentId,
         ) &&
-        events.some(
+        (events.some(
           (event) =>
             Date.parse(event.at) > boundary &&
             event.kind === "run_released_from_observed_liveness" &&
             event.detail.startsWith(`${run.role} ${run.id}: `),
-        );
+        ) ||
+          releasedAfterArchivedCompletion(store, task, run, events, boundary));
       const laterMove = events.some((event) => {
         if (event.kind !== "owner_control" || Date.parse(event.at) <= boundary)
           return false;

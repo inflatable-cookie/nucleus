@@ -6,6 +6,7 @@ import {
   authenticatedCompletion,
   blockingRecoveryEffects,
   hasRecordedOperationSettlement,
+  observationOnlyRestartOperation,
   observedHostEffectEvidence,
   releasedRunDeliveryEvidence,
   recoveryEffectsRefusal,
@@ -149,5 +150,13 @@ export function blockedEffectAttentionReason(
     BLOCKED_EFFECT_ATTENTION_MS;
   if (!Number.isFinite(Date.parse(since)) || at - Date.parse(since) < bound)
     return null;
-  return `${BLOCKED_EFFECT_ATTENTION_PREFIX}: ${recoveryEffectsRefusal(blocked)}. Later evidence settles any of these the task has answered, so retry_effect re-proves the effect by observation and never resends an unknown delivery.`;
+  const observationOnly = blocked.every(
+    (effect) =>
+      effect.kind === "operation" &&
+      observationOnlyRestartOperation(store, effect.identity),
+  );
+  const next = observationOnly
+    ? "Nucleus observes each restart target on the sweep and settles it once later evidence shows the displaced occurrence can no longer act; no retry applies before then."
+    : "Later evidence settles any of these the task has answered, so retry_effect re-proves the effect by observation and never resends an unknown delivery.";
+  return `${BLOCKED_EFFECT_ATTENTION_PREFIX}: ${recoveryEffectsRefusal(blocked)}. ${next}`;
 }
