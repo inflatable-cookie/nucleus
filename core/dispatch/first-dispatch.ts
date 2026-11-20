@@ -46,6 +46,7 @@ export type FirstDispatchContext = Pick<
   | "profileCatalogKnown"
   | "profilesFor"
   | "hostWait"
+  | "repositoryHostWait"
   | "hostIds"
   | "hostAvailable"
   | "profileCatalogKnownFor"
@@ -96,6 +97,11 @@ export class FirstDispatch {
     const firstWorker = this.context.firstWorkerUnbound(task);
     if (firstWorker) {
       const hosts = this.context.workerHostCatalogs(task);
+      // nucleus#1416: the repository's explicit host kind must answer before any
+      // profile is chosen elsewhere; an outage is not proof the profile cannot run there.
+      const repositoryWait = this.context.repositoryHostWait(task);
+      if (repositoryWait)
+        return this.waitForRepositoryHost(task, dispatchHeld, repositoryWait);
       const chosen = chooseFirstWorkerHost(
         task,
         hosts,
@@ -157,6 +163,31 @@ export class FirstDispatch {
         this.dispatchOnHost(taskId, dispatchHeld),
       );
     return this.dispatchOnHost(taskId, dispatchHeld);
+  }
+  /**
+   * The named wait for an unbound task whose repository host kind is not ready.
+   * It takes the same gates as the route stop, so a paused, held or capacity-stopped
+   * task keeps its own stop, and it never charges a profile or reserves a workspace.
+   */
+  private waitForRepositoryHost(
+    task: Task,
+    dispatchHeld: boolean,
+    wait: string,
+  ): void {
+    if (
+      dispatchGate({
+        transientWaiting: this.context.gitTransientWaiting(task.id),
+        task,
+        stopped: this.context.stopped,
+        paused: this.store.getMeta<boolean>("paused"),
+        dispatchHeld,
+      }) ||
+      usageGateBlocked(task, this.store.usageLevel()) ||
+      this.store.dependencyWait(task) ||
+      this.resolution.slotAdmissionReason(task)
+    )
+      return;
+    if (task.reason !== wait) this.store.update(task.id, { reason: wait });
   }
   private async dispatchOnHost(
     taskId: string,
@@ -358,6 +389,7 @@ export class FirstDispatch {
       }
       let loaded = "";
       let inFlightWait = "";
+      let repositoryHold = "";
       let loadGuardSkipped = "";
       const admitted = this.store.transaction(() => {
         // Re-sample after awaited checks; pressure admission and its pacing marker
@@ -378,6 +410,13 @@ export class FirstDispatch {
           (firstSelection && !this.context.hostAvailable(firstSelection.hostId))
         )
           return false;
+        // nucleus#1416: the repository's host kind is read again after the awaits
+        // above, so a host that dropped, or a setting changed while queued, wins
+        // over this commit.
+        if (this.context.firstWorkerUnbound(current)) {
+          repositoryHold = this.context.repositoryHostWait(current) ?? "";
+          if (repositoryHold) return false;
+        }
         if (
           current.phase !== "queued" ||
           dispatchBlocked(current) ||
@@ -464,6 +503,11 @@ export class FirstDispatch {
       this.context.armWorkspacePressureWake();
       if (loaded) return;
       if (inFlightWait) return;
+      if (repositoryHold) {
+        if (this.store.task(task.id).reason !== repositoryHold)
+          this.store.update(task.id, { reason: repositoryHold });
+        return;
+      }
       if (!admitted) return;
       const prepared = this.store.task(task.id);
       if (!prepared.workspaceId) {

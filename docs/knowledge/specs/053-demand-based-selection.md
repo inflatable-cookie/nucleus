@@ -114,6 +114,15 @@ sign-off; it replaces the demand result for that role.
   (recording `hostId` and `hostSelection` with `basis: "worker_profile"` per the
   [orchestration contract](../contracts/orchestration.md)) while preserving the
   task's branch and PR; non-worker roles remain on the task's current host.
+- **Repository host kind is a requirement for first dispatch** (Tom's ruling,
+  nucleus#1416). An explicit repository `hostKind` must have an online host with a
+  read catalog before an unbound worker is selected or committed; while it does
+  not, the task keeps `Waiting for repository host <label>` with no workspace,
+  profile charge or slot, and healthy projects keep dispatching. A host outage is
+  not proof a profile cannot run there, so the wait holds even when another host
+  has it. The operator default stays a preference, and an omitted kind never waits.
+  The earlier cross-host ruling still holds for a profile only another host can
+  launch while the repository's host is ready.
 
 **What retires:** the pool's `roles` and `scopes` switches, and the soft
 capability-fit multiplier (demand replaces it). A task's `scope` stays readable
@@ -194,3 +203,6 @@ after the switch is live (the "operator UI before agent rollout" rule).
 | 12 | Same capability, costs medium and high, equal weight | Medium-cost share is twice the high-cost share; the high-cost one still gets work |
 | 13 | Unavailable subscription group in the set | Skipped; the rest of the set rotates |
 | 14 | Worker `route` (`now` or queued), `restart fresh`, or required-profile check for a profile launchable only on another online host | Evaluates every online host catalog in the task's mode; raises unavailability only when no online host can launch it, and moves the task (`basis: "worker_profile"`) to the capable host while keeping branch and PR |
+| 15 | Unbound worker on a repository with an explicit hostKind whose host is offline, reconnecting, or has no read catalog, while another online host has the profile | Stays queued with `Waiting for repository host <label>`, no workspace, profile charge or slot; a healthy project dispatches in the same pass; the same task dispatches through ordinary scheduling once the host answers |
+| 16 | Same repository, the host drops between selection and commit, or the setting changes while queued | Commit holds before any intent; clearing the kind releases the wait on the next pass |
+| 17 | Repository hostKind with no registered host of that kind | Visible wait `Repository host <label> is not registered; waiting for its configuration`; no workspace |

@@ -1447,9 +1447,21 @@ request identities and stored committed-handoff rows are not rewritten.
   slot. Queue scans continue past those waits; a recovered origin is proved before
   the review rejoins fair slot ordering. A fault outside a host still records `engineError`.
   Bounding calls that never return is tracked separately in nucleus#1347.
-- Before the first worker dispatch, the repository host and operator default are
-  preferences. Selection rotates profiles across online host catalogs, including
-  their options. A profile available on one host takes the task there; for a
+- Before the first worker dispatch, an explicit repository `hostKind` is a
+  requirement; the operator default stays a preference (Tom's ruling, nucleus#1416).
+  While no host of that kind is online with a read catalog, an unbound task keeps
+  the named wait `Waiting for repository host <label>` with no workspace, profile
+  charge, dispatch intent or slot. A kind with no registered host reads
+  `Repository host <label> is not registered; waiting for its configuration`. An
+  outage is not evidence that a profile cannot run there, so the wait holds even when
+  another online host has the profile. The readiness is read at selection and again
+  before the commit, so a host that drops between them, or a repository setting that
+  changes while the task is queued, holds the dispatch. The wait does not hold a
+  dispatch pass: healthy projects behind it keep dispatching. Recovery is ordinary
+  scheduling; the first pass that sees the host ready dispatches the same task. A
+  profile only another host can launch still routes there while the repository's host
+  is ready and its catalog positively lacks the profile (the earlier ruling).
+  Selection rotates profiles across online host catalogs, including their options. A profile available on one host takes the task there; for a
   multi-host profile the preferences choose the host. The dispatch intent records
   the host and reason with the workspace intent. After dispatch, non-worker roles
   (`reviewer`, `coordinator`, `executor`) stay on the task's current host, and a
