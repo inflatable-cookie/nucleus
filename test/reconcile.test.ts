@@ -1763,19 +1763,7 @@ test("a reviewer route-now after proved absence releases the empty creation once
       f,
       () => new Error("Transport lost"),
     );
-    // The fake adapter does not route creation through the host facade, so the
-    // throw is settled here and backdated past the producer-stop grace.
-    const attempt = readCreationAttempt(f.store, {
-      id: first.id,
-      taskId: f.task.id,
-      hostId: first.hostId,
-      workspaceId: first.workspaceId,
-      role: "reviewer",
-    })!;
-    settleCreationAttempt(f.store, attempt, "threw");
-    f.store.db
-      .prepare("UPDATE events SET at=? WHERE kind=?")
-      .run("2000-01-01T00:00:00.000Z", "creation_attempt_settled");
+    rolledReviewerCreation(f, first);
     const pi = profile("reviewer-pi", "reviewer-pi", { provider: "pi" });
     addProfile(f, pi, "review-pi", "reviewer");
     f.foundAgents.set(first.id, []);
@@ -1794,13 +1782,20 @@ test("a reviewer route-now after proved absence releases the empty creation once
     assert.equal(released.released, true);
     assert.equal(released.status, "superseded");
     assert.equal(released.agentId, null);
-    assert.throws(() => f.store.authenticate(first.id, "any-token"), /Unauthorized/);
+    assert.throws(
+      () => f.store.authenticate(first.id, "any-token"),
+      /Unauthorized/,
+    );
     await f.engine.wake();
     const live = f.store
       .runs(f.task.id)
       .filter((run) => run.role === "reviewer" && !run.released);
     assert.equal(live.length, 1, "one fresh reviewer owns the review");
-    assert.notEqual(live[0]!.id, first.id, "the fresh reviewer takes its own run identity");
+    assert.notEqual(
+      live[0]!.id,
+      first.id,
+      "the fresh reviewer takes its own run identity",
+    );
     assert.equal(
       f.store.runs(f.task.id).filter((run) => run.id === first.id).length,
       1,
@@ -2289,43 +2284,34 @@ function settledReviewerCreation(f: Fixture, run: Run) {
  * backdated past the lookup grace as a roll long before the pass looks again.
  */
 function rolledReviewerCreation(f: Fixture, run: Run) {
-  const reserved = f.store.db
+  const attempt = readCreationAttempt(f.store, run);
+  assert.ok(attempt);
+  const updated = f.store.db
     .prepare(
-      "SELECT id, detail FROM events WHERE taskId=? AND kind=? ORDER BY id DESC LIMIT 1",
+      `UPDATE events SET detail=json_set(detail,'$.producerId',?), at=?
+       WHERE taskId=? AND kind='creation_attempt_reserved'
+       AND json_extract(detail,'$.attemptId')=?`,
     )
-    .get(f.task.id, "creation_attempt_reserved") as {
-    id: number;
-    detail: string;
-  };
-  const reservation = JSON.parse(reserved.detail) as Record<string, unknown>;
-  assert.equal(
-    reservation.id,
-    run.id,
-    "the reservation under test is the latest one",
-  );
-  f.store.event(
-    f.task.id,
-    "creation_attempt_reserved",
-    JSON.stringify({
-      ...reservation,
-      producerId: "previous-service-process",
-      attemptId: randomUUID(),
-    }),
-  );
-  const latest = f.store.db
-    .prepare(
-      "SELECT id FROM events WHERE taskId=? AND kind=? ORDER BY id DESC LIMIT 1",
-    )
-    .get(f.task.id, "creation_attempt_reserved") as { id: number };
+    .run(
+      "previous-service-process",
+      "2000-01-01T00:00:00.000Z",
+      run.taskId,
+      attempt.attemptId,
+    );
+  assert.equal(updated.changes, 1);
   f.store.db
-    .prepare("UPDATE events SET at=? WHERE id=?")
-    .run("2000-01-01T00:00:00.000Z", latest.id);
+    .prepare(
+      `UPDATE events SET at=? WHERE taskId=? AND kind='creation_attempt_settled'
+       AND json_extract(detail,'$.attemptId')=?`,
+    )
+    .run("2000-01-01T00:00:00.000Z", run.taskId, attempt.attemptId);
 }
 
 async function uncertainReviewerCreation(f: Fixture) {
   f.plantReview();
   const create = f.adapter.createRun!;
-  f.adapter.createRun = async () => {
+  f.adapter.createRun = async (_task, run, token) => {
+    f.tokens.set(run.id, token);
     throw new Error("Transport lost");
   };
   await f.engine.wake();
@@ -2339,7 +2325,7 @@ async function uncertainReviewerCreation(f: Fixture) {
 test("the sweep proves a reviewer creation absent once, and names the owner exits", async () => {
   const f = fixture(50_000);
   try {
-    const { run, create } = await uncertainReviewerCreation(f);
+    const { run } = await uncertainReviewerCreation(f);
     rolledReviewerCreation(f, run);
     f.foundAgents.set(run.id, []);
     await f.engine.wake();
@@ -2360,6 +2346,7 @@ test("the sweep proves a reviewer creation absent once, and names the owner exit
       f.current().reason,
       /route role=reviewer now or restart role=reviewer/,
     );
+    assert.equal(reviewerRestartOffer(f)?.available, true);
     assert.equal(
       f.store
         .runs(f.task.id)
@@ -2378,10 +2365,27 @@ test("the sweep proves a reviewer creation absent once, and names the owner exit
   }
 });
 
-test("an ambiguity twin of a reviewer creation stays an owner decision and binds nothing", async () => {
+function reviewerRestartOffer(f: Fixture) {
+  return ownerTaskNext(collectOwnerVerbFacts(f.store, f.current())).verbs.find(
+    (verb) => verb.action === "restart",
+  );
+}
+
+function restartReviewer(f: Fixture, reason: string) {
+  return f.engine.performTaskControl({
+    taskId: f.task.id,
+    version: f.current().version,
+    action: "restart",
+    role: "reviewer",
+    reason,
+    caller: OWNER,
+  });
+}
+
+test("an ambiguity twin of a reviewer creation refuses restart in sweep, preview and execution", async () => {
   const f = fixture(50_000);
   try {
-    const { run, create } = await uncertainReviewerCreation(f);
+    const { run } = await uncertainReviewerCreation(f);
     rolledReviewerCreation(f, run);
     f.foundAgents.set(run.id, [
       { id: "first", workspaceId: run.workspaceId },
@@ -2392,6 +2396,12 @@ test("an ambiguity twin of a reviewer creation stays an owner decision and binds
     assert.equal(current.resolution.attention, true);
     assert.match(current.reason, /partial or ambiguous \(2 matching agents\)/);
     assert.ok(current.reason.includes(`run ${run.id}`));
+    const restart = reviewerRestartOffer(f);
+    assert.equal(restart?.available, false);
+    assert.equal(restart?.refusal, current.resolution.stop?.detail);
+    await assert.rejects(restartReviewer(f, "Resume the review"), {
+      message: restart!.refusal,
+    });
     assert.equal(f.store.run(run.id)?.agentId, null);
     assert.ok(!f.store.run(run.id)?.absentProvenAt);
     assert.equal(
@@ -2405,10 +2415,35 @@ test("an ambiguity twin of a reviewer creation stays an owner decision and binds
   }
 });
 
+test("a fresh ambiguous lookup withdraws a previous reviewer restart offer", async () => {
+  const f = fixture(50_000);
+  try {
+    const { run } = await uncertainReviewerCreation(f);
+    rolledReviewerCreation(f, run);
+    await f.engine.wake();
+    assert.equal(reviewerRestartOffer(f)?.available, true);
+    f.foundAgents.set(run.id, [
+      { id: "first", workspaceId: run.workspaceId },
+      { id: "second", workspaceId: run.workspaceId },
+    ]);
+    await assert.rejects(
+      restartReviewer(f, "Replace the reviewer"),
+      /partial or ambiguous/,
+    );
+    assert.equal(reviewerRestartOffer(f)?.available, false);
+    assert.match(reviewerRestartOffer(f)?.refusal ?? "", /2 matching agents/);
+    assert.equal(f.store.run(run.id)?.released, false);
+    assert.equal(f.store.run(run.id)?.absentProvenAt, undefined);
+    assert.equal(f.creates.length, 0);
+  } finally {
+    await f.close();
+  }
+});
+
 test("the sweep, the owner preview and the applying restart name the same reviewer creation wait", async () => {
   const f = fixture(50_000);
   try {
-    const { run, create } = await uncertainReviewerCreation(f);
+    const { run } = await uncertainReviewerCreation(f);
     f.foundAgents.set(run.id, []);
     await f.engine.wake();
     const wait = resolutionCreationWait("reviewer");
@@ -2417,13 +2452,7 @@ test("the sweep, the owner preview and the applying restart name the same review
       wait,
       "the sweep names the missing fact",
     );
-    const next = ownerTaskNext({
-      ...collectOwnerVerbFacts(f.store, f.current()),
-      creationGraceMs: f.engine.resolution.graceMs,
-    });
-    const restart = next.verbs.find(
-      (verb: { verb?: string }) => verb.verb === "restart",
-    );
+    const restart = reviewerRestartOffer(f);
     assert.equal(restart?.available, false);
     assert.equal(
       restart?.refusal,
@@ -2432,14 +2461,7 @@ test("the sweep, the owner preview and the applying restart name the same review
     );
     // The applying control records the same wait and sends nothing: one
     // observation answers the preview and the execution.
-    const waited = await f.engine.performTaskControl({
-      taskId: f.task.id,
-      version: f.current().version,
-      action: "restart",
-      role: "reviewer",
-      reason: "Resume the review",
-      caller: OWNER,
-    });
+    const waited = await restartReviewer(f, "Resume the review");
     assert.equal(waited.resolution.stop?.detail, wait);
     assert.equal(f.store.run(run.id)?.released, false);
     assert.equal(
@@ -2448,12 +2470,42 @@ test("the sweep, the owner preview and the applying restart name the same review
         .filter((candidate) => candidate.role === "reviewer").length,
       1,
     );
+    settledReviewerCreation(f, run);
+    await f.engine.wake();
+    const settledWait = f.current().resolution.stop?.detail;
+    assert.match(settledWait ?? "", /may still deliver/);
+    assert.equal(reviewerRestartOffer(f)?.refusal, settledWait);
+    const waitedAfterThrow = await restartReviewer(f, "Resume the review");
+    assert.equal(waitedAfterThrow.resolution.stop?.detail, settledWait);
+    assert.equal(f.store.run(run.id)?.released, false);
   } finally {
     await f.close();
   }
 });
 
-test("a restart replay after proved absence launches one fresh reviewer at the current head", async () => {
+test("proved absence at the old PR head cannot authorize replacement after the head moves", async () => {
+  const f = fixture(50_000);
+  try {
+    const { run, create } = await uncertainReviewerCreation(f);
+    rolledReviewerCreation(f, run);
+    await f.engine.wake();
+    assert.equal(reviewerRestartOffer(f)?.available, true);
+    f.setHead("d".repeat(40));
+    f.adapter.createRun = create;
+    await assert.rejects(
+      restartReviewer(f, "Replace the proved-absent reviewer"),
+      /PR head changed/,
+    );
+    assert.equal(f.store.run(run.id)?.released, false);
+    assert.equal(f.store.run(run.id)?.head, head);
+    assert.equal(f.creates.length, 0);
+    assert.equal(f.sends.length, 0);
+  } finally {
+    await f.close();
+  }
+});
+
+test("a restart replay after proved absence gives the replacement head one fresh reviewer and rejects stale progress", async () => {
   const f = fixture(50_000);
   try {
     const { run, create } = await uncertainReviewerCreation(f);
@@ -2461,22 +2513,52 @@ test("a restart replay after proved absence launches one fresh reviewer at the c
     f.foundAgents.set(run.id, []);
     await f.engine.wake();
     assert.ok(f.store.run(run.id)?.absentProvenAt);
+    assert.equal(run.head, head);
+    const originalToken = f.tokens.get(run.id)!;
+    assert.doesNotThrow(() => f.store.authenticate(run.id, originalToken));
     f.adapter.createRun = create;
+    await restartReviewer(f, "Replace the proved-absent reviewer");
+    assert.equal(f.store.run(run.id)?.released, true);
+    assert.equal(f.store.run(run.id)?.status, "superseded");
+
+    const replacementHead = "d".repeat(40);
+    f.setHead(replacementHead);
+    await f.engine.wake();
+    assert.equal(
+      f.creates.length,
+      0,
+      "dispatch waits for a binding at the new head",
+    );
+    f.adapter.verifyInspectedRevisionHead = async (
+      _task,
+      number,
+      verifiedHead,
+    ) => {
+      assert.equal(number, 1);
+      assert.equal(verifiedHead, replacementHead);
+    };
     await f.engine.performTaskControl({
       taskId: f.task.id,
       version: f.current().version,
-      action: "restart",
-      role: "reviewer",
-      reason: "Replace the proved-absent reviewer",
+      action: "move",
+      to: "review",
+      reason: "Review the replacement PR head",
       caller: OWNER,
     });
-    const released = f.store.run(run.id)!;
-    assert.equal(released.released, true);
-    assert.equal(released.status, "superseded");
-    assert.throws(
-      () => f.store.authenticate(run.id, "any-token"),
+    const staleProgress: Completion = {
+      eventId: randomUUID(),
+      taskId: f.task.id,
+      runId: run.id,
+      status: "review_in_progress",
+      head: run.head,
+      summary: "Old head review",
+      checkpoint: { covered: ["Old diff"], remaining: ["Tests"] },
+    };
+    await assert.rejects(
+      f.engine.complete(staleProgress, originalToken),
       /Unauthorized/,
     );
+    await f.engine.wake();
     await f.engine.wake();
     const live = f.store
       .runs(f.task.id)
@@ -2487,9 +2569,19 @@ test("a restart replay after proved absence launches one fresh reviewer at the c
     assert.notEqual(live[0]!.id, run.id);
     assert.equal(
       live[0]!.head,
-      f.current().prHead,
+      replacementHead,
       "the fresh reviewer reads the current head",
     );
+    await assert.rejects(
+      f.engine.complete(
+        { ...staleProgress, eventId: randomUUID(), runId: live[0]!.id },
+        f.tokens.get(live[0]!.id)!,
+      ),
+      /reviewer run exact head/,
+    );
+    assert.equal(f.current().prHead, replacementHead);
+    assert.equal(f.current().resolution.review, null);
+    assert.equal(f.store.run(live[0]!.id)?.reviewCheckpoints?.length ?? 0, 0);
     assert.equal(f.store.run(run.id)?.reviewCheckpoints?.length ?? 0, 0);
     const fresh = f.creates.filter((created) => created.role === "reviewer");
     assert.equal(

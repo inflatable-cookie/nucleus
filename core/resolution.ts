@@ -2749,7 +2749,13 @@ export class Resolution {
     who: string,
     handoff?: import("./questions/ladder").OperatorEscalationHandoff,
   ): void {
-    return this.ladder.classifyEscalationToOperator(t, id, reason, who, handoff);
+    return this.ladder.classifyEscalationToOperator(
+      t,
+      id,
+      reason,
+      who,
+      handoff,
+    );
   }
   settlePlannerEscalation(
     t: Task,

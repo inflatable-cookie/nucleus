@@ -1,8 +1,8 @@
+import { readCreationAttempt } from "../store/store-task-funnel";
 import {
-  creationTermination,
-  readCreationAttempt,
-} from "../store/store-task-funnel";
-import { creationLookup } from "../recovery/absent-creation/restarts";
+  observeResolutionCreation,
+  recordResolutionCreationBinding,
+} from "../recovery/absent-creation/restarts";
 import { TaskChangedRefusal } from "../../shared/task-version";
 import {
   COORDINATOR_LOOP_LIMIT,
@@ -420,36 +420,46 @@ export class EpisodeRestarts {
       );
     if (!this.resolution.adapter.findRunAgents)
       throw Error("Run identity lookup is unavailable");
-    const proof = creationTermination(this.store, run, this.resolution.graceMs);
-    const found = await this.resolution.adapter.findRunAgents(run);
-    const lookup = creationLookup(found, run.workspaceId);
-    if (lookup.kind === "absent" && !proof) {
+    const observation = await observeResolutionCreation(
+      this.store,
+      this.resolution.adapter,
+      run,
+      this.resolution.graceMs,
+    );
+    if (observation.kind === "wait") {
       const current = check();
       if (
         !current.resolution.stop ||
         current.resolution.stop.reason === "lifecycle"
       )
-        this.resolution.waiting(
-          current,
-          `The ${run.role} creation remains uncertain; waiting for its recorded producer to stop and the lookup grace period to pass`,
-          "lifecycle",
-        );
+        this.resolution.waiting(current, observation.detail, "lifecycle");
       return this.store.task(task.id);
     }
-    if (
-      lookup.kind === "unknown" &&
-      found.length === 1 &&
-      found[0]!.workspaceId === run.workspaceId
-    )
-      throw Error(
-        "Run creation lookup has an incomplete host identity; no restart",
-      );
+    if (observation.kind === "partial") {
+      const current = check();
+      // A fresh contradiction invalidates the saved proof that next offered.
+      if (run.absentProvenAt) {
+        this.store.transaction(() => {
+          this.store.putRun({ ...run, absentProvenAt: undefined });
+          this.resolution.attention(
+            current,
+            observation.detail,
+            "uncertain_delivery",
+          );
+        });
+      }
+      throw new DurableFenceRefusal(observation.detail);
+    }
     // A fresh run needs creation capability; refuse before anything is settled.
-    if (restart && !found.length && !this.resolution.adapter.createRun)
+    if (
+      restart &&
+      observation.kind === "absent" &&
+      !this.resolution.adapter.createRun
+    )
       throw Error(
         "Agent creation is unavailable; uncertain run restart refused",
       );
-    if (restart && !found.length) {
+    if (restart && observation.kind === "absent") {
       const latest = this.store.task(task.id),
         wait = this.engine.dispatchWaitsFor(latest);
       // A newly placed hold defers intent, never carries this inventory read
@@ -459,17 +469,9 @@ export class EpisodeRestarts {
           runId: run.id,
         });
     }
-    if (!restart && found.length)
+    if (!restart && observation.kind === "bound")
       throw Error(
         "Resolution run creation is no longer proven absent; inspect the matching agent before retrying",
-      );
-    if (found.length > 1)
-      throw Error(
-        `Run creation lookup is ambiguous (${found.length} matching agents); no restart`,
-      );
-    if (found.length === 1 && found[0]!.workspaceId !== run.workspaceId)
-      throw Error(
-        `Run creation lookup found agent ${found[0]!.id} outside the retained workspace ${run.workspaceId}; inspect it before restarting so no second agent is created for the same run`,
       );
     if (run.role === "closeout") {
       if (!this.adapter.verifyCleanQueueWorktree)
@@ -487,7 +489,7 @@ export class EpisodeRestarts {
         );
     }
     admitLocal();
-    if (restart && !found.length) {
+    if (restart && observation.kind === "absent") {
       const wait = this.engine.dispatchWaitsFor(check());
       if (wait)
         return this.engine.deferOwnerVerb(check(), restart.input, wait, {
@@ -497,14 +499,28 @@ export class EpisodeRestarts {
     return async () => {
       const current = check();
       admitLocal();
-      if (restart && found.length) {
+      if (
+        (readCreationAttempt(this.store, run)?.attemptId ?? null) !==
+        observation.attemptId
+      )
+        throw new TaskChangedRefusal(
+          "Run creation changed during restart",
+          input.version,
+          current.version,
+        );
+      if (restart && observation.kind === "bound") {
         return this.store.transaction(() => {
           if (input.settleFences)
             this.engine.settleVerbFences(task.id, input.settleFences);
           const latest = this.store.run(run.id)!,
             settledTask = this.store.task(task.id),
-            agentId = found[0]!.id;
-          this.store.putRun({ ...latest, agentId, status: "running" });
+            agentId = observation.agentId;
+          this.store.putRun({
+            ...latest,
+            agentId,
+            status: "running",
+            absentProvenAt: undefined,
+          });
           const patch: Partial<Task> = {};
           if (latest.role === "reviewer")
             patch.resolution = {
@@ -519,11 +535,7 @@ export class EpisodeRestarts {
             !settledTask.coordinatorAgentId
           )
             patch.coordinatorAgentId = agentId;
-          this.store.event(
-            task.id,
-            "absent_creation_bound",
-            `Exact lookup bound ${latest.role} run ${latest.id} to agent ${agentId} on restart`,
-          );
+          recordResolutionCreationBinding(this.store, latest, agentId);
           return this.store.update(task.id, patch, "restart_creation_bound");
         });
       }
@@ -533,15 +545,6 @@ export class EpisodeRestarts {
           return this.engine.deferOwnerVerb(current, restart.input, wait, {
             runId: run.id,
           });
-        if (
-          !proof ||
-          readCreationAttempt(this.store, run)?.attemptId !== proof.attemptId
-        )
-          throw new TaskChangedRefusal(
-            "Run creation changed during restart",
-            input.version,
-            current.version,
-          );
         return this.resolution.replaceAbsentRunFromRoute(
           current,
           run.id,

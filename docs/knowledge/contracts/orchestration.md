@@ -2029,8 +2029,10 @@ review or merge credit; live participants and unsettled effects remain fences.
   binds the original run), `absent` (no agent, and the producer that could still
   deliver belonged to a previous service process), `partial` (a match it cannot
   bind, because it is ambiguous, misplaced or host-unconfirmed) and `wait` (no
-  answer yet). The sweep, `next` and the applying restart read this one
-  observation, so the wait text and the threshold cannot differ between them.
+  answer yet). The sweep records the result for `next`. Restart and immediate
+  route repeat the same observation and verify the exact source before
+  replacement. A fresh ambiguous lookup on restart withdraws the earlier
+  absence proof and keeps the occurrence owned.
 - Only `absent` is a proof, and only the owner acts on it: the sweep records
   `absentProvenAt`, resolves the incident and names `route`/`restart` as the
   exits, while the one replacement stays the owner's deliberate route or

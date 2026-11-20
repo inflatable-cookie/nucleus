@@ -1,4 +1,3 @@
-import { creationTermination } from "../store/store-task-funnel";
 import {
   blockingRecoveryEffectsRefusal,
   unsettledControlRefusal,
@@ -62,7 +61,7 @@ import {
   workerLookupWait,
   workerProducerStopped,
 } from "../recovery/absent-creation/stale-worker";
-import { resolutionCreationWait } from "../recovery/absent-creation/restarts";
+import { resolutionCreationRestartRefusal } from "../recovery/absent-creation/restarts";
 
 /**
  * Round 4 (Tom, 2026-10-19): what `restart` does when no run of the role needs
@@ -894,11 +893,8 @@ export const restart: OwnerVerb = {
           refusal:
             "The resolution creation needs its recorded run, host and workspace",
         };
-      if (!creationTermination(facts.store, run, facts.creationGraceMs ?? 0))
-        return {
-          available: false,
-          refusal: resolutionCreationWait(run.role),
-        };
+      const refusal = resolutionCreationRestartRefusal(task, run);
+      if (refusal) return { available: false, refusal };
     }
     // nucleus#1195: one bounded continuation asks a live proof executor whose
     // result never arrived to resend that report on its existing run and
@@ -954,6 +950,9 @@ export const restart: OwnerVerb = {
       shape === "absent_worker"
         ? "Nucleus checks the exact creation on its recorded host before returning the work to ordinary dispatch."
         : undefined;
+    if (shape === "absent_resolution")
+      observationNote =
+        "The sweep proved this creation absent. Nucleus rechecks the exact lookup and current source before restarting.";
     if (shape === "checkpoint_reviewer") {
       // The same plan a preserving `move to=review` reads: one derivation, so the
       // two views cannot advertise different answers for the same checkpoint.

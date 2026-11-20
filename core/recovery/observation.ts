@@ -39,7 +39,11 @@ import {
   recordHostFailure,
 } from "../host/adapter-routing";
 import { HostReadRefusalError } from "../host";
-import { observeResolutionCreation } from "./absent-creation/restarts";
+import {
+  observeResolutionCreation,
+  recordResolutionCreationBinding,
+} from "./absent-creation/restarts";
+import { runsUnchangedSince } from "./observation-advance";
 
 export type ObservationContext = Pick<
   Resolution,
@@ -214,27 +218,41 @@ export class Observation {
             run,
             this.resolution.graceMs,
           );
-          if (dispatchBlocked(this.store.task(task.id))) continue;
+          const current = this.store.task(task.id);
+          const latest = this.store.run(run.id);
+          if (
+            dispatchBlocked(current) ||
+            !latest ||
+            !runsUnchangedSince([run], [latest]) ||
+            current.hostId !== run.hostId ||
+            current.workspaceId !== run.workspaceId ||
+            (run.role === "reviewer" &&
+              (current.prHead !== run.head ||
+                current.resolution.currentRunId !== run.id))
+          )
+            continue;
           if (creation.kind === "bound") {
-            run = { ...run, agentId: creation.agentId, status: "running" };
-            this.store.putRun(run);
+            run = { ...latest, agentId: creation.agentId, status: "running" };
             // The identity is proved; the dispatch it was created for is not.
             // Record which fact the occurrence still owes so a report request
             // inspects that exact message instead of assuming it arrived.
-            this.store.event(
-              task.id,
-              "run_creation_bound",
-              `${run.id}: exact lookup bound agent ${creation.agentId} in ${run.workspaceId}; its dispatch delivery is not yet observed`,
-            );
+            this.store.transaction(() => {
+              this.store.putRun(run);
+              recordResolutionCreationBinding(
+                this.store,
+                run,
+                creation.agentId,
+              );
+            });
             if (run.role === "reviewer")
-              this.resolution.update(task, {
+              this.resolution.update(current, {
                 reviewerAgentId: run.agentId,
                 reviewerProfile: run.profile,
               });
             if (
               coordinative(run) &&
-              task.coordinatorGeneration === run.generation &&
-              !task.coordinatorAgentId
+              current.coordinatorGeneration === run.generation &&
+              !current.coordinatorAgentId
             )
               this.store.update(
                 task.id,
@@ -249,11 +267,7 @@ export class Observation {
             );
             continue;
           }
-          await this.resolution.reconcileAbsentCreation(
-            this.store.task(task.id),
-            run,
-            creation,
-          );
+          await this.resolution.reconcileAbsentCreation(current, run, creation);
           continue;
         }
         const observationStartedAt = now();
