@@ -280,6 +280,11 @@ export class Notices {
         );
         if (error instanceof ProvenPreSendRefusalError && d.refused) {
           d.refused(record, error.message);
+        } else if (error instanceof ProvenPreSendRefusalError) {
+          // A refusal proved nothing left this process, so the notice is not an
+          // unknown delivery: it stays pending and is retried on a later pass
+          // (nucleus#1445).
+          d.wait(error.message);
         } else {
           d.mark(record, "uncertain", String(error), error);
         }
