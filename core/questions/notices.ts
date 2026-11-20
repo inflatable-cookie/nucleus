@@ -11,6 +11,7 @@ import type { AgentObservation } from '../host/adapter';
 import { isAgentGoneRefusal } from '../host/errors';
 import { qaSettlementHostMessageId } from '../qa/project-qa-notice';
 import { qaNoticeOwner, qaScheduleNoticeProject } from '../qa/project-qa-schedule';
+import { triageNoticeProject } from '../planning/triage';
 import type { Resolution } from '../resolution';
 import { now } from '../store/store';
 import { active } from '../recovery/task-reasons';
@@ -220,11 +221,13 @@ export class Notices {
     if (!this.adapter.notify || this.paused()) return;
     for (let n of this.store.pendingNotices()) {
       if (this.paused()) return;
-      if (n.kind !== 'lane_drain' && n.kind !== 'next_aim' && n.kind !== 'qa') continue;
+      if (n.kind !== 'lane_drain' && n.kind !== 'next_aim' && n.kind !== 'qa' && n.kind !== 'triage') continue;
       const [scope, key, ...rest] = n.id.split(':');
       const since = rest.join(':');
       const episodeLive = () => {
         try {
+          // A triage prompt is live while its batch is the project's outstanding batch.
+          if (n.kind === 'triage') return Boolean(triageNoticeProject(this.store, n));
           if (scope === 'lane-drain') return this.store.laneByKey(key)?.drain?.since === since;
           if (scope === 'next-aim') return this.store.projectByKey(key)?.drain?.since === since;
           return n.kind === 'qa';
@@ -233,6 +236,20 @@ export class Notices {
       if (n.status === 'intent') { this.store.putNotice({ ...n, status: 'uncertain', error: 'Restart during delivery; inspect the owner thread before resending' }); continue; }
       const scheduledQa = n.kind === 'qa' && !n.id.startsWith('project-qa-settled:');
       const qaProject = scheduledQa ? qaScheduleNoticeProject(this.store, n) : null;
+      if (n.kind === 'triage') {
+        // The planner is the project's current responsible thread, resolved at delivery like a scheduled QA prompt.
+        const project = triageNoticeProject(this.store, n);
+        if (!project) { this.store.putNotice({ ...n, status: 'superseded', error: 'The triage batch ended before the prompt was delivered' }); continue; }
+        const { thread } = await this.resolution.responsibleThread(project);
+        if (!thread) {
+          if (n.error !== 'No live responsible thread') this.store.putNotice({ ...n, error: 'No live responsible thread' });
+          continue;
+        }
+        if (n.agentId !== thread.agentId || n.error) {
+          n = { ...n, agentId: thread.agentId, recipientAgentId: thread.agentId, error: '' };
+          this.store.putNotice(n);
+        }
+      }
       let live = episodeLive();
       if (n.kind === 'qa') {
         live = scheduledQa ? Boolean(qaProject) : Boolean(qaNoticeOwner(this.store, n));
@@ -249,7 +266,7 @@ export class Notices {
         }
       }
       if (!live) { this.store.putNotice({ ...n, status: 'superseded', error: 'The drain episode ended before the prompt was delivered' }); continue; }
-      if (n.status === 'pending' && n.kind !== 'qa') {
+      if (n.status === 'pending' && n.kind !== 'qa' && n.kind !== 'triage') {
         const project = n.kind === 'next_aim' ? this.store.projectByKey(key) : this.store.projects().find(candidate => {
           try { return this.store.plan({ project: candidate.key }).entries.some(entry => entry.lane === key); }
           catch { return false; }
@@ -271,7 +288,7 @@ export class Notices {
         confirm: () => {
           // Plan saves and lane-document edits may land while the owner is finishing
           // another run. Refresh at the delivery boundary and retain the episode ID.
-          if (n.kind !== 'qa') this.store.evaluateLaneDrains();
+          if (n.kind !== 'qa' && n.kind !== 'triage') this.store.evaluateLaneDrains();
           const current = this.store.notices(n.taskId).find(notice => notice.id === n.id);
           if (!current || current.status !== 'pending') return null;
           let stillLive = episodeLive();

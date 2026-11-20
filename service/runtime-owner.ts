@@ -1631,6 +1631,17 @@ export class QueueRuntime {
   }) {
     return this.planning.approveLead(input);
   }
+  /** Nucleus#1420: automatic lead and papercut triage. */
+  triageGet(input: { project: string }) {
+    return this.planning.triageView(input);
+  }
+  triageSet(input: { project: string; enabled: boolean; by: string }) {
+    this.planning.triageSet(input);
+    return this.planning.triageView({ project: input.project });
+  }
+  triageApply(input: Parameters<RuntimePlanning["triageApply"]>[0]) {
+    return this.planning.triageApply(input);
+  }
   promoteLeadToTask(input: {
     id: string;
     repository?: string;

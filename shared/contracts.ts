@@ -78,6 +78,7 @@ export * from "./schema/papercuts";
 export * from "./rpc/papercuts";
 export * from "./schema/leads";
 export * from "./rpc/leads";
+export * from "./rpc/triage";
 export * from "./schema/decisions";
 export * from "./rpc/decisions";
 export * from "./schema/plans";

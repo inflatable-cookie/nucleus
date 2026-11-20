@@ -139,13 +139,15 @@ export class Leads {
     });
   }
   drop(input: { id: string; reason: string }): Lead {
-    return this.store.transaction(() => {
-      const current = this.store.lead(input.id);
-      if (current.papercut) throw new Error("Use papercut.close for papercuts");
-      if (current.state !== "open") throw new Error(`Only open leads can be dropped; this lead is ${current.state}`);
-      const stamp = now();
-      return this.store.updateLead({ ...current, state: "dropped", dropReason: input.reason, updatedAt: stamp, closedAt: stamp });
-    });
+    return this.store.transaction(() => this.dropWithin(input));
+  }
+  /** The drop rule without its own transaction, for a caller that already holds one (Nucleus#1420 triage ledger). */
+  dropWithin(input: { id: string; reason: string }): Lead {
+    const current = this.store.lead(input.id);
+    if (current.papercut) throw new Error("Use papercut.close for papercuts");
+    if (current.state !== "open") throw new Error(`Only open leads can be dropped; this lead is ${current.state}`);
+    const stamp = now();
+    return this.store.updateLead({ ...current, state: "dropped", dropReason: input.reason, updatedAt: stamp, closedAt: stamp });
   }
   /**
    * Restores one dropped lead to open in place, so a mistaken drop needs no new lead, content edit,

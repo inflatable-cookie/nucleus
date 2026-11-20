@@ -874,3 +874,83 @@ decision read under the same `decisions` key. Each list keeps its previous resul
 on screen while a new revision loads; a failed refresh keeps the last loaded list
 and says it was not refreshed, and loading or error states show only with no list
 to show. A write the operator makes moves its domain revision, so it shows at once.
+
+## Revision: automatic lead and papercut triage (nucleus#1420, 2026-11-20)
+
+Tom's direction: a project planner should not have to remember to sweep its
+open leads and papercuts. Nucleus wakes the project's planner with a bounded
+triage batch when records change, when a deferred record comes due, or when
+dispatch room opens. Filing text stays evidence; the planner decides.
+
+**Opt-in, per project.** Triage is off until a project opts in with
+`triage.set` (`{project, enabled, by}`). Opting out keeps the ledger, so a later
+opt-in resumes it. Nucleus itself is the pilot; activation is the planner's
+call once this lands, and nothing in code enables it.
+
+**Ledger.** Each project's state is one durable meta row, `triage:<project>`,
+so assessments, the outstanding batch and the last completed batch survive a
+daemon roll and a planner handover. It holds, per record: a versioned history
+of settled dispositions, the source digest the decision rests on, and the
+record's next condition (a deferred revisit time). The digest covers the lead
+version, title, body, lanes, tags, state and base branch, so an edit or a
+lane move makes the record eligible again.
+
+**Batches.** Eligible records are open, not tagged `hold` (an intentional hold
+is never triaged automatically), and either unassessed, changed since their
+decision, or deferred past their revisit time. The oldest eligible records come
+first, at most eight to a batch. A project holds at most one outstanding batch;
+records that change while it is outstanding wait for the next one. The sweep
+evaluates at most once a minute.
+
+- A planner-less project keeps the batch visible in `triage.get`, unnoticed,
+  until a planner is registered. A handover ends the old planner's prompt and
+  addresses the batch to the new planner.
+- A full dispatch queue (live tasks at the project's slot limit) holds batch
+  creation with `waiting: capacity` until room opens. A batch is not made to
+  queue promotions nobody can dispatch.
+- The prompt is one durable notice, kind `triage`, delivered through the
+  ordinary notice path to the project's responsible planner. It is live only
+  while its batch is the project's outstanding batch, so a settled or replaced
+  batch is never resent.
+
+**Dispositions.** `triage.apply` (`{project, batch, by, decisions}`) takes one
+decision per record:
+
+| Disposition | Required | Effect |
+| --- | --- | --- |
+| `promote` | `reason` | Checks the brief if needed, approves the current version with `by` as approver, then promotes it with `by` as promoting agent through the ordinary operations. A papercut promotes through `papercut.promote-task`. A record already linked to a task settles without another promotion. |
+| `close` | `reason`, `closure` (`duplicate`, `fixed` or `out_of_scope`), `canonical` | Drops a lead with the closure, reason and canonical target as its drop reason, or closes a papercut as `deprecated` (duplicate) or `completed` (fixed, out of scope), with the same text as its note. The filing text is kept. |
+| `defer` | `reason`, `revisitAt` (a future ISO time) | Records the reason and the time. The record stays open and is eligible again when the time is due. |
+| `operator` | `reason`, `question` | Records the question for the operator, shown as `operatorQuestions` in `triage.get`. The record stays open. |
+
+`out_of_scope` closure needs `canonical` to name the plan rule that supports it.
+Otherwise an out-of-scope idea stays deferred.
+
+**Stale and replayed work.** An apply is accepted only for the outstanding batch.
+A decision is applied only when its `leadVersion` and `digest` still match the
+record and the record is still open. A changed record is superseded and never
+closed or promoted on the old assessment. A replay of a completed batch returns
+its recorded outcomes and changes nothing. A promotion that is not yet current
+(a brief check running, an operation accepted, backpressure) is proposed, the
+item stays open, and the planner applies again. Promotion is idempotent by
+source, so a retry never dispatches twice. A refused decision (missing
+evidence, a wrong or changed record) leaves its record open for a corrected
+decision.
+
+**Standing planner authority.** Promotion through triage uses the planner's
+standing authority for routine, in-scope work only. Each promotion records the
+planner as approver and promoting agent, with its reason, and runs the same
+check and promotion gates as an operator-approved lead. Changes to product
+direction, release or outward actions, and held profiles are not triage
+decisions: the planner uses `operator` for them.
+
+**Limits.** Triage never prunes on age, never edits filing text, and never
+overrides a project's dispatch limit, pause or dispatch hold. Opting out or
+pausing the service stops new batches; an outstanding batch keeps its record of
+what was decided.
+
+**Status.** The triage ledger, batching, wake, notice delivery, dispositions and
+replay protection are implemented and proved in `test/triage-1420.test.ts`
+(isolated stores, real notice delivery through the engine). The planning
+surface does not yet show proposed and applied outcomes or the batch digest; it
+reads `triage.get`. That view is the remaining acceptance item.

@@ -1278,7 +1278,7 @@ Coordination (recovery, review routing, merge, closeout) is Nucleus's job.
 Papercuts, leads, decisions and plans are Nucleus records:
 `papercut.add|list|get|edit|promote|promote-task|close|set-lanes`,
 `lead.add|submit|edit|get|version|list|set-lanes|set-tags|drop|reopen|promote|check|approve|promote-task|import`,
-`decision.add|get|list|answer|withdraw|link|supersede|backfill`, and `plan.get|plan.set`.
+`decision.add|get|list|answer|withdraw|link|supersede|backfill`, `triage.get|set|apply`, and `plan.get|plan.set`.
 Record small recurring friction as a papercut and carry on; list existing items before filing duplicates. The planner can attach it to lanes, promote it, or close it as completed or deprecated.
 A papercut needs `repository` (an origin string or `{origin, path}`), `title`,
 `happened` and `impact`; `papercut.promote-task` also needs `complexity`, since
@@ -1293,7 +1293,9 @@ JSON
 
 A lead names complexity in its brief as
 `queue.complexity`. A lead is checked at the pushed head and approved only
-by the operator (or a relayed agent naming the authorization); promotion rechecks
+by the operator (or a relayed agent naming the authorization), except that
+triage's standing planner authority approves a routine, in-scope lead under the
+planner's name (see "Triage batches" below); promotion rechecks
 planning, routing, dependencies and pre-dispatch policy before admitting one task
 per approved lead version and repository. A newly checked and approved version
 can admit after an earlier target was cancelled; it does not cancel or supersede
@@ -1382,6 +1384,38 @@ resolved relative to the primary checkout. A primary checkout is left alone.
 Install Nucleus to use `nucleus worktree <action>`.
 
 Create and edit routing profiles in Settings → Profiles.
+
+### Triage batches (opt-in per project)
+
+A project with triage on gets one bounded batch of its oldest open leads and
+papercuts at a time, as a `triage` notice to its planner. Opt in with
+`triage.set` (`{"project", "enabled", "by"}`); nothing enables it by default.
+`triage.get` (`{"project"}`) shows the outstanding batch, each record's
+`leadVersion` and `digest`, and any operator questions.
+
+Answer the batch with `triage.apply` (JSON on stdin, `by` set to your agent id):
+one decision per record, copying its `leadVersion` and `digest` exactly.
+
+- `promote` with a `reason`: checks and approves the lead under your name, then
+  promotes it. Use it for routine, in-scope work only.
+- `close` with `closure` (`duplicate`, `fixed` or `out_of_scope`), a `reason` and
+  a `canonical` target (the other record, the fixing task or outcome, or the plan
+  rule). The filing text is kept.
+- `defer` with a `reason` and a future `revisitAt`.
+- `operator` with a `question`, for decisions only the operator can make.
+
+A record that changed since the batch was made is superseded, not closed, and
+comes back in a later batch. A replayed apply changes nothing. Records tagged
+`hold` are never triaged automatically.
+
+```sh
+nucleus triage.apply - <<'JSON'
+{"project": "owner/name", "batch": "<batch id>", "by": "<your agent id>",
+ "decisions": [{"recordId": "<id>", "leadVersion": 3, "digest": "<digest>",
+   "disposition": "close", "closure": "duplicate", "canonical": "<other id>",
+   "reason": "Same request as the canonical lead"}]}
+JSON
+```
 
 ## Worker rules
 
