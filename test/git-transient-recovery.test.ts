@@ -712,6 +712,7 @@ test("census: review through merge and sync reads the Proxy, and every Task-bear
       observe: "resolution",
       syncMain: "resolution",
       verifyPr: "resolution",
+      verifyPrIdentity: "resolution",
       verifyReview: "resolution",
     });
     assert.deepEqual(tags.untagged(), []);
@@ -724,6 +725,7 @@ test("census: review through merge and sync reads the Proxy, and every Task-bear
         "resolution.merged",
         "resolution.syncMain",
         "resolution.verifyPr",
+        "resolution.verifyPrIdentity",
         "resolution.verifyReview",
       ],
       "observe and the timeline take no Task",

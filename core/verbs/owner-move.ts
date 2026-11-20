@@ -63,6 +63,7 @@ import type { OwnerVerbApplicability, OwnerVerb } from "./owner-shared";
 import { interactiveSessionOpen } from "../dispatch/interactive";
 import { retainedContinuationPlan } from "./owner-restart";
 import { reviewRequiredForTask } from "../review/reviewer-setting";
+import { publishedReviewDecision } from "../intake/result-application";
 
 export const moveTargets = ["work", "review", "merge", "closeout"] as const;
 
@@ -260,6 +261,15 @@ function moveViews(facts: OwnerVerbFacts): TaskNextVerb[] {
   const review = ((): OwnerVerbApplicability => {
     const shared = gate("review");
     if (shared) return shared;
+    const published = publishedReviewDecision(facts.store, task);
+    if (published.kind === "blocked")
+      return { available: false, refusal: published.refusal };
+    if (published.kind === "ready")
+      return {
+        available: true,
+        args: {},
+        note: `Apply the published ${published.completion.status} verdict from reviewer run ${published.run.id} after the forge and participant lease confirm the current source and custody.`,
+      };
     // nucleus#1425: a recorded unreviewed merge whose source no longer matches is refused here
     // with the admission's own text, so `next` never offers a route the move would refuse.
     const mergedRouteRefusal = unreviewedMergeRouteRefusal(task);

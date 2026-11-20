@@ -1592,7 +1592,12 @@ function fixture(uncertainMergeRetryMs?: number) {
       return state;
     },
     agentTimelinePage: observedParticipantTimeline(states),
-    verifyPr: async () => ({ head, url: task.prUrl! }),
+    verifyPr: async () => ({
+      head,
+      url: task.prUrl!,
+      repository: "example/repo",
+      headRepository: "example/repo",
+    }),
     createRun: async (t, r, token) => {
       creates.push(r);
       tokens.set(r.id, token);
@@ -2494,6 +2499,8 @@ test("every pre-merge refusal parks on its second unchanged observation regardle
     try {
       await stepEngine(f.engine);
       await f.report("ready_to_merge", false);
+      await stepEngine(f.engine);
+      assert.equal(f.current().resolution.review?.status, "ready_to_merge");
       // Exercise the shared refusal boundary used by conflicts and repository
       // hooks, without fabricating a different hook execution for every shape.
       const route = f.engine.resolution as unknown as {
@@ -2546,6 +2553,8 @@ test("alternating refusals at one head each get one round, then an earlier refus
   try {
     await stepEngine(f.engine);
     await f.report("ready_to_merge", false);
+    await stepEngine(f.engine);
+    assert.equal(f.current().resolution.review?.status, "ready_to_merge");
     f.adapter.mergeGate = async (t) =>
       ({ head: t.prHead!, base, wait: "Hold for test observation" }) as never;
     const route = f.engine.resolution as unknown as {
