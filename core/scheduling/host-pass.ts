@@ -26,6 +26,7 @@ import { submissionSchema } from "../../shared/contracts";
 import { submissionRecordFromLegacy } from "../../shared/schema/settings/legacy";
 import { LANE_PRIORITY_AUDIT } from "./lane-priorities";
 import type { TaskAttention } from "../../shared/task-attention";
+import type { TaskRowProjection } from "../host/contract/thread-presentation";
 import { taskRowAttention } from "../workspaces/task-row-attention";
 import { HiddenRows } from "./hidden-row";
 
@@ -103,29 +104,40 @@ export class HostPass {
   private readonly transportFailures = new Set<string>();
 
   /**
+   * The pass's rows: one per task this host presents, from the one attention
+   * projection (nucleus#1366). They are derived before any write so the row step and
+   * the title step read the same facts and a row fault cannot leave a partial
+   * reading behind (nucleus#1443).
+   */
+  private taskRows(hostId: string): TaskRowProjection[] {
+    return this.store
+      .tasks()
+      .filter((task) => task.hostId === hostId && task.removedAt == null)
+      .map((task) => ({ task, attention: taskRowAttention(this.store, task) }));
+  }
+
+  /**
    * The task's one row, from the one attention projection (nucleus#1366): a person
    * who must act unsnoozes it, a task that waits on nothing Nucleus runs snoozes it,
    * and a running role leaves it alone. A host without the presentation method
    * (Paseo) keeps its own behaviour. Presentation only: a warning here never
    * changes a task.
    */
-  private async reconcileTaskRows(hostId: string): Promise<void> {
+  private async reconcileTaskRows(
+    rows: readonly TaskRowProjection[],
+  ): Promise<void> {
     const reconcile = this.adapter.reconcileTaskRow;
     if (!reconcile) return;
-    const rows = this.store
-      .tasks()
-      .filter((task) => task.hostId === hostId && task.removedAt == null)
-      .map((task) => ({ task, attention: taskRowAttention(this.store, task) }));
     const rank = (state: TaskAttention["state"]) =>
       state === "active" || state === "attention"
         ? 0
         : state === "waiting"
           ? 1
           : 2;
-    rows.sort(
+    const ordered = [...rows].sort(
       (left, right) => rank(left.attention.state) - rank(right.attention.state),
     );
-    for (const { task, attention } of rows) {
+    for (const { task, attention } of ordered) {
       try {
         await reconcile.call(this.adapter, task.id, attention);
       } catch (error) {
@@ -458,11 +470,22 @@ export class HostPass {
         host,
       ),
     );
+    // The pass derives its rows once, before it writes anything, and both the row
+    // step and the title step read that same projection (nucleus#1443): a row write
+    // that fails partway leaves the titles reading the whole host, never a count of
+    // how many writes had landed. A host that presents neither pays for no rows, and
+    // a projection fault stays inside the step that first needed it.
+    let derived: readonly TaskRowProjection[] | undefined;
+    const rows = (): readonly TaskRowProjection[] =>
+      (derived ??=
+        this.adapter.reconcileTaskRow || this.adapter.reconcileThreadTitles
+          ? this.taskRows(host)
+          : []);
     await this.step(host, "reconcileTaskRows", () =>
-      this.reconcileTaskRows(host),
+      this.reconcileTaskRows(rows()),
     );
     await this.step(host, "reconcileThreadTitles", () =>
-      this.adapter.reconcileThreadTitles?.(tasks),
+      this.adapter.reconcileThreadTitles?.(tasks, rows()),
     );
     // Audit A6: one bounded labelled inventory answers every identity this
     // pass observes, and retired workers are re-read on their own slow cadence.

@@ -16,6 +16,7 @@ import type {
 } from "../../shared/host";
 import type { Run, Task } from "../../shared/contracts";
 import type { TaskAttention } from "../../shared/task-attention";
+import type { TaskRowProjection } from "../../core/host/contract/thread-presentation";
 import { WIRE_LABEL_KEYS } from "../../shared/wire-labels";
 import { T3CodeHost, type T3CodeConfig } from "./adapter";
 
@@ -291,8 +292,11 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
     threadArchiveState(id: string) {
       return this.native.threadArchiveState(id);
     }
-    reconcileThreadTitles(tasks: readonly Task[]) {
-      return this.native.reconcileThreadTitles(tasks);
+    reconcileThreadTitles(
+      tasks: readonly Task[],
+      rows?: readonly TaskRowProjection[],
+    ) {
+      return this.native.reconcileThreadTitles(tasks, rows);
     }
     agentTimelinePage(id: string, limit?: number) {
       return this.native.agentTimelinePage(id, limit);

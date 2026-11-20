@@ -67,7 +67,8 @@ export interface InboxUiResult {
 
 /**
  * The inbox thread's one live signal (nucleus#1384, v2): decisions to answer first, then
- * tasks running on this host, otherwise "All quiet". Counts are the caller's facts.
+ * tasks running on this host, otherwise "All quiet". Both counts are the caller's facts:
+ * the decision projection's open offers and the pass's own task attention rows.
  */
 export function inboxTitle(decisions: number, runningTasks: number): string {
   if (decisions > 0)
@@ -85,8 +86,6 @@ interface InboxContext {
   hostId(): string;
   /** The persisted global Nucleus pause state. */
   paused(): boolean;
-  /** Tasks whose attention is active on this host in the current pass (each task once). */
-  runningTasks(): number;
   acp(): AcpSessionSurface | null;
   state: T3StateFile;
   reads: T3Reads;
@@ -107,7 +106,11 @@ export class T3Inbox {
   private readonly serving = new Set<string>();
   constructor(private readonly core: InboxContext) {}
 
-  async reconcile(): Promise<void> {
+  /**
+   * `runningTasks` is the pass's complete count, derived from the shared attention
+   * projection before any row write (nucleus#1443); the title never counts writes.
+   */
+  async reconcile(runningTasks: number): Promise<void> {
     const acp = this.core.acp();
     if (!acp?.bindInbox) return;
     const observed = decode(
@@ -196,7 +199,7 @@ export class T3Inbox {
     if (!this.previewAttempted && this.core.boardLink)
       await this.showBoardFor(inbox);
     await this.nameProject(inbox.projectId);
-    await this.retitle(inbox.threadId, thread);
+    await this.retitle(inbox.threadId, thread, runningTasks);
     if (thread.pinnedAt === undefined)
       throw new T3CompatibilityError("inbox thread pinnedAt");
     if (thread.pinnedAt === null) {
@@ -414,13 +417,14 @@ export class T3Inbox {
    */
   private async retitle(
     threadId: string,
-    knownThread?: Awaited<ReturnType<T3Reads["shellRow"]>>,
+    knownThread: Awaited<ReturnType<T3Reads["shellRow"]>> | undefined,
+    runningTasks: number,
   ): Promise<void> {
     const hostId = this.core.hostId();
     const key = this.core.acp()?.pendingInboxDecisionKey?.(hostId) ?? null;
     const decisions = key ? (JSON.parse(key) as unknown[]).length : 0;
     const title = pausedInboxTitle(
-      inboxTitle(decisions, this.core.runningTasks()),
+      inboxTitle(decisions, runningTasks),
       this.core.paused(),
     );
     const thread = knownThread ?? (await this.core.reads.shellRow(threadId));
