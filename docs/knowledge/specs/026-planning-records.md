@@ -415,6 +415,15 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
   naming the operator's authorization, and the approval is recorded as relayed
   (Tom, 2026-09-26); without a note it is refused. A brief that should wait for the
   operator simply stays an open lead until approved.
+- **Routine dispatch under standing authority (Tom, 2026-11-20).** The planner
+  decides whether to dispatch an ordinary in-scope brief without asking the
+  operator for dispatch approval, and records the source of that authority.
+  Product or scope changes, held-profile requests, releases and other explicitly
+  reserved operator actions still need the operator. The check, digest,
+  attribution and promotion gates are unchanged: a CLI approval under the
+  standing ruling still carries `relayed: true` with a note naming the standing
+  ruling and the brief it covers, never a per-brief operator conversation that
+  did not happen.
 - **Promote to task.** One action turns an approved lead version, or a papercut, into
   a task. It re-checks at promotion time, is atomic, and is idempotent on the source
   and the admitted version, digest and repository. The admitted approval retains
