@@ -1,4 +1,4 @@
-import { fakeAdapter, profile } from './support/fakes';
+import { fakeAdapter, profile } from "./support/fakes";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
