@@ -24,8 +24,7 @@ import {
   ProvenPreSendRefusalError,
 } from "../../core/host";
 import { isHostOperationTimeout } from "../../core/host";
-import type { RowSnoozeVisibility } from "../../core/host";
-import type { TaskRowProjection } from "../../core/host/contract/thread-presentation";
+import type { RowSnoozeVisibility, TaskRowProjection } from "../../core/host";
 import { T3RpcClient, type T3ConnectionConfig } from "./rpc";
 import {
   canonicalThinkingValue,

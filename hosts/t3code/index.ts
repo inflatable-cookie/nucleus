@@ -3,6 +3,7 @@ import type {
   HostPolicyConstructor,
   HostPolicyPort,
   HostWorktreeWorkspaceSpec,
+  TaskRowProjection,
 } from "../../core/host";
 import {
   HostReadRefusalError,
@@ -16,7 +17,6 @@ import type {
 } from "../../shared/host";
 import type { Run, Task } from "../../shared/contracts";
 import type { TaskAttention } from "../../shared/task-attention";
-import type { TaskRowProjection } from "../../core/host/contract/thread-presentation";
 import { WIRE_LABEL_KEYS } from "../../shared/wire-labels";
 import { T3CodeHost, type T3CodeConfig } from "./adapter";
 
