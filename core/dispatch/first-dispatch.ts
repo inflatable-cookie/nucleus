@@ -24,6 +24,8 @@ import { chooseProfile, eligibilityReasons } from "./routing";
 import {
   chooseFirstWorkerHost,
   formatWorkerHostSelectionReason,
+  unreadHostsNote,
+  type WorkerHostObservation,
 } from "./first-host-selection";
 import { dispatchGate } from "./dispatch-decisions";
 import { USAGE_GATE_WAIT, usageGateBlocked } from "./usage-gate";
@@ -46,7 +48,8 @@ export type FirstDispatchContext = Pick<
   | "profileCatalogKnown"
   | "profilesFor"
   | "hostWait"
-  | "repositoryHostWait"
+  | "firstDispatchTarget"
+  | "targetHostWait"
   | "hostIds"
   | "hostAvailable"
   | "profileCatalogKnownFor"
@@ -97,11 +100,20 @@ export class FirstDispatch {
     const firstWorker = this.context.firstWorkerUnbound(task);
     if (firstWorker) {
       const hosts = this.context.workerHostCatalogs(task);
-      // nucleus#1416: the repository's explicit host kind must answer before any
-      // profile is chosen elsewhere; an outage is not proof the profile cannot run there.
-      const repositoryWait = this.context.repositoryHostWait(task);
-      if (repositoryWait)
-        return this.waitForRepositoryHost(task, dispatchHeld, repositoryWait);
+      // nucleus#1416 (extended 2026-11-20): the effective target host kind, the
+      // repository's explicit kind else the operator default, must answer before
+      // any profile is chosen elsewhere; an outage is not proof the profile cannot run there.
+      const targetWait = this.context.targetHostWait(task);
+      if (targetWait)
+        return this.waitForTargetHost(task, dispatchHeld, targetWait);
+      const target = this.context.firstDispatchTarget(task);
+      // Hosts this dispatch could not read: offline, reconnecting or catalog unread.
+      const observation: WorkerHostObservation = {
+        unreadHostIds: this.context
+          .hostIds()
+          .filter((id) => !hosts.some((host) => host.hostId === id)),
+        targetKind: target?.kind ?? null,
+      };
       const chosen = chooseFirstWorkerHost(
         task,
         hosts,
@@ -119,7 +131,7 @@ export class FirstDispatch {
       );
       if (chosen)
         return this.context.withHost(chosen.hostId, () =>
-          this.dispatchOnHost(taskId, dispatchHeld, chosen),
+          this.dispatchOnHost(taskId, dispatchHeld, chosen, observation),
         );
       if (hosts.length) {
         if (
@@ -141,16 +153,20 @@ export class FirstDispatch {
               profile.available && !workerProfileIsExcluded(task, profile.id),
           ),
         );
+        // An unread host can still hold the profile, so absence here is not proof of incompatibility.
+        const reason = eligibilityReasons(
+          task,
+          profiles,
+          this.store.pool(),
+          this.store.availability(),
+          this.store.usageLevel(),
+          profiles,
+        );
         this.context.note(
           task.id,
-          eligibilityReasons(
-            task,
-            profiles,
-            this.store.pool(),
-            this.store.availability(),
-            this.store.usageLevel(),
-            profiles,
-          ),
+          observation.unreadHostIds?.length
+            ? `${reason}${unreadHostsNote(observation.unreadHostIds)}`
+            : reason,
           "route_unavailable",
         );
         this.store.markRoutingAttempt(task.id);
@@ -165,11 +181,12 @@ export class FirstDispatch {
     return this.dispatchOnHost(taskId, dispatchHeld);
   }
   /**
-   * The named wait for an unbound task whose repository host kind is not ready.
-   * It takes the same gates as the route stop, so a paused, held or capacity-stopped
-   * task keeps its own stop, and it never charges a profile or reserves a workspace.
+   * The named wait for an unbound task whose target host kind (repository, then
+   * operator default) is not ready. It takes the same gates as the route stop, so
+   * a paused, held or capacity-stopped task keeps its own stop, and it never
+   * charges a profile or reserves a workspace.
    */
-  private waitForRepositoryHost(
+  private waitForTargetHost(
     task: Task,
     dispatchHeld: boolean,
     wait: string,
@@ -193,6 +210,7 @@ export class FirstDispatch {
     taskId: string,
     dispatchHeld: boolean,
     firstSelection?: NonNullable<ReturnType<typeof chooseFirstWorkerHost>>,
+    observation: WorkerHostObservation = {},
   ): Promise<void> {
     if (
       dispatchGate({
@@ -389,7 +407,7 @@ export class FirstDispatch {
       }
       let loaded = "";
       let inFlightWait = "";
-      let repositoryHold = "";
+      let targetHold = "";
       let loadGuardSkipped = "";
       const admitted = this.store.transaction(() => {
         // Re-sample after awaited checks; pressure admission and its pacing marker
@@ -410,12 +428,12 @@ export class FirstDispatch {
           (firstSelection && !this.context.hostAvailable(firstSelection.hostId))
         )
           return false;
-        // nucleus#1416: the repository's host kind is read again after the awaits
-        // above, so a host that dropped, or a setting changed while queued, wins
-        // over this commit.
+        // nucleus#1416: the target host kind (repository, then operator default) is
+        // read again after the awaits above, so a host that dropped, or a setting
+        // changed while queued, wins over this commit.
         if (this.context.firstWorkerUnbound(current)) {
-          repositoryHold = this.context.repositoryHostWait(current) ?? "";
-          if (repositoryHold) return false;
+          targetHold = this.context.targetHostWait(current) ?? "";
+          if (targetHold) return false;
         }
         if (
           current.phase !== "queued" ||
@@ -451,6 +469,7 @@ export class FirstDispatch {
                       firstSelection.hostId,
                       firstSelection.capableHostIds,
                       recorded.hostId,
+                      observation,
                     ),
                   },
                 }
@@ -503,9 +522,9 @@ export class FirstDispatch {
       this.context.armWorkspacePressureWake();
       if (loaded) return;
       if (inFlightWait) return;
-      if (repositoryHold) {
-        if (this.store.task(task.id).reason !== repositoryHold)
-          this.store.update(task.id, { reason: repositoryHold });
+      if (targetHold) {
+        if (this.store.task(task.id).reason !== targetHold)
+          this.store.update(task.id, { reason: targetHold });
         return;
       }
       if (!admitted) return;

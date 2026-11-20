@@ -25,6 +25,7 @@ import { type WorkspaceDiscard } from "./workspaces/orphan-worktree";
 import {
   HOST_KIND_LABELS,
   hostKindOf,
+  type HostKind,
   type IdentitySource,
 } from "../shared/host-kind";
 import { RecoverySettlement } from "./recovery/coordinator-settlement";
@@ -1382,24 +1383,39 @@ export class Engine {
     );
   }
   /**
-   * nucleus#1416 (Tom): an explicit repository hostKind is a requirement for a
-   * first worker dispatch, not a preference. While no host of that kind is online
-   * with a read catalog, the unbound task keeps this named wait, with no
-   * workspace, profile charge or slot. A kind with no registered host is a visible
-   * configuration wait. An omitted kind, and the operator default, never gate.
+   * The host kind a first worker dispatch must reach: the repository's explicit
+   * hostKind, else the operator default. Null means automatic dispatch.
    */
-  repositoryHostWait(task: Pick<Task, "repoPath" | "hostId">): string | null {
-    const kind = this.store.repositoryFor(task.repoPath)?.hostKind;
-    if (!kind) return null;
-    const label = HOST_KIND_LABELS[kind];
+  firstDispatchTarget(
+    task: Pick<Task, "repoPath">,
+  ): { kind: HostKind; source: "repository" | "operator_default" } | null {
+    const repository = this.store.repositoryFor(task.repoPath)?.hostKind;
+    if (repository) return { kind: repository, source: "repository" };
+    const kind = this.store.getMeta<HostKind | null>("operatorDefaultHostKind");
+    return kind ? { kind, source: "operator_default" } : null;
+  }
+  /**
+   * nucleus#1416 (Tom), extended 2026-11-20 (Tom): the first worker dispatch's
+   * target kind is a requirement, not a preference. While no host of that kind is
+   * online with a read catalog, the unbound task keeps this named wait, with no
+   * workspace, profile charge or slot. A repository hostKind wins over the
+   * operator default. A kind with no registered host is a visible configuration
+   * wait. Only with neither configured does dispatch stay automatic.
+   */
+  targetHostWait(task: Pick<Task, "repoPath" | "hostId">): string | null {
+    const target = this.firstDispatchTarget(task);
+    if (!target) return null;
+    const label = HOST_KIND_LABELS[target.kind];
+    const prefix =
+      target.source === "repository" ? "Repository host" : "Operator default host";
     const registered = [
       ...new Set([...this.hostIds(), ...(task.hostId ? [task.hostId] : [])]),
-    ].filter((id) => hostKindOf(id) === kind);
+    ].filter((id) => hostKindOf(id) === target.kind);
     if (!registered.length)
-      return `Repository host ${label} is not registered; waiting for its configuration`;
+      return `${prefix} ${label} is not registered; waiting for its configuration`;
     return registered.some((id) => this.workerHostReady(id))
       ? null
-      : `Waiting for repository host ${label}`;
+      : `Waiting for ${prefix.toLowerCase()} ${label}`;
   }
   preferredHostKindsForTask(
     task: Pick<Task, "repoPath">,

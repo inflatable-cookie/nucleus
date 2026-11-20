@@ -114,15 +114,24 @@ sign-off; it replaces the demand result for that role.
   (recording `hostId` and `hostSelection` with `basis: "worker_profile"` per the
   [orchestration contract](../contracts/orchestration.md)) while preserving the
   task's branch and PR; non-worker roles remain on the task's current host.
-- **Repository host kind is a requirement for first dispatch** (Tom's ruling,
-  nucleus#1416). An explicit repository `hostKind` must have an online host with a
-  read catalog before an unbound worker is selected or committed; while it does
-  not, the task keeps `Waiting for repository host <label>` with no workspace,
-  profile charge or slot, and healthy projects keep dispatching. A host outage is
-  not proof a profile cannot run there, so the wait holds even when another host
-  has it. The operator default stays a preference, and an omitted kind never waits.
-  The earlier cross-host ruling still holds for a profile only another host can
-  launch while the repository's host is ready.
+- **The first-dispatch target kind is a requirement** (Tom's ruling, nucleus#1416,
+  extended by Tom, 2026-11-20). The target is the repository's explicit
+  `hostKind`, else the operator default. It must have an online host with a read
+  catalog before an unbound worker is selected or committed; while it does not, the
+  task keeps `Waiting for repository host <label>` (or `Waiting for operator default
+  host <label>`) with no workspace, profile charge or slot, and healthy projects keep
+  dispatching. An unregistered target reads as a configuration wait. A host outage is
+  not proof a profile cannot run there, so the wait holds even when another host has
+  it. Tom, 2026-11-20: when the global default names a host kind, first dispatch
+  waits if that target is unavailable; a selected model can still run elsewhere when
+  the target's healthy catalog positively shows it cannot launch there, as with
+  Antigravity on a Paseo default. With neither configured, dispatch stays automatic.
+  The target is read before selection and again before the commit, so a default that
+  changes, or a host that drops, during admission holds the dispatch. The earlier
+  cross-host ruling still holds for a profile only another host can launch while the
+  target is ready, and its reason names the ready target's catalog as lacking it. A
+  selection reason says "only" only when every registered host was read; a host that
+  was offline or unread is named as not ruled out.
 
 **What retires:** the pool's `roles` and `scopes` switches, and the soft
 capability-fit multiplier (demand replaces it). A task's `scope` stays readable

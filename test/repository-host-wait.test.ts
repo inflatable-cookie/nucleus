@@ -344,28 +344,231 @@ test("a repository host kind with no registered host is a visible configuration 
   }
 });
 
-test("the operator default host kind stays a preference and never gates dispatch", async () => {
+// nucleus#1442 (Tom, 2026-11-20): the operator default host kind is a first-dispatch
+// target like the repository's. Underlay-shaped: the task's host is Paseo while the
+// default names T3Code, so the selection must not read a missing T3Code catalog as
+// a Paseo-only choice.
+
+const REPO_PASEO = { origin: null, path: "/synthetic/paseo-repo" };
+
+function poolFor(profileIds: string[]) {
+  return profileIds.map((profileId) =>
+    poolSchema.parse({
+      profileId,
+      enabled: true,
+      group: profileId,
+      weight: 1,
+      scopes: ["general"],
+      capability: "worker",
+      cost: "medium",
+    }),
+  );
+}
+
+function registerPlainRepositories(store: Store) {
+  store.putRepository(REPO_PLAIN, null, "", null, null, null, undefined, undefined, null);
+  store.putRepository(REPO_PASEO, null, "", null, null, null, undefined, undefined, "paseo");
+}
+
+test("an offline operator default host kind holds an unbound task, while a repository on a ready host dispatches", async () => {
   const store = new Store(":memory:");
-  const { engine, online } = fixture(store);
+  const { engine, created, online } = fixture(store);
   try {
     store.setMeta("operatorDefaultHostKind", "t3code");
-    store.putRepository(
-      REPO_PLAIN,
-      null,
-      "",
-      null,
-      null,
-      null,
-      undefined,
-      undefined,
-      null,
+    registerPlainRepositories(store);
+    online.delete(T3);
+    const waiting = insertTask(store, engine, REPO_PLAIN.path);
+    const healthy = insertTask(store, engine, REPO_PASEO.path);
+    await engine.dispatchQueued();
+    const held = store.task(waiting.id);
+    assert.equal(held.phase, "queued");
+    assert.equal(held.reason, "Waiting for operator default host T3Code");
+    assert.equal(held.workspaceId, null);
+    assert.equal(held.profile, null);
+    assert.equal(held.workspaceIntent, false);
+    assert.equal(
+      store.events(waiting.id).filter((event) => event.kind === "dispatch_intent").length,
+      0,
+      "no dispatch intent is committed while the default host is offline",
     );
+    assert.ok(created.every((entry) => !entry.endsWith(waiting.id)));
+    assert.notEqual(store.task(healthy.id).phase, "queued");
+    assert.ok(created.some((entry) => entry.endsWith(healthy.id)));
+  } finally {
+    await engine.stop();
+    store.close();
+  }
+});
+
+test("an operator default host kind with no registered host is a visible configuration wait", async () => {
+  const store = new Store(":memory:");
+  const { engine, created } = fixture(store);
+  try {
+    store.setMeta("operatorDefaultHostKind", "t3code");
+    registerPlainRepositories(store);
+    engine.hostIds = () => [PASEO];
+    const task = insertTask(store, engine, REPO_PLAIN.path);
+    await engine.dispatchQueued();
+    const waiting = store.task(task.id);
+    assert.equal(waiting.phase, "queued");
+    assert.equal(
+      waiting.reason,
+      "Operator default host T3Code is not registered; waiting for its configuration",
+    );
+    assert.equal(created.length, 0);
+  } finally {
+    await engine.stop();
+    store.close();
+  }
+});
+
+test("the same task dispatches on its operator default host through ordinary scheduling once that host recovers", async () => {
+  const store = new Store(":memory:");
+  const { engine, created, online } = fixture(store);
+  try {
+    store.setMeta("operatorDefaultHostKind", "t3code");
+    store.setMeta("pool", poolFor(["both"]));
+    registerPlainRepositories(store);
     online.delete(T3);
     const task = insertTask(store, engine, REPO_PLAIN.path);
     await engine.dispatchQueued();
+    assert.equal(store.task(task.id).reason, "Waiting for operator default host T3Code");
+    online.add(T3);
+    await engine.dispatchQueued();
     const dispatched = store.task(task.id);
-    assert.equal(dispatched.hostId, PASEO);
-    assert.notEqual(dispatched.phase, "queued");
+    assert.equal(dispatched.hostId, T3);
+    assert.equal(dispatched.profile?.id, "both");
+    assert.equal(dispatched.hostSelection?.basis, "worker_profile");
+    assert.ok(created.some((entry) => entry === `t3:${task.id}`));
+  } finally {
+    await engine.stop();
+    store.close();
+  }
+});
+
+test("a default that changes to an unready host during admission holds the commit", async () => {
+  const store = new Store(":memory:");
+  const { engine, created, online, hooks } = fixture(store);
+  try {
+    store.setMeta("operatorDefaultHostKind", "paseo");
+    store.setMeta("pool", poolFor(["both"]));
+    registerPlainRepositories(store);
+    // Selection reads Paseo as the target; the default moves to T3Code and T3Code drops before the commit.
+    hooks.afterSelection = () => {
+      store.setMeta("operatorDefaultHostKind", "t3code");
+      online.delete(T3);
+    };
+    const task = insertTask(store, engine, REPO_PLAIN.path);
+    await engine.dispatchQueued();
+    const held = store.task(task.id);
+    assert.equal(held.phase, "queued");
+    assert.equal(held.reason, "Waiting for operator default host T3Code");
+    assert.equal(held.workspaceId, null);
+    assert.equal(
+      store.events(task.id).filter((event) => event.kind === "dispatch_intent").length,
+      0,
+    );
+    assert.ok(created.every((entry) => !entry.endsWith(task.id)));
+  } finally {
+    await engine.stop();
+    store.close();
+  }
+});
+
+test("an explicit repository Paseo kind outranks an unavailable T3Code operator default", async () => {
+  const store = new Store(":memory:");
+  const { engine, created, online } = fixture(store);
+  try {
+    store.setMeta("operatorDefaultHostKind", "t3code");
+    store.setMeta("pool", poolFor(["both"]));
+    registerPlainRepositories(store);
+    online.delete(T3);
+    const explicit = insertTask(store, engine, REPO_PASEO.path);
+    await engine.dispatchQueued();
+    assert.notEqual(store.task(explicit.id).phase, "queued");
+    assert.ok(created.some((entry) => entry === `paseo:${explicit.id}`));
+  } finally {
+    await engine.stop();
+    store.close();
+  }
+});
+
+test("an explicit repository T3Code kind waits even when the operator default names Paseo", async () => {
+  const store = new Store(":memory:");
+  const { engine, created, online } = fixture(store);
+  try {
+    store.setMeta("operatorDefaultHostKind", "paseo");
+    store.putRepository(REPO_T3, null, "", null, null, null, undefined, undefined, "t3code");
+    online.delete(T3);
+    const task = insertTask(store, engine, REPO_T3.path);
+    await engine.dispatchQueued();
+    assert.equal(store.task(task.id).reason, "Waiting for repository host T3Code");
+    assert.equal(created.length, 0);
+  } finally {
+    await engine.stop();
+    store.close();
+  }
+});
+
+test("a healthy default host dispatches a profile only another host can launch there, with its reason", async () => {
+  const store = new Store(":memory:");
+  const { engine, created } = fixture(store);
+  try {
+    store.setMeta("operatorDefaultHostKind", "paseo");
+    store.setMeta("pool", poolFor(["neon"]));
+    registerPlainRepositories(store);
+    const task = insertTask(store, engine, REPO_PLAIN.path);
+    await engine.dispatchQueued();
+    const routed = store.task(task.id);
+    assert.equal(routed.hostId, T3);
+    assert.equal(routed.profile?.id, "neon");
+    assert.equal(
+      routed.hostSelection?.reason,
+      "Profile neon is absent from the ready Paseo catalog; it can run only on online host t3code:env",
+    );
+    assert.ok(created.some((entry) => entry === `t3:${task.id}`));
+  } finally {
+    await engine.stop();
+    store.close();
+  }
+});
+
+test("an unread host is named as not ruled out, never as proof a profile is Paseo-only", async () => {
+  const store = new Store(":memory:");
+  const { engine, online } = fixture(store);
+  try {
+    store.setMeta("operatorDefaultHostKind", "paseo");
+    store.setMeta("pool", poolFor(["paseo-only"]));
+    registerPlainRepositories(store);
+    online.delete(T3);
+    const task = insertTask(store, engine, REPO_PLAIN.path);
+    await engine.dispatchQueued();
+    const routed = store.task(task.id);
+    assert.equal(routed.hostId, PASEO);
+    assert.notEqual(routed.phase, "queued");
+    assert.equal(
+      routed.hostSelection?.reason,
+      "Profile paseo-only runs on online host paseo-primary; not ruled out on t3code:env, which is not ready",
+    );
+  } finally {
+    await engine.stop();
+    store.close();
+  }
+});
+
+test("with neither a repository kind nor an operator default, dispatch stays automatic", async () => {
+  const store = new Store(":memory:");
+  const { engine, created, online } = fixture(store);
+  try {
+    // A store opens with the operator default seeded to Paseo; null is the configured "no default".
+    store.setMeta("operatorDefaultHostKind", null);
+    store.setMeta("pool", poolFor(["both"]));
+    registerPlainRepositories(store);
+    online.delete(PASEO);
+    const task = insertTask(store, engine, REPO_PLAIN.path);
+    await engine.dispatchQueued();
+    assert.notEqual(store.task(task.id).phase, "queued");
+    assert.ok(created.some((entry) => entry === `t3:${task.id}`));
   } finally {
     await engine.stop();
     store.close();

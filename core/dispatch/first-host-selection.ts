@@ -6,20 +6,52 @@ import type {
 } from "../../shared/contracts";
 import { chooseProfile } from "./routing";
 import { workerProfileIsExcluded } from "../../shared/contracts";
-import { hostKindOf, type HostKind } from "../../shared/host-kind";
+import {
+  HOST_KIND_LABELS,
+  hostKindOf,
+  type HostKind,
+} from "../../shared/host-kind";
 
 /** A catalog snapshot from an online host. Unread and offline hosts must be omitted. */
 export type WorkerHostCatalog = { hostId: string; profiles: Profile[] };
+
+/**
+ * What one dispatch read beside its selection. Omitted evidence is never proof
+ * of incompatibility, so the reason names the hosts it could not read and whether
+ * the effective target's ready catalog positively lacks the profile.
+ */
+export type WorkerHostObservation = {
+  unreadHostIds?: readonly string[];
+  targetKind?: HostKind | null;
+};
 
 export function formatWorkerHostSelectionReason(
   profileName: string,
   hostId: string,
   capableHostIds: readonly string[],
   preferredHostId?: string | null,
+  observation: WorkerHostObservation = {},
 ): string {
-  return capableHostIds.length === 1
-    ? `Profile ${profileName} can run only on online host ${hostId}`
-    : `Profile ${profileName} runs on ${capableHostIds.join(", ")}; selected ${hostId}${hostId === preferredHostId ? " by host preference" : ""}`;
+  const unread = observation.unreadHostIds ?? [];
+  const targetKind = observation.targetKind ?? null;
+  const targetAbsent =
+    targetKind !== null &&
+    !capableHostIds.some((id) => hostKindOf(id) === targetKind);
+  const placement =
+    capableHostIds.length === 1
+      ? `${unread.length ? "runs" : "can run only"} on online host ${hostId}`
+      : `runs on ${capableHostIds.join(", ")}; selected ${hostId}${hostId === preferredHostId ? " by host preference" : ""}`;
+  const absent = targetAbsent
+    ? `is absent from the ready ${HOST_KIND_LABELS[targetKind]} catalog; it `
+    : "";
+  return `Profile ${profileName} ${absent}${placement}${unreadHostsNote(unread)}`;
+}
+
+/** The clause that keeps an unread host from reading as proof of incompatibility. */
+export function unreadHostsNote(unreadHostIds: readonly string[]): string {
+  return unreadHostIds.length
+    ? `; not ruled out on ${unreadHostIds.join(", ")}, which ${unreadHostIds.length === 1 ? "is" : "are"} not ready`
+    : "";
 }
 
 export function resolveWorkerHostForProfile(
