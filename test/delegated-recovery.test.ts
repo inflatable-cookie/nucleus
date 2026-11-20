@@ -119,8 +119,6 @@ test("completed unanswered escalation windows stay terminal across maintenance a
     agentId: "planner-1",
     setBy: "operator",
   });
-  // Only the task planner is live: the registered project planner is not a live thread here.
-  Object.assign(f.adapter, { listLiveAgents: async () => [{ id: "origin", title: "origin", workspaceId: "workspace" }] });
   f.store.event(
     task.id,
     "planner_escalation",
