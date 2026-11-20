@@ -649,19 +649,27 @@ test("observe: pause still binds an unbound run, and a hold landing during its l
 // taskQuantum: spy order
 // ---------------------------------------------------------------------------
 
+/**
+ * `threadArchiveAdapter` is the one adapter property two steps read: the released
+ * run-delivery probe (before superseded-idle settlement) and the terminal thread
+ * archive (in the tail). The pin records each read where it happens.
+ */
+const THREAD_ARCHIVE_ADAPTER = "threadArchiveAdapter";
 const QUANTUM_TAIL = [
   "profileCatalogKnown",
   "reconcileClosedRetainedReviewer",
   "settleHistoricalProofExecutions",
+  THREAD_ARCHIVE_ADAPTER,
   "settleSupersededIdleRuns",
   "recovery.pass",
-  "archiveFinishedThreads",
+  THREAD_ARCHIVE_ADAPTER,
   "enqueueTitle",
 ];
-/** Archive returns on its pause and disposition checks before the adapter property these spies can see. */
-const UNARCHIVED_TAIL = QUANTUM_TAIL.filter(
-  (step) => step !== "archiveFinishedThreads",
-);
+/** A paused or stopped engine skips the tail archive read, never the observation read. */
+const UNARCHIVED_TAIL = [
+  ...QUANTUM_TAIL.slice(0, QUANTUM_TAIL.length - 2),
+  "enqueueTitle",
+];
 const QUANTUM_HEAD = ["profileCatalogKnown", "beginValidationScanPass"];
 const SETTLED = ["settleFinishedRuns", "settleRunBuildOutputs"];
 const PROBED = [
@@ -738,7 +746,7 @@ function quantumSpies(
   Object.defineProperty(e.adapter, "originAgent", {
     configurable: true,
     get() {
-      log.push("archiveFinishedThreads");
+      log.push(THREAD_ARCHIVE_ADAPTER);
       return undefined;
     },
   });
@@ -936,7 +944,7 @@ const quantumRows: {
       "reconcileClosedRetainedReviewer",
       "settleHistoricalProofExecutions",
       "noteStepFailure",
-      "archiveFinishedThreads",
+      THREAD_ARCHIVE_ADAPTER,
       "enqueueTitle",
     ],
   },
@@ -949,7 +957,7 @@ const quantumRows: {
       ...PROBED,
       "hooks.reconcileTask",
       "reconcile",
-      "archiveFinishedThreads",
+      THREAD_ARCHIVE_ADAPTER,
       "enqueueTitle",
     ],
   },
@@ -997,7 +1005,7 @@ test("taskQuantum: a resolution stop is routed after the recovery pass", async (
   assert.deepEqual(tail, [
     "recovery.pass",
     "recovery.route",
-    "archiveFinishedThreads",
+    THREAD_ARCHIVE_ADAPTER,
     "enqueueTitle",
   ]);
 });
@@ -1110,7 +1118,7 @@ function auditSpies(
   return log;
 }
 
-test("auditPass: maintenance, observation, recovery, replay, enqueue, quanta, notices, dispatch, titles", async (t) => {
+test("auditPass: observation, maintenance, recovery, replay, enqueue, quanta, notices, dispatch, titles", async (t) => {
   const f = fixture(t);
   f.add({
     phase: "working",
@@ -1122,9 +1130,11 @@ test("auditPass: maintenance, observation, recovery, replay, enqueue, quanta, no
   const log = auditSpies(f);
   const pass = await f.internals.auditPass(false);
   assert.equal(pass.fault, null);
+  // The host reading runs before the store chores: one bounded inventory answers
+  // every identity the pass observes, and the chores then share it.
   assert.deepEqual(log, [
-    ...AUDIT_MAINTENANCE,
     ...AUDIT_OBSERVE,
+    ...AUDIT_MAINTENANCE,
     ...AUDIT_RECOVERY,
     ...AUDIT_REPLAY,
     ...AUDIT_ENQUEUE,
@@ -1174,8 +1184,8 @@ test("auditPass: an incomplete disposition resumes after the observation read, a
   const log = auditSpies(f);
   await f.internals.auditPass(false);
   const at = log.indexOf("resumeDispositions");
-  assert.equal(log[at - 1], "observeRetiredWorkers");
-  assert.equal(log[at + 1], "resumePausedStops");
+  assert.ok(at > log.indexOf("observeRetiredWorkers"), "it resumes after the observation read");
+  assert.equal(log[at + 1], "resumePausedStops", "and ahead of worker recovery");
 });
 
 test("auditPass: pause skips maintenance, recovery launches, retired-errored archive and dispatch; replay, observation, notices and titles still run", async (t) => {

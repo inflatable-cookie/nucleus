@@ -251,6 +251,16 @@ export function fixture(
     originAgent: async (id: string) => ({
       id, workspaceId: states.get(id)?.workspaceId ?? "workspace", title: id, archived: archivedAgents.has(id),
     }),
+    // The responsible-thread resolver reads one bounded host inventory (1373): the
+    // registered planner threads plus every agent this fixture observed.
+    listLiveAgents: async () => {
+      const ids = new Set<string>(states.keys());
+      for (const project of store.projects())
+        if (project.planner?.agentId) ids.add(project.planner.agentId);
+      return [...ids]
+        .filter((id) => !archivedAgents.has(id))
+        .map((id) => ({ id, title: id, workspaceId: "workspace" }));
+    },
     archiveAgent: async (id: string) => {
       archivedAgents.add(id);
       const state = states.get(id);

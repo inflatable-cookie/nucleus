@@ -23,6 +23,7 @@ import {
 } from "../core/store/store-task-funnel";
 import { Admission, admitAdapter } from "../core/host/admission";
 import { briefDigest } from "../core/planning/brief";
+import { parseAgentId } from "../shared/agent-identity";
 import { Engine, controlHasExternalEffect } from "../core/engine";
 import {
   holdOwnerOf,
@@ -290,6 +291,16 @@ function fixture(
         if (!s) throw new Error("Agent missing");
         return s;
       },
+      // The responsible-thread resolver reads one bounded host inventory (1373):
+      // every observed thread the fixture keeps live, including a planner a test idles.
+      listLiveAgents: async () =>
+        [...states.values()]
+          .filter((state) => !state.archived)
+          .map((state) => ({
+            id: state.id,
+            title: state.id,
+            workspaceId: state.workspaceId,
+          })),
       agentTimelinePage: async () => ({
         entries: [],
         hasOlder: false,
@@ -12390,7 +12401,9 @@ test("stale-generation and wrong-role recovery rejections stay closed and bind n
           },
           token,
         ),
-      /Unknown run/,
+      // A callback may only name the run whose credential authenticated it, so an
+      // unknown run is refused at authentication before any run lookup.
+      /Unknown run|Unauthorized callback/,
     );
     assert.throws(
       () =>
@@ -12827,7 +12840,9 @@ test("a fallback coordinator report without a generation binds the authenticated
           },
           token,
         ),
-      /Unknown run/,
+      // A callback may only name the run whose credential authenticated it, so an
+      // unknown run is refused at authentication before any run lookup.
+      /Unknown run|Unauthorized callback/,
     );
     assert.throws(
       () =>
@@ -13538,11 +13553,22 @@ test("Consumer #687: an operator origin is not a thread: no lookup or inheritanc
     }
   }
 });
+/** The native thread an identity names, whether or not it carries its host. */
+function nativeIdentity(id: string): string {
+  try {
+    return parseAgentId(id)?.nativeAgentId ?? id;
+  } catch {
+    return id;
+  }
+}
+
 test("Consumer #687: origin notices for an operator origin go to the project planner, wait visibly without one, and never replay an uncertain send", async () => {
   for (const operator of ["operator", "operator (board)"]) {
     const f = fixture();
     try {
-      const task = operatorTask(f, operator);
+      // An operator origin is no thread, and this repository has no other project
+      // thread yet, so the notice has nowhere to go: it waits visibly.
+      const task = operatorTask(f, operator, "/operator-repo");
       f.store.update(task.id, {
         originWorkspaceId: "longhorn-workspace",
         resolution: { ...f.store.task(task.id).resolution, attention: true },
@@ -13566,11 +13592,12 @@ test("Consumer #687: origin notices for an operator origin go to the project pla
         sent.filter((id) => id !== "origin"),
         [],
       );
-      // A planner arrives: the same owed notice is addressed to it and delivered once.
+      // A planner arrives: the project's live responsible thread (the registered
+      // planner) receives the same owed notice once.
       f.store.upsertProject({
         key: "app",
         name: "App",
-        repositories: [{ origin: null, path: "/repo" }],
+        repositories: [{ origin: null, path: "/operator-repo" }],
       });
       f.store.setProjectPlanner({
         key: "app",
@@ -13582,9 +13609,9 @@ test("Consumer #687: origin notices for an operator origin go to the project pla
       await f.engine.resolution.deliverNotices();
       notice = f.store.notices(task.id).find((n) => n.id === notice.id)!;
       assert.equal(notice.status, "delivered");
-      assert.equal(notice.agentId, "project-planner");
+      assert.equal(nativeIdentity(notice.agentId!), "project-planner");
       assert.deepEqual(
-        sent.filter((id) => id === "project-planner"),
+        sent.filter((id) => nativeIdentity(id) === "project-planner"),
         ["project-planner"],
         "delivered once, to the planner",
       );
@@ -13593,7 +13620,7 @@ test("Consumer #687: origin notices for an operator origin go to the project pla
         ...notice,
         id: "intent-" + notice.id,
         status: "intent",
-        agentId: "project-planner",
+        agentId: notice.agentId,
       });
       f.store.setProjectPlanner({
         key: "app",
@@ -13610,12 +13637,13 @@ test("Consumer #687: origin notices for an operator origin go to the project pla
         "uncertain",
         "an unknown delivery is never resent",
       );
-      assert.ok(!sent.includes("new-planner"));
+      assert.ok(!sent.some((id) => nativeIdentity(id) === "new-planner"));
     } finally {
       await f.close();
     }
   }
 });
+
 test("Consumer #687: an explicit successor and a real origin thread are unaffected by the operator rule, and the fallback is the planner chain", async () => {
   const f = fixture();
   try {
@@ -13647,49 +13675,59 @@ test("Consumer #687: an explicit successor and a real origin thread are unaffect
       "an explicit notification thread wins over the planner",
     );
     f.store.update(task.id, { notificationAgentId: null });
-    assert.equal(
-      originRecipient(f.store, f.store.task(task.id)),
-      "project-planner",
-    );
-    // No project planner: the Queue planner (the project that holds this repository's origin) answers.
-    f.store.setProjectPlanner({ key: "app", agentId: null, setBy: "test" });
-    const queueKey = `repo-${digest(QUEUE_REPOSITORY_ORIGIN).slice(0, 20)}`;
-    f.store.upsertProject({
-      key: queueKey,
-      name: "Queue",
-      repositories: [{ origin: QUEUE_REPOSITORY_ORIGIN, path: "/queue" }],
-    });
-    f.store.setProjectPlanner({
-      key: queueKey,
-      agentId: "queue-planner",
-      setBy: "test",
-    });
-    assert.equal(
-      originRecipient(f.store, f.store.task(task.id)),
-      "queue-planner",
-      "the Queue planner is the second fallback",
-    );
-    f.store.setProjectPlanner({ key: queueKey, agentId: null, setBy: "test" });
-    assert.equal(
-      originRecipient(f.store, f.store.task(task.id)),
-      null,
-      "no planner anywhere waits visibly",
-    );
-    // An operator identity is no thread either.
-    f.store.setProjectPlanner({
-      key: "app",
-      agentId: "operator",
-      setBy: "test",
-    });
-    assert.equal(
-      originRecipient(f.store, f.store.task(task.id)),
-      null,
-      "an operator-identity planner is no thread",
-    );
+    // `Store.projectPlannerRecipient` prefers the runtime's verified responsible-thread
+    // cache. This case owns the registry fallback chain, so read it without that cache;
+    // the delivery cases own the verified-cache path.
+    const runtimeCache = f.store.responsibleRecipient;
+    f.store.responsibleRecipient = undefined;
+    try {
+      assert.equal(
+        originRecipient(f.store, f.store.task(task.id)),
+        "project-planner",
+      );
+      // No project planner: the Queue planner (the project that holds this repository's origin) answers.
+      f.store.setProjectPlanner({ key: "app", agentId: null, setBy: "test" });
+      const queueKey = `repo-${digest(QUEUE_REPOSITORY_ORIGIN).slice(0, 20)}`;
+      f.store.upsertProject({
+        key: queueKey,
+        name: "Queue",
+        repositories: [{ origin: QUEUE_REPOSITORY_ORIGIN, path: "/queue" }],
+      });
+      f.store.setProjectPlanner({
+        key: queueKey,
+        agentId: "queue-planner",
+        setBy: "test",
+      });
+      assert.equal(
+        originRecipient(f.store, f.store.task(task.id)),
+        "queue-planner",
+        "the Queue planner is the second fallback",
+      );
+      f.store.setProjectPlanner({ key: queueKey, agentId: null, setBy: "test" });
+      assert.equal(
+        originRecipient(f.store, f.store.task(task.id)),
+        null,
+        "no planner anywhere waits visibly",
+      );
+      // An operator identity is no thread either.
+      f.store.setProjectPlanner({
+        key: "app",
+        agentId: "operator",
+        setBy: "test",
+      });
+      assert.equal(
+        originRecipient(f.store, f.store.task(task.id)),
+        null,
+        "an operator-identity planner is no thread",
+      );
+    } finally {
+      f.store.responsibleRecipient = runtimeCache;
+    }
   } finally {
     await f.close();
   }
 });
+
 test("closeout records the verified publication SHA without re-merging implementation", async () => {
   const f = fixture();
   try {

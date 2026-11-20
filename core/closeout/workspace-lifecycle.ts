@@ -551,8 +551,8 @@ export class Lifecycle {
                   !effect,
                   effect ?? { status: "ready", at: now() },
                 );
-              } else if (adapter.archiveAgent) {
-                await adapter.archiveAgent(agentId);
+              } else if (typeof adapter.archiveAgent === "function") {
+                await this.engine.host.archiveAgent(agentId);
                 this.store.putThreadArchiveEffect(key, agentId, {
                   status: "archived",
                   at: now(),
