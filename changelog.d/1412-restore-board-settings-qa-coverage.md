@@ -1,0 +1,1 @@
+- Restored milestone QA test coverage for board cards, task detail layout, pipeline board, capacity schema/settings, host settings, and project settings editor assertions to match current `hostPending`, `threadRetentionDays`, `Preferred thread`, host-dependent refusal details, and formatted JSX source.

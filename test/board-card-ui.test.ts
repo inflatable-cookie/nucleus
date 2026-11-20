@@ -494,7 +494,29 @@ test("a T3Code task card names the host on the eyebrow and in its accessible lab
   const store = new Store(":memory:");
   try {
     const { queued } = fixtures(store);
-    const task = { ...queued, hostId: "t3code:synthetic-environment" };
+    const pendingUi = mount(
+      h(queue.TaskCard as never, {
+        task: { ...queued, hostId: "t3code:synthetic-environment" },
+        selected: false,
+        onPress: () => {},
+        c,
+        board: true,
+      }),
+    );
+    try {
+      assert.doesNotMatch(
+        pendingUi.text(),
+        /T3Code/,
+        "an unbound queued task with hostPending keeps the host chip hidden",
+      );
+    } finally {
+      pendingUi.update(h("View", null));
+    }
+    const task = {
+      ...queued,
+      hostId: "t3code:synthetic-environment",
+      hostPending: undefined,
+    };
     const ui = mount(
       h(queue.TaskCard as never, {
         task,
@@ -1150,7 +1172,7 @@ test("the card keeps two-line titles, drops the repository and phase chips, and 
   // The title is capped at two lines and carries the short number, never the multi-repo reference.
   assert.match(
     card,
-    /numberOfLines=\{2\} style=\{\{ color: c\.foreground, fontWeight: "600"/,
+    /numberOfLines=\{2\}\s+style=\{\{\s*color:\s*c\.foreground,\s*fontWeight:\s*"600"/,
   );
   assert.match(card, /taskNumberLabel\(task, false\)/);
   assert.doesNotMatch(card, /repoChip|phaseChip|laneChips|profile\?\.name/);
@@ -1160,7 +1182,7 @@ test("the card keeps two-line titles, drops the repository and phase chips, and 
     ui.indexOf("/>", ui.indexOf("<TaskCard")),
   );
   assert.doesNotMatch(call, /phaseChip|repoChip|laneChips/);
-  assert.match(card, /return <BoardCard/);
+  assert.match(card, /return\s*\(?\s*<BoardCard/);
   assert.match(
     card,
     /Hold reason preview · \{holdReasonPreview\(dispatchWait\.reason\)\}/,
