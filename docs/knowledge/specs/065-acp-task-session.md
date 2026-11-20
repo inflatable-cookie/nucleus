@@ -44,6 +44,10 @@ nothing else:
 - `session/prompt` holds the turn while the service says to, shows the
   lifecycle lines the service sends as `session/update` agent messages, and
   forwards a person's text from a task session. The inbox never forwards prompt text.
+  A client may wrap the person's message in its own instructions, so the
+  operator's text is the last `<user_request>` block when the prompt carries one
+  and the prompt itself otherwise; a command is matched against that text, never
+  against the client's envelope (nucleus#1435).
   It also raises each service-projected decision as a concurrent native form and
   returns the operator's answer or cancellation receipt. A host that released a turn re-enters the
   thread with a prompt of its own, and the binding's `holdPattern` names it:
@@ -212,7 +216,11 @@ command path an ACP client registers.
 The agent tests also cover the hold rule: a re-entry prompt shows nothing, forwards
 nothing, holds the turn until the service releases it, and leaves the operator's
 next message still forwarded; an ignore rule ends the turn while a hold rule holds
-it. The service tests prove a mint carries both host rules into the binding and
+it. The inbox `ui` tests also drive the nightly harness's own envelope — the
+client's instructions plus a `<user_request>` block — proving the operator's `ui`
+inside it opens the board, a tool-originated message there does not, and a failed
+open still answers with its actionable line (nucleus#1435).
+The service tests prove a mint carries both host rules into the binding and
 that a mint without them writes neither.
 
 `test/acp-service.test.ts` covers the service side against a real store, engine

@@ -1023,6 +1023,17 @@ tab of this board's origin, mints a fresh one-time pairing link and calls
 invoke this route, and pairing URLs never cross back to the ACP session, the
 host state or logs.
 
+The command is the operator's own words, not the whole prompt (nucleus#1435).
+The nightly's ACP harness prefixes the client's instructions and wraps the
+person's message in a `<user_request>` block, so on 2026-11-20 the prompt for `ui`
+was that envelope and the agent's exact match never saw the command: the turn
+went straight to the held poll, showed nothing and opened nothing. The agent now
+reads the last `<user_request>` block as the operator's text and matches `ui`
+there; a prompt without the block is its own text. A message T3's own tools send
+keeps its marker inside the block, so it is not the operator's command. The
+transcript's own message text stays exactly `ui`, which is what the window scan
+serves, so the normal and queued `ui` paths share one reading of the command.
+
 **A retained board tab is replaced, not reused, because the nightly cannot
 reveal it.** Opening is the only reveal the RPC surface offers (see "Workspace
 pane layout limitation"), so a healthy retained tab, a `LoadFailed` tab and a
