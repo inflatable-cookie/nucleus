@@ -69,6 +69,8 @@ export interface WorkspaceArchiveOptions {
   primaryArchived?: () => boolean;
   /** Fresh run inventory for every participant workspace/scratch process proof. */
   participantRuns?: () => Run[];
+  /** Nucleus #1397: branch on a host workspace displaced by a cross-host move. */
+  displacedBranch?: string;
 }
 
 /**
@@ -110,7 +112,9 @@ export class OwnedWorkspaceArchive {
       discard = null,
       primaryArchived,
       participantRuns,
+      displacedBranch,
     } = options;
+    const isTaskCheckout = id === task.workspaceId || Boolean(displacedBranch);
     const workspace = this.host.workspaceHost.workspaceRef(id);
     const terminal =
       task.phase === "done" ||
@@ -203,6 +207,7 @@ export class OwnedWorkspaceArchive {
       }
       const slug =
         reviewRun?.reviewSourceView?.branch ??
+        displacedBranch ??
         (id === task.workspaceId ? task.branch : `ns-closeout-${task.id}`);
       const intakeOwned =
         id === task.workspaceId &&
@@ -229,8 +234,8 @@ export class OwnedWorkspaceArchive {
         // allocation and published source still supply the authority to tear down.
         if (
           !ownedCheckout ||
-          id !== task.workspaceId ||
-          task.directory !== directory ||
+          !isTaskCheckout ||
+          (!displacedBranch && task.directory !== directory) ||
           task.reviewEntry ||
           !requirePublished
         )
@@ -440,8 +445,8 @@ export class OwnedWorkspaceArchive {
         await verifyRecordedOrigin(task, directory);
         const publishedBranch = reviewRun
           ? task.branch
-          : id === task.workspaceId
-            ? task.branch || task.baseBranch
+          : isTaskCheckout
+            ? displacedBranch || task.branch || task.baseBranch
             : task.baseBranch;
         const listed =
           (
@@ -559,7 +564,9 @@ export class OwnedWorkspaceArchive {
             `Preserving workspace with unpublished commits on ${publishedBranch}`,
           );
       }
-      const expectedBranch = id === task.workspaceId ? task.branch : slug;
+      const expectedBranch = isTaskCheckout
+        ? displacedBranch || task.branch
+        : slug;
       // An orphaned worktree has no Git identity to read; its identity is the
       // durable binding and exact owned path proved above, branch unproven.
       if (

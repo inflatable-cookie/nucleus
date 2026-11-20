@@ -1,0 +1,2 @@
+- Support cross-host task moves when routing or re-selecting a worker profile that only another online host can launch, preserving task branch and PR continuity while cleaning up displaced old-host workspaces and threads via the ordinary lifecycle lane.
+- Evaluate required worker profile availability across every online host and surface cross-host move notes or mode/connectivity refusals in the `route` verb view of `next`.

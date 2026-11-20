@@ -11,6 +11,7 @@ import {
 import { LANE_PRIORITY_AUDIT } from "./lane-priorities";
 import { onCheckoutVolume } from "../workspaces/checkout-volume";
 import { reconcileRoutingSignoffs } from "../dispatch/routing-signoff";
+import { provisionHostMovedWorkspace } from "../dispatch/worker-host-move";
 import { archiveFinishedThreads } from "../workspaces/thread-archive";
 import { archiveSupersededWorkers } from "../workspaces/thread-archive-replacement";
 import type { Task } from "../../shared/contracts";
@@ -33,15 +34,19 @@ export type TaskQuantumContext = Pick<
   Engine,
   | "adapter"
   | "cleanContext"
+  | "enqueueCleanup"
   | "enqueueTitle"
   | "hooks"
   | "launchAgent"
   | "launchProofOnly"
   | "note"
   | "noteStepFailure"
+  | "preferredHostKindsForTask"
   | "prerequisiteWaitYieldsToLiveWork"
   | "profileCatalogKnown"
+  | "profileCatalogKnownFor"
   | "profiles"
+  | "profilesFor"
   | "quantumFinish"
   | "quantumSteps"
   | "reconcile"
@@ -58,6 +63,10 @@ export type TaskQuantumContext = Pick<
   | "stopped"
   | "store"
   | "wakeRepository"
+  | "workerHostCatalogPending"
+  | "workerHostCatalogs"
+  | "workerRoutingProfiles"
+  | "hostAvailable"
 > & {
   readonly resolution: Pick<
     Resolution,
@@ -76,6 +85,7 @@ export type TaskQuantumContext = Pick<
     | "settleBudgetClock"
     | "slotAdmissionReason"
     | "update"
+    | "waiting"
   >;
 };
 
@@ -102,12 +112,31 @@ export class TaskQuantum {
   }
 
   private async applyApprovedRoutes(taskId: string): Promise<void> {
-    if (!this.context.profileCatalogKnown()) return;
+    let task: Task;
+    try {
+      task = this.context.store.task(taskId);
+    } catch {
+      return;
+    }
+    const hostProfiles = this.context.profileCatalogKnownFor(task.hostId)
+      ? this.context.profilesFor(task.hostId)
+      : this.context.profiles;
+    const workerCatalogs = this.context.workerHostCatalogs(task);
+    if (
+      !this.context.profileCatalogKnown() &&
+      !this.context.profileCatalogKnownFor(task.hostId) &&
+      !workerCatalogs.length
+    )
+      return;
     const routes = reconcileRoutingSignoffs(
       this.context.store,
       this.context.signoffDecisions,
       taskId,
-      this.context.profiles,
+      hostProfiles,
+      {
+        workerProfiles: this.context.workerRoutingProfiles(task),
+        workerCatalogPending: this.context.workerHostCatalogPending(task),
+      },
     );
     for (const route of routes) {
       const task = this.context.store.task(taskId);
@@ -338,6 +367,36 @@ export class TaskQuantum {
       // state. Restore it so the ordinary resolution path advances instead of idling.
       const resumed = this.context.resolution.resumeClearedAttention(task);
       if (resumed) task = resumed;
+      if (
+        !startsNoRuns(this.context.store) &&
+        !task.workspaceId &&
+        !task.workspaceIntent &&
+        [
+          "dispatching",
+          "changes_requested",
+          "awaiting_review",
+          "reviewing",
+          "needs_attention",
+        ].includes(task.phase)
+      ) {
+        const ready = await provisionHostMovedWorkspace(
+          {
+            store: this.context.store,
+            adapter: this.context.adapter,
+            hostAvailable: (hostId) => this.context.hostAvailable(hostId),
+            enqueueCleanup: (id) => this.context.enqueueCleanup(id ?? task.id),
+            waiting: (currentTask, waitReason) =>
+              this.context.resolution.waiting(
+                currentTask,
+                waitReason,
+                "lifecycle",
+              ),
+          },
+          task,
+        );
+        if (!ready) return;
+        task = this.context.store.task(task.id);
+      }
       if (this.context.resolution.owns(task)) {
         await this.context.resolution.advance(task);
         return;
@@ -445,7 +504,11 @@ export class TaskQuantum {
           );
         }
         // Spec 052 sign-off: ask, apply or withdraw the operator's routing decisions.
-        if (this.context.profileCatalogKnown())
+        if (
+          this.context.profileCatalogKnown() ||
+          this.context.profileCatalogKnownFor(current.hostId) ||
+          this.context.workerHostCatalogs(current).length > 0
+        )
           await this.applyApprovedRoutes(taskId);
         // A checkpointed reviewer whose own agent was positively observed
         // closed can never receive its same-run continuation. Record that

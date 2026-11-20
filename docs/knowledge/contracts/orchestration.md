@@ -1437,8 +1437,20 @@ request identities and stored committed-handoff rows are not rewritten.
   preferences. Selection rotates profiles across online host catalogs, including
   their options. A profile available on one host takes the task there; for a
   multi-host profile the preferences choose the host. The dispatch intent records
-  the host and reason with the workspace intent. Once dispatched, every role and
-  later run stays on that host; an incompatible route is refused by name.
+  the host and reason with the workspace intent. After dispatch, non-worker roles
+  (`reviewer`, `coordinator`, `executor`) stay on the task's current host, and a
+  worker `route` (with or without `now`), `restart fresh`, Spec 052 climb or
+  worker failover that selects a worker profile only another online host can
+  launch (in the task's mode) moves the task to that host (`worker_host_moved`),
+  recording `task.hostId` and `task.hostSelection` (`basis: "worker_profile"`).
+  A cross-host worker move preserves `task.branch`, `prUrl`, `prHead` and
+  `resumePrNumber`, refuses dirty checkouts, and hands the displaced host's
+  workspace and threads (`resolution.displacedHostWorkspaces` and
+  host-attributed `retiredWorkers`) to the ordinary cleanup lane before the
+  destination host provisions its checkout. Required worker profile
+  availability checks every online host, and `next` (`route` view for worker)
+  prefills a cross-host route only when the target host is online and supports
+  the task's mode, naming the host move in `note`.
 - A queued task waiting for an unavailable fixed host does not reserve an available
   slot ahead of another host; its reservation returns when its host wait clears.
 - The wait is independent of the task's stop (nucleus#1198 review). When nothing
@@ -1457,8 +1469,9 @@ request identities and stored committed-handoff rows are not rewritten.
   thread before anything is sent; the task continues on the same host and
   threads. Delivery that was unknown stays unknown — an outage is never a reason
   to replay it.
-- Moving a task to another host stays an explicit owner decision: there is no
-  automatic failover and no `move host` verb.
+- Moving a task to another host stays driven by worker profile routing/selection
+  or an explicit owner route (`route` / `restart fresh`): there is no automatic
+  outage failover across hosts and no `move host` verb.
 - Past the dispatch-limits bound (`hostOutageNoticeMinutes`, 120 by default) each
   affected project's planner receives one notice naming the host, its outage
   start and the tasks held on it, through the ordinary durable notice path.

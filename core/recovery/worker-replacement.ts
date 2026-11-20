@@ -58,20 +58,48 @@ export function retainedWorkerFailureCause(args: {
   groupUnavailable?: { group: string; reason: string } | null;
 }): WorkerReplacementFailure | null {
   if (args.task.completion?.providerUnavailable) {
-    const retry = args.task.completion.providerRetryAt ? ` (retry ${args.task.completion.providerRetryAt})` : "";
-    return { kind: "provider_failure", detail: `the retained worker reported provider exhaustion${retry}` };
+    const retry = args.task.completion.providerRetryAt
+      ? ` (retry ${args.task.completion.providerRetryAt})`
+      : "";
+    return {
+      kind: "provider_failure",
+      detail: `the retained worker reported provider exhaustion${retry}`,
+    };
   }
   if (args.observedError && isQuotaExhaustion(args.observedError))
-    return { kind: "quota_exhaustion", detail: `the retained worker observed quota exhaustion: ${args.observedError.slice(0, 400)}` };
+    return {
+      kind: "quota_exhaustion",
+      detail: `the retained worker observed quota exhaustion: ${args.observedError.slice(0, 400)}`,
+    };
   if (args.groupUnavailable)
-    return { kind: "quota_exhaustion", detail: `subscription group ${args.groupUnavailable.group} is unavailable: ${args.groupUnavailable.reason.slice(0, 400)}` };
-  if (args.observedStatus === "error" && args.observedActive === false && args.observedPermissions === false)
-    return { kind: "agent_errored", detail: `the retained worker agent errored: ${(args.observedError || "no error detail").slice(0, 400)}` };
+    return {
+      kind: "quota_exhaustion",
+      detail: `subscription group ${args.groupUnavailable.group} is unavailable: ${args.groupUnavailable.reason.slice(0, 400)}`,
+    };
+  if (
+    args.observedStatus === "error" &&
+    args.observedActive === false &&
+    args.observedPermissions === false
+  )
+    return {
+      kind: "agent_errored",
+      detail: `the retained worker agent errored: ${(args.observedError || "no error detail").slice(0, 400)}`,
+    };
   if (args.observedStatus === "closed" || args.observedStatus === "archived")
-    return { kind: "agent_closed", detail: `the retained worker agent was observed ${args.observedStatus}` };
-  if (args.observedWorkspaceId !== undefined && args.observedWorkspaceId !== null
-    && args.task.workspaceId && args.observedWorkspaceId !== args.task.workspaceId)
-    return { kind: "session_unrecoverable", detail: "the retained worker's workspace identity changed" };
+    return {
+      kind: "agent_closed",
+      detail: `the retained worker agent was observed ${args.observedStatus}`,
+    };
+  if (
+    args.observedWorkspaceId !== undefined &&
+    args.observedWorkspaceId !== null &&
+    args.task.workspaceId &&
+    args.observedWorkspaceId !== args.task.workspaceId
+  )
+    return {
+      kind: "session_unrecoverable",
+      detail: "the retained worker's workspace identity changed",
+    };
   return null;
 }
 
@@ -86,11 +114,19 @@ export function isWorkerRouteApproved(
   pool: readonly Pick<PoolEntry, "cost" | "capability" | "profileId">[],
   usage: UsageLevel,
 ): boolean {
-  const entry = pool.find(item => item.profileId === profileId);
+  const entry = pool.find((item) => item.profileId === profileId);
   const requested = requestedTier(task.complexity);
   const climb = climbedTier(task);
   if (!entry || !requestOnly(entry, usage, requested, climb)) return true;
-  return honouredRequest(task.profileRequests?.worker ?? null, pool, usage, requested, climb)?.profileId === profileId;
+  return (
+    honouredRequest(
+      task.profileRequests?.worker ?? null,
+      pool,
+      usage,
+      requested,
+      climb,
+    )?.profileId === profileId
+  );
 }
 
 /**
@@ -112,16 +148,26 @@ export function decideWorkerReplacement(args: {
   approved: boolean;
   failure: WorkerReplacementFailure | null;
   explicitOperatorRelay: boolean;
+  /** True when the requested profile moves worker execution to another online host. */
+  hostChanges?: boolean;
   /** The caller shape, naming the refusal rule for a fresh restart. */
   freshRestart?: boolean;
 }): WorkerReplacementDecision {
   if (args.failure)
-    return { allowed: true, cause: `${args.failure.kind}: ${args.failure.detail}` };
+    return {
+      allowed: true,
+      cause: `${args.failure.kind}: ${args.failure.detail}`,
+    };
   if (args.explicitOperatorRelay)
-    return { allowed: true, cause: "operator_relayed: an explicit operator-relayed reason authorizes the replacement" };
+    return {
+      allowed: true,
+      cause:
+        "operator_relayed: an explicit operator-relayed reason authorizes the replacement",
+    };
   const current = (args.currentModel ?? "").trim();
   const requested = (args.requestedModel ?? "").trim();
-  const modelChanges = Boolean(current && requested) && modelKey(requested) !== modelKey(current);
+  const modelChanges =
+    Boolean(current && requested) && modelKey(requested) !== modelKey(current);
   if (args.requestedProfileId && !args.approved)
     return {
       allowed: false,
@@ -129,17 +175,28 @@ export function decideWorkerReplacement(args: {
       detail: `route to ${args.requestedProfileId} is waiting on the operator's board sign-off; the request is recorded and nothing replaces the retained worker until it is approved`,
     };
   if (args.requestedProfileId && modelChanges && args.approved)
-    return { allowed: true, cause: `approved_model_change: the worker route moves from ${current} to ${requested} on an approved route` };
+    return {
+      allowed: true,
+      cause: `approved_model_change: the worker route moves from ${current} to ${requested} on an approved route`,
+    };
+  if (args.requestedProfileId && args.hostChanges && args.approved)
+    return {
+      allowed: true,
+      cause:
+        "approved_host_change: the worker route moves to another online host on an approved route",
+    };
   if (args.freshRestart)
     return {
       allowed: false,
       rule: "fresh_without_cause_or_relay",
-      detail: "a fresh worker restart replaces only on provider failure, quota exhaustion, an inactive errored agent, a closed agent or an unrecoverable session, or with an explicit operator-relayed reason; the retained worker continues",
+      detail:
+        "a fresh worker restart replaces only on provider failure, quota exhaustion, an inactive errored agent, a closed agent or an unrecoverable session, or with an explicit operator-relayed reason; the retained worker continues",
     };
   return {
     allowed: false,
     rule: "same_model_no_failure",
-    detail: "the replacement keeps the same model with no worker failure; the retained worker continues",
+    detail:
+      "the replacement keeps the same model with no worker failure; the retained worker continues",
   };
 }
 
@@ -148,12 +205,18 @@ export function decideWorkerReplacement(args: {
  * its one exit belong to the replacement rule, so every caller that refuses names
  * the same bound and the same owner verb.
  */
-export function replacementCeilingRefusal(task: Pick<Task, 'retiredWorkers'>): string {
+export function replacementCeilingRefusal(
+  task: Pick<Task, "retiredWorkers">,
+): string {
   return `Nucleus has retired ${task.retiredWorkers.length} workers, the replacement ceiling of ${WORKER_REPLACEMENT_CEILING}; an operator-relayed restart role=worker fresh is required to replace it`;
 }
 
 /** The `worker_replacement_refused` detail for a selection that stopped matching its armed request. */
-export function supersededReplacementRefusal(recordedProfileId: string | null, selectedProfileId: string, cause: string): WorkerReplacementDecision {
+export function supersededReplacementRefusal(
+  recordedProfileId: string | null,
+  selectedProfileId: string,
+  cause: string,
+): WorkerReplacementDecision {
   return {
     allowed: false,
     rule: "route_superseded",

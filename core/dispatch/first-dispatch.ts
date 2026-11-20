@@ -21,7 +21,10 @@ import {
 import { startsNoRuns } from "../closeout/queue-drain";
 import type { Resolution } from "../resolution";
 import { chooseProfile, eligibilityReasons } from "./routing";
-import { chooseFirstWorkerHost } from "./first-host-selection";
+import {
+  chooseFirstWorkerHost,
+  formatWorkerHostSelectionReason,
+} from "./first-host-selection";
 import { dispatchGate } from "./dispatch-decisions";
 import { USAGE_GATE_WAIT, usageGateBlocked } from "./usage-gate";
 
@@ -404,10 +407,12 @@ export class FirstDispatch {
                   hostSelection: {
                     hostId: firstSelection.hostId,
                     basis: "worker_profile" as const,
-                    reason:
-                      firstSelection.capableHostIds.length === 1
-                        ? `Profile ${selection.profile.name} can run only on online host ${firstSelection.hostId}`
-                        : `Profile ${selection.profile.name} runs on ${firstSelection.capableHostIds.join(", ")}; selected ${firstSelection.hostId}${firstSelection.hostId === recorded.hostId ? " by host preference" : ""}`,
+                    reason: formatWorkerHostSelectionReason(
+                      selection.profile.name,
+                      firstSelection.hostId,
+                      firstSelection.capableHostIds,
+                      recorded.hostId,
+                    ),
                   },
                 }
               : {}),

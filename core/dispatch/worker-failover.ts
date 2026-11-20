@@ -35,6 +35,14 @@ import {
   eligibilityReasons,
   reviewerFiltersWorker,
 } from "./routing";
+import {
+  combineWorkerHostProfiles,
+  resolveWorkerHostForProfile,
+} from "./first-host-selection";
+import {
+  moveTaskToWorkerHost,
+  verifyMoveSourceClean,
+} from "./worker-host-move";
 import { startsNoRuns } from "../closeout/queue-drain";
 import { now, type Store } from "../store/store";
 import {
@@ -185,6 +193,10 @@ type WorkerFailoverReaders = {
   unavailableGroups: () => Set<string>;
   retainedProfileIssue: () => string | null;
   providerUnavailable: () => boolean;
+  resolveHostForProfile?: (
+    profileId: string,
+    thinkingOptionId: string,
+  ) => { hostId: string } | null;
 };
 /**
  * The failover sweep's decision for one armed worker: wait, skip, refuse with
@@ -305,11 +317,7 @@ function planWorkerFailover(
   const catalogOutage = facts.providerUnavailable();
   const outage =
     Boolean(assignedGroup && unavailable.has(assignedGroup)) || catalogOutage;
-  const demand = runDemand(
-    task.complexity,
-    "worker",
-    store.usageLevel(),
-  );
+  const demand = runDemand(task.complexity, "worker", store.usageLevel());
   // An outage alone must not promote work to a stronger fallback. An explicit
   // request is already subject to the normal route/sign-off rules.
   const explicitlyRequested =
@@ -477,12 +485,21 @@ function planWorkerFailover(
             store.usageLevel(),
           )
         : false);
+    const targetHost =
+      facts.resolveHostForProfile?.(
+        selected.profile.id,
+        selected.profile.thinkingOptionId ?? "",
+      ) ?? null;
+    const hostChanges = Boolean(
+      targetHost && targetHost.hostId !== task.hostId,
+    );
     const decision = decideWorkerReplacement({
       task,
       requestedProfileId: requestedId ?? selected.profile.id,
       requestedModel: selected.profile.model,
       currentModel: task.profile?.model ?? null,
       approved,
+      hostChanges,
       failure,
       explicitOperatorRelay: sweepRelay,
       freshRestart: false,
@@ -509,18 +526,25 @@ function planWorkerFailover(
 export type WorkerFailoverContext = Pick<
   Engine,
   | "activeHostId"
-  | "control"
   | "adapter"
+  | "cleanContext"
+  | "control"
+  | "enqueueCleanup"
   | "host"
   | "launchAgent"
   | "note"
+  | "preferredHostKindsForTask"
   | "profileCatalogKnown"
+  | "profileCatalogKnownFor"
   | "profiles"
-  | "workerProviderUnavailable"
+  | "profilesFor"
   | "stopped"
   | "store"
   | "taskHostAvailable"
+  | "wakeTask"
   | "withHost"
+  | "workerHostCatalogs"
+  | "workerProviderUnavailable"
 > & {
   readonly resolution: Pick<
     Resolution,
@@ -857,10 +881,18 @@ export class WorkerFailover {
             );
           }
         }
+        const hostCatalogs = this.engine.workerHostCatalogs(task);
+        const preferredKinds = this.engine.preferredHostKindsForTask(task);
+        const combinedProfiles =
+          hostCatalogs.length > 0
+            ? combineWorkerHostProfiles(hostCatalogs)
+            : this.engine.profilesFor(task.hostId);
         const failover = planWorkerFailover(task, state, erroredWithoutTurn, {
           store: this.store,
-          profiles: this.engine.profiles,
-          catalogKnown: () => this.engine.profileCatalogKnown(),
+          profiles: combinedProfiles,
+          catalogKnown: () =>
+            this.engine.profileCatalogKnownFor(task.hostId) ||
+            hostCatalogs.length > 0,
           suppressed: () =>
             this.resolution.suppressAutomaticRetry(
               task,
@@ -874,6 +906,15 @@ export class WorkerFailover {
             this.resolution.retainedWorkerProfileIssue(task),
           providerUnavailable: () =>
             this.engine.workerProviderUnavailable(task),
+          resolveHostForProfile: (profileId, thinking) =>
+            resolveWorkerHostForProfile(
+              task,
+              hostCatalogs,
+              profileId,
+              thinking,
+              preferredKinds,
+              true,
+            ),
         });
         if (failover.kind === "skip") continue;
         if (failover.kind === "workspace_changed")
@@ -998,6 +1039,7 @@ export class WorkerFailover {
         const { selected, replacingStoppedRevision, replacingStoppedWorker } =
           failover;
         for (const old of task.retiredWorkers) {
+          if ((old.hostId ?? task.hostId) !== task.hostId) continue;
           const s = await this.engine.host.observe(old.agentId);
           if (
             s.workspaceId !== task.workspaceId ||
@@ -1007,10 +1049,30 @@ export class WorkerFailover {
           )
             throw new Error("An earlier worker still owns the workspace");
         }
-        if (!this.adapter.verifyResume)
-          throw new Error("Adapter cannot verify continuation worktrees");
-        await this.adapter.verifyResume(task);
+        const targetHost = resolveWorkerHostForProfile(
+          task,
+          hostCatalogs,
+          selected.profile.id,
+          selected.profile.thinkingOptionId,
+          preferredKinds,
+          true,
+        );
+        const movingHost = Boolean(
+          targetHost && targetHost.hostId !== task.hostId,
+        );
+        const moveSource = movingHost
+          ? await verifyMoveSourceClean(task.directory)
+          : { head: null };
+        if (!movingHost) {
+          if (!this.adapter.verifyResume)
+            throw new Error("Adapter cannot verify continuation worktrees");
+          await this.adapter.verifyResume(task);
+        }
         if (startsNoRuns(this.store, this.engine.stopped)) return;
+        const resetRecovery =
+          task.failoverReason.startsWith(OPERATOR_WORKER_REMAP_REASON) ||
+          replacingStoppedRevision ||
+          replacingStoppedWorker;
         this.store.transaction(() => {
           if (revision)
             this.store.putRun({
@@ -1029,59 +1091,37 @@ export class WorkerFailover {
             .filter(Boolean)
             .join("; ")
             .slice(0, 14000);
-          this.store.update(
-            task.id,
-            {
-              phase: "dispatching",
-              retiredWorkers: [
-                ...task.retiredWorkers,
-                ...(task.agentId
-                  ? [
-                      {
-                        agentId: task.agentId,
-                        runId: task.runId!,
-                        profile: task.profile!,
-                        reason: retirementReason,
-                      },
-                    ]
-                  : []),
-              ],
-              ...(task.agentId ? {} : { continuesWorkspace: true }),
-              profile: selected.profile,
-              profileGroup: selected.entry.group,
-              agentId: null,
-              runId: null,
-              transientProviderRetry: undefined,
-              agentIntent: false,
-              completion: null,
-              prHead: null,
-              agentActive: null,
-              lastObservedAt: null,
-              lastAgentStatus: null,
-              idleSince: null,
-              failoverReason: "",
-              replacementProfile: null,
-              workerModel: null,
-              workerModels: [
-                ...new Set([
-                  ...task.workerModels,
-                  state.model || task.workerModel || task.profile!.model,
-                ]),
-              ],
-              resumePrNumber:
-                task.resumePrNumber ?? task.completion?.prNumber ?? null,
-              resolution: {
-                ...task.resolution,
-                currentRunId: null,
+          if (movingHost && targetHost) {
+            const targetProfile = {
+              ...targetHost.profile,
+              thinkingOptionId:
+                selected.profile.thinkingOptionId ||
+                targetHost.profile.thinkingOptionId,
+            };
+            moveTaskToWorkerHost({
+              store: this.store,
+              taskId: task.id,
+              targetHostId: targetHost.hostId,
+              hostSelection: targetHost.hostSelection,
+              targetProfile,
+              targetGroup: selected.entry.group,
+              oldHead: moveSource.head,
+              retireReason: retirementReason,
+              patch: {
+                ...(task.agentId ? {} : { continuesWorkspace: true }),
+                phase: this.adapter.createRun
+                  ? "changes_requested"
+                  : "dispatching",
+                failoverReason: "",
+                replacementProfile: null,
+                reason: `Moving worker to ${targetHost.hostId} for ${selected.profile.name}`,
+              },
+              resolutionPatch: {
                 attention: false,
                 ...(task.resolution.prePrResumeInstruction
                   ? { prePrResumeInstruction: null }
                   : {}),
-                ...(task.failoverReason.startsWith(
-                  OPERATOR_WORKER_REMAP_REASON,
-                ) ||
-                replacingStoppedRevision ||
-                replacingStoppedWorker
+                ...(resetRecovery
                   ? {
                       recoveryActive: false,
                       recoveryAttempts: 0,
@@ -1089,17 +1129,80 @@ export class WorkerFailover {
                     }
                   : {}),
               },
-              reason: "Replacing stopped worker in the existing workspace",
-            },
-            "worker_replacement",
-            selected.profile.name,
-          );
+            });
+          } else {
+            this.store.update(
+              task.id,
+              {
+                phase: "dispatching",
+                retiredWorkers: [
+                  ...task.retiredWorkers,
+                  ...(task.agentId
+                    ? [
+                        {
+                          agentId: task.agentId,
+                          runId: task.runId!,
+                          profile: task.profile!,
+                          reason: retirementReason,
+                          ...(task.hostId ? { hostId: task.hostId } : {}),
+                        },
+                      ]
+                    : []),
+                ],
+                ...(task.agentId ? {} : { continuesWorkspace: true }),
+                profile: selected.profile,
+                profileGroup: selected.entry.group,
+                agentId: null,
+                runId: null,
+                transientProviderRetry: undefined,
+                agentIntent: false,
+                completion: null,
+                prHead: null,
+                agentActive: null,
+                lastObservedAt: null,
+                lastAgentStatus: null,
+                idleSince: null,
+                failoverReason: "",
+                replacementProfile: null,
+                workerModel: null,
+                workerModels: [
+                  ...new Set([
+                    ...task.workerModels,
+                    state.model || task.workerModel || task.profile!.model,
+                  ]),
+                ],
+                resumePrNumber:
+                  task.resumePrNumber ?? task.completion?.prNumber ?? null,
+                resolution: {
+                  ...task.resolution,
+                  currentRunId: null,
+                  attention: false,
+                  ...(task.resolution.prePrResumeInstruction
+                    ? { prePrResumeInstruction: null }
+                    : {}),
+                  ...(resetRecovery
+                    ? {
+                        recoveryActive: false,
+                        recoveryAttempts: 0,
+                        recovery: null,
+                      }
+                    : {}),
+                },
+                reason: "Replacing stopped worker in the existing workspace",
+              },
+              "worker_replacement",
+              selected.profile.name,
+            );
+          }
           this.store.chargeAssignment(
             selected.entry.group,
             selected.profile.id,
           );
         });
-        await this.engine.launchAgent(this.store.task(task.id));
+        if (movingHost) {
+          this.engine.enqueueCleanup(task.id);
+          void this.engine.cleanContext(() => this.engine.wakeTask(task.id));
+        } else await this.engine.launchAgent(this.store.task(task.id));
       } catch (error) {
         // A daemon drop is not a task fault: parking here put every working task in
         // needs_attention when Paseo restarted (2026-09-29, eleven tasks at 13:56:59).

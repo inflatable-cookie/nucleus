@@ -1,6 +1,7 @@
-import type { Run, Task } from '../../shared/contracts';
-import type { HostOutage } from '../../shared/host-outage';
-import type { IdentitySource } from '../../shared/host-kind';
+import type { Run, Task } from "../../shared/contracts";
+import type { HostOutage } from "../../shared/host-outage";
+import type { HostKind, IdentitySource } from "../../shared/host-kind";
+import type { WorkerHostCatalog } from "../dispatch/first-host-selection";
 
 /**
  * Every host question a composition root answers (`nucleus#1232`). The runtime
@@ -30,8 +31,13 @@ export interface HostPorts {
   awaitBridge: ((waitMs: number) => Promise<boolean>) | null;
   bridgeWaitMs: number;
   canReuseUnqualifiedOriginWorkspace(): boolean;
-  identifyOriginHost(agentId: string, identitySource?: IdentitySource): Promise<string | undefined>;
+  identifyOriginHost(
+    agentId: string,
+    identitySource?: IdentitySource,
+  ): Promise<string | undefined>;
   catalogKnown(): boolean;
+  workerCatalogs?(task: Task): WorkerHostCatalog[];
+  preferredHostKinds?(task: Task): (HostKind | null | undefined)[];
 }
 
 /**
@@ -64,7 +70,9 @@ export function ambientHostPorts(origin: () => string | undefined): HostPorts {
  * context. The rule reads the owner's recorded `hostId`, never a caller's claim.
  */
 export function onOwnerHost<T>(
-  ports: Pick<HostPorts, 'withHost'>, owner: { hostId?: string | null } | null | undefined, work: () => T,
+  ports: Pick<HostPorts, "withHost">,
+  owner: { hostId?: string | null } | null | undefined,
+  work: () => T,
 ): T {
   const hostId = owner?.hostId;
   return hostId ? ports.withHost(hostId, work) : work();
