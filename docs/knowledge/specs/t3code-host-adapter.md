@@ -790,8 +790,9 @@ For already-bound targets (`observe`, `originAgent`, `isObserved`, `activeRunId`
 once the target is absent from live shell so a positively live, archived,
 `deletedAt`, or mismatched exact binding is proved without pairing
 `getArchivedShellSnapshot`, and selection shares that projection with the
-pre-send check within a pass. Only `ThreadNotFoundError` (plus operations
-that genuinely require full coverage: `threadArchiveState`, `workspaceThreads`,
+pre-send check within a pass. Only `ThreadNotFoundError` and, for a bound parent,
+the generic incomplete projection read (nucleus#1460) hand a read to the paired
+inventory (plus operations that genuinely require full coverage: `threadArchiveState`, `workspaceThreads`,
 `archiveThreadPage`, `findAgents`, `anyChildLive`, and `observeThreadList`
 after `ThreadNotFoundError`) pairs `subscribeShell` with
 `getArchivedShellSnapshot` at an equal `snapshotSequence` (retrying up to 5
@@ -1385,10 +1386,13 @@ An explicit owner restart can restore the same archived parent after its existin
 creation, workspace and custody admission proves settled. The parent must still
 match the task's recorded workspace, project and Nucleus ACP provider. The T3
 `thread.unarchive` effect has the restart operation's durable identity; the
-narrow parent observation (falling back to paired inventory only on
-`ThreadNotFoundError`) must prove the same parent live before normal admission
-proceeds, and a transient incomplete read keeps the authorized restart pending
-without losing it. After a lost reply, the operation observes only that occurrence.
+narrow parent observation must prove the same parent live before normal admission
+proceeds. A narrow read that cannot answer (`ThreadNotFoundError`, or the generic
+incomplete projection error the nightly also gives for an absent thread,
+nucleus#1460) falls back to the paired inventory, and an unreadable inventory keeps
+the authorized restart pending without losing it. A prepared binding (below) is
+not a restore: the restart precheck sends nothing and the worker's create launches
+the same parent, so no live projection is needed first. After a lost reply, the operation observes only that occurrence.
 An archived or unobservable result waits without another send or child; a deleted
 or mismatched parent remains fenced with its cause. A routine sweep never
 restores a manually archived parent, and terminal archival is unchanged.
@@ -1404,10 +1408,14 @@ session are deterministic for a task
 (`identity('thread', …)` and `identity('parent-launch', …)`), recorded in the
 adapter's state before the send, and a lost reply is settled by finding the thread
 before anything is launched again. The binding is stored before the parent's
-launch read, so a transient read failure in between leaves a **prepared** binding
-(nucleus#1458). The next create classifies it by two facts: the complete inventory
-shows no row for the parent, and the `parent-launch` command has no ledger intent,
-which proves nothing was reserved for a send. Only that pair resumes the launch: the
+launch read, so a read failure in between leaves a **prepared** binding
+(nucleus#1458). The generic incomplete projection error grants no absence, so the
+parent observation and the launch's own existence check both fall back to the
+complete paired inventory (nucleus#1460). An unreadable inventory keeps the wait.
+Prepared is one decision, shared by first dispatch, the retained launch and owner
+restart: the complete inventory shows no row for the parent, and the `parent-launch`
+command has no ledger intent, which proves nothing was reserved for a send. Only that
+pair resumes the launch: the
 same binding (session and binding path, never a second `acp.bind`), the same thread
 and command id, and the normal launch intent. Any launch intent, a `deletedAt`
 tombstone, an archived parent, or a checkout or project that no longer matches the

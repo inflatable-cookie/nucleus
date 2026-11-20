@@ -598,6 +598,14 @@ export async function t3Fake(t: TestContext, directory: string) {
     interruptThreadReads: 0,
     /** The next N thread projection reads fail with `OrchestrationV2GetThreadProjectionError`. */
     threadProjectionErrors: 0,
+    /**
+     * The answer a projection read gives for a thread T3 does not hold. The installed
+     * nightly's absent read is the generic incomplete projection error, not
+     * `ThreadNotFoundError` (nucleus#1460 evidence); the default keeps the #1458 shape.
+     */
+    absentThreadError: "ThreadNotFoundError" as
+      | "ThreadNotFoundError"
+      | "OrchestrationV2GetThreadProjectionError",
     disconnectMutation: false,
     disconnectAfterEffect: false,
     /** A launch thread commits, then its reply is lost to a dropped socket. */
@@ -1181,7 +1189,9 @@ export async function t3Fake(t: TestContext, directory: string) {
           if (!p || p.thread.deletedAt !== null)
             return failure({
               _tag: "Fail",
-              error: { _tag: "ThreadNotFoundError" },
+              error: {
+                _tag: !p ? controls.absentThreadError : "ThreadNotFoundError",
+              },
             });
           // A lagging unsettle becomes visible only after this many thread reads.
           if (p.unsettleLagReads !== undefined && --p.unsettleLagReads <= 0) {
