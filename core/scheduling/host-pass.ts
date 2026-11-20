@@ -27,6 +27,7 @@ import { submissionRecordFromLegacy } from "../../shared/schema/settings/legacy"
 import { LANE_PRIORITY_AUDIT } from "./lane-priorities";
 import type { TaskAttention } from "../../shared/task-attention";
 import { taskRowAttention } from "../workspaces/task-row-attention";
+import { HiddenRows } from "./hidden-row";
 
 const ROW_FAILURE_LABEL = "task row presentation";
 
@@ -116,8 +117,14 @@ export class HostPass {
       .filter((task) => task.hostId === hostId && task.removedAt == null)
       .map((task) => ({ task, attention: taskRowAttention(this.store, task) }));
     const rank = (state: TaskAttention["state"]) =>
-      state === "active" || state === "attention" ? 0 : state === "waiting" ? 1 : 2;
-    rows.sort((left, right) => rank(left.attention.state) - rank(right.attention.state));
+      state === "active" || state === "attention"
+        ? 0
+        : state === "waiting"
+          ? 1
+          : 2;
+    rows.sort(
+      (left, right) => rank(left.attention.state) - rank(right.attention.state),
+    );
     for (const { task, attention } of rows) {
       try {
         await reconcile.call(this.adapter, task.id, attention);
@@ -441,6 +448,15 @@ export class HostPass {
     });
     await this.step(host, "reconcileTaskRows", () =>
       this.reconcileTaskRows(host),
+    );
+    // The row's own visibility: a Nucleus-owned snooze that stays on past its
+    // bound is reported to the planner (nucleus#1417). It reads the host's durable
+    // snooze record and the attention projection, never the presentation step's
+    // outcome, so a failed presentation pass cannot suppress the notice.
+    await this.step(host, "reconcileHiddenRows", () =>
+      new HiddenRows({ store: this.store, adapter: this.adapter }).observe(
+        host,
+      ),
     );
     await this.step(host, "reconcileThreadTitles", () =>
       this.adapter.reconcileThreadTitles?.(tasks),

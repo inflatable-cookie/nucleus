@@ -1,4 +1,5 @@
 import { isHostOperationTimeout } from "../../core/host";
+import type { RowSnoozeVisibility } from "../../core/host";
 import { formatTaskNumber } from "../../shared/contracts";
 import { capPaseoTitle } from "../../shared/paseo-title";
 import { WIRE_LABEL_KEYS } from "../../shared/wire-labels";
@@ -20,7 +21,14 @@ import {
   presentationThread,
 } from "./intents";
 import type { T3IntentLedger } from "./intents";
-import { attentionStep, isSupportRole, labelRole, labelTask, rowStep, rowTitle } from "./one-row";
+import {
+  attentionStep,
+  isSupportRole,
+  labelRole,
+  labelTask,
+  rowStep,
+  rowTitle,
+} from "./one-row";
 
 /** A settled or refused command never runs again, so its identity is spent. */
 const settledOrRefused = (intent: T3State["intents"][string]) =>
@@ -33,6 +41,29 @@ const latestRun = (projection: Projection) =>
       !best || (run.ordinal ?? -1) >= (best.ordinal ?? -1) ? run : best,
     undefined,
   );
+
+/**
+ * When one continuous implicit snooze episode began (nucleus#1417). A record
+ * written before the field existed proves its own start: the horizon it read back
+ * is exactly one horizon after the send that wrote it.
+ */
+export function snoozeEpisodeStart(
+  record: NonNullable<T3State["snoozes"]>[string],
+): string {
+  if (record.episodeStartedAt) return record.episodeStartedAt;
+  const until = Date.parse(record.until);
+  return Number.isFinite(until)
+    ? new Date(until - SNOOZE_HORIZON_MS).toISOString()
+    : record.recordedAt;
+}
+
+/**
+ * What one task row's visibility is now, as this host's durable snooze ownership
+ * and a fresh native read prove it (nucleus#1417). The hidden-row notice reads
+ * this instead of guessing from the task: only a row this host snoozed is
+ * Nucleus-owned, and an unreadable row is unknown rather than clear.
+ */
+export type { RowSnoozeVisibility };
 
 /**
  * How long one snooze horizon lasts (nucleus#1366). Nucleus waits are open-ended,
@@ -307,6 +338,54 @@ export class T3Presentation {
   }
 
   /**
+   * The task row's visibility right now (nucleus#1417): this host's own durable
+   * snooze record says whether the row is Nucleus-owned, and a fresh read of the
+   * thread proves T3 still shows it snoozed. A row this host never snoozed, a row
+   * an operator settled or snoozed, and a row whose horizon already lapsed are all
+   * clear. A row T3 cannot be read for is unknown, never clear: the recorded snooze
+   * is then the only evidence and it is kept as it is.
+   */
+  async rowSnoozeVisibility(taskId: string): Promise<RowSnoozeVisibility> {
+    const threadId = this.workerThreadFor(taskId);
+    if (!threadId) return { kind: "clear" };
+    const record = this.core.state.read().snoozes?.[threadId];
+    // A refused snooze never hid the row, and a record this host forgot no longer
+    // owns one.
+    if (!record || record.state === "refused") return { kind: "clear" };
+    const episodeStartedAt = snoozeEpisodeStart(record);
+    const cause = record.cause ?? "";
+    if (this.core.intents.confirmedDeletion(this.core.state.read(), threadId))
+      return { kind: "clear" };
+    let projection: Projection;
+    try {
+      this.core.requireConnection();
+      if (!(await this.core.reads.isObserved(threadId)))
+        return { kind: "clear" };
+      projection = await this.core.reads.readProjection(
+        threadId,
+        "observation",
+      );
+    } catch (error) {
+      if (isHostOperationTimeout(error)) throw error;
+      return {
+        kind: "unknown",
+        threadId,
+        episodeStartedAt,
+        cause,
+        reason: error instanceof Error ? error.message : String(error),
+      };
+    }
+    if (projection.thread.deletedAt || projection.thread.archivedAt)
+      return { kind: "clear" };
+    const wakeAt = projection.thread.snoozedUntil
+      ? Date.parse(projection.thread.snoozedUntil)
+      : Number.NaN;
+    if (!Number.isFinite(wakeAt) || wakeAt <= Date.now())
+      return { kind: "clear" };
+    return { kind: "snoozed", threadId, episodeStartedAt, cause };
+  }
+
+  /**
    * Send one row title. A title the row already sent once gets a fresh command
    * identity when it comes back: round two's `· reviewing` is the same string as
    * round one's, a sent command never runs again, and the fresh projection read
@@ -490,7 +569,11 @@ export class T3Presentation {
         this.core.state.update((current) => {
           const intent = current.intents[key];
           if (intent?.status === "unknown")
-            current.intents[key] = { ...intent, status: "settled", result: null };
+            current.intents[key] = {
+              ...intent,
+              status: "settled",
+              result: null,
+            };
         });
         return;
       }
@@ -525,7 +608,8 @@ export class T3Presentation {
 
     // T3 may show the unsettle a moment after the command returns: read it back.
     for (let attempt = 0; attempt < UNSETTLE_READ_ATTEMPTS; attempt++) {
-      if (attempt) await new Promise((done) => setTimeout(done, UNSETTLE_READ_GAP_MS));
+      if (attempt)
+        await new Promise((done) => setTimeout(done, UNSETTLE_READ_GAP_MS));
       const read = await this.observeFresh(id);
       if (read.thread.settledOverride !== "settled") return;
     }
@@ -594,15 +678,26 @@ export class T3Presentation {
     let record = this.core.state.read().snoozes?.[threadId];
     const snoozed = Number.isFinite(wakeAt) && wakeAt > now;
     if (record?.state === "refused") return;
-    if (record?.state === "unknown" && record.ended && Date.parse(record.until) <= now) {
+    if (
+      record?.state === "unknown" &&
+      record.ended &&
+      Date.parse(record.until) <= now
+    ) {
       // A late delivery cannot snooze beyond its own expired horizon. A later
       // wait can now start a fresh episode without replaying the uncertain send.
       this.forgetSnooze(threadId);
       record = undefined;
     }
+    const episodeStartedAt = record
+      ? snoozeEpisodeStart(record)
+      : new Date(now).toISOString();
     if (record?.state === "unknown") {
       if (snoozed && projection.thread.snoozedUntil === record.until)
-        this.recordSnooze(threadId, { ...record, state: "snoozed" });
+        this.recordSnooze(threadId, {
+          ...record,
+          state: "snoozed",
+          episodeStartedAt,
+        });
       return;
     }
     // A snooze nobody here recorded is the operator's and is always left alone.
@@ -615,11 +710,13 @@ export class T3Presentation {
         until: projection.thread.snoozedUntil!,
         state: "snoozed",
         cause,
+        episodeStartedAt,
       });
       return;
     }
     // A renewal inside the same wait gets the horizon's own command id, so a
-    // returning identical wait never reuses a spent command.
+    // returning identical wait never reuses a spent command. The episode start
+    // stays: a renewal is not a new episode (nucleus#1417).
     const episode = record?.episode ?? 0;
     const until = new Date(now + SNOOZE_HORIZON_MS).toISOString();
     const commandId = this.commandIdFor(
@@ -628,7 +725,12 @@ export class T3Presentation {
       settledOrRefused,
     );
     this.recordSnooze(threadId, {
-      episode, commandId, until, state: "unknown", cause,
+      episode,
+      commandId,
+      until,
+      state: "unknown",
+      cause,
+      episodeStartedAt,
       recordedAt: new Date().toISOString(),
     });
     try {
@@ -643,7 +745,12 @@ export class T3Presentation {
     } catch (error) {
       if (error instanceof ProvenPreSendRefusalError) {
         this.recordSnooze(threadId, {
-          episode, commandId, until, state: "refused", cause,
+          episode,
+          commandId,
+          until,
+          state: "refused",
+          cause,
+          episodeStartedAt,
           recordedAt: new Date().toISOString(),
         });
       }
@@ -664,6 +771,7 @@ export class T3Presentation {
       until: landed ?? until,
       state: landed ? "snoozed" : "refused",
       cause,
+      episodeStartedAt,
       recordedAt: new Date().toISOString(),
     });
   }
@@ -800,7 +908,8 @@ export class T3Presentation {
       current.state === entry.state &&
       current.until === entry.until &&
       current.episode === entry.episode &&
-      current.ended === entry.ended
+      current.ended === entry.ended &&
+      current.episodeStartedAt === entry.episodeStartedAt
     )
       return;
     this.core.state.update((state) => {

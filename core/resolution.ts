@@ -527,7 +527,9 @@ export class Resolution {
     if (!assigned) return;
     let gone = false;
     try {
-      gone = (await this.plannerPresence.threadRoute(assigned.agentId)).kind === "gone";
+      gone =
+        (await this.plannerPresence.threadRoute(assigned.agentId)).kind ===
+        "gone";
     } catch {
       return;
     }
@@ -3630,6 +3632,10 @@ export class Resolution {
   }
   deliverHoldNotices(): Promise<void> {
     return this.notices.deliverHoldNotices();
+  }
+  /** nucleus#1417: the one planner notice a task's hidden row episode owes. */
+  deliverRowHiddenNotices(): Promise<void> {
+    return this.notices.deliverRowHiddenNotices();
   }
   deliverDecisionNotices(): Promise<void> {
     return this.notices.deliverDecisionNotices();

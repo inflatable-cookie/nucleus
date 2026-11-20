@@ -47,7 +47,11 @@ import { T3RpcClient, T3RpcError } from "../../hosts/t3code/rpc";
 import { createAdapter, createHost } from "../../hosts/t3code";
 import { canonical } from "../../hosts/t3code/state";
 import { pipelineBoard } from "../../shared/pipeline-board";
-import { submissionSchema, type Task, type TaskSummary } from "../../shared/contracts";
+import {
+  submissionSchema,
+  type Task,
+  type TaskSummary,
+} from "../../shared/contracts";
 import { HostPolicies } from "../../core/host/host-policies";
 import type { HostPolicyConstructor } from "../../core/host";
 import { Store } from "../../core/store/store";
@@ -57,7 +61,7 @@ import { QueueService } from "../../service/transport/server";
 import { storedT3Labels } from "../../test/support/t3code-labels";
 
 /** The nightly line this proof reads; the exact installed build is recorded, never pinned. */
-const NIGHTLY_LINE = /^0\.1\.11-nightly\.\d+\.\d+$/;
+const NIGHTLY_LINE = /^0\.1\.(?:11|12)-nightly\.\d+\.\d+$/;
 const TASK_ID = "proof-task-1366";
 const SNOOZE_HORIZON_MS = 48 * 60 * 60_000;
 
@@ -83,7 +87,10 @@ function extractArchive(source: string, destination: string): void {
     const prelude = Buffer.alloc(16);
     assert.equal(readSync(fd, prelude, 0, 16, 0), 16);
     const headerSize = prelude.readUInt32LE(12);
-    assert.ok(headerSize > 0 && headerSize < 16 * 1024 * 1024, "bounded header");
+    assert.ok(
+      headerSize > 0 && headerSize < 16 * 1024 * 1024,
+      "bounded header",
+    );
     const header = Buffer.alloc(headerSize);
     readSync(fd, header, 0, headerSize, 16);
     const tree = JSON.parse(header.toString()) as ArchiveEntry;
@@ -100,7 +107,10 @@ function extractArchive(source: string, destination: string): void {
           walk(child, join(relative, name));
       } else if (entry.link) {
         const linkTarget = resolve(destination, entry.link);
-        assert.ok(linkTarget.startsWith(destination + sep), "link stays inside the fixture");
+        assert.ok(
+          linkTarget.startsWith(destination + sep),
+          "link stays inside the fixture",
+        );
         symlinkSync(linkTarget, target);
       } else if (entry.unpacked) {
         // A native module the archive carries beside itself in `.unpacked`.
@@ -195,20 +205,26 @@ async function run(
 async function main() {
   const args = process.argv.slice(2);
   const asarArg = args.indexOf("--asar");
-  const asar = asarArg >= 0 ? args[asarArg + 1] : process.env.NUCLEUS_T3_PROOF_ASAR;
+  const asar =
+    asarArg >= 0 ? args[asarArg + 1] : process.env.NUCLEUS_T3_PROOF_ASAR;
   if (!asar)
     throw new Error(
       "Set NUCLEUS_T3_PROOF_ASAR or pass --asar with the installed nightly app archive",
     );
   const root = mkdtempSync(join(scratchRoot(), "t3-snooze-"));
   console.log(JSON.stringify({ proofRoot: root }));
-  const evidence: Record<string, unknown> = { nightlyLine: String(NIGHTLY_LINE), steps: [] };
+  const evidence: Record<string, unknown> = {
+    nightlyLine: String(NIGHTLY_LINE),
+    steps: [],
+  };
   const steps = evidence.steps as unknown[];
 
   const bundle = join(root, "bundle");
   mkdirSync(bundle);
   extractArchive(resolve(asar), bundle);
-  const metadata = JSON.parse(readFileSync(join(bundle, "package.json"), "utf8")) as {
+  const metadata = JSON.parse(
+    readFileSync(join(bundle, "package.json"), "utf8"),
+  ) as {
     version: string;
   };
   assert.match(metadata.version, NIGHTLY_LINE);
@@ -223,7 +239,13 @@ async function main() {
   const nucleusData = join(root, "nucleus-data");
   const repository = join(root, "synthetic-repository");
   const worktree = join(root, "synthetic-worktree");
-  for (const path of [privateHome, data, join(data, "userdata"), nucleusData, repository])
+  for (const path of [
+    privateHome,
+    data,
+    join(data, "userdata"),
+    nucleusData,
+    repository,
+  ])
     mkdirSync(path, { recursive: true });
   const environment: NodeJS.ProcessEnv = {
     PATH: process.env.PATH,
@@ -240,12 +262,28 @@ async function main() {
     T3CODE_TRACE_TIMING_ENABLED: "false",
     NUCLEUS_DATA_HOME: nucleusData,
   };
-  await run(["git", "init", "--quiet", "--initial-branch=main"], repository, environment);
-  await run(["git", "config", "user.email", "fixture@example.invalid"], repository, environment);
-  await run(["git", "config", "user.name", "Synthetic fixture"], repository, environment);
+  await run(
+    ["git", "init", "--quiet", "--initial-branch=main"],
+    repository,
+    environment,
+  );
+  await run(
+    ["git", "config", "user.email", "fixture@example.invalid"],
+    repository,
+    environment,
+  );
+  await run(
+    ["git", "config", "user.name", "Synthetic fixture"],
+    repository,
+    environment,
+  );
   writeFileSync(join(repository, "fixture.txt"), "Synthetic private proof\n");
   await run(["git", "add", "fixture.txt"], repository, environment);
-  await run(["git", "commit", "--quiet", "-m", "Synthetic fixture"], repository, environment);
+  await run(
+    ["git", "commit", "--quiet", "-m", "Synthetic fixture"],
+    repository,
+    environment,
+  );
   await run(
     ["git", "worktree", "add", "--quiet", "-b", "proof-worktree", worktree],
     repository,
@@ -270,7 +308,11 @@ async function main() {
     `#!/bin/sh\n# nucleus-owned-command-v1\nexec ${shellQuote(process.execPath)} --import ${shellQuote(join(checkout, "node_modules/tsx/dist/loader.mjs"))} ${shellQuote(join(checkout, "bin/nucleus-acp.mjs"))} "$@"\n`,
     { mode: 0o700 },
   );
-  writeFileSync(join(nucleusData, "settings.json"), JSON.stringify({ daemonUrl: "ws://127.0.0.1:6767/ws" }, null, 2), { mode: 0o600 });
+  writeFileSync(
+    join(nucleusData, "settings.json"),
+    JSON.stringify({ daemonUrl: "ws://127.0.0.1:6767/ws" }, null, 2),
+    { mode: 0o600 },
+  );
   writeFileSync(
     join(data, "userdata/settings.json"),
     JSON.stringify({
@@ -278,7 +320,11 @@ async function main() {
         codex: {
           driver: "codex",
           enabled: true,
-          config: { binaryPath: provider, homePath: codexHome, setupMode: "existing" },
+          config: {
+            binaryPath: provider,
+            homePath: codexHome,
+            setupMode: "existing",
+          },
         },
         nucleus: {
           driver: "acpRegistry",
@@ -327,7 +373,16 @@ async function main() {
     const log = openSync(join(root, "server.log"), "a", 0o600);
     server = spawn(
       process.execPath,
-      [entry, "--base-dir", data, "--host", "127.0.0.1", "--port", String(port), "--no-browser"],
+      [
+        entry,
+        "--base-dir",
+        data,
+        "--host",
+        "127.0.0.1",
+        "--port",
+        String(port),
+        "--no-browser",
+      ],
       { cwd: root, env: environment, stdio: ["ignore", "pipe", "pipe"] },
     );
     const relay = (stream: NodeJS.ReadableStream) => {
@@ -348,8 +403,11 @@ async function main() {
     server.once("close", () => closeSync(log));
     await until(
       async () =>
-        (await fetch(`${endpoint}/.well-known/t3/environment`).catch(() => null))?.ok ===
-        true,
+        (
+          await fetch(`${endpoint}/.well-known/t3/environment`).catch(
+            () => null,
+          )
+        )?.ok === true,
       "private server startup",
     );
   };
@@ -375,7 +433,10 @@ async function main() {
     rpc = new T3RpcClient({ endpoint, bearer, timeoutMs: 15_000 });
     await rpc.connect();
     const config = (await rpc.call("server.getConfig", {})) as {
-      environment: { serverVersion: string; orchestrationProtocolVersion: number };
+      environment: {
+        serverVersion: string;
+        orchestrationProtocolVersion: number;
+      };
     };
     assert.match(config.environment.serverVersion, NIGHTLY_LINE);
     evidence.serverVersion = config.environment.serverVersion;
@@ -438,7 +499,11 @@ async function main() {
             title: "Waiting on nucleus#1364: 1366 proof",
           },
         },
-        nesting: { state: "unavailable", reason: "no ACP sessions in this proof", at: new Date().toISOString() },
+        nesting: {
+          state: "unavailable",
+          reason: "no ACP sessions in this proof",
+          at: new Date().toISOString(),
+        },
       }),
       { mode: 0o600 },
     );
@@ -458,7 +523,14 @@ async function main() {
         "orchestration.subscribeThread",
         { threadId: seedThreadId },
         (chunk) => (chunk as { kind?: string }).kind === "snapshot",
-      )) as { projection: { thread: { snoozedUntil: string | null; settledOverride: string | null } } };
+      )) as {
+        projection: {
+          thread: {
+            snoozedUntil: string | null;
+            settledOverride: string | null;
+          };
+        };
+      };
       return value.projection.thread;
     };
     const adapterSettles = () =>
@@ -466,9 +538,10 @@ async function main() {
         Object.values(host!.state.read().intents).filter(
           (intent) =>
             (intent as { kind?: string }).kind === "thread.settle" ||
-            JSON.parse((intent as { payload: string }).payload).payload?.type ===
-              "thread.settle",
-        ).length) || 0;
+            JSON.parse((intent as { payload: string }).payload).payload
+              ?.type === "thread.settle",
+        ).length) ||
+      0;
 
     // 1. A waiting task's row is snoozed once, and the horizon is read back.
     await host.reconcileTaskRow(TASK_ID, {
@@ -482,15 +555,52 @@ async function main() {
     assert.ok(Date.parse(first) > Date.now(), "the horizon is in the future");
     const record = host.state.read().snoozes?.[seedThreadId];
     assert.equal(record?.state, "snoozed");
-    assert.equal(record?.until, first, "the adapter recorded the horizon it read back");
-    assert.equal((await readThread()).settledOverride, null, "the row is never settled");
-    steps.push({ step: "snooze-once-read-back", result: "passed" });
+    assert.equal(
+      record?.until,
+      first,
+      "the adapter recorded the horizon it read back",
+    );
+    assert.ok(
+      record?.episodeStartedAt,
+      "the adapter recorded the continuous episode start",
+    );
+    const firstVisibility = await host.rowSnoozeVisibility(TASK_ID);
+    assert.equal(
+      firstVisibility.kind,
+      "snoozed",
+      "real T3 read proves the row is snoozed",
+    );
+    assert.equal(
+      firstVisibility.kind === "snoozed" && firstVisibility.episodeStartedAt,
+      record?.episodeStartedAt,
+      "visibility reports the durable episode start",
+    );
+    assert.equal(
+      (await readThread()).settledOverride,
+      null,
+      "the row is never settled",
+    );
+    steps.push({
+      step: "snooze-once-read-back",
+      result: "passed",
+      episodeStartedAt: record?.episodeStartedAt,
+    });
 
     // 2. A repeated pass inside the horizon adds no write.
     const commandsBefore = adapterIntentCount(host);
-    await host.reconcileTaskRow(TASK_ID, { state: "waiting", cause: "Waiting on nucleus#1364" });
-    await host.reconcileTaskRow(TASK_ID, { state: "waiting", cause: "Waiting on nucleus#1364" });
-    assert.equal(adapterIntentCount(host), commandsBefore, "a repeated pass writes nothing");
+    await host.reconcileTaskRow(TASK_ID, {
+      state: "waiting",
+      cause: "Waiting on nucleus#1364",
+    });
+    await host.reconcileTaskRow(TASK_ID, {
+      state: "waiting",
+      cause: "Waiting on nucleus#1364",
+    });
+    assert.equal(
+      adapterIntentCount(host),
+      commandsBefore,
+      "a repeated pass writes nothing",
+    );
     steps.push({ step: "repeat-no-write", result: "passed" });
 
     // 3. The renewal before the horizon asks for a full one again.
@@ -502,26 +612,52 @@ async function main() {
     });
     const short = await readThread();
     assert.ok(Date.parse(short.snoozedUntil!) - Date.now() < 2 * 60 * 60_000);
-    await host.reconcileTaskRow(TASK_ID, { state: "waiting", cause: "Waiting on nucleus#1364" });
-    const renewed = await until(
-      async () => {
-        const untilValue = (await readThread()).snoozedUntil;
-        return untilValue && Date.parse(untilValue) - Date.now() > SNOOZE_HORIZON_MS / 2
-          ? untilValue
-          : null;
-      },
-      "the renewed horizon",
-    );
+    await host.reconcileTaskRow(TASK_ID, {
+      state: "waiting",
+      cause: "Waiting on nucleus#1364",
+    });
+    const renewed = await until(async () => {
+      const untilValue = (await readThread()).snoozedUntil;
+      return untilValue &&
+        Date.parse(untilValue) - Date.now() > SNOOZE_HORIZON_MS / 2
+        ? untilValue
+        : null;
+    }, "the renewed horizon");
     assert.ok(Date.parse(renewed) > Date.now() + SNOOZE_HORIZON_MS / 2);
-    steps.push({ step: "renew-before-horizon", result: "passed", horizon: renewed });
+    const renewedVisibility = await host.rowSnoozeVisibility(TASK_ID);
+    assert.equal(
+      renewedVisibility.kind,
+      "snoozed",
+      "renewal keeps the row snoozed",
+    );
+    assert.equal(
+      renewedVisibility.kind === "snoozed" &&
+        renewedVisibility.episodeStartedAt,
+      record?.episodeStartedAt,
+      "renewal preserves the original episode start on real T3",
+    );
+    steps.push({
+      step: "renew-before-horizon",
+      result: "passed",
+      horizon: renewed,
+      episodeStartedAt: record?.episodeStartedAt,
+    });
 
     // 4. A task that needs a person has the row unsnoozed.
     await host.reconcileTaskRow(TASK_ID, {
       state: "attention",
       cause: "Worker creation refused before send",
     });
-    await until(async () => (await readThread()).snoozedUntil === null, "the unsnoozed row");
+    await until(
+      async () => (await readThread()).snoozedUntil === null,
+      "the unsnoozed row",
+    );
     assert.equal(host.state.read().snoozes?.[seedThreadId], undefined);
+    assert.deepEqual(
+      await host.rowSnoozeVisibility(TASK_ID),
+      { kind: "clear" },
+      "unsnooze clears row visibility",
+    );
     steps.push({ step: "unsnooze-on-attention", result: "passed" });
 
     // 5. A manually settled row is left alone.
@@ -535,14 +671,25 @@ async function main() {
       "the manual settle",
     );
     const settledCommands = adapterIntentCount(host);
-    await host.reconcileTaskRow(TASK_ID, { state: "waiting", cause: "Waiting on nucleus#1364" });
-    await host.reconcileTaskRow(TASK_ID, { state: "attention", cause: "Needs a person" });
+    await host.reconcileTaskRow(TASK_ID, {
+      state: "waiting",
+      cause: "Waiting on nucleus#1364",
+    });
+    await host.reconcileTaskRow(TASK_ID, {
+      state: "attention",
+      cause: "Needs a person",
+    });
     assert.equal(
       adapterIntentCount(host),
       settledCommands,
       "a manual settle is neither snoozed over nor unsettled",
     );
     assert.equal((await readThread()).settledOverride, "settled");
+    assert.deepEqual(
+      await host.rowSnoozeVisibility(TASK_ID),
+      { kind: "clear" },
+      "a manual settle is never reported as a Nucleus-owned snooze",
+    );
     steps.push({ step: "manual-settle-left-alone", result: "passed" });
 
     // 6. A snooze refused for a pending approval stays active, with no retry loop.
@@ -571,16 +718,20 @@ async function main() {
       attachments: [],
       dispatchMode: { type: "queue_after_active" },
     });
-    const pendingApproval = await until(
-      async () => {
-        const projection = await host!.readProjection(seedThreadId, "observation");
-        return projection.runtimeRequests.find(
-          (request) => request.status === "pending" && request.kind !== "user_input",
-        );
-      },
-      "the pending approval",
+    const pendingApproval = await until(async () => {
+      const projection = await host!.readProjection(
+        seedThreadId,
+        "observation",
+      );
+      return projection.runtimeRequests.find(
+        (request) =>
+          request.status === "pending" && request.kind !== "user_input",
+      );
+    }, "the pending approval");
+    assert.ok(
+      pendingApproval,
+      "the nightly holds a pending non-user-input approval",
     );
-    assert.ok(pendingApproval, "the nightly holds a pending non-user-input approval");
     const passedSnooze = adapterIntentCount(host);
     await host.reconcileTaskRow(TASK_ID, {
       state: "waiting",
@@ -609,7 +760,16 @@ async function main() {
       passedSnooze + 1,
       "this wait episode sends exactly one refused snooze and never retries",
     );
-    assert.equal(adapterSettles(), 0, "the adapter sent no thread.settle for the task");
+    assert.equal(
+      adapterSettles(),
+      0,
+      "the adapter sent no thread.settle for the task",
+    );
+    assert.deepEqual(
+      await host.rowSnoozeVisibility(TASK_ID),
+      { kind: "clear" },
+      "refused snooze never hides the row",
+    );
     steps.push({
       step: "pending-approval-refusal-stays-active",
       result: "passed",
@@ -642,7 +802,9 @@ async function main() {
     ]);
     // Any ready provider answers the model fence; the refusal this step proves is
     // the missing ACP surface, which is checked before any child command.
-    const ready = served.providers.find((provider) => provider.models.length > 0);
+    const ready = served.providers.find(
+      (provider) => provider.models.length > 0,
+    );
     assert.ok(ready, "a provider reports models");
     const proofProvider = ready.instanceId;
     const proofModel = ready.models[0]!.slug;
@@ -673,8 +835,9 @@ async function main() {
         const message = error instanceof Error ? error.message : String(error);
         evidence.refusalMessage = message;
         return (
-          /T3 provider not ready: this process serves no ACP sessions/.test(message) &&
-          /nucleus t3 install/.test(message)
+          /T3 provider not ready: this process serves no ACP sessions/.test(
+            message,
+          ) && /nucleus t3 install/.test(message)
         );
       },
       "the refusal names the reason and the fix",
@@ -705,7 +868,10 @@ async function main() {
           owner: "operator",
           reason: "Hold until the prerequisite lands",
           since: new Date().toISOString(),
-          until: { kind: "task", taskId: "0f8a2b3c-0000-4000-8000-000000000001" },
+          until: {
+            kind: "task",
+            taskId: "0f8a2b3c-0000-4000-8000-000000000001",
+          },
         },
       },
       dependsOn: [],
@@ -766,18 +932,23 @@ async function main() {
       requestId: pendingApproval.id,
       decision: "accept",
     });
-    await until(
-      async () => {
-        const projection = await host!.readProjection(seedThreadId, "observation");
-        return projection.runtimeRequests.every((request) => request.status !== "pending");
-      },
-      "approval resolved",
-    );
+    await until(async () => {
+      const projection = await host!.readProjection(
+        seedThreadId,
+        "observation",
+      );
+      return projection.runtimeRequests.every(
+        (request) => request.status !== "pending",
+      );
+    }, "approval resolved");
     // Clear the refused snooze record from step 6 before driving step 9 on the same thread.
     host.state.update((state) => {
       if (state.snoozes) delete state.snoozes[seedThreadId];
     });
-    await host.reconcileTaskRow(TASK_ID, { state: "waiting", cause: "Delayed apply wait" });
+    await host.reconcileTaskRow(TASK_ID, {
+      state: "waiting",
+      cause: "Delayed apply wait",
+    });
     const delayedUntil = await until(
       async () => (await readThread()).snoozedUntil,
       "step 9 snooze",
@@ -795,8 +966,15 @@ async function main() {
       return nativeCall(method, payload);
     };
     await host.reconcileTaskRow(TASK_ID, { state: "active" });
-    assert.equal((await readThread()).snoozedUntil, delayedUntil, "T3 still shows snoozedUntil");
-    assert.ok(host.state.read().snoozes?.[seedThreadId], "snooze record retained until read-back clears");
+    assert.equal(
+      (await readThread()).snoozedUntil,
+      delayedUntil,
+      "T3 still shows snoozedUntil",
+    );
+    assert.ok(
+      host.state.read().snoozes?.[seedThreadId],
+      "snooze record retained until read-back clears",
+    );
 
     // Delayed apply lands before the next pass: re-observe retires the snooze without resending.
     await rpc.call("orchestration.dispatchCommand", {
@@ -805,22 +983,52 @@ async function main() {
       threadId: seedThreadId,
       reason: "user",
     });
-    await until(async () => (await readThread()).snoozedUntil === null, "delayed unsnooze landed");
+    await until(
+      async () => (await readThread()).snoozedUntil === null,
+      "delayed unsnooze landed",
+    );
     await host.reconcileTaskRow(TASK_ID, { state: "active" });
-    assert.equal(host.state.read().snoozes?.[seedThreadId], undefined, "delayed apply retired snooze on re-observe");
+    assert.equal(
+      host.state.read().snoozes?.[seedThreadId],
+      undefined,
+      "delayed apply retired snooze on re-observe",
+    );
 
     // Unapplied ack: settled unsnooze that did not clear retries as a new occurrence.
-    await host.reconcileTaskRow(TASK_ID, { state: "waiting", cause: "Retry occurrence wait" });
-    await until(async () => (await readThread()).snoozedUntil !== null, "second snooze landed");
+    await host.reconcileTaskRow(TASK_ID, {
+      state: "waiting",
+      cause: "Retry occurrence wait",
+    });
+    await until(
+      async () => (await readThread()).snoozedUntil !== null,
+      "second snooze landed",
+    );
     await host.reconcileTaskRow(TASK_ID, { state: "active" });
-    assert.ok(host.state.read().snoozes?.[seedThreadId], "snooze record kept while still snoozed");
+    assert.ok(
+      host.state.read().snoozes?.[seedThreadId],
+      "snooze record kept while still snoozed",
+    );
     dropUnsnoozeAck = false;
     await host.reconcileTaskRow(TASK_ID, { state: "active" });
-    await until(async () => (await readThread()).snoozedUntil === null, "retried unsnooze cleared");
-    assert.equal(host.state.read().snoozes?.[seedThreadId], undefined, "snooze retired after read-back");
+    await until(
+      async () => (await readThread()).snoozedUntil === null,
+      "retried unsnooze cleared",
+    );
+    assert.equal(
+      host.state.read().snoozes?.[seedThreadId],
+      undefined,
+      "snooze retired after read-back",
+    );
 
     // Stale pass snapshot inside beginHostPass: unsnoozeRow bypasses held cache and clears.
-    const staleTask = { id: TASK_ID, number: 1399, title: "Stale snapshot", phase: "working", hostId: host.hostId, removedAt: null } as unknown as Task;
+    const staleTask = {
+      id: TASK_ID,
+      number: 1399,
+      title: "Stale snapshot",
+      phase: "working",
+      hostId: host.hostId,
+      removedAt: null,
+    } as unknown as Task;
     await host.beginHostPass([staleTask]);
     const heldRead = await host.readProjection(seedThreadId, "observation");
     assert.equal(heldRead.thread.snoozedUntil, null);
@@ -831,33 +1039,64 @@ async function main() {
       threadId: seedThreadId,
       snoozedUntil: staleUntil,
     });
-    await until(async () => (await readThread()).snoozedUntil === staleUntil, "snooze set during pass");
+    await until(
+      async () => (await readThread()).snoozedUntil === staleUntil,
+      "snooze set during pass",
+    );
     host.state.update((state) => {
       state.snoozes = {
         ...state.snoozes,
-        [seedThreadId]: { episode: 0, commandId: "stale-pass-snooze", until: staleUntil, state: "snoozed", recordedAt: new Date().toISOString() },
+        [seedThreadId]: {
+          episode: 0,
+          commandId: "stale-pass-snooze",
+          until: staleUntil,
+          state: "snoozed",
+          recordedAt: new Date().toISOString(),
+        },
       };
     });
     await host.reconcileTaskRow(TASK_ID, { state: "active" });
     host.endHostPass();
-    await until(async () => (await readThread()).snoozedUntil === null, "stale pass cleared");
+    await until(
+      async () => (await readThread()).snoozedUntil === null,
+      "stale pass cleared",
+    );
     assert.equal(host.state.read().snoozes?.[seedThreadId], undefined);
 
     // Unknown delivery (timeout): never resent blindly while unknown, settles once cleared.
-    await host.reconcileTaskRow(TASK_ID, { state: "waiting", cause: "Unknown timeout wait" });
-    await until(async () => (await readThread()).snoozedUntil !== null, "unknown timeout snooze");
+    await host.reconcileTaskRow(TASK_ID, {
+      state: "waiting",
+      cause: "Unknown timeout wait",
+    });
+    await until(
+      async () => (await readThread()).snoozedUntil !== null,
+      "unknown timeout snooze",
+    );
     let timeoutAttempts = 0;
     host.rpc.call = async (method, payload) => {
-      if (method === "orchestration.dispatchCommand" && (payload as { type?: string }).type === "thread.unsnooze") {
+      if (
+        method === "orchestration.dispatchCommand" &&
+        (payload as { type?: string }).type === "thread.unsnooze"
+      ) {
         timeoutAttempts++;
         throw new T3RpcError("timeout", method);
       }
       return nativeCall(method, payload);
     };
-    await assert.rejects(host.reconcileTaskRow(TASK_ID, { state: "active" }), /Host delivery is unknown/i);
+    await assert.rejects(
+      host.reconcileTaskRow(TASK_ID, { state: "active" }),
+      /Host delivery is unknown/i,
+    );
     await host.reconcileTaskRow(TASK_ID, { state: "active" });
-    assert.equal(timeoutAttempts, 1, "unknown unsnooze is never resent blindly");
-    assert.ok(host.state.read().snoozes?.[seedThreadId], "snooze retained while unknown");
+    assert.equal(
+      timeoutAttempts,
+      1,
+      "unknown unsnooze is never resent blindly",
+    );
+    assert.ok(
+      host.state.read().snoozes?.[seedThreadId],
+      "snooze retained while unknown",
+    );
     host.rpc.call = nativeCall;
     await rpc.call("orchestration.dispatchCommand", {
       type: "thread.unsnooze",
@@ -865,7 +1104,10 @@ async function main() {
       threadId: seedThreadId,
       reason: "user",
     });
-    await until(async () => (await readThread()).snoozedUntil === null, "unknown cleared externally");
+    await until(
+      async () => (await readThread()).snoozedUntil === null,
+      "unknown cleared externally",
+    );
     await host.reconcileTaskRow(TASK_ID, { state: "active" });
     assert.equal(host.state.read().snoozes?.[seedThreadId], undefined);
 
@@ -877,24 +1119,56 @@ async function main() {
       threadId: seedThreadId,
       snoozedUntil: opUntil,
     });
-    await until(async () => (await readThread()).snoozedUntil === opUntil, "operator snooze set");
-    await host.reconcileTaskRow(TASK_ID, { state: "waiting", cause: "Operator snooze check" });
+    await until(
+      async () => (await readThread()).snoozedUntil === opUntil,
+      "operator snooze set",
+    );
+    await host.reconcileTaskRow(TASK_ID, {
+      state: "waiting",
+      cause: "Operator snooze check",
+    });
     await host.reconcileTaskRow(TASK_ID, { state: "active" });
-    assert.equal((await readThread()).snoozedUntil, opUntil, "operator snooze untouched");
-    steps.push({ step: "readback-delayed-stale-unknown-operator", result: "passed" });
+    assert.equal(
+      (await readThread()).snoozedUntil,
+      opUntil,
+      "operator snooze untouched",
+    );
+    steps.push({
+      step: "readback-delayed-stale-unknown-operator",
+      result: "passed",
+    });
 
     // 10. Real ACP parent + same native child going idle and resuming on the real wire,
     //     measuring the reconcile path from role going active to the row showing.
-    service = new QueueService({ owner: { dataDir: nucleusData, timers: false }, fixture: "fake", debug: true });
+    service = new QueueService({
+      owner: { dataDir: nucleusData, timers: false },
+      fixture: "fake",
+      debug: true,
+    });
     await service.start();
     const acpWorktree = join(root, "acp-worktree");
-    await run(["git", "worktree", "add", "--quiet", "-b", "proof-acp-worktree", acpWorktree], repository, environment);
+    await run(
+      [
+        "git",
+        "worktree",
+        "add",
+        "--quiet",
+        "-b",
+        "proof-acp-worktree",
+        acpWorktree,
+      ],
+      repository,
+      environment,
+    );
     acpStore = new Store(join(nucleusData, "queue.sqlite"));
     acpStore.setMeta("paused", false);
-    const acpSessions = new AcpSessions({ store: acpStore } as unknown as Engine, {
-      dataHome: nucleusData,
-      socketPath: join(nucleusData, "callback.sock"),
-    });
+    const acpSessions = new AcpSessions(
+      { store: acpStore } as unknown as Engine,
+      {
+        dataHome: nucleusData,
+        socketPath: join(nucleusData, "callback.sock"),
+      },
+    );
     acpHost = createHost({
       endpoint,
       bearer,
@@ -904,7 +1178,10 @@ async function main() {
       acp: () => acpSessions,
     });
     await acpHost.connect();
-    const acpAdapter = createAdapter(HostPolicies as unknown as HostPolicyConstructor, acpHost);
+    const acpAdapter = createAdapter(
+      HostPolicies as unknown as HostPolicyConstructor,
+      acpHost,
+    );
     const liveEngine = new Engine(acpStore, acpAdapter, 60_000);
     acpEngine = liveEngine;
 
@@ -946,21 +1223,22 @@ async function main() {
       "handoff",
       planning,
     );
-    const codexReady = await until(
-      async () => {
-        const cfg = (await acpHost!.rpc.call("server.getConfig", {})) as {
-          providers: Array<{ instanceId: string; status: string; models: Array<{ slug: string }> }>;
-        };
-        const codex = cfg.providers.find(
-          (providerEntry) =>
-            providerEntry.instanceId === "codex" &&
-            providerEntry.status === "ready" &&
-            providerEntry.models.length > 0,
-        );
-        return codex ?? null;
-      },
-      "codex provider models ready",
-    );
+    const codexReady = await until(async () => {
+      const cfg = (await acpHost!.rpc.call("server.getConfig", {})) as {
+        providers: Array<{
+          instanceId: string;
+          status: string;
+          models: Array<{ slug: string }>;
+        }>;
+      };
+      const codex = cfg.providers.find(
+        (providerEntry) =>
+          providerEntry.instanceId === "codex" &&
+          providerEntry.status === "ready" &&
+          providerEntry.models.length > 0,
+      );
+      return codex ?? null;
+    }, "codex provider models ready");
     const acpProfile = {
       id: "proof-codex",
       name: "Codex",
@@ -980,7 +1258,10 @@ async function main() {
       attempt: () => ({
         requestId: "proof-same-child-launch",
         prompt: "Initial worker turn",
-        labels: storedT3Labels("worker", { taskId: acpTask.id, runId: "proof-run-1" }),
+        labels: storedT3Labels("worker", {
+          taskId: acpTask.id,
+          runId: "proof-run-1",
+        }),
         environment: {},
       }),
     });
@@ -991,17 +1272,21 @@ async function main() {
         "orchestration.subscribeThread",
         { threadId: parentRecord.threadId },
         (chunk) => (chunk as { kind?: string }).kind === "snapshot",
-      )) as { projection: { thread: { snoozedUntil: string | null; settledOverride: string | null } } };
+      )) as {
+        projection: {
+          thread: {
+            snoozedUntil: string | null;
+            settledOverride: string | null;
+          };
+        };
+      };
       return value.projection.thread;
     };
     // Wait for initial child turn to go idle.
-    await until(
-      async () => {
-        const obs = await acpHost!.observe(workerChild.id);
-        return !obs.active && obs.status === "idle" ? true : null;
-      },
-      "worker child turn goes idle",
-    );
+    await until(async () => {
+      const obs = await acpHost!.observe(workerChild.id);
+      return !obs.active && obs.status === "idle" ? true : null;
+    }, "worker child turn goes idle");
     acpStore.update(acpTask.id, {
       phase: "working",
       workspaceId: acpWs.id,
@@ -1031,13 +1316,10 @@ async function main() {
       messageId: `proof-resume-${crypto.randomUUID()}`,
       text: "proof-hold resume same native child",
     });
-    await until(
-      async () => {
-        const obs = await acpHost!.observe(workerChild.id);
-        return obs.active ? true : null;
-      },
-      "same native child resumed active",
-    );
+    await until(async () => {
+      const obs = await acpHost!.observe(workerChild.id);
+      return obs.active ? true : null;
+    }, "same native child resumed active");
     acpStore.update(acpTask.id, {
       prerequisiteWait: null,
       agentActive: true,
@@ -1048,9 +1330,16 @@ async function main() {
     await acpEngine.drainProjections({ cleanup: false });
     const reconcileMs = Date.now() - activatedAt;
     const afterResume = await readParent();
-    assert.equal(afterResume.snoozedUntil, null, "real ACP parent unsnoozed promptly on role resume");
+    assert.equal(
+      afterResume.snoozedUntil,
+      null,
+      "real ACP parent unsnoozed promptly on role resume",
+    );
     assert.equal(afterResume.settledOverride, null, "never settled");
-    assert.equal(acpHost.state.read().snoozes?.[parentRecord.threadId], undefined);
+    assert.equal(
+      acpHost.state.read().snoozes?.[parentRecord.threadId],
+      undefined,
+    );
     steps.push({
       step: "same-native-child-idle-resume-reconcile",
       result: "passed",
@@ -1072,9 +1361,13 @@ async function main() {
     host?.close();
     rpc?.close();
     await stopServer();
-    writeFileSync(join(root, "evidence.json"), JSON.stringify(evidence, null, 2), {
-      mode: 0o600,
-    });
+    writeFileSync(
+      join(root, "evidence.json"),
+      JSON.stringify(evidence, null, 2),
+      {
+        mode: 0o600,
+      },
+    );
     console.log(
       JSON.stringify({
         result: evidence.result,
@@ -1090,7 +1383,9 @@ async function main() {
 }
 
 /** Every command identity this adapter recorded, whatever its status. */
-function adapterIntentCount(host: { state: { read(): { intents: Record<string, unknown> } } }): number {
+function adapterIntentCount(host: {
+  state: { read(): { intents: Record<string, unknown> } };
+}): number {
   return Object.keys(host.state.read().intents).length;
 }
 

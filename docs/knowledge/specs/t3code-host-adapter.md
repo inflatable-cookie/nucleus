@@ -340,6 +340,7 @@ already present.
 | Archive | `thread.archive` through dispatch | Receipt followed by archived-state observation |
 | Remove | `thread.delete` through dispatch at closeout, never `onlyIfUnused` | Durable intent, then `deletedAt` or absence from a complete inventory proves removal; an unknown outcome is never resent |
 | Snooze a waiting row | `thread.snooze` through dispatch with `snoozedUntil` in the future | One bounded horizon, read back from `snoozedUntil`; deterministic command identity per wait episode and horizon; a refusal is "stay active" for that episode, never a retry loop |
+| Report a row that stays hidden | No command: one durable `row_hidden` notice per continuous snooze episode (30 minutes) or hold generation (3 hours) | The task, its age, its wait, its last transition and one supported action; unknown when the row cannot be read; superseded when the episode ends |
 | Show a row again | `thread.unsnooze` through dispatch with `reason: "user"` | Only a row this host snoozed; a person who must act or a running role gets the row back immediately through the title/row projection drain and the host pass. The snooze record stays until a fresh T3 read proves `snoozedUntil` is cleared; a settled unsnooze that still reads snoozed is re-observed and retried as a new occurrence, while an unknown delivery is never resent blindly. Operator snoozes and manual settles are never touched |
 | Continue a manually settled thread | Unsettle, then send | A message, decision, follow-up or re-entry for a thread the operator settled unsettles it first and then delivers (Tom, 2026-11-19). Refusing before send is retired |
 | Archive workspace | Mark the task's T3 worktree handle archived in adapter state | Observation reads the handle's `archivedAt`; the shared project registration remains registered and available |
@@ -423,6 +424,49 @@ cleared, the unknown unsnooze intent settles and the snooze record is retired.
 
 An operator snooze (any live snooze not recorded by this host) is left exactly
 as it is, and a repeated pass inside the horizon writes nothing.
+
+**A row that stays hidden says so to the planner (nucleus#1417).** The row's snooze
+is normally the design working: a task that waits on nothing Nucleus runs is
+deliberately hidden. It stops being normal when the wait has gone on quietly, so
+the host reconciles the row's visibility on every pass after its presentation step
+(`rowSnoozeVisibility`): only a snooze this host recorded is Nucleus-owned, a row
+T3 reads unsnoozed or an operator snoozed or settled is clear, and a row the host
+cannot read is unknown rather than clear.
+
+A Nucleus-owned snooze is one continuous episode, from the first snooze until a
+fresh read proves the row shown, the task closes out, or a genuinely new wait
+starts. The episode start is durable state in the adapter's own record: every
+horizon renewal keeps it, and a record written before the field existed proves its
+start from the horizon it read back (it was written exactly one horizon before
+that). After 30 minutes the planner gets one `row_hidden` notice through the
+ordinary durable notice path, naming the task, the age, the current wait reason,
+the last task transition and one supported inspection or owner action. It says
+which of the two cases it is: a wait that is genuinely waiting, or a row that
+should be shown (a role is running, or a person must act) while T3 still reads it
+snoozed — the ordinary unsnooze reconciliation keeps running either way, and an
+unreadable row is reported as an unread observation fault with its recorded snooze
+kept as the evidence.
+
+Exactly one notice belongs to one episode, so sweeps, rolls, horizon renewals and
+owner changes never produce a second; a pending notice follows the owner it would
+reach now. An episode that ends supersedes an undelivered notice, and one the
+planner has already read keeps its record. An undelivered notice stays pending and
+visible while the planner's turn runs and is delivered when it ends; a failed send
+is unknown delivery and is never resent. When the ordinary attention delivery
+already reached this planner for the task's current state, the hidden row is
+recorded as one `row_hidden_visibility_failure` event instead of a second message.
+Presentation after that state stays the same: nothing here settles, stops,
+restarts or releases anything, and an operator's snooze or manual settle is never
+interpreted as Nucleus-owned.
+
+**An explicit hold is excluded from the 30-minute rule (nucleus#1417).** A hidden
+row behind a hold fence that blocks the current phase does not accrue wait time.
+After three hours of one continuous hold generation the planner gets one
+informational `row_hidden` nudge naming the hold's reason and its release condition
+where it has one; it changes no hold, owner, release condition or escalation. A
+Spec 040 hold prompt that already reached this planner for the same generation is
+reused instead of repeated. Time under the hold never accrues toward the wait
+episode: the 30-minute clock starts again at the first pass after release.
 
 A settled thread starts no run, and T3 does not clear a manual settle on
 `message.dispatch`. So every message, decision, re-entry and follow-up goes through
@@ -1531,6 +1575,19 @@ write on a repeated pass, a person who must act unsnoozing a row this host snooz
 an operator's settled row left alone, a snooze refused for a pending approval
 staying active with no retry loop, no `thread.settle` on any decision, and a role
 whose create refuses launching no thread and naming the fix.
+
+`test/t3code-row-hidden.test.ts` is the hidden row's own evidence on the fake
+nightly: one recorded episode start that a horizon renewal keeps, a legacy record's
+start proved from its own horizon, an operator snooze, manual settle and lapsed
+horizon all clear, a refused snooze clear, and an unreadable row reported as
+unknown with its record untouched. `test/row-hidden-notice.test.ts` is the notice's
+own suite: the 30-minute bound with an injected clock, the age, wait reason,
+transition and action in the text, no second notice across passes, renewals and
+rolls, the confirmed wake, terminal closeout and new episode each clearing the
+timer, an owner change re-pointing a pending notice, an undelivered notice waiting
+for a busy planner and a refused send staying unknown, the attention-delivery
+coalescing, the hold's 3-hour nudge with the existing reminder reused, and hold
+time never accruing toward the wait bound after release.
 
 One end-to-end test drives an ordinary task's whole lifecycle on the fake
 Nightly transport (nucleus#1139): promotion onto the T3 host, workspace

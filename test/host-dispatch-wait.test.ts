@@ -241,6 +241,7 @@ test("real admission gives one free slot to healthy hosts while a BB host waits,
       "deliverDecisionNotices",
       "deliverDrainNotices",
       "deliverHostOutageNotices",
+      "deliverRowHiddenNotices",
     ] as const)
       engine.resolution[method] = async () => {};
     engine.enqueueTitle = () => {};
@@ -482,6 +483,7 @@ test("a refused BB origin holds only its review while Paseo and T3 use real admi
     "deliverDecisionNotices",
     "deliverDrainNotices",
     "deliverHostOutageNotices",
+    "deliverRowHiddenNotices",
   ] as const)
     engine.resolution[method] = async () => {};
   engine.enqueueTitle = () => {};
