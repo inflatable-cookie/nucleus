@@ -940,6 +940,15 @@ export class T3CodeHost implements Host {
     return { id, directory };
   }
 
+  /**
+   * The projects the last synchronized shell read saw on this connection (nucleus#1450),
+   * or null before one. It reads nothing from the host: the board's generated badges use
+   * this observation, so a card never costs a host call.
+   */
+  projectObservation() {
+    return this.reads.projectObservation();
+  }
+
   async repositoryProject(root: string) {
     const workspaceRoot = await realpath(root);
     return {

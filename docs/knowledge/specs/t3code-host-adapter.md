@@ -1437,6 +1437,41 @@ writes no snooze or title to it. A message or re-entry for that row still goes
 through the delivery gate, which unsettles it first. Being in T3's "Working" section is the client's own view of an
 active run and cannot be set from outside.
 
+## Board project badges
+
+A task card on the Nucleus board that T3 opens shows its project with the same
+generated monogram and colour as the T3 project it belongs to (nucleus#1450: a T3 project
+whose title gives the fuchsia BA). The rules copy the installed T3
+nightly's `ProjectMonogram` (renderer `t3code-0.1.12-nightly.20261120.4994`); they live
+in `shared/t3/project-badge.ts`, and the parity table in `test/t3-project-badge.test.ts`
+is the evidence, produced by running that renderer's own functions on the same titles.
+
+- **Identity, not names.** A badge matches a Nucleus task only by its own T3 host
+  and the repository path, against the T3 project's recorded `workspaceRoot`
+  (canonical paths). A title lookup never matches. Archived and deleted projects
+  do not count. A repository matched by no project, or by more than one, keeps its
+  normal label.
+- **The text comes from the T3 title.** The monogram and colour derive from the exact
+  T3 project title, not the Nucleus display name. An operator's own monogram icon
+  (`projectIcon` of kind `monogram`, with a palette colour) is reused as stored. A
+  lucide or emoji icon, or any `faviconPath`, means no generated badge; the service
+  never fetches an image path, so those projects keep the normal label.
+- **The observation is the last read.** The T3 host keeps the projects its last
+  synchronized shell read saw, and the board reads that observation. A badge never
+  costs a host call. The observation counts only while the connection is live, and a
+  change in it advances the board revision, so a renamed or re-rooted project shows on
+  the next publication.
+- **Only the T3 surface.** The board link the T3 host asks for (`service.ui-link` with
+  `surface: "t3code"`, issued when the inbox's `ui` opens the board) pairs a session that
+  receives `projectBadges`. The token and session record the surface, persisted beside the
+  session digest; a session without one, `nucleus ui`, any browser, and the Paseo and BB
+  plugin boards never receive the field. The badge map is keyed by host and then by
+  repository path, and a card looks up only its own task's host.
+- **Rendering.** The card draws the badge in place of the folder icon, in the renderer's
+  text colour for the surface's mode (600 on light, 400 on dark, judged from the
+  surface colour) over the 14% tint. It is decorative: the project name is the label, and
+  the accessible label is unchanged.
+
 ## Thread lifecycle
 
 While a T3 task is open, its worker, reviewer, recovery, coordinator and executor

@@ -10,6 +10,7 @@ import { backupHealthSchema } from "./backup";
 import { taskSummarySchema } from "../schema/task-view";
 import { laneViewSchema } from "./lanes";
 import { boardQaRunSchema } from "./qa";
+import { projectBadgeMapSchema } from "../t3/project-badge";
 
 export const eventSchema = z.object({ id: z.number(), taskId: z.string(), at: z.string(), kind: z.string(), detail: z.string() }).strict();
 
@@ -97,7 +98,7 @@ export const snapshotStateSchema = stateSchema.extend({
 
 export type SnapshotState = z.infer<typeof snapshotStateSchema>;
 
-export const uiStateSchema = stateSchema.omit({ tasks: true }).extend({ queuedCounts: z.array(z.object({ repoPath: z.string(), count: z.number().int().nonnegative() })).default([]), tasks: z.array(taskSummarySchema), lanes: z.array(laneViewSchema).default([]), projects: z.array(projectSchema).default([]), projectActivity: z.array(projectActivitySchema).default([]), pendingSubmissions: z.array(pendingSubmissionSchema).default([]), qaRuns: z.lazy(() => z.array(boardQaRunSchema)).default([]) });
+export const uiStateSchema = stateSchema.omit({ tasks: true }).extend({ projectBadges: projectBadgeMapSchema.optional(), queuedCounts: z.array(z.object({ repoPath: z.string(), count: z.number().int().nonnegative() })).default([]), tasks: z.array(taskSummarySchema), lanes: z.array(laneViewSchema).default([]), projects: z.array(projectSchema).default([]), projectActivity: z.array(projectActivitySchema).default([]), pendingSubmissions: z.array(pendingSubmissionSchema).default([]), qaRuns: z.lazy(() => z.array(boardQaRunSchema)).default([]) });
 
 export type UiQueueState = z.infer<typeof uiStateSchema>;
 

@@ -333,6 +333,7 @@ const queuedMoreCards = queuedHidden.map(item => <View key={item.repoPath} style
                                   key={`${card.kind}:${card.id}`}
                                   task={card.value}
                                   defaultHostId={state?.hostId}
+                                  projectBadge={card.value.hostId ? state?.projectBadges?.[card.value.hostId]?.[card.value.repoPath] ?? null : null}
                                   board
                                   selected={selected === card.id}
                                   onPress={() => onSelectTask(card.id)}

@@ -76,10 +76,19 @@ const COUNTER_FIELDS = [
   "resumedThreads",
 ] as const;
 
+/**
+ * The board surface a link was minted for. The T3 pane's link carries `t3code`, so its
+ * session may receive the generated project badges (nucleus#1450). A link without one
+ * (`nucleus ui`, a browser) is the standalone board and never does.
+ */
+export const BOARD_SURFACE_T3 = "t3code";
+export type BoardSurface = typeof BOARD_SURFACE_T3;
+
 /** The owner socket's `service.ui-link` input: mint a link, or revoke every outstanding token. */
 export const uiLinkInputSchema = z
   .object({
     action: z.enum(["issue", "revoke"]).default("issue"),
+    surface: z.enum([BOARD_SURFACE_T3]).optional(),
     ttlMinutes: z
       .number()
       .int()
@@ -101,14 +110,25 @@ function digest(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
 
+/**
+ * The board a session may see. Generated project badges belong to the T3 surface;
+ * every other surface gets the board without them (nucleus#1450). Acknowledgements and
+ * anything that is not a board pass through unchanged.
+ */
+export function boardForSurface<T>(board: T, t3: boolean): T {
+  if (t3 || !board || typeof board !== "object" || Array.isArray(board) || "unchanged" in board) return board;
+  const { projectBadges: _badges, ...rest } = board as Record<string, unknown>;
+  return rest as T;
+}
+
 /** In-memory token table: digests only, bounded, expiring, revocable. */
 export class WebTokens {
-  private readonly live = new Map<string, { expiresAt: number }>();
+  private readonly live = new Map<string, { expiresAt: number; surface: BoardSurface | null }>();
 
   constructor(private readonly now: () => number = Date.now) {}
 
-  /** Mint a token that lives for `ttlMs`. The table keeps only its digest. */
-  issue(ttlMs: number): { token: string; expiresAt: number } {
+  /** Mint a token that lives for `ttlMs`, for the board surface it was minted for. The table keeps only its digest. */
+  issue(ttlMs: number, surface: BoardSurface | null = null): { token: string; expiresAt: number } {
     this.prune();
     while (this.live.size >= MAX_OUTSTANDING_TOKENS) {
       const oldest = this.live.keys().next().value;
@@ -117,7 +137,7 @@ export class WebTokens {
     }
     const token = randomBytes(32).toString("base64url");
     const expiresAt = this.now() + ttlMs;
-    this.live.set(digest(token), { expiresAt });
+    this.live.set(digest(token), { expiresAt, surface });
     return { token, expiresAt };
   }
 
@@ -128,11 +148,13 @@ export class WebTokens {
     return this.isLive(key) ? key : null;
   }
 
-  /** Consume a valid one-time link token during browser pairing. */
-  consume(token: string | undefined): string | null {
+  /** Consume a valid one-time link token during browser pairing; the session key and the surface it names. */
+  consume(token: string | undefined): { key: string; surface: BoardSurface | null } | null {
     const key = this.admit(token);
-    if (key) this.live.delete(key);
-    return key;
+    if (!key) return null;
+    const { surface } = this.live.get(key)!;
+    this.live.delete(key);
+    return { key, surface };
   }
 
   isLive(key: string): boolean {
@@ -183,6 +205,8 @@ interface Stream {
   response: ServerResponse;
   /** Digest of the session that opened the stream; the stream closes when it stops being live. */
   key: string;
+  /** Whether the session is the T3 board surface, which alone receives project badges. */
+  t3: boolean;
   sentRevision: number;
   sentCounters: string;
   sentUnavailable: string | null;
@@ -199,6 +223,8 @@ export class WebBoard {
   private unsubscribe: (() => void) | null = null;
   private tokenTimer: NodeJS.Timeout | null = null;
   private readonly sessions = new Map<string, number>();
+  /** The surface each paired session was minted for; absent is the standalone board. */
+  private readonly surfaces = new Map<string, BoardSurface>();
   private readonly now: () => number;
   private portFallback = false;
   private sessionWrites: Promise<void> = Promise.resolve();
@@ -251,13 +277,13 @@ export class WebBoard {
   /** Whether the preferred port was occupied and the board selected an ephemeral one. */
   get usedFallbackPort(): boolean { return this.portFallback; }
 
-  /** Mint a link: the board URL with a fresh token in its fragment. */
-  issueLink(ttlMinutes: number): {
+  /** Mint a link: the board URL with a fresh token in its fragment, for one board surface. */
+  issueLink(ttlMinutes: number, surface: BoardSurface | null = null): {
     url: string;
     expiresAt: string;
     ttlMinutes: number;
   } {
-    const { token, expiresAt } = this.tokens.issue(ttlMinutes * 60_000);
+    const { token, expiresAt } = this.tokens.issue(ttlMinutes * 60_000, surface);
     return {
       url: `http://${LOOPBACK}:${this.boundPort}/#token=${token}&expiresAt=${expiresAt}`,
       expiresAt: new Date(expiresAt).toISOString(),
@@ -270,6 +296,7 @@ export class WebBoard {
     this.pruneSessions();
     const revoked = this.sessions.size + this.tokens.revokeAll();
     this.sessions.clear();
+    this.surfaces.clear();
     this.dropRevokedStreams();
     await this.saveSessions();
     return revoked;
@@ -417,8 +444,8 @@ export class WebBoard {
       return;
     }
     const token = bearerToken(request);
-    const key = this.tokens.consume(token);
-    if (!key) {
+    const consumed = this.tokens.consume(token);
+    if (!consumed) {
       sendJson(
         response,
         401,
@@ -430,8 +457,13 @@ export class WebBoard {
     const cookie = randomBytes(32).toString("base64url");
     const sessionKey = digest(cookie);
     this.pruneSessions();
-    while (this.sessions.size >= MAX_OUTSTANDING_TOKENS) this.sessions.delete(this.sessions.keys().next().value!);
+    while (this.sessions.size >= MAX_OUTSTANDING_TOKENS) {
+      const oldest = this.sessions.keys().next().value!;
+      this.sessions.delete(oldest);
+      this.surfaces.delete(oldest);
+    }
     this.sessions.set(sessionKey, this.now() + WEB_SESSION_IDLE_MS);
+    if (consumed.surface) this.surfaces.set(sessionKey, consumed.surface);
     await this.saveSessions();
     sendJson(response, 200, { paired: true }, {
       "set-cookie": sessionCookie(cookie),
@@ -474,7 +506,11 @@ export class WebBoard {
   }
 
   private pruneSessions(): void {
-    for (const [key, expiry] of this.sessions) if (expiry <= this.now()) this.sessions.delete(key);
+    for (const [key, expiry] of this.sessions) {
+      if (expiry > this.now()) continue;
+      this.sessions.delete(key);
+      this.surfaces.delete(key);
+    }
   }
 
   private async loadSessions(): Promise<void> {
@@ -486,16 +522,21 @@ export class WebBoard {
       throw new Error("The web session file is invalid");
     for (const entry of (parsed as { sessions: unknown[] }).sessions) {
       if (!entry || typeof entry !== "object") continue;
-      const { digest: key, expiresAt } = entry as { digest?: unknown; expiresAt?: unknown };
-      if (typeof key === "string" && /^[a-f0-9]{64}$/.test(key) && typeof expiresAt === "number" && Number.isFinite(expiresAt) && expiresAt > this.now())
+      const { digest: key, expiresAt, surface } = entry as { digest?: unknown; expiresAt?: unknown; surface?: unknown };
+      if (typeof key === "string" && /^[a-f0-9]{64}$/.test(key) && typeof expiresAt === "number" && Number.isFinite(expiresAt) && expiresAt > this.now()) {
         this.sessions.set(key, expiresAt);
+        if (surface === BOARD_SURFACE_T3) this.surfaces.set(key, BOARD_SURFACE_T3);
+      }
     }
   }
 
   private saveSessions(): Promise<void> {
     if (!this.options.sessionFile) return Promise.resolve();
     const file = this.options.sessionFile;
-    const rows = [...this.sessions].map(([digest, expiresAt]) => ({ digest, expiresAt }));
+    const rows = [...this.sessions].map(([digest, expiresAt]) => {
+      const surface = this.surfaces.get(digest);
+      return surface ? { digest, expiresAt, surface } : { digest, expiresAt };
+    });
     const save = async () => {
       await mkdir(join(file, ".."), { recursive: true, mode: 0o700 });
       const temporary = `${file}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
@@ -550,7 +591,8 @@ export class WebBoard {
       return;
     }
     const catalogue = this.options.host.isMutating?.(call.data.method) ?? false;
-    if (!await this.authorize(request, response, catalogue)) return;
+    const key = await this.authorize(request, response, catalogue);
+    if (!key) return;
     // A Settings write needs the Settings screen's marker on top of the session;
     // the session alone answers like every other refusal here (no mutation, no retry).
     const settingsRefusal = webSettingsRefusal(
@@ -562,10 +604,11 @@ export class WebBoard {
       return;
     }
     try {
-      const result = await this.options.host.call(
-        call.data.method,
-        call.data.input ?? {},
-      );
+      const raw = await this.options.host.call(call.data.method, call.data.input ?? {});
+      const result =
+        call.data.method === "queue.ui-snapshot"
+          ? boardForSurface(raw, this.surfaces.get(key) === BOARD_SURFACE_T3)
+          : raw;
       sendJson(response, 200, { result });
     } catch (error) {
       const mapped = webError(error);
@@ -584,6 +627,7 @@ export class WebBoard {
     }
     const key = await this.authorize(request, response);
     if (!key) return this.refuseUnauthorized(response);
+    const t3 = this.surfaces.get(key) === BOARD_SURFACE_T3;
     if (this.streams.size >= MAX_STREAMS) {
       sendJson(
         response,
@@ -605,6 +649,7 @@ export class WebBoard {
     const stream: Stream = {
       response,
       key,
+      t3,
       sentRevision: -1,
       sentCounters: "",
       sentUnavailable: null,
@@ -634,8 +679,9 @@ export class WebBoard {
       return;
     }
     stream.sentUnavailable = null;
-    const board = this.options.host.board();
-    if (!board || isUnchangedBoard(board)) return;
+    const published = this.options.host.board();
+    if (!published || isUnchangedBoard(published)) return;
+    const board = boardForSurface(published, stream.t3);
     const counters = countersOf(board);
     const signature = JSON.stringify(counters);
     if (board.revision !== stream.sentRevision) {

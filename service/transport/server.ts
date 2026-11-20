@@ -235,6 +235,14 @@ function serviceError(
   return { code: "internal", message };
 }
 
+
+/** A board without the T3 project badges, for surfaces that do not render them (nucleus#1450). */
+function withoutProjectBadges(board: UiBoard): UiBoard {
+  if ("unchanged" in board) return board;
+  const { projectBadges: _badges, ...rest } = board;
+  return rest;
+}
+
 export class QueueService {
   readonly dataDir: string;
   readonly executor: PersistenceExecutor;
@@ -1442,7 +1450,7 @@ export class QueueService {
       parsed.data.action === "revoke"
         ? { revoked: await web.revokeAll() }
         : {
-            ...web.issueLink(parsed.data.ttlMinutes),
+            ...web.issueLink(parsed.data.ttlMinutes, parsed.data.surface),
             portFallback: web.usedFallbackPort,
             port: web.address?.port,
           };
@@ -1526,7 +1534,9 @@ export class QueueService {
           {
             v: PROTOCOL_VERSION,
             id: request.id,
-            result: this.serveBoard(input),
+            // Generated project badges belong to the T3 board surface only (nucleus#1450);
+            // the socket's plugin boards never receive them.
+            result: withoutProjectBadges(this.serveBoard(input)),
           },
           false,
           request.method,

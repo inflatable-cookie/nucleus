@@ -1,0 +1,1 @@
+The Nucleus board opened in T3 shows each task's project with the same generated monogram and colour as its T3 project, so its generated badge matches T3's own. A card keeps its normal label when no T3 project matches its repository, when T3 stores a non-monogram icon for it, or when the host is not connected. The standalone board and the other hosts' boards are unchanged.

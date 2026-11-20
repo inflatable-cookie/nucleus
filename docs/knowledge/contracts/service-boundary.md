@@ -421,6 +421,10 @@ The runtime build packages both bundles together.
   prints a link using it. It never fails service start because the preferred
   port is busy. The selected port is recorded as `httpPort` in
   `queue-service.json`, beside the socket.
+- **Board surface (nucleus#1450).** A link can name one board surface, `t3code`,
+  which only the T3 host's own board link does. The paired session records it, and
+  only that session receives the board's generated `projectBadges`; every other
+  session, and the socket's plugin boards, get the board without them.
 - **Host and Origin.** A `Host` other than `127.0.0.1:<port>` or
   `localhost:<port>` is refused with 403 before anything else, so a page on
   another domain that resolves to loopback (DNS rebinding) gets nothing. A present

@@ -132,6 +132,13 @@ export const project = z.object({
   title: z.string(),
   workspaceRoot: id,
   archivedAt: date.nullable().optional(),
+  deletedAt: date.nullable().optional(),
+  // Project icon metadata the nightly stores (nucleus#1450). A monogram is reused;
+  // any other icon or a favicon keeps the card's normal label.
+  // Read as-is: a shape this board does not know must not fail the whole shell read.
+  // The badge rules decide what an icon or favicon means (see shared/t3/project-badge.ts).
+  projectIcon: z.unknown().optional(),
+  faviconPath: z.unknown().optional(),
 });
 export const shellSnapshot = z.object({
   schemaVersion: z.number().int().positive(),

@@ -13,6 +13,10 @@ import { HostPolicies } from "../core/host/host-policies";
 import { Admission, admitAdapter } from "../core/host/admission";
 import type { HostRegistry } from "../core/host/host-registry";
 import { hostKindOf } from "../shared/host-kind";
+import type {
+  ObservedT3Project,
+  ProjectObservation,
+} from "../shared/t3/project-badge";
 
 /** Owner-only settings; never part of the service's public settings projection. */
 export interface T3ConnectionConfig {
@@ -36,6 +40,8 @@ interface NativeConnection {
   readonly modelShapes?: string;
   connect(probeThreadId?: string): Promise<void>;
   decisionParent?(taskId: string): import("../core/acp/decisions").ParentStatus;
+  /** The projects the last shell read saw, for the board's generated badges (nucleus#1450). */
+  projectObservation?(): readonly ObservedT3Project[] | null;
   openInboxUi?(): Promise<{
     status: "opened" | "reused" | "failed";
     detail?: string;
@@ -115,8 +121,11 @@ export class T3HostConnection {
               credential: info.credential,
             });
             try {
+              // The T3 pane's link carries the T3 surface, so the board can show this
+              // host's generated project badges. Only this host's link asks for it.
               const result = (await client.request("service.ui-link", {
                 action: "issue",
+                surface: "t3code",
               })) as { url?: unknown };
               if (typeof result.url !== "string")
                 throw new Error("The local board did not issue a link");
@@ -272,6 +281,17 @@ export class T3HostConnection {
         )
         .slice(0, 500)}`;
     }
+  }
+
+  /**
+   * The live T3 host's observed projects, keyed by its identity, for the board's
+   * generated badges (nucleus#1450). Empty when the connection is not live, so a stale
+   * observation never badges a card.
+   */
+  projectObservations(): ProjectObservation[] {
+    if (!this.session || !this.host?.connected) return [];
+    const projects = this.host.projectObservation?.();
+    return projects ? [{ hostId: this.host.hostId, projects }] : [];
   }
 
   decisionParent(hostId: string, taskId: string): import("../core/acp/decisions").ParentStatus {
