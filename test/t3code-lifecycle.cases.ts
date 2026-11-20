@@ -17,6 +17,7 @@ import { git } from "../core/git/index";
 import {
   leadSubmit,
   taskSchema,
+  runSchema,
   submissionSchema,
   type Profile,
   type Run,
@@ -31,6 +32,8 @@ import { storedT3Labels } from "./support/t3code-labels";
 import { WIRE_LABEL_KEYS } from "../shared/wire-labels";
 import { createHost, createAdapter } from "../hosts/t3code";
 import type { AcpSessionSurface } from "../shared/acp/surface";
+import { taskControlOperation } from "../core/verbs/task-control-key";
+import { CoordinatorEpisode } from "../core/recovery/coordinator-episode";
 import { archiveFinishedThreads } from "../core/workspaces/thread-archive";
 import { HostPolicies } from "../core/host/host-policies";
 import type {
@@ -1174,6 +1177,133 @@ function releasedRecoveryRun(
   };
 }
 
+
+/** An archived parent with a settled refused worker and optional recovery history. */
+async function parentRestartFixture(f: Fixture, mode: "settled" | "uncertain" | "pre_dispatch" = "settled") {
+  const { taskId, head, workerThreadId } = await taskWithWorker(f);
+  f.runtime.store.setMeta("paused", true);
+  const task = f.runtime.store.task(taskId);
+  const parent = f.host.nesting.parentOf(taskId)!;
+  const refusedRunId = "refused-worker";
+  f.runtime.store.update(taskId, { phase: "needs_attention", agentId: null, agentIntent: false, runId: null,
+    resolution: { ...task.resolution, attention: true } });
+  f.runtime.store.event(taskId, "agent_intent", refusedRunId);
+  f.runtime.store.event(taskId, "worker_creation_refused_before_send", JSON.stringify({ runId: refusedRunId, profileId: task.profile!.id, reason: "Parent archived" }));
+  if (mode !== "pre_dispatch") {
+    const episode = new CoordinatorEpisode(f.runtime.engine.resolution);
+    const recovery = runSchema.parse({ id: "recovery-refused", taskId, hostId: task.hostId, role: "recovery", head, base,
+      generation: 1, workspaceId: task.workspaceId, profile: task.profile, status: "uncertain", createdAt: new Date().toISOString(),
+      active: false, released: false, agentId: null, lastObservedAt: null, idleSince: null, completion: null });
+    f.runtime.store.putRun(recovery);
+    episode.escalate(f.runtime.store.task(taskId), "Recovery creation was refused");
+    episode.save(f.runtime.store.task(taskId), { runId: recovery.id });
+    f.runtime.engine.resolution.update(f.runtime.store.task(taskId), { recoveryActive: true });
+    if (mode === "settled") episode.releaseRefusedCreation(f.runtime.store.task(taskId), recovery, "Not sent");
+  }
+  f.server.threads.get(parent.threadId)!.thread.archivedAt = STAMP;
+  const current = f.runtime.store.task(taskId);
+  const input = { action: "restart" as const, taskId, version: current.version, role: "worker" as const, reason: "Resume the task", caller: f.planner };
+  return { taskId, workerThreadId, parent, current, input };
+}
+
+async function assertParentRestarted(f: Fixture, taskId: string, parentId: string, previousChild: string, unarchives: number) {
+  assert.equal(f.server.threads.get(parentId)!.thread.archivedAt, null);
+  assert.equal(f.host.nesting.parentOf(taskId)?.threadId, parentId);
+  assert.equal(f.server.commands.filter((c) => c.type === "thread.unarchive").length, unarchives);
+  assert.equal(f.server.commands.filter((c) => c.method === "orchestration.launchThread").length, 1);
+  f.runtime.store.setMeta("paused", false);
+  await driveUntil(f, () => Boolean(f.runtime.store.task(taskId).agentId), "worker restarted", taskId);
+  assert.notEqual(f.runtime.store.task(taskId).agentId, previousChild);
+  assert.equal(f.server.commands.filter((c) => c.type === "delegated_task.request").length, 2);
+}
+
+for (const mode of ["settled", "pre_dispatch"] as const) {
+  test(`an owner restart restores the same T3 parent (${mode})`, async (t) => {
+    const f = await fixture(t);
+    try {
+      const { taskId, parent, workerThreadId, input } = await parentRestartFixture(f, mode);
+      await f.runtime.taskControl(input);
+      await assertParentRestarted(f, taskId, parent.threadId, workerThreadId, 1);
+    } finally { await f.close(); }
+  });
+}
+
+test("an owner restart adopts a manually unarchived parent", async (t) => {
+  const f = await fixture(t);
+  try {
+    const { taskId, parent, workerThreadId, input } = await parentRestartFixture(f);
+    f.host.state.update((state) => { state.parents![taskId]!.archivedAt = STAMP; });
+    f.server.threads.get(parent.threadId)!.thread.archivedAt = null;
+    await f.runtime.taskControl(input);
+    await assertParentRestarted(f, taskId, parent.threadId, workerThreadId, 0);
+  } finally { await f.close(); }
+});
+
+test("a lost T3 parent unarchive reply resumes the same owner restart once", async (t) => {
+  const f = await fixture(t);
+  try {
+    const { taskId, parent, workerThreadId, current, input } = await parentRestartFixture(f);
+    const { key, payload } = taskControlOperation(input);
+    f.server.controls.disconnectAfterEffect = true;
+    const accepted = await f.runtime.engine.startOperation({ key, kind: "task_control", taskId, expectedVersion: current.version, payload });
+    assert.ok("accepted" in accepted);
+    await driveUntil(f, () => f.runtime.store.operation(accepted.operation.id)?.state === "pending" &&
+      Boolean(f.runtime.store.operation(accepted.operation.id)?.preSendBoundaryStartedAt), "unknown parent restore");
+    assert.equal(f.server.commands.filter((c) => c.type === "delegated_task.request").length, 1);
+    f.server.controls.disconnectAfterEffect = false;
+    await f.host.connect();
+    f.runtime.engine.scheduleOperation(accepted.operation.id);
+    const settled = await f.runtime.engine.awaitOperation(accepted.operation.id);
+    assert.equal(settled.state, "succeeded", settled.diagnostic);
+    const repeated = await f.runtime.engine.startOperation({ key, kind: "task_control", taskId, expectedVersion: current.version, payload });
+    assert.ok("accepted" in repeated);
+    assert.equal(repeated.operation.id, accepted.operation.id);
+    assert.equal(repeated.operation.state, "succeeded");
+    await assertParentRestarted(f, taskId, parent.threadId, workerThreadId, 1);
+  } finally { await f.close(); }
+});
+
+for (const shape of ["uncertain", "deleted", "mismatched", "unobservable"] as const) {
+  test(`an owner restart keeps the ${shape} parent or creation fenced`, async (t) => {
+    const f = await fixture(t);
+    try {
+      const { taskId, parent, input } = await parentRestartFixture(f, shape === "uncertain" ? "uncertain" : "settled");
+      const row = f.server.threads.get(parent.threadId)!.thread;
+      if (shape === "deleted") row.deletedAt = STAMP;
+      if (shape === "mismatched") row.worktreePath = "/synthetic/wrong";
+      if (shape === "unobservable") f.server.controls.beforeArchiveRead = () => { f.server.controls.snapshotSequence++; };
+      const expected = shape === "uncertain" ? /creation|delivery|recovery|run/i : shape === "deleted" ? /parent thread is deleted/ : shape === "mismatched" ? /no longer matches/ : /inventory|snapshot/i;
+      await assert.rejects(() => f.runtime.taskControl(input), expected);
+      assert.equal(f.host.nesting.parentOf(taskId)?.threadId, parent.threadId);
+      assert.equal(f.server.commands.filter((c) => c.type === "thread.unarchive").length, 0);
+      assert.equal(f.server.commands.filter((c) => c.method === "orchestration.launchThread").length, 1);
+      assert.equal(f.server.commands.filter((c) => c.type === "delegated_task.request").length, 1);
+    } finally { await f.close(); }
+  });
+}
+
+test("an unlanded unarchive remains fenced on repeated owner operation", async (t) => {
+  const f = await fixture(t);
+  try {
+    const { taskId, parent, current, input } = await parentRestartFixture(f);
+    const { key, payload } = taskControlOperation(input);
+    f.server.controls.disconnectMutation = true;
+    const accepted = await f.runtime.engine.startOperation({ key, kind: "task_control", taskId, expectedVersion: current.version, payload });
+    assert.ok("accepted" in accepted);
+    await driveUntil(f, () => Boolean(f.runtime.store.operation(accepted.operation.id)?.preSendBoundaryStartedAt) &&
+      f.runtime.store.operation(accepted.operation.id)?.state === "pending", "unknown parent restore");
+    f.server.controls.disconnectMutation = false;
+    await f.host.connect();
+    f.runtime.engine.scheduleOperation(accepted.operation.id);
+    await driveUntil(f, () => f.runtime.store.operation(accepted.operation.id)?.diagnostic.includes("still archived") === true, "archived parent observed");
+    const repeated = await f.runtime.engine.startOperation({ key, kind: "task_control", taskId, expectedVersion: current.version, payload });
+    assert.ok("accepted" in repeated);
+    assert.equal(repeated.operation.id, accepted.operation.id);
+    assert.equal(f.server.threads.get(parent.threadId)!.thread.archivedAt, STAMP);
+    assert.equal(f.server.commands.filter((c) => c.type === "thread.unarchive").length, 1);
+    assert.equal(f.server.commands.filter((c) => c.type === "delegated_task.request").length, 1);
+  } finally { await f.close(); }
+});
 
 test("a slow T3 thread read refuses the retained-worker restart and names the timeout", async (t) => {
   const f = await fixture(t);

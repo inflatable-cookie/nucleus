@@ -74,6 +74,8 @@ import type { AcpSessionSurface } from "../../shared/acp/surface";
 
 export interface T3CodeConfig extends T3ConnectionConfig {
   statePath: string;
+  /** The persisted global Nucleus pause state. */
+  paused?: () => boolean;
   probeThreadId?: string;
   /**
    * The service's ACP session surface, when this process serves one. It mints the
@@ -262,6 +264,7 @@ export class T3CodeHost implements Host {
     });
     this.inbox = new T3Inbox({
       hostId: () => this.hostId,
+      paused: options.paused ?? (() => false),
       acp: this.acp,
       state: this.state,
       reads: this.reads,
@@ -387,6 +390,14 @@ export class T3CodeHost implements Host {
       await writeFile(this.modelCapturePath, capture + "\n", { mode: 0o600 });
     }
   }
+  /** Only this host's durable parent record can identify a task's ACP row. */
+  decisionParent(taskId: string): import("../../core/acp/decisions").ParentStatus {
+    if (!this.connected) return { state: "unknown" };
+    const parent = this.state.read().parents?.[taskId];
+    return !parent || parent.archivedAt
+      ? { state: "absent" }
+      : { state: "parent", sessionId: parent.sessionId };
+  }
   capabilities() {
     return {
       reportingViaMcp: false,
@@ -438,6 +449,11 @@ export class T3CodeHost implements Host {
     }
   }
   close() {
+    const acp = this.acp();
+    const state = this.state.read();
+    if (state.hostId) acp?.observedCards?.({ hostId: state.hostId }, null);
+    for (const parent of Object.values(state.parents ?? {}))
+      acp?.observedCards?.({ taskId: parent.taskId, sessionId: parent.sessionId }, null);
     this.ready = false;
     this.rpc.close();
   }
@@ -703,7 +719,7 @@ export class T3CodeHost implements Host {
           const cards = await this.decisionCards.reconcile(
             parent.threadId,
             parent.workspaceId,
-            { taskId: parent.taskId },
+            { taskId: parent.taskId, sessionId: parent.sessionId },
           );
           if (cards && this.acp()?.pendingDecisionKey?.(parent.taskId))
             await this.decisionHold.reconcile(parent.threadId);

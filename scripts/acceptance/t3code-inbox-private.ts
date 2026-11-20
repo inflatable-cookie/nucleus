@@ -55,10 +55,11 @@ import { activeStatuses } from "../../hosts/t3code/reads";
 import { acpInboxDirectory } from "../../shared/acp/inbox-binding";
 import { ACP_OPEN_UI_TIMEOUT_MS } from "../../shared/acp/transport";
 import { QueueService } from "../../service/transport/server";
+import { submissionSchema } from "../../shared/contracts";
 import { findT3Cli } from "../../shared/t3/operator";
 
 const checkout = fileURLToPath(new URL("../..", import.meta.url));
-const NIGHTLY_LINE = /^0\.1\.(11|12)-nightly\.\d+\.\d+$/;
+const NIGHTLY_LINE = /^0\.1\.(?:11|12)-nightly\.\d+\.\d+$/;
 /** Every process this run starts, so a failed setup never leaves a server behind. */
 const spawned: ChildProcess[] = [];
 const killSpawned = () => {
@@ -67,8 +68,9 @@ const killSpawned = () => {
 };
 process.on("exit", killSpawned);
 
-/** The inbox thread's live signal (decisions, running tasks, or All quiet). */
-const LIVE_TITLE = /^(All quiet|\d+ decisions? to answer|\d+ tasks? running)$/;
+/** The inbox thread's live signal, with its pause prefix when paused. */
+const LIVE_TITLE =
+  /^(?:Paused: )?(?:All quiet|\d+ decisions? to answer|\d+ tasks? running)$/;
 const CHOICES = [
   { label: "Yes", consequence: "Proceed" },
   { label: "No", consequence: "Hold" },
@@ -452,12 +454,18 @@ async function waitForCard(env: Environment, decisionId: string, what: string) {
   return await until(async () => cardFor(env, decisionId), what);
 }
 
-/** Wait until the inbox has no active run for `sweeps` consecutive sweeps. */
-async function threadTitle(env: Environment): Promise<string> {
+async function matchingThreadTitle(
+  env: Environment,
+  signal: string,
+): Promise<string | null> {
   const snap = await shell(env.rpc);
-  return snap?.threads.find((row) => row.id === env.inboxThreadId)?.title ?? "";
+  const title = snap?.threads.find(
+    (row) => row.id === env.inboxThreadId,
+  )?.title;
+  return title?.replace(/^Paused: /, "") === signal ? title : null;
 }
 
+/** Wait until the inbox has no active run for `sweeps` consecutive sweeps. */
 async function idleFor(
   env: Environment,
   sweeps: number,
@@ -833,7 +841,7 @@ async function freshScenarios(env: Environment) {
   // 1. Empty inbox at startup goes idle.
   const start = await idleFor(env, 3);
   const startTitle = await until(
-    async () => ((await threadTitle(env)) === "All quiet" ? "All quiet" : null),
+    () => matchingThreadTitle(env, "All quiet"),
     "the idle inbox title All quiet",
   );
   record(env, "fresh:empty-start-idle", {
@@ -842,13 +850,81 @@ async function freshScenarios(env: Environment) {
     title: startTitle,
   });
 
+  // A held, pre-dispatch task has no parent thread: its linked question belongs here.
+  const hostId = (env.service.health() as unknown as { t3code: { id: string } })
+    .t3code.id;
+  const planning = "a".repeat(40);
+  const task = (await env.service.debug({
+    target: "store",
+    method: "insert",
+    args: [
+      submissionSchema.parse({
+        submissionId: "inbox-predispatch",
+        title: "Held synthetic task",
+        repoPath: join(env.root, "synthetic-repository"),
+        planningCommit: planning,
+        brief: { text: "Synthetic held task" },
+        originAgentId: "proof-origin",
+      }),
+      hostId,
+      "brief",
+      planning,
+    ],
+  })) as { id: string };
+  await env.service.debug({
+    target: "store",
+    method: "update",
+    args: [task.id, { held: true }],
+  });
+  const linked = (await env.service.debug({
+    target: "runtime",
+    method: "addDecision",
+    args: [
+      {
+        question: "Approve the held task?",
+        headline: "Held task sign-off",
+        choices: CHOICES,
+        recommended: "Yes",
+        askedBy: "operator",
+        tasks: [task.id],
+      },
+    ],
+  })) as { id: string };
+  const linkedCard = await waitForCard(
+    env,
+    linked.id,
+    "the pre-dispatch task's Inbox card",
+  );
+  await operatorRespond(env.rpc, env.inboxThreadId, linkedCard.requestId, {
+    answers: { [linkedCard.questionId!]: "Yes" },
+  });
+  await until(
+    async () =>
+      (await decisionStatus(env, linked.id)) === "answered" ? true : null,
+    "the pre-dispatch Inbox answer",
+  );
+  const heldTask = (await env.service.debug({
+    target: "store",
+    method: "task",
+    args: [task.id],
+  })) as { held: boolean };
+  assert.equal(
+    heldTask.held,
+    true,
+    "answering the decision preserves the independent task hold",
+  );
+  record(env, "fresh:held-predispatch-inbox-answer", {
+    answered: true,
+    held: heldTask.held,
+  });
+
   // 2. An open decision wakes the inbox, and its card is posted.
   const wake = await addDecision(env, "Proof wake");
   const wakeCard = await waitForCard(env, wake, "the wake card");
-  const wakeTitle = await until(async () => {
-    const t = await threadTitle(env);
-    return t === "1 decision to answer" ? t : null;
-  }, "the wake title");
+  const wakeTitle = await until(
+    () => matchingThreadTitle(env, "1 decision to answer"),
+    "the wake title",
+  );
   record(env, "fresh:open-decision-wakes", {
     cardPosted: true,
     title: wakeTitle,
@@ -864,10 +940,10 @@ async function freshScenarios(env: Environment) {
     "the form answer to record",
   );
   const afterForm = await idleFor(env, 3);
-  const formTitle = await until(async () => {
-    const t = await threadTitle(env);
-    return t === "All quiet" ? t : null;
-  }, "the title to return to All quiet after the answer");
+  const formTitle = await until(
+    () => matchingThreadTitle(env, "All quiet"),
+    "the title to return to All quiet after the answer",
+  );
   record(env, "fresh:form-answer-idle", {
     decision: "answered",
     runs: afterForm.runs,

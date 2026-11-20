@@ -5,6 +5,7 @@ import { realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Engine } from "../core/engine";
+import type { ResolutionAdapter } from "../core/resolution";
 import type { HostPolicyConstructor } from "../core/host";
 import { HostPolicies } from "../core/host/host-policies";
 import type { HostProcessFact } from "../core/host/types";
@@ -365,6 +366,41 @@ test("retired and gone T3 participants reconcile through positive custody and sc
   // positive gone proof + scratch process proof still succeeds without snapshotting.
   f.server.threads.delete(retired.id);
   await f.engine.resolution.ordinaryRoundCustody(f.store.task(seeded.task.id), seeded.nextRun);
+});
+
+test("execution lease reconciles retired T3 custody and keeps live or ambiguous evidence blocking", async (t) => {
+  const f = await setupT3Engine(t);
+  const worker = await f.host.createAgent(f.makeSpec("lease-worker", "worker", "worker-current-ticket"));
+  const retired = await f.host.createAgent(f.makeSpec("lease-retired", "worker", "worker-retired-ticket"));
+  const prior = await f.host.createAgent(f.makeSpec("lease-prior", "reviewer", "prior-review-run"));
+  const next = await f.host.createAgent(f.makeSpec("lease-next", "reviewer", "next-review-run"));
+  await f.host.archiveAgent(retired.id);
+  const seeded = seedOrdinaryRoundState(f, { workerId: worker.id, retiredWorkerId: retired.id,
+    priorReviewerId: prior.id, nextReviewerId: next.id });
+  const task = f.store.task(seeded.task.id);
+  const before = subscribeRequests(f.server, retired.id);
+  assert.equal(await f.engine.resolution.executionLease(task, undefined, true, true), true);
+  assert.equal(subscribeRequests(f.server, retired.id), before);
+  assert.equal(await f.engine.resolution.executionLease(task, undefined, true, true), true, "replay remains safe");
+  f.setProcesses([{ pid: 12345, ppid: 1, pgid: 12345, cwd: seeded.retiredDir,
+    command: "node live-retired-child.mjs" } as HostProcessFact]);
+  assert.equal(await f.engine.resolution.executionLease(task, undefined, true, true), false);
+  f.setProcesses(null);
+  assert.equal(await f.engine.resolution.executionLease(task, undefined, true, true), false);
+  f.setProcesses([]);
+  f.store.putRun({ ...seeded.nextRun, released: true, status: "finished" });
+  f.store.update(task.id, {
+    phase: "merging",
+    completion: { taskId: task.id, runId: seeded.currentTicket, eventId: "worker-ready",
+      status: "ready_for_review", summary: "Ready", prNumber: 42 },
+    resolution: { ...f.store.task(task.id).resolution,
+      review: { taskId: task.id, runId: seeded.priorRun.id, eventId: "approved",
+        status: "ready_to_merge", summary: "Approved", head: HEAD, reviewId: 42 } },
+  });
+  (f.adapter as typeof f.adapter & ResolutionAdapter).externalMerge = async () => ({ head: HEAD, commit: "c".repeat(40) });
+  assert.equal(await f.engine.resolution.recoverExternalMerge(f.store.task(task.id)), true);
+  assert.equal(f.store.task(task.id).resolution.mergedCommit, "c".repeat(40));
+  assert.equal(f.store.task(task.id).phase, "syncing");
 });
 
 test("ordinary review refuses closed receiving reviewer, wrong-workspace origin, unrecorded root, unavailable timeline without probes, and live scratch process", async (t) => {

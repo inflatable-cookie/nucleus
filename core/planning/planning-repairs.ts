@@ -54,7 +54,7 @@ export class PlanningRepairs {
     });
   }
 
-  async retryValidation(input: { taskId: string; version: number; rebindWorkspaceId?: string; removeOrphanWorkspace?: boolean; settleFences?: { detail: string; runIds: string[]; displacedRunIds?: string[] } }): Promise<Task> {
+  async retryValidation(input: { taskId: string; version: number; rebindWorkspaceId?: string; removeOrphanWorkspace?: boolean; settleFences?: { detail: string; runIds: string[]; displacedRunIds?: string[] }; parentRestart?: { before: () => Promise<boolean>; commit: (task: Task, restored: boolean) => Task } }): Promise<Task> {
     const current = this.store.task(input.taskId);
     if (current.removedAt) throw new Error("Task was removed from the queue");
     if (current.version !== input.version) throw new Error("Task changed; refresh before retrying");
@@ -120,6 +120,7 @@ export class PlanningRepairs {
     } else if (current.workspaceId || current.directory) {
       throw new Error("Recorded workspace has no creation intent; reconcile its identity before retrying");
     }
+    const restored = retained && !rebound && input.parentRestart ? await input.parentRestart.before() : false;
     return this.store.transaction(() => {
       const latest = this.store.task(current.id);
       if (latest.version !== current.version || this.engine.stopped) throw new Error("Task changed during validation verification; retry");
@@ -138,7 +139,8 @@ export class PlanningRepairs {
         ? "Uncertain workspace creation is provably absent; replaying the same create" : "Validation retry requested";
       // Clearing a recorded intent carries only the eligibility it recorded (no backfill).
       if (!retained) { const cleared = worktreeLinksForClearedIntent(this.store.task(current.id)); if (cleared.worktreeLinks) this.store.update(current.id, cleared); }
-      return this.resolution.returnToDispatch(this.store.task(current.id), retained, reason);
+      const result = this.resolution.returnToDispatch(this.store.task(current.id), retained, reason);
+      return input.parentRestart ? input.parentRestart.commit(result, restored) : result;
     });
   }
 

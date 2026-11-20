@@ -11,6 +11,7 @@ import type { Notice } from "../shared/contracts";
 import { holdPatch, releasePatch } from "../core/merge/merge-hold";
 import { noticeId } from "../core/questions/origin";
 import {
+  HOLD_ANSWER_MINUTES,
   HiddenRows,
   ROW_HIDDEN_HOLD_MINUTES,
   ROW_HIDDEN_MINUTES,
@@ -19,6 +20,7 @@ import {
   rowHiddenNoticeId,
   type RowHiddenEpisode,
 } from "../core/scheduling/hidden-row";
+import { taskRowAttention } from "../core/workspaces/task-row-attention";
 import { fakeAdapter } from "./support/fakes";
 
 /**
@@ -746,4 +748,329 @@ test("the existing hold reminder for the same generation is reused, not repeated
     "the existing reminder is the planner nudge for this generation",
   );
   assert.equal(f.record()?.held, true);
+});
+
+/**
+ * nucleus#1419: a planner's own hold parks the task, gets one nudge after three
+ * hours, and needs its planner's answer inside the answer window. A released hold,
+ * or a keep that starts a fresh generation, is the answer; a closed window with the
+ * hold still in place shows the row again and never touches the hold itself.
+ */
+
+/** A planner's own manual hold, the shape a reviewed task waits behind for its owner. */
+function planHold(
+  f: Awaited<ReturnType<typeof fixture>>,
+  kind: "merge" | "dispatch" = "merge",
+) {
+  if (kind === "merge") f.store.update(f.task().id, { phase: "verifying" });
+  f.store.update(
+    f.task().id,
+    holdPatch(f.task(), kind, "planner", "Effigy v0.15 upgrade day", null),
+  );
+  return () => f.task().holds?.[kind]?.plannerAnswer ?? null;
+}
+
+/** The one attention projection the board and a host row read. */
+const taskRowState = (f: Awaited<ReturnType<typeof fixture>>) =>
+  taskRowAttention(f.store, f.task()).state;
+
+const escalated = (f: Awaited<ReturnType<typeof fixture>>) =>
+  f.store
+    .events(f.task().id)
+    .filter((event) => event.kind.startsWith("row_hidden_hold_"));
+
+test("a planner's own hold is nudged once, and a release inside the answer window is the answer", async (t) => {
+  const f = await fixture(t);
+  const c = clock(t);
+  const answer = planHold(f);
+  const episode = new Date(c.start).toISOString();
+  f.visibility.set(f.task().id, f.hidden(f.task().id, episode));
+
+  c.at(ROW_HIDDEN_HOLD_MINUTES * MINUTE);
+  await f.observe();
+  const nudge = f.rowNotices()[0];
+  assert.ok(nudge, "the hold bound raises the planner's nudge");
+  assert.equal(nudge.id, rowHiddenHoldNoticeId(f.task().id, "merge", 1));
+  assert.match(nudge.text, /Answer window/);
+  assert.match(nudge.text, /within 30 minutes of this nudge/);
+  assert.deepEqual(
+    {
+      since: answer()?.since,
+      deliveredAt: answer()?.deliveredAt,
+      unansweredAt: answer()?.unansweredAt,
+    },
+    {
+      since: new Date(c.start).toISOString(),
+      deliveredAt: null,
+      unansweredAt: null,
+    },
+    "the fence records the nudge and owes the planner's answer",
+  );
+
+  await f.deliver();
+  assert.equal(nudge.status, "pending");
+  c.at(ROW_HIDDEN_HOLD_MINUTES * MINUTE + MINUTE);
+  await f.observe();
+  assert.ok(
+    answer()?.deliveredAt,
+    "the confirmed delivery starts the answer window",
+  );
+  // The planner releases the hold inside the window.
+  c.at(ROW_HIDDEN_HOLD_MINUTES * MINUTE + 10 * MINUTE);
+  f.store.update(f.task().id, releasePatch(f.task(), "merge"));
+  await f.observe();
+  assert.equal(
+    escalated(f).length,
+    0,
+    "a timely release closes the answer cycle without an escalation",
+  );
+  assert.equal(f.task().holds?.merge, undefined);
+  // The row is still hidden, and the ordinary wait episode owns it now.
+  c.at(ROW_HIDDEN_HOLD_MINUTES * MINUTE + 40 * MINUTE);
+  await f.observe();
+  assert.equal(
+    escalated(f).length,
+    0,
+    "hold time never escalates anything after the release",
+  );
+  assert.match(
+    f.rowNotices().at(-1)!.text,
+    /genuinely waits/,
+    "the released row is back on the ordinary wait rule",
+  );
+});
+
+test("a keep inside the answer window is a fresh generation, not an escalation", async (t) => {
+  const f = await fixture(t);
+  const c = clock(t);
+  const answer = planHold(f);
+  const episode = new Date(c.start).toISOString();
+  f.visibility.set(f.task().id, f.hidden(f.task().id, episode));
+  c.at(ROW_HIDDEN_HOLD_MINUTES * MINUTE);
+  await f.observe();
+  await f.deliver();
+  c.at(ROW_HIDDEN_HOLD_MINUTES * MINUTE + MINUTE);
+  await f.observe();
+
+  const kept = (await f.engine.performTaskControl({
+    taskId: f.task().id,
+    version: f.task().version,
+    action: "keep_hold",
+    kind: "merge",
+    reason: "Upgrade day moved to next week",
+    agentId: "planner",
+  })) as ReturnType<typeof f.task>;
+  assert.equal(kept.holdGeneration, 2);
+  assert.equal(answer(), null, "a fresh keep clears the previous answer cycle");
+  await f.observe();
+  assert.equal(
+    escalated(f).length,
+    0,
+    "the keep answered the nudge for its generation",
+  );
+  assert.equal(taskRowState(f), "waiting", "the kept hold parks the row again");
+  assert.equal(
+    f
+      .rowNotices()
+      .filter(
+        (notice) =>
+          notice.id === rowHiddenHoldNoticeId(f.task().id, "merge", 1),
+      ).length,
+    1,
+    "the answered generation keeps its one nudge",
+  );
+  // The fresh generation owes its own nudge, three hours from the keep.
+  c.at(
+    ROW_HIDDEN_HOLD_MINUTES * MINUTE +
+      MINUTE +
+      ROW_HIDDEN_HOLD_MINUTES * MINUTE -
+      MINUTE,
+  );
+  await f.observe();
+  assert.equal(
+    escalated(f).length,
+    0,
+    "the fresh generation has not reached its own hold bound",
+  );
+});
+
+test("an unanswered nudge shows the row again and touches no hold", async (t) => {
+  const f = await fixture(t);
+  const c = clock(t);
+  const answer = planHold(f);
+  const episode = new Date(c.start).toISOString();
+  f.visibility.set(f.task().id, f.hidden(f.task().id, episode));
+  c.at(ROW_HIDDEN_HOLD_MINUTES * MINUTE);
+  await f.observe();
+  await f.deliver();
+  c.at(ROW_HIDDEN_HOLD_MINUTES * MINUTE + MINUTE);
+  await f.observe();
+  const deliveredAt = answer()!.deliveredAt!;
+
+  // Ordinary reads, sweeps and unchanged state are not an answer.
+  c.at(ROW_HIDDEN_HOLD_MINUTES * MINUTE + 20 * MINUTE);
+  await f.observe();
+  await f.observe();
+  assert.equal(answer()?.unansweredAt, null, "unchanged state answers nothing");
+  assert.equal(escalated(f).length, 0);
+
+  c.at(Date.parse(deliveredAt) + 30 * MINUTE);
+  await f.observe();
+  assert.ok(answer()?.unansweredAt, "the closed answer window is recorded");
+  assert.equal(answer()?.deliveryFault, "", "the nudge did reach the planner");
+  const [event] = escalated(f);
+  assert.ok(event, "the escalation is recorded once");
+  assert.equal(event.kind, "row_hidden_hold_unanswered");
+  assert.match(event.detail, /did not release or keep the hold/);
+  assert.equal(
+    taskRowState(f),
+    "attention",
+    "the task needs its planner again for this hold generation",
+  );
+  assert.deepEqual(
+    {
+      generation: f.task().holdGeneration,
+      reason: f.task().holdReason,
+      held: f.task().held,
+    },
+    { generation: 1, reason: "Effigy v0.15 upgrade day", held: true },
+    "the hold itself is untouched",
+  );
+
+  // Further passes record nothing new, and the generation stays visible.
+  c.at(Date.parse(deliveredAt) + 90 * MINUTE);
+  await f.observe();
+  assert.equal(escalated(f).length, 1, "one escalation per generation");
+  assert.equal(taskRowState(f), "attention");
+});
+
+test("a nudge that never reaches the planner shows the task and the delivery fault", async (t) => {
+  const f = await fixture(t);
+  const c = clock(t);
+  const answer = planHold(f);
+  const episode = new Date(c.start).toISOString();
+  f.visibility.set(f.task().id, f.hidden(f.task().id, episode));
+  c.at(ROW_HIDDEN_HOLD_MINUTES * MINUTE);
+  await f.observe();
+  f.setNotifyFails(true);
+  await f.deliver();
+  const [nudge] = f.rowNotices();
+  assert.equal(
+    nudge!.status,
+    "uncertain",
+    "the failed send is unknown delivery",
+  );
+  assert.match(nudge!.error, /refused the message/);
+
+  c.at(ROW_HIDDEN_HOLD_MINUTES * MINUTE + HOLD_ANSWER_MINUTES * MINUTE);
+  await f.observe();
+  assert.equal(answer()?.deliveredAt, null, "delivery was never confirmed");
+  assert.match(
+    answer()?.deliveryFault ?? "",
+    /refused the message/,
+    "the fence keeps the delivery fault",
+  );
+  const [event] = escalated(f);
+  assert.equal(event?.kind, "row_hidden_hold_undelivered");
+  assert.match(event.detail, /was not delivered/);
+  assert.match(event.detail, /refused the message/);
+  const projection = taskRowAttention(f.store, f.task());
+  assert.equal(projection.state, "attention");
+  assert.match(
+    projection.state === "attention" ? projection.cause : "",
+    /not delivered to the planner/,
+    "the visible reason names the delivery fault",
+  );
+});
+
+test("an independent question keeps the row visible without consuming the answer window", async (t) => {
+  const f = await fixture(t);
+  const c = clock(t);
+  planHold(f);
+  // The task needs a person for its own reason: the row is shown, and a planner's
+  // hold never hides that.
+  f.store.update(f.task().id, {
+    resolution: { ...f.task().resolution, attention: true },
+  });
+  assert.equal(
+    taskRowState(f),
+    "attention",
+    "the row stays visible for the question",
+  );
+  c.at(ROW_HIDDEN_HOLD_MINUTES * MINUTE);
+  await f.observe();
+  assert.equal(
+    f.rowNotices().filter((notice) => notice.kind === "row_hidden").length,
+    0,
+    "a visible row owes no hidden-row nudge",
+  );
+  assert.equal(taskRowState(f), "attention");
+});
+
+test("a restarted service resumes the same answer cycle and escalates once", async (t) => {
+  const f = await fixture(t);
+  const c = clock(t);
+  const answer = planHold(f);
+  const episode = new Date(c.start).toISOString();
+  f.visibility.set(f.task().id, f.hidden(f.task().id, episode));
+  c.at(ROW_HIDDEN_HOLD_MINUTES * MINUTE);
+  await f.observe();
+  await f.deliver();
+  c.at(ROW_HIDDEN_HOLD_MINUTES * MINUTE + MINUTE);
+  await f.observe();
+  const deliveredAt = answer()!.deliveredAt!;
+  await f.reopen();
+  c.at(Date.parse(deliveredAt) + 30 * MINUTE);
+  await f.observe();
+  assert.equal(
+    escalated(f).length,
+    1,
+    "the reopened service escalates the same cycle",
+  );
+  assert.equal(f.rowNotices().length, 1, "and raises no second nudge");
+});
+
+test("a hold another participant placed keeps its visibility and gets no planner nudge", async (t) => {
+  const f = await fixture(t);
+  const c = clock(t);
+  // The task's planner is its owner ("planner"); this fence belongs to a reviewer
+  // thread, so the row is not the planner's park and owes no answer window.
+  f.store.update(f.task().id, { phase: "needs_attention" });
+  f.store.update(
+    f.task().id,
+    holdPatch(
+      f.task(),
+      "dispatch",
+      "reviewer-thread",
+      "Receipt still pending",
+      null,
+    ),
+  );
+  const episode = new Date(c.start).toISOString();
+  f.visibility.set(f.task().id, f.hidden(f.task().id, episode));
+  assert.equal(
+    taskRowState(f),
+    "attention",
+    "another participant's hold is visible",
+  );
+  c.at(ROW_HIDDEN_HOLD_MINUTES * MINUTE);
+  await f.observe();
+  // The 1417 hold report still names the hidden row, but it opens no answer window:
+  // only the planner's own park does, because only the planner can answer it.
+  const [report] = f.rowNotices();
+  assert.ok(report, "the hidden row is still reported to the planner");
+  assert.doesNotMatch(report.text, /Answer window/);
+  assert.match(report.text, /once its condition no longer applies/);
+  assert.equal(f.task().holds?.dispatch?.plannerAnswer ?? null, null);
+  assert.equal(escalated(f).length, 0);
+  assert.equal(
+    taskRowState(f),
+    "attention",
+    "no escalation changes the visibility another holder owns",
+  );
+  assert.equal(
+    f.task().holds?.dispatch?.owner,
+    "reviewer-thread",
+    "the fence keeps its own owner",
+  );
 });

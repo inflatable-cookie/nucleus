@@ -22,7 +22,10 @@ import {
   MOVE_REVIEW_PR_REFUSAL,
 } from "./control-refusals";
 import { groupIsUnavailable } from "../../shared/pool";
-import { unreviewedMergeRoute, unreviewedMergeRouteRefusal } from "../../shared/task-view";
+import {
+  unreviewedMergeRoute,
+  unreviewedMergeRouteRefusal,
+} from "../../shared/task-view";
 import { proofOnlyReceiptAwaitingReview } from "../qa/proof-records";
 import { z } from "zod";
 import {
@@ -58,8 +61,9 @@ import type { OwnerVerbFacts } from "./owner-facts";
 import { verbInput } from "./owner-shared";
 import type { OwnerVerbApplicability, OwnerVerb } from "./owner-shared";
 import { interactiveSessionOpen } from "../dispatch/interactive";
-import { retainedContinuationPlan } from "./owner-restart";
+import { absentWorkerRestartRefusal, retainedContinuationPlan } from "./owner-restart";
 import { reviewRequiredForTask } from "../review/reviewer-setting";
+import { publishedReviewDecision } from "../intake/result-application";
 
 export const moveTargets = ["work", "review", "merge", "closeout"] as const;
 
@@ -245,11 +249,15 @@ function moveViews(facts: OwnerVerbFacts): TaskNextVerb[] {
     if (task.prerequisiteWait && !task.prerequisiteWait.releasedAt)
       return { available: false, refusal: RETAINED_PREREQUISITE_REFUSAL };
     if (task.agentId) return running;
+    // An uncertain creation is answered by the same owed observation `restart`
+    // reports. Naming restart as the cure is circular while restart is refused, so
+    // the cause is named here and restart is named only once it is available.
     if (task.agentIntent)
       return {
         available: false,
         refusal:
-          "The worker creation is still uncertain; restart re-creates it under the same run",
+          absentWorkerRestartRefusal(facts) ??
+          "The worker creation settled as absent; restart launches its fresh worker from the current route",
       };
     if (task.profile && task.workspaceId) return running;
     return { available: false, refusal: MOVE_WORK_AUTHOR_REFUSAL };
@@ -257,10 +265,20 @@ function moveViews(facts: OwnerVerbFacts): TaskNextVerb[] {
   const review = ((): OwnerVerbApplicability => {
     const shared = gate("review");
     if (shared) return shared;
+    const published = publishedReviewDecision(facts.store, task);
+    if (published.kind === "blocked")
+      return { available: false, refusal: published.refusal };
+    if (published.kind === "ready")
+      return {
+        available: true,
+        args: {},
+        note: `Apply the published ${published.completion.status} verdict from reviewer run ${published.run.id} after the forge and participant lease confirm the current source and custody.`,
+      };
     // nucleus#1425: a recorded unreviewed merge whose source no longer matches is refused here
     // with the admission's own text, so `next` never offers a route the move would refuse.
     const mergedRouteRefusal = unreviewedMergeRouteRefusal(task);
-    if (mergedRouteRefusal) return { available: false, refusal: mergedRouteRefusal };
+    if (mergedRouteRefusal)
+      return { available: false, refusal: mergedRouteRefusal };
     if (proofOnlyReceiptAwaitingReview(task)) {
       const reviewGate = liveGate("review", true);
       if (!reviewGate.available) return reviewGate;
@@ -526,10 +544,16 @@ function moveViews(facts: OwnerVerbFacts): TaskNextVerb[] {
   })();
   return [
     view("work", work, ["reason", "instruction"]),
-    view("review", review.available && mergedRoute ? {
-      ...review,
-      note: `The PR merged outside Queue at ${mergedRoute.head} (merge commit ${mergedRoute.commit}). A fresh review of that merged source binds the exact head; only its ready_to_merge verdict reconciles the merge, and nothing is merged, pushed or reverted.`,
-    } : review, ["reason"]),
+    view(
+      "review",
+      review.available && mergedRoute
+        ? {
+            ...review,
+            note: `The PR merged outside Queue at ${mergedRoute.head} (merge commit ${mergedRoute.commit}). A fresh review of that merged source binds the exact head; only its ready_to_merge verdict reconciles the merge, and nothing is merged, pushed or reverted.`,
+          }
+        : review,
+      ["reason"],
+    ),
     view("merge", merge, mergeFill),
     // A never-dispatched review-entry closeout always needs its acceptance; a
     // dispatched one offers the descendant pair, and the ordinary reason-only

@@ -603,6 +603,11 @@ export class T3Reads {
     return this.archivedHeld;
   }
 
+  /** A post-effect read must never reuse the current sweep's earlier snapshot. */
+  async freshInventory(): Promise<T3Inventory> {
+    return this.readInventory();
+  }
+
   async inventory(): Promise<T3Inventory> {
     const inventory = await this.memoisedInventoryRead();
     if (this.pendingThreadShape && inventory.threads[0])

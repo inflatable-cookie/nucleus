@@ -49,6 +49,7 @@ export class T3DecisionCards {
           threadId,
           workspaceId,
           acp.decisionSettlement.bind(acp),
+          scope,
         );
       }
     } finally {
@@ -61,6 +62,7 @@ export class T3DecisionCards {
     threadId: string,
     workspaceId: string,
     settlement: NonNullable<AcpSessionSurface["decisionSettlement"]>,
+    scope: AcpCardScope,
   ): Promise<AcpPendingCard[] | null> {
     const projection = await this.core.reads.readProjection(threadId, "window");
     const liveRuns = new Set(
@@ -98,7 +100,7 @@ export class T3DecisionCards {
       if (!match) continue;
       const id = match[1]!;
       const version = Number(match[2]!);
-      const decision = settlement(id, version);
+      const decision = settlement(id, version, scope);
       const stale =
         request.responseCapability.type === "message" ||
         Boolean(item.runId && !liveRuns.has(item.runId));

@@ -129,6 +129,27 @@ to the operator, and self-lifting conditions ([Spec 046](046-self-lifting-merge-
 stay exactly as they are; an operator-placed hold is never released or escalated by
 this notice.
 
+## The planner's own hold parks its row until the nudge is answered
+
+A hold the task's planner placed — the planner the brief named, else the task owner —
+is the planner's own park (Tom, 2026-11-20), so on T3 it snoozes the task row whether
+or not it names a release condition, and the task needs its planner again when that
+park goes unanswered. A hold from the operator's board or from another participant
+(worker, reviewer, coordinator) is not this park and keeps its existing treatment. The
+fence keeps that cycle in `plannerAnswer` — the generation's measured start, the
+nudge's due time and notice, when delivery was confirmed, and the moment the answer
+window closed (with the delivery fault when the notice never reached the planner).
+
+After the three-hour nudge the planner has thirty minutes from the later of the due
+time and a confirmed delivery to `release` the hold or `keep_hold` it. A keep is a
+fresh generation: the previous answer is cleared and the new generation owes its own
+nudge and window, which is why `keep_hold` now also moves the fence's own start time
+to the keep. A closed window changes no hold: the row is shown again for that
+generation, the pass records `row_hidden_hold_unanswered` or
+`row_hidden_hold_undelivered`, and the planner must still release or keep it. A hold
+that names its own end is never measured this way, and a hold from the operator's
+board keeps its existing attention.
+
 ## One task owner
 
 A task has one owner (Tom, 2026-10-26: "There should be one owner field so
@@ -182,7 +203,7 @@ Self-lifting holds ("until task X is done", "until a time") are
 | 10 | Legacy hold (`held`, no `mergeHold`) on a `blocked` task with a revision | Revision gets a slot; migration sets `mergeHold` |
 | 11 | Queued task under an ordinary hold | Still blocks dispatch; no prompts |
 | 12 | Brief `queue.mergeHold` then `hold` while queued | Dispatch fence added; merge fence stays; dispatch blocked |
-| 13 | `keep_hold` on a queued dispatch hold | Reason and generation of that kind refresh |
+| 13 | `keep_hold` on a queued dispatch hold | Reason, generation and the fence's own start time refresh |
 | 14 | `lead.promote-task` / `papercut.promote-task` with `hold` | Task created already under a dispatch hold |
 | 15 | Explicit dispatch hold on an already-dispatched task with a live stage callback | Callback advances once; no next stage run starts until release, then exactly one starts |
 | 16 | Merge-only hold on a staged task | Reviewer stage still launches |

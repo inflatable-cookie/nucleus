@@ -585,17 +585,24 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
   selection means all projects, the app-wide board, with lanes in the order of
   their first appearance across the selected plans. This is
   Nucleus's equivalent of the retired system's per-project-workspace and app-level views.
-- **Project actions in the selector** (nucleus#1430). Each project row has an
-  ellipsis that opens its actions inline in the picker, so no nested popover takes
-  an outside press. Park asks first with Settings' "No new work starts" confirmation;
-  a parked project shows Unpark instead. Rename changes the display name only, under
-  Settings' rule (1 to 200 characters once trimmed), and keeps the key, repositories
-  and selection. Remove from Nucleus leaves the picker and opens the shared removal
-  dialog, with its open-work blockers and confirmation; it never removes in one click.
-  Every save goes through the project's version and then refreshes the board and
-  Settings' project list. The ellipsis shows on hover or keyboard focus with a hover
-  pointer, and stays visible on touch and in the compact picker. Escape closes an
-  open action before it closes the picker.
+- **Project actions in the selector** (nucleus#1430, refined by nucleus#1432). Each
+  project row has a disclosure chevron, separate from the row's selection, that opens
+  a compact panel attached to the row inside the picker, so no nested popover takes an
+  outside press. One row's panel is open at a time. Park asks first with Settings' "No
+  new work starts" confirmation; a parked project shows Unpark instead. Rename edits
+  the name in its own slot: the row's label becomes a focused input seeded with the
+  name, with compact Save and Cancel and the count kept in place. Enter saves and
+  Escape cancels, neither selecting the row nor closing the picker; a validation
+  problem or refused save shows under the input and keeps the draft for a retry, and
+  Cancel restores the label. Rename changes the display name only, under Settings'
+  rule (1 to 200 characters once trimmed), and keeps the key, repositories and
+  selection even when the new name re-sorts the row. Remove from Nucleus sits below
+  a divider; it leaves the picker and opens the shared removal dialog, with its
+  open-work blockers and confirmation, and never removes in one click. Every save goes
+  through the project's version and then refreshes the board and Settings' project
+  list. The chevron shows on hover or keyboard focus with a hover pointer, and stays
+  visible on touch and in the compact picker. Escape, or back in the compact picker,
+  closes an open action before it closes the picker.
 - **Per-project workspace board** (Tom, 2026-09-27). The plugin registers a
   workspace panel (`addWorkspacePanel`, context `workspace`, opened as a tab in the
   workspace area) named "Nucleus board", and an "Open Nucleus board" workspace command.
@@ -615,7 +622,7 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
 - **Parked projects** (Spec 027): the selector and the All-projects view hide
   parked projects by default. A "Parked" section in the selector lists them for
   scoping, and selecting one still shows its views. Unpark sits in the row's
-  ellipsis (nucleus#1430) and in Settings → Projects. The Planning tab groups parked
+  row panel (nucleus#1430) and in Settings → Projects. The Planning tab groups parked
   projects under Parked. Attention from a parked project is never hidden.
 - **Project filter switch.** An "Enabled" switch at the top of the project
   selector's dropdown (Tom, 2026-09-28; it was the Pipeline view's "Filter by
@@ -623,6 +630,12 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
   (Pipeline, Papercuts, Planning) without clearing the selection; on applies
   it. While it's off, the closed selector reads "… · filter off" and loses its
   accent.
+  An explicit pick in the selector that leaves projects selected (a plain click,
+  a Shift-click, or All) turns the switch back on with the new selection, saved
+  together as one scope (Tom, 2026-11-20, nucleus#1432). None and Shift-clearing the
+  last project keep the switch as it was; opening the selector, a row's panel,
+  Rename and project management never turn it on, and other scope entry points
+  (such as opening a lane's plan) leave it alone.
   The selection and this switch persist across plugin reloads in the surface's
   local storage where it has one, otherwise for the session; neither is written
   to Nucleus's store.
@@ -737,8 +750,8 @@ control. Editing uses the existing dark-theme styling.
 | 14 | Planning tab edits: reorder, move between Now and Later, add a listed lane, save a lane document | Plan and document saved as operator versions with the horizon kept; stale save refused |
 | 14a | Planning tab navigation at both viewport sizes | Plan and lane columns at the wide size; plan, lane drill-down with back at the compact size; the pipeline board has no side pane |
 | 14c | Open the Nucleus board in a workspace of a project's repository, and in a workspace outside every project | Scoped to that project's Pipeline and Planning; outside every project, a plain message |
-| 14d | Open a project row's ellipsis: Park asks first, Unpark, Rename with an empty, 201-character or valid name, Remove from Nucleus, Escape | Each save uses the project's version and refreshes the board; Remove leaves the picker for the shared removal dialog with its blockers; Escape cancels an open action before the picker; the row's selection, filter and counts are unchanged by opening the menu |
-| 14b | Click one project, Shift-click a second, Shift-click the first off, then none; switch the Pipeline project filter off and on | A plain click replaces the selection and a Shift-click toggles one project, so every task and planning view shows first one project, then both (Planning shows both plans), then the second alone; none means all; the filter switch off shows all projects and on restores the kept selection |
+| 14d | Open a project row's chevron: Park asks first, Unpark, Rename in place with an empty, 201-character, refused or valid name (Save, Enter, Cancel, Escape), Remove from Nucleus, Escape | One row's panel opens at a time, attached to its row; Rename replaces the label with the input and keeps the draft after a refusal; each save uses the project's version and refreshes the board; Remove leaves the picker for the shared removal dialog with its blockers; Escape cancels an open action before the picker; the row's selection, filter and counts are unchanged by disclosure or a re-sorting rename |
+| 14b | Click one project, Shift-click a second, Shift-click the first off, then none; switch the Pipeline project filter off and on | A plain click replaces the selection and a Shift-click toggles one project, so every task and planning view shows first one project, then both (Planning shows both plans), then the second alone; none means all; the filter switch off shows all projects and on restores the kept selection; with the switch off, a click, Shift-click or All turns it on with the new selection, while None or clearing the last project leaves it off |
 | 15 | Board dark theme at both viewport sizes, with a busy board | Legible; checked after merge by the Nucleus Chatterbox |
 | 15a | Click a lead card and a papercut card on the Pipeline view; run each modal action | The modal opens with the record's full detail; the cards show no buttons; each action works from the modal and reports its result there; inapplicable actions are disabled with the reason |
 | 15b | Open a checked, approved lead, then a new version of it; open a lead from Triage and from a lane with more than eight open leads | The brief sits beside its checked version and approval, which names the approver and any relayed authority; Check, Approve and Promote each report their own result or refusal; the new version shows the check and approval as out of date and asks for the existing recheck; drop, reopen and question or knowledge promotion sit in More actions with their reasons; raw ids and every version stay behind Details; the lane's lead list pages eight at a time with its true total |

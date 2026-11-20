@@ -45,6 +45,7 @@ import {
   workerRestartRefusal,
 } from "./owner-verbs";
 import type { RestartRequest } from "./owner-shared";
+import { verifyEnclosingOperation } from "../planning/enclosing-operation";
 
 /**
  * The worker half of `restart`: the shapes that continue or replace a worker run
@@ -81,6 +82,47 @@ export class WorkerRestarts {
       default:
         throw Error(`restart does not support the ${c.shape} state`);
     }
+  }
+
+  /** After the ordinary restart proofs, restore the same host parent if needed. */
+  async restoreParent(c: Pick<RestartRequest, "task" | "input" | "operationId">): Promise<boolean> {
+    const restore = this.adapter.restoreTaskParent;
+    if (!restore || !c.task.workspaceId) return false;
+    const runs = this.store.runs(c.task.id);
+    const allowed = () => {
+      const current = this.store.taskOrNull(c.task.id);
+      return Boolean(current && current.version === c.task.version &&
+        current.workspaceId === c.task.workspaceId && current.hostId === c.task.hostId &&
+        !current.removedAt && !["done", "cancelled"].includes(current.phase) &&
+        !current.resolution.mergedCommit && runsUnchangedSince(runs, this.store.runs(current.id)) &&
+        (!c.operationId || verifyEnclosingOperation(this.store, c.input, c.operationId)));
+    };
+    if (this.adapter.workspaceAvailable && !(await this.adapter.workspaceAvailable(c.task.workspaceId)))
+      throw new RestartRefusal("The retained workspace is unavailable; restore it before restarting");
+    if (!allowed()) throw new RestartRefusal("Restart changed before parent restore");
+    await restore.call(this.adapter, c.task, c.operationId ?? "", allowed, () => {
+      if (!allowed() || !c.operationId) throw new RestartRefusal("Restart changed before parent restore");
+      const operation = this.store.operation(c.operationId)!;
+      if (!operation.effect || operation.effect.kind !== "task_control" || operation.effect.target !== "restart" || operation.effect.status !== "intent")
+        throw new RestartRefusal("The restart operation no longer owns its effect");
+      this.store.putOperation({ ...operation, preSendBoundaryStartedAt: operation.preSendBoundaryStartedAt ?? now(),
+        effect: { ...operation.effect, result: `parent-unarchive:${operation.id}` } });
+    });
+    if (!allowed()) throw new Error("Restart changed during parent restore; no child was created");
+    const observe = this.adapter.observeTaskParentRestore;
+    return Boolean(c.operationId && observe && await observe.call(this.adapter, c.task, c.operationId) === "live");
+  }
+
+  /** Record the admitted local result atomically with the transition after a restore. */
+  recordRestoredRestart(task: Task, operationId?: string, restored = false): Task {
+    if (!operationId || !restored) return task;
+    const operation = this.store.operation(operationId);
+    if (!operation?.preSendBoundaryStartedAt || operation.state !== "running" || operation.taskId !== task.id || !operation.effect) return task;
+    this.store.putOperation({ ...operation,
+      result: { taskId: task.id, taskVersion: task.version, phase: task.phase, number: task.number ?? null, reference: task.reference ?? null },
+      effect: { ...operation.effect, status: "reconciled", result: `parent-unarchive:${operation.id}`, resultAt: now() },
+    });
+    return task;
   }
 
   /** Re-run a parked step for restart's parked fallback; runs inside the caller's transaction. */
@@ -142,6 +184,7 @@ export class WorkerRestarts {
     taskId: string;
     version: number;
     instruction: string;
+    record?: (task: Task) => Task;
     settleFences?: {
       detail: string;
       runIds: string[];
@@ -236,12 +279,13 @@ export class WorkerRestarts {
             );
           if (input.settleFences)
             this.engine.settleVerbFences(task.id, input.settleFences);
-          return releaseStaleWorkerIntent(
+          const result = releaseStaleWorkerIntent(
             this.store,
             this.store.task(task.id),
             observed.proof,
             input.instruction,
           );
+          return input.record ? input.record(result) : result;
         });
     }
     this.resolution.prepareResumeWorker(
@@ -261,11 +305,12 @@ export class WorkerRestarts {
       return this.store.transaction(() => {
         if (input.settleFences)
           this.engine.settleVerbFences(task.id, input.settleFences);
-        return this.resolution.resumeWorker(
+        const result = this.resolution.resumeWorker(
           this.store.task(task.id),
           input.instruction,
           true,
         );
+        return input.record ? input.record(result) : result;
       });
     };
   }
@@ -527,6 +572,10 @@ export class WorkerRestarts {
   /** Never-dispatched or re-admitted pre-PR work returns through its own existing admission path. */
   private async preDispatch(c: RestartRequest): Promise<Task> {
     const { task, input, role, reason } = c;
+    const parentRestart = {
+      before: () => this.restoreParent(c),
+      commit: (result: Task, restored: boolean) => this.recordRestoredRestart(result, c.operationId, restored),
+    };
     // An owner move can leave a pre-PR task in changes_requested without
     // an author thread. Resume it through the ordinary move-to-work
     // replacement path so the retained workspace, branch and route are
@@ -543,6 +592,7 @@ export class WorkerRestarts {
         reason,
         instruction: input.instruction,
         caller: input.caller,
+        parentRestart,
       });
     // An initial pre-dispatch task replays admission through the existing
     // validation retry, which verifies any retained workspace. A review
@@ -555,6 +605,7 @@ export class WorkerRestarts {
         taskId: task.id,
         version: task.version,
         rebindWorkspaceId: input.rebindWorkspaceId,
+        parentRestart,
         settleFences: { detail: `restart ${role}: ${reason}`, runIds: [] },
       });
     const retained = Boolean(task.workspaceIntent);
@@ -602,17 +653,25 @@ export class WorkerRestarts {
         this.engine.executeEpisodeRestart(
           task.id,
           displacement,
-          () =>
-            this.engine.prepareWorkerResume({
+          async () => {
+            let restored = false;
+            const apply = await this.engine.prepareWorkerResume({
               taskId: task.id,
               version,
               instruction,
+              record: (result) => this.recordRestoredRestart(result, c.operationId, restored),
               settleFences: {
                 detail: `restart ${role}: ${reason}`,
                 runIds: finished.settleable.map((item) => item.id),
                 displacedRunIds: displacement.runIds,
               },
-            }),
+            });
+            if (typeof apply !== "function") return apply;
+            return async () => {
+              restored = await this.restoreParent(c);
+              return apply();
+            };
+          },
           finished.settleable.map((run) => run.id),
         ),
       `task:${task.id}`,
@@ -789,6 +848,8 @@ export class WorkerRestarts {
                 afterCancel,
               );
               if (afterRefusal) throw new RestartRefusal(afterRefusal);
+              const restored = input.fresh ? await this.restoreParent(c) : false;
+              this.engine.assertUnchangedBeforeCancel(task.id, version, runsBefore);
               const settle = () =>
                 this.engine.settleVerbFences(task.id, settleFences);
               const continueWorker = () => {
@@ -973,16 +1034,17 @@ export class WorkerRestarts {
                 );
               };
               if (shape === "stopped_revision") {
-                // Stopped-revision recovery owns its transaction and settles inside
-                // it; calling it here would nest a transaction. The slot hold is
-                // written in that same transaction (restartStoppedRevision).
-                return continueWorker();
+                // The stopped-revision settlement and the operation receipt share
+                // this transaction, so interruption cannot replay the restart.
+                return restored
+                  ? this.store.transaction(() => this.recordRestoredRestart(continueWorker(), c.operationId, true))
+                  : continueWorker();
               }
               return this.store.transaction(() => {
                 const restartSlot = this.workerRestartSlot(task, runsBefore);
                 settle();
                 const continued = continueWorker();
-                return restartSlot && !continued.resolution.restartSlotHold
+                const result = restartSlot && !continued.resolution.restartSlotHold
                   ? this.resolution.update(
                       continued,
                       { restartSlotHold: restartSlot },
@@ -990,6 +1052,7 @@ export class WorkerRestarts {
                       "restart_worker_slot_hold",
                     )
                   : continued;
+                return this.recordRestoredRestart(result, c.operationId, restored);
               });
             };
           },

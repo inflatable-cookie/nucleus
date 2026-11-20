@@ -40,7 +40,7 @@ import { ProvenPreSendRefusalError } from "../../core/host";
 import type { T3RpcClient } from "./rpc";
 import { config, T3CompatibilityError, type RuntimeMode } from "./contracts";
 import { activeStatuses, type Projection, type T3Reads } from "./reads";
-import { identity, type T3IntentLedger } from "./intents";
+import { identity, intentKindOf, intentThreadId, type T3IntentLedger } from "./intents";
 import { canonical, type T3State, type T3StateFile } from "./state";
 import { labelTask } from "./one-row";
 
@@ -271,21 +271,33 @@ export class T3Nesting {
           taskId,
           `the task's parent thread is bound to another checkout (${existing.workspaceId}, this run uses ${input.workspace.id}); move the task to another host or restart it on a new workspace`,
         );
-      // A parent that is finished (archived, or gone from a complete inventory) is
-      // not re-launched: a second parent thread would orphan this task's children
-      // and re-mint its binding under a thread nothing runs.
-      if (existing.archivedAt)
+      // Old markers did not distinguish archive from deletion. Re-read the exact
+      // binding before acting on either an old marker or a new observation.
+      let observation: Awaited<ReturnType<T3Nesting["parentGone"]>>;
+      try {
+        observation = await this.parentGone(existing);
+      } catch {
+        return this.unavailable(taskId, "the task's parent thread could not be observed; restore T3 inventory before restarting");
+      }
+      if (observation) {
+        if (observation === "archived" || observation === "deleted")
+          this.finishParent(taskId, observation);
         return this.unavailable(
           taskId,
-          "the task's parent thread is archived; move the task to another host or restart it",
+          observation === "mismatched"
+            ? "the task's parent thread no longer matches its recorded project and checkout; inspect the binding before restarting"
+            : observation === "archived"
+              ? "the task's parent thread is archived; use an owner restart after prior creation and delivery settle"
+              : "the task's parent thread is deleted; inspect the retained binding and recovery before continuing",
         );
-      const gone = await this.parentGone(existing).catch(() => null);
-      if (gone) {
-        this.finishParent(taskId, gone);
-        return this.unavailable(
-          taskId,
-          `the task's parent thread is ${gone}; move the task to another host or restart it`,
-        );
+      }
+      // An exact live observation repairs even a legacy finished marker after a
+      // manual unarchive. A sweep alone never unarchives the parent.
+      if (existing.archivedAt) {
+        this.core.state.update((state) => {
+          const current = state.parents?.[taskId];
+          if (current?.threadId === existing.threadId) delete current.archivedAt;
+        });
       }
       // The create owns the turn from here: a concurrent sweep must not release it
       // between the parent-run read and the child command.
@@ -396,6 +408,90 @@ export class T3Nesting {
   }
 
   /**
+   * Restore the retained parent for an already-admitted owner restart. The caller
+   * owns restart authorization and must settle creation and custody before calling.
+   * A fresh inventory is read before and after the effect, including after a lost
+   * reply. Unknown delivery is never replayed or replaced by a new operation.
+   */
+  async restoreForRestart(
+    task: Task,
+    operationId: string,
+    stillAllowed: () => boolean,
+    beforeSend: () => void = () => {},
+  ): Promise<void> {
+    const parent = this.parentOf(task.id);
+    if (!parent) return;
+    const workspace = this.core.state.read().workspaces[parent.workspaceId];
+    if (!task.workspaceId || parent.workspaceId !== task.workspaceId || task.directory !== parent.directory ||
+        !workspace || workspace.archivedAt || workspace.projectId !== parent.projectId || workspace.directory !== parent.directory ||
+        task.removedAt || ["done", "cancelled"].includes(task.phase) || task.resolution.mergedCommit)
+      throw new ProvenPreSendRefusalError("T3Code parent restore requires the same nonterminal task and workspace");
+    const observe = async () => {
+      const rows = (await this.core.reads.freshInventory()).threads.filter((row) => row.id === parent.threadId);
+      const row = rows[0];
+      if (!row || row.deletedAt) throw new ProvenPreSendRefusalError("the task's parent thread is deleted; inspect its recovery before restarting");
+      if (rows.some((candidate) => candidate.projectId !== parent.projectId || candidate.worktreePath !== parent.directory || candidate.providerInstanceId !== PARENT_PROVIDER || candidate.modelSelection.instanceId !== PARENT_PROVIDER || candidate.archivedAt !== row.archivedAt || candidate.deletedAt !== row.deletedAt))
+        throw new ProvenPreSendRefusalError("the task's parent thread no longer matches its recorded binding; inspect it before restarting");
+      return row;
+    };
+    let row = await observe();
+    if (row.archivedAt) {
+      if (!operationId) throw new ProvenPreSendRefusalError("An archived parent requires a durable owner restart operation");
+      const unknown = Object.values(this.core.state.read().intents).some(
+        (intent) => intentKindOf(intent) === "thread.unarchive" && intentThreadId(intent) === parent.threadId && intent.status === "unknown",
+      );
+      if (unknown) throw new Error("the parent unarchive delivery remains unknown; observe the same parent before retrying");
+      const commandId = identity("parent-unarchive", canonical([this.core.hostId(), parent.threadId, operationId]));
+      try {
+        await this.core.intents.effect(commandId, "orchestration.dispatchCommand", {
+          type: "thread.unarchive", commandId, threadId: parent.threadId,
+        }, () => {
+          const current = this.parentOf(task.id);
+          if (!stillAllowed() || !current || current.threadId !== parent.threadId ||
+              current.workspaceId !== parent.workspaceId || current.projectId !== parent.projectId ||
+              current.directory !== parent.directory || current.sessionId !== parent.sessionId || current.bindingPath !== parent.bindingPath)
+            throw new ProvenPreSendRefusalError("restart authorization or parent binding changed before parent restore");
+          beforeSend();
+        });
+      } catch (error) {
+        if (error instanceof ProvenPreSendRefusalError) throw error;
+        // A live exact parent proves the desired state even if the reply was lost.
+        // An unreadable or still-archived parent preserves the original failure.
+        row = await observe().catch(() => row);
+        if (row.archivedAt) throw error;
+      }
+      row = await observe();
+      if (row.archivedAt) throw new Error("the parent unarchive is not yet observable; no child was created");
+    }
+    if (!stillAllowed()) throw new ProvenPreSendRefusalError("restart authorization changed during parent restore");
+    this.core.state.update((state) => {
+      const current = state.parents?.[task.id];
+      if (current?.threadId === parent.threadId && current.workspaceId === parent.workspaceId)
+        delete current.archivedAt;
+    });
+  }
+
+  /** Observe only the exact restore occurrence of an interrupted restart. */
+  async observeRestartRestore(task: Task, operationId: string): Promise<"not_found" | "live" | "archived" | "deleted" | "mismatched" | "unobservable"> {
+    const parent = this.parentOf(task.id);
+    if (!parent || !operationId) return "not_found";
+    const commandId = identity("parent-unarchive", canonical([this.core.hostId(), parent.threadId, operationId]));
+    const intent = this.core.state.read().intents[commandId];
+    if (!intent || intentKindOf(intent) !== "thread.unarchive" || intentThreadId(intent) !== parent.threadId ||
+        (intent.status !== "unknown" && intent.status !== "settled")) return "not_found";
+    const workspace = this.core.state.read().workspaces[parent.workspaceId];
+    if (!task.workspaceId || parent.workspaceId !== task.workspaceId || task.directory !== parent.directory ||
+        !workspace || workspace.archivedAt || workspace.projectId !== parent.projectId || workspace.directory !== parent.directory ||
+        task.removedAt || ["done", "cancelled"].includes(task.phase) || task.resolution.mergedCommit)
+      return "mismatched";
+    try {
+      return (await this.parentGone(parent)) ?? "live";
+    } catch {
+      return "unobservable";
+    }
+  }
+
+  /**
    * A follow-up to a live child starts a new delegated task under the dispatch's own
    * command id, and T3 does not dispose that wake. Dispose it here; the message itself
    * already succeeded, so nothing about this may fail the send.
@@ -475,7 +571,9 @@ export class T3Nesting {
         continue;
       }
       if (projection.thread.deletedAt) {
-        this.forgetParent(task.id);
+        // A live task keeps its binding even when T3 deletes the parent: dropping
+        // it would let a later role launch a second, unrelated parent.
+        this.finishParent(task.id, "deleted");
         continue;
       }
       await this.disposePending(parent, projection);
@@ -907,15 +1005,21 @@ export class T3Nesting {
    */
   private async parentGone(
     parent: ParentThread,
-  ): Promise<"archived" | "deleted" | null> {
-    const thread =
-      (await this.core.reads.shellRow(parent.threadId)) ??
-      (await this.core.reads.inventory()).threads.find(
-        (candidate) => candidate.id === parent.threadId,
-      );
+  ): Promise<"archived" | "deleted" | "mismatched" | null> {
+    // A held sweep snapshot can predate a manual archive or an uncertain
+    // unarchive. Creation must use a fresh, complete paired inventory.
+    const matches = (await this.core.reads.freshInventory()).threads.filter(
+      (candidate) => candidate.id === parent.threadId,
+    );
+    const thread = matches[0];
+    if (matches.some((candidate) => candidate.archivedAt !== thread?.archivedAt || candidate.deletedAt !== thread?.deletedAt))
+      throw Error("T3Code parent inventory has conflicting observations");
     // Absence and a `deletedAt` tombstone are the same fact: the inventory either
     // omits a removed thread or keeps its tombstone (nucleus#1305 review).
     if (!thread || thread.deletedAt) return "deleted";
+    if (matches.some((candidate) => candidate.projectId !== parent.projectId || candidate.worktreePath !== parent.directory ||
+        candidate.providerInstanceId !== PARENT_PROVIDER || candidate.modelSelection.instanceId !== PARENT_PROVIDER))
+      return "mismatched";
     return thread.archivedAt ? "archived" : null;
   }
 

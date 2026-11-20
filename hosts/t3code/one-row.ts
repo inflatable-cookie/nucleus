@@ -38,21 +38,29 @@ export function roleWord(role: string): string { return stepOf.get(role)?.word ?
  * The step a task's worker row names, from what its support threads report:
  * a pending question or permission wins, then a finished-with-fault thread, then
  * a live role in the table's order. Empty when nothing of the task is running.
+ *
+ * A fault is a step only while the task's own attention owns it (`faultsOwned`,
+ * nucleus#1437): a role's last failed run is history once the task's wait, incident
+ * or recovery has moved on, so it never names the row. A pending question is a
+ * current request and always names it.
  */
-export function rowStep(observed: ReadonlyArray<{ role: string; pending: boolean; live: boolean; faulted: boolean }>): string {
+export function rowStep(
+  observed: ReadonlyArray<{ role: string; pending: boolean; live: boolean; faulted: boolean }>,
+  faultsOwned = false,
+): string {
   const ranked = (predicate: (entry: { role: string; pending: boolean; live: boolean; faulted: boolean }) => boolean) =>
     [...observed].filter(predicate).sort((a, b) => stepOrder.indexOf(a.role) - stepOrder.indexOf(b.role));
   const pending = ranked(entry => entry.pending)[0];
   if (pending) return `${roleWord(pending.role)} needs input`;
-  const faulted = ranked(entry => entry.faulted)[0];
+  const faulted = faultsOwned ? ranked(entry => entry.faulted)[0] : undefined;
   if (faulted) return `blocked: ${roleWord(faulted.role)}`;
   const live = ranked(entry => entry.live)[0];
   return live ? activeStep(live.role) ?? '' : '';
 }
 
-/** A step that names work waiting on a person rather than a run in flight. */
-export function attentionStep(step: string): boolean {
-  return step.endsWith(' needs input') || step.startsWith('blocked: ');
+/** A step that names a current request from a person: a role waiting for input. */
+export function needsInputStep(step: string): boolean {
+  return step.endsWith(' needs input');
 }
 
 /**

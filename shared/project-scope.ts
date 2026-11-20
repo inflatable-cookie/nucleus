@@ -114,6 +114,15 @@ export function selectProject(
   return [key];
 }
 
+/** The scope after an explicit pick in the project selector (a plain or Shift press, All,
+ * None): the picked keys and, when the pick leaves projects selected, the filter back on
+ * (Tom, 2026-11-20, nucleus#1432), so the board filters at once. An empty pick (None, or
+ * Shift-clearing the last key) keeps the switch as it was. One value, so the scope owner
+ * commits and persists both together. */
+export function pickProjects(scope: ProjectScope, projects: string[]): ProjectScope {
+  return { ...scope, projects, statusFilter: projects.length > 0 || scope.statusFilter };
+}
+
 /** The display-name rule Settings → Projects applies (nucleus#1430 reuses it from the board): trimmed,
  * non-empty and at most 200 characters. Returns the problem to show, or undefined when it can save. */
 export function projectNameProblem(name: string): string | undefined {

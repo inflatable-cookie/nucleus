@@ -1,6 +1,15 @@
 import type { Notice, Task } from "../../shared/contracts";
 import { blockingHoldFence, taskOwner } from "../../shared/contracts";
-import type { HoldKind, HoldUntil } from "../../shared/contracts";
+import type {
+  HoldKind,
+  HoldUntil,
+  PlannerHoldAnswer,
+  TaskHolds,
+} from "../../shared/contracts";
+import {
+  plannerHoldNeedingAnswer,
+  syncHoldProjection,
+} from "../../shared/holds";
 import type { TaskAttention } from "../../shared/task-attention";
 import { isHostOperationTimeout } from "../host";
 import type { Adapter, RowSnoozeVisibility } from "../host";
@@ -34,6 +43,12 @@ import type { Store } from "../store/store";
 export const ROW_HIDDEN_MINUTES = 30;
 /** A continuous effective hold hidden for this long gets one informational nudge. */
 export const ROW_HIDDEN_HOLD_MINUTES = 180;
+/**
+ * The planner's answer window for its own hold (nucleus#1419): after its nudge is
+ * due and delivered, this long with the hold still in place means the planner did
+ * not answer, so the row is shown again and the task needs its planner.
+ */
+export const HOLD_ANSWER_MINUTES = 30;
 
 /**
  * The episode one task's hidden row is being measured for. It is durable (store
@@ -107,6 +122,12 @@ export type RowHiddenPlan =
       /** The host's own answer when the row could not be read. */
       reason?: string;
       hold: RowHiddenHold | null;
+      /**
+       * This nudge opens the planner's answer window (nucleus#1419): true only for
+       * the planner's own hold, whose notice the hold answer cycle raises. A hold
+       * another participant placed is only reported.
+       */
+      answerWindow?: boolean;
     };
 
 const minutesBetween = (since: string, at: number): number => {
@@ -136,6 +157,12 @@ export function rowHiddenPlan(input: {
   prior: RowHiddenEpisode | undefined;
   /** The planner's current recipient for this task, when one is provable. */
   reminderReachedPlanner?: boolean;
+  /**
+   * The nudge a planner's own hold already owns for this generation
+   * (nucleus#1419). The hold answer cycle raises and keeps it, so this plan records
+   * it as the episode's live notice instead of raising a second one.
+   */
+  holdNudgeId?: string | null;
   at: number;
 }): RowHiddenPlan {
   const { task, attention, visibility, prior, at } = input;
@@ -156,6 +183,13 @@ export function rowHiddenPlan(input: {
       held: true,
       noticeId: null,
     };
+    // A planner's own manual hold owes both the nudge and the planner's answer
+    // window to the hold answer cycle (nucleus#1419), reconciled by this same pass.
+    if (plannerHoldNeedingAnswer(task))
+      return {
+        kind: "accruing",
+        record: { ...record, noticeId: input.holdNudgeId ?? null },
+      };
     const minutes = minutesBetween(hold.since, at);
     if (minutes < ROW_HIDDEN_HOLD_MINUTES || input.reminderReachedPlanner)
       return { kind: "accruing", record };
@@ -236,9 +270,15 @@ export function rowHiddenNoticeText(input: {
         holdUntilLine(plan.hold.until),
         `Last transition: ${transition}`,
         "Row: T3 reads the row snoozed while the task waits on this hold, so nothing else surfaces it.",
-        actionLine(
-          'release the hold with queue.task action "release", or keep it with "keep_hold" and a fresh reason, once its condition no longer applies',
-        ),
+        ...(plan.answerWindow
+          ? [
+              `Answer window: release the hold with queue.task action "release", or keep it with "keep_hold" and a fresh reason, within ${HOLD_ANSWER_MINUTES} minutes of this nudge; otherwise the row is shown again and the task needs your answer.`,
+            ]
+          : [
+              actionLine(
+                'release the hold with queue.task action "release", or keep it with "keep_hold" and a fresh reason, once its condition no longer applies',
+              ),
+            ]),
       ].join("\n"),
     };
   }
@@ -315,17 +355,18 @@ export function attentionDeliveryRecorded(
 }
 
 /**
- * Whether Spec 040's own hold reminder already reached this task's planner for
- * this hold generation. The prompt is due once per generation and reviewed head,
- * so the existing reminder is reused rather than repeated as a hidden-row nudge.
+ * Spec 040's own hold prompt for a hold generation that already reached this
+ * task's planner, when one did. The prompt is due once per generation and reviewed
+ * head, so the existing reminder is reused as this generation's nudge rather than
+ * repeated, and its delivery is the evidence the answer window counts from.
  */
-export function holdReminderReachedPlanner(
+export function holdReminderNotice(
   store: Store,
   task: Task,
   hold: RowHiddenHold,
   planner: string | null,
-): boolean {
-  if (!planner) return false;
+): Notice | null {
+  if (!planner) return null;
   const prompted = store
     .events(task.id)
     .some(
@@ -334,15 +375,133 @@ export function holdReminderReachedPlanner(
           event.kind === "hold_reminded") &&
         event.detail.includes(`generation ${hold.generation}`),
     );
-  if (!prompted) return false;
-  return store
+  if (!prompted) return null;
+  return (
+    store
+      .notices(task.id)
+      .find(
+        (notice) =>
+          notice.kind === "hold" &&
+          notice.status === "delivered" &&
+          notice.agentId === planner,
+      ) ?? null
+  );
+}
+
+/**
+ * Whether a durable notice carrying a hold nudge reached this task's planner, and
+ * the delivery path's own reason when it has not. A pending, intent or uncertain
+ * notice has not been proved to reach the planner.
+ */
+export function holdNoticeDelivery(
+  store: Store,
+  task: Task,
+  noticeId: string,
+  planner: string | null,
+): { delivered: boolean; error: string } {
+  if (!planner)
+    return { delivered: false, error: "No planner thread is recorded" };
+  const notice = store
     .notices(task.id)
-    .some(
-      (notice) =>
-        notice.kind === "hold" &&
-        notice.status === "delivered" &&
-        notice.agentId === planner,
-    );
+    .find((candidate) => candidate.id === noticeId);
+  if (!notice) return { delivered: false, error: "The nudge is not recorded" };
+  return {
+    delivered: notice.status === "delivered" && notice.agentId === planner,
+    error: notice.error,
+  };
+}
+
+/** What one pass leaves on the fence for the planner's own hold. */
+export interface HoldAnswerOutcome {
+  /** The record to store on the fence, or null when this pass changes nothing. */
+  answer: PlannerHoldAnswer | null;
+  /** The nudge is due for the first time: its durable notice has to be created. */
+  raise: boolean;
+  /** The answer window closed with the hold still in place. */
+  escalation: { fault: "planner" | "delivery"; detail: string } | null;
+}
+
+/**
+ * The planner's own hold answer cycle (nucleus#1419), from facts this pass already
+ * read. A generation first owes its nudge once the row has been hidden behind it
+ * for the hold bound; the nudge is the notice Spec 040 already delivered when
+ * there is one, else this pass raises it. From the later of the due time and a
+ * confirmed delivery, the planner has the answer window to release the hold or
+ * keep it into a fresh generation. The window closing with the hold still in place
+ * is the escalation: the hold is untouched and the row stays visible.
+ *
+ * Reads, sweeps and unchanged state are not an answer: only a released hold or a
+ * new generation answers, so nothing here changes a hold, a phase or a run.
+ */
+export function holdAnswerPlan(input: {
+  /** The notice this generation's nudge would carry when nothing else does. */
+  ownNoticeId: string;
+  /** Start of this generation: the fence's own placement or its first keep. */
+  since: string;
+  prior: PlannerHoldAnswer | null;
+  /** Whether the row is still hidden behind this hold. */
+  hidden: boolean;
+  /** Spec 040's prompt for this generation, already delivered to this planner. */
+  reminder: Notice | null;
+  /** Delivery of the notice this generation's record names. */
+  delivery: { delivered: boolean; error: string };
+  at: number;
+}): HoldAnswerOutcome {
+  const { prior, hidden, reminder, delivery, at } = input;
+  const now = new Date(at).toISOString();
+  if (prior?.unansweredAt)
+    return { answer: null, raise: false, escalation: null };
+  const dueMs = Date.parse(input.since) + ROW_HIDDEN_HOLD_MINUTES * 60_000;
+  const dueAt = new Date(dueMs).toISOString();
+  if (!prior) {
+    // Nothing is owed until the row has hidden behind this generation, and a
+    // planner nudge that never hid anything is not the row's news.
+    if (!hidden || at < dueMs)
+      return { answer: null, raise: false, escalation: null };
+    return {
+      answer: {
+        since: input.since,
+        dueAt,
+        noticeId: reminder?.id ?? input.ownNoticeId,
+        // A reminder Spec 040 already delivered is the nudge; this pass is the
+        // first pass that can prove the planner has it.
+        deliveredAt: reminder ? now : null,
+        unansweredAt: null,
+        deliveryFault: "",
+      },
+      raise: !reminder,
+      escalation: null,
+    };
+  }
+  const deliveredAt = prior.deliveredAt ?? (delivery.delivered ? now : null);
+  const windowStart = deliveredAt
+    ? Math.max(Date.parse(deliveredAt), Date.parse(prior.dueAt))
+    : Date.parse(prior.dueAt);
+  if (at < windowStart + HOLD_ANSWER_MINUTES * 60_000)
+    return {
+      answer:
+        deliveredAt !== prior.deliveredAt ? { ...prior, deliveredAt } : null,
+      raise: false,
+      escalation: null,
+    };
+  return {
+    answer: {
+      ...prior,
+      deliveredAt,
+      unansweredAt: now,
+      deliveryFault: deliveredAt ? "" : delivery.error,
+    },
+    raise: false,
+    escalation: deliveredAt
+      ? {
+          fault: "planner",
+          detail: `the planner did not release or keep the hold within ${HOLD_ANSWER_MINUTES} minutes of the nudge delivered at ${deliveredAt}`,
+        }
+      : {
+          fault: "delivery",
+          detail: `the nudge due at ${prior.dueAt} was not delivered${delivery.error ? `: ${delivery.error}` : ""}`,
+        },
+  };
 }
 
 /** The planner a hidden row's notice reaches: the ordinary attention route. */
@@ -406,14 +565,19 @@ export class HiddenRows {
     const attention = taskRowAttention(this.store, task);
     const hold = rowHiddenHold(task);
     const planner = rowHiddenRecipient(this.store, task);
+    // The planner's own hold owes a nudge and then an answer (nucleus#1419). This
+    // runs first, so a nudge it raises is the same notice the episode records and
+    // an escalation is in place before this pass's rows reconcile.
+    const answer = this.reconcileHoldAnswer(task, visibility, planner);
     const plan = rowHiddenPlan({
       task,
       attention,
       visibility,
       prior,
       at: Date.now(),
+      holdNudgeId: answer?.noticeId ?? null,
       reminderReachedPlanner: hold
-        ? holdReminderReachedPlanner(this.store, task, hold, planner)
+        ? Boolean(holdReminderNotice(this.store, task, hold, planner))
         : false,
     });
     if (plan.kind === "clear") {
@@ -471,6 +635,127 @@ export class HiddenRows {
       );
     }
     this.record(key, plan.record);
+  }
+
+  /**
+   * The planner's own hold's nudge and answer window for this pass
+   * (nucleus#1419). It reads the row's visibility and the durable notice evidence,
+   * writes the answer record on the hold's own fence (a new generation clears it)
+   * and records one event when the window closes. Nothing here touches the hold's
+   * reason, owner, condition or generation: only the planner's own `hold` or
+   * `keep_hold` answers it.
+   */
+  private reconcileHoldAnswer(
+    task: Task,
+    visibility: RowSnoozeVisibility,
+    planner: string | null,
+  ): PlannerHoldAnswer | null {
+    const subject = plannerHoldNeedingAnswer(task);
+    if (!subject) return null;
+    const { kind, fence } = subject;
+    const hold: RowHiddenHold = {
+      kind,
+      generation: fence.generation,
+      since: fence.at,
+      reason: fence.reason,
+      until: fence.until ?? null,
+    };
+    const prior = fence.plannerAnswer ?? null;
+    const reminder = holdReminderNotice(this.store, task, hold, planner);
+    const ownNoticeId = rowHiddenHoldNoticeId(task.id, kind, fence.generation);
+    const outcome = holdAnswerPlan({
+      ownNoticeId,
+      since: prior?.since ?? fence.at,
+      prior,
+      hidden: visibility.kind !== "clear",
+      reminder,
+      delivery: holdNoticeDelivery(
+        this.store,
+        task,
+        prior?.noticeId ?? reminder?.id ?? ownNoticeId,
+        planner,
+      ),
+      at: Date.now(),
+    });
+    if (outcome.raise) {
+      const attention = taskRowAttention(this.store, task);
+      const { text } = rowHiddenNoticeText({
+        task,
+        attention,
+        plan: {
+          kind: "due",
+          record: {
+            episode:
+              visibility.kind === "clear"
+                ? fence.at
+                : visibility.episodeStartedAt,
+            since: fence.at,
+            held: true,
+            noticeId: ownNoticeId,
+          },
+          noticeId: ownNoticeId,
+          answerWindow: true,
+          minutes: Math.max(
+            0,
+            Math.floor((Date.now() - Date.parse(fence.at)) / 60_000),
+          ),
+          failure: visibility.kind === "unknown" ? "unknown" : "missed",
+          ...(visibility.kind === "unknown"
+            ? { reason: visibility.reason }
+            : {}),
+          hold,
+        },
+        transition: rowHiddenTransition(this.store, task),
+      });
+      if (
+        !this.store.notices(task.id).some((notice) => notice.id === ownNoticeId)
+      ) {
+        this.store.putNotice({
+          id: ownNoticeId,
+          taskId: task.id,
+          agentId: planner ?? taskOwner(task),
+          recipientAgentId: "",
+          workspaceId: null,
+          sources: [],
+          originEntry: true,
+          kind: "row_hidden",
+          status: "pending",
+          error: "",
+          text,
+        });
+        this.store.event(
+          task.id,
+          "row_hidden_notified",
+          `${ownNoticeId}: hold; ${hold.generation} generation\n${text}`.slice(
+            0,
+            4000,
+          ),
+        );
+      }
+    }
+    if (outcome.escalation)
+      this.eventOnce(
+        task,
+        `${kind}-${fence.generation}`,
+        outcome.escalation.fault === "delivery"
+          ? "row_hidden_hold_undelivered"
+          : "row_hidden_hold_unanswered",
+        `hold generation ${fence.generation} (${kind}): ${outcome.escalation.detail}; the row is shown again until the planner releases or keeps this generation`,
+      );
+    if (outcome.answer) {
+      const latest = this.store.task(task.id);
+      const holds: TaskHolds = { ...(latest.holds ?? {}) };
+      const current = holds[kind];
+      if (current && current.generation === fence.generation)
+        this.store.update(
+          task.id,
+          syncHoldProjection({
+            ...holds,
+            [kind]: { ...current, plannerAnswer: outcome.answer },
+          }),
+        );
+    }
+    return outcome.answer ?? prior;
   }
 
   /** The row is shown, finished or no longer ours: no episode and no owed notice. */

@@ -130,6 +130,7 @@ function fixture(realSource = false, graceMs = 0) {
     idle(workerId, workspace);
     heads.set(submitted.id, head);
     bases.set(submitted.id, base);
+    const prNumber = heads.size;
     const task = store.update(submitted.id, {
       phase: "awaiting_review",
       workspaceIntent: true,
@@ -145,7 +146,7 @@ function fixture(realSource = false, graceMs = 0) {
       profile: worker,
       workerModel: worker.model,
       prHead: head,
-      prUrl: `https://github.com/example/repo/pull/${submitted.id.slice(0, 8)}`,
+      prUrl: `https://github.com/example/repo/pull/${prNumber}`,
       agentActive: false,
       lastAgentStatus: "idle",
       lastObservedAt: new Date().toISOString(),
@@ -155,11 +156,7 @@ function fixture(realSource = false, graceMs = 0) {
         eventId: `initial-${submitted.id}`,
         status: "ready_for_review",
         summary: "Ready",
-        prNumber:
-          Number.parseInt(
-            submitted.id.replace(/\D/g, "").slice(0, 6) || "1",
-            10,
-          ) || 1,
+        prNumber,
       },
     });
     return task;
@@ -184,6 +181,8 @@ function fixture(realSource = false, graceMs = 0) {
     verifyPrIdentity: async (t) => ({
       head: heads.get(t.id) ?? head,
       url: t.prUrl!,
+      repository: "example/repo",
+      headRepository: "example/repo",
     }),
     coveringEvidence: async (t) => ({
       head: t.prHead!,
