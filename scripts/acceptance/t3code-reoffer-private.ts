@@ -142,6 +142,7 @@ const digest = (path: string) => {
 
 type Projection = {
   thread: { id: string; title: string; pinnedAt?: string | null };
+  messages: Array<{ id: string; role: string; text: string }>;
   runs: Array<{ id: string; status: string }>;
   runtimeRequests: Array<{ id: string; kind: string; status: string }>;
   turnItems: Array<{
@@ -172,7 +173,7 @@ interface Environment {
   steps: Step[];
   children: ChildProcess[];
   sweepTimer: NodeJS.Timeout | null;
-  restartService: () => Promise<void>;
+  restartService: (gapMs?: number) => Promise<void>;
 }
 
 const field = (decisionId: string) => `nucleus_${decisionId}_1`;
@@ -528,7 +529,7 @@ async function startEnvironment(scratch: string): Promise<Environment> {
     steps: [],
     children,
     sweepTimer: null,
-    restartService: async () => {
+    restartService: async (gapMs = 4_000) => {
       // The callback socket is replaced: the service stops, its socket file goes, and a
       // new service binds the same path. The agent keeps running under T3, so its held
       // turn fails to reach Nucleus and ends, exactly as the live evidence shows.
@@ -536,7 +537,7 @@ async function startEnvironment(scratch: string): Promise<Environment> {
       env.sweepTimer = null;
       await env.service.stop();
       assert.equal(existsSync(env.socketPath), false, "the old socket is gone");
-      await delay(4_000);
+      await delay(gapMs);
       service = serviceOf(nucleusData);
       env.service = service;
       await service.start();
@@ -798,8 +799,138 @@ async function reofferScenarios(
   record(env, "final", { cardsPosted: posted, expectation: expect, cycles });
 }
 
+/**
+ * Fault lines shown on the Inbox thread. T3 may append a later chunk to the same assistant
+ * message, so the count is occurrences across message text, never a count of messages.
+ */
+async function faultLineCount(env: Environment): Promise<number> {
+  const p = await projection(env.rpc, env.inboxThreadId);
+  return p
+    ? p.messages.reduce(
+        (total, message) =>
+          total + (message.text.split("Nucleus is unreachable").length - 1),
+        0,
+      )
+    : -1;
+}
+
+/**
+ * nucleus#1400: a socket gap never ends a held turn. The Inbox's open decision keeps its
+ * one live card, its run stays live, and the same binding, session and pin remain. The
+ * short gap is a roll; the long gap is a sustained outage that shows one fault line.
+ */
+async function heldScenarios(env: Environment) {
+  const decision = await addDecision(env, "Proof socket gap");
+  const first = await until(
+    async () => cardFor(env, decision),
+    "the decision's first card",
+  );
+  const binding = digest(env.bindingPath).sha256;
+  const session = readAcpBinding(env.bindingPath).sessionId;
+  const pinnedAt = (await shell(env.rpc))?.threads.find(
+    (row) => row.id === env.inboxThreadId,
+  )?.pinnedAt;
+  assert.ok(pinnedAt, "the decision belongs to the pinned Inbox");
+  record(env, "card-offered", {
+    decision,
+    request: first.requestId,
+    run: first.runId,
+    session,
+  });
+  const postedBefore = await postedCount(env, decision);
+
+  const cases = [
+    { name: "roll-while-held", gapMs: 4_000 },
+    { name: "sustained-outage", gapMs: 40_000 },
+  ];
+  for (const testCase of cases) {
+    const before = await cardFor(env, decision);
+    assert.ok(before, `${testCase.name} starts with the live card`);
+    const faultsBefore = await faultLineCount(env);
+    assert.ok(
+      existsSync(env.socketPath),
+      "the callback socket exists before the gap",
+    );
+    await env.restartService(testCase.gapMs);
+    assert.ok(
+      existsSync(env.socketPath),
+      "the callback socket exists after the gap",
+    );
+    // The re-attached turn settles on the new service before the proof reads it.
+    await delay(8_000);
+    const after = await cardFor(env, decision);
+    const p = await projection(env.rpc, env.inboxThreadId);
+    assert.ok(p, "T3 returned the Inbox projection after the gap");
+    const run = p.runs.find((row) => row.id === before.runId);
+    assert.ok(
+      run && activeStatuses.has(run.status as never),
+      `${testCase.name} keeps the held run live`,
+    );
+    assert.equal(
+      after?.requestId,
+      before.requestId,
+      `${testCase.name} keeps the same live card, with no loss and no re-post`,
+    );
+    assert.equal(
+      await postedCount(env, decision),
+      postedBefore,
+      `${testCase.name} posts no card`,
+    );
+    assert.equal(
+      digest(env.bindingPath).sha256,
+      binding,
+      "the same binding remains",
+    );
+    assert.equal(
+      readAcpBinding(env.bindingPath).sessionId,
+      session,
+      "the same session remains",
+    );
+    const pin = (await shell(env.rpc))?.threads.find(
+      (row) => row.id === env.inboxThreadId,
+    )?.pinnedAt;
+    assert.equal(pin, pinnedAt, "the same Inbox thread is still pinned");
+    assert.equal(
+      await decisionStatus(env, decision),
+      "open",
+      `${testCase.name} leaves the decision open`,
+    );
+    const faults = (await faultLineCount(env)) - faultsBefore;
+    if (testCase.gapMs > 10_000)
+      assert.equal(faults, 1, "a sustained outage shows one fault line");
+    record(env, testCase.name, {
+      gapMs: testCase.gapMs,
+      run: before.runId,
+      runStatus: run.status,
+      sameCard: after?.requestId === before.requestId,
+      faultLinesAdded: faults,
+      title: await threadTitle(env),
+    });
+  }
+  record(env, "final", {
+    cardsPosted: await postedCount(env, decision),
+    expectation: "held",
+  });
+}
+
 export async function main() {
   const args = process.argv.slice(2);
+  if (args.includes("--expect=held")) {
+    const env = await startEnvironment(scratchRoot());
+    try {
+      await heldScenarios(env);
+      const path = join(env.root, "evidence.json");
+      writeFileSync(
+        path,
+        `${JSON.stringify({ nightlyLine: String(NIGHTLY_LINE), expectation: "held", steps: env.steps, logs: [{ name: "t3-server.log", ...digest(env.logPath) }] }, null, 2)}\n`,
+        { mode: 0o600 },
+      );
+      console.log(JSON.stringify({ passed: true, evidence: path }));
+    } finally {
+      await teardown(env);
+    }
+    return;
+  }
   const expect = args.includes("--expect=lost") ? "lost" : "reoffer";
   const cycleArg = args.find((arg) => arg.startsWith("--cycles="));
   const cycles = cycleArg

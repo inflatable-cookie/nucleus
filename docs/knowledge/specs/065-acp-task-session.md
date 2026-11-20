@@ -167,11 +167,21 @@ ends the turn with the reason rather than resending.
 
 ## Failure behaviour
 
-- The service unreachable at `session/new`/`session/load` refuses the session
-  with the reason: no session id is invented.
-- The service unreachable mid-turn ends the turn after three failed calls with
-  one line naming the failure. A turn nobody can release is worse than a
-  settling one.
+- The service unreachable at `session/new`/`session/load` waits on the same
+  bounded backoff as a held turn: six attach calls, about thirty seconds, so a
+  session open that meets a socket gap does not fail the provider's first turn. Then
+  it refuses with the reason: no session id is invented. A refused credential refuses
+  at once.
+- The service unreachable mid-turn (a Nucleus roll, or a callback socket being
+  replaced) does not end a held turn. The same session keeps polling after a
+  bounded, doubling wait (one second, capped at thirty), with no re-minted
+  binding and no manual restart, so the turn resumes once the socket answers.
+  After three consecutive failures it shows one fault line for the outage:
+  "Nucleus is unreachable (…); this turn stays open and resumes when Nucleus
+  answers." Only a release, `session/cancel` or a closed stdin ends the turn.
+  A `session/cancel` during a backoff ends it at once.
+- A refused credential (the callback socket answers 401) is permanent, so it is
+  the one transport failure that ends the turn, with one line naming the refusal.
 - A prompt while a turn is in flight is refused (`-32602`); the client cancels
   and sends the person's text as a new prompt, which is exactly how an ACP
   client steers.
@@ -188,8 +198,10 @@ initialize, new, load (and a mismatched load), a held prompt with the lifecycle
 line and its release, an operator prompt forwarded, an ignored wake prompt (also
 when it is the session's first prompt, so the operator's next message is still
 forwarded), an empty first prompt, cancel and the following steer, a prompt
-refused while in flight, a service that never answers, a service unreachable at
-session/new, the refusal codes, a closed stdin, and the launched entry point's
+refused while in flight, a service unreachable mid-turn (one fault line, the same
+session resumed, a card raised once across the outage, cancel during a backoff), a
+refused credential ending the turn, the real socket's 401 status on the wire, a
+service unreachable at session/new, the refusal codes, a closed stdin, and the launched entry point's
 missing-binding answer.
 
 `shared/acp/transport.ts` is the agent's socket client and `shared/acp/entry.ts`

@@ -13,6 +13,8 @@ import {
 } from "../shared/acp/agent";
 import { isLegacyT3Hold, T3_HOLD_TEXT } from "../shared/acp/t3-hold";
 import { runAcpAgentFromEnvironment } from "../shared/acp/entry";
+import { createAcpTransport } from "../shared/acp/transport";
+import { createServer } from "node:http";
 import { acpBindingSchema, type AcpBinding } from "../shared/acp/binding";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -654,24 +656,44 @@ test("a prompt while another turn is in flight is refused rather than queued", a
   await client.closed();
 });
 
-test("a service that never answers ends the turn with one explanation after bounded retries", async () => {
+/** The next agent message that matches, skipping the lines a prompt shows first. */
+async function nextMatching(
+  lines: ReturnType<typeof lineReader>,
+  matches: (message: Json) => boolean,
+): Promise<Json> {
+  for (;;) {
+    const message = await lines.next();
+    if (matches(message)) return message;
+  }
+}
+
+/** The fault line a held turn shows for one outage, counted in the agent's output. */
+const faultLines = (updates: Json[]): number =>
+  updates.filter((update) =>
+    JSON.stringify(update).includes("Nucleus is unreachable"),
+  ).length;
+
+test("a service that is unreachable mid-turn holds the turn quietly: one fault line, the same session, released only by the service", async () => {
+  let resolves = 0;
+  let polls = 0;
+  const transport: AcpSessionTransport = {
+    turn: async (input: AcpTurnRequest) => {
+      if (input.waitMs === 0) return reply("hold", ["nucleus#1304 · Working"]);
+      polls += 1;
+      if (polls <= 6)
+        throw new Error("connect ENOENT /nonexistent/callback.sock");
+      return reply("release", ["nucleus#1304 · Done"]);
+    },
+    message: async () => ({ receipt: { status: "delivered" } }),
+  };
   const client = harness({
     agent: {
-      maxTransportFailures: 2,
+      faultLineAfter: 2,
+      retryDelayMs: 1,
+      retryMaxDelayMs: 4,
       async resolve() {
-        return {
-          binding,
-          transport: {
-            turn: async (input: AcpTurnRequest) => {
-              if (input.waitMs === 0)
-                return reply("hold", ["nucleus#1304 · Working"]);
-              throw new Error("connect ENOENT /nonexistent/callback.sock");
-            },
-            message: async () => {
-              throw new Error("unreachable");
-            },
-          } satisfies AcpSessionTransport,
-        };
+        resolves += 1;
+        return { binding, transport };
       },
     },
   });
@@ -686,12 +708,329 @@ test("a service that never answers ends the turn with one explanation after boun
   assert.deepEqual(
     result.result,
     { stopReason: "end_turn" },
-    "a turn nobody can release is ended, not held",
+    "the turn ends when the service releases it, not when the socket fails",
+  );
+  assert.equal(
+    polls,
+    7,
+    "six failed polls, then the poll that the service answers",
+  );
+  assert.equal(
+    resolves,
+    1,
+    "the outage re-mints nothing: one binding, one session",
+  );
+  assert.equal(
+    faultLines(updates),
+    1,
+    "a sustained outage shows one fault line",
   );
   const text = JSON.stringify(updates);
-  assert.match(text, /Nucleus is unreachable/);
+  assert.match(text, /resumes when Nucleus answers/);
   assert.match(text, /ENOENT/);
+  assert.doesNotMatch(text, /ending this turn/);
+  assert.match(
+    text,
+    /nucleus#1304 · Done/,
+    "the service's line after recovery is shown",
+  );
   await client.closed();
+});
+
+test("each outage shows its own fault line, even when the failure reads the same as the last", async () => {
+  let polls = 0;
+  const transport: AcpSessionTransport = {
+    turn: async (input: AcpTurnRequest) => {
+      if (input.waitMs === 0) return reply("hold", ["nucleus#1304 · Working"]);
+      polls += 1;
+      // Two outages of three failed polls each, separated by one answered poll, then release.
+      if ((polls >= 1 && polls <= 3) || (polls >= 5 && polls <= 7))
+        throw new Error("connect ENOENT /nonexistent/callback.sock");
+      if (polls === 4 || polls === 8) return reply("hold");
+      return reply("release", ["nucleus#1304 · Done"]);
+    },
+    message: async () => ({ receipt: { status: "delivered" } }),
+  };
+  const client = harness({
+    agent: {
+      faultLineAfter: 3,
+      retryDelayMs: 1,
+      retryMaxDelayMs: 2,
+      async resolve() {
+        return { binding, transport };
+      },
+    },
+  });
+  await client.lines.untilResult(
+    client.request("session/new", { cwd: "/fixture/checkout" }),
+  );
+  const prompt = client.request("session/prompt", {
+    sessionId: binding.sessionId,
+    prompt: [{ type: "text", text: "opening" }],
+  });
+  const { updates, result } = await client.lines.untilResult(prompt);
+  assert.deepEqual(result.result, { stopReason: "end_turn" });
+  assert.equal(
+    faultLines(updates),
+    2,
+    "a repeated identical outage is shown again, not suppressed as a repeat of the last line",
+  );
+  await client.closed();
+});
+
+test("a socket replaced while the turn is held resumes the same session, with an open decision still one card", async () => {
+  const question = {
+    id: "decision-1",
+    version: 1,
+    headline: "Choose a path",
+    question: "Which path?",
+    choices: [{ label: "Yes", consequence: "Proceed" }],
+  };
+  let polls = 0;
+  const transport: AcpSessionTransport & {
+    answers: import("../shared/acp/surface").AcpAnswerInput[];
+  } = {
+    answers: [],
+    turn: async (input: AcpTurnRequest) => {
+      if (input.waitMs === 0) return reply("hold", ["nucleus#1304 · Working"]);
+      polls += 1;
+      // Poll 1 raises the card; the socket is replaced for polls 2-4; the new socket
+      // answers poll 5 with the same version still offered and the turn still held.
+      if (polls === 1) return { ...reply("hold"), elicitations: [question] };
+      if (polls <= 4) throw new Error("connect ECONNREFUSED callback.sock");
+      if (polls === 5) return { ...reply("hold"), elicitations: [question] };
+      return reply("release", ["nucleus#1304 · Done"]);
+    },
+    message: async () => ({ receipt: { status: "delivered" } }),
+    answer: async (input) => {
+      transport.answers.push(input);
+      return {};
+    },
+  };
+  let resolves = 0;
+  const client = harness({
+    agent: {
+      retryDelayMs: 1,
+      retryMaxDelayMs: 2,
+      faultLineAfter: 2,
+      async resolve() {
+        resolves += 1;
+        return { binding, transport };
+      },
+    },
+  });
+  await client.lines.untilResult(
+    client.request("session/new", { cwd: "/fixture/checkout" }),
+  );
+  const prompt = client.request("session/prompt", {
+    sessionId: binding.sessionId,
+    prompt: [{ type: "text", text: "opening" }],
+  });
+  const card = await nextMatching(
+    client.lines,
+    (message) => message.method === "elicitation/create",
+  );
+  client.respond(card.id, {
+    action: "accept",
+    content: { "nucleus_decision-1_1": "Yes" },
+  });
+  for (let i = 0; i < 200 && transport.answers.length < 1; i++)
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.deepEqual(
+    transport.answers.map((row) => [
+      row.id,
+      "answer" in row ? row.answer : null,
+    ]),
+    [["decision-1", "Yes"]],
+    "the answer routes on the same session after the socket returns",
+  );
+  const { updates, result } = await client.lines.untilResult(prompt);
+  assert.deepEqual(result.result, { stopReason: "end_turn" });
+  assert.equal(
+    resolves,
+    1,
+    "the same binding and session carried the whole outage",
+  );
+  assert.equal(
+    polls,
+    6,
+    "poll 5 re-offered the version and the card was not raised again",
+  );
+  assert.equal(faultLines(updates), 1);
+  await client.closed();
+});
+
+test("session/cancel ends a turn waiting out an outage at once, not after the backoff", async () => {
+  const client = harness({
+    agent: {
+      faultLineAfter: 1,
+      retryDelayMs: 60_000,
+      retryMaxDelayMs: 60_000,
+      async resolve() {
+        return {
+          binding,
+          transport: {
+            turn: async (input: AcpTurnRequest) => {
+              if (input.waitMs === 0)
+                return reply("hold", ["nucleus#1304 · Working"]);
+              throw new Error("connect ENOENT /nonexistent/callback.sock");
+            },
+            message: async () => ({ receipt: { status: "delivered" } }),
+          } satisfies AcpSessionTransport,
+        };
+      },
+    },
+  });
+  await client.lines.untilResult(
+    client.request("session/new", { cwd: "/fixture/checkout" }),
+  );
+  const prompt = client.request("session/prompt", {
+    sessionId: binding.sessionId,
+    prompt: [{ type: "text", text: "opening" }],
+  });
+  // The fault line shows the outage has begun, so the turn is now in its backoff.
+  await nextMatching(client.lines, (message) =>
+    JSON.stringify(message).includes("Nucleus is unreachable"),
+  );
+  client.notify("session/cancel", { sessionId: binding.sessionId });
+  const { result } = await client.lines.untilResult(prompt);
+  assert.deepEqual(result.result, { stopReason: "cancelled" });
+  await client.closed();
+});
+
+test("a refused credential is permanent: the held turn ends once with its reason instead of holding forever", async () => {
+  const client = harness({
+    agent: {
+      retryDelayMs: 1,
+      async resolve() {
+        return {
+          binding,
+          transport: {
+            turn: async (input: AcpTurnRequest) => {
+              if (input.waitMs === 0)
+                return reply("hold", ["nucleus#1304 · Working"]);
+              throw Object.assign(new Error("unauthorized"), { status: 401 });
+            },
+            message: async () => ({ receipt: { status: "delivered" } }),
+          } satisfies AcpSessionTransport,
+        };
+      },
+    },
+  });
+  await client.lines.untilResult(
+    client.request("session/new", { cwd: "/fixture/checkout" }),
+  );
+  const prompt = client.request("session/prompt", {
+    sessionId: binding.sessionId,
+    prompt: [{ type: "text", text: "opening" }],
+  });
+  const { updates, result } = await client.lines.untilResult(prompt);
+  assert.deepEqual(result.result, { stopReason: "end_turn" });
+  const text = JSON.stringify(updates);
+  assert.match(text, /refused this session's credential/);
+  assert.doesNotMatch(text, /resumes when Nucleus answers/);
+  await client.closed();
+});
+
+test("the callback socket's refusal reaches the agent with its status, and a socket that is gone carries none", async () => {
+  const dir = mkdtempSync(join(process.env.TMPDIR ?? tmpdir(), "acp-socket-"));
+  const socketPath = join(dir, "callback.sock");
+  const server = createServer((_request, response) => {
+    response.statusCode = 401;
+    response.end("unauthorized");
+  });
+  await new Promise<void>((resolve) => server.listen(socketPath, resolve));
+  const input: AcpTurnRequest = {
+    kind: "task",
+    taskId: binding.taskId,
+    sessionId: binding.sessionId,
+    waitMs: 0,
+  } as AcpTurnRequest;
+  try {
+    await assert.rejects(
+      createAcpTransport({ ...binding, socketPath }).turn(
+        input,
+        new AbortController().signal,
+      ),
+      (error: unknown) =>
+        (error as { status?: unknown }).status === 401 &&
+        /unauthorized/.test((error as Error).message),
+    );
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    rmSync(dir, { recursive: true, force: true });
+  }
+  await assert.rejects(
+    createAcpTransport({
+      ...binding,
+      socketPath: join(dir, "gone.sock"),
+    }).turn(input, new AbortController().signal),
+    (error: unknown) => (error as { status?: unknown }).status === undefined,
+    "an absent socket is an outage, which the held turn retries",
+  );
+});
+
+test("a session open that meets a socket gap waits on the same backoff, and a refused credential refuses at once", async () => {
+  let attaches = 0;
+  const transport: AcpSessionTransport = {
+    turn: async (input: AcpTurnRequest) => {
+      if (input.waitMs === 0) {
+        attaches += 1;
+        // The first two attaches meet the gap; the third reaches the socket again.
+        if (attaches <= 2)
+          throw new Error("connect ENOENT /nonexistent/callback.sock");
+        return reply("hold", ["nucleus#1304 · Working"]);
+      }
+      return reply("release", ["nucleus#1304 · Done"]);
+    },
+    message: async () => ({ receipt: { status: "delivered" } }),
+  };
+  const client = harness({
+    agent: {
+      retryDelayMs: 1,
+      async resolve() {
+        return { binding, transport };
+      },
+    },
+  });
+  const opened = await client.lines.untilResult(
+    client.request("session/new", { cwd: "/fixture/checkout" }),
+  );
+  assert.equal(
+    (opened.result.result as Json).sessionId,
+    binding.sessionId,
+    "the session opens on the same binding once the socket answers",
+  );
+  assert.equal(attaches, 3, "two gap attaches, then the answered one");
+  await client.closed();
+
+  let refusedAttaches = 0;
+  const refused = harness({
+    agent: {
+      retryDelayMs: 1,
+      async resolve() {
+        return {
+          binding,
+          transport: {
+            turn: async () => {
+              refusedAttaches += 1;
+              throw Object.assign(new Error("unauthorized"), { status: 401 });
+            },
+            message: async () => ({ receipt: { status: "delivered" } }),
+          } satisfies AcpSessionTransport,
+        };
+      },
+    },
+  });
+  const rejected = await refused.lines.untilResult(
+    refused.request("session/new", { cwd: "/fixture/checkout" }),
+  );
+  assert.match(
+    String((rejected.result.error as Json).message),
+    /Nucleus is unreachable/,
+  );
+  assert.equal(refusedAttaches, 1, "a refused credential is not retried");
+  await refused.closed();
 });
 
 test("a service that cannot be reached at session/new refuses the session instead of inventing one", async () => {

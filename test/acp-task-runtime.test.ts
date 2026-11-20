@@ -652,12 +652,7 @@ test("a same-shaped helper outside the connected server's app-server exempts not
     ),
     fact(900, 1, "/Applications/Other Host.app/Contents/MacOS/other-host", "/"),
     fact(710, 900, "/usr/local/bin/codex app-server", fixture.worktree),
-    fact(
-      CUA,
-      710,
-      "/provider/.local/bin/cua-driver mcp",
-      fixture.worktree,
-    ),
+    fact(CUA, 710, "/provider/.local/bin/cua-driver mcp", fixture.worktree),
     fact(
       REPL,
       710,
@@ -685,12 +680,7 @@ test("a same-shaped helper outside the connected server's app-server exempts not
     fact(SERVER, 1, "T3 Code (Nightly)", "/"),
     fact(711, 712, "/usr/local/bin/codex app-server", fixture.worktree),
     fact(712, SERVER, "/bin/zsh -lc 'codex app-server'", fixture.worktree),
-    fact(
-      713,
-      711,
-      "/provider/.local/bin/cua-driver mcp",
-      fixture.worktree,
-    ),
+    fact(713, 711, "/provider/.local/bin/cua-driver mcp", fixture.worktree),
   ];
   const possible = possibleParticipantRuntimePids(shellStarted);
   for (const pid of [711, 713])
