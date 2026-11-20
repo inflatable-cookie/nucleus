@@ -3534,3 +3534,102 @@ test("one retention pass over a T3 host removes a finished task's archived worke
   );
 });
 
+
+test("a native answer on a paged thread reads the retained question item, and a refusal names its pre-send step", async (t) => {
+  const { host, server, spec, workspace } = await fixture(t);
+  const created = await host.createAgent(spec());
+  const p = server.threads.get(created.id)!;
+  const at = (offset: number) =>
+    new Date(Date.parse(STAMP) + offset * 1_000).toISOString();
+  const questionItem = (requestId: string) =>
+    syntheticTurnItem(created.id, 1, {
+      type: "user_input_request",
+      id: `${requestId}-item`,
+      requestId,
+      runId: "synthetic-run-2",
+      nodeId: `synthetic-node-${requestId}`,
+      questions: [
+        {
+          id: "choice",
+          header: "Choice",
+          question: "Pick one?",
+          options: [{ label: "Yes" }, { label: "No" }],
+        },
+      ],
+      updatedAt: at(0),
+    });
+  // The question is the oldest row: the newest window drops it, but the pending request keeps it.
+  p.turnItems = [
+    questionItem("synthetic-question"),
+    ...Array.from({ length: 30 }, (_, index) =>
+      syntheticTurnItem(created.id, index + 2, {
+        type: "assistant_message",
+        runId: "synthetic-run-1",
+        updatedAt: at(index + 1),
+      }),
+    ),
+  ];
+  p.runtimeRequests = [
+    syntheticRuntimeRequest({
+      id: "synthetic-question",
+      kind: "user_input",
+      status: "pending",
+    }),
+  ];
+  server.controls.boundedRowLimit = 2;
+  await host.answerNativeQuestion(
+    created.id,
+    workspace.id,
+    "synthetic-question",
+    { Choice: "Yes" },
+  );
+  const answered = server.commands
+    .filter((command) => command.type === "runtime-request.respond")
+    .at(-1)!;
+  assert.equal(answered.requestId, "synthetic-question");
+  assert.deepEqual(answered.answers, { choice: ["Yes"] });
+  assert.equal(p.runtimeRequests[0].status, "resolved");
+
+  // A pending request whose question item the window does not carry is refused before
+  // any write, and the refusal names that step rather than a generic fence.
+  p.runtimeRequests.push(
+    syntheticRuntimeRequest({
+      id: "late-question",
+      kind: "user_input",
+      status: "pending",
+    }),
+  );
+  const sends = () =>
+    server.commands.filter(
+      (command) =>
+        command.type === "runtime-request.respond" &&
+        command.requestId === "late-question",
+    ).length;
+  await assert.rejects(
+    host.answerNativeQuestion(created.id, workspace.id, "late-question", {
+      Choice: "Yes",
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof ProvenPreSendRefusalError);
+      assert.match(
+        error.message,
+        /pending question item is outside the bounded timeline window; no answer was sent/,
+      );
+      return true;
+    },
+  );
+  assert.equal(sends(), 0);
+
+  // Once the item is retained, the same refused answer is delivered again, exactly once.
+  p.turnItems.push(questionItem("late-question"));
+  await host.answerNativeQuestion(created.id, workspace.id, "late-question", {
+    Choice: "Yes",
+  });
+  assert.equal(sends(), 1);
+  assert.deepEqual(
+    server.commands
+      .filter((command) => command.requestId === "late-question")
+      .at(-1)!.answers,
+    { choice: ["Yes"] },
+  );
+});

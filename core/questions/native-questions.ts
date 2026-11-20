@@ -11,6 +11,90 @@ import { retainedProgressRun } from "../dispatch/retained-work";
 import { digest } from "../store/store";
 import { qualifyLegacyAgentId } from "../../shared/agent-identity";
 import type { AnsweredQuestionRead } from "../../shared/host";
+import { ProvenPreSendRefusalError } from "../host/errors";
+import { operatorQuestionRecords } from "./question-events";
+import { HOST_KIND_LABELS, hostKindOf } from "../../shared/host-kind";
+
+/**
+ * Where one native question stands, read from its own latest outcome event. `open`
+ * has no outcome; `operator` waits for the operator's decision; `refused` was proven
+ * not sent and may be delivered again from its recorded answer; `intent` may have
+ * reached the host and is never resent; `settled` is final.
+ */
+export type NativeQuestionState =
+  | "open"
+  | "operator"
+  | "refused"
+  | "intent"
+  | "settled";
+
+const NATIVE_QUESTION_SETTLED = new Set([
+  "native_question_answered",
+  "native_question_stale_answered",
+  "native_question_unknown",
+  "native_question_unanswered",
+]);
+
+export function nativeQuestionState(
+  events: ReadonlyArray<{ kind: string; detail: string }>,
+  id: string,
+): NativeQuestionState {
+  let state: NativeQuestionState = "open";
+  for (const event of events) {
+    if (!event.detail.startsWith(`${id}:`)) continue;
+    if (event.kind === "native_question_response_intent") state = "intent";
+    else if (event.kind === "native_question_refused") state = "refused";
+    else if (event.kind === "native_question_operator") state = "operator";
+    else if (NATIVE_QUESTION_SETTLED.has(event.kind)) state = "settled";
+  }
+  return state;
+}
+
+/** The planner overtakes one answer carries; a recovered answer keeps them. */
+export interface NativeOvertake {
+  ids: string[];
+  label: string;
+}
+
+/**
+ * The answers and overtakes a native question's durable response intent recorded
+ * before its send. A recovered delivery sends these exact answers and asks nobody.
+ */
+export function recordedNativeAnswer(
+  events: ReadonlyArray<{ kind: string; detail: string }>,
+  id: string,
+): { answers: Record<string, string>; overtakes: NativeOvertake[] } | null {
+  const event = [...events]
+    .reverse()
+    .find(
+      (row) =>
+        row.kind === "native_question_response_intent" &&
+        row.detail.startsWith(`${id}:`),
+    );
+  const match = event
+    ? /; answers (\{.*\})(?:; overtakes (\[.*\]))?$/s.exec(event.detail)
+    : null;
+  if (!match) return null;
+  try {
+    const answers = JSON.parse(match[1]!) as unknown;
+    const overtakes = match[2]
+      ? (JSON.parse(match[2]) as NativeOvertake[])
+      : [];
+    if (
+      !answers ||
+      typeof answers !== "object" ||
+      Object.values(answers).some((value) => typeof value !== "string")
+    )
+      return null;
+    return { answers: answers as Record<string, string>, overtakes };
+  } catch {
+    return null;
+  }
+}
+
+/** The one Nucleus decision a native question's escalated question raises on the task. */
+export const operatorDecisionIdFor = (id: string, index: number): string =>
+  `native-question-${id}-${index}`;
 
 /** What an answered native question on a blocked worker or reviewer thread does. */
 export type AnsweredQuestionOutcome =
@@ -118,6 +202,12 @@ export class NativeQuestions {
         } catch {
           continue;
         }
+        // An operator card or a refused answer settles once its permission leaves the thread.
+        this.settleAbandonedQuestions(
+          task.id,
+          watch.agentId,
+          new Set(pending.map((request) => request.requestId)),
+        );
         for (const request of pending) {
           // Queue's own marked questions already have their own delegation and durable intent.
           if (
@@ -146,21 +236,19 @@ export class NativeQuestions {
                   request.requestId,
                 ]),
               );
+          if (this.resolution.responsibleQuestions.has(id)) continue;
+          // An intent that may have reached the host, or a settled question, is never
+          // asked or sent again. A refused intent is sent again from its own record, and
+          // an operator escalation resumes only once its decision is answered.
+          const state = nativeQuestionState(events, id);
+          if (state === "settled" || state === "intent") continue;
           if (
-            this.resolution.responsibleQuestions.has(id) ||
-            events.some(
-              (event) =>
-                [
-                  "native_question_answered",
-                  "native_question_operator",
-                  "native_question_unknown",
-                  "native_question_unanswered",
-                  "native_question_response_intent",
-                ].includes(event.kind) && event.detail.startsWith(`${id}:`),
-            )
+            state === "operator" &&
+            !this.operatorEscalationAnswered(task.id, id)
           )
             continue;
           if (
+            state === "open" &&
             events.some(
               (event) =>
                 event.kind === "native_question_delegated" &&
@@ -260,17 +348,49 @@ export class NativeQuestions {
     signal: AbortSignal,
   ): Promise<void> {
     const task = this.store.task(taskId);
+    // A refused answer already holds its recorded answers: deliver those, and ask nobody.
+    const recorded = nativeQuestionState(this.store.eventsAll(taskId), id);
+    if (recorded === "refused") {
+      const intent = recordedNativeAnswer(this.store.eventsAll(taskId), id);
+      if (!intent) return;
+      await this.sendNativeAnswer({
+        taskId,
+        hostId: task.hostId,
+        agentId,
+        workspaceId,
+        id,
+        requestId: request.requestId,
+        answers: intent.answers,
+        plannerOvertakes: intent.overtakes,
+        records: [
+          `Recovered the recorded answer after a refused delivery: ${JSON.stringify(intent.answers)}`,
+        ],
+        recordIntent: false,
+      });
+      return;
+    }
     // Task 1109: the task's own planner is asked first; the project planner is the fallback rung.
     const { rungs, issue } = await this.resolution.plannerRungsFor(task);
     const answers: Record<string, string> = {};
     const records: string[] = [];
-    const plannerOvertakes: Array<{ ids: string[]; label: string }> = [];
+    const plannerOvertakes: NativeOvertake[] = [];
     for (const [index, question] of request.questions.entries()) {
       const planners = plannerWindows(
         this.resolution,
         `queue-native-${id}-${index}`,
         rungs,
       );
+      // An operator's answer to this question is the answer; no planner is asked again.
+      const decided = this.operatorAnswerFor(taskId, id, index);
+      if (decided !== null) {
+        Object.defineProperty(answers, question.header, {
+          value: decided,
+          enumerable: true,
+          configurable: true,
+        });
+        records.push(`Answered by operator: ${decided}`);
+        continue;
+      }
       if (issue) {
         const detail = `${id}: ${issue}`;
         if (
@@ -345,7 +465,25 @@ export class NativeQuestions {
         this.store.event(
           taskId,
           "native_question_operator",
-          `${id}: Operator decision needed — ${reply.reason}`.slice(0, 4000),
+          `${id}: agent ${agentId}; permission ${request.requestId}; Operator decision needed — ${reply.reason}`.slice(
+            0,
+            4000,
+          ),
+        );
+        // One decision on the task raises the question on its parent card; its answer
+        // applies to this same permission, once, through the resumed answer above.
+        this.resolution.ensureQueueRaiseDecision(
+          this.store.task(taskId),
+          {
+            id: operatorDecisionIdFor(id, index),
+            kind: "process",
+            question: question.question,
+            options: question.options,
+          },
+          `The ${HOST_KIND_LABELS[hostKindOf(task.hostId)]} native question needs the operator: ${reply.reason}`.slice(
+            0,
+            1000,
+          ),
         );
         return;
       }
@@ -372,11 +510,158 @@ export class NativeQuestions {
           ),
         });
     }
+    await this.sendNativeAnswer({
+      taskId,
+      hostId: task.hostId,
+      agentId,
+      workspaceId,
+      id,
+      requestId: request.requestId,
+      answers,
+      plannerOvertakes,
+      records,
+      recordIntent: true,
+    });
+  }
+
+  /** The operator's answer to one escalated question, or null while it is unanswered. */
+  private operatorAnswerFor(
+    taskId: string,
+    id: string,
+    index: number,
+  ): string | null {
+    return this.operatorDecisions(taskId, id).get(index)?.answer ?? null;
+  }
+
+  /** Whether every operator escalation of one native question has its answer. */
+  private operatorEscalationAnswered(taskId: string, id: string): boolean {
+    const decisions = [...this.operatorDecisions(taskId, id).values()];
+    return (
+      decisions.length > 0 && decisions.every((row) => row.answer !== null)
+    );
+  }
+
+  /** The decisions one native question raised on its task, keyed by question index. */
+  private operatorDecisions(
+    taskId: string,
+    id: string,
+  ): Map<
+    number,
+    { viewId: string; version: number; answer: string | null }
+  > {
+    const events = this.store.eventsAll(taskId);
+    const prefix = `native-question-${id}-`;
+    const decisions = new Map<
+      number,
+      { viewId: string; version: number; answer: string | null }
+    >();
+    for (const [decisionId, record] of operatorQuestionRecords(events)) {
+      if (!decisionId.startsWith(prefix) || !record.link) continue;
+      const index = Number(decisionId.slice(prefix.length));
+      if (!Number.isInteger(index)) continue;
+      let view;
+      try {
+        view = new Decisions(this.store).get({ id: record.link.decisionId });
+      } catch {
+        continue;
+      }
+      decisions.set(index, {
+        viewId: view.id,
+        version: view.version,
+        answer:
+          view.status === "answered" && view.answer ? view.answer.text : null,
+      });
+    }
+    return decisions;
+  }
+
+  /**
+   * A native question whose permission left the thread settles without a send. An operator
+   * card is withdrawn, so the parent card clears; a refused answer is closed as stale. Either
+   * way the escalation or refusal ends with no second answer.
+   */
+  private settleAbandonedQuestions(
+    taskId: string,
+    agentId: string,
+    pendingIds: Set<string>,
+  ): void {
+    for (const event of this.store.eventsAll(taskId)) {
+      if (
+        event.kind !== "native_question_operator" &&
+        event.kind !== "native_question_refused"
+      )
+        continue;
+      const match = /^([^:]+): agent (\S+); permission (\S+); /.exec(
+        event.detail,
+      );
+      if (!match || match[2] !== agentId) continue;
+      const id = match[1]!;
+      const requestId = match[3]!;
+      const state = nativeQuestionState(this.store.eventsAll(taskId), id);
+      if (pendingIds.has(requestId) || state !== (event.kind === "native_question_operator" ? "operator" : "refused"))
+        continue;
+      if (event.kind === "native_question_operator")
+        this.withdrawOperatorCards(taskId, id);
+      this.store.event(
+        taskId,
+        "native_question_stale_answered",
+        `${id}: permission ${requestId}; ${event.kind === "native_question_operator" ? "operator decision withdrawn" : "refused answer not sent"}; no effect because the permission was already answered on the thread`.slice(
+          0,
+          4000,
+        ),
+      );
+    }
+  }
+
+  /** Withdraw every open operator card one native question raised. */
+  private withdrawOperatorCards(taskId: string, id: string): void {
+    for (const row of this.operatorDecisions(taskId, id).values()) {
+      if (row.answer !== null) continue;
+      try {
+        new Decisions(this.store).withdraw({
+          id: row.viewId,
+          version: row.version,
+          reason: "The permission was answered on the thread",
+          withdrawnBy: "nucleus",
+        });
+      } catch {
+        /* the decision already moved on; its own record stands */
+      }
+    }
+  }
+
+  /**
+   * The one pre-send path for a native answer, shared by a new answer and a recovered one.
+   * A new answer records its intent first. A recovered answer reuses the intent it recorded
+   * (proven refused, so never sent): nothing is re-asked and no second intent is written.
+   */
+  private async sendNativeAnswer(input: {
+    taskId: string;
+    hostId: string | null | undefined;
+    agentId: string;
+    workspaceId: string;
+    id: string;
+    requestId: string;
+    answers: Record<string, string>;
+    plannerOvertakes: NativeOvertake[];
+    records: string[];
+    recordIntent: boolean;
+  }): Promise<void> {
+    const {
+      taskId,
+      agentId,
+      workspaceId,
+      id,
+      requestId,
+      answers,
+      plannerOvertakes,
+      records,
+    } = input;
     const current = this.store.task(taskId);
     if (
       current.removedAt ||
       ["done", "cancelled"].includes(current.phase) ||
-      current.hostId !== task.hostId ||
+      current.hostId !== input.hostId ||
       !current.hostId ||
       (current.agentId !== agentId &&
         current.resolution.reviewerAgentId !== agentId)
@@ -388,22 +673,10 @@ export class NativeQuestions {
       )
     )
       throw new DelegatedHostUnavailable("Native question host is offline");
-    // The command receipt authorizes an answer, not replay of an uncertain host response.
-    if (
-      this.store
-        .eventsAll(taskId)
-        .some(
-          (event) =>
-            event.kind === "native_question_response_intent" &&
-            event.detail.startsWith(`${id}:`),
-        )
-    )
-      return;
     // A permission that has left the thread was answered there: that answer wins. A failed read proves nothing.
     const stillPending =
       (await this.adapter.pendingQuestions?.(agentId).then(
-        (pending) =>
-          pending.some((item) => item.requestId === request.requestId),
+        (pending) => pending.some((item) => item.requestId === requestId),
         () => true,
       )) ?? true;
     if (!stillPending) {
@@ -423,17 +696,30 @@ export class NativeQuestions {
       )
     )
       throw new DelegatedHostUnavailable("Native question host is offline");
-    this.store.event(
-      taskId,
-      "native_question_response_intent",
-      `${id}: agent ${agentId}; permission ${request.requestId}; answers ${JSON.stringify(answers)}`,
-    );
-    await this.adapter.answerNativeQuestion!(
-      agentId,
-      workspaceId,
-      request.requestId,
-      answers,
-    );
+    if (input.recordIntent)
+      this.store.event(
+        taskId,
+        "native_question_response_intent",
+        `${id}: agent ${agentId}; permission ${requestId}; answers ${JSON.stringify(answers)}${
+          plannerOvertakes.length
+            ? `; overtakes ${JSON.stringify(plannerOvertakes)}`
+            : ""
+        }`,
+      );
+    try {
+      await this.adapter.answerNativeQuestion!(
+        agentId,
+        workspaceId,
+        requestId,
+        answers,
+      );
+    } catch (error) {
+      // Only a proven pre-send refusal is recoverable: nothing was written, so the
+      // recorded answer is delivered again. Any other error stays an unknown delivery.
+      if (!(error instanceof ProvenPreSendRefusalError)) throw error;
+      this.recordRefusedAnswer(taskId, id, agentId, requestId, error.message);
+      return;
+    }
     if (plannerOvertakes.length)
       this.store.transaction(() => {
         const decisions = new Decisions(this.store);
@@ -475,6 +761,30 @@ export class NativeQuestions {
         "native_question_answered",
         `${id}: ${record}`.slice(0, 4000),
       );
+  }
+
+  /** A proven refusal is recorded once per distinct reason; the next pass delivers the recorded answer. */
+  private recordRefusedAnswer(
+    taskId: string,
+    id: string,
+    agentId: string,
+    requestId: string,
+    reason: string,
+  ): void {
+    const detail =
+      `${id}: agent ${agentId}; permission ${requestId}; ${reason}; no answer was sent; the recorded answer is delivered again`.slice(
+        0,
+        4000,
+      );
+    const last = [...this.store.eventsAll(taskId)]
+      .reverse()
+      .find(
+        (event) =>
+          event.kind === "native_question_refused" &&
+          event.detail.startsWith(`${id}:`),
+      );
+    if (last?.detail === detail) return;
+    this.store.event(taskId, "native_question_refused", detail);
   }
   async resumeResponsibleAnsweredQuestions(scopedHost?: string): Promise<void> {
     if (this.resolution.paused()) return;

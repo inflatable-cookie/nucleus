@@ -460,7 +460,11 @@ export class T3IntentLedger {
             ? new ProvenPreSendRefusalError(
                 error instanceof T3RpcError
                   ? error.message
-                  : "T3Code send fence refused before delivery",
+                  : // A local read or build failure before the write names its own reason.
+                    // The generic text hid which pre-send step refused.
+                    error instanceof Error && error.message
+                    ? `T3Code send fence refused before delivery: ${error.message.slice(0, 500)}`
+                    : "T3Code send fence refused before delivery",
               )
             : null;
       if (refusal)
