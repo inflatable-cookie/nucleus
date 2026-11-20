@@ -158,6 +158,9 @@ test("real admission gives one free slot to healthy hosts while a BB host waits,
     });
     const engine = new Engine(store, adapter, 0);
     store.setMeta("paused", false);
+    // The archived-thread retention pass reads each host hourly on its own detached
+    // lane; this fixture measures the audit pass's own bound, so keep that lane idle.
+    store.setMeta("lastThreadRetentionAt", Date.now());
     store.setMeta(
       "globalLimit",
       refusal === "hung operation" ? 2 : refusal === "hung BB pass" ? 3 : 1,

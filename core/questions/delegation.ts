@@ -1375,8 +1375,47 @@ export class Delegation {
       normalizeRepositoryOrigin(task.repository ?? ""),
     );
     if (!project) return { planner: null, failed: false };
-    const { thread } = await this.resolution.responsibleThread(project);
-    return { planner: thread?.agentId ?? null, failed: false };
+    // Spec 058: a registered planner whose thread is missing or archived is gone
+    // for routing. The project row is cleared by the observing pass
+    // (`refreshResponsibleThreads`), never by this read.
+    const assigned = await this.resolution.plannerPresence.observeProjectPlanner(
+      project,
+    );
+    // A planner the observing pass cleared for a missing or archived thread leaves
+    // the episode on the project, so routing still treats the rung as failed.
+    const clearedForGone =
+      !assigned &&
+      this.store
+        .eventsAll(`project:${project.key}`)
+        .some((event) => event.kind === "project_planner_missing_notified");
+    const named = taskPlanner(task);
+    const namedGone =
+      !assigned && !isOperatorOrigin(named)
+        ? await this.resolution.plannerPresence
+            .plannerThreadGone(named)
+            .catch(() => false)
+        : false;
+    const gone =
+      assigned?.state.kind === "gone" || clearedForGone || namedGone;
+    const queue = this.store.queueProject();
+    // A gone or cleared project planner falls back to the Queue planner, the
+    // Nucleus planner the planner chain names.
+    const target =
+      gone && queue && queue.key !== project.key ? queue : project;
+    const { thread } = await this.resolution.responsibleThread(target);
+    // A responsible thread names its host; a planner on this task's own host is
+    // recorded by its native identity, as the planner rung itself is.
+    const planner = thread?.agentId ?? null;
+    if (!planner) return { planner: null, failed: gone };
+    let native = planner;
+    try {
+      const parsed = parseAgentId(planner);
+      if (parsed && (!task.hostId || parsed.hostId === task.hostId))
+        native = parsed.nativeAgentId;
+    } catch {
+      /* a malformed identity stays as it is and is refused where it is used */
+    }
+    return { planner: native, failed: gone };
   }
 
   /**

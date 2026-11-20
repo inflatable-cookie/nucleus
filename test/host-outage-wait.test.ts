@@ -330,7 +330,7 @@ test('a long-outage notice pending when its planner is unreachable is superseded
     const pending = f.store.notices().filter(notice => notice.kind === 'host_outage');
     assert.equal(pending.length, 1, 'the notice is raised for the project');
     assert.equal(pending[0]!.status, 'pending', 'and waits for its planner');
-    assert.match(pending[0]!.error, /No live responsible thread/);
+    assert.match(pending[0]!.error, /Waiting for host paseo:synthetic-planner/);
     const plannerSends = () => f.sends.filter(send => send.agentId === 'planner-a');
     assert.equal(plannerSends().length, 0);
     const recordedText = pending[0]!.text;

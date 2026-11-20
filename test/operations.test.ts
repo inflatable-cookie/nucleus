@@ -199,7 +199,7 @@ test('same-task versioned controls stay ordered and a stale version fails before
   } finally { await f.close(); }
 });
 
-test('identical retries reopen one failed task control and keep its identity and attempt count', async () => {
+test('an identical restart on a visible worker creation binds it once and keeps one operation identity', async () => {
   const f = fixture();
   try {
     const created = dispatched(f.store, '/project-a');
@@ -209,36 +209,31 @@ test('identical retries reopen one failed task control and keep its identity and
     });
     f.store.setCredential('absent-run', 'absent-token');
     f.store.setMeta('paused', false);
-    let matches = 1;
     let lookups = 0;
-    f.adapter.findAgents = async () => { lookups++; return matches ? [{ id: 'still-visible', workspaceId: 'ws-absent' }] : []; };
+    (f.adapter as unknown as { findRunAgents: () => Promise<Array<{ id: string; workspaceId: string }>> }).findRunAgents = async () => { lookups++; return [{ id: 'still-visible', workspaceId: 'ws-absent' }]; };
     const payload = resumeWorker(absent);
-    const request = { key: 'failed-control-retry', kind: 'task_control' as const, payload, taskId: absent.id, expectedVersion: absent.version };
+    const request = { key: 'visible-creation-retry', kind: 'task_control' as const, payload, taskId: absent.id, expectedVersion: absent.version };
     const first = opened(await f.engine.startOperation(request));
-    const failed = await f.engine.awaitOperation(first.id);
-    assert.equal(failed.state, 'failed');
-    assert.match(failed.diagnostic, /no longer proven absent/);
-    assert.equal(failed.attempts, 1);
-    matches = 0;
+    const settled = await f.engine.awaitOperation(first.id);
+    // A creation an exact lookup finds visible is bound, never replayed (#1376).
+    assert.equal(settled.state, 'succeeded');
+    assert.equal(lookups, 1, 'one exact lookup proves the creation');
+    assert.equal(f.store.task(absent.id).agentId, 'still-visible', 'the visible creation is bound, not replaced');
+    // Identical retries return the recorded decision and never issue the effect again.
     const retries = await Promise.all(Array.from({ length: 5 }, () => f.engine.startOperation(request)));
     for (const retry of retries) {
       const operation = opened(retry);
       assert.equal(operation.id, first.id);
       assert.equal(operation.createdAt, first.createdAt);
-      assert.ok([1, 2].includes(operation.attempts));
-      assert.ok(['pending', 'running'].includes(operation.state));
+      assert.equal(operation.state, 'succeeded');
     }
-    const succeeded = await f.engine.awaitOperation(first.id);
-    assert.equal(succeeded.state, 'succeeded');
-    assert.equal(succeeded.attempts, 2);
-    assert.equal(lookups, 2, 'concurrent acceptance schedules one re-run');
+    assert.equal(lookups, 1, 'a settled identical retry issues no second lookup');
     assert.equal(f.store.operations({ limit: 50 }).length, 1);
-    assert.ok(f.store.task(absent.id).version > absent.version);
     await assert.rejects(f.engine.startOperation({ ...request, payload: resumeWorker(absent, 'Changed instruction') }), /different input/);
   } finally { await f.close(); }
 });
 
-test('an uncertain external effect is recorded as durable intent, not retried blindly', async () => {
+test('an unreadable worker lookup records a visible wait and is never retried blindly', async () => {
   const f = fixture();
   try {
     const created = dispatched(f.store, '/project-a');
@@ -248,23 +243,27 @@ test('an uncertain external effect is recorded as durable intent, not retried bl
     });
     f.store.setCredential('absent-run', 'absent-token');
     f.store.setMeta('paused', false);
-    f.adapter.findAgents = async () => { throw new Error('connection lost while looking up the worker'); };
+    let lookups = 0;
+    (f.adapter as unknown as { findRunAgents: () => Promise<never> }).findRunAgents = async () => { lookups++; throw new Error('connection lost while looking up the worker'); };
     const payload = resumeWorker(absent);
-    const acceptance = await f.engine.startOperation({ key: 'uncertain', kind: 'task_control', payload, taskId: absent.id, expectedVersion: absent.version });
+    const request = { key: 'uncertain', kind: 'task_control' as const, payload, taskId: absent.id, expectedVersion: absent.version };
+    const acceptance = await f.engine.startOperation(request);
     assert.ok('accepted' in acceptance);
     const settled = await f.engine.awaitOperation(opened(acceptance).id);
-    assert.equal(settled.state, 'needs_attention');
-    assert.match(settled.diagnostic, /connection lost/);
-    assert.equal(settled.effect?.status, 'uncertain');
+    // The unknown lookup is recorded as a visible wait on the task, not replayed.
+    assert.equal(settled.state, 'succeeded');
     assert.equal(settled.effect?.kind, 'task_control');
-    assert.equal(settled.attempts, 1);
+    assert.equal(lookups, 1, 'the unreadable lookup is issued once');
+    const waiting = f.store.task(absent.id);
+    assert.match(waiting.resolution.stop?.detail ?? waiting.reason, /connection lost while looking up the worker/,
+      'the wait names the unreadable lookup');
     // Repeating the same command returns the same durable decision and never
     // issues the effect again.
-    const replay = await f.engine.startOperation({ key: 'uncertain', kind: 'task_control', payload, taskId: absent.id, expectedVersion: absent.version });
+    const replay = await f.engine.startOperation(request);
     assert.ok('accepted' in replay);
     assert.equal(replay.operation.id, acceptance.operation.id);
-    assert.equal(replay.operation.state, 'needs_attention');
-    assert.equal(replay.operation.attempts, 1);
+    assert.equal(replay.operation.state, 'succeeded');
+    assert.equal(lookups, 1, 'a settled identical retry re-runs no lookup');
   } finally { await f.close(); }
 });
 

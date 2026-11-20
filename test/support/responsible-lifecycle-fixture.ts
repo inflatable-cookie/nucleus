@@ -251,6 +251,23 @@ export function fixture(
     originAgent: async (id: string) => ({
       id, workspaceId: states.get(id)?.workspaceId ?? "workspace", title: id, archived: archivedAgents.has(id),
     }),
+    // The responsible-thread resolver reads one bounded host inventory (1373): the
+    // registered planner threads plus every agent this fixture observed.
+    listLiveAgents: async () => {
+      const ids = new Set<string>(states.keys());
+      for (const project of store.projects())
+        if (project.planner?.agentId) ids.add(project.planner.agentId);
+      // A delegated case can make the assigned planner gone without archiving it
+      // through a verb; the inventory must agree with `originAgent` about that.
+      const gone = (id: string) =>
+        archivedAgents.has(id) ||
+        (id === "planner-1" &&
+          (options.delegates?.plannerArchived === true ||
+            options.delegates?.plannerMissing === true));
+      return [...ids]
+        .filter((id) => !gone(id))
+        .map((id) => ({ id, title: id, workspaceId: "workspace" }));
+    },
     archiveAgent: async (id: string) => {
       archivedAgents.add(id);
       const state = states.get(id);
