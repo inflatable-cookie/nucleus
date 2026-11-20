@@ -75,8 +75,13 @@ test("1421 rendered: a plain click replaces the selection, Shift-click toggles o
   ui.press(/^Projects, /);
   assert.ok(ui.get("Project selector"));
   assert.equal(ui.ofType("Modal").length, 0, "a popover at the wide size");
+  assert.equal(
+    ui.get(/^Project consumer-b-v2/).props.accessibilityLabel,
+    "Project consumer-b-v2, 0 tasks",
+    "the zero total is included in the accessible project name",
+  );
   // A plain click from empty selects one project and closes the picker.
-  ui.press("Project consumer-b-v2");
+  ui.press(/^Project consumer-b-v2/);
   assert.deepEqual(seen!.projects, ["consumer-b-v2"]);
   assert.equal(
     ui.query("Project selector"),
@@ -85,7 +90,7 @@ test("1421 rendered: a plain click replaces the selection, Shift-click toggles o
   );
   // A plain click from a single selection replaces it.
   ui.press(/^Projects, /);
-  ui.press("Project project-a-accelerator");
+  ui.press(/^Project project-a-accelerator/);
   assert.deepEqual(seen!.projects, ["project-a-accelerator"]);
   assert.equal(ui.query("Project selector"), undefined);
   assert.equal(
@@ -94,33 +99,33 @@ test("1421 rendered: a plain click replaces the selection, Shift-click toggles o
   );
   // Clicking the sole selected project keeps it selected.
   ui.press(/^Projects, /);
-  ui.press("Project project-a-accelerator");
+  ui.press(/^Project project-a-accelerator/);
   assert.deepEqual(seen!.projects, ["project-a-accelerator"]);
   assert.equal(ui.query("Project selector"), undefined);
   // Shift-click adds one project and keeps the picker open (the React Native
   // event shape, with the DOM event under nativeEvent).
   ui.press(/^Projects, /);
-  ui.press("Project consumer-b-v2", { nativeEvent: { shiftKey: true } });
+  ui.press(/^Project consumer-b-v2/, { nativeEvent: { shiftKey: true } });
   assert.deepEqual(seen!.projects, ["project-a-accelerator", "consumer-b-v2"]);
   assert.ok(
     ui.get("Project selector"),
     "the picker stays open for a sequence of Shift-clicks",
   );
   assert.equal(
-    ui.get("Project consumer-b-v2").props.accessibilityState.checked,
+    ui.get(/^Project consumer-b-v2/).props.accessibilityState.checked,
     true,
   );
-  assert.equal(ui.get("Project other").props.accessibilityState.checked, false);
+  assert.equal(ui.get(/^Project other/).props.accessibilityState.checked, false);
   assert.equal(
     ui.get(/^Projects, /).props.accessibilityLabel,
     "Projects, 2 projects",
   );
   // Shift-click with the React Native Web top-level shape removes one project.
-  ui.press("Project project-a-accelerator", { shiftKey: true });
+  ui.press(/^Project project-a-accelerator/, { shiftKey: true });
   assert.deepEqual(seen!.projects, ["consumer-b-v2"]);
   assert.ok(ui.get("Project selector"));
   // Shift-click removes the last one: empty means all projects.
-  ui.press("Project consumer-b-v2", { nativeEvent: { shiftKey: true } });
+  ui.press(/^Project consumer-b-v2/, { nativeEvent: { shiftKey: true } });
   assert.deepEqual(seen!.projects, []);
   assert.equal(
     ui.get(/^Projects, /).props.accessibilityLabel,
@@ -182,7 +187,7 @@ test("1421 bundled: the Shift modifier survives the real client bundle (RN Web e
   }
   const ui = mount(h(Harness));
   ui.press(/^Projects, /);
-  ui.press("Project consumer-b-v2", { shiftKey: true });
+  ui.press(/^Project consumer-b-v2/, { shiftKey: true });
   assert.deepEqual(
     seen,
     [["consumer-b-v2"]],
@@ -192,7 +197,7 @@ test("1421 bundled: the Shift modifier survives the real client bundle (RN Web e
     ui.get("Project selector"),
     "the bundled picker stays open on Shift-click",
   );
-  ui.press("Project consumer-b-v2");
+  ui.press(/^Project consumer-b-v2/);
   assert.deepEqual(
     seen[seen.length - 1],
     ["consumer-b-v2"],
@@ -238,7 +243,7 @@ test("026-14b rendered: single-select, clear to all, and the selector's Enabled 
   ui.press(/^Projects, /);
   assert.ok(ui.get("Project selector"));
   assert.equal(ui.ofType("Modal").length, 0, "a popover at the wide size");
-  ui.press("Project consumer-b-v2");
+  ui.press(/^Project consumer-b-v2/);
   assert.deepEqual(seen!.projects, ["consumer-b-v2"]);
   assert.equal(
     ui.get(/^Projects, /).props.accessibilityLabel,
@@ -246,15 +251,15 @@ test("026-14b rendered: single-select, clear to all, and the selector's Enabled 
   );
   // Shift-click builds the multi-project selection the switch test needs.
   ui.press(/^Projects, /);
-  ui.press("Project project-a-accelerator", {
+  ui.press(/^Project project-a-accelerator/, {
     nativeEvent: { shiftKey: true },
   });
   assert.deepEqual(seen!.projects, ["consumer-b-v2", "project-a-accelerator"]);
   assert.equal(
-    ui.get("Project consumer-b-v2").props.accessibilityState.checked,
+    ui.get(/^Project consumer-b-v2/).props.accessibilityState.checked,
     true,
   );
-  assert.equal(ui.get("Project other").props.accessibilityState.checked, false);
+  assert.equal(ui.get(/^Project other/).props.accessibilityState.checked, false);
   assert.equal(
     ui.get(/^Projects, /).props.accessibilityLabel,
     "Projects, 2 projects",
@@ -295,7 +300,7 @@ test("026-14b rendered: single-select, clear to all, and the selector's Enabled 
       .all(/^Project /)
       .filter((node) => node.props.accessibilityRole === "checkbox")
       .map((node) => node.props.accessibilityLabel),
-    ["Project project-a-accelerator"],
+    ["Project project-a-accelerator, 0 tasks"],
   );
   ui.type("Filter projects", "");
   ui.press("Clear project selection");
@@ -364,7 +369,7 @@ test("Spec 027 #11 rendered selector lists parked projects under Parked for scop
     undefined,
     "unpark lives in Settings → Projects",
   );
-  ui.press("Project project-a-accelerator");
+  ui.press(/^Project project-a-accelerator/);
   assert.deepEqual(
     chosen,
     [["project-a-accelerator"]],
@@ -701,9 +706,9 @@ test("026-14a/14b rendered Planning: two selected projects show both plans, none
 
   const wide = mount(h(Harness, { compact: false, storage: fresh() }));
   wide.press(/^Projects, /);
-  wide.press("Project consumer-b-v2");
+  wide.press(/^Project consumer-b-v2/);
   wide.press(/^Projects, /);
-  wide.press("Project project-a-accelerator", {
+  wide.press(/^Project project-a-accelerator/, {
     nativeEvent: { shiftKey: true },
   });
   assert.deepEqual(
@@ -736,14 +741,14 @@ test("026-14a/14b rendered Planning: two selected projects show both plans, none
   assert.equal(wide.query("Save project-a-accelerator plan"), undefined);
   wide.press("Clear project selection");
   assert.equal(wide.all(/^Project row /).length, 3, "none means all");
-  wide.press("Project consumer-b-v2");
+  wide.press(/^Project consumer-b-v2/);
   wide.press(/^Projects, /);
-  wide.press("Project project-a-accelerator", {
+  wide.press(/^Project project-a-accelerator/, {
     nativeEvent: { shiftKey: true },
   });
-  wide.press("Project other", { nativeEvent: { shiftKey: true } });
-  wide.press("Project consumer-b-v2", { nativeEvent: { shiftKey: true } });
-  wide.press("Project project-a-accelerator", {
+  wide.press(/^Project other/, { nativeEvent: { shiftKey: true } });
+  wide.press(/^Project consumer-b-v2/, { nativeEvent: { shiftKey: true } });
+  wide.press(/^Project project-a-accelerator/, {
     nativeEvent: { shiftKey: true },
   });
   assert.deepEqual(
@@ -755,9 +760,9 @@ test("026-14a/14b rendered Planning: two selected projects show both plans, none
 
   const compact = mount(h(Harness, { compact: true, storage: fresh() }));
   compact.press(/^Projects, /);
-  compact.press("Project consumer-b-v2");
+  compact.press(/^Project consumer-b-v2/);
   compact.press(/^Projects, /);
-  compact.press("Project project-a-accelerator", {
+  compact.press(/^Project project-a-accelerator/, {
     nativeEvent: { shiftKey: true },
   });
   compact.press("Project row project-a-accelerator");
@@ -777,7 +782,7 @@ test("026-14a/14b rendered Planning: two selected projects show both plans, none
     "same expansion after back",
   );
   compact.press("Open lane project-a-a");
-  compact.press("Project project-a-accelerator", {
+  compact.press(/^Project project-a-accelerator/, {
     nativeEvent: { shiftKey: true },
   });
   assert.equal(

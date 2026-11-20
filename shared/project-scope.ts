@@ -7,6 +7,7 @@ import {
   type TaskSummary,
 } from "./contracts";
 import { projectPlanningCounts } from "./planning-tab";
+import { hiddenQueuedByProject } from "./queued-more";
 
 /**
  * Spec 026 Board "Scope": one project selector scopes Pipeline, Lanes,
@@ -175,8 +176,10 @@ export function projectSelectorRows(
   search: string,
   tasks: TaskSummary[],
   leads: readonly LeadListFacts[],
+  queuedCounts: readonly { repoPath: string; count: number }[] = [],
 ): ProjectSelectorRow[] {
   const needle = search.trim().toLowerCase();
+  const hiddenQueued = hiddenQueuedByProject(queuedCounts, tasks);
   return [...projects]
     .sort(
       (a, b) =>
@@ -191,12 +194,21 @@ export function projectSelectorRows(
         !`${project.name} ${primary}`.toLowerCase().includes(needle)
       )
         return [];
+      const counts = projectPlanningCounts(project, tasks, leads);
+      const hidden = hiddenQueued.reduce(
+        (total, item) =>
+          project.repositories.some((repo) => repo.path === item.repoPath)
+            ? total + item.hidden
+            : total,
+        0,
+      );
       return [
         {
           key: project.key,
           name: project.name,
           primary,
-          ...projectPlanningCounts(project, tasks, leads),
+          ...counts,
+          tasks: counts.tasks + hidden,
           checked: selection.includes(project.key),
           visibility: project.visibility,
           version: project.version,
