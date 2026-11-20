@@ -446,17 +446,20 @@ export class HostPass {
           );
         });
     });
-    await this.step(host, "reconcileTaskRows", () =>
-      this.reconcileTaskRows(host),
-    );
-    // The row's own visibility: a Nucleus-owned snooze that stays on past its
-    // bound is reported to the planner (nucleus#1417). It reads the host's durable
-    // snooze record and the attention projection, never the presentation step's
-    // outcome, so a failed presentation pass cannot suppress the notice.
+    // The row's own visibility first: a Nucleus-owned snooze that stays on past its
+    // bound is reported to the planner, and a planner's own hold whose nudge went
+    // unanswered is escalated here (nucleus#1417, nucleus#1419). It reads the host's
+    // durable snooze record and the attention projection, never the presentation
+    // step's outcome, so a failed presentation pass cannot suppress the notice; and
+    // running it first lets this same pass's rows see an escalation, so the row
+    // wakes in the pass that decided it.
     await this.step(host, "reconcileHiddenRows", () =>
       new HiddenRows({ store: this.store, adapter: this.adapter }).observe(
         host,
       ),
+    );
+    await this.step(host, "reconcileTaskRows", () =>
+      this.reconcileTaskRows(host),
     );
     await this.step(host, "reconcileThreadTitles", () =>
       this.adapter.reconcileThreadTitles?.(tasks),

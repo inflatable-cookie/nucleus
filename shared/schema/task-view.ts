@@ -131,6 +131,10 @@ export const taskSummarySchema = z
             reason: z.string(),
             since: z.string(),
             until: holdUntilSchema.nullable().optional(),
+            // The task planner's own park, and its nudge once that went unanswered
+            // (nucleus#1419); the same view a host row reads.
+            planner: z.literal(true).optional(),
+            unanswered: z.enum(["planner", "delivery"]).optional(),
           })
           .strict()
           .optional(),
@@ -140,6 +144,8 @@ export const taskSummarySchema = z
             reason: z.string(),
             since: z.string(),
             until: holdUntilSchema.nullable().optional(),
+            planner: z.literal(true).optional(),
+            unanswered: z.enum(["planner", "delivery"]).optional(),
           })
           .strict()
           .optional(),

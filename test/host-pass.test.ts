@@ -24,6 +24,7 @@ import {
   ownerTaskNext,
 } from "../core/verbs/owner-verbs";
 import { runSchema } from "../shared/contracts";
+import { holdPatch } from "../core/merge/merge-hold";
 
 /**
  * nucleus#1257: one host's audit steps are their own owner. A step that throws is
@@ -33,7 +34,11 @@ import { runSchema } from "../shared/contracts";
 type Loose = Record<string, any>;
 const HOST = "host-1";
 
-function fixture(t: TestContext, adapter: Loose, options: { task?: boolean } = {}) {
+function fixture(
+  t: TestContext,
+  adapter: Loose,
+  options: { task?: boolean } = {},
+) {
   const store = new Store(":memory:");
   const engine = new Engine(store, adapter as Adapter, 60_000);
   t.after(async () => {
@@ -123,16 +128,22 @@ test("a clean pass records no failure and answers the inventory it read", async 
  */
 test("a step that fails at the transport boundary answers nothing for that host and nothing for another", async (t) => {
   const ran: string[] = [];
-  const f = fixture(t, {
-    reconcileTaskRow: async () => {
-      const host = f.engine.activeHostId;
-      if (host === HOST)
-        throw new Error(`Transport not connected: host ${host} is unavailable`);
+  const f = fixture(
+    t,
+    {
+      reconcileTaskRow: async () => {
+        const host = f.engine.activeHostId;
+        if (host === HOST)
+          throw new Error(
+            `Transport not connected: host ${host} is unavailable`,
+          );
+      },
+      reconcileThreadTitles: () => {
+        ran.push("titles");
+      },
     },
-    reconcileThreadTitles: () => {
-      ran.push("titles");
-    },
-  }, { task: true });
+    { task: true },
+  );
 
   const result = await f.engine.withHost(HOST, () => f.hostPass.run(HOST));
   assert.equal(
@@ -1408,5 +1419,105 @@ test("an unavailable process table does not create cleanup intents for unrecorde
     !hostDependents(f.store, { id: HOST, kind: "paseo", primary: true }).some(
       (x) => x.kind === "effect",
     ),
+  );
+});
+
+/**
+ * nucleus#1419: one host pass sows the planner's own hold, its nudge and the
+ * planner's answer in this order, so the row this same pass presents already reads
+ * the escalation the pass just recorded. The hold itself is never touched.
+ */
+test("a planner's hold is snoozed until its nudge goes unanswered, in the same pass", async (t) => {
+  const seen: string[] = [];
+  const now = Date.now();
+  const startedAt = new Date(now - 3 * 60 * 60_000).toISOString();
+  const f = fixture(
+    t,
+    {
+      reconcileTaskRow: async (
+        _taskId: string,
+        attention: { state: string },
+      ) => {
+        seen.push(attention.state);
+      },
+      rowSnoozeVisibility: async (taskId: string) => ({
+        kind: "snoozed" as const,
+        threadId: `thread-${taskId}`,
+        episodeStartedAt: startedAt,
+        cause: "Held by planner",
+      }),
+    },
+    { task: true },
+  );
+  const task = f.store.tasks()[0]!;
+  f.store.update(task.id, { phase: "needs_attention" });
+  f.store.update(
+    task.id,
+    // The task's planner is its owner ("origin"), so this fence is its own park.
+    holdPatch(
+      f.store.task(task.id),
+      "dispatch",
+      "origin",
+      "Approved, waiting for Effigy v0.15",
+      null,
+    ),
+  );
+
+  // A quiet task behind the planner's own hold: the row is snoozed, not shown.
+  await f.engine.withHost(HOST, () => f.hostPass.run(HOST));
+  assert.deepEqual(seen, ["waiting"], "the planner's own hold parks the row");
+
+  // The nudge reached the planner an hour ago and the answer window has closed.
+  const fence = f.store.task(task.id).holds!.dispatch!;
+  const noticeId = `row-hidden-hold:${task.id}:dispatch:1`;
+  f.store.putNotice({
+    id: noticeId,
+    taskId: task.id,
+    agentId: "origin",
+    recipientAgentId: "",
+    workspaceId: null,
+    sources: [],
+    originEntry: true,
+    kind: "row_hidden",
+    status: "delivered",
+    error: "",
+    text: "Nucleus: a hold still hides a task row on T3",
+  });
+  f.store.update(task.id, {
+    holds: {
+      dispatch: {
+        ...fence,
+        plannerAnswer: {
+          since: startedAt,
+          dueAt: new Date(now - 2 * 60 * 60_000).toISOString(),
+          noticeId,
+          deliveredAt: new Date(now - 60 * 60_000).toISOString(),
+          unansweredAt: null,
+          deliveryFault: "",
+        },
+      },
+    },
+  });
+  seen.length = 0;
+  await f.engine.withHost(HOST, () => f.hostPass.run(HOST));
+  assert.deepEqual(
+    seen,
+    ["attention"],
+    "the pass escalates the hold and presents the row again in one pass",
+  );
+  assert.ok(
+    f.store
+      .events(task.id)
+      .some((event) => event.kind === "row_hidden_hold_unanswered"),
+    "the escalation is recorded as the reason the row is visible",
+  );
+  assert.deepEqual(
+    {
+      generation: f.store.task(task.id).holdGeneration,
+      reason: f.store.task(task.id).holdReason,
+      held: f.store.task(task.id).held,
+    },
+    { generation: 1, reason: "Approved, waiting for Effigy v0.15", held: true },
+    "the hold is never released because a timer fired",
   );
 });
