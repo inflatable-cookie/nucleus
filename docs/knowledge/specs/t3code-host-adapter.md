@@ -1205,6 +1205,16 @@ sweep observes deletion, so a later role cannot launch a replacement parent. A
 finished task's held turn is released at once — the create grace window is for live
 work — and its parent is archived.
 
+An explicit owner restart can restore the same archived parent after its existing
+creation, workspace and custody admission proves settled. The parent must still
+match the task's recorded workspace, project and Nucleus ACP provider. The T3
+`thread.unarchive` effect has the restart operation's durable identity; a fresh
+paired inventory must prove the same parent live before normal admission proceeds.
+After a lost reply, the operation observes only that occurrence. An archived or
+unobservable result waits without another send or child; a deleted or mismatched
+parent remains fenced with its cause. A routine sweep never restores a manually
+archived parent, and terminal archival is unchanged.
+
 **A deleted child does not hold the turn.** The release decision reads one complete
 inventory: a child absent from it, or listed there as a `deletedAt` tombstone, is
 deleted (a positive fact, never a read that failed), and a live child counts only

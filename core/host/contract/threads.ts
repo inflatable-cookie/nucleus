@@ -21,7 +21,7 @@ export interface HostThreads {
   /** Restore this task's retained host parent only within an admitted owner restart. */
   restoreTaskParent?(task: Task, operationId: string, stillAllowed: () => boolean, beforeSend: () => void): Promise<void>;
   /** Observe the same interrupted restore occurrence without sending another command. */
-  observeTaskParentRestore?(task: Task, operationId: string): Promise<"not_found" | "live" | "pending">;
+  observeTaskParentRestore?(task: Task, operationId: string): Promise<"not_found" | "live" | "archived" | "deleted" | "mismatched" | "unobservable">;
   createAgent(
     task: Task,
     token: string,

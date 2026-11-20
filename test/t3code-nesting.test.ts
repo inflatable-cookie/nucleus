@@ -577,7 +577,7 @@ test("a deletedAt tombstone in the inventory counts as deleted for a child and f
     () => host.createAgent(spec("review-run", "Review it", "reviewer")),
     (error: unknown) =>
       error instanceof ProvenPreSendRefusalError &&
-      /parent thread is deleted; move the task to another host/.test(
+      /parent thread is deleted; inspect the retained binding/.test(
         error.reason,
       ),
   );
@@ -612,7 +612,7 @@ test("a role launched after its parent was archived refuses instead of re-launch
     () => host.createAgent(spec("review-run", "Review it", "reviewer")),
     (error: unknown) =>
       error instanceof ProvenPreSendRefusalError &&
-      /parent thread is archived; move the task to another host/.test(
+      /parent thread is archived; use an owner restart/.test(
         error.reason,
       ),
   );
@@ -668,7 +668,7 @@ test("the restart restore effect unarchives the same bound parent and reuses it"
   await host.createAgent(spec("worker-create", "Do the work"));
   const parent = parentOf(host)!;
   server.threads.get(parent.threadId)!.thread.archivedAt = STAMP;
-  const task = { id: parent.taskId, workspaceId: workspace.id, phase: "working", removedAt: null, resolution: { mergedCommit: null } } as Task;
+  const task = { id: parent.taskId, workspaceId: workspace.id, directory: workspace.directory, phase: "working", removedAt: null, resolution: { mergedCommit: null } } as Task;
   await host.nesting.restoreForRestart(task, "owner-operation", () => true);
   await host.nesting.restoreForRestart(task, "owner-operation", () => true);
   assert.equal(commandsOf(server, "thread.unarchive").length, 1);
@@ -684,7 +684,7 @@ test("a lost unarchive reply is reconciled by reading the same parent before any
   await host.createAgent(spec("worker-create", "Do the work"));
   const parent = parentOf(host)!;
   server.threads.get(parent.threadId)!.thread.archivedAt = STAMP;
-  const task = { id: parent.taskId, workspaceId: workspace.id, phase: "working", removedAt: null, resolution: { mergedCommit: null } } as Task;
+  const task = { id: parent.taskId, workspaceId: workspace.id, directory: workspace.directory, phase: "working", removedAt: null, resolution: { mergedCommit: null } } as Task;
   server.controls.disconnectAfterEffect = true;
   await assert.rejects(() => host.nesting.restoreForRestart(task, "operation-1", () => true));
   server.controls.disconnectAfterEffect = false;
@@ -702,7 +702,7 @@ test("the restart restore effect refuses a changed binding and unknown prior del
   await host.createAgent(spec("worker-create", "Do the work"));
   const parent = parentOf(host)!;
   const remote = server.threads.get(parent.threadId)!.thread;
-  const task = { id: parent.taskId, workspaceId: workspace.id, phase: "working", removedAt: null, resolution: { mergedCommit: null } } as Task;
+  const task = { id: parent.taskId, workspaceId: workspace.id, directory: workspace.directory, phase: "working", removedAt: null, resolution: { mergedCommit: null } } as Task;
   remote.archivedAt = STAMP;
   remote.providerInstanceId = "other";
   await assert.rejects(() => host.nesting.restoreForRestart(task, "operation-1", () => true), /binding/);
@@ -743,7 +743,7 @@ test("a parent gone from the complete inventory refuses without sending anything
     () => host.createAgent(spec("review-run", "Review it", "reviewer")),
     (error: unknown) =>
       error instanceof ProvenPreSendRefusalError &&
-      /parent thread is deleted; move the task to another host/.test(
+      /parent thread is deleted; inspect the retained binding/.test(
         error.reason,
       ),
   );
