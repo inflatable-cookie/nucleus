@@ -35,10 +35,12 @@ import { taskStopRecord } from "../shared/task-stop";
 import { HostCallAbandonedError } from "../core/host/errors";
 import {
   collectOwnerVerbFacts,
+  ownerTaskNext,
   ownerVerbViews,
 } from "../core/verbs/owner-verbs";
 import { blockingRecoveryEffects } from "../core/recovery/recovery-effects";
 import { provenAbsentCreation } from "../core/recovery/absent-creation/decisions";
+import { resolutionCreationWait } from "../core/recovery/absent-creation/restarts";
 
 const head = "a".repeat(40),
   base = "b".repeat(40),
@@ -1129,7 +1131,7 @@ test("an empty reviewer lookup keeps the original request and credential owned",
     assert.equal(f.store.run(run.id)?.agentId, null);
     assert.ok(!f.store.run(run.id)?.absentProvenAt);
     assert.doesNotThrow(() => f.store.authenticate(run.id, token));
-    assert.match(f.current().reason, /still uncertain/);
+    assert.equal(f.current().reason, resolutionCreationWait("reviewer"));
     f.foundAgents.set(run.id, [
       { id: "late-reviewer", workspaceId: "workspace" },
     ]);
@@ -1711,7 +1713,7 @@ test("a timed out reviewer creation remains uncertain after an empty lookup", as
       ),
       true,
     );
-    assert.match(f.current().reason, /still uncertain/);
+    assert.equal(f.current().reason, resolutionCreationWait("reviewer"));
   } finally {
     await f.close();
   }
@@ -2255,6 +2257,246 @@ test("restart role=worker on a stale creation intent launches a fresh worker fro
     const task = f.current();
     assert.notEqual(task.runId, "stale-worker-run");
     assert.equal(task.agentId, `agent-${task.runId}`);
+  } finally {
+    await f.close();
+  }
+});
+
+/**
+ * One reviewer creation occurrence driven from its original delivery evidence.
+ * The fixture assigns the adapter directly, so the native call's settlement is
+ * recorded here, as the host facade records it in production. Backdating that
+ * settlement is what a producer that stopped a full grace ago looks like.
+ */
+function settledReviewerCreation(f: Fixture, run: Run) {
+  const attempt = readCreationAttempt(f.store, {
+    id: run.id,
+    taskId: f.task.id,
+    hostId: run.hostId,
+    workspaceId: run.workspaceId,
+    role: "reviewer",
+  })!;
+  settleCreationAttempt(f.store, attempt, "threw");
+  f.store.db
+    .prepare("UPDATE events SET at=? WHERE kind=?")
+    .run("2000-01-01T00:00:00.000Z", "creation_attempt_settled");
+  return attempt;
+}
+
+/**
+ * A service roll: the recorded producer becomes a previous process, so the call
+ * that could still deliver the original request is gone. The reservation is
+ * backdated past the lookup grace as a roll long before the pass looks again.
+ */
+function rolledReviewerCreation(f: Fixture, run: Run) {
+  const reserved = f.store.db
+    .prepare(
+      "SELECT id, detail FROM events WHERE taskId=? AND kind=? ORDER BY id DESC LIMIT 1",
+    )
+    .get(f.task.id, "creation_attempt_reserved") as {
+    id: number;
+    detail: string;
+  };
+  const reservation = JSON.parse(reserved.detail) as Record<string, unknown>;
+  assert.equal(
+    reservation.id,
+    run.id,
+    "the reservation under test is the latest one",
+  );
+  f.store.event(
+    f.task.id,
+    "creation_attempt_reserved",
+    JSON.stringify({
+      ...reservation,
+      producerId: "previous-service-process",
+      attemptId: randomUUID(),
+    }),
+  );
+  const latest = f.store.db
+    .prepare(
+      "SELECT id FROM events WHERE taskId=? AND kind=? ORDER BY id DESC LIMIT 1",
+    )
+    .get(f.task.id, "creation_attempt_reserved") as { id: number };
+  f.store.db
+    .prepare("UPDATE events SET at=? WHERE id=?")
+    .run("2000-01-01T00:00:00.000Z", latest.id);
+}
+
+async function uncertainReviewerCreation(f: Fixture) {
+  f.plantReview();
+  const create = f.adapter.createRun!;
+  f.adapter.createRun = async () => {
+    throw new Error("Transport lost");
+  };
+  await f.engine.wake();
+  const run = f.store
+    .runs(f.task.id)
+    .find((candidate) => candidate.role === "reviewer")!;
+  ageIncident(f);
+  return { run, create };
+}
+
+test("the sweep proves a reviewer creation absent once, and names the owner exits", async () => {
+  const f = fixture(50_000);
+  try {
+    const { run, create } = await uncertainReviewerCreation(f);
+    rolledReviewerCreation(f, run);
+    f.foundAgents.set(run.id, []);
+    await f.engine.wake();
+    const proved = f.store.run(run.id)!;
+    assert.ok(
+      proved.absentProvenAt,
+      "the complete lookup and stopped producer prove absence",
+    );
+    assert.equal(proved.agentId, null);
+    assert.equal(
+      proved.released,
+      false,
+      "only an owner control releases the run",
+    );
+    assert.equal(f.events("absent_creation_proven").length, 1);
+    assert.match(f.current().reason, /is proved absent after an exact lookup/);
+    assert.match(
+      f.current().reason,
+      /route role=reviewer now or restart role=reviewer/,
+    );
+    assert.equal(
+      f.store
+        .runs(f.task.id)
+        .filter((candidate) => candidate.role === "reviewer").length,
+      1,
+      "the sweep reconciles the occurrence and never creates a second reviewer",
+    );
+    assert.equal(provenAbsentCreation(f.store.run(run.id)!), true);
+    // Replay converges: the settled occurrence is never looked up or re-escalated.
+    const count = f.store.eventsAll(f.task.id).length;
+    await f.engine.wake();
+    await f.engine.wake();
+    assert.equal(f.store.eventsAll(f.task.id).length, count);
+  } finally {
+    await f.close();
+  }
+});
+
+test("an ambiguity twin of a reviewer creation stays an owner decision and binds nothing", async () => {
+  const f = fixture(50_000);
+  try {
+    const { run, create } = await uncertainReviewerCreation(f);
+    rolledReviewerCreation(f, run);
+    f.foundAgents.set(run.id, [
+      { id: "first", workspaceId: run.workspaceId },
+      { id: "second", workspaceId: run.workspaceId },
+    ]);
+    await f.engine.wake();
+    const current = f.current();
+    assert.equal(current.resolution.attention, true);
+    assert.match(current.reason, /partial or ambiguous \(2 matching agents\)/);
+    assert.ok(current.reason.includes(`run ${run.id}`));
+    assert.equal(f.store.run(run.id)?.agentId, null);
+    assert.ok(!f.store.run(run.id)?.absentProvenAt);
+    assert.equal(
+      f.store
+        .runs(f.task.id)
+        .filter((candidate) => candidate.role === "reviewer").length,
+      1,
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+test("the sweep, the owner preview and the applying restart name the same reviewer creation wait", async () => {
+  const f = fixture(50_000);
+  try {
+    const { run, create } = await uncertainReviewerCreation(f);
+    f.foundAgents.set(run.id, []);
+    await f.engine.wake();
+    const wait = resolutionCreationWait("reviewer");
+    assert.equal(
+      f.current().resolution.stop?.detail,
+      wait,
+      "the sweep names the missing fact",
+    );
+    const next = ownerTaskNext({
+      ...collectOwnerVerbFacts(f.store, f.current()),
+      creationGraceMs: f.engine.resolution.graceMs,
+    });
+    const restart = next.verbs.find(
+      (verb: { verb?: string }) => verb.verb === "restart",
+    );
+    assert.equal(restart?.available, false);
+    assert.equal(
+      restart?.refusal,
+      wait,
+      "the preview names the same owed observation",
+    );
+    // The applying control records the same wait and sends nothing: one
+    // observation answers the preview and the execution.
+    const waited = await f.engine.performTaskControl({
+      taskId: f.task.id,
+      version: f.current().version,
+      action: "restart",
+      role: "reviewer",
+      reason: "Resume the review",
+      caller: OWNER,
+    });
+    assert.equal(waited.resolution.stop?.detail, wait);
+    assert.equal(f.store.run(run.id)?.released, false);
+    assert.equal(
+      f.store
+        .runs(f.task.id)
+        .filter((candidate) => candidate.role === "reviewer").length,
+      1,
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+test("a restart replay after proved absence launches one fresh reviewer at the current head", async () => {
+  const f = fixture(50_000);
+  try {
+    const { run, create } = await uncertainReviewerCreation(f);
+    rolledReviewerCreation(f, run);
+    f.foundAgents.set(run.id, []);
+    await f.engine.wake();
+    assert.ok(f.store.run(run.id)?.absentProvenAt);
+    f.adapter.createRun = create;
+    await f.engine.performTaskControl({
+      taskId: f.task.id,
+      version: f.current().version,
+      action: "restart",
+      role: "reviewer",
+      reason: "Replace the proved-absent reviewer",
+      caller: OWNER,
+    });
+    const released = f.store.run(run.id)!;
+    assert.equal(released.released, true);
+    assert.equal(released.status, "superseded");
+    assert.throws(
+      () => f.store.authenticate(run.id, "any-token"),
+      /Unauthorized/,
+    );
+    await f.engine.wake();
+    const live = f.store
+      .runs(f.task.id)
+      .filter(
+        (candidate) => candidate.role === "reviewer" && !candidate.released,
+      );
+    assert.equal(live.length, 1, "exactly one fresh reviewer owns the review");
+    assert.notEqual(live[0]!.id, run.id);
+    assert.equal(
+      live[0]!.head,
+      f.current().prHead,
+      "the fresh reviewer reads the current head",
+    );
+    assert.equal(f.store.run(run.id)?.reviewCheckpoints?.length ?? 0, 0);
+    const fresh = f.creates.filter((created) => created.role === "reviewer");
+    assert.equal(
+      fresh.length,
+      1,
+      "one replacement launches from the current route",
+    );
   } finally {
     await f.close();
   }

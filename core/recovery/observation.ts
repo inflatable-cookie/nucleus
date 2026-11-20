@@ -39,7 +39,7 @@ import {
   recordHostFailure,
 } from "../host/adapter-routing";
 import { HostReadRefusalError } from "../host";
-import { creationLookup } from "./absent-creation/restarts";
+import { observeResolutionCreation } from "./absent-creation/restarts";
 
 export type ObservationContext = Pick<
   Resolution,
@@ -204,12 +204,28 @@ export class Observation {
             continue;
           // Proven absent: settled, never looked up again or re-escalated.
           if (provenAbsentCreation(run)) continue;
-          const found = await this.adapter.findRunAgents!(run);
+          // One observation of the original delivery evidence: the exact lookup
+          // and the recorded producer together decide whether this creation is
+          // bound, proved absent or still unknown. The owner preview and the
+          // applying verb read the same answer.
+          const creation = await observeResolutionCreation(
+            this.store,
+            this.adapter,
+            run,
+            this.resolution.graceMs,
+          );
           if (dispatchBlocked(this.store.task(task.id))) continue;
-          const lookup = creationLookup(found, run.workspaceId);
-          if (lookup.kind === "bound") {
-            run = { ...run, agentId: lookup.agentId, status: "running" };
+          if (creation.kind === "bound") {
+            run = { ...run, agentId: creation.agentId, status: "running" };
             this.store.putRun(run);
+            // The identity is proved; the dispatch it was created for is not.
+            // Record which fact the occurrence still owes so a report request
+            // inspects that exact message instead of assuming it arrived.
+            this.store.event(
+              task.id,
+              "run_creation_bound",
+              `${run.id}: exact lookup bound agent ${creation.agentId} in ${run.workspaceId}; its dispatch delivery is not yet observed`,
+            );
             if (run.role === "reviewer")
               this.resolution.update(task, {
                 reviewerAgentId: run.agentId,
@@ -236,7 +252,7 @@ export class Observation {
           await this.resolution.reconcileAbsentCreation(
             this.store.task(task.id),
             run,
-            found,
+            creation,
           );
           continue;
         }

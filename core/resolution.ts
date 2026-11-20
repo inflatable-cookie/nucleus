@@ -117,6 +117,7 @@ import { MergeGates } from "./merge/merge-gates";
 import { RetryRoutes } from "./recovery/retry-orchestration";
 import { ExternalMerge } from "./merge/external-merge";
 import { AbsentRestarts } from "./recovery/absent-creation";
+import type { ResolutionCreationObservation } from "./recovery/absent-creation";
 import { Delegation } from "./questions/delegation";
 import type { PlannerRung } from "./questions/delegation";
 import { Ladder } from "./questions/ladder";
@@ -2154,16 +2155,16 @@ export class Resolution {
   }
 
   /**
-   * Zero/one/many reconciliation for one uncertain creation. After the bounded
-   * grace: bind one exact match (done by the caller), replace a proven-absent
-   * creation exactly once, or hand ambiguity and second failures to the coordinator.
+   * Settle one uncertain creation from its own observation. After the bounded
+   * grace: record a proved absence and its owner exits, keep a partial lookup as
+   * an owner decision bound to this occurrence, or name the missing fact.
    */
   reconcileAbsentCreation(
     t: Task,
     run: Run,
-    found: { id: string; workspaceId: string | null }[],
+    observation: ResolutionCreationObservation,
   ) {
-    return this.absentRestarts.reconcileAbsentCreation(t, run, found);
+    return this.absentRestarts.reconcileAbsentCreation(t, run, observation);
   }
   /** Atomically revoke one proven-absent callback and issue exactly one same-role replacement. */
   private replaceAbsentCreation(t: Task, run: Run) {

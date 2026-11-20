@@ -62,6 +62,7 @@ import {
   workerLookupWait,
   workerProducerStopped,
 } from "../recovery/absent-creation/stale-worker";
+import { resolutionCreationWait } from "../recovery/absent-creation/restarts";
 
 /**
  * Round 4 (Tom, 2026-10-19): what `restart` does when no run of the role needs
@@ -896,7 +897,7 @@ export const restart: OwnerVerb = {
       if (!creationTermination(facts.store, run, facts.creationGraceMs ?? 0))
         return {
           available: false,
-          refusal: `The ${run.role} creation is waiting for its recorded producer and an exact lookup`,
+          refusal: resolutionCreationWait(run.role),
         };
     }
     // nucleus#1195: one bounded continuation asks a live proof executor whose

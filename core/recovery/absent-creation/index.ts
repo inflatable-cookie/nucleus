@@ -14,5 +14,6 @@
  */
 export { CreationRecovery } from './creation';
 export { AbsentRestarts } from './restarts';
+export type { ResolutionCreationObservation } from './restarts';
 export { absentReplacementRecord, absentReplacementRole, absentReplacementSpent } from './budget';
 export { absentWorkerStep, workspaceReplayAllowed } from './decisions';
