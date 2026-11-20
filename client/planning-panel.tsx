@@ -8,7 +8,7 @@ import { decisionAge } from "../shared/pipeline-board";
 import { formatTelemetryDuration } from "../shared/telemetry";
 import { ActionButton, Button, Field, controlFrame, controlText, muted, row, type Colors } from "./controls";
 import { overlay, radius, roles, space, touchTarget, type, type as typeScale } from "./design";
-import { projectDormant } from "../shared/contracts";
+import { projectDormantByActivity, type ProjectActivity } from "../shared/project-activity";
 import { ProjectTriage } from "./planning-triage";
 
 /** `error` is set when the plan or its saved version could not be read; `latest` is then the last version read, if any. */
@@ -426,12 +426,14 @@ export function LaneFinderResults({ rows, total, query, loading, error, plansErr
   </View>;
 }
 
-export function PlanningTab({ sections: allSections, leads = [], lanes, projects: allProjects, selection = [], plans: allPlans, plansError, lanesLoading = false, lanesError, edits, saveErrors, selectedLane, step, compact, busy, lanePanel, qaRuns, qaLoading = false, qaError, onOpenQaRun, onRetryQa, onRetryPlans, onRetryLanes, onStep, onOpenLane, onOpenTask, onSelectProjects, onEdit, onSave, onCancel, onCloseLane, c }: {
+export function PlanningTab({ sections: allSections, leads = [], lanes, projects: allProjects, projectActivity = [], selection = [], plans: allPlans, plansError, lanesLoading = false, lanesError, edits, saveErrors, selectedLane, step, compact, busy, lanePanel, qaRuns, qaLoading = false, qaError, onOpenQaRun, onRetryQa, onRetryPlans, onRetryLanes, onStep, onOpenLane, onOpenTask, onSelectProjects, onEdit, onSave, onCancel, onCloseLane, c }: {
   sections: PlanSection[]; leads?: LeadListFacts[]; lanes: LaneView[]; edits: Record<string, PlanEdit>; saveErrors?: Record<string, string>; selectedLane: string; step: PlanningStep; compact: boolean; busy: boolean; lanePanel: ReactNode;
   /** The latest milestone QA per repository; `qaLoading` and `qaError` keep a first and a failed read apart from no run. */
   qaRuns?: ProjectQaRun[]; qaLoading?: boolean; qaError?: string; onOpenQaRun?: (runId: string) => void; onRetryQa?: () => void;
   /** Every project and its plan, so the chooser and the lane search see past the tab's own scope. */
   projects?: Project[]; selection?: readonly string[]; plans?: ProjectPlan[];
+  /** Spec 026 (nucleus#1446): the store-wide activity behind the Dormant group, shared with the board selector. */
+  projectActivity?: readonly ProjectActivity[];
   /** A plan read that failed keeps its last version; the lane search then says its positions may be stale. */
   plansError?: string; lanesLoading?: boolean; lanesError?: string;
   onSelectProjects?: (keys: string[]) => void; onRetryLanes?: () => void;
@@ -452,7 +454,9 @@ export function PlanningTab({ sections: allSections, leads = [], lanes, projects
   // The finder reads the lane records only while it is open; the plan column costs nothing otherwise.
   const scoped = searching ? laneFinderRows({ lanes, projects, plans, selection: searchSelection }) : [];
   const rows = searching ? laneFinderRows({ lanes, projects, plans, selection: searchSelection, query }) : [];
-  const dormant = allSections.filter(section => projectDormant(section.project) && section.project.visibility !== 'parked').map(section => section.project);
+  const activityByKey = new Map(projectActivity.map(item => [item.key, item]));
+  const nowMs = Date.now();
+  const dormant = allSections.filter(section => projectDormantByActivity(section.project, activityByKey.get(section.project.key), nowMs)).map(section => section.project);
   const sections = allSections.filter(section => !dormant.includes(section.project));
   const visible = planningColumns(compact, step);
   const [expanded, setExpanded] = useState<string | null>(null);

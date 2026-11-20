@@ -1,6 +1,5 @@
 import { readMigratedValue, type KeyValueStorage } from "./storage-migration";
 import {
-  projectDormant,
   type LeadListFacts,
   type Project,
   type ProjectPlan,
@@ -8,6 +7,7 @@ import {
 } from "./contracts";
 import { projectPlanningCounts } from "./planning-tab";
 import { hiddenQueuedByProject } from "./queued-more";
+import { projectDormantByActivity, type ProjectActivity } from "./project-activity";
 
 /**
  * Spec 026 Board "Scope": one project selector scopes Pipeline, Lanes,
@@ -187,7 +187,8 @@ export type ProjectSelectorRow = {
   version: number;
   dormant: boolean;
 };
-/** Selector popover rows: every project matching the filter box, with its primary repository and counts. */
+/** Selector popover rows: every project matching the filter box, with its primary repository and counts.
+ * Dormancy follows the one activity rule (Spec 026, nucleus#1446): `activity` is the store-wide read, and `nowMs` ages it. */
 export function projectSelectorRows(
   projects: Project[],
   selection: readonly string[],
@@ -195,14 +196,18 @@ export function projectSelectorRows(
   tasks: TaskSummary[],
   leads: readonly LeadListFacts[],
   queuedCounts: readonly { repoPath: string; count: number }[] = [],
+  activity: readonly ProjectActivity[] = [],
+  nowMs: number = Date.now(),
 ): ProjectSelectorRow[] {
   const needle = search.trim().toLowerCase();
   const hiddenQueued = hiddenQueuedByProject(queuedCounts, tasks);
+  const activityByKey = new Map(activity.map((item) => [item.key, item]));
+  const dormantOf = (project: Project) => projectDormantByActivity(project, activityByKey.get(project.key), nowMs);
   return [...projects]
     .sort(
       (a, b) =>
         Number(a.visibility === "parked") - Number(b.visibility === "parked") ||
-        Number(projectDormant(a)) - Number(projectDormant(b)) ||
+        Number(dormantOf(a)) - Number(dormantOf(b)) ||
         a.name.localeCompare(b.name),
     )
     .flatMap((project) => {
@@ -230,7 +235,7 @@ export function projectSelectorRows(
           checked: selection.includes(project.key),
           visibility: project.visibility,
           version: project.version,
-          dormant: projectDormant(project),
+          dormant: dormantOf(project),
         },
       ];
     });

@@ -624,6 +624,20 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
   scoping, and selecting one still shows its views. Unpark sits in the row's
   row panel (nucleus#1430) and in Settings → Projects. The Planning tab groups parked
   projects under Parked. Attention from a parked project is never hidden.
+- **Active and dormant projects** (Tom, 2026-11-20, nucleus#1446). The selector and
+  the Planning tab share one rule. A project is active while task work is executing
+  (a live task in dispatching, working, reviewing, verifying, syncing, merging or
+  closing) or while its newest substantive activity is under five days old. Substantive
+  activity is a task submission, work or lifecycle event, a completion (the outcome's
+  finish time, however old the task page), a deliberate plan version, or a lead or
+  papercut write in the project's repositories. Routine observation, bookkeeping,
+  background sweep and reminder events, planner registration and project management
+  never count. A project with no activity, or activity at or past five days, appears
+  under Dormant whether or not a planner is registered. Parked projects stay under
+  Parked. The store reads these facts store-wide and ships each project's activity time
+  and executing flag on the board snapshot (`projectActivity`), so the selection, task
+  paging and visible rows never change a project's group. Planner routing and drain
+  rules are unchanged.
 - **Project filter switch.** An "Enabled" switch at the top of the project
   selector's dropdown (Tom, 2026-09-28; it was the Pipeline view's "Filter by
   project" switch). Off shows every project in every view the selector scopes

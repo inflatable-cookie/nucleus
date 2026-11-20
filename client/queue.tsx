@@ -186,6 +186,7 @@ export function MainSurface({ theme, layout, navigation, workspaceBoard, now }: 
                     tasks={state?.tasks ?? []}
                     leads={boardLeads}
                     queuedCounts={state?.queuedCounts ?? []}
+                    projectActivity={state?.projectActivity ?? []}
                     value={scope.projects}
                     // An explicit nonempty pick turns a disabled filter back on (nucleus#1432); other scope entry points keep it.
                     onChange={(projects) => setScope(pickProjects(scope, projects))}
@@ -224,6 +225,7 @@ export function MainSurface({ theme, layout, navigation, workspaceBoard, now }: 
               onOpenLane={selectPlanningLane}
               lanes={state?.lanes ?? []}
               projects={state?.projects ?? []}
+              projectActivity={state?.projectActivity ?? []}
               selection={activeSelection(scope)}
               plans={planQuery.data ?? []}
               plansError={planMessage(planQuery.error)}
