@@ -1201,7 +1201,7 @@ for (const kind of ["time", "decision"] as const) {
   });
 }
 
-test("a service roll completes a partial operator classification before returning success", async () => {
+test("a service roll completes a partial bare operator classification by returning the escalation to the planner", async () => {
   const f = fixture({ responsible: true });
   try {
     askedEscalation(f, () => null);
@@ -1238,42 +1238,25 @@ test("a service roll completes a partial operator classification before returnin
       "delegated_command_answered",
       `${questionId}: origin`,
     );
-    // Preserve evidence from the old crash window: the classification marker
-    // existed, but neither the decision nor its task wait had been linked.
-    f.store.event(
-      task.id,
-      "planner_escalation_decision",
-      `${escalationId}: the planner origin said it cannot decide: ${reason}`,
-    );
 
     const answer = await f.engine.resolution.answerDelegatedQuestion(
       { questionId, decision: "operator", reason },
       "origin",
     );
     assert.equal(answer.questionId, questionId);
-    const linked = f
-      .events("planner_escalation_decision_linked")
-      .find((event) => event.detail.startsWith(`${escalationId}:`));
-    assert.ok(linked, "recovery creates or finds the linked decision");
-    const decisionId = linked.detail.match(/decision ([0-9a-f-]{36})/)![1]!;
-    assert.ok(
-      new Decisions(f.store)
-        .get({ id: decisionId })
-        .links.tasks.includes(task.id),
+    assert.equal(
+      f
+        .events("planner_escalation_decision_linked")
+        .filter((event) => event.detail.startsWith(`${escalationId}:`)).length,
+      0,
+      "bare classification creates no operator decision card",
     );
-    assert.ok(
-      f.events("planner_escalation_wait").some((event) => {
-        try {
-          const wait = JSON.parse(event.detail.slice(escalationId.length + 2));
-          return wait.kind === "decision" && wait.target === decisionId;
-        } catch {
-          return false;
-        }
-      }),
-    );
-    assert.match(
-      f.current().resolution.stop?.detail ?? "",
-      /Waiting with the operator/,
+    assert.equal(new Decisions(f.store).list({ task: task.id }).length, 0);
+    assert.equal(
+      f
+        .events("planner_escalation_returned")
+        .filter((event) => event.detail.startsWith(`${escalationId}:`)).length,
+      1,
     );
     assert.ok(
       f.store
@@ -1285,7 +1268,7 @@ test("a service roll completes a partial operator classification before returnin
   }
 });
 
-test("a duplicate answer repairs an operator wait before reporting the classification applied", async () => {
+test("a duplicate bare answer repairs return state without duplicating return or creating a decision", async () => {
   const f = fixture({ responsible: true });
   try {
     askedEscalation(f, () => null);
@@ -1307,11 +1290,6 @@ test("a duplicate answer repairs an operator wait before reporting the classific
     const questionId = `ns-escalation-${escalationId}`;
     const receiptKey = `delegation:${questionId}`;
     const reason = "The planner cannot decide within the approved outcome.";
-    const decision = new Decisions(f.store).add({
-      question: "What next?",
-      askedBy: "origin",
-      tasks: [task.id],
-    });
     f.store.event(
       receiptKey,
       "delegated_answer",
@@ -1329,27 +1307,8 @@ test("a duplicate answer repairs an operator wait before reporting the classific
     );
     f.store.event(
       task.id,
-      "planner_escalation_decision",
-      `${escalationId}: the planner origin said it cannot decide: ${reason}`,
-    );
-    f.store.event(
-      task.id,
-      "planner_escalation_decision_linked",
-      `${escalationId}: decision ${decision.id}`,
-    );
-    f.store.event(
-      task.id,
-      "planner_escalation_wait",
-      `${escalationId}: ${JSON.stringify({ kind: "decision", target: decision.id })}`,
-    );
-    assert.equal(
-      f.engine.resolution.ladder.operatorDecisionApplied(task.id, escalationId),
-      false,
-      "event markers are not enough while the task is not stopped on that decision",
-    );
-    assert.match(
-      f.current().resolution.stop?.detail ?? "",
-      /Waiting with the planner or task owner/,
+      "planner_escalation_returned",
+      `${escalationId}: ${JSON.stringify({ who: "planner origin", reason, sourceQuestionId: questionId })}`,
     );
 
     const answer = await f.engine.resolution.answerDelegatedQuestion(
@@ -1357,13 +1316,12 @@ test("a duplicate answer repairs an operator wait before reporting the classific
       "origin",
     );
     assert.equal(answer.questionId, questionId);
+    assert.equal(new Decisions(f.store).list({ task: task.id }).length, 0);
     assert.equal(
-      f.current().resolution.stop?.detail,
-      escalationWaitDetail.operator(escalationId, decision.id),
-    );
-    assert.equal(
-      f.engine.resolution.ladder.operatorDecisionApplied(task.id, escalationId),
-      true,
+      f
+        .events("planner_escalation_returned")
+        .filter((event) => event.detail.startsWith(`${escalationId}:`)).length,
+      1,
     );
     assert.ok(
       f.store
@@ -1376,6 +1334,96 @@ test("a duplicate answer repairs an operator wait before reporting the classific
         .some((event) => event.kind === "delegated_command_refused"),
       false,
     );
+  } finally {
+    await f.close();
+  }
+});
+
+test("a duplicate structured operator handoff repairs an operator wait without duplicating the decision", async () => {
+  const f = fixture({ responsible: true });
+  try {
+    askedEscalation(f, () => null);
+    await f.reviews(1);
+    await f.engine.wake();
+    await f.report("blocked", {
+      summary: "The isolation gate is still held",
+      cause: { kind: "external", name: "isolation gate" },
+    });
+    await until(
+      () =>
+        f.events("planner_escalation").length > 0 &&
+        f.events("planner_escalation_offered").length > 0,
+    );
+    const task = f.current();
+    const escalationId = f
+      .events("planner_escalation")[0]!
+      .detail.split(":", 1)[0]!;
+    const decision = new Decisions(f.store).add({
+      question: "Should we widen product scope for the isolation gate?",
+      choices: [
+        {
+          label: "Widen product scope",
+          consequence: "Allows implementation outside the original boundary.",
+        },
+        {
+          label: "Keep strict boundary",
+          consequence: "Rejects changes that cross the isolation gate.",
+        },
+      ],
+      recommended: "Keep strict boundary",
+      askedBy: "origin",
+      tasks: [task.id],
+    });
+    f.store.event(
+      task.id,
+      "planner_escalation_decision",
+      `${escalationId}: the planner origin said it cannot decide: scope boundary`,
+    );
+    f.store.event(
+      task.id,
+      "planner_escalation_decision_linked",
+      `${escalationId}: decision ${decision.id}`,
+    );
+    f.store.event(
+      task.id,
+      "planner_escalation_wait",
+      `${escalationId}: ${JSON.stringify({ kind: "decision", target: decision.id, stopDetail: escalationWaitDetail.operator(escalationId, decision.id) })}`,
+    );
+    assert.equal(
+      f.engine.resolution.ladder.operatorDecisionApplied(task.id, escalationId),
+      false,
+      "event markers are not enough while the task is not stopped on that decision",
+    );
+
+    f.engine.resolution.classifyEscalationToOperator(
+      f.current(),
+      escalationId,
+      "Scope boundary requires an explicit operator choice",
+      "planner origin",
+      {
+        authority: "operator_choices",
+        choices: [
+          {
+            label: "Widen product scope",
+            consequence: "Allows implementation outside the original boundary.",
+          },
+          {
+            label: "Keep strict boundary",
+            consequence: "Rejects changes that cross the isolation gate.",
+          },
+        ],
+        recommended: "Keep strict boundary",
+      },
+    );
+    assert.equal(
+      f.current().resolution.stop?.detail,
+      escalationWaitDetail.operator(escalationId, decision.id),
+    );
+    assert.equal(
+      f.engine.resolution.ladder.operatorDecisionApplied(task.id, escalationId),
+      true,
+    );
+    assert.equal(new Decisions(f.store).list({ task: task.id }).length, 1);
   } finally {
     await f.close();
   }
@@ -2194,16 +2242,21 @@ test("a cause genuinely outside the task escalates straight to the planner witho
   }
 });
 
-test("a planner that explicitly cannot decide reaches Tom, and the board answer settles the escalation", async () => {
+test("a bare planner operator classification returns to the planner without an operator card, and settles on recommendation", async () => {
   const f = fixture({ responsible: true });
   // The fixture's default window is 10 ms, which can close before this immediate answer on a busy host.
   f.engine.resolution.delegatedAnswerWaitMs = 5000;
+  let calls = 0;
   (f.adapter as unknown as Record<string, unknown>).askPlanner = async (
     _planner: string,
     input: { prompt: string },
   ) => {
+    calls += 1;
     f.delegated.planner.push(input);
-    return "Decision: operator\nReason: This changes the task's product scope.";
+    if (calls === 1) {
+      return "Decision: operator\nReason: This changes the task's product scope.";
+    }
+    return "Choice: Return to the worker with a new approach\nReason: Keep the change within the approved boundary";
   };
   try {
     f.store.upsertProject({
@@ -2219,6 +2272,63 @@ test("a planner that explicitly cannot decide reaches Tom, and the board answer 
     await f.reviews(1);
     await f.engine.wake();
     await f.report("blocked");
+    await until(() => f.events("planner_escalation_applied").length > 0);
+    assert.equal(calls, 2);
+    assert.equal(f.events("planner_escalation_returned").length, 1);
+    assert.equal(f.events("planner_escalation_decision_linked").length, 0);
+    assert.equal(new Decisions(f.store).list({ task: f.current().id }).length, 0);
+    assert.match(f.delegated.planner[1]!.prompt, /returned to the planner for a recommendation/i);
+    assert.match(f.delegated.planner[1]!.prompt, /Work needed:/);
+    assert.match(
+      f.events("planner_escalation_applied")[0]!.detail,
+      /returned to the worker/,
+    );
+    await f.settle(3);
+    assert.equal(f.run().role, "revision");
+    assert.match(f.run().instruction ?? "", /approved boundary/);
+  } finally {
+    await f.close();
+  }
+});
+
+test("concrete operator choices reach Tom, and the board answer settles the escalation", async () => {
+  const f = fixture({ responsible: true });
+  f.engine.resolution.delegatedAnswerWaitMs = 5000;
+  askedEscalation(f, () => null);
+  try {
+    await f.reviews(1);
+    await f.engine.wake();
+    await f.report("blocked");
+    await until(
+      () =>
+        f.events("planner_escalation").length > 0 &&
+        f.events("planner_escalation_offered").length > 0,
+    );
+    const escalationId = f
+      .events("planner_escalation")[0]!
+      .detail.split(":", 1)[0]!;
+    f.engine.resolution.classifyEscalationToOperator(
+      f.current(),
+      escalationId,
+      "This changes the task's product scope.",
+      "planner planner-1",
+      {
+        authority: "operator_choices",
+        question: `Escalation ${escalationId}: should this task widen the product scope?`,
+        choices: [
+          {
+            label: "Return to the worker with a new approach — treat the admission premise as out of scope",
+            consequence: "Keeps the existing product scope intact.",
+          },
+          {
+            label: "Widen product scope",
+            consequence: "Permits expanding the boundary in code.",
+          },
+        ],
+        recommended:
+          "Return to the worker with a new approach — treat the admission premise as out of scope",
+      },
+    );
     await until(
       () => f.events("planner_escalation_decision_linked").length > 0,
     );
@@ -2237,10 +2347,8 @@ test("a planner that explicitly cannot decide reaches Tom, and the board answer 
     assert.equal(
       decision.status,
       "open",
-      "one Spec 032 decision carries the escalation to the operator",
+      "one Spec 032 decision with concrete choices carries the escalation to the operator",
     );
-    assert.match(decision.question, /is stuck/);
-    // The operator answers on the board; the recovery sweep settles the escalation.
     new Decisions(f.store).answer({
       id: decisionId,
       version: decision.version,

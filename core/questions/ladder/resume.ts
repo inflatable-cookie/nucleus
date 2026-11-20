@@ -9,8 +9,9 @@ import { NO_RESOLUTION_RUN_REFUSAL } from '../../verbs/verb-refusal-text';
 import { escalationWaitState, establishEscalationWait, type EscalationWait } from './hold';
 import type { Ladder } from './ladder';
 import { consultRecovery, escalationRecovery } from './pass';
+import { reconcileLegacyPlaceholderDecisions } from './operator';
 import { plannerEscalations, reviewerConsults, type LadderEvent } from './records';
-import { routePlannerEscalation } from './routing';
+import { routePlannerEscalation, routePlannerEscalationReturn } from './routing';
 import { escalationWaitDetail } from './waits';
 
 /** Owner verbs that resume parked work. stop and route do not. */
@@ -145,9 +146,17 @@ export function resumeDelegations(ladder: Ladder, task: Task): void {
       .finally(() => ladder.resolution.routingConsults.delete(consult.id));
   }
   for (const escalation of plannerEscalations(events)) {
-    const windows = [`ns-escalation-${escalation.id}`, `ns-escalation-${escalation.id}-project`, `ns-decider-${escalation.id}`];
+    const isReturn = Boolean(escalation.returned);
+    const returnedEvent = isReturn
+      ? events.findLast(event => event.kind === 'planner_escalation_returned' && event.detail.startsWith(`${escalation.id}:`))
+      : undefined;
+    const phaseAfter = returnedEvent?.id ?? 0;
+    const windows = isReturn
+      ? [`ns-escalation-return-${escalation.id}`, `ns-escalation-return-${escalation.id}-project`]
+      : [`ns-escalation-${escalation.id}`, `ns-escalation-${escalation.id}-project`, `ns-decider-${escalation.id}`];
+    const inFlightKey = isReturn ? `return:${escalation.id}` : escalation.id;
     if (escalationRecovery({
-      missedNoAnswer: events.some(event => event.kind === 'planner_escalation_missed' && event.detail.startsWith(`${escalation.id}: no delegated answer was produced;`)),
+      missedNoAnswer: events.some(event => event.kind === 'planner_escalation_missed' && event.id > phaseAfter && event.detail.startsWith(`${escalation.id}: no delegated answer was produced;`)),
       answered: escalation.answered,
       unknown: escalation.unknown,
       observing: escalation.unknown ? ladder.resolution.recoverableDelegation(windows, false) : false,
@@ -155,25 +164,30 @@ export function resumeDelegations(ladder: Ladder, task: Task): void {
       recoverable: escalation.missed ? ladder.resolution.recoverableDelegation(windows) : false,
       decisionId: escalation.decisionId,
       question: escalation.question,
-      inFlight: ladder.routingEscalations.has(escalation.id),
+      inFlight: ladder.routingEscalations.has(escalation.id) || ladder.routingEscalations.has(`return:${escalation.id}`),
+      returnExhausted: escalation.returnExhausted,
     }).kind === 'skip' || !escalation.question) continue;
-    ladder.routingEscalations.add(escalation.id);
-    void routePlannerEscalation(ladder, task, escalation.id, escalation.question)
+    ladder.routingEscalations.add(inFlightKey);
+    const drive = isReturn
+      ? routePlannerEscalationReturn(ladder, task, escalation.id)
+      : routePlannerEscalation(ladder, task, escalation.id, escalation.question);
+    void drive
       .catch(error => {
         if (ladder.resolution.stopped()) return;
         ladder.store.event(task.id, 'planner_escalation_unknown', `${escalation.id}: ${error instanceof Error ? error.message : String(error)}`.slice(0, 4000));
         ladder.resolution.waiting(ladder.store.task(task.id), escalationWaitDetail.unknown(escalation.id), 'escalated');
       })
-      .finally(() => ladder.routingEscalations.delete(escalation.id));
+      .finally(() => ladder.routingEscalations.delete(inFlightKey));
   }
 }
 
 /** Re-assert every recorded escalation wait, and wake the ones whose target settled. */
 export async function resumeEscalationWaits(ladder: Ladder, task: Task): Promise<void> {
+  reconcileLegacyPlaceholderDecisions(ladder, task);
   const events = ladder.store.eventsAll(task.id);
   for (const event of events.filter(item => item.kind === 'planner_escalation_wait')) {
     const id = event.detail.split(':', 1)[0]!;
-    if (events.some(item => item.kind === 'planner_escalation_wait_superseded' && item.detail.startsWith(`${id}:`))) continue;
+    if (events.some(item => item.kind === 'planner_escalation_wait_superseded' && item.id > event.id && item.detail.startsWith(`${id}:`))) continue;
     const intent = events.some(item => item.kind === 'planner_escalation_wake_intent' && item.detail.startsWith(`${id}:`));
     if (intent) {
       const finished = events.some(item => ['planner_escalation_woke', 'planner_escalation_wake_refused'].includes(item.kind) && item.detail.startsWith(`${id}:`));

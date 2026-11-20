@@ -35,10 +35,19 @@ A decision has:
   consequences. An authorless headline uses the final interrogative sentence,
   prefixed by its task reference when linked, and shortens at a word boundary
   with an ellipsis. Creation and supersession always supply choices and a matching
-  recommendation, including questions a planner forwards with `Decision: operator`.
-  If choices are missing, Queue offers returning to the planner for a recommendation
-  or keeping the task held. A single option gains a hold alternative. Legacy
-  free-text decisions receive the same choices when read.
+  recommendation. At the blocker ladder's operator handoff, a bare
+  `Decision: operator` classification or options that only defer planning
+  without concrete choices and consequences do not create an operator decision
+  and instead return the escalation occurrence to the planner ladder for a
+  recommendation (Tom, 2026-11-20). Still-open legacy placeholder ladder
+  decisions without explicit options or stored choices are withdrawn by their escalation
+  settlement owner (preserving history without manufacturing an operator answer)
+  and returned to the planner; genuine operator rulings, permission requests,
+  and already answered decisions stay untouched. Outside that blocker-ladder
+  handoff, if choices are missing on creation or supersession, Queue offers
+  returning to the planner for a recommendation or keeping the task held; a
+  single option gains a hold alternative, and legacy free-text decisions receive
+  the same choices when read.
   `details` holds the longer context and evidence. Tom, 2026-11-04: a stopped task's
   question must escalate to the planner or provide recommended options.
 - `question` (required) and optional `context`, `options` (short labels) and

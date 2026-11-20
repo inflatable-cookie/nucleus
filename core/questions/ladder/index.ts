@@ -61,3 +61,9 @@ export {
   plannerEscalationOwnerSuffix,
   plannerEscalationSuggestedVerbs,
 } from "./proof";
+export {
+  hasConcreteOperatorChoices,
+  isPlaceholderDecisionRecord,
+  type OperatorEscalationChoice,
+  type OperatorEscalationHandoff,
+} from "./operator";
