@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { repositorySettingsSchema, repositoryMatchSpecificity, DEFAULT_REPOSITORY_CHECKS_POLICY, type HostKind, type ProjectCloseout, type ProjectQa, type ProjectValidation, type RepositoryChecksPolicy, type RepositorySettings, type Task } from "../../shared/contracts";
+import { repositorySettingsSchema, repositoryMatchSpecificity, DEFAULT_REPOSITORY_CHECKS_POLICY, type HostKind, type ProjectCloseout, type ProjectQa, type ProjectValidation, type RepositoryChecksPolicy, type RepositorySettings, type Task, type WorkspaceProvider } from "../../shared/contracts";
 import { normalizeRepositoryOrigin } from "../../shared/lanes";
 import { repositoryRekeyInputSchema, repositoryRekeyReceiptSchema, type RepositoryRekeyInput, type RepositoryRekeyPreview, type RepositoryRekeyPreviewInput, type RepositoryRekeyReceipt, type RepositoryRekeyReceiptQuery, type RepositoryRekeyResult } from "../../shared/repository-rekey";
 import { repositoryScratchNamespace } from "../workspaces/run-scratch";
@@ -116,7 +116,7 @@ export class StoreRepositorySettings {
     return revision;
   }
 
-  putRepository(identity: RepositorySettings["repository"], closeout: ProjectCloseout | null, note: string, validation: ProjectValidation | null = null, reviewer: RepositorySettings["reviewer"] = null, qa: ProjectQa | null = null, checksPolicy: RepositorySettings["checksPolicy"] | undefined = undefined, scratchNamespace?: string | null, hostKind?: HostKind | null, affectedTests?: RepositorySettings["affectedTests"]): RepositorySettings {
+  putRepository(identity: RepositorySettings["repository"], closeout: ProjectCloseout | null, note: string, validation: ProjectValidation | null = null, reviewer: RepositorySettings["reviewer"] = null, qa: ProjectQa | null = null, checksPolicy: RepositorySettings["checksPolicy"] | undefined = undefined, scratchNamespace?: string | null, hostKind?: HostKind | null, affectedTests?: RepositorySettings["affectedTests"], workspaceProvider?: RepositorySettings["workspaceProvider"]): RepositorySettings {
     if (!identity.origin && !identity.path) throw new Error("A project needs a repository origin or local path");
     const write = () => {
       // A path hint set from a real checkout survives a later origin-only set.
@@ -137,7 +137,7 @@ export class StoreRepositorySettings {
         if (row.repository.origin === null && merged.path && row.repository.path === merged.path)
           this.db.prepare("DELETE FROM repository_settings WHERE key=?").run(rowKey);
       }
-      const parsed = repositorySettingsSchema.parse({ repository: merged, scratchNamespace: scratchNamespace === undefined ? existing?.scratchNamespace ?? pathOnlyPredecessor?.scratchNamespace ?? null : scratchNamespace, closeout, validation, reviewer, qa, affectedTests: affectedTests === undefined ? existing?.affectedTests ?? pathOnlyPredecessor?.affectedTests ?? null : affectedTests, checksPolicy: checksPolicy === undefined ? existing?.checksPolicy ?? pathOnlyPredecessor?.checksPolicy ?? null : checksPolicy, hostKind: hostKind !== undefined ? hostKind : existing?.hostKind ?? pathOnlyPredecessor?.hostKind ?? null, note, updatedAt: now(), revision: this.nextRepositoryRevision() });
+      const parsed = repositorySettingsSchema.parse({ repository: merged, scratchNamespace: scratchNamespace === undefined ? existing?.scratchNamespace ?? pathOnlyPredecessor?.scratchNamespace ?? null : scratchNamespace, closeout, validation, reviewer, qa, affectedTests: affectedTests === undefined ? existing?.affectedTests ?? pathOnlyPredecessor?.affectedTests ?? null : affectedTests, checksPolicy: checksPolicy === undefined ? existing?.checksPolicy ?? pathOnlyPredecessor?.checksPolicy ?? null : checksPolicy, hostKind: hostKind !== undefined ? hostKind : existing?.hostKind ?? pathOnlyPredecessor?.hostKind ?? null, workspaceProvider: workspaceProvider !== undefined ? workspaceProvider : existing?.workspaceProvider ?? pathOnlyPredecessor?.workspaceProvider ?? null, note, updatedAt: now(), revision: this.nextRepositoryRevision() });
       this.db.prepare("INSERT INTO repository_settings(key,data) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data").run(repositoryKey(merged), JSON.stringify(parsed));
       this.registry.ensureProject(merged.path, merged.origin);
       this.core.advanceRevision();
@@ -147,7 +147,7 @@ export class StoreRepositorySettings {
   }
 
   /** Patch semantics: only the named fields change; `null` clears one and an absent field keeps its stored value. Returns the full resulting row. */
-  patchRepository(identity: RepositorySettings["repository"], patch: { scratchNamespace?: string | null; closeout?: ProjectCloseout | null; validation?: ProjectValidation | null; reviewer?: RepositorySettings["reviewer"]; qa?: ProjectQa | null; affectedTests?: RepositorySettings["affectedTests"]; checksPolicy?: RepositorySettings["checksPolicy"]; hostKind?: HostKind | null; note?: string }): RepositorySettings {
+  patchRepository(identity: RepositorySettings["repository"], patch: { scratchNamespace?: string | null; closeout?: ProjectCloseout | null; validation?: ProjectValidation | null; reviewer?: RepositorySettings["reviewer"]; qa?: ProjectQa | null; affectedTests?: RepositorySettings["affectedTests"]; checksPolicy?: RepositorySettings["checksPolicy"]; hostKind?: HostKind | null; workspaceProvider?: RepositorySettings["workspaceProvider"]; note?: string }): RepositorySettings {
     const apply = () => {
       const existing = this.repositorySettingsFor(identity);
       const base = existing ?? { closeout: null, validation: null, reviewer: null, qa: null, affectedTests: null, checksPolicy: null, note: "" };
@@ -155,7 +155,8 @@ export class StoreRepositorySettings {
         patch.validation !== undefined ? patch.validation : base.validation, patch.reviewer !== undefined ? patch.reviewer : base.reviewer,
         patch.qa !== undefined ? patch.qa : base.qa,
         patch.checksPolicy !== undefined ? patch.checksPolicy : base.checksPolicy,
-        patch.scratchNamespace, patch.hostKind, patch.affectedTests !== undefined ? patch.affectedTests : base.affectedTests);
+        patch.scratchNamespace, patch.hostKind, patch.affectedTests !== undefined ? patch.affectedTests : base.affectedTests,
+        patch.workspaceProvider);
     };
     return this.db.isTransaction ? apply() : this.core.transaction(apply);
   }
@@ -163,6 +164,10 @@ export class StoreRepositorySettings {
   scratchNamespaceFor(task: Pick<Task, "repoPath" | "repository">): string {
     const row = this.canonicalRepository(task.repoPath, task.repository);
     return repositoryScratchNamespace(task.repository ?? task.repoPath, row?.scratchNamespace);
+  }
+
+  workspaceProviderFor(task: Pick<Task, "repoPath" | "repository">): WorkspaceProvider {
+    return this.canonicalRepository(task.repoPath, task.repository)?.workspaceProvider ?? "local";
   }
 
   /** Task 382: the effective hosted-check policy for a task's repository. An absent or null setting keeps every check blocking, so existing repositories never gain advisory behaviour implicitly. */

@@ -197,6 +197,13 @@ export function routeHostAdapter(
             new Error(`Transport not connected: host ${id} is unavailable`),
           ),
         );
+      if (
+        !selected.workspaceAllocationBridge &&
+        selectedFallback.workspaceAllocationBridge
+      ) {
+        selected.workspaceAllocationBridge =
+          selectedFallback.workspaceAllocationBridge;
+      }
       let value: unknown;
       try {
         value = Reflect.get(selected, property, selected);

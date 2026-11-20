@@ -20,6 +20,7 @@ import { threadRunningReason } from '../../intake/thread-waits';
 import { declaredLaneDocumentKeys } from '../../planning/brief-lane-documents';
 import { dirname } from 'node:path';
 import { ensureTaskNodeModules } from '../../workspaces/task-node-modules';
+import { verifyBargeLeaseAndCustody } from '../../workspaces/barge-allocator';
 
 // Proof executors keep their own refusal path; reviewer and closeout creations wait for their exact lookup.
 const creationRoles = new Set<Run['role']>(['reviewer', 'closeout']);
@@ -58,8 +59,28 @@ export class RunLaunchDeliver {
       // Ordinary review takes custody of a detached exact-head checkout only
       // after reservation. Recheck its dependencies after that final source
       // transition and before the retained reviewer reads the worktree.
+      if (role !== 'closeout' && t.workspaceAllocation?.provider === 'barge') {
+        const bridge = this.adapter.workspaceAllocationBridge;
+        await verifyBargeLeaseAndCustody({
+          allocation: t.workspaceAllocation,
+          saveAllocation: bridge
+            ? (updated) => bridge.saveWorkspaceAllocation(t.id, updated)
+            : undefined,
+          cliOptions: bridge?.bargeCliOptions,
+        });
+      }
       if (role !== 'closeout' && t.directory)
-        await this.ensureTaskDependencies(t.directory, t.repoPath, dirname(t.directory));
+        await this.ensureTaskDependencies(
+          t.directory,
+          t.repoPath,
+          dirname(t.directory),
+          t.workspaceAllocation?.provider === 'barge'
+            ? {
+                expectedCommonDir: t.workspaceAllocation.gitCommonDir,
+                expectedCheckoutPath: t.workspaceAllocation.checkoutPath,
+              }
+            : undefined,
+        );
       // Proof launch preparation checked the exact source before reservation,
       // but this delivery path may refresh dependencies again. Recheck after
       // that setup and before any executor send or creation.

@@ -17,6 +17,7 @@ import {
   populateOwnedWorktree,
   removeOrphanCheckout,
   repoCommonDir,
+  WORKSPACE_POPULATE_BUDGET_MS,
   workspaceCreationRefusal,
   workspaceDataDirFor,
   type OrphanWorkspace,
@@ -25,7 +26,31 @@ import {
 import { capPaseoTitle, taskWorkspaceTitle } from "./workspace-title";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import type { Task } from "../../shared/contracts";
+import type {
+  Task,
+  WorkspaceAllocation,
+  WorkspaceProvider,
+} from "../../shared/contracts";
+import {
+  BargeCliError,
+  bargeWorktreeLeaseGet,
+  bargeWorktreeStatus,
+  classifyBargeDispatchError,
+} from "./barge-cli";
+import {
+  chooseWorkspaceProvider,
+  createBargeAllocationIntent,
+  nextAllocationSequence,
+  preserveBargeHeadForReplacement,
+  provisionBargeAllocation,
+  resolveBargeRepoIdentifier,
+  returnBargeAllocation,
+  verifyBargeLeaseAndCustody,
+} from "./barge-allocator";
+import type {
+  SaveWorkspaceAllocationOptions,
+  WorkspaceAllocationBridge,
+} from "./workspace-allocation-bridge";
 import {
   externalWorkspace,
   intakeOwnedReviewWorkspace,
@@ -131,25 +156,226 @@ export class WorkspaceLifecycle {
       ...(this.host.testPlacement?.retainedDataDirs ?? []),
     ];
   }
+  private latestTask(task: Task): Task {
+    return this.host.workspaceAllocationBridge?.task?.(task.id) ?? task;
+  }
+  private providerFor(task: Task): WorkspaceProvider {
+    const fresh = this.latestTask(task);
+    const bridge = this.host.workspaceAllocationBridge;
+    return chooseWorkspaceProvider({
+      task: fresh,
+      workspaceProviderFor: (target) =>
+        bridge?.workspaceProviderFor(target) ?? "local",
+    });
+  }
+  private saveAllocation(
+    taskId: string,
+    allocation: WorkspaceAllocation,
+    options?: SaveWorkspaceAllocationOptions,
+  ): void {
+    const bridge = this.host.workspaceAllocationBridge;
+    if (!bridge) {
+      throw new CheckoutRefusalError(
+        `Barge workspace provider requires a store allocation bridge for task ${taskId}`,
+      );
+    }
+    bridge.saveWorkspaceAllocation(taskId, allocation, options);
+  }
+  private async preflightBargeStorage(task: Task): Promise<void> {
+    if (task.workspaceAllocation?.leaseId) return;
+    const cliOptions = this.host.workspaceAllocationBridge?.bargeCliOptions;
+    let pools;
+    try {
+      const repo = await resolveBargeRepoIdentifier(task.repoPath, task.repository);
+      pools = await bargeWorktreeStatus({ repo }, cliOptions);
+    } catch (error) {
+      throw classifyBargeDispatchError(error);
+    }
+    const pool = pools[0];
+    if (!pool) {
+      throw new CheckoutUnavailableError(
+        `No Barge worktree pool configured for ${task.repository ?? task.repoPath}`,
+      );
+    }
+    if (pool.unavailable) {
+      throw new CheckoutUnavailableError(pool.unavailable);
+    }
+    const allBusy =
+      pool.roots.length >= pool.max &&
+      pool.roots.every((root) => Boolean(root.lease_id || root.held));
+    if (allBusy) {
+      throw new CheckoutUnavailableError(
+        `Barge worktree pool ${pool.pool} is at its maximum of ${pool.max} and no root is free`,
+      );
+    }
+  }
+  private async populateBargeTaskWorktree(
+    task: Task,
+    options: { replace?: boolean; targetHead?: string } = {},
+  ): Promise<{
+    directory: string;
+    populated: boolean;
+    budgetMs: number;
+    elapsedMs: number;
+  }> {
+    const started = Date.now();
+    const bridge = this.host.workspaceAllocationBridge;
+    if (!bridge) {
+      throw new CheckoutRefusalError(
+        `Barge workspace provider requires a store allocation bridge for task ${task.id}`,
+      );
+    }
+    let fresh = this.latestTask(task);
+    const cliOptions = bridge.bargeCliOptions;
+    const controlRootDir = bridge.custodianControlRootDir;
+
+    const existing = fresh.workspaceAllocation;
+    if (
+      !options.replace &&
+      existing?.provider === "barge" &&
+      existing.state === "leased" &&
+      existing.leaseId &&
+      existing.checkoutPath
+    ) {
+      const verified = await verifyBargeLeaseAndCustody({
+        allocation: existing,
+        saveAllocation: (updated) => this.saveAllocation(fresh.id, updated),
+        cliOptions,
+      });
+      return {
+        directory: verified.checkoutPath!,
+        populated: false,
+        budgetMs: 0,
+        elapsedMs: Date.now() - started,
+      };
+    }
+
+    const unreturnedDisplaced = (
+      fresh.resolution?.displacedWorkspaceAllocations ?? []
+    ).filter((entry) => entry.provider === "barge" && entry.state !== "returned");
+    if (unreturnedDisplaced.length > 0) {
+      throw new CheckoutUnavailableError(
+        `Waiting for displaced Barge lease ${unreturnedDisplaced[0]!.leaseId ?? unreturnedDisplaced[0]!.allocationId} to return before allocating replacement`,
+      );
+    }
+
+    if (
+      options.replace &&
+      existing?.provider === "barge" &&
+      existing.state !== "returned"
+    ) {
+      const expectedHead = options.targetHead;
+      if (
+        expectedHead &&
+        existing.checkoutPath &&
+        existsSync(existing.checkoutPath)
+      ) {
+        await preserveBargeHeadForReplacement({
+          repoPath: fresh.repoPath,
+          oldCheckoutPath: existing.checkoutPath,
+          expectedHead,
+        });
+      }
+      await returnBargeAllocation({
+        allocation: existing,
+        task: fresh,
+        dispositionEvidence: expectedHead ? "host_move_head_preserved" : null,
+        saveAllocation: (updated) => {
+          fresh = bridge.saveWorkspaceAllocation(fresh.id, updated);
+        },
+        cliOptions,
+      });
+      fresh = this.latestTask(fresh);
+    }
+
+    const reusableIntent =
+      !options.replace &&
+      fresh.workspaceAllocation?.provider === "barge" &&
+      ["intent", "uncertain"].includes(fresh.workspaceAllocation.state) &&
+      Boolean(fresh.workspaceAllocation.requestId)
+        ? fresh.workspaceAllocation
+        : null;
+
+    let intent: WorkspaceAllocation;
+    if (reusableIntent) {
+      intent = reusableIntent;
+    } else {
+      const baseRef = options.targetHead ?? fresh.planningBase ?? fresh.baseBranch;
+      const baseSha = (await git(fresh.repoPath, "rev-parse", baseRef)).trim();
+      const repoIdentifier = await resolveBargeRepoIdentifier(
+        fresh.repoPath,
+        fresh.repository,
+      );
+      intent = createBargeAllocationIntent({
+        task: fresh,
+        sequence: nextAllocationSequence(fresh),
+        baseSha,
+        repoIdentifier,
+      });
+      // Persist allocation intent + requestId BEFORE invoking Barge CLI.
+      fresh = bridge.saveWorkspaceAllocation(fresh.id, intent, {
+        displaceCurrent: Boolean(
+          fresh.workspaceAllocation &&
+            fresh.workspaceAllocation.allocationId !== intent.allocationId,
+        ),
+        auditEvent: {
+          kind: "barge_allocation_intent",
+          detail: `${intent.allocationId} request=${intent.requestId}`,
+        },
+      });
+    }
+
+    const provisioned = await provisionBargeAllocation({
+      allocation: intent,
+      task: fresh,
+      saveAllocation: (updated) => {
+        fresh = bridge.saveWorkspaceAllocation(fresh.id, updated);
+      },
+      cliOptions,
+      controlRootDir,
+    });
+    return {
+      directory: provisioned.checkoutPath!,
+      populated: true,
+      budgetMs: WORKSPACE_POPULATE_BUDGET_MS,
+      elapsedMs: Date.now() - started,
+    };
+  }
   async preflightWorkspaceStorage(task: Task): Promise<void> {
+    const fresh = this.latestTask(task);
+    if (externalWorkspace(fresh)) return;
+    if (this.providerFor(fresh) === "barge") {
+      await this.preflightBargeStorage(fresh);
+      return;
+    }
     const placement = this.host.placement();
     if (!placement) return;
     // External workspaces are not Queue allocations. An intake-owned review
     // workspace is also outside Queue placement, but its own directory still
     // receives volume admission because Nucleus archives its workspace entry.
-    if (externalWorkspace(task)) return;
-    if (workspaceOutsideQueueAllocation(task)) {
-      this.admitWorkspace(placement, task, task.directory!);
+    if (workspaceOutsideQueueAllocation(fresh)) {
+      this.admitWorkspace(placement, fresh, fresh.directory!);
       return;
     }
-    const ownedPath = await this.host.ownedPathFor(task);
-    const common = await repoCommonDir(task.repoPath);
-    if (!isOwnedWorkspacePath(ownedPath, this.host.dataDir(), common, task.id))
-      this.admitWorkspace(placement, task, ownedPath);
+    const ownedPath = await this.host.ownedPathFor(fresh);
+    const common = await repoCommonDir(fresh.repoPath);
+    if (!isOwnedWorkspacePath(ownedPath, this.host.dataDir(), common, fresh.id))
+      this.admitWorkspace(placement, fresh, ownedPath);
   }
   async ownedPathFor(task: Task): Promise<string> {
-    if (workspaceOutsideQueueAllocation(task) && task.directory)
-      return task.directory;
+    const fresh = this.latestTask(task);
+    if (fresh.workspaceAllocation?.provider === "barge") {
+      if (
+        fresh.workspaceAllocation.checkoutPath &&
+        fresh.workspaceAllocation.state !== "returned"
+      )
+        return fresh.workspaceAllocation.checkoutPath;
+      throw new CheckoutUnavailableError(
+        `Barge allocation for task ${fresh.id} has no active checkout path`,
+      );
+    }
+    if (workspaceOutsideQueueAllocation(fresh) && fresh.directory)
+      return fresh.directory;
     const common = await repoCommonDir(task.repoPath),
       placement = this.host.placement();
     if (
@@ -231,6 +457,69 @@ export class WorkspaceLifecycle {
       progress?: boolean;
     } = {},
   ): Promise<WorkspaceCreationState> {
+    const fresh = this.latestTask(task);
+    if (this.providerFor(fresh) === "barge") {
+      const allocation = fresh.workspaceAllocation;
+      if (!allocation || allocation.state === "returned") {
+        return { kind: "absent" };
+      }
+      const bridge = this.host.workspaceAllocationBridge;
+      const cliOptions = bridge?.bargeCliOptions;
+      if (allocation.state === "intent" || allocation.state === "uncertain") {
+        if (!allocation.requestId) return { kind: "absent" };
+        try {
+          const lease = await bargeWorktreeLeaseGet(
+            { request: allocation.requestId },
+            cliOptions,
+          );
+          if (lease.state === "returned") return { kind: "absent" };
+          if (lease.state !== "leased") {
+            return {
+              kind: "unknown",
+              evidence: `Barge lease ${lease.lease_id} is in state ${lease.state}`,
+            };
+          }
+          if (bridge) {
+            bridge.saveWorkspaceAllocation(fresh.id, {
+              ...allocation,
+              leaseId: lease.lease_id,
+              pool: lease.pool,
+              rootId: lease.root_id,
+              checkoutPath: lease.path,
+              state: "leased",
+              updatedAt: new Date().toISOString(),
+            });
+          }
+          return { kind: "found_done", directory: lease.path };
+        } catch (error) {
+          if (error instanceof BargeCliError && error.kind === "not_found")
+            return { kind: "absent" };
+          return {
+            kind: "unknown",
+            evidence: error instanceof Error ? error.message : String(error),
+          };
+        }
+      }
+      if (allocation.state === "leased" && allocation.checkoutPath) {
+        const verified = await verifyBargeLeaseAndCustody({
+          allocation,
+          saveAllocation: bridge
+            ? (updated) => {
+                bridge.saveWorkspaceAllocation(fresh.id, updated);
+              }
+            : undefined,
+          cliOptions,
+          requireHeldCustodian: !options.skipProcessScan,
+        });
+        return { kind: "found_done", directory: verified.checkoutPath! };
+      }
+      return {
+        kind: "unknown",
+        evidence:
+          allocation.error ??
+          `Barge allocation ${allocation.allocationId} is in state ${allocation.state}`,
+      };
+    }
     const common = await repoCommonDir(task.repoPath).catch(() => "");
     const placement = this.host.placement();
     const legacyPath =
@@ -280,8 +569,12 @@ export class WorkspaceLifecycle {
     });
   }
   async populateTaskWorktree(task: Task) {
-    if (task.workspaceId && !task.proofOnly)
+    const fresh = this.latestTask(task);
+    if (fresh.workspaceId && !fresh.proofOnly)
       throw new Error("Workspace already recorded; creation cannot replace it");
+    if (this.providerFor(fresh) === "barge") {
+      return await this.populateBargeTaskWorktree(fresh);
+    }
     if (task.proofOnly) {
       const ownedPath = await this.host.ownedPathFor(task);
       const state = await this.host.inspectWorkspaceCreation(task, {
@@ -418,22 +711,23 @@ export class WorkspaceLifecycle {
     task: Task,
     options: { freshlyPopulated?: boolean } = {},
   ) {
+    const fresh = this.latestTask(task);
     // A stable request ID does not prove the daemon will deduplicate a later
     // create. Recover a visible identity before asking Paseo for any resource.
-    if (task.workspaceId)
+    if (fresh.workspaceId)
       throw new Error("Workspace already recorded; creation cannot replace it");
     if (options.freshlyPopulated)
       this.host.workspaceCreationProgress?.(
-        task.id,
+        fresh.id,
         "workspace_identity_lookup",
         "skipped",
         0,
       );
     else {
       const found = await this.creationStep(
-        task,
+        fresh,
         "workspace_identity_lookup",
-        () => this.host.findWorkspaces(task),
+        () => this.host.findWorkspaces(fresh),
       );
       if (found.length > 1)
         throw new Error(
@@ -441,8 +735,8 @@ export class WorkspaceLifecycle {
         );
       if (found.length === 1) return found[0]!;
     }
-    const state = await this.creationStep(task, "worktree_inspection", () =>
-      this.host.inspectWorkspaceCreation(task, {
+    const state = await this.creationStep(fresh, "worktree_inspection", () =>
+      this.host.inspectWorkspaceCreation(fresh, {
         progress: true,
         skipProcessScan: options.freshlyPopulated,
         skipRemoteCheck: options.freshlyPopulated,
@@ -450,27 +744,31 @@ export class WorkspaceLifecycle {
     );
     if (state.kind !== "found_done")
       throw new Error(workspaceCreationRefusal(state));
+    const isBarge = fresh.workspaceAllocation?.provider === "barge";
     const placement = this.host.placement();
-    const ownedPath = await this.creationStep(task, "owned_path_proof", () =>
-      this.host.ownedPathFor(task),
+    const ownedPath = await this.creationStep(fresh, "owned_path_proof", () =>
+      this.host.ownedPathFor(fresh),
     );
-    if (placement && state.directory === ownedPath)
-      this.admitWorkspace(placement, task, state.directory);
+    if (!isBarge && placement && state.directory === ownedPath)
+      this.admitWorkspace(placement, fresh, state.directory);
     const registered = await this.creationStep(
-      task,
+      fresh,
       "path_registration_check",
-      () => this.samePathRegistration(task, state.directory),
+      () => this.samePathRegistration(fresh, state.directory),
     );
     if (registered.kind === "reuse") return registered.reuse;
     const project = await this.creationStep(
-      task,
+      fresh,
       "repository_project_lookup",
-      () => this.repositoryProject(task),
+      () => this.repositoryProject(fresh),
     );
-    const workspace = await this.creationStep(task, "workspace_creation", () =>
+    const seq = fresh.workspaceAllocation?.sequence ?? 1;
+    const requestId =
+      seq > 1 ? `ns-workspace-${fresh.id}-a${seq}` : `ns-workspace-${fresh.id}`;
+    const workspace = await this.creationStep(fresh, "workspace_creation", () =>
       this.host.workspaceHost.createWorkspace({
-        title: capPaseoTitle(taskWorkspaceTitle(task)),
-        requestId: `ns-workspace-${task.id}`,
+        title: capPaseoTitle(taskWorkspaceTitle(fresh)),
+        requestId,
         directory: state.directory,
         project,
       }),
@@ -493,6 +791,12 @@ export class WorkspaceLifecycle {
     throw new Error(workspaceCreationRefusal(state));
   }
   async removeOrphanWorkspace(task: Task, orphan: OrphanWorkspace) {
+    const fresh = this.latestTask(task);
+    if (fresh.workspaceAllocation?.provider === "barge") {
+      throw new Error(
+        `Refusing local orphan deletion on Barge-allocated task ${fresh.id}; use Barge return reconciliation`,
+      );
+    }
     const again = await this.host.inspectOrphanWorkspace(task);
     if (
       !again ||
@@ -626,12 +930,71 @@ export class WorkspaceLifecycle {
     task: Task,
     options: { target?: "pr_head" | "branch" } = {},
   ) {
+    let fresh = this.latestTask(task);
     const source =
       options.target === "branch"
-        ? await this.workerSource(task)
-        : { head: task.prHead ?? "", local: "" };
+        ? await this.workerSource(fresh)
+        : { head: fresh.prHead ?? "", local: "" };
     if (!source.head)
       throw new Error("Task workspace recovery requires an accepted PR head");
+    if (this.providerFor(fresh) === "barge") {
+      if (
+        fresh.workspaceAllocation?.provider === "barge" &&
+        fresh.workspaceAllocation.state === "leased" &&
+        fresh.workspaceAllocation.checkoutPath &&
+        existsSync(fresh.workspaceAllocation.checkoutPath)
+      ) {
+        const existingWorkspaces = await this.host.findWorkspaces(fresh);
+        const cliOptions = this.host.workspaceAllocationBridge?.bargeCliOptions;
+        if (existingWorkspaces.length === 1 && existingWorkspaces[0]!.directory === fresh.workspaceAllocation.checkoutPath) {
+          const verified = await verifyBargeLeaseAndCustody({
+            allocation: fresh.workspaceAllocation,
+            saveAllocation: (updated) => this.saveAllocation(fresh.id, updated),
+            cliOptions,
+          });
+          const headOk = await git(verified.checkoutPath!, "rev-parse", "HEAD").catch(() => "");
+          const branchOk = await git(verified.checkoutPath!, "branch", "--show-current").catch(() => "");
+          const dirtyOk = await queueCheckoutStatus(verified.checkoutPath!, "status", "--porcelain").catch(() => "dirty");
+          if (headOk === source.head && branchOk === fresh.branch && !dirtyOk) {
+            return {
+              ...existingWorkspaces[0]!,
+              directory: verified.checkoutPath!,
+            };
+          }
+        }
+      }
+      const populated = await this.populateBargeTaskWorktree(fresh, {
+        replace:
+          fresh.workspaceAllocation?.provider === "barge" &&
+          fresh.workspaceAllocation.state !== "returned",
+        targetHead: source.head,
+      });
+      fresh = this.latestTask(fresh);
+      const directory = populated.directory;
+      const seq = fresh.workspaceAllocation?.sequence ?? 1;
+      const registered = await this.samePathRegistration(fresh, directory);
+      const workspace =
+        (registered.kind === "reuse" ? registered.reuse : null) ??
+        (await this.host.workspaceHost.createWorkspace({
+          title: capPaseoTitle(taskWorkspaceTitle(fresh)),
+          requestId:
+            seq > 1
+              ? `ns-recover-workspace-${fresh.id}-a${seq}`
+              : `ns-recover-workspace-${fresh.id}`,
+          directory,
+          project: await this.repositoryProject(fresh),
+        }));
+      if (!workspace.directory)
+        throw new Error("Recovered Barge task workspace returned no directory");
+      return {
+        id: workspace.id,
+        directory: await this.verifiedRecoveredCheckout(
+          fresh,
+          workspace.directory,
+          source.head,
+        ),
+      };
+    }
     const found = await this.host.findWorkspaces(task);
     if (found.length > 1)
       throw new Error("Ambiguous workspace identity; no new resource created");
@@ -746,6 +1109,8 @@ export interface WorkspaceLifecycleHost {
   readonly helperPath: string;
   /** The placed allocation surface a fixture supplies instead of the live volume policy. */
   readonly testPlacement?: WorkspacePlacementFixture;
+  /** Durable store bridge for repository provider opt-in and Barge leases. */
+  readonly workspaceAllocationBridge?: WorkspaceAllocationBridge;
   /** The engine's durable per-step creation timing hook, set after construction. */
   workspaceCreationProgress?: (
     taskId: string,

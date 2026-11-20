@@ -9,6 +9,7 @@ import { ParticipantTickets } from "../core/dispatch/participant-tickets";
 import { RuntimeRepositories } from "../core/runtime/repositories";
 import { RuntimePlanning } from "../core/runtime/planning";
 import { RuntimeBoard } from "../core/runtime/board";
+import { createStoreWorkspaceAllocationBridge } from "../core/workspaces/workspace-allocation-bridge";
 
 import { compiledIdentity, stableInstalledPath } from "../shared/runtime.mjs";
 import { sourcePathFromModule } from "../shared/service/build";
@@ -670,6 +671,9 @@ export class QueueRuntime {
         settings: this.settings,
       });
       raw.scratchNamespaceFor = (task) => this.store.scratchNamespaceFor(task);
+      raw.workspaceAllocationBridge = createStoreWorkspaceAllocationBridge(
+        this.store,
+      );
       this.adapter = admitAdapter(raw, this.admission);
     } else {
       const hostHome = options.paseoHome ?? paseoHome();
@@ -694,6 +698,9 @@ export class QueueRuntime {
         join(sourcePath, "mcp-report.mjs"),
       );
       raw.scratchNamespaceFor = (task) => this.store.scratchNamespaceFor(task);
+      raw.workspaceAllocationBridge = createStoreWorkspaceAllocationBridge(
+        this.store,
+      );
       this.paseoAdapter = raw;
       this.adapter = admitAdapter(raw, this.admission);
     }

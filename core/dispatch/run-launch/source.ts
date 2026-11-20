@@ -562,6 +562,12 @@ export class RunLaunchSource {
         t.directory,
         t.repoPath,
         dirname(t.directory),
+        t.workspaceAllocation?.provider === "barge"
+          ? {
+              expectedCommonDir: t.workspaceAllocation.gitCommonDir,
+              expectedCheckoutPath: t.workspaceAllocation.checkoutPath,
+            }
+          : undefined,
       );
     // Dependency setup is a command in the task checkout. Re-prove the local
     // exact tree after it and before thread selection can reserve a proof run.

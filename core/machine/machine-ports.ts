@@ -64,6 +64,8 @@ export class MachinePorts {
 
   /** Where each Queue-launched run's own temp directory lives and how it is proved. */
   scratchNamespaceFor?: (task: Task) => string;
+  /** Durable workspace allocation & Barge lease bridge supplied by the runtime/engine. */
+  workspaceAllocationBridge?: import("../workspaces/workspace-allocation-bridge").WorkspaceAllocationBridge;
   /**
    * Where each Queue-launched run's own temp directory lives and how it is proved
    * (queue #535). The default proves the mounted checkout volume before creating it;

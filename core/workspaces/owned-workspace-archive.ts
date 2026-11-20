@@ -1,6 +1,16 @@
 import { existsSync } from "node:fs";
 import { removeTree } from "./tree-removal";
-import type { Run, Task } from "../../shared/contracts";
+import type {
+  Run,
+  Task,
+  WorkspaceAllocation,
+} from "../../shared/contracts";
+import { commonDirMatchesTask, safeRealpathSync } from "../git/git-identity";
+import {
+  returnBargeAllocation,
+  verifyBargeLeaseAndCustody,
+} from "./barge-allocator";
+import type { WorkspaceAllocationBridge } from "./workspace-allocation-bridge";
 import { intakeOwnedReviewWorkspace } from "../../shared/workspace-ownership";
 import type { AgentObservation, OriginAgent } from "../host/adapter";
 import type { WorkspaceContinuationHost } from "./workspace-continuation";
@@ -116,6 +126,44 @@ export class OwnedWorkspaceArchive {
       displacedBranch,
     } = options;
     const isTaskCheckout = id === task.workspaceId || Boolean(displacedBranch);
+    const matchingBargeAllocation = (): WorkspaceAllocation | null => {
+      const latest = this.host.workspaceAllocationBridge?.task?.(task.id) ?? task;
+      const targetDir = safeRealpathSync(directory);
+      const candidates = [
+        latest.workspaceAllocation,
+        ...(latest.resolution?.displacedWorkspaceAllocations ?? []),
+      ]
+        .filter((item): item is WorkspaceAllocation =>
+          Boolean(
+            item?.provider === "barge" &&
+              item.checkoutPath &&
+              safeRealpathSync(item.checkoutPath) === targetDir,
+          ),
+        )
+        .sort(
+          (a, b) =>
+            (b.state !== "returned" ? 1 : 0) - (a.state !== "returned" ? 1 : 0) ||
+            b.sequence - a.sequence,
+        );
+      return candidates[0] ?? null;
+    };
+    const initialBargeAllocation = matchingBargeAllocation();
+    const bridge = this.host.workspaceAllocationBridge;
+    if (initialBargeAllocation?.state === "returned") {
+      // Never inspect or mutate a Barge checkout path after its lease returned: a
+      // newer lease for another task may now occupy that warm root path. Only finish
+      // archiving this task's own native registration if still catalogued.
+      const workspaceRef = this.host.workspaceHost.workspaceRef(id);
+      await workspaceRef.refresh();
+      if (workspaceRef.current() && allowed()) {
+        const res = await workspaceRef.archive(`ns-archive-${task.id}-${id}`);
+        if (res.error)
+          throw Error(`Paseo workspace.archive failed: ${res.error}`);
+        if (!res.archivedAt)
+          throw Error("Paseo workspace.archive was not confirmed");
+      }
+      return [];
+    }
     const workspace = this.host.workspaceHost.workspaceRef(id);
     const terminal =
       task.phase === "done" ||
@@ -159,17 +207,19 @@ export class OwnedWorkspaceArchive {
       discard && discard.workspaceId === id && discard.directory === directory,
     );
     const orphanOf = async () =>
-      discarding && id === task.workspaceId && !reviewRun
-        ? this.host.classifyOrphan({
-            directory,
-            repoPath: task.repoPath,
-            dataDir:
-              (await this.host.ownedDataDirFor(task, directory)) ??
-              this.host.dataDir(),
-            taskId: task.id,
-            continuing: task.resolution.archiveIntentWorkspaceId === id,
-          })
-        : { orphaned: false as const };
+      initialBargeAllocation
+        ? { orphaned: false as const }
+        : discarding && id === task.workspaceId && !reviewRun
+          ? this.host.classifyOrphan({
+              directory,
+              repoPath: task.repoPath,
+              dataDir:
+                (await this.host.ownedDataDirFor(task, directory)) ??
+                this.host.dataDir(),
+              taskId: task.id,
+              continuing: task.resolution.archiveIntentWorkspaceId === id,
+            })
+          : { orphaned: false as const };
     // The thread inventory narrows to the workspace's project only under a
     // binding read from this attempt's first, catalogued pass. Paseo fixes a
     // workspace's projectId at creation and refuses same-id recreation, and its
@@ -224,7 +274,19 @@ export class OwnedWorkspaceArchive {
       // path, never presentation metadata. The same proof gates non-force
       // teardown below.
       let ownedCheckout = false;
-      ownedCheckout = Boolean(await this.host.ownedDataDirFor(task, directory));
+      const activeBarge = matchingBargeAllocation();
+      if (activeBarge && activeBarge.state === "leased") {
+        await verifyBargeLeaseAndCustody({
+          allocation: activeBarge,
+          saveAllocation: (updated) => {
+            bridge?.saveWorkspaceAllocation(task.id, updated);
+          },
+          cliOptions: bridge?.bargeCliOptions,
+        });
+      }
+      ownedCheckout = activeBarge
+        ? true
+        : Boolean(await this.host.ownedDataDirFor(task, directory));
       const slugOk =
         intakeOwned ||
         current?.worktreeSlug === slug ||
@@ -251,6 +313,25 @@ export class OwnedWorkspaceArchive {
           "Workspace archive outcome is uncertain; inspect before retrying",
         );
       if (!existsSync(directory)) {
+        if (activeBarge && activeBarge.state !== "returned") {
+          if (current) {
+            if (!allowed()) throw Error("Workspace archive cancelled before missing Barge cleanup");
+            const res = await workspace.archive(`ns-archive-${task.id}-${id}`);
+            if (res.error) throw Error(`Paseo workspace.archive failed: ${res.error}`);
+            if (!res.archivedAt) throw Error("Paseo workspace.archive was not confirmed");
+          }
+          await returnBargeAllocation({
+            allocation: activeBarge,
+            task: bridge?.task?.(task.id) ?? task,
+            dispositionEvidence: discarding ? "terminal_discard" : null,
+            originPublished: !requirePublished,
+            saveAllocation: (updated) => {
+              bridge?.saveWorkspaceAllocation(task.id, updated);
+            },
+            cliOptions: bridge?.bargeCliOptions,
+          });
+          return null;
+        }
         if (requireDirectory)
           throw Error("Preserving workspace with missing directory");
         return null;
@@ -485,6 +566,7 @@ export class OwnedWorkspaceArchive {
               () => true,
               () => false,
             ));
+          if (published) publication = `origin/${publishedBranch}`;
         }
         // A completed merge may have deleted the task branch. Its exact accepted
         // PR head is still safely published when the recorded merge commit is on
@@ -536,6 +618,7 @@ export class OwnedWorkspaceArchive {
                 () => true,
                 () => false,
               ));
+            if (published) publication = `origin/${task.baseBranch}`;
           }
         }
         if (!published) {
@@ -565,22 +648,33 @@ export class OwnedWorkspaceArchive {
         : slug;
       // An orphaned worktree has no Git identity to read; its identity is the
       // durable binding and exact owned path proved above, branch unproven.
+      const bargeCommonOk = async (observed: string, canonical: string) =>
+        activeBarge
+          ? commonDirMatchesTask(
+              { workspaceAllocation: activeBarge },
+              observed,
+              canonical,
+              directory,
+            )
+          : observed === canonical;
       if (
         !orphan.orphaned &&
         ((await git(directory, "branch", "--show-current")) !==
           expectedBranch ||
-          (await git(
-            directory,
-            "rev-parse",
-            "--path-format=absolute",
-            "--git-common-dir",
-          )) !==
-            (await git(
+          !(await bargeCommonOk(
+            await git(
+              directory,
+              "rev-parse",
+              "--path-format=absolute",
+              "--git-common-dir",
+            ),
+            await git(
               task.repoPath,
               "rev-parse",
               "--path-format=absolute",
               "--git-common-dir",
-            )))
+            ),
+          )))
       )
         throw Error("Preserving workspace: Git ownership changed");
       if (
@@ -609,6 +703,7 @@ export class OwnedWorkspaceArchive {
         if (cleanup === "run") {
           const placement = this.host.placement();
           if (
+            !initialBargeAllocation &&
             id === task.workspaceId &&
             placement &&
             directory === (await this.host.ownedPathFor(task))
@@ -617,7 +712,10 @@ export class OwnedWorkspaceArchive {
               (placement.admitIntake ?? placement.admit)(directory);
             else placement.admit(directory);
           }
-          const result = await removeBuildOutput(directory);
+          const result = await removeBuildOutput(
+            directory,
+            initialBargeAllocation ? { keepDependencies: true } : undefined,
+          );
           buildOutputCleanup.observed(result);
           if (!result.safe) return false;
         }
@@ -689,20 +787,35 @@ export class OwnedWorkspaceArchive {
         throw Error(
           "Preserving workspace: its Git state changed before teardown",
         );
-      const ownedData = await this.host.ownedDataDirFor(task, directory);
+      const bargeTeardown = matchingBargeAllocation() ?? initialBargeAllocation;
+      const ownedData = bargeTeardown
+        ? bargeTeardown.checkoutPath
+        : await this.host.ownedDataDirFor(task, directory);
       if (!ownedData)
         throw Error(
           "Preserving workspace: source or ownership changed before teardown",
         );
       if (
         !initial.orphan.orphaned &&
-        ((await git(
-          directory,
-          "rev-parse",
-          "--path-format=absolute",
-          "--git-common-dir",
-        )) !== (await repoCommonDir(task.repoPath)) ||
-          (await git(directory, "branch", "--show-current")) !== task.branch ||
+        (!(await (async () => {
+          const observed = await git(
+            directory,
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-common-dir",
+          );
+          const canonical = await repoCommonDir(task.repoPath);
+          return bargeTeardown
+            ? commonDirMatchesTask(
+                { workspaceAllocation: bargeTeardown },
+                observed,
+                canonical,
+                directory,
+              )
+            : observed === canonical;
+        })()) ||
+          (await git(directory, "branch", "--show-current")) !==
+            (displacedBranch || task.branch) ||
           (!discarding &&
             ((await git(directory, "rev-parse", "HEAD")) !==
               initial.actualHead ||
@@ -719,47 +832,75 @@ export class OwnedWorkspaceArchive {
           "Preserving workspace: repository origin changed before teardown",
         );
       try {
-        const commonDir = await repoCommonDir(task.repoPath);
-        // Git has no record of an orphaned worktree, so `worktree remove`
-        // cannot apply: re-prove the orphan, then the fences, then the
-        // canonical path synchronously, and delete exactly the owned directory.
-        // Links inside are removed, never followed.
-        if (
-          initial.orphan.orphaned &&
-          !(
-            await this.host.classifyOrphan({
-              directory,
-              repoPath: task.repoPath,
-              dataDir: ownedData,
-              taskId: task.id,
-              continuing: task.resolution.archiveIntentWorkspaceId === id,
-            })
-          ).orphaned
-        )
-          throw Error("the worktree is no longer orphaned");
-        if (!allowed()) return false;
-        // Under the discard, the canonical path is re-proved and read-only
-        // directories inside it are opened for removal, synchronously. A
-        // normalization failure stops removal.
-        if (discarding) {
-          assertCanonicalOwnedPath(directory, ownedData, commonDir, task.id);
-          normalizeOwnedDirectoryPermissions(directory);
+        if (bargeTeardown) {
+          if (!allowed()) return false;
+          let alloc = bargeTeardown;
+          if (alloc.state === "leased") {
+            alloc = await verifyBargeLeaseAndCustody({
+              allocation: alloc,
+              saveAllocation: (updated) => {
+                bridge?.saveWorkspaceAllocation(task.id, updated);
+              },
+              cliOptions: bridge?.bargeCliOptions,
+            });
+          }
+          await returnBargeAllocation({
+            allocation: alloc,
+            task: bridge?.task?.(task.id) ?? task,
+            dispositionEvidence: discarding
+              ? "terminal_discard"
+              : displacedBranch
+                ? "host_move_head_preserved"
+                : null,
+            originPublished: Boolean(initial.publication),
+            saveAllocation: (updated) => {
+              bridge?.saveWorkspaceAllocation(task.id, updated);
+            },
+            cliOptions: bridge?.bargeCliOptions,
+          });
+        } else {
+          const commonDir = await repoCommonDir(task.repoPath);
+          // Git has no record of an orphaned worktree, so `worktree remove`
+          // cannot apply: re-prove the orphan, then the fences, then the
+          // canonical path synchronously, and delete exactly the owned directory.
+          // Links inside are removed, never followed.
+          if (
+            initial.orphan.orphaned &&
+            !(
+              await this.host.classifyOrphan({
+                directory,
+                repoPath: task.repoPath,
+                dataDir: ownedData,
+                taskId: task.id,
+                continuing: task.resolution.archiveIntentWorkspaceId === id,
+              })
+            ).orphaned
+          )
+            throw Error("the worktree is no longer orphaned");
+          if (!allowed()) return false;
+          // Under the discard, the canonical path is re-proved and read-only
+          // directories inside it are opened for removal, synchronously. A
+          // normalization failure stops removal.
+          if (discarding) {
+            assertCanonicalOwnedPath(directory, ownedData, commonDir, task.id);
+            normalizeOwnedDirectoryPermissions(directory);
+          }
+          // The path was re-proved synchronously just above; the removal is issued
+          // against that same proven path and runs its walk off this thread. An
+          // interrupted walk leaves a partial directory that the next archive attempt
+          // re-proves and removes, exactly as the synchronous removal did
+          // (nucleus#1179; planner ruling 2026-11-13).
+          if (initial.orphan.orphaned)
+            await removeTree(directory, { force: false });
+          else await removeOwnedWorktree(task.repoPath, directory, discarding);
         }
-        // The path was re-proved synchronously just above; the removal is issued
-        // against that same proven path and runs its walk off this thread. An
-        // interrupted walk leaves a partial directory that the next archive attempt
-        // re-proves and removes, exactly as the synchronous removal did
-        // (nucleus#1179; planner ruling 2026-11-13).
-        if (initial.orphan.orphaned)
-          await removeTree(directory, { force: false });
-        else await removeOwnedWorktree(task.repoPath, directory, discarding);
       } catch (error) {
         throw new WorkspaceTeardownRefusal(
           "failed",
           error instanceof Error ? error.message : String(error),
         );
       }
-      if (existsSync(directory))
+      if (!bargeTeardown && existsSync(directory))
         throw new WorkspaceTeardownRefusal(
           "incomplete",
           `Queue-owned worktree directory remains after archive: ${directory}`,
@@ -784,4 +925,5 @@ export interface OwnedWorkspaceArchiveHost extends WorkspaceContinuationHost {
   classifyOrphan: typeof classifyOrphanWorktree;
   ownedDataDirFor(task: Task, directory: string): Promise<string | null>;
   dataDir(): string;
+  readonly workspaceAllocationBridge?: WorkspaceAllocationBridge;
 }

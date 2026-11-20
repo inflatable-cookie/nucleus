@@ -29,6 +29,7 @@ import {
 } from "node:path";
 import type {
   Task,
+  WorkspaceAllocation,
   WorktreeLink,
   WorktreeLinkFinding,
   WorktreeLinks,
@@ -471,7 +472,29 @@ export async function canonicalLinkRoot(
     retainedDataDirs?: string[];
     admit: (path: string) => void;
   },
+  bargeAllocation?: WorkspaceAllocation | null,
 ): Promise<string> {
+  if (bargeAllocation?.provider === "barge") {
+    if (
+      bargeAllocation.state === "returned" ||
+      !bargeAllocation.leaseId ||
+      !bargeAllocation.checkoutPath ||
+      !bargeAllocation.gitCommonDir
+    ) {
+      throw new Error("Barge workspace link root requires an active Barge allocation");
+    }
+    const [actualDir, expectedDir, actualCommon, expectedCommon] =
+      await Promise.all([
+        realpath(directory),
+        realpath(bargeAllocation.checkoutPath),
+        repoCommonDir(directory),
+        realpath(bargeAllocation.gitCommonDir),
+      ]);
+    if (actualDir !== expectedDir || actualCommon !== expectedCommon) {
+      throw new Error("Barge checkout path or Git common directory does not match the recorded lease");
+    }
+    return dirname(actualDir);
+  }
   let data = await realpath(dataDir);
   const awaitableCommon = await repoCommonDir(repoPath);
   const live = liveCheckoutDataDir(dataDir);
@@ -595,7 +618,9 @@ export async function placeWorktreeLink(
  */
 export async function provisionWorktreeLinks(input: {
   dataDir: string;
-  task: Pick<Task, "repoPath" | "directory" | "workspaceId">;
+  task: Pick<Task, "repoPath" | "directory" | "workspaceId"> & {
+    workspaceAllocation?: Task["workspaceAllocation"];
+  };
   configured: readonly ConfiguredCheckout[];
   pinned?: {
     taskId: string;
@@ -707,6 +732,8 @@ export async function provisionWorktreeLinks(input: {
         input.dataDir,
         input.task.repoPath,
         directory,
+        undefined,
+        input.task.workspaceAllocation,
       );
       const source = await configuredSourceRoot(
         candidate.target,

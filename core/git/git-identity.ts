@@ -12,6 +12,8 @@
  */
 import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
+import { normalizeRepositoryOrigin } from "../../shared/lanes";
+import type { Task } from "../../shared/contracts";
 
 const SHA = /^[a-f0-9]{40,64}$/;
 
@@ -169,4 +171,54 @@ function unique(paths: string[]): string[] {
     out.push(path);
   }
   return out;
+}
+
+export function safeRealpathSync(path: string): string {
+  try { return realpathSync(path); }
+  catch { return resolve(path); }
+}
+
+/**
+ * Verify a checkout's Git common dir belongs to the task's repository or active
+ * Barge pool lease (never accepting a returned allocation or wrong lease path).
+ */
+export function commonDirMatchesTask(
+  task: Pick<Task, "workspaceAllocation">,
+  observedCommonDir: string,
+  repoCommonDir: string,
+  observedDirectory?: string | null,
+): boolean {
+  const allocation = task.workspaceAllocation;
+  if (allocation?.provider === "barge") {
+    if (
+      allocation.state === "returned" ||
+      !allocation.leaseId ||
+      !allocation.gitCommonDir ||
+      !allocation.checkoutPath
+    ) {
+      return false;
+    }
+    if (safeRealpathSync(observedCommonDir) !== safeRealpathSync(allocation.gitCommonDir)) {
+      return false;
+    }
+    if (
+      observedDirectory &&
+      safeRealpathSync(observedDirectory) !== safeRealpathSync(allocation.checkoutPath)
+    ) {
+      return false;
+    }
+    return true;
+  }
+  return safeRealpathSync(observedCommonDir) === safeRealpathSync(repoCommonDir);
+}
+
+/** Compare two repository origin URLs with hosted-slug and file:// equivalence. */
+export function originsMatchForTask(a: string, b: string): boolean {
+  if (a === b) return true;
+  const slugA = normalizeRepositoryOrigin(a);
+  const slugB = normalizeRepositoryOrigin(b);
+  if (slugA && slugB) return slugA === slugB;
+  const normLocal = (value: string) =>
+    value.trim().replace(/^file:\/\//i, "").replace(/\/+$/, "").replace(/\.git$/i, "");
+  return Boolean(a && b) && normLocal(a) === normLocal(b);
 }

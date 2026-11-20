@@ -207,6 +207,8 @@ import { TaskWakes } from "./scheduling/task-wakes";
 import { CompletionFollowUps } from "./closeout/completion-follow-ups";
 
 import { TerminalWorkspaceRetirement } from "./closeout/terminal-workspace-retirement";
+import { createStoreWorkspaceAllocationBridge } from "./workspaces/workspace-allocation-bridge";
+import { verifyBargeLeaseAndCustody } from "./workspaces/barge-allocator";
 
 export const STOPPED_BEFORE_DRAIN = () =>
   new Error(
@@ -922,6 +924,10 @@ export class Engine {
   ) {
     this.hostOutages = new HostOutages(store);
     this.primaryAdapter = adapter;
+    if (!adapter.workspaceAllocationBridge) {
+      adapter.workspaceAllocationBridge =
+        createStoreWorkspaceAllocationBridge(store);
+    }
     this.resolveHostAdapter = () => adapter;
     this.adapter = routeHostAdapter(this, adapter);
     this.catalogs = new ProfileCatalogs(this);
@@ -3169,7 +3175,57 @@ export class Engine {
   continuationOwnsReturn(taskId: string): boolean {
     return this.workerReconcile.continuationOwnsReturn(taskId);
   }
-  reconcile(task: Task): Promise<void> {
+  async reconcileBargeCustodyForTask(task: Task): Promise<void> {
+    const fresh = this.store.taskOrNull(task.id);
+    if (
+      !fresh ||
+      fresh.workspaceAllocation?.provider !== "barge" ||
+      fresh.workspaceAllocation.state !== "leased"
+    )
+      return;
+    const bridge = this.adapter.workspaceAllocationBridge;
+    try {
+      await verifyBargeLeaseAndCustody({
+        allocation: fresh.workspaceAllocation,
+        saveAllocation: bridge
+          ? (updated) => bridge.saveWorkspaceAllocation(fresh.id, updated)
+          : undefined,
+        cliOptions: bridge?.bargeCliOptions,
+      });
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      this.store.event(fresh.id, "barge_custody_lost", reason);
+      if (
+        !["done", "cancelled"].includes(fresh.phase) &&
+        !fresh.removedAt
+      ) {
+        this.note(
+          fresh.id,
+          `Barge lease custody lost (return fenced): ${reason}`,
+          "operator_needed",
+          "needs_attention",
+        );
+      }
+    }
+  }
+  async reconcileBargeCustodians(): Promise<void> {
+    for (const task of this.store.tasks()) {
+      if (
+        task.workspaceAllocation?.provider === "barge" &&
+        task.workspaceAllocation.state === "leased" &&
+        !task.removedAt
+      ) {
+        await this.reconcileBargeCustodyForTask(task);
+      }
+    }
+  }
+  async reconcile(task: Task): Promise<void> {
+    if (
+      task.workspaceAllocation?.provider === "barge" &&
+      task.workspaceAllocation.state === "leased"
+    ) {
+      await this.reconcileBargeCustodyForTask(task);
+    }
     return this.workerReconcile.reconcile(task);
   }
   reconcileObservation(task: Task): Promise<{

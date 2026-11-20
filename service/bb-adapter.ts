@@ -28,6 +28,7 @@ import {
   type BbWorkspaceRecord,
 } from "../hosts/bb";
 import type { Store } from "../core/store/store";
+import { createStoreWorkspaceAllocationBridge } from "../core/workspaces/workspace-allocation-bridge";
 import type {
   HostOperationName,
   HostOperationOutcome,
@@ -151,6 +152,7 @@ export function composeBbAdapter(input: {
     readonly testPlacement = undefined;
     /** Repository scratch namespaces, so a BB run's leaf follows the repository's setting. */
     scratchNamespaceFor = (task: Task) => store.scratchNamespaceFor(task);
+    workspaceAllocationBridge = createStoreWorkspaceAllocationBridge(store);
     isConnected() {
       return input.connected();
     }

@@ -91,6 +91,7 @@ export abstract class HostPolicies extends MachinePorts {
   abstract readonly reportingViaMcp: boolean;
   abstract readonly admissionLaunchEnv: Record<string, string>;
   abstract readonly testPlacement: WorkspaceLifecycleHost["testPlacement"];
+  declare workspaceAllocationBridge?: WorkspaceLifecycleHost["workspaceAllocationBridge"];
   abstract readonly workspaceHost: WorkspaceLifecycleHost["workspaceHost"] &
     WorkspaceContinuationHost["workspaceHost"] &
     OwnedWorkspaceArchiveHost["workspaceHost"] &

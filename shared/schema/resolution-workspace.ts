@@ -4,6 +4,7 @@ import {
   displacedHostWorkspaceSchema,
   externalWorkspaceArchiveSchema,
   runtimeRetirementSchema,
+  workspaceAllocationSchema,
   workspaceArchiveRetrySchema,
 } from "./workspace";
 
@@ -54,4 +55,6 @@ export const resolutionWorkspaceFields = {
     .array(externalWorkspaceArchiveSchema)
     .default([]),
   displacedHostWorkspaces: z.array(displacedHostWorkspaceSchema).default([]),
+  /** Displaced or historical provider allocations (including Barge leases) kept for fencing and durable return. */
+  displacedWorkspaceAllocations: z.array(workspaceAllocationSchema).default([]),
 };

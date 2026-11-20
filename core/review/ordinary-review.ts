@@ -2,7 +2,7 @@ import { realpathSync } from 'node:fs';
 import type { Run, Task } from '../../shared/contracts';
 import { git, queueCheckoutStatus } from '../git/index';
 import { gitPrefix } from '../git/git-command';
-import { GitIdentityError, readGitCheckout, readGitRef } from '../git/git-identity';
+import { GitIdentityError, commonDirMatchesTask, originsMatchForTask, readGitCheckout, readGitRef } from '../git/git-identity';
 
 /**
  * The largest single inlined report (review text, worker return) a prompt may
@@ -62,7 +62,7 @@ export function assertOrdinaryReviewIdentity(task: Task, head: string, detached:
   if (realpathSync(task.directory) === realpathSync(task.repoPath) || checkout.toplevel !== realpathSync(task.directory))
     throw Error('Ordinary reviewer requires its recorded Queue-owned checkout root');
   // Origin is compared because a worktree gitDir config can override commonDir.
-  if (checkout.commonDir !== repo.commonDir || checkout.origin !== repo.origin)
+  if (!commonDirMatchesTask(task, checkout.commonDir, repo.commonDir, task.directory) || !originsMatchForTask(checkout.origin, repo.origin))
     throw Error(`Ordinary reviewer repository identity changed: expected common directory ${repo.commonDir} and origin ${repo.origin}, observed ${checkout.commonDir} and ${checkout.origin}`);
   let branchTip: string;
   try { branchTip = readGitRef(checkout, `refs/heads/${task.branch}`); }

@@ -1970,6 +1970,7 @@ export class Store {
     scratchNamespace?: string | null,
     hostKind?: import("../../shared/host-kind").HostKind | null,
     affectedTests?: RepositorySettings["affectedTests"],
+    workspaceProvider?: RepositorySettings["workspaceProvider"],
   ): RepositorySettings {
     return this.repositorySettingsStore.putRepository(
       identity,
@@ -1982,6 +1983,7 @@ export class Store {
       scratchNamespace,
       hostKind,
       affectedTests,
+      workspaceProvider,
     );
   }
   /** Patch semantics: only the named fields change; `null` clears one and an absent field keeps its stored value. Returns the full resulting row. */
@@ -1996,6 +1998,7 @@ export class Store {
       affectedTests?: RepositorySettings["affectedTests"];
       checksPolicy?: RepositorySettings["checksPolicy"];
       hostKind?: import("../../shared/host-kind").HostKind | null;
+      workspaceProvider?: RepositorySettings["workspaceProvider"];
       note?: string;
     },
   ): RepositorySettings {
@@ -2003,6 +2006,12 @@ export class Store {
   }
   scratchNamespaceFor(task: Pick<Task, "repoPath" | "repository">): string {
     return this.repositorySettingsStore.scratchNamespaceFor(task);
+  }
+  /** Effective workspace provider for new allocations on a task's repository (`"local"` when unconfigured/null). */
+  workspaceProviderFor(
+    task: Pick<Task, "repoPath" | "repository">,
+  ): import("../../shared/schema/workspace").WorkspaceProvider {
+    return this.repositorySettingsStore.workspaceProviderFor(task);
   }
   /** Task 382: the effective hosted-check policy for a task's repository. An absent or null setting keeps every check blocking, so existing repositories never gain advisory behaviour implicitly. */
   checksPolicyFor(

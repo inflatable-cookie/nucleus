@@ -137,6 +137,19 @@ export function moveTaskToWorkerHost(params: MoveTaskToWorkerHostParams): Task {
     const workerModels = previousModel
       ? [...new Set([...current.workerModels, previousModel])]
       : current.workerModels;
+    const existingDisplacedAllocations =
+      current.resolution.displacedWorkspaceAllocations ?? [];
+    const displacedWorkspaceAllocations =
+      current.workspaceAllocation?.provider === "barge"
+        ? [
+            ...existingDisplacedAllocations.filter(
+              (entry) =>
+                entry.allocationId !==
+                current.workspaceAllocation!.allocationId,
+            ),
+            current.workspaceAllocation,
+          ]
+        : existingDisplacedAllocations;
     const {
       resolution: patchResolution,
       retiredWorkers: _ignoredRetired,
@@ -152,6 +165,10 @@ export function moveTaskToWorkerHost(params: MoveTaskToWorkerHostParams): Task {
         workspaceId: null,
         workspaceIntent: false,
         directory: null,
+        workspaceAllocation:
+          current.workspaceAllocation?.provider === "barge"
+            ? null
+            : current.workspaceAllocation,
         agentId: null,
         runId: null,
         agentIntent: false,
@@ -178,6 +195,7 @@ export function moveTaskToWorkerHost(params: MoveTaskToWorkerHostParams): Task {
           reviewerProfile: null,
           stalledTurnStop: null,
           displacedHostWorkspaces,
+          displacedWorkspaceAllocations,
         },
       },
       "worker_host_moved",
@@ -234,11 +252,16 @@ export async function provisionHostMovedWorkspace(
       (context.hostAvailable(entry.hostId) ||
         Boolean(entry.directory && existsSync(entry.directory))),
   );
-  if (blocking.length > 0) {
+  const unreturnedBarge = (
+    task.resolution.displacedWorkspaceAllocations ?? []
+  ).find((entry) => entry.provider === "barge" && entry.state !== "returned");
+  if (blocking.length > 0 || unreturnedBarge) {
     context.enqueueCleanup(task.id);
     context.waiting(
       task,
-      `Waiting for host ${blocking[0]!.hostId} cleanup before provisioning workspace on ${task.hostId}`,
+      blocking.length > 0
+        ? `Waiting for host ${blocking[0]!.hostId} cleanup before provisioning workspace on ${task.hostId}`
+        : `Waiting for Barge lease ${unreturnedBarge!.leaseId ?? unreturnedBarge!.allocationId} return before provisioning replacement on ${task.hostId}`,
     );
     return false;
   }
