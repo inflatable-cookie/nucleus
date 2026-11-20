@@ -261,6 +261,7 @@ export class T3Reads {
   private pass = 0;
   /** Pass-scoped live shell, archived shell and paired inventory reads. */
   private shellHeld: Promise<z.infer<typeof shellSnapshot>> | null = null;
+  private observedProjects: readonly z.infer<typeof project>[] | null = null;
   private archivedHeld: Promise<z.infer<typeof archivedShellSnapshot>> | null =
     null;
   private inventoryHeld: Promise<T3Inventory> | null = null;
@@ -445,7 +446,18 @@ export class T3Reads {
         return false;
       },
     );
+    // The projects this read saw are the host's own project observation. The board
+    // reads them from here, so a badge never costs an extra host read (nucleus#1450).
+    this.observedProjects = snapshot!.projects;
     return snapshot!;
+  }
+  /**
+   * The projects the last synchronized shell read saw, or null before any read on
+   * this connection. Holds no fresh read: a caller decides whether the connection
+   * is still live before it trusts the list.
+   */
+  projectObservation(): readonly z.infer<typeof project>[] | null {
+    return this.observedProjects;
   }
   /**
    * One fresh, synchronized thread snapshot. An observation read opts into the

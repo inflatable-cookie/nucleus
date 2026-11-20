@@ -43,6 +43,11 @@ import {
   type BbSidebarWorkspace,
 } from "./bb-sidebar-groups";
 import type { BbSidebarGroups } from "../../shared/schema/bb-sidebar";
+import {
+  matchProjectBadges,
+  type ProjectObservation,
+} from "../../shared/t3/project-badge";
+import { realpathSync } from "node:fs";
 import { collectOwnerVerbFacts, ownerTaskNext } from "../verbs/owner-verbs";
 import type { createTaskDetailCache } from "../telemetry/task-detail";
 import type {
@@ -75,6 +80,28 @@ export interface BoardContext {
   boardError(): string;
   readonly prStates: Record<string, PrState>;
   readonly hostId: string;
+  /** Each live T3 host's projects from its last shell read (nucleus#1450); none when disconnected. */
+  projectObservations?(): ProjectObservation[];
+}
+
+/**
+ * A per-projection path canonicaliser: realpath when the path exists, the path itself
+ * otherwise. Memoised for one board, so a repository is resolved once per snapshot.
+ */
+function canonicalPathResolver(): (path: string) => string {
+  const seen = new Map<string, string>();
+  return (path) => {
+    const known = seen.get(path);
+    if (known !== undefined) return known;
+    let resolved = path;
+    try {
+      resolved = realpathSync.native(path);
+    } catch {
+      resolved = path;
+    }
+    seen.set(path, resolved);
+    return resolved;
+  };
 }
 
 /** Board reads retain their projection state without owning runtime lifecycle. */
@@ -82,6 +109,7 @@ export class RuntimeBoard {
   /** Spec 052: the usage level the last board projection was built at. */
   private boardUsageLevel: UsageLevel | null = null;
   private boardBackupKey: string | null = null;
+  private boardProjectKey: string | null = null;
 
   constructor(private readonly context: BoardContext) {}
 
@@ -385,6 +413,14 @@ export class RuntimeBoard {
       this.advanceRevisionForProjection("backup health");
     }
     this.boardBackupKey = backupKey;
+    // nucleus#1450: a T3 project renamed, re-rooted, archived or connected changes the
+    // generated badges with no store write, so the observed projects move the revision.
+    const observations = this.context.projectObservations?.() ?? [];
+    const projectKey = JSON.stringify(observations);
+    if (this.boardProjectKey !== null && projectKey !== this.boardProjectKey) {
+      this.advanceRevisionForProjection("t3 project observation");
+    }
+    this.boardProjectKey = projectKey;
     const facts = this.context.cachedUiSnapshotFacts();
     const revision = facts.revision;
     const counters = this.boardCounters(facts);
@@ -431,6 +467,16 @@ export class RuntimeBoard {
         .map(summarizeOperation),
       error,
       tasks: facts.summaries,
+      projectBadges: observations.length
+        ? matchProjectBadges({
+            tasks: facts.summaries.map((task) => ({
+              hostId: task.hostId ?? "",
+              repoPath: task.repoPath,
+            })),
+            observations,
+            canonical: canonicalPathResolver(),
+          })
+        : {},
       queuedCounts: facts.queuedCounts,
       lanes: facts.lanes,
       projects: facts.projects,
@@ -684,7 +730,7 @@ export class RuntimeBoard {
   }
 
   private advanceRevisionForProjection(
-    source: "usage level" | "backup health",
+    source: "usage level" | "backup health" | "t3 project observation",
   ): void {
     try {
       this.context.store.advanceRevision();

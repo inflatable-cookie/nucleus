@@ -32,6 +32,12 @@ import {
 } from "../../shared/decision-project";
 import { taskWaitCardLabel } from "../../shared/task-detail-summary";
 import {
+  T3_PROJECT_BADGE_TINT,
+  isDarkSurface,
+  projectBadgeText,
+  type ProjectBadge,
+} from "../../shared/t3/project-badge";
+import {
   projectName,
   plainCardText,
   plainCardNode,
@@ -372,6 +378,40 @@ export const QaRunCard = React.memo(function QaRunCard({
  * waiting and who or what moves it next. Long IDs, lanes, profiles and timestamps live in
  * the task view; the card keeps the holds, waits and attention a scan needs.
  */
+/**
+ * The generated T3 project badge on a card's project line (nucleus#1450). It is drawn in
+ * the T3 renderer's colours for the surface's mode and is decorative: the project name
+ * beside it is the label.
+ */
+function ProjectBadgeMark({ badge, c }: { badge: ProjectBadge; c: Colors }) {
+  // A Text box, so the tint's currentColor is the badge's own text colour on every host.
+  const color = projectBadgeText(badge, isDarkSurface(c.surface0));
+  return (
+    <Text
+      numberOfLines={1}
+      accessibilityElementsHidden
+      importantForAccessibility="no"
+      style={{
+        color,
+        backgroundColor: T3_PROJECT_BADGE_TINT,
+        minWidth: 16,
+        maxWidth: 32,
+        height: 16,
+        paddingHorizontal: 3,
+        borderRadius: 4,
+        overflow: "hidden",
+        textAlign: "center",
+        lineHeight: 16,
+        fontFamily: "monospace",
+        fontSize: 8,
+        fontWeight: "700",
+      }}
+    >
+      {badge.monogram}
+    </Text>
+  );
+}
+
 export const TaskCard = React.memo(function TaskCard({
   task,
   selected,
@@ -383,6 +423,7 @@ export const TaskCard = React.memo(function TaskCard({
   decisions = false,
   decisionTitle,
   defaultHostId,
+  projectBadge = null,
 }: {
   task: TaskSummary;
   selected: boolean;
@@ -394,6 +435,8 @@ export const TaskCard = React.memo(function TaskCard({
   decisions?: boolean;
   decisionTitle?: string | null;
   defaultHostId?: string;
+  /** The generated T3 project badge for this task's repository, when its host is T3 and matched. */
+  projectBadge?: ProjectBadge | null;
 }) {
   const [statusTip, setStatusTip] = useState(false);
   const statusAnchor = useRef<View | null>(null);
@@ -722,7 +765,11 @@ export const TaskCard = React.memo(function TaskCard({
       board={board}
       eyebrow={
         <>
-          <Icon name="Folder" size={12} color={c.foregroundMuted} />
+          {projectBadge ? (
+            <ProjectBadgeMark badge={projectBadge} c={c} />
+          ) : (
+            <Icon name="Folder" size={12} color={c.foregroundMuted} />
+          )}
           <Text
             numberOfLines={1}
             ellipsizeMode="tail"

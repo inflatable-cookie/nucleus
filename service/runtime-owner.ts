@@ -866,6 +866,7 @@ export class QueueRuntime {
       markStoreAccess: () => this.markStoreAccess(),
       anyHostConnected: () => this.anyHostConnected(),
       backupHealthProjection: () => this.backupHealthProjection(),
+      projectObservations: () => this.t3Host?.projectObservations() ?? [],
       boardError: () => this.boardError(),
       get prStates() {
         return runtime.lifecycle.prStateMap();
