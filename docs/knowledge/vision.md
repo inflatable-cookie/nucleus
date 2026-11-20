@@ -278,7 +278,7 @@ reviewer, recovery and coordinator stay separate top-level T3 threads ("isn't my
 guess it's the only way to make it work in t3"); reporting goes through the CLI helper for now; no
 patches to T3 ("we need to work around the gaps - no patches"); the Nucleus web board is the operator
 UI alongside T3; and T3 is a trial before any commitment ("the gaps may affect the workflow too
-much"). Paseo stays the primary host until Tom decides.
+much"). Paseo stayed the primary host until Tom decided (superseded 2026-11-20: T3 is the current operating host; see the operating-host ruling below).
 
 T3Code compatibility follows the auto-updating nightly, with read-only structural
 probes rather than a server-version pin (Tom, 2026-11-11). The connection and
@@ -288,8 +288,8 @@ T3Code, opt-in per repository, with one workspace per task nested under the task
 BB's sidebar. His target is "T3 dispatches, BB executes", and he wants the full end-to-end workflow —
 submit, dispatch, worker report, independent review, merge, closeout and archive, with questions and
 notices back to the planner thread — proven in BB before any switch from Paseo. Paseo stays the
-primary host until he makes the parity call; [Spec 062](specs/062-bb-host-adapter.md) records that
-call as pending. Subscription usage is each host's own surface: Nucleus adds usage UI to no host, and
+primary host until he made the parity call (superseded 2026-11-20: T3 is the current operating host; see the operating-host ruling below); [Spec 062](specs/062-bb-host-adapter.md) recorded that
+call as pending (now superseded; see the operating-host ruling below). BB stays available as opt-in per-repository host support with its recorded evidence. Subscription usage is each host's own surface: Nucleus adds usage UI to no host, and
 BB's card plus host-specific plugins are BB's.
 
 
@@ -298,9 +298,11 @@ Target host split (Tom, 2026-11-17): "use T3Code for standalone threads and prob
 platform. T3 dispatches, BB executes. Paseo will probably be retired, I don't like having to patch
 the binary on every update and it's still a bit rough around the edges… we have to prove BB out
 first though, and I want the full end-to-end workflow in BB before any full switch." Until then
-Paseo stays the primary host. The BB trial (Spec 062 phase 7) has to prove the whole flow: a planner
+Paseo stayed the primary host (both superseded 2026-11-20: T3 is the current operating host; see the operating-host ruling below). The BB trial (Spec 062 phase 7) was to prove the whole flow: a planner
 thread in T3 dispatching through Nucleus to tasks that run, get reviewed, merge and close out on BB.
 Usage display is the host's job, not Nucleus's (Tom, 2026-11-17).
+
+Current operating host (Tom, 2026-11-19/20): T3 is the current operating host for Nucleus planning and execution. On 2026-11-19 Tom said the T3 ACP solution removed the need for BB to execute Nucleus work; on 2026-11-20 he confirmed, "we're fully in T3 now already!" The former migration lead was dropped as redundant. The Nov 17 BB-executes target and the Paseo-primary conditional above are superseded historical quotes; BB stays available as opt-in per-repository host support with its recorded evidence.
 
 Profiles (Tom, 2026-11-06): Nucleus takes its agent profiles from Paseo's profile system today, and other apps have none. "We'll need to switch nucleus to a more traditional model picker system - have the host app provide a list of all the providers and models, then allow the operator to create profiles based on their selections". Profiles become Nucleus's own, and the host only lists what's available.
 On provider options (Tom, 2026-11-06): the picker shows whatever the host reports for a model. "We need to be able to control permission settings and agent-specific modes".
