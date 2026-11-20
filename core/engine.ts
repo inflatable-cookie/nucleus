@@ -22,7 +22,11 @@ import { CreationRecovery } from "./recovery/absent-creation";
 import type { GitTransientEpisode } from "./git/git-transient-backoff";
 
 import { type WorkspaceDiscard } from "./workspaces/orphan-worktree";
-import { HOST_KIND_LABELS, hostKindOf, type IdentitySource } from "../shared/host-kind";
+import {
+  HOST_KIND_LABELS,
+  hostKindOf,
+  type IdentitySource,
+} from "../shared/host-kind";
 import { RecoverySettlement } from "./recovery/coordinator-settlement";
 import { settleResponsibleFault } from "./recovery/responsible-fault";
 import { Decisions } from "./planning/decisions";

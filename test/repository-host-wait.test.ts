@@ -86,8 +86,28 @@ test("an offline repository host kind keeps an unbound task queued with a named 
   const store = new Store(":memory:");
   const { engine, created, online } = fixture(store);
   try {
-    store.putRepository(REPO_T3, null, "", null, null, null, undefined, undefined, "t3code");
-    store.putRepository(REPO_PLAIN, null, "", null, null, null, undefined, undefined, null);
+    store.putRepository(
+      REPO_T3,
+      null,
+      "",
+      null,
+      null,
+      null,
+      undefined,
+      undefined,
+      "t3code",
+    );
+    store.putRepository(
+      REPO_PLAIN,
+      null,
+      "",
+      null,
+      null,
+      null,
+      undefined,
+      undefined,
+      null,
+    );
     online.delete(T3);
     const waiting = insertTask(store, engine, REPO_T3.path);
     const healthy = insertTask(store, engine, REPO_PLAIN.path);
@@ -99,7 +119,9 @@ test("an offline repository host kind keeps an unbound task queued with a named 
     assert.equal(held.profile, null);
     assert.equal(held.workspaceIntent, false);
     assert.equal(
-      store.events(waiting.id).filter((event) => event.kind === "dispatch_intent").length,
+      store
+        .events(waiting.id)
+        .filter((event) => event.kind === "dispatch_intent").length,
       0,
       "no dispatch intent is committed while the host is offline",
     );
@@ -123,11 +145,24 @@ test("the same task dispatches on its repository host through ordinary schedulin
   const store = new Store(":memory:");
   const { engine, created, online } = fixture(store);
   try {
-    store.putRepository(REPO_T3, null, "", null, null, null, undefined, undefined, "t3code");
+    store.putRepository(
+      REPO_T3,
+      null,
+      "",
+      null,
+      null,
+      null,
+      undefined,
+      undefined,
+      "t3code",
+    );
     online.delete(T3);
     const task = insertTask(store, engine, REPO_T3.path);
     await engine.dispatchQueued();
-    assert.equal(store.task(task.id).reason, "Waiting for repository host T3Code");
+    assert.equal(
+      store.task(task.id).reason,
+      "Waiting for repository host T3Code",
+    );
     online.add(T3);
     await engine.dispatchQueued();
     const dispatched = store.task(task.id);
@@ -145,7 +180,17 @@ test("an unread catalog on the repository host waits, even when another host has
   const store = new Store(":memory:");
   const { engine, created, catalogRead } = fixture(store);
   try {
-    store.putRepository(REPO_T3, null, "", null, null, null, undefined, undefined, "t3code");
+    store.putRepository(
+      REPO_T3,
+      null,
+      "",
+      null,
+      null,
+      null,
+      undefined,
+      undefined,
+      "t3code",
+    );
     catalogRead.delete(T3);
     const task = insertTask(store, engine, REPO_T3.path, {
       preferredProfileId: "paseo-only",
@@ -166,14 +211,28 @@ test("a profile only launchable on T3 still routes there against a healthy Paseo
   const store = new Store(":memory:");
   const { engine, created } = fixture(store);
   try {
-    store.putRepository(REPO_PLAIN, null, "", null, null, null, undefined, undefined, "paseo");
+    store.putRepository(
+      REPO_PLAIN,
+      null,
+      "",
+      null,
+      null,
+      null,
+      undefined,
+      undefined,
+      "paseo",
+    );
     const task = insertTask(store, engine, REPO_PLAIN.path, {
       preferredProfileId: "neon",
       requirePreferred: true,
     });
     await engine.dispatchQueued();
     const dispatched = store.task(task.id);
-    assert.equal(dispatched.hostId, T3, "the proven exclusive profile keeps its ruling");
+    assert.equal(
+      dispatched.hostId,
+      T3,
+      "the proven exclusive profile keeps its ruling",
+    );
     assert.equal(dispatched.profile?.id, "neon");
     assert.ok(created.some((entry) => entry === `t3:${task.id}`));
   } finally {
@@ -186,7 +245,17 @@ test("a repository host dropping between selection and commit holds the dispatch
   const store = new Store(":memory:");
   const { engine, created, online, hooks } = fixture(store);
   try {
-    store.putRepository(REPO_T3, null, "", null, null, null, undefined, undefined, "t3code");
+    store.putRepository(
+      REPO_T3,
+      null,
+      "",
+      null,
+      null,
+      null,
+      undefined,
+      undefined,
+      "t3code",
+    );
     // paseo-only is launchable only on Paseo, so the chosen host is Paseo while
     // the repository's T3 host still answers at selection time.
     const task = insertTask(store, engine, REPO_T3.path, {
@@ -201,7 +270,8 @@ test("a repository host dropping between selection and commit holds the dispatch
     assert.equal(held.profile, null);
     assert.equal(held.workspaceId, null);
     assert.equal(
-      store.events(task.id).filter((event) => event.kind === "dispatch_intent").length,
+      store.events(task.id).filter((event) => event.kind === "dispatch_intent")
+        .length,
       0,
     );
     assert.equal(created.length, 0);
@@ -215,11 +285,24 @@ test("changing the repository setting while queued releases the wait on the next
   const store = new Store(":memory:");
   const { engine, online } = fixture(store);
   try {
-    store.putRepository(REPO_T3, null, "", null, null, null, undefined, undefined, "t3code");
+    store.putRepository(
+      REPO_T3,
+      null,
+      "",
+      null,
+      null,
+      null,
+      undefined,
+      undefined,
+      "t3code",
+    );
     online.delete(T3);
     const task = insertTask(store, engine, REPO_T3.path);
     await engine.dispatchQueued();
-    assert.equal(store.task(task.id).reason, "Waiting for repository host T3Code");
+    assert.equal(
+      store.task(task.id).reason,
+      "Waiting for repository host T3Code",
+    );
     store.patchRepository(REPO_T3, { hostKind: null });
     await engine.dispatchQueued();
     const dispatched = store.task(task.id);
@@ -235,7 +318,17 @@ test("a repository host kind with no registered host is a visible configuration 
   const store = new Store(":memory:");
   const { engine, created } = fixture(store);
   try {
-    store.putRepository({ origin: null, path: "/synthetic/bb-repo" }, null, "", null, null, null, undefined, undefined, "bb");
+    store.putRepository(
+      { origin: null, path: "/synthetic/bb-repo" },
+      null,
+      "",
+      null,
+      null,
+      null,
+      undefined,
+      undefined,
+      "bb",
+    );
     const task = insertTask(store, engine, "/synthetic/bb-repo");
     await engine.dispatchQueued();
     const waiting = store.task(task.id);
@@ -256,7 +349,17 @@ test("the operator default host kind stays a preference and never gates dispatch
   const { engine, online } = fixture(store);
   try {
     store.setMeta("operatorDefaultHostKind", "t3code");
-    store.putRepository(REPO_PLAIN, null, "", null, null, null, undefined, undefined, null);
+    store.putRepository(
+      REPO_PLAIN,
+      null,
+      "",
+      null,
+      null,
+      null,
+      undefined,
+      undefined,
+      null,
+    );
     online.delete(T3);
     const task = insertTask(store, engine, REPO_PLAIN.path);
     await engine.dispatchQueued();
