@@ -4,9 +4,8 @@ Status: approved. Phases 0–7 are implemented. Phase 0 (the transport spike) is
 registration, identity and health), phase 2 (workspace custody), phase 3 (worker runs, observation
 presentation), phase 4 (delivery, questions and the support roles), phase 5 (the forked sidebar and
 the task group header) and phase 6 (the boards, settings, pills and the planner terminal) are in
-place, and phase 7 records its parity table and evidence with the operator's parity call still
-pending (see [phase 7](#phase-7--trial-and-parity-call)). This document is the design and the phased
-plan, and [phase 0 evidence](#phase-0-evidence-2026-11-16) answers its eight assumptions. The phase 7 trial below was described as the prerequisite for the move to T3 under the superseded Nov 17 target; the current operating-host ruling is in [vision](../vision.md) (Tom, 2026-11-19/20: T3 is the current operating host). Amended
+place, and phase 7 records its parity table and evidence; the phase 7 trial below was the described prerequisite for the move to T3 under the superseded Nov 17 target, and the operator's parity call on it is superseded by the current operating-host ruling in [vision](../vision.md) (Tom, 2026-11-19/20: T3 is the current operating host; see [phase 7](#phase-7--trial-and-parity-call)). This document is the design and the phased
+plan, and [phase 0 evidence](#phase-0-evidence-2026-11-16) answers its eight assumptions. Amended
 2026-11-16: decision 5 now carries the forked sidebar, the two boards and BB usage left to BB's card
 plus the operator's Usage Pace plugin, and the experimental inventory and the plan from phase 5 on
 follow it; phases 0–4 are unchanged. Amended 2026-11-17 (nucleus#1302): subscription usage leaves
@@ -18,8 +17,8 @@ Owner: Nucleus runtime maintainers
 
 BB ([getbb.app](https://getbb.app)) is a third Nucleus host beside Paseo and T3Code (Tom,
 2026-11-16: "push this forward", "dispatch any work on the repo via Nucleus"). One BB workspace per
-task, each task's workspace nested under its planner thread in BB's sidebar. Paseo stays the primary
-host; BB is opt-in per repository, like T3Code.
+task, each task's workspace nested under its planner thread in BB's sidebar. Paseo stayed the primary
+host at the time (superseded 2026-11-20: T3 is the current operating host, see [vision](../vision.md)); BB is opt-in per repository, like T3Code.
 
 ## Boundary
 
@@ -1469,8 +1468,8 @@ Paseo stays Tom's call.
 3. **The fork rebase** through the documented routine, with the drift report and the
    vendored-manifest test at the pin; no newer release tag exists yet, so the evidence is the routine
    re-run at the pin plus the drift report against a newer upstream ref.
-4. **The operator's call** is recorded pending: the planner answered on Tom's behalf on 2026-11-17 that
-   he has not made it and the merge hold stays until he does.
+4. **The operator's call** was recorded pending: the planner answered on Tom's behalf on 2026-11-17 that
+   he had not made it and the merge hold stayed until he did (superseded 2026-11-20: T3 is the current operating host, see [vision](../vision.md)).
 
 **Dependencies.** Phases 0–6 and the operator install route.
 
@@ -1597,11 +1596,14 @@ What was proved instead, through the routine in [PATCHES.md](../../../hosts/bb/p
   hashes every recorded path that is not patched. The vendored-manifest test and the fork's own tests
   pass at the re-derived pin.
 
-#### The operator's parity call: pending
+#### The operator's parity call: superseded
 
-Tom has not decided whether BB becomes a supported host (planner, 2026-11-17). This document records
-the call as **pending** and assumes nothing: BB stays an opt-in host per repository beside Paseo and
-T3Code, Paseo stays the primary host (vision.md), and the task's merge hold stands until Tom decides.
+Tom had not decided whether BB becomes a supported host (planner, 2026-11-17). This document recorded
+the call as **pending** and assumed nothing: BB stayed an opt-in host per repository beside Paseo and
+T3Code, Paseo stayed the primary host (vision.md), and the task's merge hold stood until Tom decided.
+That pending call is superseded by the current operating-host ruling in [vision](../vision.md) (Tom,
+2026-11-19/20: T3 is the current operating host). BB stays an opt-in host per repository with its
+recorded evidence above; the parity table and trial evidence below are retained as history.
 The evidence above is what the decision reads: operator parity is in place on every surface, the
 end-to-end row's two former gaps (dispatch from a T3-only plan, and a worker question reaching the T3
 thread) are closed by nucleus#1313 at the runtime layer, the end-to-end lifecycle is proven at that

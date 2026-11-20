@@ -288,8 +288,8 @@ T3Code, opt-in per repository, with one workspace per task nested under the task
 BB's sidebar. His target is "T3 dispatches, BB executes", and he wants the full end-to-end workflow —
 submit, dispatch, worker report, independent review, merge, closeout and archive, with questions and
 notices back to the planner thread — proven in BB before any switch from Paseo. Paseo stays the
-primary host until he made the parity call (superseded 2026-11-20: T3 is the current operating host; see the operating-host ruling below); [Spec 062](specs/062-bb-host-adapter.md) records that
-call as pending. BB stays available as opt-in per-repository host support with its recorded evidence. Subscription usage is each host's own surface: Nucleus adds usage UI to no host, and
+primary host until he made the parity call (superseded 2026-11-20: T3 is the current operating host; see the operating-host ruling below); [Spec 062](specs/062-bb-host-adapter.md) recorded that
+call as pending (now superseded; see the operating-host ruling below). BB stays available as opt-in per-repository host support with its recorded evidence. Subscription usage is each host's own surface: Nucleus adds usage UI to no host, and
 BB's card plus host-specific plugins are BB's.
 
 
