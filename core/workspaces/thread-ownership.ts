@@ -1,6 +1,6 @@
-import { historicalWireLabel } from '../../shared/wire-labels';
-import type { Run, Task } from '../../shared/contracts';
-import type { Store } from '../store/store';
+import { historicalWireLabel } from "../../shared/wire-labels";
+import type { Run, Task } from "../../shared/contracts";
+import type { Store } from "../store/store";
 
 /**
  * Who owns a thread, and what a task owes it.
@@ -13,20 +13,37 @@ import type { Store } from '../store/store';
  */
 
 /** Whether this task owns a thread through a task or task-scoped support label. */
-export function ownedByTask(labels: Record<string, string> | undefined, taskId: string): boolean {
-  const taskScopedLabels = ['task', 'reviewer', 'decider'] as const;
-  return taskScopedLabels.some(label => historicalWireLabel(labels, label) === taskId);
+export function ownedByTask(
+  labels: Record<string, string> | undefined,
+  taskId: string,
+): boolean {
+  const taskScopedLabels = ["task", "reviewer", "decider"] as const;
+  return taskScopedLabels.some(
+    (label) => historicalWireLabel(labels, label) === taskId,
+  );
 }
 
 /** Worker history also includes revision runs whose task pointer has moved on. */
 export function workerThreadIds(task: Task, runs: Run[]): Set<string> {
-  return new Set([task.agentId, ...task.retiredWorkers.map(worker => worker.agentId),
-    ...runs.filter(run => run.hostId === task.hostId && run.role === 'revision').map(run => run.agentId)]
-    .filter((agentId): agentId is string => Boolean(agentId)));
+  return new Set(
+    [
+      task.agentId,
+      ...task.retiredWorkers
+        .filter((worker) => (worker.hostId ?? task.hostId) === task.hostId)
+        .map((worker) => worker.agentId),
+      ...runs
+        .filter((run) => run.hostId === task.hostId && run.role === "revision")
+        .map((run) => run.agentId),
+    ].filter((agentId): agentId is string => Boolean(agentId)),
+  );
 }
 
 /** A run of this thread is still unreleased, so the thread still serves it. */
-export function threadHasUnreleasedRun(store: Store, task: Task, agentId: string): boolean {
+export function threadHasUnreleasedRun(
+  store: Store,
+  task: Task,
+  agentId: string,
+): boolean {
   return store.unreleasedRunsForAgent(agentId, task.hostId).length > 0;
 }
 
@@ -35,15 +52,37 @@ export function threadHasUnreleasedRun(store: Store, task: Task, agentId: string
  * coordinator or its retained reviewer (a worker remapped as another task's
  * coordinator, review #543).
  */
-export function threadBoundToAnotherLiveTask(store: Store, task: Task, agentId: string): boolean {
-  return store.tasks().some(other => other.id !== task.id
-    && (!other.hostId || !task.hostId || other.hostId === task.hostId) && !['done', 'cancelled'].includes(other.phase) && !other.removedAt
-    && [other.agentId, other.coordinatorAgentId, other.resolution.reviewerAgentId].includes(agentId));
+export function threadBoundToAnotherLiveTask(
+  store: Store,
+  task: Task,
+  agentId: string,
+): boolean {
+  return store
+    .tasks()
+    .some(
+      (other) =>
+        other.id !== task.id &&
+        (!other.hostId || !task.hostId || other.hostId === task.hostId) &&
+        !["done", "cancelled"].includes(other.phase) &&
+        !other.removedAt &&
+        [
+          other.agentId,
+          other.coordinatorAgentId,
+          other.resolution.reviewerAgentId,
+        ].includes(agentId),
+    );
 }
 
 /** Either live claim above: the thread is not this task's to archive. */
-export function threadServesAnotherTask(store: Store, task: Task, agentId: string): boolean {
-  return threadHasUnreleasedRun(store, task, agentId) || threadBoundToAnotherLiveTask(store, task, agentId);
+export function threadServesAnotherTask(
+  store: Store,
+  task: Task,
+  agentId: string,
+): boolean {
+  return (
+    threadHasUnreleasedRun(store, task, agentId) ||
+    threadBoundToAnotherLiveTask(store, task, agentId)
+  );
 }
 
 /**
@@ -53,8 +92,15 @@ export function threadServesAnotherTask(store: Store, task: Task, agentId: strin
  * one. Initial worker threads have no role label, so the task pointer or a
  * revision run supplies that role.
  */
-export function threadOperation(agentId: string, labels: Record<string, string> | undefined, workerAgents: ReadonlySet<string>, supportRemoval: boolean): 'archive' | 'delete' {
-  const role = historicalWireLabel(labels, 'role');
-  const worker = role ? role === 'worker' || role === 'revision' : workerAgents.has(agentId);
-  return supportRemoval && !worker ? 'delete' : 'archive';
+export function threadOperation(
+  agentId: string,
+  labels: Record<string, string> | undefined,
+  workerAgents: ReadonlySet<string>,
+  supportRemoval: boolean,
+): "archive" | "delete" {
+  const role = historicalWireLabel(labels, "role");
+  const worker = role
+    ? role === "worker" || role === "revision"
+    : workerAgents.has(agentId);
+  return supportRemoval && !worker ? "delete" : "archive";
 }

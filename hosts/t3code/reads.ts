@@ -406,14 +406,6 @@ export class T3Reads {
     return (await this.readThreadSnapshot(threadId, kind)).projection;
   }
 
-  /**
-   * The newest bounded window with its own coverage. A user message found in it is an
-   * exact fact; its absence is proof only when `paged` and `omitsTurnItems` are both false.
-   */
-  async readWindow(threadId: string): Promise<ThreadSnapshotRead> {
-    return this.readThreadSnapshot(threadId, "window");
-  }
-
   /** One thread snapshot plus the nightly's own window coverage. */
   private async readThreadSnapshot(
     threadId: string,

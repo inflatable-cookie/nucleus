@@ -4,9 +4,13 @@ import { DEFAULT_PROCESS_TERMINATION_GRACE_MS, PROCESS_TERMINATION_GRACE_MAX_MS,
 import { withSpawnSlot } from "../dispatch/spawn-gate";
 import { ESCAPED_DESCENDANT_SCAN_MS, EscapedDescendantCustody, escapedDescendantsOf } from "./escaped-descendants";
 import { processGroupEmpty, signalProcessGroupAsync, waitForProcessGroupEmpty } from "./process-group";
-import { processStartIdentityEnvironment, processesForStartIdentityAsync } from "./process-identity-search";
+import { processStartIdentityEnvironment, processesForStartIdentityAsync, type ProcessStartIdentitySearch } from "./process-identity-search";
 import { hostRunProcessStartIdentity } from "./start-identity";
 import { BoundedStreamRetention, FailureFirstStreamRetention } from "./output-retention";
+import { boundedPromise } from "./bounded-promise";
+
+export const POST_EXIT_OBSERVATION_BOUND_MS = 2_000;
+export const POST_EXIT_PIPE_DRAIN_BOUND_MS = 250;
 
 export interface ExecutionOutcome {
   pid: number | null; code: number | null; signal: string | null; timedOut: boolean;
@@ -22,6 +26,8 @@ export interface ExecutionOutcome {
   processGroupId?: number | null; leaderStartIdentity?: string | null; startIdentity?: string | null;
   escapedDescendants?: HostRunEscapedDescendant[]; cancelled?: boolean;
   terminationSignal?: "SIGTERM" | "SIGKILL" | null; processGroupEmpty?: boolean | null; terminationError?: string | null;
+  escapedDescendantsObservation?: "proven" | "unknown";
+  outputDrainTimedOut?: boolean;
 }
 
 const POST_KILL_PROCESS_GROUP_WAIT_MS = 5_000;
@@ -77,6 +83,14 @@ export interface ExecutionRequest {
    * never lands, and can say where each stream's output ended.
    */
   onChildExit?: (exit: ChildExitFacts) => void;
+  /** Best-effort diagnostic phase observer around post-exit custody and output drain. */
+  onPhase?: (phase: string) => void;
+  /** Bound for post-exit escaped-descendant observation when `settleOnEscapedDescendants` is false. */
+  postExitObservationTimeoutMs?: number;
+  /** Bound for post-exit pipe drain after `processGroupEmpty` is observed. */
+  postExitPipeDrainTimeoutMs?: number;
+  /** Test seam for escaped-descendant observation after `processGroupEmpty`. */
+  observeEscapedDescendants?: (identity: string) => Promise<ProcessStartIdentitySearch>;
 }
 
 /** The direct child's exit, as the executor observed it. */
@@ -235,37 +249,94 @@ export function executeHookProgram(request: ExecutionRequest): Promise<Execution
       }
       void finishWhenGroupIsEmpty();
     };
+    const emitPhase = (phaseName: string) => {
+      try { request.onPhase?.(phaseName); } catch { /* diagnostic phase observation never fails execution */ }
+    };
+    const waitForPipesClosed = (timeoutMs: number): Promise<void> => {
+      if (pipesClosed) return Promise.resolve();
+      return new Promise<void>(resolveDrain => {
+        let done = false;
+        let drainTimer: ReturnType<typeof setTimeout> | undefined;
+        const finish = () => {
+          if (done) return;
+          done = true;
+          if (drainTimer) clearTimeout(drainTimer);
+          child.off("close", finish);
+          resolveDrain();
+        };
+        child.once("close", finish);
+        drainTimer = setTimeout(finish, Math.max(0, timeoutMs));
+        drainTimer.unref?.();
+        if (pipesClosed) finish();
+      });
+    };
     const finishWhenGroupIsEmpty = async () => {
       if (settled || finishing || !leaderExited) return;
       if (!request.settleOnProcessGroup || !processGroupId) {
         if (!pipesClosed) return;
         // A signalled leader can exit before its group's termination is
         // recorded; settle with that record, not ahead of it.
-        if (termination) { finishing = true; await termination; }
+        if (termination) {
+          finishing = true;
+          try { await termination; }
+          catch (error) { outcome.terminationError ??= `Process-group termination failed: ${String(error)}`; }
+        }
         settle();
         return;
       }
       if (!processGroupEmpty(processGroupId)) return;
       // The absence proof reads the host asynchronously, so another tick may have
       // settled while it was in flight.
-      if (escapedCustody && !await proveEscapedAbsence(processGroupId, terminationAt)) return;
+      if (escapedCustody) {
+        try {
+          if (!await proveEscapedAbsence(processGroupId, terminationAt)) return;
+        } catch (error) {
+          outcome.terminationError ??= `Escaped-descendant custody check failed: ${String(error)}`;
+          return;
+        }
+      }
       if (settled || finishing) return;
       finishing = true;
       outcome.processGroupEmpty = true;
-      // The escaped-descendant rule has one owner: this is its settled inventory,
-      // recorded as a fact so a leak stays visible instead of holding capacity.
-      outcome.escapedDescendants = escapedCustody
-        ? escapedCustody.recorded()
-        : escapedDescendantsOf(await processesForStartIdentityAsync(leaderStartIdentity), processGroupId);
-      // Let already-buffered pipe data reach the readers. The process group is
-      // the settlement boundary; an escaped descendant holding a pipe cannot
-      // keep this step alive after this point.
-      await new Promise<void>(resolveNext => setImmediate(resolveNext));
-      if (termination) await termination;
-      child.stdout.destroy();
-      child.stderr.destroy();
-      child.stdin.destroy();
-      settle();
+      try {
+        // The escaped-descendant rule has one owner: this is its settled inventory,
+        // recorded as a fact so a leak stays visible instead of holding capacity.
+        if (escapedCustody) {
+          outcome.escapedDescendants = escapedCustody.recorded();
+          outcome.escapedDescendantsObservation = "proven";
+        } else {
+          emitPhase("step-exit-descendants");
+          const observeFn = request.observeEscapedDescendants ?? processesForStartIdentityAsync;
+          const observeTimeoutMs = Math.max(0, request.postExitObservationTimeoutMs ?? POST_EXIT_OBSERVATION_BOUND_MS);
+          const search = await boundedPromise(
+            Promise.resolve().then(() => observeFn(leaderStartIdentity)).catch(() => ({ state: "unknown" as const })),
+            observeTimeoutMs,
+            () => ({ state: "unknown" as const }),
+          );
+          outcome.escapedDescendantsObservation = search.state === "unknown" ? "unknown" : "proven";
+          outcome.escapedDescendants = escapedDescendantsOf(search, processGroupId);
+        }
+        // Let already-buffered pipe data reach the readers within a short bound.
+        // The process group is the settlement boundary; an escaped descendant
+        // holding a pipe cannot keep this step alive past the drain bound.
+        if (!pipesClosed) {
+          emitPhase("step-exit-output-drain");
+          const drainTimeoutMs = Math.max(0, request.postExitPipeDrainTimeoutMs ?? POST_EXIT_PIPE_DRAIN_BOUND_MS);
+          await waitForPipesClosed(drainTimeoutMs);
+          if (!pipesClosed) outcome.outputDrainTimedOut = true;
+        }
+        if (termination) {
+          emitPhase("step-exit-termination");
+          await termination;
+        }
+      } catch (error) {
+        outcome.terminationError ??= `Post-exit step settlement failed: ${String(error)}`;
+      } finally {
+        child.stdout.destroy();
+        child.stderr.destroy();
+        child.stdin.destroy();
+        settle();
+      }
     };
     child.on("error", error => {
       if (outcome.processGroupId) void terminateGroup("overflow");
@@ -327,6 +398,9 @@ export function executeHookProgram(request: ExecutionRequest): Promise<Execution
         try {
           request.onChildExit?.({ pid: child.pid, exitCode: code, signal, exitedAt: new Date().toISOString() });
         } catch { /* a record can never change how a step ends */ }
+      }
+      if (request.settleOnProcessGroup && processGroupId && !processGroupEmpty(processGroupId)) {
+        emitPhase("step-exit-group-wait");
       }
       void finishWhenGroupIsEmpty();
     });

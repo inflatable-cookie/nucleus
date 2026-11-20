@@ -1,0 +1,1 @@
+Bound post-exit milestone QA supervisor observation, pipe drain, live-output flush, spawn persistence, phase writes and step-log writes while recording attributable sub-phases, and separate clean step exits whose finalization was interrupted (`hold`, preserving direct exit `0`, partial logs and explicit teardown state) from genuine step failures (`failed`).

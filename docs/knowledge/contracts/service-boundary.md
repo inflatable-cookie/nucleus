@@ -134,8 +134,10 @@ retains transaction cleanup, listener notifications and dependency-control trans
   original selection; a control that is already invalid on stored facts refuses
   before that wait, so the wait holds only a control that would otherwise be
   accepted. The operation and task record whether selection was
-  explicit, sole-online or migrated; each run inherits that evidence with its
-  task host. Legacy runs inherit
+  explicit, sole-online, worker-profile, or migrated; each run inherits that
+  evidence with its task host (and historical released runs from an earlier host
+  on a `worker_host_moved` task retain their original `hostId` for thread
+  cleanup and audit). Legacy runs inherit
   it only where it is present, and historical events and intent IDs stay intact.
 - Origin threads have a separate host identity. The sole known online host or
   a unique complete host observation records it; incomplete or ambiguous
@@ -473,7 +475,11 @@ The runtime build packages both bundles together.
     every 15 seconds, and at most eight streams stay open. The web client suspends
     snapshot polling while this channel is connected and resumes it after a
     disconnect; an unavailable event still triggers a read to expose the failure.
-- **Surface.** Web calls carry `via: "web"`. The Settings writes (`queue.capacity`,
+- **Surface.** Web calls carry `via: "web"`. The web board mounts Settings through
+  `StandaloneSettingsScreen` (responsive horizontal insets, readable content width,
+  and a leading theme-aware Back control to return to the board), while Paseo's
+  native plugin Settings container and BB's `settingsSection` mount
+  `QueueSettingsScreen` directly. The Settings writes (`queue.capacity`,
   `queue.pool`, `queue.profile`, `queue.availability`,
   `queue.usage`, `queue.project-dispatch-limit`,
   `queue.routing-grant`, `repository.set`, `backup.now`,

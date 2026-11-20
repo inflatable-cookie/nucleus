@@ -1,9 +1,8 @@
 /** A fresh, durable occurrence re-enters an idle ACP thread when it needs a held turn. */
-import { activeStatuses, type T3Reads } from "./reads";
+import { activeStatuses, type Projection, type T3Reads } from "./reads";
 import { canonical, type T3StateFile } from "./state";
 import { identity, type T3IntentLedger } from "./intents";
 import { HOLD_MARKER } from "./nesting";
-import { T3CompatibilityError } from "./contracts";
 
 interface HoldContext {
   hostId(): string;
@@ -35,11 +34,12 @@ export class T3DecisionHold {
         await this.send(threadId, previous.commandId, previous.messageId);
         return;
       }
-      // An acknowledged receipt proves the occurrence landed, and the observation above
-      // proves no run is live or queued, so no history read is needed (nucleus#1407).
+      // An acknowledged receipt is final. The observation above proves no run is live or
+      // queued, so an acknowledged wake needs no history read, however far it has moved
+      // out of T3's window (nucleus#1407).
       if (
         intent.status !== "settled" &&
-        !(await this.occurrenceFinished(
+        !(await this.unsettledOccurrenceFinished(
           threadId,
           previous.commandId,
           previous.messageId,
@@ -67,33 +67,34 @@ export class T3DecisionHold {
 
   /**
    * Whether an unsettled occurrence (unknown, refused or timed out) is decided, so the next
-   * occurrence may go. Only the newest window's user message is read: finding it there is
-   * exact, while its absence proves nothing unless the window is the whole history. A timed-out
-   * send still has a late reply in flight. Ambiguity that the window cannot settle is raised,
-   * never skipped silently, and nothing is resent (nucleus#1407).
+   * occurrence may go. The newest window is read first: finding the occurrence there is
+   * exact. Absence is read from the full transcript, the only read that can prove it; a
+   * paged transcript throws its incompatibility, so absence is never inferred from a bounded
+   * suffix and nothing is resent (nucleus#1407). A timed-out send still has a late reply in flight.
    */
-  private async occurrenceFinished(
+  private async unsettledOccurrenceFinished(
     threadId: string,
     commandId: string,
     messageId: string,
     unknown: boolean,
     timedOut: boolean,
   ): Promise<boolean> {
-    const read = await this.core.reads.readWindow(threadId);
-    const items = read.projection.turnItems.filter(
-      (item) => item.type === "user_message" && item.messageId === messageId,
+    let read: Projection = await this.core.reads.readProjection(
+      threadId,
+      "window",
     );
+    let items = occurrenceOf(read, messageId);
+    if (items.length === 0) {
+      read = await this.core.reads.readProjection(threadId, "transcript");
+      items = occurrenceOf(read, messageId);
+    }
     if (items.length > 1) return false;
     if (items.length === 1) {
-      const run = read.projection.runs.find((row) => row.id === items[0].runId);
+      const run = read.runs.find((row) => row.id === items[0].runId);
       if (!run || activeStatuses.has(run.status)) return false;
       if (unknown) this.settleIntent(commandId, "settled");
       return true;
     }
-    if (read.paged || read.omitsTurnItems)
-      throw new T3CompatibilityError(
-        `Nucleus inbox wake ${commandId} has an unsettled send older than T3's snapshot window, so T3 cannot show whether it landed; re-entry waits and nothing is resent`,
-      );
     if (timedOut) return false;
     if (unknown) this.settleIntent(commandId, "refused");
     return true;
@@ -124,4 +125,11 @@ export class T3DecisionHold {
       dispatchMode: { type: "queue_after_active" },
     });
   }
+}
+
+/** The user messages carrying one occurrence's message id in a read. */
+function occurrenceOf(read: Projection, messageId: string) {
+  return read.turnItems.filter(
+    (item) => item.type === "user_message" && item.messageId === messageId,
+  );
 }

@@ -123,23 +123,22 @@ test("first dispatch binds the selected profile host before workspace creation",
           engine.resolution.select(result, "reviewer"),
         );
         assert.equal(reviewer?.profile.id, t3Reviewer.id);
-        assert.equal(
+        assert.ok(
           engine
             .workerRoutingProfiles(result)
             .find((p) => p.id === "paseo-only"),
-          undefined,
+          "online worker host profiles remain routable across hosts",
         );
-        const route = taskControlInputSchema.parse({
-          taskId: result.id,
-          version: result.version,
-          action: "route",
-          role: "worker",
-          profileId: "paseo-only",
-          reason: "Change worker",
+        const retry = store.update(result.id, {
+          phase: "queued",
+          workspaceId: null,
+          directory: null,
+          workspaceIntent: false,
         });
-        await assert.rejects(
-          engine.applyTaskControlRoute(route, (value) => value),
-          /paseo-only cannot run on task host t3code:one/,
+        assert.equal(
+          engine.firstWorkerUnbound(retry),
+          false,
+          "a released workspace intent never reopens host selection",
         );
         const hosts = engine.routingHostViews(result);
         assert.equal(
@@ -154,17 +153,32 @@ test("first dispatch binds the selected profile host before workspace creation",
             ?.profiles.find((p) => p.profileId === id)?.eligible,
           false,
         );
-        const retry = store.update(result.id, {
-          phase: "queued",
-          workspaceId: null,
-          directory: null,
-          workspaceIntent: false,
+        const missingRoute = taskControlInputSchema.parse({
+          taskId: result.id,
+          version: retry.version,
+          action: "route",
+          role: "worker",
+          profileId: "missing-profile",
+          reason: "Missing worker",
         });
-        assert.equal(
-          engine.firstWorkerUnbound(retry),
-          false,
-          "a released workspace intent never reopens host selection",
+        await assert.rejects(
+          engine.applyTaskControlRoute(missingRoute, (value) => value),
+          /missing-profile cannot run on task host t3code:one/,
         );
+        const crossHostRoute = taskControlInputSchema.parse({
+          taskId: result.id,
+          version: store.task(result.id).version,
+          action: "route",
+          role: "worker",
+          profileId: "paseo-only",
+          reason: "Move worker back to paseo",
+        });
+        const moved = await engine.applyTaskControlRoute(
+          crossHostRoute,
+          (value) => value,
+        );
+        assert.equal(moved.hostId, "paseo:one");
+        assert.equal(moved.hostSelection?.basis, "worker_profile");
       }
     }
     engine.hostAvailable = (id) => id !== "t3code:one";

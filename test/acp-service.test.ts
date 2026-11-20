@@ -1505,3 +1505,93 @@ test("a real agent re-raises its inbox card after a turn ends and the host settl
     await fixture.close();
   }
 });
+
+test("inbox ui authenticates through the inbox binding and holds only while a decision is offerable", async () => {
+  const fixture = await acpFixture();
+  try {
+    const uiHosts: string[] = [];
+    let nextStatus: "opened" | "reused" = "opened";
+    const acp = new AcpSessions(fixture.engine, {
+      dataHome: fixture.dir,
+      socketPath: join(fixture.dir, "callback.sock"),
+      pollMs: 50,
+      openInboxUi: async (hostId) => {
+        uiHosts.push(hostId);
+        return { status: nextStatus };
+      },
+    });
+    fixture.engine.acp = acp;
+    const inbox = acp.bindInbox({ hostId: "t3code:synthetic" });
+    const inboxBinding = readAcpBinding(inbox.bindingPath);
+
+    // Task credentials are refused on /acp-inbox-ui.
+    await assert.rejects(
+      () =>
+        callbackRequest(fixture.binding, "/acp-inbox-ui", {
+          kind: "inbox",
+          hostId: inbox.hostId,
+          sessionId: inbox.sessionId,
+        }),
+      /Unauthorized callback/,
+    );
+
+    // Real ACP agent child process handles `ui` over /acp-inbox-ui and goes idle when no decisions exist.
+    const agent = launchAgent({ worktree: inbox.directory, dir: fixture.dir });
+    try {
+      agent.write({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "session/new",
+        params: { cwd: inbox.directory, mcpServers: [] },
+      });
+      await agent.lines.untilId(1);
+
+      agent.write({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "session/prompt",
+        params: {
+          sessionId: inbox.sessionId,
+          prompt: [{ type: "text", text: "ui" }],
+        },
+      });
+      const first = await agent.lines.untilId(2);
+      assert.equal(
+        (first.answer.result as Record<string, unknown>).stopReason,
+        "end_turn",
+      );
+      assert.deepEqual(uiHosts, [inbox.hostId]);
+
+      // With an offerable decision, `ui` keeps the turn held so the card can be raised.
+      nextStatus = "reused";
+      const decisionId = "33333333-3333-4333-8333-333333333333";
+      fixture.store.addDecision(
+        decisionSchema.parse({
+          id: decisionId,
+          version: 1,
+          question: "Hold after ui?",
+          headline: "Hold after ui",
+          choices: [
+            { label: "Yes", consequence: "Proceed" },
+            { label: "No", consequence: "Hold" },
+          ],
+          askedBy: { agentId: "synthetic" },
+          links: {},
+          status: "open",
+          createdAt: "2026-11-19T00:00:00.000Z",
+          updatedAt: "2026-11-19T00:00:00.000Z",
+        }),
+      );
+      const reply = await callbackRequest(inboxBinding, "/acp-inbox-ui", {
+        kind: "inbox",
+        hostId: inbox.hostId,
+        sessionId: inbox.sessionId,
+      });
+      assert.deepEqual(reply, { status: "reused", hold: true });
+    } finally {
+      agent.child.kill();
+    }
+  } finally {
+    await fixture.close();
+  }
+});

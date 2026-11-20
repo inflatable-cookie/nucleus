@@ -6,7 +6,7 @@ import {
   readHostRunResult,
 } from "./project-qa-supervision-files";
 import { tailWithTruncationMarker } from "../machine/output-retention";
-import type { ExecutionOutcome } from "../machine/process-exec";
+import type { ExecutionOutcome, ExecutionRequest } from "../machine/process-exec";
 import { executeHookProgram } from "../machine/process-exec";
 import { minimalHookEnvironment } from "../hooks/hook-result";
 import { withRunTemporaryDirectory } from "../workspaces/run-scratch";
@@ -43,11 +43,22 @@ export const SUPERVISOR_HEARTBEAT_MS = 2_000;
  * from the pipeline run, and without this sync they would keep an undefined
  * token in production and record the secret unredacted.
  */
+export interface DetachedSupervisorIoOptions {
+  postExitObservationTimeoutMs?: number;
+  postExitPipeDrainTimeoutMs?: number;
+  observeEscapedDescendants?: ExecutionRequest["observeEscapedDescendants"];
+  phaseTimeoutMs?: number;
+  spawnPersistTimeoutMs?: number;
+  logWriteTimeoutMs?: number;
+  liveOutputDrainTimeoutMs?: number;
+}
+
 export function detachedSupervisorIo(
   plan: QaSupervisionPlan,
   statePath: string,
   tokenHolder?: { hostRunToken?: string },
   cpuReads?: ProcessTreeCpuReads,
+  options: DetachedSupervisorIoOptions = {},
 ): QaPipelineIo {
   const supervisorEnv = Object.fromEntries(
     Object.entries(process.env).filter(
@@ -61,8 +72,16 @@ export function detachedSupervisorIo(
   let cpuSampler: ProcessTreeCpuSampler | null = null;
   let finalCpu: ProcessTreeCpu | null = null;
   let writes = Promise.resolve();
+  let phaseWrites = Promise.resolve();
   let heartbeatWrite = Promise.resolve();
   let heartbeatWriting = false;
+  const writePhase = (phase: string) => {
+    const write = phaseWrites.then(() =>
+      writeQaJsonAsync(phasePath, { runId: plan.runId, phase }, { durable: false }),
+    );
+    phaseWrites = write.catch(() => {});
+    return write;
+  };
   const persist = (state: QaSupervisionState) => {
     const snapshot = structuredClone({
       ...state,
@@ -86,9 +105,17 @@ export function detachedSupervisorIo(
   const executeOptions = (
     cancelable: boolean,
     onSpawn?: (process: QaSpawnedProcess) => void,
+    onPhase?: (phase: string) => void,
   ) => ({
     processStartIdentity: plan.identityToken,
     settleOnProcessGroup: true,
+    ...(options.postExitObservationTimeoutMs !== undefined ? { postExitObservationTimeoutMs: options.postExitObservationTimeoutMs } : {}),
+    ...(options.postExitPipeDrainTimeoutMs !== undefined ? { postExitPipeDrainTimeoutMs: options.postExitPipeDrainTimeoutMs } : {}),
+    ...(options.observeEscapedDescendants ? { observeEscapedDescendants: options.observeEscapedDescendants } : {}),
+    onPhase: (next: string) => {
+      if (onPhase) onPhase(next);
+      else void writePhase(next);
+    },
     cancelReason: cancelable
       ? () => readQaCancelRequest(cancelPath, plan.runId)?.reason ?? null
       : undefined,
@@ -128,7 +155,11 @@ export function detachedSupervisorIo(
     },
   });
   return {
-    phase: (phase) => writeQaJsonAsync(phasePath, { runId: plan.runId, phase }, { durable: false }),
+    phase: writePhase,
+    ...(options.phaseTimeoutMs !== undefined ? { phaseTimeoutMs: options.phaseTimeoutMs } : {}),
+    ...(options.spawnPersistTimeoutMs !== undefined ? { spawnPersistTimeoutMs: options.spawnPersistTimeoutMs } : {}),
+    ...(options.logWriteTimeoutMs !== undefined ? { logWriteTimeoutMs: options.logWriteTimeoutMs } : {}),
+    ...(options.liveOutputDrainTimeoutMs !== undefined ? { liveOutputDrainTimeoutMs: options.liveOutputDrainTimeoutMs } : {}),
     environment: async (eventId, root) => {
       if (!plan.hostRunToken) {
         const launchedAt = Date.parse(plan.startedAt);
@@ -175,7 +206,7 @@ export function detachedSupervisorIo(
           ...executeOptions(cancelable, onSpawn),
         }),
       ),
-    command: (stage, root, onSpawn, cancelable = true, stepEnv, onOutput) =>
+    command: (stage, root, onSpawn, cancelable = true, stepEnv, onOutput, onPhase) =>
       redactExecution(
         executeHookProgram({
           root,
@@ -195,7 +226,7 @@ export function detachedSupervisorIo(
               minimalHookEnvironment(`project-qa:${plan.runId}`),
               plan.temporaryDirectory,
             ),
-          ...executeOptions(cancelable, onSpawn),
+          ...executeOptions(cancelable, onSpawn, onPhase),
           ...(onOutput ? { onOutput } : {}),
         }),
       ),

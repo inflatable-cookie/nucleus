@@ -270,15 +270,20 @@ export class Engine {
       [
         "adapter",
         "cleanContext",
+        "enqueueCleanup",
         "enqueueTitle",
         "hooks",
+        "hostAvailable",
         "launchAgent",
         "launchProofOnly",
         "note",
         "noteStepFailure",
+        "preferredHostKindsForTask",
         "prerequisiteWaitYieldsToLiveWork",
         "profileCatalogKnown",
+        "profileCatalogKnownFor",
         "profiles",
+        "profilesFor",
         "quantumFinish",
         "quantumSteps",
         "reconcile",
@@ -295,6 +300,9 @@ export class Engine {
         "stopped",
         "store",
         "wakeRepository",
+        "workerHostCatalogPending",
+        "workerHostCatalogs",
+        "workerRoutingProfiles",
       ],
       [
         "advance",
@@ -312,6 +320,7 @@ export class Engine {
         "settleBudgetClock",
         "slotAdmissionReason",
         "update",
+        "waiting",
       ],
     ),
   );
@@ -413,7 +422,13 @@ export class Engine {
         !this.auditUnavailableHosts.has(task.hostId) &&
         (!this.activeHostId || this.activeHostId === task.hostId) &&
         this.hostAvailable(task.hostId) &&
-        this.store.runs(task.id).every((run) => run.hostId === task.hostId),
+        this.store
+          .runs(task.id)
+          .every(
+            (run) =>
+              run.hostId === task.hostId ||
+              (run.released && Boolean(run.hostId)),
+          ),
     );
   }
   /**
@@ -974,6 +989,8 @@ export class Engine {
       identifyOriginHost: (id, identitySource) =>
         this.identifyOriginHost(id, identitySource),
       catalogKnown: () => this.profileCatalogKnownFor(this.activeHostId),
+      workerCatalogs: (task) => this.workerHostCatalogs(task),
+      preferredHostKinds: (task) => this.preferredHostKindsForTask(task),
     };
     this.resolution.gitTransientFailure = (task, error) =>
       this.deferGitTransient(task.id, error);
@@ -1009,6 +1026,7 @@ export class Engine {
           "enqueueCleanup",
           "hooks",
           "host",
+          "hostAvailable",
           "onTaskHost",
           "removeSiblings",
           "retirement",
@@ -1020,6 +1038,7 @@ export class Engine {
           "stopped",
           "store",
           "taskHostAvailable",
+          "wakeTask",
           "withHost",
         ],
         [
@@ -1180,17 +1199,24 @@ export class Engine {
         [
           "activeHostId",
           "adapter",
+          "cleanContext",
           "control",
+          "enqueueCleanup",
           "host",
           "launchAgent",
           "note",
+          "preferredHostKindsForTask",
           "profileCatalogKnown",
+          "profileCatalogKnownFor",
           "profiles",
-          "workerProviderUnavailable",
+          "profilesFor",
           "stopped",
           "store",
           "taskHostAvailable",
+          "wakeTask",
           "withHost",
+          "workerHostCatalogs",
+          "workerProviderUnavailable",
         ],
         [
           "clearTransportWait",
@@ -1340,10 +1366,31 @@ export class Engine {
       )
       .map((hostId) => ({ hostId, profiles: this.profilesFor(hostId) }));
   }
+  preferredHostKindsForTask(
+    task: Pick<Task, "repoPath">,
+  ): (import("../shared/host-kind").HostKind | null | undefined)[] {
+    return [
+      this.store.repositoryFor(task.repoPath)?.hostKind,
+      this.store.getMeta<import("../shared/host-kind").HostKind | null>(
+        "operatorDefaultHostKind",
+      ),
+    ];
+  }
+  workerHostCatalogPending(task: { hostId?: string | null }): boolean {
+    const ids = [
+      ...new Set([...this.hostIds(), ...(task.hostId ? [task.hostId] : [])]),
+    ];
+    return ids.some(
+      (id) =>
+        !this.auditUnavailableHosts.has(id) &&
+        this.withHost(id, () => this.hostAvailable(id)) &&
+        !this.profileCatalogKnownFor(id),
+    );
+  }
   workerRoutingProfiles(task: Task): Profile[] {
-    return this.firstWorkerUnbound(task)
-      ? combineWorkerHostProfiles(this.workerHostCatalogs(task))
-      : this.profilesFor(task.hostId);
+    const catalogs = this.workerHostCatalogs(task);
+    if (catalogs.length > 0) return combineWorkerHostProfiles(catalogs);
+    return this.profilesFor(task.hostId);
   }
   submissionRoutingRefusal(
     submission: import("../shared/contracts").Submission,
@@ -1391,7 +1438,9 @@ export class Engine {
                 task.thinkingOptionId
               : task.preferredProfileId === profileId
                 ? task.thinkingOptionId
-                : "";
+                : task.profile?.id === profileId
+                  ? task.profile.thinkingOptionId
+                  : "";
           const reason = !online
             ? "Host offline"
             : !known

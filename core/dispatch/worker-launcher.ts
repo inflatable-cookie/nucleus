@@ -1,4 +1,4 @@
-import { measureRunPrompt, recordPromptSize } from './prompt-text/measure';
+import { measureRunPrompt, recordPromptSize } from "./prompt-text/measure";
 import { randomBytes, randomUUID } from "node:crypto";
 import { workerProfileIsExcluded } from "../../shared/contracts";
 import type { Task } from "../../shared/contracts";
@@ -124,6 +124,7 @@ export class WorkerLauncher {
     }
     if (this.refuseExcludedWorker(task)) return;
     for (const old of task.retiredWorkers) {
+      if ((old.hostId ?? task.hostId) !== task.hostId) continue;
       const state = await this.engine.host.observe(old.agentId);
       if (state.workspaceId !== task.workspaceId || !agentSettled(state))
         throw new Error(
@@ -278,15 +279,36 @@ export class WorkerLauncher {
           ? runTicketPath({ helperPath: helper }, prepared.runId)
           : undefined;
       const runs = this.store.runs(prepared.id);
-      const affectedTestsCommand = this.store.canonicalRepository(prepared.repoPath, prepared.repository)
-        ?.affectedTests?.command;
-      const render = (mcp: boolean) => measureRunPrompt(section =>
-        workerPrompt(prepared, mcp, runs, worktreeLinkRecordFailure, helper, ticket, affectedTestsCommand, section));
+      const affectedTestsCommand = this.store.canonicalRepository(
+        prepared.repoPath,
+        prepared.repository,
+      )?.affectedTests?.command;
+      const render = (mcp: boolean) =>
+        measureRunPrompt((section) =>
+          workerPrompt(
+            prepared,
+            mcp,
+            runs,
+            worktreeLinkRecordFailure,
+            helper,
+            ticket,
+            affectedTestsCommand,
+            section,
+          ),
+        );
       const primary = render(Boolean(this.adapter.reportingViaMcp));
       const fallback = this.adapter.reportingViaMcp ? render(false) : primary;
-      const agent = await this.adapter.createAgent(prepared, token, primary.prompt, fallback.prompt, {
-        primary: primary.size, fallback: fallback.size, affectedTestsCommand,
-      });
+      const agent = await this.adapter.createAgent(
+        prepared,
+        token,
+        primary.prompt,
+        fallback.prompt,
+        {
+          primary: primary.size,
+          fallback: fallback.size,
+          affectedTestsCommand,
+        },
+      );
       recordPromptSize(this.store, task.id, runId, prepared.temporaryDirectory);
       this.store.update(
         task.id,
@@ -392,7 +414,11 @@ export class WorkerLauncher {
                 resolution: { ...current.resolution, attention: true },
               },
               "worker_creation_refused_before_send",
-              JSON.stringify({ runId, profileId: current.profile?.id ?? null, reason }),
+              JSON.stringify({
+                runId,
+                profileId: current.profile?.id ?? null,
+                reason,
+              }),
             );
           });
           return;

@@ -201,7 +201,14 @@ JSON
 ```
 
 Optional fields are `baseBranch`, `lanes`, `tags`, `hostId` and `hold`. The note
-records existing operator authorization; the brief itself grants none. A failed
+records existing operator authorization; the brief itself grants none. Routine dispatch
+needs no per-brief operator approval: under Tom's 2026-11-20 standing ruling the
+planner decides whether to dispatch an ordinary in-scope brief (see
+[Spec 026](../../docs/knowledge/specs/026-planning-records.md)). Product or scope
+changes, held-profile requests, releases and other explicitly reserved operator
+actions still need the operator. A relayed note under the standing ruling names
+that ruling and the brief it covers, never a per-brief conversation that did not
+happen; the check, digest, attribution and promotion gates still apply. A failed
 check returns `{lead}` with `check.message` and no approval or task. An existing
 same-title lead or task in that repository is returned without creating another
 or changing the lead; inspect an existing lead before deciding its next step.

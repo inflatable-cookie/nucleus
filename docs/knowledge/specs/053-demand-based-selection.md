@@ -103,6 +103,18 @@ Selection for a run then:
 An explicit request still applies under [Spec 052](052-usage-level.md)
 sign-off; it replaces the demand result for that role.
 
+- **Cross-host worker profile selection and availability** (Tom, 2026-11-19):
+  worker selection, `route role=worker` (with or without `now`), `restart fresh`,
+  Spec 052 step-up, worker failover, and signed-off worker profile requests
+  evaluate launch eligibility across every online host catalog in the task's
+  mode rather than stopping at the task's current host. Required worker profile
+  availability counts every online host before raising a missing, disabled, or
+  unavailable decision. When a chosen worker profile is launchable only on
+  another online host, the worker dispatch or route moves the task to that host
+  (recording `hostId` and `hostSelection` with `basis: "worker_profile"` per the
+  [orchestration contract](../contracts/orchestration.md)) while preserving the
+  task's branch and PR; non-worker roles remain on the task's current host.
+
 **What retires:** the pool's `roles` and `scopes` switches, and the soft
 capability-fit multiplier (demand replaces it). A task's `scope` stays readable
 history and no longer gates selection. The by-request flag that Decision 2
@@ -181,3 +193,4 @@ after the switch is live (the "operator UI before agent rollout" rule).
 | 11 | Two profiles at equal cost and capability, weights 2 and 1 | Share follows weight (2:1) |
 | 12 | Same capability, costs medium and high, equal weight | Medium-cost share is twice the high-cost share; the high-cost one still gets work |
 | 13 | Unavailable subscription group in the set | Skipped; the rest of the set rotates |
+| 14 | Worker `route` (`now` or queued), `restart fresh`, or required-profile check for a profile launchable only on another online host | Evaluates every online host catalog in the task's mode; raises unavailability only when no online host can launch it, and moves the task (`basis: "worker_profile"`) to the capable host while keeping branch and PR |

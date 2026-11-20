@@ -96,7 +96,13 @@ line; see [SKILL.md](../SKILL.md)):
    optional `hostId` with the same meaning as on `lead.submit`, and the calling
    thread's identity, which Nucleus stamps from the CLI, decides the origin host
    of a brief that notifies its origin, as at promotion.
-3. **Approve:** only after the operator has authorized this brief.
+3. **Approve:** only after the operator has authorized this brief, or under the
+   standing routine-dispatch ruling recorded in [Spec 026](../../docs/knowledge/specs/026-planning-records.md)
+   (Tom, 2026-11-20: the planner decides whether to dispatch an ordinary
+   in-scope brief). Product or scope changes, held-profile requests, releases
+   and other reserved operator actions still need the operator. A relayed
+   approval under the standing ruling names that ruling and the brief it
+   covers, with `relayed: true`.
    `lead.approve` takes the latest `id`, `version` and `digest`, `approver`
    (your agent ID), `relayed: true` and a `note` naming the authorization
    ("Tom approved in the planning thread on 2026-09-27"). The operator can

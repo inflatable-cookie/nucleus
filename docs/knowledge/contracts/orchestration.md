@@ -135,14 +135,22 @@ last heartbeat, pre-stop supervisor liveness, in-flight step and process-group
 state, plus starts and rolls in the heartbeat gap; incomplete service history
 is reported as unknown.
 
-The supervisor records its last pipeline phase around step output, step logs,
-TAP finalization, teardown, cleanup and result publication. A detached monitor
-records the supervisor's exit code or signal independently of the service;
-abandoned-run detail names that exit and the last recorded phase, or says when
-either is unknown. The live-output projection keeps the newest bytes
-across truncation, including the redactor's final flush; if the supervisor dies
-before closing it, recovery warns that final bytes up to the token's length may
-have been withheld. A phase is diagnostic evidence, not proof that an operation
+The supervisor records its last pipeline phase around step output, post-exit
+settlement (`step-exit-group-wait`, `step-exit-descendants`,
+`step-exit-output-drain`, `step-exit-termination`, `step-spawn-persist`), step
+logs, TAP finalization, teardown, cleanup and result publication. Post-exit
+escaped-descendant observation (when `settleOnEscapedDescendants` is unset),
+post-exit pipe drain, live-output flush, spawn-state wait, diagnostic phase
+writes and step-log writes are bounded so stalled observation or output work
+cannot block normal step completion, teardown or result publication, while
+preserving strict `settleOnEscapedDescendants` custody and cancellation. A
+detached monitor records the supervisor's exit code or signal independently of
+the service; abandoned-run detail names that exit, the last recorded phase and
+the explicit teardown state, or says when either is unknown. The live-output
+projection flushes retained output per step and keeps the newest bytes across
+truncation, including the redactor's final flush; if the supervisor dies before
+closing it, recovery warns that final bytes up to the token's length may have
+been withheld. A phase is diagnostic evidence, not proof that an operation
 completed or authority to retry it.
 
 After result publication, inspection gives the supervisor the same bounded
@@ -162,15 +170,21 @@ uncertain hold.
 When the supervisor is alive and the step it says is in flight has no process
 group left, `project-qa-inspection.ts` watches that emptiness for a short bound
 (`QA_STEP_EXIT_SETTLE_BOUND_MS`), then hands the run to
-`project-qa-recovery.ts`. The stale-heartbeat stop reaches the same settlement:
-it also reads the step's recorded exit after the stop, so a hung supervisor never
-discards an outcome it had already written. With a recorded exit the run settles
-`failed` from the step's exit code or signal, with the step named as
-`interruptedStep`/`failedStep` and the live output log's path, byte offset and
-last lines in its detail; with no recorded exit the outcome is genuinely
-unobservable and the run settles `lost`, carrying the same step and output
-pointer. `lost` therefore means a dead supervisor or an unobservable outcome,
-never a run that simply waited for its capacity deadline.
+`project-qa-recovery.ts`. The stale-heartbeat stop and proven-dead supervisor
+inspection also read the step's recorded exit after the stop or exit, so a hung
+or dead supervisor never discards an outcome it had already written. With a
+recorded non-zero exit or signal, the run settles `failed` from that exit with
+`interruptedStep` and `failedStep` naming the step; with a clean recorded exit
+(`exitCode === 0`, no signal) whose run finalization is unproved, the run
+settles `hold` with the step's direct exit `0` preserved, `interruptedStep`
+naming the step and `failedStep` left clear unless teardown fails, because a
+clean step exit alone never certifies skipped stages, teardown or full pipeline
+completion (including across teardown retries). Both carry the live-output
+pointer, any retained step logs and explicit teardown state; with no recorded
+exit the outcome is genuinely unobservable and the run settles `lost`. `lost`
+therefore means a dead supervisor or an unobservable outcome, never a run that
+simply waited for its capacity deadline. Existing terminal QA receipts clear
+through normal follow-up runs without rewriting historical run rows.
 
 A takeover is ordered so it can only ever stop what its own proof names.
 `supervisor-process.ts` stops the supervisor first and alone
@@ -1437,8 +1451,20 @@ request identities and stored committed-handoff rows are not rewritten.
   preferences. Selection rotates profiles across online host catalogs, including
   their options. A profile available on one host takes the task there; for a
   multi-host profile the preferences choose the host. The dispatch intent records
-  the host and reason with the workspace intent. Once dispatched, every role and
-  later run stays on that host; an incompatible route is refused by name.
+  the host and reason with the workspace intent. After dispatch, non-worker roles
+  (`reviewer`, `coordinator`, `executor`) stay on the task's current host, and a
+  worker `route` (with or without `now`), `restart fresh`, Spec 052 climb or
+  worker failover that selects a worker profile only another online host can
+  launch (in the task's mode) moves the task to that host (`worker_host_moved`),
+  recording `task.hostId` and `task.hostSelection` (`basis: "worker_profile"`).
+  A cross-host worker move preserves `task.branch`, `prUrl`, `prHead` and
+  `resumePrNumber`, refuses dirty checkouts, and hands the displaced host's
+  workspace and threads (`resolution.displacedHostWorkspaces` and
+  host-attributed `retiredWorkers`) to the ordinary cleanup lane before the
+  destination host provisions its checkout. Required worker profile
+  availability checks every online host, and `next` (`route` view for worker)
+  prefills a cross-host route only when the target host is online and supports
+  the task's mode, naming the host move in `note`.
 - A queued task waiting for an unavailable fixed host does not reserve an available
   slot ahead of another host; its reservation returns when its host wait clears.
 - The wait is independent of the task's stop (nucleus#1198 review). When nothing
@@ -1457,8 +1483,9 @@ request identities and stored committed-handoff rows are not rewritten.
   thread before anything is sent; the task continues on the same host and
   threads. Delivery that was unknown stays unknown — an outage is never a reason
   to replay it.
-- Moving a task to another host stays an explicit owner decision: there is no
-  automatic failover and no `move host` verb.
+- Moving a task to another host stays driven by worker profile routing/selection
+  or an explicit owner route (`route` / `restart fresh`): there is no automatic
+  outage failover across hosts and no `move host` verb.
 - Past the dispatch-limits bound (`hostOutageNoticeMinutes`, 120 by default) each
   affected project's planner receives one notice naming the host, its outage
   start and the tasks held on it, through the ordinary durable notice path.

@@ -4,6 +4,9 @@ import { open, rename, unlink, writeFile, chmod, mkdir } from "node:fs/promises"
 import { dirname } from "node:path";
 import { LIVE_OUTPUT_BYTES, type LiveOutputLog, type LiveOutputSecret } from "../machine/live-output";
 import { tokenRedactor } from "../machine/token-redactor";
+import { boundedPromise } from "../machine/bounded-promise";
+
+export const QA_LIVE_OUTPUT_DRAIN_BOUND_MS = 2_000;
 
 /** Durable publication without blocking the supervisor's heartbeat event loop. */
 export async function writeQaJsonAsync(path: string, value: unknown, options: { durable?: boolean; requireDirectorySync?: boolean } = {}): Promise<void> {
@@ -37,7 +40,11 @@ export async function writeQaStepLogAsync(path: string, buffer: Buffer): Promise
 }
 
 /** A slow terminal projection keeps only a bounded pending tail, never blocking step output. */
-export async function openQaLiveOutput(path: string, secret?: LiveOutputSecret): Promise<LiveOutputLog & { close(): Promise<void> } | null> {
+export async function openQaLiveOutput(
+  path: string,
+  secret?: LiveOutputSecret,
+  options: { drainTimeoutMs?: number } = {},
+): Promise<LiveOutputLog & { flush(): Promise<boolean>; close(): Promise<void> } | null> {
   let file;
   try {
     await mkdir(dirname(path), { recursive: true, mode: 0o700 });
@@ -48,6 +55,7 @@ export async function openQaLiveOutput(path: string, secret?: LiveOutputSecret):
   let written = 0;
   let closed = false;
   let dropped = false;
+  const drainTimeoutMs = Math.max(0, options.drainTimeoutMs ?? QA_LIVE_OUTPUT_DRAIN_BOUND_MS);
   const marker = Buffer.from("\n[queue] live output truncated; the step logs beside the run keep the full record\n");
   const drain = async () => {
     while (pending.length) {
@@ -83,16 +91,29 @@ export async function openQaLiveOutput(path: string, secret?: LiveOutputSecret):
     pending = Buffer.from(Buffer.concat([pending, bytes]).subarray(-LIVE_OUTPUT_BYTES));
     if (!writing) writing = drain().finally(() => { writing = null; });
   });
+  const flushPending = async (): Promise<boolean> => {
+    redactor.flush();
+    while (writing || pending.length) {
+      if (writing) await writing;
+      if (pending.length && !writing) {
+        writing = drain().finally(() => { writing = null; });
+        await writing;
+      }
+    }
+    return true;
+  };
   return {
     path,
     write(chunk) { if (!closed) redactor.write(chunk); },
+    async flush() {
+      if (closed) return true;
+      return boundedPromise(flushPending(), drainTimeoutMs, () => false);
+    },
     async close() {
       if (closed) return;
       closed = true;
-      redactor.flush();
-      await writing;
-      await drain();
-      await file.close().catch(() => {});
+      await boundedPromise(flushPending(), drainTimeoutMs, () => false);
+      await boundedPromise(file.close().catch(() => {}), 1_000, () => undefined);
     },
   };
 }

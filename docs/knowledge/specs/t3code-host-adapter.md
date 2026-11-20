@@ -892,13 +892,14 @@ How the previous occurrence is judged depends on its send (nucleus#1407):
 - An acknowledged receipt (settled) is final. The fresh observation that shows no
   live or queued run is enough for the next occurrence, however far the old one
   has moved out of T3's window. No history read is made for it.
-- An unsettled occurrence (unknown, refused or timed out) is decided from the
-  newest window's own user message. Finding it there is exact. A timed-out send
-  waits for its late reply. Absence proves non-delivery only when the window is
-  the whole history, so a bounded window never proves absence.
-- An unsettled occurrence the window cannot show, because it is older than the
-  window, is raised as an incompatibility. Nothing is resent, and re-entry waits.
-  The sweep reports it after its nesting pass runs, not as a silent skip.
+- An unsettled occurrence (unknown, refused or timed out) is decided from its own
+  user message. The newest window is read first: finding the message there is
+  exact. Absence is read from the full transcript, which alone proves it. A timed-out
+  send waits for its late reply. A bounded window never proves absence.
+- An unsettled occurrence older than the window cannot be proven either way. The
+  paged transcript raises `subscribeThread: incomplete projection`, nothing is
+  resent, and re-entry waits. The sweep reports it after its nesting pass runs,
+  not as a silent skip.
   `effigy proof:t3code:window` runs this case on the installed nightly: an earlier
   wake pushed outside the window, a T3 daemon restart that keeps the inbox thread,
   binding and credential, then a fresh decision (`--expect woken`, or `--expect
@@ -934,11 +935,38 @@ returns to an earlier value is written again rather than replayed. The project n
 stays "Nucleus Inbox".
 
 The service mints a fresh one-time board link for `preview.open` on the inbox
-thread. It sends the link only in that WebSocket call, never in an ACP prompt or
-an intent log. A new host connection opens the pane again after T3 or the service
+thread. It sends the link only in that WebSocket call, never in an ACP prompt,
+thread reply or intent log. A new host connection opens the pane again after T3 or the service
 restarts; an uncertain open is not blindly repeated on the same connection.
 `nucleus t3 install` grants `preview:operate` to the runtime bearer, and a repeat
 install rotates that bearer.
+
+Typing exact `ui` in the pinned Nucleus inbox reuses or reopens the board in that
+thread's browser pane (Tom, 2026-11-19). The inbox ACP agent routes exact `ui`
+through its authenticated `inbox` binding (`/acp-inbox-ui` -> `AcpSessions.openInboxUi`
+-> `T3HostConnection.openInboxUi` -> `T3Inbox.openBoard`). `openBoard` reads
+`preview.list` for the inbox thread: if a healthy (`Loading` or `Success`) board
+tab matching the board's origin already exists, it reuses that tab without
+minting another pairing link or opening a duplicate tab; otherwise it closes any
+`LoadFailed` board tab, mints a fresh one-time pairing link, and calls
+`preview.open` with `reveal: true`. Non-`ui` prompts and task threads never
+invoke this route, pairing URLs never cross back to the ACP session or logs,
+and once the open finishes the inbox returns to `end_turn` (idle) at once
+unless an offerable decision holds it.
+
+**Workspace pane layout limitation.** Verified against installed nightly
+`0.1.11-nightly.20261119.4941` (commit `ff9efe89f6e7`): the right panel's
+maximized state (`byThreadKey[threadKey].maximized` via `setMaximized` in the
+client `rightPanelStore` persisted in `window.localStorage`) is client-local
+only, controlled by the native "Maximize panel" toggle (`PanelLayoutControls`)
+or `rightPanel.toggleMaximized`. Neither `WS_METHODS` (`preview.open`,
+`preview.resize`, `preview.adjust`) nor `OrchestrationV2` exposes a server RPC
+or command to set or toggle workspace pane layout, and browser viewport sizing
+(`preview.resize`) does not change that layout. Likewise, `WS_METHODS` exposes
+no `preview.reveal` or `tabId`-reusing `preview.open` RPC (`PreviewManager.open`
+always creates a new `tabId`, and `PreviewManager.requestReveal` is internal to
+T3's in-process MCP `PreviewAutomationBroker`). The adapter keeps T3's native
+manual maximize control with no T3 patches or client-state hacks.
 
 ## Native parenting
 
@@ -976,6 +1004,34 @@ exactly, so the agent holds the turn and shows or forwards nothing. A legacy par
 rule as well. A manually settled parent is woken first: the re-entry message goes through the
 delivery gate, which unsettles it and reads it back before sending. A parent T3 will
 not run leaves the task waiting with a reason.
+
+**A callback-socket gap never ends the parent's turn (nucleus#1400).** A temporary
+gap or replacement of the callback socket (a Nucleus roll or restart) leaves the
+held parent's turn, binding, ACP session and native children as they are. The
+agent keeps polling the same session on a bounded, doubling wait and resumes once
+the socket answers, with no re-minting and no manual restart. A sustained outage
+shows one fault line, not a line per failed call. The row's state never comes from
+the transport: the parent row reads Nucleus role activity (running, needs a person,
+or truly waiting), so a gap changes neither the row nor a live child's hold. An
+authenticated answer or report whose delivery is unknown is still reconciled, never
+resent. Only a refused credential (401) ends the turn, because no retry can succeed.
+On the installed nightly `0.1.11-nightly.20261119.4941`, `effigy proof:t3code:reoffer -- --expect=held`
+proves the Inbox's open decision through a roll and a 40-second sustained outage: the
+same live card, a live run, the same binding, session and pin, and one fault line for
+the outage. `effigy proof:t3code:parent-gap` proves the task parent: a reviewer child
+running under a held parent through a 4-second roll, a 40-second sustained outage (one
+fault line), and a second child created under the same held parent after the first is
+interrupted, with the same binding and session. One run of that proof failed the
+sustained step on the fault count (no new line), and two earlier runs did the same.
+Those runs predate the proof's agent-stderr capture and its bounded fault-count window,
+so their cause is not confirmed. The window now lets a late-landing line count, and a
+failure prints the parent's runs, messages and the agent's stderr. Three consecutive runs
+at `8afefd567` passed, and the agent log of a passing run shows one fault line per outage
+with the turn held. The same proof also covers the parent's own open decision: a task-scoped
+decision the held parent raises as a card stays the same card, on the same running run,
+through a roll, with one card posted and the decision still open. The proof raises it by
+marking the parent's scope observed through the service's own ACP surface, since the
+service's adapter runs in another process.
 
 **Completion wakes never reach the parent.** Every child is created with
 `completionWake: "settled_only"` and its delivery is disposed
@@ -1439,6 +1495,15 @@ visible user bubble. No quiet re-entry exists on `message.dispatch`, so the visi
 plain sentence is the prompt. The proof releases the held turn through a fixture-only
 `acp` debug target, because the adapter in that proof does not own the service's ACP
 surface.
+
+`test/t3code-inbox.test.ts`, `test/acp-agent.test.ts`, `test/acp-service.test.ts`
+and `effigy proof:t3code:inbox` (`scripts/acceptance/t3code-inbox-private.ts`)
+cover the pinned inbox lifecycle and its `ui` command: reusing an already-open
+board tab without duplicating it or minting another link, ignoring non-exact
+prompts, reopening from a closed or `LoadFailed` pane with a fresh one-time
+pairing link and `reveal: true`, keeping pairing URLs out of ACP messages and
+logs, and returning to idle immediately when no decisions are offerable while
+staying held when an offerable decision is open.
 
 The private proof starts an unmodified checkout of the target nightly revision,
 or its bundled server copied into fresh run scratch, with separate home, data,

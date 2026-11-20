@@ -291,6 +291,7 @@ export class ProjectQaRunner {
     steps: ProjectQaStep[]; failedStep: ProjectQaStepName | null; escapedDescendants: HostRunEscapedDescendant[];
     logWriteErrors?: ProjectQaLogWriteError[];
     checkoutCleanupPending?: boolean;
+    interruptedStep?: ProjectQaStepName | null;
   }): ProjectQaRun { return projectQaTeardownRetry.applyTeardownRetry.call(this, run, outcome); }
   /** Internal to the QA owners: apply a settled teardown retry supervisor's result. */
   settleTeardownRetry(run: ProjectQaRun, state: QaSupervisionState | null): ProjectQaRun {
