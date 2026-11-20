@@ -74,6 +74,8 @@ import type { AcpSessionSurface } from "../../shared/acp/surface";
 
 export interface T3CodeConfig extends T3ConnectionConfig {
   statePath: string;
+  /** The persisted global Nucleus pause state. */
+  paused?: () => boolean;
   probeThreadId?: string;
   /**
    * The service's ACP session surface, when this process serves one. It mints the
@@ -262,6 +264,7 @@ export class T3CodeHost implements Host {
     });
     this.inbox = new T3Inbox({
       hostId: () => this.hostId,
+      paused: options.paused ?? (() => false),
       acp: this.acp,
       state: this.state,
       reads: this.reads,

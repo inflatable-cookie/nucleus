@@ -189,6 +189,7 @@ async function idleInbox(t: TestContext) {
     },
   ];
   const offered: string[] = [];
+  let paused = false;
   const settlement = new Map<string, "open" | "answered" | "cancelled">();
   const released: string[] = [];
   const observed: Array<{
@@ -230,11 +231,13 @@ async function idleInbox(t: TestContext) {
     statePath: join(root, "state.json"),
     probeThreadId: "synthetic-probe",
     acp: () => acp,
+    paused: () => paused,
     boardLink: async () => "http://127.0.0.1:1234/#token=synthetic",
   });
   t.after(() => host.close());
   await host.connect();
-  return { fake, host, offered, settlement, released, observed, root };
+  return { fake, host, offered, settlement, released, observed, root,
+    setPaused(value: boolean) { paused = value; } };
 }
 
 const holdPosts = (
@@ -354,8 +357,8 @@ test("the inbox title names decisions, then running tasks, then All quiet", () =
   assert.equal(inboxTitle(0, 0), "All quiet");
 });
 
-test("the inbox title follows the offered decisions, writes only on change, and returns to All quiet as a new write", async (t) => {
-  const { fake, host, offered } = await idleInbox(t);
+test("the inbox title follows decisions and pause state, writes only on change, and returns to All quiet as a new write", async (t) => {
+  const { fake, host, offered, setPaused } = await idleInbox(t);
   const inbox = () => host.state.read().inbox!;
   const titleWrites = () =>
     fake.commands.filter(
@@ -369,23 +372,32 @@ test("the inbox title follows the offered decisions, writes only on change, and 
   // An unchanged title sends nothing on the next sweep.
   await host.reconcileThreadTitles([]);
   assert.equal(titleWrites().length, 1);
+  // The underlying title is unchanged, but a paused sweep reconciles the prefix.
+  setPaused(true);
+  await host.reconcileThreadTitles([]);
+  assert.equal(fake.threads.get(inbox().threadId)!.thread.title, "Paused: All quiet");
+  assert.equal(titleWrites().length, 2);
   offered.push("decision-a");
   await host.reconcileThreadTitles([]);
   assert.equal(
     fake.threads.get(inbox().threadId)!.thread.title,
-    "1 decision to answer",
+    "Paused: 1 decision to answer",
   );
   offered.push("decision-b");
   await host.reconcileThreadTitles([]);
   assert.equal(
     fake.threads.get(inbox().threadId)!.thread.title,
-    "2 decisions to answer",
+    "Paused: 2 decisions to answer",
   );
   offered.length = 0;
   await host.reconcileThreadTitles([]);
-  // Returning to a title already written earlier is still a new write, not a replay.
+  assert.equal(fake.threads.get(inbox().threadId)!.thread.title, "Paused: All quiet");
+  assert.equal(titleWrites().length, 5);
+  // Resume removes the prefix in place, even though the underlying title was written earlier.
+  setPaused(false);
+  await host.reconcileThreadTitles([]);
   assert.equal(fake.threads.get(inbox().threadId)!.thread.title, "All quiet");
-  assert.equal(titleWrites().length, 4);
+  assert.equal(titleWrites().length, 6);
 });
 
 test("a pending card older than the thread window is answered from the full transcript", async () => {

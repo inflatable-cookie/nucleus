@@ -64,8 +64,10 @@ async function fixture(t: TestContext) {
   server.controls.providers = [nucleusProvider, { instanceId: 'synthetic-provider', displayName: 'Synthetic provider', driver: 'codex',
     enabled: true, status: 'ready', models: [{ slug: 'synthetic-model', name: 'Synthetic model' }] }];
   const acp = acpStub(server);
+  let paused = false;
   const host = new T3CodeHost({ endpoint: server.endpoint, bearer: 'synthetic-bearer', statePath: join(root, 'state.json'),
-    timeoutMs: 2_000, probeThreadId: 'synthetic-probe', acp: () => acp.surface, reentryTimeoutMs: 300 });
+    timeoutMs: 2_000, probeThreadId: 'synthetic-probe', acp: () => acp.surface, reentryTimeoutMs: 300,
+    paused: () => paused });
   t.after(() => host.close());
   await host.connect();
   const workspace = await host.createWorkspace({ title: 'Synthetic worktree', requestId: 'workspace-intent', directory, project: { projectId: 'synthetic-project' } });
@@ -77,7 +79,8 @@ async function fixture(t: TestContext) {
   const task = (overrides: Partial<Task> = {}): Task => ({ id: taskId, number: 225, title: 'Synthetic role', held: false,
     hostId: host.hostId, workspaceId: workspace.id, phase: 'awaiting_review', ...overrides }) as Task;
   const parentOf = () => Object.values(host.state.read().parents ?? {})[0];
-  return { root, directory, server, host, workspace, spec, task, acp, parentOf };
+  return { root, directory, server, host, workspace, spec, task, acp, parentOf,
+    setPaused(value: boolean) { paused = value; } };
 }
 
 /** One recorded command by dispatch type, or by method for a launch (which carries no `type`). */
@@ -86,7 +89,7 @@ const commandsOf = (server: Awaited<ReturnType<typeof t3Fake>>, type: string) =>
 const waiting = (cause = 'Waiting on nucleus#1364'): TaskAttention => ({ state: 'waiting', cause });
 
 test('the inbox counts each active task once and excludes waiting, snoozed and finished tasks', async t => {
-  const { acp, directory, host, parentOf, server, spec } = await fixture(t);
+  const { acp, directory, host, parentOf, server, spec, setPaused } = await fixture(t);
   const inboxDir = mkdtempSync(join(directory, 'inbox-'));
   acp.surface.bindInbox = ({ hostId }) => ({
     sessionId: 'synthetic-inbox', hostId, directory: inboxDir, bindingPath: join(inboxDir, 'binding'),
@@ -110,6 +113,12 @@ test('the inbox counts each active task once and excludes waiting, snoozed and f
   await host.reconcileTaskRow(otherTask, { state: 'active' });
   await host.reconcileThreadTitles([]);
   assert.equal(inboxTitle(), '2 tasks running');
+  setPaused(true);
+  await host.reconcileThreadTitles([]);
+  assert.equal(inboxTitle(), 'Paused: 2 tasks running');
+  setPaused(false);
+  await host.reconcileThreadTitles([]);
+  assert.equal(inboxTitle(), '2 tasks running');
 
   for (const role of roleThreads) {
     role.runs = [syntheticRun(role.thread.id, 1, { status: 'completed' })];
@@ -122,6 +131,18 @@ test('the inbox counts each active task once and excludes waiting, snoozed and f
   await host.reconcileTaskRow(otherTask, { state: 'finished' });
   await host.reconcileThreadTitles([]);
   assert.equal(inboxTitle(), 'All quiet');
+
+  // Pause changes only the prefix, even when the underlying title is unchanged.
+  const titleUpdates = () => commandsOf(server, 'thread.metadata.update').filter(command => command.threadId === inbox.threadId);
+  const countBeforePause = titleUpdates().length;
+  setPaused(true);
+  await host.reconcileThreadTitles([]);
+  assert.equal(inboxTitle(), 'Paused: All quiet');
+  assert.equal(titleUpdates().length, countBeforePause + 1);
+  setPaused(false);
+  await host.reconcileThreadTitles([]);
+  assert.equal(inboxTitle(), 'All quiet');
+  assert.equal(titleUpdates().length, countBeforePause + 2);
 });
 
 test('the parent row names the step its role children are doing (acceptance 2)', async t => {

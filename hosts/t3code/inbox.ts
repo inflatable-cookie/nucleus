@@ -77,8 +77,14 @@ export function inboxTitle(decisions: number, runningTasks: number): string {
   return "All quiet";
 }
 
+export function pausedInboxTitle(title: string, paused: boolean): string {
+  return paused ? `Paused: ${title}` : title;
+}
+
 interface InboxContext {
   hostId(): string;
+  /** The persisted global Nucleus pause state. */
+  paused(): boolean;
   /** Tasks whose attention is active on this host in the current pass (each task once). */
   runningTasks(): number;
   acp(): AcpSessionSurface | null;
@@ -413,7 +419,10 @@ export class T3Inbox {
     const hostId = this.core.hostId();
     const key = this.core.acp()?.pendingInboxDecisionKey?.(hostId) ?? null;
     const decisions = key ? (JSON.parse(key) as unknown[]).length : 0;
-    const title = inboxTitle(decisions, this.core.runningTasks());
+    const title = pausedInboxTitle(
+      inboxTitle(decisions, this.core.runningTasks()),
+      this.core.paused(),
+    );
     const thread = knownThread ?? (await this.core.reads.shellRow(threadId));
     if (!thread || thread.title === title) return;
     const generation = this.core.state.read().inbox?.titleGeneration ?? 0;
