@@ -7,6 +7,13 @@ import { authorModelKey, queueAuthorModelKey, taskAuthorModelKeys } from "../../
 import { reviewerRuntimeChanged } from "./reviewer-runtime";
 import { proofExecutorAgents } from "../dispatch/routing";
 import { isOwnerRoutedReviewer, reviewerIndependence } from "../dispatch/routing";
+import {
+  HostReadRefusalError,
+  HostSnapshotPendingError,
+  isHostOperationTimeout,
+} from "../host";
+import { HostTransportFault } from "../host/adapter-routing";
+import { isTransportFailure } from "../../shared/transport";
 import { ProvenPreSendRefusalError } from "../recovery/task-reasons";
 import { assertOrdinaryReviewIdentity, ordinaryReviewSource } from "./ordinary-review";
 import { commonDirMatchesTask, readGitCheckout, safeRealpathSync } from "../git/git-identity";
@@ -196,6 +203,14 @@ export class ReviewPolicy {
       return { sent: true };
     } catch (error) {
       if (sendInvoked) throw error;
+      if (
+        error instanceof HostReadRefusalError ||
+        error instanceof HostSnapshotPendingError ||
+        isTransportFailure(error) ||
+        isHostOperationTimeout(error) ||
+        error instanceof HostTransportFault
+      )
+        throw error;
       return refuse(`Reviewer delivery preflight failed before send: ${String(error).slice(0, 600)}`);
     }
   }

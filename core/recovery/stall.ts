@@ -17,6 +17,12 @@ import {
 import { workerRouteProfile } from "../../shared/pool";
 import type { Run, StalledTurnStop, Task } from "../../shared/contracts";
 import type { AgentObservation } from "../host/adapter";
+import {
+  HostReadRefusalError,
+  isHostOperationTimeout,
+} from "../host/errors";
+import { HostTransportFault } from "../host/adapter-routing";
+import { isTransportFailure } from "../../shared/transport";
 import type { Resolution } from "../resolution";
 import { dispatchBlocked } from "../dispatch/capacity";
 import { now } from "../store/store";
@@ -1108,7 +1114,7 @@ export type ToolTimelineRead =
       pendingBackgroundTasks: string[];
     }
   | { entries: TimelineEntry[]; coverage?: "turn" }
-  | { issue: string };
+  | { issue: string; transientError?: unknown };
 
 export async function readToolTimeline(
   host: {
@@ -1140,8 +1146,14 @@ export async function readToolTimeline(
         }),
       ]);
     } catch (error) {
+      const transient =
+        error instanceof HostReadRefusalError ||
+        isTransportFailure(error) ||
+        isHostOperationTimeout(error) ||
+        error instanceof HostTransportFault;
       return {
         issue: `tool observations read ${read + 1} failed: ${error instanceof Error ? error.message : String(error)}`,
+        ...(transient ? { transientError: error } : {}),
       };
     } finally {
       clearTimeout(timer);

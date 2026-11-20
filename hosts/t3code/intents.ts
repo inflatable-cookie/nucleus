@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 import {
+  HostReadRefusalError,
+  HostSnapshotPendingError,
   HostUnknownDeliveryError,
   ProvenPreSendRefusalError,
   sanitizeHostDeliveryDiagnostic,
@@ -7,6 +9,7 @@ import {
 import type { T3RpcClient } from "./rpc";
 import { T3RpcError } from "./rpc";
 import { T3CompatibilityError } from "./contracts";
+import { isTransientT3ReadRpcError, T3TransientReadError } from "./reads";
 import {
   canonical,
   intentKindOf,
@@ -452,6 +455,23 @@ export class T3IntentLedger {
       // guidance and the recorded intent is never marked refused.
       if (!(error instanceof T3RpcError && error.late))
         this.awaitingLate.delete(key);
+      // A proved incomplete/transient read before any command write never crossed
+      // the send boundary: release the provisional reservation instead of marking
+      // the occurrence refused or unknown, and preserve the transient read reason.
+      if (
+        !wrote &&
+        (error instanceof HostReadRefusalError ||
+          error instanceof HostSnapshotPendingError ||
+          isTransientT3ReadRpcError(error))
+      ) {
+        state.update((current) => {
+          if (prior) current.intents[key] = prior;
+          else delete current.intents[key];
+        });
+        if (isTransientT3ReadRpcError(error))
+          throw new T3TransientReadError(error);
+        throw error;
+      }
       const refusal =
         error instanceof ProvenPreSendRefusalError
           ? error

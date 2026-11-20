@@ -22,7 +22,7 @@ import {
   type LadderEvent,
 } from "./ladder";
 import { closeEscalationFollowups } from "./ladder/continuation";
-import { ProvenPreSendRefusalError } from "../host/errors";
+import { HostReadRefusalError, ProvenPreSendRefusalError } from "../host/errors";
 
 type Answerer =
   | { role: "planner" | "decider"; agentId: string }
@@ -739,6 +739,7 @@ export class EscalationSettlement {
       }
       return null;
     } catch (error) {
+      if (error instanceof HostReadRefusalError) throw error;
       const message = error instanceof Error ? error.message : String(error);
       this.store.event(
         current.id,

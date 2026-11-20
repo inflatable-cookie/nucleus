@@ -14,6 +14,7 @@ import {
   type TaskControlInput,
 } from "../../shared/contracts";
 import type { AgentObservation } from "../host/adapter";
+import { HostReadRefusalError } from "../host";
 import { taskPrNumber } from "../forge/index";
 import type { RestartRole } from "./owner-verbs";
 import {
@@ -269,6 +270,7 @@ export class RestartControls {
         this.engine.host.observe(task.agentId!),
       );
     } catch (error) {
+      if (error instanceof HostReadRefusalError) throw error;
       throw new RestartRefusal(
         `The retained worker cannot be observed (${hostFailureRefusalDetail(error)}); restore observation before restarting. No continuation was sent`,
       );

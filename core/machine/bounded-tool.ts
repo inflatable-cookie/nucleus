@@ -1,4 +1,10 @@
 import type { AgentObservation } from '../host/adapter';
+import {
+  HostReadRefusalError,
+  isHostOperationTimeout,
+} from '../host';
+import { HostTransportFault } from '../host/adapter-routing';
+import { isTransportFailure } from '../../shared/transport';
 import { formatLiveToolIssue, liveToolIssueFact, noTurnLive, type ToolTimelineRead } from '../recovery/stall';
 
 /** A bounded window is liveness evidence only with inactivity and owned-process proof. */
@@ -18,7 +24,16 @@ export async function boundedToolHold(
   if (read.pendingBackgroundTasks.length)
     return `an owned tool is still live: provider reports outstanding background work: ${read.pendingBackgroundTasks.join(', ')}`;
   let state: AgentObservation | null = null;
-  try { state = await host.observe(agentId); } catch { /* Unknown never clears. */ }
+  try { state = await host.observe(agentId); } catch (error) {
+    if (
+      error instanceof HostReadRefusalError ||
+      isTransportFailure(error) ||
+      isHostOperationTimeout(error) ||
+      error instanceof HostTransportFault
+    )
+      throw error;
+    /* Unknown never clears. */
+  }
   if (!state || state.id !== agentId || !workspaceId || state.workspaceId !== workspaceId)
     return 'owned tool evidence is inconclusive: participant observation or workspace identity is unavailable';
   if (state.active === true || state.activeTurnId || state.permissions === true)

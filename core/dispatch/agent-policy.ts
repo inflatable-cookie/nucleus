@@ -2,6 +2,13 @@ import type { WorkerPromptMeasurement } from './prompt-text/measure';
 import type { Task } from "../../shared/contracts";
 import type { HostAgentSpec } from "../../shared/host";
 import { removeMcpBinding, workerAgentSpec, type CreationOwner } from "./agent-creation";
+import {
+  HostReadRefusalError,
+  HostSnapshotPendingError,
+  isHostOperationTimeout,
+} from "../host";
+import { HostTransportFault } from "../host/adapter-routing";
+import { isTransportFailure } from "../../shared/transport";
 import { ProvenPreSendRefusalError } from "../recovery/task-reasons";
 
 export interface AgentPolicyHost {
@@ -30,7 +37,15 @@ export class AgentPolicy {
       try{
         if(!await guard.allowed()||!guard.stillAllowed())throw new ProvenPreSendRefusalError('Review-entry source or writer state changed before creation');
       }catch(error){
-        if(error instanceof ProvenPreSendRefusalError)throw error;
+        if (
+          error instanceof ProvenPreSendRefusalError ||
+          error instanceof HostReadRefusalError ||
+          error instanceof HostSnapshotPendingError ||
+          isTransportFailure(error) ||
+          isHostOperationTimeout(error) ||
+          error instanceof HostTransportFault
+        )
+          throw error;
         throw new ProvenPreSendRefusalError(error instanceof Error?error.message:String(error));
       }
     }

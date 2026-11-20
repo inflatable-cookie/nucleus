@@ -572,6 +572,7 @@ export class Engine {
         [
           "checkpoints",
           "delegateNativeQuestions",
+          "delegation",
           "deliverDrainNotices",
           "deliverHoldNotices",
           "deliverHostOutageNotices",
@@ -672,6 +673,7 @@ export class Engine {
       portsContext(this, [
         "resolution",
         "admission",
+        "applyDeferredOwnerVerbs",
         "armGitTransient",
         "cleanContext",
         "completionFollowUps",
@@ -691,6 +693,7 @@ export class Engine {
         "taskQuantum",
         "terminalThreadsPending",
         "transientKey",
+        "wakeRepository",
         "wakeTask",
         "withHost",
       ]),
@@ -1008,6 +1011,12 @@ export class Engine {
     };
     this.resolution.gitTransientFailure = (task, error) =>
       this.deferGitTransient(task.id, error);
+    this.resolution.hostReadTransientFailure = (task, error, step) =>
+      this.deferHostReadTransient(task.id, error, false, step);
+    this.resolution.clearHostReadTransient = (id, scope) =>
+      this.clearHostReadTransient(id, scope);
+    this.resolution.armHostReadTransient = (id, retryAt, scope) =>
+      this.taskWakes.armHostReadTransient(id, retryAt, scope);
     this.resolution.gitTransientRecovered = (task, source) => {
       const key = this.transientKey(task.id);
       const episode = this.store.getMeta<GitTransientEpisode | null>(key);
@@ -1597,6 +1606,20 @@ export class Engine {
   }
   gitTransientWaiting(id: string, operation = false): boolean {
     return this.taskWakes.gitTransientWaiting(id, operation);
+  }
+  clearHostReadTransient(
+    id: string,
+    scope: "task" | "op" | "question" = "task",
+  ): void {
+    this.taskWakes.clearHostReadTransient(id, scope);
+  }
+  deferHostReadTransient(
+    id: string,
+    error: unknown,
+    operation = false,
+    step = "Host check",
+  ): "wait" | "exhausted" {
+    return this.taskWakes.deferHostReadTransient(id, error, operation, step);
   }
   noteStepFailure(taskId: string, error: unknown): void {
     this.taskWakes.noteStepFailure(taskId, error);

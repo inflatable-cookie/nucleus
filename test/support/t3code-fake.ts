@@ -596,6 +596,8 @@ export async function t3Fake(t: TestContext, directory: string) {
     beforeArchiveRead: (() => {}) as () => void,
     /** The next N thread reads end with an Interrupt frame instead of a snapshot (a stream cut mid-turn). */
     interruptThreadReads: 0,
+    /** The next N thread projection reads fail with `OrchestrationV2GetThreadProjectionError`. */
+    threadProjectionErrors: 0,
     disconnectMutation: false,
     disconnectAfterEffect: false,
     /** One-shot faults for the next `thread.unsettle` commands, in order: "drops" or "lands". */
@@ -1175,6 +1177,13 @@ export async function t3Fake(t: TestContext, directory: string) {
             delete p.unsettleLagReads;
             p.thread.settledOverride = "active";
             p.thread.settledAt = null;
+          }
+          if (controls.threadProjectionErrors > 0) {
+            controls.threadProjectionErrors--;
+            return failure({
+              _tag: "Fail",
+              error: { _tag: "OrchestrationV2GetThreadProjectionError" },
+            });
           }
           if (controls.interruptThreadReads > 0) {
             controls.interruptThreadReads--;

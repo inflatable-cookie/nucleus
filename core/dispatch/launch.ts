@@ -86,6 +86,7 @@ export type LaunchDeliverContext = Pick<
   Resolution,
   | "adapter"
   | "assertReviewProfileIndependent"
+  | "clearHostReadTransient"
   | "ensureIncident"
   | "ordinaryReviewRuns"
   | "ordinaryRoundCustody"

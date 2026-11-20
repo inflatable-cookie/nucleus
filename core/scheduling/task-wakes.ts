@@ -11,6 +11,13 @@ import {
   nextGitTransientAttempt,
   type GitTransientEpisode,
 } from "../git/git-transient-backoff";
+import {
+  claimHostReadTransientError,
+  hostReadTransientEscalationReason,
+  hostReadTransientKey,
+  nextHostReadTransientAttempt,
+  type HostReadTransientEpisode,
+} from "../recovery/host-read-transient";
 import { boardDispatchHoldApplies } from "../../shared/board-dispatch-hold";
 import {
   CheckoutRefusalError,
@@ -208,6 +215,7 @@ export type TaskWakesContext = Pick<
   | "taskQuantum"
   | "terminalThreadsPending"
   | "transientKey"
+  | "wakeRepository"
   | "wakeTask"
   | "withHost"
 >;
@@ -225,6 +233,10 @@ export class TaskWakes {
   }
   readonly lifecycleFollowUps = new Set<string>();
   private readonly gitTransientTimers = new Map<
+    string,
+    ReturnType<typeof setTimeout>
+  >();
+  private readonly hostReadTransientTimers = new Map<
     string,
     ReturnType<typeof setTimeout>
   >();
@@ -374,9 +386,150 @@ export class TaskWakes {
       now: Date.now(),
     };
   }
+  clearHostReadTransient(
+    id: string,
+    scope: "task" | "op" | "question" = "task",
+  ): void {
+    const key = hostReadTransientKey(scope, id);
+    this.store.deleteMeta(key);
+    const timerKey = `${scope}:${id}`;
+    const timer = this.hostReadTransientTimers.get(timerKey);
+    if (timer) {
+      clearTimeout(timer);
+      this.hostReadTransientTimers.delete(timerKey);
+    }
+  }
+  armHostReadTransient(
+    id: string,
+    retryAt: number,
+    scope: "task" | "op" | "question" = "task",
+  ): void {
+    const timerKey = `${scope}:${id}`;
+    if (this.hostReadTransientTimers.has(timerKey) || this.engine.stopped)
+      return;
+    const timer = setTimeout(
+      () => {
+        this.hostReadTransientTimers.delete(timerKey);
+        if (this.engine.stopped) return;
+        if (scope === "op") {
+          if (!this.store.getMeta("paused")) this.engine.scheduleOperation(id);
+          return;
+        }
+        if (scope === "question") {
+          void this.engine.cleanContext(() =>
+            this.resolution.delegation.recoverPendingEscalationAnswers(),
+          );
+          return;
+        }
+        const task = this.store.taskOrNull(id);
+        if (!task || task.removedAt || ["done", "cancelled"].includes(task.phase))
+          return;
+        if (task.phase === "queued" && !task.workspaceId)
+          void this.engine.cleanContext(() =>
+            this.engine.wakeRepository(task.repoPath),
+          );
+        else
+          void this.engine.cleanContext(() => this.engine.wakeTask(id));
+      },
+      Math.max(0, retryAt - Date.now()),
+    );
+    timer.unref();
+    this.hostReadTransientTimers.set(timerKey, timer);
+  }
+  deferHostReadTransient(
+    id: string,
+    error: unknown,
+    operation = false,
+    step = "Host check",
+  ): "wait" | "exhausted" {
+    const scope = operation ? "op" : "task";
+    const key = hostReadTransientKey(scope, id);
+    const detail = error instanceof Error ? error.message : String(error);
+    const old =
+      this.store.getMeta<HostReadTransientEpisode | null>(key) ?? null;
+    if (!claimHostReadTransientError(error) && old)
+      return "wait";
+    const limits = {
+      limitMs: this.store.getMeta<number>("hostReadTransientLimitMs"),
+      minAttempts: this.store.getMeta<number>("hostReadTransientMinAttempts"),
+      maxAttempts: this.store.getMeta<number>("hostReadTransientMaxAttempts"),
+    };
+    const next = nextHostReadTransientAttempt(old, detail, Date.now(), limits);
+    if (!next) {
+      this.clearHostReadTransient(id, scope);
+      const reason = hostReadTransientEscalationReason(step, old, detail);
+      if (operation) {
+        const current = this.store.operation(id);
+        if (current)
+          this.store.putOperation({
+            ...current,
+            state: "needs_attention",
+            settledAt: now(),
+            diagnostic: reason.slice(0, 4000),
+            effect: current.effect
+              ? {
+                  ...current.effect,
+                  status: "reconciled",
+                  result: reason.slice(0, 2000),
+                  resultAt: now(),
+                }
+              : null,
+          });
+      } else {
+        const current = this.store.taskOrNull(id);
+        const episodeTag = `${old?.startedAt ?? 0}:${detail.slice(0, 120)}`;
+        const alreadyEscalated =
+          current?.phase === "needs_attention" &&
+          this.store
+            .eventsAll(id)
+            .some(
+              (event) =>
+                event.kind === "host_read_transient_exhausted" &&
+                event.detail.startsWith(episodeTag),
+            );
+        if (!alreadyEscalated) {
+          this.store.event(
+            id,
+            "host_read_transient_exhausted",
+            `${episodeTag}: ${reason}`.slice(0, 2000),
+          );
+          this.engine.note(
+            id,
+            reason,
+            "operator_needed",
+            this.store.getMeta("paused") ? undefined : "needs_attention",
+          );
+        }
+      }
+      return "exhausted";
+    }
+    this.store.setMeta(key, next);
+    const visible = `${step} read incomplete; retrying automatically (attempt ${next.attempts}): ${detail}`;
+    if (operation) {
+      const current = this.store.operation(id);
+      if (current)
+        this.store.putOperation({
+          ...current,
+          state: "pending",
+          settledAt: null,
+          diagnostic: visible.slice(0, 4000),
+        });
+    } else {
+      const task = this.store.taskOrNull(id);
+      if (task)
+        this.resolution.waiting(task, visible, "external_unavailable");
+    }
+    this.armHostReadTransient(id, next.retryAt, scope);
+    return "wait";
+  }
+
   noteStepFailure(taskId: string, error: unknown) {
     const current = this.store.task(taskId);
     const terminal = ["done", "cancelled"].includes(current.phase);
+    if (!terminal && error instanceof HostReadRefusalError) {
+      this.deferHostReadTransient(taskId, error, false);
+      return;
+    }
     const gitTransient =
       !terminal && this.engine.deferGitTransient(taskId, error);
     switch (
@@ -745,6 +898,9 @@ export class TaskWakes {
   stop(): void {
     for (const timer of this.gitTransientTimers.values()) clearTimeout(timer);
     this.gitTransientTimers.clear();
+    for (const timer of this.hostReadTransientTimers.values())
+      clearTimeout(timer);
+    this.hostReadTransientTimers.clear();
     this.engine.completionFollowUps.stop();
   }
 }
