@@ -847,9 +847,15 @@ async function heldScenarios(env: Environment) {
     const before = await cardFor(env, decision);
     assert.ok(before, `${testCase.name} starts with the live card`);
     const faultsBefore = await faultLineCount(env);
-    assert.ok(existsSync(env.socketPath), "the callback socket exists before the gap");
+    assert.ok(
+      existsSync(env.socketPath),
+      "the callback socket exists before the gap",
+    );
     await env.restartService(testCase.gapMs);
-    assert.ok(existsSync(env.socketPath), "the callback socket exists after the gap");
+    assert.ok(
+      existsSync(env.socketPath),
+      "the callback socket exists after the gap",
+    );
     // The re-attached turn settles on the new service before the proof reads it.
     await delay(8_000);
     const after = await cardFor(env, decision);
@@ -901,7 +907,10 @@ async function heldScenarios(env: Environment) {
       title: await threadTitle(env),
     });
   }
-  record(env, "final", { cardsPosted: await postedCount(env, decision), expectation: "held" });
+  record(env, "final", {
+    cardsPosted: await postedCount(env, decision),
+    expectation: "held",
+  });
 }
 
 export async function main() {

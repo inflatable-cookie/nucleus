@@ -666,7 +666,9 @@ async function nextMatching(
 
 /** The fault line a held turn shows for one outage, counted in the agent's output. */
 const faultLines = (updates: Json[]): number =>
-  updates.filter((update) => JSON.stringify(update).includes("Nucleus is unreachable")).length;
+  updates.filter((update) =>
+    JSON.stringify(update).includes("Nucleus is unreachable"),
+  ).length;
 
 test("a service that is unreachable mid-turn holds the turn quietly: one fault line, the same session, released only by the service", async () => {
   let resolves = 0;
@@ -675,7 +677,8 @@ test("a service that is unreachable mid-turn holds the turn quietly: one fault l
     turn: async (input: AcpTurnRequest) => {
       if (input.waitMs === 0) return reply("hold", ["nucleus#1304 · Working"]);
       polls += 1;
-      if (polls <= 6) throw new Error("connect ENOENT /nonexistent/callback.sock");
+      if (polls <= 6)
+        throw new Error("connect ENOENT /nonexistent/callback.sock");
       return reply("release", ["nucleus#1304 · Done"]);
     },
     message: async () => ({ receipt: { status: "delivered" } }),
@@ -704,14 +707,30 @@ test("a service that is unreachable mid-turn holds the turn quietly: one fault l
     { stopReason: "end_turn" },
     "the turn ends when the service releases it, not when the socket fails",
   );
-  assert.equal(polls, 7, "six failed polls, then the poll that the service answers");
-  assert.equal(resolves, 1, "the outage re-mints nothing: one binding, one session");
-  assert.equal(faultLines(updates), 1, "a sustained outage shows one fault line");
+  assert.equal(
+    polls,
+    7,
+    "six failed polls, then the poll that the service answers",
+  );
+  assert.equal(
+    resolves,
+    1,
+    "the outage re-mints nothing: one binding, one session",
+  );
+  assert.equal(
+    faultLines(updates),
+    1,
+    "a sustained outage shows one fault line",
+  );
   const text = JSON.stringify(updates);
   assert.match(text, /resumes when Nucleus answers/);
   assert.match(text, /ENOENT/);
   assert.doesNotMatch(text, /ending this turn/);
-  assert.match(text, /nucleus#1304 · Done/, "the service's line after recovery is shown");
+  assert.match(
+    text,
+    /nucleus#1304 · Done/,
+    "the service's line after recovery is shown",
+  );
   await client.closed();
 });
 
@@ -815,14 +834,25 @@ test("a socket replaced while the turn is held resumes the same session, with an
   for (let i = 0; i < 200 && transport.answers.length < 1; i++)
     await new Promise((resolve) => setTimeout(resolve, 5));
   assert.deepEqual(
-    transport.answers.map((row) => [row.id, "answer" in row ? row.answer : null]),
+    transport.answers.map((row) => [
+      row.id,
+      "answer" in row ? row.answer : null,
+    ]),
     [["decision-1", "Yes"]],
     "the answer routes on the same session after the socket returns",
   );
   const { updates, result } = await client.lines.untilResult(prompt);
   assert.deepEqual(result.result, { stopReason: "end_turn" });
-  assert.equal(resolves, 1, "the same binding and session carried the whole outage");
-  assert.equal(polls, 6, "poll 5 re-offered the version and the card was not raised again");
+  assert.equal(
+    resolves,
+    1,
+    "the same binding and session carried the whole outage",
+  );
+  assert.equal(
+    polls,
+    6,
+    "poll 5 re-offered the version and the card was not raised again",
+  );
   assert.equal(faultLines(updates), 1);
   await client.closed();
 });
@@ -838,7 +868,8 @@ test("session/cancel ends a turn waiting out an outage at once, not after the ba
           binding,
           transport: {
             turn: async (input: AcpTurnRequest) => {
-              if (input.waitMs === 0) return reply("hold", ["nucleus#1304 · Working"]);
+              if (input.waitMs === 0)
+                return reply("hold", ["nucleus#1304 · Working"]);
               throw new Error("connect ENOENT /nonexistent/callback.sock");
             },
             message: async () => ({ receipt: { status: "delivered" } }),
@@ -873,7 +904,8 @@ test("a refused credential is permanent: the held turn ends once with its reason
           binding,
           transport: {
             turn: async (input: AcpTurnRequest) => {
-              if (input.waitMs === 0) return reply("hold", ["nucleus#1304 · Working"]);
+              if (input.waitMs === 0)
+                return reply("hold", ["nucleus#1304 · Working"]);
               throw Object.assign(new Error("unauthorized"), { status: 401 });
             },
             message: async () => ({ receipt: { status: "delivered" } }),
@@ -942,7 +974,8 @@ test("a session open that meets a socket gap waits on the same backoff, and a re
       if (input.waitMs === 0) {
         attaches += 1;
         // The first two attaches meet the gap; the third reaches the socket again.
-        if (attaches <= 2) throw new Error("connect ENOENT /nonexistent/callback.sock");
+        if (attaches <= 2)
+          throw new Error("connect ENOENT /nonexistent/callback.sock");
         return reply("hold", ["nucleus#1304 · Working"]);
       }
       return reply("release", ["nucleus#1304 · Done"]);
@@ -989,7 +1022,10 @@ test("a session open that meets a socket gap waits on the same backoff, and a re
   const rejected = await refused.lines.untilResult(
     refused.request("session/new", { cwd: "/fixture/checkout" }),
   );
-  assert.match(String((rejected.result.error as Json).message), /Nucleus is unreachable/);
+  assert.match(
+    String((rejected.result.error as Json).message),
+    /Nucleus is unreachable/,
+  );
   assert.equal(refusedAttaches, 1, "a refused credential is not retried");
   await refused.closed();
 });
