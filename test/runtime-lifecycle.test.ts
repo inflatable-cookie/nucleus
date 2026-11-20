@@ -30,6 +30,10 @@ const fakeOwner = (
     recordedHost?: string;
     observedHost?: string;
     read?: () => Promise<Record<string, PrState>>;
+    /** A verified host other than the primary is online. */
+    secondaryOnline?: boolean;
+    /** The primary connect never answers, the shape a quit Paseo leaves. */
+    primaryHangs?: boolean;
   } = {},
 ): Fake => {
   let read = options.read ?? (async () => ({}));
@@ -43,8 +47,19 @@ const fakeOwner = (
         revisions++;
       },
     },
-    engine: { refresh: async () => undefined },
-    adapter: { connect: async () => undefined },
+    engine: {
+      refresh: async () => undefined,
+      wake: async () => undefined,
+      progressMark: () => 0,
+      resumeOperations: () => undefined,
+      resumeBulkDispositions: () => undefined,
+      hooks: { disposeLegacyWarmCheckouts: async () => undefined },
+    },
+    adapter: {
+      connect: options.primaryHangs
+        ? () => new Promise<void>(() => {})
+        : async () => undefined,
+    },
     admission: {},
     hostRegistry: {
       known: () => known,
@@ -62,7 +77,7 @@ const fakeOwner = (
     hostSession: null,
     idleShutdownLatched: false,
     connected: () => false,
-    anyHostConnected: () => false,
+    anyHostConnected: () => options.secondaryOnline === true,
     readPrStates: () => {
       reads++;
       return read();
@@ -180,4 +195,51 @@ test("a host identity conflict is a typed fact observed by the bootstrap, not st
     "old-host",
     "a retry records the same typed fact",
   );
+});
+
+test("a secondary host satisfies readiness while the primary connect never answers (nucleus#1449)", async () => {
+  const withSecondary = fakeOwner({ secondaryOnline: true, primaryHangs: true });
+  const lifecycle = new RuntimeLifecycle(withSecondary.owner);
+  const startedAt = Date.now();
+
+  assert.equal(
+    await lifecycle.ensureBootstrap(),
+    true,
+    "the online host owns readiness, so the bootstrap completes",
+  );
+  assert.equal(lifecycle.startError, "", "the primary's absence is not a start error");
+  assert.equal(lifecycle.bootstrapped, true);
+  assert.equal(
+    lifecycle.primaryFault === null,
+    true,
+    "the abandoned connect has not failed yet; the host shows offline meanwhile",
+  );
+  assert.ok(
+    Date.now() - startedAt < 1_000,
+    "the common recovery did not wait for the offline adapter",
+  );
+
+  // The bounded attempt settles on its own and records its cause on that host.
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  assert.match(
+    lifecycle.primaryFault?.message ?? "",
+    /Daemon connection did not settle inside 10 ms/,
+  );
+  assert.equal(lifecycle.startError, "", "the recorded host fault stays off the board");
+});
+
+test("with no host online the primary's connect failure is still the runtime's start error", async () => {
+  const alone = fakeOwner({ primaryHangs: true });
+  const lifecycle = new RuntimeLifecycle(alone.owner);
+
+  assert.equal(
+    await lifecycle.ensureBootstrap(),
+    false,
+    "nothing owns readiness, so the bootstrap never completes",
+  );
+  assert.match(
+    lifecycle.startError,
+    /Daemon connection did not settle inside 10 ms/,
+  );
+  assert.equal(lifecycle.bootstrapped, false);
 });
