@@ -13,15 +13,18 @@
  *      wake's receipt is settled;
  *   3. manual operator turns push that wake outside the bounded projection, confirmed by a
  *      bounded snapshot read with `hasMoreHistory` and without the wake's message;
- *   4. a fresh decision is offered. `--expect blocked` (the pre-fix code) records that no
+ *   4. the T3 daemon restarts; the environment, inbox thread, binding and runtime
+ *      credential are read before and after, and the hold keeps its generation and receipt;
+ *   5. a fresh decision is offered. `--expect blocked` (the pre-fix code) records that no
  *      card and no new occurrence appear within 90 seconds. `--expect woken` (the fixed
  *      code) records exactly one card, answerable, and one new occurrence.
  *
- * Evidence is compact JSON per step. Raw server logs and evidence stay in run scratch.
+ * Evidence is compact JSON per step, and it names the source revision and host-file
+ * digests that ran. Raw server logs and evidence stay in run scratch.
  * Run through `effigy proof:t3code:window`.
  */
 import assert from "node:assert/strict";
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
   existsSync,
@@ -46,6 +49,13 @@ import { findT3Cli } from "../../shared/t3/operator";
 
 const checkout = fileURLToPath(new URL("../..", import.meta.url));
 const NIGHTLY_LINE = /^0\.1\.11-nightly\.\d+\.\d+$/;
+/** The host files the proof executes, digested so a before-and-after pair names what ran. */
+const EXECUTED_SOURCE = [
+  "hosts/t3code/decision-hold.ts",
+  "hosts/t3code/reads.ts",
+  "hosts/t3code/adapter.ts",
+  "hosts/t3code/intents.ts",
+];
 /** Every process this run starts, so a failed setup never leaves a server behind. */
 const spawned: ChildProcess[] = [];
 const killSpawned = () => {
@@ -739,6 +749,70 @@ async function teardown(env: Environment) {
   }
 }
 
+/**
+ * The source this run executes: the git revision and clean state of a checkout, or the
+ * revision a source archive records in `.proof-source.json`, and the digests of the host
+ * files and this proof script. A before-and-after pair names what ran (nucleus#1407 review).
+ */
+function sourceFingerprint() {
+  let revision: string | null = null;
+  let clean: boolean | null = null;
+  if (existsSync(join(checkout, ".git"))) {
+    revision = execFileSync("git", ["-C", checkout, "rev-parse", "HEAD"], {
+      encoding: "utf8",
+    }).trim();
+    clean =
+      execFileSync("git", ["-C", checkout, "status", "--porcelain"], {
+        encoding: "utf8",
+      }).trim() === "";
+  } else if (existsSync(join(checkout, ".proof-source.json"))) {
+    revision = (
+      JSON.parse(
+        readFileSync(join(checkout, ".proof-source.json"), "utf8"),
+      ) as {
+        revision: string;
+      }
+    ).revision;
+  }
+  return {
+    revision: revision ?? "unrecorded",
+    cleanCheckout: clean,
+    files: Object.fromEntries(
+      EXECUTED_SOURCE.map((file) => [
+        file,
+        digest(join(checkout, file)).sha256,
+      ]),
+    ),
+    proofScript: digest(fileURLToPath(import.meta.url)).sha256,
+  };
+}
+
+/**
+ * The inbox's identity on the wire and on disk: the environment, the inbox thread, its
+ * binding session, and the runtime credential. The credential is compared in memory and
+ * never written to evidence.
+ */
+async function inboxIdentity(env: Environment) {
+  const descriptor = (await (
+    await fetch(`${env.endpoint}/.well-known/t3/environment`)
+  ).json()) as { environmentId: string };
+  const state = JSON.parse(
+    readFileSync(join(env.root, "ns", "hosts", "t3code.json"), "utf8"),
+  ) as { inbox?: { threadId: string; sessionId: string; bindingPath: string } };
+  const settings = JSON.parse(
+    readFileSync(join(env.root, "ns", "settings.json"), "utf8"),
+  ) as { t3code: { bearer: string } };
+  return {
+    environmentId: descriptor.environmentId,
+    threadId: state.inbox?.threadId ?? null,
+    sessionId: state.inbox?.sessionId ?? null,
+    bindingPath: state.inbox?.bindingPath ?? null,
+    credential: createHash("sha256")
+      .update(settings.t3code.bearer)
+      .digest("hex"),
+  };
+}
+
 /** The window case (nucleus#1407): a settled wake pushed outside the bounded projection. */
 type WindowRow = { type: string; messageId?: string };
 async function windowCoverage(
@@ -862,6 +936,36 @@ async function windowScenarios(env: Environment, expect: "blocked" | "woken") {
     earlierReceipt: acknowledged.intentStatus,
   });
 
+  // A T3 daemon restart after the earlier wake is outside the window: the environment, the
+  // inbox thread, its binding and the runtime credential are read before and after it.
+  const beforeRestart = await inboxIdentity(env);
+  await env.restart();
+  await idleFor(env, 3);
+  const afterRestart = await inboxIdentity(env);
+  const restartedHold = holdState(env);
+  record(env, "window:t3-daemon-restarted", {
+    environmentKept: beforeRestart.environmentId === afterRestart.environmentId,
+    inboxThreadKept: beforeRestart.threadId === afterRestart.threadId,
+    bindingKept:
+      beforeRestart.sessionId === afterRestart.sessionId &&
+      beforeRestart.bindingPath === afterRestart.bindingPath,
+    credentialKept: beforeRestart.credential === afterRestart.credential,
+    holdGeneration: restartedHold.hold!.generation,
+    holdGenerationKept:
+      restartedHold.hold!.generation === acknowledged.hold!.generation,
+    earlierReceipt: restartedHold.intentStatus,
+  });
+  assert.equal(
+    afterRestart.threadId,
+    beforeRestart.threadId,
+    "the inbox thread is kept across the restart",
+  );
+  assert.equal(
+    afterRestart.credential,
+    beforeRestart.credential,
+    "the runtime credential is kept across the restart",
+  );
+
   const later = await addDecision(env, "Window later");
   if (expect === "blocked") {
     let card: unknown = null;
@@ -948,7 +1052,7 @@ export async function main() {
   const path = join(root, "evidence.json");
   writeFileSync(
     path,
-    `${JSON.stringify({ nightlyLine: String(NIGHTLY_LINE), expect: expectOutcome, serverVersion: env.serverVersion, steps: env.steps, logs: [{ name: "t3-server.log", ...digest(env.logPath) }] }, null, 2)}\n`,
+    `${JSON.stringify({ nightlyLine: String(NIGHTLY_LINE), expect: expectOutcome, source: sourceFingerprint(), serverVersion: env.serverVersion, steps: env.steps, logs: [{ name: "t3-server.log", ...digest(env.logPath) }] }, null, 2)}\n`,
     { mode: 0o600 },
   );
   if (failure) throw failure;
