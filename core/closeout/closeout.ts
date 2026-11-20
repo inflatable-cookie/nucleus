@@ -171,7 +171,11 @@ export class Closeout {
       if (recoveredIncident) this.resolution.recordIncidentEvent(t.id, recoveredIncident);
       const escalation = oldEpisode && legacyRecoveryEscalation(this.store, current);
       if (escalation && plannerEscalations(this.store.eventsAll(t.id)).some(item => item.id === escalation && !item.answered)) {
+        const events = this.store.eventsAll(t.id);
         this.store.event(t.id, "planner_escalation_resolved", `${escalation}: ${detail}`);
+        if (events.some(event => event.kind === "planner_escalation_wait" && event.detail.startsWith(`${escalation}:`))
+            && !events.some(event => event.kind === "planner_escalation_wait_superseded" && event.detail.startsWith(`${escalation}:`)))
+          this.store.event(t.id, "planner_escalation_wait_superseded", `${escalation}: ${detail}`);
         closeEscalationFollowups(this.store, t.id, escalation);
       }
       return updated;

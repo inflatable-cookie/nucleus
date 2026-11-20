@@ -234,6 +234,7 @@ test('the stored late recovery escalation follows its exact verified merge once'
     } });
     f.store.event(f.taskId, 'planner_escalation', 'escalation: cause');
     f.store.event(f.taskId, 'planner_escalation_payload', `escalation: ${JSON.stringify({ id: 'escalation', runId: 'recovery-run', source: 'recovery' })}`);
+    f.store.event(f.taskId, 'planner_escalation_wait', `escalation: ${JSON.stringify({ kind: 'time', target: '2099-01-01T00:00:00Z' })}`);
     f.store.event(f.taskId, 'task_waiting', JSON.stringify(stop));
     await f.engine.wake();
     const advanced = f.task();
@@ -241,6 +242,7 @@ test('the stored late recovery escalation follows its exact verified merge once'
     assert.equal(advanced.resolution.stop, null);
     assert.equal(advanced.resolution.recovery?.action?.status, 'applied');
     assert.equal(f.events('planner_escalation_resolved').length, 1);
+    assert.equal(f.events('planner_escalation_wait_superseded').length, 1);
     await sweepToDone(f);
     await f.engine.wake();
     const events = f.store.eventsAll(f.taskId), counts = f.counts();
