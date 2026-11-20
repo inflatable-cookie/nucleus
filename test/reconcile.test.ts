@@ -1755,6 +1755,61 @@ test("an uncertain reviewer creation refuses immediate owner routing", async () 
   }
 });
 
+test("a reviewer route-now after proved absence releases the empty creation once and launches one fresh reviewer", async () => {
+  const f = fixture(50_000);
+  try {
+    const { create, first } = await uncertainReviewerAbsence(
+      f,
+      () => new Error("Transport lost"),
+    );
+    // The fake adapter does not route creation through the host facade, so the
+    // throw is settled here and backdated past the producer-stop grace.
+    const attempt = readCreationAttempt(f.store, {
+      id: first.id,
+      taskId: f.task.id,
+      hostId: first.hostId,
+      workspaceId: first.workspaceId,
+      role: "reviewer",
+    })!;
+    settleCreationAttempt(f.store, attempt, "threw");
+    f.store.db
+      .prepare("UPDATE events SET at=? WHERE kind=?")
+      .run("2000-01-01T00:00:00.000Z", "creation_attempt_settled");
+    const pi = profile("reviewer-pi", "reviewer-pi", { provider: "pi" });
+    addProfile(f, pi, "review-pi", "reviewer");
+    f.foundAgents.set(first.id, []);
+    f.adapter.createRun = create;
+    await f.engine.performTaskControl({
+      taskId: f.task.id,
+      version: f.current().version,
+      action: "route",
+      role: "reviewer",
+      profileId: pi.id,
+      now: true,
+      reason: "Owner route after proved absence",
+      caller: OWNER,
+    });
+    const released = f.store.run(first.id)!;
+    assert.equal(released.released, true);
+    assert.equal(released.status, "superseded");
+    assert.equal(released.agentId, null);
+    assert.throws(() => f.store.authenticate(first.id, "any-token"), /Unauthorized/);
+    await f.engine.wake();
+    const live = f.store
+      .runs(f.task.id)
+      .filter((run) => run.role === "reviewer" && !run.released);
+    assert.equal(live.length, 1, "one fresh reviewer owns the review");
+    assert.notEqual(live[0]!.id, first.id, "the fresh reviewer takes its own run identity");
+    assert.equal(
+      f.store.runs(f.task.id).filter((run) => run.id === first.id).length,
+      1,
+      "the proved-absent creation is not re-opened as a second run",
+    );
+  } finally {
+    await f.close();
+  }
+});
+
 /** The barge#066 stored shape: a worker creation intent with no agent, on a changes_requested task with no PR. */
 function staleWorkerTask(f: Fixture, stopped = true) {
   const runId = "stale-worker-run";
