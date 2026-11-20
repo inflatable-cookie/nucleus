@@ -43,15 +43,16 @@ import { submissionSchema } from "../shared/contracts";
 
 const execFileAsync = promisify(execFile);
 
-const PINNED_RELEASE_BIN =
-  "/Volumes/Stash/oxide-outputs/barge-14dca308/release/barge";
-
 function findRealBargeBin(): string | null {
-  for (const candidate of [
+  const envCandidates = [
     process.env.NUCLEUS_BARGE_BIN,
     process.env.BARGE_BIN,
-    PINNED_RELEASE_BIN,
-  ]) {
+  ];
+  const pathDirs = (process.env.PATH ?? "")
+    .split(":")
+    .filter(Boolean)
+    .map((dir) => join(dir, "barge"));
+  for (const candidate of [...envCandidates, ...pathDirs]) {
     if (candidate && existsSync(candidate)) return candidate;
   }
   return null;
