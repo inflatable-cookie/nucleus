@@ -163,13 +163,14 @@ export class Dispatch {
             if (task.phase === "needs_attention") failedTasks.add(task.id);
             if (task.resolution.stop?.reason === "origin_busy")
               failedTasks.add(task.id);
-            // nucleus#1416: an unbound task waiting on its repository host kind
-            // is a settled visit, not progress. Counting it lets the pass reach
-            // healthy projects behind it instead of stopping on "nothing moved".
+            // nucleus#1416: an unbound task waiting on its target host kind
+            // (repository, then operator default) is a settled visit, not
+            // progress. Counting it lets the pass reach healthy projects behind
+            // it instead of stopping on "nothing moved".
             if (
               task.phase === "queued" &&
               this.engine.firstWorkerUnbound(task) &&
-              this.engine.repositoryHostWait(task)
+              this.engine.targetHostWait(task)
             )
               failedTasks.add(task.id);
           });
