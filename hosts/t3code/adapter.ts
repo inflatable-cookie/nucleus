@@ -645,10 +645,13 @@ export class T3CodeHost implements Host {
     else this.activeTaskIds.delete(taskId);
     await this.presentation.reconcileTaskRow(taskId, shown);
   }
-  /** Open or reuse the board preview in the host's pinned inbox thread. */
-  async openInboxUi(): Promise<{ status: "opened" | "reused" }> {
+  /** Show the board in the host's pinned inbox thread for the operator's `ui` (nucleus#1415). */
+  async openInboxUi(): Promise<{
+    status: "opened" | "reused" | "failed";
+    detail?: string;
+  }> {
     this.requireConnection();
-    return await this.inbox.openBoard();
+    return await this.inbox.showBoard();
   }
 
   /** The ordinary host sweep's nesting pass: dispose owed wakes, hold or release the parent's turn, archive a finished task's parent. */
@@ -678,6 +681,10 @@ export class T3CodeHost implements Host {
               "no operator decision is open for the inbox",
             );
         }
+        // A held turn makes T3 queue the operator's own message, so the pass answers the
+        // `ui` the agent cannot receive (nucleus#1415). It reads and writes only the preview
+        // and the served-`ui` record: the offer, the card and the hold are untouched.
+        await this.inbox.serveQueuedUi();
       }
       for (const parent of Object.values(state.parents ?? {})) {
         if (!parent.archivedAt) {

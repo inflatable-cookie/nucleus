@@ -44,6 +44,7 @@ class ScriptedTransport implements AcpSessionTransport {
   readonly answers: import("../shared/acp/surface").AcpAnswerInput[] = [];
   openUi?: (
     input: import("../shared/acp/surface").AcpInboxUiInput,
+    signal: AbortSignal,
   ) => Promise<import("../shared/acp/surface").AcpInboxUiReply>;
   answer(
     input: import("../shared/acp/surface").AcpAnswerInput,
@@ -1508,11 +1509,24 @@ test("one held turn raises one card per decision version, however often the serv
 test("an inbox session routes exact ui through openUi and goes idle when no decisions are offered", async () => {
   const uiCalls: unknown[] = [];
   let holdNext = false;
+  let hangNext = false;
   let status: "opened" | "reused" | "failed" = "opened";
   let detail: string | undefined;
   const transport = new ScriptedTransport();
-  transport.openUi = async (input) => {
+  transport.openUi = async (input, signal) => {
     uiCalls.push(input);
+    // A board open that never answers on its own: only the operator's Stop ends it.
+    if (hangNext)
+      return await new Promise<never>((_resolve, reject) => {
+        signal.addEventListener(
+          "abort",
+          () =>
+            reject(
+              Object.assign(new Error("cancelled"), { name: "AbortError" }),
+            ),
+          { once: true },
+        );
+      });
     return { status, hold: holdNext, ...(detail ? { detail } : {}) };
   };
   const inbox = {
@@ -1552,7 +1566,9 @@ test("an inbox session routes exact ui through openUi and goes idle when no deci
     ]);
     assert.match(JSON.stringify(first.updates), /Opened the Nucleus board\./);
 
-    // Repeating `ui` still reports the reused status and stays idle.
+    // A `reused` reply means this same `ui` was already served — usually by the pass that
+    // answered the message T3 queued while the inbox's turn was held — and nothing is
+    // replayed. It is still a success line, and the turn still ends at once.
     status = "reused";
     const second = await client.lines.untilResult(
       client.request("session/prompt", {
@@ -1561,7 +1577,7 @@ test("an inbox session routes exact ui through openUi and goes idle when no deci
       }),
     );
     assert.deepEqual(second.result.result, { stopReason: "end_turn" });
-    assert.match(JSON.stringify(second.updates), /already open/i);
+    assert.match(JSON.stringify(second.updates), /board is open/i);
 
     // Repeating the same `reused` reply still emits on a new prompt.
     const third = await client.lines.untilResult(
@@ -1570,7 +1586,26 @@ test("an inbox session routes exact ui through openUi and goes idle when no deci
         prompt: [{ type: "text", text: "ui" }],
       }),
     );
-    assert.match(JSON.stringify(third.updates), /already open/i);
+    assert.match(JSON.stringify(third.updates), /board is open/i);
+
+    // Stop during a board open that never answers ends the command at once, with no
+    // invented line and no failed open.
+    hangNext = true;
+    const callsBeforeHang = uiCalls.length;
+    const stopped = client.request("session/prompt", {
+      sessionId: inbox.sessionId,
+      prompt: [{ type: "text", text: "ui" }],
+    });
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    assert.equal(uiCalls.length, callsBeforeHang + 1, "the open is in flight");
+    client.notify("session/cancel", { sessionId: inbox.sessionId });
+    const stoppedResult = await client.lines.untilResult(stopped);
+    assert.deepEqual(stoppedResult.result.result, { stopReason: "cancelled" });
+    assert.doesNotMatch(
+      JSON.stringify(stoppedResult.updates),
+      /could not open the board/i,
+    );
+    hangNext = false;
 
     // Failed openUi redacts any pairing token fragment and ends turn when idle.
     status = "failed";

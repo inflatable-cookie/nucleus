@@ -953,18 +953,64 @@ restarts; an uncertain open is not blindly repeated on the same connection.
 `nucleus t3 install` grants `preview:operate` to the runtime bearer, and a repeat
 install rotates that bearer.
 
-Typing exact `ui` in the pinned Nucleus inbox reuses or reopens the board in that
-thread's browser pane (Tom, 2026-11-19). The inbox ACP agent routes exact `ui`
-through its authenticated `inbox` binding (`/acp-inbox-ui` -> `AcpSessions.openInboxUi`
--> `T3HostConnection.openInboxUi` -> `T3Inbox.openBoard`). `openBoard` reads
-`preview.list` for the inbox thread: if a healthy (`Loading` or `Success`) board
-tab matching the board's origin already exists, it reuses that tab without
-minting another pairing link or opening a duplicate tab; otherwise it closes any
-`LoadFailed` board tab, mints a fresh one-time pairing link, and calls
+Typing exact `ui` in the pinned Nucleus inbox shows the board in that thread's
+browser pane and answers with one short result (Tom, 2026-11-19; bounded and
+served-from-the-message by nucleus#1415). One `ui` is served once, by its own
+message id, and the attempt is recorded in the host state before the native open
+(`inbox.ui`), so a crash, an unknown delivery or a reconnecting socket never
+replays that open; a later `ui` is a new message and a new attempt.
+
+The inbox ACP agent routes exact `ui` through its authenticated `inbox` binding
+(`/acp-inbox-ui` -> `AcpSessions.openInboxUi` -> `T3HostConnection.openInboxUi`
+-> `T3Inbox.showBoard`). `showBoard` reads the inbox thread's window, finds the
+newest operator `ui` message and serves it unless that message already has an
+attempt. Serving reads `preview.list` for the inbox thread, closes every board
+tab of this board's origin, mints a fresh one-time pairing link and calls
 `preview.open` with `reveal: true`. Non-`ui` prompts and task threads never
-invoke this route, pairing URLs never cross back to the ACP session or logs,
-and once the open finishes the inbox returns to `end_turn` (idle) at once
-unless an offerable decision holds it.
+invoke this route, and pairing URLs never cross back to the ACP session, the
+host state or logs.
+
+**A retained board tab is replaced, not reused, because the nightly cannot
+reveal it.** Opening is the only reveal the RPC surface offers (see "Workspace
+pane layout limitation"), so a healthy retained tab, a `LoadFailed` tab and a
+duplicate left by an earlier attempt are all closed first and one freshly
+revealed tab is opened in their place: exactly one board tab remains and the
+open is what brings the pane up. The board's own scroll and in-page state are
+not preserved across `ui`; the page reload is what the reveal costs (Tom asked
+for the board to appear, not for the tab to be kept warm, 2026-11-20).
+
+**`ui` while a decision holds the inbox (nucleus#1415).** An open decision holds
+the inbox's turn, and T3 queues an operator's message behind a live run of the
+same thread instead of starting another. The queued `ui` therefore never
+reaches the agent as a prompt: it waits for the held turn to end, which waits
+for the operator to answer the card. That is the silent turn Tom saw — the board
+was never asked for, the card stayed answerable, and nothing was reported. The
+ordinary sweep now answers it: the inbox pass reads the thread's window (the
+queued message is in the thread's `messages` before it is a turn item) and,
+when the newest `ui` is a message T3 has queued and has no attempt yet, serves
+it from the same record with the same open. That pass touches only the preview
+RPCs and `inbox.ui`: the offer, the card, its version and the hold are read and
+never written, so answering the card is unaffected and the card is not re-raised.
+When the held turn finally ends, the queued `ui` runs and reports that same
+recorded result (`The Nucleus board is open.`) without opening a second tab. An
+in-flight serve for one message is tracked in the process, so the turn and the
+pass cannot both open for it.
+
+**One bound, a clear result, and a responsive Stop.** Inbox lookup, message
+lookup, link issuance and all preview calls share one
+`INBOX_UI_DEADLINE_MS` budget (20 s), under the callback's 30 s bound. Each
+stage uses only the time left. If the deadline expires after an open is sent,
+the command records a timeout and leaves that attempt's delivery uncertain.
+The three cases are
+reported as one line each: `Opened the Nucleus board.`, `The Nucleus board is
+open.` (this message's open is already recorded, usually served by the pass), or
+`Nucleus could not open the board: <reason>` with any pairing URL or token
+fragment removed. Once the open finishes the inbox returns to `end_turn` (idle)
+at once unless an offerable decision holds it, as every other inbox turn does.
+The transport's `openUi` takes the turn's abort signal, so Stop ends the command
+at once (`cancelled`, with no invented line) without waiting for the bound or the
+socket; the service's own serve continues under its bound, and the operator's
+next `ui` is a new attempt.
 
 **Workspace pane layout limitation.** Verified against installed nightly
 `0.1.11-nightly.20261119.4941` (commit `ff9efe89f6e7`): the right panel's
@@ -977,8 +1023,10 @@ or command to set or toggle workspace pane layout, and browser viewport sizing
 (`preview.resize`) does not change that layout. Likewise, `WS_METHODS` exposes
 no `preview.reveal` or `tabId`-reusing `preview.open` RPC (`PreviewManager.open`
 always creates a new `tabId`, and `PreviewManager.requestReveal` is internal to
-T3's in-process MCP `PreviewAutomationBroker`). The adapter keeps T3's native
-manual maximize control with no T3 patches or client-state hacks.
+T3's in-process MCP `PreviewAutomationBroker`). **A retained preview tab therefore
+cannot be revealed through any supported call; `ui` shows the board by replacing
+the tab with a freshly revealed open** (nucleus#1415). The adapter keeps T3's
+native manual maximize control with no T3 patches or client-state hacks.
 
 ### Native question answers
 
@@ -1534,12 +1582,16 @@ surface.
 
 `test/t3code-inbox.test.ts`, `test/acp-agent.test.ts`, `test/acp-service.test.ts`
 and `effigy proof:t3code:inbox` (`scripts/acceptance/t3code-inbox-private.ts`)
-cover the pinned inbox lifecycle and its `ui` command: reusing an already-open
-board tab without duplicating it or minting another link, ignoring non-exact
-prompts, reopening from a closed or `LoadFailed` pane with a fresh one-time
-pairing link and `reveal: true`, keeping pairing URLs out of ACP messages and
-logs, and returning to idle immediately when no decisions are offerable while
-staying held when an offerable decision is open.
+cover the pinned inbox lifecycle and its `ui` command (nucleus#1415): one board
+tab after every `ui`, a retained healthy tab replaced by the revealed one, a new
+`ui` message served once and a repeated report of it not reopened, ignoring
+non-exact prompts, reopening from a closed or `LoadFailed` pane with a fresh
+one-time pairing link and `reveal: true`, keeping pairing URLs out of ACP
+messages, the host state and logs, being served by the pass while a decision
+holds the turn (the queued message, the unchanged card, the served result
+reported when the queued turn runs), Stop ending a hung open at once, and
+returning to idle immediately when no decisions are offerable while staying held
+when an offerable decision is open.
 
 The private proof starts an unmodified checkout of the target nightly revision,
 or its bundled server copied into fresh run scratch, with separate home, data,
