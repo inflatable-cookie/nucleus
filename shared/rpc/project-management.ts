@@ -1,9 +1,11 @@
 import { defineRpc } from "../rpc";
-import { projectManageInputSchema, projectManagementPreviewSchema, projectMergeCheckInputSchema, projectMergeCheckSchema, projectMergeInputSchema, projectMergeOutputSchema, projectRemovalBlockersInputSchema, projectRemoveInputSchema, projectRemoveRepositoryInputSchema, reparentInputSchema, reparentResultSchema } from "../schema/project-management";
+import { ownerInventoryInputSchema, ownerInventorySchema, projectManageInputSchema, projectManagementPreviewSchema, projectMergeCheckInputSchema, projectMergeCheckSchema, projectMergeInputSchema, projectMergeOutputSchema, projectRemovalBlockersInputSchema, projectRemoveInputSchema, projectRemoveRepositoryInputSchema, reparentInputSchema, reparentResultSchema } from "../schema/project-management";
 import { z } from "zod";
 import { projectRemovalBlockerSchema, projectSchema, projectTombstoneSchema } from "../schema/projects";
 
 export const reparent = defineRpc({ name: "queue.reparent", input: reparentInputSchema, output: reparentResultSchema });
+
+export const ownerInventory = defineRpc({ name: "queue.owner-inventory", input: ownerInventoryInputSchema, output: ownerInventorySchema });
 
 export const projectManagementPreview = defineRpc({ name: "project.management-preview", input: z.object({ key: projectSchema.shape.key, target: projectSchema.shape.key.optional() }).strict(), output: projectManagementPreviewSchema });
 

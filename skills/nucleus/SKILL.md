@@ -1218,7 +1218,15 @@ owner in one step (Spec 040); never unarchive the old thread or edit the live st
 ```sh
 nucleus helper reparent NEW_OWNER_AGENT_ID --task TASK_ID [--task TASK_ID ...] --reason TEXT
 nucleus helper reparent NEW_OWNER_AGENT_ID --project PROJECT --from OLD_OWNER_AGENT_ID --reason TEXT
+nucleus helper reparent --inventory AGENT_ID [--project PROJECT]
 ```
+
+The `--inventory` form is the read-only check before a handover: it lists one
+thread's unfinished tasks grouped by project, the selected project's work apart
+from the work outside it (`remaining` when a project is named), and writes
+nothing. A thread may inventory itself; the operator may inventory any thread,
+including an archived or gone one. A missing or ambiguous owner identity, or an
+unknown project, is refused before anything is read.
 
 The calling thread (its Nucleus ticket or host identity) must be the tasks' current owner, the task's own planner,
 the project's registered planner, or the Nucleus planner; the operator can do the same from the board. A

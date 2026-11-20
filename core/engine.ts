@@ -48,6 +48,8 @@ import type {
   BulkDisposition,
   BulkDispositionRequest,
   ReparentInput,
+  OwnerInventory,
+  OwnerInventoryInput,
   WorkspaceArchiveRetry,
 } from "../shared/contracts";
 import { isTransportFailure } from "../shared/transport";
@@ -2189,6 +2191,9 @@ export class Engine {
   }
   reparent(input: ReparentInput) {
     return this.settingsControls.reparent(input);
+  }
+  ownerInventory(input: OwnerInventoryInput): Promise<OwnerInventory> {
+    return this.resolution.origins.ownerInventory(input);
   }
   taskControlFromAgent(
     caller: { taskId: string; runId: string; token: string },

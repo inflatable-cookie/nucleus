@@ -11,6 +11,20 @@ same planning. Nothing about the handover is written into the repository.
   that exists only in this conversation is lost at handover.
 - **Note what's in flight:** Queue tasks this thread submitted or is watching,
   and anything waiting on the operator.
+- **Check what you still own outside the project you are handing over.** The
+  one read-only inventory lists this thread's own unfinished tasks by project,
+  the selected project first and everything else as what a project-scoped
+  handover leaves behind:
+
+  ```sh
+  nucleus helper reparent --inventory YOUR_AGENT_ID [--project PROJECT]
+  ```
+
+  It reads the same owner facts a reparent moves and writes nothing, so holds
+  and pending notices are untouched and no notice is sent. A thread may run it
+  for itself, and the operator may run it for any thread, including an archived
+  or gone one. It refuses an identity no registered host proves and an unknown
+  project.
 
 ## Steps
 
@@ -34,7 +48,9 @@ same planning. Nothing about the handover is written into the repository.
    ```
 
    For tasks outside those projects, use the `--task` form in
-   [Change a task's owner](../SKILL.md#change-a-tasks-owner). Check the result
+   [Change a task's owner](../SKILL.md#change-a-tasks-owner); the inventory in
+   "Before handing over" names every one a project-scoped reparent leaves
+   behind. Check the result
    and the task set. The project form moves open tasks owned by the old thread;
    it moves each task's own planner with that owner and does not change the
    project's planner.

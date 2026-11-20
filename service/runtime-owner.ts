@@ -116,6 +116,7 @@ import type {
   PoolEntry,
   BulkDispositionRequest,
   ReparentInput,
+  OwnerInventoryInput,
   TaskControlRequest,
   ReviewEntryInput,
   OutcomeSearchInput,
@@ -2324,6 +2325,17 @@ export class QueueRuntime {
         };
     }
     return this.engine.reparent(input);
+  }
+  /**
+   * nucleus#1447: the retiring planner's read-only responsibility inventory. It
+   * proves the same identities `reparent` does - the caller's own ticket or host
+   * identity and the old thread's host - and never writes.
+   */
+  async ownerInventory(input: OwnerInventoryInput) {
+    await this.started;
+    if (!this.anyHostConnected())
+      throw new Error(this.startError || "All hosts are disconnected");
+    return this.engine.ownerInventory(input);
   }
   availabilityControl(
     input: z.infer<

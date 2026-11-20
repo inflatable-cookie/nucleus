@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { projectRemovalBlockerKindSchema, projectRemovalBlockerSchema, projectSchema, projectTombstoneSchema } from "./projects";
 import { bulkDispositionSchema } from "./bulk-disposition";
+import { taskPhaseSchema } from "./task-primitives";
 
 /**
  * Spec 040 (Tom, 2026-10-26): change the owner of open tasks in one write each -
@@ -24,6 +25,41 @@ export const reparentResultSchema = z.object({
 }).strict();
 
 export type ReparentResult = z.infer<typeof reparentResultSchema>;
+
+/**
+ * nucleus#1447: the read-only inventory a retiring planner reads before it hands
+ * its responsibilities on. It names the unfinished tasks one thread owns - the
+ * same owner facts `reparent` writes - grouped by project, so the work of the
+ * project being handed over is separated from the responsibilities a
+ * project-scoped handover leaves with the old thread. `project` selects that
+ * project; without it nothing is selected. Nothing here writes or notifies.
+ */
+export const ownerInventoryInputSchema = z.object({
+  agentId: z.string().min(1).max(240), caller: z.string().min(1).max(240), project: projectSchema.shape.key.optional(),
+}).strict();
+
+export type OwnerInventoryInput = z.infer<typeof ownerInventoryInputSchema>;
+
+const ownerInventoryTaskSchema = z.object({
+  taskId: z.string(), number: z.number().int().positive().nullable(), reference: z.string().nullable(),
+  title: z.string(), phase: taskPhaseSchema,
+}).strict();
+
+const ownerInventoryGroupSchema = z.object({
+  project: projectSchema.shape.key.nullable(), name: z.string(), tasks: z.array(ownerInventoryTaskSchema),
+}).strict();
+
+export const ownerInventorySchema = z.object({
+  agentId: z.string(), hostId: z.string(),
+  /** The selected project's own work, or null when no project was named. */
+  selected: ownerInventoryGroupSchema.nullable(),
+  /** Every other project's work this thread still owns, plus its work outside any project. */
+  outside: z.array(ownerInventoryGroupSchema),
+  /** What a handover of `selected` would leave behind; null when nothing was selected. */
+  remaining: z.object({ tasks: z.number().int().nonnegative(), groups: z.array(z.string()) }).strict().nullable(),
+}).strict();
+
+export type OwnerInventory = z.infer<typeof ownerInventorySchema>;
 
 /** Spec 027: server-authoritative cleanup confirmation, never a filtered board inventory. */
 export const projectManagementItemSchema = z.object({
