@@ -210,11 +210,11 @@ export class ProjectQaInspection {
           if (sameSupervisorAlive) observedLiveness = "live";
           const handover = await this.handOverSupervisor(state, run, statePath, resultPath);
           if (!handover) return { kind: "running", state };
-          if (handover.hostResult) return { kind: "settled", state, hostResult: handover.hostResult };
+          if (handover.hostResult || handover.settledState)
+            return { kind: "settled", state: handover.settledState ?? state, hostResult: handover.hostResult };
           const staleReason = `the supervisor heartbeat was stale for ${staleAgeMs}ms and unchanged across checks ${SUPERVISOR_STUCK_CONFIRMATION_MS}ms apart; it was stopped with its recorded step group`;
           // #1393: a step exit the supervisor recorded before it went quiet is
-          // an observable outcome. It settles failed from that exit, never as an
-          // unexplained loss.
+          // an observable outcome, never an unexplained loss.
           const exit = state.activeProcess
             ? readQaStepExit(stepExitPath, { runId: run.id, step: state.activeProcess.step, pid: state.activeProcess.pid }) : null;
           if (exit) return { kind: "step_ended", state, step: exit.step, exit, emptyForMs: 0,
@@ -232,6 +232,10 @@ export class ProjectQaInspection {
           }
           const escaped = processesForStartIdentity(state.activeProcess?.leaderStartIdentity ?? state.identityToken);
           if (escaped.state !== "absent") return { kind: "running", state };
+          const exit = state.activeProcess
+            ? readQaStepExit(stepExitPath, { runId: run.id, step: state.activeProcess.step, pid: state.activeProcess.pid }) : null;
+          if (exit) return { kind: "step_ended", state, step: exit.step, exit, emptyForMs: 0,
+            reason: `${liveness.reason}; ${exit.step} had already recorded ${exit.signal ? `${exit.signal}` : `exit code ${exit.exitCode}`} at ${exit.exitedAt}` };
           return { kind: "dead", state, reason: liveness.reason, escapedDescendants: [] };
         }
         // #1393: the supervisor is alive, so a run it has not settled is not
@@ -330,7 +334,7 @@ export class ProjectQaInspection {
    */
   private async handOverSupervisor(
     state: QaSupervisionState, run: ProjectQaRun, statePath: string, resultPath: string,
-  ): Promise<{ hostResult: HostRunResult | null } | null> {
+  ): Promise<{ hostResult: HostRunResult | null; settledState?: QaSupervisionState } | null> {
     if (!await this.recordStillNamesStep(statePath, run.id, state.activeProcess)) return null;
     await this.limits.beforeStepStop?.(statePath);
     if (!await this.recordStillNamesStep(statePath, run.id, state.activeProcess)) return null;
@@ -342,6 +346,10 @@ export class ProjectQaInspection {
     if (!supervisorStopped) return null;
     const hostResult = readHostRunResult(resultPath, run.id);
     if (hostResult) return { hostResult };
+    const fresh = readQaSupervisionStateFile(statePath);
+    if (fresh.kind === "present" && fresh.value.runId === run.id && fresh.value.result) {
+      return { hostResult: fresh.value.result.hostResult ?? null, settledState: fresh.value };
+    }
     // Nothing can start a step now, but the record may still have advanced
     // before the stop (a queued write landing late). Only a record that names
     // this step may have its group stopped and be settled from.
@@ -390,7 +398,8 @@ export class ProjectQaInspection {
     if (!handover) return { kind: "running", state };
     this.endedStepObservations.delete(observationKey);
     // A result written during the stop is the run's own settlement; use it.
-    if (handover.hostResult) return { kind: "settled", state, hostResult: handover.hostResult };
+    if (handover.hostResult || handover.settledState)
+      return { kind: "settled", state: handover.settledState ?? state, hostResult: handover.hostResult };
     const exit = readQaStepExit(stepExitPath, { runId: run.id, step: active.step, pid: active.pid });
     const ended = exit
       ? `${active.step} ended ${exit.signal ? `by ${exit.signal}` : `with exit code ${exit.exitCode}`} at ${exit.exitedAt}`

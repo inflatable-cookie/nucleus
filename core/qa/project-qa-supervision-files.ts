@@ -94,6 +94,7 @@ export const qaSupervisionPlanSchema = z.object({
     reason: z.string().min(1).max(4000),
     cleanupOnly: z.boolean().optional(),
     priorFailedStep: projectQaStepNameSchema.nullable().optional(),
+    priorInterruptedStep: projectQaStepNameSchema.nullable().optional(),
   }).strict().nullable().default(null),
 }).strict();
 export type QaSupervisionPlan = z.infer<typeof qaSupervisionPlanSchema>;

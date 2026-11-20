@@ -28,7 +28,7 @@ import { removeQaWorkspace } from "./project-qa-worktree";
  */
 export async function runQaTeardownRetry(
   base: QaPipelineIdentity, run: QaPipelineRun, io: QaPipelineIo,
-  retry: { command: string; priorSteps: ProjectQaStep[]; qaExitCode: number | null; priorCancelReason: string | null; reason: string; cleanupOnly?: boolean; priorFailedStep?: ProjectQaStepName | null },
+  retry: { command: string; priorSteps: ProjectQaStep[]; qaExitCode: number | null; priorCancelReason: string | null; reason: string; cleanupOnly?: boolean; priorFailedStep?: ProjectQaStepName | null; priorInterruptedStep?: ProjectQaStepName | null },
 ): Promise<QaPipelineOutcome> {
   const state: QaSupervisionState = {
     schema: QA_SUPERVISION_SCHEMA, schema_version: QA_SUPERVISION_SCHEMA_VERSION,
@@ -105,7 +105,10 @@ export async function runQaTeardownRetry(
     } else {
       state.failedStep = "teardown";
     }
-    const stateName: ProjectQaRun["state"] = teardownFailed ? "hold" : retry.qaExitCode === 0 ? "passed" : "failed";
+    const interruptedBeforeTeardown = Boolean(retry.priorInterruptedStep && retry.priorInterruptedStep !== "teardown");
+    const stateName: ProjectQaRun["state"] = teardownFailed || interruptedBeforeTeardown
+      ? "hold"
+      : retry.qaExitCode === 0 ? "passed" : "failed";
     const finishedAt = new Date(io.now()).toISOString();
     const durationMs = Math.max(0, io.now() - run.startedAtMs);
     const checkoutCleanupPending = Boolean(run.checkoutAdmission && teardownCompleted && teardownFailed);
