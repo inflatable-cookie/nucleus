@@ -41,6 +41,7 @@ const intentKind = z.enum([
   "thread.delete",
   "thread.stop",
   "thread.archive",
+  "thread.unarchive",
   "thread.tag.set",
   "thread.created.record",
   "message.dispatch",

@@ -74,6 +74,14 @@
       ],
       "optional": []
     },
+    "thread.unarchive": {
+      "required": [
+        "type",
+        "commandId",
+        "threadId"
+      ],
+      "optional": []
+    },
     "thread.delete": {
       "required": [
         "type",

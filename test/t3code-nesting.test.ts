@@ -663,6 +663,53 @@ test("a parent with a changed checkout is fenced even with an older finished mar
   assert.equal(commandsOf(server, "delegated_task.request").length, 1);
 });
 
+test("the restart restore effect unarchives the same bound parent and reuses it", async (t) => {
+  const { host, server, spec, workspace, acp } = await fixture(t);
+  await host.createAgent(spec("worker-create", "Do the work"));
+  const parent = parentOf(host)!;
+  server.threads.get(parent.threadId)!.thread.archivedAt = STAMP;
+  const task = { id: parent.taskId, workspaceId: workspace.id, phase: "working", removedAt: null, resolution: { mergedCommit: null } } as Task;
+  await host.nesting.restoreForRestart(task, "owner-operation", () => true);
+  await host.nesting.restoreForRestart(task, "owner-operation", () => true);
+  assert.equal(commandsOf(server, "thread.unarchive").length, 1);
+  assert.equal(server.threads.get(parent.threadId)!.thread.archivedAt, null);
+  await host.createAgent(spec("worker-next", "Continue"));
+  assert.equal(commandsOf(server, "orchestration.launchThread").length, 1);
+  assert.equal(commandsOf(server, "delegated_task.request").length, 2);
+  assert.equal(acp.bindings.length, 1);
+});
+
+test("a lost unarchive reply is reconciled by reading the same parent before any repeat", async (t) => {
+  const { host, server, spec, workspace } = await fixture(t);
+  await host.createAgent(spec("worker-create", "Do the work"));
+  const parent = parentOf(host)!;
+  server.threads.get(parent.threadId)!.thread.archivedAt = STAMP;
+  const task = { id: parent.taskId, workspaceId: workspace.id, phase: "working", removedAt: null, resolution: { mergedCommit: null } } as Task;
+  server.controls.disconnectAfterEffect = true;
+  await assert.rejects(() => host.nesting.restoreForRestart(task, "operation-1", () => true));
+  server.controls.disconnectAfterEffect = false;
+  await host.connect();
+  await host.nesting.restoreForRestart(task, "operation-2", () => true);
+  assert.equal(commandsOf(server, "thread.unarchive").length, 1);
+  assert.equal(server.threads.get(parent.threadId)!.thread.archivedAt, null);
+  assert.equal(commandsOf(server, "orchestration.launchThread").length, 1);
+});
+
+test("the restart restore effect refuses a changed binding and unknown prior delivery", async (t) => {
+  const { host, server, spec, workspace } = await fixture(t);
+  await host.createAgent(spec("worker-create", "Do the work"));
+  const parent = parentOf(host)!;
+  const remote = server.threads.get(parent.threadId)!.thread;
+  const task = { id: parent.taskId, workspaceId: workspace.id, phase: "working", removedAt: null, resolution: { mergedCommit: null } } as Task;
+  remote.archivedAt = STAMP;
+  remote.providerInstanceId = "other";
+  await assert.rejects(() => host.nesting.restoreForRestart(task, "operation-1", () => true), /binding/);
+  remote.providerInstanceId = PARENT_PROVIDER;
+  host.state.update((state) => { state.intents["unknown-unarchive"] = { status: "unknown", kind: "thread.unarchive", threadId: parent.threadId, payload: "{}" }; });
+  await assert.rejects(() => host.nesting.restoreForRestart(task, "operation-2", () => true), /delivery remains unknown/);
+  assert.equal(commandsOf(server, "thread.unarchive").length, 0);
+});
+
 test("a parent gone from the complete inventory refuses without sending anything", async (t) => {
   const { host, server, spec } = await fixture(t);
   await host.createAgent(spec("worker-create", "Do the work"));
