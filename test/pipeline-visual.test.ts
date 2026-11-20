@@ -322,7 +322,7 @@ const board = {
   recentAssignments: {},
   lanes,
   projects: [project],
-  projectActivity: [] as Array<{ key: string; executing: boolean; activityAt: string | null }>,
+  projectActivity: [] as Array<{ key: string; items: Array<{ id: string; at: string; executing: boolean }> }>,
   prStates: {},
 };
 const service = {

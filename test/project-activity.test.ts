@@ -1,19 +1,30 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Store } from '../core/store/store';
+import { Leads } from '../core/planning/leads';
 import { submissionSchema, type Project } from '../shared/contracts';
 import {
+  PROJECT_ACTIVE_ITEM_COUNT,
   PROJECT_ACTIVITY_WINDOW_MS,
   isSubstantiveEventKind,
   projectActive,
+  projectActiveItemCount,
   projectActivityRows,
   projectDormantByActivity,
+  type ActivityItemFact,
+  type ActivityRepository,
   type ProjectActivity,
   type ProjectActivityFacts,
 } from '../shared/project-activity';
 import { projectSelectorRows } from '../shared/project-scope';
 
-/** Spec 026 (nucleus#1446): one activity rule for the board selector and Planning. Oracle rows: recent without a planner, stale with a planner, executing, quiet, the threshold, a completion outside the visible page, and parked precedence. */
+/**
+ * Spec 026 (nucleus#1446, brief v3): one rule for the board selector and Planning. Active needs two
+ * distinct recent work items within three days; a task and its linked leads are one item. Oracle: one
+ * sweep task across lifecycle events and linked records stays Dormant, two items activate a project
+ * without a planner, stale work with a planner stays Dormant, one of two items aging out restores
+ * Dormant, plus the boundary, a never-used project, recent completion and parked precedence.
+ */
 const DAY = 24 * 60 * 60 * 1000;
 const NOW = Date.parse('2026-11-20T12:00:00.000Z');
 const iso = (ms: number) => new Date(ms).toISOString();
@@ -22,209 +33,295 @@ const project = (key: string, path: string, extra: Partial<Project> = {}) => ({
   key, name: key, version: 1, visibility: 'active', repositories: [{ origin: null, path }], primary: { origin: null, path }, drain: null, ...extra,
 }) as unknown as Project;
 const planner = { agentId: 'planner-1', setBy: 'operator', setAt: iso(NOW - 60 * DAY) };
-const emptyFacts: ProjectActivityFacts = { repositories: [], plans: [], executing: [] };
+const item = (id: string, at: number, executing = false, repositories: ActivityRepository[] = [{ origin: null, path: '/app' }]): ActivityItemFact => ({ id, at: iso(at), executing, repositories });
+const facts = (...items: ActivityItemFact[]): ProjectActivityFacts => ({ items });
+const rowFor = (projects: Project[], f: ProjectActivityFacts, key: string): ProjectActivity => projectActivityRows(projects, f).find(row => row.key === key)!;
 const submission = (id: string, repoPath: string) => submissionSchema.parse({
   submissionId: id, title: id, repoPath, planningCommit: head, handoffPath: `${id}.md`, originAgentId: 'origin',
 });
-const row = (rows: ProjectActivity[], key: string) => rows.find(item => item.key === key)!;
 
-test('a project with recent activity and no planner is active', () => {
+test('two distinct recent items activate a project without a planner', () => {
   const app = project('app', '/app');
-  const facts: ProjectActivityFacts = { ...emptyFacts, repositories: [{ origin: null, path: '/app', at: iso(NOW - DAY) }] };
-  const rows = projectActivityRows([app], facts);
-  assert.equal(rows[0].activityAt, iso(NOW - DAY));
-  assert.equal(projectDormantByActivity(app, rows[0], NOW), false);
+  const row = rowFor([app], facts(item('one', NOW - DAY), item('two', NOW - 2 * DAY)), 'app');
+  assert.equal(projectActiveItemCount(row, NOW), 2);
+  assert.equal(projectDormantByActivity(app, row, NOW), false);
 });
 
-test('a project with stale activity stays dormant even with a registered planner', () => {
+test('one recent sweep item stays Dormant, including while it is executing', () => {
+  const app = project('app', '/app');
+  const recent = rowFor([app], facts(item('sweep', NOW - DAY)), 'app');
+  assert.equal(projectDormantByActivity(app, recent, NOW), true);
+  const running = rowFor([app], facts(item('sweep', NOW - 30 * DAY, true)), 'app');
+  assert.equal(projectActiveItemCount(running, NOW), 1, 'one executing item is still one item');
+  assert.equal(projectDormantByActivity(app, running, NOW), true);
+});
+
+test('one executing item and one recent item activate a project', () => {
+  const app = project('app', '/app');
+  const row = rowFor([app], facts(item('running', NOW - 30 * DAY, true), item('recent', NOW - DAY)), 'app');
+  assert.equal(projectActive(row, NOW), true);
+});
+
+test('an item counts once: duplicate ids are one item', () => {
+  const app = project('app', '/app');
+  const row = rowFor([app], facts(item('same', NOW - DAY), item('same', NOW - 2 * DAY)), 'app');
+  assert.equal(projectActiveItemCount(row, NOW), 1);
+  assert.equal(projectDormantByActivity(app, row, NOW), true);
+});
+
+test('stale work with a registered planner stays Dormant', () => {
   const app = project('app', '/app', { planner } as Partial<Project>);
-  const facts: ProjectActivityFacts = { ...emptyFacts, repositories: [{ origin: null, path: '/app', at: iso(NOW - 6 * DAY) }] };
-  const rows = projectActivityRows([app], facts);
-  assert.equal(projectDormantByActivity(app, rows[0], NOW), true);
+  const row = rowFor([app], facts(item('old-one', NOW - 6 * DAY), item('old-two', NOW - 10 * DAY)), 'app');
+  assert.equal(projectDormantByActivity(app, row, NOW), true);
 });
 
-test('a project with an executing task is active whatever its activity age', () => {
+test('one of two items aging out restores Dormant', () => {
   const app = project('app', '/app');
-  const facts: ProjectActivityFacts = { ...emptyFacts, repositories: [{ origin: null, path: '/app', at: iso(NOW - 30 * DAY) }], executing: [{ origin: null, path: '/app' }] };
-  const rows = projectActivityRows([app], facts);
-  assert.equal(row(rows, 'app').executing, true);
-  assert.equal(projectDormantByActivity(app, rows[0], NOW), false);
+  const both = facts(item('a', NOW - DAY), item('b', NOW - 2 * DAY));
+  assert.equal(projectActive(rowFor([app], both, 'app'), NOW), true);
+  assert.equal(projectActive(rowFor([app], both, 'app'), NOW + 2 * DAY), false, 'both items are past three days by then');
+  const later = rowFor([app], facts(item('a', NOW - DAY), item('b', NOW - 2.5 * DAY)), 'app');
+  assert.equal(projectActiveItemCount(later, NOW + DAY), 1, 'item b ages out and item a remains');
+  assert.equal(projectDormantByActivity(app, later, NOW + DAY), true);
 });
 
-test('a quiet or never-used project is dormant with no activity time', () => {
+test('the three-day boundary is exclusive: just inside counts, exactly three days does not', () => {
+  const app = project('app', '/app');
+  assert.equal(PROJECT_ACTIVITY_WINDOW_MS, 3 * DAY);
+  assert.equal(PROJECT_ACTIVE_ITEM_COUNT, 2);
+  const justInside = rowFor([app], facts(item('a', NOW - 3 * DAY + 1000), item('b', NOW - 3 * DAY + 1000)), 'app');
+  assert.equal(projectActive(justInside, NOW), true);
+  const atBoundary = rowFor([app], facts(item('a', NOW - 3 * DAY), item('b', NOW - 3 * DAY)), 'app');
+  assert.equal(projectActive(atBoundary, NOW), false, 'exactly three days is dormant');
+  const pastBoundary = rowFor([app], facts(item('a', NOW - 3 * DAY - 1000), item('b', NOW - 3 * DAY - 1000)), 'app');
+  assert.equal(projectActive(pastBoundary, NOW), false);
+});
+
+test('a never-used project is dormant with no items', () => {
   const quiet = project('quiet', '/quiet');
-  const rows = projectActivityRows([quiet], emptyFacts);
-  assert.equal(rows[0].activityAt, null);
-  assert.equal(rows[0].executing, false);
-  assert.equal(projectActive(rows[0], NOW), false);
-  assert.equal(projectDormantByActivity(quiet, rows[0], NOW), true);
+  const row = rowFor([quiet], facts(item('elsewhere', NOW - DAY, false, [{ origin: null, path: '/app' }])), 'quiet');
+  assert.deepEqual(row.items, []);
+  assert.equal(projectDormantByActivity(quiet, row, NOW), true);
   assert.equal(projectDormantByActivity(quiet, undefined, NOW), true);
 });
 
-test('the five-day threshold is exclusive: a project just inside is active, one at or past it is dormant', () => {
-  const app = project('app', '/app');
-  const at = (ms: number) => projectActivityRows([app], { ...emptyFacts, repositories: [{ origin: null, path: '/app', at: iso(ms) }] })[0];
-  assert.equal(PROJECT_ACTIVITY_WINDOW_MS, 5 * DAY);
-  assert.equal(projectDormantByActivity(app, at(NOW - 5 * DAY + 1000), NOW), false, 'just under five days is active');
-  assert.equal(projectDormantByActivity(app, at(NOW - 5 * DAY), NOW), true, 'exactly five days is dormant');
-  assert.equal(projectDormantByActivity(app, at(NOW - 5 * DAY - 1000), NOW), true, 'past five days is dormant');
-});
-
-test('a parked project is never dormant, so it keeps its Parked group', () => {
-  const parked = project('parked', '/parked', { visibility: 'parked' } as Partial<Project>);
-  const recent: ProjectActivityFacts = { ...emptyFacts, repositories: [{ origin: null, path: '/parked', at: iso(NOW - DAY) }] };
-  assert.equal(projectDormantByActivity(parked, projectActivityRows([parked], recent)[0], NOW), false);
-  assert.equal(projectDormantByActivity(parked, projectActivityRows([parked], emptyFacts)[0], NOW), false);
-  const rows = projectSelectorRows([parked], [], '', [], [], [], projectActivityRows([parked], emptyFacts), NOW);
+test('a parked project is never dormant, whatever its items', () => {
+  const parked = project('parked', '/app', { visibility: 'parked' } as Partial<Project>);
+  const row = rowFor([parked], facts(item('a', NOW - DAY), item('b', NOW - DAY)), 'parked');
+  assert.equal(projectDormantByActivity(parked, row, NOW), false);
+  assert.equal(projectDormantByActivity(parked, rowFor([parked], facts(), 'parked'), NOW), false);
+  const rows = projectSelectorRows([parked], [], '', [], [], [], [row], NOW);
   assert.equal(rows[0].visibility, 'parked');
   assert.equal(rows[0].dormant, false);
 });
 
-test('a plan version is deliberate planning activity and counts for its project', () => {
-  const app = project('app', '/app');
-  const rows = projectActivityRows([app], { ...emptyFacts, plans: [{ project: 'app', at: iso(NOW - DAY) }] });
-  assert.equal(projectActive(rows[0], NOW), true);
-});
-
 test('repository membership uses origin when both sides know one, else the path', () => {
   const app = project('app', '/app', { repositories: [{ origin: 'owner/app', path: '/app' }] } as Partial<Project>);
-  const byOrigin = projectActivityRows([app], { ...emptyFacts, repositories: [{ origin: 'owner/app', path: '/elsewhere', at: iso(NOW - DAY) }] });
-  assert.equal(byOrigin[0].activityAt, iso(NOW - DAY));
-  const otherOrigin = projectActivityRows([app], { ...emptyFacts, repositories: [{ origin: 'owner/other', path: '/app', at: iso(NOW - DAY) }] });
-  assert.equal(otherOrigin[0].activityAt, null, 'a different origin is another repository even at the same path');
+  const byOrigin = rowFor([app], facts(item('a', NOW - DAY, false, [{ origin: 'owner/app', path: '/elsewhere' }])), 'app');
+  assert.equal(byOrigin.items.length, 1);
+  const otherOrigin = rowFor([app], facts(item('b', NOW - DAY, false, [{ origin: 'owner/other', path: '/app' }])), 'app');
+  assert.deepEqual(otherOrigin.items, [], 'a different origin is another repository even at the same path');
 });
 
-test('routine observation, bookkeeping and sweep event kinds never count', () => {
-  for (const kind of ['agent_state', 'telemetry_stage', 'callback_reminder', 'project_planner_set', 'thread_archive_observed', 'operation_reconciled', 'transport_deferred', 'agent_message_expired'])
-    assert.equal(isSubstantiveEventKind(kind), false, kind);
-  for (const kind of ['submitted', 'dispatch', 'working', 'done', 'lane_changed', 'thread_archive_uncertain'])
-    assert.equal(isSubstantiveEventKind(kind), true, kind);
-});
-
-test('the board selector groups by the same rule, and an omitted read keeps every project dormant', () => {
+test('the selector groups by the same rule, and an omitted read keeps every project dormant', () => {
   const app = project('app', '/app');
   const quiet = project('quiet', '/quiet');
-  const activity = projectActivityRows([app, quiet], { ...emptyFacts, repositories: [{ origin: null, path: '/app', at: iso(NOW - DAY) }] });
+  const activity = projectActivityRows([app, quiet], facts(item('a', NOW - DAY), item('b', NOW - DAY)));
   const rows = projectSelectorRows([app, quiet], [], '', [], [], [], activity, NOW);
-  assert.deepEqual(rows.map(item => [item.key, item.dormant]), [['app', false], ['quiet', true]]);
-  assert.deepEqual(projectSelectorRows([app], [], '', [], [], [], [], NOW).map(item => item.dormant), [true]);
+  assert.deepEqual(rows.map(row => [row.key, row.dormant]), [['app', false], ['quiet', true]]);
+  assert.deepEqual(projectSelectorRows([app], [], '', [], [], [], [], NOW).map(row => row.dormant), [true]);
+});
+
+test('routine observation, bookkeeping and sweep event kinds are never substantive', () => {
+  for (const kind of ['agent_state', 'telemetry_stage', 'callback_reminder', 'project_planner_set', 'thread_archive_observed', 'operation_reconciled', 'transport_deferred', 'agent_message_expired'])
+    assert.equal(isSubstantiveEventKind(kind), false, kind);
+  for (const kind of ['submitted', 'dispatch', 'working', 'done', 'lane_changed', 'papercut_linked', 'thread_archive_uncertain'])
+    assert.equal(isSubstantiveEventKind(kind), true, kind);
 });
 
 // --- Store-backed oracle: the persisted facts, read through the store's own write paths.
 
-function fixture() {
-  const store = new Store(':memory:');
-  return { store, close: () => store.close() };
-}
-const readRows = (store: Store) => projectActivityRows(store.projects(), store.projectActivityFacts());
+const fixture = () => new Store(':memory:');
+const readRows = (store: Store, key: string) => rowFor(store.projects(), store.projectActivityFacts(), key);
+const activeIn = (store: Store, key: string) => projectActive(readRows(store, key), Date.now());
 const ageEvents = (store: Store, taskId: string, at: string) => store.db.prepare('UPDATE events SET at=? WHERE taskId=?').run(at, taskId);
+const ageAll = (store: Store, at: string) => store.db.prepare('UPDATE events SET at=?').run(at);
+const ago = (ms: number) => iso(Date.now() - ms);
+const seedApp = (store: Store) => store.upsertProject({ key: 'app', name: 'App', repositories: [{ origin: 'owner/app', path: '/app' }] });
+/** A task in the fixture repository: its origin is the project's, so membership is by origin as in production. */
+const insertTask = (store: Store, id: string) => store.insert(submission(id, '/app'), 'host', 'handoff', head, {}, undefined, 'owner/app');
 
-test('store: a fresh submission without a planner makes its project active', () => {
-  const f = fixture();
+test('store: one sweep task across lifecycle events and a linked lead stays Dormant, while running and after', () => {
+  const store = fixture();
   try {
-    f.store.upsertProject({ key: 'app', name: 'App', repositories: [{ origin: null, path: '/app' }] });
-    f.store.insert(submission('fresh', '/app'), 'host', 'handoff', head);
-    const rows = readRows(f.store);
-    assert.ok(row(rows, 'app').activityAt, 'the submission is recorded');
-    assert.equal(projectActive(row(rows, 'app'), Date.now()), true);
-  } finally { f.close(); }
+    seedApp(store);
+    const sweep = insertTask(store, 'sweep');
+    const lead = new Leads(store).add({ repositories: [{ origin: 'owner/app', path: '/app' }], title: 'Sweep finding', body: 'Filing text', lanes: [], tags: [], author: 'fixture' });
+    store.event(sweep.id, 'papercut_linked', lead.id);
+    store.event(sweep.id, 'dispatch', 'dispatched');
+    store.update(sweep.id, { phase: 'working', reason: 'Working' });
+    store.event(sweep.id, 'lane_changed', 'lane edit');
+    store.updateLead({ ...store.lead(lead.id), state: 'promoted', targets: [{ kind: 'task', repository: 'owner/app', reference: sweep.id, at: ago(0) }], updatedAt: ago(0) });
+    assert.equal(readRows(store, 'app').items.length, 1, 'the task and its linked lead are one item');
+    assert.equal(activeIn(store, 'app'), false, 'a single running sweep stays dormant');
+    store.update(sweep.id, { phase: 'done', reason: 'Done' });
+    assert.equal(readRows(store, 'app').items.length, 1);
+    assert.equal(activeIn(store, 'app'), false, 'a single completed sweep stays dormant');
+  } finally { store.close(); }
 });
 
-test('store: routine events leave a stale project dormant, while a substantive event refreshes it', () => {
-  const f = fixture();
+test('store: a papercut link event alone joins its lead to the task, so the pair is one item', () => {
+  const store = fixture();
   try {
-    f.store.upsertProject({ key: 'app', name: 'App', repositories: [{ origin: null, path: '/app' }] });
-    const task = f.store.insert(submission('stale', '/app'), 'host', 'handoff', head);
-    ageEvents(f.store, task.id, iso(Date.now() - 10 * DAY));
-    f.store.event(task.id, 'agent_state', 'routine observation');
-    f.store.event(task.id, 'telemetry_stage', 'bookkeeping');
-    f.store.event(task.id, 'callback_reminder', 'sweep');
-    assert.equal(projectActive(row(readRows(f.store), 'app'), Date.now()), false);
-    f.store.event(task.id, 'lane_changed', 'a deliberate edit');
-    assert.equal(projectActive(row(readRows(f.store), 'app'), Date.now()), true);
-  } finally { f.close(); }
+    seedApp(store);
+    const task = insertTask(store, 'linked');
+    const lead = new Leads(store).add({ repositories: [{ origin: 'owner/app', path: '/app' }], title: 'Promoted', body: 'Filing text', lanes: [], tags: [], author: 'fixture' });
+    store.event(task.id, 'papercut_source_claimed', lead.id);
+    assert.equal(readRows(store, 'app').items.length, 1, 'the claimed lead and its task are one item');
+    assert.equal(activeIn(store, 'app'), false);
+  } finally { store.close(); }
 });
 
-test('store: executing work keeps a project active, and leaving execution returns it to the window', () => {
-  const f = fixture();
+test('store: two independent items activate a project without a planner', () => {
+  const store = fixture();
   try {
-    f.store.upsertProject({ key: 'app', name: 'App', repositories: [{ origin: null, path: '/app' }] });
-    const task = f.store.insert(submission('running', '/app'), 'host', 'handoff', head);
-    ageEvents(f.store, task.id, iso(Date.now() - 30 * DAY));
-    f.store.update(task.id, { phase: 'working', reason: 'Working' });
-    ageEvents(f.store, task.id, iso(Date.now() - 30 * DAY));
-    assert.equal(row(readRows(f.store), 'app').executing, true);
-    assert.equal(projectActive(row(readRows(f.store), 'app'), Date.now()), true);
-    f.store.update(task.id, { phase: 'blocked', reason: 'Blocked' });
-    assert.equal(row(readRows(f.store), 'app').executing, false);
-    assert.equal(projectActive(row(readRows(f.store), 'app'), Date.now()), false);
-  } finally { f.close(); }
+    seedApp(store);
+    insertTask(store, 'first');
+    assert.equal(activeIn(store, 'app'), false, 'one item is dormant');
+    insertTask(store, 'second');
+    assert.equal(readRows(store, 'app').items.length, 2);
+    assert.equal(activeIn(store, 'app'), true);
+  } finally { store.close(); }
 });
 
-test('store: a recent completion counts even when its task events are stale', () => {
-  const f = fixture();
+test('store: an independent lead and a task are two items', () => {
+  const store = fixture();
   try {
-    f.store.upsertProject({ key: 'app', name: 'App', repositories: [{ origin: null, path: '/app' }] });
-    const finished = f.store.insert(submission('finished', '/app'), 'host', 'handoff', head);
-    f.store.update(finished.id, { phase: 'done', reason: 'Done' });
-    ageEvents(f.store, finished.id, iso(Date.now() - 30 * DAY));
-    const rows = readRows(f.store);
-    assert.ok(row(rows, 'app').activityAt && Date.parse(row(rows, 'app').activityAt!) > Date.now() - DAY, 'the outcome time is the activity');
-    assert.equal(projectActive(row(rows, 'app'), Date.now()), true);
-  } finally { f.close(); }
+    seedApp(store);
+    insertTask(store, 'task');
+    new Leads(store).add({ repositories: [{ origin: 'owner/app', path: '/app' }], title: 'Own record', body: 'Filing text', lanes: [], tags: [], author: 'fixture' });
+    assert.equal(readRows(store, 'app').items.length, 2);
+    assert.equal(activeIn(store, 'app'), true);
+  } finally { store.close(); }
 });
 
-test('store: a quiet project has no activity time, and a planner registration does not refresh it', () => {
-  const f = fixture();
+test('store: two tasks linked to one lead are one item', () => {
+  const store = fixture();
   try {
-    f.store.upsertProject({ key: 'app', name: 'App', repositories: [{ origin: null, path: '/app' }] });
-    f.store.upsertProject({ key: 'quiet', name: 'Quiet', repositories: [{ origin: null, path: '/quiet' }] });
-    const task = f.store.insert(submission('old', '/app'), 'host', 'handoff', head);
-    ageEvents(f.store, task.id, iso(Date.now() - 6 * DAY));
-    f.store.setProjectPlanner({ key: 'app', agentId: 'planner-1', setBy: 'operator' });
-    const rows = readRows(f.store);
-    assert.equal(projectActive(row(rows, 'app'), Date.now()), false, 'stale with a planner stays dormant');
-    assert.equal(row(rows, 'quiet').activityAt, null);
-    assert.equal(projectActive(row(rows, 'quiet'), Date.now()), false);
-  } finally { f.close(); }
+    seedApp(store);
+    const first = insertTask(store, 'first');
+    const second = insertTask(store, 'second');
+    const lead = new Leads(store).add({ repositories: [{ origin: 'owner/app', path: '/app' }], title: 'Shared', body: 'Filing text', lanes: [], tags: [], author: 'fixture' });
+    store.updateLead({ ...store.lead(lead.id), state: 'promoted', targets: [
+      { kind: 'task', repository: 'owner/app', reference: first.id, at: ago(0) },
+      { kind: 'task', repository: 'owner/app', reference: second.id, at: ago(0) },
+    ], updatedAt: ago(0) });
+    assert.equal(readRows(store, 'app').items.length, 1, 'both tasks and the lead form one item');
+    assert.equal(activeIn(store, 'app'), false);
+  } finally { store.close(); }
+});
+
+test('store: stale work with a registered planner stays Dormant', () => {
+  const store = fixture();
+  try {
+    seedApp(store);
+    for (const id of ['old-a', 'old-b']) {
+      const task = insertTask(store, id);
+      ageEvents(store, task.id, ago(4 * DAY));
+    }
+    store.setProjectPlanner({ key: 'app', agentId: 'planner-1', setBy: 'operator' });
+    assert.equal(activeIn(store, 'app'), false);
+  } finally { store.close(); }
+});
+
+test('store: one of two items aging out restores Dormant', () => {
+  const store = fixture();
+  try {
+    seedApp(store);
+    const first = insertTask(store, 'first');
+    const second = insertTask(store, 'second');
+    assert.equal(activeIn(store, 'app'), true);
+    ageEvents(store, second.id, ago(4 * DAY));
+    assert.equal(readRows(store, 'app').items.length, 1);
+    assert.equal(activeIn(store, 'app'), false);
+    void first;
+  } finally { store.close(); }
+});
+
+test('store: a recent completion outside the visible page counts, however old its task events', () => {
+  const store = fixture();
+  try {
+    seedApp(store);
+    const done = [insertTask(store, 'done-a'), insertTask(store, 'done-b')];
+    for (const task of done) {
+      store.update(task.id, { phase: 'done', reason: 'Done' });
+      ageEvents(store, task.id, ago(30 * DAY));
+    }
+    assert.equal(readRows(store, 'app').items.length, 2, 'the completions are the items');
+    assert.equal(activeIn(store, 'app'), true);
+  } finally { store.close(); }
+});
+
+test('store: the three-day boundary holds against persisted times', () => {
+  const store = fixture();
+  try {
+    seedApp(store);
+    const first = insertTask(store, 'edge-a');
+    const second = insertTask(store, 'edge-b');
+    const minute = 60_000;
+    ageEvents(store, first.id, ago(3 * DAY - 2 * minute));
+    ageEvents(store, second.id, ago(3 * DAY - 2 * minute));
+    assert.equal(activeIn(store, 'app'), true, 'two minutes inside the window');
+    ageEvents(store, second.id, ago(3 * DAY + 2 * minute));
+    assert.equal(activeIn(store, 'app'), false, 'one item past the window leaves one');
+  } finally { store.close(); }
+});
+
+test('store: a never-used project and a project with only routine events are dormant', () => {
+  const store = fixture();
+  try {
+    seedApp(store);
+    store.upsertProject({ key: 'quiet', name: 'Quiet', repositories: [{ origin: null, path: '/quiet' }] });
+    const task = insertTask(store, 'routine');
+    ageAll(store, ago(10 * DAY));
+    store.event(task.id, 'agent_state', 'routine observation');
+    store.event(task.id, 'telemetry_stage', 'bookkeeping');
+    store.event(task.id, 'callback_reminder', 'sweep');
+    assert.equal(activeIn(store, 'app'), false);
+    assert.equal(readRows(store, 'quiet').items.length, 0);
+    assert.equal(activeIn(store, 'quiet'), false);
+  } finally { store.close(); }
 });
 
 test('store: an event written around the funnel is seen on the next read', () => {
-  const f = fixture();
+  const store = fixture();
   try {
-    f.store.upsertProject({ key: 'app', name: 'App', repositories: [{ origin: null, path: '/app' }] });
-    const task = f.store.insert(submission('raw', '/app'), 'host', 'handoff', head);
-    ageEvents(f.store, task.id, iso(Date.now() - 10 * DAY));
-    assert.equal(projectActive(row(readRows(f.store), 'app'), Date.now()), false);
-    f.store.db.prepare('INSERT INTO events(taskId,at,kind,detail) VALUES(?,?,?,?)').run(task.id, iso(Date.now() - 60_000), 'lane_changed', 'raw');
-    assert.equal(projectActive(row(readRows(f.store), 'app'), Date.now()), true);
-  } finally { f.close(); }
+    seedApp(store);
+    const first = insertTask(store, 'raw-a');
+    const second = insertTask(store, 'raw-b');
+    ageEvents(store, first.id, ago(10 * DAY));
+    ageEvents(store, second.id, ago(10 * DAY));
+    assert.equal(activeIn(store, 'app'), false);
+    store.db.prepare('INSERT INTO events(taskId,at,kind,detail) VALUES(?,?,?,?)').run(first.id, ago(60_000), 'lane_changed', 'raw');
+    store.db.prepare('INSERT INTO events(taskId,at,kind,detail) VALUES(?,?,?,?)').run(second.id, ago(60_000), 'lane_changed', 'raw');
+    assert.equal(activeIn(store, 'app'), true);
+  } finally { store.close(); }
 });
 
-test('store: an event in a rolled-back transaction does not refresh the project', () => {
-  const f = fixture();
+test('store: an event in a rolled-back transaction does not count', () => {
+  const store = fixture();
   try {
-    f.store.upsertProject({ key: 'app', name: 'App', repositories: [{ origin: null, path: '/app' }] });
-    const task = f.store.insert(submission('rolled', '/app'), 'host', 'handoff', head);
-    ageEvents(f.store, task.id, iso(Date.now() - 10 * DAY));
-    assert.equal(projectActive(row(readRows(f.store), 'app'), Date.now()), false);
-    assert.throws(() => f.store.transaction(() => {
-      f.store.event(task.id, 'lane_changed', 'discarded');
+    seedApp(store);
+    const first = insertTask(store, 'rolled-a');
+    const second = insertTask(store, 'rolled-b');
+    ageEvents(store, first.id, ago(10 * DAY));
+    ageEvents(store, second.id, ago(10 * DAY));
+    assert.equal(activeIn(store, 'app'), false);
+    assert.throws(() => store.transaction(() => {
+      store.event(first.id, 'lane_changed', 'discarded');
+      store.event(second.id, 'lane_changed', 'discarded');
       throw new Error('roll back');
     }), /roll back/);
-    assert.equal(projectActive(row(readRows(f.store), 'app'), Date.now()), false);
-  } finally { f.close(); }
-});
-
-test('store: the threshold holds against persisted times, not only fixed clocks', () => {
-  const f = fixture();
-  try {
-    f.store.upsertProject({ key: 'app', name: 'App', repositories: [{ origin: null, path: '/app' }] });
-    const task = f.store.insert(submission('edge', '/app'), 'host', 'handoff', head);
-    const minute = 60_000;
-    ageEvents(f.store, task.id, iso(Date.now() - 5 * DAY + 2 * minute));
-    assert.equal(projectActive(row(readRows(f.store), 'app'), Date.now()), true, 'two minutes inside the window');
-    ageEvents(f.store, task.id, iso(Date.now() - 5 * DAY - 2 * minute));
-    assert.equal(projectActive(row(readRows(f.store), 'app'), Date.now()), false, 'two minutes past the window');
-  } finally { f.close(); }
+    assert.equal(activeIn(store, 'app'), false);
+  } finally { store.close(); }
 });

@@ -238,7 +238,7 @@ export class Store {
     revisionAdvanced: () => {
       this.tasksStore.projectionClock = this.tasksStore.readProjectionClock();
     },
-    eventWritten: (taskId, kind, at) => this.eventWritten(taskId, kind, at),
+    eventWritten: (taskId, kind, detail, at) => this.eventWritten(taskId, kind, detail, at),
     taskChanged: (taskId) => this.taskChanged(taskId),
   });
   /**
@@ -1325,8 +1325,8 @@ export class Store {
   event(taskId: string, kind: string, detail: string) {
     return this.core.event(taskId, kind, detail);
   }
-  private eventWritten(taskId: string, kind: string, at: string) {
-    this.projectActivityStore.eventWritten(taskId, kind, at);
+  private eventWritten(taskId: string, kind: string, detail: string, at: string) {
+    this.projectActivityStore.eventWritten(taskId, kind, detail, at);
     if (this.lastEventAtByTask) {
       if (at > (this.lastEventAtByTask.get(taskId) ?? ""))
         this.lastEventAtByTask.set(taskId, at);

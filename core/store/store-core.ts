@@ -16,7 +16,7 @@ interface TransactionHooks { committed(): void; beforeRollback(): void; rolledBa
 interface StoreCoreHooks {
   transaction(): TransactionHooks;
   revisionAdvanced(): void;
-  eventWritten(taskId: string, kind: string, at: string): void;
+  eventWritten(taskId: string, kind: string, detail: string, at: string): void;
   taskChanged(taskId: string): void;
 }
 
@@ -50,7 +50,7 @@ export class StoreCore {
   event(taskId: string, kind: string, detail: string) {
     const at = now();
     this.db.prepare("INSERT INTO events(taskId,at,kind,detail) VALUES(?,?,?,?)").run(taskId, at, kind, detail);
-    this.hooks.eventWritten(taskId, kind, at);
+    this.hooks.eventWritten(taskId, kind, detail, at);
     this.advanceTelemetryRevision(); this.hooks.taskChanged(taskId);
   }
 
