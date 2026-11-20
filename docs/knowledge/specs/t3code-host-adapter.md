@@ -768,7 +768,8 @@ the retained answered window; an absent question item leaves its text empty.
 Answered reads return an explicit success or unknown result; an unreadable
 bounded snapshot never becomes an empty answer list.
 A complete-transcript read still refuses a paged or locally omitted projection;
-no consumer requests an unbounded snapshot.
+no consumer requests an unbounded snapshot. A native answer reads the window too
+(see Native question answers), so no answer needs the transcript.
 Complete shell
 and archive inventory reads contain summaries rather than transcript history;
 the Nightly exposes no complete paged shell form. Omitting settled threads or
@@ -967,6 +968,30 @@ no `preview.reveal` or `tabId`-reusing `preview.open` RPC (`PreviewManager.open`
 always creates a new `tabId`, and `PreviewManager.requestReveal` is internal to
 T3's in-process MCP `PreviewAutomationBroker`). The adapter keeps T3's native
 manual maximize control with no T3 patches or client-state hacks.
+
+### Native question answers
+
+A native answer reads the bounded window, the same read that lists the pending
+question. The retained `user_input_request` item supplies the question ids on a
+paged thread, so a long child history never needs the complete transcript. A
+request whose item the window does not carry is refused before any write, and the
+refusal says so: `T3Code pending question item is outside the bounded timeline
+window; no answer was sent`. Every other pre-send refusal names its own step
+rather than a generic fence.
+
+A proven pre-send refusal is not an unknown delivery. Nucleus records it as a
+refused answer (`native_question_refused`) that names the agent and permission,
+and the next maintenance pass delivers the same recorded answer again without
+asking a planner. A recovered answer is delivered only while its permission is
+still pending on the thread; a permission answered elsewhere settles as stale and
+receives no answer. An unknown outcome is never resent. Its intent stays, and
+only the thread's own answered read reconciles it.
+
+An answer the planner ladder escalates to the operator is held, not sent. The
+escalated question raises one Nucleus decision on the task, shown as the ACP
+parent's card. The operator's answer applies to that same permission once, and the
+card is withdrawn when the permission leaves the thread without an answer. The
+task row names the host its question waits on.
 
 ## Native parenting
 

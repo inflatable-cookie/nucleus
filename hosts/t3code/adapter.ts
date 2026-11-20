@@ -1511,11 +1511,14 @@ export class T3CodeHost implements Host {
           input: canonical({ type, response }),
         },
         prepare: async () => {
+          // A native answer reads the bounded window the pending request is retained in
+          // (the same read `pendingQuestions` uses). A complete transcript is refused on
+          // a long thread, and that refusal reached the answer as an unexplained send fence.
           const { request, projection: p } = await this.reads.runtimeRequest(
             agent,
             workspace,
             requestId,
-            mapAnswers ? "transcript" : "observation",
+            mapAnswers ? "window" : "observation",
           );
           if (type === "thread.user-input.dismiss") {
             if (request.kind !== "user_input")
@@ -1551,6 +1554,9 @@ export class T3CodeHost implements Host {
           return mapAnswers ? { ...payload, answers: mapAnswers(p) } : payload;
         },
       },
+      // A refused-before-send answer was never written, so the same recorded answer may
+      // be sent again. An unknown outcome is never resent by this option.
+      mapAnswers ? { retryRefusedBeforeSend: true } : undefined,
     );
   }
 
@@ -1572,8 +1578,11 @@ export class T3CodeHost implements Host {
         const questions = p.turnItems.find(
           (t) => t.type === "user_input_request" && t.requestId === requestId,
         )?.questions;
+        // Nothing was written yet, so this refusal is proven before send.
         if (!questions)
-          throw new T3CompatibilityError("runtimeRequest.questions");
+          throw new ProvenPreSendRefusalError(
+            "T3Code pending question item is outside the bounded timeline window; no answer was sent",
+          );
         const mapped: Record<string, unknown> = {};
         for (const [key, value] of Object.entries(answers)) {
           const matches = questions.filter(

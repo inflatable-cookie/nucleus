@@ -159,6 +159,11 @@ Nucleus-raised decisions, native questions and planner escalations. It records
 intent before delivery and uses one reply parser; AgentAsks and Ladder own their
 respective resume logic.
 
+A native question the ladder escalates to the operator raises one Nucleus decision
+on its task, which the ACP parent shows as its card. A proven pre-send refusal of
+the planner's answer keeps that answer recorded and is delivered again without
+asking the planner again; an unknown delivery is never resent (nucleus#1413).
+
 A Nucleus-raised question whose native delivery goes unknown still reaches the
 planner ladder. The same question id is delegated to the task's planner rungs,
 whose `question.answer` settles it, so a short transport drop no longer strands

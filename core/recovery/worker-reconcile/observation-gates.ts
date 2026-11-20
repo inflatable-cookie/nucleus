@@ -6,6 +6,7 @@ import type { Adapter } from '../../host/adapter';
 import { now } from '../../store/store';
 import { OPERATOR_WORKER_REMAP_REASON, observedActive } from '../task-reasons';
 import type { WorkerReconcileContext } from './context';
+import { HOST_KIND_LABELS, hostKindOf } from '../../../shared/host-kind';
 import { INTERACTIVE_RUNNING_REASON, INTERACTIVE_WAIT_REASON, classifyWorkerObservation } from './decisions';
 
 /**
@@ -28,6 +29,11 @@ function resetLookupBackoff(engine: WorkerReconcileContext, current: Task): void
 }
 
 /** Observe the worker and settle every live state. Null ends the pass; otherwise the worker has stopped. */
+
+/** The row names the host its worker's question waits on, never another host's name. */
+const permissionWait = (hostId: string | null | undefined): string =>
+  `Worker is waiting for a permission response in ${HOST_KIND_LABELS[hostKindOf(hostId)]}`;
+
 export async function reconcileObservation(engine: WorkerReconcileContext, task: Task): Promise<{ state: Awaited<ReturnType<Adapter["observe"]>>; current: Task } | null> {
   const { store, resolution } = engine;
   // Callers pick lanes from an earlier read. A task that has since finished or been
@@ -71,7 +77,7 @@ export async function reconcileObservation(engine: WorkerReconcileContext, task:
     const live = state.active || ["running", "initializing"].includes(state.status) || state.permissions;
     if (live || state.status === "idle") {
       if (current.idleSince) store.update(task.id, { idleSince: null });
-      if (live) engine.note(task.id, state.permissions ? "Worker is waiting for a permission response in Paseo" : INTERACTIVE_RUNNING_REASON, 'lifecycle');
+      if (live) engine.note(task.id, state.permissions ? permissionWait(task.hostId) : INTERACTIVE_RUNNING_REASON, 'lifecycle');
       else resolution.waiting(store.task(task.id), INTERACTIVE_WAIT_REASON, 'interactive');
       return null;
     }
@@ -94,7 +100,7 @@ export async function reconcileObservation(engine: WorkerReconcileContext, task:
     // An attention reason the stall check (or any other fault) just recorded owns
     // the visible cause; "Worker running" must never overwrite it mid-turn.
     if (after.phase === "needs_attention" || after.resolution.attention) return null;
-    engine.note(task.id, state.permissions ? "Worker is waiting for a permission response in Paseo" : current.completion ? "Completion received; worker is still active" : shellNotice ?? "Worker running", 'lifecycle');
+    engine.note(task.id, state.permissions ? permissionWait(current.hostId) : current.completion ? "Completion received; worker is still active" : shellNotice ?? "Worker running", 'lifecycle');
     return null;
   }
   if (observation === 'transient') return null;
