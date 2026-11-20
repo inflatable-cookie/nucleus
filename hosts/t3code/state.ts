@@ -232,19 +232,44 @@ const schema = z.object({
    */
   parents: z.record(z.string(), parentThread).optional(),
   /** Permanent host-scoped inbox, never a task role or an archive target. */
-  inbox: z.object({ threadId: z.string(), sessionId: z.string(), bindingPath: z.string(), directory: z.string(),
-    workspaceId: z.string(), projectId: z.string(), createdAt: z.string(), pinGeneration: z.number().int().nonnegative().default(0),
-    titleGeneration: z.number().int().nonnegative().default(0),
-    /**
-     * The last operator `ui` the inbox served, by the message it was sent as
-     * (nucleus#1415). It is written before the native open, so an open whose delivery
-     * is unknown is never replayed blindly for that message: a later `ui` is a new
-     * message and a new attempt. `messageId` is null for an inbox read that carried no
-     * message the window had not carried yet.
-     */
-    ui: z.object({ messageId: z.string().nullable(), at: z.string(), status: z.enum(["attempted", "opened", "failed"]), detail: z.string().optional() }).optional(),
-  }).optional(),
-  decisionHolds: z.record(z.string(), z.object({ generation: z.number().int().nonnegative(), commandId: z.string(), messageId: z.string() })).optional(),
+  inbox: z
+    .object({
+      threadId: z.string(),
+      sessionId: z.string(),
+      bindingPath: z.string(),
+      directory: z.string(),
+      workspaceId: z.string(),
+      projectId: z.string(),
+      createdAt: z.string(),
+      pinGeneration: z.number().int().nonnegative().default(0),
+      titleGeneration: z.number().int().nonnegative().default(0),
+      /**
+       * The last operator `ui` the inbox served, by the message it was sent as
+       * (nucleus#1415). It is written before the native open, so an open whose delivery
+       * is unknown is never replayed blindly for that message: a later `ui` is a new
+       * message and a new attempt. `messageId` is null for an inbox read that carried no
+       * message the window had not carried yet.
+       */
+      ui: z
+        .object({
+          messageId: z.string().nullable(),
+          at: z.string(),
+          status: z.enum(["attempted", "opened", "failed"]),
+          detail: z.string().optional(),
+        })
+        .optional(),
+    })
+    .optional(),
+  decisionHolds: z
+    .record(
+      z.string(),
+      z.object({
+        generation: z.number().int().nonnegative(),
+        commandId: z.string(),
+        messageId: z.string(),
+      }),
+    )
+    .optional(),
   /**
    * Whether this host can nest role threads right now: the Nucleus ACP provider is
    * registered and ready. When it is not, the host says why on its status line and

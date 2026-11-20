@@ -1221,9 +1221,7 @@ async function freshScenarios(env: Environment) {
     // A queued message is in the thread's messages before it is a turn item.
     const message = p?.messages?.find(
       (row) =>
-        row.role === "user" &&
-        row.text === "ui" &&
-        row.id === queuedMessageId,
+        row.role === "user" && row.text === "ui" && row.id === queuedMessageId,
     );
     const run = message?.runId
       ? p?.runs.find((row) => row.id === message.runId)
@@ -1279,7 +1277,11 @@ async function freshScenarios(env: Environment) {
       : null;
   }, "the queued ui turn to report the served board");
   const afterQueuedSessions = await previewSessions(env.rpc, env.inboxThreadId);
-  assert.equal(afterQueuedSessions.length, 1, "one board tab after the held ui");
+  assert.equal(
+    afterQueuedSessions.length,
+    1,
+    "one board tab after the held ui",
+  );
   assert.equal(
     afterQueuedSessions[0]!.tabId,
     queuedUi.sessions[0]!.tabId,

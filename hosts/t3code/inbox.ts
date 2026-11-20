@@ -233,7 +233,10 @@ export class T3Inbox {
   }): Promise<UiMessage | null> {
     let projection: Projection;
     try {
-      projection = await this.core.reads.readProjection(inbox.threadId, "window");
+      projection = await this.core.reads.readProjection(
+        inbox.threadId,
+        "window",
+      );
     } catch {
       return null;
     }
@@ -297,7 +300,8 @@ export class T3Inbox {
     try {
       const at = new Date().toISOString();
       this.core.state.update((state) => {
-        if (state.inbox) state.inbox.ui = { messageId, at, status: "attempted" };
+        if (state.inbox)
+          state.inbox.ui = { messageId, at, status: "attempted" };
       });
       const result = await this.showBoardFor(await this.inboxRecord());
       this.core.state.update((state) => {

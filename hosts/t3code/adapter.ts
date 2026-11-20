@@ -646,7 +646,10 @@ export class T3CodeHost implements Host {
     await this.presentation.reconcileTaskRow(taskId, shown);
   }
   /** Show the board in the host's pinned inbox thread for the operator's `ui` (nucleus#1415). */
-  async openInboxUi(): Promise<{ status: "opened" | "reused" | "failed"; detail?: string }> {
+  async openInboxUi(): Promise<{
+    status: "opened" | "reused" | "failed";
+    detail?: string;
+  }> {
     this.requireConnection();
     return await this.inbox.showBoard();
   }

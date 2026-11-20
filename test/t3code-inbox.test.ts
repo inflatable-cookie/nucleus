@@ -824,10 +824,15 @@ test("inbox ui shows the board once per operator message, replacing a retained t
   // and the hold are untouched.
   const held = host.state.read().decisionHolds?.[inbox.threadId];
   const queuedRun = addUi("synthetic-ui-4", "queued");
-  for (const run of projection.runs) if (run.id !== queuedRun.id) run.status = "completed";
+  for (const run of projection.runs)
+    if (run.id !== queuedRun.id) run.status = "completed";
   const linksBefore = issuedLinks;
   await host.reconcileThreadTitles([]);
-  assert.equal(issuedLinks, linksBefore + 1, "the queued ui is served by the pass");
+  assert.equal(
+    issuedLinks,
+    linksBefore + 1,
+    "the queued ui is served by the pass",
+  );
   assert.equal(host.state.read().inbox!.ui!.messageId, "synthetic-ui-4");
   assert.equal(boardTabs().length, 1);
   // A second pass serves nothing: the message already has its attempt.

@@ -272,7 +272,12 @@ export const projection = z.object({
    * `runId` names the run the message started.
    */
   messages: z.array(
-    z.object({ id, role: id, text: z.string(), runId: id.nullable().optional() }),
+    z.object({
+      id,
+      role: id,
+      text: z.string(),
+      runId: id.nullable().optional(),
+    }),
   ),
   updatedAt: date,
 });

@@ -35,7 +35,10 @@ interface NativeConnection {
   /** Provider model option descriptors from the last config read (nucleus#1375). */
   readonly modelShapes?: string;
   connect(probeThreadId?: string): Promise<void>;
-  openInboxUi?(): Promise<{ status: "opened" | "reused" | "failed"; detail?: string }>;
+  openInboxUi?(): Promise<{
+    status: "opened" | "reused" | "failed";
+    detail?: string;
+  }>;
   close(): void;
 }
 

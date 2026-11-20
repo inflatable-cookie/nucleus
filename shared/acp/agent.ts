@@ -89,7 +89,10 @@ export interface AcpSessionTransport {
   message(input: AcpMessageRequest): Promise<AcpMessageReply>;
   answer?(input: AcpAnswerInput): Promise<unknown>;
   /** `signal` aborts on Stop; the service's own bound ends a hung open with a result. */
-  openUi?(input: AcpInboxUiInput, signal: AbortSignal): Promise<AcpInboxUiReply>;
+  openUi?(
+    input: AcpInboxUiInput,
+    signal: AbortSignal,
+  ): Promise<AcpInboxUiReply>;
 }
 
 /** What a thread's working directory resolves to: Nucleus's binding and how to reach the service. */
