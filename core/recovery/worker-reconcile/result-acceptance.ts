@@ -4,6 +4,7 @@ import {
   sameCallerIdentity,
 } from "../../../shared/agent-identity";
 import type { Completion, Task } from "../../../shared/contracts";
+import { noticeTaskLine } from "../../../shared/contracts";
 import { normalizeRepositoryOrigin } from "../../../shared/lanes";
 import {
   recordResultApplied,
@@ -81,7 +82,7 @@ async function announceReportReady(
     await resolution.withHost(hostId, () =>
       engine.host.sendMessage(planner, {
         messageId,
-        text: `Nucleus: report ready for planner acceptance\nTask: ${current.title} (${current.id})\n${completion.headline ?? completion.summary}\nArtifact: ${artifact.key} v${artifact.version} (${artifact.digest})\nUse the existing complete owner verb with the artifact and an acceptance reason, or move to work with an instruction if the report needs revision. No PR or reviewer was started.`,
+        text: `Nucleus: report ready for planner acceptance\n${noticeTaskLine(current)}\n${completion.headline ?? completion.summary}\nArtifact: ${artifact.key} v${artifact.version} (${artifact.digest})\nUse the existing complete owner verb with the artifact and an acceptance reason, or move to work with an instruction if the report needs revision. No PR or reviewer was started.`,
       }),
     );
     store.event(current.id, "report_ready_planner_notice_delivered", planner);

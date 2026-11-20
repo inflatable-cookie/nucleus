@@ -19,9 +19,11 @@ number that Nucleus assigns and keeps.
   at 1 for each repository and are never reused, including for cancelled, removed
   or purged tasks.
 - **Displayed as `#N`** where the repository is obvious (a project-filtered board,
-  a task's own detail), and as `repo#N` where it is not (All projects, notices,
+  a task's own detail), and as `repo#N` where it is not (All projects,
   cross-project lanes, CLI output). `repo` is the origin repository name, for
-  example `consumer-b-v2#304`.
+  example `consumer-b-v2#304`. Planner notice Task lines instead name the bare
+  number before the title (`Task: 004 Title (uuid)`), independent of any PR
+  number, so the number never reads as a GitHub `#N` autolink.
 - **Zero-filled to at least three digits** wherever a number is shown as text
   (`004`, `049`, `1631`): references, board labels, workspace titles, prompts and
   PR titles (Tom, 2026-09-26). Storage stays an integer, and lookups accept a
@@ -70,6 +72,12 @@ number that Nucleus assigns and keeps.
   with it as a bare number, for example `304: Legacy video triage`. On GitHub `#N`
   is the repository's own issue and PR numbering and is autolinked, so a Nucleus
   number written as `#304` or `repo#304` there would point at an unrelated PR.
+- **Planner notices:** the Task line of attention, completion, hold,
+  prerequisite-clearance and report-ready notices names the bare zero-filled
+  number before the title and keeps the UUID (`Task: 004 Title (<uuid>)`),
+  through one shared format helper. A legacy record with no number keeps a
+  clean title and its existing identity (`Task: Title (<uuid>)`). Delegated
+  questions already name the qualified reference and are unchanged.
 - **Branch names are unchanged** (`ns-<task id>`). Workspace and branch identity
   checks parse that exact slug, and the number gains nothing there.
 
@@ -89,6 +97,7 @@ number that Nucleus assigns and keeps.
 | 10 | Board, project-filtered and All projects | `#N` and `repo#N` respectively |
 | 11 | Migration backfill | Existing tasks numbered per repository in creation order, stable across restart |
 | 12 | Worker prompt | Carries the number and the bare-number PR-title instruction; otherwise unchanged |
+| 13 | Planner notice Task line | Bare number before the title with the UUID kept; a legacy record with no number keeps its title and UUID |
 
 ## Out of scope
 

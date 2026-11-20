@@ -602,6 +602,19 @@ export const taskNumberLabel = (
       : `#${formatTaskNumber(task.number)}`
     : "";
 
+/**
+ * Planner-facing notices put the task's recorded repository-scoped number before
+ * its title (`Task: 107 Barge worktree pools (uuid)`), so the number reads
+ * independently of any PR number. The UUID stays where the notice already
+ * provides it; a legacy record with no number keeps a clean title and identity.
+ */
+export function noticeTaskLine(
+  task: Pick<Task, "title" | "id" | "number">,
+): string {
+  const numbered = task.number ? `${formatTaskNumber(task.number)} ` : "";
+  return `Task: ${numbered}${task.title} (${task.id})`;
+}
+
 export function summarizeTask(
   task: Task,
   includeRepository = false,
