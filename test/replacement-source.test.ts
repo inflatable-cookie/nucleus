@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { verifyReplacementSource } from '../core/git/index';
 import type { Task } from '../shared/contracts';
+import { briefDigest } from '../core/planning/brief';
 
 test('replacement source proves its own repository, clean branch, planning ancestry and exact advertised head', async () => {
  const root=mkdtempSync(join(tmpdir(),'ns-replacement-source-'));
@@ -18,7 +19,9 @@ test('replacement source proves its own repository, clean branch, planning ances
   const base=git(repo,'rev-parse','HEAD');git(repo,'push','origin','main');
   git(repo,'worktree','add','-b','task',work,'main');writeFileSync(join(work,'change.txt'),'work\n');git(work,'add','change.txt');git(work,'commit','-m','work');git(work,'push','origin','task');
   const head=git(work,'rev-parse','HEAD');
-  const task={directory:work,repoPath:repo,branch:'task',baseBranch:'main',planningBase:base,planningCommit:base,handoffPath:'brief.md',handoffText:'approved',brief:null,repository:''} as Task;
+  // A Queue-held brief pinned at the planning commit (committed handoffs are retired).
+  const pinned={text:'approved',digest:briefDigest('approved'),mediaType:'text/markdown',version:1,reason:'Submitted',pinnedAt:'2026-11-20T00:00:00.000Z'};
+  const task={directory:work,repoPath:repo,branch:'task',baseBranch:'main',planningBase:base,planningCommit:base,handoffPath:null,handoffText:'approved',brief:{digest:pinned.digest,mediaType:pinned.mediaType},briefVersions:[pinned],repository:''} as unknown as Task;
   await verifyReplacementSource(task,head);
   writeFileSync(join(work,'change.txt'),'dirty\n');await assert.rejects(verifyReplacementSource(task,head),/dirty|clean/i);
   git(work,'checkout','--','change.txt');

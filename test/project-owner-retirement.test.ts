@@ -357,6 +357,8 @@ function escalationFixture(
     });
   idle("review-agent");
   idle("reviewer");
+  // The task planner must be observable: an unverified planner is no route (1362; 144212241).
+  idle("origin");
   const asks: Array<{ planner: string; prompt: string }> = [];
   const adapter = fakeAdapter({
     hostId: "host",

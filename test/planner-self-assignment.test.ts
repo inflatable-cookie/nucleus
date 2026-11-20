@@ -91,6 +91,6 @@ test('an unbound retained run never borrows the task worker identity', () => {
       status: 'intent', createdAt: new Date().toISOString(), lastObservedAt: null, active: false, idleSince: null,
       completion: null, released: false }));
     f.store.setCredential('unbound-reviewer', 'synthetic-token');
-    assert.throws(() => resolveTicketCaller(f.store, { taskId: task.id, runId: 'unbound-reviewer' }, 'synthetic-token'), /No calling thread/);
+    assert.throws(() => resolveTicketCaller(f.store, { taskId: task.id, runId: 'unbound-reviewer' }, 'synthetic-token'), /Stale Nucleus assignment: this ticket names run unbound-reviewer/);
   } finally { f.store.close(); }
 });

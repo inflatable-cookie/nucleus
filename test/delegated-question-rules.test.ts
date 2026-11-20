@@ -63,7 +63,7 @@ test('bug 8: an escalation with its project planner and origin thread both gone 
     await escalate(f);
     assert.deepEqual(f.delegated.planner, [], 'nobody waits on the archived thread');
     assert.equal(f.delegated.deciders.length, 1);
-    assert.equal(f.store.projectByKey('app')?.planner, null, 'the gap is visible on the project');
+    assert.equal(f.store.projectByKey('app')?.planner?.agentId, 'planner-1', 'the registration stays; delivery uses live threads only (Spec 060 section 3)');
   } finally { await f.close(); }
 });
 
@@ -92,11 +92,11 @@ test('bug 8: an archived project planner sends an escalation to the live origin 
     projectPlanner(f);
     await escalate(f);
     assert.deepEqual(f.delegated.planner.map(item => item.agentId), ['origin']);
-    assert.equal(f.store.projectByKey('app')?.planner, null);
+    assert.equal(f.store.projectByKey('app')?.planner?.agentId, 'planner-1', 'the registration stays; delivery uses live threads only (Spec 060 section 3)');
   } finally { await f.close(); }
 });
 
-test('bug 8: a native question skips an archived project planner for the Nucleus planner and notes the gap', async () => {
+test('bug 8: a native question skips an archived project planner and is recorded unanswered, never sent to a dead thread', async () => {
   const f = fixture({ responsible: true, delegates: { planner: 'Answer: The focused selector\nReason: It covers the change.', decider: null, plannerArchived: true } });
   try {
     projectPlanner(f);
@@ -104,14 +104,14 @@ test('bug 8: a native question skips an archived project planner for the Nucleus
     threadsGone(f, ['origin']);
     const delivered = nativeQuestion(f, []);
     await f.engine.resolution.delegateNativeQuestions();
-    await until(() => delivered.length > 0);
-    assert.deepEqual(f.delegated.planner.map(item => item.agentId), ['queue-planner']);
-    assert.equal(f.store.projectByKey('app')?.planner, null);
-    assert.ok(f.store.eventsAll('project:app').some(event => event.kind === 'project_planner_missing_notified'));
+    await until(() => f.store.eventsAll(f.submitted.id).some(event => event.kind === 'native_question_unanswered'));
+    assert.deepEqual(f.delegated.planner.map(item => item.agentId), [], 'the archived planner is not asked, and the Queue planner is not a project fallback');
+    assert.equal(delivered.length, 0);
+    assert.equal(f.delegated.deciders.length, 1, 'the decider is the last rung and gave no usable answer');
   } finally { await f.close(); }
 });
 
-test('bug 8: a native question with no project planner reaches the Nucleus planner, not a decider', async () => {
+test('bug 8: a native question with no project planner is not sent to the Queue planner; the decider answers', async () => {
   const f = fixture({ responsible: true, delegates: { planner: 'Answer: The focused selector\nReason: It covers the change.', decider: 'Answer: Other\nReason: Decider.' } });
   try {
     queuePlanner(f);
@@ -119,8 +119,8 @@ test('bug 8: a native question with no project planner reaches the Nucleus plann
     const delivered = nativeQuestion(f, []);
     await f.engine.resolution.delegateNativeQuestions();
     await until(() => delivered.length > 0);
-    assert.deepEqual(f.delegated.planner.map(item => item.agentId), ['queue-planner']);
-    assert.equal(f.delegated.deciders.length, 0);
+    assert.deepEqual(f.delegated.planner.map(item => item.agentId), [], 'the Queue planner is not a project fallback (Spec 060 section 3)');
+    assert.equal(f.delegated.deciders.length, 1);
   } finally { await f.close(); }
 });
 
@@ -389,12 +389,12 @@ test('qualified planners receive missing-planner, board-question and escalation 
  let boardAnswer:Promise<string>|undefined;
  try {
   threadsGone(f,['planner-1','origin']);
-  projectPlanner(f);
+  // The qualified planner is the project's live registered thread (Spec 060 section 3); the Queue planner is no fallback.
   const caller=formatAgentId('host','queue-planner');
-  queuePlanner(f,caller);
+  projectPlanner(f,caller);
+  // The host lists its native id; the registration carries the qualified one.
+  Object.assign(f.adapter,{listLiveAgents:async()=>[{id:'queue-planner',title:'queue-planner',workspaceId:'workspace'}]});
   assert.equal((await f.engine.resolution.projectPlannerFor(f.current())).planner,caller);
-  const missing=f.prompts.find(message=>message.messageId.startsWith('ns-project-planner-missing-'));
-  assert.equal(missing?.agentId,'queue-planner');
   boardAnswer=f.engine.resolution.questionRaiseRoutes.raiseBoardDecision(f.current(),
    {id:'qualified-board-question',kind:'process',question:'Continue?',options:['Continue']},controller.signal).catch(()=> 'aborted');
   await until(()=>f.prompts.some(message=>message.messageId==='ns-queue-question-qualified-board-question'));

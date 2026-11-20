@@ -5,7 +5,7 @@
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dataHome } from '../shared/data-home.mjs';
-import { ensureDaemonForT3 } from '../service/t3code-launch.ts';
+import { ensureDaemonForT3 } from '../service/transport/index.mjs';
 import { runAcpAgentFromEnvironment } from '../shared/acp/entry.ts';
 
 // T3Code probes this launcher on its own cold start, with no thread (nucleus#1394).

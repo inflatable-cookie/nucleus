@@ -9,6 +9,7 @@ import { Store } from "../core/store/store";
 import { Engine } from "../core/engine";
 import { workerPrompt } from "../core/dispatch/prompts";
 import { checkpointPrompt, runPrompt } from "../core/dispatch/prompts";
+import { WORKER_RULES } from "../core/dispatch/prompt-text/standing-rules";
 import {
   isPseudoCheckpointError,
   postBudgetPrePrResumes,
@@ -228,10 +229,9 @@ test("the worker prompt reserves blocked/error for execution failures and sends 
       } as unknown as Task,
       true,
     );
-    assert.match(
-      prompt,
-      /Report blocked or error only for a concrete external impediment or an observed execution failure/,
-    );
+    // The blocked-report guidance lives in the worker rules the prompt points to (1374).
+    assert.match(prompt, /Follow 'Worker rules' in the nucleus skill/);
+    assert.match(WORKER_RULES, /Continue until you deliver or hit a concrete impediment\./);
     assert.match(
       prompt,
       /continue toward the PR instead of reporting error as another checkpoint/,
@@ -244,7 +244,10 @@ test("the worker prompt reserves blocked/error for execution failures and sends 
       prompt,
       /Use progress_checkpoint for a deliberate bounded handover of real committed progress/,
     );
-    assert.match(prompt, /self-assessed context pressure is not one/);
+    assert.match(
+      WORKER_RULES,
+      /Unfinished work and context pressure call for continued work or a checkpoint where allowed\./,
+    );
   } finally {
     await f.close();
   }

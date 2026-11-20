@@ -7,7 +7,7 @@ for (const source of ['run','participant','host','none']) test(`submit, reparent
   const f=await callerCliFixture();
   try {
     const helpers=[
-      ['nucleus-submit.mjs',['--dry-run',join(f.dir,'synthetic.md')],'originAgentId'],
+      ['nucleus-submit.mjs',['--brief','--dry-run',join(f.dir,'synthetic-brief.md')],'originAgentId'],
       ['nucleus-reparent.mjs',['owner','--task','task','--reason','Synthetic ownership'],'caller'],
       ['nucleus-subscribe.mjs',['task','subscribe'],'agentId'],
     ] as const;

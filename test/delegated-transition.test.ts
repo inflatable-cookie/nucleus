@@ -249,14 +249,17 @@ for (const route of [
     const t = transitionFixture(route);
     const first = t.fresh(),
       second = t.fresh();
+    // Planning asks and escalations never start a decider (116be987a: allowDecider false).
+    const decides = route === "native" || route === "decision";
     try {
       await t.drive(first);
-      await waitFor(t.answered, ANSWERING_WINDOW_MS, "the delegated answer");
+      if (decides) await waitFor(t.answered, ANSWERING_WINDOW_MS, "the delegated answer");
+      else await pause();
       assert.equal(t.counters.reviewerSends, 0);
       assert.equal(t.counters.plannerSends, 0, 'neither recorded planner window is sent again');
       assert.equal(t.counters.taskPlannerSends, 0);
-      assert.equal(t.counters.deciderCreates, 1);
-      assert.equal(t.counters.deciderSends, 1);
+      assert.equal(t.counters.deciderCreates, decides ? 1 : 0);
+      assert.equal(t.counters.deciderSends, decides ? 1 : 0);
       assert.deepEqual(
         t.f.store.eventsAll(`delegation:${t.deliveryId}`),
         t.originalJournal,
@@ -277,7 +280,7 @@ for (const route of [
         t.f.store
           .eventsAll(`delegation:${t.deciderId}`)
           .filter((e) => e.kind === "delegated_delivery").length,
-        1,
+        decides ? 1 : 0,
       );
     } finally {
       await first.stop();

@@ -1,4 +1,4 @@
-import { formatAgentId } from "../shared/agent-identity";
+import { formatAgentId, parseAgentId } from "../shared/agent-identity";
 import { fakeAdapter } from "./support/fakes";
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -59,7 +59,11 @@ function fixture(input: Record<string, unknown> = {}) {
   );
   const delivered: string[] = [];
   const sources: Array<string | undefined> = [];
+  // A registered planner is held as its qualified identity; the host sees its native id.
+  const native = (id: string) => parseAgentId(id)?.nativeAgentId ?? id;
   const adapter = fakeAdapter({
+    // The ambient host of this adapter: qualified registrations resolve to it (nucleus#1373).
+    hostId: "host",
     profiles: async () => [],
     validate: async () => commit,
     createWorkspace: async () => {
@@ -72,9 +76,14 @@ function fixture(input: Record<string, unknown> = {}) {
     verifyPr: async () => {
       throw Error("unused");
     },
-    originAgent: async (id: string) => agents.get(id) ?? null,
+    originAgent: async (id: string) => agents.get(native(id)) ?? null,
+    // Responsible routing reads the host inventory (nucleus#1373): a project thread is a candidate only while listed.
+    listLiveAgents: async () =>
+      [...agents.values()]
+        .filter((agent) => !agent.archived)
+        .map((agent) => ({ id: agent.id, title: agent.title, workspaceId: agent.workspaceId })),
     observe: async (id: string) => {
-      const state = states.get(id);
+      const state = states.get(native(id));
       if (!state) throw Error("Agent was not found");
       return state;
     },
@@ -84,7 +93,7 @@ function fixture(input: Record<string, unknown> = {}) {
       _text: string,
       source?: string,
     ) => {
-      delivered.push(id);
+      delivered.push(native(id));
       sources.push(source);
     },
   } as unknown as Adapter & {
@@ -108,6 +117,9 @@ function fixture(input: Record<string, unknown> = {}) {
     creatorCompletionRecipients: bindings,
   });
   const engine = new Engine(store, adapter);
+  // One online host carries the inventory the responsible-thread cache reads (nucleus#1373).
+  engine.hostIds = () => ["host"];
+  engine.identifyOriginHost = async () => "host";
   store.setMeta("paused", false);
   return {
     dir,
@@ -656,10 +668,13 @@ test("consumer #687: an operator-origin completion entry goes to the project pla
         agentId: "alpha",
         setBy: "test",
       });
+      // The store reads the responsible thread from the cache the sweep refreshes (nucleus#1373).
+      await f.engine.resolution.refreshResponsibleThreads([f.store.projectByKey("app")!]);
+      // The subscriber is the planner as the responsible thread names it: its qualified identity.
       let task = await f.engine.completionSubscription({
         taskId: f.task.id,
         version: f.task.version,
-        agentId: "alpha",
+        agentId: formatAgentId("host", "alpha"),
         action: "subscribe",
       });
       task = f.store.update(task.id, { phase: "done" });
@@ -677,7 +692,8 @@ test("consumer #687: an operator-origin completion entry goes to the project pla
       );
       assert.match(
         notices.find((notice) => notice.status === "superseded")?.error ?? "",
-        /multiple cohort entries resolve to alpha/,
+        // The recipient is named by its qualified identity once the planner is a responsible thread.
+        /multiple cohort entries resolve to .*alpha/,
       );
     } finally {
       await f.close();
@@ -738,6 +754,8 @@ test("consumer #687 (review #602): changed project planner is rechecked before p
     const observe = f.adapter.observe;
     f.adapter.observe = async (id) => {
       f.store.setProjectPlanner({ key: "app", agentId: "beta", setBy: "test" });
+      // A planner change invalidates the responsible-thread cache the store reads (nucleus#1373).
+      f.engine.resolution.responsibleThreads.cache.invalidate("app");
       return observe(id);
     };
     await f.engine.resolution.deliverNotices();
@@ -760,6 +778,7 @@ test("consumer #687 (review #602): delivered origin history does not suppress a 
       repositories: [{ origin: null, path: "/repo" }],
     });
     f.store.setProjectPlanner({ key: "app", agentId: "alpha", setBy: "test" });
+    await f.engine.resolution.refreshResponsibleThreads([f.store.projectByKey("app")!]);
     f.states.set("beta", {
       ...f.states.get("beta")!,
       status: "running",
@@ -769,6 +788,7 @@ test("consumer #687 (review #602): delivered origin history does not suppress a 
     await f.engine.resolution.deliverNotices();
     assert.deepEqual(f.delivered, ["alpha"]);
     f.store.setProjectPlanner({ key: "app", agentId: "beta", setBy: "test" });
+    await f.engine.resolution.refreshResponsibleThreads([f.store.projectByKey("app")!]);
     f.states.set("beta", {
       ...f.states.get("beta")!,
       status: "idle",
