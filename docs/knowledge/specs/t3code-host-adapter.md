@@ -1403,7 +1403,16 @@ read keeps the turn rather than guessing.
 session are deterministic for a task
 (`identity('thread', …)` and `identity('parent-launch', …)`), recorded in the
 adapter's state before the send, and a lost reply is settled by finding the thread
-before anything is launched again. A child's id is derived from its command id, so
+before anything is launched again. The binding is stored before the parent's
+launch read, so a transient read failure in between leaves a **prepared** binding
+(nucleus#1458). The next create classifies it by two facts: the complete inventory
+shows no row for the parent, and the `parent-launch` command has no ledger intent,
+which proves nothing was reserved for a send. Only that pair resumes the launch: the
+same binding (session and binding path, never a second `acp.bind`), the same thread
+and command id, and the normal launch intent. Any launch intent, a `deletedAt`
+tombstone, an archived parent, or a checkout or project that no longer matches the
+binding is not resumed: a launch that may have been sent and is not shown is never
+resent, and nothing is replaced. A child's id is derived from its command id, so
 a lost reply cannot produce an unowned thread; a failed child command is read back
 first and adopted when the child exists, and a proven absence refuses with the
 reason rather than launching anything else. The parent is kept out of
