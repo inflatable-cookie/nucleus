@@ -12,6 +12,7 @@ import { isAgentGoneRefusal } from '../host/errors';
 import { qaSettlementHostMessageId } from '../qa/project-qa-notice';
 import { qaNoticeOwner, qaScheduleNoticeProject } from '../qa/project-qa-schedule';
 import { triageNoticeProject } from '../planning/triage';
+import { rowHiddenKey, type RowHiddenEpisode } from '../scheduling/hidden-row';
 import type { Resolution } from '../resolution';
 import { now } from '../store/store';
 import { active } from '../recovery/task-reasons';
@@ -379,7 +380,7 @@ export class Notices {
     }
     for (const n of this.store.pendingNotices()) {
       if (this.paused()) return;
-      if (n.kind === 'hold' || n.kind === 'hold_release' || n.kind === 'host_outage' || n.kind === 'lane_drain' || n.kind === 'next_aim' || n.kind === 'qa') continue;
+      if (n.kind === 'hold' || n.kind === 'hold_release' || n.kind === 'row_hidden' || n.kind === 'host_outage' || n.kind === 'lane_drain' || n.kind === 'next_aim' || n.kind === 'qa') continue;
       const task = this.store.task(n.taskId);
       if (task.originHostId !== scopedHost) continue;
       const completion=n.kind==='completion';
@@ -544,6 +545,86 @@ export class Notices {
         mark: (current, status, error) => {
           if (status === 'intent') { this.store.putNotice({ ...current, error, status }); return; }
           const latest = sending(current);
+          if (latest) this.store.putNotice({ ...latest, error, status });
+        },
+      }));
+      if (sent === 'paused') return;
+    }
+  }
+  /**
+   * nucleus#1417: one durable notice per hidden-row episode reaches the task's
+   * planner through the ordinary notice path (intent before send, uncertain after
+   * a failure, never resent blindly). The episode itself is the host pass's
+   * record, so a notice the planner has not read yet stays pending and visible
+   * and is delivered once the planner's turn ends — a failed presentation pass
+   * never suppresses it. An episode that ended, a finished task or a superseded
+   * record settles the notice without sending, and an owner change re-points a
+   * pending one at the owner it would reach now.
+   */
+  async deliverRowHiddenNotices(scopedHost?: string) {
+    if (!scopedHost) {
+      const hosts = new Set(this.store.pendingNotices()
+        .filter(n => n.kind === 'row_hidden')
+        .flatMap(n => { const host = this.store.task(n.taskId).hostId; return host ? [host] : []; }));
+      for (const host of hosts) await this.resolution.withHost(host, () => this.deliverRowHiddenNotices(host));
+      return;
+    }
+    if (!this.adapter.notify || this.paused()) return;
+    const ended = 'The row is no longer hidden for this episode';
+    const live = (taskId: string, id: string) => {
+      const record = this.store.getMeta<RowHiddenEpisode>(rowHiddenKey(taskId));
+      return Boolean(record && record.noticeId === id);
+    };
+    for (let n of this.store.pendingNotices()) {
+      if (this.paused()) return;
+      if (n.kind !== 'row_hidden') continue;
+      const task = this.store.task(n.taskId);
+      if (task.hostId !== scopedHost) continue;
+      if (n.status === 'intent') {
+        this.store.putNotice({ ...n, status: 'uncertain', error: 'Restart during delivery; inspect the planner thread before resending' });
+        continue;
+      }
+      if (task.removedAt || task.phase === 'done' || task.phase === 'cancelled' || !live(task.id, n.id)) {
+        this.store.putNotice({ ...n, status: 'superseded', error: ended });
+        continue;
+      }
+      const target = noticeTarget(this.store, task, n);
+      if (target === null) {
+        if (n.error !== NO_ORIGIN_THREAD_WAIT) this.store.putNotice({ ...n, error: NO_ORIGIN_THREAD_WAIT });
+        continue;
+      }
+      // The planner a pending notice would reach now, never the one it recorded
+      // before an owner change; a settled one keeps the recipient it recorded.
+      if (target !== n.agentId) {
+        this.store.putNotice({ ...n, agentId: target, error: '' });
+        continue;
+      }
+      const recipientHost = target === task.originAgentId || target === task.notificationAgentId
+        ? task.originHostId
+        : await this.resolution.identifyOriginHost(target);
+      if (!recipientHost || !this.resolution.withHost(recipientHost, () => this.resolution.originHostAvailable(recipientHost))) {
+        const error = recipientHost ? `Waiting for host ${recipientHost}` : 'Waiting for a proven planner host';
+        if (n.error !== error) this.store.putNotice({ ...n, error });
+        continue;
+      }
+      const sent = await this.resolution.withHost(recipientHost, () => this.sendDurably({
+        recipient: target,
+        lookupWait: message => `Waiting for the planner: ${message}`,
+        busyWait: state => `Waiting for the planner to finish (${state.status})`,
+        wait: reason => { if (n.error !== reason) this.store.putNotice({ ...n, error: reason }); },
+        gone: () => this.store.putNotice({ ...n, status: 'superseded', error: 'The planner thread is no longer available' }),
+        confirm: () => {
+          const current = this.store.notices(n.taskId).find(notice => notice.id === n.id);
+          if (!current || current.status !== 'pending') return null;
+          if (!live(current.taskId, current.id)) {
+            this.store.putNotice({ ...current, status: 'superseded', error: ended });
+            return null;
+          }
+          return current;
+        },
+        target: current => ({ agentId: current.agentId, id: current.id, text: current.text }),
+        mark: (current, status, error) => {
+          const latest = this.store.notices(current.taskId).find(notice => notice.id === current.id);
           if (latest) this.store.putNotice({ ...latest, error, status });
         },
       }));

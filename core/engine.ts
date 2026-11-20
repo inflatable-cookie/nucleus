@@ -572,6 +572,7 @@ export class Engine {
           "deliverHoldNotices",
           "deliverHostOutageNotices",
           "deliverNotices",
+          "deliverRowHiddenNotices",
           "deliverQueuedMessages",
           "observationTargets",
           "observe",

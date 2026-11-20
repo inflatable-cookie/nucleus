@@ -87,6 +87,9 @@ publication obligations remain unchanged.
 - Prompts, reminders and escalation run from the integration-turn claim, which is where a
   held task would otherwise proceed: review accepted at the current head, no attention,
   phase `verifying` or `merging`. Verification and the merge gate run after release.
+- The three-hour hidden-row nudge belongs to the host that hides the row: it is raised
+  from the host pass's own reading, not from this claim, so a dispatch hold or a hold
+  that is not the last blocker still tells the planner the task is parked.
 - A hold prompt is a durable notice of kind `hold`, id `task:hold:generation:head:n`, delivered
   to the owner's thread like other notices and superseded when the hold is released.
 - `keep_hold` by the operator keeps the owner; by an agent it transfers ownership to that agent.
@@ -104,6 +107,27 @@ publication obligations remain unchanged.
   legacy fields in sync (merge is the projected primary when both exist).
 
 Times are first guesses (Tom, 2026-10-02) and are settings, not constants.
+
+## A hold that keeps a T3 row hidden informs the planner
+
+On T3 a waiting task's row is snoozed by Nucleus itself, so a task parked behind a
+hold is invisible in the T3 list for as long as the hold lasts (nucleus#1417). A
+hold fence that blocks the task's current phase therefore owes the task's planner
+one informational notice after three hours of one continuous hold generation. It
+names the hold's kind, generation, reason and release condition, and it is the same
+`row_hidden` notice the 30-minute wait rule uses; it changes no hold, owner,
+generation, release condition or escalation, and it asks for the ordinary
+`release` / `keep_hold` actions rather than acting itself.
+
+One notice belongs to one hold generation. A Spec 040 hold prompt that already
+reached that same planner for the generation — the prompt Spec 040 sends when the
+hold is the last blocker, or its reminder — is reused instead of repeated, so a
+planner already being reminded is not told twice. Time under the hold never accrues
+toward the 30-minute wait rule: after release the clock starts at the first pass
+that sees the row still hidden. Operator and third-party ownership, the escalation
+to the operator, and self-lifting conditions ([Spec 046](046-self-lifting-merge-holds.md))
+stay exactly as they are; an operator-placed hold is never released or escalated by
+this notice.
 
 ## One task owner
 

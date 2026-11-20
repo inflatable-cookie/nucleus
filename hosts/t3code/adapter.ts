@@ -24,6 +24,7 @@ import {
   ProvenPreSendRefusalError,
 } from "../../core/host";
 import { isHostOperationTimeout } from "../../core/host";
+import type { RowSnoozeVisibility } from "../../core/host";
 import { T3RpcClient, type T3ConnectionConfig } from "./rpc";
 import {
   canonicalThinkingValue,
@@ -644,6 +645,14 @@ export class T3CodeHost implements Host {
     if (shown.state === "active") this.activeTaskIds.add(taskId);
     else this.activeTaskIds.delete(taskId);
     await this.presentation.reconcileTaskRow(taskId, shown);
+  }
+  /**
+   * The task row's visibility now (nucleus#1417): whether a Nucleus-owned snooze
+   * still hides it and how long that continuous episode has run.
+   */
+  async rowSnoozeVisibility(taskId: string): Promise<RowSnoozeVisibility> {
+    if (!this.connected) return { kind: "clear" };
+    return await this.presentation.rowSnoozeVisibility(taskId);
   }
   /** Show the board in the host's pinned inbox thread for the operator's `ui` (nucleus#1415). */
   async openInboxUi(): Promise<{

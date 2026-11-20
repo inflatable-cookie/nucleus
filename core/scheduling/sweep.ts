@@ -95,6 +95,7 @@ export type SweepContext = Pick<
     | "deliverDecisionNotices"
     | "deliverDrainNotices"
     | "deliverHoldNotices"
+    | "deliverRowHiddenNotices"
     | "deliverHostOutageNotices"
     | "deliverNotices"
     | "deliverQueuedMessages"
@@ -735,6 +736,12 @@ export class Sweep {
       if (drain && covered) this.engine.sweepCursor = null;
       await this.fleetStep("deliverNotices", () =>
         this.engine.resolution.deliverNotices(),
+      );
+      // A task hidden behind a Nucleus-owned row snooze says so to its planner
+      // (nucleus#1417): the episodes were read in this pass's host steps, and the
+      // notice's delivery is the same durable path every other notice uses.
+      await this.fleetStep("deliverRowHiddenNotices", () =>
+        this.engine.resolution.deliverRowHiddenNotices(),
       );
       await this.fleetStep("deliverQueuedMessages", () =>
         this.engine.resolution.deliverQueuedMessages(),

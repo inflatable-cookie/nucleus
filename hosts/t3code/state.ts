@@ -145,6 +145,14 @@ const snooze = z.object({
   /** The named wait the row was snoozed for; diagnostic text only. */
   cause: z.string().optional(),
   recordedAt: z.string(),
+  /**
+   * When this continuous implicit snooze episode began (nucleus#1417). A horizon
+   * renewal keeps it, so a row hidden for hours is one episode and not a new one
+   * every renewal. A record written before this field existed proves its own start
+   * from the horizon it read back: it was written exactly one horizon before that
+   * (`snoozeEpisodeStart`).
+   */
+  episodeStartedAt: z.string().optional(),
 });
 /**
  * One task's parent thread: the Nucleus ACP session that owns the task's row, the

@@ -67,7 +67,9 @@ export function RunsCloseout({ task, detailQuery, c }: { task: TaskDetailRead["t
         <Text key={n.id} selectable style={muted(c)}>
           {n.kind === "completion"
             ? `Completion → ${n.recipientAgentId || n.agentId}`
-            : "Attention notification"}
+            : n.kind === "row_hidden"
+              ? `Hidden row → ${n.recipientAgentId || n.agentId}`
+              : "Attention notification"}
           : {n.status}
           {n.error ? ` · ${n.error}` : ""}
         </Text>

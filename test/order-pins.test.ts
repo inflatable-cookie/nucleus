@@ -1016,6 +1016,7 @@ test("taskQuantum: a resolution stop is routed after the recovery pass", async (
 
 const AUDIT_NOTICES = [
   "deliverNotices",
+  "deliverRowHiddenNotices",
   "deliverQueuedMessages",
   "resumeAskQuestions",
   "raiseOperatorQuestions",

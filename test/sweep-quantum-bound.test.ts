@@ -136,7 +136,8 @@ function catchUpSweepFixture() {
   engine.resolution.observationTargets = () => [];
   engine.resolution.observe = async () => {};
   for (const method of ['deliverNotices', 'deliverQueuedMessages', 'resumeAskQuestions', 'raiseOperatorQuestions',
-    'delegateNativeQuestions', 'resumeResponsibleAnsweredQuestions', 'deliverHoldNotices', 'deliverDecisionNotices', 'deliverDrainNotices'] as const)
+    'delegateNativeQuestions', 'resumeResponsibleAnsweredQuestions', 'deliverHoldNotices', 'deliverDecisionNotices', 'deliverDrainNotices',
+    'deliverRowHiddenNotices'] as const)
     Object.assign(engine.resolution, { [method]: async () => {} });
   const add = (hostId = hosts[0], owned = true) => {
     const initial = store.insert(submission(), hostId, 'synthetic handoff', 'b'.repeat(40));
