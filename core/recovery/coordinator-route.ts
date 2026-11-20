@@ -50,6 +50,7 @@ import {
   cause,
   key,
   needsAttention,
+  recoveryMergeWitness,
   type RecoveryContext,
 } from "./coordinator-episode";
 import {
@@ -538,8 +539,9 @@ export class CoordinatorRoute {
         unproductiveCoordinatorRuns(this.store, t.id) >= COORDINATOR_LOOP_LIMIT
       )
         return this.episode.escalate(t, COORDINATOR_LOOP_SUMMARY);
+      const episodeId = randomUUID();
       incident = {
-        id: randomUUID(),
+        id: episodeId,
         key: fingerprint,
         generation: t.coordinatorGeneration,
         runId: null,
@@ -552,6 +554,7 @@ export class CoordinatorRoute {
             ? null
             : (t.resolution.incident?.id ?? null),
         progress: taskProgressDigest(t),
+        mergeWitness: recoveryMergeWitness(t, episodeId, fingerprint),
         ...(refusedAction ? { action: refusedAction } : {}),
       };
       t = this.resolution.update(
@@ -879,6 +882,9 @@ export class CoordinatorRoute {
           runId: run.id,
           agentId,
           status: "running",
+          ...(current.resolution.recovery?.mergeWitness ? {
+            mergeWitness: { ...current.resolution.recovery.mergeWitness, runId: run.id },
+          } : {}),
           ...(current.resolution.recovery?.action ? { action: null } : {}),
         });
         this.resolution.update(t, {
