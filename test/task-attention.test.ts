@@ -337,3 +337,57 @@ test("a running role and an independent call for a person win over a planner's h
     "waiting",
   );
 });
+
+test("a passive lifecycle wait keeps a task waiting even in an attention phase unless attention or a manual hold owns it (nucleus#1453)", () => {
+  assert.equal(
+    taskAttention({
+      phase: "needs_attention",
+      held: false,
+      passiveWait: true,
+      reason: "Worker creation remains uncertain; waiting for exact lookup",
+    }).state,
+    "waiting",
+  );
+  assert.equal(
+    taskAttention({
+      phase: "needs_attention",
+      held: false,
+      passiveWait: true,
+      attention: true,
+      reason: "Prompt delivery is uncertain",
+    }).state,
+    "attention",
+  );
+  assert.equal(
+    taskAttention({
+      phase: "needs_attention",
+      held: false,
+      passiveWait: true,
+      originFault: true,
+    }).state,
+    "attention",
+  );
+  assert.equal(
+    taskAttention({
+      phase: "needs_attention",
+      held: false,
+      passiveWait: true,
+      liveRun: true,
+    }).state,
+    "active",
+  );
+  assert.equal(
+    taskAttention({
+      phase: "needs_attention",
+      held: true,
+      passiveWait: true,
+      holds: {
+        dispatch: {
+          reason: "Manual operator hold",
+          until: null,
+        },
+      },
+    }).state,
+    "attention",
+  );
+});

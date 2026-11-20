@@ -20,7 +20,11 @@ import { submission } from './support/fakes';
 import type { AcpSessionSurface } from '../shared/acp/surface';
 import type { HostAgentSpec } from '../shared/host';
 import type { Profile, Task } from '../shared/contracts';
+import { runSchema } from '../shared/contracts';
 import type { TaskAttention } from '../shared/task-attention';
+import { taskStopRecord } from '../shared/task-stop';
+import { runHoldsSlot, taskHasUnreleasedRun } from '../shared/task-view';
+import { taskRowAttention } from '../core/workspaces/task-row-attention';
 import { t3Fake, STAMP, syntheticRun, syntheticRuntimeRequest } from './support/t3code-fake';
 import { storedT3Labels } from './support/t3code-labels';
 
@@ -923,4 +927,299 @@ test('active worker going idle and resuming in the same native child unsnoozes o
   assert.equal(host.state.read().snoozes?.[parent.threadId], undefined, 'snooze record retired after read-back');
   assert.equal(store.task(inserted.id).agentId, worker.id, 'same native worker child resumed');
   assert.ok(elapsedMs < 2_000, `expected immediate drain reconcile (<2000ms), got ${elapsedMs}ms`);
+});
+
+test('unconfirmed role launches snooze the verified parent and stay out of the Inbox running count until live or needing attention (nucleus#1453)', async t => {
+  const { acp, directory, host, server, workspace, parentOf } = await fixture(t);
+  const store = new Store(':memory:');
+  store.setMeta('paused', false);
+  const adapter = createAdapter(HostPolicies as unknown as HostPolicyConstructor, host);
+  const engine = new Engine(store, adapter, 60_000);
+  const pass = new HostPass(enginePorts(engine, ['adapter', 'host', 'inventoryHostMatches', 'observeRetiredWorkers',
+    'retiredObservationKey', 'retiredObservationPlan', 'scheduleLane', 'stopped', 'store'], ['observationTargets']));
+  t.after(async () => { await engine.stop(); store.close(); });
+
+  const inboxDir = mkdtempSync(join(directory, 'inbox-'));
+  let pendingDecision: string | null = null;
+  acp.surface.bindInbox = ({ hostId }) => ({ sessionId: 'synthetic-inbox', hostId, directory: inboxDir, bindingPath: join(inboxDir, 'binding') });
+  acp.surface.pendingDecisionKey = (id) => (pendingDecision && id === task.id ? pendingDecision : null);
+  const runPass = () => engine.withHost(host.hostId, () => pass.run(host.hostId));
+
+  const task = store.insert(
+    submission({ submissionId: 'unconfirmed-launch', title: 'Unconfirmed reviewer launch', repoPath: directory }),
+    host.hostId,
+    'handoff',
+    'a'.repeat(40),
+  );
+  const worker = await host.createAgent({
+    workspaceId: workspace.id,
+    profile,
+    title: 'Unconfirmed reviewer launch',
+    taskNumber: task.number,
+    mcpBindingPath: null,
+    attempt: () => ({
+      requestId: 'worker-launch-1453',
+      prompt: 'Worker prompt',
+      labels: storedT3Labels('worker', { taskId: task.id, runId: 'worker-run-1453' }),
+      environment: {},
+    }),
+  });
+  const parent = parentOf()!;
+  const parentProjection = server.threads.get(parent.threadId)!;
+  const workerProjection = server.threads.get(worker.id)!;
+  workerProjection.runs = [syntheticRun(worker.id, 1, { status: 'completed' })];
+
+  // Realistic idle worker with ready_for_review completion and a no-agent reserved reviewer run.
+  const reviewRunId = 'rev-run-1453';
+  const uncertainReason = 'Reviewer creation is uncertain; exact lookup decides whether it produced an agent';
+  const makeReviewerRun = (overrides: Record<string, unknown> = {}) => runSchema.parse({
+    id: reviewRunId,
+    taskId: task.id,
+    hostId: host.hostId,
+    role: 'reviewer',
+    generation: 0,
+    head: 'b'.repeat(40),
+    base: 'a'.repeat(40),
+    agentId: null,
+    workspaceId: workspace.id,
+    profile,
+    status: 'intent',
+    createdAt: STAMP,
+    lastObservedAt: null,
+    active: null,
+    idleSince: null,
+    completion: null,
+    released: false,
+    ...overrides,
+  });
+
+  store.update(task.id, {
+    phase: 'reviewing',
+    workspaceId: workspace.id,
+    directory,
+    agentId: worker.id,
+    agentIntent: false,
+    agentActive: false,
+    runId: 'worker-run-1453',
+    prHead: 'b'.repeat(40),
+    prUrl: 'https://example.invalid/pr/6510',
+    completion: {
+      eventId: 'worker-evt-1453',
+      taskId: task.id,
+      runId: 'worker-run-1453',
+      status: 'ready_for_review',
+      head: 'b'.repeat(40),
+      summary: 'Ready for review',
+      prNumber: 6510,
+      verdicts: [],
+    },
+    reason: uncertainReason,
+    resolution: {
+      ...store.task(task.id).resolution,
+      currentRunId: reviewRunId,
+      attention: false,
+      stop: taskStopRecord('lifecycle', uncertainReason, null, STAMP),
+      incident: {
+        id: 'incident-1453',
+        fingerprint: 'incident-1453',
+        role: 'reviewer',
+        runId: reviewRunId,
+        turnId: null,
+        attempt: 0,
+        cause: 'exact_lookup',
+        detail: 'Reviewer creation is uncertain',
+        action: 'exact_lookup',
+        status: 'reconciling',
+        createdAt: STAMP,
+        updatedAt: STAMP,
+      },
+    },
+  });
+  const reservedRun = makeReviewerRun({ status: 'intent', agentId: null });
+  store.putRun(reservedRun);
+
+  const inboxTitle = () => server.threads.get(host.state.read().inbox!.threadId)!.thread.title;
+
+  // 1. No-agent reserved (`intent`) delivery snoozes the verified parent row and keeps Inbox quiet.
+  assert.equal(runHoldsSlot(reservedRun), true, 'capacity stays held by the reserved run');
+  assert.equal(taskHasUnreleasedRun(store.task(task.id), true), true, 'durable unreleased run remains unchanged');
+  assert.equal(taskRowAttention(store, store.task(task.id)).state, 'waiting');
+  await runPass();
+  assert.ok(parentProjection.thread.snoozedUntil, 'reserved no-agent launch snoozes parent row');
+  assert.equal(host.state.read().snoozes?.[parent.threadId]?.taskId, task.id);
+  assert.equal(inboxTitle(), 'All quiet', 'reserved launch does not inflate Inbox running count');
+
+  // 2. No-agent uncertain (`uncertain`) delivery also keeps the row snoozed and Inbox quiet.
+  const uncertainRun = makeReviewerRun({ status: 'uncertain', agentId: null });
+  store.putRun(uncertainRun);
+  assert.equal(runHoldsSlot(uncertainRun), true, 'capacity stays held by the uncertain run');
+  assert.equal(taskRowAttention(store, store.task(task.id)).state, 'waiting');
+  await runPass();
+  assert.ok(parentProjection.thread.snoozedUntil, 'uncertain no-agent launch keeps parent row snoozed');
+  assert.equal(inboxTitle(), 'All quiet', 'uncertain launch does not inflate Inbox running count');
+
+  // 3. Retained-thread reserved/uncertain delivery (`agentId` set, no observed live execution) also waits passively.
+  const retainedUncertain = makeReviewerRun({ status: 'uncertain', agentId: 'retained-reviewer-1', active: null });
+  store.putRun(retainedUncertain);
+  assert.equal(taskRowAttention(store, store.task(task.id)).state, 'waiting');
+  await runPass();
+  assert.ok(parentProjection.thread.snoozedUntil, 'unconfirmed delivery with no active execution stays snoozed');
+  assert.equal(inboxTitle(), 'All quiet');
+
+  // 4. Transition to activity: exact lookup binds the reviewer and confirms running (`status: "running"`).
+  // Even with the initial worker still idle (`agentActive: false`), the bound running reviewer surfaces the row.
+  const reviewer = await host.createAgent({
+    workspaceId: workspace.id,
+    profile,
+    title: 'reviewer: Unconfirmed reviewer launch',
+    taskNumber: task.number,
+    mcpBindingPath: null,
+    attempt: () => ({
+      requestId: 'reviewer-launch-1453',
+      prompt: 'Reviewer prompt',
+      labels: storedT3Labels('reviewer', { taskId: task.id, runId: reviewRunId }),
+      environment: {},
+    }),
+  });
+  const reviewerProjection = server.threads.get(reviewer.id)!;
+  reviewerProjection.runs = [syntheticRun(reviewer.id, 1, { status: 'running' })];
+  store.putRun(makeReviewerRun({ status: 'running', agentId: reviewer.id, active: true }));
+  store.update(task.id, {
+    reason: 'reviewer thread running',
+    resolution: { ...store.task(task.id).resolution, stop: null },
+  });
+  assert.equal(taskRowAttention(store, store.task(task.id)).state, 'active');
+  await runPass();
+  assert.equal(parentProjection.thread.snoozedUntil, null, 'confirmed running reviewer unsnoozes parent row');
+  assert.equal(host.state.read().snoozes?.[parent.threadId], undefined, 'snooze record retired after read-back');
+  assert.equal(inboxTitle(), '1 task running', 'bound running reviewer counts in Inbox despite idle worker');
+
+  // 5. Return to uncertain no-agent launch in a passive wait -> snoozes again; then a pending question surfaces it.
+  reviewerProjection.runs = [syntheticRun(reviewer.id, 1, { status: 'completed' })];
+  store.putRun(makeReviewerRun({ status: 'uncertain', agentId: null, active: null }));
+  store.update(task.id, {
+    reason: uncertainReason,
+    resolution: {
+      ...store.task(task.id).resolution,
+      stop: taskStopRecord('lifecycle', uncertainReason, null, STAMP),
+    },
+  });
+  await runPass();
+  assert.ok(parentProjection.thread.snoozedUntil, 'snoozed again while unconfirmed');
+  assert.equal(inboxTitle(), 'All quiet');
+
+  // 5a. Pending ACP decision on the task surfaces the row and clears the Nucleus snooze.
+  pendingDecision = 'decision-1453';
+  await runPass();
+  assert.equal(parentProjection.thread.snoozedUntil, null, 'pending ACP decision unsnoozes parent row');
+  pendingDecision = null;
+  await runPass();
+  assert.ok(parentProjection.thread.snoozedUntil, 're-snoozed once decision clears');
+
+  // 5b. Support thread pending permission/question surfaces the row.
+  reviewerProjection.runtimeRequests = [syntheticRuntimeRequest({ id: 'req-1453', status: 'pending', kind: 'permission' })];
+  await runPass();
+  assert.equal(parentProjection.thread.snoozedUntil, null, 'pending role permission unsnoozes parent row');
+  assert.match(parentProjection.thread.title ?? '', /reviewer needs input/);
+  reviewerProjection.runtimeRequests = [];
+  await runPass();
+  assert.ok(parentProjection.thread.snoozedUntil, 're-snoozed once permission clears');
+
+  // 5c. Genuine operator attention / escalation surfaces the row.
+  store.update(task.id, {
+    phase: 'needs_attention',
+    reason: 'Reviewer creation lookup is ambiguous (2 matching agents); no resource was created',
+    resolution: {
+      ...store.task(task.id).resolution,
+      attention: true,
+      stop: taskStopRecord('operator_needed', 'Reviewer creation lookup is ambiguous', null, STAMP),
+    },
+  });
+  await runPass();
+  assert.equal(parentProjection.thread.snoozedUntil, null, 'genuine operator attention unsnoozes parent row');
+  assert.equal(inboxTitle(), 'All quiet', 'attention row is visible without inflating running count');
+});
+
+test('unbound worker agentIntent in a passive lifecycle wait snoozes and preserves manual snooze and settled threads (nucleus#1453)', async t => {
+  const { directory, host, server, workspace, parentOf } = await fixture(t);
+  const store = new Store(':memory:');
+  store.setMeta('paused', false);
+  const adapter = createAdapter(HostPolicies as unknown as HostPolicyConstructor, host);
+  const engine = new Engine(store, adapter, 60_000);
+  const pass = new HostPass(enginePorts(engine, ['adapter', 'host', 'inventoryHostMatches', 'observeRetiredWorkers',
+    'retiredObservationKey', 'retiredObservationPlan', 'scheduleLane', 'stopped', 'store'], ['observationTargets']));
+  t.after(async () => { await engine.stop(); store.close(); });
+  const runPass = () => engine.withHost(host.hostId, () => pass.run(host.hostId));
+
+  const task = store.insert(
+    submission({ submissionId: 'unbound-worker-1453', title: 'Unbound worker intent', repoPath: directory }),
+    host.hostId,
+    'handoff',
+    'a'.repeat(40),
+  );
+  await host.createAgent({
+    workspaceId: workspace.id,
+    profile,
+    title: 'Unbound worker intent',
+    taskNumber: task.number,
+    mcpBindingPath: null,
+    attempt: () => ({
+      requestId: 'worker-launch-unbound-1453',
+      prompt: 'Worker prompt',
+      labels: storedT3Labels('worker', { taskId: task.id, runId: 'worker-run-unbound-1453' }),
+      environment: {},
+    }),
+  });
+  const parent = parentOf()!;
+  const parentProjection = server.threads.get(parent.threadId)!;
+
+  // Unbound worker creation intent with a passive lifecycle wait (even in needs_attention).
+  const waitReason = 'Worker creation remains uncertain; waiting for its recorded producer to stop and the lookup grace period to pass';
+  store.update(task.id, {
+    phase: 'needs_attention',
+    workspaceId: workspace.id,
+    directory,
+    agentIntent: true,
+    agentId: null,
+    agentActive: null,
+    runId: 'worker-run-unbound-1453',
+    reason: waitReason,
+    resolution: {
+      ...store.task(task.id).resolution,
+      attention: false,
+      stop: taskStopRecord('lifecycle', waitReason, null, STAMP),
+    },
+  });
+  assert.equal(taskHasUnreleasedRun(store.task(task.id)), true, 'capacity stays held by agentIntent');
+  assert.equal(taskRowAttention(store, store.task(task.id)).state, 'waiting');
+
+  // Operator manual snooze is retained and never overwritten.
+  const operatorUntil = new Date(Date.now() + 3600_000).toISOString();
+  parentProjection.thread.snoozedUntil = operatorUntil;
+  await runPass();
+  assert.equal(parentProjection.thread.snoozedUntil, operatorUntil, 'operator manual snooze stays untouched');
+  assert.equal(host.state.read().snoozes?.[parent.threadId], undefined);
+
+  // Operator manual settle is retained and never snoozed or unsettled.
+  parentProjection.thread.snoozedUntil = null;
+  parentProjection.thread.settledOverride = 'settled';
+  parentProjection.thread.settledAt = STAMP;
+  await runPass();
+  assert.equal(parentProjection.thread.settledOverride, 'settled');
+  assert.equal(parentProjection.thread.snoozedUntil, null);
+
+  // An ordinary parent row gets snoozed, then unsnoozed once the worker is bound and active.
+  parentProjection.thread.settledOverride = null;
+  parentProjection.thread.settledAt = null;
+  await runPass();
+  assert.ok(parentProjection.thread.snoozedUntil, 'unconfirmed worker wait snoozes verified parent');
+  store.update(task.id, {
+    phase: 'working',
+    agentId: 'bound-worker-1453',
+    agentActive: true,
+    reason: 'Worker running',
+    resolution: { ...store.task(task.id).resolution, stop: null },
+  });
+  await runPass();
+  assert.equal(parentProjection.thread.snoozedUntil, null, 'bound active worker unsnoozes parent');
 });

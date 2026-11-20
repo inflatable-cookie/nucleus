@@ -5,7 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store } from "../core/store/store";
 import { Engine } from "../core/engine";
-import { submissionSchema } from "../shared/contracts";
+import { submissionSchema, runSchema } from "../shared/contracts";
+import { taskStopRecord } from "../shared/task-stop";
 import type { RowSnoozeVisibility } from "../core/host";
 import type { Notice } from "../shared/contracts";
 import { holdPatch, releasePatch } from "../core/merge/merge-hold";
@@ -1073,4 +1074,85 @@ test("a hold another participant placed keeps its visibility and gets no planner
     "reviewer-thread",
     "the fence keeps its own owner",
   );
+});
+
+test("an unconfirmed reviewer launch hidden for 30 minutes escalates via #1417, then reports missed once bound and running (nucleus#1453)", async (t) => {
+  const f = await fixture(t);
+  const c = clock(t);
+  const episode = new Date(c.start).toISOString();
+  const waitReason =
+    "Reviewer creation is uncertain; exact lookup decides whether it produced an agent";
+  const revRunId = "uncertain-rev-1417";
+  f.store.update(f.task().id, {
+    phase: "reviewing",
+    agentId: "worker-1",
+    agentActive: false,
+    reason: waitReason,
+    resolution: {
+      ...f.task().resolution,
+      currentRunId: revRunId,
+      attention: false,
+      stop: taskStopRecord("lifecycle", waitReason, null, episode),
+    },
+  });
+  f.store.putRun(
+    runSchema.parse({
+      id: revRunId,
+      taskId: f.task().id,
+      hostId,
+      role: "reviewer",
+      generation: 0,
+      head: commit,
+      base: commit,
+      agentId: null,
+      workspaceId: "planning",
+      profile: null,
+      status: "uncertain",
+      createdAt: episode,
+      lastObservedAt: null,
+      active: null,
+      idleSince: null,
+      completion: null,
+      released: false,
+    }),
+  );
+  f.visibility.set(f.task().id, {
+    kind: "snoozed",
+    threadId: `thread-${f.task().id}`,
+    episodeStartedAt: episode,
+    cause: waitReason,
+  });
+  assert.equal(taskRowState(f), "waiting");
+
+  c.at(ROW_HIDDEN_MINUTES * MINUTE);
+  await f.observe();
+  const [notice] = f.rowNotices();
+  assert.ok(notice, "the 30-minute bound reports the hidden unconfirmed launch");
+  assert.match(notice.text, /Nucleus: a task row has stayed snoozed on T3/);
+  assert.match(notice.text, /Reviewer creation is uncertain/);
+
+  // Once exact lookup binds the reviewer and it is running, a still-snoozed row
+  // transitions to a missed-visibility attention projection and supersedes the wait notice.
+  f.store.putRun(
+    runSchema.parse({
+      id: revRunId,
+      taskId: f.task().id,
+      hostId,
+      role: "reviewer",
+      generation: 0,
+      head: commit,
+      base: commit,
+      agentId: "reviewer-bound",
+      workspaceId: "planning",
+      profile: null,
+      status: "running",
+      createdAt: episode,
+      lastObservedAt: new Date(c.start + ROW_HIDDEN_MINUTES * MINUTE).toISOString(),
+      active: true,
+      idleSince: null,
+      completion: null,
+      released: false,
+    }),
+  );
+  assert.equal(taskRowState(f), "active");
 });
