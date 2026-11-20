@@ -38,7 +38,8 @@ type Delivered = { to: string; id: string; text: string };
 
 async function fixture(t: TestContext) {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), 'ns-row-hidden-')));
-  const store = new Store(join(dir, 'queue.sqlite'));
+  const dbPath = join(dir, 'queue.sqlite');
+  let store = new Store(dbPath);
   const delivered: Delivered[] = [];
   const visibility = new Map<string, RowSnoozeVisibility>();
   const agents = new Map([['planner', 'planning'], ['successor', 'planning-2']]);
@@ -76,7 +77,7 @@ async function fixture(t: TestContext) {
     rowSnoozeVisibility: async (taskId: string) =>
       visibility.get(taskId) ?? { kind: 'clear' },
   });
-  const engine = new Engine(store, adapter);
+  let engine = new Engine(store, adapter);
   t.after(async () => {
     await engine.stop();
     store.close();
@@ -120,8 +121,22 @@ async function fixture(t: TestContext) {
   const rowNotices = () => notices().filter(notice => notice.kind === 'row_hidden');
   const record = () => store.getMeta<RowHiddenEpisode>(rowHiddenKey(inserted.id));
   return {
-    store, engine, adapter, delivered, visibility, hidden, observe, deliver,
+    get store() {
+      return store;
+    },
+    get engine() {
+      return engine;
+    },
+    adapter, delivered, visibility, hidden, observe, deliver,
     notices, rowNotices, record,
+    /** A restarted service process: the same database file, a fresh store and engine. */
+    reopen: async () => {
+      await engine.stop();
+      store.close();
+      store = new Store(dbPath);
+      engine = new Engine(store, adapter);
+      store.setMeta('paused', false);
+    },
     task: () => store.task(inserted.id),
     setNotifyFails: (value: boolean) => {
       notifyFails = value;
@@ -201,6 +216,31 @@ test('a horizon renewal and a fresh pass resume the same episode instead of noti
   assert.equal(f.delivered.length, 1, 'the one notice is never repeated');
   assert.equal(f.record()?.since, recorded!.since, 'the accrual anchor is unchanged');
   assert.equal(f.record()?.noticeId, recorded!.noticeId, 'the notice identity is durable');
+});
+
+test('a restarted service over the same store resumes the episode and keeps one notice', async t => {
+  const f = await fixture(t);
+  const c = clock(t);
+  const episode = new Date(c.start).toISOString();
+  f.visibility.set(f.task().id, f.hidden(f.task().id, episode));
+  c.at(ROW_HIDDEN_MINUTES * MINUTE);
+  await f.observe();
+  await f.deliver();
+  assert.equal(f.delivered.length, 1);
+  const raised = f.rowNotices()[0]!;
+  const recorded = f.record()!;
+
+  // A restart: the same database file, a fresh store, engine and owner object. A
+  // roll loses nothing durable, so the episode and its one notice survive it.
+  await f.reopen();
+  c.at(2 * 60 * MINUTE);
+  await f.observe();
+  await f.deliver();
+  assert.deepEqual(f.record(), recorded, 'the durable episode is unchanged across the restart');
+  assert.equal(f.rowNotices().length, 1, 'the restart raises nothing new');
+  assert.equal(f.rowNotices()[0]!.id, raised.id);
+  assert.equal(f.delivered.length, 1, 'the delivered notice is never repeated');
+  assert.equal(f.rowNotices()[0]!.status, 'delivered');
 });
 
 test('a confirmed wake, a terminal closeout and a new episode clear the timer', async t => {
@@ -366,6 +406,43 @@ test('a hidden row whose task needs attention never doubles the ordinary attenti
   assert.ok(notice);
   assert.match(notice.text, /should be visible on T3 and still reads snoozed/);
   assert.match(notice.text, /needs a person/);
+});
+
+test('a row left snoozed while a role is running is a missed transition, not a wait', async t => {
+  const f = await fixture(t);
+  const c = clock(t);
+  const episode = new Date(c.start).toISOString();
+  f.visibility.set(f.task().id, f.hidden(f.task().id, episode));
+  // Nucleus is running a role for this task, so its row must be shown.
+  f.store.putRun({
+    id: 'synthetic-live-run',
+    taskId: f.task().id,
+    hostId,
+    role: 'revision',
+    generation: 0,
+    head: commit,
+    base: commit,
+    workspaceId: 'planning',
+    agentId: 'agent-live',
+    profile: null,
+    status: 'running',
+    createdAt: new Date(c.start).toISOString(),
+    lastObservedAt: null,
+    active: true,
+    idleSince: null,
+    released: false,
+    completion: null,
+  });
+
+  c.at(ROW_HIDDEN_MINUTES * MINUTE);
+  await f.observe();
+  const [notice] = f.rowNotices();
+  assert.ok(notice, 'a role running behind a hidden row is reported');
+  assert.match(notice.text, /should be visible on T3 and still reads snoozed/);
+  assert.match(notice.text, /has a role running/);
+  assert.match(notice.text, /keeps sending the ordinary unsnooze every pass/);
+  // The episode's own timer is what fired, not the newer projected state.
+  assert.equal(f.record()?.since, episode, 'the timer keeps the original episode start');
 });
 
 test('an unreadable row is reported as unknown, never as clear', async t => {
