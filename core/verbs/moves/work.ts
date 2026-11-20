@@ -21,6 +21,7 @@ export type WorkMoveInput = {
   instruction?: string;
   caller?: string;
   restart?: { afterSettlement: (settled: Task) => Task; afterRevision: (revised: Task) => Task };
+  parentRestart?: { before: () => Promise<boolean>; commit: (task: Task, restored: boolean) => Task; restoreRetained?: boolean };
 };
 
 /** What the work move's guarded transaction needs from its observed prelude. */
@@ -109,9 +110,21 @@ export async function moveToWork(engine: Engine, input: WorkMoveInput): Promise<
       if (!routeProfileId && !current.profile) throw Error('Starting a fresh author requires the worker route or the retained profile');
     }
     const settlement: WorkSettlement = { expected, reason: input.reason, displaced: displacement.displaced, stoppedReviewers: displacement.stoppedReviewers };
-    if (current.agentId)
+    if (current.agentId && !input.parentRestart?.restoreRetained)
       return reviseRetainedAuthor(engine, task.id, input, settlement, { instruction, continuedPr, foreignCompletion });
-    return replaceAbsentAuthor(engine, task.id, input, settlement, instruction);
+    let restored = false;
+    if (input.parentRestart) {
+      if (current.agentIntent) throw Error("Worker creation remains uncertain; settle it before restarting");
+      if (store.runs(current.id).some(run => !run.released && !settlement.stoppedReviewers.has(run.id)))
+        throw Error("A run still owns this task; settle it before restarting");
+      restored = await input.parentRestart.before();
+      engine.requireOwnerControlCurrent(store.task(task.id), expected, 'Task changed during parent restore; refresh before retrying');
+      if (!runsUnchangedSince(runsBeforeMove, store.runs(task.id))) throw Error('Task or run changed during parent restore');
+    }
+    const finalInput = input.parentRestart ? { ...input, parentRestart: { ...input.parentRestart, commit: (result: Task) => input.parentRestart!.commit(result, restored) } } : input;
+    return current.agentId
+      ? reviseRetainedAuthor(engine, task.id, finalInput, settlement, { instruction, continuedPr, foreignCompletion })
+      : replaceAbsentAuthor(engine, task.id, finalInput, settlement, instruction);
   }, `task:${task.id}`);
 }
 
@@ -160,7 +173,8 @@ function reviseRetainedAuthor(engine: Engine, taskId: string, input: WorkMoveInp
         instruction: revised.resolution.pendingWorkerInstruction ?? input.instruction?.trim() ?? '' }));
       revised = store.update(taskId, { completion: null }, 'report_ready_completion_cleared', report.eventId);
     }
-    return input.restart ? input.restart.afterRevision(revised) : revised;
+    const continued = input.restart ? input.restart.afterRevision(revised) : revised;
+    return input.parentRestart ? input.parentRestart.commit(continued, true) : continued;
   });
 }
 
@@ -182,7 +196,7 @@ function replaceAbsentAuthor(engine: Engine, taskId: string, input: WorkMoveInpu
     const failoverReason = `${OPERATOR_WORKER_REMAP_REASON}. Continue the existing task: ${instruction}`.slice(0, 2000);
     if (routeProfileId && settledTask.profileRequests?.worker?.ownerRoute)
       store.event(taskId, 'worker_route_honoured', `move to=work selected pending worker route ${routeProfileId}`);
-    return store.update(latest.id, {
+    const result = store.update(latest.id, {
       phase: 'changes_requested', ...(settledTask.completion?.status === 'report_ready' ? { completion: null } : {}),
       reason: 'Owner moved the task to a fresh author revision on the worker route',
       failoverReason,
@@ -190,6 +204,7 @@ function replaceAbsentAuthor(engine: Engine, taskId: string, input: WorkMoveInpu
       resolution: { ...latest.resolution, currentRunId: null, attention: false, recoveryActive: false, recoveryAttempts: 0,
         pendingWorkerInstruction: instruction, ...(taskHasPr(latest) ? {} : { prePrResumeInstruction: instruction }) },
     }, input.caller ? 'move_work_requested' : 'owner_control', JSON.stringify({ verb: 'move', to: 'work', phaseBefore: settledTask.phase, reason: input.reason }));
+    return input.parentRestart ? input.parentRestart.commit(result, true) : result;
   });
 }
 

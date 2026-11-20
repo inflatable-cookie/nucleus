@@ -1711,6 +1711,7 @@ export class Engine {
     version: number;
     rebindWorkspaceId?: string;
     removeOrphanWorkspace?: boolean;
+    parentRestart?: { before: () => Promise<boolean>; commit: (task: Task, restored: boolean) => Task };
     settleFences?: {
       detail: string;
       runIds: string[];
@@ -2206,6 +2207,7 @@ export class Engine {
     taskId: string;
     version: number;
     instruction: string;
+    record?: (task: Task) => Task;
     settleFences?: {
       detail: string;
       runIds: string[];
@@ -2262,6 +2264,7 @@ export class Engine {
     reason: string;
     instruction?: string;
     caller?: string;
+    parentRestart?: { before: () => Promise<boolean>; commit: (task: Task, restored: boolean) => Task; restoreRetained?: boolean };
     restart?: {
       afterSettlement: (settled: Task) => Task;
       afterRevision: (revised: Task) => Task;

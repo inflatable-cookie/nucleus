@@ -790,7 +790,7 @@ export class RetryRoutes {
       displacedRunIds?: string[];
     },
   ): Task {
-    return this.store.transaction(() => {
+    const apply = () => {
       // Spec 050 (#3569): the restart settles its armed fences atomically with
       // the restart; a refusal inside rolls both back.
       const before = this.store.task(t.id);
@@ -849,6 +849,7 @@ export class RetryRoutes {
             "restart_worker_slot_hold",
           )
         : continued;
-    });
+    };
+    return this.store.db.isTransaction ? apply() : this.store.transaction(apply);
   }
 }
