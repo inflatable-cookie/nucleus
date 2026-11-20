@@ -57,7 +57,11 @@ export function blockerLadderStep(facts: {
       ? escalationWaitDetail.operator(latest.id, latest.decisionId)
       : latest.unknown
         ? escalationWaitDetail.unknown(latest.id)
-        : escalationWaitDetail.planner(latest.id)
+        : latest.returnExhausted || (latest.returned && latest.missed)
+          ? escalationWaitDetail.returnedNoPlanner(latest.id)
+          : latest.returned
+            ? escalationWaitDetail.returned(latest.id)
+            : escalationWaitDetail.planner(latest.id)
     : openConsults.length
       ? escalationWaitDetail.reviewer(openConsults.at(-1)!.id)
       : null;
@@ -99,8 +103,9 @@ export function escalationRecovery(facts: {
   decisionId: string | null;
   question: string | null;
   inFlight: boolean;
+  returnExhausted?: boolean;
 }): EscalationRecovery {
-  if (facts.missedNoAnswer) return { kind: "skip" };
+  if (facts.missedNoAnswer || facts.returnExhausted) return { kind: "skip" };
   if (
     facts.answered ||
     (facts.unknown && !facts.observing) ||

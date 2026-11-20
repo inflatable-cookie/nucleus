@@ -3,20 +3,25 @@ import type { Ladder } from './ladder';
 import { plannerEscalations } from './records';
 import type { Store } from '../../store/store';
 
-/** Retire every recorded refusal follow-up once its escalation has settled. */
+/** Retire every recorded refusal follow-up and return prompt once its escalation has settled. */
 export function closeEscalationFollowups(store: Store, taskId: string, escalationId: string): void {
+  const closeWindow = (questionId: string) => {
+    for (const candidate of [questionId, `${questionId}-project`]) {
+      const key = `delegation:${candidate}`, events = store.eventsAll(key);
+      if (events.length && !events.some(event => event.kind === 'delegated_closed'))
+        store.event(key, 'delegated_closed', 'The escalation settled; this follow-up is superseded');
+    }
+  };
+  closeWindow(`ns-escalation-return-${escalationId}`);
+  closeWindow(`ns-escalation-return-refusal-${escalationId}`);
   const offers = store.eventsAll(taskId).filter(event => event.kind === 'planner_escalation_followup_offered'
     && event.detail.startsWith(`${escalationId}: `));
   for (const offer of offers) {
     let id: unknown;
     try { id = (JSON.parse(offer.detail.slice(escalationId.length + 2)) as { questionId?: unknown }).questionId; }
     catch { continue; }
-    if (typeof id !== 'string' || !id.startsWith(`ns-escalation-refusal-${escalationId}`)) continue;
-    for (const questionId of [id, `${id}-project`]) {
-      const key = `delegation:${questionId}`, events = store.eventsAll(key);
-      if (events.length && !events.some(event => event.kind === 'delegated_closed'))
-        store.event(key, 'delegated_closed', 'The escalation settled; this follow-up is superseded');
-    }
+    if (typeof id !== 'string' || (!id.startsWith(`ns-escalation-refusal-${escalationId}`) && !id.startsWith(`ns-escalation-return-refusal-${escalationId}`))) continue;
+    closeWindow(id);
   }
 }
 

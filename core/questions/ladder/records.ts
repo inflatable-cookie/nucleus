@@ -56,6 +56,10 @@ export interface PlannerEscalation {
   missed: boolean;
   /** The Spec 032 decision that carries it to the operator, when one was classified. */
   decisionId: string | null;
+  /** Whether a bare operator handoff returned this occurrence to the planner for a recommendation. */
+  returned?: boolean;
+  /** Whether the planner again could not decide on the returned escalation. */
+  returnExhausted?: boolean;
   /** The visible wait while the ladder works around an unroutable planner. */
   routingWait?: { detail: string; holderAgentId?: string };
 }
@@ -196,10 +200,24 @@ export function plannerEscalations(events: LadderEvent[]): PlannerEscalation[] {
             kinds.includes(event.kind) && event.detail.startsWith(`${id}:`),
         )
         .at(-1)?.id ?? 0;
+    const returnedEvent = eventsOf(events, "planner_escalation_returned").findLast(
+      (event) => event.detail.startsWith(`${id}:`),
+    );
+    const decision = eventsOf(
+      events,
+      "planner_escalation_decision_linked",
+    ).findLast((event) => event.detail.startsWith(`${id}:`));
+    const activeDecision =
+      decision && (!returnedEvent || decision.id > returnedEvent.id)
+        ? decision
+        : undefined;
+    const returned = Boolean(returnedEvent && !activeDecision);
+    const phaseAfter = returned && returnedEvent ? returnedEvent.id : 0;
     const routingWait = events.findLast(
       (event) =>
         event.kind === "planner_escalation_routing_wait" &&
-        event.detail.startsWith(`${id}: `),
+        event.detail.startsWith(`${id}: `) &&
+        event.id > phaseAfter,
     );
     const pendingAt = latest([
       "planner_escalation_answer_pending",
@@ -210,18 +228,20 @@ export function plannerEscalations(events: LadderEvent[]): PlannerEscalation[] {
       "planner_escalation_woke",
     ]);
     const unknownEvents = eventsOf(events, "planner_escalation_unknown").filter(
-      (event) => event.detail.startsWith(`${id}:`),
+      (event) => event.detail.startsWith(`${id}:`) && event.id > phaseAfter,
     );
-    const decision = eventsOf(
+    const returnExhausted = eventsOf(
       events,
-      "planner_escalation_decision_linked",
-    ).find((event) => event.detail.startsWith(`${id}:`));
+      "planner_escalation_return_exhausted",
+    ).some((event) => event.detail.startsWith(`${id}:`) && event.id >= phaseAfter);
     const wait = routingWait
       ? readRoutingWait(routingWait.detail.slice(id.length + 2))
       : null;
     return {
       id,
       ...(wait ? { routingWait: wait } : {}),
+      ...(returned ? { returned: true } : {}),
+      ...(returnExhausted ? { returnExhausted: true } : {}),
       cause: lineCause(intent.detail),
       runId: intentRun(payload, intent.detail),
       question: payloadText(payload, "question"),
@@ -239,11 +259,11 @@ export function plannerEscalations(events: LadderEvent[]): PlannerEscalation[] {
             ))),
       unknown: unknownEvents.length > 0,
       unknownAt: unknownEvents.at(-1)?.at ?? null,
-      missed: eventsOf(events, "planner_escalation_missed").some((event) =>
-        event.detail.startsWith(`${id}:`),
+      missed: eventsOf(events, "planner_escalation_missed").some(
+        (event) => event.detail.startsWith(`${id}:`) && event.id > phaseAfter,
       ),
       decisionId:
-        decision?.detail.match(/decision ([0-9a-f-]{36})/)?.[1] ?? null,
+        activeDecision?.detail.match(/decision ([0-9a-f-]{36})/)?.[1] ?? null,
     };
   });
 }
