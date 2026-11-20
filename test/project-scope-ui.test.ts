@@ -5,6 +5,7 @@ import { boardSource } from "./support/board-source";
 import React from "react";
 import { mount, useNativeStubs } from "./support/render";
 import {
+  pickProjects,
   pipelineSelection,
   planningLaneLeads,
   type ProjectScope,
@@ -1022,4 +1023,89 @@ test("chooser settings icon: closes the chooser and opens Settings at Projects; 
     bare.press(/^Projects, /);
     assert.equal(bare.query("Project settings"), undefined);
   }
+});
+
+test("1432: an explicit nonempty pick turns a disabled filter back on; an empty pick keeps the switch", () => {
+  const off: ProjectScope = { projects: ["other"], statusFilter: false };
+  assert.deepEqual(pickProjects(off, ["consumer-b-v2"]), { projects: ["consumer-b-v2"], statusFilter: true });
+  assert.deepEqual(pickProjects(off, []), { projects: [], statusFilter: false }, "None keeps it off");
+  assert.deepEqual(pickProjects({ projects: ["other"], statusFilter: true }, []), { projects: [], statusFilter: true });
+});
+
+test("1432 rendered: plain, Shift and All picks while the filter is off turn it on and persist both; None, clearing the last key, opening and disclosure leave it", async () => {
+  const { ProjectSelector, useProjectScope } = await load();
+  const storage = memory();
+  storage.setItem("nucleus:project-scope", JSON.stringify({ projects: ["other"], statusFilter: false }));
+  let seen: ProjectScope | null = null;
+  let setScopeRef: ((scope: ProjectScope) => void) | null = null;
+  const actions = {
+    park: () => Promise.resolve(),
+    unpark: () => Promise.resolve(),
+    rename: () => Promise.resolve(),
+  };
+  function Harness() {
+    const [scope, setScope] = useProjectScope(() => storage);
+    seen = scope;
+    setScopeRef = setScope;
+    // The board's wiring (client/queue.tsx): one scope value carries the keys and the switch.
+    return h(ProjectSelector, {
+      projects,
+      tasks: [],
+      leads: [],
+      value: scope.projects,
+      onChange: (keys: string[]) => setScope(pickProjects(scope, keys)),
+      enabled: scope.statusFilter,
+      onEnabledChange: (statusFilter: boolean) => setScope({ ...scope, statusFilter }),
+      projectActions: actions,
+      onOpenChange: () => {},
+      compact: false,
+      c,
+    });
+  }
+  const ui = mount(h(Harness));
+  const stored = () => JSON.parse(storage.getItem("nucleus:project-scope")!);
+  const current = (): ProjectScope => seen!;
+  const turnOff = () => setScopeRef!({ ...current(), statusFilter: false });
+
+  // Opening, disclosure and rename leave the switch off.
+  ui.press(/^Projects, /);
+  ui.press("Project actions for consumer-b-v2");
+  ui.press("Rename consumer-b-v2");
+  ui.press("Cancel rename of consumer-b-v2");
+  assert.equal(current().statusFilter, false);
+  assert.equal(ui.get("Enabled").props.accessibilityState.checked, false);
+
+  // A plain pick turns it on with the new key, persisted together.
+  ui.press(/^Project consumer-b-v2/);
+  assert.deepEqual(current(), { projects: ["consumer-b-v2"], statusFilter: true });
+  assert.deepEqual(stored(), { projects: ["consumer-b-v2"], statusFilter: true });
+  assert.deepEqual(pipelineSelection(current()), ["consumer-b-v2"], "the board filters at once");
+
+  // Shift-adding while off turns it on.
+  turnOff();
+  ui.press(/^Projects, /);
+  ui.press(/^Project other/, { nativeEvent: { shiftKey: true } });
+  assert.deepEqual(current(), { projects: ["consumer-b-v2", "other"], statusFilter: true });
+
+  // Shift-clearing down to nothing keeps the switch as it was.
+  turnOff();
+  ui.press(/^Project other/, { nativeEvent: { shiftKey: true } });
+  assert.deepEqual(current(), { projects: ["consumer-b-v2"], statusFilter: true }, "a nonempty Shift-removal is a pick");
+  turnOff();
+  ui.press(/^Project consumer-b-v2/, { nativeEvent: { shiftKey: true } });
+  assert.deepEqual(current(), { projects: [], statusFilter: false }, "clearing the last key keeps it off");
+
+  // None keeps it off; All turns it on.
+  ui.press("Clear project selection");
+  assert.equal(current().statusFilter, false);
+  ui.press("Select all projects");
+  assert.equal(current().statusFilter, true);
+  assert.deepEqual(stored().statusFilter, true);
+});
+
+test("1432: the board's selector commits picks through pickProjects; other scope entry points keep the switch", () => {
+  const source = boardSource();
+  assert.match(source, /onChange=\{\(projects\) => setScope\(pickProjects\(scope, projects\)\)\}/);
+  assert.match(source, /const setScopeProjects = \(projects: string\[\]\) => setScope\(\{ \.\.\.scope, projects \}\);/);
+  assert.match(source, /onSelectProjects=\{setScopeProjects\}/);
 });
