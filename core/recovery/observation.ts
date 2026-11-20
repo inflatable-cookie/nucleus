@@ -51,6 +51,8 @@ export type ObservationContext = Pick<
   | "heavyRunAlive"
   | "host"
   | "hostAvailable"
+  | "hostReadTransientFailure"
+  | "clearHostReadTransient"
   | "inventoryHostMatches"
   | "launchingRuns"
   | "onTaskHost"
@@ -263,6 +265,16 @@ export class Observation {
         if (this.resolution.stopped()) return;
         const latest = this.store.run(run.id);
         if (!latest || JSON.stringify(latest) !== JSON.stringify(run)) continue;
+        this.resolution.clearHostReadTransient?.(task.id, "task");
+        const taskStop = this.store.taskOrNull(task.id);
+        if (taskStop?.resolution.stop?.reason === "external_unavailable")
+          this.resolution.update(
+            taskStop,
+            { stop: null },
+            {},
+            "task_wait_cleared",
+            "external_unavailable",
+          );
         if (state.id !== run.agentId || state.workspaceId !== run.workspaceId)
           throw new Error(
             "Observed agent or workspace differs from the recorded run lease",
@@ -662,11 +674,19 @@ export class Observation {
           continue;
         }
         if (error instanceof HostReadRefusalError) {
-          this.resolution.waiting(
-            this.store.task(task.id),
-            error.message,
-            "external_unavailable",
-          );
+          if (this.resolution.hostReadTransientFailure) {
+            this.resolution.hostReadTransientFailure(
+              this.store.task(task.id),
+              error,
+              "Participant observation",
+            );
+          } else {
+            this.resolution.waiting(
+              this.store.task(task.id),
+              error.message,
+              "external_unavailable",
+            );
+          }
           continue;
         }
         // A transport failure is not a task fault: leave the lane where it is so the next

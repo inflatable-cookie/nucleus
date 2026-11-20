@@ -6,6 +6,7 @@ import { matchingInactiveParticipant } from '../../intake/run-settlement';
 import { message } from '../../recovery/task-reasons';
 import { reviewerRuntimeChanged } from '../../review/reviewer-runtime';
 import { reviewerIndependence } from '../routing';
+import { HostReadRefusalError } from '../../host';
 import { type LaunchOptions, type ThreadBinding } from './thread-binding';
 import { reviewerRoundEligible, reviewerThreadDecision, type ReviewerSwapCondition } from './thread-decisions';
 
@@ -130,6 +131,7 @@ export async function retainReviewerThread(ctx: LaunchThreadContext, t: Task, ro
       context = !/context_length_exceeded|maximum context length|context window (?:is )?exhausted/i.test(state.error ?? '');
       if (!context) swapDetail.context = `its provider reported context exhaustion: ${state.error}`;
     } catch (error) {
+      if (error instanceof HostReadRefusalError) throw error;
       participant = false;
       delete swapDetail.participant;
       const detail = message(error);

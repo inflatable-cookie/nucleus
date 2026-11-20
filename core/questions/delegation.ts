@@ -17,6 +17,13 @@ import {
 import { plannerEscalations, type LadderEvent } from "./ladder";
 import { askLifecycle } from "./agent-ask-events";
 import type { Resolution } from "../resolution";
+import { HostReadRefusalError } from "../host";
+import {
+  hostReadTransientEscalationReason,
+  hostReadTransientKey,
+  nextHostReadTransientAttempt,
+  type HostReadTransientEpisode,
+} from "../recovery/host-read-transient";
 import { complexityBracket } from "../../shared/demand";
 import { chooseProfile } from "../dispatch/routing";
 import { plannerParticipantTicketPath } from "../dispatch/participant-tickets";
@@ -604,6 +611,13 @@ export class Delegation {
         correctingRefusal = true;
       } else {
         if (!isEscalation) return receipt;
+        if (
+          answer !== receipt.answer ||
+          input.decision !== receipt.decision
+        )
+          throw Error(
+            "This question already has a recorded answer awaiting application",
+          );
         const taskEvents = this.store.eventsAll(authority.taskId);
         const hasEscalation = taskEvents.some(
           (event) =>
@@ -733,8 +747,9 @@ export class Delegation {
         authority.role,
         reason,
       ).then(
-        () => {
+        (outcome) => {
           if (
+            outcome === "transient_pending" ||
             this.deferredEscalation(
               authority.taskId,
               escalationId,
@@ -927,8 +942,11 @@ export class Delegation {
       authority.role,
       receipt.reason,
     ).then(
-      () => {
-        if (this.deferredEscalation(authority.taskId, escalationId, questionId))
+      (outcome) => {
+        if (
+          outcome === "transient_pending" ||
+          this.deferredEscalation(authority.taskId, escalationId, questionId)
+        )
           return { ...receipt, status: "pending" as const };
         this.recordCommandApplied(key, escalationId, recordedId);
         return receipt;
@@ -951,8 +969,9 @@ export class Delegation {
     caller: string,
     role: string,
     reason: string,
-  ) {
+  ): Promise<"applied" | "transient_pending"> {
     const escalationId = escalationIdForQuestion(input.questionId);
+    const transientKey = hostReadTransientKey("question", input.questionId);
     try {
       if (input.decision === "operator") {
         this.resolution.ladder.classifyEscalationToOperator(
@@ -977,7 +996,59 @@ export class Delegation {
           );
         if (refusal) throw Error(refusal);
       }
+      this.resolution.clearHostReadTransient?.(input.questionId, "question");
+      return "applied";
     } catch (error) {
+      if (error instanceof HostReadRefusalError) {
+        const old =
+          this.store.getMeta<HostReadTransientEpisode | null>(transientKey) ??
+          null;
+        const limits = {
+          limitMs: this.store.getMeta<number>("hostReadTransientLimitMs"),
+          minAttempts: this.store.getMeta<number>(
+            "hostReadTransientMinAttempts",
+          ),
+          maxAttempts: this.store.getMeta<number>(
+            "hostReadTransientMaxAttempts",
+          ),
+        };
+        const next = nextHostReadTransientAttempt(
+          old,
+          error.message,
+          Date.now(),
+          limits,
+        );
+        if (next) {
+          this.store.setMeta(transientKey, next);
+          const task = this.store.taskOrNull(taskId);
+          if (task)
+            this.resolution.waiting(
+              task,
+              `question.answer pre-send check could not read host state (attempt ${next.attempts}); retrying automatically while honoring recorded answer: ${error.message}`,
+              "external_unavailable",
+            );
+          this.resolution.armHostReadTransient?.(
+            input.questionId,
+            next.retryAt,
+            "question",
+          );
+          return "transient_pending";
+        }
+        this.resolution.clearHostReadTransient?.(input.questionId, "question");
+        const detail = hostReadTransientEscalationReason(
+          "question.answer pre-send check",
+          old,
+          error.message,
+        );
+        const message = `Escalation ${escalationId} answer was not applied: ${detail}`;
+        this.store.event(
+          taskId,
+          "planner_escalation_answer_refused",
+          `${escalationId}: ${message}`.slice(0, 4000),
+        );
+        throw Error(message);
+      }
+      this.resolution.clearHostReadTransient?.(input.questionId, "question");
       const detail = error instanceof Error ? error.message : String(error);
       const message = `Escalation ${escalationId} answer was not applied: ${detail}. Read task next, then answer this same question with a corrected choice or reason.`;
       this.store.event(
@@ -986,6 +1057,73 @@ export class Delegation {
         `${escalationId}: ${message}`.slice(0, 4000),
       );
       throw Error(message);
+    }
+  }
+  /** Retry any recorded question.answer awaiting a pre-send host read on fresh evidence. */
+  async recoverPendingEscalationAnswers(): Promise<void> {
+    const prefix = hostReadTransientKey("question", "");
+    const rows = this.store.db
+      .prepare("SELECT key FROM meta WHERE key LIKE ?")
+      .all(`${prefix}%`) as Array<{ key: string }>;
+    for (const row of rows) {
+      const questionId = row.key.slice(prefix.length);
+      const key = `delegation:${questionId}`;
+      const events = this.store.eventsAll(key);
+      const delivery = events.findLast(
+        (event) => event.kind === "delegated_delivery",
+      );
+      const recorded = events.findLast(
+        (event) => event.kind === "delegated_answer",
+      );
+      if (!delivery || !recorded) {
+        this.store.deleteMeta(row.key);
+        continue;
+      }
+      const settled = events.findLast(
+        (event) =>
+          event.id > recorded.id &&
+          (event.kind === "delegated_command_applied" ||
+            event.kind === "delegated_command_refused"),
+      );
+      if (settled) {
+        this.store.deleteMeta(row.key);
+        continue;
+      }
+      const authority = JSON.parse(delivery.detail) as {
+        taskId: string;
+        recipient: string;
+        role: string;
+        prompt: string;
+        deadline: number;
+        hostId?: string;
+      };
+      const receipt = JSON.parse(recorded.detail) as {
+        questionId: string;
+        caller: string;
+        answer?: string;
+        reason: string;
+        decision?: "operator";
+        overtakes?: string[];
+      };
+      const task = this.store.taskOrNull(authority.taskId);
+      if (
+        !task ||
+        (task.hostId &&
+          !this.resolution.withHost(task.hostId, () =>
+            this.resolution.hostAvailable(task),
+          ))
+      )
+        continue;
+      await this.recoverRecordedEscalationAnswer(
+        key,
+        authority,
+        receipt,
+        escalationIdForQuestion(questionId),
+        questionId,
+        recorded.id,
+      ).catch(() => {
+        /* refusal or sustained escalation already recorded on failure */
+      });
     }
   }
   async waitDelegatedAnswer(

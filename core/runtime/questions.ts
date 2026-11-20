@@ -3,6 +3,7 @@ import { Store, digest as storeDigest } from "../store/store";
 import type { Engine } from "../engine";
 import type { Decisions } from '../planning/decisions';
 import { reconcileRoutingGrants } from "../dispatch/routing-signoff";
+import { HostReadRefusalError, ProvenPreSendRefusalError } from "../host";
 
 /** Narrow dependencies; construction and lifecycle remain runtime-owned. */
 export interface QuestionsContext {
@@ -66,13 +67,55 @@ export class RuntimeQuestions {
       const legacyIntentId = storeDigest(JSON.stringify([input.taskId, agent, input.requestId]));
       const intentId = storeDigest(JSON.stringify([input.taskId, formatAgentId(task.hostId!, agent), input.requestId]));
       this.context.store.transaction(() => {
-        if (this.context.store.eventsAll(input.taskId).some(event => event.kind === 'native_manual_answer_intent' && [intentId, legacyIntentId].some(id => event.detail.startsWith(`${id}:`))))
-          throw Error('Native answer delivery is already recorded; inspect the question before retrying');
-        if (this.context.store.task(input.taskId).hostId !== task.hostId || this.nativeQuestionWorkspace(input.taskId, agent) !== workspace) throw Error('Question thread identity changed');
-        this.context.store.event(input.taskId, 'native_manual_answer_intent', `${intentId}: host ${task.hostId}; agent ${agent}; request ${input.requestId}`);
+        const events = this.context.store.eventsAll(input.taskId);
+        const latest = events.findLast(
+          (event) =>
+            (event.kind === "native_manual_answer_intent" ||
+              event.kind === "native_manual_answer_refused") &&
+            [intentId, legacyIntentId].some((id) =>
+              event.detail.startsWith(`${id}:`),
+            ),
+        );
+        if (latest?.kind === "native_manual_answer_intent")
+          throw Error(
+            "Native answer delivery is already recorded; inspect the question before retrying",
+          );
+        if (
+          this.context.store.task(input.taskId).hostId !== task.hostId ||
+          this.nativeQuestionWorkspace(input.taskId, agent) !== workspace
+        )
+          throw Error("Question thread identity changed");
+        this.context.store.event(
+          input.taskId,
+          "native_manual_answer_intent",
+          `${intentId}: host ${task.hostId}; agent ${agent}; request ${input.requestId}`,
+        );
       });
-      await adapter.answerNativeQuestion(agent, workspace, input.requestId, input.answers);
-      this.context.store.event(input.taskId, 'native_manual_answer_delivered', `${intentId}: host ${task.hostId}`);
+      try {
+        await adapter.answerNativeQuestion(
+          agent,
+          workspace,
+          input.requestId,
+          input.answers,
+        );
+      } catch (error) {
+        if (
+          error instanceof ProvenPreSendRefusalError ||
+          error instanceof HostReadRefusalError
+        ) {
+          this.context.store.event(
+            input.taskId,
+            "native_manual_answer_refused",
+            `${intentId}: ${error.message}`.slice(0, 1000),
+          );
+        }
+        throw error;
+      }
+      this.context.store.event(
+        input.taskId,
+        "native_manual_answer_delivered",
+        `${intentId}: host ${task.hostId}`,
+      );
       return { ok: true as const };
     });
   }

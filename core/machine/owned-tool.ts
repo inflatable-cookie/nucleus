@@ -11,7 +11,11 @@ import { readHostUidProcesses } from "./host-process-listing";
 import { participantRuntime, storeDataHome } from "./participant-runtime";
 import { participantTemporaryDirectory } from "./participant-roots";
 import { HostTransportFault } from "../host/adapter-routing";
-import { isAgentGoneRefusal, isHostOperationTimeout } from "../host/errors";
+import {
+  HostReadRefusalError,
+  isAgentGoneRefusal,
+  isHostOperationTimeout,
+} from "../host/errors";
 import type { Resolution } from "../resolution";
 import {
   formatLiveToolIssue,
@@ -147,11 +151,20 @@ export class OwnedTools {
     let read: Awaited<ReturnType<typeof readToolTimeline>>;
     try {
       read = await readToolTimeline(this.resolution.host, agentId);
-    } catch {
+    } catch (error) {
+      if (
+        error instanceof HostReadRefusalError ||
+        isTransportFailure(error) ||
+        isHostOperationTimeout(error) ||
+        error instanceof HostTransportFault
+      )
+        throw error;
       return "owned tool evidence is unreadable";
     }
-    if ("issue" in read)
+    if ("issue" in read) {
+      if (read.transientError) throw read.transientError;
       return `owned tool evidence is inconclusive: ${read.issue}`;
+    }
     if (read.coverage === "bounded") {
       const hold = await boundedToolHold(
         read,
@@ -311,14 +324,24 @@ export class OwnedTools {
     } catch (error) {
       observeError = error;
     }
-    if (isTransportFailure(observeError) || isHostOperationTimeout(observeError) || observeError instanceof HostTransportFault)
+    if (
+      observeError instanceof HostReadRefusalError ||
+      isTransportFailure(observeError) ||
+      isHostOperationTimeout(observeError) ||
+      observeError instanceof HostTransportFault
+    )
       throw observeError;
     if (this.adapter.originAgent) {
       let origin: Awaited<ReturnType<Resolution["host"]["originAgent"]>>;
       try {
         origin = await this.resolution.host.originAgent(agentId);
       } catch (originError) {
-        if (isTransportFailure(originError) || isHostOperationTimeout(originError) || originError instanceof HostTransportFault)
+        if (
+          originError instanceof HostReadRefusalError ||
+          isTransportFailure(originError) ||
+          isHostOperationTimeout(originError) ||
+          originError instanceof HostTransportFault
+        )
           throw originError;
         const message = originError instanceof Error ? originError.message : String(originError);
         return { kind: "refuse", reason: `owned tool custody observation failed: ${message}` };

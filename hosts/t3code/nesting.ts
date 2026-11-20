@@ -32,14 +32,24 @@
  */
 import { z } from "zod";
 import { T3_HOLD_TEXT } from "../../shared/acp/t3-hold";
-import { isHostOperationTimeout } from "../../core/host";
+import {
+  HostReadRefusalError,
+  isHostOperationTimeout,
+  ProvenPreSendRefusalError,
+} from "../../core/host";
 import type { HostAgentAttempt, HostAgentSpec } from "../../shared/host";
 import type { Profile, Task } from "../../shared/contracts";
 import type { AcpSessionSurface } from "../../shared/acp/surface";
-import { ProvenPreSendRefusalError } from "../../core/host";
 import type { T3RpcClient } from "./rpc";
 import { config, T3CompatibilityError, type RuntimeMode } from "./contracts";
-import { activeStatuses, type Projection, type T3Reads } from "./reads";
+import {
+  activeStatuses,
+  isThreadNotFoundRpcError,
+  isTransientT3ReadRpcError,
+  T3TransientReadError,
+  type Projection,
+  type T3Reads,
+} from "./reads";
 import { identity, intentKindOf, intentThreadId, type T3IntentLedger } from "./intents";
 import { canonical, type T3State, type T3StateFile } from "./state";
 import { labelTask } from "./one-row";
@@ -261,6 +271,7 @@ export class T3Nesting {
       input.profile,
     );
     const existing = this.parentOf(taskId);
+    let existingSharedProjection: Projection | undefined;
     if (existing) {
       // A child with no workspace strategy inherits the parent's checkout, and one
       // with a strategy never starts outside T3's own MCP handler. A role whose run
@@ -272,25 +283,22 @@ export class T3Nesting {
           `the task's parent thread is bound to another checkout (${existing.workspaceId}, this run uses ${input.workspace.id}); move the task to another host or restart it on a new workspace`,
         );
       // Old markers did not distinguish archive from deletion. Re-read the exact
-      // binding before acting on either an old marker or a new observation.
-      let observation: Awaited<ReturnType<T3Nesting["parentGone"]>>;
-      try {
-        observation = await this.parentGone(existing);
-      } catch {
-        return this.unavailable(taskId, "the task's parent thread could not be observed; restore T3 inventory before restarting");
-      }
-      if (observation) {
-        if (observation === "archived" || observation === "deleted")
-          this.finishParent(taskId, observation);
+      // binding before acting on either an old marker or a new observation,
+      // sharing its narrow projection with the held-turn check below.
+      const observation = await this.classifyParent(existing, true);
+      if (observation.kind !== "live") {
+        if (observation.kind === "archived" || observation.kind === "deleted")
+          this.finishParent(taskId, observation.kind);
         return this.unavailable(
           taskId,
-          observation === "mismatched"
+          observation.kind === "mismatched"
             ? "the task's parent thread no longer matches its recorded project and checkout; inspect the binding before restarting"
-            : observation === "archived"
+            : observation.kind === "archived"
               ? "the task's parent thread is archived; use an owner restart after prior creation and delivery settle"
               : "the task's parent thread is deleted; inspect the retained binding and recovery before continuing",
         );
       }
+      if (existing) existingSharedProjection = observation.projection;
       // An exact live observation repairs even a legacy finished marker after a
       // manual unarchive. A sweep alone never unarchives the parent.
       if (existing.archivedAt) {
@@ -323,6 +331,7 @@ export class T3Nesting {
       parent,
       input.attempt.requestId,
       existing ? 0 : LAUNCH_RUN_TIMEOUT_MS,
+      existingSharedProjection,
     );
     if (!live)
       return this.unavailable(
@@ -427,12 +436,16 @@ export class T3Nesting {
         task.removedAt || ["done", "cancelled"].includes(task.phase) || task.resolution.mergedCommit)
       throw new ProvenPreSendRefusalError("T3Code parent restore requires the same nonterminal task and workspace");
     const observe = async () => {
-      const rows = (await this.core.reads.freshInventory()).threads.filter((row) => row.id === parent.threadId);
-      const row = rows[0];
-      if (!row || row.deletedAt) throw new ProvenPreSendRefusalError("the task's parent thread is deleted; inspect its recovery before restarting");
-      if (rows.some((candidate) => candidate.projectId !== parent.projectId || candidate.worktreePath !== parent.directory || candidate.providerInstanceId !== PARENT_PROVIDER || candidate.modelSelection.instanceId !== PARENT_PROVIDER || candidate.archivedAt !== row.archivedAt || candidate.deletedAt !== row.deletedAt))
-        throw new ProvenPreSendRefusalError("the task's parent thread no longer matches its recorded binding; inspect it before restarting");
-      return row;
+      const classified = await this.classifyParent(parent, true);
+      if (classified.kind === "deleted")
+        throw new ProvenPreSendRefusalError(
+          "the task's parent thread is deleted; inspect its recovery before restarting",
+        );
+      if (classified.kind === "mismatched")
+        throw new ProvenPreSendRefusalError(
+          "the task's parent thread no longer matches its recorded binding; inspect it before restarting",
+        );
+      return classified.row;
     };
     let row = await observe();
     if (row.archivedAt) {
@@ -457,7 +470,13 @@ export class T3Nesting {
         if (error instanceof ProvenPreSendRefusalError) throw error;
         // A live exact parent proves the desired state even if the reply was lost.
         // An unreadable or still-archived parent preserves the original failure.
-        row = await observe().catch(() => row);
+        try {
+          row = await observe();
+        } catch (observeError) {
+          if (observeError instanceof ProvenPreSendRefusalError)
+            throw observeError;
+          throw error;
+        }
         if (row.archivedAt) throw error;
       }
       row = await observe();
@@ -695,7 +714,7 @@ export class T3Nesting {
         at: new Date().toISOString(),
       };
     });
-    const known = await this.knownThread(threadId).catch(() => null);
+    const known = await this.knownThread(threadId);
     if (known) {
       if (known.deletedAt) return null;
       this.core.state.update((state) => {
@@ -769,18 +788,9 @@ export class T3Nesting {
   private async activeParentRun(
     threadId: string,
     waitMs = 0,
+    sharedProjection?: Projection,
   ): Promise<{ id: string; rootNodeId: string } | null> {
-    const deadline = Date.now() + waitMs;
-    for (;;) {
-      let projection: Projection;
-      try {
-        projection = await this.core.reads.readProjection(
-          threadId,
-          "observation",
-        );
-      } catch {
-        return null;
-      }
+    const pickActive = (projection: Projection) => {
       if (projection.thread.deletedAt) return null;
       const runs = projection.runs.filter(
         (run) =>
@@ -791,7 +801,32 @@ export class T3Nesting {
       const latest = runs
         .sort((a, b) => (a.ordinal ?? -1) - (b.ordinal ?? -1))
         .at(-1);
-      if (latest) return { id: latest.id, rootNodeId: latest.rootNodeId! };
+      return latest ? { id: latest.id, rootNodeId: latest.rootNodeId! } : null;
+    };
+    if (sharedProjection) {
+      const fromShared = pickActive(sharedProjection);
+      if (fromShared || sharedProjection.thread.deletedAt || waitMs <= 0)
+        return fromShared;
+    }
+    const deadline = Date.now() + waitMs;
+    for (;;) {
+      let projection: Projection;
+      try {
+        projection = await this.core.reads.readDirectProjection(
+          threadId,
+          "observation",
+          waitMs > 0,
+        );
+      } catch (error) {
+        if (isThreadNotFoundRpcError(error)) return null;
+        if (isTransientT3ReadRpcError(error))
+          throw new T3TransientReadError(error);
+        if (error instanceof HostReadRefusalError) throw error;
+        throw error;
+      }
+      if (projection.thread.deletedAt) return null;
+      const latest = pickActive(projection);
+      if (latest) return latest;
       if (Date.now() >= deadline) return null;
       await new Promise((resolve) => setTimeout(resolve, REENTRY_POLL_MS));
     }
@@ -807,8 +842,13 @@ export class T3Nesting {
     parent: ParentThread,
     requestId: string,
     waitMs = 0,
+    sharedProjection?: Projection,
   ): Promise<{ id: string; rootNodeId: string } | null> {
-    const active = await this.activeParentRun(parent.threadId, waitMs);
+    const active = await this.activeParentRun(
+      parent.threadId,
+      waitMs,
+      sharedProjection,
+    );
     if (active) return active;
     const commandId = identity(
       "hold",
@@ -969,11 +1009,20 @@ export class T3Nesting {
     commandId: string,
   ): Promise<boolean> {
     const threadId = childThreadId(commandId);
-    const known = await this.knownThread(threadId).catch(() => null);
+    const known = await this.knownThread(threadId);
     if (!known || known.deletedAt) return false;
-    const parentProjection = await this.core.reads
-      .readProjection(parent.threadId, "observation")
-      .catch(() => null);
+    let parentProjection: Projection;
+    try {
+      parentProjection = await this.core.reads.readDirectProjection(
+        parent.threadId,
+        "observation",
+      );
+    } catch (error) {
+      if (isThreadNotFoundRpcError(error)) return false;
+      if (isTransientT3ReadRpcError(error))
+        throw new T3TransientReadError(error);
+      throw error;
+    }
     if (
       !parentProjection?.subagents?.some(
         (child) =>
@@ -986,16 +1035,94 @@ export class T3Nesting {
   }
 
   private async knownThread(threadId: string) {
-    const inShell = await this.core.reads.shellRow(threadId);
-    if (inShell) return inShell;
-    const { threads } = await this.core.reads.inventory();
-    return threads.find((thread) => thread.id === threadId) ?? null;
+    const record = await this.core.reads.readThreadRecord(threadId);
+    return record?.row ?? null;
   }
 
   private forgetParent(taskId: string): void {
     this.core.state.update((state) => {
       if (state.parents?.[taskId]) delete state.parents[taskId];
     });
+  }
+
+  /**
+   * Observe one already-bound parent thread via its narrow projection first,
+   * falling back to complete paired inventory only on `ThreadNotFoundError`.
+   * Transient incomplete reads propagate without collapsing into absence.
+   */
+  private async classifyParent(
+    parent: ParentThread,
+    fresh = false,
+  ): Promise<
+    | { kind: "live"; row: Projection["thread"]; projection: Projection }
+    | {
+        kind: "archived";
+        row: Projection["thread"];
+        projection: Projection | null;
+      }
+    | { kind: "deleted" }
+    | { kind: "mismatched" }
+  > {
+    const matchesParent = (candidate: {
+      projectId: string;
+      worktreePath: string | null;
+      providerInstanceId: string;
+      modelSelection: { instanceId: string };
+    }) =>
+      candidate.projectId === parent.projectId &&
+      candidate.worktreePath === parent.directory &&
+      candidate.providerInstanceId === PARENT_PROVIDER &&
+      candidate.modelSelection.instanceId === PARENT_PROVIDER;
+    try {
+      const projection = await this.core.reads.readDirectProjection(
+        parent.threadId,
+        "observation",
+        fresh,
+      );
+      const thread = projection.thread;
+      if (thread.deletedAt) return { kind: "deleted" };
+      if (!matchesParent(thread)) return { kind: "mismatched" };
+      if (thread.archivedAt)
+        return { kind: "archived", row: thread, projection };
+      return { kind: "live", row: thread, projection };
+    } catch (error) {
+      if (isTransientT3ReadRpcError(error))
+        throw new T3TransientReadError(error);
+      if (!isThreadNotFoundRpcError(error)) throw error;
+    }
+    const matches = (
+      fresh
+        ? await this.core.reads.freshInventory()
+        : await this.core.reads.inventory()
+    ).threads.filter((candidate) => candidate.id === parent.threadId);
+    const thread = matches[0];
+    if (
+      matches.some(
+        (candidate) =>
+          candidate.archivedAt !== thread?.archivedAt ||
+          candidate.deletedAt !== thread?.deletedAt,
+      )
+    )
+      throw Error("T3Code parent inventory has conflicting observations");
+    if (!thread || thread.deletedAt) return { kind: "deleted" };
+    if (matches.some((candidate) => !matchesParent(candidate)))
+      return { kind: "mismatched" };
+    if (thread.archivedAt)
+      return { kind: "archived", row: thread, projection: null };
+    try {
+      return {
+        kind: "live",
+        row: thread,
+        projection: await this.core.reads.readDirectProjection(
+          parent.threadId,
+          "observation",
+        ),
+      };
+    } catch (error) {
+      if (isTransientT3ReadRpcError(error))
+        throw new T3TransientReadError(error);
+      throw error;
+    }
   }
 
   /**
@@ -1006,21 +1133,8 @@ export class T3Nesting {
   private async parentGone(
     parent: ParentThread,
   ): Promise<"archived" | "deleted" | "mismatched" | null> {
-    // A held sweep snapshot can predate a manual archive or an uncertain
-    // unarchive. Creation must use a fresh, complete paired inventory.
-    const matches = (await this.core.reads.freshInventory()).threads.filter(
-      (candidate) => candidate.id === parent.threadId,
-    );
-    const thread = matches[0];
-    if (matches.some((candidate) => candidate.archivedAt !== thread?.archivedAt || candidate.deletedAt !== thread?.deletedAt))
-      throw Error("T3Code parent inventory has conflicting observations");
-    // Absence and a `deletedAt` tombstone are the same fact: the inventory either
-    // omits a removed thread or keeps its tombstone (nucleus#1305 review).
-    if (!thread || thread.deletedAt) return "deleted";
-    if (matches.some((candidate) => candidate.projectId !== parent.projectId || candidate.worktreePath !== parent.directory ||
-        candidate.providerInstanceId !== PARENT_PROVIDER || candidate.modelSelection.instanceId !== PARENT_PROVIDER))
-      return "mismatched";
-    return thread.archivedAt ? "archived" : null;
+    const classified = await this.classifyParent(parent, true);
+    return classified.kind === "live" ? null : classified.kind;
   }
 
   /**

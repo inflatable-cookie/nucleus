@@ -75,6 +75,7 @@ export const SAFE_REMOTE_TAGS: readonly string[] = [
   "OrchestrationV2GetShellSnapshotError",
   "OrchestrationV2ThreadLaunchError",
   "ProjectMutationError",
+  "ThreadNotFoundError",
 ];
 
 /**

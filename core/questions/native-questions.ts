@@ -11,7 +11,10 @@ import { retainedProgressRun } from "../dispatch/retained-work";
 import { digest } from "../store/store";
 import { qualifyLegacyAgentId } from "../../shared/agent-identity";
 import type { AnsweredQuestionRead } from "../../shared/host";
-import { ProvenPreSendRefusalError } from "../host/errors";
+import {
+  HostReadRefusalError,
+  ProvenPreSendRefusalError,
+} from "../host/errors";
 import { operatorQuestionRecords } from "./question-events";
 import { HOST_KIND_LABELS, hostKindOf } from "../../shared/host-kind";
 
@@ -673,12 +676,21 @@ export class NativeQuestions {
       )
     )
       throw new DelegatedHostUnavailable("Native question host is offline");
-    // A permission that has left the thread was answered there: that answer wins. A failed read proves nothing.
-    const stillPending =
-      (await this.adapter.pendingQuestions?.(agentId).then(
-        (pending) => pending.some((item) => item.requestId === requestId),
-        () => true,
-      )) ?? true;
+    // A permission that has left the thread was answered there: that answer wins.
+    // A proved incomplete host read preserves the recorded answer without sending
+    // or declaring an unknown outcome; any other read failure defaults safe.
+    let stillPending = true;
+    if (this.adapter.pendingQuestions) {
+      try {
+        stillPending = (await this.adapter.pendingQuestions(agentId)).some(
+          (item) => item.requestId === requestId,
+        );
+      } catch (error) {
+        if (error instanceof HostReadRefusalError)
+          throw new DelegatedHostUnavailable(error.message);
+        stillPending = true;
+      }
+    }
     if (!stillPending) {
       this.store.event(
         taskId,
@@ -714,8 +726,13 @@ export class NativeQuestions {
         answers,
       );
     } catch (error) {
-      // Only a proven pre-send refusal is recoverable: nothing was written, so the
-      // recorded answer is delivered again. Any other error stays an unknown delivery.
+      // Only a proven pre-send refusal or transient incomplete read is
+      // recoverable: nothing was written, so the recorded answer stays preserved
+      // without marking the intent `unknown`.
+      if (error instanceof HostReadRefusalError) {
+        this.recordRefusedAnswer(taskId, id, agentId, requestId, error.message);
+        throw new DelegatedHostUnavailable(error.message);
+      }
       if (!(error instanceof ProvenPreSendRefusalError)) throw error;
       this.recordRefusedAnswer(taskId, id, agentId, requestId, error.message);
       return;

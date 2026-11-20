@@ -20,6 +20,7 @@ import type { TaskAttention } from "../../shared/task-attention";
 import { WIRE_LABEL_KEYS } from "../../shared/wire-labels";
 import {
   ArchiveNotDeliveredError,
+  HostReadRefusalError,
   HostSnapshotPendingError,
   ProvenPreSendRefusalError,
 } from "../../core/host";
@@ -505,8 +506,13 @@ export class T3CodeHost implements Host {
     if (!tracked.length && !retiredIds.length) return;
     const retire: string[] = [],
       restore: string[] = [];
-    for (const id of tracked)
-      if (!(await this.reads.isObserved(id))) retire.push(id);
+    for (const id of tracked) {
+      try {
+        if (!(await this.reads.isObserved(id))) retire.push(id);
+      } catch (error) {
+        if (!(error instanceof HostReadRefusalError)) throw error;
+      }
+    }
     for (const id of retiredIds) {
       if (state.retiredAgents?.[id]?.deletedAt) continue;
       if (await this.reads.isActiveInShell(id)) restore.push(id);
@@ -571,9 +577,8 @@ export class T3CodeHost implements Host {
   }
   async originAgent(id: string) {
     this.requireConnection();
-    const found =
-      (await this.reads.shellRow(id)) ??
-      (await this.reads.inventory()).threads.find((t) => t.id === id);
+    const record = await this.reads.readThreadRecord(id);
+    const found = record?.row;
     if (!found) {
       this.presentation.retireDeletedPresentationIntents(id);
       return null;
@@ -599,7 +604,8 @@ export class T3CodeHost implements Host {
         deleted: !!found.deletedAt,
       };
     }
-    const p = await this.reads.readProjection(id, "observation");
+    const p =
+      record?.projection ?? (await this.reads.readProjection(id, "observation"));
     if (p.thread.deletedAt)
       this.presentation.retireDeletedPresentationIntents(id);
     return {

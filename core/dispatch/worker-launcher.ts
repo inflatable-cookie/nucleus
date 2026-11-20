@@ -21,6 +21,7 @@ import {
   PROFILE_CATALOG_PENDING_REASON,
   ProvenPreSendRefusalError,
 } from "../recovery/task-reasons";
+import { HostReadRefusalError } from "../host";
 import { startsNoRuns } from "../closeout/queue-drain";
 import { agentSettled } from "../machine/agent-settled";
 import { dirname } from "node:path";
@@ -337,6 +338,7 @@ export class WorkerLauncher {
         throw new Error(
           "Worker returned in the wrong workspace; inspect before proceeding",
         );
+      this.engine.clearHostReadTransient(task.id, "task");
     } catch (error) {
       // The adapter proves the checkout volume before issuing its native create. Its typed
       // refusal is therefore a definite pre-send failure, not an unknown agent.
@@ -399,6 +401,38 @@ export class WorkerLauncher {
           );
           return;
         }
+      }
+      // A proved pre-send transient read failure never crossed the send boundary:
+      // release the unsent creation reservation cleanly before propagating so
+      // `launchAgent` places the task in bounded `external_unavailable` wait.
+      if (error instanceof HostReadRefusalError) {
+        const current = this.store.task(task.id);
+        if (
+          current.agentIntent &&
+          !current.agentId &&
+          current.runId === runId
+        ) {
+          this.store.transaction(() => {
+            this.store.deleteCredential(runId);
+            this.store.update(
+              task.id,
+              {
+                agentIntent: false,
+                restartRunId: runId,
+                runId: null,
+                briefRuns: current.briefRuns.filter(
+                  (item) => item.runId !== runId,
+                ),
+                laneDocumentRuns: (current.laneDocumentRuns ?? []).filter(
+                  (item) => item.runId !== runId,
+                ),
+              },
+              "agent_create_transient_read_wait",
+              error.message,
+            );
+          });
+        }
+        throw error;
       }
       // A proven pre-send refusal is not an absent creation: nothing was sent,
       // so there is nothing for exact-lookup reconciliation to find and a

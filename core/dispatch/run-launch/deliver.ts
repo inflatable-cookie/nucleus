@@ -19,7 +19,7 @@ import { ABSENT_RESOLUTION_REASON, HostSnapshotPendingError, ProvenPreSendRefusa
 import { isDispositionActive, type Profile, type Run, type Task } from '../../../shared/contracts';
 import { isTransportFailure } from '../../../shared/transport';
 import { HostTransportFault } from '../../host/adapter-routing';
-import { isHostOperationTimeout } from '../../host/errors';
+import { HostReadRefusalError, isHostOperationTimeout } from '../../host/errors';
 import { threadRunningReason } from '../../intake/thread-waits';
 import { declaredLaneDocumentKeys } from '../../planning/brief-lane-documents';
 import { dirname } from 'node:path';
@@ -246,6 +246,7 @@ export class RunLaunchDeliver {
         }
       }
       this.store.putRun({ ...this.store.run(run.id)!, agentId, status: 'running' });
+      this.resolution.clearHostReadTransient?.(t.id, "task");
       this.resolution.waiting(this.store.task(t.id), threadRunningReason(role), 'lifecycle');
     } catch (error) {
       if (error instanceof BlockingRecoveryEffectsError) {
@@ -276,6 +277,23 @@ export class RunLaunchDeliver {
         });
         this.resolution.waiting(this.store.task(t.id), `Waiting for T3Code to settle the host catalogue: ${error.detail}`, 'lifecycle');
         return;
+      }
+      // A proved pre-send transient read failure (e.g. T3 inventory churn on
+      // ordinary review admission's custody check) never crossed the send boundary:
+      // release the unsent run without counting a launch or raising immediate
+      // attention so the caller records the bounded retryable wait.
+      if (error instanceof HostReadRefusalError && (!dispatchInvoked || !agentId)) {
+        this.store.transaction(() => {
+          const latestRun = this.store.run(run.id);
+          if (latestRun && !latestRun.released)
+            this.store.putRun({ ...latestRun, status: 'superseded', released: true, active: false });
+          if (!agentId) this.store.deleteCredential(run.id);
+          const latest = this.store.task(t.id);
+          if (latest.resolution.currentRunId === run.id)
+            this.resolution.update(latest, { currentRunId: null },
+              { phase: role === 'reviewer' ? 'reviewing' : latest.phase }, 'launch_transient_read_wait', error.message);
+        });
+        throw error;
       }
       // A provider size rejection proves the prompt was refused before send:
       // nothing was bound or delivered, so the run settles as refused with a

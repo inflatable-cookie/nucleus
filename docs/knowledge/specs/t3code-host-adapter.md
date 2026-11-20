@@ -784,16 +784,58 @@ live or retired threads, and live nesting checks — answer from `subscribeShell
 pairing against `getArchivedShellSnapshot`. Pass-scoped `shell`, `archivedShell`
 and `inventory` promises share reads within one audit pass and clear on close.
 
-Operations that require complete live-plus-archived proof or absence —
-`threadArchiveState`, `workspaceThreads` (when including archived),
-`archiveThreadPage({ includeArchived: true })`, and `findAgents`, `originAgent`,
-`observeThreadList`, `knownThread` or `parentGone` when a target is absent from
-the live shell — pair `subscribeShell` with `getArchivedShellSnapshot` at an
-equal `snapshotSequence` (retrying up to 5 times). If events keep advancing the
-global cursor across that pair, the adapter throws `T3InventoryChurnError`
-(`HostReadRefusalError`): a bounded, visible operation refusal that keeps T3
-online and model-eligible, records no `host_transport_fault` or outage, and
-never infers absence from partial data (`test/t3code-inventory-churn.test.ts`).
+For already-bound targets (`observe`, `originAgent`, `isObserved`, `activeRunId`,
+`activeRunIds`, `runtimeRequest`, `knownThread`, `parentGone`, and
+`restoreForRestart`), reads prefer `subscribeThread` (`readDirectProjection`)
+once the target is absent from live shell so a positively live, archived,
+`deletedAt`, or mismatched exact binding is proved without pairing
+`getArchivedShellSnapshot`, and selection shares that projection with the
+pre-send check within a pass. Only `ThreadNotFoundError` (plus operations
+that genuinely require full coverage: `threadArchiveState`, `workspaceThreads`,
+`archiveThreadPage`, `findAgents`, `anyChildLive`, and `observeThreadList`
+after `ThreadNotFoundError`) pairs `subscribeShell` with
+`getArchivedShellSnapshot` at an equal `snapshotSequence` (retrying up to 5
+times). If events keep advancing the global cursor across that pair, or if
+`subscribeThread` returns a transient incomplete projection read
+(`OrchestrationV2GetThreadProjectionError` before delivery), the adapter throws a
+`HostReadRefusalError` (`T3InventoryChurnError` / `T3TransientReadError`)
+rather than catching and erasing the reason or inferring deletion/absence. This
+keeps T3 online and model-eligible, records no `host_transport_fault`, and
+never marks an un-sent intent refused or unknown (`intents.ts` releases the
+provisional intent reservation before delivery on `HostReadRefusalError` or
+`HostSnapshotPendingError`).
+
+When a proved pre-send transient (`HostReadRefusalError`) hits worker launch,
+ordinary reviewer admission and owned-tool custody checks (`#1448`), recovery
+coordinator admission, durable owner controls/restarts, or `question.answer`:
+
+- **Lifecycle and review/recovery admission:** any un-sent run reservation or
+  creation intent (`agentIntent`, unsent `runId`, credential, or coordinator
+  `recoveryAttempts`) is released without consuming launches or raising
+  immediate `needs_attention`, retaining the task in a bounded, visible
+  `external_unavailable` wait and retrying automatically on fresh evidence
+  until settled or exhausted after sustained failures (`hostReadTransient:*`
+  episode -> one actionable escalation). Positively live or genuinely unknown
+  tool custody (gaps, stale cursors, missing timelines, live workspace/run
+  processes) still blocks review admission.
+- **Durable owner controls and #1431 parent restore:** `task_control`
+  operations failing before their send boundary retain their authorized intent
+  without consuming attempts and retry automatically on recovery; after a
+  lost or unobservable restore boundary, `holdParentRestore` / `observeRestartRestore`
+  keep the operation pending while manual archive/restore policy stays intact.
+- **`question.answer` (`EscalationSettlement` / `Delegation`):** when the
+  pre-send check cannot read (e.g., observing the worker for an active turn,
+  checking/delivering a live reviewer direction, or checking an owner control's
+  custody before send), the already-recorded `delegated_answer` receipt is
+  honored without recording `delegated_command_refused` or losing the answer.
+  The call returns `{ ...receipt, status: "pending" }`, places the task in a
+  bounded `external_unavailable` wait, and retries applying that same recorded
+  answer once host reads recover (escalating once on sustained exhaustion),
+  while still refusing conflicting overrides, unknown sends, distinct identity
+  failures, and manual archive/restore policy. Native question forwarding
+  (`NativeQuestions`) likewise preserves recorded answers without recording
+  `native_question_unknown`, and manual `host.question-answer` records
+  `native_manual_answer_refused` on pre-send transient/refusal failures.
 `archivedThreads` reads `getArchivedShellSnapshot` once to enumerate candidates;
 retention still takes an exact `threadArchiveState` read immediately before
 deletion. Do not enable omission of older settled threads or idle children.
@@ -1342,12 +1384,14 @@ work — and its parent is archived.
 An explicit owner restart can restore the same archived parent after its existing
 creation, workspace and custody admission proves settled. The parent must still
 match the task's recorded workspace, project and Nucleus ACP provider. The T3
-`thread.unarchive` effect has the restart operation's durable identity; a fresh
-paired inventory must prove the same parent live before normal admission proceeds.
-After a lost reply, the operation observes only that occurrence. An archived or
-unobservable result waits without another send or child; a deleted or mismatched
-parent remains fenced with its cause. A routine sweep never restores a manually
-archived parent, and terminal archival is unchanged.
+`thread.unarchive` effect has the restart operation's durable identity; the
+narrow parent observation (falling back to paired inventory only on
+`ThreadNotFoundError`) must prove the same parent live before normal admission
+proceeds, and a transient incomplete read keeps the authorized restart pending
+without losing it. After a lost reply, the operation observes only that occurrence.
+An archived or unobservable result waits without another send or child; a deleted
+or mismatched parent remains fenced with its cause. A routine sweep never
+restores a manually archived parent, and terminal archival is unchanged.
 
 **A deleted child does not hold the turn.** The release decision reads one complete
 inventory: a child absent from it, or listed there as a `deletedAt` tombstone, is

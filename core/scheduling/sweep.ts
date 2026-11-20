@@ -92,6 +92,7 @@ export type SweepContext = Pick<
   readonly resolution: Pick<
     Resolution,
     | "checkpoints"
+    | "delegation"
     | "delegateNativeQuestions"
     | "deliverDrainNotices"
     | "deliverHoldNotices"
@@ -536,6 +537,9 @@ export class Sweep {
       // Round 4: owner verbs recorded while paused or held apply once that clears.
       await this.fleetStep("applyDeferredOwnerVerbs", () =>
         this.engine.applyDeferredOwnerVerbs(),
+      );
+      await this.fleetStep("recoverPendingEscalationAnswers", () =>
+        this.engine.resolution.delegation.recoverPendingEscalationAnswers(),
       );
       // Task 1218: an amendment recorded while its host was unreachable is delivered
       // by the next pass; an attempted send with an unknown outcome never is.

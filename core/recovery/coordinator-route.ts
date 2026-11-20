@@ -43,6 +43,7 @@ import {
   ProvenPreSendRefusalError,
   creationFailureSummary,
 } from "./task-reasons";
+import { HostReadRefusalError } from "../host";
 import { refusedLaunchProfiles } from "./refused-launch";
 import { unreleasedExecutorRun } from "../qa/proof-admission";
 import {
@@ -279,6 +280,8 @@ export class CoordinatorRoute {
             null)
           : null;
         waiting = Boolean(row && groupIsUnavailable(row));
+      } else if (stop.reason === "external_unavailable") {
+        waiting = !this.resolution.hostAvailable(t);
       } else if (stop.reason === "route_unavailable") {
         // A coordinator can route the waiting role elsewhere (Tom, 2026-10-19), so
         // the wait holds only while no coordinator is routable either.
@@ -952,6 +955,7 @@ export class CoordinatorRoute {
       }
       this.store.putRun({ ...run, agentId, status: "running" });
       this.episode.save(t, { agentId });
+      this.resolution.clearHostReadTransient?.(t.id, "task");
       return null;
     } catch (error) {
       // A host that has not settled its model options has not refused this
@@ -971,6 +975,49 @@ export class CoordinatorRoute {
           "lifecycle",
         );
         return null;
+      }
+      // A proved pre-send transient host read failure never crossed the send
+      // boundary: release any unsent creation without consuming recovery attempts
+      // and retain the episode in a bounded `external_unavailable` wait.
+      if (
+        error instanceof HostReadRefusalError &&
+        (!attempted || !attempted.agentId)
+      ) {
+        if (attempted) {
+          this.episode.releaseRefusedCreation(
+            this.store.task(t.id),
+            attempted,
+            error.message,
+          );
+          const afterRelease = this.store.task(t.id);
+          this.resolution.update(afterRelease, {
+            recoveryActive: false,
+            recoveryAttempts: Math.max(
+              0,
+              afterRelease.resolution.recoveryAttempts - 1,
+            ),
+          });
+        }
+        const route = this.resolution.hostReadTransientFailure?.(
+          this.store.task(t.id),
+          error,
+          "Coordinator admission",
+        );
+        if (route !== "exhausted") {
+          const currentTask = this.store.task(t.id);
+          this.episode.wait(
+            currentTask,
+            currentTask.resolution.stop?.detail ?? error.message,
+            "external_unavailable",
+          );
+          return null;
+        }
+        return this.episode.escalate(
+          this.store.task(t.id),
+          creationFailureSummary(
+            this.store.task(t.id).reason || error.message,
+          ),
+        );
       }
       // A proven pre-send refusal never crossed the send boundary: settle that
       // occurrence now (run, credential and the episode's agent binding) rather

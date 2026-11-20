@@ -2,11 +2,12 @@ import { z } from "zod";
 import type { Task } from "../../shared/contracts";
 import type { HostThread, HostTimelinePage } from "../../shared/host";
 import {
+  hostFailureRefusalDetail,
   HostReadRefusalError,
   ProvenPreSendRefusalError,
   type ArchivedThread,
 } from "../../core/host";
-import type { T3RpcClient } from "./rpc";
+import { T3RpcError, type T3RpcClient } from "./rpc";
 import { agentRecord, canonical, type T3StateFile } from "./state";
 import { labelTask } from "./one-row";
 import {
@@ -80,6 +81,28 @@ export class T3InventoryChurnError extends HostReadRefusalError {
     );
     this.name = "T3InventoryChurnError";
   }
+}
+/** Transient T3 read/projection failure before a complete binding can be proved. */
+export class T3TransientReadError extends HostReadRefusalError {
+  constructor(causeError: unknown) {
+    super(hostFailureRefusalDetail(causeError));
+    this.name = "T3TransientReadError";
+    (this as Error & { cause?: unknown }).cause = causeError;
+  }
+}
+export function isThreadNotFoundRpcError(error: unknown): boolean {
+  return (
+    error instanceof T3RpcError &&
+    error.code === "remote" &&
+    error.remoteTag === "ThreadNotFoundError"
+  );
+}
+export function isTransientT3ReadRpcError(error: unknown): boolean {
+  return (
+    error instanceof T3RpcError &&
+    error.code === "remote" &&
+    error.remoteTag === "OrchestrationV2GetThreadProjectionError"
+  );
 }
 /** One thread observation as this host reports it: a snapshot's answer, or the thread list's. */
 export interface T3ThreadObservation {
@@ -265,12 +288,13 @@ export class T3Reads {
   private archivedHeld: Promise<z.infer<typeof archivedShellSnapshot>> | null =
     null;
   private inventoryHeld: Promise<T3Inventory> | null = null;
+  private readonly projectionHeld = new Map<string, Promise<Projection>>();
   private passing = false;
   constructor(private readonly core: T3ReadContext) {}
 
   /**
    * The pass opens: these are the tasks the host still works on, and every read in
-   * this pass shares one thread list and one snapshot per thread. A thread whose
+   * this pass shares one thread list, one narrow projection cache, and one snapshot per thread. A thread whose
    * task is over, or that T3 reports archived or removed, leaves observation here.
    */
   beginPass(tasks: readonly Task[]) {
@@ -279,6 +303,7 @@ export class T3Reads {
     this.shellHeld = null;
     this.archivedHeld = null;
     this.inventoryHeld = null;
+    this.projectionHeld.clear();
     this.noteTaskFacts(tasks);
   }
   /** The pass closes: the next one reads the thread list afresh and may still reuse unchanged snapshots. */
@@ -287,6 +312,7 @@ export class T3Reads {
     this.shellHeld = null;
     this.archivedHeld = null;
     this.inventoryHeld = null;
+    this.projectionHeld.clear();
   }
   /** The task facts alone, for a caller that states them outside a pass. */
   noteTaskFacts(tasks: readonly Task[]) {
@@ -307,6 +333,7 @@ export class T3Reads {
     this.shellHeld = null;
     this.archivedHeld = null;
     this.inventoryHeld = null;
+    this.projectionHeld.clear();
   }
 
   /** The Nucleus task a tracked thread was launched for, from its own launch labels. */
@@ -334,9 +361,23 @@ export class T3Reads {
     try {
       const shell = await this.shellRow(threadId);
       if (shell) return !shell.archivedAt && !shell.deletedAt;
-      const archived = await this.archivedShellRow(threadId);
-      return !archived || (!archived.archivedAt && !archived.deletedAt);
-    } catch {
+      try {
+        const projection = await this.readDirectProjection(
+          threadId,
+          "observation",
+        );
+        return !projection.thread.archivedAt && !projection.thread.deletedAt;
+      } catch (error) {
+        if (isTransientT3ReadRpcError(error))
+          throw new T3TransientReadError(error);
+        if (isThreadNotFoundRpcError(error)) {
+          const archived = await this.archivedShellRow(threadId);
+          return !archived || (!archived.archivedAt && !archived.deletedAt);
+        }
+        return true;
+      }
+    } catch (error) {
+      if (error instanceof HostReadRefusalError) throw error;
       return true;
     }
   }
@@ -386,10 +427,58 @@ export class T3Reads {
    */
   private async threadRow(threadId: string): Promise<ShellRow | undefined> {
     if (!this.passing) return undefined;
+    return await this.shellRow(threadId);
+  }
+  /** Narrow single-thread projection without `shell` or `archivedShell` gating. */
+  async readDirectProjection(
+    threadId: string,
+    kind: ThreadReadKind = "observation",
+    fresh = false,
+  ): Promise<Projection> {
+    if (fresh) this.projectionHeld.delete(threadId);
+    if (!fresh && kind === "observation" && this.passing) {
+      let pending = this.projectionHeld.get(threadId);
+      if (!pending) {
+        pending = this.readFreshSnapshot(threadId, kind).then(
+          (read) => read.projection,
+        );
+        this.projectionHeld.set(threadId, pending);
+      }
+      try {
+        return await pending;
+      } catch (error) {
+        if (this.projectionHeld.get(threadId) === pending)
+          this.projectionHeld.delete(threadId);
+        throw error;
+      }
+    }
+    return (await this.readFreshSnapshot(threadId, kind)).projection;
+  }
+  /** Read an already-bound thread via narrow projection first, falling back to broad inventory only on ThreadNotFoundError. */
+  async readThreadRecord(
+    id: string,
+    fresh = false,
+  ): Promise<{ row: ShellRow | Projection["thread"]; projection: Projection | null } | null> {
+    if (!fresh) {
+      const shell = await this.threadRow(id);
+      if (shell) return { row: shell, projection: null };
+    }
     try {
-      return await this.shellRow(threadId);
-    } catch {
-      return undefined;
+      const projection = await this.readDirectProjection(
+        id,
+        "observation",
+        fresh,
+      );
+      return { row: projection.thread, projection };
+    } catch (error) {
+      if (isTransientT3ReadRpcError(error))
+        throw new T3TransientReadError(error);
+      if (!isThreadNotFoundRpcError(error)) throw error;
+      const inventory = fresh
+        ? await this.freshInventory()
+        : await this.inventory();
+      const row = inventory.threads.find((thread) => thread.id === id);
+      return row ? { row, projection: null } : null;
     }
   }
   /** The pass's thread list, read once; an out-of-pass read always asks T3 afresh. */
@@ -788,19 +877,77 @@ export class T3Reads {
 
   async observe(id: string): Promise<T3ThreadObservation> {
     this.core.requireConnection();
-    if (!(await this.isObserved(id))) return await this.observeThreadList(id);
-    const detail = await this.readProjection(id, "observation"),
-      { thread } = detail;
+    const observed = this.observes(id);
+    const native = await this.threadRow(id);
+    if (native && (!observed || native.archivedAt || native.deletedAt)) {
+      const record = agentRecord(this.core.state.read(), id);
+      const active = !!native.activeRunId || activeStatuses.has(native.status);
+      return {
+        id,
+        workspaceId: this.workspaceFor(native) ?? record?.workspaceId ?? null,
+        archived: !!native.archivedAt,
+        status: shellThreadStatus(native),
+        active,
+        permissions: !!native.pendingRuntimeRequest,
+        error: native.lastError ?? "",
+        model: native.modelSelection.model,
+        provider: native.modelSelection.instanceId,
+        modeId: native.runtimeMode ?? null,
+        updatedAt: native.updatedAt,
+        activeTurnId: native.activeRunId,
+        turnStartedAt: null,
+        lastUserMessageAt: native.latestUserMessageAt,
+        labels: record?.labels ?? {},
+        pendingPermissionKinds: native.pendingRuntimeRequest
+          ? [
+              native.pendingRuntimeRequest.kind === "user_input"
+                ? "question"
+                : native.pendingRuntimeRequest.kind,
+            ]
+          : [],
+        ...(native.pendingRuntimeRequest
+          ? {
+              pendingRequest: {
+                id: native.pendingRuntimeRequest.id,
+                kind:
+                  native.pendingRuntimeRequest.kind === "user_input"
+                    ? "question"
+                    : native.pendingRuntimeRequest.kind,
+                firstLine: null,
+              },
+            }
+          : {}),
+      };
+    }
+    let detail: Projection;
+    try {
+      detail =
+        native && observed
+          ? await this.readProjection(id, "observation")
+          : await this.readDirectProjection(id, "observation");
+    } catch (error) {
+      if (isThreadNotFoundRpcError(error))
+        return await this.observeThreadList(id);
+      if (isTransientT3ReadRpcError(error))
+        throw new T3TransientReadError(error);
+      throw error;
+    }
+    const { thread } = detail;
+    const shellNative =
+      native ??
+      (thread.archivedAt || thread.deletedAt
+        ? undefined
+        : await this.shellRow(id));
+    const record = agentRecord(this.core.state.read(), id);
     const active = detail.runs.find((r) => activeStatuses.has(r.status));
     const pending = detail.runtimeRequests.filter(
       (r) => r.status === "pending",
     );
-    const native = await this.shellRow(id);
     // An archived thread is retired: it reports the terminal closed state, with
     // the archived fact on its own field for retained-read consumers.
     return {
       id,
-      workspaceId: this.workspaceFor(thread),
+      workspaceId: this.workspaceFor(thread) ?? record?.workspaceId ?? null,
       archived: !!thread.archivedAt,
       status: thread.deletedAt
         ? "gone"
@@ -808,27 +955,38 @@ export class T3Reads {
           ? "closed"
           : active
             ? active.status
-            : native && activeStatuses.has(native.status)
-              ? native.status
+            : shellNative && activeStatuses.has(shellNative.status)
+              ? shellNative.status
               : "idle",
-      active:
-        !!active ||
-        !!native?.activeRunId ||
-        (!!native && activeStatuses.has(native.status)),
-      permissions: pending.length > 0 || !!native?.pendingRuntimeRequest,
-      error: native?.lastError ?? "",
+      active: thread.archivedAt || thread.deletedAt
+        ? false
+        : !!active ||
+          !!shellNative?.activeRunId ||
+          (!!shellNative && activeStatuses.has(shellNative.status)),
+      permissions:
+        thread.archivedAt || thread.deletedAt
+          ? false
+          : pending.length > 0 || !!shellNative?.pendingRuntimeRequest,
+      error: shellNative?.lastError ?? "",
       model: thread.modelSelection.model,
       provider: thread.modelSelection.instanceId,
       modeId: thread.runtimeMode ?? null,
       updatedAt: detail.updatedAt,
-      activeTurnId: active?.id ?? native?.activeRunId ?? null,
-      turnStartedAt: active?.startedAt ?? null,
-      lastUserMessageAt: native?.latestUserMessageAt ?? null,
-      labels: agentRecord(this.core.state.read(), id)?.labels ?? {},
-      pendingPermissionKinds: pending.map((r) =>
-        r.kind === "user_input" ? "question" : r.kind,
-      ),
-      ...(pending[0]
+      activeTurnId:
+        thread.archivedAt || thread.deletedAt
+          ? null
+          : active?.id ?? shellNative?.activeRunId ?? null,
+      turnStartedAt:
+        thread.archivedAt || thread.deletedAt ? null : active?.startedAt ?? null,
+      lastUserMessageAt: shellNative?.latestUserMessageAt ?? null,
+      labels: record?.labels ?? {},
+      pendingPermissionKinds:
+        thread.archivedAt || thread.deletedAt
+          ? []
+          : pending.map((r) =>
+              r.kind === "user_input" ? "question" : r.kind,
+            ),
+      ...(!(thread.archivedAt || thread.deletedAt) && pending[0]
         ? {
             pendingRequest: {
               id: pending[0].id,
@@ -921,7 +1079,14 @@ export class T3Reads {
     id: string,
     _limit = 100,
   ): Promise<HostTimelinePage | null> {
-    const read = await this.readThreadSnapshot(id, "window");
+    let read: ThreadSnapshotRead;
+    try {
+      read = await this.readThreadSnapshot(id, "window");
+    } catch (error) {
+      if (isTransientT3ReadRpcError(error))
+        throw new T3TransientReadError(error);
+      throw error;
+    }
     const rows = read.projection.visibleTurnItems;
     if (!rows)
       throw new T3CompatibilityError("subscribeThread.visibleTurnItems");
@@ -965,15 +1130,37 @@ export class T3Reads {
   }
 
   async activeRunId(id: string): Promise<string | null> {
-    if (!(await this.isObserved(id))) {
-      // The thread list is the only answer an unobserved thread has, and a list that
-      // cannot be read is not "no active run": a steer and a stop must both see the
-      // difference (nucleus#1328 review).
+    const native = await this.threadRow(id);
+    if (native && (native.archivedAt || native.deletedAt))
+      return native.activeRunId ?? null;
+    if (!this.observes(id)) {
+      try {
+        const projection = await this.readDirectProjection(id, "observation");
+        return (
+          projection.runs.find((r) => activeStatuses.has(r.status))?.id ??
+          native?.activeRunId ??
+          null
+        );
+      } catch (error) {
+        if (isTransientT3ReadRpcError(error))
+          throw new T3TransientReadError(error);
+        if (!isThreadNotFoundRpcError(error)) throw error;
+        const row = await this.readListRow(id);
+        return row?.activeRunId ?? null;
+      }
+    }
+    let projection: Projection;
+    try {
+      projection = native
+        ? await this.readProjection(id, "observation")
+        : await this.readDirectProjection(id, "observation");
+    } catch (error) {
+      if (isTransientT3ReadRpcError(error))
+        throw new T3TransientReadError(error);
+      if (!isThreadNotFoundRpcError(error)) throw error;
       const row = await this.readListRow(id);
       return row?.activeRunId ?? null;
     }
-    const projection = await this.readProjection(id, "observation");
-    const native = await this.shellRow(id);
     return (
       projection.runs.find((r) => activeStatuses.has(r.status))?.id ??
       native?.activeRunId ??
@@ -983,6 +1170,7 @@ export class T3Reads {
   /** Drop the snapshot held for one thread, because a command is about to change it. */
   forget(threadId: string) {
     this.held.delete(threadId);
+    this.projectionHeld.delete(threadId);
   }
 
   /**
@@ -993,12 +1181,22 @@ export class T3Reads {
    * a stop must never report success because it could not look (nucleus#1328 review).
    */
   async activeRunIds(id: string): Promise<string[]> {
-    if (!(await this.isObserved(id))) {
+    const native = await this.threadRow(id);
+    if (native && (native.archivedAt || native.deletedAt))
+      return native.activeRunId ? [native.activeRunId] : [];
+    let projection: Projection;
+    try {
+      projection =
+        native && this.observes(id)
+          ? await this.readProjection(id, "observation")
+          : await this.readDirectProjection(id, "observation");
+    } catch (error) {
+      if (isTransientT3ReadRpcError(error))
+        throw new T3TransientReadError(error);
+      if (!isThreadNotFoundRpcError(error)) throw error;
       const row = await this.readListRow(id);
-      // Absence from a complete list is a removal, and a removal cancels its runs.
       return row?.activeRunId ? [row.activeRunId] : [];
     }
-    const projection = await this.readProjection(id, "observation");
     return projection.runs
       .filter((r) => activeStatuses.has(r.status))
       .map((r) => r.id)
@@ -1093,11 +1291,26 @@ export class T3Reads {
     kind: ThreadReadKind = "observation",
   ) {
     this.core.requireConnection();
-    if (!(await this.isObserved(agent)))
+    if (!this.observes(agent))
       throw new ProvenPreSendRefusalError(
         "T3Code thread is no longer observed",
       );
-    const p = await this.readProjection(agent, kind);
+    let p: Projection;
+    try {
+      p = await this.readDirectProjection(agent, kind);
+    } catch (error) {
+      if (isThreadNotFoundRpcError(error))
+        throw new ProvenPreSendRefusalError(
+          "T3Code thread is no longer observed",
+        );
+      if (isTransientT3ReadRpcError(error))
+        throw new T3TransientReadError(error);
+      throw error;
+    }
+    if (p.thread.archivedAt || p.thread.deletedAt)
+      throw new ProvenPreSendRefusalError(
+        "T3Code thread is no longer observed",
+      );
     if (this.workspaceFor(p.thread) !== workspace)
       throw new ProvenPreSendRefusalError(
         "T3Code runtime request workspace changed",

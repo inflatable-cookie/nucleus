@@ -1059,6 +1059,8 @@ export class Resolution {
       "heavyRunAlive",
       "host",
       "hostAvailable",
+      "hostReadTransientFailure",
+      "clearHostReadTransient",
       "inventoryHostMatches",
       "launchingRuns",
       "onTaskHost",
@@ -3494,6 +3496,20 @@ export class Resolution {
     return this.resultApplication.reapplyPendingReview(t);
   }
   gitTransientFailure?: (task: Task, error: unknown) => boolean;
+  hostReadTransientFailure?: (
+    task: Task,
+    error: unknown,
+    step?: string,
+  ) => "wait" | "exhausted";
+  clearHostReadTransient?: (
+    id: string,
+    scope?: "task" | "op" | "question",
+  ) => void;
+  armHostReadTransient?: (
+    id: string,
+    retryAt: number,
+    scope?: "task" | "op" | "question",
+  ) => void;
   advance(original: Task): Promise<void> {
     if (this.stopped() || !this.hostAvailable(original))
       return Promise.resolve();

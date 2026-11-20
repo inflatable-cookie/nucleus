@@ -5,6 +5,7 @@ import {
 } from "./source-promotion-reconcile";
 export { SOURCE_PROMOTION_NOT_DELIVERED } from "./source-promotion-reconcile";
 import { isTransportFailure } from "../../shared/transport";
+import { HostReadRefusalError } from "../host";
 import { assertSupportedSubmission, PlanningSubmission } from "./submission";
 import { PlanningRepairs } from "./planning-repairs";
 import { operationFailureSettlement } from "./operation-failure";
@@ -758,6 +759,10 @@ export class Operations {
       // Re-read: the handler may have advanced the task, and the settled record
       // must reflect the observed identity rather than the intent's snapshot.
       this.store.deleteMeta(this.engine.transientKey(id));
+      this.engine.clearHostReadTransient(id, "op");
+      const targetTaskId = running.taskId ?? result.taskId ?? null;
+      if (targetTaskId)
+        this.engine.clearHostReadTransient(targetTaskId, "task");
       const settled = this.store.operation(id) ?? running;
       // A submit creates its task, so the top-level identity is only known here; mirror it
       // so callers need not dig into result.taskId.
@@ -798,6 +803,27 @@ export class Operations {
       // that intent can be observed, rather than classifying a lost reply as a
       // refusal or replaying the restart.
       if (currentOperation?.preSendBoundaryStartedAt && await this.holdParentRestore(currentOperation)) return;
+      // A proved pre-send transient host read failure never crossed the send
+      // boundary: retain the authorized operation without consuming attempts or
+      // recording a refusal, and retry automatically until settled or exhausted.
+      if (
+        !currentOperation?.preSendBoundaryStartedAt &&
+        error instanceof HostReadRefusalError &&
+        pending.kind !== "task_remove"
+      ) {
+        if (currentOperation)
+          this.store.putOperation({
+            ...currentOperation,
+            attempts: Math.max(0, running.attempts - 1),
+          });
+        this.engine.deferHostReadTransient(
+          id,
+          error,
+          true,
+          `${pending.kind} pre-send check`,
+        );
+        return;
+      }
       const controlPayload = payload as {
         type?: unknown;
         control?: unknown;

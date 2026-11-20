@@ -53,6 +53,8 @@ export type RecoveryContext = Pick<
   | "graceMs"
   | "host"
   | "hostAvailable"
+  | "hostReadTransientFailure"
+  | "clearHostReadTransient"
   | "workerProviderUnavailable"
   | "idle"
   | "lease"

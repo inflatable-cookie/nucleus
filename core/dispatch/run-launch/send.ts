@@ -6,6 +6,13 @@ import { measureRunPrompt, writePromptSize } from '../prompt-text/measure';
 import { buildRunContext, materializeRunContext } from '../prompt-text/context-store';
 import { runTemporaryEnvironment, type RunScratchPlacement } from '../../workspaces/run-scratch';
 import { materializeLaneDocuments } from '../../planning/brief-lane-documents';
+import {
+  HostReadRefusalError,
+  HostSnapshotPendingError,
+  isHostOperationTimeout,
+} from '../../host';
+import { HostTransportFault } from '../../host/adapter-routing';
+import { isTransportFailure } from '../../../shared/transport';
 import { ProvenPreSendRefusalError } from '../../recovery/task-reasons';
 import type { RecoveryDispatchSnapshot } from '../../recovery/recovery-context';
 import type { OwnerReviewContext } from '../../review/owner-review-context';
@@ -44,7 +51,15 @@ export async function sendRunVia(owner: RunSendOwner, task: Task, run: Run, toke
         if (!await guard.allowed() || !guard.stillAllowed())
           throw new ProvenPreSendRefusalError('Review-entry source or writer state changed before send');
       } catch (error) {
-        if (error instanceof ProvenPreSendRefusalError) throw error;
+        if (
+          error instanceof ProvenPreSendRefusalError ||
+          error instanceof HostReadRefusalError ||
+          error instanceof HostSnapshotPendingError ||
+          isTransportFailure(error) ||
+          isHostOperationTimeout(error) ||
+          error instanceof HostTransportFault
+        )
+          throw error;
         throw new ProvenPreSendRefusalError(error instanceof Error ? error.message : String(error));
       }
     }
