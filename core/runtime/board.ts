@@ -434,6 +434,7 @@ export class RuntimeBoard {
       queuedCounts: facts.queuedCounts,
       lanes: facts.lanes,
       projects: facts.projects,
+      projectActivity: facts.projectActivity,
       qaRuns: facts.qaRuns,
       pendingSubmissions: this.context.store.pendingSubmissions(),
       profiles: this.context.engine.profiles,

@@ -46,3 +46,11 @@ export function observeIdle(workspaceId: string | null, fixedId?: string): Adapt
 
 /** The ordinary task-named agent response, without callback or state side effects. */
 export const createTaskAgent: Adapter['createAgent'] = async task => ({ id: `agent-${task.id}`, workspaceId: task.workspaceId });
+
+/** Spec 026 (nucleus#1446, brief v3): each project's persisted activity for a fixture that means an active project: two distinct recent work items. */
+export function recentProjectActivity(projects: ReadonlyArray<{ key: string }>, at: string = new Date().toISOString()) {
+  return projects.map(project => ({
+    key: project.key,
+    items: [`${project.key}-a`, `${project.key}-b`].map(id => ({ id, at, executing: false })),
+  }));
+}
