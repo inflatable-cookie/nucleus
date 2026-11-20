@@ -1339,16 +1339,21 @@ async function existingScenarios(env: Environment) {
 
   const started = performance.now();
   const messageId = await sendInboxText(env, "ui");
-  const result = await until(async () => {
-    const view = await projection(env.rpc, threadId);
-    const message = view?.messages?.find((row) => row.id === messageId);
-    const run = view?.runs.find((row) => row.id === message?.runId);
-    const reply = view?.messages?.find(
-      (row) => row.role === "assistant" && row.runId === run?.id,
-    );
-    if (!view || !message || run?.status !== "completed" || !reply) return null;
-    return { view, reply };
-  }, "the existing Inbox ui reply", ACP_OPEN_UI_TIMEOUT_MS);
+  const result = await until(
+    async () => {
+      const view = await projection(env.rpc, threadId);
+      const message = view?.messages?.find((row) => row.id === messageId);
+      const run = view?.runs.find((row) => row.id === message?.runId);
+      const reply = view?.messages?.find(
+        (row) => row.role === "assistant" && row.runId === run?.id,
+      );
+      if (!view || !message || run?.status !== "completed" || !reply)
+        return null;
+      return { view, reply };
+    },
+    "the existing Inbox ui reply",
+    ACP_OPEN_UI_TIMEOUT_MS,
+  );
   const elapsedMs = Math.round(performance.now() - started);
   assert.ok(elapsedMs < ACP_OPEN_UI_TIMEOUT_MS, "the reply is bounded");
   assert.equal(result.reply.text.trim(), "Opened the Nucleus board.");
