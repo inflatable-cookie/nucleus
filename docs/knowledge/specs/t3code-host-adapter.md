@@ -477,12 +477,14 @@ reused instead of repeated. Time under the hold never accrues toward the wait
 episode: the 30-minute clock starts again at the first pass after release.
 
 **A planner's own hold parks the row until its nudge goes unanswered
-(nucleus#1419).** An effective hold from the planner is the planner's own park,
-whether or not it names a release condition, so it snoozes the task row like any
-other wait while the work is quiet (Tom, 2026-11-20). An operator-owned hold keeps its
-existing treatment, and a running role, an independent call for a person, an origin
-fault or a pending question or permission keeps the row visible whatever the hold
-says. The fence stores the nudge and the answer in `plannerAnswer`: the generation's
+(nucleus#1419).** An effective hold whose holder is the task's planner — the planner
+the brief named, else the task owner — is the planner's own park, whether or not it
+names a release condition, so it snoozes the task row like any other wait while the
+work is quiet (Tom, 2026-11-20). A hold the operator placed, and one a worker,
+reviewer, coordinator or any other participant placed, keeps its existing treatment:
+only the thread that answers for the task's planning parks its row. A running role,
+an independent call for a person, an origin fault or a pending question or permission
+keeps the row visible whatever the hold says. The fence stores the nudge and the answer in `plannerAnswer`: the generation's
 start, the due time (its start plus the three-hour hold bound), the durable notice
 that carries the nudge, when that notice was confirmed delivered, and — once the
 window closes — the moment it went unanswered and the delivery fault when delivery

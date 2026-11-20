@@ -15,7 +15,11 @@ export type HoldFields = Pick<
   | "holdUntil"
   | "holdBlocking"
   | "originAgentId"
-> & { holds?: TaskHolds; notificationAgentId?: string | null };
+> & {
+  holds?: TaskHolds;
+  notificationAgentId?: string | null;
+  plannerAgentId?: string | null;
+};
 
 /**
  * The independent fences on a task. Stored `holds` win while the task is held;
@@ -209,6 +213,7 @@ export function holdFencesView(task: HoldFields): HoldFenceView | undefined {
       reason: fence.reason.slice(0, 600),
       since: fence.at,
       until: fence.until ?? null,
+      ...(fenceIsPlannerHold(task, fence) ? { planner: true as const } : {}),
       ...(unanswered ? { unanswered } : {}),
     };
   };
@@ -224,6 +229,8 @@ export type HoldFenceSummary = {
   reason: string;
   since: string;
   until?: HoldFence["until"];
+  /** The task planner's own park, not another participant's hold (nucleus#1419). */
+  planner?: true;
   unanswered?: "planner" | "delivery";
 };
 
@@ -248,17 +255,32 @@ export function plannerAnswerUnanswered(fence: {
 }
 
 /**
- * The blocking fence a planner placed, with the owner it answers to, or null. A
- * hold from the operator's board is the operator's to release and keeps its
- * existing attention (nucleus#1419), so it is never a planner's park.
+ * Whether a fence is the task planner's own park (nucleus#1419): the thread that
+ * owns the task's planning placed it. A hold from the operator's board, and one a
+ * worker, reviewer, coordinator or any other participant placed, is not the
+ * planner's; those keep their existing treatment and are never a planner park.
+ */
+export function fenceIsPlannerHold(
+  task: HoldFields,
+  fence: HoldFence,
+): boolean {
+  const owner = holdOwnerOf(task, fence.owner);
+  if (isOperatorOwner(owner)) return false;
+  return sameCallerIdentity(owner, taskPlanner(task));
+}
+
+/**
+ * The blocking fence the task planner placed, with the owner it answers to, or
+ * null. Only that hold parks the row: an operator's hold is the operator's to
+ * release, and another participant's hold keeps its existing attention
+ * (nucleus#1419).
  */
 export function plannerHoldFence(
   task: HoldFields,
 ): { kind: HoldKind; fence: HoldFence; owner: string } | null {
   const blocking = blockingHoldFence(task);
-  if (!blocking) return null;
-  const owner = holdOwnerOf(task, blocking.fence.owner);
-  return isOperatorOwner(owner) ? null : { ...blocking, owner };
+  if (!blocking || !fenceIsPlannerHold(task, blocking.fence)) return null;
+  return { ...blocking, owner: holdOwnerOf(task, blocking.fence.owner) };
 }
 
 /**

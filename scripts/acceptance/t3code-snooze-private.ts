@@ -45,7 +45,11 @@ import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { T3RpcClient, T3RpcError } from "../../hosts/t3code/rpc";
 import { createAdapter, createHost } from "../../hosts/t3code";
-import { holdPatch, keepPatch } from "../../core/merge/merge-hold";
+import {
+  holdPatch,
+  keepPatch,
+  releasePatch,
+} from "../../core/merge/merge-hold";
 import { HiddenRows } from "../../core/scheduling/hidden-row";
 import { taskRowAttention } from "../../core/workspaces/task-row-attention";
 import { canonical } from "../../hosts/t3code/state";
@@ -1466,6 +1470,51 @@ async function main() {
     );
     holdStore.close();
     steps.push({ step: "planner-hold-independent-question", result: "passed" });
+
+    // (g) A hold another participant placed is not the planner's park: the row
+    //     stays visible and owes no answer window, whatever the holder calls it.
+    holdStore = new Store(holdDbPath);
+    holdStore.update(
+      holdTask.id,
+      releasePatch(holdStore.task(holdTask.id), "dispatch"),
+    );
+    holdStore.update(
+      holdTask.id,
+      holdPatch(
+        holdStore.task(holdTask.id),
+        "dispatch",
+        "proof-other-participant",
+        "Reviewer paused the task for a receipt",
+        null,
+      ),
+    );
+    const eventsBefore = holdEvents().length;
+    await pass();
+    await until(
+      async () => (await readRow(holdThreadId)).snoozedUntil === null,
+      "the row another participant's hold keeps visible",
+    );
+    const otherProjection = taskRowAttention(holdStore, holdNow());
+    assert.equal(
+      otherProjection.state,
+      "attention",
+      "another participant's hold is never snoozed",
+    );
+    assert.equal(
+      holdNow().holds!.dispatch!.plannerAnswer ?? null,
+      null,
+      "and it opens no planner answer window",
+    );
+    assert.equal(
+      holdEvents().length,
+      eventsBefore,
+      "no escalation and no nudge is owed for it",
+    );
+    steps.push({
+      step: "other-participant-hold-stays-visible",
+      result: "passed",
+    });
+    holdStore.close();
 
     // 11. Real ACP parent + same native child going idle and resuming on the real wire,
     //     measuring the reconcile path from role going active to the row showing.

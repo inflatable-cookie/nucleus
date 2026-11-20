@@ -197,6 +197,7 @@ const plannerFence = (extra: Record<string, unknown> = {}) => ({
     reason: "Approved, waiting for the upgrade day",
     since: "2026-11-19T00:00:00.000Z",
     until: null,
+    planner: true as const,
     ...extra,
   },
 });
@@ -256,6 +257,31 @@ test("an unanswered planner nudge makes the same hold attention again", () => {
       `the board column agrees (${unanswered})`,
     );
   }
+});
+
+test("a hold another participant placed is not a planner park", () => {
+  // The view only marks the task planner's own fence (nucleus#1419): a hold a
+  // worker, reviewer or coordinator placed keeps its existing attention.
+  const holds = {
+    dispatch: {
+      owner: "reviewer-thread",
+      reason: "Review is paused for the receipt",
+      since: "2026-11-19T00:00:00.000Z",
+      until: null,
+    },
+  };
+  const held = task({ phase: "needs_attention", held: true, holds });
+  assert.equal(
+    taskAttention({ phase: held.phase, held: held.held, holds: held.holds })
+      .state,
+    "attention",
+    "another participant's hold is never snoozed",
+  );
+  assert.equal(attention(held), true);
+  assert.equal(
+    pipelineColumn({ kind: "task", id: held.id, lanes: [], value: held }),
+    "Attention",
+  );
 });
 
 test("an operator's own hold with no release condition still needs the operator", () => {

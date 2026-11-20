@@ -131,12 +131,14 @@ this notice.
 
 ## The planner's own hold parks its row until the nudge is answered
 
-A hold the planner placed is the planner's own park (Tom, 2026-11-20), so on T3 it
-snoozes the task row whether or not it names a release condition, and the task needs
-its planner again when that park goes unanswered. The fence keeps that
-cycle in `plannerAnswer` — the generation's measured start, the nudge's due time and
-notice, when delivery was confirmed, and the moment the answer window closed (with
-the delivery fault when the notice never reached the planner).
+A hold the task's planner placed — the planner the brief named, else the task owner —
+is the planner's own park (Tom, 2026-11-20), so on T3 it snoozes the task row whether
+or not it names a release condition, and the task needs its planner again when that
+park goes unanswered. A hold from the operator's board or from another participant
+(worker, reviewer, coordinator) is not this park and keeps its existing treatment. The
+fence keeps that cycle in `plannerAnswer` — the generation's measured start, the
+nudge's due time and notice, when delivery was confirmed, and the moment the answer
+window closed (with the delivery fault when the notice never reached the planner).
 
 After the three-hour nudge the planner has thirty minutes from the later of the due
 time and a confirmed delivery to `release` the hold or `keep_hold` it. A keep is a

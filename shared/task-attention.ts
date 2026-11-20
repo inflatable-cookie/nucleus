@@ -1,6 +1,6 @@
 import type { HoldKind, Task } from "./contracts";
 import { isTerminalPhase } from "./task-state";
-import { blockingHoldKind, isOperatorOwner } from "./holds";
+import { blockingHoldKind } from "./holds";
 
 /**
  * The one attention projection (nucleus#1366).
@@ -39,12 +39,16 @@ export type TaskAttention =
   | { state: "waiting"; cause: string }
   | { state: "active" };
 
-/** The hold fence's shape this projection reads: its release condition, owner and answer state. */
+/** The hold fence's shape this projection reads: its release condition and the facts about its owner. */
 export interface AttentionFence {
   until?: { kind: "task" | "time" } | null;
   reason?: string;
-  /** Who placed the fence, as `holdFencesView` resolves it: the task's owner or the operator. */
-  owner?: string;
+  /**
+   * The task planner placed this fence, as `holdFencesView` answers it from the
+   * effective owner and planner identity — never "anyone but the operator". A fence
+   * from another participant is not the planner's park (nucleus#1419).
+   */
+  planner?: boolean;
   /** The planner's nudge for this fence went unanswered, or never reached it (nucleus#1419). */
   unanswered?: "planner" | "delivery" | null;
 }
@@ -108,13 +112,14 @@ function blockingFence(facts: TaskAttentionFacts): AttentionFence | null {
 }
 
 /**
- * The planner's own hold, or null. An operator's hold from the board is the
- * operator's to release and keeps its existing attention (nucleus#1419).
+ * The task planner's own hold, or null. The view already answered which holder is
+ * the planner, so an operator's hold and another participant's hold keep their
+ * existing attention here (nucleus#1419).
  */
 function plannerHold(facts: TaskAttentionFacts): AttentionFence | null {
   const fence = blockingFence(facts);
-  if (!fence || fence.until) return null;
-  return fence.owner && !isOperatorOwner(fence.owner) ? fence : null;
+  if (!fence || fence.until || fence.planner !== true) return null;
+  return fence;
 }
 
 export function taskAttention(facts: TaskAttentionFacts): TaskAttention {

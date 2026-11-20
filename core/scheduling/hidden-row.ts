@@ -122,6 +122,12 @@ export type RowHiddenPlan =
       /** The host's own answer when the row could not be read. */
       reason?: string;
       hold: RowHiddenHold | null;
+      /**
+       * This nudge opens the planner's answer window (nucleus#1419): true only for
+       * the planner's own hold, whose notice the hold answer cycle raises. A hold
+       * another participant placed is only reported.
+       */
+      answerWindow?: boolean;
     };
 
 const minutesBetween = (since: string, at: number): number => {
@@ -264,7 +270,15 @@ export function rowHiddenNoticeText(input: {
         holdUntilLine(plan.hold.until),
         `Last transition: ${transition}`,
         "Row: T3 reads the row snoozed while the task waits on this hold, so nothing else surfaces it.",
-        `Answer window: release the hold with queue.task action "release", or keep it with "keep_hold" and a fresh reason, within ${HOLD_ANSWER_MINUTES} minutes of this nudge; otherwise the row is shown again and the task needs your answer.`,
+        ...(plan.answerWindow
+          ? [
+              `Answer window: release the hold with queue.task action "release", or keep it with "keep_hold" and a fresh reason, within ${HOLD_ANSWER_MINUTES} minutes of this nudge; otherwise the row is shown again and the task needs your answer.`,
+            ]
+          : [
+              actionLine(
+                'release the hold with queue.task action "release", or keep it with "keep_hold" and a fresh reason, once its condition no longer applies',
+              ),
+            ]),
       ].join("\n"),
     };
   }
@@ -680,6 +694,7 @@ export class HiddenRows {
             noticeId: ownNoticeId,
           },
           noticeId: ownNoticeId,
+          answerWindow: true,
           minutes: Math.max(
             0,
             Math.floor((Date.now() - Date.parse(fence.at)) / 60_000),

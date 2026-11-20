@@ -1453,10 +1453,11 @@ test("a planner's hold is snoozed until its nudge goes unanswered, in the same p
   f.store.update(task.id, { phase: "needs_attention" });
   f.store.update(
     task.id,
+    // The task's planner is its owner ("origin"), so this fence is its own park.
     holdPatch(
       f.store.task(task.id),
       "dispatch",
-      "planner-thread",
+      "origin",
       "Approved, waiting for Effigy v0.15",
       null,
     ),

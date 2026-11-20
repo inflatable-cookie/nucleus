@@ -1029,3 +1029,48 @@ test("a restarted service resumes the same answer cycle and escalates once", asy
   );
   assert.equal(f.rowNotices().length, 1, "and raises no second nudge");
 });
+
+test("a hold another participant placed keeps its visibility and gets no planner nudge", async (t) => {
+  const f = await fixture(t);
+  const c = clock(t);
+  // The task's planner is its owner ("planner"); this fence belongs to a reviewer
+  // thread, so the row is not the planner's park and owes no answer window.
+  f.store.update(f.task().id, { phase: "needs_attention" });
+  f.store.update(
+    f.task().id,
+    holdPatch(
+      f.task(),
+      "dispatch",
+      "reviewer-thread",
+      "Receipt still pending",
+      null,
+    ),
+  );
+  const episode = new Date(c.start).toISOString();
+  f.visibility.set(f.task().id, f.hidden(f.task().id, episode));
+  assert.equal(
+    taskRowState(f),
+    "attention",
+    "another participant's hold is visible",
+  );
+  c.at(ROW_HIDDEN_HOLD_MINUTES * MINUTE);
+  await f.observe();
+  // The 1417 hold report still names the hidden row, but it opens no answer window:
+  // only the planner's own park does, because only the planner can answer it.
+  const [report] = f.rowNotices();
+  assert.ok(report, "the hidden row is still reported to the planner");
+  assert.doesNotMatch(report.text, /Answer window/);
+  assert.match(report.text, /once its condition no longer applies/);
+  assert.equal(f.task().holds?.dispatch?.plannerAnswer ?? null, null);
+  assert.equal(escalated(f).length, 0);
+  assert.equal(
+    taskRowState(f),
+    "attention",
+    "no escalation changes the visibility another holder owns",
+  );
+  assert.equal(
+    f.task().holds?.dispatch?.owner,
+    "reviewer-thread",
+    "the fence keeps its own owner",
+  );
+});
