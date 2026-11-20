@@ -16,7 +16,13 @@
  * 5. the adapter sends no `thread.settle` for a task thread;
  * 6. a role create with no ACP provider refuses with the reason and the
  *    `nucleus t3 install` fix and launches no thread;
- * 7. the board's attention count excludes the waiting task.
+ * 7. the board's attention count excludes the waiting task;
+ * 8. a non-task thread keeps its operator snooze (nucleus#1445): an ordinary
+ *    delivery on the real nightly clears `snoozedUntil` (the reported symptom),
+ *    and a Nucleus message to that snoozed thread is refused before the send, so
+ *    the notice waits for the wake instead of clearing it;
+ * 9. a task row's replaced horizon, an ambiguous legacy record and an ambiguous
+ *    parent binding are never renewed, unsnoozed or addressed.
  *
  * Evidence is written beside the run in `evidence.json` with no bearer. Run it
  * through `effigy proof:t3code:snooze`; the archive comes from
@@ -610,15 +616,22 @@ async function main() {
     );
     steps.push({ step: "repeat-no-write", result: "passed" });
 
-    // 3. The renewal before the horizon asks for a full one again.
+    // 3. The renewal before the horizon asks for a full one again. This host renews
+    //    only the occurrence it wrote (nucleus#1445), so the short horizon is put on
+    //    the same side of the record: T3 shows it and the record names it.
+    const shortUntil = new Date(Date.now() + 60 * 60_000).toISOString();
     await rpc.call("orchestration.dispatchCommand", {
       type: "thread.snooze",
       commandId: `proof-short-snooze-${crypto.randomUUID()}`,
       threadId: seedThreadId,
-      snoozedUntil: new Date(Date.now() + 60 * 60_000).toISOString(),
+      snoozedUntil: shortUntil,
     });
     const short = await readThread();
+    assert.equal(short.snoozedUntil, shortUntil);
     assert.ok(Date.parse(short.snoozedUntil!) - Date.now() < 2 * 60 * 60_000);
+    host.state.update((state) => {
+      state.snoozes![seedThreadId]!.until = shortUntil;
+    });
     await host.reconcileTaskRow(TASK_ID, {
       state: "waiting",
       cause: "Waiting on nucleus#1364",
@@ -1145,7 +1158,293 @@ async function main() {
       result: "passed",
     });
 
-    // 10. A planner's own manual hold on the real wire (nucleus#1419): the row is
+    // 10. A non-task thread keeps its operator snooze (Tom's ruling, 2026-11-20;
+    //     nucleus#1445). The adapter's retained ledger addresses a direct snooze or
+    //     unsnooze to task parents only, so this step reads what the delivery path
+    //     itself does on the real nightly: T3 clears a snooze on an ordinary message,
+    //     and a Nucleus message therefore waits for the wake instead of clearing it.
+    const plannerThreadId = crypto.randomUUID();
+    const guestThreadId = crypto.randomUUID();
+    for (const [threadId, title] of [
+      [plannerThreadId, "Proof planner row"],
+      [guestThreadId, "Proof guest row"],
+    ] as const)
+      await rpc.call("orchestration.launchThread", {
+        commandId: crypto.randomUUID(),
+        threadId,
+        projectId,
+        title,
+        modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+        workspaceStrategy: {
+          type: "existing_worktree",
+          worktreePath: worktree,
+        },
+      });
+    const readPlanner = async (threadId: string) => {
+      const value = (await rpc!.readStream(
+        "orchestration.subscribeThread",
+        { threadId },
+        (chunk) => (chunk as { kind?: string }).kind === "snapshot",
+      )) as { projection: { thread: { snoozedUntil: string | null } } };
+      return value.projection.thread;
+    };
+    const snoozePlanner = async (threadId: string, wakeAt: string) => {
+      await rpc!.call("orchestration.dispatchCommand", {
+        type: "thread.snooze",
+        commandId: `proof-planner-snooze-${crypto.randomUUID()}`,
+        threadId,
+        snoozedUntil: wakeAt,
+      });
+      await until(
+        async () => (await readPlanner(threadId)).snoozedUntil === wakeAt,
+        "the planner thread's manual snooze",
+      );
+    };
+    const rowCommandIntents = (threadId: string) =>
+      Object.values(host!.state.read().intents).filter(
+        (intent) =>
+          (intent.kind === "thread.snooze" ||
+            intent.kind === "thread.unsnooze") &&
+          intent.threadId === threadId,
+      ).length;
+
+    // (a) The reported cleared symptom: an ordinary delivery wakes a snoozed thread.
+    await snoozePlanner(
+      guestThreadId,
+      new Date(Date.now() + 60 * 60_000).toISOString(),
+    );
+    await rpc.call("orchestration.dispatchCommand", {
+      type: "message.dispatch",
+      createdBy: "user",
+      creationSource: "server",
+      commandId: `proof-guest-message-${crypto.randomUUID()}`,
+      threadId: guestThreadId,
+      messageId: `proof-guest-${crypto.randomUUID()}`,
+      text: "proof-guest-message",
+      attachments: [],
+      dispatchMode: { type: "queue_after_active" },
+    });
+    await until(
+      async () => (await readPlanner(guestThreadId)).snoozedUntil === null,
+      "the native wake of the snoozed planner thread",
+    );
+    steps.push({
+      step: "t3-native-wake-on-delivery",
+      result: "passed",
+      detail:
+        "an ordinary message.dispatch on the real nightly cleared snoozedUntil",
+    });
+
+    // (b) A Nucleus notice to that snoozed thread is refused before the send, so the
+    //     manual snooze stands and the durable notice keeps waiting.
+    const keptUntil = new Date(Date.now() + 60 * 60_000).toISOString();
+    await snoozePlanner(plannerThreadId, keptUntil);
+    const plannerIntentsBefore = rowCommandIntents(plannerThreadId);
+    const noticeMessageId = `proof-planner-notice-${crypto.randomUUID()}`;
+    let refusal = "";
+    await assert.rejects(
+      () =>
+        host!.sendMessage(plannerThreadId, {
+          messageId: noticeMessageId,
+          text: "Nucleus: a task row has stayed snoozed.",
+        }),
+      (error: unknown) => {
+        refusal = error instanceof Error ? error.message : String(error);
+        return /snoozed until .*waits for that snooze to wake/.test(refusal);
+      },
+      "a message to a manually snoozed non-task thread is refused before send",
+    );
+    assert.equal(
+      rowCommandIntents(plannerThreadId),
+      plannerIntentsBefore,
+      "the refusal recorded no command against the non-task thread",
+    );
+    assert.equal(
+      (await readPlanner(plannerThreadId)).snoozedUntil,
+      keptUntil,
+      "the operator's manual snooze stands on the real nightly",
+    );
+    steps.push({
+      step: "planner-notice-waits-for-wake",
+      result: "passed",
+      refusal,
+    });
+
+    // (c) Once that snooze lapses, the same delivery goes through.
+    await snoozePlanner(
+      plannerThreadId,
+      new Date(Date.now() + 3_000).toISOString(),
+    );
+    await delay(4_000);
+    await host.sendMessage(plannerThreadId, {
+      messageId: noticeMessageId,
+      text: "Nucleus: a task row has stayed snoozed.",
+    });
+    await until(
+      async () => (await readPlanner(plannerThreadId)).snoozedUntil === null,
+      "the lapsed planner snooze delivered",
+    );
+    steps.push({ step: "planner-notice-after-wake", result: "passed" });
+
+    // (d) No direct snooze command ever addressed a non-task thread.
+    const taskParentThreads = Object.values(
+      host.state.read().parents ?? {},
+    ).map((parent) => parent.threadId);
+    const strayCommands = Object.values(host.state.read().intents).filter(
+      (intent) =>
+        (intent.kind === "thread.snooze" ||
+          intent.kind === "thread.unsnooze") &&
+        intent.threadId !== undefined &&
+        !taskParentThreads.includes(intent.threadId),
+    );
+    assert.equal(
+      strayCommands.length,
+      0,
+      "no snooze or unsnooze command addressed a planner, the inbox or an unrelated thread",
+    );
+    steps.push({
+      step: "no-commands-to-non-task-threads",
+      result: "passed",
+      parentThreads: taskParentThreads.length,
+    });
+
+    // 10b. This host's own task row: a replaced horizon is never renewed or cleared.
+    await rpc.call("orchestration.dispatchCommand", {
+      type: "thread.unsnooze",
+      commandId: `proof-clear-operator-snooze-${crypto.randomUUID()}`,
+      threadId: seedThreadId,
+      reason: "user",
+    });
+    await until(
+      async () => (await readThread()).snoozedUntil === null,
+      "the operator snooze cleared for the ownership proof",
+    );
+    await host.reconcileTaskRow(TASK_ID, {
+      state: "waiting",
+      cause: "Ownership proof",
+    });
+    const ownUntil = await until(
+      async () => (await readThread()).snoozedUntil,
+      "this host's own row snooze",
+    );
+    assert.equal(
+      host.state.read().snoozes?.[seedThreadId]?.taskId,
+      TASK_ID,
+      "the record is bound to the task whose row it snoozed",
+    );
+
+    // The operator replaces the horizon from another client.
+    const replacedUntil = new Date(Date.now() + 30 * 60_000).toISOString();
+    await rpc.call("orchestration.dispatchCommand", {
+      type: "thread.snooze",
+      commandId: `proof-operator-replaces-${crypto.randomUUID()}`,
+      threadId: seedThreadId,
+      snoozedUntil: replacedUntil,
+    });
+    await until(
+      async () => (await readThread()).snoozedUntil === replacedUntil,
+      "the operator replacement snooze",
+    );
+    const ownershipCommands = rowCommandIntents(seedThreadId);
+    await host.reconcileTaskRow(TASK_ID, {
+      state: "waiting",
+      cause: "Ownership proof",
+    });
+    await host.reconcileTaskRow(TASK_ID, {
+      state: "attention",
+      cause: "Worker creation refused before send",
+    });
+    assert.equal(
+      rowCommandIntents(seedThreadId),
+      ownershipCommands,
+      "no renewal or unsnooze was sent over the operator horizon",
+    );
+    assert.equal(
+      (await readThread()).snoozedUntil,
+      replacedUntil,
+      "the operator horizon stands on the real nightly",
+    );
+    assert.equal(
+      host.state.read().snoozes?.[seedThreadId],
+      undefined,
+      "the record stops claiming the replaced occurrence",
+    );
+    assert.deepEqual(await host.rowSnoozeVisibility(TASK_ID), {
+      kind: "clear",
+    });
+    steps.push({
+      step: "operator-replacement-preserved",
+      result: "passed",
+      ownUntil,
+      replacedUntil,
+    });
+
+    // A legacy record whose horizon T3 does not show claims nothing either.
+    host.state.update((state) => {
+      state.snoozes = {
+        ...state.snoozes,
+        [seedThreadId]: {
+          episode: 0,
+          commandId: "legacy-unproven-snooze",
+          until: new Date(Date.now() + SNOOZE_HORIZON_MS).toISOString(),
+          state: "snoozed",
+          recordedAt: new Date().toISOString(),
+        },
+      };
+    });
+    const legacyCommands = rowCommandIntents(seedThreadId);
+    await host.reconcileTaskRow(TASK_ID, {
+      state: "waiting",
+      cause: "Legacy record proof",
+    });
+    await host.reconcileTaskRow(TASK_ID, {
+      state: "attention",
+      cause: "Worker creation refused before send",
+    });
+    assert.equal(
+      rowCommandIntents(seedThreadId),
+      legacyCommands,
+      "an ambiguous legacy record sends nothing",
+    );
+    assert.equal((await readThread()).snoozedUntil, replacedUntil);
+    assert.equal(host.state.read().snoozes?.[seedThreadId], undefined);
+    steps.push({ step: "legacy-record-claims-nothing", result: "passed" });
+
+    // An ambiguous parent binding is never addressed as a row.
+    host.state.update((state) => {
+      state.parents = {
+        ...state.parents,
+        "proof-other-task": {
+          ...state.parents![TASK_ID],
+          taskId: "proof-other-task",
+        },
+      };
+    });
+    const ambiguousCommands = rowCommandIntents(seedThreadId);
+    await host.reconcileTaskRow(TASK_ID, {
+      state: "waiting",
+      cause: "Ambiguous binding proof",
+    });
+    await host.reconcileTaskRow(TASK_ID, {
+      state: "attention",
+      cause: "Worker creation refused before send",
+    });
+    assert.equal(
+      rowCommandIntents(seedThreadId),
+      ambiguousCommands,
+      "an ambiguous binding is never addressed",
+    );
+    assert.deepEqual(await host.rowSnoozeVisibility(TASK_ID), {
+      kind: "clear",
+    });
+    host.state.update((state) => {
+      if (state.parents) delete state.parents["proof-other-task"];
+    });
+    steps.push({ step: "ambiguous-binding-not-addressed", result: "passed" });
+
+    // 11. A planner's own manual hold on the real wire (nucleus#1419): the row is
     //     snoozed while the hold parks it, the nudge and the answer window decide
     //     whether it stays hidden, and the hold itself is never touched.
     const holdThreadId = crypto.randomUUID();
@@ -1516,7 +1815,7 @@ async function main() {
     });
     holdStore.close();
 
-    // 11. Real ACP parent + same native child going idle and resuming on the real wire,
+    // 12. Real ACP parent + same native child going idle and resuming on the real wire,
     //     measuring the reconcile path from role going active to the row showing.
     service = new QueueService({
       owner: { dataDir: nucleusData, timers: false },

@@ -3,9 +3,10 @@ import type { TaskAttention } from "../../../shared/task-attention";
 
 /**
  * What one task row's visibility is, as a host's own durable snooze ownership and
- * a fresh native read prove it (nucleus#1417). Only a row the host snoozed is
- * Nucleus-owned: an operator's snooze or manual settle is never one, and an
- * unreadable row is unknown rather than clear.
+ * a fresh native read prove it (nucleus#1417). Only the exact occurrence the host
+ * wrote on a verified task row is Nucleus-owned: an operator's snooze, a horizon
+ * the operator replaced, a manual settle and an unreadable row are never read as
+ * one (Tom's ruling, 2026-11-20; nucleus#1445).
  */
 export type RowSnoozeVisibility =
   /** No row here, a row this host never snoozed, or one the host reads shown. */

@@ -135,7 +135,7 @@ const waiting = (cause = "Waiting on nucleus#1364"): TaskAttention => ({
 });
 
 test("a waiting row records one episode start that a horizon renewal keeps (nucleus#1417)", async (t) => {
-  const { host, projection, snoozeRecord } = await fixture(t);
+  const { host, parent, projection, snoozeRecord } = await fixture(t);
 
   assert.deepEqual(
     await host.rowSnoozeVisibility(taskId),
@@ -162,9 +162,13 @@ test("a waiting row records one episode start that a horizon renewal keeps (nucl
   );
 
   // A renewal before the horizon is the same episode: the age does not restart.
-  projection.thread.snoozedUntil = new Date(
+  const shortUntil = new Date(
     Date.now() + SNOOZE_RENEW_BEFORE_MS / 2,
   ).toISOString();
+  projection.thread.snoozedUntil = shortUntil;
+  host.state.update((state) => {
+    state.snoozes![parent.threadId]!.until = shortUntil;
+  });
   await host.reconcileTaskRow(taskId, waiting());
   const renewed = snoozeRecord()!;
   assert.notEqual(renewed.until, first.until, "the horizon was renewed");
