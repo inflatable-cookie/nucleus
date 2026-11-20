@@ -662,6 +662,10 @@ export class Store {
     putOperation: (operation) => this.operationsStore.putOperation(operation),
     runs: (taskId) => this.runs(taskId),
     task: (id) => this.task(id),
+    eventsAll: (taskId) => this.eventsAll(taskId),
+    event: (taskId, kind, detail) => {
+      this.event(taskId, kind, detail);
+    },
   });
   get db(): DatabaseSync {
     return this.core.db;
@@ -2491,6 +2495,16 @@ export class Store {
   }
   reconcileTaskControlPreSend(id: string, inputHash: string): QueueOperation {
     return this.preSendStore.reconcileTaskControlPreSend(id, inputHash);
+  }
+
+  /** The no-write evidence for an uncertain move to merge, or null (nucleus#1428). */
+  unwrittenMergeMoveProof(id: string): string | null {
+    return this.preSendStore.unwrittenMergeMoveProof(id);
+  }
+
+  /** Settle a proven no-write move to merge as failed; never re-runs the control (nucleus#1428). */
+  reconcileUnwrittenMergeMove(id: string, inputHash: string): QueueOperation {
+    return this.preSendStore.reconcileUnwrittenMergeMove(id, inputHash);
   }
   settleTaskPreSendReceipts(taskId: string): void {
     this.transaction(() => {

@@ -4,6 +4,7 @@ import { RestartRefusal } from "../verbs/owner-verbs";
 import { DurableFenceRefusal } from "../intake/run-settlement";
 import { ProvenPreSendRefusalError, RetainedRunRefusal } from "../recovery/task-reasons";
 import { ExternalMergeRefusal } from "../verbs/moves";
+import { PreWriteMergeObservationRefusal } from "../verbs/moves/merge";
 import { ParkedRestartPreSendRefusal } from "../verbs/restart";
 
 /** Prose classifier for unexplained failures only; typed pre-binding refusals never reach it. */
@@ -19,7 +20,8 @@ const uncertainOperationError = (message: string) => /uncertain|unknown|timed ou
 export const typedPreSendRefusal = (error: unknown): boolean =>
   error instanceof ProvenPreSendRefusalError || error instanceof ReviewEntryRefusal
   || error instanceof ExternalMergeRefusal || error instanceof RestartRefusal || error instanceof RepositoryRekeyRefused
-  || error instanceof RetainedRunRefusal || error instanceof ParkedRestartPreSendRefusal || error instanceof DurableFenceRefusal;
+  || error instanceof RetainedRunRefusal || error instanceof ParkedRestartPreSendRefusal || error instanceof DurableFenceRefusal
+  || error instanceof PreWriteMergeObservationRefusal;
 
 /**
  * How one failed operation settles, from the facts `runOperation` re-reads after

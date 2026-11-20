@@ -261,6 +261,13 @@ export class RetryEffectControls {
       return null;
     if (candidate.result && candidate.effect?.status === "reconciled")
       return null;
+    // nucleus#1428: a move whose journal proves it wrote and sent nothing settles
+    // failed here, with that evidence. Only then may the scheduler continue.
+    if (this.store.unwrittenMergeMoveProof(candidate.id)) {
+      this.store.reconcileUnwrittenMergeMove(candidate.id, candidate.inputHash);
+      void this.engine.cleanContext(() => this.engine.wakeTask(task.id));
+      return this.store.task(task.id);
+    }
     const blocked = blockingRecoveryEffects(
       this.store,
       this.store.task(task.id),

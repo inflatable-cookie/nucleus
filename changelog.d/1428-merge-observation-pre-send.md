@@ -1,0 +1,1 @@
+A merge request whose PR lookup times out before anything is written now fails as a clean refusal instead of leaving the task fenced by an uncertain effect. A task already stuck on such a timeout shows `retry_effect` on the named operation, which settles it with its evidence; the guarded merge then continues.

@@ -8,6 +8,39 @@ import { readyReviewAtHead } from "../../recovery/task-reasons";
 import { qualifiedAcceptanceEligibility } from "../owner-verbs";
 import { MOVE_MERGE_ACCEPTANCE_REFUSAL, moveStateRefusal, REMOVED_TASK_REFUSAL } from "../control-refusals";
 
+/**
+ * A forge observation failed before this move wrote anything or sent a stop
+ * (nucleus#1428). The read was the only work done, so the refusal proves nothing
+ * was bound or sent. Typed, so the operation settles failed with its pre-send
+ * receipt instead of an uncertain effect that fences later merges.
+ */
+export class PreWriteMergeObservationRefusal extends Error {
+  constructor(cause: string) {
+    super(`Merge refused before any write: the PR observation failed (${cause}). Nothing was written or sent; retry the move.`);
+    this.name = "PreWriteMergeObservationRefusal";
+  }
+}
+
+/**
+ * Run one read-only PR observation. A failure is a pre-write refusal only while
+ * the move has recorded no event since it began: every store write and every
+ * stop intent this move makes is evented, so an unchanged journal proves that
+ * nothing was written or sent. Any event since then keeps the original error.
+ */
+async function observeBeforeWrite<T>(
+  store: Engine["store"],
+  taskId: string,
+  eventsBefore: number,
+  observe: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await observe();
+  } catch (error) {
+    if (store.eventsAll(taskId).length !== eventsBefore) throw error;
+    throw new PreWriteMergeObservationRefusal(error instanceof Error ? error.message : String(error));
+  }
+}
+
 /** The owner `move to=merge` request, after the verb has parsed it. */
 export type MergeMoveInput = {
   taskId: string;
@@ -74,7 +107,8 @@ export async function moveToMerge(engine: Engine, input: MergeMoveInput): Promis
   // head the move enters verification with is GitHub's own open PR head, and it
   // must be the head named, or with none named, the stored one.
   const mergeRunsBefore = store.runs(task.id);
-  const observed = await adapter.verifyPr(task, taskPrNumber(task));
+  const eventsBefore = store.eventsAll(task.id).length;
+  const observed = await observeBeforeWrite(store, task.id, eventsBefore, () => adapter.verifyPr(task, taskPrNumber(task)));
   engine.assertUnchangedBeforeCancel(task.id, input.version, mergeRunsBefore);
   if (input.head && observed.head !== input.head)
     throw Error(`The current PR head ${observed.head} differs from the head you accept (${input.head}); refresh before retrying`);
@@ -97,7 +131,7 @@ export async function moveToMerge(engine: Engine, input: MergeMoveInput): Promis
     // A fresh observation after the waits and the cancellation: a displaced turn
     // may have pushed before it stopped, and no network call runs inside the
     // commit transaction below.
-    const pr = await adapter.verifyPr(task, taskPrNumber(task));
+    const pr = await observeBeforeWrite(store, task.id, eventsBefore, () => adapter.verifyPr(task, taskPrNumber(task)));
     if (pr.head !== acceptedHead) throw Error(`The current PR head ${pr.head} differs from the accepted head ${acceptedHead}; refresh before retrying`);
     return store.transaction(() => {
       const current = store.task(task.id);
