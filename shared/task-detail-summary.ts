@@ -1,4 +1,5 @@
 import type { Run, Task, TaskNext, TaskNextVerb } from "./contracts";
+import { TASK_PROGRESSING_REASON } from "./task-stop";
 import type { TaskBudgetView } from "./task-budget";
 import { waitStateLabels, type WaitStateView } from "./wait-state";
 
@@ -14,7 +15,7 @@ import { waitStateLabels, type WaitStateView } from "./wait-state";
 /** The headline a reader sees: about one line on a card and in the dialog. */
 export const REPORT_HEADLINE_MAX = 200;
 /** The words a progressing responsible task reads with: no stop and no wait. */
-export const TASK_PROGRESSING_REASON = "No stop or wait; the task is progressing.";
+export { TASK_PROGRESSING_REASON } from "./task-stop";
 
 /** What a report may carry; longer text is clipped for display, not refused on read. */
 export const REPORT_HEADLINE_STORED_MAX = 240;

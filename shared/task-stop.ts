@@ -39,6 +39,16 @@ export const taskStopReasons = [
 export const taskStopReasonSchema = z.enum(taskStopReasons);
 /** Queue's reason for a queued task with nothing in its way but dispatch itself. */
 export const DISPATCH_WAIT_REASON = "Waiting for dispatch";
+/**
+ * The words a task with no stop or wait reads with. It is prose, not a fault: no
+ * writer may turn it into a stop (nucleus#1437). A settled wait leaves it behind.
+ */
+export const TASK_PROGRESSING_REASON = "No stop or wait; the task is progressing.";
+/** The explicit unknown a blocked phase names when no recorded cause says why it is blocked. */
+export const UNKNOWN_TASK_ATTENTION_REASON = "Task needs attention";
+/** Whether a reason is the settled-wait prose, which can never be a stop's cause. */
+export const isSettledWaitProse = (text: string | null | undefined): boolean =>
+  (text ?? "").trim() === TASK_PROGRESSING_REASON;
 export type TaskStopReason = z.infer<typeof taskStopReasonSchema>;
 
 /**

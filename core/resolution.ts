@@ -1651,6 +1651,10 @@ export class Resolution {
   settleBudgetClock(task: Task, options: { returned?: boolean } = {}): Task {
     return this.taskStops.settleBudgetClock(task, options);
   }
+  /** nucleus#1437: settle a stored settled-wait prose stop once nothing owns it. */
+  settleSettledWaitStop(task: Task): Task {
+    return this.taskStops.settleSettledWaitStop(task);
+  }
   /** Tom, 2026-11-14 (T3 lane v18, host dropout option 1: wait): clear the host wait when its host is back. */
   clearHostWait(task: Task): Task {
     return this.taskStops.clearHostWait(task);

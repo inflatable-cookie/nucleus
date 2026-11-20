@@ -17,8 +17,10 @@ import { archiveSupersededWorkers } from "../workspaces/thread-archive-replaceme
 import type { Task } from "../../shared/contracts";
 import { missingOriginHasPlanner } from "../questions/origin";
 import {
+  isSettledWaitProse,
   taskStopClassification,
   taskStopVerbsFor,
+  UNKNOWN_TASK_ATTENTION_REASON,
 } from "../../shared/task-stop";
 import { holdsOf, taskHasUnreleasedRun } from "../../shared/contracts";
 import { startsNoRuns } from "../closeout/queue-drain";
@@ -83,6 +85,7 @@ export type TaskQuantumContext = Pick<
     | "recovery"
     | "resumeClearedAttention"
     | "settleBudgetClock"
+    | "settleSettledWaitStop"
     | "slotAdmissionReason"
     | "update"
     | "waiting"
@@ -352,14 +355,25 @@ export class TaskQuantum {
             task.phase === "needs_attention",
           ))
       ) {
+        // A recorded fault (the attention flag) keeps its own reason; a phase alone
+        // names no fault, so a wait that owned nothing falls back to the progressing
+        // prose and cannot become a stop later (nucleus#1437).
+        const settledReason = task.resolution.attention
+          ? task.reason === task.resolution.stop!.detail
+            ? UNKNOWN_TASK_ATTENTION_REASON
+            : task.reason
+          : TASK_PROGRESSING_REASON;
         task = this.context.resolution.update(
           task,
           { stop: null },
-          { reason: TASK_PROGRESSING_REASON },
+          { reason: settledReason },
           "slot_wait_settled",
           task.resolution.stop!.detail,
         );
       }
+      // nucleus#1437: a stored settled-wait prose stop with no live owner settles before
+      // the ordinary pass reads ownership, so a released verdict is not held behind it.
+      task = this.context.resolution.settleSettledWaitStop(task);
       // The sweep owns discovery for an accepted worker creation restart.
       if (staleWorkerIntent(task) && deferredWorkerCreationRestart(task))
         return;
@@ -484,12 +498,14 @@ export class TaskQuantum {
           ((current.originError &&
             !missingOriginHasPlanner(this.context.store, current)) ||
             current.resolution.attention ||
-            ["blocked", "error", "needs_attention"].includes(current.phase))
+            ["blocked", "error", "needs_attention"].includes(current.phase)) &&
+          // Settled-wait prose is no fault, so no stop is synthesized from it (nucleus#1437).
+          (current.originError || !isSettledWaitProse(current.reason))
         ) {
           // Only Queue's own origin error text is classified. A task reason can
           // be an agent's report, and reading a wait out of it invents one.
           const detail =
-            current.originError || current.reason || "Task needs attention";
+            current.originError || current.reason || UNKNOWN_TASK_ATTENTION_REASON;
           const classification = current.originError
             ? taskStopClassification(detail)
             : {

@@ -1,6 +1,7 @@
 import type { HoldKind, Task } from "./contracts";
 import { isTerminalPhase } from "./task-state";
 import { blockingHoldKind } from "./holds";
+import { isSettledWaitProse } from "./task-stop";
 
 /**
  * The one attention projection (nucleus#1366).
@@ -82,7 +83,8 @@ export const ATTENTION_PHASES: ReadonlyArray<Task["phase"]> = [
 ];
 
 const bounded = (text: string | undefined | null, fallback: string): string => {
-  const value = (text ?? "").trim();
+  // Settled-wait prose names no cause, so a row never reads it as its reason (nucleus#1437).
+  const value = isSettledWaitProse(text) ? "" : (text ?? "").trim();
   return value ? value.slice(0, 160) : fallback;
 };
 
