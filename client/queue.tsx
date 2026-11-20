@@ -6,6 +6,8 @@ import { useBoardState } from "./board-state";
 import { PopoverHost } from "./popover";
 import { PlanningTab, type PlanEdit } from "./planning-panel";
 import { ProjectSelector, usePanelScope, useProjectScope } from "./project-scope-controls";
+import { useProjectSelectorActions } from "./project-selector-actions";
+import { ProjectManagementView } from "./project-management-view";
 import { useQueryClient } from "@tanstack/react-query";
 import * as api from "../shared/contracts";
 import type { HostRunRecord, TaskSummary } from "../shared/contracts";
@@ -81,6 +83,9 @@ export function MainSurface({ theme, layout, navigation, workspaceBoard, now }: 
   // hook, so every surface hydrates from one projection and panel mounts never
   // wait for their own poll.
   const { stateQuery, state } = useBoardState();
+  // The selector's row actions (nucleus#1430) refresh the board after each save; Remove opens the shared removal dialog below.
+  const projectSelector = useProjectSelectorActions(() => stateQuery.refetch());
+  const [removingProject, setRemovingProject] = useState<api.Project | null>(null);
   const { detailQuery, nextQuery } = useTaskDetail(selected);
   const records = useRecordQueries({ stateQuery, state, tab, scopeOpen });
   const { leadsQuery, decisionsQuery, planQuery, staleRead, boardLeads, leadLinks } = records;
@@ -184,6 +189,7 @@ export function MainSurface({ theme, layout, navigation, workspaceBoard, now }: 
                     value={scope.projects}
                     onChange={setScopeProjects}
                     onSettings={settingsOpener ? () => settingsOpener?.("projects") : undefined}
+                    projectActions={{ ...projectSelector.actions, remove: setRemovingProject }}
                     onOpenChange={setScopeOpen}
                     compact={compact}
                     c={c}
@@ -436,6 +442,18 @@ export function MainSurface({ theme, layout, navigation, workspaceBoard, now }: 
         </View>
         )}
       </BoardHeader>
+      {removingProject && (
+        <ProjectManagementView
+          c={c}
+          project={removingProject}
+          rpc={projectSelector.removal}
+          onClose={() => setRemovingProject(null)}
+          onRemoved={() => {
+            setRemovingProject(null);
+            void projectSelector.refresh();
+          }}
+        />
+      )}
     </View>
     </PopoverHost>
   );
