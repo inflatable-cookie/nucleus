@@ -387,6 +387,14 @@ export class T3CodeHost implements Host {
       await writeFile(this.modelCapturePath, capture + "\n", { mode: 0o600 });
     }
   }
+  /** Only this host's durable parent record can identify a task's ACP row. */
+  decisionParent(taskId: string): import("../../core/acp/decisions").ParentStatus {
+    if (!this.connected) return { state: "unknown" };
+    const parent = this.state.read().parents?.[taskId];
+    return !parent || parent.archivedAt
+      ? { state: "absent" }
+      : { state: "parent", sessionId: parent.sessionId };
+  }
   capabilities() {
     return {
       reportingViaMcp: false,
@@ -438,6 +446,11 @@ export class T3CodeHost implements Host {
     }
   }
   close() {
+    const acp = this.acp();
+    const state = this.state.read();
+    if (state.hostId) acp?.observedCards?.({ hostId: state.hostId }, null);
+    for (const parent of Object.values(state.parents ?? {}))
+      acp?.observedCards?.({ taskId: parent.taskId, sessionId: parent.sessionId }, null);
     this.ready = false;
     this.rpc.close();
   }
@@ -703,7 +716,7 @@ export class T3CodeHost implements Host {
           const cards = await this.decisionCards.reconcile(
             parent.threadId,
             parent.workspaceId,
-            { taskId: parent.taskId },
+            { taskId: parent.taskId, sessionId: parent.sessionId },
           );
           if (cards && this.acp()?.pendingDecisionKey?.(parent.taskId))
             await this.decisionHold.reconcile(parent.threadId);
