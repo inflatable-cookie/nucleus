@@ -9,10 +9,12 @@ import {
 } from "react-native";
 import { Icon } from "./shell";
 import { Popover } from "./popover";
+import { errorText } from "./error-text";
 import type { LeadListFacts, Project, TaskSummary } from "../shared/contracts";
 import type { PlanningStep } from "../shared/planning-tab";
 import {
   isAdditivePress,
+  projectNameProblem,
   projectSelectorRows,
   readProjectScope,
   selectionLabel,
@@ -24,13 +26,15 @@ import {
 import {
   ActionButton,
   Button,
+  Field,
+  InlineConfirm,
   controlFrame,
   controlText,
   muted,
   row,
   type Colors,
 } from "./controls";
-import { control, space, radius, type as typeScale, overlay } from "./design";
+import { control, space, radius, roles, type as typeScale, overlay } from "./design";
 
 type ScopeStorage = {
   getItem(key: string): string | null;
@@ -163,11 +167,38 @@ function withinBoxes(boxes: React.RefObject<View | null>[], target: unknown) {
 }
 /** Kept for callers written before the 2026-09-27 board retirement. */
 
+/** A row's actions in the board's project selector (nucleus#1430). Each resolves once the
+ * change is saved; a rejection shows in the row. Remove hands the project to the shared
+ * removal dialog, which the board renders outside the picker. An absent action is left out of the menu. */
+export type ProjectSelectorActions = {
+  park?: (project: Project) => Promise<unknown>;
+  unpark?: (project: Project) => Promise<unknown>;
+  rename?: (project: Project, name: string) => Promise<unknown>;
+  remove?: (project: Project) => void;
+};
+
+/** A desktop pointer that hovers reveals a row's ellipsis on hover; touch and native hosts keep it visible. */
+function finePointer(): boolean {
+  try {
+    return Boolean(
+      (globalThis as { matchMedia?: (query: string) => { matches: boolean } }).matchMedia?.(
+        "(hover: hover) and (pointer: fine)",
+      )?.matches,
+    );
+  } catch {
+    return false;
+  }
+}
+
+type RowMenu = { key: string; view: "actions" | "park" | "rename" };
+
 /** Spec 026 Board "Scope": the header's project selector (nucleus#1421:
  * single-select by default, Shift-click toggles one project). A popover at the
  * wide size, a modal at the compact size. An empty selection means all projects.
- * It only scopes the board: project settings live in Settings → Projects, which
- * its settings icon opens (lane `nucleus-ui`, task 946 build task 4). */
+ * Each row's ellipsis (nucleus#1430) opens Park or Unpark, Rename and Remove from
+ * Nucleus inline in the picker, so no nested popover takes an outside press. Project
+ * settings live in Settings → Projects, which its settings icon opens (lane `nucleus-ui`,
+ * task 946 build task 4). */
 export function ProjectSelector({
   projects,
   tasks,
@@ -181,6 +212,7 @@ export function ProjectSelector({
   enabled = true,
   onEnabledChange,
   onSettings,
+  projectActions,
 }: {
   projects: Project[];
   tasks: TaskSummary[];
@@ -191,13 +223,29 @@ export function ProjectSelector({
   enabled?: boolean;
   onEnabledChange?: (enabled: boolean) => void;
   /** Opens Settings at Projects; absent on a host without Settings. */ onSettings?: () => void;
+  /** The row ellipsis's actions; absent, rows have no ellipsis. */ projectActions?: ProjectSelectorActions;
   onOpenChange: (open: boolean) => void;
   compact: boolean;
   c: Colors;
 }) {
   const [open, setOpenState] = useState(false),
     [search, setSearch] = useState("");
+  // The row whose actions are open, and the step it is on. Ref-mirrored so the Escape listener reads it live.
+  const [menuState, setMenuState] = useState<RowMenu | null>(null),
+    menuRef = useRef<RowMenu | null>(null);
+  const [draft, setDraft] = useState(""),
+    [pending, setPending] = useState(false),
+    [actionError, setActionError] = useState("");
+  // Hover and keyboard focus reveal a row's ellipsis on a pointer device.
+  const [hovered, setHovered] = useState<string | null>(null),
+    [focused, setFocused] = useState<string | null>(null);
+  const setMenu = (next: RowMenu | null) => {
+    menuRef.current = next;
+    setMenuState(next);
+    setActionError("");
+  };
   const setOpen = (next: boolean) => {
+    if (!next) setMenu(null);
     setOpenState(next);
     onOpenChange(next);
   };
@@ -214,8 +262,11 @@ export function ProjectSelector({
     const onPointer = (event: { target?: unknown }) => {
       if (!withinBoxes([trigger, menu], event?.target)) setOpen(false);
     };
+    // Escape closes an open row action first, so a rename in progress is cancelled, not the picker.
     const onKey = (event: { key?: string }) => {
-      if (event?.key === "Escape") setOpen(false);
+      if (event?.key !== "Escape") return;
+      if (menuRef.current) setMenu(null);
+      else setOpen(false);
     };
     documentHost.addEventListener("pointerdown", onPointer);
     documentHost.addEventListener("keydown", onKey);
@@ -237,6 +288,148 @@ export function ProjectSelector({
     leads,
     queuedCounts,
   );
+  const byKey = new Map(projects.map((project) => [project.key, project]));
+  const fine = finePointer();
+  // One action at a time. Each one resolves into a closed menu; a rejection stays on the row.
+  const run = (action: Promise<unknown>) => {
+    setPending(true);
+    setActionError("");
+    action.then(
+      () => {
+        setPending(false);
+        setMenu(null);
+      },
+      (error) => {
+        setPending(false);
+        setActionError(errorText(error));
+      },
+    );
+  };
+  const toggleMenu = (key: string) =>
+    menuRef.current?.key === key ? setMenu(null) : setMenu({ key, view: "actions" });
+  /** The row's actions, inline under the row so the picker's outside-press check still sees them. */
+  const renderMenu = (full: Project) => {
+    const name = full.name;
+    const parked = full.visibility === "parked";
+    const view = menuState?.view ?? "actions";
+    const step = (next: RowMenu["view"]) => setMenu({ key: full.key, view: next });
+    const failure = actionError ? (
+      <Text accessibilityRole="alert" style={{ color: roles(c).danger, fontSize: typeScale.metadata.fontSize }}>
+        {actionError}
+      </Text>
+    ) : null;
+    const box = {
+      gap: space.xs,
+      padding: space.xs,
+      marginLeft: space.md,
+      borderWidth: 1,
+      borderColor: c.border,
+      borderRadius: radius.control,
+      backgroundColor: c.surface1,
+    };
+    if (view === "park")
+      return (
+        <View style={box}>
+          <InlineConfirm
+            c={c}
+            question={`Park ${name}? No new work starts.`}
+            confirmLabel="Park"
+            label={`project ${name}`}
+            busy={pending}
+            onConfirm={() => run(projectActions!.park!(full))}
+            onCancel={() => step("actions")}
+          />
+          {failure}
+        </View>
+      );
+    if (view === "rename") {
+      const problem = projectNameProblem(draft);
+      return (
+        <View style={box}>
+          <Field
+            c={c}
+            label="Name"
+            a11yLabel={`Name for ${name}`}
+            value={draft}
+            onChange={setDraft}
+            disabled={pending}
+            invalid={Boolean(problem)}
+          />
+          {problem && (
+            <Text accessibilityRole="alert" style={{ color: roles(c).danger, fontSize: typeScale.metadata.fontSize }}>
+              {problem}
+            </Text>
+          )}
+          <View style={row}>
+            <Button
+              small
+              c={c}
+              text="Save"
+              label={`Save name for ${name}`}
+              disabled={pending || Boolean(problem) || draft.trim() === name}
+              onPress={() => run(projectActions!.rename!(full, draft.trim()))}
+            />
+            <Button
+              small
+              c={c}
+              text="Cancel"
+              label={`Cancel rename of ${name}`}
+              disabled={pending}
+              onPress={() => step("actions")}
+            />
+          </View>
+          {failure}
+        </View>
+      );
+    }
+    return (
+      <View style={box}>
+        <View style={{ ...row, flexWrap: "wrap" }}>
+          {projectActions!.park && !parked && (
+            <Button small c={c} text="Park" label={`Park ${name}`} disabled={pending} onPress={() => step("park")} />
+          )}
+          {projectActions!.unpark && parked && (
+            <Button
+              small
+              c={c}
+              text="Unpark"
+              label={`Unpark ${name}`}
+              disabled={pending}
+              onPress={() => run(projectActions!.unpark!(full))}
+            />
+          )}
+          {projectActions!.rename && (
+            <Button
+              small
+              c={c}
+              text="Rename"
+              label={`Rename ${name}`}
+              disabled={pending}
+              onPress={() => {
+                setDraft(name);
+                step("rename");
+              }}
+            />
+          )}
+          {projectActions!.remove && (
+            // Remove opens the shared removal dialog, which checks blockers and asks for confirmation.
+            <Button
+              small
+              c={c}
+              text="Remove from Nucleus"
+              label={`Remove ${name} from Nucleus`}
+              disabled={pending}
+              onPress={() => {
+                setOpen(false);
+                projectActions!.remove!(full);
+              }}
+            />
+          )}
+        </View>
+        {failure}
+      </View>
+    );
+  };
   const panel = (
     <View
       accessibilityLabel="Project selector"
@@ -337,74 +530,117 @@ export function ProjectSelector({
                   Dormant projects
                 </Text>
               )}
-            <Pressable
-              accessibilityRole="checkbox"
-              accessibilityLabel={`Project ${project.name}, ${project.tasks} tasks`}
-              accessibilityState={{ checked: project.checked }}
-              onPress={(event) => {
-                // Single-select by default (nucleus#1421): a plain press replaces the
-                // selection and closes the picker, while Shift toggles just that
-                // project and keeps the picker open for a sequence of Shift-clicks.
-                // Touch and keyboard activation carry no Shift, so they select one.
-                const additive = isAdditivePress(event);
-                onChange(
-                  additive
-                    ? toggleProject(value, project.key)
-                    : selectProject(value, project.key),
-                );
-                if (!additive) setOpen(false);
-              }}
+            <View
               style={{
                 flexDirection: "row",
                 alignItems: "center",
-                gap: space.sm,
-                padding: space.xs,
                 borderRadius: radius.control,
                 borderWidth: 1,
                 borderColor: project.checked ? c.accent : c.border,
                 backgroundColor: project.checked ? c.surface2 : c.surface0,
               }}
             >
-              <View
-                style={{
-                  width: 18,
-                  height: 18,
-                  borderRadius: radius.control,
-                  borderWidth: 1,
-                  borderColor: project.checked ? c.accent : c.foregroundMuted,
-                  backgroundColor: project.checked ? c.accent : "transparent",
-                  alignItems: "center",
-                  justifyContent: "center",
+              <Pressable
+                accessibilityRole="checkbox"
+                accessibilityLabel={`Project ${project.name}, ${project.tasks} tasks`}
+                accessibilityState={{ checked: project.checked }}
+                onHoverIn={() => setHovered(project.key)}
+                onHoverOut={() => setHovered((current) => (current === project.key ? null : current))}
+                onFocus={() => setFocused(project.key)}
+                onBlur={() => setFocused((current) => (current === project.key ? null : current))}
+                onPress={(event) => {
+                  // Single-select by default (nucleus#1421): a plain press replaces the
+                  // selection and closes the picker, while Shift toggles just that
+                  // project and keeps the picker open for a sequence of Shift-clicks.
+                  // Touch and keyboard activation carry no Shift, so they select one.
+                  const additive = isAdditivePress(event);
+                  onChange(
+                    additive
+                      ? toggleProject(value, project.key)
+                      : selectProject(value, project.key),
+                  );
+                  if (!additive) setOpen(false);
                 }}
-              >
-                {project.checked && (
-                  <Icon name="Check" size={12} color={c.accentForeground} />
-                )}
-              </View>
-              <Text
-                numberOfLines={1}
                 style={{
-                  color: c.foreground,
-                  fontWeight: "600",
-                  fontSize: typeScale.body.fontSize,
                   flex: 1,
                   minWidth: 0,
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: space.sm,
+                  padding: space.xs,
                 }}
               >
-                {project.name}
-              </Text>
-              <Text
-                accessibilityElementsHidden
-                importantForAccessibility="no"
-                style={{
-                  color: c.foregroundMuted,
-                  fontSize: typeScale.metadata.fontSize,
-                  fontVariant: ["tabular-nums"],
-                }}
-              >
-                {project.tasks}
-              </Text>
-            </Pressable>
+                <View
+                  style={{
+                    width: 18,
+                    height: 18,
+                    borderRadius: radius.control,
+                    borderWidth: 1,
+                    borderColor: project.checked ? c.accent : c.foregroundMuted,
+                    backgroundColor: project.checked ? c.accent : "transparent",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  {project.checked && (
+                    <Icon name="Check" size={12} color={c.accentForeground} />
+                  )}
+                </View>
+                <Text
+                  numberOfLines={1}
+                  style={{
+                    color: c.foreground,
+                    fontWeight: "600",
+                    fontSize: typeScale.body.fontSize,
+                    flex: 1,
+                    minWidth: 0,
+                  }}
+                >
+                  {project.name}
+                </Text>
+                <Text
+                  accessibilityElementsHidden
+                  importantForAccessibility="no"
+                  style={{
+                    color: c.foregroundMuted,
+                    fontSize: typeScale.metadata.fontSize,
+                    fontVariant: ["tabular-nums"],
+                  }}
+                >
+                  {project.tasks}
+                </Text>
+              </Pressable>
+              {projectActions && byKey.get(project.key) && (() => {
+                const full = byKey.get(project.key)!;
+                const menuOpen = menuState?.key === project.key;
+                // Hidden until hover, focus or an open menu on a pointer device; it keeps its place either way.
+                const revealed = compact || !fine || hovered === project.key || focused === project.key || menuOpen;
+                return (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={`Project actions for ${full.name}`}
+                    accessibilityState={{ expanded: menuOpen }}
+                    onHoverIn={() => setHovered(project.key)}
+                    onHoverOut={() => setHovered((current) => (current === project.key ? null : current))}
+                    onFocus={() => setFocused(project.key)}
+                    onBlur={() => setFocused((current) => (current === project.key ? null : current))}
+                    onPress={() => toggleMenu(project.key)}
+                    style={{
+                      opacity: revealed ? 1 : 0,
+                      paddingHorizontal: space.xs,
+                      paddingVertical: space.xs,
+                    }}
+                  >
+                    <Icon
+                      name="EllipsisVertical"
+                      size={16}
+                      color={menuOpen ? c.foreground : c.foregroundMuted}
+                    />
+                  </Pressable>
+                );
+              })()}
+            </View>
+            {projectActions && menuState?.key === project.key && byKey.get(project.key) && renderMenu(byKey.get(project.key)!)}
           </React.Fragment>
         ))}
         {!projects.length && <Text style={muted(c)}>No projects yet.</Text>}

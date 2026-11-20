@@ -585,6 +585,17 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
   selection means all projects, the app-wide board, with lanes in the order of
   their first appearance across the selected plans. This is
   Nucleus's equivalent of the retired system's per-project-workspace and app-level views.
+- **Project actions in the selector** (nucleus#1430). Each project row has an
+  ellipsis that opens its actions inline in the picker, so no nested popover takes
+  an outside press. Park asks first with Settings' "No new work starts" confirmation;
+  a parked project shows Unpark instead. Rename changes the display name only, under
+  Settings' rule (1 to 200 characters once trimmed), and keeps the key, repositories
+  and selection. Remove from Nucleus leaves the picker and opens the shared removal
+  dialog, with its open-work blockers and confirmation; it never removes in one click.
+  Every save goes through the project's version and then refreshes the board and
+  Settings' project list. The ellipsis shows on hover or keyboard focus with a hover
+  pointer, and stays visible on touch and in the compact picker. Escape closes an
+  open action before it closes the picker.
 - **Per-project workspace board** (Tom, 2026-09-27). The plugin registers a
   workspace panel (`addWorkspacePanel`, context `workspace`, opened as a tab in the
   workspace area) named "Nucleus board", and an "Open Nucleus board" workspace command.
@@ -603,8 +614,8 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
   retired `subscriptions` hint opens Profiles scrolled to Subscriptions.
 - **Parked projects** (Spec 027): the selector and the All-projects view hide
   parked projects by default. A "Parked" section in the selector lists them for
-  scoping, and selecting one still shows its views; Unpark lives in Settings →
-  Projects. The Planning tab groups parked
+  scoping, and selecting one still shows its views. Unpark sits in the row's
+  ellipsis (nucleus#1430) and in Settings → Projects. The Planning tab groups parked
   projects under Parked. Attention from a parked project is never hidden.
 - **Project filter switch.** An "Enabled" switch at the top of the project
   selector's dropdown (Tom, 2026-09-28; it was the Pipeline view's "Filter by
@@ -726,6 +737,7 @@ control. Editing uses the existing dark-theme styling.
 | 14 | Planning tab edits: reorder, move between Now and Later, add a listed lane, save a lane document | Plan and document saved as operator versions with the horizon kept; stale save refused |
 | 14a | Planning tab navigation at both viewport sizes | Plan and lane columns at the wide size; plan, lane drill-down with back at the compact size; the pipeline board has no side pane |
 | 14c | Open the Nucleus board in a workspace of a project's repository, and in a workspace outside every project | Scoped to that project's Pipeline and Planning; outside every project, a plain message |
+| 14d | Open a project row's ellipsis: Park asks first, Unpark, Rename with an empty, 201-character or valid name, Remove from Nucleus, Escape | Each save uses the project's version and refreshes the board; Remove leaves the picker for the shared removal dialog with its blockers; Escape cancels an open action before the picker; the row's selection, filter and counts are unchanged by opening the menu |
 | 14b | Click one project, Shift-click a second, Shift-click the first off, then none; switch the Pipeline project filter off and on | A plain click replaces the selection and a Shift-click toggles one project, so every task and planning view shows first one project, then both (Planning shows both plans), then the second alone; none means all; the filter switch off shows all projects and on restores the kept selection |
 | 15 | Board dark theme at both viewport sizes, with a busy board | Legible; checked after merge by the Nucleus Chatterbox |
 | 15a | Click a lead card and a papercut card on the Pipeline view; run each modal action | The modal opens with the record's full detail; the cards show no buttons; each action works from the modal and reports its result there; inapplicable actions are disabled with the reason |

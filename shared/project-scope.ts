@@ -114,6 +114,15 @@ export function selectProject(
   return [key];
 }
 
+/** The display-name rule Settings → Projects applies (nucleus#1430 reuses it from the board): trimmed,
+ * non-empty and at most 200 characters. Returns the problem to show, or undefined when it can save. */
+export function projectNameProblem(name: string): string | undefined {
+  const trimmed = name.trim();
+  if (!trimmed) return "Name is empty";
+  if (trimmed.length > 200) return "Name is over 200 characters";
+  return undefined;
+}
+
 /** The press-event shapes that carry the Shift modifier. React Native passes
  * the DOM event under `nativeEvent` while React Native Web also exposes the
  * modifier at the top level; touch and keyboard activation carry neither. */
