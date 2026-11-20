@@ -5,7 +5,28 @@ import { join } from 'node:path';
 import { digest } from '../core/store/store';
 import { QUEUE_REPOSITORY_ORIGIN } from '../shared/contracts';
 import { ANSWERING_WINDOW_MS, waitFor } from './support/budgets';
-import { fixture } from './support/responsible-lifecycle-fixture';
+import { fixture as baseFixture } from './support/responsible-lifecycle-fixture';
+
+/**
+ * Responsible routing reads the host's live inventory (nucleus#1373): a planner is a rung
+ * only while the inventory lists it. Only this file's routes need that listing, so the
+ * shared lifecycle fixture stays as the other suites read it.
+ */
+function fixture(...args: Parameters<typeof baseFixture>) {
+  const f = baseFixture(...args);
+  const adapter = f.adapter as unknown as { originAgent?: (id: string) => Promise<{ archived: boolean } | null> };
+  Object.assign(f.adapter, {
+    listLiveAgents: async () => {
+      const live: Array<{ id: string; title: string; workspaceId: string }> = [];
+      for (const id of ['origin', 'planner-1', 'queue-planner', 'decider-1']) {
+        const agent = await adapter.originAgent!(id);
+        if (agent && !agent.archived) live.push({ id, title: id, workspaceId: 'workspace' });
+      }
+      return live;
+    },
+  });
+  return f;
+}
 
 /**
  * Tom's rulings of 2026-11-06 on the delegated routes: one missing-planner rule (bug 8), the

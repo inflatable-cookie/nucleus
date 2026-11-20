@@ -390,18 +390,6 @@ export function fixture(
         }
       },
     });
-    // Responsible routing reads the host's live inventory (nucleus#1373): a planner
-    // is a rung only while the inventory lists it, so list the fixture's live threads.
-    Object.assign(adapter, {
-      listLiveAgents: async () => {
-        const live: Array<{ id: string; title: string; workspaceId: string }> = [];
-        for (const id of ["origin", "planner-1", "queue-planner", "decider-1"]) {
-          const agent = await adapter.originAgent!(id);
-          if (agent && !agent.archived) live.push({ id, title: id, workspaceId: "workspace" });
-        }
-        return live;
-      },
-    });
     const archive = adapter.archiveAgent;
     adapter.archiveAgent = async (id: string) => {
       delegated.archived.push(id);
