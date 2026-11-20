@@ -13,7 +13,7 @@ import * as api from "../shared/contracts";
 import type { HostRunRecord, TaskSummary } from "../shared/contracts";
 import { hiddenQueuedByProject } from "../shared/queued-more";
 import { planSaveInput } from "../shared/planning-tab";
-import { activeSelection, effectiveSelection, projectHasRepository, scopeContains } from "../shared/project-scope";
+import { activeSelection, effectiveSelection, pickProjects, projectHasRepository, scopeContains } from "../shared/project-scope";
 import { isOpenTask, navigationViews, openTaskCount, workspaceNavigationViews, type SettingsTarget } from "../shared/queue-navigation";
 import { errorText, readErrorText, storedBoardErrorText } from "./error-text";
 import { LaneScreen, isPapercut, type LaneDraft } from "./lane-screen";
@@ -187,7 +187,8 @@ export function MainSurface({ theme, layout, navigation, workspaceBoard, now }: 
                     leads={boardLeads}
                     queuedCounts={state?.queuedCounts ?? []}
                     value={scope.projects}
-                    onChange={setScopeProjects}
+                    // An explicit nonempty pick turns a disabled filter back on (nucleus#1432); other scope entry points keep it.
+                    onChange={(projects) => setScope(pickProjects(scope, projects))}
                     onSettings={settingsOpener ? () => settingsOpener?.("projects") : undefined}
                     projectActions={{ ...projectSelector.actions, remove: setRemovingProject }}
                     onOpenChange={setScopeOpen}
