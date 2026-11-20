@@ -847,11 +847,11 @@ export class T3Nesting {
         .map(([id]) => id),
     );
     if (!ids.size) return false;
-    const { threads } = await this.core.reads.inventory();
+    const shell = await this.core.reads.shell();
     // A deleted thread is either absent from the list or carried as a tombstone with
     // `deletedAt`; both are the same positive fact, and a tombstone with an old run
     // record must not read as live (nucleus#1305 review).
-    return threads.some(
+    return [...shell.threads, ...shell.archivedThreads].some(
       (thread) =>
         ids.has(thread.id) &&
         !thread.deletedAt &&
@@ -882,6 +882,8 @@ export class T3Nesting {
   }
 
   private async knownThread(threadId: string) {
+    const inShell = await this.core.reads.shellRow(threadId);
+    if (inShell) return inShell;
     const { threads } = await this.core.reads.inventory();
     return threads.find((thread) => thread.id === threadId) ?? null;
   }
@@ -900,10 +902,11 @@ export class T3Nesting {
   private async parentGone(
     parent: ParentThread,
   ): Promise<"archived" | "deleted" | null> {
-    const { threads } = await this.core.reads.inventory();
-    const thread = threads.find(
-      (candidate) => candidate.id === parent.threadId,
-    );
+    const thread =
+      (await this.core.reads.shellRow(parent.threadId)) ??
+      (await this.core.reads.inventory()).threads.find(
+        (candidate) => candidate.id === parent.threadId,
+      );
     // Absence and a `deletedAt` tombstone are the same fact: the inventory either
     // omits a removed thread or keeps its tombstone (nucleus#1305 review).
     if (!thread || thread.deletedAt) return "deleted";

@@ -31,7 +31,11 @@ import {
   hostFailureRefusalDetail,
 } from "../core/host";
 import { T3CompatibilityError, shellThread } from "../hosts/t3code/contracts";
-import { activeStatuses, shellThreadStatus } from "../hosts/t3code/reads";
+import {
+  activeStatuses,
+  shellThreadStatus,
+  T3InventoryChurnError,
+} from "../hosts/t3code/reads";
 import {
   workspaceThreadFacts,
   type WorkspaceThreadInventoryHost,
@@ -685,6 +689,9 @@ test("observations distinguish idle, active run, permissions, archived and expli
   assert.equal(retired.status, "closed");
   assert.equal(retired.archived, true);
   assert.ok(
+    (await host.archivedThreads()).some((row) => row.id === created.id),
+  );
+  assert.ok(
     server.requests.some(
       (r) => r.tag === "orchestration.getArchivedShellSnapshot",
     ),
@@ -1090,10 +1097,10 @@ test("history exceeding the frame limit is observed, listed and titled without a
   assert.ok(
     (await host.listLiveAgents()).some((agent) => agent.id === created.id),
   );
+  const wt = await host.workspaceThreads([workspace.id]);
+  assert.equal(wt.ok, true);
   assert.ok(
-    (await host.workspaceThreads([workspace.id])).threads.some(
-      (thread) => thread.id === created.id,
-    ),
+    wt.ok && wt.threads.some((thread) => thread.id === created.id),
   );
   assert.ok(await host.originAgent(created.id));
   const task = {
@@ -1608,33 +1615,52 @@ test("inventory repeats moving live/archive snapshot pairs and succeeds when the
   assert.ok(
     (await host.listLiveAgents()).some((agent) => agent.id === created.id),
   );
+  assert.ok(
+    (await host.activeThreads()).some((agent) => agent.id === created.id),
+  );
+  assert.equal(
+    movingReads,
+    0,
+    "live-only reads use the atomic shell without touching archived snapshots",
+  );
+  const archiveInventory = await host.workspaceThreads([workspace.id]);
+  assert.equal(archiveInventory.ok, true);
+  assert.ok(
+    archiveInventory.ok &&
+      archiveInventory.threads.some((agent) => agent.id === created.id),
+  );
   assert.equal(
     movingReads,
     3,
     "two mismatched pairs are followed by the consistent third pair",
   );
-  assert.ok(
-    (await host.listLiveAgents()).some((agent) => agent.id === created.id),
-  );
-  assert.ok(
-    (await host.activeThreads()).some((agent) => agent.id === created.id),
-  );
 });
 
 test("inventory refuses an unstable snapshot after the bounded number of read pairs", async (t) => {
-  const { host, server } = await fixture(t);
+  const { host, server, workspace, spec } = await fixture(t);
+  const created = await host.createAgent(spec());
+  server.controls.beforeArchiveRead = () => {
+    server.controls.snapshotSequence++;
+  };
+  // Live observation and catalog/workspace project reads succeed with 0 archive reads.
+  assert.ok(
+    (await host.listLiveAgents()).some((agent) => agent.id === created.id),
+  );
+  assert.ok((await host.observe(created.id)).id === created.id);
+  assert.equal(await host.workspaceAvailable(workspace.id), true);
+
   const shellReads = server.requests.filter(
     (request) => request.tag === "orchestration.subscribeShell",
   ).length;
   const archiveReads = server.requests.filter(
     (request) => request.tag === "orchestration.getArchivedShellSnapshot",
   ).length;
-  server.controls.beforeArchiveRead = () => {
-    server.controls.snapshotSequence++;
-  };
   await assert.rejects(
-    host.listLiveAgents(),
-    /inventory kept moving.*5 attempts/,
+    host.reads.threadArchiveState(created.id),
+    (error: unknown) =>
+      error instanceof T3InventoryChurnError &&
+      !(error instanceof T3CompatibilityError) &&
+      /inventory kept moving.*5 attempts/.test(error.message),
   );
   assert.equal(
     server.requests.filter(

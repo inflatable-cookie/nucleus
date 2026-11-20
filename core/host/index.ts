@@ -4,6 +4,7 @@ export type * from "./types";
 export type { HostPolicyPort, HostPolicyConstructor } from "./policy";
 export {
   ArchiveNotDeliveredError,
+  HostReadRefusalError,
   ProvenPreSendRefusalError,
   HostSnapshotPendingError,
   HostUnknownDeliveryError,

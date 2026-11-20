@@ -140,9 +140,11 @@ export class T3Inbox {
       });
       inbox = this.core.state.read().inbox!;
     }
-    let thread = (await this.core.reads.inventory()).threads.find(
-      (row) => row.id === inbox!.threadId,
-    );
+    let thread =
+      (await this.core.reads.shellRow(inbox!.threadId)) ??
+      (await this.core.reads.inventory()).threads.find(
+        (row) => row.id === inbox!.threadId,
+      );
     if (thread?.deletedAt || thread?.archivedAt)
       throw new T3CompatibilityError("Nucleus inbox is deleted or archived");
     if (!thread) {
@@ -176,7 +178,7 @@ export class T3Inbox {
         undefined,
         { resendUnknownAfterRead: true },
       );
-      thread = (await this.core.reads.inventory()).threads.find(
+      thread = (await this.core.reads.readShell()).threads.find(
         (row) => row.id === inbox!.threadId,
       );
       if (!thread) return;
@@ -188,7 +190,7 @@ export class T3Inbox {
     if (!this.previewAttempted && this.core.boardLink)
       await this.showBoardFor(inbox);
     await this.nameProject(inbox.projectId);
-    await this.retitle(inbox.threadId);
+    await this.retitle(inbox.threadId, thread);
     if (thread.pinnedAt === undefined)
       throw new T3CompatibilityError("inbox thread pinnedAt");
     if (thread.pinnedAt === null) {
@@ -280,9 +282,11 @@ export class T3Inbox {
   private async inboxRecord(wait: InboxUiWait) {
     const inbox = this.core.state.read().inbox;
     if (!inbox) throw new Error("Nucleus inbox is unavailable");
-    const thread = (await wait(() => this.core.reads.inventory())).threads.find(
-      (row) => row.id === inbox.threadId,
-    );
+    const thread =
+      (await wait(() => this.core.reads.shellRow(inbox.threadId))) ??
+      (await wait(() => this.core.reads.inventory())).threads.find(
+        (row) => row.id === inbox.threadId,
+      );
     if (!thread) throw new Error("Nucleus inbox is unavailable");
     if (thread.deletedAt || thread.archivedAt)
       throw new T3CompatibilityError("Nucleus inbox is deleted or archived");
@@ -402,14 +406,15 @@ export class T3Inbox {
    * current title, and never wakes the inbox: a metadata update, not a turn. The
    * generation makes a title that returns to an earlier value a new command.
    */
-  private async retitle(threadId: string): Promise<void> {
+  private async retitle(
+    threadId: string,
+    knownThread?: Awaited<ReturnType<T3Reads["shellRow"]>>,
+  ): Promise<void> {
     const hostId = this.core.hostId();
     const key = this.core.acp()?.pendingInboxDecisionKey?.(hostId) ?? null;
     const decisions = key ? (JSON.parse(key) as unknown[]).length : 0;
     const title = inboxTitle(decisions, this.core.runningTasks());
-    const thread = (await this.core.reads.inventory()).threads.find(
-      (row) => row.id === threadId,
-    );
+    const thread = knownThread ?? (await this.core.reads.shellRow(threadId));
     if (!thread || thread.title === title) return;
     const generation = this.core.state.read().inbox?.titleGeneration ?? 0;
     const commandId = identity(
@@ -441,7 +446,7 @@ export class T3Inbox {
    * directory survive.
    */
   private async nameProject(projectId: string): Promise<void> {
-    const project = (await this.core.reads.inventory()).projects.find(
+    const project = (await this.core.reads.shell()).projects.find(
       (row) => row.id === projectId,
     );
     if (!project || project.archivedAt || project.title === INBOX_PROJECT_TITLE)

@@ -4,7 +4,7 @@ import type {
   HostPolicyPort,
   HostWorktreeWorkspaceSpec,
 } from "../../core/host";
-import { ProvenPreSendRefusalError } from "../../core/host";
+import { HostReadRefusalError, ProvenPreSendRefusalError } from "../../core/host";
 import type {
   HostAgentSpec,
   HostCapabilities,
@@ -18,6 +18,7 @@ import { T3CodeHost, type T3CodeConfig } from "./adapter";
 
 export { T3CodeHost, type T3CodeConfig } from "./adapter";
 export { T3CompatibilityError } from "./contracts";
+export { T3InventoryChurnError } from "./reads";
 export { T3RpcError, T3RpcClient } from "./rpc";
 export function createHost(config: T3CodeConfig): T3CodeHost {
   return new T3CodeHost(config);
@@ -130,7 +131,10 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
           page: { limit: number; cursor?: string };
         }) => {
           const ids = Object.keys(native.state.read().workspaces);
-          const listed = await native.workspaceThreads(ids);
+          const listed = await native.workspaceThreads(ids, {
+            includeArchived: options.filter.includeArchived,
+          });
+          if (!listed.ok) throw new HostReadRefusalError(listed.reason);
           const threads = options.filter.includeArchived
             ? listed.threads
             : listed.threads.filter((t) => !t.archived);

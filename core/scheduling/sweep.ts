@@ -20,6 +20,7 @@ import {
   hostFaultHost,
   recordHostFailure,
 } from "../host/adapter-routing";
+import { HostReadRefusalError } from "../host";
 import { archiveRetiredErroredAgents } from "../workspaces/retired-agent-archive";
 
 /**
@@ -202,6 +203,13 @@ export class Sweep {
     try {
       await work();
     } catch (error) {
+      if (error instanceof HostReadRefusalError) {
+        this.engine.store.setMeta(
+          "hostPassError",
+          `${name}: ${error.message}`.slice(0, 2000),
+        );
+        return;
+      }
       const hostId = hostFaultHost(error);
       if (!hostId) throw error;
       const fault =
@@ -428,6 +436,13 @@ export class Sweep {
             return this.hostPass.run(host);
           });
         } catch (error) {
+          if (error instanceof HostReadRefusalError) {
+            this.engine.store.setMeta(
+              "hostPassError",
+              `${host}/hostPass: ${error.message}`.slice(0, 2000),
+            );
+            continue;
+          }
           if (!hostFaultHost(error)) throw error;
           // A connected registry claim can still fail at the transport boundary.
           // Keep this host's tasks on the existing outage wait for this pass, and
