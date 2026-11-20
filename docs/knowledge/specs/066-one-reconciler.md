@@ -73,6 +73,16 @@ with proven isolation, or verified merge of the exact PR can make the old
 control irrelevant to the current step. Preserve any residual participant or
 workspace cleanup obligation.
 
+A release alone does not displace a historical restart's target. A finished
+target that Queue released from its authenticated completion after the send
+can still take a late restart. The release answers the restart once the host
+observes that thread archived, the same per-agent archive proof the ordinary
+archive path accepts. A target whose completion was never accepted, or that
+stayed unreleased, keeps the fence. The sweep and the owner preview read one
+decision. A settled restart offers no retry. A blocked one stays visible in
+`next` as an unavailable entry that names the sweep as the next observation,
+and its attention text names the observer rather than a retry.
+
 An exact creation lookup must cover the original host, workspace and creation
 identity after its grace period and show a complete result. One match binds
 the existing occurrence. Zero matches settles it when the original reservation
@@ -181,6 +191,7 @@ twins. Stop at each batch's boundary if the diff needs another slice.
 | 8 · delivered (nucleus#1358) | `core/verbs/task-next.ts`, `core/verbs/verb-fences.ts`, `core/store/store-pre-send.ts`. Finish shared refusal projection for moves and retries. Sweep settles positively bound pre-send receipts without replaying the original request. Closeout shares the stored merge-state refusal, and escalation answers accept an exact label or its unique short form with the offered binding still current. Older choices without a recorded binding require a fresh offer. A released reviewer’s applied impediment stays with its run. The current reviewer can continue an authenticated checkpoint at the same head, including a reader stopped by the earlier fence. Restart returns an escalated pre-dispatch worker to ordinary admission when the latest creation was refused before send and historical runs are settled. End the manually keyed correction route in a compatibility slice after its callers migrate. | C1, C4 and C7. No force for an obsolete binding and no input-hash ritual for a proved refusal. Changed run, caller and head still refuse. |
 | 9 | `core/workspaces/worktree-links.ts`, `service/bb-adapter.ts`, `service/callbacks/callback.ts`. Fix parity at the shared provisioning and binding edges. Verify declared link publication and retained helper resolution through a roll without granting extra authority. | C8. BB and Paseo reach the same link and reporting contract on supported paths. Missing capability remains a named wait or actionable owner decision. |
 | 10 · delivered (nucleus#1359) | Audit schedules process cleanup on the host cleanup lane. Each cleanup round shares one parsed table and uses bounded asynchronous identity reads for signal targets. The executor's periodic tick handles unchanged snapshot refreshes. | C2 and C4 under a slow process reader. Healthy task and admission requests still answer, while identity and teardown evidence retain their current strength. Fixture fleet profiled before and after. |
+| 11 · bounded slice (nucleus#1448) | `core/recovery/recovery-effects.ts` and `core/recovery/effect-gates.ts`. The restart observer accepts a target released from its authenticated completion after the send once its thread is observed archived. The stop and attention text names the observer, not a retry, when only observation remains. | C1 with positive displacement, plus fenced twins for an unarchived thread, an unaccepted completion, an unreleased target, no later binding, and receipt-bearing or non-uncertain restarts. Two independent restarts settle separately, and a replay across a restart settles once. |
 
 The cutover also needs these bounded slices. Each slice replaces its old
 reader and writer together and keeps the specialized proof owner. Retained

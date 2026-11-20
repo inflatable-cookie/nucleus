@@ -565,6 +565,86 @@ export function hasRecordedOperationSettlement(
   });
 }
 
+/**
+ * A run Queue released from its own authenticated completion after the send.
+ * The release alone is not proof: the agent may still be open and able to take
+ * a late restart. It is displaced once the host proves its thread archived,
+ * which is the same per-agent archive proof the ordinary archive path accepts.
+ */
+function releasedAfterArchivedCompletion(
+  store: Store,
+  task: Task,
+  run: Run,
+  events: ReturnType<Store["eventsAll"]>,
+  boundary: number,
+): boolean {
+  if (!run.agentId || run.status !== "finished" || !authenticatedCompletion(store, run))
+    return false;
+  if (store.threadArchiveEffect(run.agentId, task.hostId)?.status !== "archived")
+    return false;
+  return events.some(
+    (event) =>
+      Date.parse(event.at) > boundary &&
+      event.kind === "run_released_from_recorded_completion" &&
+      event.detail === `${run.role} ${run.id}`,
+  );
+}
+
+/**
+ * An uncertain historical restart send whose only remaining step is
+ * observation. The sweep's observer owns it, and no owner retry or pre-send
+ * reconciliation applies before later evidence answers it. Operations that are
+ * not uncertain, already carry a result, carry an execution-authored pre-send
+ * receipt, or do not match a settled historical restart send stay outside this
+ * classification so executable reconciliation remains accurately represented.
+ */
+export function observationOnlyRestartOperation(
+  store: Store,
+  operationId: string,
+): boolean {
+  const operation = store.operation(operationId);
+  if (
+    !operation ||
+    operation.kind !== "task_control" ||
+    operation.state !== "needs_attention" ||
+    !operation.taskId ||
+    !operation.expectedVersion ||
+    operation.attempts <= 0 ||
+    operation.result !== null ||
+    operation.preSendReceipt != null ||
+    operation.effect?.kind !== "task_control" ||
+    operation.effect.target !== "restart" ||
+    operation.effect.status !== "uncertain"
+  )
+    return false;
+  const accepted = Date.parse(operation.createdAt);
+  const started = Date.parse(operation.startedAt ?? "");
+  const boundary = Date.parse(operation.settledAt ?? "");
+  if (
+    !Number.isFinite(accepted) ||
+    !Number.isFinite(started) ||
+    !Number.isFinite(boundary) ||
+    started < accepted ||
+    boundary < started ||
+    operation.id !== operationIdForKey(operation.key)
+  )
+    return false;
+  const payload = store.operationPayload(operation.id) as {
+    control?: {
+      action?: string;
+      taskId?: string;
+      version?: number;
+    };
+  } | null;
+  return Boolean(
+    payload &&
+      operation.inputHash === operationInputHash(payload) &&
+      payload.control?.action === "restart" &&
+      payload.control.taskId === operation.taskId &&
+      payload.control.version === operation.expectedVersion,
+  );
+}
+
 /** Positive task-bound evidence that a control no longer owns the current step. */
 export function observedHostEffectEvidence(
   store: Store,
@@ -798,12 +878,13 @@ export function observedHostEffectEvidence(
         !runs.some(
           (other) => !other.released && other.agentId === run.agentId,
         ) &&
-        events.some(
+        (events.some(
           (event) =>
             Date.parse(event.at) > boundary &&
             event.kind === "run_released_from_observed_liveness" &&
             event.detail.startsWith(`${run.role} ${run.id}: `),
-        );
+        ) ||
+          releasedAfterArchivedCompletion(store, task, run, events, boundary));
       const laterMove = events.some((event) => {
         if (event.kind !== "owner_control" || Date.parse(event.at) <= boundary)
           return false;
