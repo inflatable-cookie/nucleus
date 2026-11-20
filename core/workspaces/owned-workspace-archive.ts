@@ -12,6 +12,7 @@ import {
   bbWorkspaceThreads,
 } from "../machine/owned-tool-process-proof";
 import { participantRuntime } from "../machine/participant-runtime";
+import { participantTemporaryDirectory } from "../machine/participant-roots";
 import {
   readToolTimeline,
   liveToolIssue,
@@ -352,13 +353,8 @@ export class OwnedWorkspaceArchive {
                       );
                       if (!runIds.length)
                         return "participant run process identity is unavailable";
-                      const temporaryDirectories = runIds.map(
-                        (runId) =>
-                          runs.find((run) => run.id === runId)
-                            ?.temporaryDirectory ??
-                          (runId === task.runId
-                            ? task.temporaryDirectory
-                            : undefined),
+                      const temporaryDirectories = runIds.map((runId) =>
+                        participantTemporaryDirectory(task, runs, runId),
                       );
                       if (temporaryDirectories.some((root) => !root))
                         return "a participant run temporary directory is unrecorded";

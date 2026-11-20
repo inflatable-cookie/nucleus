@@ -6,6 +6,7 @@ import {
 } from "./owned-tool-process-proof";
 import { readHostUidProcesses } from "./host-process-listing";
 import { participantRuntime, storeDataHome } from "./participant-runtime";
+import { participantTemporaryDirectory } from "./participant-roots";
 import type { Resolution } from "../resolution";
 import {
   formatLiveToolIssue,
@@ -121,10 +122,11 @@ export class OwnedTools {
         task && bbThreadForAgent(agentId, boundRun?.hostId ?? task.hostId)
           ? bbWorkspaceThreads(task, this.store.runs(task.id), workspaceId)
           : [];
+      const taskRuns = task ? this.store.runs(task.id) : [];
       const runtime = participantRuntime({
         dataHome: storeDataHome(this.store),
         tasks: task ? [task] : [],
-        runs: task ? this.store.runs(task.id) : [],
+        runs: taskRuns,
         bbThreads,
       });
       const hold = await boundedToolHold(
@@ -141,10 +143,8 @@ export class OwnedTools {
             !this.adapter.hostProcessListing
           )
             return "owned workspace or run process identity is unavailable";
-          const temporaryDirectories = runIds.map(
-            (id) =>
-              this.store.run(id)?.temporaryDirectory ??
-              (id === task.runId ? task.temporaryDirectory : undefined),
+          const temporaryDirectories = runIds.map((id) =>
+            participantTemporaryDirectory(task, taskRuns, id),
           );
           if (temporaryDirectories.some((directory) => !directory))
             return "a participant run temporary directory is unrecorded";

@@ -1181,6 +1181,7 @@ const noticeFacts = (over: Partial<NoticeFacts> = {}): NoticeFacts => ({
   currentNoticeId: "attention:task",
   supportsCoordinatorRecovery: true,
   coordinatorNeedsOwner: false,
+  ownerActionNeeded: false,
   awaitingProof: false,
   closeoutHookHold: false,
   sshAuthExhausted: false,
@@ -1294,7 +1295,24 @@ test("noticeSettlement: one pending notice’s ordinary settlement, in today’s
     {
       name: "a coordinator-recovery stop supersedes a superseded attention notice",
       facts: noticeFacts(),
-      expect: { kind: "superseded" },
+      expect: {
+        kind: "superseded",
+        error:
+          "The task waits on a condition that clears on its own; no owner action is owed",
+      },
+    },
+    {
+      name: "an owner-only stop keeps its notice",
+      facts: noticeFacts({ ownerActionNeeded: true }),
+      expect: { kind: "send", recipient: "owner", escalation: false },
+    },
+    {
+      name: "an owner-only stop keeps its notice even under coordinator recovery",
+      facts: noticeFacts({
+        ownerActionNeeded: true,
+        supportsCoordinatorRecovery: true,
+      }),
+      expect: { kind: "send", recipient: "owner", escalation: false },
     },
     {
       name: "a proof wait keeps its notice (bug 7)",
@@ -1330,7 +1348,10 @@ test("noticeSettlement: one pending notice’s ordinary settlement, in today’s
         supportsCoordinatorRecovery: false,
         currentNoticeId: "attention:other",
       }),
-      expect: { kind: "superseded" },
+      expect: {
+        kind: "superseded",
+        error: "A later attention episode replaced this notice",
+      },
     },
     {
       name: "a prerequisite notice is never superseded for its id",
