@@ -3,7 +3,7 @@ import { parseAgentId } from '../../shared/agent-identity';
 import { TASK_OWNER_HOLD, episodeBindsCurrentWork, isDispositionActive, isDispositionComplete, isRetainedProfileReason, taskOwner } from '../../shared/contracts';
 import { normalizeRepositoryOrigin } from '../../shared/lanes';
 import { isSshAuthExhausted } from '../../shared/ssh-auth';
-import { isWaitingTaskStop } from '../../shared/task-stop';
+import { isWaitingTaskStop, recordedStopIsWait } from '../../shared/task-stop';
 import { parseHostOutageNoticeId } from '../../shared/host-outage';
 import { isCloseoutHookHold } from '../hooks/hooks';
 import { NO_ORIGIN_THREAD_WAIT, missingOriginHasPlanner, noticeId, noticeTarget, originRecipient, originUsesProject } from './origin';
@@ -47,6 +47,8 @@ export function noticeSettlement(facts: {
   currentNoticeId: string;
   supportsCoordinatorRecovery: boolean;
   coordinatorNeedsOwner: boolean;
+  /** The task's recorded stop is a blocker its owner must act on, and no recovery episode owns it. */
+  ownerActionNeeded: boolean;
   awaitingProof: boolean;
   closeoutHookHold: boolean;
   sshAuthExhausted: boolean;
@@ -74,9 +76,14 @@ export function noticeSettlement(facts: {
     return { kind: 'uncertain', error: 'Origin changed after delivery intent; inspect old thread before resending' };
   }
   // A wait clears on its own and a hold has its own owner reminders (Spec 040).
-  if (!completion && !prerequisite && facts.supportsCoordinatorRecovery && !facts.coordinatorNeedsOwner
-    && !facts.awaitingProof && !facts.closeoutHookHold && !facts.sshAuthExhausted) return { kind: 'superseded' };
-  if (!completion && !prerequisite && notice.status === 'pending' && notice.id !== facts.currentNoticeId) return { kind: 'superseded' };
+  // A stop only the owner can exit is not that, so its notice stays pending until
+  // delivery, a later episode replaces it, or the stop clears. A live recovery
+  // episode still owns its stop: the owner hears when it escalates or refuses.
+  if (!completion && !prerequisite && !facts.ownerActionNeeded && facts.supportsCoordinatorRecovery && !facts.coordinatorNeedsOwner
+    && !facts.awaitingProof && !facts.closeoutHookHold && !facts.sshAuthExhausted)
+    return { kind: 'superseded', error: 'The task waits on a condition that clears on its own; no owner action is owed' };
+  if (!completion && !prerequisite && notice.status === 'pending' && notice.id !== facts.currentNoticeId)
+    return { kind: 'superseded', error: 'A later attention episode replaced this notice' };
   if (notice.status === 'intent') return { kind: 'uncertain', error: `Restart during delivery; inspect ${completion?'recipient':'origin'} thread before resending` };
   // No thread to receive it, after the ordinary settlement rules: the notice stays
   // pending and visible on the board, and is never sent to a fictitious agent.
@@ -329,11 +336,13 @@ export class Notices {
       // A recorded stop whose reason is not a wait is attention whatever the
       // phase says: Queue has stopped and named an owner verb it cannot apply
       // itself (nucleus#1159: a review blocked on an uncertain side effect keeps
-      // its phase, so the phase alone would leave the owner uninformed).
-      const actionableStop = Boolean(stop && stop.reason !== 'held' && !isWaitingTaskStop(stop.reason));
+      // its phase, so the phase alone would leave the owner uninformed). A
+      // recovery episode still owns its stop, though: that coordinator acts, and
+      // its escalation or refusal is what makes the owner's notice due.
+      const ownerActionNeeded = Boolean(stop && stop.reason !== 'held' && !recordedStopIsWait(stop)) && !episodeOpen;
       const legacyAttention = !this.adapter.supportsCoordinatorRecovery
         && Boolean(task.originError&&!missingOriginHasPlanner(this.store,task) || task.resolution.attention || ['blocked', 'error', 'needs_attention'].includes(task.phase));
-      if (!coordinatorNeedsOwner && !locallyActionable && !legacyAttention && !actionableStop) continue;
+      if (!coordinatorNeedsOwner && !locallyActionable && !legacyAttention && !ownerActionNeeded) continue;
       // A wait clears on its own and a hold has its own owner reminders (Spec 040).
       if (this.adapter.supportsCoordinatorRecovery && stop && (isWaitingTaskStop(stop.reason) || stop.reason === 'held')
         && !coordinatorNeedsOwner && !locallyActionable) continue;
@@ -373,6 +382,10 @@ export class Notices {
         completionCohort = { settled: Boolean(settled), firstPendingId: pending[0]?.id ?? null };
       }
       const coordinatorNeedsOwner=task.resolution.recovery?.status==='escalated'||task.resolution.recovery?.action?.status==='refused';
+      // The same fact the raise above uses: a stop whose reason is not a wait is
+      // the owner's, so its notice is never settled as a self-clearing wait.
+      const settlementStop = task.resolution.stop;
+      const ownerActionNeeded = Boolean(settlementStop && settlementStop.reason !== 'held' && !recordedStopIsWait(settlementStop)) && !episodeBindsCurrentWork(task);
       const facts: Parameters<typeof noticeSettlement>[0] = {
         notice: n,
         taskRemoved: Boolean(task.removedAt),
@@ -382,6 +395,7 @@ export class Notices {
         currentNoticeId: noticeId(task),
         supportsCoordinatorRecovery: Boolean(this.adapter.supportsCoordinatorRecovery),
         coordinatorNeedsOwner,
+        ownerActionNeeded,
         awaitingProof: task.resolution.stop?.reason==='awaiting_proof',
         closeoutHookHold: isCloseoutHookHold(task),
         sshAuthExhausted: isSshAuthExhausted(task.reason),

@@ -60,6 +60,29 @@ export function runTemporaryDirectory(runId: string, root: string): string {
 }
 
 /**
+ * The leaf one worker ticket's identity names beside another ticket's recorded
+ * leaf, in whichever shape Queue wrote it: the current 8-character digest, the
+ * older 12-character one, or a `runs/<ticket>` directory.
+ *
+ * A retired worker's record names the worker ticket a replacement displaced. It
+ * has no run row and the task row now records this worker's leaf, but the retired
+ * ticket's own leaf is not lost: the launcher named it by this same rule under
+ * the same root. A recorded leaf in no shape Queue writes, another host's ticket
+ * or an unusable identity is not a root this can extend, so it answers undefined
+ * rather than inventing one.
+ */
+export function ticketTemporaryDirectoryBeside(recorded: string | undefined, recordedTicket: string | undefined, ticket: string): string | undefined {
+  if (!recorded || !recordedTicket || !ticket || ticket === recordedTicket) return undefined;
+  if (!runIdShape.test(recordedTicket) || !runIdShape.test(ticket)) return undefined;
+  const root = dirname(recorded);
+  if (recorded === runTemporaryDirectory(recordedTicket, root)) return runTemporaryDirectory(ticket, root);
+  const legacyLeaf = (id: string) => createHash("sha256").update(id).digest("hex").slice(0, 12);
+  if (basename(recorded) === legacyLeaf(recordedTicket)) return join(root, legacyLeaf(ticket));
+  if (basename(recorded) === recordedTicket && basename(root) === "runs") return join(root, ticket);
+  return undefined;
+}
+
+/**
  * The production placement: the configured scratch root, created only after the
  * root proves its canonical path and any configured volume identity.
  */

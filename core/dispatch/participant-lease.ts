@@ -18,15 +18,26 @@ export class ParticipantLease {
   get store() { return this.resolution.store; }
   get adapter() { return this.resolution.adapter; }
 
-  private async settleStrayTool(t: Task, agentId: string, workspaceId: string, runIds: string[], issue: string): Promise<string | null> {
+  /**
+   * One participant's owned-tool refusal, and whether the merge can clear it
+   * without its owner.
+   *
+   * The grace window is a timed retry: it ends by itself and a conclusive read is
+   * taken then. The host-process reap is the automatic settlement. What survives
+   * both is a fact no pass in this lane can change — an unreadable listing, an
+   * unrecorded root, a live Paseo-owned process, or a proof that still refuses
+   * after its tree was proved empty — so it is the owner's, not a quiet wait. A
+   * participant that resumed during the grace is live again, which is transient.
+   */
+  private async settleStrayTool(t: Task, agentId: string, workspaceId: string, runIds: string[], issue: string): Promise<{ issue: string; needsOwner: boolean } | null> {
     const runId = runIds[0];
-    if (!runId) return issue;
+    if (!runId) return { issue, needsOwner: true };
     const hold = this.store.eventsAll(t.id).findLast(event => event.kind === 'owned_tool_hold' && (() => {
       try { return JSON.parse(event.detail).runId === runId; } catch { return false; }
     })());
-    if (!hold) return issue;
+    if (!hold) return { issue, needsOwner: true };
     const deadline = Date.parse(hold.at) + Math.max(0, this.resolution.graceMs);
-    if (Date.now() < deadline) return `${issue}; stray-tool grace ends at ${new Date(deadline).toISOString()}`;
+    if (Date.now() < deadline) return { issue: `${issue}; stray-tool grace ends at ${new Date(deadline).toISOString()}`, needsOwner: false };
 
     // A live turn owns its tools. Recheck immediately before the host sweep so
     // a turn that resumed during the grace is never stopped.
@@ -36,9 +47,9 @@ export class ParticipantLease {
     for (const [id, workspace] of executionParticipants(t, this.store.runs(t.id))) {
       let state: Awaited<ReturnType<Adapter['observe']>>;
       try { state = await this.resolution.host.observe(id); }
-      catch { return `${issue}; participant ${id} identity could not be rechecked before reaping`; }
+      catch { return { issue: `${issue}; participant ${id} identity could not be rechecked before reaping`, needsOwner: true }; }
       if (state.id !== id || state.workspaceId !== workspace || !agentSettled(state))
-        return `${issue}; participant ${id} resumed or its identity changed before reaping`;
+        return { issue: `${issue}; participant ${id} resumed or its identity changed before reaping`, needsOwner: false };
     }
 
     let processes: Awaited<ReturnType<NonNullable<Adapter['hostProcessListing']>>> | undefined;
@@ -52,22 +63,23 @@ export class ParticipantLease {
         processes,
       });
     } catch (error) {
-      return `${issue}; host-process reap failed: ${error instanceof Error ? error.message : String(error)}`;
+      return { issue: `${issue}; host-process reap failed: ${error instanceof Error ? error.message : String(error)}`, needsOwner: true };
     }
-    if (result.unavailable) return `${issue}; host-process reap could not read the host: ${result.unavailable.reason}`;
-    if (result.failed.length) return `${issue}; host-process reap could not prove or stop every target: ${result.failed.map(target => target.reason).join('; ')}`;
+    if (result.unavailable) return { issue: `${issue}; host-process reap could not read the host: ${result.unavailable.reason}`, needsOwner: true };
+    if (result.failed.length) return { issue: `${issue}; host-process reap could not prove or stop every target: ${result.failed.map(target => target.reason).join('; ')}`, needsOwner: true };
     if (result.skippedPaseo.length) {
       const skipped = `Skipped ${result.skippedPaseo.length} Paseo-owned process${result.skippedPaseo.length === 1 ? '' : 'es'}: ${result.skippedPaseo.map(target => `pid=${target.pid} pgid=${target.pgid} cwd=${target.cwd || '-'} command=${target.command || '-'}`).join('; ')}`;
       this.store.event(t.id, 'participant_tool_reap_skipped', skipped);
-      return `${issue}; host-process reap ${skipped}`;
+      return { issue: `${issue}; host-process reap ${skipped}`, needsOwner: true };
     }
     if (result.terminated.length) this.store.event(t.id, 'participant_tool_reaped',
       `Stopped participant ${agentId} after its reported turn ended and stray-tool grace elapsed: ${formatHostProcessSweepEvent(result)}`);
     else this.store.event(t.id, 'participant_tool_reap_empty',
       `Participant ${agentId} still reported ${issue}, but the host-process reap found no live task process after the grace`);
-    return await this.resolution.ownedToolHold(agentId, {
+    const remaining = await this.resolution.ownedToolHold(agentId, {
       requireCompleteEvidence: true, runId, runIds, taskId: t.id, workspaceId,
     });
+    return remaining ? { issue: remaining, needsOwner: true } : null;
   }
 
   private yieldIntegrationTurn(t: Task): void {
@@ -237,12 +249,20 @@ export class ParticipantLease {
         const participantRunIds=participantToolRunIds(t,runs,id,workspace);
         const why=await this.resolution.ownedToolHold(id,{requireCompleteEvidence:true,runId:participantRunIds[0],runIds:participantRunIds,taskId:t.id,workspaceId:workspace});
         if (why) {
-          const stray = !probe && !syncing && !t.resolution.mergeIntent && !t.resolution.mergedCommit
+          // While a merge intent is recorded the stray-tool settlement is not
+          // attempted; a participant still holding it has already been through
+          // its grace in an earlier pass, so the owner's exit is the one left.
+          const stray = !probe && !t.resolution.mergeIntent && !t.resolution.mergedCommit
             ? await this.settleStrayTool(t, id, workspace, participantRunIds, why)
-            : why;
+            : { issue: why, needsOwner: !probe };
           if (!stray) continue;
           if (!probe) this.yieldIntegrationTurn(t);
-          if (!probe) this.resolution.waiting(t, `Merge waits for participant ${id}: ${stray}`, 'lifecycle');
+          if (!probe) this.resolution.waiting(
+            t,
+            `Merge waits for participant ${id}: ${stray.issue}`,
+            stray.needsOwner ? 'operator_needed' : 'lifecycle',
+            stray.needsOwner ? { suggestedVerbs: ['retry_effect'] } : {},
+          );
           return false;
         }
       }

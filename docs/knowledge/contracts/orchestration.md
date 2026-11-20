@@ -3130,6 +3130,16 @@ movement invalidates source approval and preserves the normal readiness gates.
 - An attention notice states the current stop. A resolved recovery episode,
   including an action recorded not applied because an owner verb superseded it,
   is history and is never quoted as a live blockage.
+- One notice per episode, and the episode is a fact, not the sentence. An open
+  incident keys its notice (reconciling and escalated are separate); a recovery
+  episode that still owns its stop keys none, because its coordinator acts and
+  the owner hears when it escalates or refuses. Otherwise the recorded stop keys
+  it: a stop only the owner can exit is its own episode, so a notice an earlier
+  transient wait superseded never hides the block that followed it. That stop's
+  notice stays pending through the wait and every ordinary recheck until it is
+  delivered once, the stop clears, or a later episode replaces it. A conclusively
+  transient wait supersedes its notice naming that reason, not with an empty
+  error.
 - Agentless recovery follows the proof and release rules in
   [Uncertain creation and absence](#uncertain-creation-and-absence).
 - A decision that escalates, spends a coordinator run or returns work verifies
@@ -3724,6 +3734,13 @@ after the task finishes.
   integration turn; after the wait clears it rejoins through the existing FIFO
   turn mechanism. A live or changed participant is never reaped, and an
   uncertain merge intent continues to retain its turn.
+- The participant wait says which of the two it is. The grace window and a
+  participant that resumed during it are timed waits that clear on their own
+  (`lifecycle`). What the grace and the reap cannot answer — an unreadable
+  listing, an unrecorded root, a live Paseo-owned process, or a proof that still
+  refuses after its tree was proved empty — is a recorded `operator_needed` stop
+  whose exit is `retry_effect` on the `owned_tool.<runId>` occurrence, so a merge
+  that cannot settle its own participant is visible instead of waiting forever.
 
 ### History retention
 

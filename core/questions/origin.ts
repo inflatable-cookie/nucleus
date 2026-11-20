@@ -1,7 +1,8 @@
 import { sameCallerIdentity } from '../../shared/agent-identity';
 import type {Notice,ReparentInput,ReparentResult,Task} from '../../shared/contracts';
-import {isDispositionActive,isOperatorOrigin,OPERATOR_BOARD_CALLER,taskOwner,taskPlanner} from '../../shared/contracts';
+import {episodeBindsCurrentWork,isDispositionActive,isOperatorOrigin,OPERATOR_BOARD_CALLER,taskOwner,taskPlanner} from '../../shared/contracts';
 import {normalizeRepositoryOrigin} from '../../shared/lanes';
+import {recordedStopIsWait} from '../../shared/task-stop';
 import type {Resolution} from '../resolution';
 import {digest,type Store} from '../store/store';
 /** A missing-origin fact can remain visible while a live project thread receives its notices. */
@@ -184,9 +185,21 @@ export class OriginRouting {
  }
 }
 
-// Attention notices deduplicate per incident: reconciling and escalated states
-// deliver at most one notice each, and repeated observations never append another.
-const noticeId=(t:Task)=>digest(`${t.id}:${t.resolution.incident?.id??`waiting:${t.phase}:${t.reason}`}:${t.resolution.incident?.status==='escalated'?'escalated':'reconciling'}`);
+// Attention notices deduplicate per episode: an open incident keys its own notice
+// (reconciling and escalated are separate), and repeated observations never append
+// another. Without one, the episode is the stop whose owner is needed, never the
+// wait text alone: a notice a transient wait superseded must not hide the block
+// that followed it. A recovery episode that still owns the task keys nothing new,
+// because its coordinator, not the owner, is acting on the stop.
+const noticeId=(t:Task)=>{
+ const stop=t.resolution.stop,incident=t.resolution.incident;
+ const ownerAction=Boolean(stop&&stop.reason!=='held'&&!recordedStopIsWait(stop))&&!episodeBindsCurrentWork(t);
+ const episode=incident&&incident.status!=='resolved'
+  ?`${incident.id}:${incident.status==='escalated'?'escalated':'reconciling'}`
+  :ownerAction?`stop:${stop!.reason}:${stop!.since}`
+  :`waiting:${t.phase}:${t.reason}`;
+ return digest(`${t.id}:${episode}`);
+};
 /** Why an origin notice waits when its task has no thread to receive it. */
 export const NO_ORIGIN_THREAD_WAIT = 'No origin thread: waiting for a planner; the operator reads this on the board';
 /** Missing and operator origins use the project's live responsible thread. */

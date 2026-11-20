@@ -756,6 +756,17 @@ run temporary directories. Workspace archive resolves every recorded run for
 each participant in that workspace, including attached support roles and the
 task-row worker, and checks every scratch root on each proof pass. A missing
 run inventory, identity or scratch root stays inconclusive.
+
+A participant ticket is a run identity even without a run row. The retained
+worker's ticket is the task's recorded scratch leaf; a retired worker record
+names the worker ticket a replacement displaced, so its leaf is the one that
+ticket's own identity names beside the recorded leaf in the shape the launcher
+wrote (the 8-character leaf, the older 12-character one, or `runs/<ticket>`).
+That is the root its processes were started under, so the proof scans it rather
+than calling it unrecorded, and a process still living there holds. A ticket
+recorded on another host, one this task never recorded, or a recorded leaf in
+none of those shapes stays unrecorded and inconclusive, as does a run row with
+no recorded leaf.
 History pages are not read or reconstructed (planner ruling, 2026-11-15).
 Provider threads are window-retained: active threads, threads referenced by the
 window or retained nodes, and the latest todo owner. The residual premise is
