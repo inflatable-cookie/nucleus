@@ -606,7 +606,11 @@ async function main() {
   // The outage's fault line is the agent's own record, and T3 can land a streamed chunk
   // after the first read. The count gets a bounded window before it is called absent.
   let sustainedAdded = sustained.faultLinesAdded;
-  for (let waited = 0; sustainedAdded !== 1 && waited < 30_000; waited += 1_000) {
+  for (
+    let waited = 0;
+    sustainedAdded !== 1 && waited < 30_000;
+    waited += 1_000
+  ) {
     await delay(1_000);
     sustainedAdded =
       faultLines(await project(parent.threadId)) - sustainedFaultsBefore;

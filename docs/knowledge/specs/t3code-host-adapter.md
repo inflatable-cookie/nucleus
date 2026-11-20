@@ -979,9 +979,12 @@ the outage. `effigy proof:t3code:parent-gap` proves the task parent: a reviewer 
 running under a held parent through a 4-second roll, a 40-second sustained outage (one
 fault line), and a second child created under the same held parent after the first is
 interrupted, with the same binding and session. One run of that proof failed the
-sustained step on the fault count (no new line), and two earlier runs did the same;
-the passing run's agent log shows one fault line per outage. That failure is not
-explained yet. The same proof also covers the parent's own open decision: a task-scoped
+sustained step on the fault count (no new line), and two earlier runs did the same.
+Those runs predate the proof's agent-stderr capture and its bounded fault-count window,
+so their cause is not confirmed. The window now lets a late-landing line count, and a
+failure prints the parent's runs, messages and the agent's stderr. Three consecutive runs
+at `8afefd567` passed, and the agent log of a passing run shows one fault line per outage
+with the turn held. The same proof also covers the parent's own open decision: a task-scoped
 decision the held parent raises as a card stays the same card, on the same running run,
 through a roll, with one card posted and the decision still open. The proof raises it by
 marking the parent's scope observed through the service's own ACP surface, since the
