@@ -38,13 +38,16 @@ export class ProfileCatalogs {
 
   async refresh(): Promise<void> {
     if (!this.owner.adapter.catalog) throw new Error('Host profile catalog is unavailable');
-    // A host that is offline answers no catalog, and that is that host's own
-    // absence rather than a failure of the pass (nucleus#1449): its previous
-    // snapshot stays, dispatch on it waits on its own gates, and every online
-    // host below still reads its own catalog. A connected host whose read fails
-    // is a real fault and still rejects.
-    const primaryOnline = hostConnected(this.owner.primaryAdapter);
-    if (primaryOnline) {
+    // A host that positively reports itself offline answers no catalog, and that is
+    // that host's own absence rather than a failure of the pass (nucleus#1449): its
+    // previous snapshot stays, dispatch on it waits on its own gates, and every
+    // online host below still reads its own catalog. An adapter that cannot report
+    // its connection at all is read as before, and a connected host whose read
+    // fails is a real fault that still rejects.
+    const primaryReadable = this.owner.primaryAdapter.isConnected
+      ? hostConnected(this.owner.primaryAdapter)
+      : true;
+    if (primaryReadable) {
       const catalog = await this.owner.adapter.catalog();
       this.hostCatalogs.set(PRIMARY_CATALOG, { catalog, readAt: new Date().toISOString() });
       this.profileCatalogRefreshed = true;
