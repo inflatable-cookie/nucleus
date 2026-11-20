@@ -1127,7 +1127,10 @@ test("an unconfirmed reviewer launch hidden for 30 minutes escalates via #1417, 
   c.at(ROW_HIDDEN_MINUTES * MINUTE);
   await f.observe();
   const [notice] = f.rowNotices();
-  assert.ok(notice, "the 30-minute bound reports the hidden unconfirmed launch");
+  assert.ok(
+    notice,
+    "the 30-minute bound reports the hidden unconfirmed launch",
+  );
   assert.match(notice.text, /Nucleus: a task row has stayed snoozed on T3/);
   assert.match(notice.text, /Reviewer creation is uncertain/);
 
@@ -1147,7 +1150,9 @@ test("an unconfirmed reviewer launch hidden for 30 minutes escalates via #1417, 
       profile: null,
       status: "running",
       createdAt: episode,
-      lastObservedAt: new Date(c.start + ROW_HIDDEN_MINUTES * MINUTE).toISOString(),
+      lastObservedAt: new Date(
+        c.start + ROW_HIDDEN_MINUTES * MINUTE,
+      ).toISOString(),
       active: true,
       idleSince: null,
       completion: null,
