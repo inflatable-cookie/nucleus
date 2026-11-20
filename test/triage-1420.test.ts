@@ -128,6 +128,15 @@ test("1420-3 dispositions: duplicate and fixed closures with canonical targets, 
     const view = f.service.view(f.project.key);
     assert.equal(view.batch, null, "a completed batch clears the outstanding slot");
     assert.equal(view.lastCompleted, batch.id);
+    f.reopen();
+    const completed = f.service.planningView(f.project.key)!.latest!;
+    assert.equal(completed.id, batch.id, "Planning retains the completed digest after restart");
+    const fixed = completed.items.find(item => item.recordId === cut.id)!;
+    assert.equal(fixed.title, "Fixed papercut");
+    assert.equal(fixed.kind, "papercut");
+    assert.equal(fixed.outcome?.reason, "Verified fixed by task 1200");
+    assert.equal(fixed.outcome?.canonical, "task 1200");
+    assert.equal(fixed.canonicalTaskId, null, "plain-text evidence does not become a broken task link");
     const settled = f.store.lead(promote.id);
     assert.equal(settled.state, "open", "promotion is recorded by the task link, not a drop");
   } finally { f.close(); }

@@ -1,20 +1,12 @@
 import { defineRpc } from "../rpc";
 import { z } from "zod";
+import { triageRecordItemSchema } from "../schema/triage";
 
 /**
  * Nucleus#1420: automatic lead and papercut triage. A project opts in with `triage.set`; the
  * planner reads its outstanding batch with `triage.get` and answers it with `triage.apply`.
  * Filing text is evidence; these records hold the planner's decisions and their reasons.
  */
-const triageRecordItemSchema = z.object({
-  recordId: z.string(), kind: z.enum(["lead", "papercut"]), title: z.string(), createdAt: z.string(), leadVersion: z.number().int(), digest: z.string(),
-  outcome: z.object({
-    version: z.number().int(), status: z.enum(["proposed", "applied", "refused", "superseded"]), disposition: z.enum(["promote", "close", "defer", "operator"]).nullable(),
-    reason: z.string(), by: z.string(), at: z.string(), canonical: z.string().nullable(), closure: z.enum(["duplicate", "fixed", "out_of_scope"]).nullable(),
-    revisitAt: z.string().nullable(), question: z.string().nullable(), task: z.string().nullable(), diagnostic: z.string(),
-  }).nullable(),
-});
-
 export const triageViewSchema = z.object({
   enabled: z.boolean(), enabledAt: z.string().nullable(), enabledBy: z.string().nullable(), waiting: z.enum(["capacity"]).nullable(),
   batch: z.object({ id: z.string(), createdAt: z.string(), planner: z.string().nullable(), noticed: z.boolean(), items: z.array(triageRecordItemSchema) }).nullable(),

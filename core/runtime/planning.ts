@@ -621,7 +621,11 @@ export class RuntimePlanning {
   }
   listPlans() {
     this.context.markStoreAccess();
-    return this.context.store.plans();
+    const triage = new TriageService(this.context.store);
+    return this.context.store.plans().map(plan => {
+      const batch = triage.planningView(plan.project);
+      return batch ? { ...plan, triage: batch } : plan;
+    });
   }
   setPlan(input: Parameters<Store["setPlan"]>[0]) {
     return this.context.store.setPlan(input);

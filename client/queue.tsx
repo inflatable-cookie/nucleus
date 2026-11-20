@@ -233,11 +233,13 @@ export function MainSurface({ theme, layout, navigation, workspaceBoard, now }: 
                 void qaQuery.refetch();
               }}
               onOpenQaRun={openQaRun}
+              onOpenTask={(id) => { selectTask(id); setTab("queue"); }}
               sections={planningProjects.map(project => {
                 const latest = planQuery.data?.find(plan => plan.project === project.key);
                 return {
                   project,
                   latest,
+                  triage: latest?.triage,
                   saved: latest ? { ...latest, entries: latest.savedEntries } : undefined,
                   error: planMessage(planQuery.error),
                 };

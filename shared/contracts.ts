@@ -82,6 +82,7 @@ export * from "./rpc/triage";
 export * from "./schema/decisions";
 export * from "./rpc/decisions";
 export * from "./schema/plans";
+export type { PlanningTriage } from "./schema/triage";
 export * from "./rpc/plans";
 export * from "./schema/service";
 export * from "./rpc/service";

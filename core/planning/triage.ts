@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import type { Lead, Notice, Project } from "../../shared/contracts";
+import type { Lead, Notice, PlanningTriage, Project } from "../../shared/contracts";
 import type { Store } from "../store/store";
 import { Leads } from "./leads";
 import { Papercuts } from "./papercut-operations";
@@ -79,6 +79,8 @@ export interface TriageRecordLedger {
   history: TriageOutcome[];
 }
 
+type TriageItemLabel = Pick<TriageItem, "recordId" | "kind" | "title">;
+
 export interface TriageProjectState {
   enabled: boolean;
   enabledAt: string | null;
@@ -87,7 +89,7 @@ export interface TriageProjectState {
   batch: TriageBatch | null;
   waiting: "capacity" | null;
   records: Record<string, TriageRecordLedger>;
-  lastCompleted: { batchId: string; outcomes: Record<string, TriageOutcome> } | null;
+  lastCompleted: { batchId: string; outcomes: Record<string, TriageOutcome>; items?: TriageItemLabel[] } | null;
 }
 
 /** A promotion the caller runs asynchronously, with its lead and the planner identity that asked. */
@@ -171,6 +173,7 @@ export class TriageService {
 
   private write(projectKey: string, state: TriageProjectState) {
     this.store.setMeta(triageStateKey(projectKey), state);
+    this.store.advanceTriagePlanningRevision();
   }
 
   /** Opt a project in or out. Opting out keeps the ledger, so a later opt-in resumes it. */
@@ -377,7 +380,8 @@ export class TriageService {
     const open = batch.items.filter(item => !item.outcome || !TERMINAL.includes(item.outcome.status));
     if (open.length) return { batchId: batch.id, complete: false, replayed: false, outcomes: outcomesOf(batch) };
     const outcomes = Object.fromEntries(batch.items.map(item => [item.recordId, item.outcome!]));
-    this.write(projectKey, { ...state, batch: null, lastCompleted: { batchId: batch.id, outcomes } });
+    const items = batch.items.map(({ recordId, kind, title }) => ({ recordId, kind, title }));
+    this.write(projectKey, { ...state, batch: null, lastCompleted: { batchId: batch.id, outcomes, items } });
     return { batchId: batch.id, complete: true, replayed: false, outcomes: outcomesOf(batch) };
   }
 
@@ -418,6 +422,44 @@ export class TriageService {
         .map(([recordId, record]) => ({ recordId, question: record.current.question, at: record.current.at })),
       lastCompleted: state.lastCompleted?.batchId ?? null,
     };
+  }
+
+  /** Planning shows the current batch and the last completed one, with links by durable task id. */
+  planningView(projectKey: string): PlanningTriage | undefined {
+    const { enabled, waiting, batch, lastCompleted } = this.state(projectKey);
+    if (!enabled && !batch && !lastCompleted) return undefined;
+    const item = (record: Omit<TriageItemLabel, "kind"> & { kind: TriageItem["kind"] | null }, outcome: TriageOutcome | null) => ({
+      recordId: record.recordId, title: record.title, kind: record.kind,
+      outcome: outcome && {
+        status: outcome.status, disposition: outcome.disposition, reason: outcome.reason,
+        canonical: outcome.canonical, closure: outcome.closure, revisitAt: outcome.revisitAt,
+        question: outcome.question, task: outcome.task, diagnostic: outcome.diagnostic,
+      },
+      taskId: this.planningTaskId(outcome?.task),
+      canonicalTaskId: this.planningTaskId(outcome?.canonical),
+    });
+    return {
+      enabled, waiting,
+      awaitingPlanner: Boolean(batch && !batch.planner),
+      current: batch && { id: batch.id, items: batch.items.map(record => item(record, record.outcome)) },
+      latest: lastCompleted && {
+        id: lastCompleted.batchId,
+        // Early ledgers retained outcomes without the source title and kind.
+        items: (lastCompleted.items ?? Object.keys(lastCompleted.outcomes).map(recordId => ({ recordId, title: recordId, kind: null })))
+          .map(record => item(record, lastCompleted.outcomes[record.recordId])),
+      },
+    };
+  }
+
+  private planningTaskId(reference?: string | null): string | null {
+    if (!reference) return null;
+    try {
+      const id = this.store.resolveTaskId(reference);
+      return this.store.numberFor(id) ? id : null;
+    } catch {
+      // Canonical evidence can also name a lead, a plan rule or an ambiguous reference.
+      return null;
+    }
   }
 }
 

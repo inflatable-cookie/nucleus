@@ -1390,6 +1390,8 @@ Create and edit routing profiles in Settings → Profiles.
 A project with triage on gets one bounded batch of its oldest open leads and
 papercuts at a time, as a `triage` notice to its planner. Opt in with
 `triage.set` (`{"project", "enabled", "by"}`); nothing enables it by default.
+The project roadmap in Planning shows the current and last completed batch,
+with outcomes, reasons, task links and questions that need operator input.
 `triage.get` (`{"project"}`) shows the outstanding batch, each record's
 `leadVersion` and `digest`, and any operator questions.
 

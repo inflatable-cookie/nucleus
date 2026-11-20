@@ -5,3 +5,6 @@ planner answers with `triage.apply`: promote a routine in-scope lead under its o
 name, close a duplicate or fixed record with a canonical target, defer with a
 revisit time, or raise an operator question. Records that changed since the batch
 was made are superseded, and a replayed batch changes nothing. Off by default.
+
+Planning shows the current and last completed batches, with a short digest,
+outcome reasons, operator questions and links to recorded tasks.

@@ -902,7 +902,7 @@ first, at most eight to a batch. A project holds at most one outstanding batch;
 records that change while it is outstanding wait for the next one. The sweep
 evaluates at most once a minute.
 
-- A planner-less project keeps the batch visible in `triage.get`, unnoticed,
+- A planner-less project keeps the batch visible in Planning and `triage.get`, unnoticed,
   until a planner is registered. A handover ends the old planner's prompt and
   addresses the batch to the new planner.
 - A full dispatch queue (live tasks at the project's slot limit) holds batch
@@ -949,8 +949,8 @@ overrides a project's dispatch limit, pause or dispatch hold. Opting out or
 pausing the service stops new batches; an outstanding batch keeps its record of
 what was decided.
 
-**Status.** The triage ledger, batching, wake, notice delivery, dispositions and
-replay protection are implemented and proved in `test/triage-1420.test.ts`
-(isolated stores, real notice delivery through the engine). The planning
-surface does not yet show proposed and applied outcomes or the batch digest; it
-reads `triage.get`. That view is the remaining acceptance item.
+**Planning.** The project roadmap shows a digest of the current and last
+completed batches. Open a batch to see proposed and applied outcomes, their
+reasons, canonical targets, revisit times, operator questions and links to
+recorded tasks. The batched `queue.plans` read refreshes when triage changes.
+Use `triage.get` for the source version and digest needed by `triage.apply`.
