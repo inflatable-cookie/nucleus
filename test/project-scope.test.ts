@@ -195,6 +195,47 @@ test("026-14b the selector lists every project with filter, primary repository, 
   assert.deepEqual(toggleProject(["a", "b"], "a"), ["b"]);
 });
 
+test("1426 selector totals include every live phase and hidden queued tasks across member repositories", () => {
+  const multiRepo = project(
+    "multi",
+    "Multi",
+    repo("multi-a"),
+    repo("multi-b"),
+  );
+  const empty = project("empty", "Empty", repo("empty"));
+  const tasks = [
+    { id: "q1", repository: "owner/multi-a", repoPath: "/multi-a", phase: "queued" },
+    { id: "working", repository: "owner/multi-a", repoPath: "/multi-a", phase: "working" },
+    { id: "review", repository: "owner/multi-b", repoPath: "/multi-b", phase: "awaiting_review" },
+    { id: "closing", repository: "owner/multi-b", repoPath: "/multi-b", phase: "merging" },
+    { id: "done", repository: "owner/multi-a", repoPath: "/multi-a", phase: "done" },
+    { id: "cancelled", repository: "owner/multi-b", repoPath: "/multi-b", phase: "cancelled" },
+  ] as Parameters<typeof projectSelectorRows>[3];
+  const rows = projectSelectorRows(
+    [multiRepo, empty],
+    ["empty"],
+    "",
+    tasks,
+    [
+      { id: "lead", title: "Lead", state: "open", lanes: [], repositories: [repo("multi-a")] },
+      { id: "papercut", title: "Papercut", state: "open", lanes: [], repositories: [repo("multi-b")], tags: ["papercut"] },
+    ] as Parameters<typeof projectSelectorRows>[4],
+    [
+      { repoPath: "/multi-a", count: 3 },
+      { repoPath: "/multi-b", count: 2 },
+    ],
+  );
+  assert.deepEqual(
+    rows.map(({ key, tasks: count, leads: leadCount }) => [key, count, leadCount]),
+    [
+      ["empty", 0, 0],
+      ["multi", 8, 2],
+    ],
+    "four rendered live tasks plus four hidden queued tasks; terminal tasks and non-task cards do not affect the task total",
+  );
+  assert.equal(rows[1].checked, false, "totals are independent of selection");
+});
+
 test("1421 single-select by default: a plain press replaces, Shift toggles one project", () => {
   assert.deepEqual(selectProject([], "a"), ["a"], "empty selects one");
   assert.deepEqual(

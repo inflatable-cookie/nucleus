@@ -172,6 +172,7 @@ export function ProjectSelector({
   projects,
   tasks,
   leads,
+  queuedCounts = [],
   value,
   onChange,
   onOpenChange,
@@ -184,6 +185,7 @@ export function ProjectSelector({
   projects: Project[];
   tasks: TaskSummary[];
   leads: readonly LeadListFacts[];
+  queuedCounts?: readonly { repoPath: string; count: number }[];
   value: string[];
   onChange: (keys: string[]) => void;
   enabled?: boolean;
@@ -227,7 +229,14 @@ export function ProjectSelector({
     enabled || !value.length
       ? selectionLabel(projects, value)
       : `${selectionLabel(projects, value)} · filter off`;
-  const rows = projectSelectorRows(projects, value, search, tasks, leads);
+  const rows = projectSelectorRows(
+    projects,
+    value,
+    search,
+    tasks,
+    leads,
+    queuedCounts,
+  );
   const panel = (
     <View
       accessibilityLabel="Project selector"
@@ -330,7 +339,7 @@ export function ProjectSelector({
               )}
             <Pressable
               accessibilityRole="checkbox"
-              accessibilityLabel={`Project ${project.name}`}
+              accessibilityLabel={`Project ${project.name}, ${project.tasks} tasks`}
               accessibilityState={{ checked: project.checked }}
               onPress={(event) => {
                 // Single-select by default (nucleus#1421): a plain press replaces the
@@ -383,6 +392,17 @@ export function ProjectSelector({
                 }}
               >
                 {project.name}
+              </Text>
+              <Text
+                accessibilityElementsHidden
+                importantForAccessibility="no"
+                style={{
+                  color: c.foregroundMuted,
+                  fontSize: typeScale.metadata.fontSize,
+                  fontVariant: ["tabular-nums"],
+                }}
+              >
+                {project.tasks}
               </Text>
             </Pressable>
           </React.Fragment>

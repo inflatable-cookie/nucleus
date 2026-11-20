@@ -569,7 +569,14 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
   selector in the header replaces the single-project filter everywhere. It is a
   dropdown that opens a large popover (a modal at the compact viewport) listing
   every project with a filter box, its primary repository and counts of live tasks
-  and open leads, with a checkbox per project, plus All and None. A plain click
+  and open leads, with a checkbox per project, plus All and None. The live-task
+  total covers every non-terminal task in the project's member repositories and
+  adds the hidden portion of each repository's queued snapshot after subtracting
+  rendered queued cards, so it includes work beyond the first queue page without
+  counting visible cards twice. The compact total appears beside the project name
+  and in its accessible label, including when the total is zero. It is computed
+  from the current board snapshot and stays independent of selector filtering and
+  selection. A plain click
   replaces the selection with that project (clicking the sole selected project
   keeps it selected) and closes the picker; Shift-click toggles just that project
   and keeps the picker open for a sequence of Shift-clicks. The selection (a

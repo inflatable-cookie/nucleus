@@ -180,6 +180,7 @@ export function MainSurface({ theme, layout, navigation, workspaceBoard, now }: 
                     projects={state?.projects ?? []}
                     tasks={state?.tasks ?? []}
                     leads={boardLeads}
+                    queuedCounts={state?.queuedCounts ?? []}
                     value={scope.projects}
                     onChange={setScopeProjects}
                     onSettings={settingsOpener ? () => settingsOpener?.("projects") : undefined}
