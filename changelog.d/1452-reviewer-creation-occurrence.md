@@ -1,0 +1,1 @@
+An uncertain reviewer creation stays owned while its exact host lookup is ambiguous. The sweep records proved absence for `next`, and an owner restart or immediate route rechecks that evidence and the exact PR head before creating a replacement. A reviewer report request first verifies that the retained reviewer received the review dispatch.

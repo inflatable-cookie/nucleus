@@ -2023,6 +2023,34 @@ review or merge credit; live participants and unsettled effects remain fences.
   the exact lookup proves absence following producer termination. Release
   revokes its credential and re-enters the role's ordinary admission on a fresh
   run ID. An agentless recovery also settles its bound episode.
+- One observation answers an agentless resolution-role creation: the recorded
+  producer, the creation attempt and the complete exact lookup on the recorded
+  host and workspace. Its answers are `bound` (one exact in-workspace match
+  binds the original run), `absent` (no agent, and the producer that could still
+  deliver belonged to a previous service process), `partial` (a match it cannot
+  bind, because it is ambiguous, misplaced or host-unconfirmed) and `wait` (no
+  answer yet). The sweep records the result for `next`. Restart and immediate
+  route repeat the same observation and verify the exact source before
+  replacement. A fresh ambiguous lookup on restart withdraws the earlier
+  absence proof and keeps the occurrence owned.
+- Only `absent` is a proof, and only the owner acts on it: the sweep records
+  `absentProvenAt`, resolves the incident and names `route`/`restart` as the
+  exits, while the one replacement stays the owner's deliberate route or
+  restart from the current route. A call that settled or threw inside this
+  service process is an observation, not a proof: it may still reach the host,
+  so its empty lookup keeps the run and credential owned and states that a
+  service roll answers it. `partial` is attention bound to the exact run and
+  attempt, never a second agent. Repeating the pass converges with no extra
+  event, launch or release.
+- A reviewer report request resends one delivered review occurrence, so it must
+  name one: a delivered continuation turn or the run's accepted dispatch at the
+  exact head. A creation its exact lookup bound is not proof the dispatch
+  arrived; the request inspects that exact `ns-run-<runId>` message first. A
+  present message is positive delivery and is recorded, a complete readable
+  page without it proves the dispatch never arrived and names the deliberate
+  replacement instead of a resend, and an unreadable or incomplete page keeps
+  the request visibly waiting. "Already asked to resend" names that occurrence,
+  never a bare run.
 - `move to=work` on an uncertain worker creation names the observation restart
   is waiting for, with the same text, and never points at restart while restart is
   refused. Once proved absence makes restart available, the move refusal names

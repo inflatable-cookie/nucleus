@@ -3100,7 +3100,7 @@ for (const [label, overrides] of [
           completion: null,
           released: false,
         });
-        settledResolutionCreation(f, run);
+        rolledResolutionCreation(f, run);
         unrecoveredRecovery(
           f,
           { ...recoveredCompletion, taskId: f.taskId },
@@ -3371,7 +3371,7 @@ test("absent reviewer creation: restart releases the uncertain run and resumes r
       completion: null,
       released: false,
     });
-    settledResolutionCreation(f, run);
+    rolledResolutionCreation(f, run);
     f.store.update(f.taskId, {
       resolution: {
         ...f.current().resolution,
@@ -4674,7 +4674,7 @@ test("an uncertain resolution restart settles a finished idle recovery run (#356
       completion: null,
       released: false,
     });
-    settledResolutionCreation(f, run);
+    rolledResolutionCreation(f, run);
     unrecoveredRecovery(f, { ...recoveredCompletion, taskId: f.taskId }, false);
     f.store.update(f.taskId, {
       resolution: { ...f.current().resolution, currentRunId: run.id },
@@ -4766,7 +4766,7 @@ test("an ambiguous absent-run lookup refuses with nothing settled or changed", a
     const before = f.current();
     await assert.rejects(
       f.control({ instruction: "Create the reviewer once and continue" }),
-      /Run creation lookup is ambiguous \(2 matching agents\)/,
+      /creation lookup for run .* is partial or ambiguous \(2 matching agents\)/,
     );
     // The lookup refuses before anything is written: no settlement, no version.
     assert.deepEqual(
@@ -6219,7 +6219,7 @@ test("uncertain creation: a hold placed during the inventory lookup defers the r
       completion: null,
       released: false,
     });
-    settledResolutionCreation(f, run);
+    rolledResolutionCreation(f, run);
     f.store.update(f.taskId, {
       resolution: {
         ...f.current().resolution,
@@ -6335,7 +6335,7 @@ test("uncertain re-creation persists the new credential before the agent exists,
       completion: null,
       released: false,
     });
-    settledResolutionCreation(f, run);
+    rolledResolutionCreation(f, run);
     f.store.update(f.taskId, {
       resolution: {
         ...f.current().resolution,
@@ -7173,14 +7173,18 @@ test("restart records its worker direction while a recovery run still owns settl
   }
 });
 
-function settledResolutionCreation(f: ReturnType<typeof fixture>, run: Run) {
+function rolledResolutionCreation(f: ReturnType<typeof fixture>, run: Run) {
   f.store.putRun({ ...run, status: "intent", agentId: null });
   const reserved = f.store.run(run.id)!;
-  settleCreationAttempt(
-    f.store,
-    readCreationAttempt(f.store, reserved)!,
-    "threw",
-  );
+  const attempt = readCreationAttempt(f.store, reserved);
+  assert.ok(attempt);
+  f.store.db
+    .prepare(
+      `UPDATE events SET detail=json_set(detail,'$.producerId',?)
+       WHERE taskId=? AND kind='creation_attempt_reserved'
+       AND json_extract(detail,'$.attemptId')=?`,
+    )
+    .run("previous-service-process", run.taskId, attempt.attemptId);
   f.store.putRun({ ...reserved, status: "uncertain" });
 }
 
@@ -7189,7 +7193,7 @@ function absentReviewerTask(f: ReturnType<typeof fixture>) {
   const run = f.store.run("absent-review-admission")!;
   // Drop the bound fixture run before writing the actual creation shape.
   f.store.db.prepare("DELETE FROM runs WHERE id=?").run(run.id);
-  settledResolutionCreation(f, {
+  rolledResolutionCreation(f, {
     ...run,
     agentId: null,
     status: "uncertain",

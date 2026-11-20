@@ -9,8 +9,10 @@ import {
 } from "../intake/run-settlement";
 import {
   REVIEW_READER_EXHAUSTED,
+  latestDeliveredReviewTurn,
   reviewerCannotFinish,
 } from "../review/review-continuation";
+import type { TimelinePage } from "../host/types";
 import {
   hostFailureRefusalDetail,
   ProvenPreSendRefusalError,
@@ -209,6 +211,91 @@ export function reviewerReportPlan(
 
 type ReviewerReportEvents = readonly { kind: string; detail: string }[];
 
+/**
+ * Whether one complete timeline page holds this exact user message. The same
+ * contract as the delivery observer's `timelineMessage`: an incomplete page
+ * (older page, gap, stale cursor, reset) answers unknown, never absence.
+ */
+function timelineMessage(
+  page: TimelinePage | null | undefined,
+  messageId: string,
+): "present" | "absent" | "unknown" {
+  if (!page || page.hasOlder || page.gap || page.staleCursor || page.reset)
+    return "unknown";
+  return page.entries.some(
+    (entry) =>
+      entry.item.type === "user_message" &&
+      ((entry.item as Record<string, unknown>).messageId === messageId ||
+        (entry.item as Record<string, unknown>).clientMessageId === messageId),
+  )
+    ? "present"
+    : "absent";
+}
+
+/** The stable identity of the report request a run can receive exactly once. */
+export const reviewerReportMessageId = (runId: string) =>
+  `ns-reviewer-report-${runId}`;
+
+/**
+ * The positively delivered review occurrence a resend request names. A report
+ * resends one occurrence's result, so the dispatch or continuation turn it asks
+ * about must be proved to have arrived at this exact run and head. A run whose
+ * own dispatch was never delivered can produce no report whatever is asked, and
+ * a creation its exact lookup bound without observing the dispatch is not proof
+ * that the reviewer ever read it: that fact is inspected, never assumed.
+ */
+export type ReviewerReportOccurrence =
+  | { kind: "delivered"; detail: string }
+  | { kind: "unproven"; detail: string }
+  | { kind: "missing"; refusal: string };
+
+export function reviewerReportOccurrence(
+  run: Run,
+  events: ReviewerReportEvents,
+): ReviewerReportOccurrence {
+  const undelivered = events.findLast(
+    (event) =>
+      event.kind === "run_delivery_not_delivered" &&
+      event.detail.startsWith(`${run.id}:`),
+  );
+  if (undelivered)
+    return {
+      kind: "missing",
+      refusal: `The review dispatch for run ${run.id} at head ${run.head} was never delivered (${undelivered.detail}), so no report can come from it and none is requested; restart role=reviewer fresh or route role=reviewer with now replaces that reader at the same head`,
+    };
+  const turn = latestDeliveredReviewTurn(run);
+  if (turn)
+    return {
+      kind: "delivered",
+      detail: `the delivered continuation ${turn.deliveryId} for checkpoint ${turn.checkpointOrdinal} on run ${run.id} at head ${run.head}`,
+    };
+  const reconciled = events.findLast(
+    (event) =>
+      event.kind === "run_delivery_reconciled" &&
+      event.detail.startsWith(`${run.id}:`),
+  );
+  if (reconciled)
+    return {
+      kind: "delivered",
+      detail: `the observed dispatch of run ${run.id} at head ${run.head} (${reconciled.detail})`,
+    };
+  if (
+    events.some(
+      (event) =>
+        event.kind === "run_creation_bound" &&
+        event.detail.startsWith(`${run.id}:`),
+    )
+  )
+    return {
+      kind: "unproven",
+      detail: `the creation of run ${run.id} was bound by an exact lookup, so its dispatch message ${`ns-run-${run.id}`} may never have reached the reviewer`,
+    };
+  return {
+    kind: "delivered",
+    detail: `the accepted dispatch of run ${run.id} (agent ${run.agentId}) at head ${run.head}`,
+  };
+}
+
 function lastReviewerReportRequest(run: Run, events: ReviewerReportEvents) {
   return events.findLast(
     (event) =>
@@ -243,11 +330,15 @@ export function reviewerReportRequestRefusal(
   events: ReviewerReportEvents,
 ): string | null {
   if (reviewerCannotFinish(run)) return REVIEW_READER_EXHAUSTED;
+  const occurrence = reviewerReportOccurrence(run, events);
+  if (occurrence.kind === "missing") return occurrence.refusal;
+  if (occurrence.kind === "unproven")
+    return `The retained reviewer report cannot be requested yet: ${occurrence.detail}. Nucleus inspects that exact retained dispatch before asking for anything, and no report was requested`;
   return (
     unresolvedReviewerDelivery(run, events) ??
     (lastReviewerReportRequest(run, events)?.kind ===
     "reviewer_report_request_sent"
-      ? "The retained reviewer was already asked to resend its report; wait for that report"
+      ? `The retained reviewer was already asked to resend its report for ${occurrence.detail}; wait for that report`
       : null)
   );
 }
@@ -305,6 +396,38 @@ export async function requestReviewerReport(
     );
   if (JSON.stringify(store.run(run.id)) !== JSON.stringify(run))
     throw Error("The reviewer run changed during observation");
+  // A report resends one delivered occurrence's result. When the retained
+  // dispatch itself is unproved, the exact creation message decides it: a
+  // present message is positive delivery, a complete readable page without it
+  // proves the reviewer never received the review, and an unreadable or
+  // incomplete page stays a named wait. Nothing is sent on an unproved dispatch.
+  const occurrence = reviewerReportOccurrence(run, store.eventsAll(task.id));
+  if (occurrence.kind === "missing")
+    throw new ProvenPreSendRefusalError(occurrence.refusal);
+  if (occurrence.kind === "unproven") {
+    let page = null;
+    try {
+      page = engine.adapter.agentTimelinePage
+        ? await engine.onTaskHost(task, () =>
+            engine.host.agentTimelinePage(run.agentId!, 100),
+          )
+        : null;
+    } catch {
+      page = null;
+    }
+    const delivery = timelineMessage(page, `ns-run-${run.id}`);
+    if (delivery !== "present")
+      throw new ProvenPreSendRefusalError(
+        delivery === "absent"
+          ? `The reviewer dispatch for run ${run.id} was never delivered: a complete readable timeline has no ns-run-${run.id}, so no report can come from it and none was requested; restart role=reviewer fresh or route role=reviewer with now replaces that reader at the same head`
+          : `The reviewer dispatch for run ${run.id} is not yet proved: ${occurrence.detail}, and its retained timeline is unavailable or incomplete, so no report was requested until it answers`,
+      );
+    store.event(
+      task.id,
+      "run_delivery_reconciled",
+      `${run.id}: exact creation message observed before the retained report request`,
+    );
+  }
   if (engine.dispatchWaitsFor(store.task(task.id), engine.isOwnerCall(), true))
     throw new ProvenPreSendRefusalError(
       "Dispatch is held; no reviewer report request was sent",
@@ -331,7 +454,7 @@ export async function requestReviewerReport(
   // Re-read after every awaited proof so concurrent callers cannot both send.
   const refusal = reviewerReportRequestRefusal(run, store.eventsAll(task.id));
   if (refusal) throw new ProvenPreSendRefusalError(refusal);
-  const messageId = `ns-reviewer-report-${run.id}`;
+  const messageId = reviewerReportMessageId(run.id);
   const text = `Nucleus did not receive your review report for run ${run.id} at head ${run.head}. Resend your existing authenticated report using this same run and credential; do not repeat checks or start another review. If you did not finish, continue the review and report its result.${instruction ? ` Owner direction: ${instruction}` : ""} Reason: ${reason}`;
   store.event(
     task.id,

@@ -734,7 +734,8 @@ const restartRows: Row[] = [
           { id: "y", workspaceId: "workspace" },
         ] as never;
     },
-    refusal: /Run creation lookup is ambiguous/,
+    refusal:
+      /creation lookup for run absent-review is partial or ambiguous \(2 matching agents\)/,
   },
   {
     name: "fresh",

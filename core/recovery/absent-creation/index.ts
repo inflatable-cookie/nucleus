@@ -12,7 +12,12 @@
  * a run that belongs to one). The rules they share live in `decisions.ts` and
  * `budget.ts`, so neither restates one.
  */
-export { CreationRecovery } from './creation';
-export { AbsentRestarts } from './restarts';
-export { absentReplacementRecord, absentReplacementRole, absentReplacementSpent } from './budget';
-export { absentWorkerStep, workspaceReplayAllowed } from './decisions';
+export { CreationRecovery } from "./creation";
+export { AbsentRestarts } from "./restarts";
+export type { ResolutionCreationObservation } from "./restarts";
+export {
+  absentReplacementRecord,
+  absentReplacementRole,
+  absentReplacementSpent,
+} from "./budget";
+export { absentWorkerStep, workspaceReplayAllowed } from "./decisions";

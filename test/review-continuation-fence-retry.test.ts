@@ -13,6 +13,7 @@ import {
 import { completionSchema, taskControlInputSchema } from "../shared/contracts";
 import { holdPatch, releasePatch } from "../core/merge/merge-hold";
 import { ProvenPreSendRefusalError } from "../core/host/errors";
+import { toolTimelinePage } from "./support/tool-timeline";
 
 test("report recovery waits for a dispatch hold and sends after release", async () => {
   const f = fixture();
@@ -599,3 +600,171 @@ for (const action of [
     }
   });
 }
+
+/**
+ * One reviewer report request, bound to the delivered review occurrence it can
+ * resend. The checkpoint's continuation is undelivered here, so the request
+ * names the dispatch the reviewer was actually created for.
+ */
+function undeliveredReportCase(f: ReturnType<typeof fixture>) {
+  f.store.putRun({
+    ...f.run(),
+    reviewBudgetExhaustedAt: new Date().toISOString(),
+    reviewDeliveries: [],
+    active: false,
+    lastObservedAt: new Date(Date.now() + 1000).toISOString(),
+  });
+  f.store.event(
+    f.submitted.id,
+    "run_creation_bound",
+    `${f.runId}: exact lookup bound agent review-agent in workspace; its dispatch delivery is not yet observed`,
+  );
+}
+
+test("a report request inspects the retained dispatch and names the proved no-send", async () => {
+  const f = fixture();
+  try {
+    await f.report({ covered: ["Diff"], remaining: ["Tests"] }, "no-dispatch");
+    undeliveredReportCase(f);
+    const sent: string[] = [];
+    f.adapter.notify = async (_agent, _id, text) => {
+      sent.push(text);
+    };
+    await assert.rejects(
+      f.engine.performTaskControl({
+        action: "move",
+        to: "review",
+        taskId: f.submitted.id,
+        version: f.current().version,
+        reason: "Recover the retained report",
+      }),
+      /was never delivered[\s\S]*restart role=reviewer fresh/,
+    );
+    assert.equal(
+      sent.length,
+      0,
+      "no report was requested for a dispatch that never arrived",
+    );
+    assert.equal(
+      f.createdRuns.length,
+      0,
+      "the refusal replaces no reader and creates none",
+    );
+    assert.equal(f.current().resolution.currentRunId, f.runId);
+    assert.equal(f.run().released, false);
+
+    // The exact creation message answers the same occurrence: the dispatch is
+    // delivered, so the request names it and sends once.
+    f.reviewerTimeline.push({
+      timestamp: new Date().toISOString(),
+      item: {
+        type: "user_message",
+        messageId: `ns-run-${f.runId}`,
+        text: "Review this change",
+      },
+    });
+    await f.engine.performTaskControl({
+      action: "move",
+      to: "review",
+      taskId: f.submitted.id,
+      version: f.current().version,
+      reason: "Recover the retained report",
+    });
+    assert.equal(sent.length, 1);
+    assert.ok(
+      f.store
+        .eventsAll(f.submitted.id)
+        .some(
+          (event) =>
+            event.kind === "run_delivery_reconciled" &&
+            event.detail.startsWith(`${f.runId}:`),
+        ),
+      "the observed dispatch is recorded once, before the send",
+    );
+    await assert.rejects(
+      f.engine.performTaskControl({
+        action: "move",
+        to: "review",
+        taskId: f.submitted.id,
+        version: f.current().version,
+        reason: "Recover the retained report again",
+      }),
+      /already asked to resend its report for the observed dispatch/,
+    );
+    assert.equal(
+      sent.length,
+      1,
+      "the same occurrence is inspected, never resent",
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+test("an incomplete retained timeline keeps the report request visibly waiting", async () => {
+  const f = fixture();
+  try {
+    await f.report({ covered: ["Diff"], remaining: ["Tests"] }, "partial");
+    undeliveredReportCase(f);
+    f.adapter.agentTimelinePage = async () =>
+      toolTimelinePage([], { hasOlder: true });
+    const sent: string[] = [];
+    f.adapter.notify = async (_agent, _id, text) => {
+      sent.push(text);
+    };
+    await assert.rejects(
+      f.engine.performTaskControl({
+        action: "move",
+        to: "review",
+        taskId: f.submitted.id,
+        version: f.current().version,
+        reason: "Recover the retained report",
+      }),
+      /not yet proved[\s\S]*unavailable or incomplete/,
+    );
+    assert.equal(sent.length, 0);
+    assert.equal(f.run().released, false);
+  } finally {
+    await f.close();
+  }
+});
+
+test("the already-asked refusal names the delivered continuation it waits on", async () => {
+  const f = fixture();
+  try {
+    await f.report({ covered: ["Diff"], remaining: ["Tests"] }, "named-turn");
+    await f.engine.wake();
+    assert.equal(f.reviewerDeliveries.length, 1);
+    f.store.putRun({
+      ...f.run(),
+      active: false,
+      lastObservedAt: new Date(Date.now() + 1000).toISOString(),
+    });
+    const sent: string[] = [];
+    f.adapter.notify = async (_agent, _id, text) => {
+      sent.push(text);
+    };
+    const task = f.current();
+    await f.engine.performTaskControl({
+      action: "move",
+      to: "review",
+      taskId: task.id,
+      version: task.version,
+      reason: "Recover the lost report",
+    });
+    assert.equal(sent.length, 1);
+    await assert.rejects(
+      f.engine.performTaskControl({
+        action: "move",
+        to: "review",
+        taskId: f.submitted.id,
+        version: f.current().version,
+        reason: "Recover the lost report again",
+      }),
+      /already asked to resend its report for the delivered continuation[\s\S]*at head/,
+    );
+    assert.equal(sent.length, 1);
+  } finally {
+    await f.close();
+  }
+});

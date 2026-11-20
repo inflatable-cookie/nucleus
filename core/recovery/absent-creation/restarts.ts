@@ -1,5 +1,12 @@
 import { type Run, type Task } from "../../../shared/contracts";
-import { now } from "../../store/store";
+import { now, type Store } from "../../store/store";
+import type { Adapter } from "../../host/adapter";
+import { hostFailureRefusalDetail } from "../../host/errors";
+import type { ResolutionAdapter } from "../../resolution";
+import {
+  creationProducerId,
+  readCreationAttempt,
+} from "../../store/store-task-funnel";
 import {
   ABSENT_RESOLUTION_REASON,
   resolutionCreationRoles,
@@ -31,6 +38,138 @@ export function creationLookup(
   )
     return { kind: "bound", agentId: found[0]!.id };
   return { kind: "unknown" };
+}
+
+/**
+ * The one observation a resolution-role creation occurrence waits on. Sweep,
+ * `next` and the applying owner verb read these strings, so a stuck creation
+ * names the same missing fact everywhere instead of a third routed answer.
+ */
+export const resolutionCreationWait = (role: Run["role"]): string =>
+  `The ${role} creation remains uncertain; waiting for its recorded producer to stop and the lookup grace period to pass`;
+const resolutionCreationPartial = (run: Run): string =>
+  `The ${run.role} creation lookup for run ${run.id} is partial or ambiguous`;
+const resolutionCreationUnavailable = (role: Run["role"]): string =>
+  `Exact ${role} creation lookup is unavailable`;
+const resolutionCreationSettled = (run: Run): string =>
+  `The ${run.role} creation ${run.id} is still uncertain: a complete lookup found no agent, but its recorded creation call settled in this service process and may still deliver; wait for a service roll and another exact lookup`;
+
+/** The preview is a store read. Only the sweep's positive proof can offer replacement. */
+export function resolutionCreationRestartRefusal(task: Task, run: Run) {
+  if (run.role !== "closeout" && run.head !== task.prHead)
+    return "PR head changed; inspect it before replacing the absent run";
+  if (provenAbsentCreation(run)) return null;
+  const detail = task.resolution.stop?.detail;
+  if (
+    task.resolution.incident?.runId === run.id &&
+    detail &&
+    [
+      resolutionCreationPartial(run),
+      resolutionCreationUnavailable(run.role),
+      resolutionCreationSettled(run),
+    ].some((prefix) => detail.startsWith(prefix))
+  )
+    return detail;
+  return resolutionCreationWait(run.role);
+}
+
+/**
+ * What one agentless creation occurrence is, from its original delivery
+ * evidence. `bound` is the exact identity that answers the occurrence;
+ * `absent` is a complete lookup with no agent after the recorded producer can
+ * no longer deliver; `partial` found a match it cannot bind (ambiguous,
+ * misplaced or host-unconfirmed); `wait` has not answered yet and stays owned.
+ * Zero matches alone are never absence: the original call may still deliver.
+ */
+export type ResolutionCreationObservation =
+  | { kind: "bound"; agentId: string; attemptId: string | null }
+  | { kind: "absent"; attemptId: string; terminatedBy: string }
+  | { kind: "partial"; detail: string; attemptId: string | null }
+  | { kind: "wait"; detail: string };
+
+export function recordResolutionCreationBinding(
+  store: Store,
+  run: Run,
+  agentId: string,
+) {
+  store.event(
+    run.taskId,
+    "run_creation_bound",
+    `${run.id}: exact lookup bound agent ${agentId} in ${run.workspaceId}; its dispatch delivery is not yet observed`,
+  );
+}
+
+/**
+ * Observe one agentless resolution creation: capture termination before the
+ * inventory read can prove absence, then classify the complete exact lookup.
+ * A match binds even while its producer is pending; only an empty read needs
+ * termination proof.
+ */
+export async function observeResolutionCreation(
+  store: Pick<Store, "db">,
+  adapter: Adapter & Partial<Pick<ResolutionAdapter, "findRunAgents">>,
+  run: Run,
+  graceMs: number,
+): Promise<ResolutionCreationObservation> {
+  // A call that settles during the lookup cannot answer that lookup.
+  const attempt = readCreationAttempt(store, run);
+  const gracePassed =
+    attempt &&
+    Date.now() - Date.parse(attempt.settlement?.at ?? attempt.reservedAt) >=
+      graceMs;
+  if (!adapter.findRunAgents)
+    return {
+      kind: "wait",
+      detail: `${resolutionCreationUnavailable(run.role)}; the occurrence remains owned`,
+    };
+  let found: {
+    id: string;
+    workspaceId: string | null;
+    hostConfirmed?: boolean;
+  }[];
+  try {
+    found = await adapter.findRunAgents(run);
+  } catch (error) {
+    return {
+      kind: "wait",
+      detail: `${resolutionCreationUnavailable(run.role)} (${hostFailureRefusalDetail(error)}); the occurrence remains owned`,
+    };
+  }
+  if (
+    (readCreationAttempt(store, run)?.attemptId ?? null) !==
+    (attempt?.attemptId ?? null)
+  )
+    return { kind: "wait", detail: resolutionCreationWait(run.role) };
+  const lookup = creationLookup(found, run.workspaceId);
+  if (lookup.kind === "bound")
+    return {
+      kind: "bound",
+      agentId: lookup.agentId,
+      attemptId: attempt?.attemptId ?? null,
+    };
+  if (lookup.kind === "absent" && attempt && gracePassed) {
+    if (attempt.producerId !== creationProducerId)
+      return {
+        kind: "absent",
+        attemptId: attempt.attemptId,
+        terminatedBy: "service_replaced",
+      };
+    if (attempt.settlement)
+      return { kind: "wait", detail: resolutionCreationSettled(run) };
+  }
+  if (lookup.kind === "unknown") {
+    const placement =
+      found.length === 1 && found[0]?.workspaceId !== run.workspaceId
+        ? `; found agent outside the retained workspace ${run.workspaceId}`
+        : "";
+    const occurrence = attempt ? ` (attempt ${attempt.attemptId})` : "";
+    return {
+      kind: "partial",
+      detail: `${resolutionCreationPartial(run)} (${found.length} matching agent${found.length === 1 ? "" : "s"})${placement}${occurrence}; the occurrence remains owned`,
+      attemptId: attempt?.attemptId ?? null,
+    };
+  }
+  return { kind: "wait", detail: resolutionCreationWait(run.role) };
 }
 
 /** Admit replacements for proven-absent creations. */
@@ -220,56 +359,83 @@ export class AbsentRestarts {
   }
 
   /**
-   * Zero/one/many reconciliation for one uncertain creation. After the bounded
-   * grace: bind one exact match (done by the caller), retain an unproved
-   * empty result, or hand ambiguous results to the coordinator.
+   * Settle one uncertain resolution-role creation from its own observation.
+   * After the bounded grace the occurrence takes exactly one of the observed
+   * answers: a proved absence records its proof and the owner exits, a partial
+   * lookup stays an owner decision bound to this occurrence, and an unanswered
+   * lookup names the missing fact. Nothing here creates or releases a run.
    */
   async reconcileAbsentCreation(
     t: Task,
     run: Run,
-    found: { id: string; workspaceId: string | null }[],
+    observation: ResolutionCreationObservation,
   ) {
     if (isDispositionActive(t) || isDispositionComplete(t)) return;
     // A creation already proved absent is settled: nothing re-looks it up, reopens its incident or escalates again.
     if (provenAbsentCreation(this.store.run(run.id) ?? run)) return;
-    const incident = this.resolution.ensureIncident(
-      t,
-      run,
-      ABSENT_RESOLUTION_REASON,
-      "exact_lookup",
-    );
-    if (Date.now() - Date.parse(incident.createdAt) < this.graceMs) return;
+    const prior = t.resolution.incident;
+    const incident =
+      prior?.runId === run.id &&
+      prior.cause === "uncertain_delivery" &&
+      prior.status !== "resolved"
+        ? prior
+        : this.resolution.ensureIncident(
+            t,
+            run,
+            ABSENT_RESOLUTION_REASON,
+            "exact_lookup",
+          );
     const current = this.store.task(t.id);
-    const lookup = creationLookup(found, run.workspaceId);
-    if (lookup.kind !== "absent") {
+    if (observation.kind === "partial") {
       this.resolution.attention(
         current,
-        `${run.role} creation lookup is ambiguous (${found.length} matching agents); no resource was created`,
+        observation.detail,
+        "uncertain_delivery",
       );
       return;
     }
-    // An empty inventory does not prove that the original producer cannot
-    // deliver later. Keep the run and credential owned and observe it again.
+    if (Date.now() - Date.parse(incident.createdAt) < this.graceMs) return;
+    if (observation.kind === "absent") {
+      this.settleAbsentProof(current, run, observation);
+      return;
+    }
+    // An empty inventory alone does not prove that the original producer cannot
+    // deliver later. Keep the run and credential owned, and name the exact fact
+    // that has not answered yet.
     this.resolution.waiting(
       current,
-      `The ${run.role} creation is still uncertain; its original request remains owned`,
+      observation.kind === "wait"
+        ? observation.detail
+        : resolutionCreationWait(run.role),
       "lifecycle",
     );
   }
 
   /**
    * Record that an exact lookup proved this uncertain creation produced no agent,
-   * once the replacement budget is spent. The run keeps its lease until an owner
-   * control releases it, but observation stops looking it up and the effect no
-   * longer blocks other verbs. The task names the owner controls that replace it.
+   * either once the replacement budget is spent or from the sweep's own complete
+   * observation. The run keeps its lease until an owner control releases it, but
+   * observation stops looking it up and the effect no longer blocks other verbs.
+   * The task names the owner controls that replace it.
    */
-  settleAbsentProof(t: Task, run: Run): void {
+  settleAbsentProof(
+    t: Task,
+    run: Run,
+    proof?: Pick<
+      Extract<ResolutionCreationObservation, { kind: "absent" }>,
+      "attemptId" | "terminatedBy"
+    >,
+  ): void {
     this.store.transaction(() => {
       const latest = this.store.run(run.id);
       if (!latest || latest.released || latest.agentId || latest.absentProvenAt)
         return;
       this.store.putRun({ ...latest, absentProvenAt: now() });
-      this.store.event(t.id, "absent_creation_proven", `${run.role}:${run.id}`);
+      this.store.event(
+        t.id,
+        "absent_creation_proven",
+        `${run.role}:${run.id}: ${JSON.stringify(proof ?? {})}`,
+      );
     });
     // The exact-lookup window has ended with an absence: the incident records that and stops asking for a retry.
     this.resolution.resolveIncident(
@@ -280,7 +446,7 @@ export class AbsentRestarts {
     // A wait, not attention: the coordinator's own creation runs on the same host that never answered, so the owner replaces this run instead.
     this.resolution.waiting(
       this.store.task(t.id),
-      `A replacement ${run.role} creation also proved absent after an exact lookup; route now or restart fresh replaces it from the current route`,
+      `The ${run.role} creation ${run.id} is proved absent after an exact lookup (no agent, producer stopped); route role=${run.role} now or restart role=${run.role} launches one fresh run from the current route`,
       "lifecycle",
       { suggestedVerbs: ["route", "restart"] },
     );

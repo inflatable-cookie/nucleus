@@ -35,10 +35,12 @@ import { taskStopRecord } from "../shared/task-stop";
 import { HostCallAbandonedError } from "../core/host/errors";
 import {
   collectOwnerVerbFacts,
+  ownerTaskNext,
   ownerVerbViews,
 } from "../core/verbs/owner-verbs";
 import { blockingRecoveryEffects } from "../core/recovery/recovery-effects";
 import { provenAbsentCreation } from "../core/recovery/absent-creation/decisions";
+import { resolutionCreationWait } from "../core/recovery/absent-creation/restarts";
 
 const head = "a".repeat(40),
   base = "b".repeat(40),
@@ -1129,7 +1131,7 @@ test("an empty reviewer lookup keeps the original request and credential owned",
     assert.equal(f.store.run(run.id)?.agentId, null);
     assert.ok(!f.store.run(run.id)?.absentProvenAt);
     assert.doesNotThrow(() => f.store.authenticate(run.id, token));
-    assert.match(f.current().reason, /still uncertain/);
+    assert.equal(f.current().reason, resolutionCreationWait("reviewer"));
     f.foundAgents.set(run.id, [
       { id: "late-reviewer", workspaceId: "workspace" },
     ]);
@@ -1711,7 +1713,7 @@ test("a timed out reviewer creation remains uncertain after an empty lookup", as
       ),
       true,
     );
-    assert.match(f.current().reason, /still uncertain/);
+    assert.equal(f.current().reason, resolutionCreationWait("reviewer"));
   } finally {
     await f.close();
   }
@@ -1761,19 +1763,7 @@ test("a reviewer route-now after proved absence releases the empty creation once
       f,
       () => new Error("Transport lost"),
     );
-    // The fake adapter does not route creation through the host facade, so the
-    // throw is settled here and backdated past the producer-stop grace.
-    const attempt = readCreationAttempt(f.store, {
-      id: first.id,
-      taskId: f.task.id,
-      hostId: first.hostId,
-      workspaceId: first.workspaceId,
-      role: "reviewer",
-    })!;
-    settleCreationAttempt(f.store, attempt, "threw");
-    f.store.db
-      .prepare("UPDATE events SET at=? WHERE kind=?")
-      .run("2000-01-01T00:00:00.000Z", "creation_attempt_settled");
+    rolledReviewerCreation(f, first);
     const pi = profile("reviewer-pi", "reviewer-pi", { provider: "pi" });
     addProfile(f, pi, "review-pi", "reviewer");
     f.foundAgents.set(first.id, []);
@@ -1792,13 +1782,20 @@ test("a reviewer route-now after proved absence releases the empty creation once
     assert.equal(released.released, true);
     assert.equal(released.status, "superseded");
     assert.equal(released.agentId, null);
-    assert.throws(() => f.store.authenticate(first.id, "any-token"), /Unauthorized/);
+    assert.throws(
+      () => f.store.authenticate(first.id, "any-token"),
+      /Unauthorized/,
+    );
     await f.engine.wake();
     const live = f.store
       .runs(f.task.id)
       .filter((run) => run.role === "reviewer" && !run.released);
     assert.equal(live.length, 1, "one fresh reviewer owns the review");
-    assert.notEqual(live[0]!.id, first.id, "the fresh reviewer takes its own run identity");
+    assert.notEqual(
+      live[0]!.id,
+      first.id,
+      "the fresh reviewer takes its own run identity",
+    );
     assert.equal(
       f.store.runs(f.task.id).filter((run) => run.id === first.id).length,
       1,
@@ -2255,6 +2252,343 @@ test("restart role=worker on a stale creation intent launches a fresh worker fro
     const task = f.current();
     assert.notEqual(task.runId, "stale-worker-run");
     assert.equal(task.agentId, `agent-${task.runId}`);
+  } finally {
+    await f.close();
+  }
+});
+
+/**
+ * One reviewer creation occurrence driven from its original delivery evidence.
+ * The fixture assigns the adapter directly, so the native call's settlement is
+ * recorded here, as the host facade records it in production. Backdating that
+ * settlement is what a producer that stopped a full grace ago looks like.
+ */
+function settledReviewerCreation(f: Fixture, run: Run) {
+  const attempt = readCreationAttempt(f.store, {
+    id: run.id,
+    taskId: f.task.id,
+    hostId: run.hostId,
+    workspaceId: run.workspaceId,
+    role: "reviewer",
+  })!;
+  settleCreationAttempt(f.store, attempt, "threw");
+  f.store.db
+    .prepare("UPDATE events SET at=? WHERE kind=?")
+    .run("2000-01-01T00:00:00.000Z", "creation_attempt_settled");
+  return attempt;
+}
+
+/**
+ * A service roll: the recorded producer becomes a previous process, so the call
+ * that could still deliver the original request is gone. The reservation is
+ * backdated past the lookup grace as a roll long before the pass looks again.
+ */
+function rolledReviewerCreation(f: Fixture, run: Run) {
+  const attempt = readCreationAttempt(f.store, run);
+  assert.ok(attempt);
+  const updated = f.store.db
+    .prepare(
+      `UPDATE events SET detail=json_set(detail,'$.producerId',?), at=?
+       WHERE taskId=? AND kind='creation_attempt_reserved'
+       AND json_extract(detail,'$.attemptId')=?`,
+    )
+    .run(
+      "previous-service-process",
+      "2000-01-01T00:00:00.000Z",
+      run.taskId,
+      attempt.attemptId,
+    );
+  assert.equal(updated.changes, 1);
+  f.store.db
+    .prepare(
+      `UPDATE events SET at=? WHERE taskId=? AND kind='creation_attempt_settled'
+       AND json_extract(detail,'$.attemptId')=?`,
+    )
+    .run("2000-01-01T00:00:00.000Z", run.taskId, attempt.attemptId);
+}
+
+async function uncertainReviewerCreation(f: Fixture) {
+  f.plantReview();
+  const create = f.adapter.createRun!;
+  f.adapter.createRun = async (_task, run, token) => {
+    f.tokens.set(run.id, token);
+    throw new Error("Transport lost");
+  };
+  await f.engine.wake();
+  const run = f.store
+    .runs(f.task.id)
+    .find((candidate) => candidate.role === "reviewer")!;
+  ageIncident(f);
+  return { run, create };
+}
+
+test("the sweep proves a reviewer creation absent once, and names the owner exits", async () => {
+  const f = fixture(50_000);
+  try {
+    const { run } = await uncertainReviewerCreation(f);
+    rolledReviewerCreation(f, run);
+    f.foundAgents.set(run.id, []);
+    await f.engine.wake();
+    const proved = f.store.run(run.id)!;
+    assert.ok(
+      proved.absentProvenAt,
+      "the complete lookup and stopped producer prove absence",
+    );
+    assert.equal(proved.agentId, null);
+    assert.equal(
+      proved.released,
+      false,
+      "only an owner control releases the run",
+    );
+    assert.equal(f.events("absent_creation_proven").length, 1);
+    assert.match(f.current().reason, /is proved absent after an exact lookup/);
+    assert.match(
+      f.current().reason,
+      /route role=reviewer now or restart role=reviewer/,
+    );
+    assert.equal(reviewerRestartOffer(f)?.available, true);
+    assert.equal(
+      f.store
+        .runs(f.task.id)
+        .filter((candidate) => candidate.role === "reviewer").length,
+      1,
+      "the sweep reconciles the occurrence and never creates a second reviewer",
+    );
+    assert.equal(provenAbsentCreation(f.store.run(run.id)!), true);
+    // Replay converges: the settled occurrence is never looked up or re-escalated.
+    const count = f.store.eventsAll(f.task.id).length;
+    await f.engine.wake();
+    await f.engine.wake();
+    assert.equal(f.store.eventsAll(f.task.id).length, count);
+  } finally {
+    await f.close();
+  }
+});
+
+function reviewerRestartOffer(f: Fixture) {
+  return ownerTaskNext(collectOwnerVerbFacts(f.store, f.current())).verbs.find(
+    (verb) => verb.action === "restart",
+  );
+}
+
+function restartReviewer(f: Fixture, reason: string) {
+  return f.engine.performTaskControl({
+    taskId: f.task.id,
+    version: f.current().version,
+    action: "restart",
+    role: "reviewer",
+    reason,
+    caller: OWNER,
+  });
+}
+
+test("an ambiguity twin of a reviewer creation refuses restart in sweep, preview and execution", async () => {
+  const f = fixture(50_000);
+  try {
+    const { run } = await uncertainReviewerCreation(f);
+    rolledReviewerCreation(f, run);
+    f.foundAgents.set(run.id, [
+      { id: "first", workspaceId: run.workspaceId },
+      { id: "second", workspaceId: run.workspaceId },
+    ]);
+    await f.engine.wake();
+    const current = f.current();
+    assert.equal(current.resolution.attention, true);
+    assert.match(current.reason, /partial or ambiguous \(2 matching agents\)/);
+    assert.ok(current.reason.includes(`run ${run.id}`));
+    const restart = reviewerRestartOffer(f);
+    assert.equal(restart?.available, false);
+    assert.equal(restart?.refusal, current.resolution.stop?.detail);
+    await assert.rejects(restartReviewer(f, "Resume the review"), {
+      message: restart!.refusal,
+    });
+    assert.equal(f.store.run(run.id)?.agentId, null);
+    assert.ok(!f.store.run(run.id)?.absentProvenAt);
+    assert.equal(
+      f.store
+        .runs(f.task.id)
+        .filter((candidate) => candidate.role === "reviewer").length,
+      1,
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+test("a fresh ambiguous lookup withdraws a previous reviewer restart offer", async () => {
+  const f = fixture(50_000);
+  try {
+    const { run } = await uncertainReviewerCreation(f);
+    rolledReviewerCreation(f, run);
+    await f.engine.wake();
+    assert.equal(reviewerRestartOffer(f)?.available, true);
+    f.foundAgents.set(run.id, [
+      { id: "first", workspaceId: run.workspaceId },
+      { id: "second", workspaceId: run.workspaceId },
+    ]);
+    await assert.rejects(
+      restartReviewer(f, "Replace the reviewer"),
+      /partial or ambiguous/,
+    );
+    assert.equal(reviewerRestartOffer(f)?.available, false);
+    assert.match(reviewerRestartOffer(f)?.refusal ?? "", /2 matching agents/);
+    assert.equal(f.store.run(run.id)?.released, false);
+    assert.equal(f.store.run(run.id)?.absentProvenAt, undefined);
+    assert.equal(f.creates.length, 0);
+  } finally {
+    await f.close();
+  }
+});
+
+test("the sweep, the owner preview and the applying restart name the same reviewer creation wait", async () => {
+  const f = fixture(50_000);
+  try {
+    const { run } = await uncertainReviewerCreation(f);
+    f.foundAgents.set(run.id, []);
+    await f.engine.wake();
+    const wait = resolutionCreationWait("reviewer");
+    assert.equal(
+      f.current().resolution.stop?.detail,
+      wait,
+      "the sweep names the missing fact",
+    );
+    const restart = reviewerRestartOffer(f);
+    assert.equal(restart?.available, false);
+    assert.equal(
+      restart?.refusal,
+      wait,
+      "the preview names the same owed observation",
+    );
+    // The applying control records the same wait and sends nothing: one
+    // observation answers the preview and the execution.
+    const waited = await restartReviewer(f, "Resume the review");
+    assert.equal(waited.resolution.stop?.detail, wait);
+    assert.equal(f.store.run(run.id)?.released, false);
+    assert.equal(
+      f.store
+        .runs(f.task.id)
+        .filter((candidate) => candidate.role === "reviewer").length,
+      1,
+    );
+    settledReviewerCreation(f, run);
+    await f.engine.wake();
+    const settledWait = f.current().resolution.stop?.detail;
+    assert.match(settledWait ?? "", /may still deliver/);
+    assert.equal(reviewerRestartOffer(f)?.refusal, settledWait);
+    const waitedAfterThrow = await restartReviewer(f, "Resume the review");
+    assert.equal(waitedAfterThrow.resolution.stop?.detail, settledWait);
+    assert.equal(f.store.run(run.id)?.released, false);
+  } finally {
+    await f.close();
+  }
+});
+
+test("proved absence at the old PR head cannot authorize replacement after the head moves", async () => {
+  const f = fixture(50_000);
+  try {
+    const { run, create } = await uncertainReviewerCreation(f);
+    rolledReviewerCreation(f, run);
+    await f.engine.wake();
+    assert.equal(reviewerRestartOffer(f)?.available, true);
+    f.setHead("d".repeat(40));
+    f.adapter.createRun = create;
+    await assert.rejects(
+      restartReviewer(f, "Replace the proved-absent reviewer"),
+      /PR head changed/,
+    );
+    assert.equal(f.store.run(run.id)?.released, false);
+    assert.equal(f.store.run(run.id)?.head, head);
+    assert.equal(f.creates.length, 0);
+    assert.equal(f.sends.length, 0);
+  } finally {
+    await f.close();
+  }
+});
+
+test("a restart replay after proved absence gives the replacement head one fresh reviewer and rejects stale progress", async () => {
+  const f = fixture(50_000);
+  try {
+    const { run, create } = await uncertainReviewerCreation(f);
+    rolledReviewerCreation(f, run);
+    f.foundAgents.set(run.id, []);
+    await f.engine.wake();
+    assert.ok(f.store.run(run.id)?.absentProvenAt);
+    assert.equal(run.head, head);
+    const originalToken = f.tokens.get(run.id)!;
+    assert.doesNotThrow(() => f.store.authenticate(run.id, originalToken));
+    f.adapter.createRun = create;
+    await restartReviewer(f, "Replace the proved-absent reviewer");
+    assert.equal(f.store.run(run.id)?.released, true);
+    assert.equal(f.store.run(run.id)?.status, "superseded");
+
+    const replacementHead = "d".repeat(40);
+    f.setHead(replacementHead);
+    await f.engine.wake();
+    assert.equal(
+      f.creates.length,
+      0,
+      "dispatch waits for a binding at the new head",
+    );
+    f.adapter.verifyInspectedRevisionHead = async (
+      _task,
+      number,
+      verifiedHead,
+    ) => {
+      assert.equal(number, 1);
+      assert.equal(verifiedHead, replacementHead);
+    };
+    await f.engine.performTaskControl({
+      taskId: f.task.id,
+      version: f.current().version,
+      action: "move",
+      to: "review",
+      reason: "Review the replacement PR head",
+      caller: OWNER,
+    });
+    const staleProgress: Completion = {
+      eventId: randomUUID(),
+      taskId: f.task.id,
+      runId: run.id,
+      status: "review_in_progress",
+      head: run.head,
+      summary: "Old head review",
+      checkpoint: { covered: ["Old diff"], remaining: ["Tests"] },
+    };
+    await assert.rejects(
+      f.engine.complete(staleProgress, originalToken),
+      /Unauthorized/,
+    );
+    await f.engine.wake();
+    await f.engine.wake();
+    const live = f.store
+      .runs(f.task.id)
+      .filter(
+        (candidate) => candidate.role === "reviewer" && !candidate.released,
+      );
+    assert.equal(live.length, 1, "exactly one fresh reviewer owns the review");
+    assert.notEqual(live[0]!.id, run.id);
+    assert.equal(
+      live[0]!.head,
+      replacementHead,
+      "the fresh reviewer reads the current head",
+    );
+    await assert.rejects(
+      f.engine.complete(
+        { ...staleProgress, eventId: randomUUID(), runId: live[0]!.id },
+        f.tokens.get(live[0]!.id)!,
+      ),
+      /reviewer run exact head/,
+    );
+    assert.equal(f.current().prHead, replacementHead);
+    assert.equal(f.current().resolution.review, null);
+    assert.equal(f.store.run(live[0]!.id)?.reviewCheckpoints?.length ?? 0, 0);
+    assert.equal(f.store.run(run.id)?.reviewCheckpoints?.length ?? 0, 0);
+    const fresh = f.creates.filter((created) => created.role === "reviewer");
+    assert.equal(
+      fresh.length,
+      1,
+      "one replacement launches from the current route",
+    );
   } finally {
     await f.close();
   }

@@ -53,11 +53,9 @@ import {
   type ExhaustedReviewerReplacement,
 } from "./reviewer-report";
 import { observeRecoveryCreation } from "../recovery/coordinator-episode";
-import { creationLookup } from "../recovery/absent-creation/restarts";
-import {
-  creationTermination,
-  readCreationAttempt,
-} from "../store/store-task-funnel";
+import { observeResolutionCreation } from "../recovery/absent-creation/restarts";
+import { readCreationAttempt } from "../store/store-task-funnel";
+import { taskPrNumber } from "../forge/index";
 
 import {
   combineWorkerHostProfiles,
@@ -474,26 +472,36 @@ export class RouteControls {
           : null;
       let absentRun: { run: Run; attemptId: string } | null = null;
       if (agentless && !recoveryObservation) {
-        const proof = creationTermination(
-          this.store,
-          agentless,
-          this.resolution.graceMs,
-        );
         if (
-          !proof ||
           agentless.status !== "uncertain" ||
           agentless.hostId !== task.hostId ||
-          !this.resolution.adapter.findRunAgents
+          agentless.workspaceId !== task.workspaceId
         )
           throw Error(
             `route now cannot replace the ${role}'s creation until an exact lookup proves no agent exists after its producer has stopped`,
           );
-        const found = await this.resolution.adapter.findRunAgents(agentless);
-        if (creationLookup(found, agentless.workspaceId).kind !== "absent")
+        const observation = await observeResolutionCreation(
+          this.store,
+          this.resolution.adapter,
+          agentless,
+          this.resolution.graceMs,
+        );
+        if (observation.kind !== "absent")
           throw Error(
-            `route now cannot replace the ${role}'s creation while its agent is present or placement is uncertain`,
+            `route now cannot replace the ${role}'s creation until an exact lookup proves absence. ${observation.kind === "bound" ? `The lookup found retained agent ${observation.agentId}` : observation.detail}`,
           );
-        absentRun = { run: agentless, attemptId: proof.attemptId };
+        if (agentless.role !== "closeout") {
+          const pr = await this.adapter.verifyPr(task, taskPrNumber(task));
+          if (
+            pr.url !== task.prUrl ||
+            pr.head !== task.prHead ||
+            pr.head !== agentless.head
+          )
+            throw Error(
+              "PR head changed; inspect it before replacing the absent run",
+            );
+        }
+        absentRun = { run: agentless, attemptId: observation.attemptId };
       }
       if (
         recoveryObservation &&
