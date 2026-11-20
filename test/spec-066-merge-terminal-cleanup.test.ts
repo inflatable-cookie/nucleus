@@ -136,6 +136,13 @@ function plantDone(f: ReturnType<typeof fixture>, directory: string, extra: Part
   return f.task();
 }
 
+/** Leave unrelated checkout-gate cases with a settled recovery, not an active fault. */
+function settleFixtureRecovery(f: ReturnType<typeof fixture>) {
+  const task = f.task(), recovery = task.resolution.recovery;
+  f.store.update(f.taskId, { resolution: { ...task.resolution, recoveryActive: false, currentRunId: null,
+    recovery: recovery ? { ...recovery, status: 'resolved' } : null } });
+}
+
 test('merge occurrence proof binds the original recovery run and rejects a current fault', async () => {
   const f = fixture();
   try {
@@ -609,6 +616,7 @@ test('C6 a live participant keeps the verified merge gated', async () => {
   const f = fixture();
   try {
     plantMerged(f);
+    settleFixtureRecovery(f);
     f.observations.set('worker-agent', { id: 'worker-agent', workspaceId: 'workspace', status: 'running', active: true, permissions: false, error: '' });
     await f.engine.wake();
     assert.equal(f.task().phase, 'syncing');
@@ -626,7 +634,9 @@ test('C6 a live participant keeps the verified merge gated', async () => {
 test('C6 a restart with unknown delivery on the current binding still blocks synchronization', async () => {
   const f = fixture();
   try {
-    const task = plantMerged(f);
+    plantMerged(f);
+    settleFixtureRecovery(f);
+    const task = f.task();
     const control = taskControlInputSchema.parse({
       taskId: task.id, version: task.version, action: 'restart', role: 'worker', reason: 'Resume the retained worker',
     });
@@ -659,6 +669,7 @@ test('C6 a fast-forward whose result was lost is observed before closeout', asyn
   let restarted: Engine | undefined;
   try {
     plantMerged(f, f.source);
+    settleFixtureRecovery(f);
     let writes = 0;
     f.adapter.syncMain = (task, allowed, _applied, before) => syncMain(task, allowed, () => {
       writes++;
@@ -695,6 +706,7 @@ for (const barrier of ['dirty', 'divergent', 'unproved'] as const) {
       if (barrier === 'unproved') await git(f.writer, 'push', '--force', 'origin', `${f.source.base}:main`);
       const before = await git(f.repo, 'rev-parse', 'HEAD');
       plantMerged(f, f.source);
+      settleFixtureRecovery(f);
       await f.engine.wake();
       assert.equal(f.task().resolution.mergedCommit, f.source.merged);
       assert.equal(f.task().resolution.syncedCommit, null);

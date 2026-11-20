@@ -371,7 +371,7 @@ export class ExternalMerge {
       for (const run of leases()) {
         // The shared merge transition owns this episode. Keep its callback and
         // execution custody until that transition and the ordinary lease settle.
-        if (run.role === "recovery" && run.id === current.resolution.recovery?.runId) continue;
+        if (run.role === "recovery" && run.id === current.resolution.recovery?.runId && !run.completion) continue;
         // Spec 050 (#3569): a recovery run released at closeout still records a
         // pending accepted action as not applied instead of closing silently.
         if (
