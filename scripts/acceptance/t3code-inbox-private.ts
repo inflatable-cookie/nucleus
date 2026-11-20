@@ -25,8 +25,9 @@
  *      open), ignores non-exact text, reopens a closed pane, and — while a decision holds
  *      the turn and T3 queues the message — is served by the pass with the card untouched
  *      and the served result reported when the queued turn runs.
- * Both environments prove the project reads "Nucleus Inbox", the thread reads "Nucleus",
- * the thread stays pinned, and the registration keeps its id.
+ * Both environments prove the project reads "Nucleus Inbox", the thread stays pinned,
+ * and the existing registration keeps its id. The existing Inbox also serves `ui`
+ * from a closed pane and is checked for the reply and the revealed preview tab.
  *
  * Evidence is compact JSON per step with sha256 digests of the raw server logs. Raw logs
  * and evidence stay in run scratch. Run through `effigy proof:t3code:inbox`.
@@ -52,11 +53,12 @@ import { identity } from "../../hosts/t3code/intents";
 import { canonical } from "../../hosts/t3code/state";
 import { activeStatuses } from "../../hosts/t3code/reads";
 import { acpInboxDirectory } from "../../shared/acp/inbox-binding";
+import { ACP_OPEN_UI_TIMEOUT_MS } from "../../shared/acp/transport";
 import { QueueService } from "../../service/transport/server";
 import { findT3Cli } from "../../shared/t3/operator";
 
 const checkout = fileURLToPath(new URL("../..", import.meta.url));
-const NIGHTLY_LINE = /^0\.1\.11-nightly\.\d+\.\d+$/;
+const NIGHTLY_LINE = /^0\.1\.(11|12)-nightly\.\d+\.\d+$/;
 /** Every process this run starts, so a failed setup never leaves a server behind. */
 const spawned: ChildProcess[] = [];
 const killSpawned = () => {
@@ -476,7 +478,7 @@ async function startEnvironment(
   legacy: boolean,
   scratch: string,
 ): Promise<Environment> {
-  const root = mkdtempSync(join(scratch, `t3-inbox-${name}-`));
+  const root = mkdtempSync(join(scratch, `${name}-`));
   console.log(JSON.stringify({ environment: name, proofRoot: root }));
   const t3 = findT3Cli({ explicit: process.env.NUCLEUS_T3_CLI ?? null });
   assert.ok(
@@ -520,11 +522,15 @@ async function startEnvironment(
   const port = await freePort();
   const endpoint = `http://127.0.0.1:${port}`;
   const logPath = join(root, "t3-server.log");
+  writeFileSync(logPath, "", { mode: 0o600 });
   const children: ChildProcess[] = [];
   const startServer = (): ChildProcess => {
     const child = spawn(
       t3.path!,
       [
+        "serve",
+        "--mode",
+        "web",
         "--base-dir",
         t3Data,
         "--host",
@@ -552,7 +558,8 @@ async function startEnvironment(
           { flag: "a" },
         );
       });
-    collect(child.stdout!);
+    // Web mode prints its operator pairing credentials and QR code to stdout.
+    child.stdout!.resume();
     collect(child.stderr!);
     return child;
   };
@@ -627,6 +634,7 @@ async function startEnvironment(
     owner: { dataDir: nucleusData, timers: false },
     fixture: "fake",
     debug: true,
+    webBoard: { port: 0 },
   });
   await service.start();
   const health = () =>
@@ -1298,7 +1306,7 @@ async function freshScenarios(env: Environment) {
   });
 }
 
-/** The existing environment: the adopted registration names, wakes and idles. */
+/** The adopted Inbox wakes for decisions and can reopen its board from a closed pane. */
 async function existingScenarios(env: Environment) {
   const start = await idleFor(env, 3);
   record(env, "existing:empty-start-idle", {
@@ -1319,6 +1327,46 @@ async function existingScenarios(env: Environment) {
     decision: "answered",
     runs: after.runs,
   });
+
+  const threadId = env.inboxThreadId;
+  const board = env.service.webBoardAddress();
+  assert.ok(board, "the private Nucleus board is listening");
+  for (const tab of await previewSessions(env.rpc, threadId)) {
+    await env.rpc.call("preview.close", { threadId, tabId: tab.tabId });
+  }
+  assert.equal((await previewSessions(env.rpc, threadId)).length, 0);
+
+  const started = performance.now();
+  const messageId = await sendInboxText(env, "ui");
+  const result = await until(async () => {
+    const view = await projection(env.rpc, threadId);
+    const message = view?.messages?.find((row) => row.id === messageId);
+    const run = view?.runs.find((row) => row.id === message?.runId);
+    const reply = view?.messages?.find(
+      (row) => row.role === "assistant" && row.runId === run?.id,
+    );
+    if (!view || !message || run?.status !== "completed" || !reply) return null;
+    return { view, reply };
+  }, "the existing Inbox ui reply", ACP_OPEN_UI_TIMEOUT_MS);
+  const elapsedMs = Math.round(performance.now() - started);
+  assert.ok(elapsedMs < ACP_OPEN_UI_TIMEOUT_MS, "the reply is bounded");
+  assert.equal(result.reply.text.trim(), "Opened the Nucleus board.");
+  assert.ok(result.view.thread.pinnedAt, "the same Inbox is still pinned");
+  assertNoPairingLeak(env, result.view, "existing Inbox board reopen");
+
+  const tabs = await previewSessions(env.rpc, threadId);
+  assert.equal(tabs.length, 1, "the Inbox has one preview after ui");
+  assert.equal(tabs[0]!.reveal, true);
+  const url = new URL(tabs[0]!.navStatus.url ?? "");
+  assert.equal(url.origin, `http://${board.host}:${board.port}`);
+  record(env, "existing:ui-reopens-closed-pane", {
+    threadId,
+    messageId,
+    reply: result.reply.text.trim(),
+    elapsedMs,
+    previewTabId: tabs[0]!.tabId,
+    reveal: true,
+  });
 }
 
 export async function main() {
@@ -1329,7 +1377,8 @@ export async function main() {
       ? "fresh"
       : "both";
   const scratch = scratchRoot();
-  const root = mkdtempSync(join(scratch, "t3-inbox-proof-"));
+  // Keep the service and callback socket paths within the Unix socket limit.
+  const root = mkdtempSync(join(scratch, "inbox-"));
   console.log(JSON.stringify({ proofRoot: root }));
   const environments: Record<string, unknown> = {};
 

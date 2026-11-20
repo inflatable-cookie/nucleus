@@ -1672,6 +1672,13 @@ reported when the queued turn runs), Stop ending a hung open at once, and
 returning to idle immediately when no decisions are offerable while staying held
 when an offerable decision is open.
 
+The existing-Inbox proof (`effigy proof:t3code:inbox -- --existing-only`)
+also closes its private preview, dispatches exact `ui` on the same pinned
+thread and checks both the bounded ACP reply and the newly revealed preview
+tab. It checks the tab against the real private board's origin and records
+only the tab ID and reveal state. A rendered-pane check also observes the
+board in T3's client, since server readback alone cannot show what rendered.
+
 The private proof starts an unmodified checkout of the target nightly revision,
 or its bundled server copied into fresh run scratch, with separate home, data,
 configuration and synthetic Git project/worktree. A local scripted provider drives questions, approvals and a
