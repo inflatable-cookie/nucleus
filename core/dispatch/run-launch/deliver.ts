@@ -6,6 +6,7 @@ import { taskPrNumber } from '../../forge/index';
 import { git } from '../../git/index';
 import { NON_DELIVERY_ROUTE_REASON } from '../../recovery/non-delivery';
 import { assertOrdinaryReviewIdentity, ordinaryReviewSource } from '../../review/ordinary-review';
+import { unreviewedMergeRoute } from '../../../shared/task-view';
 import { ownerReviewContext } from '../../review/owner-review-context';
 import type { Adapter } from '../../host/adapter';
 import { proofExecutionRecord, recordProofExecution } from '../../qa/proof-records';
@@ -22,6 +23,17 @@ import { dirname } from 'node:path';
 import { ensureTaskNodeModules } from '../../workspaces/task-node-modules';
 
 // Proof executors keep their own refusal path; reviewer and closeout creations wait for their exact lookup.
+/**
+ * The detached reviewer round's PR identity (nucleus#1425). A recorded unreviewed external
+ * merge of the task's PR binds its exact merged source; any other task keeps the strict
+ * open-PR identity.
+ */
+async function reviewPrIdentity(machine: LaunchMachinePorts, t: Task, number: number): Promise<{ url: string; head: string }> {
+  const route = unreviewedMergeRoute(t);
+  if (!route) return machine.verifyPrIdentity!(t, number);
+  return machine.verifyMergedReviewSource!(t, route);
+}
+
 const creationRoles = new Set<Run['role']>(['reviewer', 'closeout']);
 
 /**
@@ -101,7 +113,7 @@ export class RunLaunchDeliver {
         const sendGuard = run.ordinaryDetached || guardedReviewEntry ? {
           allowed: async () => {
             if (run.ordinaryDetached) await this.resolution.ordinaryRoundCustody(fresh, savedRun);
-            const pr = await this.machine.verifyPrIdentity!(fresh, taskPrNumber(fresh));
+            const pr = await reviewPrIdentity(this.machine, fresh, taskPrNumber(fresh));
             if (pr.head !== run.head || pr.url !== fresh.prUrl) return false;
             if (fresh.reviewEntry)
               await assertReviewEntryWriterYielded(reviewEntryInputForTask(fresh), this.adapter as Adapter & ReviewEntryAdapter, fresh.id);
@@ -125,7 +137,7 @@ export class RunLaunchDeliver {
         if (run.ordinaryDetached) {
           await this.resolution.ordinaryRoundCustody(t, this.store.run(run.id)!);
           if (!this.machine.verifyPrIdentity) throw Error('Ordinary reviewer PR identity observation unavailable');
-          const pr = await this.machine.verifyPrIdentity(t, taskPrNumber(t));
+          const pr = await reviewPrIdentity(this.machine, t, taskPrNumber(t));
           if (pr.head !== run.head || pr.url !== t.prUrl) throw Error('Ordinary reviewer PR identity changed before creation');
           await this.resolution.ordinaryRoundCustody(t, this.store.run(run.id)!);
           if (t.reviewEntry) await assertReviewEntryWriterYielded(reviewEntryInputForTask(t), this.adapter as Adapter & ReviewEntryAdapter, t.id);

@@ -38,6 +38,7 @@ export class MachinePorts {
   verifyWorkspace = verifyWorkspace;
   verifyPr = verifyPr;
   verifyPrIdentity = forge.verifyPrIdentity;
+  verifyMergedReviewSource = forge.verifyMergedReviewSource;
   verifyInspectedRevisionHead = forge.verifyInspectedRevisionHead;
   verifyContinuedProgress = forge.verifyContinuedProgress;
   findOpenBranchPr = forge.findOpenBranchPr;

@@ -2741,7 +2741,26 @@ movement invalidates source approval and preserves the normal readiness gates.
   acceptance (`move to=closeout`). Nothing is advanced, reverted or synced,
   and a repeated observation attaches to the open escalation instead of
   asking again. An already-recorded merge re-entry never re-decides an
-  accepted route, so the gate lives on the fresh observation only. A
+  accepted route, so the gate lives on the fresh observation only.
+- The stop records the merged PR's number, source head and merge commit on the
+  task (`unreviewedMerge`, nucleus#1425). That record is the one route
+  eligibility: `next`, the `move to=review` admission, the reviewer launch and
+  verdict publication read it through one predicate. The route holds only while
+  the task still names that PR and source head and no merge is recorded. The
+  admission then observes the forge's merged PR, which must still name the same
+  head and merge commit; any other answer refuses with nothing written.
+- A fresh review of that merged source may run on the retained reviewer or an
+  independent one. Its `ready_to_merge` verdict at the exact merged head
+  reconciles the merge once; a verdict at any other head, a negative or a missing
+  verdict keeps the stop. No merge, revision push or revert is ever sent against
+  the merged PR, and the open-PR proofs stay strict for every other review.
+- While the owner's review of that merged source is in flight, the probe does
+  not restate the stop. A reobserved unchanged merge honors an answered
+  escalation's recorded stop or wait while that disposition is current, and
+  re-enters only after it releases. The escalation names the two routes apart:
+  the independent review (`move to=review`), and the operator-only exact-head
+  source acceptance (`move to=closeout`, qualification naming that head). A
+  planner hand-back is neither. A
   submission that explicitly skipped PR review keeps its previous merge
   behavior, the same rule the Queue-owned gates apply.
 - `move to=closeout` (reason required) closes out an external merge at a head

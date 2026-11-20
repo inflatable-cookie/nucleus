@@ -4,6 +4,8 @@ import { type Task, operatorSourceAcceptance, qualifiedOwnerAcceptance, type Run
 import { withIntegrationCheckout, fastForwardIntegrationBase, git, gitStatus, verifyPr, queueCheckoutStatus, type IntegrationFastForwardObserver } from '../git/index';
 import { type ReviewerSetting, type FormalReviewRuntime, verifyReview } from './reviews';
 import { readyReviewAtHead } from '../recovery/task-reasons';
+import { verifyUnreviewedMergeSource, type UnreviewedMergeRoute } from '../../shared/task-view';
+import type { VerifiedPr } from '../host/types';
 import { type CheckHistory, type GateEvidence, type CheckRequirementTransport, requiredCheckRequirements, branchUpdateRequired, observeCheckClassification, type CheckClassification, requiredChecks } from './checks';
 import { api, repo } from './github-client';
 import { requestServiceRollAfterRepositorySync } from './roll-request';
@@ -265,6 +267,16 @@ export async function externalMerge(t: Task, acceptHead = false, retainedSource 
   return {head,commit};
 }
 
+/**
+ * nucleus#1425: the exact merged source of a recorded unreviewed external merge, verified
+ * at the forge as a PR identity. Every other review keeps the strict open-PR proof.
+ */
+export async function verifyMergedReviewSource(t: Task, route: UnreviewedMergeRoute): Promise<VerifiedPr> {
+  const name = await repo(t);
+  const verified = await verifyUnreviewedMergeSource(t, route, () => externalMerge(t));
+  // externalMerge proves the head and base repositories are both the canonical repository.
+  return { ...verified, repository: name, headRepository: name, crossRepository: false };
+}
 export async function reportedOrExactMergeCommit(t:Pick<Task,'repoPath'|'baseBranch'|'resolution'>,p:{merged?:boolean;merge_commit_sha?:unknown}) {
   return p.merged?String(p.merge_commit_sha??''):exactIntendedMerge(t);
 }

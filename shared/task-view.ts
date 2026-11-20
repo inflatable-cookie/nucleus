@@ -319,6 +319,55 @@ export function mergeReviewEvidenceAt(
   return null;
 }
 
+/** A verified external merge that stopped a task unreviewed (nucleus#1425), with its exact identities. */
+export interface UnreviewedMergeRoute {
+  prNumber: number;
+  head: string;
+  commit: string;
+}
+
+/**
+ * The recorded unreviewed external merge the fresh review route admits, or null
+ * (nucleus#1425). Shared by `next`, the `move to=review` admission, the reviewer
+ * launch and verdict publication, so the offer and every gate read one rule. It
+ * holds only while the task still names the recorded PR and source head and no
+ * merge is recorded, so a reconciled or re-headed task never routes again.
+ */
+export function unreviewedMergeRoute(task: AcceptanceTask): UnreviewedMergeRoute | null {
+  const record = task.resolution.unreviewedMerge;
+  if (!record || !task.prHead || record.head !== task.prHead) return null;
+  if (task.resolution.mergedCommit || task.resolution.mergeIntent || task.resolution.externalMerge) return null;
+  const prNumber = task.reviewEntry?.prNumber ?? task.resumePrNumber ?? task.completion?.prNumber ?? null;
+  return prNumber === record.prNumber ? record : null;
+}
+
+/**
+ * The refusal for a recorded unreviewed merge whose source no longer matches the
+ * task, or null. Once a merge is recorded the state refusals own the answer.
+ */
+export function unreviewedMergeRouteRefusal(task: AcceptanceTask): string | null {
+  const record = task.resolution.unreviewedMerge;
+  if (!record || unreviewedMergeRoute(task) || task.resolution.mergedCommit || task.resolution.externalMerge) return null;
+  return `The PR merged outside Queue at ${record.head} (merge commit ${record.commit}), but the task's recorded source head is ${task.prHead ?? "none"} or its PR number changed; the fresh review route needs the recorded merged source`;
+}
+
+/**
+ * The exact merged source a fresh review of an unreviewed external merge may bind:
+ * the observed merge must still name the recorded source head and merge commit.
+ * Any other answer refuses, and nothing is read as acceptance (nucleus#1425).
+ */
+export async function verifyUnreviewedMergeSource(
+  task: Pick<Task, "prUrl">,
+  route: UnreviewedMergeRoute,
+  observe: () => Promise<{ head: string; commit: string } | null>,
+): Promise<{ url: string; head: string }> {
+  const observed = await observe();
+  if (!observed || observed.head !== route.head || observed.commit !== route.commit)
+    throw new Error(`PR #${route.prNumber} is no longer observed merged at source ${route.head} with merge commit ${route.commit}; the fresh review route was refused`);
+  if (!task.prUrl) throw new Error("The unreviewed merge route requires the recorded PR URL");
+  return { url: task.prUrl, head: observed.head };
+}
+
 /**
  * The recorded stop that is still current. A `held` record belongs to the
  * fences: once none is left it is history, never a hold, and the next stop in

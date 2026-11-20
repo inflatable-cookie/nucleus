@@ -5,6 +5,8 @@ import { type Task, type Run, type Completion } from '../../shared/contracts';
 import { api, repo, commandErrorText, type CheckEvidenceTransport } from './github-client';
 import { taskPrNumber } from './pr-identity';
 import { verifyPr, command } from '../git/index';
+import { verifyMergedReviewSource } from './merge';
+import { unreviewedMergeRoute } from '../../shared/task-view';
 import { reviewMarker, reviewPublicationBody } from '../../shared/review-text';
 import { type Store, digest } from '../store/store';
 import { reviewPublicationKey, claimReviewPublication, type PublicationRecord } from '../review/review-publication';
@@ -56,12 +58,22 @@ export async function authorCommentEvidence(t: Task, priorCommentId?: number | n
   if (!Array.isArray(pages)) throw Error('PR comment inventory is incomplete');
   return formatAuthorCommentEvidence(pages.flat(), { head, repository: name, prNumber: number, priorCommentId: priorCommentId ?? null });
 }
+/**
+ * The reviewer's PR proof (nucleus#1425). A recorded unreviewed external merge of this
+ * task's PR binds its exact merged source, observed at the forge; every other review keeps
+ * the strict open-PR proof, so an ordinary review never reads a merged PR as open.
+ */
+async function reviewSourcePr(t: Task, verify: (task: Task, number: number) => Promise<{ url: string; head: string }>): Promise<{ url: string; head: string }> {
+  const route = unreviewedMergeRoute(t);
+  if (!route) return verify(t, taskPrNumber(t));
+  return verifyMergedReviewSource(t, route);
+}
 export async function verifyReview(t: Task, run: Run, result: Completion, reviewer?: ReviewerSetting | null, runtime?: FormalReviewRuntime):Promise<number> {
   if (reviewer) return verifyFormalReview(t, run, result, reviewer, runtime);
   return verifyReviewComment(t, run, result, runtime);
 }
 async function verifyReviewComment(t: Task, run: Run, result: Completion, runtime?: FormalReviewRuntime):Promise<number> {
-  const pr = await (runtime?.verifyPr ?? verifyPr)(t, taskPrNumber(t));
+  const pr = await reviewSourcePr(t, runtime?.verifyPr ?? verifyPr);
   if (pr.head !== run.head || result.head !== run.head) throw new Error('Review is stale for the current PR head');
   const name = await repo(t);
   const user = await api(t, 'user');
@@ -135,7 +147,7 @@ function earliestPublication<T extends { id?: unknown; submitted_at?: unknown }>
   })[0]!;
 }
 async function publishReviewCommentOnce(store:Store,t:Task,run:Run,status:string,text:string,allowed:()=>boolean=()=>true):Promise<PublicationOutcome> {
-  const pr=await verifyPr(t,taskPrNumber(t));if(pr.head!==run.head)throw Error('Review is stale for the current PR head');
+  const pr=await reviewSourcePr(t,verifyPr);if(pr.head!==run.head)throw Error('Review is stale for the current PR head');
   const body=reviewPublicationBody(t,run,status,text,store.run(run.id)?.completion?.verdicts??[]);
   const key=reviewPublicationKey(run.id),hash=digest(body),previous=store.getMeta<{hash:string;commentId?:number}>(key);
   if(previous && previous.hash!==hash)throw Error('This run already has a different review publication');
@@ -273,8 +285,7 @@ export async function publishFormalReview(store: Store, t: Task, run: Run, statu
   return (await publishReviewOnce(store, t, run, status, text, allowed, reviewer, runtime, recoveryReason)).id;
 }
 async function publishFormalReviewOnce(store: Store, t: Task, run: Run, status: string, text: string, reviewer: ReviewerSetting, allowed: () => boolean = () => true, runtime: FormalReviewRuntime = {}, recoveryReason?: string): Promise<PublicationOutcome> {
-  const verify = runtime.verifyPr ?? verifyPr;
-  const pr = await verify(t, taskPrNumber(t));
+  const pr = await reviewSourcePr(t, runtime.verifyPr ?? verifyPr);
   if (pr.head !== run.head) throw new Error('Review is stale for the current PR head');
   const body = reviewPublicationBody(t, run, status, text, store.run(run.id)?.completion?.verdicts ?? []);
   const key = reviewPublicationKey(run.id), hash = digest(body);
@@ -311,7 +322,7 @@ async function publishFormalReviewOnce(store: Store, t: Task, run: Run, status: 
     // Observe before every resend. A transient POST failure uses the existing
     // bounded lifecycle backoff; an owner retry also proves absence again.
     const attemptKey = `reviewPublicationRecovery:${run.id}`;
-    const currentPr = await verify(t, taskPrNumber(t));
+    const currentPr = await reviewSourcePr(t, runtime.verifyPr ?? verifyPr);
     if (currentPr.head !== run.head) throw new Error('Review is stale for the current PR head');
     const second = await formalCall(org, token, () => listFormalReviews(t, name, token, gh));
     if (second.some(review => String(review.body).includes(marker))) {
@@ -363,8 +374,7 @@ export async function reconcileFormalReviewPublication(store: Store, t: Task, ru
   return publishFormalReview(store, t, run, result.status, result.reviewText, reviewer, allowed, runtime, reason);
 }
 export async function verifyFormalReview(t: Task, run: Run, result: Completion, reviewer: ReviewerSetting, runtime: FormalReviewRuntime = {}): Promise<number> {
-  const verify = runtime.verifyPr ?? verifyPr;
-  const pr = await verify(t, taskPrNumber(t));
+  const pr = await reviewSourcePr(t, runtime.verifyPr ?? verifyPr);
   if (pr.head !== run.head || result.head !== run.head) throw new Error('Review is stale for the current PR head');
   const { name, org, token, gh } = await formalIdentity(t, reviewer, runtime);
   const marker = reviewMarker(t, run.id, run.head, result.status);
