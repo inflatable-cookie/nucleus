@@ -57,6 +57,7 @@ import {
 } from "./contracts";
 import {
   activeStatuses,
+  T3InventoryChurnError,
   T3Reads,
   type Projection,
   type ThreadReadKind,
@@ -495,7 +496,7 @@ export class T3CodeHost implements Host {
       if (!(await this.reads.isObserved(id))) retire.push(id);
     for (const id of retiredIds) {
       if (state.retiredAgents?.[id]?.deletedAt) continue;
-      if (await this.reads.isObserved(id)) restore.push(id);
+      if (await this.reads.isActiveInShell(id)) restore.push(id);
     }
     if (!retire.length && !restore.length) return;
     this.state.update((next) => {
@@ -557,8 +558,9 @@ export class T3CodeHost implements Host {
   }
   async originAgent(id: string) {
     this.requireConnection();
-    const { threads } = await this.reads.inventory();
-    const found = threads.find((t) => t.id === id);
+    const found =
+      (await this.reads.shellRow(id)) ??
+      (await this.reads.inventory()).threads.find((t) => t.id === id);
     if (!found) {
       this.presentation.retireDeletedPresentationIntents(id);
       return null;
@@ -815,10 +817,10 @@ export class T3CodeHost implements Host {
     const repositoryRoot = spec.project.workspaceRoot
       ? await realpath(spec.project.workspaceRoot)
       : undefined;
-    const inventory = await this.reads.inventory();
+    const shell = await this.reads.shell();
     let selected = repositoryRoot
-      ? inventory.projects.find((p) => p.workspaceRoot === repositoryRoot)
-      : inventory.projects.find((p) =>
+      ? shell.projects.find((p) => p.workspaceRoot === repositoryRoot)
+      : shell.projects.find((p) =>
           spec.project.projectId
             ? p.id === spec.project.projectId
             : p.workspaceRoot === directory,
@@ -905,7 +907,7 @@ export class T3CodeHost implements Host {
   async repositoryProject(root: string) {
     const workspaceRoot = await realpath(root);
     return {
-      projectId: (await this.reads.inventory()).projects.find(
+      projectId: (await this.reads.shell()).projects.find(
         (p) => p.workspaceRoot === workspaceRoot,
       )?.id,
       workspaceRoot,
@@ -923,7 +925,7 @@ export class T3CodeHost implements Host {
     return (
       !!w &&
       !w.archivedAt &&
-      (await this.reads.inventory()).projects.some(
+      (await this.reads.shell()).projects.some(
         (p) => p.id === w.projectId && p.archivedAt == null,
       )
     );
@@ -990,7 +992,7 @@ export class T3CodeHost implements Host {
   async workspaceArchived(id: string): Promise<boolean> {
     const workspace = this.state.read().workspaces[id];
     if (!workspace || workspace.archivedAt) return true;
-    const found = (await this.reads.inventory()).projects.find(
+    const found = (await this.reads.shell()).projects.find(
       (p) => p.id === workspace.projectId,
     );
     return !found || found.archivedAt != null;
@@ -1003,13 +1005,26 @@ export class T3CodeHost implements Host {
     };
   }
 
-  async workspaceThreads(ids: readonly string[]) {
-    return {
-      ok: true as const,
-      threads: (await this.reads.activeAndArchivedThreads()).filter(
-        (t) => !!t.workspaceId && ids.includes(t.workspaceId),
-      ),
-    };
+  async workspaceThreads(
+    ids: readonly string[],
+    options: { includeArchived?: boolean } = {},
+  ) {
+    try {
+      const threads =
+        options.includeArchived === false
+          ? await this.reads.activeThreads()
+          : await this.reads.activeAndArchivedThreads();
+      return {
+        ok: true as const,
+        threads: threads.filter(
+          (t) => !!t.workspaceId && ids.includes(t.workspaceId),
+        ),
+      };
+    } catch (error) {
+      if (error instanceof T3InventoryChurnError)
+        return { ok: false as const, reason: error.message };
+      throw error;
+    }
   }
 
   /**

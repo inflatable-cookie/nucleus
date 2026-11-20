@@ -632,32 +632,41 @@ completion or a Nucleus report.
 
 ## Observation and restart
 
-Start with an unfiltered shell subscription and explicitly read
-`orchestration.getArchivedShellSnapshot`; the target nightly's live shell loader
-does not include archived records even though its schema has an archive array.
-Do not enable omission of older settled threads or idle children. Require the
-initial snapshot and synchronization/completion evidence before answering an inventory
-read. Each read takes a fresh synchronized snapshot; an intervening event,
-reconnect, invalid update or unfinished snapshot refuses that read. There is no
-cached inactivity to carry across connections. Read the thread
-projection when shell summaries lack request details or timeline coverage.
+`orchestration.subscribeShell` returns every project registration (active and
+archived) and every active non-archived thread in one SQLite read transaction,
+whereas `orchestration.getArchivedShellSnapshot` returns archived threads in a
+separate transaction. Routine live-only reads — `listLiveAgents`, `activeThreads`,
+`createWorkspace`, `repositoryProject`, `workspaceAvailable`,
+`workspaceArchived`, live `observe`, live `findAgents`, live `originAgent`,
+live `archiveThreadPage({ includeArchived: false })`, `reconcileObservation` for
+live or retired threads, and live nesting checks — answer from `subscribeShell`
+(and bounded `orchestration.subscribeThread` snapshots where needed) without
+pairing against `getArchivedShellSnapshot`. Pass-scoped `shell`, `archivedShell`
+and `inventory` promises share reads within one audit pass and clear on close.
+
+Operations that require complete live-plus-archived proof or absence —
+`threadArchiveState`, `workspaceThreads` (when including archived),
+`archiveThreadPage({ includeArchived: true })`, and `findAgents`, `originAgent`,
+`observeThreadList`, `knownThread` or `parentGone` when a target is absent from
+the live shell — pair `subscribeShell` with `getArchivedShellSnapshot` at an
+equal `snapshotSequence` (retrying up to 5 times). If events keep advancing the
+global cursor across that pair, the adapter throws `T3InventoryChurnError`
+(`HostReadRefusalError`): a bounded, visible operation refusal that keeps T3
+online and model-eligible, records no `host_transport_fault` or outage, and
+never infers absence from partial data (`test/t3code-inventory-churn.test.ts`).
+`archivedThreads` reads `getArchivedShellSnapshot` once to enumerate candidates;
+retention still takes an exact `threadArchiveState` read immediately before
+deletion. Do not enable omission of older settled threads or idle children.
 Project-enrichment snapshots marked with `resolvedRepositoryIdentityRoots` can
-carry empty thread arrays; they never replace the authoritative inventory.
+carry empty thread arrays; they never replace authoritative shell reads.
 
-The origin-thread read takes the complete shell and archived inventory before it
-reads a projection: a thread the complete inventory does not carry is authoritative
-absence (not mine), while a failed inventory or projection is an unread read
-(unknown) and never absence. A native question about a thread T3 does not have
-therefore never makes a two-host origin lookup ambiguous.
-
-Observation reads are one-shot and per call: each sweep or reconcile takes a fresh
-snapshot, so an interrupted `subscribeThread` or `subscribeShell` stream ends that
-read only and never ends observation. T3 transport and timeout errors are an
-observation outage, classified as a transport failure: the lane defers and the next
-sweep re-reads, and the task is never marked idle or attention for it. A task
-quantum that does not return within two minutes (`TASK_QUANTUM_BOUND_MS`) no
-longer holds the sweep; the task records an `observation_outage` event and its
-lane stays held until the quantum returns (#1148, planner ruling).
+Observation reads keep each sweep bounded: T3 transport and timeout errors
+classify as transport failures (deferring the lane and marking the host
+unavailable on the pass), while `T3InventoryChurnError` keeps the host online
+and lets independent work proceed. A task quantum that does not return within
+two minutes (`TASK_QUANTUM_BOUND_MS`) releases the sweep; the task records an
+`observation_outage` event and its lane stays held until the quantum returns
+(#1148, planner ruling).
 
 ### Observation window
 
@@ -998,8 +1007,10 @@ pass cannot both open for it.
 
 **One bound, a clear result, and a responsive Stop.** Inbox lookup, message
 lookup, link issuance and all preview calls share one
-`INBOX_UI_DEADLINE_MS` budget (20 s), under the callback's 30 s bound. Each
-stage uses only the time left. If the deadline expires after an open is sent,
+`INBOX_UI_DEADLINE_MS` budget (20 s), under the callback's 30 s bound. Inbox
+lookup checks the live shell first and reads complete inventory only when
+the inbox is absent from that shell. Each read uses the time left in the
+same budget. If the deadline expires after an open is sent,
 the command records a timeout and leaves that attempt's delivery uncertain.
 The three cases are
 reported as one line each: `Opened the Nucleus board.`, `The Nucleus board is

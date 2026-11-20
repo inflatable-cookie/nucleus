@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { Task } from "../../shared/contracts";
 import type { HostThread, HostTimelinePage } from "../../shared/host";
 import {
+  HostReadRefusalError,
   ProvenPreSendRefusalError,
   type ArchivedThread,
 } from "../../core/host";
@@ -59,6 +60,27 @@ export class T3UnobservedThreadError extends Error {
 }
 /** The phases in which a task is over, so its threads need no observation. */
 const terminalTaskPhases = new Set(["done", "cancelled"]);
+const archivedShellSnapshot = z.object({
+  schemaVersion: z.number().int().positive(),
+  snapshotSequence: z.number().int().nonnegative(),
+  projects: z.array(project),
+  threads: z.array(shellThread),
+});
+/**
+ * Complete inventory reads pair `orchestration.subscribeShell` with
+ * `orchestration.getArchivedShellSnapshot` at an equal global `snapshotSequence`.
+ * Under active thread churn that cross-RPC pairing can exhaust its retry budget;
+ * this is a bounded, visible read refusal for callers that genuinely need
+ * complete live + archived inventory, never a host outage or compatibility fault.
+ */
+export class T3InventoryChurnError extends HostReadRefusalError {
+  constructor(attempts: number) {
+    super(
+      `inventory kept moving between live and archived reads after ${attempts} attempts`,
+    );
+    this.name = "T3InventoryChurnError";
+  }
+}
 /** One thread observation as this host reports it: a snapshot's answer, or the thread list's. */
 export interface T3ThreadObservation {
   id: string;
@@ -237,7 +259,10 @@ export class T3Reads {
   >();
   /** The pass the reads currently happen in; a new pass may still reuse an unchanged snapshot. */
   private pass = 0;
-  /** One pass's thread list, shared by every consumer in it. */
+  /** Pass-scoped live shell, archived shell and paired inventory reads. */
+  private shellHeld: Promise<z.infer<typeof shellSnapshot>> | null = null;
+  private archivedHeld: Promise<z.infer<typeof archivedShellSnapshot>> | null =
+    null;
   private inventoryHeld: Promise<T3Inventory> | null = null;
   private passing = false;
   constructor(private readonly core: T3ReadContext) {}
@@ -250,12 +275,16 @@ export class T3Reads {
   beginPass(tasks: readonly Task[]) {
     this.passing = true;
     this.pass++;
+    this.shellHeld = null;
+    this.archivedHeld = null;
     this.inventoryHeld = null;
     this.noteTaskFacts(tasks);
   }
   /** The pass closes: the next one reads the thread list afresh and may still reuse unchanged snapshots. */
   endPass() {
     this.passing = false;
+    this.shellHeld = null;
+    this.archivedHeld = null;
     this.inventoryHeld = null;
   }
   /** The task facts alone, for a caller that states them outside a pass. */
@@ -274,6 +303,8 @@ export class T3Reads {
     this.held.clear();
     this.pass = 0;
     this.passing = false;
+    this.shellHeld = null;
+    this.archivedHeld = null;
     this.inventoryHeld = null;
   }
 
@@ -291,44 +322,74 @@ export class T3Reads {
     return !task || !this.liveTasks || this.liveTasks.has(task);
   }
   /**
-   * The same, with T3's own terminal facts: a thread its thread list reports
-   * archived or removed has left observation whatever its task says. A thread the
-   * list does not carry at all is left to the read that asked, which is what proves
-   * a deletion today. An unreadable list proves no terminal fact, so the task facts
-   * alone answer.
+   * The same, with T3's own terminal facts: a thread T3's live shell reports
+   * active stays observed without touching the archived snapshot. When a live-task
+   * thread leaves the live shell, the archived snapshot is checked so an archived
+   * thread retires cleanly without a per-thread snapshot read; an unreadable list
+   * falls back to the task facts.
    */
   async isObserved(threadId: string): Promise<boolean> {
     if (!this.observes(threadId)) return false;
-    const row = await this.listRow(threadId);
-    return !row || (!row.archivedAt && !row.deletedAt);
-  }
-  /** One thread's row in T3's thread list, or undefined when the list cannot answer. */
-  private async listRow(threadId: string): Promise<ShellRow | undefined> {
     try {
-      return await this.readListRow(threadId);
+      const shell = await this.shellRow(threadId);
+      if (shell) return !shell.archivedAt && !shell.deletedAt;
+      const archived = await this.archivedShellRow(threadId);
+      return !archived || (!archived.archivedAt && !archived.deletedAt);
     } catch {
-      return undefined;
+      return true;
     }
   }
-  /**
-   * The same row, but a list that cannot be read is an error rather than an absent
-   * answer: a caller that must not confuse "nothing is running" with "I could not
-   * look" reads through here (nucleus#1328 review).
-   */
-  private async readListRow(threadId: string): Promise<ShellRow | undefined> {
-    return (await this.memoisedInventory()).threads.find(
+  /** Whether a retired thread reappeared as an active row in T3's live shell. */
+  async isActiveInShell(threadId: string): Promise<boolean> {
+    if (!this.observes(threadId)) return false;
+    try {
+      const row = await this.shellRow(threadId);
+      return !!row && !row.archivedAt && !row.deletedAt;
+    } catch {
+      return false;
+    }
+  }
+  /** One thread's row in T3's live shell, propagating read/shape failures. */
+  async shellRow(threadId: string): Promise<ShellRow | undefined> {
+    const snapshot = await this.shell();
+    return (
+      snapshot.threads.find((row) => row.id === threadId) ??
+      snapshot.archivedThreads.find((row) => row.id === threadId)
+    );
+  }
+  /** One thread's row in T3's archived shell snapshot, without pairing with live shell. */
+  private async archivedShellRow(
+    threadId: string,
+  ): Promise<ShellRow | undefined> {
+    return (await this.archivedShell()).threads.find(
       (row) => row.id === threadId,
     );
   }
   /**
-   * One thread's row inside a pass: the change marker for its snapshot. Only a pass
-   * holds a thread list, so an out-of-pass read asks T3 for the thread itself rather
-   * than paying for the whole list first — a callback's fresh read stays as fresh as
-   * it was before this window existed.
+   * One thread's row from complete live + archived inventory, when not found in
+   * the live shell. A list that cannot be read is an error rather than an absent
+   * answer (nucleus#1328 review).
+   */
+  private async readListRow(threadId: string): Promise<ShellRow | undefined> {
+    return (
+      (await this.shellRow(threadId)) ??
+      (await this.memoisedInventory()).threads.find(
+        (row) => row.id === threadId,
+      )
+    );
+  }
+  /**
+   * One thread's live-shell row inside a pass: the change marker for its snapshot.
+   * Only a pass holds a thread list, so an out-of-pass read asks T3 for the thread
+   * itself rather than paying for the whole list first.
    */
   private async threadRow(threadId: string): Promise<ShellRow | undefined> {
     if (!this.passing) return undefined;
-    return this.listRow(threadId);
+    try {
+      return await this.shellRow(threadId);
+    } catch {
+      return undefined;
+    }
   }
   /** The pass's thread list, read once; an out-of-pass read always asks T3 afresh. */
   private async memoisedInventory(): Promise<T3Inventory> {
@@ -508,6 +569,40 @@ export class T3Reads {
     }
   }
 
+  /**
+   * The pass-scoped live shell snapshot: all projects and active non-archived
+   * threads in one RPC without pairing with `getArchivedShellSnapshot`.
+   */
+  async shell() {
+    const snapshot = await this.memoisedShellRead();
+    const probe = snapshot.threads[0] ?? snapshot.archivedThreads[0];
+    if (this.pendingThreadShape && probe)
+      await this.readProjection(probe.id, "observation");
+    return snapshot;
+  }
+  private async memoisedShellRead() {
+    this.core.requireConnection();
+    if (!this.passing) return this.readShell();
+    if (!this.shellHeld) this.shellHeld = this.readShell();
+    return this.shellHeld;
+  }
+  /** One fresh `orchestration.getArchivedShellSnapshot` read without live-shell pairing. */
+  async readArchivedShell() {
+    this.core.requireConnection();
+    return decode(
+      archivedShellSnapshot,
+      await this.core.rpc.call("orchestration.getArchivedShellSnapshot", {}),
+      "getArchivedShellSnapshot",
+    );
+  }
+  /** Pass-scoped `orchestration.getArchivedShellSnapshot` read. */
+  async archivedShell() {
+    this.core.requireConnection();
+    if (!this.passing) return this.readArchivedShell();
+    if (!this.archivedHeld) this.archivedHeld = this.readArchivedShell();
+    return this.archivedHeld;
+  }
+
   async inventory(): Promise<T3Inventory> {
     const inventory = await this.memoisedInventoryRead();
     if (this.pendingThreadShape && inventory.threads[0])
@@ -529,16 +624,7 @@ export class T3Reads {
     this.core.requireConnection();
     for (let attempt = 1; attempt <= inventoryReadAttempts; attempt++) {
       const shell = await this.readShell();
-      const archived = decode(
-        z.object({
-          schemaVersion: z.number().int().positive(),
-          snapshotSequence: z.number().int().nonnegative(),
-          projects: z.array(project),
-          threads: z.array(shellThread),
-        }),
-        await this.core.rpc.call("orchestration.getArchivedShellSnapshot", {}),
-        "getArchivedShellSnapshot",
-      );
+      const archived = await this.readArchivedShell();
       // Both loaders report the application event cursor. If it moved between
       // reads, repeat the read-only pair until both describe the same snapshot.
       if (shell.snapshotSequence === archived.snapshotSequence)
@@ -553,9 +639,7 @@ export class T3Reads {
       if (attempt < inventoryReadAttempts)
         await new Promise((resolve) => setTimeout(resolve, attempt * 10));
     }
-    throw new T3CompatibilityError(
-      `inventory kept moving between live and archived reads after ${inventoryReadAttempts} attempts`,
-    );
+    throw new T3InventoryChurnError(inventoryReadAttempts);
   }
 
   workspaceFor(thread: Projection["thread"]) {
@@ -576,8 +660,7 @@ export class T3Reads {
     );
   }
 
-  async activeAndArchivedThreads(): Promise<HostThread[]> {
-    const { threads } = await this.inventory();
+  private toHostThreads(threads: readonly ShellRow[]): HostThread[] {
     return threads.map((t) => ({
       id: t.id,
       workspaceId: this.workspaceFor(t),
@@ -597,9 +680,15 @@ export class T3Reads {
     }));
   }
 
+  async activeAndArchivedThreads(): Promise<HostThread[]> {
+    const { threads } = await this.inventory();
+    return this.toHostThreads(threads);
+  }
+
   async activeThreads() {
-    return (await this.activeAndArchivedThreads()).filter(
-      (t) => !t.archived && t.status !== "gone",
+    const { threads } = await this.shell();
+    return this.toHostThreads(
+      threads.filter((t) => !t.archivedAt && !t.deletedAt),
     );
   }
 
@@ -616,9 +705,17 @@ export class T3Reads {
     const retired = Object.entries(state.retiredAgents ?? {}).filter(
       ([id, agent]) => !agent.deletedAt && !liveIds.has(id) && matches(agent),
     );
-    if (!live.length && !retired.length) return [];
-    const { threads } = await this.memoisedInventory();
-    return [...live, ...retired].map(([id]) => {
+    const candidates = [...live, ...retired];
+    if (!candidates.length) return [];
+    const shell = await this.shell();
+    const shellRows = [...shell.threads, ...shell.archivedThreads];
+    const allInShell = candidates.every(([id]) =>
+      shellRows.some((row) => row.id === id && !row.deletedAt),
+    );
+    const threads = allInShell
+      ? shellRows
+      : (await this.memoisedInventory()).threads;
+    return candidates.map(([id]) => {
       const thread = threads.find((row) => row.id === id && !row.deletedAt);
       return {
         id,
@@ -631,12 +728,13 @@ export class T3Reads {
   /**
    * The retention pass's archived inventory (orchestration contract, "Archived
    * thread retention"): every archived thread this host holds that Nucleus
-   * created, read from one synchronized inventory, which is a complete positive
-   * answer. A row without a launch record is not Nucleus's and is never listed.
+   * created, read from the archived snapshot. A row without a launch record is
+   * not Nucleus's and is never listed. Exact cross-list checks happen immediately
+   * before deletion via `threadArchiveState`.
    */
   async archivedThreads(): Promise<ArchivedThread[]> {
     const state = this.core.state.read();
-    const { threads } = await this.inventory();
+    const { threads } = await this.archivedShell();
     // T3 reports an archived thread in both the shell list and the archived snapshot;
     // one row per thread is the answer.
     const archived: ArchivedThread[] = [];
@@ -680,7 +778,7 @@ export class T3Reads {
     const pending = detail.runtimeRequests.filter(
       (r) => r.status === "pending",
     );
-    const native = (await this.inventory()).threads.find((t) => t.id === id);
+    const native = await this.shellRow(id);
     // An archived thread is retired: it reports the terminal closed state, with
     // the archived fact on its own field for retained-read consumers.
     return {
@@ -726,7 +824,7 @@ export class T3Reads {
     };
   }
   async listLiveAgents() {
-    const { threads, projects } = await this.inventory();
+    const { threads, projects } = await this.shell();
     return threads
       .filter((t) => !t.archivedAt && !t.deletedAt)
       .map((t) => ({
@@ -752,7 +850,7 @@ export class T3Reads {
    * complete list is the deletion proof, and it is the one case that has no answer.
    */
   private async observeThreadList(id: string): Promise<T3ThreadObservation> {
-    const row = await this.listRow(id);
+    const row = await this.readListRow(id);
     if (!row) throw new T3UnobservedThreadError(id);
     const record = agentRecord(this.core.state.read(), id);
     const active = !!row.activeRunId || activeStatuses.has(row.status);
@@ -858,7 +956,7 @@ export class T3Reads {
       return row?.activeRunId ?? null;
     }
     const projection = await this.readProjection(id, "observation");
-    const native = (await this.inventory()).threads.find((t) => t.id === id);
+    const native = await this.shellRow(id);
     return (
       projection.runs.find((r) => activeStatuses.has(r.status))?.id ??
       native?.activeRunId ??

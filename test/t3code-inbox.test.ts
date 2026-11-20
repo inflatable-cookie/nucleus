@@ -716,6 +716,14 @@ test("inbox ui shows the board once per operator message, replacing a retained t
   const inbox = host.state.read().inbox!;
   const previewOpens = () =>
     fake.requests.filter((request) => request.tag === "preview.open");
+  const archiveReads = () =>
+    fake.requests.filter(
+      (request) => request.tag === "orchestration.getArchivedShellSnapshot",
+    ).length;
+  const archiveReadsBefore = archiveReads();
+  fake.controls.beforeArchiveRead = () => {
+    fake.controls.snapshotSequence++;
+  };
   const boardTabs = () =>
     (fake.previews.get(inbox.threadId) ?? []).filter((session) =>
       String((session.navStatus as { url?: string }).url ?? "").startsWith(
@@ -843,6 +851,23 @@ test("inbox ui shows the board once per operator message, replacing a retained t
   assert.deepEqual(late, { status: "reused" });
   assert.equal(issuedLinks, linksBefore + 1);
   assert.equal(held, host.state.read().decisionHolds?.[inbox.threadId]);
+  assert.equal(archiveReads(), archiveReadsBefore, "live ui uses the shell");
+
+  await t.test(
+    "ui refuses to open when the inbox is missing and inventory keeps moving",
+    async () => {
+      const opensBefore = previewOpens().length;
+      projection.thread.deletedAt = new Date().toISOString();
+      try {
+        await assert.rejects(host.openInboxUi(), /inventory kept moving/);
+        assert.ok(archiveReads() > archiveReadsBefore);
+        assert.equal(previewOpens().length, opensBefore);
+        assert.equal(issuedLinks, linksBefore + 1);
+      } finally {
+        projection.thread.deletedAt = null;
+      }
+    },
+  );
 
   // Nothing about the pairing link is persisted.
   assert.equal(

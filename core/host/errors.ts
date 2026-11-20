@@ -18,6 +18,18 @@ export class ArchiveNotDeliveredError extends Error {
   }
 }
 /**
+ * A host read refused because its snapshot boundary kept moving or was
+ * otherwise unable to produce a complete consistent view within its retry
+ * budget (nucleus#1424). This is a bounded, visible operation refusal, never a
+ * transport outage or model-eligibility fault; the host stays online.
+ */
+export class HostReadRefusalError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "HostReadRefusalError";
+  }
+}
+/**
  * A send this adapter refused before delivery. `label` names the work that was
  * refused, so a title write never reports itself as a reviewer continuation
  * (nucleus#1366); it defaults to the reviewer continuation these refusals

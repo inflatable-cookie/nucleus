@@ -241,8 +241,7 @@ export class T3Nesting {
    */
   async create(input: NestedCreateInput): Promise<NestedCreateResult> {
     const taskId = labelTask(input.attempt.labels);
-    if (!taskId)
-      return this.unavailable("", "the launch names no task");
+    if (!taskId) return this.unavailable("", "the launch names no task");
     const acp = this.core.acp();
     if (!acp)
       return this.unavailable(
@@ -253,9 +252,14 @@ export class T3Nesting {
     if (!provider.ok) return this.unavailable(taskId, provider.reason);
     // Resolve the role's model and mode before a parent can be launched.
     const options = this.core.modelSelectionOptionsFor(
-      input.profile, input.roleProvider, input.roleModel,
+      input.profile,
+      input.roleProvider,
+      input.roleModel,
     );
-    const runtimeMode = this.core.roleRuntimeMode(input.roleProvider, input.profile);
+    const runtimeMode = this.core.roleRuntimeMode(
+      input.roleProvider,
+      input.profile,
+    );
     const existing = this.parentOf(taskId);
     if (existing) {
       // A child with no workspace strategy inherits the parent's checkout, and one
@@ -712,8 +716,10 @@ export class T3Nesting {
       "hold",
       canonical([this.core.hostId(), parent.threadId, requestId]),
     );
-    await this.core.presentation
-      .wakeBeforeDelivery(parent.threadId, identity("message", commandId));
+    await this.core.presentation.wakeBeforeDelivery(
+      parent.threadId,
+      identity("message", commandId),
+    );
     this.core.state.update((state) => {
       const current = state.parents?.[parent.taskId];
       if (!current) return;
@@ -847,11 +853,11 @@ export class T3Nesting {
         .map(([id]) => id),
     );
     if (!ids.size) return false;
-    const { threads } = await this.core.reads.inventory();
+    const shell = await this.core.reads.shell();
     // A deleted thread is either absent from the list or carried as a tombstone with
     // `deletedAt`; both are the same positive fact, and a tombstone with an old run
     // record must not read as live (nucleus#1305 review).
-    return threads.some(
+    return [...shell.threads, ...shell.archivedThreads].some(
       (thread) =>
         ids.has(thread.id) &&
         !thread.deletedAt &&
@@ -882,6 +888,8 @@ export class T3Nesting {
   }
 
   private async knownThread(threadId: string) {
+    const inShell = await this.core.reads.shellRow(threadId);
+    if (inShell) return inShell;
     const { threads } = await this.core.reads.inventory();
     return threads.find((thread) => thread.id === threadId) ?? null;
   }
@@ -900,10 +908,11 @@ export class T3Nesting {
   private async parentGone(
     parent: ParentThread,
   ): Promise<"archived" | "deleted" | null> {
-    const { threads } = await this.core.reads.inventory();
-    const thread = threads.find(
-      (candidate) => candidate.id === parent.threadId,
-    );
+    const thread =
+      (await this.core.reads.shellRow(parent.threadId)) ??
+      (await this.core.reads.inventory()).threads.find(
+        (candidate) => candidate.id === parent.threadId,
+      );
     // Absence and a `deletedAt` tombstone are the same fact: the inventory either
     // omits a removed thread or keeps its tombstone (nucleus#1305 review).
     if (!thread || thread.deletedAt) return "deleted";

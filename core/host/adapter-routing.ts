@@ -19,7 +19,11 @@ import {
   settleCreationAttempt,
 } from "../store/store-task-funnel";
 import { trackHostCreation } from "./admission";
-import { HostCallAbandonedError, ProvenPreSendRefusalError } from "./errors";
+import {
+  HostCallAbandonedError,
+  HostReadRefusalError,
+  ProvenPreSendRefusalError,
+} from "./errors";
 const faultHosts = new WeakMap<object, string>();
 const HOST_FAILURE = Symbol("host-failure");
 
@@ -49,7 +53,12 @@ export class HostTransportFault extends Error {
 }
 
 function attributed(host: string | undefined, error: unknown): unknown {
-  if (!host || error instanceof HostTransportFault) return error;
+  if (
+    !host ||
+    error instanceof HostTransportFault ||
+    error instanceof HostReadRefusalError
+  )
+    return error;
   if (
     (typeof error === "object" && error !== null) ||
     typeof error === "function"
