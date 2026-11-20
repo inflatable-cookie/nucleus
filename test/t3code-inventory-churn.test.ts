@@ -141,10 +141,11 @@ test("routine live observation, catalog, workspace-project, and live pass reads 
   assert.equal(await host.workspaceAvailable(workspace.id), true);
   assert.equal(await host.workspaceArchived(workspace.id), false);
   const adapterWithPolicies = new (t3AdapterClass(Policy))(host);
-  const liveOnlyPage = await adapterWithPolicies.workspaceHost.archiveThreadPage({
-    filter: { includeArchived: false },
-    page: { limit: 50 },
-  });
+  const liveOnlyPage =
+    await adapterWithPolicies.workspaceHost.archiveThreadPage({
+      filter: { includeArchived: false },
+      page: { limit: 50 },
+    });
   assert.ok(liveOnlyPage.entries.some((entry) => entry.agent.id === live.id));
   assert.equal(await host.reads.activeRunId(live.id), "run:launch-live");
   assert.deepEqual(await host.reads.activeRunIds(live.id), ["run:launch-live"]);
@@ -201,17 +202,23 @@ test("complete-inventory operations refuse moving snapshots boundedly without po
   await assert.rejects(
     host.activeThreads(),
     (error: unknown) =>
-      error instanceof T3CompatibilityError && /activeRunId/.test(error.message),
+      error instanceof T3CompatibilityError &&
+      /activeRunId/.test(error.message),
   );
 });
 
 test("T3InventoryChurnError does not take T3 offline or drop model eligibility while independent work progresses", async (t) => {
   const { host, server, workspace, spec } = await makeFixture(t);
-  const healthyT3Agent = await host.createAgent(spec("launch-healthy", "worker"));
-  const churnedT3Agent = await host.createAgent(spec("launch-churned", "reviewer"));
+  const healthyT3Agent = await host.createAgent(
+    spec("launch-healthy", "worker"),
+  );
+  const churnedT3Agent = await host.createAgent(
+    spec("launch-churned", "reviewer"),
+  );
   // Hide churnedT3Agent from subscribeShell/archivedThreads only? Better: trigger T3InventoryChurnError
   // on churnedT3Agent's unobserved read while healthyT3Agent succeeds cleanly via shell+projection.
-  server.threads.get(churnedT3Agent.id)!.thread.archivedAt = "2026-11-20T00:00:00.000Z";
+  server.threads.get(churnedT3Agent.id)!.thread.archivedAt =
+    "2026-11-20T00:00:00.000Z";
   // Real nightly subscribeShell puts archived threads in getArchivedShellSnapshot only:
   server.controls.beforeArchiveRead = () => {
     server.controls.snapshotSequence++;
@@ -278,9 +285,17 @@ test("T3InventoryChurnError does not take T3 offline or drop model eligibility w
   engine.resolution.origins.pass = async () => {};
   engine.dispatchQueued = async () => {};
 
-  const insertWorking = (hostId: string, title: string, agentId: string, wsId: string) => {
+  const insertWorking = (
+    hostId: string,
+    title: string,
+    agentId: string,
+    wsId: string,
+  ) => {
     const inserted = store.insert(
-      submission({ title, repoPath: `/synthetic/${title.replace(/\W+/g, "-")}` }),
+      submission({
+        title,
+        repoPath: `/synthetic/${title.replace(/\W+/g, "-")}`,
+      }),
       hostId,
       "handoff.md",
       "b".repeat(40),
@@ -314,9 +329,24 @@ test("T3InventoryChurnError does not take T3 offline or drop model eligibility w
     return task;
   };
 
-  const healthyT3Task = insertWorking(host.hostId, "Healthy T3", healthyT3Agent.id, workspace.id);
-  const churnedT3Task = insertWorking(host.hostId, "Churned T3", churnedT3Agent.id, workspace.id);
-  const paseoTask = insertWorking(PASEO_HOST, "Paseo task", "paseo-agent-1", "paseo-ws");
+  const healthyT3Task = insertWorking(
+    host.hostId,
+    "Healthy T3",
+    healthyT3Agent.id,
+    workspace.id,
+  );
+  const churnedT3Task = insertWorking(
+    host.hostId,
+    "Churned T3",
+    churnedT3Agent.id,
+    workspace.id,
+  );
+  const paseoTask = insertWorking(
+    PASEO_HOST,
+    "Paseo task",
+    "paseo-agent-1",
+    "paseo-ws",
+  );
 
   engine.scheduleTaskQuantum = async (taskId) => {
     processed.push(`quantum:${taskId}`);
@@ -332,7 +362,10 @@ test("T3InventoryChurnError does not take T3 offline or drop model eligibility w
   const churnedNow = store.task(churnedT3Task.id);
   assert.equal(churnedNow.phase, "working");
   assert.equal(churnedNow.resolution.stop?.reason, "external_unavailable");
-  assert.match(churnedNow.resolution.stop?.detail ?? "", /inventory kept moving/);
+  assert.match(
+    churnedNow.resolution.stop?.detail ?? "",
+    /inventory kept moving/,
+  );
   for (const task of [healthyT3Task, churnedT3Task, paseoTask]) {
     assert.equal(
       store.eventsAll(task.id).some((e) => e.kind === "host_transport_fault"),
@@ -364,6 +397,8 @@ test("T3InventoryChurnError does not take T3 offline or drop model eligibility w
   await engine.auditPass(true);
   assert.notEqual(engine.hostOutages.current(host.hostId), null);
   assert.ok(
-    store.eventsAll(healthyT3Task.id).some((e) => e.kind === "host_transport_fault"),
+    store
+      .eventsAll(healthyT3Task.id)
+      .some((e) => e.kind === "host_transport_fault"),
   );
 });

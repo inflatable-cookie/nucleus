@@ -4,7 +4,10 @@ import type {
   HostPolicyPort,
   HostWorktreeWorkspaceSpec,
 } from "../../core/host";
-import { HostReadRefusalError, ProvenPreSendRefusalError } from "../../core/host";
+import {
+  HostReadRefusalError,
+  ProvenPreSendRefusalError,
+} from "../../core/host";
 import type {
   HostAgentSpec,
   HostCapabilities,
@@ -57,9 +60,21 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
       this.admissionLaunchEnv = reporting?.admissionLaunchEnv ?? {};
       this.testPlacement = reporting?.testPlacement;
       const inheritedCreateAgent = this.createAgent.bind(this);
-      this.createAgent = (task, token, prompt, legacyPrompt = prompt, measurement) => {
+      this.createAgent = (
+        task,
+        token,
+        prompt,
+        legacyPrompt = prompt,
+        measurement,
+      ) => {
         this.requireHelper();
-        return inheritedCreateAgent(task, token, prompt, legacyPrompt, measurement);
+        return inheritedCreateAgent(
+          task,
+          token,
+          prompt,
+          legacyPrompt,
+          measurement,
+        );
       };
     }
     get hostId() {
@@ -79,7 +94,11 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
       };
     }
     creationOwner() {
-      return { ...super.creationOwner(), perThreadEnvironment: false as const, prepareRunScratch: true };
+      return {
+        ...super.creationOwner(),
+        perThreadEnvironment: false as const,
+        prepareRunScratch: true,
+      };
     }
     private requireHelper(): void {
       if (!this.helperPath || !this.socketPath)

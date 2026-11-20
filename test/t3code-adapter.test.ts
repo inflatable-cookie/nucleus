@@ -130,7 +130,9 @@ function acpStub(server: Awaited<ReturnType<typeof t3Fake>>) {
       for (const thread of server.threads.values()) {
         if (thread.thread.providerInstanceId !== PARENT_PROVIDER) continue;
         for (const run of thread.runs)
-          if (["preparing", "starting", "running", "waiting"].includes(run.status))
+          if (
+            ["preparing", "starting", "running", "waiting"].includes(run.status)
+          )
             run.status = "completed";
       }
     },
@@ -225,8 +227,14 @@ test("create launches the task parent on the task checkout and runs the role as 
     worktreePath: directory,
   });
   // The opening prompt is a plain sentence: no internal marker and no task id on screen.
-  assert.equal(parent.initialMessage.text, "Nucleus keeps this task thread open for its next role.");
-  assert.doesNotMatch(parent.initialMessage.text, /nucleus-hold|task-[0-9a-f-]{8}/);
+  assert.equal(
+    parent.initialMessage.text,
+    "Nucleus keeps this task thread open for its next role.",
+  );
+  assert.doesNotMatch(
+    parent.initialMessage.text,
+    /nucleus-hold|task-[0-9a-f-]{8}/,
+  );
   assert.equal(parent.runtimeMode, "full-access");
   // The role: a native child of that parent, on the launch's own provider and model,
   // carrying the prompt and the numbered role title.
@@ -251,9 +259,6 @@ test("create launches the task parent on the task checkout and runs the role as 
   );
 });
 
-
-
-
 test("new T3 worker, reviewer and recovery threads use task number and role titles", async (t) => {
   const { host, server, spec } = await fixture(t);
   await host.createAgent(spec("worker-title", "Worker", "worker"));
@@ -270,7 +275,6 @@ test("new T3 worker, reviewer and recovery threads use task number and role titl
     ],
   );
 });
-
 
 test("worker thread titles use the shared task state title once per change", async (t) => {
   const { host, server, options, spec } = await fixture(t);
@@ -529,10 +533,6 @@ test("follow-ups keep exact text and native target, with no resend after interru
   );
   assert.equal(messages().length, 2, "the uncertain follow-up is never resent");
 });
-
-
-
-
 
 test("decoder-formatted defects keep durable diagnostics while remaining unknown after reload", async (t) => {
   const { host, server, spec, options } = await fixture(t);
@@ -1099,9 +1099,7 @@ test("history exceeding the frame limit is observed, listed and titled without a
   );
   const wt = await host.workspaceThreads([workspace.id]);
   assert.equal(wt.ok, true);
-  assert.ok(
-    wt.ok && wt.threads.some((thread) => thread.id === created.id),
-  );
+  assert.ok(wt.ok && wt.threads.some((thread) => thread.id === created.id));
   assert.ok(await host.originAgent(created.id));
   const task = {
     id: "synthetic-task",
@@ -1143,7 +1141,10 @@ test("history exceeding the frame limit is observed, listed and titled without a
   const reads = server.requests
     .slice(start)
     .filter((request) => request.tag === "orchestration.subscribeThread");
-  assert.ok(reads.length >= 1, "the row and the readers share the bounded read");
+  assert.ok(
+    reads.length >= 1,
+    "the row and the readers share the bounded read",
+  );
   assert.ok(
     reads.every((request) => request.payload.acceptBoundedSnapshot === true),
   );
@@ -1747,13 +1748,15 @@ test("questions and approvals answer exact runtime requests and refuse wrong kin
     "question-request",
     { choice: "A" },
   );
-  p.runtimeRequests.push({ id: "cancel-request", kind: "user_input", status: "pending", responseCapability: { type: "live", providerSessionId: "session" } });
-  await host.respondRuntimeRequest(
-    created.id,
-    workspace.id,
-    "cancel-request",
-    { decision: "cancel" },
-  );
+  p.runtimeRequests.push({
+    id: "cancel-request",
+    kind: "user_input",
+    status: "pending",
+    responseCapability: { type: "live", providerSessionId: "session" },
+  });
+  await host.respondRuntimeRequest(created.id, workspace.id, "cancel-request", {
+    decision: "cancel",
+  });
   await host.respondRuntimeRequest(
     created.id,
     workspace.id,
@@ -1768,7 +1771,12 @@ test("questions and approvals answer exact runtime requests and refuse wrong kin
   assert.deepEqual(responses[0]!.answers, { choice: ["A"] });
   assert.equal(responses[1]!.requestId, "cancel-request");
   assert.equal(responses[1]!.decision, "cancel");
-  assert.equal(p.runtimeRequests.find((request: { id: string }) => request.id === "cancel-request")!.status, "resolved");
+  assert.equal(
+    p.runtimeRequests.find(
+      (request: { id: string }) => request.id === "cancel-request",
+    )!.status,
+    "resolved",
+  );
   assert.equal(responses[2]!.requestId, "approval-request");
   assert.equal(responses[2]!.decision, "accept");
   const answeredRead = await host.answeredQuestions(created.id);
@@ -2573,10 +2581,9 @@ test("a thinking level the model does not report settles to the nearest one it d
   const child = server.commands.find(
     (entry) => entry.type === "delegated_task.request",
   )!;
-  assert.deepEqual(
-    (child.modelSelection as { options: unknown[] }).options,
-    [{ id: "reasoningEffort", value: "high" }],
-  );
+  assert.deepEqual((child.modelSelection as { options: unknown[] }).options, [
+    { id: "reasoningEffort", value: "high" },
+  ]);
 });
 
 test("an unreported feature value is refused before send with the option and value named", async (t) => {
@@ -2688,12 +2695,24 @@ test("the workspace inventory reads T3's finished, archived and removed threads 
   });
   // The pilot's shape: a finished worker, its follow-up child, an archived thread
   // and a removed one, plus a live run and an unrelated task's thread.
-  const worker = await host.createAgent(launch("pilot-worker", pilotTask, "pilot-run"));
-  const followUp = await host.createAgent(launch("pilot-follow-up", pilotTask, "follow-up-run"));
-  const archived = await host.createAgent(launch("pilot-archived", pilotTask, "archived-run"));
-  const removed = await host.createAgent(launch("pilot-removed", pilotTask, "removed-run"));
-  const live = await host.createAgent(launch("pilot-live", pilotTask, "live-run"));
-  const foreign = await host.createAgent(launch("foreign", "other-task", "foreign-run"));
+  const worker = await host.createAgent(
+    launch("pilot-worker", pilotTask, "pilot-run"),
+  );
+  const followUp = await host.createAgent(
+    launch("pilot-follow-up", pilotTask, "follow-up-run"),
+  );
+  const archived = await host.createAgent(
+    launch("pilot-archived", pilotTask, "archived-run"),
+  );
+  const removed = await host.createAgent(
+    launch("pilot-removed", pilotTask, "removed-run"),
+  );
+  const live = await host.createAgent(
+    launch("pilot-live", pilotTask, "live-run"),
+  );
+  const foreign = await host.createAgent(
+    launch("foreign", "other-task", "foreign-run"),
+  );
   server.controls.shellStatuses = {
     [worker.id]: "completed",
     [followUp.id]: "interrupted",
@@ -2707,18 +2726,36 @@ test("the workspace inventory reads T3's finished, archived and removed threads 
   server.threads.get(removed.id)!.thread.deletedAt = "2026-11-19T00:00:00.000Z";
 
   // The workspace inventory the archive proof reads, through the adapter's own mapping.
-  const adapter = createAdapter(HostPolicies as unknown as HostPolicyConstructor, host) as unknown as WorkspaceThreadInventoryHost;
+  const adapter = createAdapter(
+    HostPolicies as unknown as HostPolicyConstructor,
+    host,
+  ) as unknown as WorkspaceThreadInventoryHost;
   const page = await adapter.workspaceHost.archiveThreadPage({
     filter: { includeArchived: true },
     page: { limit: 200 },
   });
-  const rows = new Map(page.entries.map((entry) => [entry.agent.id, entry.agent]));
+  const rows = new Map(
+    page.entries.map((entry) => [entry.agent.id, entry.agent]),
+  );
   assert.equal(rows.get(worker.id)?.status, "idle", "a completed run is idle");
-  assert.equal(rows.get(followUp.id)?.status, "idle", "an interrupted run is idle");
-  assert.equal(rows.get(archived.id)?.status, "closed", "an archived thread is closed");
-  assert.equal(rows.get(removed.id)?.status, "gone", "a removed thread is gone");
+  assert.equal(
+    rows.get(followUp.id)?.status,
+    "idle",
+    "an interrupted run is idle",
+  );
+  assert.equal(
+    rows.get(archived.id)?.status,
+    "closed",
+    "an archived thread is closed",
+  );
+  assert.equal(
+    rows.get(removed.id)?.status,
+    "gone",
+    "a removed thread is gone",
+  );
   assert.equal(rows.get(live.id)?.activeTurn, true, "a live run still holds");
-  const entriesOf = (ids: string[]) => ids.map((id) => ({ agent: rows.get(id)! }));
+  const entriesOf = (ids: string[]) =>
+    ids.map((id) => ({ agent: rows.get(id)! }));
   const finished = [worker.id, followUp.id, archived.id, removed.id];
   assert.deepEqual(
     workspaceThreadFacts(entriesOf(finished), pilotTask, new Set(), false),
@@ -2726,17 +2763,34 @@ test("the workspace inventory reads T3's finished, archived and removed threads 
     "the pilot's finished, archived and removed threads archive",
   );
   assert.throws(
-    () => workspaceThreadFacts(entriesOf([...finished, live.id]), pilotTask, new Set(), false),
+    () =>
+      workspaceThreadFacts(
+        entriesOf([...finished, live.id]),
+        pilotTask,
+        new Set(),
+        false,
+      ),
     /become idle/,
     "a live run holds the archive",
   );
   assert.throws(
-    () => workspaceThreadFacts(entriesOf([...finished, foreign.id]), pilotTask, new Set(), false),
+    () =>
+      workspaceThreadFacts(
+        entriesOf([...finished, foreign.id]),
+        pilotTask,
+        new Set(),
+        false,
+      ),
     /unrelated thread/,
     "an unrelated thread in the workspace is preserved",
   );
   assert.deepEqual(
-    workspaceThreadFacts(entriesOf([...finished, foreign.id]), pilotTask, new Set(), true),
+    workspaceThreadFacts(
+      entriesOf([...finished, foreign.id]),
+      pilotTask,
+      new Set(),
+      true,
+    ),
     { foreignAgentIds: [foreign.id] },
     "an allowed idle foreign thread is named, not treated as the task's",
   );
@@ -2746,7 +2800,14 @@ test("every raw status the shell decoder admits reaches the archive proof as its
   // The shell decoder accepts only this closed enum, so no row the service reads can
   // carry any other raw status. Each value is walked through the same mapping the
   // inventory uses and the archive facts that decide the workspace.
-  const finishedRun = ["idle", "completed", "interrupted", "failed", "cancelled", "rolled_back"];
+  const finishedRun = [
+    "idle",
+    "completed",
+    "interrupted",
+    "failed",
+    "cancelled",
+    "rolled_back",
+  ];
   const liveRun = ["preparing", "queued", "starting", "running", "waiting"];
   assert.deepEqual(
     [...shellThread.shape.status.options].sort(),
@@ -2754,7 +2815,13 @@ test("every raw status the shell decoder admits reaches the archive proof as its
     "the mapping covers the whole shell enum; a new T3 status must be classified here",
   );
   for (const status of shellThread.shape.status.options) {
-    const row = { id: "pilot-row", status, activeRunId: null, archivedAt: null, deletedAt: null } as unknown as Parameters<typeof shellThreadStatus>[0];
+    const row = {
+      id: "pilot-row",
+      status,
+      activeRunId: null,
+      archivedAt: null,
+      deletedAt: null,
+    } as unknown as Parameters<typeof shellThreadStatus>[0];
     const mapped = shellThreadStatus(row);
     const entries = [
       {
@@ -2776,7 +2843,8 @@ test("every raw status the shell decoder admits reaches the archive proof as its
       );
     else
       assert.throws(
-        () => workspaceThreadFacts(entries, "task-1381-pilot", new Set(), false),
+        () =>
+          workspaceThreadFacts(entries, "task-1381-pilot", new Set(), false),
         /become idle/,
         `${status} holds the archive`,
       );
@@ -2796,9 +2864,12 @@ test("a finished task's follow-up child leaves observation with its task, and a 
       environment: {},
     }),
   });
-  await host.createAgent(launch("finished-worker", finishedTask, "finished-run"));
+  await host.createAgent(
+    launch("finished-worker", finishedTask, "finished-run"),
+  );
   await host.createAgent(launch("live-worker", liveTask, "live-run"));
-  const parentOf = (taskId: string) => host.state.read().parents?.[taskId]?.threadId;
+  const parentOf = (taskId: string) =>
+    host.state.read().parents?.[taskId]?.threadId;
   const finishedParent = parentOf(finishedTask);
   assert.ok(finishedParent, "the finished task has a parent thread");
   const reminder = "thread:delegated-task:ns-reminder-1381";
@@ -2807,12 +2878,18 @@ test("a finished task's follow-up child leaves observation with its task, and a 
     state.followUps = {
       [reminder]: {
         workspaceId: workspace.id,
-        labels: storedT3Labels("worker", { taskId: finishedTask, runId: "reminder-run" }),
+        labels: storedT3Labels("worker", {
+          taskId: finishedTask,
+          runId: "reminder-run",
+        }),
         parentThreadId: finishedParent!,
       },
       [liveFollowUp]: {
         workspaceId: workspace.id,
-        labels: storedT3Labels("worker", { taskId: liveTask, runId: "live-follow-up-run" }),
+        labels: storedT3Labels("worker", {
+          taskId: liveTask,
+          runId: "live-follow-up-run",
+        }),
         parentThreadId: parentOf(liveTask)!,
       },
     };
@@ -2825,9 +2902,20 @@ test("a finished task's follow-up child leaves observation with its task, and a 
   host.endHostPass();
 
   const state = host.state.read();
-  assert.equal(state.followUps?.[reminder], undefined, "the finished task's reminder is no longer a live-looking row");
-  assert.equal(state.retiredAgents?.[reminder]?.workspaceId, workspace.id, "its launch identity is kept for the workspace inventory");
-  assert.ok(state.followUps?.[liveFollowUp], "a live task's follow-up stays observed");
+  assert.equal(
+    state.followUps?.[reminder],
+    undefined,
+    "the finished task's reminder is no longer a live-looking row",
+  );
+  assert.equal(
+    state.retiredAgents?.[reminder]?.workspaceId,
+    workspace.id,
+    "its launch identity is kept for the workspace inventory",
+  );
+  assert.ok(
+    state.followUps?.[liveFollowUp],
+    "a live task's follow-up stays observed",
+  );
 });
 
 test("createWorkspace reuses the preserved project registration after a task workspace archive", async (t) => {
@@ -3292,7 +3380,12 @@ for (const lostDeleteReply of [false, true])
       // A second title is its own command identity: titles legitimately change, so
       // each one is a presentation intent of its own (nucleus#1366).
       () =>
-        host.setTaskWorkspaceTitle(task, "Another title", "lost-title-2", false),
+        host.setTaskWorkspaceTitle(
+          task,
+          "Another title",
+          "lost-title-2",
+          false,
+        ),
     ]) {
       server.controls.disconnectAfterEffect = true;
       await assert.rejects(operation(), HostUnknownDeliveryError);
@@ -3430,7 +3523,12 @@ test("external deletion without our recorded delete leaves unknown presentation 
   } as Task;
   server.controls.disconnectAfterEffect = true;
   await assert.rejects(
-    host.setTaskWorkspaceTitle(task, "Unknown delivery title", "unknown-title", false),
+    host.setTaskWorkspaceTitle(
+      task,
+      "Unknown delivery title",
+      "unknown-title",
+      false,
+    ),
     HostUnknownDeliveryError,
   );
   server.controls.disconnectAfterEffect = false;
@@ -3440,13 +3538,16 @@ test("external deletion without our recorded delete leaves unknown presentation 
   )!;
   p.thread.deletedAt = STAMP;
   assert.equal(await host.originAgent(row.threadId), null);
-  await host.setTaskWorkspaceTitle(task, "Unknown delivery title", "unknown-title", true);
+  await host.setTaskWorkspaceTitle(
+    task,
+    "Unknown delivery title",
+    "unknown-title",
+    true,
+  );
   assert.equal(host.state.read().intents[key].status, "unknown");
   assert.equal(host.state.read().intents[key].retiredByDeletion, undefined);
   assert.ok(created.id);
 });
-
-
 
 // Orchestration contract, "Archived thread retention" (nucleus#1369): the retention pass
 // reads a T3 host's archived Nucleus threads from T3's own inventory, and reads one
@@ -3559,7 +3660,6 @@ test("one retention pass over a T3 host removes a finished task's archived worke
     1,
   );
 });
-
 
 test("a native answer on a paged thread reads the retained question item, and a refusal names its pre-send step", async (t) => {
   const { host, server, spec, workspace } = await fixture(t);

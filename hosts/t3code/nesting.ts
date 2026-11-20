@@ -241,8 +241,7 @@ export class T3Nesting {
    */
   async create(input: NestedCreateInput): Promise<NestedCreateResult> {
     const taskId = labelTask(input.attempt.labels);
-    if (!taskId)
-      return this.unavailable("", "the launch names no task");
+    if (!taskId) return this.unavailable("", "the launch names no task");
     const acp = this.core.acp();
     if (!acp)
       return this.unavailable(
@@ -253,9 +252,14 @@ export class T3Nesting {
     if (!provider.ok) return this.unavailable(taskId, provider.reason);
     // Resolve the role's model and mode before a parent can be launched.
     const options = this.core.modelSelectionOptionsFor(
-      input.profile, input.roleProvider, input.roleModel,
+      input.profile,
+      input.roleProvider,
+      input.roleModel,
     );
-    const runtimeMode = this.core.roleRuntimeMode(input.roleProvider, input.profile);
+    const runtimeMode = this.core.roleRuntimeMode(
+      input.roleProvider,
+      input.profile,
+    );
     const existing = this.parentOf(taskId);
     if (existing) {
       // A child with no workspace strategy inherits the parent's checkout, and one
@@ -712,8 +716,10 @@ export class T3Nesting {
       "hold",
       canonical([this.core.hostId(), parent.threadId, requestId]),
     );
-    await this.core.presentation
-      .wakeBeforeDelivery(parent.threadId, identity("message", commandId));
+    await this.core.presentation.wakeBeforeDelivery(
+      parent.threadId,
+      identity("message", commandId),
+    );
     this.core.state.update((state) => {
       const current = state.parents?.[parent.taskId];
       if (!current) return;
