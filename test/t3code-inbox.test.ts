@@ -773,6 +773,7 @@ test("inbox ui shows the board once per operator message, replacing a retained t
   assert.deepEqual(previewOpens()[1]!.payload, {
     threadId: inbox.threadId,
     url: "http://127.0.0.1:1234/#token=synthetic-2",
+    runtime: "server",
     reveal: true,
   });
   const afterFirst = boardTabs();

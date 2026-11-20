@@ -187,6 +187,7 @@ type Projection = {
 type PreviewSession = {
   tabId: string;
   navStatus: { _tag: string; url?: string };
+  runtime?: string;
   reveal?: boolean;
 };
 
@@ -1357,6 +1358,7 @@ async function existingScenarios(env: Environment) {
   const tabs = await previewSessions(env.rpc, threadId);
   assert.equal(tabs.length, 1, "the Inbox has one preview after ui");
   assert.equal(tabs[0]!.reveal, true);
+  assert.equal(tabs[0]!.runtime, "server");
   const url = new URL(tabs[0]!.navStatus.url ?? "");
   assert.equal(url.origin, `http://${board.host}:${board.port}`);
   record(env, "existing:ui-reopens-closed-pane", {
@@ -1365,6 +1367,7 @@ async function existingScenarios(env: Environment) {
     reply: result.reply.text.trim(),
     elapsedMs,
     previewTabId: tabs[0]!.tabId,
+    runtime: tabs[0]!.runtime,
     reveal: true,
   });
 }

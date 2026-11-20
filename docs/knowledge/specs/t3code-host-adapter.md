@@ -1019,7 +1019,10 @@ The inbox ACP agent routes exact `ui` through its authenticated `inbox` binding
 newest operator `ui` message and serves it unless that message already has an
 attempt. Serving reads `preview.list` for the inbox thread, closes every board
 tab of this board's origin, mints a fresh one-time pairing link and calls
-`preview.open` with `reveal: true`. Non-`ui` prompts and task threads never
+`preview.open` with `runtime: "server"` and `reveal: true`. T3's web client
+auto-reveals server-rendered tabs. On the installed 0.1.12 nightly, an open
+without a runtime returned a tab that stayed in `Loading` and never brought
+up the pane. Non-`ui` prompts and task threads never
 invoke this route, and pairing URLs never cross back to the ACP session, the
 host state or logs.
 
@@ -1676,7 +1679,7 @@ The existing-Inbox proof (`effigy proof:t3code:inbox -- --existing-only`)
 also closes its private preview, dispatches exact `ui` on the same pinned
 thread and checks both the bounded ACP reply and the newly revealed preview
 tab. It checks the tab against the real private board's origin and records
-only the tab ID and reveal state. A rendered-pane check also observes the
+the tab ID, runtime and reveal state. A rendered-pane check also observes the
 board in T3's client, since server readback alone cannot show what rendered.
 
 The private proof starts an unmodified checkout of the target nightly revision,

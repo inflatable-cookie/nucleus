@@ -352,8 +352,9 @@ export class T3Inbox {
    * tab (`PreviewManager.requestReveal` is internal to T3's in-process broker), and
    * `preview.open` always creates the tab it reveals. This thread's board tabs are therefore
    * closed first and one fresh tab is opened with a new one-time pairing link, so exactly one
-   * board tab remains and the open is what brings the pane up. Pairing URLs stay out of state
-   * and logs.
+   * board tab remains. The server runtime lets T3 reveal and render the tab in connected
+   * clients, including a browser without a local preview runtime. Pairing URLs stay out of
+   * state and logs.
    */
   private async showBoardFor(
     inbox: { threadId: string },
@@ -389,6 +390,7 @@ export class T3Inbox {
         return this.core.rpc.call("preview.open", {
           threadId: inbox.threadId,
           url: link,
+          runtime: "server",
           reveal: true,
         });
       });
