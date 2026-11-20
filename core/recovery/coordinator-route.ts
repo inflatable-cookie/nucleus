@@ -370,11 +370,12 @@ export class CoordinatorRoute {
     if (
       t.resolution.mergedCommit &&
       t.resolution.recoveryPhase !== "closeout" &&
+      (!t.resolution.recovery || t.resolution.recovery.status === "resolved") &&
       !this.busy(t)
     )
       t = this.resolution.update(
         t,
-        { recoveryPhase: "closeout", recoveryAttempts: 0, recovery: null },
+        { recoveryPhase: "closeout", recoveryAttempts: 0 },
         {},
         "closeout_recovery_budget",
       );

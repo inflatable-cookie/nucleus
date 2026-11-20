@@ -223,14 +223,21 @@ test('the stored late recovery escalation follows its exact verified merge once'
     f.store.event(f.taskId, 'planner_escalation', 'escalation: cause');
     f.store.event(f.taskId, 'planner_escalation_payload', `escalation: ${JSON.stringify({ id: 'escalation', runId: 'recovery-run', source: 'recovery' })}`);
     f.store.event(f.taskId, 'task_waiting', JSON.stringify(stop));
-    const advanced = f.engine.resolution.closeout.continueRecordedMerge(f.task(), { kind: 'sweep', reobserved: true });
-    assert.equal(advanced.phase, 'syncing');
+    await f.engine.wake();
+    const advanced = f.task();
+    assert.ok(['syncing', 'closing', 'done'].includes(advanced.phase));
     assert.equal(advanced.resolution.stop, null);
     assert.equal(advanced.resolution.recovery?.action?.status, 'applied');
     assert.equal(f.events('planner_escalation_resolved').length, 1);
-    const events = f.store.eventsAll(f.taskId);
-    f.engine.resolution.closeout.continueRecordedMerge(f.task(), { kind: 'sweep' });
+    await sweepToDone(f);
+    await f.engine.wake();
+    const events = f.store.eventsAll(f.taskId), counts = f.counts();
+    await f.engine.wake();
     assert.deepEqual(f.store.eventsAll(f.taskId), events);
+    assert.deepEqual(f.counts(), counts);
+    assert.equal(f.counts().merges, 0);
+    assert.equal(f.counts().sends, 0);
+    assert.equal(f.events('main_synchronized').length, 1);
   } finally { await f.close(); }
 });
 
