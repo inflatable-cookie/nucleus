@@ -600,6 +600,8 @@ export async function t3Fake(t: TestContext, directory: string) {
     threadProjectionErrors: 0,
     disconnectMutation: false,
     disconnectAfterEffect: false,
+    /** A launch thread commits, then its reply is lost to a dropped socket. */
+    disconnectAfterLaunch: false,
     /** One-shot faults for the next `thread.unsettle` commands, in order: "drops" or "lands". */
     unsettleFaults: [] as Array<"drops" | "lands">,
     /** Thread reads that still show a settled thread after an unsettle command (a delayed apply). */
@@ -1166,6 +1168,15 @@ export async function t3Fake(t: TestContext, directory: string) {
               `subscribeThread.${field} is not a recorded input field`,
             );
           const p = threads.get(payload.threadId);
+          // A thread T3 has not projected yet can fail its read transiently too, so
+          // the injected fault applies to an absent thread as well (nucleus#1458).
+          if (!p && controls.threadProjectionErrors > 0) {
+            controls.threadProjectionErrors--;
+            return failure({
+              _tag: "Fail",
+              error: { _tag: "OrchestrationV2GetThreadProjectionError" },
+            });
+          }
           // The nightly refuses a removed thread's projection outright.
           if (!p || p.thread.deletedAt !== null)
             return failure({
@@ -1321,6 +1332,8 @@ export async function t3Fake(t: TestContext, directory: string) {
               }),
             );
           threads.set(payload.threadId, p);
+          // The launch took effect, and the reply is lost (nucleus#1458).
+          if (controls.disconnectAfterLaunch) return socket.destroy();
           return success({
             threadId: payload.threadId,
             projection: wireProjection(p),

@@ -272,6 +272,9 @@ export class T3Nesting {
     );
     const existing = this.parentOf(taskId);
     let existingSharedProjection: Projection | undefined;
+    // A binding stored before its launch was sent (nucleus#1458) is resumed, not
+    // treated as a parent that already ran.
+    let prepared: ParentThread | undefined;
     if (existing) {
       // A child with no workspace strategy inherits the parent's checkout, and one
       // with a strategy never starts outside T3's own MCP handler. A role whose run
@@ -286,35 +289,60 @@ export class T3Nesting {
       // binding before acting on either an old marker or a new observation,
       // sharing its narrow projection with the held-turn check below.
       const observation = await this.classifyParent(existing, true);
-      if (observation.kind !== "live") {
-        if (observation.kind === "archived" || observation.kind === "deleted")
-          this.finishParent(taskId, observation.kind);
-        return this.unavailable(
-          taskId,
-          observation.kind === "mismatched"
-            ? "the task's parent thread no longer matches its recorded project and checkout; inspect the binding before restarting"
-            : observation.kind === "archived"
-              ? "the task's parent thread is archived; use an owner restart after prior creation and delivery settle"
-              : "the task's parent thread is deleted; inspect the retained binding and recovery before continuing",
-        );
-      }
-      if (existing) existingSharedProjection = observation.projection;
-      // An exact live observation repairs even a legacy finished marker after a
-      // manual unarchive. A sweep alone never unarchives the parent.
-      if (existing.archivedAt) {
+      if (
+        observation.kind === "deleted" &&
+        observation.absent &&
+        !this.parentLaunchReserved(taskId)
+      ) {
+        // Absent from T3 and no launch intent: the launch was never reserved, so
+        // nothing reached T3 and the stored binding is still the parent this task
+        // will get. Resume its launch under the same identity; a checkout or project
+        // that no longer matches the binding is refused instead.
+        if (
+          existing.projectId !== input.workspace.projectId ||
+          existing.directory !== input.workspace.directory
+        )
+          return this.unavailable(
+            taskId,
+            "the task's parent thread no longer matches its recorded project and checkout; inspect the binding before restarting",
+          );
+        prepared = existing;
+      } else {
+        if (observation.kind !== "live") {
+          if (observation.kind === "archived" || observation.kind === "deleted")
+            this.finishParent(taskId, observation.kind);
+          return this.unavailable(
+            taskId,
+            observation.kind === "mismatched"
+              ? "the task's parent thread no longer matches its recorded project and checkout; inspect the binding before restarting"
+              : observation.kind === "archived"
+                ? "the task's parent thread is archived; use an owner restart after prior creation and delivery settle"
+                : "the task's parent thread is deleted; inspect the retained binding and recovery before continuing",
+          );
+        }
+        existingSharedProjection = observation.projection;
+        // An exact live observation repairs even a legacy finished marker after a
+        // manual unarchive. A sweep alone never unarchives the parent.
+        if (existing.archivedAt) {
+          this.core.state.update((state) => {
+            const current = state.parents?.[taskId];
+            if (current?.threadId === existing.threadId) delete current.archivedAt;
+          });
+        }
+        // The create owns the turn from here: a concurrent sweep must not release it
+        // between the parent-run read and the child command.
         this.core.state.update((state) => {
           const current = state.parents?.[taskId];
-          if (current?.threadId === existing.threadId) delete current.archivedAt;
+          if (current) current.holdingSince = new Date().toISOString();
         });
       }
-      // The create owns the turn from here: a concurrent sweep must not release it
-      // between the parent-run read and the child command.
-      this.core.state.update((state) => {
-        const current = state.parents?.[taskId];
-        if (current) current.holdingSince = new Date().toISOString();
-      });
     }
-    const parent = existing ?? (await this.launchParent(input, provider, acp));
+    // A launch this create makes, or resumes, starts its run asynchronously.
+    const launching = !existing || prepared !== undefined;
+    const parent =
+      existing && !prepared
+        ? existing
+        : await this.launchParent(input, provider, acp, prepared);
     if (!parent)
       return this.unavailable(
         taskId,
@@ -330,7 +358,7 @@ export class T3Nesting {
     const live = await this.heldRun(
       parent,
       input.attempt.requestId,
-      existing ? 0 : LAUNCH_RUN_TIMEOUT_MS,
+      launching ? LAUNCH_RUN_TIMEOUT_MS : 0,
       existingSharedProjection,
     );
     if (!live)
@@ -663,12 +691,23 @@ export class T3Nesting {
     };
   }
 
+  /** The deterministic command id of one task's parent launch. */
+  private parentLaunchId(taskId: string): string {
+    return identity("parent-launch", canonical([this.core.hostId(), taskId]));
+  }
+
+  /** Whether this task's parent launch was ever reserved for a send (nucleus#1458). */
+  private parentLaunchReserved(taskId: string): boolean {
+    return this.core.state.read().intents[this.parentLaunchId(taskId)] !== undefined;
+  }
+
   /**
    * The task's parent thread, launched on the Nucleus ACP provider, or a proven refusal.
    * The binding is minted first, because the launched agent resolves its session from
    * the checkout it starts in; the thread id is deterministic, so a lost reply is
    * settled by finding the thread, and only a proven absence launches it again under
-   * the same command identity.
+   * the same command identity. A `bound` binding (nucleus#1458) was stored by an earlier
+   * pass whose launch never reserved a send: it is resumed as stored, never minted again.
    */
   private async launchParent(
     input: NestedCreateInput,
@@ -678,13 +717,16 @@ export class T3Nesting {
       supportedRuntimeModes?: readonly RuntimeMode[];
     },
     acp: AcpSessionSurface,
+    bound?: ParentThread,
   ): Promise<ParentThread | null> {
     const taskId = labelTask(input.attempt.labels)!;
     const threadId = identity(
       "thread",
       canonical([this.core.hostId(), taskId, "parent"]),
     );
-    const binding = acp.bind({ taskId, ...parentPromptRules() });
+    const binding = bound
+      ? { sessionId: bound.sessionId, bindingPath: bound.bindingPath }
+      : acp.bind({ taskId, ...parentPromptRules() });
     const record: ParentThread = {
       taskId,
       threadId,
@@ -694,7 +736,7 @@ export class T3Nesting {
       workspaceId: input.workspace.id,
       projectId: input.workspace.projectId,
       directory: input.workspace.directory,
-      createdAt: new Date().toISOString(),
+      createdAt: bound?.createdAt ?? new Date().toISOString(),
       title: input.title,
     };
     // Durable before the send: a lost reply leaves an owned parent, never an orphan.
@@ -728,10 +770,7 @@ export class T3Nesting {
       offered.length === 0 || offered.includes("full-access")
         ? "full-access"
         : "approval-required";
-    const commandId = identity(
-      "parent-launch",
-      canonical([this.core.hostId(), taskId]),
-    );
+    const commandId = this.parentLaunchId(taskId);
     const payload = {
       commandId,
       threadId,
@@ -1060,7 +1099,8 @@ export class T3Nesting {
         row: Projection["thread"];
         projection: Projection | null;
       }
-    | { kind: "deleted" }
+    /** `absent`: the complete inventory has no row for it, not a `deletedAt` tombstone. */
+    | { kind: "deleted"; absent: boolean }
     | { kind: "mismatched" }
   > {
     const matchesParent = (candidate: {
@@ -1080,7 +1120,7 @@ export class T3Nesting {
         fresh,
       );
       const thread = projection.thread;
-      if (thread.deletedAt) return { kind: "deleted" };
+      if (thread.deletedAt) return { kind: "deleted", absent: false };
       if (!matchesParent(thread)) return { kind: "mismatched" };
       if (thread.archivedAt)
         return { kind: "archived", row: thread, projection };
@@ -1104,7 +1144,8 @@ export class T3Nesting {
       )
     )
       throw Error("T3Code parent inventory has conflicting observations");
-    if (!thread || thread.deletedAt) return { kind: "deleted" };
+    if (!thread || thread.deletedAt)
+      return { kind: "deleted", absent: !thread };
     if (matches.some((candidate) => !matchesParent(candidate)))
       return { kind: "mismatched" };
     if (thread.archivedAt)

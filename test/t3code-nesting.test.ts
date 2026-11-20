@@ -28,8 +28,10 @@ import {
   STAMP,
   syntheticRuntimeRequest,
   syntheticTurnItem,
+  threadProjection,
 } from "./support/t3code-fake";
 import { storedT3Labels } from "./support/t3code-labels";
+import { T3TransientReadError } from "../hosts/t3code/reads";
 
 const profile: Profile = {
   id: "synthetic-profile",
@@ -1082,4 +1084,162 @@ test("decisionParent routes an archived parent to the Inbox and keeps a disconne
   host.close();
   assert.deepEqual(host.decisionParent(taskId), { state: "unknown" });
   assert.equal(proposedOwner(fakeStore, decision, host.hostId, lookup), null);
+});
+
+/**
+ * nucleus#1458: a parent binding stored before its launch was sent. A transient read
+ * fails the first pass between the binding and the launch; the replay, a rolled host,
+ * a lost launch reply and a parent that T3 shows as archived or as another checkout
+ * are each observed before any parent or child is sent.
+ */
+const reopenHost = (
+  t: TestContext,
+  root: string,
+  server: Awaited<ReturnType<typeof t3Fake>>,
+  acp: ReturnType<typeof acpStub>,
+) => {
+  const host = new T3CodeHost({
+    endpoint: server.endpoint,
+    bearer: "synthetic-bearer",
+    statePath: join(root, "state.json"),
+    timeoutMs: 1_000,
+    probeThreadId: "synthetic-probe",
+    acp: () => acp.surface,
+    reentryTimeoutMs: 300,
+  });
+  t.after(() => host.close());
+  return host;
+};
+
+test("#1458 a transient read after the parent binding is stored resumes the same unsent launch on replay", async (t) => {
+  const { host, server, spec, acp } = await fixture(t);
+  server.controls.threadProjectionErrors = 1;
+  await assert.rejects(
+    () => host.createAgent(spec("worker-create", "Do the work")),
+    (error: unknown) => error instanceof T3TransientReadError,
+  );
+  const bound = parentOf(host)!;
+  assert.ok(bound, "the binding is durable before the launch is sent");
+  assert.equal(
+    commandOf(server, "orchestration.launchThread"),
+    undefined,
+    "nothing is sent while the pre-send read is unresolved",
+  );
+
+  const created = await host.createAgent(spec("worker-create", "Do the work"));
+  assert.ok(created.id);
+  const parent = parentOf(host)!;
+  assert.equal(parent.threadId, bound.threadId, "the same parent identity");
+  assert.equal(parent.sessionId, bound.sessionId, "the same ACP binding");
+  assert.equal(acp.bindings.length, 1, "the binding is reused, not minted again");
+  assert.equal(commandsOf(server, "orchestration.launchThread").length, 1);
+  assert.equal(commandsOf(server, "delegated_task.request").length, 1);
+  assert.equal(
+    commandOf(server, "delegated_task.request")!.parentThreadId,
+    parent.threadId,
+  );
+});
+
+test("#1458 a rolled host resumes the prepared launch from durable state without a second parent", async (t) => {
+  const { host, server, spec, acp, root } = await fixture(t);
+  server.controls.threadProjectionErrors = 1;
+  await assert.rejects(
+    () => host.createAgent(spec("worker-create", "Do the work")),
+    (error: unknown) => error instanceof T3TransientReadError,
+  );
+  const bound = parentOf(host)!;
+  host.close();
+
+  const rolled = reopenHost(t, root, server, acp);
+  await rolled.connect();
+  await rolled.createAgent(spec("worker-create", "Do the work"));
+  assert.equal(parentOf(rolled)!.threadId, bound.threadId);
+  assert.equal(commandsOf(server, "orchestration.launchThread").length, 1);
+  assert.equal(commandsOf(server, "delegated_task.request").length, 1);
+});
+
+test("#1458 a lost launch reply is settled by the parent T3 shows, with one parent and one child", async (t) => {
+  const { host, server, spec } = await fixture(t);
+  server.controls.disconnectAfterLaunch = true;
+  await assert.rejects(() => host.createAgent(spec("worker-create", "Do the work")));
+  const bound = parentOf(host)!;
+  assert.ok(server.threads.has(bound.threadId), "the launch took effect");
+  assert.equal(commandsOf(server, "orchestration.launchThread").length, 1);
+
+  server.controls.disconnectAfterLaunch = false;
+  await host.connect();
+  await host.createAgent(spec("worker-create", "Do the work"));
+  assert.equal(parentOf(host)!.threadId, bound.threadId);
+  assert.equal(
+    commandsOf(server, "orchestration.launchThread").length,
+    1,
+    "no second parent is launched",
+  );
+  assert.equal(commandsOf(server, "delegated_task.request").length, 1);
+});
+
+test("#1458 a prepared binding whose parent T3 shows archived refuses without a launch or a child", async (t) => {
+  const { host, server, spec } = await fixture(t);
+  server.controls.threadProjectionErrors = 1;
+  await assert.rejects(() => host.createAgent(spec("worker-create", "Do the work")));
+  const bound = parentOf(host)!;
+  const twin = threadProjection(bound.threadId, bound.directory);
+  Object.assign(twin.thread, {
+    projectId: bound.projectId,
+    worktreePath: bound.directory,
+    providerInstanceId: PARENT_PROVIDER,
+    modelSelection: { instanceId: PARENT_PROVIDER, model: PARENT_MODEL },
+    archivedAt: STAMP,
+  });
+  server.threads.set(bound.threadId, twin);
+
+  await assert.rejects(
+    () => host.createAgent(spec("worker-create", "Do the work")),
+    /parent thread is archived/,
+  );
+  assert.equal(commandOf(server, "orchestration.launchThread"), undefined);
+  assert.equal(commandOf(server, "delegated_task.request"), undefined);
+});
+
+test("#1458 a prepared binding whose parent id is held by another checkout refuses without adopting it", async (t) => {
+  const { host, server, spec } = await fixture(t);
+  server.controls.threadProjectionErrors = 1;
+  await assert.rejects(() => host.createAgent(spec("worker-create", "Do the work")));
+  const bound = parentOf(host)!;
+  const twin = threadProjection(bound.threadId, "/synthetic/other-checkout");
+  Object.assign(twin.thread, {
+    projectId: bound.projectId,
+    providerInstanceId: PARENT_PROVIDER,
+    modelSelection: { instanceId: PARENT_PROVIDER, model: PARENT_MODEL },
+  });
+  server.threads.set(bound.threadId, twin);
+
+  await assert.rejects(
+    () => host.createAgent(spec("worker-create", "Do the work")),
+    /no longer matches its recorded project and checkout/,
+  );
+  assert.equal(commandOf(server, "orchestration.launchThread"), undefined);
+  assert.equal(commandOf(server, "delegated_task.request"), undefined);
+});
+
+test("#1458 an unknown launch whose parent T3 does not show is never resent as a replacement", async (t) => {
+  const { host, server, spec } = await fixture(t);
+  server.controls.disconnectMutation = true;
+  await assert.rejects(() => host.createAgent(spec("worker-create", "Do the work")));
+  server.controls.disconnectMutation = false;
+  const bound = parentOf(host)!;
+  assert.equal(commandsOf(server, "orchestration.launchThread").length, 1);
+  assert.equal(server.threads.has(bound.threadId), false);
+
+  await host.connect();
+  await assert.rejects(
+    () => host.createAgent(spec("worker-create", "Do the work")),
+    /parent thread is deleted/,
+  );
+  assert.equal(
+    commandsOf(server, "orchestration.launchThread").length,
+    1,
+    "a possibly sent launch is not resent under the same identity",
+  );
+  assert.equal(commandOf(server, "delegated_task.request"), undefined);
 });
