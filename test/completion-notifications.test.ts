@@ -498,6 +498,18 @@ test("done freezes a normalized cohort and independently fences delivery, missin
             notice.text.includes("Repository: /repo"),
         ),
     );
+    // nucleus#1422: the Task line carries the repository-scoped task number (001),
+    // independent of the PR number (7), and keeps the UUID.
+    for (const notice of f.store.notices(task.id)) {
+      assert.ok(
+        notice.text.includes(`Task: 001 Completion cohorts (${task.id})`),
+        notice.text,
+      );
+      assert.ok(
+        notice.text.includes("PR: https://github.com/example/repo/pull/7"),
+        notice.text,
+      );
+    }
     f.agents.set("beta", { ...f.agents.get("beta")!, archived: true });
     f.store.setMeta("paused", true);
     await f.engine.resolution.deliverNotices();

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Task } from "../../shared/contracts";
 import { DISPATCH_WAIT_REASON } from "../../shared/task-stop";
-import { taskOwner } from "../../shared/contracts";
+import { noticeTaskLine, taskOwner } from "../../shared/contracts";
 import { now } from "./store-core";
 import type { ReviewEntryFacts } from "./review-entry-eligibility";
 
@@ -238,7 +238,7 @@ export class StorePrerequisites {
           kind: "prerequisite",
           status: "pending",
           error: "",
-          text: `Nucleus prerequisite wait cleared\nTask: ${task.title} (${task.id})\nReason: ${wait.reason}\nPrerequisites complete: ${wait.waitsFor.join(", ")}\nThe task is back in normal handling. A revision needs its own authorization.`,
+          text: `Nucleus prerequisite wait cleared\n${noticeTaskLine(task)}\nReason: ${wait.reason}\nPrerequisites complete: ${wait.waitsFor.join(", ")}\nThe task is back in normal handling. A revision needs its own authorization.`,
         });
       }
       // The release is the producer's clear: its prerequisite stop goes with it.

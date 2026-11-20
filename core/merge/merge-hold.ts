@@ -1,6 +1,6 @@
 import { readyReviewAtHead } from '../recovery/task-reasons';
 import type { HoldBlocking, HoldKind, HoldUntil, Task, TaskHolds } from "../../shared/contracts";
-import { DEFAULT_HOLD_ESCALATION_MINUTES, DEFAULT_HOLD_REMINDER_MINUTES, TASK_OWNER_HOLD, holdOwnerOf, holdsOf, isOperatorOrigin, operatorSourceAcceptance, qualifiedOwnerAcceptance, storedHoldOwner, syncHoldProjection } from "../../shared/contracts";
+import { DEFAULT_HOLD_ESCALATION_MINUTES, DEFAULT_HOLD_REMINDER_MINUTES, TASK_OWNER_HOLD, holdOwnerOf, holdsOf, isOperatorOrigin, noticeTaskLine, operatorSourceAcceptance, qualifiedOwnerAcceptance, storedHoldOwner, syncHoldProjection } from "../../shared/contracts";
 import { PREREQUISITE_WAIT_PREFIX, prerequisiteCannotComplete } from "../../shared/wait-state";
 import type { Resolution } from "../resolution";
 import { digest, now } from "../store/store";
@@ -98,7 +98,7 @@ export class Holds {
       const id = digest(`${t.id}:hold:${generation}:${t.prHead}:${next.notices}`);
       const age = `${Math.max(0, Math.round((nowMs - Date.parse(merge.at || next.since)) / 60_000))} minutes`;
       if (!this.store.notices(t.id).some(n => n.id === id)) this.store.putNotice({ id, taskId: t.id, agentId: owner, recipientAgentId: recipientMark, workspaceId: null, sources: [], originEntry: false, kind: 'hold', status: 'pending', error: '',
-        text: `Nucleus: a merge hold is the only thing stopping a reviewed task\nTask: ${t.title} (${t.id})\nReviewed head: ${t.prHead}\nHold reason: ${reason}\nHold age: ${age}\nRelease it with queue.task action "release", or keep it with action "keep_hold" and a fresh reason. Nucleus reminds you again until you do.` });
+        text: `Nucleus: a merge hold is the only thing stopping a reviewed task\n${noticeTaskLine(t)}\nReviewed head: ${t.prHead}\nHold reason: ${reason}\nHold age: ${age}\nRelease it with queue.task action "release", or keep it with action "keep_hold" and a fresh reason. Nucleus reminds you again until you do.` });
       this.store.event(t.id, next.notices === 0 ? 'hold_ready_notified' : 'hold_reminded', `${owner}; head ${t.prHead}; generation ${generation}`);
       next = { ...next, notices: next.notices + 1, lastNoticeAt: at };
     }
@@ -155,14 +155,14 @@ export class Holds {
         const generation = `generation ${fence.generation};`;
         if (!this.store.events(t.id).some(event => event.kind === 'hold_until_blocked' && event.detail.startsWith(generation))) {
           if (agentOwner) this.store.putNotice({ id: `hold-until-blocked:${t.id}:${kind}:${fence.generation}`, taskId: t.id, agentId: owner, recipientAgentId: recipientMark, workspaceId: null, sources: [], originEntry: false, kind: 'hold', status: 'pending', error: '',
-            text: `Nucleus: a hold's end condition can never be met\nTask: ${t.title} (${t.id})\nHold kind: ${kind}\nHold reason: ${fence.reason || HOLD_REASON_NOT_RECORDED}\nEnd condition: ${outcome.detail}\nRelease the hold with queue.task action "release", or keep it with action "keep_hold" and a fresh reason. Nucleus cannot lift this hold by itself.` });
+            text: `Nucleus: a hold's end condition can never be met\n${noticeTaskLine(t)}\nHold kind: ${kind}\nHold reason: ${fence.reason || HOLD_REASON_NOT_RECORDED}\nEnd condition: ${outcome.detail}\nRelease the hold with queue.task action "release", or keep it with action "keep_hold" and a fresh reason. Nucleus cannot lift this hold by itself.` });
           this.store.event(t.id, 'hold_until_blocked', `${generation} ${kind}; ${outcome.detail}`);
         }
         continue;
       }
       this.store.transaction(() => {
         if (agentOwner) this.store.putNotice({ id: `hold-auto-release:${t.id}:${kind}:${fence.generation}`, taskId: t.id, agentId: owner, recipientAgentId: recipientMark, workspaceId: null, sources: [], originEntry: false, kind: 'hold_release', status: 'pending', error: '',
-          text: `Nucleus: a hold lifted itself\nTask: ${t.title} (${t.id})\nHold kind: ${kind}\nHold reason: ${fence.reason || HOLD_REASON_NOT_RECORDED}\nEnd condition met: ${outcome.detail}\nNucleus released the hold and will continue.` });
+          text: `Nucleus: a hold lifted itself\n${noticeTaskLine(t)}\nHold kind: ${kind}\nHold reason: ${fence.reason || HOLD_REASON_NOT_RECORDED}\nEnd condition met: ${outcome.detail}\nNucleus released the hold and will continue.` });
         this.store.update(t.id, releasePatch(this.store.task(t.id), kind), 'hold_auto_released', `${kind}; ${outcome.detail}`);
       });
       released = true;

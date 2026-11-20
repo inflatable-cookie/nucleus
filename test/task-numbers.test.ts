@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from '../core/store/store';
-import { submissionSchema, outcomeLookupSchema, detail, taskNumberLabel, summarizeTask } from '../shared/contracts';
+import { submissionSchema, outcomeLookupSchema, detail, noticeTaskLine, taskNumberLabel, summarizeTask } from '../shared/contracts';
 import { taskWorkspaceTitle } from '../core/workspaces/workspace-title';
 import { workerPrompt } from '../core/dispatch/prompts';
 
@@ -115,6 +115,15 @@ test('Spec 021 #11 schema 50 upgrade preserves creation order and counters', () 
     f.reopen();
     assert.equal(f.store.task(second.id).reference, 'alpha#002');
     assert.equal(f.add().task.number, 3);
+  } finally { f.close(); }
+});
+
+test('Spec 021 #13 planner notice Task lines carry the bare task number and keep the UUID', () => {
+  const f = fixture(); try {
+    const task = f.add().task;
+    assert.equal(noticeTaskLine(task), `Task: 001 Task submission-1 (${task.id})`);
+    assert.equal(noticeTaskLine({ title: 'Fourth', id: 'fourth-id', number: 4 }), 'Task: 004 Fourth (fourth-id)');
+    assert.equal(noticeTaskLine({ title: 'Legacy', id: 'legacy-id', number: null }), 'Task: Legacy (legacy-id)');
   } finally { f.close(); }
 });
 

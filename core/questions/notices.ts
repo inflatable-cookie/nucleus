@@ -1,6 +1,6 @@
 import type { Notice } from '../../shared/contracts';
 import { parseAgentId } from '../../shared/agent-identity';
-import { TASK_OWNER_HOLD, episodeBindsCurrentWork, isDispositionActive, isDispositionComplete, isRetainedProfileReason, taskOwner } from '../../shared/contracts';
+import { TASK_OWNER_HOLD, episodeBindsCurrentWork, isDispositionActive, isDispositionComplete, isRetainedProfileReason, noticeTaskLine, taskOwner } from '../../shared/contracts';
 import { normalizeRepositoryOrigin } from '../../shared/lanes';
 import { isSshAuthExhausted } from '../../shared/ssh-auth';
 import { isWaitingTaskStop, recordedStopIsWait } from '../../shared/task-stop';
@@ -358,7 +358,7 @@ export class Notices {
       this.store.putNotice({ id, taskId: task.id, agentId: proofOwner ?? originRecipient(this.store, task) ?? taskOwner(task),
         recipientAgentId: proofOwner ?? taskOwner(task), workspaceId: task.originWorkspaceId, sources: [], originEntry: !proofOwner,
         kind: 'attention', status: 'pending', error: '',
-        text: `Nucleus needs attention\nTask: ${task.title} (${task.id})\nState: ${task.phase}\n${detail}${suggested}${remapHint}\nWorker: ${task.agentId ?? 'none'}\nCoordinator: ${task.coordinatorAgentId || 'unassigned'}\nPR: ${task.prUrl ?? 'none'}\nInspect the queue detail before choosing the next action. This is a plugin notice, not new planning authority.` });
+        text: `Nucleus needs attention\n${noticeTaskLine(task)}\nState: ${task.phase}\n${detail}${suggested}${remapHint}\nWorker: ${task.agentId ?? 'none'}\nCoordinator: ${task.coordinatorAgentId || 'unassigned'}\nPR: ${task.prUrl ?? 'none'}\nInspect the queue detail before choosing the next action. This is a plugin notice, not new planning authority.` });
     }
     for (const n of this.store.pendingNotices()) {
       if (this.paused()) return;

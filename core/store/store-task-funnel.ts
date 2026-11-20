@@ -5,6 +5,7 @@ import {
   completionMembership,
   holdsOf,
   isOperatorOrigin,
+  noticeTaskLine,
   resolutionSchema,
   retiredSubmissionRefusal,
   syncHoldProjection,
@@ -835,7 +836,7 @@ export class StoreTaskFunnel {
           kind: "completion",
           status: "pending",
           error: "",
-          text: `Nucleus completion\nTask: ${task.title} (${task.id})\nRepository: ${task.repoPath}\nState: done\nCompleted: ${completedAt}\nPR: ${next.prUrl ?? "none"}${next.reportAcceptance ? `\n${next.reportAcceptance.artifact ? `Owner accepted report: ${next.reportAcceptance.artifact.key} v${next.reportAcceptance.artifact.version} (${next.reportAcceptance.artifact.digest})` : "Owner completed this task with no PR"}\nAccepted by: ${next.reportAcceptance.acceptedBy}\nReason: ${next.reportAcceptance.reason}` : ""}\nInspect queue detail for full state. Completion membership grants no task authority.`,
+          text: `Nucleus completion\n${noticeTaskLine(task)}\nRepository: ${task.repoPath}\nState: done\nCompleted: ${completedAt}\nPR: ${next.prUrl ?? "none"}${next.reportAcceptance ? `\n${next.reportAcceptance.artifact ? `Owner accepted report: ${next.reportAcceptance.artifact.key} v${next.reportAcceptance.artifact.version} (${next.reportAcceptance.artifact.digest})` : "Owner completed this task with no PR"}\nAccepted by: ${next.reportAcceptance.acceptedBy}\nReason: ${next.reportAcceptance.reason}` : ""}\nInspect queue detail for full state. Completion membership grants no task authority.`,
         };
         if (
           !this.services
