@@ -996,7 +996,7 @@ Typed pre-send refusals that settle an operation failed with a receipt:
 `ProvenPreSendRefusalError`, `ReviewEntryRefusal`, `ExternalMergeRefusal`,
 `RestartRefusal`, `RepositoryRekeyRefused`, `RetainedRunRefusal`,
 `DurableFenceRefusal`. `ParkedRestartPreSendRefusal` is the eighth class in
-that set. Event-kind reads and writes stay in the census in
+that set, and `PreWriteMergeObservationRefusal` (nucleus#1428) is the ninth. Event-kind reads and writes stay in the census in
 `test/control-strings.test.ts`; do not reword a kind.
 
 ### Confidence
@@ -3199,6 +3199,17 @@ movement invalidates source approval and preserves the normal readiness gates.
   refusal a typed gate raises before Nucleus bound or sent anything is a definite
   failure, and a durable receipt it could not record never turns it into an
   unknown delivery (Tom, 2026-11-01).
+- A read-only forge observation that fails before a move to merge writes or
+  stops anything is a definite refusal (`PreWriteMergeObservationRefusal`,
+  nucleus#1428). The move proves it by its own journal: a failure counts only
+  while no task event has been recorded since the move began. A timeout
+  message alone never settles a move uncertain, and a later successful move
+  never proves absence. An uncertain move that was journaled inside its own
+  attempt window, or whose boundary was crossed, stays fenced. A legacy
+  uncertain move to merge with an empty window reconciles through
+  `retry_effect operation.<id>`, which settles it failed with the evidence in a
+  `operation_pre_send_reconciled` event. `next` offers that reconciliation only
+  when `retry_effect` would perform it.
 - Commands are accepted durably before remote work
   ([Spec 012](../specs/012-durable-asynchronous-operations.md),
   [Spec 013](../specs/013-standalone-queue-service.md)). One operation record

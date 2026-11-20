@@ -56,6 +56,7 @@ import {
 } from "../core/qa/proof-admission";
 import { ProofExecutionRefusal } from "../core/qa/proof-refusal";
 import { RepositoryRekeyRefused } from "../core/planning/repository-rekey";
+import { PreWriteMergeObservationRefusal } from "../core/verbs/moves/merge";
 import { ReviewEntryRefusal } from "../core/review/review-entry";
 import {
   DurableFenceRefusal,
@@ -208,6 +209,10 @@ const TYPED: [string, () => Error][] = [
   ],
   ["RetainedRunRefusal", () => new RetainedRunRefusal(FRIGHTENING)],
   ["DurableFenceRefusal", () => new DurableFenceRefusal(FRIGHTENING)],
+  [
+    "PreWriteMergeObservationRefusal",
+    () => new PreWriteMergeObservationRefusal(FRIGHTENING),
+  ],
 ];
 
 for (const [name, make] of TYPED) {
@@ -230,7 +235,7 @@ for (const [name, make] of TYPED) {
   });
 }
 
-test("operation state: the typed set is exactly these eight classes", () => {
+test("operation state: the typed set is exactly these nine classes", () => {
   // ParkedRestartPreSendRefusal is private to its file, so the set is read from
   // source rather than thrown. test/restart.cases.ts drives that class.
   const body =
@@ -244,6 +249,7 @@ test("operation state: the typed set is exactly these eight classes", () => {
       "DurableFenceRefusal",
       "ExternalMergeRefusal",
       "ParkedRestartPreSendRefusal",
+      "PreWriteMergeObservationRefusal",
       "ProvenPreSendRefusalError",
       "RepositoryRekeyRefused",
       "RestartRefusal",

@@ -325,6 +325,17 @@ bound delivery, relabels through `operation-status` with
 `reconcilePreSendInputHash`; the reconcile changes only the label and never
 re-runs the control.
 
+A move to merge reads the PR before it writes anything. If that read fails
+while the move has recorded no event since it began (nucleus#1428), the move
+refuses as `PreWriteMergeObservationRefusal`: the operation settles `failed`
+with a pre-send receipt, and the owner retries the move. A failure after the
+move has journaled a write or a stop intent stays uncertain, because a stop may
+have reached a turn. A legacy uncertain move to merge (one attempt, no
+boundary, no receipt) whose attempt window holds no task event is provably
+unwritten. `retry_effect operation.<id>` settles it failed, keeps the window
+and any later owner move as evidence, and never re-runs it. `next` offers the
+same reconciliation only where that proof holds.
+
 Restart does not deliver urgent steering into a healthy active worker, even with
 `fresh`. Wait for idle, or use `route now` to durably stop and replace the role on
 the selected profile. Routing without `now` selects a subsequent run. Selecting

@@ -66,12 +66,103 @@ export const preSendSettlementIdentity = (operation: QueueOperation): string =>
     operation.effect?.intentAt,
   ]);
 
+/** One row of the task's own journal, as the no-write proof reads it. */
+export interface JournalEvent {
+  id: number;
+  at: string;
+  kind: string;
+  detail: string;
+}
+
+/**
+ * Nucleus#1428: the no-write proof for an uncertain move to merge. Every store
+ * write and every stop intent a move makes is journaled, so an attempt whose
+ * own window (`startedAt` to `settledAt`) holds no task event provably wrote and
+ * sent nothing, and an observation timeout inside it changes nothing. A later
+ * owner move at the same head is corroboration only, never the proof: it can
+ * neither establish absence nor replace the window. Returns the evidence line,
+ * or null when any shape, boundary or journal fact is missing.
+ */
+export function unwrittenMergeMoveProof(
+  operation: QueueOperation,
+  payload: unknown,
+  events: readonly JournalEvent[],
+): string | null {
+  if (
+    operation.kind !== "task_control" ||
+    operation.state !== "needs_attention" ||
+    operation.result ||
+    operation.preSendReceipt ||
+    operation.preSendBoundaryStartedAt ||
+    operation.attempts !== 1 ||
+    !operation.taskId ||
+    !operation.startedAt ||
+    !operation.settledAt ||
+    !operationIdMatchesKey(operation) ||
+    !payloadMatchesInputHash(payload, operation.inputHash)
+  )
+    return null;
+  const body = payload as { type?: unknown; control?: unknown } | null;
+  const parsed = taskControlInputSchema.safeParse(body?.control);
+  const effect = operation.effect;
+  if (
+    body?.type !== "task_control" ||
+    !parsed.success ||
+    parsed.data.action !== "move" ||
+    parsed.data.to !== "merge" ||
+    parsed.data.taskId !== operation.taskId ||
+    parsed.data.version !== operation.expectedVersion ||
+    !effect ||
+    effect.kind !== "task_control" ||
+    effect.target !== "move" ||
+    effect.status !== "uncertain" ||
+    effect.result !== operation.diagnostic.slice(0, 2000)
+  )
+    return null;
+  const started = Date.parse(operation.startedAt);
+  const settled = Date.parse(operation.settledAt);
+  if (!Number.isFinite(started) || !Number.isFinite(settled) || settled < started)
+    return null;
+  const journaled = events.some((event) => {
+    const at = Date.parse(event.at);
+    return at >= started && at <= settled;
+  });
+  if (journaled) return null;
+  return `no task event was recorded between ${operation.startedAt} and ${operation.settledAt}, so the observation failed before any write or stop`;
+}
+
+/** The first move-to-merge the owner recorded after an attempt settled: corroboration only. */
+function laterMergeMove(
+  events: readonly JournalEvent[],
+  settledAt: string | null,
+): { eventId: number; at: string } | null {
+  const after = settledAt ? Date.parse(settledAt) : Number.NaN;
+  if (!Number.isFinite(after)) return null;
+  for (const event of events) {
+    if (
+      Date.parse(event.at) <= after ||
+      (event.kind !== "move_merge_requested" && event.kind !== "owner_control")
+    )
+      continue;
+    try {
+      const value = JSON.parse(event.detail) as { verb?: unknown; to?: unknown };
+      if (value.verb === "move" && value.to === "merge")
+        return { eventId: event.id, at: event.at };
+    } catch {
+      /* a non-JSON detail is not a move record */
+    }
+  }
+  return null;
+}
+
 interface PreSendAccess {
   operation(id: string): QueueOperation | null;
   operationPayload(id: string): unknown;
   putOperation(operation: QueueOperation): QueueOperation;
   runs(taskId?: string): Run[];
   task(id: string): Task;
+  eventsAll(taskId: string): JournalEvent[];
+  event(taskId: string, kind: string, detail: string): void;
 }
 
 export class StorePreSend {
@@ -128,6 +219,49 @@ export class StorePreSend {
       preSendSettlementIdentity(operation),
     );
     return settled;
+  }
+
+  /** The no-write evidence for an uncertain move to merge, or null (nucleus#1428). */
+  unwrittenMergeMoveProof(id: string): string | null {
+    const operation = this.access.operation(id);
+    if (!operation?.taskId) return null;
+    return unwrittenMergeMoveProof(
+      operation,
+      this.access.operationPayload(id),
+      this.access.eventsAll(operation.taskId),
+    );
+  }
+
+  /**
+   * Settle a proven no-write move to merge as failed, keeping its evidence and
+   * the owner's later move as corroboration. The control is never re-run; a
+   * changed identity or missing proof refuses and changes nothing.
+   */
+  reconcileUnwrittenMergeMove(id: string, inputHash: string): QueueOperation {
+    return this.core.transaction(() => {
+      const operation = this.access.operation(id);
+      if (!operation || operation.kind !== "task_control" || operation.inputHash !== inputHash || !operation.taskId)
+        throw new Error("Task-control operation not found or its input changed");
+      const proof = this.unwrittenMergeMoveProof(id);
+      if (!proof)
+        throw new Error("Operation evidence does not prove that no write was sent; delivery remains uncertain");
+      const at = now();
+      const later = laterMergeMove(this.access.eventsAll(operation.taskId), operation.settledAt);
+      const settled = this.access.putOperation({
+        ...operation,
+        state: "failed",
+        preSendReconciledAt: at,
+        effect: operation.effect
+          ? { ...operation.effect, status: "reconciled", result: proof.slice(0, 2000), resultAt: at }
+          : null,
+      });
+      this.access.event(
+        operation.taskId,
+        "operation_pre_send_reconciled",
+        JSON.stringify({ operationId: id, inputHash, proof, laterMove: later }).slice(0, 4000),
+      );
+      return settled;
+    });
   }
 
   private settleReceipt(operation: QueueOperation): QueueOperation {
