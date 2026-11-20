@@ -209,6 +209,7 @@ import { Sweep } from "./scheduling/sweep";
 import { HostOutages } from "./scheduling/host-outage";
 import { TaskWakes } from "./scheduling/task-wakes";
 import { CompletionFollowUps } from "./closeout/completion-follow-ups";
+import { DecisionNoticeDelivery } from "./questions/decision-notices";
 
 import { TerminalWorkspaceRetirement } from "./closeout/terminal-workspace-retirement";
 import { createStoreWorkspaceAllocationBridge } from "./workspaces/workspace-allocation-bridge";
@@ -570,7 +571,6 @@ export class Engine {
         [
           "checkpoints",
           "delegateNativeQuestions",
-          "deliverDecisionNotices",
           "deliverDrainNotices",
           "deliverHoldNotices",
           "deliverHostOutageNotices",
@@ -889,6 +889,7 @@ export class Engine {
   private readonly deferredVerbs: DeferredOwnerVerbs;
   private readonly reviewerAutoContinue: ReviewerAutoContinue;
   private readonly briefAmendmentDelivery: BriefAmendmentDelivery;
+  readonly decisionNotices: DecisionNoticeDelivery;
   private readonly reviewerControls: ReviewerControls;
   readonly moveControls: MoveControls;
   readonly restartControls: RestartControls;
@@ -1097,6 +1098,22 @@ export class Engine {
     this.deferredVerbs = new DeferredOwnerVerbs(this);
     this.reviewerAutoContinue = new ReviewerAutoContinue(this);
     this.briefAmendmentDelivery = new BriefAmendmentDelivery(this);
+    this.decisionNotices = new DecisionNoticeDelivery(
+      enginePorts(
+        this,
+        ["adapter", "cleanContext", "scheduleLane", "stopped", "store"],
+        [
+          "host",
+          "identifyOriginHost",
+          "originHostAvailable",
+          "paused",
+          "sendDurably",
+          "withHost",
+        ],
+      ),
+    );
+    this.resolution.scheduleDecisionDelivery = () =>
+      this.decisionNotices.schedule();
     this.reviewerControls = new ReviewerControls(this);
     this.moveControls = new MoveControls(this);
     this.restartControls = new RestartControls(this);
@@ -2535,6 +2552,10 @@ export class Engine {
   deliverPendingBriefAmendments(): Promise<void> {
     return this.briefAmendmentDelivery.deliverPending();
   }
+  /** Schedule coalesced, bounded decision-notice delivery independently of the fleet sweep. */
+  scheduleDecisionNotices(): Promise<void> {
+    return this.decisionNotices.schedule();
+  }
   stopTask(input: TaskControlInput): Promise<Task> {
     return this.ownerStop.stopTask(input);
   }
@@ -2717,6 +2738,7 @@ export class Engine {
     this.stopped = true;
     this.unsubscribePrerequisites();
     this.taskWakes.stop();
+    this.decisionNotices.stop();
     this.cleanups.stop();
     this.dispatchOwner.stop();
     // A native decision this process observes is left unknown rather than resent.

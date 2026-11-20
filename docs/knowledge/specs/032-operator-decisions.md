@@ -103,12 +103,30 @@ under [Spec 055](055-source-immutable-proof-executor.md).
 
 ## Delivery
 
-Answering sends one durable notice to the asking agent's thread through the
-existing notice path, deduplicated per decision version. Delivery failure is
-retried like other notices and never loses the answer: an agent that resumes
-lists its answered decisions.
-An answer the asking agent relays itself sends no notice: that thread already
-has it (Tom, 2026-09-29).
+Answering commits the decision version and schedules one durable notice to the
+asking agent's thread through a coalesced, bounded delivery owner on its own
+lane, independent of the serial fleet reconciliation sweep. Both T3 Inbox and
+board answers use the shared answer path, which preserves an independent wake
+for task effects while delivering decision notices without waiting behind slow
+task reconciliation.
+
+Startup, resume, unpause, host reconnect and bounded backoff retries route
+through that same delivery owner; the serial fleet sweep does not send decision
+notices. Per-recipient ordering stays FIFO while independent recipients run
+with bounded concurrency and per-step timeouts so a busy, unavailable or slow
+recipient stays pending and cannot monopolize delivery to an unrelated
+reachable recipient.
+
+Notices use the deterministic version identity (`decision:<id>:<version>`) and
+the shared durable send path (`intent` before send, fresh recipient and host
+availability checks, pause gates). Notification failure never rolls back the
+committed answer: an agent that resumes still lists its answered decisions.
+Proven pre-send refusals, busy threads and unavailable hosts keep the notice
+pending for retry; interrupted `intent` records on restart and non-pre-send
+send failures settle as `uncertain` and are never resent blindly (a late
+acknowledgement on an abandoned send settles `uncertain` to `delivered` without
+resending). An answer the asking agent relays itself sends no notice: that
+thread already has it (Tom, 2026-09-29).
 
 ## Staleness
 

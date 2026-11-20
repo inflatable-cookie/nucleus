@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store } from "../core/store/store";
 import { Engine } from "../core/engine";
+import { ProvenPreSendRefusalError } from "../core/host";
 import { Decisions, decisionHeadline, decisionNoticeId } from "../core/planning/decisions";
 import { Leads } from "../core/planning/leads";
 import { Papercuts } from "../core/planning/papercut-operations";
@@ -287,31 +288,36 @@ function deliveryFixture() {
   const store = new Store(join(dir, "queue.sqlite"));
   const state: AgentObservation = { id: "agent-asker", workspaceId: "ws", status: "idle", active: false, permissions: false, error: "" };
   const delivered: { agentId: string; messageId: string; text: string }[] = [];
-  let fail = false;
+  let failMode: "none" | "refuse" | "unknown" = "none";
   const adapter = {
     profiles: async () => [], observe: async () => state,
-    notify: async (agentId: string, messageId: string, text: string) => { if (fail) throw new Error("transport down"); delivered.push({ agentId, messageId, text }); },
+    notify: async (agentId: string, messageId: string, text: string) => {
+      if (failMode === "refuse") throw new ProvenPreSendRefusalError("transport not ready");
+      if (failMode === "unknown") throw new Error("transport down");
+      delivered.push({ agentId, messageId, text });
+    },
   } as unknown as Adapter & { notify(agentId: string, messageId: string, text: string): Promise<void> };
   const engine = new Engine(store, adapter);
   engine.identifyOriginHost = async () => 'host';
   store.setMeta("paused", false);
   store.setMeta("quiet", true);
   const decisions = new Decisions(store);
-  return { dir, store, engine, decisions, delivered, state, setFail(value: boolean) { fail = value; },
-    close() { store.close(); rmSync(dir, { recursive: true, force: true }); } };
+  return { dir, store, engine, decisions, delivered, state,
+    setFail(value: boolean | "refuse" | "unknown") { failMode = value === true ? "refuse" : value === false ? "none" : value; },
+    async close() { await engine.stop(); store.close(); rmSync(dir, { recursive: true, force: true }); } };
 }
 
-test("032-7 answering sends one durable notice per version and a failure retries without losing the answer", async () => {
+test("032-7 answering sends one durable notice per version, retries pre-send refusals, and never resends uncertain deliveries", async () => {
   const f = deliveryFixture(); try {
     const decision = f.decisions.add({ question: "Ship it?", askedBy: "agent-asker", project });
-    f.setFail(true);
+    f.setFail("refuse");
     const answered = f.decisions.answer({ id: decision.id, version: 1, answer: "Yes, ship it.", answeredBy: "operator (board)", relayed: false, note: "" });
     assert.equal(answered.delivery?.status, "pending");
     assert.equal(answered.delivery?.noticeId, decisionNoticeId(decision.id, 2));
 
     await f.engine.resolution.deliverDecisionNotices();
-    assert.equal(f.delivered.length, 0, "a failed delivery sends nothing");
-    assert.equal(f.decisions.get({ id: decision.id }).delivery?.status, "uncertain");
+    assert.equal(f.delivered.length, 0, "a pre-send refusal sends nothing");
+    assert.equal(f.decisions.get({ id: decision.id }).delivery?.status, "pending");
     assert.equal(f.decisions.get({ id: decision.id }).answer?.text, "Yes, ship it.", "the answer stays listable");
     assert.deepEqual(f.decisions.list({ status: "answered" }).map(d => d.id), [decision.id]);
 
@@ -326,7 +332,17 @@ test("032-7 answering sends one durable notice per version and a failure retries
     await f.engine.resolution.deliverDecisionNotices();
     await f.engine.resolution.deliverDecisionNotices();
     assert.equal(f.delivered.length, 1, "delivery is deduplicated per decision version");
-  } finally { f.close(); }
+
+    const uncertain = f.decisions.add({ question: "Ship second?", askedBy: "agent-asker", project });
+    f.decisions.answer({ id: uncertain.id, version: 1, answer: "Yes, second.", answeredBy: "operator (board)", relayed: false, note: "" });
+    f.setFail("unknown");
+    await f.engine.resolution.deliverDecisionNotices();
+    assert.equal(f.decisions.get({ id: uncertain.id }).delivery?.status, "uncertain");
+    assert.equal(f.decisions.get({ id: uncertain.id }).answer?.text, "Yes, second.", "the answer stays committed");
+    f.setFail(false);
+    await f.engine.resolution.deliverDecisionNotices();
+    assert.equal(f.delivered.length, 1, "an uncertain send is never resent blindly");
+  } finally { await f.close(); }
 });
 
 test("032-9 an answer relayed by the asker itself sends no notice back to its own thread", async () => {
@@ -340,7 +356,7 @@ test("032-9 an answer relayed by the asker itself sends no notice back to its ow
     f.decisions.answer({ id: other.id, version: 1, answer: "Yes.", answeredBy: "agent-relay", relayed: true, note: "Tom: yes" });
     await f.engine.resolution.deliverDecisionNotices();
     assert.deepEqual(f.delivered.map(d => d.messageId), [decisionNoticeId(other.id, 2)], "only an answer relayed by someone else is delivered");
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 test("032-8 delivery waits while the asking agent is busy and pauses with the queue", async () => {
@@ -358,7 +374,7 @@ test("032-8 delivery waits while the asking agent is busy and pauses with the qu
     f.store.setMeta("paused", false);
     await f.engine.resolution.deliverDecisionNotices();
     assert.equal(f.delivered.length, 1);
-  } finally { f.close(); }
+  } finally { await f.close(); }
 });
 
 test("032-9 a decision view names its Queue project, and agent-projects maps a thread by its task, else by its working directory", () => {

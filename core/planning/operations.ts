@@ -531,6 +531,11 @@ export class Operations {
       states: ["pending", "running"],
     }))
       this.engine.scheduleOperation(operation.id);
+    if (!this.engine.stopped && this.store.pendingDecisionDeliveries().length > 0) {
+      void this.engine.scheduleDecisionNotices().catch(() => {
+        /* decision delivery records its own wait or fault */
+      });
+    }
   }
   reconcileSourcePromotion(operation: QueueOperation): void {
     reconcileSourcePromotion(this.store, operation, this.activeOperations);
