@@ -391,8 +391,8 @@ export class T3CodeHost implements Host {
   decisionParent(taskId: string): import("../../core/acp/decisions").ParentStatus {
     if (!this.connected) return { state: "unknown" };
     const parent = this.state.read().parents?.[taskId];
-    return !parent ? { state: "absent" } : parent.archivedAt
-      ? { state: "unknown" }
+    return !parent || parent.archivedAt
+      ? { state: "absent" }
       : { state: "parent", sessionId: parent.sessionId };
   }
   capabilities() {

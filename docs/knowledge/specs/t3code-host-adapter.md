@@ -893,10 +893,11 @@ expiry is not evidence that the original answer was never delivered.
 ## Operator decisions on T3
 
 An open decision linked to a T3 task goes to its recorded ACP parent when one is
-available; before a parent exists it goes to that host's single pinned **Nucleus**
+available; when no eligible parent exists (before a parent is created or after a
+recorded parent is archived) it goes to that host's single pinned **Nucleus**
 inbox. Other operator decisions also go to the inbox. No parent is created to ask a
-question. An unavailable parent whose cards cannot be read stays unknown, rather
-than authorizing a second offer. The
+question. A disconnected host or an unreadable parent stays unknown, rather than
+authorizing a second offer. The
 inbox has a dedicated service-owned directory and a host-scoped ACP binding, not
 a task identity. Its credential can read its decision projection and answer it,
 but cannot send a task message, report a run or exercise task controls. Re-minting

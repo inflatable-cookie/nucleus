@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { T3CodeHost } from "../hosts/t3code/adapter";
 import { decode } from "../hosts/t3code/contracts";
 import { projection } from "../hosts/t3code/contracts";
+import { proposedOwner } from "../core/acp/decisions";
 import {
   HOLD_MARKER,
   PARENT_MODEL,
@@ -928,4 +929,51 @@ test("a nested role refuses a missing model on a settled provider before creatin
   }), (error: unknown) => error instanceof ProvenPreSendRefusalError && /does not report model missing/.test(error.message));
   assert.equal(parentOf(host), undefined);
   assert.equal(commandOf(server, "delegated_task.request"), undefined);
+});
+
+test("decisionParent routes an archived parent to the Inbox and keeps a disconnected host unknown", async (t) => {
+  const { host, server, spec } = await fixture(t);
+  const taskId = "synthetic-task";
+  const fakeStore = {
+    taskOrNull: (id: string) =>
+      id === taskId ? ({ id, hostId: host.hostId, removedAt: null } as Task) : null,
+  } as unknown as import("../core/store/store").Store;
+  const decision = {
+    id: "11111111-1111-4111-8111-111111111199",
+    version: 1,
+    links: { tasks: [taskId] },
+  } as unknown as import("../shared/contracts").Decision;
+  const lookup = (_hostId: string, id: string) => host.decisionParent(id);
+
+  assert.deepEqual(host.decisionParent(taskId), { state: "absent" });
+  assert.deepEqual(proposedOwner(fakeStore, decision, host.hostId, lookup), {
+    kind: "inbox",
+    hostId: host.hostId,
+  });
+
+  await host.createAgent(spec("worker-create", "Do the work"));
+  const parent = parentOf(host)!;
+  assert.deepEqual(host.decisionParent(taskId), {
+    state: "parent",
+    sessionId: parent.sessionId,
+  });
+  assert.deepEqual(proposedOwner(fakeStore, decision, host.hostId, lookup), {
+    kind: "task",
+    taskId,
+    hostId: host.hostId,
+    sessionId: parent.sessionId,
+  });
+
+  finishChildren(host, server);
+  await host.reconcileThreadTitles([{ id: taskId, phase: "done" } as Task]);
+  assert.notEqual(parentOf(host)?.archivedAt, undefined);
+  assert.deepEqual(host.decisionParent(taskId), { state: "absent" });
+  assert.deepEqual(proposedOwner(fakeStore, decision, host.hostId, lookup), {
+    kind: "inbox",
+    hostId: host.hostId,
+  });
+
+  host.close();
+  assert.deepEqual(host.decisionParent(taskId), { state: "unknown" });
+  assert.equal(proposedOwner(fakeStore, decision, host.hostId, lookup), null);
 });
