@@ -117,25 +117,7 @@ export class OrdinaryEffectRetries {
   }
 
   async retryOwnedToolHold(task: Task, ownedTool: OwnerEffect): Promise<Task> {
-    const runId = ownerEffectIdentity(ownedTool.effect, 'owned_tool')!;
-    const runs = this.store.runs(task.id);
-    const run = runs.find(item => item.id === runId);
-    // The initial worker and retired initial workers live on the task row,
-    // without a corresponding Run record. Resolve the effect through every
-    // durable participant binding before deciding that its agent is unreadable.
-    const retiredWorker = task.retiredWorkers.find(worker => worker.runId === runId);
-    const bindings = [
-      run?.agentId ? { agentId: run.agentId, workspaceId: run.workspaceId } : null,
-      task.runId === runId && task.agentId && task.workspaceId
-        ? { agentId: task.agentId, workspaceId: task.workspaceId } : null,
-      retiredWorker ? { agentId: retiredWorker.agentId, workspaceId: run?.workspaceId ?? task.workspaceId } : null,
-    ].filter((binding): binding is { agentId: string; workspaceId: string } => Boolean(binding?.workspaceId));
-    const bindingKeys = new Set(bindings.map(binding => `${binding.agentId}\0${binding.workspaceId}`));
-    if (bindingKeys.size > 1) throw Error(`Owned-tool hold ${runId} has conflicting agent bindings`);
-    const binding = bindings[0];
-    if (!binding) throw Error(`Owned-tool hold ${runId} no longer has a readable agent binding`);
-    const hold = await this.engine.ownedToolHold(binding.agentId, runId, task.id);
-    if (hold) throw Error(`Owned-tool hold ${runId} remains: ${hold}`);
+    await reconcileOwnedToolHold(this.engine, task, ownedTool);
     await this.engine.settleObservedIdleRuns(task.id, `retry_effect ${ownedTool.effect}`);
     return this.store.task(task.id);
   }
@@ -214,4 +196,35 @@ export class OrdinaryEffectRetries {
         throw Error(`${found.kind} is settled by its own observer`);
     }
   }
+}
+
+/**
+ * Reconcile one recorded `owned_tool.<runId>` hold against fresh participant
+ * custody, tool timeline, and owned-process evidence. Clears stale holds once
+ * proven inactive or retired with zero live tools; refuses with the remaining
+ * cause otherwise.
+ */
+export async function reconcileOwnedToolHold(engine: Engine, task: Task, ownedTool: OwnerEffect): Promise<void> {
+  const runId = ownerEffectIdentity(ownedTool.effect, 'owned_tool')!;
+  const runs = engine.store.runs(task.id);
+  const run = runs.find(item => item.id === runId);
+  // The initial worker and retired initial workers live on the task row,
+  // without a corresponding Run record. Resolve the effect through every
+  // durable participant binding before deciding that its agent is unreadable.
+  const retiredWorker = task.retiredWorkers.find(worker => worker.runId === runId);
+  const bindings = [
+    run?.agentId ? { agentId: run.agentId, workspaceId: run.workspaceId } : null,
+    task.runId === runId && task.agentId && task.workspaceId
+      ? { agentId: task.agentId, workspaceId: task.workspaceId } : null,
+    retiredWorker ? { agentId: retiredWorker.agentId, workspaceId: run?.workspaceId ?? task.workspaceId } : null,
+  ].filter((binding): binding is { agentId: string; workspaceId: string } => Boolean(binding?.workspaceId));
+  const bindingKeys = new Set(bindings.map(binding => `${binding.agentId}\0${binding.workspaceId}`));
+  if (bindingKeys.size > 1) throw Error(`Owned-tool hold ${runId} has conflicting agent bindings`);
+  const binding = bindings[0];
+  if (!binding) throw Error(`Owned-tool hold ${runId} no longer has a readable agent binding`);
+  const hold = await engine.ownedToolHold(binding.agentId, runId, task.id, {
+    requireCompleteEvidence: true,
+    allowRetired: true,
+  });
+  if (hold) throw Error(`Owned-tool hold ${runId} remains: ${hold}`);
 }

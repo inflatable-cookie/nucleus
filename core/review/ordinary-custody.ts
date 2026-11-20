@@ -46,16 +46,24 @@ export class OrdinaryCustody {
     const participants = new Map([...taskParticipants].map(id => [id, t.workspaceId!]));
     if (prior.agentId) participants.set(prior.agentId, t.workspaceId!);
     for (const [id, workspaceId] of participants) {
-      const participantRunIds=participantToolRunIds(t,this.context.store.runs(t.id),id,workspaceId);
-      const held = await this.context.ownedToolHold(id, { requireCompleteEvidence: true, runId: participantRunIds[0], runIds: participantRunIds, taskId: t.id, workspaceId });
-      if (held) throw Error(`Ordinary review participant has live or unknown tools: ${held}`);
-      const state = await this.context.host.observe(id);
-      // matchingInactiveParticipant admits an errored agent with no active
-      // turn and no pending permission wherever it admits a closed one, so a
-      // dead provider session never blocks a round that does not need it.
-      // The round's own reviewer still needs a live idle agent to receive it.
-      if (!matchingInactiveParticipant({ agentId: id, workspaceId }, state, restoring || id !== run.agentId ? ['idle', 'closed'] : ['idle']))
+      const allowRetired = restoring || id !== run.agentId;
+      if (!allowRetired) {
+        const state = await this.context.host.observe(id);
+        if (!matchingInactiveParticipant({ agentId: id, workspaceId }, state, ['idle']))
+          throw Error('Ordinary review participant is not idle and permission-free in the recorded workspace');
+      }
+      const participantRunIds = participantToolRunIds(t, this.context.store.runs(t.id), id, workspaceId);
+      const held = await this.context.ownedToolHold(id, {
+        requireCompleteEvidence: true,
+        allowRetired,
+        runId: participantRunIds[0],
+        runIds: participantRunIds,
+        taskId: t.id,
+        workspaceId,
+      });
+      if (held === 'participant is not idle and permission-free in the recorded workspace')
         throw Error('Ordinary review participant is not idle and permission-free in the recorded workspace');
+      if (held) throw Error(`Ordinary review participant has live or unknown tools: ${held}`);
     }
     const latest = this.context.store.task(t.id);
     const reviewIdentity = (task: Task) => JSON.stringify([

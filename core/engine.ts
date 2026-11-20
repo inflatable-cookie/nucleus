@@ -2981,8 +2981,9 @@ export class Engine {
     agentId: string,
     runId?: string,
     taskId?: string,
+    options?: { requireCompleteEvidence?: boolean; allowRetired?: boolean },
   ): Promise<string | null> {
-    return this.runRelease.ownedToolHold(agentId, runId, taskId);
+    return this.runRelease.ownedToolHold(agentId, runId, taskId, options);
   }
   observedRunLiveness(run: Run): Promise<boolean | null> {
     return this.runRelease.observedRunLiveness(run);

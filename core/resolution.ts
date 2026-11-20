@@ -2466,6 +2466,7 @@ export class Resolution {
     agentId: string,
     options: {
       requireCompleteEvidence?: boolean;
+      allowRetired?: boolean;
       runId?: string;
       runIds?: string[];
       taskId?: string;

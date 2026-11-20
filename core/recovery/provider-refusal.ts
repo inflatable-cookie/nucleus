@@ -1,6 +1,9 @@
 import type { Run, Task } from '../../shared/contracts';
+import { isTransportFailure } from '../../shared/transport';
 import { isDispositionActive, isDispositionComplete } from '../../shared/contracts';
 import { dispatchBlocked } from '../dispatch/capacity';
+import { HostTransportFault } from '../host/adapter-routing';
+import { isHostOperationTimeout } from '../host/errors';
 import { isQuotaExhaustion, providerRetryAt } from './exhaustion';
 import { taskPrNumber } from '../forge/index';
 import type { AgentObservation } from '../host/adapter';
@@ -269,11 +272,18 @@ export class ProviderRefusals {
     const before = this.store.task(task.id);
     const version = before.version;
     if (this.resolution.refusalGap(before, run, version)) return false;
-    const page = await this.resolution.host.agentTimelinePage(run.agentId, 100);
+    let page: TimelinePage | null = null;
+    let pageErrorGap: string | null = null;
+    try {
+      page = await this.resolution.host.agentTimelinePage(run.agentId, 100);
+    } catch (error) {
+      if (isTransportFailure(error) || isHostOperationTimeout(error) || error instanceof HostTransportFault || (error instanceof Error && error.name === 'T3CompatibilityError')) throw error;
+      pageErrorGap = error instanceof Error ? error.message : String(error);
+    }
     if (this.resolution.stopped()) return false;
     const afterRead = this.store.task(task.id);
     if (this.resolution.refusalGap(afterRead, run, version)) return false;
-    const read = detectReviewerProviderRefusal(page, run.id);
+    const read = pageErrorGap ? { state: 'unverified' as const, gap: pageErrorGap } : detectReviewerProviderRefusal(page, run.id);
     if (read.state === 'unverified') {
       // Bounded, never indefinite (papercut fe93582a): the first read surfaces its
       // exact gap and holds one grace; the last read hands the run back to the

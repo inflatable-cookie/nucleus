@@ -7,9 +7,11 @@ import { assertCanonicalPrSource, taskPrNumber } from "../../forge/index";
 import { runsUnchangedSince } from "../../recovery/observation-advance";
 import { blockingRecoveryEffectsRefusal } from "../../recovery/recovery-effects";
 import { operatorReplacementPending } from "../../recovery/task-reasons";
+import { participantToolRunIds } from "../../recovery/task-reasons/participants";
 import { reviewerIdentityAtHead } from "../../review/review-continuation";
 import { proofOnlyReceiptAwaitingReview } from "../../qa/proof-records";
-import { currentReadyPrEvidence } from "../owner-verbs";
+import { collectOwnerVerbFacts, currentReadyPrEvidence, ownerPendingEffects } from "../owner-verbs";
+import { reconcileOwnedToolHold } from "../retry-effect-ordinary";
 import { MOVE_REVIEW_PR_REFUSAL, MOVE_REVIEW_WORKSPACE_REFUSAL, moveStateRefusal, REMOVED_TASK_REFUSAL } from "../control-refusals";
 import { cancelDisplacedReviewers, observeReviewerDisplacement } from "./review-displacement";
 import { moveRetainedReader } from "./review-reader";
@@ -92,10 +94,32 @@ export async function moveToReview(engine: Engine, input: ReviewMoveInput, opera
     if (!retained) return;
     if (!task.agentId || !task.workspaceId || !task.directory || !task.profile || operatorReplacementPending(task))
       throw Error(MOVE_REVIEW_WORKSPACE_REFUSAL);
-    for (const agentId of new Set([task.agentId, ...task.retiredWorkers.map(worker => worker.agentId)])) {
-      const observed = await engine.host.observe(agentId);
-      if (observed.id !== agentId || observed.workspaceId !== task.workspaceId || observed.active || observed.activeTurnId || observed.permissions || !['idle', 'error', 'closed'].includes(observed.status))
-        throw Error('Move to review requires the retained workers to be observably inactive in the task workspace');
+    const observedCurrent = await engine.host.observe(task.agentId);
+    if (observedCurrent.id !== task.agentId || observedCurrent.workspaceId !== task.workspaceId || observedCurrent.active || observedCurrent.activeTurnId || observedCurrent.permissions || !['idle', 'error', 'closed'].includes(observedCurrent.status))
+      throw Error('Move to review requires the retained workers to be observably inactive in the task workspace');
+    const runs = store.runs(task.id);
+    for (const agentId of new Set(task.retiredWorkers.map(worker => worker.agentId))) {
+      if (agentId === task.agentId) continue;
+      if (adapter.noLiveWorkspaceProcesses && adapter.hostProcessListing) {
+        const runIds = participantToolRunIds(task, runs, agentId, task.workspaceId);
+        const hold = await engine.resolution.ownedToolHold(agentId, {
+          allowRetired: true,
+          requireCompleteEvidence: true,
+          runId: runIds[0],
+          runIds,
+          taskId: task.id,
+          workspaceId: task.workspaceId,
+        });
+        if (hold) throw Error(
+          hold === 'participant is not idle and permission-free in the recorded workspace'
+            ? 'Move to review requires the retained workers to be observably inactive in the task workspace'
+            : `Move to review requires retired worker ${agentId} to clear owned tools: ${hold}`,
+        );
+      } else {
+        const observed = await engine.host.observe(agentId);
+        if (observed.id !== agentId || observed.workspaceId !== task.workspaceId || observed.active || observed.activeTurnId || observed.permissions || !['idle', 'error', 'closed'].includes(observed.status))
+          throw Error('Move to review requires the retained workers to be observably inactive in the task workspace');
+      }
     }
   };
   const checkRetainedEffects = () => {
@@ -103,6 +127,9 @@ export async function moveToReview(engine: Engine, input: ReviewMoveInput, opera
     const refusal = blockingRecoveryEffectsRefusal(store, store.task(task.id), { kinds: ['run-delivery', 'publication', 'review-delivery', 'merge-response'] });
     if (refusal) throw Error(refusal);
   };
+  for (const ownedTool of ownerPendingEffects(collectOwnerVerbFacts(store, store.task(task.id))).filter(effect => effect.kind === 'owned_tool')) {
+    await reconcileOwnedToolHold(engine, store.task(task.id), ownedTool);
+  }
   checkRetainedEffects();
   await observeRetainedWorkers();
   // Spec 050 (#3569): finished runs settle by observation before the run
