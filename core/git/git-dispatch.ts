@@ -17,6 +17,7 @@ import { gitStatus, queueCheckoutStatus, currentWorkerBranch } from "./git-check
 import { assertPinnedBrief, validateSubmission, verifyBriefWorkerIdentity } from "./git-submission";
 import { dirtyWorktreeError } from "./git-stash";
 import { verifyRecordedOrigin } from "./git-proof";
+import { commonDirMatchesTask } from "./git-identity";
 import type { Store } from "../store/store";
 import { COMMITTED_HANDOFF_RETIRED } from "../planning/brief";
 
@@ -310,7 +311,9 @@ export async function verifyCleanQueueWorktree(task: Task) {
  */
 export async function verifyResume(task: Task) {
   if (!task.directory) throw new Error("Missing continuation worktree");
-  if (await git(task.directory, "rev-parse", "--git-common-dir") !== await git(task.repoPath, "rev-parse", "--path-format=absolute", "--git-common-dir")) throw new Error("Continuation worktree belongs to another repository");
+  const observedCommon = await git(task.directory, "rev-parse", "--path-format=absolute", "--git-common-dir");
+  const planningCommon = await git(task.repoPath, "rev-parse", "--path-format=absolute", "--git-common-dir");
+  if (!commonDirMatchesTask(task, observedCommon, planningCommon, task.directory)) throw new Error("Continuation worktree belongs to another repository");
   const branch = await currentWorkerBranch(task, task.directory);
   if (branch !== task.branch || task.branch === task.baseBranch) throw new Error("Continuation branch changed; inspect before replacing the worker");
   if (!task.brief) throw new Error(COMMITTED_HANDOFF_RETIRED);

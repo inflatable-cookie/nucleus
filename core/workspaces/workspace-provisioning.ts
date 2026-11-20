@@ -408,6 +408,8 @@ export class WorkspaceProvisioning {
         this.siblingDataDir,
         current.repoPath,
         current.directory,
+        undefined,
+        current.workspaceAllocation,
       );
       detail = (
         await ensureSharedSiblingCheckouts({

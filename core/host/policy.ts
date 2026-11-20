@@ -149,6 +149,7 @@ export interface HostPolicyPort
     reviewer?: ReviewerSetting,
   ): Promise<number | void>;
   scratchNamespaceFor?: (task: Task) => string;
+  workspaceAllocationBridge?: import("../workspaces/workspace-allocation-bridge").WorkspaceAllocationBridge;
   runScratch: RunScratchPlacement;
   scratchPlacement(task?: Task): RunScratchPlacement;
 }

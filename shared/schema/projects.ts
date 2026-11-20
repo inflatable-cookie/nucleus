@@ -5,6 +5,7 @@ import { projectQaSchema } from "./qa-config";
 import { RETIRED_VALIDATION_POLICY_FIELD } from "./repository-identity";
 import { PROJECT_OWNER_CANDIDATE_KINDS } from "../owner-candidate-kind";
 import { hostKindSchema } from "../host-kind";
+import { workspaceProviderSchema } from "./workspace";
 
 /** The same repository identity as outcomes, lanes and task numbers: normalised origin plus a local path hint. The path hint may be empty when only the origin is known. */
 export const projectRepositorySchema = z.object({
@@ -45,6 +46,8 @@ export const repositorySettingsSchema = z.object({
   checksPolicy: repositoryChecksPolicySchema.nullable().default(null),
   /** Optional repository host override; null means use the operator and planner defaults. */
   hostKind: hostKindSchema.nullable().default(null),
+  /** Optional workspace provider override; null keeps Queue's local git-worktree default. */
+  workspaceProvider: workspaceProviderSchema.nullable().default(null),
   note: z.string().max(4000).default(""),
   updatedAt: z.string(),
   revision: z.number().int().nonnegative().default(0),
@@ -71,6 +74,7 @@ export const repositorySetInputSchema = z.object({
   // Parsed only so the refusal below names the replacement; no stored row keeps it.
   [RETIRED_VALIDATION_POLICY_FIELD]: z.unknown().optional(),
   checksPolicy: repositoryChecksPolicySchema.nullable().optional(),
+  workspaceProvider: workspaceProviderSchema.nullable().optional(),
   hostKind: hostKindSchema.nullable().optional(),
   note: z.string().max(4000).optional(),
 }).strict().superRefine((input, ctx) => {

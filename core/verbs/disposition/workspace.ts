@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import type { Task } from "../../../shared/contracts";
 import type { Store } from "../../store/store";
 import { git, originBranchContaining, verifyRecordedOrigin, queueCheckoutStatus } from "../../git/index";
+import { commonDirMatchesTask } from "../../git/git-identity";
 
 export async function proveWorkspaceEmpty(store: Store, task: Task, baseOnly = false, allowDirty = false): Promise<{ empty: boolean; detail: string; uncertain?: string }> {
   if (!task.workspaceId || !task.directory) return { empty: false, detail: "No task workspace was created" };
@@ -16,7 +17,7 @@ export async function proveWorkspaceEmpty(store: Store, task: Task, baseOnly = f
     if (branch !== task.branch) return { empty: false, detail: `Workspace is on ${branch || "a detached head"}, not the queue branch ${task.branch}; preserved without archive` };
     const common = await git(task.directory, "rev-parse", "--path-format=absolute", "--git-common-dir");
     const canonical = await git(task.repoPath, "rev-parse", "--path-format=absolute", "--git-common-dir");
-    if (common !== canonical) return { empty: false, detail: "Workspace belongs to another repository; preserved without archive" };
+    if (!commonDirMatchesTask(task, common, canonical, task.directory)) return { empty: false, detail: "Workspace belongs to another repository; preserved without archive" };
     const head = await git(task.directory, "rev-parse", "HEAD");
     // Under a recorded owner content discard only the content proofs are waived:
     // the clean head, the porcelain state and publication. Identity, repository,

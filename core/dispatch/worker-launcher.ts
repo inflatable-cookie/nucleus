@@ -25,6 +25,7 @@ import { startsNoRuns } from "../closeout/queue-drain";
 import { agentSettled } from "../machine/agent-settled";
 import { dirname } from "node:path";
 import { ensureTaskNodeModules } from "../workspaces/task-node-modules";
+import { verifyBargeLeaseAndCustody } from "../workspaces/barge-allocator";
 
 /**
  * Creates a task's worker once: one creation per task at a time, one run identity
@@ -132,6 +133,16 @@ export class WorkerLauncher {
         );
     }
     let branch: string;
+    if (task.workspaceAllocation?.provider === "barge") {
+      const bridge = this.engine.adapter.workspaceAllocationBridge;
+      await verifyBargeLeaseAndCustody({
+        allocation: task.workspaceAllocation,
+        saveAllocation: bridge
+          ? (updated) => bridge.saveWorkspaceAllocation(task.id, updated)
+          : undefined,
+        cliOptions: bridge?.bargeCliOptions,
+      });
+    }
     // A continuation keeps the retained worktree's work: after a retired worker,
     // or after a gone author's replacement, verify it as a continuation.
     if (task.retiredWorkers.length || task.continuesWorkspace) {
@@ -147,6 +158,12 @@ export class WorkerLauncher {
       task.directory,
       task.repoPath,
       dirname(task.directory),
+      task.workspaceAllocation?.provider === "barge"
+        ? {
+            expectedCommonDir: task.workspaceAllocation.gitCommonDir,
+            expectedCheckoutPath: task.workspaceAllocation.checkoutPath,
+          }
+        : undefined,
     );
     const stash = await this.engine.readStash(task.directory);
     if (startsNoRuns(this.store, this.engine.stopped)) return;

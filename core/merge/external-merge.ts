@@ -21,7 +21,7 @@ import {
   GitReadTimeoutError,
   queueCheckoutStatus,
 } from "../git/index";
-import { readGitCheckout } from "../git/git-identity";
+import { commonDirMatchesTask, readGitCheckout } from "../git/git-identity";
 import { blockingRecoveryEffectsRefusal } from "../recovery/recovery-effects";
 import type {
   ReviewEntryExternalMerge,
@@ -547,7 +547,7 @@ export class ExternalMerge {
       checkout.toplevel !== root
     )
       throw Error("Retained workspace is aliased or is not its Git root");
-    if (checkout.commonDir !== repoGit.commonDir)
+    if (!commonDirMatchesTask(t, checkout.commonDir, repoGit.commonDir, t.directory))
       throw Error("Retained workspace belongs to another repository");
     if (
       !t.repository ||

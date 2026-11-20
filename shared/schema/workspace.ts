@@ -510,3 +510,97 @@ export const displacedHostWorkspaceSchema = z
 export type DisplacedHostWorkspace = z.infer<
   typeof displacedHostWorkspaceSchema
 >;
+
+export const workspaceProviderSchema = z.enum(["local", "barge"]);
+export type WorkspaceProvider = z.infer<typeof workspaceProviderSchema>;
+
+export const bargeCustodianStateSchema = z.enum([
+  "starting",
+  "holding",
+  "releasing",
+  "released",
+  "lost",
+]);
+export type BargeCustodianState = z.infer<typeof bargeCustodianStateSchema>;
+
+export const bargeCustodianSchema = z
+  .object({
+    state: bargeCustodianStateSchema,
+    token: z.string().min(1),
+    pid: z.number().int().positive().nullable().default(null),
+    startIdentity: z.string().min(1).nullable().default(null),
+    readyFile: z.string().min(1).nullable().default(null),
+    stopFile: z.string().min(1).nullable().default(null),
+    startedAt: z.string(),
+    verifiedAt: z.string().nullable().default(null),
+    releasedAt: z.string().nullable().default(null),
+    error: z.string().nullable().default(null),
+  })
+  .strict();
+export type BargeCustodian = z.infer<typeof bargeCustodianSchema>;
+
+export const bargeReturnStateSchema = z.enum([
+  "idle",
+  "intent",
+  "uncertain",
+  "refused",
+  "interrupted",
+  "returned",
+]);
+export type BargeReturnState = z.infer<typeof bargeReturnStateSchema>;
+
+export const bargeReturnRecordSchema = z
+  .object({
+    operationId: z.string().min(1),
+    requestId: z.string().min(1),
+    state: bargeReturnStateSchema,
+    disposable: z.boolean().default(false),
+    dispositionEvidence: z.string().nullable().default(null),
+    attemptCount: z.number().int().nonnegative().default(0),
+    startedAt: z.string(),
+    updatedAt: z.string(),
+    returnedAt: z.string().nullable().default(null),
+    lastError: z.string().nullable().default(null),
+    lastErrorKind: z.string().nullable().default(null),
+  })
+  .strict();
+export type BargeReturnRecord = z.infer<typeof bargeReturnRecordSchema>;
+
+export const bargeAllocationStateSchema = z.enum([
+  "intent",
+  "leased",
+  "uncertain",
+  "returning",
+  "interrupted",
+  "returned",
+  "lost",
+]);
+export type BargeAllocationState = z.infer<typeof bargeAllocationStateSchema>;
+
+export const workspaceAllocationSchema = z
+  .object({
+    provider: workspaceProviderSchema,
+    sequence: z.number().int().positive().default(1),
+    allocationId: z.string().min(1),
+    requestId: z.string().min(1).nullable().default(null),
+    repoPath: z.string().min(1),
+    /** Origin/repo argument passed to `barge --json worktree ... --repo`. */
+    repoIdentifier: z.string().min(1).nullable().default(null),
+    baseBranch: z.string().min(1).nullable().default(null),
+    baseSha: z.string().min(1).nullable().default(null),
+    branch: z.string().min(1).nullable().default(null),
+    label: z.string().min(1).nullable().default(null),
+    leaseId: z.string().min(1).nullable().default(null),
+    pool: z.string().min(1).nullable().default(null),
+    rootId: z.string().min(1).nullable().default(null),
+    checkoutPath: z.string().min(1).nullable().default(null),
+    gitCommonDir: z.string().min(1).nullable().default(null),
+    state: bargeAllocationStateSchema.default("leased"),
+    custodian: bargeCustodianSchema.nullable().default(null),
+    returnRecord: bargeReturnRecordSchema.nullable().default(null),
+    createdAt: z.string(),
+    updatedAt: z.string(),
+    error: z.string().nullable().default(null),
+  })
+  .strict();
+export type WorkspaceAllocation = z.infer<typeof workspaceAllocationSchema>;

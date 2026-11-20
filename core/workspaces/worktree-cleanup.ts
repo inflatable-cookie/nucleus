@@ -309,12 +309,30 @@ export async function buildOutputDirectoryAbsent(directory: string): Promise<boo
  * Checkout identity for a run-bound settlement: the directory still shares the
  * task repository's Git common directory. Returns the refusal, or null.
  */
-export async function buildOutputCheckoutMismatch(repoPath: string, directory: string): Promise<string | null> {
+export async function buildOutputCheckoutMismatch(
+  repoPath: string,
+  directory: string,
+  options?: { expectedCommonDir?: string | null; expectedCheckoutPath?: string | null },
+): Promise<string | null> {
   try {
-    const [checkout, repository] = await Promise.all([
-      defaultGit(directory, "rev-parse", "--path-format=absolute", "--git-common-dir"),
-      defaultGit(repoPath, "rev-parse", "--path-format=absolute", "--git-common-dir"),
-    ]);
+    if (options?.expectedCheckoutPath) {
+      const [actualDir, expectedDir] = await Promise.all([
+        realpath(directory),
+        realpath(options.expectedCheckoutPath),
+      ]);
+      if (actualDir !== expectedDir) {
+        return "its checkout path no longer matches the recorded allocation";
+      }
+    }
+    const checkout = await defaultGit(directory, "rev-parse", "--path-format=absolute", "--git-common-dir");
+    if (options?.expectedCommonDir) {
+      const [actualCommon, expectedCommon] = await Promise.all([
+        realpath(checkout).catch(() => resolve(checkout)),
+        realpath(options.expectedCommonDir).catch(() => resolve(options.expectedCommonDir!)),
+      ]);
+      return actualCommon === expectedCommon ? null : "its Git common directory no longer matches the Barge allocation";
+    }
+    const repository = await defaultGit(repoPath, "rev-parse", "--path-format=absolute", "--git-common-dir");
     return checkout === repository ? null : "its Git common directory no longer matches the task repository";
   } catch (error) {
     return `its Git identity could not be proven: ${error instanceof Error ? error.message : String(error)}`;

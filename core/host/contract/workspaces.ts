@@ -34,4 +34,5 @@ export interface HostWorkspaces {
   verifyWorkspace(task: Task, directory: string): Promise<string>;
   inspectReviewEntry?(input:ReviewEntryInput,taskId?:string,originProof?:{origin:OriginAgent;state:AgentObservation}):Promise<{directory:string;originWorkspaceId:string;busyReason:string;busyTransient?:boolean}>;
   scratchNamespaceFor?(task: Task): string;
+  workspaceAllocationBridge?: import('../../workspaces/workspace-allocation-bridge').WorkspaceAllocationBridge;
 }

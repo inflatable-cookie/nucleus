@@ -6,6 +6,7 @@ import {
   mkdir,
   readFile,
   readlink,
+  realpath,
   rename,
   unlink,
   writeFile,
@@ -36,27 +37,46 @@ export async function ensureTaskNodeModules(
   taskDirectory: string,
   registeredCheckout: string,
   workspaceRoot = dirname(taskDirectory),
+  options?: {
+    expectedCommonDir?: string | null;
+    expectedCheckoutPath?: string | null;
+  },
 ): Promise<void> {
   if (!(await lockFingerprint(taskDirectory))) return;
+  if (options?.expectedCheckoutPath) {
+    const [actualDir, expectedDir] = await Promise.all([
+      realpath(taskDirectory),
+      realpath(options.expectedCheckoutPath),
+    ]);
+    if (actualDir !== expectedDir)
+      throw new Error("Task worktree path does not match recorded allocation");
+  }
   const taskRoot = await git(taskDirectory, "rev-parse", "--show-toplevel");
-  if (resolve(taskRoot) !== resolve(taskDirectory))
+  if ((await realpath(taskRoot).catch(() => resolve(taskRoot))) !== (await realpath(taskDirectory).catch(() => resolve(taskDirectory))))
     throw new Error("Task dependency setup requires the task worktree root");
-  const [taskCommon, registeredCommon] = await Promise.all([
-    git(
-      taskDirectory,
-      "rev-parse",
-      "--path-format=absolute",
-      "--git-common-dir",
-    ),
-    git(
+  const taskCommon = await git(
+    taskDirectory,
+    "rev-parse",
+    "--path-format=absolute",
+    "--git-common-dir",
+  );
+  if (options?.expectedCommonDir) {
+    const [actualCommon, expectedCommon] = await Promise.all([
+      realpath(taskCommon).catch(() => resolve(taskCommon)),
+      realpath(options.expectedCommonDir).catch(() => resolve(options.expectedCommonDir!)),
+    ]);
+    if (actualCommon !== expectedCommon)
+      throw new Error("Task worktree does not belong to the recorded Barge allocation");
+  } else {
+    const registeredCommon = await git(
       registeredCheckout,
       "rev-parse",
       "--path-format=absolute",
       "--git-common-dir",
-    ),
-  ]);
-  if (resolve(taskCommon) !== resolve(registeredCommon))
-    throw new Error("Task worktree does not belong to the registered checkout");
+    );
+    if (resolve(taskCommon) !== resolve(registeredCommon))
+      throw new Error("Task worktree does not belong to the registered checkout");
+  }
   if (resolve(taskDirectory) === resolve(registeredCheckout))
     throw new Error(
       "Refusing task dependency setup in the registered checkout",

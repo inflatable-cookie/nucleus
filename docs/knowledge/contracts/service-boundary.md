@@ -1613,3 +1613,52 @@ expire by modification time. QA execution paths share step records, escapee
 merging and failure classification; streamed output shares one token redactor.
 
 Agents use the installed `nucleus` command from any directory; repository CLI files are internal implementation (Tom, 2026-11-16).
+
+### Barge workspace provider (`workspaceProvider`)
+
+Repositories may opt in to Barge-managed task worktrees via
+`repository.set` with `workspaceProvider: "barge"` (default `null` keeps local
+Queue git worktree allocation). Existing local allocations, proof-only tasks,
+and external review-entry checkouts always retain their existing provider.
+
+- **Allocation & identity**: Provider choice and deterministic `--request`
+  identity are persisted on `task.workspaceAllocation` before invoking
+  `barge --json worktree lease`. Uncertain replies reconcile via
+  `barge --json worktree lease get --request <id>` without minting a duplicate
+  allocation. Pool full or unavailable responses map to
+  `CheckoutUnavailableError` and wait transparently until a root frees. Verified
+  lease metadata (`leaseId`, `rootId`, `pool`, `checkoutPath`, `gitCommonDir`)
+  and custody are recorded before native host registration on Paseo, T3Code, or
+  BB.
+- **Detached custody (`barge worktree run`)**: Because native T3 provider child
+  turns run in a shared host process outside Nucleus's process tree, Nucleus
+  spawns a detached lease custodian through
+  `barge --json worktree run --lease <id> -- <custodian>` and verifies its PID,
+  start identity, command token, and `barge --json worktree status` `held` flag
+  across revisions, reviews, host moves, and service rolls. Custody loss
+  mid-use keeps return fenced and surfaces `needs_attention`; an unsupported
+  `barge worktree run` CLI refuses initial Barge allocation without claiming
+  unheld custody.
+- **Git common dir & dependencies**: Worktree ownership, resume, review,
+  merge, build-output cleanup, and dependency setup checks recognize a live
+  Barge allocation's recorded `gitCommonDir` and `checkoutPath` (never a
+  returned lease path), preserve warm `node_modules` by passing
+  `keepDependencies: true` on Barge build-output cleanup, and avoid spurious
+  Queue-root `worktreeLinks` failures.
+- **Replacement, host move & durable return**: Because Barge pool clones share
+  branches (`branch_exists` refuses duplicate branches), replacement and
+  cross-host moves fence and return the old lease cleanly (after preserving its
+  head in the task repository) before allocating the `sequence + 1`
+  replacement with a new request ID; an unreturnable old lease preserves custody
+  without silently minting a substitute branch or local fallback. Returns release
+  the custodian only after participant, tool, teardown, publication/discard, and
+  native registration checks pass, never run `git worktree remove` or `rm` on a
+  Barge tree, and pass `--disposable` only with positive publication or
+  explicit discard authorization.
+
+Proofs: `test/barge-worktrees.test.ts` (opt-in, reply-loss reconciliation,
+custody-loss fencing, Git common-dir and warm-dependency safety, return gating,
+reused-path isolation, and host-move replacement);
+`test/barge-worktrees-real.test.ts` (real pinned Barge CLI lease, detached
+`worktree run` custodian, competing return refusal, service-roll reconciliation,
+SIGKILL custody fence, warm root reuse, and host-move replacement).

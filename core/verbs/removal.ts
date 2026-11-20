@@ -221,7 +221,10 @@ export class TaskRemoval {
       }
       // The directory may have appeared since the hold observation. Prove its
       // identity before any removal, even when the earlier observation was absent.
-      const identity = await buildOutputCheckoutMismatch(task.repoPath, record.directory);
+      const expectedBarge = task.workspaceAllocation?.provider === "barge"
+        ? { expectedCommonDir: task.workspaceAllocation.gitCommonDir, expectedCheckoutPath: task.workspaceAllocation.checkoutPath }
+        : undefined;
+      const identity = await buildOutputCheckoutMismatch(task.repoPath, record.directory, expectedBarge);
       if (identity) { this.recordRunBuildOutputState(taskId, record, record.state, identity); continue; }
       // The identity lookup awaits Git. Recheck ownership synchronously after it,
       // immediately before starting the destructive effect.
@@ -320,7 +323,10 @@ export class TaskRemoval {
     // A missing checkout has no output to remove. Still prove the participants
     // idle first, and recheck absence in removeBuildOutput at the effect boundary.
     if (!await buildOutputDirectoryAbsent(record.directory)) {
-      const identity = await buildOutputCheckoutMismatch(task.repoPath, record.directory);
+      const expectedBarge = task.workspaceAllocation?.provider === "barge"
+        ? { expectedCommonDir: task.workspaceAllocation.gitCommonDir, expectedCheckoutPath: task.workspaceAllocation.checkoutPath }
+        : undefined;
+      const identity = await buildOutputCheckoutMismatch(task.repoPath, record.directory, expectedBarge);
       if (identity) return identity;
     }
     const lateHostRun = this.store.hostRunHoldingWorkspace(record.directory);
