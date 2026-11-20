@@ -23,6 +23,7 @@ import { git } from '../core/git/index';
 import { syncMain } from '../core/forge/index';
 import { plannerEscalations } from '../core/questions/ladder/records';
 import { taskControlOperation } from '../core/verbs/task-control-key';
+import { recoveryOvertakenByMerge } from '../core/recovery/merge-occurrence';
 
 const head = 'a'.repeat(40), base = 'b'.repeat(40), merged = 'c'.repeat(40);
 const CALLER = 'owner-thread';
@@ -133,6 +134,37 @@ function plantDone(f: ReturnType<typeof fixture>, directory: string, extra: Part
   });
   return f.task();
 }
+
+test('merge occurrence proof binds the original recovery run and rejects a current fault', async () => {
+  const f = fixture();
+  try {
+    plantMerged(f);
+    const task = f.task();
+    const episode = task.resolution.recovery!;
+    const witness = { episodeId: episode.id, incidentId: episode.incidentId, stopKey: episode.key,
+      runId: episode.runId, generation: episode.generation, prNumber: 7, head, mergedCommit: null };
+    f.store.update(f.taskId, { resolution: { ...task.resolution, recovery: { ...episode, mergeWitness: witness } } });
+    assert.equal(recoveryOvertakenByMerge(f.store, f.task()), true);
+    f.store.update(f.taskId, { resolution: { ...f.task().resolution, recovery: {
+      ...f.task().resolution.recovery!, mergeWitness: { ...witness, mergedCommit: merged },
+    } } });
+    assert.equal(recoveryOvertakenByMerge(f.store, f.task()), false);
+  } finally { await f.close(); }
+});
+
+test('legacy recovery requires its exact run launch before the verified merge', async () => {
+  const f = fixture();
+  try {
+    plantMerged(f);
+    f.store.update(f.taskId, { resolution: { ...f.task().resolution, externalMerge: false } });
+    assert.equal(recoveryOvertakenByMerge(f.store, f.task()), false);
+    f.store.event(f.taskId, 'telemetry_recovery', JSON.stringify({ runId: 'recovery-run' }));
+    f.store.event(f.taskId, 'merge_verified', '');
+    assert.equal(recoveryOvertakenByMerge(f.store, f.task()), true);
+    f.store.event(f.taskId, 'merge_verified', '');
+    assert.equal(recoveryOvertakenByMerge(f.store, f.task()), false);
+  } finally { await f.close(); }
+});
 
 async function integrationFixture() {
   const dir = mkdtempSync(join(tmpdir(), 'ns-066-c6-integration-'));

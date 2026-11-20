@@ -883,7 +883,15 @@ export class CoordinatorRoute {
           agentId,
           status: "running",
           ...(current.resolution.recovery?.mergeWitness ? {
-            mergeWitness: { ...current.resolution.recovery.mergeWitness, runId: run.id },
+            // A reservation made after work moved cannot inherit the opening's
+            // pre-merge evidence. Keep the opening witness unbound in that case.
+            mergeWitness: current.resolution.recovery.mergeWitness.mergedCommit === null
+              && current.resolution.mergedCommit === null
+              && current.resolution.recovery.mergeWitness.generation === run.generation
+              && current.resolution.recovery.mergeWitness.head === current.prHead
+              && current.resolution.recovery.mergeWitness.prNumber === (current.reviewEntry?.prNumber ?? current.resumePrNumber ?? current.completion?.prNumber ?? null)
+              ? { ...current.resolution.recovery.mergeWitness, runId: run.id }
+              : current.resolution.recovery.mergeWitness,
           } : {}),
           ...(current.resolution.recovery?.action ? { action: null } : {}),
         });
