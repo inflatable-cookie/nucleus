@@ -1683,3 +1683,109 @@ test("a task session still forwards literal ui text as an operator message", asy
     await client.closed();
   }
 });
+
+/**
+ * The nightly ACP harness wraps a message in the client's instructions and a
+ * `<user_request>` block (nucleus#1435). Every prompt the inbox receives arrives that
+ * way, so the operator's exact `ui` has to be read from inside the block.
+ */
+const harnessPrompt = (request: string): string =>
+  `<t3_code_instructions>
+## T3 Code interaction mode: Default
+
+Prefer making reasonable assumptions and carrying out the user's request.
+
+</t3_code_instructions>
+
+<user_request>
+${request}
+</user_request>`;
+const harnessRuntimeBlock =
+  "<runtime_info>In case you're asked: you are running in T3 Code through the acpRegistry harness, as nucleus.</runtime_info>";
+
+test("an inbox ui inside the nightly harness prompt opens the board and answers the operator", async () => {
+  const uiCalls: unknown[] = [];
+  let status: "opened" | "reused" | "failed" = "opened";
+  let detail: string | undefined;
+  const transport = new ScriptedTransport();
+  transport.openUi = async (input) => {
+    uiCalls.push(input);
+    return { status, hold: false, ...(detail ? { detail } : {}) };
+  };
+  const inbox = {
+    format: "nucleus.acp.inbox" as const,
+    version: 1 as const,
+    kind: "inbox" as const,
+    hostId: "t3code:harness-fixture",
+    sessionId: "6b1d4e1a-9c1f-4f80-9b0b-3a0e1a6f2c11",
+    socketPath: "/nonexistent/callback.sock",
+    token: "fixture-token",
+  };
+  const client = harness({
+    agent: { resolve: async () => ({ binding: inbox, transport }) },
+  });
+  try {
+    await client.lines.untilResult(
+      client.request("session/load", {
+        sessionId: inbox.sessionId,
+        cwd: "/synthetic",
+      }),
+    );
+    // A person typing `ui` in the T3 inbox reaches the agent as the harness envelope.
+    const opened = await client.lines.untilResult(
+      client.request("session/prompt", {
+        sessionId: inbox.sessionId,
+        prompt: [
+          { type: "text", text: harnessPrompt("ui") },
+          { type: "text", text: harnessRuntimeBlock },
+        ],
+      }),
+    );
+    assert.deepEqual(opened.result.result, { stopReason: "end_turn" });
+    assert.match(JSON.stringify(opened.updates), /Opened the Nucleus board\./);
+    assert.deepEqual(uiCalls, [
+      { kind: "inbox", hostId: inbox.hostId, sessionId: inbox.sessionId },
+    ]);
+
+    // A message T3's tools sent carries that marker inside the block: it is not the
+    // operator's command, so the inbox holds it and shows nothing.
+    const callsBeforeTools = uiCalls.length;
+    const toolsPrompt = client.request("session/prompt", {
+      sessionId: inbox.sessionId,
+      prompt: [
+        {
+          type: "text",
+          text: harnessPrompt(
+            "[T3 Code: this message came through T3 Code's tools, not from the user typing in this chat.]\n\nui",
+          ),
+        },
+      ],
+    });
+    await turnStarted(transport, 2);
+    client.notify("session/cancel", { sessionId: inbox.sessionId });
+    const held = await client.lines.untilResult(toolsPrompt);
+    assert.deepEqual(held.result.result, { stopReason: "cancelled" });
+    assert.equal(uiCalls.length, callsBeforeTools);
+    assert.doesNotMatch(JSON.stringify(held.updates), /Nucleus board/);
+
+    // A failed open still reaches the operator with its actionable line before the bound.
+    status = "failed";
+    detail = "the board did not open in time; type ui again to retry";
+    const failed = await client.lines.untilResult(
+      client.request("session/prompt", {
+        sessionId: inbox.sessionId,
+        prompt: [
+          { type: "text", text: harnessPrompt("ui") },
+          { type: "text", text: harnessRuntimeBlock },
+        ],
+      }),
+    );
+    assert.deepEqual(failed.result.result, { stopReason: "end_turn" });
+    assert.match(
+      JSON.stringify(failed.updates),
+      /Nucleus could not open the board: the board did not open in time/,
+    );
+  } finally {
+    await client.closed();
+  }
+});

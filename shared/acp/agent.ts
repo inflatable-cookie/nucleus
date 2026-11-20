@@ -525,7 +525,11 @@ export class AcpAgent {
         if (card.turn < session.turn) session.cards.delete(key);
       for (const line of session.pending.splice(0))
         this.emit(send, sessionId, line);
-      if (session.caller.kind === "inbox" && !holding && text === "ui") {
+      if (
+        session.caller.kind === "inbox" &&
+        !holding &&
+        operatorText(text) === "ui"
+      ) {
         const outcome = await this.openInboxUi(session, send);
         if (outcome) {
           this.result(send, id, { stopReason: outcome });
@@ -868,6 +872,23 @@ function sanitizeUiDetail(text: string | undefined): string {
       "[redacted]",
     )
     .trim();
+}
+
+/**
+ * The operator's own words in one prompt (nucleus#1435). T3's ACP harness prefixes the
+ * client's own instructions and wraps what the person typed in a `<user_request>` block,
+ * so the last such block is the operator's text and everything else is the harness's
+ * envelope. A prompt the harness marks as arriving through T3's tools keeps that marker
+ * inside the block, so an agent's message is never mistaken for the operator's command;
+ * every prompt without the block is already its own text.
+ */
+const USER_REQUEST_BLOCK = /<user_request>([\s\S]*?)<\/user_request>/g;
+function operatorText(text: string): string {
+  let last: string | undefined;
+  // A fresh expression per call: the shared source, with no lastIndex to carry.
+  for (const block of text.matchAll(new RegExp(USER_REQUEST_BLOCK.source, "g")))
+    last = block[1];
+  return (last ?? text).trim();
 }
 
 /** The text of one ACP prompt: its text blocks, in order. Anything else is not text to forward. */

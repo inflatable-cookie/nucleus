@@ -1081,9 +1081,23 @@ The inbox ACP agent routes exact `ui` through its authenticated `inbox` binding
 newest operator `ui` message and serves it unless that message already has an
 attempt. Serving reads `preview.list` for the inbox thread, closes every board
 tab of this board's origin, mints a fresh one-time pairing link and calls
-`preview.open` with `reveal: true`. Non-`ui` prompts and task threads never
+`preview.open` with `runtime: "server"` and `reveal: true`. T3's web client
+auto-reveals server-rendered tabs. On the installed 0.1.12 nightly, an open
+without a runtime returned a tab that stayed in `Loading` and never brought
+up the pane. Non-`ui` prompts and task threads never
 invoke this route, and pairing URLs never cross back to the ACP session, the
 host state or logs.
+
+The command is the operator's own words, not the whole prompt (nucleus#1435).
+The nightly's ACP harness prefixes the client's instructions and wraps the
+person's message in a `<user_request>` block, so on 2026-11-20 the prompt for `ui`
+was that envelope and the agent's exact match never saw the command: the turn
+went straight to the held poll, showed nothing and opened nothing. The agent now
+reads the last `<user_request>` block as the operator's text and matches `ui`
+there; a prompt without the block is its own text. A message T3's own tools send
+keeps its marker inside the block, so it is not the operator's command. The
+transcript's own message text stays exactly `ui`, which is what the window scan
+serves, so the normal and queued `ui` paths share one reading of the command.
 
 **A retained board tab is replaced, not reused, because the nightly cannot
 reveal it.** Opening is the only reveal the RPC surface offers (see "Workspace
@@ -1738,6 +1752,13 @@ holds the turn (the queued message, the unchanged card, the served result
 reported when the queued turn runs), Stop ending a hung open at once, and
 returning to idle immediately when no decisions are offerable while staying held
 when an offerable decision is open.
+
+The existing-Inbox proof (`effigy proof:t3code:inbox -- --existing-only`)
+also closes its private preview, dispatches exact `ui` on the same pinned
+thread and checks both the bounded ACP reply and the newly revealed preview
+tab. It checks the tab against the real private board's origin and records
+the tab ID, runtime and reveal state. A rendered-pane check also observes the
+board in T3's client, since server readback alone cannot show what rendered.
 
 The private proof starts an unmodified checkout of the target nightly revision,
 or its bundled server copied into fresh run scratch, with separate home, data,

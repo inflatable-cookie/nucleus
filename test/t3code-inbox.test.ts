@@ -89,6 +89,7 @@ test("one host inbox is launched once and pinned outside task retention", async 
   assert.deepEqual(preview[0].payload, {
     threadId: inbox.threadId,
     url: "http://127.0.0.1:1234/#token=synthetic",
+    runtime: "server",
     reveal: true,
   });
   assert.equal(
@@ -236,8 +237,18 @@ async function idleInbox(t: TestContext) {
   });
   t.after(() => host.close());
   await host.connect();
-  return { fake, host, offered, settlement, released, observed, root,
-    setPaused(value: boolean) { paused = value; } };
+  return {
+    fake,
+    host,
+    offered,
+    settlement,
+    released,
+    observed,
+    root,
+    setPaused(value: boolean) {
+      paused = value;
+    },
+  };
 }
 
 const holdPosts = (
@@ -375,7 +386,10 @@ test("the inbox title follows decisions and pause state, writes only on change, 
   // The underlying title is unchanged, but a paused sweep reconciles the prefix.
   setPaused(true);
   await host.reconcileThreadTitles([]);
-  assert.equal(fake.threads.get(inbox().threadId)!.thread.title, "Paused: All quiet");
+  assert.equal(
+    fake.threads.get(inbox().threadId)!.thread.title,
+    "Paused: All quiet",
+  );
   assert.equal(titleWrites().length, 2);
   offered.push("decision-a");
   await host.reconcileThreadTitles([]);
@@ -391,7 +405,10 @@ test("the inbox title follows decisions and pause state, writes only on change, 
   );
   offered.length = 0;
   await host.reconcileThreadTitles([]);
-  assert.equal(fake.threads.get(inbox().threadId)!.thread.title, "Paused: All quiet");
+  assert.equal(
+    fake.threads.get(inbox().threadId)!.thread.title,
+    "Paused: All quiet",
+  );
   assert.equal(titleWrites().length, 5);
   // Resume removes the prefix in place, even though the underlying title was written earlier.
   setPaused(false);
@@ -785,6 +802,7 @@ test("inbox ui shows the board once per operator message, replacing a retained t
   assert.deepEqual(previewOpens()[1]!.payload, {
     threadId: inbox.threadId,
     url: "http://127.0.0.1:1234/#token=synthetic-2",
+    runtime: "server",
     reveal: true,
   });
   const afterFirst = boardTabs();

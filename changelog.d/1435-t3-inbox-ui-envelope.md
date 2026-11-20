@@ -1,0 +1,1 @@
+Typing `ui` in the pinned T3 Nucleus Inbox now opens a visible board preview or reports the failure in the transcript. Nucleus reads the operator's exact command from T3's `<user_request>` block and opens a server-rendered preview that the connected T3 client can reveal.
