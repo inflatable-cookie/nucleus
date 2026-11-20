@@ -21,6 +21,45 @@ for (const source of ['run','participant','host','none']) test(`submit, reparent
 });
 
 
+test('reparent helper parses both owner-change forms and the read-only inventory before it resolves a caller', async () => {
+  const f = await callerCliFixture();
+  try {
+    const forms = [
+      ['owner', '--task', 'task', '--reason', 'Synthetic ownership'],
+      ['owner', '--project', 'project-c', '--from', 'old', '--reason', 'Planner handover'],
+      ['--inventory', 'old', '--project', 'project-c'],
+    ] as const;
+    for (const args of forms) {
+      const result = await f.invoke('none', 'nucleus-reparent.mjs', [...args]);
+      assert.notEqual(result.code, 0, args.join(' '));
+      assert.doesNotMatch(result.stderr, /Usage: nucleus helper reparent/, `the form parses: ${args.join(' ')}`);
+      assert.match(result.stderr, /Nucleus run or participant ticket/, `the parse reaches caller resolution: ${args.join(' ')}`);
+    }
+    const taskForm = await f.invoke('run', 'nucleus-reparent.mjs', [...forms[0]]);
+    assert.match(taskForm.stderr, /Synthetic caller payload received/);
+    assert.equal(f.calls.at(-1)?.method, 'queue.reparent');
+    assert.equal(f.calls.at(-1)?.input.toAgentId, 'owner');
+    assert.deepEqual(f.calls.at(-1)?.input.taskIds, ['task']);
+    assert.equal(f.calls.at(-1)?.input.reason, 'Synthetic ownership');
+    const projectForm = await f.invoke('run', 'nucleus-reparent.mjs', [...forms[1]]);
+    assert.match(projectForm.stderr, /Synthetic caller payload received/);
+    assert.equal(f.calls.at(-1)?.method, 'queue.reparent');
+    assert.equal(f.calls.at(-1)?.input.toAgentId, 'owner');
+    assert.equal(f.calls.at(-1)?.input.project, 'project-c');
+    assert.equal(f.calls.at(-1)?.input.fromAgentId, 'old');
+    const inventory = await f.invoke('run', 'nucleus-reparent.mjs', [...forms[2]]);
+    assert.match(inventory.stderr, /Synthetic caller payload received/);
+    assert.equal(f.calls.at(-1)?.method, 'queue.owner-inventory');
+    assert.deepEqual(f.calls.at(-1)?.input, {
+      agentId: 'old',
+      caller: f.caller('run'),
+      project: 'project-c',
+    });
+  } finally {
+    await f.close();
+  }
+});
+
 test('installed helper routes bulk disposal and subscription to their implementations', async () => {
   const f = await callerCliFixture();
   try {

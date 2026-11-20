@@ -15,9 +15,13 @@ const usage='Usage: nucleus helper reparent TO_AGENT_ID --task TASK_ID [--task T
  +'nucleus helper reparent TO_AGENT_ID --project PROJECT --from AGENT_ID --reason TEXT | '
  +'nucleus helper reparent --inventory AGENT_ID [--project PROJECT]';
 const args=process.argv.slice(2);
+// The reparent forms name the new owner as their one positional; `--inventory`
+// carries its subject as the flag's own value and has no positional.
+const positional=args[0]!==undefined&&!args[0].startsWith('--')?args[0]:null;
+const pairs=args.slice(positional===null?0:1);
 const taskIds=[];let project=null,fromAgentId=null,reason=null,inventoryAgentId=null;
-for(let i=0;i<args.length;i+=2){
- const flag=args[i],value=args[i+1];
+for(let i=0;i<pairs.length;i+=2){
+ const flag=pairs[i],value=pairs[i+1];
  if(!value||value.startsWith('--'))throw Error(usage);
  if(flag==='--task')taskIds.push(value);
  else if(flag==='--project'&&project===null)project=value;
@@ -27,10 +31,10 @@ for(let i=0;i<args.length;i+=2){
  else throw Error(usage);
 }
 const byTask=taskIds.length>0,byProject=project!==null||fromAgentId!==null,byInventory=inventoryAgentId!==null;
-if(byInventory&&(taskIds.length||fromAgentId!==null||reason!==null))throw Error(usage);
-if(!byInventory&&(byTask===byProject||!reason||(byProject&&(!project||!fromAgentId))))throw Error(usage);
-const [toAgentId]=byInventory?[]:args;
-if(!byInventory&&(!toAgentId||toAgentId.startsWith('--')))throw Error(usage);
+if(byInventory){
+ if(positional!==null||taskIds.length||fromAgentId!==null||reason!==null)throw Error(usage);
+}else if(positional===null||!reason||byTask===byProject||(byProject&&(!project||!fromAgentId)))throw Error(usage);
+const toAgentId=positional;
 const caller=(await resolveCliCaller({viaPaseo})).caller;
 
 const client=await queueClient({viaPaseo});
