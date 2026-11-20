@@ -8,6 +8,8 @@ import { T3CodeHost } from '../hosts/t3code/adapter';
 import { createAdapter } from '../hosts/t3code';
 import { T3RpcError } from '../hosts/t3code/rpc';
 import { HostPolicies } from '../core/host/host-policies';
+import { enginePorts } from '../core/port-context';
+import { HostPass } from '../core/scheduling/host-pass';
 import type { HostPolicyConstructor } from '../core/host';
 import { taskWorkspaceTitle } from '../core/workspaces/workspace-title';
 import { PARENT_MODEL, PARENT_PROVIDER } from '../hosts/t3code/nesting';
@@ -102,22 +104,25 @@ test('the inbox counts each active task once and excludes waiting, snoozed and f
   }
 
   const otherTask = 'synthetic-other-task';
+  /** The pass's rows as the host step hands them over: the one projection per task. */
+  const rows = (attention: Record<string, TaskAttention>) =>
+    Object.entries(attention).map(([id, row]) => ({ task: { id } as Task, attention: row }));
   await host.reconcileTaskRow(taskId, { state: 'active' });
   await host.reconcileTaskRow(otherTask, waiting());
-  await host.reconcileThreadTitles([]);
+  await host.reconcileThreadTitles([], rows({ [taskId]: { state: 'active' }, [otherTask]: waiting() }));
   const inbox = host.state.read().inbox!;
   const inboxTitle = () => server.threads.get(inbox.threadId)!.thread.title;
   assert.equal(inboxTitle(), '1 task running');
 
   await host.reconcileTaskRow(taskId, { state: 'active' });
   await host.reconcileTaskRow(otherTask, { state: 'active' });
-  await host.reconcileThreadTitles([]);
+  await host.reconcileThreadTitles([], rows({ [taskId]: { state: 'active' }, [otherTask]: { state: 'active' } }));
   assert.equal(inboxTitle(), '2 tasks running');
   setPaused(true);
-  await host.reconcileThreadTitles([]);
+  await host.reconcileThreadTitles([], rows({ [taskId]: { state: 'active' }, [otherTask]: { state: 'active' } }));
   assert.equal(inboxTitle(), 'Paused: 2 tasks running');
   setPaused(false);
-  await host.reconcileThreadTitles([]);
+  await host.reconcileThreadTitles([], rows({ [taskId]: { state: 'active' }, [otherTask]: { state: 'active' } }));
   assert.equal(inboxTitle(), '2 tasks running');
 
   for (const role of roleThreads) {
@@ -125,24 +130,102 @@ test('the inbox counts each active task once and excludes waiting, snoozed and f
   }
   await host.reconcileTaskRow(taskId, waiting());
   assert.ok(server.threads.get(parentOf()!.threadId)!.thread.snoozedUntil);
-  await host.reconcileThreadTitles([]);
+  await host.reconcileThreadTitles([], rows({ [taskId]: waiting(), [otherTask]: { state: 'active' } }));
   assert.equal(inboxTitle(), '1 task running');
 
   await host.reconcileTaskRow(otherTask, { state: 'finished' });
-  await host.reconcileThreadTitles([]);
+  await host.reconcileThreadTitles([], rows({ [taskId]: waiting(), [otherTask]: { state: 'finished' } }));
   assert.equal(inboxTitle(), 'All quiet');
 
   // Pause changes only the prefix, even when the underlying title is unchanged.
   const titleUpdates = () => commandsOf(server, 'thread.metadata.update').filter(command => command.threadId === inbox.threadId);
   const countBeforePause = titleUpdates().length;
   setPaused(true);
-  await host.reconcileThreadTitles([]);
+  await host.reconcileThreadTitles([], rows({ [taskId]: waiting(), [otherTask]: { state: 'finished' } }));
   assert.equal(inboxTitle(), 'Paused: All quiet');
   assert.equal(titleUpdates().length, countBeforePause + 1);
   setPaused(false);
-  await host.reconcileThreadTitles([]);
+  await host.reconcileThreadTitles([], rows({ [taskId]: waiting(), [otherTask]: { state: 'finished' } }));
   assert.equal(inboxTitle(), 'All quiet');
   assert.equal(titleUpdates().length, countBeforePause + 2);
+});
+
+test('a row fault partway through the pass never publishes a partial running count (nucleus#1443)', async t => {
+  const { acp, directory, host, server, workspace } = await fixture(t);
+  const store = new Store(':memory:');
+  store.setMeta('paused', false);
+  const adapter = createAdapter(HostPolicies as unknown as HostPolicyConstructor, host);
+  const engine = new Engine(store, adapter, 60_000);
+  const pass = new HostPass(enginePorts(engine, ['adapter', 'host', 'inventoryHostMatches', 'observeRetiredWorkers',
+    'retiredObservationKey', 'retiredObservationPlan', 'scheduleLane', 'stopped', 'store'], ['observationTargets']));
+  t.after(async () => { await engine.stop(); store.close(); });
+  const inboxDir = mkdtempSync(join(directory, 'inbox-'));
+  acp.surface.bindInbox = ({ hostId }) => ({ sessionId: 'synthetic-inbox', hostId, directory: inboxDir, bindingPath: join(inboxDir, 'binding') });
+  const runPass = () => engine.withHost(host.hostId, () => pass.run(host.hostId));
+
+  const insertTask = (name: string, hostId = host.hostId) => store.insert(
+    submission({ submissionId: name, title: name, repoPath: directory }), hostId, 'handoff', 'a'.repeat(40));
+  const taskA = insertTask('inbox-count-a');
+  const taskB = insertTask('inbox-count-b');
+  const taskC = insertTask('inbox-count-c');
+  const elsewhere = insertTask('inbox-count-other-host', 'synthetic-other-host');
+  /** One role's own thread, and the task row both of its roles share. */
+  const launch = async (taskId: string, role: string, requestId: string) => {
+    const agent = await host.createAgent({ workspaceId: workspace.id, profile, title: role, taskNumber: 1,
+      mcpBindingPath: null, attempt: () => ({ requestId, prompt: 'prompt',
+        labels: storedT3Labels(role, { taskId, runId: `${requestId}-run` }), environment: {} }) });
+    return { role: agent.id, row: host.state.read().parents![taskId]!.threadId };
+  };
+  const rolesA = [await launch(taskA.id, 'worker', 'count-a-worker'), await launch(taskA.id, 'reviewer', 'count-a-reviewer')];
+  const workerB = await launch(taskB.id, 'worker', 'count-b-worker');
+  const workerC = await launch(taskC.id, 'worker', 'count-c-worker');
+  const rows = () => [rolesA[0].row, workerB.row, workerC.row];
+  const inboxTitle = () => server.threads.get(host.state.read().inbox!.threadId)!.thread.title;
+  const unsnoozes = () => commandsOf(server, 'thread.unsnooze');
+
+  // Every task waits, so every row is snoozed and the title counts nothing.
+  await runPass();
+  assert.equal(inboxTitle(), 'All quiet');
+  for (const row of rows()) assert.ok(host.state.read().snoozes?.[row], `row ${row} was snoozed by the first pass`);
+
+  // All three tasks run. `store.tasks()` lists newest first and the pass keeps that
+  // order among equal ranks, so the second row it presents is B's; that row's read
+  // fails at the transport boundary, and the row step stops there.
+  for (const task of [taskA, taskB, taskC, elsewhere]) store.update(task.id, { phase: 'working', agentActive: true });
+  const presented = store.tasks().filter(task => task.hostId === host.hostId && task.removedAt == null);
+  assert.equal(presented.length, 3, 'the other host\'s task is out of this pass');
+  assert.equal(presented[1]!.id, taskB.id, 'the pass presents the newest task first');
+  const faulted = host.state.read().parents![presented[1]!.id]!.threadId;
+  const call = host.rpc.call.bind(host.rpc);
+  const readStream = host.rpc.readStream.bind(host.rpc);
+  const faulty = (payload: unknown) => (payload as { threadId?: string } | null)?.threadId === faulted;
+  host.rpc.call = async (method, payload) => faulty(payload) ? Promise.reject(new T3RpcError('transport', method)) : call(method, payload);
+  host.rpc.readStream = async (method, payload, accept) => faulty(payload) ? Promise.reject(new T3RpcError('transport', method)) : readStream(method, payload, accept);
+  const faultyPass = await runPass();
+  assert.equal(faultyPass.transportAnswered, false, 'the row step stopped at the transport boundary');
+  assert.match(String(store.getMeta('hostPassError')), /\/reconcileTaskRows: T3Code transport/);
+  assert.equal(unsnoozes().length, 1, 'the rows after the fault were never written');
+  // The row writes were partial; the title is not. A's two live roles are one task.
+  for (const role of rolesA)
+    assert.ok(server.threads.get(role.role)?.runs.some((run: { status?: string }) => run.status === 'running'), `role ${role.role} is live`);
+  assert.equal(inboxTitle(), '3 tasks running');
+
+  // A clean pass writes the remaining rows and finds nothing new to count.
+  host.rpc.call = call;
+  host.rpc.readStream = readStream;
+  await runPass();
+  assert.equal(unsnoozes().length, 3, 'every remaining row is shown again');
+  assert.equal(inboxTitle(), '3 tasks running');
+
+  // The next passes read the store afresh: a finished task leaves, a started one joins.
+  store.update(taskC.id, { phase: 'done' });
+  await runPass();
+  assert.equal(inboxTitle(), '2 tasks running');
+  const taskD = insertTask('inbox-count-d');
+  store.update(taskD.id, { phase: 'working', agentActive: true });
+  await launch(taskD.id, 'worker', 'count-d-worker');
+  await runPass();
+  assert.equal(inboxTitle(), '3 tasks running');
 });
 
 test('the parent row names the step its role children are doing (acceptance 2)', async t => {

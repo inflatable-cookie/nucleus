@@ -395,6 +395,9 @@ task's parent row is driven by the one attention projection the board and
   `reconcileTaskRow` right alongside title updates when a role goes active or
   attention changes, instead of waiting for the next periodic sweep; `HostPass`
   also reconciles active and attention rows ahead of waiting and finished rows.
+  One pass derives every row of a host from that projection before it writes any
+  of them, and the Inbox title counts those rows, so a row fault never leaves a
+  partial reading (nucleus#1443).
 - *waiting* — the task waits on nothing Nucleus is running and needs no one: the
   row is snoozed, including past a role's old fault (nucleus#1437). An owner hold with a release condition, a planner's own hold
   and an unresolved completable prerequisite wait are waiting with their named
@@ -1047,12 +1050,19 @@ is "Nucleus". A registration made before this change is renamed with T3's native
 survive. Other repository projects keep their folder names.
 
 **The inbox thread's title is its live signal (nucleus#1384, Tom 2026-11-19: "Perfect,
-let's do it"; pause prefix, nucleus#1427).** The thread title shows one signal, in
-priority order: "N decisions to answer" (or "1 decision to answer"), counting
-decisions offered on this inbox by the same projection as the cards; otherwise "N
-tasks running" (or "1 task running"), counting each task once whose attention is
-active on this host in the pass (snoozed, waiting, attention and finished tasks are
-not counted); otherwise "All quiet". While the persisted global Nucleus pause is in
+let's do it"; pause prefix, nucleus#1427; complete count, nucleus#1443).** The thread
+title shows one signal, in priority order: "N decisions to answer" (or "1 decision to
+answer"), counting decisions offered on this inbox by the same projection as the
+cards; otherwise "N tasks running" (or "1 task running"), counting each task once
+whose attention is active on this host in the pass (waiting, attention and finished
+tasks are not counted, and neither is a task whose decision is open, since that is
+the title's decision signal). The count is derived from the pass's complete set of
+task rows — the same shared attention projection the row writes read, one row per
+task, so every role a task runs is one task and a task on another host is never
+one — before any row write reaches T3. A row write that fails or times out partway
+through the pass therefore never publishes a partial count: the titles read the
+pass's rows, not how far its writes got, and no tally of landed writes is kept.
+While the persisted global Nucleus pause is in
 effect, the title prefixes that signal with "Paused: ". The prefix does not change
 the signal priority or counts. The title is written with `thread.metadata.update`
 only when the thread's current title differs, including while the inbox is idle and

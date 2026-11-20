@@ -24,7 +24,7 @@ import {
   ProvenPreSendRefusalError,
 } from "../../core/host";
 import { isHostOperationTimeout } from "../../core/host";
-import type { RowSnoozeVisibility } from "../../core/host";
+import type { RowSnoozeVisibility, TaskRowProjection } from "../../core/host";
 import { T3RpcClient, type T3ConnectionConfig } from "./rpc";
 import {
   canonicalThinkingValue,
@@ -218,8 +218,6 @@ export class T3CodeHost implements Host {
   private readonly probeThreadId?: string;
   private readonly modelCapturePath?: string;
   private readonly acp: () => AcpSessionSurface | null;
-  /** Tasks whose attention is active in the current host pass; the inbox title counts them. */
-  private readonly activeTaskIds = new Set<string>();
   constructor(options: T3CodeConfig) {
     this.acp = options.acp ?? (() => null);
     this.probeThreadId = options.probeThreadId;
@@ -271,7 +269,6 @@ export class T3CodeHost implements Host {
       rpc: this.rpc,
       intents: this.intents,
       boardLink: options.boardLink,
-      runningTasks: () => this.activeTaskIds.size,
       workspace: async (directory) => {
         const created = await this.createWorkspace({
           title: "Nucleus",
@@ -477,7 +474,6 @@ export class T3CodeHost implements Host {
    * is what an exact settle or lookup still reads. Nothing in T3 is touched.
    */
   async beginHostPass(tasks: readonly Task[]): Promise<void> {
-    this.activeTaskIds.clear();
     this.reads.beginPass(tasks);
     await this.reconcileObservation();
   }
@@ -659,10 +655,21 @@ export class T3CodeHost implements Host {
     const shown = pending
       ? { state: "attention" as const, cause: "Decision needs an operator" }
       : attention;
-    // The inbox's title counts tasks executing on this host: attention "active", once each.
-    if (shown.state === "active") this.activeTaskIds.add(taskId);
-    else this.activeTaskIds.delete(taskId);
     await this.presentation.reconcileTaskRow(taskId, shown);
+  }
+  /**
+   * Tasks the inbox's title counts as running (nucleus#1443): the pass's own attention
+   * projection, one row per task, so every role a task runs is that one task. A task
+   * whose decision is open is the inbox title's decision signal, never a running one.
+   * The count is derived here, before any row write reaches the host.
+   */
+  private runningTaskCount(rows: readonly TaskRowProjection[]): number {
+    const acp = this.acp();
+    return rows.filter(
+      ({ task, attention }) =>
+        attention.state === "active" &&
+        !acp?.pendingDecisionKey?.(task.id),
+    ).length;
   }
   /**
    * The task row's visibility now (nucleus#1417): whether a Nucleus-owned snooze
@@ -683,13 +690,16 @@ export class T3CodeHost implements Host {
   }
 
   /** The ordinary host sweep's nesting pass: dispose owed wakes, hold or release the parent's turn, archive a finished task's parent. */
-  async reconcileThreadTitles(tasks: readonly Task[]): Promise<void> {
+  async reconcileThreadTitles(
+    tasks: readonly Task[],
+    rows: readonly TaskRowProjection[] = [],
+  ): Promise<void> {
     if (!this.connected) return;
     // An incompatibility is evidence the operator needs, so it is raised after the nesting
     // pass runs. Other faults still retry on the next pass, as before (nucleus#1407).
     let incompatible: T3CompatibilityError | null = null;
     try {
-      await this.inbox.reconcile();
+      await this.inbox.reconcile(this.runningTaskCount(rows));
       const state = this.state.read();
       if (state.inbox) {
         // The inbox is idle between decisions (nucleus#1384): re-enter it only while an

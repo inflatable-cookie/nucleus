@@ -26,6 +26,16 @@ export type RowSnoozeVisibility =
       reason: string;
     };
 
+/**
+ * One task row a host pass presents: the task and the one attention projection that
+ * decides its row (nucleus#1366). The pass derives the whole set before it writes
+ * anything, so every consumer of a row reads the same fact (nucleus#1443).
+ */
+export interface TaskRowProjection {
+  readonly task: Task;
+  readonly attention: TaskAttention;
+}
+
 /** How a task's threads are presented to the operator: the task's one row and thread titles. */
 export interface HostThreadPresentation {
   /**
@@ -54,6 +64,14 @@ export interface HostThreadPresentation {
    * omits the method; the hidden-row notice is then never raised for it.
    */
   rowSnoozeVisibility?(taskId: string): Promise<RowSnoozeVisibility>;
-  /** Reconcile native thread titles from task identity during the ordinary host sweep. */
-  reconcileThreadTitles?(tasks: readonly Task[]): Promise<void>;
+  /**
+   * Reconcile native thread titles from task identity during the ordinary host
+   * sweep. `rows` is the pass's complete set of task rows, derived from the same
+   * attention projection the row writes read, so a title that counts tasks never
+   * depends on how far those writes got (nucleus#1443).
+   */
+  reconcileThreadTitles?(
+    tasks: readonly Task[],
+    rows?: readonly TaskRowProjection[],
+  ): Promise<void>;
 }

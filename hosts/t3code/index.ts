@@ -3,6 +3,7 @@ import type {
   HostPolicyConstructor,
   HostPolicyPort,
   HostWorktreeWorkspaceSpec,
+  TaskRowProjection,
 } from "../../core/host";
 import {
   HostReadRefusalError,
@@ -291,8 +292,11 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
     threadArchiveState(id: string) {
       return this.native.threadArchiveState(id);
     }
-    reconcileThreadTitles(tasks: readonly Task[]) {
-      return this.native.reconcileThreadTitles(tasks);
+    reconcileThreadTitles(
+      tasks: readonly Task[],
+      rows?: readonly TaskRowProjection[],
+    ) {
+      return this.native.reconcileThreadTitles(tasks, rows);
     }
     agentTimelinePage(id: string, limit?: number) {
       return this.native.agentTimelinePage(id, limit);
