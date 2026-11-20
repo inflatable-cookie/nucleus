@@ -19,6 +19,7 @@ import {
 } from "./coordinator-episode";
 import { plannerEscalations, type LadderEvent } from "../questions/ladder";
 import { closeEscalationFollowups } from "../questions/ladder/continuation";
+import { recoveryOvertakenByMerge } from "./merge-occurrence";
 import {
   reportNamesNoAction,
   retiredNarrowAction,
@@ -439,6 +440,12 @@ export class CoordinatorPass {
       // the done task, and its report is evidence (Resolution.complete); terminal cleanup releases the run.
       if (["done", "cancelled"].includes(t.phase)) continue;
       const episodeRunId = incident.runId;
+      // A verified merge supersedes this exact recovery before any no-action or
+      // responsible-blocker path can apply its late report to the new stage.
+      if (recoveryOvertakenByMerge(this.store, t)) {
+        this.resolution.closeout.continueRecordedMerge(t, { kind: "sweep" });
+        if (this.store.run(episodeRunId)?.mergeRetirement) continue;
+      }
       if (reviewFenceHoldsCoordinators(t, this.store)) {
         // A finished accepted recovery still settles its bookkeeping while review
         // authorization holds (Spec 050: no verb is refused by a stale record);

@@ -158,11 +158,194 @@ test('legacy recovery requires its exact run launch before the verified merge', 
     plantMerged(f);
     f.store.update(f.taskId, { resolution: { ...f.task().resolution, externalMerge: false } });
     assert.equal(recoveryOvertakenByMerge(f.store, f.task()), false);
-    f.store.event(f.taskId, 'telemetry_recovery', JSON.stringify({ runId: 'recovery-run' }));
+    f.store.event(f.taskId, 'merge_response_accepted', `GitHub accepted the guarded merge for ${head}`);
+    f.store.event(f.taskId, 'telemetry_recovery', JSON.stringify({ runId: 'recovery-run', targetRole: 'coordinator' }));
+    f.store.event(f.taskId, 'recovery_action_bound', 'recovery-done');
     f.store.event(f.taskId, 'merge_verified', '');
+    f.store.event(f.taskId, 'run_released_from_recorded_completion', 'recovery recovery-run');
+    f.store.event(f.taskId, 'run_result_applied', 'recovery-run');
+    f.store.putRun({ ...f.store.run('recovery-run')!, completion: {
+      taskId: f.taskId, runId: 'recovery-run', eventId: 'recovery-done', status: 'blocked', summary: 'Need input',
+    } });
+    const episode = f.task().resolution.recovery!;
+    const stop = { reason: 'escalated' as const, detail: 'Waiting with the planner: blocker escalation escalation is open; the task gets no worker turn until the planner acts',
+      since: new Date().toISOString(), suggestedVerbs: [] };
+    f.store.update(f.taskId, { resolution: { ...f.task().resolution, stop, recovery: { ...episode, status: 'resolved', action: {
+      eventId: 'recovery-done', runId: 'recovery-run', reportStatus: 'blocked', coordinatorAction: { verb: 'cannot', reason: 'Need input' }, summary: 'Need input', status: 'applied',
+    } } } });
+    assert.equal(recoveryOvertakenByMerge(f.store, f.task()), false, 'a missing escalation cannot prove the occurrence');
+    f.store.event(f.taskId, 'planner_escalation', 'escalation: cause');
+    f.store.event(f.taskId, 'planner_escalation_payload', `escalation: ${JSON.stringify({ id: 'escalation', runId: 'recovery-run', source: 'recovery' })}`);
+    f.store.event(f.taskId, 'task_waiting', JSON.stringify(stop));
     assert.equal(recoveryOvertakenByMerge(f.store, f.task()), true);
     f.store.event(f.taskId, 'merge_verified', '');
     assert.equal(recoveryOvertakenByMerge(f.store, f.task()), false);
+  } finally { await f.close(); }
+});
+
+test('a recovery opened after merge remains the owner of its current fault', async () => {
+  const f = fixture();
+  try {
+    plantMerged(f);
+    const task = f.task();
+    const episode = task.resolution.recovery!;
+    const witness = { episodeId: episode.id, incidentId: episode.incidentId, stopKey: episode.key,
+      runId: episode.runId, generation: episode.generation, prNumber: 7, head, mergedCommit: merged };
+    f.store.update(f.taskId, { resolution: { ...task.resolution, recovery: { ...episode, mergeWitness: witness } } });
+    const before = f.task();
+    f.engine.resolution.closeout.continueRecordedMerge(before, { kind: 'sweep' });
+    assert.deepEqual(f.task(), before);
+  } finally { await f.close(); }
+});
+
+test('the stored late recovery escalation follows its exact verified merge once', async () => {
+  const f = fixture();
+  try {
+    plantMerged(f);
+    const prior = f.task();
+    const episode = prior.resolution.recovery!;
+    const stop = { reason: 'escalated' as const,
+      detail: 'Waiting with the planner: blocker escalation escalation is open; the task gets no worker turn until the planner acts',
+      since: new Date().toISOString(), suggestedVerbs: [] };
+    f.store.update(f.taskId, { phase: 'blocked', resolution: { ...prior.resolution, externalMerge: false,
+      currentRunId: null, recoveryActive: false, stop, recovery: { ...episode, status: 'resolved', action: {
+        eventId: 'recovery-done', runId: 'recovery-run', reportStatus: 'blocked', coordinatorAction: { verb: 'cannot', reason: 'Need input' }, summary: 'Need input', status: 'applied',
+      } } } });
+    f.store.event(f.taskId, 'merge_response_accepted', `GitHub accepted the guarded merge for ${head}`);
+    f.store.event(f.taskId, 'telemetry_recovery', JSON.stringify({ runId: 'recovery-run', targetRole: 'coordinator' }));
+    f.store.event(f.taskId, 'recovery_action_bound', 'recovery-done');
+    f.store.event(f.taskId, 'merge_verified', '');
+    f.store.event(f.taskId, 'run_released_from_recorded_completion', 'recovery recovery-run');
+    f.store.event(f.taskId, 'run_result_applied', 'recovery-run');
+    f.store.putRun({ ...f.store.run('recovery-run')!, completion: {
+      taskId: f.taskId, runId: 'recovery-run', eventId: 'recovery-done', status: 'blocked', summary: 'Need input',
+    } });
+    f.store.event(f.taskId, 'planner_escalation', 'escalation: cause');
+    f.store.event(f.taskId, 'planner_escalation_payload', `escalation: ${JSON.stringify({ id: 'escalation', runId: 'recovery-run', source: 'recovery' })}`);
+    f.store.event(f.taskId, 'task_waiting', JSON.stringify(stop));
+    const advanced = f.engine.resolution.closeout.continueRecordedMerge(f.task(), { kind: 'sweep', reobserved: true });
+    assert.equal(advanced.phase, 'syncing');
+    assert.equal(advanced.resolution.stop, null);
+    assert.equal(advanced.resolution.recovery?.action?.status, 'applied');
+    assert.equal(f.events('planner_escalation_resolved').length, 1);
+    const events = f.store.eventsAll(f.taskId);
+    f.engine.resolution.closeout.continueRecordedMerge(f.task(), { kind: 'sweep' });
+    assert.deepEqual(f.store.eventsAll(f.taskId), events);
+  } finally { await f.close(); }
+});
+
+test('verified merge retires its own recovery and retains the live run for custody', async () => {
+  const f = fixture();
+  try {
+    plantMerged(f);
+    const task = f.task();
+    const episode = task.resolution.recovery!;
+    const run = f.store.run('recovery-run')!;
+    f.store.putRun({ ...run, released: false, status: 'running', completion: null });
+    f.store.setCredential(run.id, 'synthetic-token');
+    f.store.update(f.taskId, { resolution: { ...task.resolution, recovery: { ...episode, mergeWitness: {
+      episodeId: episode.id, incidentId: episode.incidentId, stopKey: episode.key,
+      runId: run.id, generation: run.generation, prNumber: 7, head, mergedCommit: null,
+    } } } });
+    const retired = f.engine.resolution.closeout.continueRecordedMerge(f.task(), { kind: 'sweep' });
+    assert.equal(retired.resolution.recovery?.status, 'resolved');
+    assert.equal(f.store.run(run.id)?.released, false);
+    assert.equal(f.store.run(run.id)?.mergeRetirement?.episodeId, episode.id);
+    const input = { taskId: f.taskId, runId: run.id, eventId: 'late-recovery', status: 'blocked' as const,
+      summary: 'The previous participant was unavailable', head, coordinatorGeneration: run.generation };
+    const reopened = new Store(f.store.path);
+    const restarted = new Engine(reopened, f.adapter, 0, () => true);
+    try {
+      await assert.rejects(restarted.complete(input, 'wrong-token'));
+      await restarted.complete(input, 'synthetic-token');
+      const events = reopened.eventsAll(f.taskId);
+      await restarted.complete(input, 'synthetic-token');
+      assert.deepEqual(reopened.eventsAll(f.taskId), events);
+    } finally { await restarted.stop(); reopened.close(); }
+    assert.equal(f.task().phase, 'syncing');
+    assert.equal(f.task().resolution.recovery?.status, 'resolved');
+    assert.equal(f.store.run(run.id)?.completion?.eventId, input.eventId);
+    assert.equal(f.store.run(run.id)?.released, false);
+  } finally { await f.close(); }
+});
+
+test('merge verification retires an accepted recovery report before it reaches the ladder', async () => {
+  const f = fixture();
+  try {
+    plantMerged(f);
+    const task = f.task(), episode = task.resolution.recovery!, run = f.store.run('recovery-run')!;
+    f.store.putRun({ ...run, released: false, status: 'running', completion: null });
+    f.store.setCredential(run.id, 'synthetic-token');
+    f.store.update(f.taskId, { phase: 'merging', resolution: { ...task.resolution, externalMerge: false,
+      mergedCommit: null, recovery: { ...episode, mergeWitness: { episodeId: episode.id, incidentId: episode.incidentId,
+        stopKey: episode.key, runId: run.id, generation: run.generation, prNumber: 7, head, mergedCommit: null } },
+    } });
+    await f.engine.complete({ taskId: f.taskId, runId: run.id, eventId: 'pending-report', status: 'blocked',
+      summary: 'The earlier participant was unavailable', head, coordinatorGeneration: run.generation,
+      coordinatorAction: { verb: 'cannot', reason: 'Need input' } }, 'synthetic-token');
+    f.adapter.merged = async () => ({ merged: true, head, base: 'main', commit: merged });
+    await f.engine.resolution.reconcileMergeIntent(f.task());
+    assert.equal(f.task().phase, 'syncing');
+    assert.equal(f.task().resolution.recovery?.status, 'resolved');
+    assert.equal(f.task().resolution.recovery?.action?.status, 'refused');
+    assert.equal(f.store.run(run.id)?.released, false);
+    assert.equal(f.events('run_result_applied').filter(event => event.detail === run.id).length, 1);
+    assert.equal(f.events('planner_escalation').length, 0);
+  } finally { await f.close(); }
+});
+
+test('an independent stop is not cleared with an old recovery', async () => {
+  const f = fixture();
+  try {
+    plantMerged(f);
+    const task = f.task(), episode = task.resolution.recovery!;
+    f.store.update(f.taskId, { resolution: { ...task.resolution,
+      stop: { reason: 'budget', detail: 'Separate budget hold', since: new Date().toISOString(), suggestedVerbs: [] },
+      recovery: { ...episode, mergeWitness: { episodeId: episode.id, incidentId: episode.incidentId,
+        stopKey: episode.key, runId: episode.runId, generation: episode.generation, prNumber: 7, head, mergedCommit: null } },
+    } });
+    const before = f.task();
+    f.engine.resolution.closeout.continueRecordedMerge(before, { kind: 'sweep' });
+    assert.equal(f.task().resolution.stop?.reason, 'budget');
+    assert.equal(f.task().phase, before.phase);
+    assert.equal(f.task().resolution.recovery?.status, 'resolved');
+  } finally { await f.close(); }
+});
+
+test('owner closeout uses the same occurrence decision', async () => {
+  const f = fixture();
+  try {
+    plantMerged(f);
+    const task = f.task();
+    const episode = task.resolution.recovery!;
+    f.store.update(f.taskId, { phase: 'blocked', resolution: { ...task.resolution, currentRunId: null,
+      recovery: { ...episode, mergeWitness: { episodeId: episode.id, incidentId: episode.incidentId,
+        stopKey: episode.key, runId: episode.runId, generation: episode.generation, prNumber: 7, head, mergedCommit: null } },
+    } });
+    const before = f.task();
+    const result = await f.engine.performTaskControl(taskControlInputSchema.parse({ action: 'move', to: 'closeout',
+      taskId: f.taskId, version: before.version, reason: 'Resume verified closeout', caller: CALLER }));
+    assert.equal(result.phase, 'syncing');
+    assert.equal(result.resolution.recovery?.status, 'resolved');
+  } finally { await f.close(); }
+});
+
+test('an independent hold survives the merge occurrence decision', async () => {
+  const f = fixture();
+  try {
+    plantMerged(f);
+    const task = f.task();
+    const episode = task.resolution.recovery!;
+    f.store.update(f.taskId, { held: true, mergeHold: true, holdOwner: 'another-owner', holdReason: 'Keep the hold',
+      resolution: { ...task.resolution, recovery: { ...episode, mergeWitness: {
+        episodeId: episode.id, incidentId: episode.incidentId, stopKey: episode.key, runId: episode.runId,
+        generation: episode.generation, prNumber: 7, head, mergedCommit: null,
+      } } } });
+    const before = f.task();
+    f.engine.resolution.closeout.continueRecordedMerge(before, { kind: 'sweep' });
+    assert.equal(f.task().held, true);
+    assert.equal(f.task().holdOwner, before.holdOwner);
+    assert.equal(f.task().resolution.recovery?.status, 'resolved');
   } finally { await f.close(); }
 });
 
@@ -218,6 +401,9 @@ for (const alreadySynchronized of [true, false]) {
     try {
       if (alreadySynchronized) await git(f.repo, 'pull', '--ff-only');
       plantMerged(f, f.source);
+      // The retry is an integration obligation. A separate recovery with no
+      // occurrence proof must not be silently retired by synchronization.
+      f.store.update(f.taskId, { resolution: { ...f.task().resolution, recovery: null, recoveryActive: false, currentRunId: null } });
       const events = () => f.store.eventsAll(f.taskId);
       let sends = 0;
       f.adapter.syncMain = (task, allowed, applied, before) => syncMain(task, allowed, move => {
@@ -230,11 +416,11 @@ for (const alreadySynchronized of [true, false]) {
       await sweepToDone(f);
       const done = f.task();
       assert.equal(done.resolution.recoveryActive, false);
-      assert.equal(done.resolution.recovery?.status, 'resolved');
+      assert.equal(done.resolution.recovery, null);
       assert.equal(done.resolution.currentRunId, null);
       assert.equal(done.resolution.syncedCommit, f.source.merged);
       assert.equal(await git(f.repo, 'rev-parse', 'HEAD'), f.source.merged);
-      assert.equal(f.events('recorded_merge_phase_reconciled').length, 1);
+      assert.equal(f.events('recorded_merge_phase_reconciled').length, 0);
       assert.equal(f.events('main_synchronized').length, 1);
       assert.equal(f.events('resolution_retry').length, 1, 'the old event stays in history');
       assert.equal(f.events('closeout_recovery_budget').length, 1);
@@ -265,7 +451,8 @@ test('C6 an escalated task with an exact reviewed merge resumes without a planne
     plantMerged(f, f.source);
     const original = f.task();
     f.store.update(f.taskId, { phase: 'blocked', resolution: {
-      ...original.resolution, mergeIntent: false, mergeHead: null, mergedCommit: null, externalMerge: false,
+      ...original.resolution, recovery: null, recoveryActive: false, currentRunId: null,
+      mergeIntent: false, mergeHead: null, mergedCommit: null, externalMerge: false,
     } });
     f.engine.resolution.openPlannerEscalation(f.task(), {
       cause: digest('synthetic pre-merge blocker'),
@@ -279,7 +466,7 @@ test('C6 an escalated task with an exact reviewed merge resumes without a planne
     const done = f.task();
     assert.equal(done.resolution.mergedCommit, f.source.merged);
     assert.equal(done.resolution.review?.head, f.source.head);
-    assert.equal(done.resolution.recovery?.status, 'resolved');
+    assert.equal(done.resolution.recovery, null);
     assert.equal(done.resolution.stop, null);
     assert.equal(f.events('planner_escalation_resolved').length, 1);
     assert.equal(f.events('main_synchronized').length, 1);
@@ -404,7 +591,8 @@ test('a verified merge re-observes its forge identity before leaving a pre-atten
     const planted = plantMerged(f);
     f.store.update(f.taskId, {
       phase: 'needs_attention', reason: `${EXTERNAL_MERGE_CHECK_REASON_PREFIX} fixture head unavailable`,
-      resolution: { ...planted.resolution, externalMergePreAttention: { phase: 'reviewing', reason: 'Ready' } },
+      resolution: { ...planted.resolution, recovery: null, recoveryActive: false, currentRunId: null,
+        externalMergePreAttention: { phase: 'reviewing', reason: 'Ready' } },
     });
     f.adapter.externalMerge = async () => ({ head: base, commit: merged });
     await f.engine.wake();

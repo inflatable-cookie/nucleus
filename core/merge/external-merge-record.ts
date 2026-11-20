@@ -1,5 +1,4 @@
 import type { OwnerAcceptanceRecord, Task } from "../../shared/contracts";
-import type { Store } from "../store/store";
 import type { Resolution } from "../resolution";
 import { mergedWithNonePatch } from "../recovery/task-reasons";
 
@@ -18,11 +17,7 @@ import { mergedWithNonePatch } from "../recovery/task-reasons";
  * resolution every caller already holds.
  */
 export interface ObservedMergeContext {
-  store: Pick<Store, "event">;
-  resolution: Pick<Resolution, "assignIntegrationTurn" | "hasEarlierIntegrationTurn" | "update"> & {
-    /** Only the episode settlement the caller's own recovery context supplies. */
-    recovery: Pick<Resolution["recovery"], "settledEpisodeChanges">;
-  };
+  resolution: Pick<Resolution, "assignIntegrationTurn" | "hasEarlierIntegrationTurn" | "update" | "closeout">;
 }
 
 export interface ObservedMergeInput {
@@ -40,9 +35,6 @@ export interface ObservedMergeInput {
   recordHead: boolean;
   /** The exact-final-head acceptance recorded beside the merge, when the route derived one. */
   acceptance?: OwnerAcceptanceRecord | null;
-  /** Whether an episode one of the superseded runs held closes with this merge. */
-  settleEpisode: boolean;
-  episodeDetail: string;
   /** The visible reason per integration-turn state. */
   reason: { holding: string; waiting: string };
 }
@@ -53,17 +45,13 @@ export function recordObservedMerge(context: ObservedMergeContext, current: Task
   const latest = context.resolution.assignIntegrationTurn(current);
   const holding = !context.resolution.hasEarlierIntegrationTurn(latest);
   const headPatch = input.recordHead ? { prHead: input.head } : {};
-  // Every unreleased run is released by the caller, so an episode one of them held
-  // closes here: the merge is the outcome its coordinator was recovering toward (Queue #680).
-  const episode = input.settleEpisode ? context.resolution.recovery.settledEpisodeChanges(latest, input.episodeDetail) : null;
   const updated = context.resolution.update(latest, {
-    externalMerge: true, mergeHead: input.head, mergedCommit: input.commit, currentRunId: null, attention: false, externalMergePreAttention: null,
+    externalMerge: true, mergeHead: input.head, mergedCommit: input.commit,
+    ...(latest.resolution.recovery ? {} : { currentRunId: null, attention: false }), externalMergePreAttention: null,
     ...(acceptance ? {} : mergedWithNonePatch(latest, input.head)),
     ...(acceptance ? { ownerAcceptances: [...(latest.resolution.ownerAcceptances ?? []), acceptance] } : {}),
-    ...(episode ?? {}),
   }, holding
     ? { phase: "syncing", ...headPatch, coordinatorGeneration: latest.coordinatorGeneration + 1, reason: input.reason.holding }
     : { phase: "merging", ...headPatch, reason: input.reason.waiting }, "external_merge_observed");
-  if (episode) context.store.event(latest.id, "recovery_episode_settled", input.episodeDetail);
-  return updated;
+  return context.resolution.closeout.continueRecordedMerge(updated, { kind: "sweep" });
 }

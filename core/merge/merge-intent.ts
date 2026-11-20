@@ -5,7 +5,7 @@ import type { MergeGateResult, Resolution, ResolutionAdapter } from '../resoluti
 import { now } from '../store/store';
 import { mergedWithNonePatch } from '../recovery/task-reasons';
 
-export type MergeIntentContext = Pick<Resolution, 'adapter' | 'attention' | 'gateSettingsCurrent' | 'gitTransientFailure' | 'mergeGateEvidence' | 'paused' | 'store' | 'uncertainMergeRetryMs' | 'update' | 'waiting'>;
+export type MergeIntentContext = Pick<Resolution, 'adapter' | 'attention' | 'closeout' | 'gateSettingsCurrent' | 'gitTransientFailure' | 'mergeGateEvidence' | 'paused' | 'store' | 'uncertainMergeRetryMs' | 'update' | 'waiting'>;
 
 /** Decide whether fresh gate evidence permits the recorded intent's re-issue. */
 export function reissueGateDecision(current: Task, fresh: MergeGateResult, elapsed: number):
@@ -120,7 +120,14 @@ export class MergeIntent {
     const observed = mergeObservationDecision(t, result);
     if (observed === 'identity_mismatch') throw new Error('Merged PR identity differs from the approved task');
     if (observed === 'verified' && result.merged) {
-      this.update(t, { mergedCommit: result.commit!, attention: false, ...mergedWithNonePatch(t, result.head) }, { phase: 'syncing', reason: 'Merge verified; synchronizing local integration branch' }, 'merge_verified');
+      this.store.transaction(() => {
+        const current = this.store.task(t.id);
+        if (current.version !== t.version || mergeObservationDecision(current, result) !== 'verified') return;
+        const updated = this.update(current, { mergedCommit: result.commit!, ...mergedWithNonePatch(current, result.head) },
+          { phase: 'syncing', reason: 'Merge verified; synchronizing local integration branch' }, 'merge_verified',
+          JSON.stringify({ head: result.head, commit: result.commit, prNumber: current.reviewEntry?.prNumber ?? current.resumePrNumber ?? current.completion?.prNumber ?? null }));
+        this.resolution.closeout.continueRecordedMerge(updated, { kind: 'sweep' });
+      });
       return;
     }
     if (t.resolution.mergeResponseOutcome === 'pending') {

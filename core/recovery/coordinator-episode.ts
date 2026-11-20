@@ -44,6 +44,7 @@ export type RecoveryContext = Pick<
   Resolution,
   | "adapter"
   | "attention"
+  | "closeout"
   | "automaticHookReplayPending"
   | "ensureIncident"
   | "escalateRefusedCoordinator"

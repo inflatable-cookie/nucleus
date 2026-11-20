@@ -8,9 +8,7 @@ import {
   recordedCloseoutRefusal,
   REMOVED_TASK_REFUSAL,
 } from "../control-refusals";
-import { settleSupersededFencesInTx } from "../../recovery/fence-settlement";
 import { prIdentity } from "../owner-facts";
-import { now } from "../../store/store";
 import { DurableFenceRefusal } from "../../intake/run-settlement";
 
 /** The owner `move to=closeout` request, after the verb has parsed it. */
@@ -171,15 +169,8 @@ async function resumeRecordedMerge(
       throw Error("Task or run changed during merge observation");
     engine.releaseDisplacedRunsInTx(
       task.id,
-      finished.settleable.map((run) => run.id),
+      finished.settleable.filter(run => run.role !== "recovery" && run.role !== "closeout").map(run => run.id),
       `move closeout: ${input.reason}`,
-    );
-    settleSupersededFencesInTx(
-      store,
-      task.id,
-      `move closeout: ${input.reason}`,
-      now(),
-      engine.coordinatorActionRunId.getStore(),
     );
     return engine.resolution.closeout.continueRecordedMerge(
       store.task(task.id),

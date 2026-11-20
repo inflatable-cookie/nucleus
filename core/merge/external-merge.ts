@@ -72,7 +72,7 @@ export type ExternalMergeContext = Pick<
 > & {
   recovery: Pick<
     Resolution["recovery"],
-    "releaseWithNotAppliedAction" | "settledEpisodeChanges"
+    "releaseWithNotAppliedAction"
   >;
 };
 
@@ -403,15 +403,13 @@ export class ExternalMerge {
         ),
       );
       recordObservedMerge(
-        { store: this.store, resolution: this.resolution },
+        { resolution: this.resolution },
         current,
         {
           head: result.head,
           commit: result.commit,
           recordHead: !acceptance,
           acceptance,
-          settleEpisode: true,
-          episodeDetail: `External merge observed: ${reason}`,
           // A never-dispatched task keeps its recorded source head: the merged head
           // and commit are recorded beside it, not over it.
           reason: acceptance
@@ -431,7 +429,7 @@ export class ExternalMerge {
       );
       // Spec 050 atomic verbs: the move's fence settlement rides the accepted
       // merge inside this transaction, after its own update.
-      if (settleFences)
+      if (settleFences && !current.resolution.recovery)
         settleSupersededFencesInTx(
           this.store,
           t.id,
@@ -797,15 +795,12 @@ export class ExternalMerge {
         for (const run of this.store.runs(t.id).filter((r) => !r.released))
           this.store.putRun({ ...run, released: true, status: "superseded" });
         recordObservedMerge(
-          { store: this.store, resolution: this.resolution },
+          { resolution: this.resolution },
           current,
           {
             head: result.head,
             commit: result.commit,
             recordHead: true,
-            settleEpisode: true,
-            episodeDetail:
-              "External merge observed: the recovery run it superseded no longer holds the episode",
             reason: {
               holding:
                 "External merge verified; synchronizing main before coordinator closeout",
@@ -814,11 +809,10 @@ export class ExternalMerge {
             },
           },
         );
-        settleMergeEscalations(
-          current,
-          this.store,
-          `Verified merge ${result.commit} superseded the earlier resolution step`,
-        );
+        if (settleMergeEscalations(current, this.store, `Verified merge ${result.commit} superseded the earlier resolution step`)) {
+          const latest = this.store.task(current.id);
+          this.resolution.update(latest, { stop: null, attention: false }, {}, "pre_merge_escalation_settled");
+        }
       });
       return true;
     } catch (error) {

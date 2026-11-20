@@ -1,1 +1,1 @@
-Retain recovery occurrence identity for verified merge reconciliation.
+Keep superseded pre-merge recovery from interrupting verified merge closeout.
