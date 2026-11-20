@@ -138,8 +138,9 @@ test('shared brief text resolves from its version and independent handoffs retai
       }
       assert.equal(read.handoffText, text, `${id}: the handoff text is the exact submitted bytes`);
       if (briefText !== null) assert.equal(read.brief!.text, briefText, `${id}: the brief text is the exact submitted bytes`);
-      // Host selection adds a bounded identity and provenance object to each row.
-      if (id === brief.id) assert.ok(taskRowData(store, id).length < 4_100, `${id}: shared text keeps the row slim`);
+      // The canonical row is schema-bounded: host selection adds a bounded identity
+      // and provenance object, and the cross-host and restart fields joined it.
+      if (id === brief.id) assert.ok(taskRowData(store, id).length < 4_400, `${id}: shared text keeps the row slim`);
     }
     assert.equal(store.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='task_texts'").get(), undefined);
     for (const id of [brief.id, uneven.id]) {
@@ -399,8 +400,9 @@ test('nine representative rows: observation churn writes a bounded side row, not
       `an ordinary update spends a fraction of the parent bytes: ${childSubstantive.bytes} vs ${parentSubstantive.bytes}`);
     const childRow = child.ids.reduce((sum, id) => sum + Buffer.byteLength(taskRowData(child.store, id)), 0);
     const parentRow = parent.ids.reduce((sum, id) => sum + Buffer.byteLength(inlineTask(parent.store, id)), 0);
-    // Include the bounded host-selection provenance in the slim-row allowance.
-    assert.ok(taskRowData(child.store, child.ids[0]).length < 4_100, 'a slim row stays small');
+    // Include the bounded host-selection provenance and the cross-host/restart
+    // fields in the schema-bounded slim-row allowance.
+    assert.ok(taskRowData(child.store, child.ids[0]).length < 4_400, 'a slim row stays small');
     assert.ok(childRow * 10 < parentRow, `slim rows are at least ten times smaller: ${childRow} vs ${parentRow}`);
     assert.equal(childRun.taskRows, 0, 'no observation churn rewrites a task row');
     assert.equal(parentRun.taskRows, ROWS * PASSES, 'the parent rewrote the whole row on every pass');

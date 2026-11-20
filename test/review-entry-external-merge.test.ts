@@ -299,11 +299,11 @@ test('the parent behaviour reproduces the queued refusal through the public rout
       unseen=store.operations({taskId:current.id,states:['pending','running','needs_attention']}).map(item=>item.id);
       return original(current);
     };
-    await assert.rejects(runtime.taskControl(control),/Only an unmerged dispatched task can accept an external merge/,
+    await assert.rejects(runtime.taskControl(control),/Moving to closeout requires a dispatched task with a PR|Only an unmerged dispatched task can accept an external merge/,
       'the durable route, not only a parent engine call, reproduced the queued refusal');
     const operation=store.operationForKey(key)!;
     assert.equal(operation.state,'failed');
-    assert.match(operation.diagnostic,/Only an unmerged dispatched task can accept an external merge/);
+    assert.match(operation.diagnostic,/Moving to closeout requires a dispatched task with a PR|Only an unmerged dispatched task can accept an external merge/);
     assert.deepEqual(unseen.filter(id=>id===operation.id),[operation.id],
       'exactly the move\u2019s own running operation caused the parent refusal');
     assertUntouched(service,before);
@@ -384,7 +384,7 @@ test('unrelated custody still refuses before anything is accepted',async()=>{
         inputHash:'e'.repeat(64),state,taskId:before.id,expectedVersion:null,repoPath:f.repo,submissionId:null,createdAt:now(),
         startedAt:now(),settledAt:null,attempts:0,diagnostic:'',result:null,effect:null});
       store.putOperation(competing);
-      await assert.rejects(runtime.taskControl(closeout(service,{qualification:ACCEPTANCE})),/outside that boundary|Only an unmerged dispatched task/,
+      await assert.rejects(runtime.taskControl(closeout(service,{qualification:ACCEPTANCE})),/outside that boundary|Only an unmerged dispatched task|Moving to closeout requires a dispatched task with a PR/,
         `a competing ${state} operation is never mistaken for this invocation`);
       store.putOperation({...competing,state:'failed',settledAt:now()});
       assertUntouched(service,before);
@@ -394,7 +394,7 @@ test('unrelated custody still refuses before anything is accepted',async()=>{
     store.putRun({id:'history-run',taskId:before.id,role:'reviewer',generation:1,head:f.oldHead,base:f.planningCommit,
       agentId:'old-reviewer',workspaceId:before.workspaceId!,profile:f.reviewer,status:'finished',createdAt:now(),lastObservedAt:now(),
       active:false,idleSince:now(),completion:null,released:true});
-    await assert.rejects(runtime.taskControl(closeout(service,{qualification:ACCEPTANCE})),/outside that boundary|Only an unmerged dispatched task/);
+    await assert.rejects(runtime.taskControl(closeout(service,{qualification:ACCEPTANCE})),/outside that boundary|Only an unmerged dispatched task|Moving to closeout requires a dispatched task with a PR/);
     assert.deepEqual(store.task(before.id).resolution.ownerAcceptances,[]);
     assert.equal(store.task(before.id).version,before.version);
     assert.equal(events(service,before.id,'owner_acceptance').length,0);
@@ -415,7 +415,7 @@ test('a stale version, a missing invocation and a mutated invocation exempt noth
 
     // A direct engine call carries no internal invocation identity: the parent
     // refusal stands for callers outside the durable lane.
-    await assert.rejects(engine.performTaskControl(closeout(service,{qualification:ACCEPTANCE})),/outside that boundary|Only an unmerged dispatched task/,
+    await assert.rejects(engine.performTaskControl(closeout(service,{qualification:ACCEPTANCE})),/outside that boundary|Only an unmerged dispatched task|Moving to closeout requires a dispatched task with a PR/,
       'a missing internal invocation identity exempts nothing');
     assertUntouched(service,before);
 
@@ -428,7 +428,7 @@ test('a stale version, a missing invocation and a mutated invocation exempt noth
       inputHash:operationInputHash(forgedOperation.payload),state:'running',taskId:before.id,expectedVersion:before.version,
       repoPath:f.repo,submissionId:null,createdAt:now(),startedAt:now(),settledAt:null,attempts:1,diagnostic:'',result:null,effect:null});
     store.putOperation(running,forgedOperation.payload);
-    await assert.rejects(engine.performTaskControl(control,running.id),/outside that boundary|Only an unmerged dispatched task/,
+    await assert.rejects(engine.performTaskControl(control,running.id),/outside that boundary|Only an unmerged dispatched task|Moving to closeout requires a dispatched task with a PR/,
       'a running operation for another request is not this invocation');
     store.putOperation({...store.operation(running.id)!,state:'failed',settledAt:now()});
     assertUntouched(service,before);
@@ -711,7 +711,7 @@ test('an unsettled intake still refuses and unrelated queued work is never touch
     // The intake operation is still in flight: provenance is not settled.
     const intake=store.operation(before.reviewEntry!.operationId)!;
     store.putOperation({...intake,state:'running',settledAt:null});
-    await assert.rejects(runtime.taskControl(closeout(service,{qualification:ACCEPTANCE})),/outside that boundary|Only an unmerged dispatched task/);
+    await assert.rejects(runtime.taskControl(closeout(service,{qualification:ACCEPTANCE})),/outside that boundary|Only an unmerged dispatched task|Moving to closeout requires a dispatched task with a PR/);
     assertUntouched(service,before);
     store.putOperation({...intake,state:'succeeded',settledAt:now()});
 

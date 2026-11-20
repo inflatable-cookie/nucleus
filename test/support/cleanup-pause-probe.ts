@@ -10,7 +10,7 @@ async function main() {
     projectionEnqueued: new Map(), projectionDone: new Map(), projectionInFlight: new Set(), projectionWaiters: [],
     // #912: every task is host-scoped, and cleanup runs each effect inside its host.
     withHost: (_id: string, fn: () => unknown) => fn(), taskHostAvailable: () => true,
-    store: { getMeta: () => paused, task: (id: string) => ({ id, hostId: "host" }) },
+    store: { getMeta: () => paused, task: (id: string) => ({ id, hostId: "host", resolution: { displacedHostWorkspaces: [] } }) },
     scheduleCleanupRetry: () => {}, lifecycle: { archive: async () => { started++; } },
   });
   engine.enqueueCleanup('a');

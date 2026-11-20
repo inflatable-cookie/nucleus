@@ -502,10 +502,90 @@ export class Resolution {
     if (!projects.length) return [];
     const index = this.responsibleThreads.taskIndex(projects);
     return Promise.all(
-      projects.map((project) =>
-        this.responsibleThread(project, undefined, excludedHosts, index),
-      ),
+      projects.map(async (project) => {
+        const read = await this.responsibleThread(
+          project,
+          undefined,
+          excludedHosts,
+          index,
+        );
+        // Spec 058: the observing pass clears a registered planner whose thread is
+        // missing or archived, and notifies the Nucleus planner once for that
+        // episode. Routing reads never clear the row.
+        await this.reconcileGoneProjectPlanner(project, excludedHosts);
+        return read;
+      }),
     );
+  }
+
+  /** Clear a gone registered planner and tell the Nucleus planner once. */
+  private async reconcileGoneProjectPlanner(
+    project: Project,
+    excludedHosts?: ReadonlySet<string>,
+  ): Promise<void> {
+    const assigned = project.planner;
+    if (!assigned) return;
+    let gone = false;
+    try {
+      gone = (await this.plannerPresence.threadRoute(assigned.agentId)).kind === "gone";
+    } catch {
+      return;
+    }
+    const latest = this.store.projectByKey(project.key)?.planner;
+    if (
+      !gone ||
+      latest?.agentId !== assigned.agentId ||
+      latest.setAt !== assigned.setAt
+    )
+      return;
+    const queue = this.store.queueProject();
+    const fallback = queue && queue.key !== project.key ? queue : project;
+    const { thread } = await this.responsibleThread(
+      fallback,
+      undefined,
+      excludedHosts,
+    );
+    const planner = thread?.agentId ?? null;
+    const stillAssigned = this.store
+      .eventsAll(`project:${project.key}`)
+      .some(
+        (event) =>
+          event.kind === "project_planner_missing_notified" &&
+          event.detail.startsWith(`${assigned.agentId}:`),
+      );
+    this.store.setProjectPlanner({
+      key: project.key,
+      agentId: null,
+      setBy: "Queue",
+      note: `Planner ${assigned.agentId} is missing or archived; delegated questions fall back to the Nucleus planner`,
+    });
+    if (stillAssigned) return;
+    // One durable record per missing-planner episode, even when no Nucleus planner
+    // is live yet to be told; routing reads it to keep the rung failed.
+    const host = planner ? await this.identifyOriginHost(planner) : null;
+    const deliverable =
+      Boolean(host) &&
+      Boolean(planner) &&
+      this.withHost(host!, () => this.originHostAvailable(host!));
+    this.store.event(
+      `project:${project.key}`,
+      "project_planner_missing_notified",
+      planner && deliverable
+        ? `${assigned.agentId}: notifying Nucleus planner ${planner} on host ${host}`
+        : `${assigned.agentId}: no live Nucleus planner to notify yet`,
+    );
+    if (!deliverable || !planner) return;
+    await this.withHost(host!, async () => {
+      if (!this.adapter.notify) return;
+      try {
+        await this.host.sendMessage(planner, {
+          messageId: `ns-project-planner-missing-${project.key}`,
+          text: `Project ${project.name} has no live planner (${assigned.agentId} is missing or archived). Nucleus is routing its delegated questions here until a live project planner is registered.`,
+        });
+      } catch {
+        /* the durable notice record prevents repeated notifications */
+      }
+    });
   }
 
   /**

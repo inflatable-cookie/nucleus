@@ -23,7 +23,7 @@ function fixture() {
     projectionEnqueued: new Map(), projectionDone: new Map(), projectionInFlight: new Set(), projectionWaiters: [],
     // #912: every task is host-scoped, and cleanup runs each effect inside its host.
     withHost: (_id: string, fn: () => unknown) => fn(), taskHostAvailable: () => true,
-    store: { getMeta: () => false, task: (id: string) => ({ id, hostId: "host" }), taskOrNull: (id: string) => ({ id, hostId: "host" }) },
+    store: { getMeta: () => false, task: (id: string) => ({ id, hostId: "host", resolution: { displacedHostWorkspaces: [] } }), taskOrNull: (id: string) => ({ id, hostId: "host", resolution: { displacedHostWorkspaces: [] } }) },
     scheduleCleanupRetry: () => {},
     enqueueTitle: () => {},
     syncWorkspaceTitle: async (task: { id: string }) => { titles.push(task.id); },

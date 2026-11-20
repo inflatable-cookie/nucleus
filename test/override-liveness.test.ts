@@ -22,6 +22,7 @@ import { Lifecycle } from '../core/closeout/workspace-lifecycle';
 import { runSchema, submissionSchema, taskControlInputSchema, type Profile, type Run, type Task } from '../shared/contracts';
 import type { Adapter, AgentObservation } from '../core/host';
 import { CAPACITY_WAIT_PREFIX } from '../shared/wait-state';
+import { taskStopRecord } from '../shared/task-stop';
 import { stepEngine } from './support/engine-step';
 import { holdLifecycleFollowUps } from './support/hold-lifecycle-follow-ups';
 
@@ -305,7 +306,8 @@ liveness('engine', 'wakeTask', 'an owner release', f => f.control(dispatched(f),
 liveness('engine', 'wakeTask', 'a Git-transient retry timer', f => f.internals.armGitTransient(verifying(f).id, Date.now()), { standIn: () => async () => {} });
 liveness('engine', 'wakeTask', 'waking a capacity waiter', f => {
   f.resolution.slotAdmissionReason = () => null;
-  f.add({ phase: 'verifying', reason: CAPACITY_WAIT_PREFIX });
+  const task = f.add({ phase: 'awaiting_review', reason: CAPACITY_WAIT_PREFIX });
+  f.patchResolution(task, { stop: taskStopRecord('capacity', CAPACITY_WAIT_PREFIX) });
   f.internals.wakeCapacityWaiter('released');
 }, { standIn: () => async () => {} });
 liveness('engine', 'wakeRepository', 'an owner release', f => f.control(dispatched(f), { action: 'hold', kind: 'dispatch' }), { standIn: () => async () => {} });
