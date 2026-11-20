@@ -1,6 +1,7 @@
 import { isDeepStrictEqual } from "node:util";
 import type { Task } from "../../../shared/contracts";
 import { requestedReviewerRefusal } from "../../../shared/authors";
+import { unreviewedMergeRoute, unreviewedMergeRouteRefusal } from "../../../shared/task-view";
 import { validateNamedProfile } from "../../dispatch/routing";
 import type { Engine } from "../../engine";
 import { assertCanonicalPrSource, taskPrNumber } from "../../forge/index";
@@ -55,7 +56,15 @@ export async function moveToReview(engine: Engine, input: ReviewMoveInput, opera
   // the launch path owns any later checkout handoff after admission.
   const currentReader = runsBefore.findLast(run => run.role === 'reviewer' && !run.released && !run.completion && run.ordinaryDetached
     && (run.id === task.resolution.currentRunId || !task.resolution.currentRunId && run.replacedAt && run.agentId === task.resolution.reviewerAgentId));
-  const pr = currentReader ? await verifyReviewerPr(engine, task, currentReader, prNumber, input.fresh !== true) : await adapter.verifyPr(task, prNumber);
+  // nucleus#1425: a recorded external merge of this task's PR routes to its exact merged
+  // source; every other PR keeps the strict open-PR proof.
+  const mergedRouteRefusal = unreviewedMergeRouteRefusal(task);
+  if (mergedRouteRefusal) throw Error(mergedRouteRefusal);
+  const mergedRoute = currentReader ? null : unreviewedMergeRoute(task);
+  if (mergedRoute && !adapter.verifyMergedReviewSource) throw Error("Merged review source verification is unavailable");
+  const pr = currentReader ? await verifyReviewerPr(engine, task, currentReader, prNumber, input.fresh !== true)
+    : mergedRoute ? await adapter.verifyMergedReviewSource!(task, mergedRoute)
+      : await adapter.verifyPr(task, prNumber);
   if (evidence && pr.head !== evidence.head)
     throw Error(`PR #${prNumber} is at ${pr.head}, not the head ${evidence.head} its current ready result reports; nothing was bound`);
   // Reapply only a verdict pending at the verified current head. A newer PR

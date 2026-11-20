@@ -22,6 +22,7 @@ import {
   MOVE_REVIEW_PR_REFUSAL,
 } from "./control-refusals";
 import { groupIsUnavailable } from "../../shared/pool";
+import { unreviewedMergeRoute, unreviewedMergeRouteRefusal } from "../../shared/task-view";
 import { proofOnlyReceiptAwaitingReview } from "../qa/proof-records";
 import { z } from "zod";
 import {
@@ -155,6 +156,7 @@ export function qualifiedAcceptanceEligibility(
 function moveViews(facts: OwnerVerbFacts): TaskNextVerb[] {
   const { task, runs } = facts;
   const identity = { taskId: task.id, version: task.version };
+  const mergedRoute = unreviewedMergeRoute(task);
   const view = (
     to: MoveTarget,
     outcome: OwnerVerbApplicability & {
@@ -255,6 +257,10 @@ function moveViews(facts: OwnerVerbFacts): TaskNextVerb[] {
   const review = ((): OwnerVerbApplicability => {
     const shared = gate("review");
     if (shared) return shared;
+    // nucleus#1425: a recorded unreviewed merge whose source no longer matches is refused here
+    // with the admission's own text, so `next` never offers a route the move would refuse.
+    const mergedRouteRefusal = unreviewedMergeRouteRefusal(task);
+    if (mergedRouteRefusal) return { available: false, refusal: mergedRouteRefusal };
     if (proofOnlyReceiptAwaitingReview(task)) {
       const reviewGate = liveGate("review", true);
       if (!reviewGate.available) return reviewGate;
@@ -520,7 +526,10 @@ function moveViews(facts: OwnerVerbFacts): TaskNextVerb[] {
   })();
   return [
     view("work", work, ["reason", "instruction"]),
-    view("review", review, ["reason"]),
+    view("review", review.available && mergedRoute ? {
+      ...review,
+      note: `The PR merged outside Queue at ${mergedRoute.head} (merge commit ${mergedRoute.commit}). A fresh review of that merged source binds the exact head; only its ready_to_merge verdict reconciles the merge, and nothing is merged, pushed or reverted.`,
+    } : review, ["reason"]),
     view("merge", merge, mergeFill),
     // A never-dispatched review-entry closeout always needs its acceptance; a
     // dispatched one offers the descendant pair, and the ordinary reason-only
