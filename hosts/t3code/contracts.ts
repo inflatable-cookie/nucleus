@@ -334,6 +334,39 @@ export const config = z.object({
   ),
 });
 
+export const previewNavStatus = z.discriminatedUnion("_tag", [
+  z.object({ _tag: z.literal("Idle") }).passthrough(),
+  z
+    .object({ _tag: z.literal("Loading"), url: z.string(), title: z.string() })
+    .passthrough(),
+  z
+    .object({ _tag: z.literal("Success"), url: z.string(), title: z.string() })
+    .passthrough(),
+  z
+    .object({
+      _tag: z.literal("LoadFailed"),
+      url: z.string(),
+      title: z.string(),
+      code: z.number().int(),
+      description: z.string(),
+    })
+    .passthrough(),
+]);
+export const previewSession = z
+  .object({
+    threadId: id,
+    tabId: id,
+    navStatus: previewNavStatus,
+    reveal: z.boolean().optional(),
+    updatedAt: z.string(),
+  })
+  .passthrough();
+export const previewList = z
+  .object({
+    sessions: z.array(previewSession),
+  })
+  .passthrough();
+
 /**
  * How much of a thread's timeline one `subscribeThread` snapshot carries.
  *

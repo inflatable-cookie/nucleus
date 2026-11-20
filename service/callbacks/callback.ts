@@ -187,6 +187,13 @@ const acpMessageSchema = acpCallerSchema
     text: z.string().trim().min(1).max(AGENT_MESSAGE_MAX_CHARS),
   })
   .strict();
+const acpInboxUiSchema = z
+  .object({
+    kind: z.literal("inbox"),
+    hostId: z.string().min(1).max(240),
+    sessionId: z.string().min(1).max(160),
+  })
+  .strict();
 
 /** The ACP surface this process attached, or the refusal that it serves none. */
 function acpSessions(engine: Engine) {
@@ -590,6 +597,15 @@ export async function startCallbacks(
       bodyBytes: SMALL_CALLBACK_BODY_BYTES,
       handle: (input, token) =>
         acpSessions(engine).message(acpMessageSchema.parse(input), token),
+    },
+    "/acp-inbox-ui": {
+      bodyBytes: SMALL_CALLBACK_BODY_BYTES,
+      handle: (input, token) => {
+        const surface = acpSessions(engine);
+        if (!surface.openInboxUi)
+          throw new Error("This process cannot open the board from the inbox");
+        return surface.openInboxUi(acpInboxUiSchema.parse(input), token);
+      },
     },
     "/promote-task": {
       bodyBytes: SMALL_CALLBACK_BODY_BYTES,

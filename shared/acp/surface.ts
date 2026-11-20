@@ -18,6 +18,18 @@ export type AcpCaller =
   | { kind?: "task"; taskId: string; sessionId: string }
   | { kind: "inbox"; hostId: string; sessionId: string };
 
+export interface AcpInboxUiInput {
+  kind: "inbox";
+  hostId: string;
+  sessionId: string;
+}
+
+export interface AcpInboxUiReply {
+  status: "opened" | "reused" | "failed";
+  hold: boolean;
+  detail?: string;
+}
+
 export type AcpTurnInput = AcpCaller & {
   waitMs?: number;
   /**
@@ -117,6 +129,8 @@ export interface AcpSessionSurface {
   answer?(input: AcpAnswerInput, token: string): Promise<unknown>;
   /** The operator's text in the task's thread: recorded and routed by Nucleus, never by the agent. */
   message(input: AcpMessageInput, token: string): Promise<unknown>;
+  /** Open or reveal the board from the authenticated host inbox session. */
+  openInboxUi?(input: AcpInboxUiInput, token: string): Promise<AcpInboxUiReply>;
   /** A host adapter's release directive: end this session's held turn now. */
   release(sessionId: string, reason: string): void;
 }

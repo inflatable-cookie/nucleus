@@ -8,7 +8,11 @@
  */
 import { request } from "node:http";
 import type { AcpBinding } from "./binding";
-import type { AcpAnswerInput } from "./surface";
+import type {
+  AcpAnswerInput,
+  AcpInboxUiInput,
+  AcpInboxUiReply,
+} from "./surface";
 import type {
   AcpMessageReply,
   AcpMessageRequest,
@@ -35,6 +39,10 @@ export function createAcpTransport(binding: AcpBinding): AcpSessionTransport {
       }),
     answer: (input: AcpAnswerInput) =>
       post(binding, "/acp-answer", input, {
+        timeoutMs: ACP_MESSAGE_TIMEOUT_MS,
+      }),
+    openUi: (input: AcpInboxUiInput) =>
+      post<AcpInboxUiReply>(binding, "/acp-inbox-ui", input, {
         timeoutMs: ACP_MESSAGE_TIMEOUT_MS,
       }),
   };

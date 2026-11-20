@@ -42,6 +42,9 @@ class ScriptedTransport implements AcpSessionTransport {
   readonly turns: AcpTurnRequest[] = [];
   readonly messages: AcpMessageRequest[] = [];
   readonly answers: import("../shared/acp/surface").AcpAnswerInput[] = [];
+  openUi?: (
+    input: import("../shared/acp/surface").AcpInboxUiInput,
+  ) => Promise<import("../shared/acp/surface").AcpInboxUiReply>;
   answer(
     input: import("../shared/acp/surface").AcpAnswerInput,
   ): Promise<unknown> {
@@ -1497,6 +1500,150 @@ test("one held turn raises one card per decision version, however often the serv
     );
     client.notify("session/cancel", { sessionId: binding.sessionId });
     await client.lines.untilResult(prompt);
+  } finally {
+    await client.closed();
+  }
+});
+
+test("an inbox session routes exact ui through openUi and goes idle when no decisions are offered", async () => {
+  const uiCalls: unknown[] = [];
+  let holdNext = false;
+  let status: "opened" | "reused" | "failed" = "opened";
+  let detail: string | undefined;
+  const transport = new ScriptedTransport();
+  transport.openUi = async (input) => {
+    uiCalls.push(input);
+    return { status, hold: holdNext, ...(detail ? { detail } : {}) };
+  };
+  const inbox = {
+    format: "nucleus.acp.inbox" as const,
+    version: 1 as const,
+    kind: "inbox" as const,
+    hostId: "t3code:synthetic",
+    sessionId: "6b1d4e1a-9c1f-4f80-9b0b-3a0e1a6f2c11",
+    socketPath: "/nonexistent/callback.sock",
+    token: "fixture-token",
+  };
+  const client = harness({
+    agent: { resolve: async () => ({ binding: inbox, transport }) },
+  });
+  try {
+    await client.lines.untilResult(
+      client.request("session/load", {
+        sessionId: inbox.sessionId,
+        cwd: "/synthetic",
+      }),
+    );
+    // Exact `ui` works on the very first prompt and returns end_turn at once when idle.
+    const first = await client.lines.untilResult(
+      client.request("session/prompt", {
+        sessionId: inbox.sessionId,
+        prompt: [{ type: "text", text: "ui" }],
+      }),
+    );
+    assert.deepEqual(first.result.result, { stopReason: "end_turn" });
+    assert.equal(
+      transport.turns.length,
+      1,
+      "no held poll is started when hold is false",
+    );
+    assert.deepEqual(uiCalls, [
+      { kind: "inbox", hostId: inbox.hostId, sessionId: inbox.sessionId },
+    ]);
+    assert.match(JSON.stringify(first.updates), /Opened the Nucleus board\./);
+
+    // Repeating `ui` still reports the reused status and stays idle.
+    status = "reused";
+    const second = await client.lines.untilResult(
+      client.request("session/prompt", {
+        sessionId: inbox.sessionId,
+        prompt: [{ type: "text", text: "ui" }],
+      }),
+    );
+    assert.deepEqual(second.result.result, { stopReason: "end_turn" });
+    assert.match(JSON.stringify(second.updates), /already open/i);
+
+    // Repeating the same `reused` reply still emits on a new prompt.
+    const third = await client.lines.untilResult(
+      client.request("session/prompt", {
+        sessionId: inbox.sessionId,
+        prompt: [{ type: "text", text: "ui" }],
+      }),
+    );
+    assert.match(JSON.stringify(third.updates), /already open/i);
+
+    // Failed openUi redacts any pairing token fragment and ends turn when idle.
+    status = "failed";
+    detail = "http://127.0.0.1:4318/#token=secret-token failed";
+    const failed = await client.lines.untilResult(
+      client.request("session/prompt", {
+        sessionId: inbox.sessionId,
+        prompt: [{ type: "text", text: "ui" }],
+      }),
+    );
+    assert.deepEqual(failed.result.result, { stopReason: "end_turn" });
+    assert.doesNotMatch(JSON.stringify(failed.updates), /secret-token/);
+    assert.match(JSON.stringify(failed.updates), /\[redacted\]/);
+
+    // Non-exact text never triggers openUi.
+    const callsBeforeOther = uiCalls.length;
+    for (const nonExact of ["UI", "ui please", "hello"]) {
+      const other = client.request("session/prompt", {
+        sessionId: inbox.sessionId,
+        prompt: [{ type: "text", text: nonExact }],
+      });
+      await turnStarted(transport, transport.turns.length + 1);
+      transport.release();
+      await client.lines.untilResult(other);
+    }
+    assert.equal(uiCalls.length, callsBeforeOther);
+
+    // When offerable decisions exist, `ui` keeps the turn held until released/cancelled.
+    status = "reused";
+    detail = undefined;
+    holdNext = true;
+    const turnsBeforeHold = transport.turns.length;
+    const held = client.request("session/prompt", {
+      sessionId: inbox.sessionId,
+      prompt: [{ type: "text", text: "ui" }],
+    });
+    await turnStarted(transport, turnsBeforeHold + 1);
+    client.notify("session/cancel", { sessionId: inbox.sessionId });
+    const heldResult = await client.lines.untilResult(held);
+    assert.deepEqual(heldResult.result.result, { stopReason: "cancelled" });
+  } finally {
+    await client.closed();
+  }
+});
+
+test("a task session still forwards literal ui text as an operator message", async () => {
+  const client = harness();
+  let uiCalled = false;
+  client.transport.openUi = async () => {
+    uiCalled = true;
+    return { status: "opened", hold: false };
+  };
+  try {
+    await client.lines.untilResult(
+      client.request("session/new", { cwd: "/fixture/checkout" }),
+    );
+    const opening = client.request("session/prompt", {
+      sessionId: binding.sessionId,
+      prompt: [{ type: "text", text: "opening" }],
+    });
+    await turnStarted(client.transport, 2);
+    client.transport.release();
+    await client.lines.untilResult(opening);
+
+    const prompt = client.request("session/prompt", {
+      sessionId: binding.sessionId,
+      prompt: [{ type: "text", text: "ui" }],
+    });
+    await turnStarted(client.transport, 3);
+    client.transport.release();
+    await client.lines.untilResult(prompt);
+    assert.equal(uiCalled, false);
+    assert.equal(client.transport.messages.at(-1)?.text, "ui");
   } finally {
     await client.closed();
   }

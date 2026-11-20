@@ -24,6 +24,8 @@ import type {
   AcpAnswerInput,
   AcpCaller,
   AcpCardScope,
+  AcpInboxUiInput,
+  AcpInboxUiReply,
   AcpMessageInput,
   AcpPendingCard,
   AcpSessionBinding,
@@ -81,6 +83,7 @@ export interface AcpSessionsOptions {
     relayed: boolean;
     note: string;
   }) => unknown;
+  openInboxUi?: (hostId: string) => Promise<{ status: "opened" | "reused" }>;
 }
 
 /**
@@ -461,6 +464,48 @@ export class AcpSessions implements AcpSessionSurface {
           ? `Answered from T3 inbox ${input.hostId}`
           : `Answered from T3 task ${input.taskId}`,
     });
+  }
+
+  /** Open or reveal the host's board from an authenticated inbox session. */
+  async openInboxUi(
+    input: AcpInboxUiInput,
+    token: string,
+  ): Promise<AcpInboxUiReply> {
+    const record = verifyAcpInbox(
+      {
+        dataHome: this.dataHome,
+        hostId: input.hostId,
+        sessionId: input.sessionId,
+      },
+      token,
+    );
+    const hasOffer = () => this.pendingInboxDecisionKey(record.hostId) !== null;
+    if (!this.options.openInboxUi) {
+      return {
+        status: "failed",
+        hold: hasOffer(),
+        detail: "This process cannot open the board from the inbox",
+      };
+    }
+    try {
+      const opened = await this.options.openInboxUi(record.hostId);
+      return {
+        status: opened.status,
+        hold: hasOffer(),
+      };
+    } catch (error) {
+      const detail = (error instanceof Error ? error.message : String(error))
+        .replace(
+          /pairingUrl:\S+|https?:\/\/\S*#token=\S+|#token=\S+/gi,
+          "[redacted]",
+        )
+        .trim();
+      return {
+        status: "failed",
+        hold: hasOffer(),
+        ...(detail ? { detail } : {}),
+      };
+    }
   }
 
   /** The operator's text in the task's thread: recorded and routed by Nucleus, never by the agent. */
