@@ -105,7 +105,7 @@ test("task detail uses a modal and keeps absent resolution-run recovery out of t
   assert.match(ui, /<RecordModal\s+label="Papercut detail"/);
   assert.match(
     ui,
-    /<Text numberOfLines=\{2\} ellipsizeMode="tail"[^>]*>\{task\.reason\}<\/Text>/,
+    /<Text\s+numberOfLines=\{2\}\s+ellipsizeMode="tail"[^>]*>\s*\{task\.reason\}\s*<\/Text>/,
   );
   assert.doesNotMatch(ui, /LanesSwitch/);
   assert.doesNotMatch(ui, /text="Status"/);
@@ -281,7 +281,7 @@ test("CLI, native UI and Queue MCP forward task controls through the shared cont
   // #895 puts low-value technical events behind a disclosure while retaining the original audit row.
   assert.match(
     ui,
-    /function TechnicalActivityEvents[\s\S]*events\.map\(event => <EventRow key=\{event\.id\} event=\{event\} c=\{c\} \/>\)/,
+    /function TechnicalActivityEvents[\s\S]*events\.map\(\s*\(?event\)?\s*=>\s*\(?\s*<EventRow key=\{event\.id\} event=\{event\} c=\{c\} \/>\s*\)?\s*\)/,
   );
   assert.match(
     ui,
