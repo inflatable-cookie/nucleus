@@ -750,6 +750,7 @@ export class Resolution {
         "attentionUnknownEscalation",
         "environmentDeferred",
         "gitTransientFailure",
+        "reconcileLegacyPlaceholderDecisions",
         "responsibleBlockerLadder",
         "store",
         "update",
@@ -2734,13 +2735,20 @@ export class Resolution {
   routePlannerEscalation(t: Task, id: string, question: string): Promise<void> {
     return this.ladder.routePlannerEscalation(t, id, question);
   }
+  routePlannerEscalationReturn(t: Task, id: string): Promise<void> {
+    return this.ladder.routePlannerEscalationReturn(t, id);
+  }
+  reconcileLegacyPlaceholderDecisions(t: Task): void {
+    return this.ladder.reconcileLegacyPlaceholderDecisions(t);
+  }
   classifyEscalationToOperator(
     t: Task,
     id: string,
     reason: string,
     who: string,
+    handoff?: import("./questions/ladder").OperatorEscalationHandoff,
   ): void {
-    return this.ladder.classifyEscalationToOperator(t, id, reason, who);
+    return this.ladder.classifyEscalationToOperator(t, id, reason, who, handoff);
   }
   settlePlannerEscalation(
     t: Task,
@@ -3661,10 +3669,10 @@ export class Resolution {
   advanceSkippedReview(t: Task): void {
     return this.reviewAdvances.advanceSkippedReview(t);
   }
-  private sendDurably(
-    ...args: Parameters<Notices["sendDurably"]>
+  sendDurably<T>(
+    d: import("./questions/notices").DurableSendOptions<T>,
   ): Promise<"paused" | "done"> {
-    return this.notices.sendDurably(...args);
+    return this.notices.sendDurably(d);
   }
   deliverDrainNotices(): Promise<void> {
     return this.notices.deliverDrainNotices();
@@ -3683,7 +3691,10 @@ export class Resolution {
   deliverRowHiddenNotices(): Promise<void> {
     return this.notices.deliverRowHiddenNotices();
   }
+  scheduleDecisionDelivery?: () => Promise<void>;
   deliverDecisionNotices(): Promise<void> {
-    return this.notices.deliverDecisionNotices();
+    return this.scheduleDecisionDelivery
+      ? this.scheduleDecisionDelivery()
+      : this.notices.deliverDecisionNotices();
   }
 }

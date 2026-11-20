@@ -38,6 +38,7 @@ export type RecoveryLifecycleContext = Pick<
   | "waiting"
 > & {
   replayHeldAttention(t: Task): Promise<Task | null>;
+  reconcileLegacyPlaceholderDecisions?: (t: Task) => void;
 };
 
 export class RecoveryLifecycle {
@@ -87,6 +88,8 @@ export class RecoveryLifecycle {
     return t;
   }
   async blockerLadderStep(t: Task): Promise<Task | null> {
+    this.context.reconcileLegacyPlaceholderDecisions?.(t);
+    t = this.context.store.task(t.id);
     // Spec 058 slice 17: a parked blocked responsible task climbs the ladder once
     // per receipt — the repository hook and the ordinary park have already run, so
     // this is classification after the fact, never a second emission. A provider

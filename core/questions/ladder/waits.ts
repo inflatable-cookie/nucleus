@@ -12,6 +12,10 @@ export const escalationWaitDetail = {
     `Waiting with the retained reviewer: consult ${id} is out for a second opinion; the same worker continues with the advice`,
   planner: (id: string) =>
     `Waiting with the planner: blocker escalation ${id} is open; the task gets no worker turn until the planner acts`,
+  returned: (id: string) =>
+    `Waiting with the planner: blocker escalation ${id} was returned to the planner for a recommendation; the task gets no worker turn until the planner acts`,
+  returnedNoPlanner: (id: string) =>
+    `Waiting with the planner: blocker escalation ${id} was returned to the planner and stays parked until a planner or owner authorizes the next step`,
   operator: (id: string, decisionId: string) =>
     `Waiting with the operator: escalation ${id} was classified as the operator's (decision ${decisionId})`,
   unknown: (id: string) =>

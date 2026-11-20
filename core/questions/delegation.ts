@@ -46,7 +46,7 @@ export type PlannerRungName = "task" | "project";
 function escalationIdForQuestion(questionId: string): string {
   return questionId
     .replace(/^ns-decider-/, "")
-    .replace(/^ns-escalation-(?:refusal-)?/, "")
+    .replace(/^ns-escalation-(?:return-(?:refusal-)?|refusal-)?/, "")
     .replace(/-project$/, "");
 }
 
@@ -819,6 +819,25 @@ export class Delegation {
       this.recordCommandRefused(key, escalationId, message, recordedId);
       return Promise.reject(Error(message));
     }
+    const isReturn =
+      questionId.startsWith(`ns-escalation-return-${escalationId}`) ||
+      questionId.startsWith(`ns-escalation-return-refusal-${escalationId}`);
+    const alreadyReturned =
+      receipt.decision === "operator" &&
+      !isReturn &&
+      taskEvents.some(
+        (event) =>
+          event.kind === "planner_escalation_returned" &&
+          event.detail.startsWith(`${escalationId}:`),
+      );
+    const alreadyReturnExhausted =
+      receipt.decision === "operator" &&
+      isReturn &&
+      taskEvents.some(
+        (event) =>
+          event.kind === "planner_escalation_return_exhausted" &&
+          event.detail.startsWith(`${escalationId}:`),
+      );
     if (
       taskEvents.some(
         (event) =>
@@ -827,6 +846,8 @@ export class Delegation {
           event.detail.startsWith(`${escalationId}:`) &&
           event.id > recordedId,
       ) ||
+      alreadyReturned ||
+      alreadyReturnExhausted ||
       this.resolution.ladder.operatorDecisionApplied(
         authority.taskId,
         escalationId,
@@ -939,6 +960,10 @@ export class Delegation {
           escalationId,
           reason,
           `${role} ${caller}`,
+          {
+            authority: "bare_classification",
+            sourceQuestionId: input.questionId,
+          },
         );
       } else {
         const answer = `${input.choice ?? input.answer!} — ${reason}`;

@@ -10,6 +10,8 @@ import { establishEscalationWait, type EscalationWait } from "./hold";
 import {
   classifyEscalationToOperator,
   operatorDecisionApplied,
+  reconcileLegacyPlaceholderDecisions,
+  type OperatorEscalationHandoff,
 } from "./operator";
 import {
   escalateRefusedCoordinator,
@@ -25,6 +27,7 @@ import { resumeDelegations, resumeEscalationWaits } from "./resume";
 import {
   openPlannerEscalation,
   routePlannerEscalation,
+  routePlannerEscalationReturn,
   type OpenEscalationInput,
 } from "./routing";
 
@@ -150,14 +153,23 @@ export class Ladder {
   routePlannerEscalation(t: Task, id: string, question: string): Promise<void> {
     return routePlannerEscalation(this, t, id, question);
   }
-  /** A planner or decider that explicitly says it cannot decide reaches the operator. */
+  /** Route a returned escalation occurrence back through the planner ladder. */
+  routePlannerEscalationReturn(t: Task, id: string): Promise<void> {
+    return routePlannerEscalationReturn(this, t, id);
+  }
+  /** Withdraw any still-open legacy placeholder ladder decisions and return their occurrence to the planner. */
+  reconcileLegacyPlaceholderDecisions(t: Task): void {
+    return reconcileLegacyPlaceholderDecisions(this, t);
+  }
+  /** Classify an escalation: concrete operator choices reach Tom; bare classifications return to the planner. */
   classifyEscalationToOperator(
     t: Task,
     id: string,
     reason: string,
     who: string,
+    handoff?: OperatorEscalationHandoff,
   ): void {
-    return classifyEscalationToOperator(this, t, id, reason, who);
+    return classifyEscalationToOperator(this, t, id, reason, who, handoff);
   }
   /** Whether an escalation's operator decision is recorded, linked and holding the task. */
   operatorDecisionApplied(taskId: string, id: string): boolean {

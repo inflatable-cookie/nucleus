@@ -40,6 +40,7 @@ export function establishEscalationWait(ladder: Ladder, taskId: string, id: stri
     const { stopDetail, stopReason } = escalationWaitState(id, wait);
     const expected = escalationWaitState(id, wait);
     const recordedWait = events.findLast(event => event.kind === 'planner_escalation_wait' && event.detail.startsWith(`${id}:`)
+      && !events.some(superseded => superseded.kind === 'planner_escalation_wait_superseded' && superseded.id > event.id && superseded.detail.startsWith(`${id}:`))
       && (() => {
         try {
           const value = JSON.parse(event.detail.slice(id.length + 2)) as { kind?: string; target?: string; stopDetail?: string; stopReason?: string };

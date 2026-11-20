@@ -366,6 +366,11 @@ export class RuntimeLifecycle {
       this.secondaryOnline = online;
       return;
     }
+    if (this.owner.store.pendingDecisionDeliveries?.().length) {
+      void this.owner.engine.scheduleDecisionNotices?.().catch(() => {
+        /* decision delivery records its own wait or fault */
+      });
+    }
     await this.refresh();
     this.secondaryOnline = true;
   }

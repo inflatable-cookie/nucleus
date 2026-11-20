@@ -968,6 +968,12 @@ export class QueueRuntime {
         // sweep needs only the connection.
         void this.ensureBootstrap().catch(() => {});
         if (this.closing || !this.anyHostConnected()) return;
+        if (
+          !this.store.getMeta("paused") &&
+          this.store.pendingDecisionDeliveries().length > 0
+        ) {
+          void this.engine.scheduleDecisionNotices().catch(() => {});
+        }
         this.engine.resumeSubmissions();
         // Spec 058 slice 1: open streams for new run agents and close settled ones. Local
         // bookkeeping plus at most one establishment call per new run; usage is never sampled.
@@ -1130,9 +1136,19 @@ export class QueueRuntime {
     this.t3Host?.close();
     this.t3Host = replacement;
     if (!this.t3Host) return;
-    void this.t3Host.ensureConnected().catch(() => {
-      /* the next bootstrap tick reconnects; health reports the failure */
-    });
+    void this.t3Host
+      .ensureConnected()
+      .then(() => {
+        if (
+          !this.closing &&
+          this.store.pendingDecisionDeliveries().length > 0
+        ) {
+          void this.engine.scheduleDecisionNotices().catch(() => {});
+        }
+      })
+      .catch(() => {
+        /* the next bootstrap tick reconnects; health reports the failure */
+      });
   }
 
   /** A lost host connection is not evidence that any host run ended. */
@@ -1155,7 +1171,11 @@ export class QueueRuntime {
    * one re-registers, a different one refuses by its field with nothing registered.
    */
   bbHostVerified(input: BbHostVerifiedInput) {
-    return this.bbHost.verified(input);
+    const verified = this.bbHost.verified(input);
+    if (!this.closing && this.store.pendingDecisionDeliveries().length > 0) {
+      void this.engine.scheduleDecisionNotices().catch(() => {});
+    }
+    return verified;
   }
   /** Record BB's operator-authored presentation parent for one Nucleus thread. */
   bbParentChanged(input: unknown): { ok: true; matched: boolean } {

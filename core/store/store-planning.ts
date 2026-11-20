@@ -682,11 +682,11 @@ export class StorePlanning {
       && (!query.papercut || decision.links.papercuts.includes(query.papercut)));
   }
 
-  /** Answered decisions whose notice has not settled; delivery retries until it does. */
+  /** Answered decisions whose notice has not settled; delivery retries pending rows and reconciles interrupted intents. */
   pendingDecisionDeliveries(): Decision[] {
     return this.core.db.prepare("SELECT data FROM decisions WHERE status='answered'").all()
       .map(row => storedDecisionSchema.parse(JSON.parse(String(row.data))))
-      .filter(decision => decision.delivery !== null && ["pending", "intent", "uncertain"].includes(decision.delivery.status));
+      .filter(decision => decision.delivery !== null && ["pending", "intent"].includes(decision.delivery.status));
   }
 
   private storedLeadData(lead: Lead, versionWillBeWritten = false): string {

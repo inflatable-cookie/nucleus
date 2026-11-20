@@ -35,10 +35,19 @@ A decision has:
   consequences. An authorless headline uses the final interrogative sentence,
   prefixed by its task reference when linked, and shortens at a word boundary
   with an ellipsis. Creation and supersession always supply choices and a matching
-  recommendation, including questions a planner forwards with `Decision: operator`.
-  If choices are missing, Queue offers returning to the planner for a recommendation
-  or keeping the task held. A single option gains a hold alternative. Legacy
-  free-text decisions receive the same choices when read.
+  recommendation. At the blocker ladder's operator handoff, a bare
+  `Decision: operator` classification or options that only defer planning
+  without concrete choices and consequences do not create an operator decision
+  and instead return the escalation occurrence to the planner ladder for a
+  recommendation (Tom, 2026-11-20). Still-open legacy placeholder ladder
+  decisions without explicit options or stored choices are withdrawn by their escalation
+  settlement owner (preserving history without manufacturing an operator answer)
+  and returned to the planner; genuine operator rulings, permission requests,
+  and already answered decisions stay untouched. Outside that blocker-ladder
+  handoff, if choices are missing on creation or supersession, Queue offers
+  returning to the planner for a recommendation or keeping the task held; a
+  single option gains a hold alternative, and legacy free-text decisions receive
+  the same choices when read.
   `details` holds the longer context and evidence. Tom, 2026-11-04: a stopped task's
   question must escalate to the planner or provide recommended options.
 - `question` (required) and optional `context`, `options` (short labels) and
@@ -103,12 +112,30 @@ under [Spec 055](055-source-immutable-proof-executor.md).
 
 ## Delivery
 
-Answering sends one durable notice to the asking agent's thread through the
-existing notice path, deduplicated per decision version. Delivery failure is
-retried like other notices and never loses the answer: an agent that resumes
-lists its answered decisions.
-An answer the asking agent relays itself sends no notice: that thread already
-has it (Tom, 2026-09-29).
+Answering commits the decision version and schedules one durable notice to the
+asking agent's thread through a coalesced, bounded delivery owner on its own
+lane, independent of the serial fleet reconciliation sweep. Both T3 Inbox and
+board answers use the shared answer path, which preserves an independent wake
+for task effects while delivering decision notices without waiting behind slow
+task reconciliation.
+
+Startup, resume, unpause, host reconnect and bounded backoff retries route
+through that same delivery owner; the serial fleet sweep does not send decision
+notices. Per-recipient ordering stays FIFO while independent recipients run
+with bounded concurrency and per-step timeouts so a busy, unavailable or slow
+recipient stays pending and cannot monopolize delivery to an unrelated
+reachable recipient.
+
+Notices use the deterministic version identity (`decision:<id>:<version>`) and
+the shared durable send path (`intent` before send, fresh recipient and host
+availability checks, pause gates). Notification failure never rolls back the
+committed answer: an agent that resumes still lists its answered decisions.
+Proven pre-send refusals, busy threads and unavailable hosts keep the notice
+pending for retry; interrupted `intent` records on restart and non-pre-send
+send failures settle as `uncertain` and are never resent blindly (a late
+acknowledgement on an abandoned send settles `uncertain` to `delivered` without
+resending). An answer the asking agent relays itself sends no notice: that
+thread already has it (Tom, 2026-09-29).
 
 ## Staleness
 
