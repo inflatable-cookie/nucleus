@@ -6,7 +6,7 @@ presentation), phase 4 (delivery, questions and the support roles), phase 5 (the
 the task group header) and phase 6 (the boards, settings, pills and the planner terminal) are in
 place, and phase 7 records its parity table and evidence with the operator's parity call still
 pending (see [phase 7](#phase-7--trial-and-parity-call)). This document is the design and the phased
-plan, and [phase 0 evidence](#phase-0-evidence-2026-11-16) answers its eight assumptions. Amended
+plan, and [phase 0 evidence](#phase-0-evidence-2026-11-16) answers its eight assumptions. The phase 7 trial below was described as the prerequisite for the move to T3 under the superseded Nov 17 target; the current operating-host ruling is in [vision](../vision.md) (Tom, 2026-11-19/20: T3 is the current operating host). Amended
 2026-11-16: decision 5 now carries the forked sidebar, the two boards and BB usage left to BB's card
 plus the operator's Usage Pace plugin, and the experimental inventory and the plan from phase 5 on
 follow it; phases 0–4 are unchanged. Amended 2026-11-17 (nucleus#1302): subscription usage leaves
