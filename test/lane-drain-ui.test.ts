@@ -1,4 +1,5 @@
 import { test } from "node:test";
+import { recentProjectActivity } from './support/fakes';
 import assert from "node:assert/strict";
 import React from "react";
 import { useState } from "react";
@@ -129,6 +130,7 @@ test("041 rendered: a drained plan lane shows the Drained flag with its age in t
     const [edits, setEdits] = useState<Record<string, PlanEdit>>({});
     return h(PlanningTab, {
       sections: [{ project: project(null), latest: plan, saved: plan }],
+      projectActivity: recentProjectActivity([project(null)]),
       lanes: [drainedLane(false), plainLane],
       edits,
       selectedLane: "",

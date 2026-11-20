@@ -1,4 +1,5 @@
 import { test } from "node:test";
+import { recentProjectActivity } from './support/fakes';
 import assert from "node:assert/strict";
 import React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -100,6 +101,7 @@ const board = {
   recentAssignments: {},
   lanes: [],
   projects: [project],
+  projectActivity: recentProjectActivity([project]),
   prStates: {},
 };
 

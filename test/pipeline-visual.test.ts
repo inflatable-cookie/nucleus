@@ -1,4 +1,5 @@
 import { test } from "node:test";
+import { recentProjectActivity } from './support/fakes';
 import assert from "node:assert/strict";
 import React from "react";
 import { createRequire } from "node:module";
@@ -321,6 +322,7 @@ const board = {
   recentAssignments: {},
   lanes,
   projects: [project],
+  projectActivity: [] as Array<{ key: string; executing: boolean; activityAt: string | null }>,
   prStates: {},
 };
 const service = {
@@ -1122,8 +1124,9 @@ async function verifyViewport(compact: boolean) {
 
 test("026-14/A2 the bundled Planning tab renders its roadmap in the dark theme", async () => {
   const MainSurface = await bundleMainSurface();
-  // A project without an owner is grouped as dormant, which the Planning tab folds away.
+  // A project with no recent activity is grouped as dormant, which the Planning tab folds away; this one has activity.
   const previousProjects = board.projects;
+  const previousActivity = board.projectActivity;
   board.projects = [
     {
       ...project,
@@ -1135,6 +1138,7 @@ test("026-14/A2 the bundled Planning tab renders its roadmap in the dark theme",
       },
     },
   ] as never;
+  board.projectActivity = recentProjectActivity(board.projects);
   const ui = mount(tree(MainSurface, false));
   try {
     await settle(ui);
@@ -1162,6 +1166,7 @@ test("026-14/A2 the bundled Planning tab renders its roadmap in the dark theme",
   } finally {
     unmount(ui);
     board.projects = previousProjects;
+    board.projectActivity = previousActivity;
   }
 });
 
