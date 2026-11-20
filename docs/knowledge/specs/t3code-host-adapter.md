@@ -892,13 +892,26 @@ expiry is not evidence that the original answer was never delivered.
 
 ## Operator decisions on T3
 
-An open decision linked to a live T3 task goes to that task's ACP parent; other
-operator decisions go to the environment's single pinned **Nucleus** inbox. The
+An open decision linked to a T3 task goes to its recorded ACP parent when one is
+available; before a parent exists it goes to that host's single pinned **Nucleus**
+inbox. Other operator decisions also go to the inbox. No parent is created to ask a
+question. An unavailable parent whose cards cannot be read stays unknown, rather
+than authorizing a second offer. The
 inbox has a dedicated service-owned directory and a host-scoped ACP binding, not
 a task identity. Its credential can read its decision projection and answer it,
 but cannot send a task message, report a run or exercise task controls. Re-minting
 replaces the authority record and revokes the previous credential. The inbox is
 not a role thread and retention and task archiving never select it.
+
+The service durably binds a decision version to the exact scope of its first offer
+before returning the form. A later parent does not move an Inbox offer, and a
+restart keeps the same owner. Fresh reads of the candidate scopes precede a first
+offer; a legacy pending card is adopted from positive T3 evidence before a
+competing scope can offer it. An unknown read never proves a card absent, and a
+bound version is re-offered only after its own scope is read again. Offer, count,
+callback authorization and card settlement use the same owner. An Inbox sign-off
+uses the ordinary authenticated T3 operator answer route and leaves independent
+task holds intact (nucleus#1433).
 
 Each open decision version becomes its own `elicitation/create` form. The field id
 carries the decision id and version; its title, question and labelled options are

@@ -53,10 +53,11 @@ import { canonical } from "../../hosts/t3code/state";
 import { activeStatuses } from "../../hosts/t3code/reads";
 import { acpInboxDirectory } from "../../shared/acp/inbox-binding";
 import { QueueService } from "../../service/transport/server";
+import { submissionSchema } from "../../shared/contracts";
 import { findT3Cli } from "../../shared/t3/operator";
 
 const checkout = fileURLToPath(new URL("../..", import.meta.url));
-const NIGHTLY_LINE = /^0\.1\.11-nightly\.\d+\.\d+$/;
+const NIGHTLY_LINE = /^0\.1\.(?:11|12)-nightly\.\d+\.\d+$/;
 /** Every process this run starts, so a failed setup never leaves a server behind. */
 const spawned: ChildProcess[] = [];
 const killSpawned = () => {
@@ -832,6 +833,27 @@ async function freshScenarios(env: Environment) {
     quietSweeps: start.quietSweeps,
     title: startTitle,
   });
+
+  // A held, pre-dispatch task has no parent thread: its linked question belongs here.
+  const hostId = (env.service.health() as unknown as { t3code: { id: string } }).t3code.id;
+  const planning = "a".repeat(40);
+  const task = await env.service.debug({ target: "store", method: "insert", args: [
+    submissionSchema.parse({ submissionId: "inbox-predispatch", title: "Held synthetic task",
+      repoPath: join(env.root, "synthetic-repository"), planningCommit: planning,
+      brief: { text: "Synthetic held task" }, originAgentId: "proof-origin" }), hostId, "brief", planning,
+  ] }) as { id: string };
+  await env.service.debug({ target: "store", method: "update", args: [task.id, { held: true }] });
+  const linked = await env.service.debug({ target: "runtime", method: "addDecision", args: [{
+    question: "Approve the held task?", headline: "Held task sign-off", choices: CHOICES,
+    recommended: "Yes", askedBy: "operator", tasks: [task.id],
+  }] }) as { id: string };
+  const linkedCard = await waitForCard(env, linked.id, "the pre-dispatch task's Inbox card");
+  await operatorRespond(env.rpc, env.inboxThreadId, linkedCard.requestId, { answers: { [linkedCard.questionId!]: "Yes" } });
+  await until(async () => (await decisionStatus(env, linked.id)) === "answered" ? true : null,
+    "the pre-dispatch Inbox answer");
+  const heldTask = await env.service.debug({ target: "store", method: "task", args: [task.id] }) as { held: boolean };
+  assert.equal(heldTask.held, true, "answering the decision preserves the independent task hold");
+  record(env, "fresh:held-predispatch-inbox-answer", { answered: true, held: heldTask.held });
 
   // 2. An open decision wakes the inbox, and its card is posted.
   const wake = await addDecision(env, "Proof wake");

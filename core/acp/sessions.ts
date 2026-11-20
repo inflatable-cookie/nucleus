@@ -45,7 +45,7 @@ import type { Engine } from "../engine";
 import { createHash } from "node:crypto";
 import { mintAcpInbox, verifyAcpInbox } from "./inbox-binding";
 import { t3OperatorIdentity } from "../../shared/operator-identity";
-import { acpDecisions, acpElicitation } from "./decisions";
+import { acpElicitation, bindOwner, boundOwner, matchesOwner, proposedOwner, type DecisionScope, type ParentLookup } from "./decisions";
 
 /** How long one long-poll may wait; the agent asks again after this. */
 export const ACP_TURN_WAIT_MAX_MS = 25_000;
@@ -75,6 +75,8 @@ export interface AcpSessionsOptions {
   /** The callback socket the binding points the agent at. */
   socketPath: string;
   pollMs?: number;
+  /** Recorded parent identity, or unknown when its host cannot be read. */
+  parentStatus?: ParentLookup;
   answerDecision?: (input: {
     id: string;
     version: number;
@@ -121,6 +123,7 @@ export class AcpSessions implements AcpSessionSurface {
    * absence is the host's read, never this process's assumption (nucleus#1395).
    */
   private readonly presentCards = new Map<string, Set<string>>();
+  private readonly observedParentSessions = new Map<string, string>();
   private readonly releases = new Map<string, string>();
   /** Turns waiting on this session: a release, or a new signature, wakes them. */
   private readonly waiting = new Map<string, Set<() => void>>();
@@ -173,11 +176,21 @@ export class AcpSessions implements AcpSessionSurface {
    * thing recorded as a cancellation receipt, so a settlement the host made from its own
    * read of T3 never spends that allowance (nucleus#1395).
    */
+  private parentStatus: ParentLookup = (hostId, taskId) =>
+    this.options.parentStatus?.(hostId, taskId) ?? { state: "unknown" };
+
+  private owner(row: import("../../shared/contracts").Decision, caller: AcpCaller): DecisionScope | null {
+    const bound = boundOwner(this.engine.store, row);
+    if (bound) return bound;
+    const hostId = caller.kind === "inbox" ? caller.hostId : this.engine.store.taskOrNull(caller.taskId)?.hostId;
+    return hostId ? proposedOwner(this.engine.store, row, hostId, this.parentStatus) : null;
+  }
+
   private offerable(caller: AcpCaller) {
-    return acpDecisions(this.engine.store, caller).filter((row) => {
-      const receipt = this.engine.store.getMeta<{ requests: string[] }>(
-        this.cancelKey(row.id, row.version),
-      );
+    return this.engine.store.listDecisions({ status: "open" }).filter((row) => {
+      const owner = this.owner(row, caller);
+      if (!owner || !matchesOwner(owner, caller)) return false;
+      const receipt = this.engine.store.getMeta<{ requests: string[] }>(this.cancelKey(row.id, row.version));
       return (receipt?.requests.length ?? 0) < 2;
     });
   }
@@ -209,32 +222,89 @@ export class AcpSessions implements AcpSessionSurface {
    */
   observedCards(scope: AcpCardScope, cards: AcpPendingCard[] | null): void {
     const key = scopeKey(scope);
-    if (cards === null) this.presentCards.delete(key);
-    else
-      this.presentCards.set(
-        key,
-        new Set(cards.map((card) => `${card.id}:${card.version}`)),
-      );
+    if (!("hostId" in scope) && scope.sessionId) {
+      const task = this.engine.store.taskOrNull(scope.taskId);
+      const parent = task?.hostId ? this.parentStatus(task.hostId, task.id) : { state: "unknown" as const };
+      if (parent.state !== "parent" || parent.sessionId !== scope.sessionId) cards = null;
+    }
+    if (cards === null) {
+      this.observedParentSessions.delete(key);
+      this.presentCards.delete(key);
+      return;
+    }
+    if (!("hostId" in scope)) {
+      const task = this.engine.store.taskOrNull(scope.taskId);
+      const parent = task?.hostId ? this.parentStatus(task.hostId, task.id) : { state: "unknown" as const };
+      if (parent.state !== "parent") return;
+      this.observedParentSessions.set(key, parent.sessionId);
+    }
+    this.presentCards.set(key, new Set(cards.map((card) => `${card.id}:${card.version}`)));
+    // Positive host evidence adopts legacy cards before another scope may offer them.
+    for (const card of cards) {
+      const row = this.engine.store.listDecisions({ status: "open" }).find(d => d.id === card.id && d.version === card.version);
+      if (!row || boundOwner(this.engine.store, row)) continue;
+      if ("hostId" in scope) {
+        const linkedHost = row.links.tasks.map(id => this.engine.store.taskOrNull(id))
+          .find(task => task && !task.removedAt && task.hostId?.startsWith("t3code:"))?.hostId;
+        if (!linkedHost || linkedHost === scope.hostId)
+          bindOwner(this.engine.store, row, { kind: "inbox", hostId: scope.hostId });
+      }
+      else {
+        const task = this.engine.store.taskOrNull(scope.taskId);
+        if (!task?.hostId || !row.links.tasks.includes(task.id)) continue;
+        const parent = this.parentStatus(task.hostId, task.id);
+        if (parent.state === "parent") bindOwner(this.engine.store, row, { kind: "task", taskId: task.id, hostId: task.hostId, sessionId: parent.sessionId });
+      }
+    }
   }
 
-  /** The versions a turn may raise a card for now. */
+  /** A first offer waits until all potential legacy card scopes were read. */
   private raises(caller: AcpCaller) {
     const present = this.presentCards.get(callerScope(caller) ?? "");
     if (!present) return [];
-    return this.offerable(caller)
-      .filter((row) => !present.has(`${row.id}:${row.version}`))
-      .map(acpElicitation);
+    const offered = [];
+    for (const row of this.offerable(caller)) {
+      if (present.has(`${row.id}:${row.version}`)) continue;
+      const owner = this.owner(row, caller);
+      if (!owner) continue;
+      if (owner.kind === "task" && this.observedParentSessions.get(`task:${owner.taskId}`) !== owner.sessionId) continue;
+      if (!boundOwner(this.engine.store, row)) {
+        if (!this.presentCards.has(`inbox:${owner.hostId}`)) continue;
+        let complete = true;
+        for (const taskId of row.links.tasks) {
+          const task = this.engine.store.taskOrNull(taskId);
+          if (!task || task.removedAt || !task.hostId?.startsWith("t3code:")) continue;
+          const parent = this.parentStatus(task.hostId, task.id);
+          if (!this.presentCards.has(`inbox:${task.hostId}`) || parent.state === "unknown" ||
+              (parent.state === "parent" && this.observedParentSessions.get(`task:${task.id}`) !== parent.sessionId)) {
+            complete = false;
+            break;
+          }
+        }
+        if (!complete) continue;
+      }
+      if (matchesOwner(bindOwner(this.engine.store, row, owner), caller)) offered.push(acpElicitation(row));
+    }
+    return offered;
   }
 
   /** Resolve the exact version shown on a card, including an answer since superseded. */
   decisionSettlement(
     id: string,
     version: number,
+    scope?: AcpCardScope,
   ): { state: "open" | "answered" | "cancelled"; answer?: string } {
     try {
       const decision = this.engine.store.decision(id);
-      if (decision.version === version && decision.status === "open")
+      if (decision.version === version && decision.status === "open") {
+        const owner = boundOwner(this.engine.store, decision);
+        if (scope && owner && ("hostId" in scope
+          ? owner.kind !== "inbox" || owner.hostId !== scope.hostId
+          : owner.kind !== "task" || owner.taskId !== scope.taskId ||
+              (!!scope.sessionId && owner.sessionId !== scope.sessionId)))
+          return { state: "cancelled" };
         return { state: "open" };
+      }
       const next = decision.versions.find((row) => row.version === version + 1);
       if (next?.status === "answered" && next.answer)
         return { state: "answered", answer: next.answer.text };
@@ -414,8 +484,9 @@ export class AcpSessions implements AcpSessionSurface {
         },
         token,
       );
-    const decision = acpDecisions(this.engine.store, input).find(
-      (row) => row.id === input.id && row.version === input.version,
+    const decision = this.engine.store.listDecisions({ status: "open" }).find(
+      (row) => row.id === input.id && row.version === input.version &&
+        !!boundOwner(this.engine.store, row) && matchesOwner(boundOwner(this.engine.store, row)!, input),
     );
     if (!decision) {
       // A service-initiated settlement follows a closed or changed version. It is

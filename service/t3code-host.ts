@@ -35,6 +35,7 @@ interface NativeConnection {
   /** Provider model option descriptors from the last config read (nucleus#1375). */
   readonly modelShapes?: string;
   connect(probeThreadId?: string): Promise<void>;
+  decisionParent?(taskId: string): import("../core/acp/decisions").ParentStatus;
   openInboxUi?(): Promise<{
     status: "opened" | "reused" | "failed";
     detail?: string;
@@ -269,6 +270,12 @@ export class T3HostConnection {
         )
         .slice(0, 500)}`;
     }
+  }
+
+  decisionParent(hostId: string, taskId: string): import("../core/acp/decisions").ParentStatus {
+    if (!this.session || this.session.id !== hostId || !this.host?.connected)
+      return { state: "unknown" };
+    return this.host.decisionParent?.(taskId) ?? { state: "unknown" };
   }
 
   async openInboxUi(
