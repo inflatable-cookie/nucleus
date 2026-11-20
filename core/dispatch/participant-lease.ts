@@ -236,14 +236,40 @@ export class ParticipantLease {
       // The owner explicitly superseded these exact identities to close an already merged PR.
       if (syncing && t.resolution.externalMerge && t.resolution.mergedCommit
         && t.resolution.ownerCloseoutParticipants.some(item => item.agentId === id && item.workspaceId === workspace)) continue;
-      const state = await this.resolution.host.observe(id);
+      // Archived and removed participants may no longer have a readable live
+      // timeline. Their existing custody proof checks the exact binding and both
+      // workspace and run-rooted processes before releasing this lease.
+      let state: Awaited<ReturnType<Adapter['observe']>> | undefined;
+      try { state = await this.resolution.host.observe(id); }
+      catch {
+        const runIds = participantToolRunIds(t, runs, id, workspace);
+        const issue = await this.resolution.ownedToolHold(id, {
+          requireCompleteEvidence: true, allowRetired: true,
+          runId: runIds[0], runIds, taskId: t.id, workspaceId: workspace,
+        });
+        if (!issue) continue;
+        if (!probe) this.resolution.waiting(t, `Merge waits for participant ${id}: ${issue}`, 'operator_needed', { suggestedVerbs: ['retry_effect'] });
+        return false;
+      }
       if (state.id !== id || state.workspaceId !== workspace) {
         if (!probe) this.resolution.waiting(t, `Merge waits for participant ${id} in workspace ${workspace}: current identity, activity or status does not prove it is settled`, 'lifecycle');
         return false;
       }
-      if (!agentSettled(state)) {
+      if ((!agentSettled(state) && state.status !== 'gone') || state.active || state.permissions || state.activeTurnId) {
         if (!probe) this.resolution.waiting(t, `Merge waits for participant ${id} in workspace ${workspace}: ${assignedThreadWaitReason(state)}`, 'lifecycle');
         return false;
+      }
+      if (state.status === 'closed' || state.status === 'gone' || state.archived === true) {
+        const runIds = participantToolRunIds(t, runs, id, workspace);
+        const issue = await this.resolution.ownedToolHold(id, {
+          requireCompleteEvidence: true, allowRetired: true,
+          runId: runIds[0], runIds, taskId: t.id, workspaceId: workspace,
+        });
+        if (issue) {
+          if (!probe) this.resolution.waiting(t, `Merge waits for participant ${id}: ${issue}`, 'operator_needed', { suggestedVerbs: ['retry_effect'] });
+          return false;
+        }
+        continue;
       }
       if (!syncing) {
         const participantRunIds=participantToolRunIds(t,runs,id,workspace);
