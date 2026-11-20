@@ -8,6 +8,9 @@ import {
 import { validateNamedProfile } from "../../dispatch/routing";
 import type { Engine } from "../../engine";
 import { assertCanonicalPrSource, taskPrNumber } from "../../forge/index";
+import { publishedReviewDecision } from "../../intake/result-application";
+import { DurableFenceRefusal } from "../../intake/run-settlement";
+import { verifyEnclosingOperationMatching } from "../../planning/enclosing-operation";
 import { runsUnchangedSince } from "../../recovery/observation-advance";
 import { blockingRecoveryEffectsRefusal } from "../../recovery/recovery-effects";
 import { operatorReplacementPending } from "../../recovery/task-reasons";
@@ -70,6 +73,42 @@ export async function moveToReview(
   );
   const stateRefusal = moveStateRefusal(task, "review");
   if (stateRefusal) throw Error(stateRefusal);
+  const enclosing = () =>
+    verifyEnclosingOperationMatching(
+      store,
+      task.id,
+      operationId,
+      input.version,
+      (control) =>
+        control.action === "move" &&
+        control.to === "review" &&
+        !control.force &&
+        control.reason === input.reason &&
+        control.caller === input.caller &&
+        control.prNumber === input.prNumber &&
+        control.fresh === input.fresh &&
+        isDeepStrictEqual(control.reviewer, input.reviewer),
+    );
+  if (!input.fresh) {
+    const published = publishedReviewDecision(store, task, enclosing());
+    if (published.kind === "blocked")
+      throw new DurableFenceRefusal(published.refusal);
+    if (published.kind === "ready") {
+      if (input.prNumber !== undefined && input.prNumber !== published.prNumber)
+        throw new DurableFenceRefusal(
+          `The published verdict belongs to PR #${published.prNumber}`,
+        );
+      const applied =
+        await engine.resolution.resultApplication.applyPublishedReview(
+          task,
+          published,
+          enclosing,
+        );
+      if (applied.kind === "blocked")
+        throw new DurableFenceRefusal(applied.refusal);
+      return store.task(task.id);
+    }
+  }
   if (proofOnlyReceiptAwaitingReview(task))
     return moveProofOnlyReceiptToReview(engine, input);
   // Project-d #117 (Tom, 2026-10-23): with no bound PR, the PR and exact head
@@ -130,6 +169,13 @@ export async function moveToReview(
   // Reapply only a verdict pending at the verified current head. A newer PR
   // head supersedes it, and an explicit fresh review owns this transition.
   if (input.fresh !== true && pr.head === task.prHead) {
+    if (
+      publishedReviewDecision(store, store.task(task.id), enclosing()).kind !==
+      "none"
+    )
+      throw new DurableFenceRefusal(
+        "Task changed during PR observation. Read next again to apply the pending published verdict",
+      );
     const pendingReview = await engine.resolution.reapplyPendingReview(task);
     if (pendingReview === "applied") return store.task(task.id);
     if (pendingReview === "blocked")
