@@ -16,6 +16,9 @@ import { settleObservedHostEffectOperations } from '../../recovery/effect-gates'
 import { assertReviewEntryWriterYielded, reviewEntryInputForTask, type ReviewEntryAdapter } from '../../review/review-entry';
 import { ABSENT_RESOLUTION_REASON, HostSnapshotPendingError, ProvenPreSendRefusalError, coordinative, message, proofExecutor } from '../../recovery/task-reasons';
 import { isDispositionActive, type Profile, type Run, type Task } from '../../../shared/contracts';
+import { isTransportFailure } from '../../../shared/transport';
+import { HostTransportFault } from '../../host/adapter-routing';
+import { isHostOperationTimeout } from '../../host/errors';
 import { threadRunningReason } from '../../intake/thread-waits';
 import { declaredLaneDocumentKeys } from '../../planning/brief-lane-documents';
 import { dirname } from 'node:path';
@@ -180,18 +183,18 @@ export class RunLaunchDeliver {
           const previous = latest.agentId && latest.runId && latest.profile
             ? [{ agentId: latest.agentId, runId: latest.runId, profile: latest.profile, reason: `${NON_DELIVERY_ROUTE_REASON}: ${latest.profile.provider}/${latest.profile.model} returned a second unchanged blocked/error result` }]
             : [];
-          this.store.update(t.id, { agentId, runId: run.id, profile, profileGroup: group,
+          this.store.update(t.id, { agentId, runId: run.id, ...(savedRun.temporaryDirectory ? { temporaryDirectory: savedRun.temporaryDirectory } : {}), profile, profileGroup: group,
             workerModel: profile!.model, workerModels: [...new Set([...latest.workerModels, profile!.model])],
             retiredWorkers: [...latest.retiredWorkers, ...previous], resumePrNumber: latest.resumePrNumber ?? latest.completion?.prNumber ?? null,
             resolution: { ...latest.resolution, nonDeliveryRoutePending: false, pendingWorkerInstruction: null } },
             'non_delivery_worker_routed', `${profile!.provider}/${profile!.model}; same capability as ${previous[0]?.profile.provider ?? 'prior provider'}`);
         }
-        else if(role==='revision'&&firstReviewEntryWorker)this.store.update(t.id,{agentId,runId:run.id,profile,profileGroup:group,workerModel:profile!.model,workerModels:[...new Set([...t.workerModels,profile!.model])]},'review_entry_worker_bound',agentId);
+        else if(role==='revision'&&firstReviewEntryWorker)this.store.update(t.id,{agentId,runId:run.id,...(savedRun.temporaryDirectory?{temporaryDirectory:savedRun.temporaryDirectory}:{}),profile,profileGroup:group,workerModel:profile!.model,workerModels:[...new Set([...t.workerModels,profile!.model])]},'review_entry_worker_bound',agentId);
         else if (role === 'revision' && !t.agentId && t.profile) {
           // Spec 052 (Tom, 2026-11-17): the climb retired the previous worker
           // before this revision. The fresh revision agent becomes the task's
           // retained worker, so the next same-tier revision continues it.
-          this.store.update(t.id, { agentId, runId: run.id, profile, profileGroup: group ?? t.profileGroup ?? null,
+          this.store.update(t.id, { agentId, runId: run.id, ...(savedRun.temporaryDirectory ? { temporaryDirectory: savedRun.temporaryDirectory } : {}), profile, profileGroup: group ?? t.profileGroup ?? null,
             workerModel: profile!.model, workerModels: [...new Set([...t.workerModels, profile!.model])] },
             'worker_climb_bound', agentId);
         }
@@ -200,7 +203,7 @@ export class RunLaunchDeliver {
           const previous = latest.agentId && latest.runId && latest.profile
             ? [{ agentId: latest.agentId, runId: latest.runId, profile: latest.profile, reason: `Report binding lives outside the current data home` }]
             : [];
-          this.store.update(t.id, { agentId, runId: run.id, retiredWorkers: [...latest.retiredWorkers, ...previous] },
+          this.store.update(t.id, { agentId, runId: run.id, ...(savedRun.temporaryDirectory ? { temporaryDirectory: savedRun.temporaryDirectory } : {}), retiredWorkers: [...latest.retiredWorkers, ...previous] },
             'report_binding_relaunch', agentId);
         }
         else if (coordinative(run)&&this.store.task(t.id).coordinatorGeneration === run.generation) this.store.update(t.id, { coordinatorAgentId: agentId }, 'coordinator_assigned', agentId);
@@ -251,6 +254,16 @@ export class RunLaunchDeliver {
       // the step that failed named (nucleus#1139).
       const reviewEntryGuarded = role === 'reviewer' && t.reviewEntry;
       const creationRefusal = !agentId && dispatchInvoked && !run.ordinaryDetached && !reviewEntryGuarded && error instanceof ProvenPreSendRefusalError;
+      if (!dispatchInvoked && (run.ordinaryDetached || reviewEntryGuarded) && !(error instanceof ProvenPreSendRefusalError) && !isPromptTooLargeError(error)
+        && (isTransportFailure(error) || isHostOperationTimeout(error) || error instanceof HostTransportFault)) {
+        this.store.transaction(() => {
+          this.store.putRun({ ...this.store.run(run.id)!, status: 'superseded', released: true });
+          this.store.deleteCredential(run.id);
+          const current = this.store.task(t.id);
+          if (current.resolution.currentRunId === run.id) this.resolution.update(current, { currentRunId: null });
+        });
+        throw error;
+      }
       if (isPromptTooLargeError(error) || creationRefusal || ((run.ordinaryDetached || reviewEntryGuarded) && (!dispatchInvoked || error instanceof ProvenPreSendRefusalError))) {
         const tooLarge = isPromptTooLargeError(error);
         const creationStep = creationRefusal ? (role === 'reviewer' ? 'Reviewer creation' : role === 'revision' ? 'Worker creation' : 'Coordinator creation') : '';

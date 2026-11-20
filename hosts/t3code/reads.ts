@@ -806,13 +806,7 @@ export class T3Reads {
     id: string,
     _limit = 100,
   ): Promise<HostTimelinePage | null> {
-    let read: ThreadSnapshotRead;
-    try {
-      read = await this.readThreadSnapshot(id, "window");
-    } catch (error) {
-      if (error instanceof T3CompatibilityError) throw error;
-      return null;
-    }
+    const read = await this.readThreadSnapshot(id, "window");
     const rows = read.projection.visibleTurnItems;
     if (!rows)
       throw new T3CompatibilityError("subscribeThread.visibleTurnItems");

@@ -1,5 +1,5 @@
 import type { Run, Task } from '../../shared/contracts';
-import { ticketTemporaryDirectoryBeside } from '../workspaces/run-scratch';
+import { recordedTicketMatchesLeaf, ticketTemporaryDirectoryBeside } from '../workspaces/run-scratch';
 
 /**
  * The temporary root one participant run ticket ran with, or undefined when this
@@ -22,5 +22,16 @@ export function participantTemporaryDirectory(task: Task, runs: Run[], runId: st
   if (run) return run.temporaryDirectory || (run.id === task.runId ? task.temporaryDirectory || undefined : undefined);
   if (runId === task.runId) return task.temporaryDirectory || undefined;
   const retiredHere = task.retiredWorkers.some(worker => worker.runId === runId && (worker.hostId ?? task.hostId) === task.hostId);
-  return retiredHere ? ticketTemporaryDirectoryBeside(task.temporaryDirectory || undefined, task.runId || undefined, runId) : undefined;
+  if (!retiredHere || !task.temporaryDirectory) return undefined;
+  if (recordedTicketMatchesLeaf(task.temporaryDirectory, runId)) return task.temporaryDirectory;
+  const tickets = [
+    task.runId,
+    ...runs.filter(item => item.hostId === task.hostId).map(item => item.id),
+    ...task.retiredWorkers.filter(worker => (worker.hostId ?? task.hostId) === task.hostId).map(worker => worker.runId),
+  ].filter((id): id is string => Boolean(id));
+  for (const ticket of new Set(tickets)) {
+    const matched = ticketTemporaryDirectoryBeside(task.temporaryDirectory, ticket, runId);
+    if (matched) return matched;
+  }
+  return undefined;
 }

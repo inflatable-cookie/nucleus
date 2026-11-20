@@ -71,15 +71,25 @@ export function runTemporaryDirectory(runId: string, root: string): string {
  * or an unusable identity is not a root this can extend, so it answers undefined
  * rather than inventing one.
  */
+function leafForTicketShape(recorded: string, ticket: string): ((nextTicket: string) => string) | undefined {
+  if (!runIdShape.test(ticket)) return undefined;
+  const root = dirname(recorded);
+  if (recorded === runTemporaryDirectory(ticket, root)) return next => runTemporaryDirectory(next, root);
+  const legacyLeaf = (id: string) => createHash("sha256").update(id).digest("hex").slice(0, 12);
+  if (basename(recorded) === legacyLeaf(ticket)) return next => join(root, legacyLeaf(next));
+  if (basename(recorded) === ticket && basename(root) === "runs") return next => join(root, next);
+  return undefined;
+}
+
+/** True when `recorded` is the per-ticket temporary leaf for `ticket` in one of Queue's shapes. */
+export function recordedTicketMatchesLeaf(recorded: string | undefined, ticket: string | undefined): boolean {
+  return Boolean(recorded && ticket && leafForTicketShape(recorded, ticket));
+}
+
 export function ticketTemporaryDirectoryBeside(recorded: string | undefined, recordedTicket: string | undefined, ticket: string): string | undefined {
   if (!recorded || !recordedTicket || !ticket || ticket === recordedTicket) return undefined;
-  if (!runIdShape.test(recordedTicket) || !runIdShape.test(ticket)) return undefined;
-  const root = dirname(recorded);
-  if (recorded === runTemporaryDirectory(recordedTicket, root)) return runTemporaryDirectory(ticket, root);
-  const legacyLeaf = (id: string) => createHash("sha256").update(id).digest("hex").slice(0, 12);
-  if (basename(recorded) === legacyLeaf(recordedTicket)) return join(root, legacyLeaf(ticket));
-  if (basename(recorded) === recordedTicket && basename(root) === "runs") return join(root, ticket);
-  return undefined;
+  if (!runIdShape.test(ticket)) return undefined;
+  return leafForTicketShape(recorded, recordedTicket)?.(ticket);
 }
 
 /**

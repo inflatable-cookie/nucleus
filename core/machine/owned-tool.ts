@@ -1,3 +1,6 @@
+import type { Run, Task } from "../../shared/contracts";
+import { isTransportFailure } from "../../shared/transport";
+import { agentSettled } from "./agent-settled";
 import { boundedToolHold } from "./bounded-tool";
 import {
   bbThreadForAgent,
@@ -7,6 +10,8 @@ import {
 import { readHostUidProcesses } from "./host-process-listing";
 import { participantRuntime, storeDataHome } from "./participant-runtime";
 import { participantTemporaryDirectory } from "./participant-roots";
+import { HostTransportFault } from "../host/adapter-routing";
+import { isAgentGoneRefusal, isHostOperationTimeout } from "../host/errors";
 import type { Resolution } from "../resolution";
 import {
   formatLiveToolIssue,
@@ -87,12 +92,54 @@ export class OwnedTools {
     agentId: string,
     options: {
       requireCompleteEvidence?: boolean;
+      allowRetired?: boolean;
       runId?: string;
       runIds?: string[];
       taskId?: string;
       workspaceId?: string;
     } = {},
   ): Promise<string | null> {
+    const task = options.taskId ? this.store.task(options.taskId) : null;
+    const taskRuns = task ? this.store.runs(task.id) : [];
+    const boundRun = options.runId ? this.store.run(options.runId) : null;
+    const runIds = options.runIds?.length
+      ? options.runIds
+      : options.runId
+        ? [options.runId]
+        : [];
+    const workspaceId =
+      options.workspaceId ??
+      boundRun?.workspaceId ??
+      (task?.agentId === agentId ? task.workspaceId : undefined) ??
+      undefined;
+    if (options.allowRetired) {
+      const custody = await this.classifyRetiredCustody(agentId, workspaceId);
+      if (custody.kind === "refuse") return custody.reason;
+      if (custody.kind === "retired" || custody.kind === "gone") {
+        if (this.adapter.noLiveWorkspaceProcesses && this.adapter.hostProcessListing) {
+          const processIssue = await this.verifyOwnedWorkspaceAndScratchProcesses(
+            agentId,
+            task,
+            taskRuns,
+            runIds,
+            workspaceId,
+            options.runId,
+          );
+          if (processIssue && task && options.runId && this.acceptOwnedToolHold(task.id, options.runId, processIssue))
+            return null;
+          if (!processIssue && task)
+            for (const runId of runIds)
+              this.recordOwnedToolSettlement(
+                task.id,
+                runId,
+                `retired participant (${custody.kind}), workspace inactivity and owned-process observations are clear`,
+              );
+          return processIssue;
+        }
+        if (custody.kind === "gone")
+          return "owned workspace or run process identity is unavailable";
+      }
+    }
     if (!this.adapter.agentTimelinePage)
       return options.requireCompleteEvidence
         ? "owned tool evidence is unavailable: this adapter offers no tool timeline"
@@ -105,91 +152,24 @@ export class OwnedTools {
     }
     if ("issue" in read)
       return `owned tool evidence is inconclusive: ${read.issue}`;
-    const runIds = options.runIds?.length
-      ? options.runIds
-      : options.runId
-        ? [options.runId]
-        : [];
     if (read.coverage === "bounded") {
-      const task = options.taskId ? this.store.task(options.taskId) : null;
-      const boundRun = options.runId ? this.store.run(options.runId) : null;
-      const workspaceId =
-        options.workspaceId ??
-        boundRun?.workspaceId ??
-        (task?.agentId === agentId ? task.workspaceId : undefined) ??
-        undefined;
-      const bbThreads =
-        task && bbThreadForAgent(agentId, boundRun?.hostId ?? task.hostId)
-          ? bbWorkspaceThreads(task, this.store.runs(task.id), workspaceId)
-          : [];
-      const taskRuns = task ? this.store.runs(task.id) : [];
-      const runtime = participantRuntime({
-        dataHome: storeDataHome(this.store),
-        tasks: task ? [task] : [],
-        runs: taskRuns,
-        bbThreads,
-      });
       const hold = await boundedToolHold(
         read,
         this.resolution.host,
         agentId,
         workspaceId,
-        async () => {
-          if (
-            !task ||
-            !runIds.length ||
-            !workspaceId ||
-            !this.adapter.noLiveWorkspaceProcesses ||
-            !this.adapter.hostProcessListing
-          )
-            return "owned workspace or run process identity is unavailable";
-          const temporaryDirectories = runIds.map((id) =>
-            participantTemporaryDirectory(task, taskRuns, id),
-          );
-          if (temporaryDirectories.some((directory) => !directory))
-            return "a participant run temporary directory is unrecorded";
-          const workspaceIssue = await this.adapter.noLiveWorkspaceProcesses(
-            workspaceId,
+        () =>
+          this.verifyOwnedWorkspaceAndScratchProcesses(
+            agentId,
+            task,
+            taskRuns,
             runIds,
-            runtime,
-          );
-          if (workspaceIssue !== null)
-            return (
-              workspaceIssue ||
-              "the workspace process probe returned no verdict"
-            );
-          const processes = await this.adapter.hostProcessListing();
-          if (!processes) return "the host process listing is unreadable";
-          for (const directory of new Set(temporaryDirectories)) {
-            const issue = workspaceToolProcessIssue(
-              processes,
-              directory!,
-              runIds,
-              runtime,
-            );
-            if (issue) return issue;
-          }
-          return null;
-        },
+            workspaceId,
+            options.runId,
+          ),
       );
-      if (hold && task && options.runId) {
-        this.recordOwnedToolHold(task.id, options.runId, hold);
-        const latestHold = this.latestOwnedToolEvent(
-          task.id,
-          options.runId,
-          OWNED_TOOL_HOLD,
-        );
-        if (
-          this.store
-            .task(task.id)
-            .resolution.ownerSettlements.some(
-              (record) =>
-                record.effect === `owned_tool.${options.runId}` &&
-                record.occurrence === String(latestHold?.id ?? ""),
-            )
-        )
-          return null;
-      }
+      if (hold && task && options.runId && this.acceptOwnedToolHold(task.id, options.runId, hold))
+        return null;
       if (!hold && task)
         for (const runId of runIds)
           this.recordOwnedToolSettlement(
@@ -296,24 +276,8 @@ export class OwnedTools {
       } else
         hold = `${toolLabel}; process tree is unreadable: ${verdict.reason}`;
     }
-    if (hold && options.runId && options.taskId) {
-      this.recordOwnedToolHold(options.taskId, options.runId, hold);
-      const latestHold = this.latestOwnedToolEvent(
-        options.taskId,
-        options.runId,
-        OWNED_TOOL_HOLD,
-      );
-      if (
-        this.store
-          .task(options.taskId)
-          .resolution.ownerSettlements.some(
-            (record) =>
-              record.effect === `owned_tool.${options.runId}` &&
-              record.occurrence === String(latestHold?.id ?? ""),
-          )
-      )
-        return null;
-    }
+    if (hold && options.runId && options.taskId && this.acceptOwnedToolHold(options.taskId, options.runId, hold))
+      return null;
     if (!hold && options.taskId)
       for (const runId of runIds)
         this.recordOwnedToolSettlement(
@@ -322,6 +286,126 @@ export class OwnedTools {
           "fresh tool and owner observations prove the recorded hold settled",
         );
     return hold ? `an owned tool is still live: ${hold}` : null;
+  }
+
+  private async classifyRetiredCustody(
+    agentId: string,
+    workspaceId: string | undefined,
+  ): Promise<{ kind: "live" | "retired" | "gone" } | { kind: "refuse"; reason: string }> {
+    let observeError: unknown;
+    try {
+      const state = await this.resolution.host.observe(agentId);
+      const workspaceMatch = workspaceId === undefined || state.workspaceId === workspaceId;
+      if (
+        state.id !== agentId ||
+        !workspaceMatch ||
+        state.active ||
+        state.activeTurnId ||
+        state.permissions
+      )
+        return { kind: "refuse", reason: "participant is not idle and permission-free in the recorded workspace" };
+      if (state.status === "gone") return { kind: "gone" };
+      if (state.status === "closed" || state.archived === true) return { kind: "retired" };
+      if (agentSettled(state, ["idle", "closed"])) return { kind: "live" };
+      return { kind: "refuse", reason: "participant is not idle and permission-free in the recorded workspace" };
+    } catch (error) {
+      observeError = error;
+    }
+    if (isTransportFailure(observeError) || isHostOperationTimeout(observeError) || observeError instanceof HostTransportFault)
+      throw observeError;
+    if (this.adapter.originAgent) {
+      let origin: Awaited<ReturnType<Resolution["host"]["originAgent"]>>;
+      try {
+        origin = await this.resolution.host.originAgent(agentId);
+      } catch (originError) {
+        if (isTransportFailure(originError) || isHostOperationTimeout(originError) || originError instanceof HostTransportFault)
+          throw originError;
+        const message = originError instanceof Error ? originError.message : String(originError);
+        return { kind: "refuse", reason: `owned tool custody observation failed: ${message}` };
+      }
+      if (origin === null) return { kind: "gone" };
+      if (origin.id !== agentId || (workspaceId !== undefined && origin.workspaceId !== workspaceId))
+        return { kind: "refuse", reason: "participant is not idle and permission-free in the recorded workspace" };
+      if (origin.deleted === true) return { kind: "gone" };
+    } else if (isAgentGoneRefusal(observeError)) {
+      return { kind: "gone" };
+    }
+    const message = observeError instanceof Error ? observeError.message : String(observeError);
+    return { kind: "refuse", reason: `owned tool custody observation failed: ${message}` };
+  }
+
+  private async verifyOwnedWorkspaceAndScratchProcesses(
+    agentId: string,
+    task: Task | null,
+    taskRuns: Run[],
+    runIds: string[],
+    workspaceId: string | undefined,
+    boundRunId: string | undefined,
+  ): Promise<string | null> {
+    if (
+      !task ||
+      !runIds.length ||
+      !workspaceId ||
+      !this.adapter.noLiveWorkspaceProcesses ||
+      !this.adapter.hostProcessListing
+    )
+      return "owned workspace or run process identity is unavailable";
+    const temporaryDirectories = runIds.map((id) =>
+      participantTemporaryDirectory(task, taskRuns, id),
+    );
+    if (temporaryDirectories.some((directory) => !directory))
+      return "a participant run temporary directory is unrecorded";
+    const boundRun = boundRunId ? this.store.run(boundRunId) : null;
+    const bbThreads = bbThreadForAgent(agentId, boundRun?.hostId ?? task.hostId)
+      ? bbWorkspaceThreads(task, taskRuns, workspaceId)
+      : [];
+    const runtime = participantRuntime({
+      dataHome: storeDataHome(this.store),
+      tasks: [task],
+      runs: taskRuns,
+      bbThreads,
+    });
+    const workspaceIssue = await this.adapter.noLiveWorkspaceProcesses(
+      workspaceId,
+      runIds,
+      runtime,
+    );
+    if (workspaceIssue !== null)
+      return (
+        workspaceIssue || "the workspace process probe returned no verdict"
+      );
+    const processes = await this.adapter.hostProcessListing();
+    if (!processes) return "the host process listing is unreadable";
+    for (const directory of new Set(temporaryDirectories)) {
+      const issue = workspaceToolProcessIssue(
+        processes,
+        directory!,
+        runIds,
+        runtime,
+      );
+      if (issue) return issue;
+    }
+    return null;
+  }
+
+  private acceptOwnedToolHold(
+    taskId: string,
+    runId: string,
+    hold: string,
+  ): boolean {
+    this.recordOwnedToolHold(taskId, runId, hold);
+    const latestHold = this.latestOwnedToolEvent(
+      taskId,
+      runId,
+      OWNED_TOOL_HOLD,
+    );
+    return this.store
+      .task(taskId)
+      .resolution.ownerSettlements.some(
+        (record) =>
+          record.effect === `owned_tool.${runId}` &&
+          record.occurrence === String(latestHold?.id ?? ""),
+      );
   }
 
   private recordOwnedToolHold(

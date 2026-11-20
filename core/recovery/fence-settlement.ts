@@ -620,15 +620,20 @@ export class RunRelease {
    * call additionally needs a complete provider process-tree proof rooted at
    * this run's MCP report helper; every unreadable or live descendant holds.
    */
-  async ownedToolHold(agentId: string, runId?: string, taskId?: string): Promise<string | null> {
-    if (!taskId || !runId) return this.resolution.ownedToolHold(agentId);
+  async ownedToolHold(
+    agentId: string,
+    runId?: string,
+    taskId?: string,
+    options: { requireCompleteEvidence?: boolean; allowRetired?: boolean } = {},
+  ): Promise<string | null> {
+    if (!taskId || !runId) return this.resolution.ownedToolHold(agentId, options);
     const task=this.store.task(taskId), runs=this.store.runs(taskId);
     const boundRun=runs.find(run=>run.id===runId);
     const workspaceId=boundRun?.workspaceId ?? task.workspaceId;
     if (!workspaceId) return 'owned tool run workspace identity is unavailable';
     const runIds=participantToolRunIds(task,runs,agentId,workspaceId);
     if (!runIds.includes(runId)) runIds.unshift(runId);
-    return this.resolution.ownedToolHold(agentId,{runId,runIds,taskId,workspaceId});
+    return this.resolution.ownedToolHold(agentId,{...options,runId,runIds,taskId,workspaceId});
   }
 
   /**
