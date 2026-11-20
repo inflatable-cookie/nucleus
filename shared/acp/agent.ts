@@ -88,7 +88,11 @@ export interface AcpSessionTransport {
   turn(input: AcpTurnRequest, signal: AbortSignal): Promise<AcpTurnReply>;
   message(input: AcpMessageRequest): Promise<AcpMessageReply>;
   answer?(input: AcpAnswerInput): Promise<unknown>;
-  openUi?(input: AcpInboxUiInput): Promise<AcpInboxUiReply>;
+  /** `signal` aborts on Stop; the service's own bound ends a hung open with a result. */
+  openUi?(
+    input: AcpInboxUiInput,
+    signal: AbortSignal,
+  ): Promise<AcpInboxUiReply>;
 }
 
 /** What a thread's working directory resolves to: Nucleus's binding and how to reach the service. */
@@ -522,9 +526,9 @@ export class AcpAgent {
       for (const line of session.pending.splice(0))
         this.emit(send, sessionId, line);
       if (session.caller.kind === "inbox" && !holding && text === "ui") {
-        const hold = await this.openInboxUi(session, send);
-        if (!hold) {
-          this.result(send, id, { stopReason: "end_turn" });
+        const outcome = await this.openInboxUi(session, send);
+        if (outcome) {
+          this.result(send, id, { stopReason: outcome });
           return;
         }
       } else if (!opening && !holding && session.caller.kind !== "inbox") {
@@ -542,15 +546,19 @@ export class AcpAgent {
   }
 
   /**
-   * Handle the inbox's exact `ui` command through its authenticated host binding.
-   * Pairing links never cross this boundary; when no decision is offerable once the
-   * open finishes, the turn ends at once so the inbox returns to idle.
+   * Handle the inbox's exact `ui` command through its authenticated host binding
+   * (nucleus#1415). One short success or actionable failure is shown, and the command
+   * finishes: `end_turn` when no decision is offerable, `cancelled` when the operator
+   * stopped it, and nothing when an offerable decision keeps the inbox's turn held, as
+   * every other inbox turn does. The board's own bound lives in the service, so a hung
+   * board call names its failure here instead of holding the turn. Pairing links never
+   * cross this boundary.
    */
   private async openInboxUi(
     session: SessionState,
     send: Send,
-  ): Promise<boolean> {
-    if (session.caller.kind !== "inbox") return false;
+  ): Promise<"end_turn" | "cancelled" | null> {
+    if (session.caller.kind !== "inbox") return "end_turn";
     if (!session.transport.openUi) {
       this.emit(
         send,
@@ -558,23 +566,24 @@ export class AcpAgent {
         "Nucleus cannot open the board from this session.",
         true,
       );
-      return false;
+      return "end_turn";
     }
     try {
-      const reply = await session.transport.openUi({
-        kind: "inbox",
-        hostId: session.caller.hostId,
-        sessionId: session.sessionId,
-      });
+      const reply = await session.transport.openUi(
+        {
+          kind: "inbox",
+          hostId: session.caller.hostId,
+          sessionId: session.sessionId,
+        },
+        session.controller.signal,
+      );
+      if (session.cancelled) return "cancelled";
       if (reply.status === "opened") {
         this.emit(send, session.sessionId, "Opened the Nucleus board.", true);
       } else if (reply.status === "reused") {
-        this.emit(
-          send,
-          session.sessionId,
-          "The Nucleus board is already open.",
-          true,
-        );
+        // This same `ui` was already served — usually by the pass that answered the
+        // message T3 queued while the inbox's turn was held — so nothing was replayed.
+        this.emit(send, session.sessionId, "The Nucleus board is open.", true);
       } else {
         const detail = sanitizeUiDetail(reply.detail);
         this.emit(
@@ -586,8 +595,10 @@ export class AcpAgent {
           true,
         );
       }
-      return reply.hold;
+      return reply.hold ? null : "end_turn";
     } catch (error) {
+      // Stop ends the command with no invented line; anything else is shown and ends it.
+      if (session.cancelled || abortOf(error)) return "cancelled";
       const detail = sanitizeUiDetail(reasonOf(error));
       this.emit(
         send,
@@ -597,7 +608,7 @@ export class AcpAgent {
           : "Nucleus could not open the board.",
         true,
       );
-      return false;
+      return "end_turn";
     }
   }
 
@@ -837,6 +848,15 @@ export class AcpAgent {
       },
     });
   }
+}
+
+/** Whether a transport error is this process's own abort (the operator's Stop). */
+function abortOf(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (error as { name?: unknown }).name === "AbortError"
+  );
 }
 
 /** Strip any pairing URL or token fragment before showing an error in chat. */

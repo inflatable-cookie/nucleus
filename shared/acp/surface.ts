@@ -25,6 +25,11 @@ export interface AcpInboxUiInput {
 }
 
 export interface AcpInboxUiReply {
+  /**
+   * `opened` showed the board for this `ui`; `reused` means this same `ui` was already
+   * served (the pass served it while T3 held the inbox's turn), so nothing was replayed;
+   * `failed` names what stopped it.
+   */
   status: "opened" | "reused" | "failed";
   hold: boolean;
   detail?: string;
@@ -54,7 +59,7 @@ export type AcpAnswerInput = AcpCaller & { id: string; version: number } & (
   );
 
 /** Where a host's decision cards live: one inbox, or one task's parent thread. */
-export type AcpCardScope = { hostId: string } | { taskId: string };
+export type AcpCardScope = { hostId: string } | { taskId: string; sessionId?: string };
 /** One decision card, by the version it carries. */
 export interface AcpPendingCard {
   id: string;
@@ -122,6 +127,7 @@ export interface AcpSessionSurface {
   decisionSettlement?(
     id: string,
     version: number,
+    scope?: AcpCardScope,
   ): { state: "open" | "answered" | "cancelled"; answer?: string };
   /** Ask whether to keep holding this turn, and which lifecycle lines to show. */
   turn(input: AcpTurnInput, token: string): Promise<AcpTurnReply>;

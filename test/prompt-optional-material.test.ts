@@ -89,7 +89,8 @@ test('a brief that names visual proof carries the optional delivery mechanics, a
     assert.doesNotMatch(prompt, /exceeds the limits|Deliver the subset the brief allows/);
   }
   // The reviewer's inventory summary still carries no requirement language.
-  assert.match(rendered.reviewer, /1 proof file recorded for head[\s\S]*context proofs/);
+  // The inventory is inline (1392): the exact head and each recorded file, as context.
+  assert.match(rendered.reviewer, /Proof files recorded for exact head [a-f0-9]{40}[\s\S]*- Board capture \(recorded head [a-f0-9]{40}\): \/evidence\/board\.png/);
   assert.doesNotMatch(optionalLines(rendered.reviewer).join('\n'), /required|must/i);
   // The old wording attached the limits to "required" delivery, which is what a
   // worker read as a reason to stop before writing any code.

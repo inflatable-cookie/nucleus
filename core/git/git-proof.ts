@@ -13,6 +13,7 @@ import { command, git, gitAncestry } from "./git-command";
 import { queueCheckoutStatus, currentWorkerBranch } from "./git-checkout";
 import { githubRepositoryFromRemote } from "./git-remote";
 import { dirtyWorktreeError } from "./git-stash";
+import { commonDirMatchesTask } from "./git-identity";
 import { WORKER_BRANCH_REFUSAL_PREFIX, WORKER_DIRTY_REFUSAL_PREFIX, WORKER_PR_IDENTITY_REFUSAL, WorkerSourceRefusal } from "./git-refusals";
 
 export async function verifyPr(task: Task, number: number) {
@@ -78,7 +79,7 @@ export async function verifyTaskWorktreeIdentity(task: Task, options: { allowDir
     throw new Error("Task worktree proof requires the registered task worktree root");
   const common = await git(task.directory, "rev-parse", "--path-format=absolute", "--git-common-dir");
   const planningCommon = await git(task.repoPath, "rev-parse", "--path-format=absolute", "--git-common-dir");
-  if (common !== planningCommon) throw new Error("Task worktree and planning checkout belong to different Git roots");
+  if (!commonDirMatchesTask(task, common, planningCommon, task.directory)) throw new Error("Task worktree and planning checkout belong to different Git roots");
   await verifyRecordedOrigin(task, task.directory);
   if (await currentWorkerBranch(task, task.directory!) !== task.branch)
     throw new Error("Task worktree is on the wrong branch");

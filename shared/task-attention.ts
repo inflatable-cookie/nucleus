@@ -1,6 +1,7 @@
 import type { HoldKind, Task } from "./contracts";
 import { isTerminalPhase } from "./task-state";
 import { blockingHoldKind } from "./holds";
+import { isSettledWaitProse } from "./task-stop";
 
 /**
  * The one attention projection (nucleus#1366).
@@ -16,13 +17,22 @@ import { blockingHoldKind } from "./holds";
  *   origin fault, or a phase that parks work on a person with nothing saying what
  *   it waits for.
  * - `waiting`: nothing Nucleus is running and nobody has to act. An owner hold with
- *   a release condition and an unresolved prerequisite wait are waits with a named
- *   cause, never attention (Tom, 2026-11-19): the owner already said what the task
- *   waits for, so the row must not ask anyone for anything.
+ *   a release condition, a planner's own hold, and an unresolved prerequisite wait
+ *   are waits with a named cause, never attention (Tom, 2026-11-19): the owner
+ *   already said what the task waits for, so the row must not ask anyone for
+ *   anything.
  * - `active`: Nucleus is running a role for the task and no person must act.
+ *
+ * A planner's own hold waits only while its planner nudge is answered or still
+ * pending: once that nudge goes unanswered the hold needs its owner again and the
+ * task is attention for that hold generation (nucleus#1419).
  */
 
-export type TaskAttentionState = "finished" | "attention" | "waiting" | "active";
+export type TaskAttentionState =
+  | "finished"
+  | "attention"
+  | "waiting"
+  | "active";
 
 export type TaskAttention =
   | { state: "finished" }
@@ -30,10 +40,18 @@ export type TaskAttention =
   | { state: "waiting"; cause: string }
   | { state: "active" };
 
-/** The hold fence's shape this projection reads: only whether it has a release condition. */
+/** The hold fence's shape this projection reads: its release condition and the facts about its owner. */
 export interface AttentionFence {
   until?: { kind: "task" | "time" } | null;
   reason?: string;
+  /**
+   * The task planner placed this fence, as `holdFencesView` answers it from the
+   * effective owner and planner identity — never "anyone but the operator". A fence
+   * from another participant is not the planner's park (nucleus#1419).
+   */
+  planner?: boolean;
+  /** The planner's nudge for this fence went unanswered, or never reached it (nucleus#1419). */
+  unanswered?: "planner" | "delivery" | null;
 }
 
 export interface TaskAttentionFacts {
@@ -65,13 +83,16 @@ export const ATTENTION_PHASES: ReadonlyArray<Task["phase"]> = [
 ];
 
 const bounded = (text: string | undefined | null, fallback: string): string => {
-  const value = (text ?? "").trim();
+  // Settled-wait prose names no cause, so a row never reads it as its reason (nucleus#1437).
+  const value = isSettledWaitProse(text) ? "" : (text ?? "").trim();
   return value ? value.slice(0, 160) : fallback;
 };
 
 /** The named cause of a wait, as a card or row states it. */
 const waitCause = (facts: TaskAttentionFacts, fallback: string): string =>
-  facts.waitingOn ? `Waiting on ${facts.waitingOn}` : bounded(facts.reason, fallback);
+  facts.waitingOn
+    ? `Waiting on ${facts.waitingOn}`
+    : bounded(facts.reason, fallback);
 
 /**
  * The blocking fence with a release condition: the wait this task already named.
@@ -79,13 +100,28 @@ const waitCause = (facts: TaskAttentionFacts, fallback: string): string =>
  * not a wait the projection can answer on its own.
  */
 function releasingHold(facts: TaskAttentionFacts): AttentionFence | null {
+  const fence = blockingFence(facts);
+  return fence?.until ? fence : null;
+}
+
+/** The blocking fence of this task, whatever kind of hold it is. */
+function blockingFence(facts: TaskAttentionFacts): AttentionFence | null {
   const dispatch =
     Boolean(facts.holds?.dispatch) || facts.holdKind === "dispatch";
   const merge = Boolean(facts.holds?.merge) || facts.holdKind === "merge";
   const kind = blockingHoldKind(facts.phase, dispatch, merge);
-  if (!kind) return null;
-  const fence = facts.holds?.[kind];
-  return fence?.until ? fence : null;
+  return kind ? (facts.holds?.[kind] ?? null) : null;
+}
+
+/**
+ * The task planner's own hold, or null. The view already answered which holder is
+ * the planner, so an operator's hold and another participant's hold keep their
+ * existing attention here (nucleus#1419).
+ */
+function plannerHold(facts: TaskAttentionFacts): AttentionFence | null {
+  const fence = blockingFence(facts);
+  if (!fence || fence.until || fence.planner !== true) return null;
+  return fence;
 }
 
 export function taskAttention(facts: TaskAttentionFacts): TaskAttention {
@@ -93,14 +129,45 @@ export function taskAttention(facts: TaskAttentionFacts): TaskAttention {
   const hold = releasingHold(facts);
   // A hold that names its release condition is a wait: the owner already said what
   // it waits for (Tom, 2026-11-19).
-  if (hold) return { state: "waiting", cause: waitCause(facts, "Held until its condition") };
+  if (hold)
+    return {
+      state: "waiting",
+      cause: waitCause(facts, "Held until its condition"),
+    };
   if (facts.prerequisiteWait)
-    return { state: "waiting", cause: waitCause(facts, "Waiting for prerequisite") };
+    return {
+      state: "waiting",
+      cause: waitCause(facts, "Waiting for prerequisite"),
+    };
   if (facts.prerequisiteOperator || facts.attention || facts.originFault)
-    return { state: "attention", cause: bounded(facts.reason, "Needs attention") };
+    return {
+      state: "attention",
+      cause: bounded(facts.reason, "Needs attention"),
+    };
   if (facts.liveRun) return { state: "active" };
+  // The planner's own hold is a deliberate park, so a quiet row behind it waits
+  // rather than asking its owner for anything (nucleus#1419). Once the nudge for
+  // that hold generation went unanswered the planner does have to answer it, and
+  // the row is shown again; a fresh `hold`/`keep_hold` is a new generation.
+  const plannerFence = plannerHold(facts);
+  if (plannerFence) {
+    if (plannerFence.unanswered === "delivery")
+      return {
+        state: "attention",
+        cause: "The hold nudge was not delivered to the planner",
+      };
+    if (plannerFence.unanswered)
+      return {
+        state: "attention",
+        cause: "The planner has not answered this hold",
+      };
+    return { state: "waiting", cause: waitCause(facts, "Held by planner") };
+  }
   if (ATTENTION_PHASES.includes(facts.phase))
-    return { state: "attention", cause: bounded(facts.reason, "Needs attention") };
+    return {
+      state: "attention",
+      cause: bounded(facts.reason, "Needs attention"),
+    };
   // A task between roles, queued for capacity or waiting for dispatch runs nothing
   // Nucleus owns here and needs no person: it waits.
   return { state: "waiting", cause: waitCause(facts, "Waiting") };

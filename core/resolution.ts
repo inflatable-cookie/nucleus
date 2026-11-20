@@ -22,6 +22,7 @@ import type { Project } from "../shared/contracts";
 import { sameCallerIdentity } from "../shared/agent-identity";
 import { OrphanRuns } from "./recovery/orphan-runs";
 import { ProgressContinuation } from "./review/progress-continuation";
+import { proofWaitApplies } from "./qa/proof-wait";
 import { SchedulingLifecycle } from "./scheduling/lifecycle";
 
 import { ContinuedPrs, type ContinuedPrBinding } from "./review/continued-pr";
@@ -60,6 +61,8 @@ import {
 } from "./forge/index";
 
 import {
+  holdsOf,
+  isDispositionActive,
   type Completion,
   type Incident,
   type Profile,
@@ -158,7 +161,10 @@ import { type WorktreeValidationScan } from "./workspaces/worktree-validation";
 import type { VerifiedEnclosingOperation } from "./planning/enclosing-operation";
 import type { RecoveryDispatchSnapshot } from "./recovery/recovery-context";
 import type { OwnerReviewContext } from "./review/owner-review-context";
-import { ResultApplication } from "./intake/result-application";
+import {
+  publishedReviewDecision,
+  ResultApplication,
+} from "./intake/result-application";
 import { Closeout } from "./closeout/closeout";
 import { ReviewPublication } from "./review/review-publication";
 
@@ -527,7 +533,9 @@ export class Resolution {
     if (!assigned) return;
     let gone = false;
     try {
-      gone = (await this.plannerPresence.threadRoute(assigned.agentId)).kind === "gone";
+      gone =
+        (await this.plannerPresence.threadRoute(assigned.agentId)).kind ===
+        "gone";
     } catch {
       return;
     }
@@ -1157,9 +1165,11 @@ export class Resolution {
       "advanceCloseoutResult",
       "attention",
       "hooks",
+      "host",
       "lease",
       "openPlannerEscalation",
       "ordinaryRoundCustody",
+      "ownedToolHold",
       "recordBlockedPrIdentity",
       "responsibleBlockerLadder",
       "responsiblePrReportRefused",
@@ -1579,7 +1589,10 @@ export class Resolution {
     return this.paused();
   }
   owns(t: Task): boolean {
-    return this.schedulingLifecycle.owns(t);
+    return (
+      this.schedulingLifecycle.owns(t) ||
+      publishedReviewDecision(this.store, t).kind !== "none"
+    );
   }
   /**
    * The continuation a replacement worker resumes: a fresh owner instruction,
@@ -1637,6 +1650,10 @@ export class Resolution {
   /** Spec 058 budgets (nucleus#1153): open or close the wall-clock pause interval for one task. */
   settleBudgetClock(task: Task, options: { returned?: boolean } = {}): Task {
     return this.taskStops.settleBudgetClock(task, options);
+  }
+  /** nucleus#1437: settle a stored settled-wait prose stop once nothing owns it. */
+  settleSettledWaitStop(task: Task): Task {
+    return this.taskStops.settleSettledWaitStop(task);
   }
   /** Tom, 2026-11-14 (T3 lane v18, host dropout option 1: wait): clear the host wait when its host is back. */
   clearHostWait(task: Task): Task {
@@ -3471,7 +3488,39 @@ export class Resolution {
   }
   gitTransientFailure?: (task: Task, error: unknown) => boolean;
   advance(original: Task): Promise<void> {
-    return this.schedulingLifecycle.advance(original);
+    if (this.stopped() || !this.hostAvailable(original))
+      return Promise.resolve();
+    const task = this.store.task(original.id);
+    const published = publishedReviewDecision(this.store, task);
+    if (published.kind === "none")
+      return this.schedulingLifecycle.advance(task);
+    if (published.kind === "blocked") {
+      // Published admission already proved the reviewer run is released, so
+      // a retained current-run binding still lets the parked ladder reconcile.
+      // Ordinary phase work could start another review.
+      if (
+        (task.phase === "blocked" || task.phase === "error") &&
+        !isDispositionActive(task) &&
+        !holdsOf(task).dispatch &&
+        !proofWaitApplies(task)
+      )
+        return this.blockerLadderStep(task).then(() => undefined);
+      return Promise.resolve();
+    }
+    return this.resultApplication
+      .applyPublishedReview(task, published)
+      .then((result) => {
+        if (result.kind === "blocked" && !this.stopped()) {
+          const current = this.store.task(task.id);
+          if (
+            current.version === task.version &&
+            (!current.resolution.stop ||
+              current.resolution.stop.reason === "lifecycle") &&
+            publishedReviewDecision(this.store, current).kind === "ready"
+          )
+            this.waiting(current, result.refusal, "lifecycle");
+        }
+      });
   }
   /** Advance step: supersede an old recovery episode once later progress owns the task. */
   supersedeEarlierRecovery(t: Task): Task {
@@ -3558,7 +3607,7 @@ export class Resolution {
     run: Run,
     c: Completion,
     reapplied = false,
-  ): Promise<void> {
+  ): Promise<boolean> {
     return this.resultApplication.advanceReviewerResult(t, run, c, reapplied);
   }
   private verdictApplied(taskId: string, runId: string): boolean {
@@ -3572,7 +3621,7 @@ export class Resolution {
     run: Run,
     c: Completion,
     reapplied: boolean,
-  ): Promise<void> {
+  ): Promise<boolean> {
     return this.resultApplication.applyReviewerResult(t, run, c, reapplied);
   }
   responsiblePrReportRefused(
@@ -3630,6 +3679,10 @@ export class Resolution {
   }
   deliverHoldNotices(): Promise<void> {
     return this.notices.deliverHoldNotices();
+  }
+  /** nucleus#1417: the one planner notice a task's hidden row episode owes. */
+  deliverRowHiddenNotices(): Promise<void> {
+    return this.notices.deliverRowHiddenNotices();
   }
   deliverDecisionNotices(): Promise<void> {
     return this.notices.deliverDecisionNotices();

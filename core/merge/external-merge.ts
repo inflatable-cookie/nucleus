@@ -21,7 +21,7 @@ import {
   GitReadTimeoutError,
   queueCheckoutStatus,
 } from "../git/index";
-import { readGitCheckout } from "../git/git-identity";
+import { commonDirMatchesTask, readGitCheckout } from "../git/git-identity";
 import { blockingRecoveryEffectsRefusal } from "../recovery/recovery-effects";
 import type {
   ReviewEntryExternalMerge,
@@ -42,6 +42,7 @@ import {
   settleMergeEscalations,
 } from "../closeout/closeout";
 import { recordObservedMerge } from "./external-merge-record";
+import { unreviewedMergeRoute } from "../../shared/task-view";
 import {
   recoveredExternalCheckIncident,
   resumeClearedAttention as resumeClearedAttentionFor,
@@ -546,7 +547,7 @@ export class ExternalMerge {
       checkout.toplevel !== root
     )
       throw Error("Retained workspace is aliased or is not its Git root");
-    if (checkout.commonDir !== repoGit.commonDir)
+    if (!commonDirMatchesTask(t, checkout.commonDir, repoGit.commonDir, t.directory))
       throw Error("Retained workspace belongs to another repository");
     if (
       !t.repository ||
@@ -778,6 +779,12 @@ export class ExternalMerge {
         this.resolution.reviewRequired(current) &&
         !mergeReviewEvidenceAt(current, result.head)
       ) {
+        // nucleus#1425: the recorded unreviewed merge governs its own re-observation. While
+        // the owner's fresh review of that merged source is in flight, the probe neither
+        // restates the stop nor answers the route; the review's verdict reconciles the merge.
+        const route = unreviewedMergeRoute(current);
+        const recordedMerge = route !== null && route.head === result.head && route.commit === result.commit;
+        if (recordedMerge && ["awaiting_review", "reviewing"].includes(current.phase)) return false;
         stopUnreviewedExternalMerge(
           { store: this.store, resolution: this.resolution },
           current,

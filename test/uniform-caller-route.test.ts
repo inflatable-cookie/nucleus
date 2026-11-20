@@ -333,11 +333,19 @@ test("an omitted host defaults to the sole online host of the kind (78c18e51)", 
       connected: () => true,
       store,
     });
+    // No repository and no operator default: the sole online host is chosen.
+    assert.deepEqual(engine.selectIngressSelection(undefined, undefined), {
+      hostId: "t3code:env",
+      basis: "sole_online_host",
+    });
+    // With a repository but the operator default (paseo) offline, the first
+    // online host takes ingress and says why (commit 7c813048, 1390).
     assert.deepEqual(
       engine.selectIngressSelection(undefined, "/unconfigured"),
       {
         hostId: "t3code:env",
-        basis: "sole_online_host",
+        basis: "available_host",
+        reason: "Operator default host paseo is offline",
       },
     );
     assert.equal(

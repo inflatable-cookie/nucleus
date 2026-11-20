@@ -24,6 +24,7 @@ import {
   ProvenPreSendRefusalError,
 } from "../../core/host";
 import { isHostOperationTimeout } from "../../core/host";
+import type { RowSnoozeVisibility } from "../../core/host";
 import { T3RpcClient, type T3ConnectionConfig } from "./rpc";
 import {
   canonicalThinkingValue,
@@ -57,6 +58,7 @@ import {
 } from "./contracts";
 import {
   activeStatuses,
+  T3InventoryChurnError,
   T3Reads,
   type Projection,
   type ThreadReadKind,
@@ -388,6 +390,14 @@ export class T3CodeHost implements Host {
       await writeFile(this.modelCapturePath, capture + "\n", { mode: 0o600 });
     }
   }
+  /** Only this host's durable parent record can identify a task's ACP row. */
+  decisionParent(taskId: string): import("../../core/acp/decisions").ParentStatus {
+    if (!this.connected) return { state: "unknown" };
+    const parent = this.state.read().parents?.[taskId];
+    return !parent || parent.archivedAt
+      ? { state: "absent" }
+      : { state: "parent", sessionId: parent.sessionId };
+  }
   capabilities() {
     return {
       reportingViaMcp: false,
@@ -439,6 +449,11 @@ export class T3CodeHost implements Host {
     }
   }
   close() {
+    const acp = this.acp();
+    const state = this.state.read();
+    if (state.hostId) acp?.observedCards?.({ hostId: state.hostId }, null);
+    for (const parent of Object.values(state.parents ?? {}))
+      acp?.observedCards?.({ taskId: parent.taskId, sessionId: parent.sessionId }, null);
     this.ready = false;
     this.rpc.close();
   }
@@ -498,7 +513,7 @@ export class T3CodeHost implements Host {
       if (!(await this.reads.isObserved(id))) retire.push(id);
     for (const id of retiredIds) {
       if (state.retiredAgents?.[id]?.deletedAt) continue;
-      if (await this.reads.isObserved(id)) restore.push(id);
+      if (await this.reads.isActiveInShell(id)) restore.push(id);
     }
     if (!retire.length && !restore.length) return;
     this.state.update((next) => {
@@ -560,8 +575,9 @@ export class T3CodeHost implements Host {
   }
   async originAgent(id: string) {
     this.requireConnection();
-    const { threads } = await this.reads.inventory();
-    const found = threads.find((t) => t.id === id);
+    const found =
+      (await this.reads.shellRow(id)) ??
+      (await this.reads.inventory()).threads.find((t) => t.id === id);
     if (!found) {
       this.presentation.retireDeletedPresentationIntents(id);
       return null;
@@ -648,10 +664,22 @@ export class T3CodeHost implements Host {
     else this.activeTaskIds.delete(taskId);
     await this.presentation.reconcileTaskRow(taskId, shown);
   }
-  /** Open or reuse the board preview in the host's pinned inbox thread. */
-  async openInboxUi(): Promise<{ status: "opened" | "reused" }> {
+  /**
+   * The task row's visibility now (nucleus#1417): whether a Nucleus-owned snooze
+   * still hides it and how long that continuous episode has run. A disconnected
+   * host has not proved a recorded snooze clear, so the presentation layer still
+   * answers from its durable record.
+   */
+  async rowSnoozeVisibility(taskId: string): Promise<RowSnoozeVisibility> {
+    return await this.presentation.rowSnoozeVisibility(taskId);
+  }
+  /** Show the board in the host's pinned inbox thread for the operator's `ui` (nucleus#1415). */
+  async openInboxUi(): Promise<{
+    status: "opened" | "reused" | "failed";
+    detail?: string;
+  }> {
     this.requireConnection();
-    return await this.inbox.openBoard();
+    return await this.inbox.showBoard();
   }
 
   /** The ordinary host sweep's nesting pass: dispose owed wakes, hold or release the parent's turn, archive a finished task's parent. */
@@ -681,13 +709,17 @@ export class T3CodeHost implements Host {
               "no operator decision is open for the inbox",
             );
         }
+        // A held turn makes T3 queue the operator's own message, so the pass answers the
+        // `ui` the agent cannot receive (nucleus#1415). It reads and writes only the preview
+        // and the served-`ui` record: the offer, the card and the hold are untouched.
+        await this.inbox.serveQueuedUi();
       }
       for (const parent of Object.values(state.parents ?? {})) {
         if (!parent.archivedAt) {
           const cards = await this.decisionCards.reconcile(
             parent.threadId,
             parent.workspaceId,
-            { taskId: parent.taskId },
+            { taskId: parent.taskId, sessionId: parent.sessionId },
           );
           if (cards && this.acp()?.pendingDecisionKey?.(parent.taskId))
             await this.decisionHold.reconcile(parent.threadId);
@@ -811,10 +843,10 @@ export class T3CodeHost implements Host {
     const repositoryRoot = spec.project.workspaceRoot
       ? await realpath(spec.project.workspaceRoot)
       : undefined;
-    const inventory = await this.reads.inventory();
+    const shell = await this.reads.shell();
     let selected = repositoryRoot
-      ? inventory.projects.find((p) => p.workspaceRoot === repositoryRoot)
-      : inventory.projects.find((p) =>
+      ? shell.projects.find((p) => p.workspaceRoot === repositoryRoot)
+      : shell.projects.find((p) =>
           spec.project.projectId
             ? p.id === spec.project.projectId
             : p.workspaceRoot === directory,
@@ -901,7 +933,7 @@ export class T3CodeHost implements Host {
   async repositoryProject(root: string) {
     const workspaceRoot = await realpath(root);
     return {
-      projectId: (await this.reads.inventory()).projects.find(
+      projectId: (await this.reads.shell()).projects.find(
         (p) => p.workspaceRoot === workspaceRoot,
       )?.id,
       workspaceRoot,
@@ -919,7 +951,7 @@ export class T3CodeHost implements Host {
     return (
       !!w &&
       !w.archivedAt &&
-      (await this.reads.inventory()).projects.some(
+      (await this.reads.shell()).projects.some(
         (p) => p.id === w.projectId && p.archivedAt == null,
       )
     );
@@ -986,7 +1018,7 @@ export class T3CodeHost implements Host {
   async workspaceArchived(id: string): Promise<boolean> {
     const workspace = this.state.read().workspaces[id];
     if (!workspace || workspace.archivedAt) return true;
-    const found = (await this.reads.inventory()).projects.find(
+    const found = (await this.reads.shell()).projects.find(
       (p) => p.id === workspace.projectId,
     );
     return !found || found.archivedAt != null;
@@ -999,13 +1031,26 @@ export class T3CodeHost implements Host {
     };
   }
 
-  async workspaceThreads(ids: readonly string[]) {
-    return {
-      ok: true as const,
-      threads: (await this.reads.activeAndArchivedThreads()).filter(
-        (t) => !!t.workspaceId && ids.includes(t.workspaceId),
-      ),
-    };
+  async workspaceThreads(
+    ids: readonly string[],
+    options: { includeArchived?: boolean } = {},
+  ) {
+    try {
+      const threads =
+        options.includeArchived === false
+          ? await this.reads.activeThreads()
+          : await this.reads.activeAndArchivedThreads();
+      return {
+        ok: true as const,
+        threads: threads.filter(
+          (t) => !!t.workspaceId && ids.includes(t.workspaceId),
+        ),
+      };
+    } catch (error) {
+      if (error instanceof T3InventoryChurnError)
+        return { ok: false as const, reason: error.message };
+      throw error;
+    }
   }
 
   /**

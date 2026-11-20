@@ -6,6 +6,7 @@ import { taskPrNumber } from '../../forge/index';
 import { git } from '../../git/index';
 import { NON_DELIVERY_ROUTE_REASON } from '../../recovery/non-delivery';
 import { assertOrdinaryReviewIdentity, ordinaryReviewSource } from '../../review/ordinary-review';
+import { unreviewedMergeRoute } from '../../../shared/task-view';
 import { ownerReviewContext } from '../../review/owner-review-context';
 import type { Adapter } from '../../host/adapter';
 import { proofExecutionRecord, recordProofExecution } from '../../qa/proof-records';
@@ -23,8 +24,20 @@ import { threadRunningReason } from '../../intake/thread-waits';
 import { declaredLaneDocumentKeys } from '../../planning/brief-lane-documents';
 import { dirname } from 'node:path';
 import { ensureTaskNodeModules } from '../../workspaces/task-node-modules';
+import { verifyBargeLeaseAndCustody } from '../../workspaces/barge-allocator';
 
 // Proof executors keep their own refusal path; reviewer and closeout creations wait for their exact lookup.
+/**
+ * The detached reviewer round's PR identity (nucleus#1425). A recorded unreviewed external
+ * merge of the task's PR binds its exact merged source; any other task keeps the strict
+ * open-PR identity.
+ */
+async function reviewPrIdentity(machine: LaunchMachinePorts, t: Task, number: number): Promise<{ url: string; head: string }> {
+  const route = unreviewedMergeRoute(t);
+  if (!route) return machine.verifyPrIdentity!(t, number);
+  return machine.verifyMergedReviewSource!(t, route);
+}
+
 const creationRoles = new Set<Run['role']>(['reviewer', 'closeout']);
 
 /**
@@ -61,8 +74,28 @@ export class RunLaunchDeliver {
       // Ordinary review takes custody of a detached exact-head checkout only
       // after reservation. Recheck its dependencies after that final source
       // transition and before the retained reviewer reads the worktree.
+      if (role !== 'closeout' && t.workspaceAllocation?.provider === 'barge') {
+        const bridge = this.adapter.workspaceAllocationBridge;
+        await verifyBargeLeaseAndCustody({
+          allocation: t.workspaceAllocation,
+          saveAllocation: bridge
+            ? (updated) => bridge.saveWorkspaceAllocation(t.id, updated)
+            : undefined,
+          cliOptions: bridge?.bargeCliOptions,
+        });
+      }
       if (role !== 'closeout' && t.directory)
-        await this.ensureTaskDependencies(t.directory, t.repoPath, dirname(t.directory));
+        await this.ensureTaskDependencies(
+          t.directory,
+          t.repoPath,
+          dirname(t.directory),
+          t.workspaceAllocation?.provider === 'barge'
+            ? {
+                expectedCommonDir: t.workspaceAllocation.gitCommonDir,
+                expectedCheckoutPath: t.workspaceAllocation.checkoutPath,
+              }
+            : undefined,
+        );
       // Proof launch preparation checked the exact source before reservation,
       // but this delivery path may refresh dependencies again. Recheck after
       // that setup and before any executor send or creation.
@@ -104,7 +137,7 @@ export class RunLaunchDeliver {
         const sendGuard = run.ordinaryDetached || guardedReviewEntry ? {
           allowed: async () => {
             if (run.ordinaryDetached) await this.resolution.ordinaryRoundCustody(fresh, savedRun);
-            const pr = await this.machine.verifyPrIdentity!(fresh, taskPrNumber(fresh));
+            const pr = await reviewPrIdentity(this.machine, fresh, taskPrNumber(fresh));
             if (pr.head !== run.head || pr.url !== fresh.prUrl) return false;
             if (fresh.reviewEntry)
               await assertReviewEntryWriterYielded(reviewEntryInputForTask(fresh), this.adapter as Adapter & ReviewEntryAdapter, fresh.id);
@@ -128,7 +161,7 @@ export class RunLaunchDeliver {
         if (run.ordinaryDetached) {
           await this.resolution.ordinaryRoundCustody(t, this.store.run(run.id)!);
           if (!this.machine.verifyPrIdentity) throw Error('Ordinary reviewer PR identity observation unavailable');
-          const pr = await this.machine.verifyPrIdentity(t, taskPrNumber(t));
+          const pr = await reviewPrIdentity(this.machine, t, taskPrNumber(t));
           if (pr.head !== run.head || pr.url !== t.prUrl) throw Error('Ordinary reviewer PR identity changed before creation');
           await this.resolution.ordinaryRoundCustody(t, this.store.run(run.id)!);
           if (t.reviewEntry) await assertReviewEntryWriterYielded(reviewEntryInputForTask(t), this.adapter as Adapter & ReviewEntryAdapter, t.id);

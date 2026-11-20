@@ -996,7 +996,7 @@ Typed pre-send refusals that settle an operation failed with a receipt:
 `ProvenPreSendRefusalError`, `ReviewEntryRefusal`, `ExternalMergeRefusal`,
 `RestartRefusal`, `RepositoryRekeyRefused`, `RetainedRunRefusal`,
 `DurableFenceRefusal`. `ParkedRestartPreSendRefusal` is the eighth class in
-that set. Event-kind reads and writes stay in the census in
+that set, and `PreWriteMergeObservationRefusal` (nucleus#1428) is the ninth. Event-kind reads and writes stay in the census in
 `test/control-strings.test.ts`; do not reword a kind.
 
 ### Confidence
@@ -2753,7 +2753,26 @@ movement invalidates source approval and preserves the normal readiness gates.
   acceptance (`move to=closeout`). Nothing is advanced, reverted or synced,
   and a repeated observation attaches to the open escalation instead of
   asking again. An already-recorded merge re-entry never re-decides an
-  accepted route, so the gate lives on the fresh observation only. A
+  accepted route, so the gate lives on the fresh observation only.
+- The stop records the merged PR's number, source head and merge commit on the
+  task (`unreviewedMerge`, nucleus#1425). That record is the one route
+  eligibility: `next`, the `move to=review` admission, the reviewer launch and
+  verdict publication read it through one predicate. The route holds only while
+  the task still names that PR and source head and no merge is recorded. The
+  admission then observes the forge's merged PR, which must still name the same
+  head and merge commit; any other answer refuses with nothing written.
+- A fresh review of that merged source may run on the retained reviewer or an
+  independent one. Its `ready_to_merge` verdict at the exact merged head
+  reconciles the merge once; a verdict at any other head, a negative or a missing
+  verdict keeps the stop. No merge, revision push or revert is ever sent against
+  the merged PR, and the open-PR proofs stay strict for every other review.
+- While the owner's review of that merged source is in flight, the probe does
+  not restate the stop. A reobserved unchanged merge honors an answered
+  escalation's recorded stop or wait while that disposition is current, and
+  re-enters only after it releases. The escalation names the two routes apart:
+  the independent review (`move to=review`), and the operator-only exact-head
+  source acceptance (`move to=closeout`, qualification naming that head). A
+  planner hand-back is neither. A
   submission that explicitly skipped PR review keeps its previous merge
   behavior, the same rule the Queue-owned gates apply.
 - `move to=closeout` (reason required) closes out an external merge at a head
@@ -3180,6 +3199,17 @@ movement invalidates source approval and preserves the normal readiness gates.
   refusal a typed gate raises before Nucleus bound or sent anything is a definite
   failure, and a durable receipt it could not record never turns it into an
   unknown delivery (Tom, 2026-11-01).
+- A read-only forge observation that fails before a move to merge writes or
+  stops anything is a definite refusal (`PreWriteMergeObservationRefusal`,
+  nucleus#1428). The move proves it by its own journal: a failure counts only
+  while no task event has been recorded since the move began. A timeout
+  message alone never settles a move uncertain, and a later successful move
+  never proves absence. An uncertain move that was journaled inside its own
+  attempt window, or whose boundary was crossed, stays fenced. A legacy
+  uncertain move to merge with an empty window reconciles through
+  `retry_effect operation.<id>`, which settles it failed with the evidence in a
+  `operation_pre_send_reconciled` event. `next` offers that reconciliation only
+  when `retry_effect` would perform it.
 - Commands are accepted durably before remote work
   ([Spec 012](../specs/012-durable-asynchronous-operations.md),
   [Spec 013](../specs/013-standalone-queue-service.md)). One operation record

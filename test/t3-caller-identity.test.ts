@@ -7,16 +7,22 @@ import { formatAgentId } from '../shared/agent-identity';
 
 function runtimeFixture(observe: (id: string) => Promise<{ id: string; status: string }>) {
   const observed: string[] = [];
+  const activity: string[] = [];
   const adapter = { observe: async (id: string) => { observed.push(id); return observe(id); } };
   const hostId = 't3code:32be2844-7204-4edc-a95a-35b05e42ded4';
   const runtime = {
-    engine: { withHost: (_hostId: string, fn: () => unknown) => fn(), adapter, host: adapter },
+    engine: {
+      withHost: (_hostId: string, fn: () => unknown) => fn(),
+      adapter,
+      host: adapter,
+      resolution: { responsibleThreads: { recordActivity: (caller: string) => activity.push(caller) } },
+    },
     hostRegistry: {
       onlineIds: () => [hostId],
     },
     plannerTickets: { forCaller: async () => undefined },
   };
-  return { runtime, observed };
+  return { runtime, observed, activity };
 }
 
 test('caller.resolve verifies a known T3 thread and its decision is stored under the canonical caller', async () => {
@@ -59,6 +65,7 @@ test('caller.resolve verifies the thread when the desktop scope differs from the
     { hostKind: 't3code', nativeAgentId: 'mcp:known-thread', hostScope: 'e3587e2bcde8d42fdde2f3615032716c' });
   assert.equal(identity.hostId, 't3code:32be2844-7204-4edc-a95a-35b05e42ded4');
   assert.deepEqual(fixture.observed, ['mcp:known-thread']);
+  assert.deepEqual(fixture.activity, [identity.caller], 'a verified T3 caller is recorded as responsible-thread activity');
 });
 
 test('reparent resolves a bare T3 thread by the same exact thread observation', async () => {

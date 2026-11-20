@@ -560,7 +560,8 @@ export class FirstDispatch {
             throw error;
           }
         }
-        const workspace = await this.adapter.createWorkspace(prepared, {
+        const populatedTask = this.store.task(task.id);
+        const workspace = await this.adapter.createWorkspace(populatedTask, {
           freshlyPopulated,
         });
         this.store.update(

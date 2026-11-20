@@ -340,6 +340,7 @@ already present.
 | Archive | `thread.archive` through dispatch | Receipt followed by archived-state observation |
 | Remove | `thread.delete` through dispatch at closeout, never `onlyIfUnused` | Durable intent, then `deletedAt` or absence from a complete inventory proves removal; an unknown outcome is never resent |
 | Snooze a waiting row | `thread.snooze` through dispatch with `snoozedUntil` in the future | One bounded horizon, read back from `snoozedUntil`; deterministic command identity per wait episode and horizon; a refusal is "stay active" for that episode, never a retry loop |
+| Report a row that stays hidden | No command: one durable `row_hidden` notice per continuous snooze episode (30 minutes) or hold generation (3 hours), and the planner's answer window for its own hold (30 minutes) | The task, its age, its wait, its last transition and one supported action; unknown when the row cannot be read; superseded when the episode ends; an unanswered planner hold shows the row again |
 | Show a row again | `thread.unsnooze` through dispatch with `reason: "user"` | Only a row this host snoozed; a person who must act or a running role gets the row back immediately through the title/row projection drain and the host pass. The snooze record stays until a fresh T3 read proves `snoozedUntil` is cleared; a settled unsnooze that still reads snoozed is re-observed and retried as a new occurrence, while an unknown delivery is never resent blindly. Operator snoozes and manual settles are never touched |
 | Continue a manually settled thread | Unsettle, then send | A message, decision, follow-up or re-entry for a thread the operator settled unsettles it first and then delivers (Tom, 2026-11-19). Refusing before send is retired |
 | Archive workspace | Mark the task's T3 worktree handle archived in adapter state | Observation reads the handle's `archivedAt`; the shared project registration remains registered and available |
@@ -385,16 +386,27 @@ task's parent row is driven by the one attention projection the board and
 `task.next` read (`shared/task-attention.ts`):
 
 - *attention* or *active* — a person must act, or a role child is running: the
-  row is shown, and a row this host snoozed is unsnoozed. Task-level title and
+  row is shown, and a row this host snoozed is unsnoozed. A role's failed run
+  names the row (`blocked: <role>`) only while the task's own attention is
+  `attention`; a role that failed under a wait or a settled incident is history
+  and never holds the row (nucleus#1437). A role waiting on a current question or
+  permission always names the row (`<role> needs input`). Task-level title and
   row reconciliation (`WorkspaceTitleProjection` draining `enqueueTitle`) runs
   `reconcileTaskRow` right alongside title updates when a role goes active or
   attention changes, instead of waiting for the next periodic sweep; `HostPass`
   also reconciles active and attention rows ahead of waiting and finished rows.
 - *waiting* — the task waits on nothing Nucleus is running and needs no one: the
-  row is snoozed. An owner hold with a release condition and an unresolved
-  completable prerequisite wait are waiting with their named cause. An operator-owned
-  prerequisite correction remains attention.
+  row is snoozed, including past a role's old fault (nucleus#1437). An owner hold with a release condition, a planner's own hold
+  and an unresolved completable prerequisite wait are waiting with their named
+  cause. An operator-owned hold with no release condition and an operator-owned
+  prerequisite correction remain attention.
 - *finished* — the row's snooze is retired and the terminal lane archives it.
+
+A planner's own hold parks the row the way a releasing hold does (nucleus#1419):
+the planner already said the task waits, so the row must not ask anyone for
+anything while that park is answered. It stops being a park when the planner's
+nudge for that hold generation goes unanswered (see *A planner's own hold parks the
+row until its nudge goes unanswered*, below).
 
 The horizon is bounded (48 hours) and the ordinary sweep renews it with 24 hours
 left, so the row never wakes itself while the task still waits. The command
@@ -423,6 +435,83 @@ cleared, the unknown unsnooze intent settles and the snooze record is retired.
 
 An operator snooze (any live snooze not recorded by this host) is left exactly
 as it is, and a repeated pass inside the horizon writes nothing.
+
+**A row that stays hidden says so to the planner (nucleus#1417).** The row's snooze
+is normally the design working: a task that waits on nothing Nucleus runs is
+deliberately hidden. It stops being normal when the wait has gone on quietly, so
+the host reconciles the row's visibility on every pass before its presentation
+step (`rowSnoozeVisibility`): only a snooze this host recorded is Nucleus-owned, a
+row T3 reads unsnoozed or an operator snoozed or settled is clear, and a row the
+host cannot read is unknown rather than clear. Reading first is what lets the pass
+that decides an escalation present the row it just woke, in that same pass.
+
+A Nucleus-owned snooze is one continuous episode, from the first snooze until a
+fresh read proves the row shown, the task closes out, or a genuinely new wait
+starts. The episode start is durable state in the adapter's own record: every
+horizon renewal keeps it, and a record written before the field existed proves its
+start from the horizon it read back (it was written exactly one horizon before
+that). After 30 minutes the planner gets one `row_hidden` notice through the
+ordinary durable notice path, naming the task, the age, the current wait reason,
+the last task transition and one supported inspection or owner action. It says
+which of the two cases it is: a wait that is genuinely waiting, or a row that
+should be shown (a role is running, or a person must act) while T3 still reads it
+snoozed — the ordinary unsnooze reconciliation keeps running either way, and an
+unreadable row is reported as an unread observation fault with its recorded snooze
+kept as the evidence.
+
+Exactly one notice belongs to one episode, so sweeps, rolls, horizon renewals and
+owner changes never produce a second; a pending notice follows the owner it would
+reach now. An episode that ends supersedes an undelivered notice, and one the
+planner has already read keeps its record. An undelivered notice stays pending and
+visible while the planner's turn runs and is delivered when it ends; a failed send
+is unknown delivery and is never resent. When the ordinary attention delivery
+already reached this planner for the task's current state, the hidden row is
+recorded as one `row_hidden_visibility_failure` event instead of a second message.
+Presentation after that state stays the same: nothing here settles, stops,
+restarts or releases anything, and an operator's snooze or manual settle is never
+interpreted as Nucleus-owned.
+
+**An explicit hold is excluded from the 30-minute rule (nucleus#1417).** A hidden
+row behind a hold fence that blocks the current phase does not accrue wait time.
+After three hours of one continuous hold generation the planner gets one
+informational `row_hidden` nudge naming the hold's reason and its release condition
+where it has one; it changes no hold, owner, release condition or escalation. A
+Spec 040 hold prompt that already reached this planner for the same generation is
+reused instead of repeated. Time under the hold never accrues toward the wait
+episode: the 30-minute clock starts again at the first pass after release.
+
+**A planner's own hold parks the row until its nudge goes unanswered
+(nucleus#1419).** An effective hold whose holder is the task's planner — the planner
+the brief named, else the task owner — is the planner's own park, whether or not it
+names a release condition, so it snoozes the task row like any other wait while the
+work is quiet (Tom, 2026-11-20). A hold the operator placed, and one a worker,
+reviewer, coordinator or any other participant placed, keeps its existing treatment:
+only the thread that answers for the task's planning parks its row. A running role,
+an independent call for a person, an origin fault or a pending question or permission
+keeps the row visible whatever the hold says. The fence stores the nudge and the answer in `plannerAnswer`: the generation's
+start, the due time (its start plus the three-hour hold bound), the durable notice
+that carries the nudge, when that notice was confirmed delivered, and — once the
+window closes — the moment it went unanswered and the delivery fault when delivery
+was never confirmed. The nudge is raised only while the row is hidden, is the one
+`row_hidden` notice of the existing hold rule, and reuses the Spec 040 prompt
+instead of repeating it.
+
+From the later of the due time and a confirmed delivery the planner has thirty
+minutes to `release` the hold or `keep_hold` it into a fresh generation. A release
+ends the hold, and the ordinary wait rule takes the row over; a keep is a new
+generation, which starts a fresh hidden clock, nudge and answer window (Spec 040's
+`keep_hold` also restarts the fence's own start time). Neither one is an
+escalation. When the window closes with the hold still in place the task is
+attention again for that generation: the row is unsnoozed through the ordinary
+read-back path and stays visible until the planner releases or keeps that
+generation, and the pass records `row_hidden_hold_unanswered`. When
+delivery was never confirmed the pass records `row_hidden_hold_undelivered` with
+the notice path's own reason and the fence keeps that `deliveryFault`, so the row
+is shown and the fault with it. Ordinary reads, sweeps, unchanged state and
+callback noise are not an answer. Nothing here releases, lifts, keeps or changes a
+hold because a timer fired: only the planner's own `release` or `keep_hold` answers
+it, and a self-lifting hold ([Spec 046](046-self-lifting-merge-holds.md)) names its
+own end so it is never measured by this window.
 
 A settled thread starts no run, and T3 does not clear a manual settle on
 `message.dispatch`. So every message, decision, re-entry and follow-up goes through
@@ -632,32 +721,41 @@ completion or a Nucleus report.
 
 ## Observation and restart
 
-Start with an unfiltered shell subscription and explicitly read
-`orchestration.getArchivedShellSnapshot`; the target nightly's live shell loader
-does not include archived records even though its schema has an archive array.
-Do not enable omission of older settled threads or idle children. Require the
-initial snapshot and synchronization/completion evidence before answering an inventory
-read. Each read takes a fresh synchronized snapshot; an intervening event,
-reconnect, invalid update or unfinished snapshot refuses that read. There is no
-cached inactivity to carry across connections. Read the thread
-projection when shell summaries lack request details or timeline coverage.
+`orchestration.subscribeShell` returns every project registration (active and
+archived) and every active non-archived thread in one SQLite read transaction,
+whereas `orchestration.getArchivedShellSnapshot` returns archived threads in a
+separate transaction. Routine live-only reads — `listLiveAgents`, `activeThreads`,
+`createWorkspace`, `repositoryProject`, `workspaceAvailable`,
+`workspaceArchived`, live `observe`, live `findAgents`, live `originAgent`,
+live `archiveThreadPage({ includeArchived: false })`, `reconcileObservation` for
+live or retired threads, and live nesting checks — answer from `subscribeShell`
+(and bounded `orchestration.subscribeThread` snapshots where needed) without
+pairing against `getArchivedShellSnapshot`. Pass-scoped `shell`, `archivedShell`
+and `inventory` promises share reads within one audit pass and clear on close.
+
+Operations that require complete live-plus-archived proof or absence —
+`threadArchiveState`, `workspaceThreads` (when including archived),
+`archiveThreadPage({ includeArchived: true })`, and `findAgents`, `originAgent`,
+`observeThreadList`, `knownThread` or `parentGone` when a target is absent from
+the live shell — pair `subscribeShell` with `getArchivedShellSnapshot` at an
+equal `snapshotSequence` (retrying up to 5 times). If events keep advancing the
+global cursor across that pair, the adapter throws `T3InventoryChurnError`
+(`HostReadRefusalError`): a bounded, visible operation refusal that keeps T3
+online and model-eligible, records no `host_transport_fault` or outage, and
+never infers absence from partial data (`test/t3code-inventory-churn.test.ts`).
+`archivedThreads` reads `getArchivedShellSnapshot` once to enumerate candidates;
+retention still takes an exact `threadArchiveState` read immediately before
+deletion. Do not enable omission of older settled threads or idle children.
 Project-enrichment snapshots marked with `resolvedRepositoryIdentityRoots` can
-carry empty thread arrays; they never replace the authoritative inventory.
+carry empty thread arrays; they never replace authoritative shell reads.
 
-The origin-thread read takes the complete shell and archived inventory before it
-reads a projection: a thread the complete inventory does not carry is authoritative
-absence (not mine), while a failed inventory or projection is an unread read
-(unknown) and never absence. A native question about a thread T3 does not have
-therefore never makes a two-host origin lookup ambiguous.
-
-Observation reads are one-shot and per call: each sweep or reconcile takes a fresh
-snapshot, so an interrupted `subscribeThread` or `subscribeShell` stream ends that
-read only and never ends observation. T3 transport and timeout errors are an
-observation outage, classified as a transport failure: the lane defers and the next
-sweep re-reads, and the task is never marked idle or attention for it. A task
-quantum that does not return within two minutes (`TASK_QUANTUM_BOUND_MS`) no
-longer holds the sweep; the task records an `observation_outage` event and its
-lane stays held until the quantum returns (#1148, planner ruling).
+Observation reads keep each sweep bounded: T3 transport and timeout errors
+classify as transport failures (deferring the lane and marking the host
+unavailable on the pass), while `T3InventoryChurnError` keeps the host online
+and lets independent work proceed. A task quantum that does not return within
+two minutes (`TASK_QUANTUM_BOUND_MS`) releases the sweep; the task records an
+`observation_outage` event and its lane stays held until the quantum returns
+(#1148, planner ruling).
 
 ### Observation window
 
@@ -839,13 +937,27 @@ expiry is not evidence that the original answer was never delivered.
 
 ## Operator decisions on T3
 
-An open decision linked to a live T3 task goes to that task's ACP parent; other
-operator decisions go to the environment's single pinned **Nucleus** inbox. The
+An open decision linked to a T3 task goes to its recorded ACP parent when one is
+available; when no eligible parent exists (before a parent is created or after a
+recorded parent is archived) it goes to that host's single pinned **Nucleus**
+inbox. Other operator decisions also go to the inbox. No parent is created to ask a
+question. A disconnected host or an unreadable parent stays unknown, rather than
+authorizing a second offer. The
 inbox has a dedicated service-owned directory and a host-scoped ACP binding, not
 a task identity. Its credential can read its decision projection and answer it,
 but cannot send a task message, report a run or exercise task controls. Re-minting
 replaces the authority record and revokes the previous credential. The inbox is
 not a role thread and retention and task archiving never select it.
+
+The service durably binds a decision version to the exact scope of its first offer
+before returning the form. A later parent does not move an Inbox offer, and a
+restart keeps the same owner. Fresh reads of the candidate scopes precede a first
+offer; a legacy pending card is adopted from positive T3 evidence before a
+competing scope can offer it. An unknown read never proves a card absent, and a
+bound version is re-offered only after its own scope is read again. Offer, count,
+callback authorization and card settlement use the same owner. An Inbox sign-off
+uses the ordinary authenticated T3 operator answer route and leaves independent
+task holds intact (nucleus#1433).
 
 Each open decision version becomes its own `elicitation/create` form. The field id
 carries the decision id and version; its title, question and labelled options are
@@ -956,18 +1068,66 @@ restarts; an uncertain open is not blindly repeated on the same connection.
 `nucleus t3 install` grants `preview:operate` to the runtime bearer, and a repeat
 install rotates that bearer.
 
-Typing exact `ui` in the pinned Nucleus inbox reuses or reopens the board in that
-thread's browser pane (Tom, 2026-11-19). The inbox ACP agent routes exact `ui`
-through its authenticated `inbox` binding (`/acp-inbox-ui` -> `AcpSessions.openInboxUi`
--> `T3HostConnection.openInboxUi` -> `T3Inbox.openBoard`). `openBoard` reads
-`preview.list` for the inbox thread: if a healthy (`Loading` or `Success`) board
-tab matching the board's origin already exists, it reuses that tab without
-minting another pairing link or opening a duplicate tab; otherwise it closes any
-`LoadFailed` board tab, mints a fresh one-time pairing link, and calls
+Typing exact `ui` in the pinned Nucleus inbox shows the board in that thread's
+browser pane and answers with one short result (Tom, 2026-11-19; bounded and
+served-from-the-message by nucleus#1415). One `ui` is served once, by its own
+message id, and the attempt is recorded in the host state before the native open
+(`inbox.ui`), so a crash, an unknown delivery or a reconnecting socket never
+replays that open; a later `ui` is a new message and a new attempt.
+
+The inbox ACP agent routes exact `ui` through its authenticated `inbox` binding
+(`/acp-inbox-ui` -> `AcpSessions.openInboxUi` -> `T3HostConnection.openInboxUi`
+-> `T3Inbox.showBoard`). `showBoard` reads the inbox thread's window, finds the
+newest operator `ui` message and serves it unless that message already has an
+attempt. Serving reads `preview.list` for the inbox thread, closes every board
+tab of this board's origin, mints a fresh one-time pairing link and calls
 `preview.open` with `reveal: true`. Non-`ui` prompts and task threads never
-invoke this route, pairing URLs never cross back to the ACP session or logs,
-and once the open finishes the inbox returns to `end_turn` (idle) at once
-unless an offerable decision holds it.
+invoke this route, and pairing URLs never cross back to the ACP session, the
+host state or logs.
+
+**A retained board tab is replaced, not reused, because the nightly cannot
+reveal it.** Opening is the only reveal the RPC surface offers (see "Workspace
+pane layout limitation"), so a healthy retained tab, a `LoadFailed` tab and a
+duplicate left by an earlier attempt are all closed first and one freshly
+revealed tab is opened in their place: exactly one board tab remains and the
+open is what brings the pane up. The board's own scroll and in-page state are
+not preserved across `ui`; the page reload is what the reveal costs (Tom asked
+for the board to appear, not for the tab to be kept warm, 2026-11-20).
+
+**`ui` while a decision holds the inbox (nucleus#1415).** An open decision holds
+the inbox's turn, and T3 queues an operator's message behind a live run of the
+same thread instead of starting another. The queued `ui` therefore never
+reaches the agent as a prompt: it waits for the held turn to end, which waits
+for the operator to answer the card. That is the silent turn Tom saw — the board
+was never asked for, the card stayed answerable, and nothing was reported. The
+ordinary sweep now answers it: the inbox pass reads the thread's window (the
+queued message is in the thread's `messages` before it is a turn item) and,
+when the newest `ui` is a message T3 has queued and has no attempt yet, serves
+it from the same record with the same open. That pass touches only the preview
+RPCs and `inbox.ui`: the offer, the card, its version and the hold are read and
+never written, so answering the card is unaffected and the card is not re-raised.
+When the held turn finally ends, the queued `ui` runs and reports that same
+recorded result (`The Nucleus board is open.`) without opening a second tab. An
+in-flight serve for one message is tracked in the process, so the turn and the
+pass cannot both open for it.
+
+**One bound, a clear result, and a responsive Stop.** Inbox lookup, message
+lookup, link issuance and all preview calls share one
+`INBOX_UI_DEADLINE_MS` budget (20 s), under the callback's 30 s bound. Inbox
+lookup checks the live shell first and reads complete inventory only when
+the inbox is absent from that shell. Each read uses the time left in the
+same budget. If the deadline expires after an open is sent,
+the command records a timeout and leaves that attempt's delivery uncertain.
+The three cases are
+reported as one line each: `Opened the Nucleus board.`, `The Nucleus board is
+open.` (this message's open is already recorded, usually served by the pass), or
+`Nucleus could not open the board: <reason>` with any pairing URL or token
+fragment removed. Once the open finishes the inbox returns to `end_turn` (idle)
+at once unless an offerable decision holds it, as every other inbox turn does.
+The transport's `openUi` takes the turn's abort signal, so Stop ends the command
+at once (`cancelled`, with no invented line) without waiting for the bound or the
+socket; the service's own serve continues under its bound, and the operator's
+next `ui` is a new attempt.
 
 **Workspace pane layout limitation.** Verified against installed nightly
 `0.1.11-nightly.20261119.4941` (commit `ff9efe89f6e7`): the right panel's
@@ -980,8 +1140,10 @@ or command to set or toggle workspace pane layout, and browser viewport sizing
 (`preview.resize`) does not change that layout. Likewise, `WS_METHODS` exposes
 no `preview.reveal` or `tabId`-reusing `preview.open` RPC (`PreviewManager.open`
 always creates a new `tabId`, and `PreviewManager.requestReveal` is internal to
-T3's in-process MCP `PreviewAutomationBroker`). The adapter keeps T3's native
-manual maximize control with no T3 patches or client-state hacks.
+T3's in-process MCP `PreviewAutomationBroker`). **A retained preview tab therefore
+cannot be revealed through any supported call; `ui` shows the board by replacing
+the tab with a freshly revealed open** (nucleus#1415). The adapter keeps T3's
+native manual maximize control with no T3 patches or client-state hacks.
 
 ### Native question answers
 
@@ -1096,8 +1258,24 @@ row would then have to settle, and there is no ten-minute native-path parking.
 the task's existing children and re-mint a binding under a thread nothing runs.
 Deletion is read two ways from the same inventory, because the nightly omits a
 removed thread from the shell lists and also serves it as a `deletedAt` tombstone:
-absent or tombstoned are the same fact. A finished task's held turn is released at
-once — the create grace window is for live work — and its parent is archived.
+absent or tombstoned are the same fact. Before a role create, the adapter re-reads
+this exact parent and checks its project and worktree against the retained binding.
+An incomplete inventory or changed binding refuses the create. An exact live read
+clears an older finished marker after a manual unarchive; old markers alone cannot
+distinguish an archive from deletion. A live task keeps the binding even if a
+sweep observes deletion, so a later role cannot launch a replacement parent. A
+finished task's held turn is released at once — the create grace window is for live
+work — and its parent is archived.
+
+An explicit owner restart can restore the same archived parent after its existing
+creation, workspace and custody admission proves settled. The parent must still
+match the task's recorded workspace, project and Nucleus ACP provider. The T3
+`thread.unarchive` effect has the restart operation's durable identity; a fresh
+paired inventory must prove the same parent live before normal admission proceeds.
+After a lost reply, the operation observes only that occurrence. An archived or
+unobservable result waits without another send or child; a deleted or mismatched
+parent remains fenced with its cause. A routine sweep never restores a manually
+archived parent, and terminal archival is unchanged.
 
 **A deleted child does not hold the turn.** The release decision reads one complete
 inventory: a child absent from it, or listed there as a `deletedAt` tombstone, is
@@ -1476,6 +1654,19 @@ an operator's settled row left alone, a snooze refused for a pending approval
 staying active with no retry loop, no `thread.settle` on any decision, and a role
 whose create refuses launching no thread and naming the fix.
 
+`test/t3code-row-hidden.test.ts` is the hidden row's own evidence on the fake
+nightly: one recorded episode start that a horizon renewal keeps, a legacy record's
+start proved from its own horizon, an operator snooze, manual settle and lapsed
+horizon all clear, a refused snooze clear, and an unreadable row reported as
+unknown with its record untouched. `test/row-hidden-notice.test.ts` is the notice's
+own suite: the 30-minute bound with an injected clock, the age, wait reason,
+transition and action in the text, no second notice across passes, renewals and
+rolls, the confirmed wake, terminal closeout and new episode each clearing the
+timer, an owner change re-pointing a pending notice, an undelivered notice waiting
+for a busy planner and a refused send staying unknown, the attention-delivery
+coalescing, the hold's 3-hour nudge with the existing reminder reused, and hold
+time never accruing toward the wait bound after release.
+
 One end-to-end test drives an ordinary task's whole lifecycle on the fake
 Nightly transport (nucleus#1139): promotion onto the T3 host, workspace
 registration, a worker launch whose profile carries a thinking level (the
@@ -1537,12 +1728,16 @@ surface.
 
 `test/t3code-inbox.test.ts`, `test/acp-agent.test.ts`, `test/acp-service.test.ts`
 and `effigy proof:t3code:inbox` (`scripts/acceptance/t3code-inbox-private.ts`)
-cover the pinned inbox lifecycle and its `ui` command: reusing an already-open
-board tab without duplicating it or minting another link, ignoring non-exact
-prompts, reopening from a closed or `LoadFailed` pane with a fresh one-time
-pairing link and `reveal: true`, keeping pairing URLs out of ACP messages and
-logs, and returning to idle immediately when no decisions are offerable while
-staying held when an offerable decision is open.
+cover the pinned inbox lifecycle and its `ui` command (nucleus#1415): one board
+tab after every `ui`, a retained healthy tab replaced by the revealed one, a new
+`ui` message served once and a repeated report of it not reopened, ignoring
+non-exact prompts, reopening from a closed or `LoadFailed` pane with a fresh
+one-time pairing link and `reveal: true`, keeping pairing URLs out of ACP
+messages, the host state and logs, being served by the pass while a decision
+holds the turn (the queued message, the unchanged card, the served result
+reported when the queued turn runs), Stop ending a hung open at once, and
+returning to idle immediately when no decisions are offerable while staying held
+when an offerable decision is open.
 
 The private proof starts an unmodified checkout of the target nightly revision,
 or its bundled server copied into fresh run scratch, with separate home, data,

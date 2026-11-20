@@ -76,7 +76,10 @@ for (const kind of [
         ReturnType<typeof f.engine.resolution.plannerRungsFor>
       >;
     f.engine.resolution.delegation.requireHost = async () => "host";
-    f.engine.resolution.askBound = async () => {
+    f.engine.resolution.askBound = async (_task, _recipient, input) => {
+      // The real askBound records the delegate intent (onIntent) after the window
+      // opens and before the send; this stub keeps that order.
+      input.onIntent?.();
       if (!response) throw lostReply;
       return "Answer: Blue\nReason: Fixture answer";
     };

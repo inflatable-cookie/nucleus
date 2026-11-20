@@ -1434,6 +1434,11 @@ export async function t3Fake(t: TestContext, directory: string) {
             case "thread.archive":
               p.thread.archivedAt = STAMP;
               break;
+            case "thread.unarchive":
+              if (!p.thread.archivedAt)
+                return failure({ _tag: "Fail", error: { _tag: "OrchestrationV2DispatchCommandError", message: "Thread is not archived." } });
+              p.thread.archivedAt = null;
+              break;
             case "thread.delete":
               // The nightly cancels active work and answers success; `onlyIfUnused`
               // is the shape that silently changes nothing, so it must not be sent.

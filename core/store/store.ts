@@ -662,6 +662,10 @@ export class Store {
     putOperation: (operation) => this.operationsStore.putOperation(operation),
     runs: (taskId) => this.runs(taskId),
     task: (id) => this.task(id),
+    eventsAll: (taskId) => this.eventsAll(taskId),
+    event: (taskId, kind, detail) => {
+      this.event(taskId, kind, detail);
+    },
   });
   get db(): DatabaseSync {
     return this.core.db;
@@ -1028,8 +1032,8 @@ export class Store {
   }
   /**
    * The board's per-domain read keys: `lead.board` follows `leadRevision()`, open decisions
-   * their table's trigger clock, and `plans` the clock its plan, lane and project rows
-   * advance. A run, event, observation or telemetry write moves none of them, so the
+   * their table's trigger clock, and `plans` the clock advanced by plan, lane, project
+   * and triage writes. A run, event, observation or telemetry write moves none of them, so the
    * board refetches a list only when that list's own records changed (task 1030).
    */
   planningRevisions(): { leads: number; decisions: number; plans: number } {
@@ -1038,6 +1042,10 @@ export class Store {
       decisions: this.readClock("decisionRows"),
       plans: this.readClock("planInputs"),
     };
+  }
+  advanceTriagePlanningRevision(): void {
+    this.db.prepare("INSERT INTO projection_clock(name,version) VALUES('planInputs',1) ON CONFLICT(name) DO UPDATE SET version=version+1").run();
+    this.advanceRevision();
   }
   private advanceLeadRevision() {
     return this.core.advanceLeadRevision();
@@ -1970,6 +1978,7 @@ export class Store {
     scratchNamespace?: string | null,
     hostKind?: import("../../shared/host-kind").HostKind | null,
     affectedTests?: RepositorySettings["affectedTests"],
+    workspaceProvider?: RepositorySettings["workspaceProvider"],
   ): RepositorySettings {
     return this.repositorySettingsStore.putRepository(
       identity,
@@ -1982,6 +1991,7 @@ export class Store {
       scratchNamespace,
       hostKind,
       affectedTests,
+      workspaceProvider,
     );
   }
   /** Patch semantics: only the named fields change; `null` clears one and an absent field keeps its stored value. Returns the full resulting row. */
@@ -1996,6 +2006,7 @@ export class Store {
       affectedTests?: RepositorySettings["affectedTests"];
       checksPolicy?: RepositorySettings["checksPolicy"];
       hostKind?: import("../../shared/host-kind").HostKind | null;
+      workspaceProvider?: RepositorySettings["workspaceProvider"];
       note?: string;
     },
   ): RepositorySettings {
@@ -2003,6 +2014,12 @@ export class Store {
   }
   scratchNamespaceFor(task: Pick<Task, "repoPath" | "repository">): string {
     return this.repositorySettingsStore.scratchNamespaceFor(task);
+  }
+  /** Effective workspace provider for new allocations on a task's repository (`"local"` when unconfigured/null). */
+  workspaceProviderFor(
+    task: Pick<Task, "repoPath" | "repository">,
+  ): import("../../shared/schema/workspace").WorkspaceProvider {
+    return this.repositorySettingsStore.workspaceProviderFor(task);
   }
   /** Task 382: the effective hosted-check policy for a task's repository. An absent or null setting keeps every check blocking, so existing repositories never gain advisory behaviour implicitly. */
   checksPolicyFor(
@@ -2487,6 +2504,16 @@ export class Store {
   }
   reconcileTaskControlPreSend(id: string, inputHash: string): QueueOperation {
     return this.preSendStore.reconcileTaskControlPreSend(id, inputHash);
+  }
+
+  /** The no-write evidence for an uncertain move to merge, or null (nucleus#1428). */
+  unwrittenMergeMoveProof(id: string): string | null {
+    return this.preSendStore.unwrittenMergeMoveProof(id);
+  }
+
+  /** Settle a proven no-write move to merge as failed; never re-runs the control (nucleus#1428). */
+  reconcileUnwrittenMergeMove(id: string, inputHash: string): QueueOperation {
+    return this.preSendStore.reconcileUnwrittenMergeMove(id, inputHash);
   }
   settleTaskPreSendReceipts(taskId: string): void {
     this.transaction(() => {

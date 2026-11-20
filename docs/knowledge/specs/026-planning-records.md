@@ -569,7 +569,14 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
   selector in the header replaces the single-project filter everywhere. It is a
   dropdown that opens a large popover (a modal at the compact viewport) listing
   every project with a filter box, its primary repository and counts of live tasks
-  and open leads, with a checkbox per project, plus All and None. A plain click
+  and open leads, with a checkbox per project, plus All and None. The live-task
+  total covers every non-terminal task in the project's member repositories and
+  adds the hidden portion of each repository's queued snapshot after subtracting
+  rendered queued cards, so it includes work beyond the first queue page without
+  counting visible cards twice. The compact total appears beside the project name
+  and in its accessible label, including when the total is zero. It is computed
+  from the current board snapshot and stays independent of selector filtering and
+  selection. A plain click
   replaces the selection with that project (clicking the sole selected project
   keeps it selected) and closes the picker; Shift-click toggles just that project
   and keeps the picker open for a sequence of Shift-clicks. The selection (a
@@ -578,6 +585,24 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
   selection means all projects, the app-wide board, with lanes in the order of
   their first appearance across the selected plans. This is
   Nucleus's equivalent of the retired system's per-project-workspace and app-level views.
+- **Project actions in the selector** (nucleus#1430, refined by nucleus#1432). Each
+  project row has a disclosure chevron, separate from the row's selection, that opens
+  a compact panel attached to the row inside the picker, so no nested popover takes an
+  outside press. One row's panel is open at a time. Park asks first with Settings' "No
+  new work starts" confirmation; a parked project shows Unpark instead. Rename edits
+  the name in its own slot: the row's label becomes a focused input seeded with the
+  name, with compact Save and Cancel and the count kept in place. Enter saves and
+  Escape cancels, neither selecting the row nor closing the picker; a validation
+  problem or refused save shows under the input and keeps the draft for a retry, and
+  Cancel restores the label. Rename changes the display name only, under Settings'
+  rule (1 to 200 characters once trimmed), and keeps the key, repositories and
+  selection even when the new name re-sorts the row. Remove from Nucleus sits below
+  a divider; it leaves the picker and opens the shared removal dialog, with its
+  open-work blockers and confirmation, and never removes in one click. Every save goes
+  through the project's version and then refreshes the board and Settings' project
+  list. The chevron shows on hover or keyboard focus with a hover pointer, and stays
+  visible on touch and in the compact picker. Escape, or back in the compact picker,
+  closes an open action before it closes the picker.
 - **Per-project workspace board** (Tom, 2026-09-27). The plugin registers a
   workspace panel (`addWorkspacePanel`, context `workspace`, opened as a tab in the
   workspace area) named "Nucleus board", and an "Open Nucleus board" workspace command.
@@ -596,8 +621,8 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
   retired `subscriptions` hint opens Profiles scrolled to Subscriptions.
 - **Parked projects** (Spec 027): the selector and the All-projects view hide
   parked projects by default. A "Parked" section in the selector lists them for
-  scoping, and selecting one still shows its views; Unpark lives in Settings →
-  Projects. The Planning tab groups parked
+  scoping, and selecting one still shows its views. Unpark sits in the row's
+  row panel (nucleus#1430) and in Settings → Projects. The Planning tab groups parked
   projects under Parked. Attention from a parked project is never hidden.
 - **Project filter switch.** An "Enabled" switch at the top of the project
   selector's dropdown (Tom, 2026-09-28; it was the Pipeline view's "Filter by
@@ -605,6 +630,12 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
   (Pipeline, Papercuts, Planning) without clearing the selection; on applies
   it. While it's off, the closed selector reads "… · filter off" and loses its
   accent.
+  An explicit pick in the selector that leaves projects selected (a plain click,
+  a Shift-click, or All) turns the switch back on with the new selection, saved
+  together as one scope (Tom, 2026-11-20, nucleus#1432). None and Shift-clearing the
+  last project keep the switch as it was; opening the selector, a row's panel,
+  Rename and project management never turn it on, and other scope entry points
+  (such as opening a lane's plan) leave it alone.
   The selection and this switch persist across plugin reloads in the surface's
   local storage where it has one, otherwise for the session; neither is written
   to Nucleus's store.
@@ -719,7 +750,8 @@ control. Editing uses the existing dark-theme styling.
 | 14 | Planning tab edits: reorder, move between Now and Later, add a listed lane, save a lane document | Plan and document saved as operator versions with the horizon kept; stale save refused |
 | 14a | Planning tab navigation at both viewport sizes | Plan and lane columns at the wide size; plan, lane drill-down with back at the compact size; the pipeline board has no side pane |
 | 14c | Open the Nucleus board in a workspace of a project's repository, and in a workspace outside every project | Scoped to that project's Pipeline and Planning; outside every project, a plain message |
-| 14b | Click one project, Shift-click a second, Shift-click the first off, then none; switch the Pipeline project filter off and on | A plain click replaces the selection and a Shift-click toggles one project, so every task and planning view shows first one project, then both (Planning shows both plans), then the second alone; none means all; the filter switch off shows all projects and on restores the kept selection |
+| 14d | Open a project row's chevron: Park asks first, Unpark, Rename in place with an empty, 201-character, refused or valid name (Save, Enter, Cancel, Escape), Remove from Nucleus, Escape | One row's panel opens at a time, attached to its row; Rename replaces the label with the input and keeps the draft after a refusal; each save uses the project's version and refreshes the board; Remove leaves the picker for the shared removal dialog with its blockers; Escape cancels an open action before the picker; the row's selection, filter and counts are unchanged by disclosure or a re-sorting rename |
+| 14b | Click one project, Shift-click a second, Shift-click the first off, then none; switch the Pipeline project filter off and on | A plain click replaces the selection and a Shift-click toggles one project, so every task and planning view shows first one project, then both (Planning shows both plans), then the second alone; none means all; the filter switch off shows all projects and on restores the kept selection; with the switch off, a click, Shift-click or All turns it on with the new selection, while None or clearing the last project leaves it off |
 | 15 | Board dark theme at both viewport sizes, with a busy board | Legible; checked after merge by the Nucleus Chatterbox |
 | 15a | Click a lead card and a papercut card on the Pipeline view; run each modal action | The modal opens with the record's full detail; the cards show no buttons; each action works from the modal and reports its result there; inapplicable actions are disabled with the reason |
 | 15b | Open a checked, approved lead, then a new version of it; open a lead from Triage and from a lane with more than eight open leads | The brief sits beside its checked version and approval, which names the approver and any relayed authority; Check, Approve and Promote each report their own result or refusal; the new version shows the check and approval as out of date and asks for the existing recheck; drop, reopen and question or knowledge promotion sit in More actions with their reasons; raw ids and every version stay behind Details; the lane's lead list pages eight at a time with its true total |
@@ -878,3 +910,83 @@ decision read under the same `decisions` key. Each list keeps its previous resul
 on screen while a new revision loads; a failed refresh keeps the last loaded list
 and says it was not refreshed, and loading or error states show only with no list
 to show. A write the operator makes moves its domain revision, so it shows at once.
+
+## Revision: automatic lead and papercut triage (nucleus#1420, 2026-11-20)
+
+Tom's direction: a project planner should not have to remember to sweep its
+open leads and papercuts. Nucleus wakes the project's planner with a bounded
+triage batch when records change, when a deferred record comes due, or when
+dispatch room opens. Filing text stays evidence; the planner decides.
+
+**Opt-in, per project.** Triage is off until a project opts in with
+`triage.set` (`{project, enabled, by}`). Opting out keeps the ledger, so a later
+opt-in resumes it. Nucleus itself is the pilot; activation is the planner's
+call once this lands, and nothing in code enables it.
+
+**Ledger.** Each project's state is one durable meta row, `triage:<project>`,
+so assessments, the outstanding batch and the last completed batch survive a
+daemon roll and a planner handover. It holds, per record: a versioned history
+of settled dispositions, the source digest the decision rests on, and the
+record's next condition (a deferred revisit time). The digest covers the lead
+version, title, body, lanes, tags, state and base branch, so an edit or a
+lane move makes the record eligible again.
+
+**Batches.** Eligible records are open, not tagged `hold` (an intentional hold
+is never triaged automatically), and either unassessed, changed since their
+decision, or deferred past their revisit time. The oldest eligible records come
+first, at most eight to a batch. A project holds at most one outstanding batch;
+records that change while it is outstanding wait for the next one. The sweep
+evaluates at most once a minute.
+
+- A planner-less project keeps the batch visible in Planning and `triage.get`, unnoticed,
+  until a planner is registered. A handover ends the old planner's prompt and
+  addresses the batch to the new planner.
+- A full dispatch queue (live tasks at the project's slot limit) holds batch
+  creation with `waiting: capacity` until room opens. A batch is not made to
+  queue promotions nobody can dispatch.
+- The prompt is one durable notice, kind `triage`, delivered through the
+  ordinary notice path to the project's responsible planner. It is live only
+  while its batch is the project's outstanding batch, so a settled or replaced
+  batch is never resent.
+
+**Dispositions.** `triage.apply` (`{project, batch, by, decisions}`) takes one
+decision per record:
+
+| Disposition | Required | Effect |
+| --- | --- | --- |
+| `promote` | `reason` | Checks the brief if needed, approves the current version with `by` as approver, then promotes it with `by` as promoting agent through the ordinary operations. A papercut promotes through `papercut.promote-task`. A record already linked to a task settles without another promotion. |
+| `close` | `reason`, `closure` (`duplicate`, `fixed` or `out_of_scope`), `canonical` | Drops a lead with the closure, reason and canonical target as its drop reason, or closes a papercut as `deprecated` (duplicate) or `completed` (fixed, out of scope), with the same text as its note. The filing text is kept. |
+| `defer` | `reason`, `revisitAt` (a future ISO time) | Records the reason and the time. The record stays open and is eligible again when the time is due. |
+| `operator` | `reason`, `question` | Records the question for the operator, shown as `operatorQuestions` in `triage.get`. The record stays open. |
+
+`out_of_scope` closure needs `canonical` to name the plan rule that supports it.
+Otherwise an out-of-scope idea stays deferred.
+
+**Stale and replayed work.** An apply is accepted only for the outstanding batch.
+A decision is applied only when its `leadVersion` and `digest` still match the
+record and the record is still open. A changed record is superseded and never
+closed or promoted on the old assessment. A replay of a completed batch returns
+its recorded outcomes and changes nothing. A promotion that is not yet current
+(a brief check running, an operation accepted, backpressure) is proposed, the
+item stays open, and the planner applies again. Promotion is idempotent by
+source, so a retry never dispatches twice. A refused decision (missing
+evidence, a wrong or changed record) leaves its record open for a corrected
+decision.
+
+**Standing planner authority.** Promotion through triage uses the planner's
+standing authority for routine, in-scope work only. Each promotion records the
+planner as approver and promoting agent, with its reason, and runs the same
+check and promotion gates as an operator-approved lead. Changes to product
+direction, release or outward actions, and held profiles are not triage
+decisions: the planner uses `operator` for them.
+
+**Limits.** Triage never prunes on age, never edits filing text, and never
+overrides a project's dispatch limit, pause or dispatch hold. Opting out or
+pausing the service stops new batches; an outstanding batch keeps its record of
+what was decided.
+
+**Planning.** The project roadmap shows a digest of the current and last
+completed batches. Open a batch to see proposed and applied outcomes, their
+reasons, canonical targets, revisit times, operator questions and links to
+recorded tasks. The batched `queue.plans` read refreshes when triage changes.
+Use `triage.get` for the source version and digest needed by `triage.apply`.

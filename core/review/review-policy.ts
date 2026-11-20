@@ -9,7 +9,7 @@ import { proofExecutorAgents } from "../dispatch/routing";
 import { isOwnerRoutedReviewer, reviewerIndependence } from "../dispatch/routing";
 import { ProvenPreSendRefusalError } from "../recovery/task-reasons";
 import { assertOrdinaryReviewIdentity, ordinaryReviewSource } from "./ordinary-review";
-import { readGitCheckout } from "../git/git-identity";
+import { commonDirMatchesTask, readGitCheckout, safeRealpathSync } from "../git/git-identity";
 import { repoCommonDir } from "../workspaces/workspace-allocation";
 import * as forge from "../forge/index";
 import { runTicketPath } from "../dispatch/agent-creation";
@@ -202,7 +202,7 @@ export class ReviewPolicy {
 
 }
 
-async function retainedWorkspacePlacement(workspace: { directory?: string | null; refresh: () => Promise<unknown>; current: () => { projectRootPath: string } | null | undefined },
+export async function retainedWorkspacePlacement(workspace: { directory?: string | null; refresh: () => Promise<unknown>; current: () => { projectRootPath: string } | null | undefined },
   task: Task, run: Run, source: { workspaceId?: string | null; directory?: string | null }, phase: string): Promise<{ placed: true } | { placed: false; reason: string }> {
   const refuse = (reason: string) => ({ placed: false as const, reason });
   if (!source.workspaceId || !source.directory) return refuse(`Original reviewer workspace identity is incomplete or changed ${phase}; no delivery was sent`);
@@ -221,7 +221,7 @@ async function retainedWorkspacePlacement(workspace: { directory?: string | null
   let checkout;
   try { checkout = readGitCheckout(source.directory); }
   catch { return refuse(`Retained reviewer checkout is unreadable ${phase}; no delivery was sent`); }
-  if (!common || common !== checkout.commonDir)
+  if (!common || (common !== checkout.commonDir && !(task.directory && safeRealpathSync(source.directory) === safeRealpathSync(task.directory) && commonDirMatchesTask(task, checkout.commonDir, common, source.directory))))
     return refuse(`Retained reviewer checkout is not a worktree of the task repository ${phase}; no delivery was sent`);
   if (run.ordinaryDetached) await ordinaryReviewSource(task, run.head, true);
   if (checkout.branch !== (run.ordinaryDetached ? '' : task.branch) || checkout.head !== run.head)

@@ -18,6 +18,7 @@ import {
 } from "../workspaces/checkout-volume";
 import { routeUnavailableStop } from "../../shared/task-stop";
 import { recordedSlotWait } from "../recovery/wait-context";
+import { HostReadRefusalError } from "../host";
 import { WorkspaceObservationUnavailableError } from "../workspaces/workspace-allocation";
 import { isTransportFailure } from "../../shared/transport";
 import {
@@ -386,7 +387,8 @@ export class TaskWakes {
         externalWait:
           error instanceof WorkspaceObservationUnavailableError ||
           error instanceof ForgeOutageError ||
-          error instanceof CheckoutUnavailableError,
+          error instanceof CheckoutUnavailableError ||
+          error instanceof HostReadRefusalError,
         transport: isTransportFailure(error),
         session:
           error instanceof LoginSessionFaultError || isLoginSessionFault(error),

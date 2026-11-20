@@ -1,3 +1,4 @@
+import { verifyUnreviewedMergeSource } from "../shared/task-view";
 import { fakeAdapter, profile } from "./support/fakes";
 import { refusedLaunchProfiles } from "../core/recovery/refused-launch";
 import { ProvenPreSendRefusalError } from "../core/recovery/task-reasons";
@@ -338,6 +339,13 @@ function fixture(
         headRepository: "example/repo",
       }),
       verifyCleanQueueWorktree: async () => {},
+      // nucleus#1425: the merged source is the forge's observed merge, never the open-PR proof.
+      verifyMergedReviewSource: async (t, route) => ({
+        ...(await verifyUnreviewedMergeSource(t, route, () => adapter.externalMerge!(t))),
+        repository: "example/repo",
+        headRepository: "example/repo",
+        crossRepository: false,
+      }),
       coveringEvidence: async () => ({ head: currentHead, base, wait: "" }),
       authorCommentEvidence: async () => "",
       verifyInspectedRevisionHead: async (_task, _prNumber, expected) => {

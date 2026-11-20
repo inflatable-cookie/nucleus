@@ -20,6 +20,7 @@ import {
   hostFaultHost,
   recordHostFailure,
 } from "../host/adapter-routing";
+import { HostReadRefusalError } from "../host";
 import { archiveRetiredErroredAgents } from "../workspaces/retired-agent-archive";
 
 /**
@@ -95,6 +96,7 @@ export type SweepContext = Pick<
     | "deliverDecisionNotices"
     | "deliverDrainNotices"
     | "deliverHoldNotices"
+    | "deliverRowHiddenNotices"
     | "deliverHostOutageNotices"
     | "deliverNotices"
     | "deliverQueuedMessages"
@@ -202,6 +204,13 @@ export class Sweep {
     try {
       await work();
     } catch (error) {
+      if (error instanceof HostReadRefusalError) {
+        this.engine.store.setMeta(
+          "hostPassError",
+          `${name}: ${error.message}`.slice(0, 2000),
+        );
+        return;
+      }
       const hostId = hostFaultHost(error);
       if (!hostId) throw error;
       const fault =
@@ -428,6 +437,13 @@ export class Sweep {
             return this.hostPass.run(host);
           });
         } catch (error) {
+          if (error instanceof HostReadRefusalError) {
+            this.engine.store.setMeta(
+              "hostPassError",
+              `${host}/hostPass: ${error.message}`.slice(0, 2000),
+            );
+            continue;
+          }
           if (!hostFaultHost(error)) throw error;
           // A connected registry claim can still fail at the transport boundary.
           // Keep this host's tasks on the existing outage wait for this pass, and
@@ -735,6 +751,12 @@ export class Sweep {
       if (drain && covered) this.engine.sweepCursor = null;
       await this.fleetStep("deliverNotices", () =>
         this.engine.resolution.deliverNotices(),
+      );
+      // A task hidden behind a Nucleus-owned row snooze says so to its planner
+      // (nucleus#1417): the episodes were read in this pass's host steps, and the
+      // notice's delivery is the same durable path every other notice uses.
+      await this.fleetStep("deliverRowHiddenNotices", () =>
+        this.engine.resolution.deliverRowHiddenNotices(),
       );
       await this.fleetStep("deliverQueuedMessages", () =>
         this.engine.resolution.deliverQueuedMessages(),

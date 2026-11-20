@@ -20,6 +20,12 @@ import {
 } from "../../shared/task-budget";
 import { TASK_PROGRESSING_REASON } from "../../shared/task-detail-summary";
 import { holdsOf } from "../../shared/holds";
+import { isSettledWaitProse } from "../../shared/task-stop";
+import { taskHasUnreleasedRun } from "../../shared/task-view";
+import {
+  plannerEscalations,
+  type LadderEvent,
+} from "../questions/ladder/records";
 import { incidentKey } from "./incident";
 import {
   isRepositoryContention,
@@ -335,6 +341,59 @@ export class TaskStops {
       "The measured budget no longer shows the pause.",
     );
     return cleared;
+  }
+  /**
+   * nucleus#1437 (installed as #1427): a stop the sweep wrote from settled-wait prose is
+   * a machine-generated occurrence, not a fault, and it is never a wait's owner. It
+   * settles only when its own provenance (an `operator_needed` stop whose detail is that
+   * prose) and the task's current facts show nothing that owns it: no unreleased run, no
+   * unresolved incident or recovery, no hold, prerequisite or merge intent, and no open
+   * planner escalation. The prose itself is never the evidence. Anything live keeps the
+   * stop exactly as it is, and a later pass that finds it settled writes nothing.
+   */
+  settleSettledWaitStop(task: Task): Task {
+    const current = this.store.task(task.id);
+    const stop = current.resolution.stop;
+    if (
+      !stop ||
+      stop.reason !== "operator_needed" ||
+      !isSettledWaitProse(stop.detail) ||
+      current.removedAt ||
+      ["done", "cancelled"].includes(current.phase)
+    )
+      return current;
+    const { incident, recovery } = current.resolution;
+    const holds = holdsOf(current);
+    const owned =
+      this.store.runs(current.id).some((run) => !run.released) ||
+      taskHasUnreleasedRun(current) ||
+      current.resolution.recoveryActive ||
+      Boolean(incident && incident.status !== "resolved") ||
+      Boolean(recovery && recovery.status !== "resolved") ||
+      Boolean(holds.dispatch || holds.merge) ||
+      Boolean(current.prerequisiteWait && !current.prerequisiteWait.releasedAt) ||
+      Boolean(current.resolution.mergeIntent && !current.resolution.mergedCommit) ||
+      plannerEscalations(this.store.eventsAll(current.id) as LadderEvent[]).some(
+        (escalation) => !escalation.answered,
+      );
+    if (owned) return current;
+    const detail = `The stop was recorded from settled-wait prose and nothing owns it now; the task's next step is decided afresh`;
+    return this.store.transaction(() => {
+      const latest = this.store.task(current.id);
+      // Only the occurrence that was read settles; a stop written since is left to its own writer.
+      if (latest.resolution.stop?.since !== stop.since || latest.resolution.stop.detail !== stop.detail)
+        return latest;
+      const attention = latest.resolution.attention;
+      const next = this.resolution.update(
+        latest,
+        { stop: null, ...(attention ? { attention: false } : {}) },
+        {},
+        "synthetic_stop_settled",
+        detail,
+      );
+      if (attention) this.resolution.settleAttentionEpisode(latest.id, detail);
+      return next;
+    });
   }
   /** Record one stop or wait on the task; matching observations retain their first timestamp. */
   recordStop(
@@ -775,6 +834,19 @@ export class TaskStops {
     }
     // The first observation is history. Current membership is projected on reads.
     if (stop === "capacity" && recordedSlotWait(current)) return;
+    // nucleus#1437: settled-wait prose is no wait to classify. It names the reason and
+    // keeps whatever stop is current; it never becomes an operator_needed occurrence.
+    if (stop === "classify" && isSettledWaitProse(reason)) {
+      if (current.reason !== reason)
+        this.resolution.update(
+          current,
+          { stop: current.resolution.stop },
+          { reason },
+          "task_waiting",
+          reason,
+        );
+      return;
+    }
     const classification =
       stop === "classify"
         ? taskStopClassification(reason)

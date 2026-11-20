@@ -6,12 +6,14 @@ import { useBoardState } from "./board-state";
 import { PopoverHost } from "./popover";
 import { PlanningTab, type PlanEdit } from "./planning-panel";
 import { ProjectSelector, usePanelScope, useProjectScope } from "./project-scope-controls";
+import { useProjectSelectorActions } from "./project-selector-actions";
+import { ProjectManagementView } from "./project-management-view";
 import { useQueryClient } from "@tanstack/react-query";
 import * as api from "../shared/contracts";
 import type { HostRunRecord, TaskSummary } from "../shared/contracts";
 import { hiddenQueuedByProject } from "../shared/queued-more";
 import { planSaveInput } from "../shared/planning-tab";
-import { activeSelection, effectiveSelection, projectHasRepository, scopeContains } from "../shared/project-scope";
+import { activeSelection, effectiveSelection, pickProjects, projectHasRepository, scopeContains } from "../shared/project-scope";
 import { isOpenTask, navigationViews, openTaskCount, workspaceNavigationViews, type SettingsTarget } from "../shared/queue-navigation";
 import { errorText, readErrorText, storedBoardErrorText } from "./error-text";
 import { LaneScreen, isPapercut, type LaneDraft } from "./lane-screen";
@@ -81,6 +83,9 @@ export function MainSurface({ theme, layout, navigation, workspaceBoard, now }: 
   // hook, so every surface hydrates from one projection and panel mounts never
   // wait for their own poll.
   const { stateQuery, state } = useBoardState();
+  // The selector's row actions (nucleus#1430) refresh the board after each save; Remove opens the shared removal dialog below.
+  const projectSelector = useProjectSelectorActions(() => stateQuery.refetch());
+  const [removingProject, setRemovingProject] = useState<api.Project | null>(null);
   const { detailQuery, nextQuery } = useTaskDetail(selected);
   const records = useRecordQueries({ stateQuery, state, tab, scopeOpen });
   const { leadsQuery, decisionsQuery, planQuery, staleRead, boardLeads, leadLinks } = records;
@@ -180,9 +185,12 @@ export function MainSurface({ theme, layout, navigation, workspaceBoard, now }: 
                     projects={state?.projects ?? []}
                     tasks={state?.tasks ?? []}
                     leads={boardLeads}
+                    queuedCounts={state?.queuedCounts ?? []}
                     value={scope.projects}
-                    onChange={setScopeProjects}
+                    // An explicit nonempty pick turns a disabled filter back on (nucleus#1432); other scope entry points keep it.
+                    onChange={(projects) => setScope(pickProjects(scope, projects))}
                     onSettings={settingsOpener ? () => settingsOpener?.("projects") : undefined}
+                    projectActions={{ ...projectSelector.actions, remove: setRemovingProject }}
                     onOpenChange={setScopeOpen}
                     compact={compact}
                     c={c}
@@ -233,11 +241,13 @@ export function MainSurface({ theme, layout, navigation, workspaceBoard, now }: 
                 void qaQuery.refetch();
               }}
               onOpenQaRun={openQaRun}
+              onOpenTask={(id) => { selectTask(id); setTab("queue"); }}
               sections={planningProjects.map(project => {
                 const latest = planQuery.data?.find(plan => plan.project === project.key);
                 return {
                   project,
                   latest,
+                  triage: latest?.triage,
                   saved: latest ? { ...latest, entries: latest.savedEntries } : undefined,
                   error: planMessage(planQuery.error),
                 };
@@ -433,6 +443,18 @@ export function MainSurface({ theme, layout, navigation, workspaceBoard, now }: 
         </View>
         )}
       </BoardHeader>
+      {removingProject && (
+        <ProjectManagementView
+          c={c}
+          project={removingProject}
+          rpc={projectSelector.removal}
+          onClose={() => setRemovingProject(null)}
+          onRemoved={() => {
+            setRemovingProject(null);
+            void projectSelector.refresh();
+          }}
+        />
+      )}
     </View>
     </PopoverHost>
   );

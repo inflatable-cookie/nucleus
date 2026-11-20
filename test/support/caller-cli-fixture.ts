@@ -14,6 +14,11 @@ import { submissionSchema } from "../../shared/contracts";
 import { deriveTaskTelemetry } from "../../core/telemetry/telemetry";
 import { formatAgentId } from "../../shared/agent-identity";
 
+const AMBIENT_CALLER_ENV = /^(T3CODE_|BB_|PASEO_|NUCLEUS_CONTINUATION_)/;
+function withoutAmbientCallerIdentity(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return Object.fromEntries(Object.entries(env).filter(([key]) => !AMBIENT_CALLER_ENV.test(key)));
+}
+
 // The CLI installs tsx dynamically. Its refinements' Function.toString() differs
 // from the test runner's preloaded CJS transforms, which are part of wire hashes.
 let contracts: Promise<Record<string, string>> | undefined;
@@ -249,7 +254,10 @@ export async function callerCliFixture(mismatch = false) {
             [new URL("../../bin/" + script, import.meta.url).pathname, ...args],
             {
               env: {
-                ...process.env,
+                // The ambient host and run identities of the machine running the
+                // suite (a T3 thread, a BB thread, a continuation ticket) must not
+                // answer for the fixture's caller.
+                ...withoutAmbientCallerIdentity(process.env),
                 NUCLEUS_DATA_HOME: dir,
                 NUCLEUS_TICKET: ["run", "participant"].includes(source)
                   ? join(dir, source + ".json")

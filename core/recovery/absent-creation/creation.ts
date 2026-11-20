@@ -311,7 +311,7 @@ export class CreationRecovery {
           await this.adapter.populateTaskWorktree(task);
         if (!this.adapter.createWorkspace)
           throw new Error("Proof-only workspace provisioning is unavailable");
-        workspace = await this.adapter.createWorkspace(task);
+        workspace = await this.adapter.createWorkspace(this.store.task(task.id));
       }
       const current = this.store.task(task.id);
       this.store.update(

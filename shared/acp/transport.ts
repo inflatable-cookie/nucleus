@@ -25,6 +25,12 @@ import type {
 export const ACP_SOCKET_MARGIN_MS = 10_000;
 /** A message call is a local write plus delivery; the service's own bound is much smaller. */
 export const ACP_MESSAGE_TIMEOUT_MS = 30_000;
+/**
+ * One `ui` is one bounded board open on the service side (nucleus#1415). The socket bound
+ * sits above that bound, so the operator hears from the command — never from a socket
+ * timeout — and a hung board call still ends the turn with a result.
+ */
+export const ACP_OPEN_UI_TIMEOUT_MS = 30_000;
 
 export function createAcpTransport(binding: AcpBinding): AcpSessionTransport {
   return {
@@ -41,9 +47,11 @@ export function createAcpTransport(binding: AcpBinding): AcpSessionTransport {
       post(binding, "/acp-answer", input, {
         timeoutMs: ACP_MESSAGE_TIMEOUT_MS,
       }),
-    openUi: (input: AcpInboxUiInput) =>
+    // `signal` is real: Stop must end the command at once, not after the bound.
+    openUi: (input: AcpInboxUiInput, signal: AbortSignal) =>
       post<AcpInboxUiReply>(binding, "/acp-inbox-ui", input, {
-        timeoutMs: ACP_MESSAGE_TIMEOUT_MS,
+        signal,
+        timeoutMs: ACP_OPEN_UI_TIMEOUT_MS,
       }),
   };
 }

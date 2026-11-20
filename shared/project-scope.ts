@@ -7,6 +7,7 @@ import {
   type TaskSummary,
 } from "./contracts";
 import { projectPlanningCounts } from "./planning-tab";
+import { hiddenQueuedByProject } from "./queued-more";
 
 /**
  * Spec 026 Board "Scope": one project selector scopes Pipeline, Lanes,
@@ -113,6 +114,24 @@ export function selectProject(
   return [key];
 }
 
+/** The scope after an explicit pick in the project selector (a plain or Shift press, All,
+ * None): the picked keys and, when the pick leaves projects selected, the filter back on
+ * (Tom, 2026-11-20, nucleus#1432), so the board filters at once. An empty pick (None, or
+ * Shift-clearing the last key) keeps the switch as it was. One value, so the scope owner
+ * commits and persists both together. */
+export function pickProjects(scope: ProjectScope, projects: string[]): ProjectScope {
+  return { ...scope, projects, statusFilter: projects.length > 0 || scope.statusFilter };
+}
+
+/** The display-name rule Settings → Projects applies (nucleus#1430 reuses it from the board): trimmed,
+ * non-empty and at most 200 characters. Returns the problem to show, or undefined when it can save. */
+export function projectNameProblem(name: string): string | undefined {
+  const trimmed = name.trim();
+  if (!trimmed) return "Name is empty";
+  if (trimmed.length > 200) return "Name is over 200 characters";
+  return undefined;
+}
+
 /** The press-event shapes that carry the Shift modifier. React Native passes
  * the DOM event under `nativeEvent` while React Native Web also exposes the
  * modifier at the top level; touch and keyboard activation carry neither. */
@@ -175,8 +194,10 @@ export function projectSelectorRows(
   search: string,
   tasks: TaskSummary[],
   leads: readonly LeadListFacts[],
+  queuedCounts: readonly { repoPath: string; count: number }[] = [],
 ): ProjectSelectorRow[] {
   const needle = search.trim().toLowerCase();
+  const hiddenQueued = hiddenQueuedByProject(queuedCounts, tasks);
   return [...projects]
     .sort(
       (a, b) =>
@@ -191,12 +212,21 @@ export function projectSelectorRows(
         !`${project.name} ${primary}`.toLowerCase().includes(needle)
       )
         return [];
+      const counts = projectPlanningCounts(project, tasks, leads);
+      const hidden = hiddenQueued.reduce(
+        (total, item) =>
+          project.repositories.some((repo) => repo.path === item.repoPath)
+            ? total + item.hidden
+            : total,
+        0,
+      );
       return [
         {
           key: project.key,
           name: project.name,
           primary,
-          ...projectPlanningCounts(project, tasks, leads),
+          ...counts,
+          tasks: counts.tasks + hidden,
           checked: selection.includes(project.key),
           visibility: project.visibility,
           version: project.version,

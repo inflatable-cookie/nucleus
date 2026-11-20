@@ -9,6 +9,7 @@ import {
   RECLAIM_DRAIN_MAX_PAGES,
 } from "../store/store";
 import { runThreadRetention } from "../workspaces/thread-retention";
+import { evaluateTriage } from "../planning/triage";
 
 const HOUR_MS = 3_600_000;
 const DAY_MS = 86_400_000;
@@ -180,6 +181,16 @@ export class SweepMaintenance {
         this.store.setMeta("projectOwnerError", "");
       } catch (error) {
         this.store.setMeta("projectOwnerError", String(error));
+      }
+    }
+    // Nucleus#1420: opted-in projects triage their open leads and papercuts; at most a minute apart, one batch per project.
+    if (!paused && at - (this.store.getMeta<number>("lastTriageAt") ?? 0) >= 60_000) {
+      this.store.setMeta("lastTriageAt", at);
+      try {
+        evaluateTriage(this.store, at);
+        this.store.setMeta("triageError", "");
+      } catch (error) {
+        this.store.setMeta("triageError", String(error));
       }
     }
     // Spec 041: drained lanes and boards prompt their plan owner and escalate; hourly, bounded, no task touched.

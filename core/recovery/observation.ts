@@ -38,6 +38,7 @@ import {
   hostFaultHost,
   recordHostFailure,
 } from "../host/adapter-routing";
+import { HostReadRefusalError } from "../host";
 import { creationLookup } from "./absent-creation/restarts";
 
 export type ObservationContext = Pick<
@@ -657,6 +658,14 @@ export class Observation {
           this.resolution.transportDeferred(
             this.store.task(task.id),
             new HostTransportFault(failedHost, error),
+          );
+          continue;
+        }
+        if (error instanceof HostReadRefusalError) {
+          this.resolution.waiting(
+            this.store.task(task.id),
+            error.message,
+            "external_unavailable",
           );
           continue;
         }

@@ -9,6 +9,7 @@ import { ParticipantTickets } from "../core/dispatch/participant-tickets";
 import { RuntimeRepositories } from "../core/runtime/repositories";
 import { RuntimePlanning } from "../core/runtime/planning";
 import { RuntimeBoard } from "../core/runtime/board";
+import { createStoreWorkspaceAllocationBridge } from "../core/workspaces/workspace-allocation-bridge";
 
 import { compiledIdentity, stableInstalledPath } from "../shared/runtime.mjs";
 import { sourcePathFromModule } from "../shared/service/build";
@@ -671,6 +672,9 @@ export class QueueRuntime {
         settings: this.settings,
       });
       raw.scratchNamespaceFor = (task) => this.store.scratchNamespaceFor(task);
+      raw.workspaceAllocationBridge = createStoreWorkspaceAllocationBridge(
+        this.store,
+      );
       this.adapter = admitAdapter(raw, this.admission);
     } else {
       const hostHome = options.paseoHome ?? paseoHome();
@@ -695,6 +699,9 @@ export class QueueRuntime {
         join(sourcePath, "mcp-report.mjs"),
       );
       raw.scratchNamespaceFor = (task) => this.store.scratchNamespaceFor(task);
+      raw.workspaceAllocationBridge = createStoreWorkspaceAllocationBridge(
+        this.store,
+      );
       this.paseoAdapter = raw;
       this.adapter = admitAdapter(raw, this.admission);
     }
@@ -1359,6 +1366,7 @@ export class QueueRuntime {
       dataHome: this.dataDir,
       socketPath: this.paseo.socketPath,
       answerDecision: (input) => this.questions.answerT3Decision(input),
+      parentStatus: (hostId, taskId) => this.t3Host?.decisionParent(hostId, taskId) ?? { state: "unknown" },
       openInboxUi: async (hostId) => {
         if (!this.t3Host) {
           throw new Error(`T3Code host ${hostId} is not configured`);
@@ -1632,6 +1640,17 @@ export class QueueRuntime {
     relayed: boolean;
   }) {
     return this.planning.approveLead(input);
+  }
+  /** Nucleus#1420: automatic lead and papercut triage. */
+  triageGet(input: { project: string }) {
+    return this.planning.triageView(input);
+  }
+  triageSet(input: { project: string; enabled: boolean; by: string }) {
+    this.planning.triageSet(input);
+    return this.planning.triageView({ project: input.project });
+  }
+  triageApply(input: Parameters<RuntimePlanning["triageApply"]>[0]) {
+    return this.planning.triageApply(input);
   }
   promoteLeadToTask(input: {
     id: string;

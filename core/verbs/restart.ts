@@ -93,6 +93,7 @@ export class RestartControls {
     taskId: string;
     version: number;
     instruction: string;
+    record?: (task: Task) => Task;
     settleFences?: {
       detail: string;
       runIds: string[];
@@ -255,6 +256,117 @@ export class RestartControls {
     })();
   }
 
+  private async restartBlockedWorkerWithPr(task: Task, input: TaskControlInput, reason: string, fresh: boolean, operationId?: string): Promise<Task> {
+    const shape = "blocked_with_pr" as const;
+    const unobserved = workerRestartRefusal(
+      collectOwnerVerbFacts(this.store, task),
+      shape,
+    );
+    if (unobserved) throw new RestartRefusal(unobserved);
+    let observed: AgentObservation;
+    try {
+      observed = await this.engine.onTaskHost(task, () =>
+        this.engine.host.observe(task.agentId!),
+      );
+    } catch (error) {
+      throw new RestartRefusal(
+        `The retained worker cannot be observed (${hostFailureRefusalDetail(error)}); restore observation before restarting. No continuation was sent`,
+      );
+    }
+    const latest = this.store.task(task.id);
+    this.engine.requireOwnerControlCurrent(
+      latest,
+      task.version,
+      "Task changed during restart verification; read next again before restarting",
+    );
+    const refusal = workerRestartRefusal(
+      collectOwnerVerbFacts(this.store, latest),
+      shape,
+      observed,
+    );
+    if (refusal) throw new RestartRefusal(refusal);
+    return this.engine.moveToWork({
+      taskId: task.id,
+      version: task.version,
+      reason,
+      instruction: input.instruction,
+      caller: input.caller,
+      ...(fresh ? { parentRestart: {
+        before: () => this.engine.workerRestarts.restoreParent({ task, input, operationId }),
+        commit: (result: Task, restored: boolean) => this.engine.workerRestarts.recordRestoredRestart(result, operationId, restored),
+        restoreRetained: true,
+      } } : {}),
+      restart: this.engine.workerRestartArm(task, {
+        reason,
+        instruction: input.instruction,
+        caller: input.caller,
+        relayed: input.relayed,
+        note: input.note,
+        fresh,
+        observedWorker: observed,
+        supersedeNonDelivery:
+          !fresh && task.resolution.nonDeliveryRoutePending,
+      }),
+    });
+  }
+
+  /** Recheck and commit the escalated worker's existing admission. */
+  private applyEscalatedWorkerRestart(task: Task, input: TaskControlInput, reason: string, operationId?: string, restored = false): Task | null {
+    return this.store.transaction(() => {
+      const current = this.store.task(task.id);
+      this.engine.requireOwnerControlCurrent(
+        current,
+        input.version,
+        "Task changed; refresh before restarting",
+      );
+      const plan = escalatedWorkerRestart(
+        collectOwnerVerbFacts(this.store, current),
+        verifyEnclosingOperation(this.store, input, operationId),
+      );
+      if (!plan) return null;
+      if ("refusal" in plan) throw new RestartRefusal(plan.refusal);
+      const detail = `restart worker: ${reason}`;
+      this.engine.settleVerbFences(current.id, { detail, runIds: [] });
+      this.engine.resumeReleasedPrerequisiteWait(current.id);
+      const latest = this.store.task(current.id);
+      const ready = this.resolution.update(latest, {
+        stop: null,
+        ...(input.instruction
+          ? { pendingWorkerInstruction: input.instruction }
+          : {}),
+      });
+      const restarted = this.resolution.returnToDispatch(
+        ready,
+        true,
+        `Restart requested: ${reason}`,
+        "restart_requested",
+      );
+      return this.engine.workerRestarts.recordRestoredRestart(restarted, operationId, restored);
+    });
+  }
+
+  /** Resume only the admitted worker branch after observing its exact restore. */
+  async resumeRestoredWorker(input: TaskControlInput, operationId: string): Promise<Task> {
+    const task = this.store.task(input.taskId);
+    this.engine.requireOwnerControlCurrent(task, input.version, "Task changed during parent restore; read next again");
+    if (!verifyEnclosingOperation(this.store, input, operationId) || task.removedAt ||
+        isDispositionActive(task) || ["done", "cancelled"].includes(task.phase) || task.resolution.mergedCommit)
+      throw new RestartRefusal("The original restart is no longer admitted");
+    const role = (input.role as RestartRole | undefined) ?? deriveRestartRole(task, this.store.runs(task.id));
+    if (role !== "worker") throw new RestartRefusal("The restored operation no longer names a worker restart");
+    const reason = (input.reason ?? "").trim();
+    if (!reason) throw new RestartRefusal("restart requires a reason");
+    const plan = escalatedWorkerRestart(collectOwnerVerbFacts(this.store, task), verifyEnclosingOperation(this.store, input, operationId));
+    if (plan && !("refusal" in plan)) return this.applyEscalatedWorkerRestart(task, input, reason, operationId, true)!;
+    const shape = restartShape(task, this.store.runs(task.id), role, this.store.eventsAll(task.id));
+    if (shape === "blocked_with_pr" && input.role === "worker" && input.fresh === true)
+      return this.restartBlockedWorkerWithPr(task, input, reason, true, operationId);
+    if (shape !== "absent_worker" && shape !== "pre_dispatch" &&
+        !(input.fresh && (shape === "blocked_worker" || shape === "retained_worker" || shape === "stopped_revision"))) throw new RestartRefusal("The original worker restart is no longer admissible after parent restoration");
+    return this.engine.restartWorker({ task, input, role, shape, reason, operationId,
+      instruction: input.instruction?.trim() || "Continue the existing task under its current approved instruction source and within its approved scope." });
+  }
+
   /**
    * Spec 050 `restart`: get a stopped, stalled or checkpointed run going again.
    * The role is derived from the phase when omitted. Queue settles the fences
@@ -341,36 +453,16 @@ export class RestartControls {
       );
     }
     if (role === "worker") {
-      const escalated = this.store.transaction(() => {
-        const current = this.store.task(task.id);
-        this.engine.requireOwnerControlCurrent(
-          current,
-          input.version,
-          "Task changed; refresh before restarting",
-        );
-        const plan = escalatedWorkerRestart(
-          collectOwnerVerbFacts(this.store, current),
-          verifyEnclosingOperation(this.store, input, operationId),
-        );
-        if (!plan) return null;
-        if ("refusal" in plan) throw new RestartRefusal(plan.refusal);
-        const detail = `restart worker: ${reason}`;
-        this.engine.settleVerbFences(current.id, { detail, runIds: [] });
-        this.engine.resumeReleasedPrerequisiteWait(current.id);
-        const latest = this.store.task(current.id);
-        const ready = this.resolution.update(latest, {
-          stop: null,
-          ...(input.instruction
-            ? { pendingWorkerInstruction: input.instruction }
-            : {}),
-        });
-        return this.resolution.returnToDispatch(
-          ready,
-          true,
-          `Restart requested: ${reason}`,
-          "restart_requested",
-        );
-      });
+      const preview = escalatedWorkerRestart(
+        collectOwnerVerbFacts(this.store, task),
+        verifyEnclosingOperation(this.store, input, operationId),
+      );
+      let restored = false;
+      if (preview && !('refusal' in preview)) {
+        // The same task lane and the same plan are checked again at commit.
+        restored = await this.engine.workerRestarts.restoreParent({ task, input, operationId });
+      }
+      const escalated = this.applyEscalatedWorkerRestart(task, input, reason, operationId, restored);
       if (escalated) return escalated;
     }
     const pending =
@@ -572,53 +664,8 @@ export class RestartControls {
     // workspace, branch and PR). project-a #1655 keeps resume_worker and the pre-PR
     // resume closed to this shape; a restart without a role still resumes into
     // review below. The worker refusals run first with a fresh observation.
-    if (shape === "blocked_with_pr" && input.role === "worker") {
-      const unobserved = workerRestartRefusal(
-        collectOwnerVerbFacts(this.store, task),
-        shape,
-      );
-      if (unobserved) throw new RestartRefusal(unobserved);
-      let observed: AgentObservation;
-      try {
-        observed = await this.engine.onTaskHost(task, () =>
-          this.engine.host.observe(task.agentId!),
-        );
-      } catch (error) {
-        throw new RestartRefusal(
-          `The retained worker cannot be observed (${hostFailureRefusalDetail(error)}); restore observation before restarting. No continuation was sent`,
-        );
-      }
-      const latest = this.store.task(task.id);
-      this.engine.requireOwnerControlCurrent(
-        latest,
-        task.version,
-        "Task changed during restart verification; read next again before restarting",
-      );
-      const refusal = workerRestartRefusal(
-        collectOwnerVerbFacts(this.store, latest),
-        shape,
-        observed,
-      );
-      if (refusal) throw new RestartRefusal(refusal);
-      return this.engine.moveToWork({
-        taskId: task.id,
-        version: task.version,
-        reason,
-        instruction: input.instruction,
-        caller: input.caller,
-        restart: this.engine.workerRestartArm(task, {
-          reason,
-          instruction: input.instruction,
-          caller: input.caller,
-          relayed: input.relayed,
-          note: input.note,
-          fresh,
-          observedWorker: observed,
-          supersedeNonDelivery:
-            !fresh && task.resolution.nonDeliveryRoutePending,
-        }),
-      });
-    }
+    if (shape === "blocked_with_pr" && input.role === "worker")
+      return this.restartBlockedWorkerWithPr(task, input, reason, fresh, operationId);
     if (shape === "coordinator" && fresh)
       throw Error(
         "Coordinator restart retries the existing resolution; fresh is unsupported here. Use route role=coordinator with now to replace its agent",

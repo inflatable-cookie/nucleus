@@ -1,0 +1,1 @@
+Each project in the board's project selector now has an ellipsis menu with Park or Unpark, Rename and Remove from Nucleus. Park keeps Settings' confirmation, Rename validates the name and keeps the project's key and repositories, and Remove opens the same blocker-checked removal dialog as Settings. Opening the menu leaves the selection, filter and counts alone.

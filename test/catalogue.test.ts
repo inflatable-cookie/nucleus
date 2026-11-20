@@ -31,6 +31,7 @@ const READ_ONLY_METHODS = new Set([
   "lead.version",
   "lead.list",
   "lead.board",
+  "triage.get",
   "question.native-list",
   "decision.get",
   "decision.list",

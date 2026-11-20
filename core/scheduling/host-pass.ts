@@ -27,6 +27,7 @@ import { submissionRecordFromLegacy } from "../../shared/schema/settings/legacy"
 import { LANE_PRIORITY_AUDIT } from "./lane-priorities";
 import type { TaskAttention } from "../../shared/task-attention";
 import { taskRowAttention } from "../workspaces/task-row-attention";
+import { HiddenRows } from "./hidden-row";
 
 const ROW_FAILURE_LABEL = "task row presentation";
 
@@ -116,8 +117,14 @@ export class HostPass {
       .filter((task) => task.hostId === hostId && task.removedAt == null)
       .map((task) => ({ task, attention: taskRowAttention(this.store, task) }));
     const rank = (state: TaskAttention["state"]) =>
-      state === "active" || state === "attention" ? 0 : state === "waiting" ? 1 : 2;
-    rows.sort((left, right) => rank(left.attention.state) - rank(right.attention.state));
+      state === "active" || state === "attention"
+        ? 0
+        : state === "waiting"
+          ? 1
+          : 2;
+    rows.sort(
+      (left, right) => rank(left.attention.state) - rank(right.attention.state),
+    );
     for (const { task, attention } of rows) {
       try {
         await reconcile.call(this.adapter, task.id, attention);
@@ -439,6 +446,18 @@ export class HostPass {
           );
         });
     });
+    // The row's own visibility first: a Nucleus-owned snooze that stays on past its
+    // bound is reported to the planner, and a planner's own hold whose nudge went
+    // unanswered is escalated here (nucleus#1417, nucleus#1419). It reads the host's
+    // durable snooze record and the attention projection, never the presentation
+    // step's outcome, so a failed presentation pass cannot suppress the notice; and
+    // running it first lets this same pass's rows see an escalation, so the row
+    // wakes in the pass that decided it.
+    await this.step(host, "reconcileHiddenRows", () =>
+      new HiddenRows({ store: this.store, adapter: this.adapter }).observe(
+        host,
+      ),
+    );
     await this.step(host, "reconcileTaskRows", () =>
       this.reconcileTaskRows(host),
     );

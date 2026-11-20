@@ -91,5 +91,6 @@ export {
   verifyCloseoutPublication,
   verifyCloseout,
   externalMerge,
+  verifyMergedReviewSource,
   reportedOrExactMergeCommit,
 } from './merge';

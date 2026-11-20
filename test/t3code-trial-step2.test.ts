@@ -2137,7 +2137,7 @@ async function ownerRetryFixture(t: TestContext) {
       title: "T3 owner retry",
       repoPath: primary,
       planningCommit: base,
-      handoffPath: "handoff.md",
+      brief: { text: "# handoff" },
       originAgentId: "origin",
     }),
     host.hostId,

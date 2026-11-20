@@ -1,6 +1,6 @@
 import React, { type ReactNode, useState } from "react";
 import { Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native";
-import type { LaneView, LeadListFacts, Project, ProjectPlan, ProjectQaRun } from "../shared/contracts";
+import type { LaneView, LeadListFacts, PlanningTriage, Project, ProjectPlan, ProjectQaRun } from "../shared/contracts";
 import { chooserProjects, laneFinderCount, laneFinderRows, laneFinderScopeLabel, lanePlaceLabel, lanePlaces, type LaneFinderRow } from "../shared/lane-finder";
 import { effectiveSelection } from "../shared/project-scope";
 import { activeSteps, movePlan, planDraftStale, planningColumns, planningPlan, projectLanes, rebaseDraft, reorderPlan, roadmapView, sameOrder, type PlanDraft, type PlanEntry, type PlanningStep, type RoadmapStep } from "../shared/planning-tab";
@@ -9,9 +9,10 @@ import { formatTelemetryDuration } from "../shared/telemetry";
 import { ActionButton, Button, Field, controlFrame, controlText, muted, row, type Colors } from "./controls";
 import { overlay, radius, roles, space, touchTarget, type, type as typeScale } from "./design";
 import { projectDormant } from "../shared/contracts";
+import { ProjectTriage } from "./planning-triage";
 
 /** `error` is set when the plan or its saved version could not be read; `latest` is then the last version read, if any. */
-export type PlanSection = { project: Project; latest?: ProjectPlan; saved?: ProjectPlan; error?: string };
+export type PlanSection = { project: Project; latest?: ProjectPlan; saved?: ProjectPlan; triage?: PlanningTriage; error?: string };
 /** A draft: the order, horizons and idle change the operator is making, and the version it was based on. See `PlanDraft`. */
 export type PlanEdit = PlanDraft;
 
@@ -134,10 +135,10 @@ const IDLE_ENDS = 'Saving a changed plan or finishing new work ends it.';
  * completion condition. "Edit plan" opens a draft: move controls, Save and Cancel, and the idle mark.
  * The draft is kept when the plan changes underneath it; Reapply or Reload settles it.
  */
-function ProjectRoadmap({ section, leads, lanes, edits, selectedLane, busy, saveErrors, qaRuns, qaLoading = false, qaError, onOpenQaRun, onRetryQa, onOpenLane, onEdit, onSave, onCancel, onRetry, onCloseLane, c }: {
+function ProjectRoadmap({ section, leads, lanes, edits, selectedLane, busy, saveErrors, qaRuns, qaLoading = false, qaError, onOpenQaRun, onRetryQa, onOpenLane, onOpenTask, onEdit, onSave, onCancel, onRetry, onCloseLane, c }: {
   section: PlanSection; leads: LeadListFacts[]; lanes: LaneView[]; edits: Record<string, PlanEdit>; selectedLane: string; busy: boolean; saveErrors?: Record<string, string>;
   qaRuns?: ProjectQaRun[]; qaLoading?: boolean; qaError?: string; onOpenQaRun?: (runId: string) => void; onRetryQa?: () => void;
-  onOpenLane: (lane: string) => void; onEdit: (project: string, edit: PlanEdit) => void;
+  onOpenLane: (lane: string) => void; onOpenTask?: (id: string) => void; onEdit: (project: string, edit: PlanEdit) => void;
   onSave: (project: string, edit: PlanEdit) => void; onCancel: (project: string) => void; onRetry?: () => void; onCloseLane?: (lane: string) => void; c: Colors;
 }) {
   const [showDone, setShowDone] = useState(false), [showUnplanned, setShowUnplanned] = useState(false);
@@ -285,6 +286,7 @@ function ProjectRoadmap({ section, leads, lanes, edits, selectedLane, busy, save
       </View>)}
     </View>}
     </>}
+    {section.triage && <ProjectTriage project={name} triage={section.triage} onOpenTask={onOpenTask} c={c} />}
     <View style={{ gap: space.xs, borderTopColor: c.border, borderTopWidth: 1, paddingTop: space.sm }}><ProjectQaLatest project={project} runs={qaRuns} loading={qaLoading} error={qaError} onOpenRun={onOpenQaRun} onRetry={onRetryQa} c={c} /></View>
   </View>;
 }
@@ -424,7 +426,7 @@ export function LaneFinderResults({ rows, total, query, loading, error, plansErr
   </View>;
 }
 
-export function PlanningTab({ sections: allSections, leads = [], lanes, projects: allProjects, selection = [], plans: allPlans, plansError, lanesLoading = false, lanesError, edits, saveErrors, selectedLane, step, compact, busy, lanePanel, qaRuns, qaLoading = false, qaError, onOpenQaRun, onRetryQa, onRetryPlans, onRetryLanes, onStep, onOpenLane, onSelectProjects, onEdit, onSave, onCancel, onCloseLane, c }: {
+export function PlanningTab({ sections: allSections, leads = [], lanes, projects: allProjects, selection = [], plans: allPlans, plansError, lanesLoading = false, lanesError, edits, saveErrors, selectedLane, step, compact, busy, lanePanel, qaRuns, qaLoading = false, qaError, onOpenQaRun, onRetryQa, onRetryPlans, onRetryLanes, onStep, onOpenLane, onOpenTask, onSelectProjects, onEdit, onSave, onCancel, onCloseLane, c }: {
   sections: PlanSection[]; leads?: LeadListFacts[]; lanes: LaneView[]; edits: Record<string, PlanEdit>; saveErrors?: Record<string, string>; selectedLane: string; step: PlanningStep; compact: boolean; busy: boolean; lanePanel: ReactNode;
   /** The latest milestone QA per repository; `qaLoading` and `qaError` keep a first and a failed read apart from no run. */
   qaRuns?: ProjectQaRun[]; qaLoading?: boolean; qaError?: string; onOpenQaRun?: (runId: string) => void; onRetryQa?: () => void;
@@ -435,7 +437,7 @@ export function PlanningTab({ sections: allSections, leads = [], lanes, projects
   onSelectProjects?: (keys: string[]) => void; onRetryLanes?: () => void;
   /** Reads the plans again after a failed read. */
   onRetryPlans?: () => void;
-  onStep: (step: PlanningStep) => void; onOpenLane: (lane: string) => void; onEdit: (project: string, edit: PlanEdit) => void;
+  onStep: (step: PlanningStep) => void; onOpenLane: (lane: string) => void; onOpenTask?: (id: string) => void; onEdit: (project: string, edit: PlanEdit) => void;
   onSave: (project: string, edit: PlanEdit) => void; onCancel: (project: string) => void; onCloseLane?: (lane: string) => void; c: Colors;
 }) {
   const [query, setQuery] = useState("");
@@ -454,7 +456,7 @@ export function PlanningTab({ sections: allSections, leads = [], lanes, projects
   const sections = allSections.filter(section => !dormant.includes(section.project));
   const visible = planningColumns(compact, step);
   const [expanded, setExpanded] = useState<string | null>(null);
-  const roadmapProps = { leads, lanes, edits, saveErrors, selectedLane, busy, qaRuns, qaLoading, qaError, onOpenQaRun, onRetryQa, onOpenLane, onEdit, onSave, onCancel, onCloseLane, c };
+  const roadmapProps = { leads, lanes, edits, saveErrors, selectedLane, busy, qaRuns, qaLoading, qaError, onOpenQaRun, onRetryQa, onOpenLane, onOpenTask, onEdit, onSave, onCancel, onCloseLane, c };
   const roadmapFor = (section: PlanSection) => <ProjectRoadmap section={section} {...roadmapProps} onRetry={onRetryPlans} />;
   const summary = (section: PlanSection) => {
     const planError = section.error ?? plansError;
@@ -493,7 +495,10 @@ export function PlanningTab({ sections: allSections, leads = [], lanes, projects
         {open&&roadmapFor(section)}
       </View>;
     })}
-    <DormantGroup projects={dormant} c={c}/>
+    <DormantGroup projects={dormant} c={c}>{project => {
+      const triage = allSections.find(section => section.project.key === project.key)?.triage;
+      return triage && <ProjectTriage project={project.name} triage={triage} onOpenTask={onOpenTask} c={c} />;
+    }}</DormantGroup>
   </ScrollView>;
   const laneColumn = <ScrollView accessibilityLabel="Planning lane" style={{flex:1,minHeight:0,backgroundColor:c.surface1,borderColor:c.border,borderWidth:1,borderRadius:radius.card}} contentContainerStyle={{padding:space.sm,gap:space.sm}}>
     {lanePanel}

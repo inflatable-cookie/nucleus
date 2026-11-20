@@ -56,6 +56,7 @@ import {
 } from "../core/qa/proof-admission";
 import { ProofExecutionRefusal } from "../core/qa/proof-refusal";
 import { RepositoryRekeyRefused } from "../core/planning/repository-rekey";
+import { PreWriteMergeObservationRefusal } from "../core/verbs/moves/merge";
 import { ReviewEntryRefusal } from "../core/review/review-entry";
 import {
   DurableFenceRefusal,
@@ -208,6 +209,10 @@ const TYPED: [string, () => Error][] = [
   ],
   ["RetainedRunRefusal", () => new RetainedRunRefusal(FRIGHTENING)],
   ["DurableFenceRefusal", () => new DurableFenceRefusal(FRIGHTENING)],
+  [
+    "PreWriteMergeObservationRefusal",
+    () => new PreWriteMergeObservationRefusal(FRIGHTENING),
+  ],
 ];
 
 for (const [name, make] of TYPED) {
@@ -230,7 +235,7 @@ for (const [name, make] of TYPED) {
   });
 }
 
-test("operation state: the typed set is exactly these eight classes", () => {
+test("operation state: the typed set is exactly these nine classes", () => {
   // ParkedRestartPreSendRefusal is private to its file, so the set is read from
   // source rather than thrown. test/restart.cases.ts drives that class.
   const body =
@@ -244,6 +249,7 @@ test("operation state: the typed set is exactly these eight classes", () => {
       "DurableFenceRefusal",
       "ExternalMergeRefusal",
       "ParkedRestartPreSendRefusal",
+      "PreWriteMergeObservationRefusal",
       "ProvenPreSendRefusalError",
       "RepositoryRekeyRefused",
       "RestartRefusal",
@@ -1297,7 +1303,7 @@ const PARSED: ParsedText[] = [
   {
     site: "source approval empty proofs",
     writers: [
-      "return 'Source approval requires an exact-head environment blocked review with findings and named awaiting proofs; if only release gates remain, report ready_to_merge'",
+      'return "Source approval requires an exact-head environment blocked review with findings and named awaiting proofs; if only release gates remain, report ready_to_merge"',
     ],
   },
   {
@@ -1382,10 +1388,9 @@ const PARSED: ParsedText[] = [
   },
   {
     site: "ask delegated planner",
-    re: /planner (\S+);/,
+    re: /planner (.+?);/,
     sample: "a-1: task planner p-1; asked",
     writers: [
-      "${rung === 'task' ? 'task planner' : 'project planner'} ${agentId}; asked",
       '${rung === "task" ? "task planner" : "project planner"} ${agentId}; asked',
     ],
     reads: [
@@ -1395,7 +1400,7 @@ const PARSED: ParsedText[] = [
   },
   {
     site: "ask delegated reviewer",
-    re: /reviewer (\S+);/,
+    re: /reviewer (.+?);/,
     sample: "a-1: reviewer r-1; consult",
     writers: ["${ask.id}: reviewer ${reviewer}; consult"],
   },
@@ -1453,7 +1458,7 @@ const PARSED: ParsedText[] = [
   {
     site: "operator question kinds",
     reads: [
-      "record.intent?.kind === 'release'",
+      'record.intent?.kind === "release"',
       'event.detail.includes("kind budget")',
     ],
     writers: [
@@ -1471,8 +1476,8 @@ const PARSED: ParsedText[] = [
   {
     site: "held proof answer",
     reads: [
-      "event.detail.includes('Leave held for the planner')",
-      "result.reply.choice === 'Leave held for the planner'",
+      'event.detail.includes("Leave held for the planner")',
+      'result.reply.choice === "Leave held for the planner"',
     ],
     writers: ["label: 'Leave held for the planner'"],
   },
@@ -1540,7 +1545,7 @@ const SITES: Record<string, number> = {
   "${question.id}: kind ${question.kind}; stop ${task.resolution.stop?.reason ?? 'none'}; head ${task.prHead ?? 'none'}; question ${digest(": 1,
   '"route_stop_settled"': 2,
   '"route_stop_intent"': 2,
-  "return 'Source approval requires an exact-head environment blocked review with findings and named awaiting proofs; if only release gates remain, report ready_to_merge'": 1,
+  'return "Source approval requires an exact-head environment blocked review with findings and named awaiting proofs; if only release gates remain, report ready_to_merge"': 1,
 };
 
 for (const row of PARSED) {
@@ -1576,7 +1581,7 @@ for (const row of PARSED) {
  */
 const EVENT_KINDS =
   `absent_creation_replaced:2:1 absent_worker_retry:1:0 adopted:1:0 agent_ask:2:3 agent_ask_answered:2:7 agent_ask_decision:1:3 agent_ask_delegated:1:2
-agent_ask_delegation_missed:1:3 agent_ask_delegation_unknown:1:3 agent_ask_joined:1:1 agent_ask_planning_ruling:1:1 agent_ask_resumed:1:2
+agent_ask_delegation_missed:1:2 agent_ask_delegation_unknown:1:3 agent_ask_joined:1:1 agent_ask_planning_ruling:1:1 agent_ask_resumed:1:2
 agent_ask_reviewer_missed:1:2 agent_ask_stale_answered:1:2 agent_ask_superseded:3:3 agent_created:1:1 agent_intent:1:3 automatic_retry_suppressed:1:1
 blocked_pr_identity_deferred:1:1 blocked_review_evidence:1:1 blocker_ladder_classified:1:1 callback_reminder:3:10 callback_reminder_extended:2:1
 callback_reminder_skipped:1:1 cancel:1:52 checkpoint_continued:1:1 closed_out:1:5 closeout_base_renewed:0:1
@@ -1596,7 +1601,7 @@ paused_resume_uncertain:1:2 planner_escalation_answered:1:5 planner_escalation_a
 planner_escalation_decision_linked:1:3 planner_escalation_missed:2:3 planner_escalation_offered:1:1 planner_escalation_payload:2:2
 planner_escalation_refusal_sent:1:1 planner_escalation_resolved:1:2 planner_escalation_sent:1:1 planner_escalation_unknown:1:6
 pre_merge_candidate_stale:1:3 pre_merge_refused:2:1 pre_merge_warm_candidate_created:2:1 pre_merge_warm_candidate_missing:2:1 progress_checkpoint:2:5
-project_planner_missing_notified:1:1 proof_autorun_skipped:1:2 proof_autorun_waiting_inputs:1:1 proof_worker_requested:1:2 queue_ask_delivery:1:1
+proof_autorun_skipped:1:2 proof_autorun_waiting_inputs:1:1 proof_worker_requested:1:2 queue_ask_delivery:1:1
 queue_promoted:1:1 recovery_escalated:2:2 recovery_pending:3:1 release:1:24 report_ready_planner_notice_intent:1:1 reporting_binding_recheck:1:1
 responsible_converted:1:0 responsible_fault_restart:1:1 responsible_question:1:14 responsible_question_answered:3:5
 responsible_question_stale_answered:1:1 responsible_question_superseded:2:2 review_auto_continue_deferred:1:1 review_checkpoint:1:2
@@ -1606,18 +1611,24 @@ reviewer_consult_payload:1:2 reviewer_consult_reviewer:1:2 reviewer_consult_sent
 revision_requested:4:3 role_replacement:1:6 routing_signoff:1:7 run_completion:1:1 run_completion_corrected:1:1 run_intent:1:1
 runnable_proof_refused:1:1 runnable_proof_started:1:1 shell_notice_cleared:1:1 shell_notice_shown:1:1 state:2:40 submitted:1:1 telemetry_recovery:1:2
 telemetry_stage:1:5 transport_deferred:1:3 unchanged_check_revision_refused:2:1 unfinished_continuation:2:2 unfinished_pushback:2:2
-unused_workspace_archive_intent:1:1 worker_resume_requested:5:5 workspace_archived:2:4 workspace_cleanup_wait:1:1 workspace_contents_discarded:2:3
+unused_workspace_archive_intent:1:1 worker_resume_requested:5:4 workspace_archived:2:4 workspace_cleanup_wait:1:1 workspace_contents_discarded:2:3
 workspace_created:1:3 workspace_creation_auto_replay:1:1 workspace_released:1:2`
     .split(/\s+/)
     .map((row) => {
-      const [kind, reads, writes] = row.split(":");
-      return { kind: kind!, reads: Number(reads), writes: Number(writes) };
+      const match = /^([a-z][a-z0-9_]+):(\d+):(\d+)$/.exec(row);
+      assert.ok(match, `malformed EVENT_KINDS row: ${row}`);
+      return {
+        kind: match[1]!,
+        reads: Number(match[2]),
+        writes: Number(match[3]),
+      };
     });
 /** Written from a template, so their literal count is zero: the reader names the kinds, the template builds them. */
 const KIND_TEMPLATES = ["`review_delivery_${status}`"];
 
 const directRead = /\bevent\.kind\s*[!=]==?\s*(['"])([a-z][a-z0-9_]+)\1/g,
-  listRead = /\[([^\]\n]+)\]\.includes\(event\.kind\)/g;
+  // Prettier wraps long kind lists over several lines; the read is the same list.
+  listRead = /\[([^\]]+)\]\.includes\(event\.kind\)/g;
 /** A decoded lifecycle reads its kinds as `switch` cases, which is the same reading fact. */
 const switchRead = /\bcase\s*(['"])([a-z][a-z0-9_]+)\1\s*:/g;
 /**

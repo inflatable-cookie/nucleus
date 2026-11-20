@@ -1,9 +1,11 @@
 export type * from "./adapter";
+export type { RowSnoozeVisibility } from "./contract/thread-presentation";
 export { hostConnected } from "./adapter";
 export type * from "./types";
 export type { HostPolicyPort, HostPolicyConstructor } from "./policy";
 export {
   ArchiveNotDeliveredError,
+  HostReadRefusalError,
   ProvenPreSendRefusalError,
   HostSnapshotPendingError,
   HostUnknownDeliveryError,

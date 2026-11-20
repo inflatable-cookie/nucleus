@@ -438,6 +438,7 @@ export class StoreTaskFunnel {
         workspaceId: null,
         directory: null,
         branch: input.proofOnly ? "" : `ns-${id}`,
+        workspaceAllocation: null,
         workspaceOwnership: "queue",
         agentId: null,
         runId: null,
@@ -511,6 +512,7 @@ export class StoreTaskFunnel {
           at: now(),
           generation: 1,
           until: null,
+          plannerAnswer: null,
         };
       }
       Object.assign(task, syncHoldProjection(composedHolds));

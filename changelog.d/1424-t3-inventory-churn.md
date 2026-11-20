@@ -1,0 +1,2 @@
+- Keep live T3Code observation, workspace project checks, live thread lists, and pass reconciliation on `orchestration.subscribeShell` without pairing against `orchestration.getArchivedShellSnapshot`.
+- Classify exhausted live/archived `snapshotSequence` retries as `T3InventoryChurnError` (`HostReadRefusalError`) so moving inventory remains a bounded operation refusal instead of taking T3 offline or dropping model eligibility, while preserving complete-inventory refusals for deletion, origin absence, and archive cleanup.

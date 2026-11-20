@@ -71,6 +71,7 @@ const settingsRow = (
   affectedTests: null,
   checksPolicy: null,
   hostKind: null,
+  workspaceProvider: null,
   note: "",
   updatedAt: "2026-11-08T00:00:00.000Z",
   revision: 1,

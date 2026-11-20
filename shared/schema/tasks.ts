@@ -32,6 +32,7 @@ import {
   pausedStopSchema,
   siblingFindingSchema,
   siblingPinSchema,
+  workspaceAllocationSchema,
   worktreeLinksSchema,
 } from "./workspace";
 import { transientProviderRetrySchema } from "./runs";
@@ -137,6 +138,8 @@ export const taskSchema = submissionSchema
     workspaceId: z.string().nullable(),
     directory: z.string().nullable(),
     branch: z.string(),
+    /** Durable provider allocation, custody and return record (for example Barge pool leases). */
+    workspaceAllocation: workspaceAllocationSchema.nullable().default(null),
     /**
      * Who owns the directory this task is bound to. `queue` is a Queue
      * allocation, which the lifecycle admits, cleans and archives. `external` is

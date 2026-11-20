@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { T3CodeHost } from "../hosts/t3code/adapter";
 import { T3CompatibilityError } from "../hosts/t3code/contracts";
 import { HOLD_MARKER } from "../hosts/t3code/nesting";
-import { inboxTitle } from "../hosts/t3code/inbox";
+import { INBOX_UI_DEADLINE_MS, inboxTitle } from "../hosts/t3code/inbox";
 import { T3DecisionCards } from "../hosts/t3code/decision-cards";
 import { T3DecisionHold } from "../hosts/t3code/decision-hold";
 import { T3StateFile } from "../hosts/t3code/state";
@@ -676,7 +676,7 @@ test("an unsettled wake that landed inside the window is re-entered once, and an
   );
 });
 
-test("inbox ui reuses an open board tab and reopens with a fresh pairing link when closed or failed", async (t) => {
+test("inbox ui shows the board once per operator message, replacing a retained tab and serving a queued one", async (t) => {
   const root = mkdtempSync(join(tmpdir(), "t3-inbox-ui-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const inboxDir = join(root, "inbox");
@@ -728,33 +728,58 @@ test("inbox ui reuses an open board tab and reopens with a fresh pairing link wh
   const inbox = host.state.read().inbox!;
   const previewOpens = () =>
     fake.requests.filter((request) => request.tag === "preview.open");
+  const archiveReads = () =>
+    fake.requests.filter(
+      (request) => request.tag === "orchestration.getArchivedShellSnapshot",
+    ).length;
+  const archiveReadsBefore = archiveReads();
+  fake.controls.beforeArchiveRead = () => {
+    fake.controls.snapshotSequence++;
+  };
+  const boardTabs = () =>
+    (fake.previews.get(inbox.threadId) ?? []).filter((session) =>
+      String((session.navStatus as { url?: string }).url ?? "").startsWith(
+        "http://127.0.0.1:1234/",
+      ),
+    );
   assert.equal(issuedLinks, 1);
   assert.equal(previewOpens().length, 1);
 
-  // Already-open board tab: ui reuses it without minting a second pairing link or opening a duplicate tab.
-  const reused = await host.openInboxUi();
-  assert.deepEqual(reused, { status: "reused" });
-  assert.equal(issuedLinks, 1);
-  assert.equal(previewOpens().length, 1);
-  assert.equal((fake.previews.get(inbox.threadId) ?? []).length, 1);
-
-  // Non-board tab present while board tab is closed: ui mints a fresh pairing link and reopens the board tab.
-  fake.previews.set(inbox.threadId, [
-    {
+  // The operator's ui message, as the thread window carries it: its own user row and the
+  // run that row started.
+  const projection = fake.threads.get(inbox.threadId)!;
+  const addUi = (messageId: string, status: string) => {
+    const run = syntheticRun(inbox.threadId, projection.runs.length + 1, {
+      status,
+      userMessageId: messageId,
+    });
+    projection.runs.push(run);
+    // The message is in the thread's messages as soon as the operator sends it: a queued
+    // one is not a turn item yet, and the message is what a ui is served by.
+    projection.messages.push({
+      id: messageId,
       threadId: inbox.threadId,
-      tabId: "other-site",
-      navStatus: {
-        _tag: "Success",
-        url: "https://example.com/",
-        title: "Example",
-      },
-      canGoBack: false,
-      canGoForward: false,
-      updatedAt: "2026-01-01T00:00:00.000Z",
-    },
-  ]);
-  const reopened = await host.openInboxUi();
-  assert.deepEqual(reopened, { status: "opened" });
+      runId: run.id,
+      role: "user",
+      text: "ui",
+    });
+    projection.turnItems.push(
+      syntheticTurnItem(inbox.threadId, projection.turnItems.length + 1, {
+        type: "user_message",
+        messageId,
+        text: "ui",
+        runId: run.id,
+      }),
+    );
+    return run;
+  };
+
+  // A retained healthy board tab is replaced by one freshly revealed tab: the nightly
+  // reveals only an open, so this is the supported way to bring the pane up again.
+  const first = addUi("synthetic-ui-1", "completed");
+  const retainedTab = boardTabs()[0]!.tabId;
+  const opened = await host.openInboxUi();
+  assert.deepEqual(opened, { status: "opened" });
   assert.equal(issuedLinks, 2);
   assert.equal(previewOpens().length, 2);
   assert.deepEqual(previewOpens()[1]!.payload, {
@@ -762,33 +787,157 @@ test("inbox ui reuses an open board tab and reopens with a fresh pairing link wh
     url: "http://127.0.0.1:1234/#token=synthetic-2",
     reveal: true,
   });
+  const afterFirst = boardTabs();
+  assert.equal(afterFirst.length, 1, "one board tab remains");
+  assert.notEqual(afterFirst[0]!.tabId, retainedTab, "the pane is revealed");
+  assert.equal(
+    fake.requests.some(
+      (request) =>
+        request.tag === "preview.close" &&
+        (request.payload as { tabId?: string }).tabId === retainedTab,
+    ),
+    true,
+  );
+  assert.deepEqual(host.state.read().inbox!.ui, {
+    messageId: "synthetic-ui-1",
+    at: host.state.read().inbox!.ui!.at,
+    status: "opened",
+  });
+
+  // The same message is never served twice; nothing is reopened or re-minted.
+  const servedAgain = await host.openInboxUi();
+  assert.deepEqual(servedAgain, { status: "reused" });
+  assert.equal(issuedLinks, 2);
+  assert.equal(previewOpens().length, 2);
+
+  // A new ui is a new attempt: it replaces the retained tab again.
+  addUi("synthetic-ui-2", "completed");
+  const second = await host.openInboxUi();
+  assert.deepEqual(second, { status: "opened" });
+  assert.equal(issuedLinks, 3);
+  assert.equal(boardTabs().length, 1);
 
   // A LoadFailed board tab is closed and replaced on ui.
-  const openBoard = (fake.previews.get(inbox.threadId) ?? []).find(
-    (session) => session.tabId !== "other-site",
-  )!;
-  openBoard.navStatus = {
+  const failedTab = boardTabs()[0]!;
+  failedTab.navStatus = {
     _tag: "LoadFailed",
     url: "http://127.0.0.1:1234/",
     title: "",
     code: -1,
     description: "Connection refused",
   };
+  addUi("synthetic-ui-3", "completed");
   const replaced = await host.openInboxUi();
   assert.deepEqual(replaced, { status: "opened" });
-  assert.equal(issuedLinks, 3);
+  assert.equal(issuedLinks, 4);
   assert.equal(
     fake.requests.some(
       (request) =>
         request.tag === "preview.close" &&
-        (request.payload as { tabId?: string }).tabId === openBoard.tabId,
+        (request.payload as { tabId?: string }).tabId === failedTab.tabId,
     ),
     true,
   );
+
+  // While a decision holds the inbox's turn, T3 queues the operator's ui and the agent
+  // never receives it: the pass serves it, from the same record, and the offer, its card
+  // and the hold are untouched.
+  const held = host.state.read().decisionHolds?.[inbox.threadId];
+  const queuedRun = addUi("synthetic-ui-4", "queued");
+  for (const run of projection.runs)
+    if (run.id !== queuedRun.id) run.status = "completed";
+  const linksBefore = issuedLinks;
+  await host.reconcileThreadTitles([]);
+  assert.equal(
+    issuedLinks,
+    linksBefore + 1,
+    "the queued ui is served by the pass",
+  );
+  assert.equal(host.state.read().inbox!.ui!.messageId, "synthetic-ui-4");
+  assert.equal(boardTabs().length, 1);
+  // A second pass serves nothing: the message already has its attempt.
+  await host.reconcileThreadTitles([]);
+  assert.equal(issuedLinks, linksBefore + 1);
+  // The turn that finally carries the queued prompt reports the recorded result.
+  const late = await host.openInboxUi();
+  assert.deepEqual(late, { status: "reused" });
+  assert.equal(issuedLinks, linksBefore + 1);
+  assert.equal(held, host.state.read().decisionHolds?.[inbox.threadId]);
+  assert.equal(archiveReads(), archiveReadsBefore, "live ui uses the shell");
+
+  await t.test(
+    "ui refuses to open when the inbox is missing and inventory keeps moving",
+    async () => {
+      const opensBefore = previewOpens().length;
+      projection.thread.deletedAt = new Date().toISOString();
+      try {
+        await assert.rejects(host.openInboxUi(), /inventory kept moving/);
+        assert.ok(archiveReads() > archiveReadsBefore);
+        assert.equal(previewOpens().length, opensBefore);
+        assert.equal(issuedLinks, linksBefore + 1);
+      } finally {
+        projection.thread.deletedAt = null;
+      }
+    },
+  );
+
+  // Nothing about the pairing link is persisted.
   assert.equal(
     JSON.stringify(host.state.read()).includes("token=synthetic"),
     false,
   );
+  await t.test(
+    "preview.open gets only the budget left after closing the old tab",
+    async (t) => {
+      addUi("synthetic-ui-deadline", "completed");
+      t.mock.timers.enable({ apis: ["setTimeout"] });
+      let elapsed = 0;
+      t.mock.method(performance, "now", () => elapsed);
+      const advance = (ms: number) => {
+        elapsed += ms;
+        t.mock.timers.tick(ms);
+      };
+      const call = host.rpc.call.bind(host.rpc);
+      let markOpenStarted!: () => void;
+      const openStarted = new Promise<void>((resolve) => {
+        markOpenStarted = resolve;
+      });
+      let replyToOpen!: (value: unknown) => void;
+      const openReply = new Promise<unknown>((resolve) => {
+        replyToOpen = resolve;
+      });
+      let openRequests = 0;
+      t.mock.method(
+        host.rpc,
+        "call",
+        async (method: string, payload: unknown) => {
+          if (method === "preview.open") {
+            openRequests++;
+            markOpenStarted();
+            return await openReply;
+          }
+          const result = await call(method, payload);
+          if (method === "preview.close") advance(INBOX_UI_DEADLINE_MS - 1_000);
+          return result;
+        },
+      );
+      const command = host.openInboxUi();
+      await openStarted;
+      advance(1_000);
+      const result = await Promise.race([
+        command,
+        new Promise<null>((resolve) => setImmediate(() => resolve(null))),
+      ]);
+      assert.deepEqual(result, {
+        status: "failed",
+        detail: "the board did not open in time; type ui again to retry",
+      });
+      replyToOpen({});
+      assert.deepEqual(await host.openInboxUi(), result);
+      assert.equal(openRequests, 1, "the timed-out open is never replayed");
+    },
+  );
+  void first;
 });
 
 test("decisionHold advances on a bounded long thread unless a previous hold is unknown outside the window", async (t) => {

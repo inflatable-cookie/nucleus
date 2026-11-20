@@ -213,7 +213,11 @@ test('a superseded role thread never leaves its fault on the row (acceptance 2)'
 
   const failedRecovery = await host.createAgent(spec('recovery-launch-1', 'recovery'));
   server.threads.get(failedRecovery.id)!.runs = [syntheticRun('recovery-run-1', 1, { id: 'recovery-run-1', status: 'failed', rootNodeId: 'recovery-node-1' })];
+  // A waiting task's failed role run is history: it names neither the row nor its visibility (nucleus#1437).
   await host.reconcileTaskRow(taskId, waiting());
+  assert.equal(titles().at(-1)!.title, 'Review: 225 Synthetic role', "a wait does not inherit a role's old fault");
+  // The task's own attention owns the fault, so the row names it and shows.
+  await host.reconcileTaskRow(taskId, { state: 'attention', cause: 'Recovery failed' });
   assert.equal(titles().at(-1)!.title, 'Review: 225 Synthetic role · blocked: recovery');
 
   const recovery = await host.createAgent(spec('recovery-launch-2', 'recovery'));
@@ -260,6 +264,29 @@ test('a waiting task snoozes its parent row once, reads the horizon back, and re
   assert.notEqual(renewed.commandId, snooze!.commandId);
   assert.ok(Date.parse(renewed.snoozedUntil) - Date.now() > SNOOZE_HORIZON_MS / 2, 'the renewed horizon is a full one');
   assert.equal(projection.thread.snoozedUntil, renewed.snoozedUntil);
+});
+
+test('a prerequisite wait with an old role fault snoozes, and a current question still shows (nucleus#1437)', async t => {
+  const { host, server, spec, parentOf } = await fixture(t);
+  await host.createAgent(spec('worker-launch'));
+  const parent = parentOf()!;
+  const projection = server.threads.get(parent.threadId)!;
+  const failedRecovery = await host.createAgent(spec('recovery-launch-1', 'recovery'));
+  server.threads.get(failedRecovery.id)!.runs = [syntheticRun('recovery-run-1', 1, { id: 'recovery-run-1', status: 'failed', rootNodeId: 'recovery-node-1' })];
+
+  // Negative twin: the historical failed recovery does not hold the row.
+  await host.reconcileTaskRow(taskId, waiting('Waiting on nucleus#1364'));
+  assert.ok(projection.thread.snoozedUntil, 'the wait snoozes the row past the old fault');
+  assert.equal(commandsOf(server, 'thread.unsnooze').length, 0);
+
+  // Positive twin: a question the role asks now is a current request and surfaces the row.
+  const reviewer = await host.createAgent(spec('reviewer-launch', 'reviewer'));
+  const reviewerProjection = server.threads.get(reviewer.id)!;
+  reviewerProjection.runs = [syntheticRun('nightly-review-run', 1, { id: 'nightly-review-run', status: 'running', rootNodeId: 'review-node' })];
+  reviewerProjection.runtimeRequests = [syntheticRuntimeRequest({ id: 'reviewer-question', status: 'pending', kind: 'user_input' })];
+  await host.reconcileTaskRow(taskId, waiting('Waiting on nucleus#1364'));
+  assert.equal(projection.thread.snoozedUntil, null, 'a pending question shows the row');
+  assert.match(projection.thread.title ?? '', /reviewer needs input/);
 });
 
 test('a task that needs a person unsnoozes a row this host snoozed', async t => {

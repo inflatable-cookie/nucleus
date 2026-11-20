@@ -12,6 +12,7 @@ function runtimeFixture(
   observe: (id: string) => Promise<{ id: string; status: string }>,
 ) {
   const observed: string[] = [];
+  const activity: string[] = [];
   const adapter = {
     observe: async (id: string) => {
       observed.push(id);
@@ -23,13 +24,18 @@ function runtimeFixture(
       withHost: (_hostId: string, fn: () => unknown) => fn(),
       adapter,
       host: adapter,
+      resolution: {
+        responsibleThreads: {
+          recordActivity: (caller: string) => activity.push(caller),
+        },
+      },
     },
     hostRegistry: { onlineIds: () => [hostId] },
     plannerTickets: {
       forCaller: async () => "/synthetic/participant-ticket.json",
     },
   };
-  return { runtime, observed };
+  return { runtime, observed, activity };
 }
 
 test("BB thread environment resolves to a verified caller and decision.add records its host-qualified identity", async () => {
@@ -48,6 +54,11 @@ test("BB thread environment resolves to a verified caller and decision.add recor
   );
   assert.deepEqual(fixture.observed, ["thr_9ri7tsq68p"]);
   assert.equal(identity.caller, formatAgentId(hostId, "thr_9ri7tsq68p"));
+  assert.deepEqual(
+    fixture.activity,
+    [identity.caller],
+    "a verified BB caller is recorded as responsible-thread activity",
+  );
   assert.equal(
     identity.participantTicket,
     "/synthetic/participant-ticket.json",

@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { T3CodeHost } from "../hosts/t3code/adapter";
 import { decode } from "../hosts/t3code/contracts";
 import { projection } from "../hosts/t3code/contracts";
+import { proposedOwner } from "../core/acp/decisions";
 import {
   HOLD_MARKER,
   PARENT_MODEL,
@@ -577,7 +578,7 @@ test("a deletedAt tombstone in the inventory counts as deleted for a child and f
     () => host.createAgent(spec("review-run", "Review it", "reviewer")),
     (error: unknown) =>
       error instanceof ProvenPreSendRefusalError &&
-      /parent thread is deleted; move the task to another host/.test(
+      /parent thread is deleted; inspect the retained binding/.test(
         error.reason,
       ),
   );
@@ -612,7 +613,7 @@ test("a role launched after its parent was archived refuses instead of re-launch
     () => host.createAgent(spec("review-run", "Review it", "reviewer")),
     (error: unknown) =>
       error instanceof ProvenPreSendRefusalError &&
-      /parent thread is archived; move the task to another host/.test(
+      /parent thread is archived; use an owner restart/.test(
         error.reason,
       ),
   );
@@ -628,6 +629,112 @@ test("a role launched after its parent was archived refuses instead of re-launch
   );
 });
 
+test("a manually restored parent clears an older finished marker only after verifying its binding", async (t) => {
+  const { host, server, spec } = await fixture(t);
+  await host.createAgent(spec("worker-create", "Do the work"));
+  const parent = parentOf(host)!;
+  const remote = server.threads.get(parent.threadId)!.thread;
+  remote.archivedAt = STAMP;
+  await assert.rejects(() => host.createAgent(spec("review-archived", "Review", "reviewer")));
+  remote.archivedAt = null;
+  await host.createAgent(spec("review-live", "Review", "reviewer"));
+  assert.equal(host.state.read().parents![parent.taskId]!.archivedAt, undefined);
+  assert.equal(commandsOf(server, "orchestration.launchThread").length, 1);
+  assert.equal(commandsOf(server, "delegated_task.request").length, 2);
+});
+
+test("an older finished marker is reclassified when the parent was deleted", async (t) => {
+  const { host, server, spec } = await fixture(t);
+  await host.createAgent(spec("worker-create", "Do the work"));
+  const parent = parentOf(host)!;
+  host.state.update((state) => { state.parents![parent.taskId]!.archivedAt = STAMP; });
+  server.threads.delete(parent.threadId);
+  await assert.rejects(() => host.createAgent(spec("review-run", "Review", "reviewer")), /parent thread is deleted/);
+  assert.equal(commandsOf(server, "delegated_task.request").length, 1);
+});
+
+test("a parent with a changed checkout is fenced even with an older finished marker", async (t) => {
+  const { host, server, spec } = await fixture(t);
+  await host.createAgent(spec("worker-create", "Do the work"));
+  const parent = parentOf(host)!;
+  host.state.update((state) => { state.parents![parent.taskId]!.archivedAt = STAMP; });
+  server.threads.get(parent.threadId)!.thread.worktreePath = "/synthetic/other";
+  await assert.rejects(() => host.createAgent(spec("review-run", "Review", "reviewer")), /no longer matches/);
+  assert.equal(host.state.read().parents![parent.taskId]!.archivedAt, STAMP);
+  assert.equal(commandsOf(server, "delegated_task.request").length, 1);
+});
+
+test("the restart restore effect unarchives the same bound parent and reuses it", async (t) => {
+  const { host, server, spec, workspace, acp } = await fixture(t);
+  await host.createAgent(spec("worker-create", "Do the work"));
+  const parent = parentOf(host)!;
+  server.threads.get(parent.threadId)!.thread.archivedAt = STAMP;
+  const task = { id: parent.taskId, workspaceId: workspace.id, directory: workspace.directory, phase: "working", removedAt: null, resolution: { mergedCommit: null } } as Task;
+  await host.nesting.restoreForRestart(task, "owner-operation", () => true);
+  await host.nesting.restoreForRestart(task, "owner-operation", () => true);
+  assert.equal(commandsOf(server, "thread.unarchive").length, 1);
+  assert.equal(server.threads.get(parent.threadId)!.thread.archivedAt, null);
+  await host.createAgent(spec("worker-next", "Continue"));
+  assert.equal(commandsOf(server, "orchestration.launchThread").length, 1);
+  assert.equal(commandsOf(server, "delegated_task.request").length, 2);
+  assert.equal(acp.bindings.length, 1);
+});
+
+test("a lost unarchive reply is reconciled by reading the same parent before any repeat", async (t) => {
+  const { host, server, spec, workspace } = await fixture(t);
+  await host.createAgent(spec("worker-create", "Do the work"));
+  const parent = parentOf(host)!;
+  server.threads.get(parent.threadId)!.thread.archivedAt = STAMP;
+  const task = { id: parent.taskId, workspaceId: workspace.id, directory: workspace.directory, phase: "working", removedAt: null, resolution: { mergedCommit: null } } as Task;
+  server.controls.disconnectAfterEffect = true;
+  await assert.rejects(() => host.nesting.restoreForRestart(task, "operation-1", () => true));
+  server.controls.disconnectAfterEffect = false;
+  await host.connect();
+  assert.equal(await host.nesting.observeRestartRestore(task, "wrong-operation"), "not_found");
+  assert.equal(await host.nesting.observeRestartRestore(task, "operation-1"), "live");
+  await host.nesting.restoreForRestart(task, "operation-2", () => true);
+  assert.equal(commandsOf(server, "thread.unarchive").length, 1);
+  assert.equal(server.threads.get(parent.threadId)!.thread.archivedAt, null);
+  assert.equal(commandsOf(server, "orchestration.launchThread").length, 1);
+});
+
+test("the restart restore effect refuses a changed binding and unknown prior delivery", async (t) => {
+  const { host, server, spec, workspace } = await fixture(t);
+  await host.createAgent(spec("worker-create", "Do the work"));
+  const parent = parentOf(host)!;
+  const remote = server.threads.get(parent.threadId)!.thread;
+  const task = { id: parent.taskId, workspaceId: workspace.id, directory: workspace.directory, phase: "working", removedAt: null, resolution: { mergedCommit: null } } as Task;
+  remote.archivedAt = STAMP;
+  remote.providerInstanceId = "other";
+  await assert.rejects(() => host.nesting.restoreForRestart(task, "operation-1", () => true), /binding/);
+  remote.providerInstanceId = PARENT_PROVIDER;
+  host.state.update((state) => { state.intents["unknown-unarchive"] = { status: "unknown", kind: "thread.unarchive", threadId: parent.threadId, payload: "{}" }; });
+  await assert.rejects(() => host.nesting.restoreForRestart(task, "operation-2", () => true), /delivery remains unknown/);
+  assert.equal(commandsOf(server, "thread.unarchive").length, 0);
+});
+
+test("a routine sweep leaves a manually archived parent archived", async (t) => {
+  const { host, server, spec } = await fixture(t);
+  await host.createAgent(spec("worker-create", "Do the work"));
+  const parent = parentOf(host)!;
+  server.threads.get(parent.threadId)!.thread.archivedAt = STAMP;
+  await host.reconcileThreadTitles([{ id: parent.taskId, phase: "working" } as Task]);
+  assert.equal(server.threads.get(parent.threadId)!.thread.archivedAt, STAMP);
+  assert.equal(commandsOf(server, "thread.unarchive").length, 0);
+  assert.equal(parentOf(host)?.threadId, parent.threadId);
+});
+
+test("a sweep retains a deleted nonterminal parent and never launches a replacement", async (t) => {
+  const { host, server, spec } = await fixture(t);
+  await host.createAgent(spec("worker-create", "Do the work"));
+  const parent = parentOf(host)!;
+  server.threads.get(parent.threadId)!.thread.deletedAt = STAMP;
+  await host.nesting.reconcile([{ id: parent.taskId, phase: "working" } as Task]);
+  assert.equal(parentOf(host)?.threadId, parent.threadId);
+  await assert.rejects(() => host.createAgent(spec("review-after-delete", "Review", "reviewer")), /parent thread is deleted/);
+  assert.equal(commandsOf(server, "orchestration.launchThread").length, 1);
+});
+
 test("a parent gone from the complete inventory refuses without sending anything", async (t) => {
   const { host, server, spec } = await fixture(t);
   await host.createAgent(spec("worker-create", "Do the work"));
@@ -637,7 +744,7 @@ test("a parent gone from the complete inventory refuses without sending anything
     () => host.createAgent(spec("review-run", "Review it", "reviewer")),
     (error: unknown) =>
       error instanceof ProvenPreSendRefusalError &&
-      /parent thread is deleted; move the task to another host/.test(
+      /parent thread is deleted; inspect the retained binding/.test(
         error.reason,
       ),
   );
@@ -928,4 +1035,51 @@ test("a nested role refuses a missing model on a settled provider before creatin
   }), (error: unknown) => error instanceof ProvenPreSendRefusalError && /does not report model missing/.test(error.message));
   assert.equal(parentOf(host), undefined);
   assert.equal(commandOf(server, "delegated_task.request"), undefined);
+});
+
+test("decisionParent routes an archived parent to the Inbox and keeps a disconnected host unknown", async (t) => {
+  const { host, server, spec } = await fixture(t);
+  const taskId = "synthetic-task";
+  const fakeStore = {
+    taskOrNull: (id: string) =>
+      id === taskId ? ({ id, hostId: host.hostId, removedAt: null } as Task) : null,
+  } as unknown as import("../core/store/store").Store;
+  const decision = {
+    id: "11111111-1111-4111-8111-111111111199",
+    version: 1,
+    links: { tasks: [taskId] },
+  } as unknown as import("../shared/contracts").Decision;
+  const lookup = (_hostId: string, id: string) => host.decisionParent(id);
+
+  assert.deepEqual(host.decisionParent(taskId), { state: "absent" });
+  assert.deepEqual(proposedOwner(fakeStore, decision, host.hostId, lookup), {
+    kind: "inbox",
+    hostId: host.hostId,
+  });
+
+  await host.createAgent(spec("worker-create", "Do the work"));
+  const parent = parentOf(host)!;
+  assert.deepEqual(host.decisionParent(taskId), {
+    state: "parent",
+    sessionId: parent.sessionId,
+  });
+  assert.deepEqual(proposedOwner(fakeStore, decision, host.hostId, lookup), {
+    kind: "task",
+    taskId,
+    hostId: host.hostId,
+    sessionId: parent.sessionId,
+  });
+
+  finishChildren(host, server);
+  await host.reconcileThreadTitles([{ id: taskId, phase: "done" } as Task]);
+  assert.notEqual(parentOf(host)?.archivedAt, undefined);
+  assert.deepEqual(host.decisionParent(taskId), { state: "absent" });
+  assert.deepEqual(proposedOwner(fakeStore, decision, host.hostId, lookup), {
+    kind: "inbox",
+    hostId: host.hostId,
+  });
+
+  host.close();
+  assert.deepEqual(host.decisionParent(taskId), { state: "unknown" });
+  assert.equal(proposedOwner(fakeStore, decision, host.hostId, lookup), null);
 });

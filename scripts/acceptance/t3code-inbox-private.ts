@@ -1,6 +1,6 @@
 /**
- * nucleus#1384's private proof: the pinned T3 inbox is idle between decisions and
- * shows a readable project name.
+ * nucleus#1384's and nucleus#1415's private proof: the pinned T3 inbox is idle between
+ * decisions, shows a readable project name, and its `ui` command shows the board.
  *
  * Two private T3 environments run on the installed nightly's own server. Each has an
  * isolated home, base directory, port and databases, and a clean environment (only
@@ -20,7 +20,11 @@
  *   6. an operator cancel is re-offered once; the second cancel is final, no third card
  *      is posted, and the decision stays open;
  *   7. decisions arriving around the release are each posted exactly once;
- *   8. after a T3 restart the inbox is idle, and an open decision is posted once more.
+ *   8. after a T3 restart the inbox is idle, and an open decision is posted once more;
+ *   9. `ui` shows the board in one tab (a retained tab is replaced by the revealed
+ *      open), ignores non-exact text, reopens a closed pane, and — while a decision holds
+ *      the turn and T3 queues the message — is served by the pass with the card untouched
+ *      and the served result reported when the queued turn runs.
  * Both environments prove the project reads "Nucleus Inbox", the thread reads "Nucleus",
  * the thread stays pinned, and the registration keeps its id.
  *
@@ -49,10 +53,11 @@ import { canonical } from "../../hosts/t3code/state";
 import { activeStatuses } from "../../hosts/t3code/reads";
 import { acpInboxDirectory } from "../../shared/acp/inbox-binding";
 import { QueueService } from "../../service/transport/server";
+import { submissionSchema } from "../../shared/contracts";
 import { findT3Cli } from "../../shared/t3/operator";
 
 const checkout = fileURLToPath(new URL("../..", import.meta.url));
-const NIGHTLY_LINE = /^0\.1\.11-nightly\.\d+\.\d+$/;
+const NIGHTLY_LINE = /^0\.1\.(?:11|12)-nightly\.\d+\.\d+$/;
 /** Every process this run starts, so a failed setup never leaves a server behind. */
 const spawned: ChildProcess[] = [];
 const killSpawned = () => {
@@ -166,10 +171,16 @@ type Projection = {
     type: string;
     requestId?: string;
     messageId?: string;
+    runId?: string | null;
     text?: string;
     questions?: Array<{ id: string }>;
   }>;
-  messages?: Array<{ id: string; role: string; text: string }>;
+  messages?: Array<{
+    id: string;
+    role: string;
+    text: string;
+    runId?: string | null;
+  }>;
 };
 
 type PreviewSession = {
@@ -823,6 +834,27 @@ async function freshScenarios(env: Environment) {
     title: startTitle,
   });
 
+  // A held, pre-dispatch task has no parent thread: its linked question belongs here.
+  const hostId = (env.service.health() as unknown as { t3code: { id: string } }).t3code.id;
+  const planning = "a".repeat(40);
+  const task = await env.service.debug({ target: "store", method: "insert", args: [
+    submissionSchema.parse({ submissionId: "inbox-predispatch", title: "Held synthetic task",
+      repoPath: join(env.root, "synthetic-repository"), planningCommit: planning,
+      brief: { text: "Synthetic held task" }, originAgentId: "proof-origin" }), hostId, "brief", planning,
+  ] }) as { id: string };
+  await env.service.debug({ target: "store", method: "update", args: [task.id, { held: true }] });
+  const linked = await env.service.debug({ target: "runtime", method: "addDecision", args: [{
+    question: "Approve the held task?", headline: "Held task sign-off", choices: CHOICES,
+    recommended: "Yes", askedBy: "operator", tasks: [task.id],
+  }] }) as { id: string };
+  const linkedCard = await waitForCard(env, linked.id, "the pre-dispatch task's Inbox card");
+  await operatorRespond(env.rpc, env.inboxThreadId, linkedCard.requestId, { answers: { [linkedCard.questionId!]: "Yes" } });
+  await until(async () => (await decisionStatus(env, linked.id)) === "answered" ? true : null,
+    "the pre-dispatch Inbox answer");
+  const heldTask = await env.service.debug({ target: "store", method: "task", args: [task.id] }) as { held: boolean };
+  assert.equal(heldTask.held, true, "answering the decision preserves the independent task hold");
+  record(env, "fresh:held-predispatch-inbox-answer", { answered: true, held: heldTask.held });
+
   // 2. An open decision wakes the inbox, and its card is posted.
   const wake = await addDecision(env, "Proof wake");
   const wakeCard = await waitForCard(env, wake, "the wake card");
@@ -1046,47 +1078,85 @@ async function freshScenarios(env: Environment) {
     runs: finalIdle.runs,
   });
 
-  // 10. Typing `ui` reuses an already-open board tab, ignores non-exact text, reopens from
-  // a closed pane with a fresh pairing link, keeps pairing URLs out of messages/logs, and
-  // leaves the inbox idle when no decision is offered.
+  // 10. Typing `ui` shows the board in the inbox thread's pane, gives one clear result and
+  // finishes the command: a retained healthy tab is replaced by one freshly revealed tab (the
+  // nightly reveals only an open), non-exact text never opens anything, a closed pane is
+  // reopened with a fresh one-time pairing link, and while a decision holds the inbox's turn
+  // the pass answers the `ui` T3 queued behind it without touching the card.
   const openSessions = await until(async () => {
     const sessions = await previewSessions(env.rpc, env.inboxThreadId);
     return sessions.length ? sessions : null;
   }, "an open board preview before testing ui");
   const existingTabId = openSessions[0]!.tabId;
-  const reuseMessageId = await sendInboxText(env, "ui");
+  const uiMessage = await sendInboxText(env, "ui");
   await until(async () => {
     const p = await projection(env.rpc, env.inboxThreadId);
     const posted = p?.turnItems.some(
-      (item) =>
-        item.type === "user_message" && item.messageId === reuseMessageId,
+      (item) => item.type === "user_message" && item.messageId === uiMessage,
     );
     return p && posted && !hasActiveRun(p) ? p : null;
-  }, "ui on already-open pane to finish idle");
-  const reuseIdle = await idleFor(env, 3);
-  const afterReuseSessions = await previewSessions(env.rpc, env.inboxThreadId);
+  }, "ui on the retained pane to finish idle");
+  const uiIdle = await idleFor(env, 3);
+  const afterUiSessions = await previewSessions(env.rpc, env.inboxThreadId);
   assert.equal(
-    afterReuseSessions.length,
+    afterUiSessions.length,
     1,
-    "already-open board tab is reused without opening a duplicate",
+    "exactly one board tab remains after ui",
   );
-  assert.equal(
-    afterReuseSessions[0]!.tabId,
+  assert.notEqual(
+    afterUiSessions[0]!.tabId,
     existingTabId,
-    "already-open board tab keeps its tabId",
+    "the retained board tab is replaced by the revealed one",
   );
-  const afterReuseProjection = (await projection(env.rpc, env.inboxThreadId))!;
-  assertNoPairingLeak(env, afterReuseProjection, "already-open");
-  record(env, "fresh:inbox-ui-already-open", {
-    tabId: existingTabId,
-    sessions: afterReuseSessions.length,
-    runs: reuseIdle.runs,
+  assert.equal(afterUiSessions[0]!.reveal, true);
+  const afterUiProjection = (await projection(env.rpc, env.inboxThreadId))!;
+  assertNoPairingLeak(env, afterUiProjection, "retained-pane");
+  assert.match(
+    JSON.stringify(afterUiProjection.turnItems),
+    /Opened the Nucleus board/,
+    "the command answers with the board it showed",
+  );
+  record(env, "fresh:inbox-ui-replaces-retained-tab", {
+    previousTabId: existingTabId,
+    tabId: afterUiSessions[0]!.tabId,
+    reveal: afterUiSessions[0]!.reveal,
+    sessions: afterUiSessions.length,
+    runs: uiIdle.runs,
   });
+  const retainedTabId = afterUiSessions[0]!.tabId;
 
-  // Close the preview pane and verify non-exact text does not reopen it.
+  // A second `ui` is a second operator message and a second attempt: it shows the board
+  // again, replacing the tab rather than adding one, because the retained tab cannot be
+  // revealed in place.
+  const repeated = await sendInboxText(env, "ui");
+  await until(async () => {
+    const p = await projection(env.rpc, env.inboxThreadId);
+    return p &&
+      p.turnItems.some(
+        (item) => item.type === "user_message" && item.messageId === repeated,
+      ) &&
+      !hasActiveRun(p)
+      ? p
+      : null;
+  }, "a repeated ui to finish idle");
+  const repeatedSessions = await previewSessions(env.rpc, env.inboxThreadId);
+  assert.equal(repeatedSessions.length, 1);
+  assert.notEqual(
+    repeatedSessions[0]!.tabId,
+    retainedTabId,
+    "a second ui shows the board again, one tab",
+  );
+  record(env, "fresh:inbox-ui-repeat", {
+    previousTabId: retainedTabId,
+    tabId: repeatedSessions[0]!.tabId,
+    sessions: repeatedSessions.length,
+  });
+  const closedTabId = repeatedSessions[0]!.tabId;
+
+  // Non-exact text never opens the closed pane.
   await env.rpc.call("preview.close", {
     threadId: env.inboxThreadId,
-    tabId: existingTabId,
+    tabId: closedTabId,
   });
   await until(
     async () =>
@@ -1112,11 +1182,11 @@ async function freshScenarios(env: Environment) {
   );
   record(env, "fresh:inbox-ui-non-exact-ignored", { sessions: 0 });
 
-  // Exact `ui` reopens from the closed pane and returns to idle.
+  // Exact `ui` reopens from the closed pane with a fresh one-time pairing link and finishes.
   const reopenMessageId = await sendInboxText(env, "ui");
   const reopenedSessions = await until(async () => {
     const sessions = await previewSessions(env.rpc, env.inboxThreadId);
-    return sessions.length === 1 && sessions[0]!.tabId !== existingTabId
+    return sessions.length === 1 && sessions[0]!.tabId !== closedTabId
       ? sessions
       : null;
   }, "ui to reopen the closed board pane");
@@ -1137,40 +1207,62 @@ async function freshScenarios(env: Environment) {
   const reopenProjection = (await projection(env.rpc, env.inboxThreadId))!;
   assertNoPairingLeak(env, reopenProjection, "reopen-closed");
   record(env, "fresh:inbox-ui-reopen-closed", {
-    previousTabId: existingTabId,
+    previousTabId: closedTabId,
     reopenedTabId: reopenedSessions[0]!.tabId,
     reveal: reopenedSessions[0]!.reveal,
     runs: reopenIdle.runs,
   });
+  const closedPaneTabId = reopenedSessions[0]!.tabId;
 
-  // With an open offerable decision, `ui` reopens a closed pane and keeps the inbox held.
+  // With an offerable decision open, the inbox's turn is held, so T3 queues the operator's
+  // own `ui` and the agent never receives it. The pass shows the board anyway, inside the
+  // command's bound, and the card stays: the offer, its card and the hold are untouched.
   const heldDecision = await addDecision(env, "Proof ui held decision");
   const heldCard = await waitForCard(
     env,
     heldDecision,
     "the decision card before ui",
   );
-  const activeHeldRun = (
-    await projection(env.rpc, env.inboxThreadId)
-  )?.runs.find((run) => activeStatuses.has(run.status as never));
-  await env.rpc.call("preview.close", { threadId: env.inboxThreadId });
+  const heldRun = (await projection(env.rpc, env.inboxThreadId))?.runs.find(
+    (run) => activeStatuses.has(run.status as never),
+  );
+  await env.rpc.call("preview.close", {
+    threadId: env.inboxThreadId,
+    tabId: closedPaneTabId,
+  });
   await until(
     async () =>
       (await previewSessions(env.rpc, env.inboxThreadId)).length === 0
         ? true
         : null,
-    "closed pane before held ui",
+    "closed pane before the held ui",
   );
-  await sendInboxText(env, "ui", activeHeldRun?.id);
-  const heldReopened = await until(async () => {
+  const queuedMessageId = await sendInboxText(env, "ui");
+  const queuedUi = await until(async () => {
+    const p = await projection(env.rpc, env.inboxThreadId);
+    // A queued message is in the thread's messages before it is a turn item.
+    const message = p?.messages?.find(
+      (row) =>
+        row.role === "user" && row.text === "ui" && row.id === queuedMessageId,
+    );
+    const run = message?.runId
+      ? p?.runs.find((row) => row.id === message.runId)
+      : undefined;
+    if (run?.status !== "queued") return null;
     const sessions = await previewSessions(env.rpc, env.inboxThreadId);
-    return sessions.length === 1 ? sessions : null;
-  }, "ui to reopen the board while a decision is open");
+    return sessions.length === 1 ? { sessions, run, message } : null;
+  }, "the pass to answer the ui T3 queued behind the held turn");
+  assert.equal(queuedUi.sessions[0]!.reveal, true);
   const heldAfterUi = (await projection(env.rpc, env.inboxThreadId))!;
   assert.equal(
     hasActiveRun(heldAfterUi),
     true,
-    "the inbox stays held when an offerable decision is open",
+    "the inbox stays held while an offerable decision is open",
+  );
+  assert.equal(
+    heldAfterUi.runs.some((run) => run.id === heldRun?.id),
+    true,
+    "the held run is the one that was already live",
   );
   assertNoPairingLeak(env, heldAfterUi, "held-ui");
   const activeCard = await waitForCard(
@@ -1178,6 +1270,13 @@ async function freshScenarios(env: Environment) {
     heldDecision,
     "the held decision card after ui",
   );
+  assert.equal(
+    activeCard.requestId,
+    heldCard.requestId,
+    "the operator's card is the same card, not a re-raise",
+  );
+  // Answering the card releases the hold; the queued ui then runs and reports the same
+  // served result without opening the board a second time.
   await operatorRespond(env.rpc, env.inboxThreadId, activeCard.requestId, {
     answers: { [activeCard.questionId!]: "Yes" },
   });
@@ -1186,12 +1285,38 @@ async function freshScenarios(env: Environment) {
       (await decisionStatus(env, heldDecision)) === "answered" ? true : null,
     "the held decision answer after ui",
   );
-  const afterHeldUiIdle = await idleFor(env, 3);
-  record(env, "fresh:inbox-ui-keeps-decision-held", {
-    tabId: heldReopened[0]!.tabId,
+  const afterQueuedTurn = await until(async () => {
+    const p = await projection(env.rpc, env.inboxThreadId);
+    if (!p || hasActiveRun(p)) return null;
+    return p.turnItems.some(
+      (item) =>
+        item.type === "assistant_message" &&
+        /Nucleus board is open|Opened the Nucleus board/.test(
+          String(item.text ?? ""),
+        ),
+    )
+      ? p
+      : null;
+  }, "the queued ui turn to report the served board");
+  const afterQueuedSessions = await previewSessions(env.rpc, env.inboxThreadId);
+  assert.equal(
+    afterQueuedSessions.length,
+    1,
+    "one board tab after the held ui",
+  );
+  assert.equal(
+    afterQueuedSessions[0]!.tabId,
+    queuedUi.sessions[0]!.tabId,
+    "the served board tab is not replaced by the queued turn",
+  );
+  assertNoPairingLeak(env, afterQueuedTurn, "held-ui-finished");
+  record(env, "fresh:inbox-ui-serves-queued-message", {
+    queuedRun: queuedUi.run.status,
     cardIdBefore: heldCard.requestId,
     cardIdAfter: activeCard.requestId,
-    runs: afterHeldUiIdle.runs,
+    tabId: queuedUi.sessions[0]!.tabId,
+    sessions: afterQueuedSessions.length,
+    answerReported: true,
   });
 }
 

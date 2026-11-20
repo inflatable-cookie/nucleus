@@ -1,6 +1,7 @@
 import type { LaunchSourceContext } from "../launch";
 import type { LaunchMachinePorts } from "./machine";
 import { git } from "../../git/index";
+import { unreviewedMergeRoute } from "../../../shared/task-view";
 import { readGitCheckout } from "../../git/git-identity";
 import { ordinaryReviewSource } from "../../review/ordinary-review";
 import { chooseProfile, reviewerFiltersWorker } from "../routing";
@@ -420,7 +421,9 @@ export class RunLaunchSource {
             ? await this.machine.verifyPrIdentity!(t, taskPrNumber(t), {
                 allowDraft: true,
               })
-            : await this.machine.verifyPr(t, taskPrNumber(t));
+            : role === "reviewer" && unreviewedMergeRoute(t)
+              ? await this.machine.verifyMergedReviewSource!(t, unreviewedMergeRoute(t)!)
+              : await this.machine.verifyPr(t, taskPrNumber(t));
     if (revisionContinuation && pr) await this.machine.verifyResume!(t);
     let retainedPrePrHead: string | null = null;
     if (prePrWorkerResume) {
@@ -562,6 +565,12 @@ export class RunLaunchSource {
         t.directory,
         t.repoPath,
         dirname(t.directory),
+        t.workspaceAllocation?.provider === "barge"
+          ? {
+              expectedCommonDir: t.workspaceAllocation.gitCommonDir,
+              expectedCheckoutPath: t.workspaceAllocation.checkoutPath,
+            }
+          : undefined,
       );
     // Dependency setup is a command in the task checkout. Re-prove the local
     // exact tree after it and before thread selection can reserve a proof run.

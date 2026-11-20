@@ -9,10 +9,12 @@ import {
 } from "react-native";
 import { Icon } from "./shell";
 import { Popover } from "./popover";
+import { errorText } from "./error-text";
 import type { LeadListFacts, Project, TaskSummary } from "../shared/contracts";
 import type { PlanningStep } from "../shared/planning-tab";
 import {
   isAdditivePress,
+  projectNameProblem,
   projectSelectorRows,
   readProjectScope,
   selectionLabel,
@@ -22,15 +24,29 @@ import {
   type ProjectScope,
 } from "../shared/project-scope";
 import {
+  ACTION_ICONS,
   ActionButton,
   Button,
+  FocusRing,
+  InlineConfirm,
+  noOutline,
   controlFrame,
   controlText,
   muted,
   row,
   type Colors,
 } from "./controls";
-import { control, space, radius, type as typeScale, overlay } from "./design";
+import {
+  control,
+  space,
+  radius,
+  roles,
+  touchSlop,
+  touchTarget,
+  type as typeScale,
+  overlay,
+} from "./design";
+import { useFocusVisible } from "./focus-modality";
 
 type ScopeStorage = {
   getItem(key: string): string | null;
@@ -163,15 +179,227 @@ function withinBoxes(boxes: React.RefObject<View | null>[], target: unknown) {
 }
 /** Kept for callers written before the 2026-09-27 board retirement. */
 
+/** A row's actions in the board's project selector (nucleus#1430). Each resolves once the
+ * change is saved; a rejection shows in the row. Remove hands the project to the shared
+ * removal dialog, which the board renders outside the picker. An absent action is left out of the menu. */
+export type ProjectSelectorActions = {
+  park?: (project: Project) => Promise<unknown>;
+  unpark?: (project: Project) => Promise<unknown>;
+  rename?: (project: Project, name: string) => Promise<unknown>;
+  remove?: (project: Project) => void;
+};
+
+/** A desktop pointer that hovers reveals a row's disclosure chevron on hover; touch and native hosts keep it visible. */
+function finePointer(): boolean {
+  try {
+    return Boolean(
+      (
+        globalThis as { matchMedia?: (query: string) => { matches: boolean } }
+      ).matchMedia?.("(hover: hover) and (pointer: fine)")?.matches,
+    );
+  } catch {
+    return false;
+  }
+}
+
+type RowMenu = { key: string; view: "actions" | "park" | "rename" };
+
+/** The selection box's side, shared by the row, its rename editor and the note under it. */
+const CHECKBOX = 18;
+
+function Checkbox({ c, checked }: { c: Colors; checked: boolean }) {
+  return (
+    <View
+      style={{
+        width: CHECKBOX,
+        height: CHECKBOX,
+        borderRadius: radius.control,
+        borderWidth: control.border,
+        borderColor: checked ? c.accent : c.foregroundMuted,
+        backgroundColor: checked ? c.accent : "transparent",
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+    >
+      {checked && <Icon name="Check" size={12} color={c.accentForeground} />}
+    </View>
+  );
+}
+
+/** A row's task count, at the same place whether the row shows its name or the rename editor. */
+function Count({ c, value }: { c: Colors; value: number }) {
+  return (
+    <Text
+      accessibilityElementsHidden
+      importantForAccessibility="no"
+      style={{
+        color: c.foregroundMuted,
+        fontSize: typeScale.metadata.fontSize,
+        lineHeight: typeScale.metadata.lineHeight,
+        fontVariant: ["tabular-nums"],
+      }}
+    >
+      {value}
+    </Text>
+  );
+}
+
+/** A compact icon control in a project row (the disclosure chevron, Save and Cancel): the
+ * compact control size, the touch target's reach, and the keyboard focus ring. */
+function RowIcon({
+  c,
+  icon,
+  label,
+  color,
+  expanded,
+  hidden = false,
+  disabled = false,
+  onPress,
+  onHoverIn,
+  onHoverOut,
+  onFocus,
+  onBlur,
+}: {
+  c: Colors;
+  icon: string;
+  label: string;
+  color: string;
+  expanded?: boolean;
+  hidden?: boolean;
+  disabled?: boolean;
+  onPress: () => void;
+  onHoverIn?: () => void;
+  onHoverOut?: () => void;
+  onFocus?: () => void;
+  onBlur?: () => void;
+}) {
+  const focus = useFocusVisible();
+  const [hover, setHover] = useState(false);
+  const size = control.compact.height;
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={
+        expanded === undefined ? { disabled } : { expanded, disabled }
+      }
+      disabled={disabled}
+      hitSlop={touchSlop(size)}
+      onHoverIn={() => {
+        setHover(true);
+        onHoverIn?.();
+      }}
+      onHoverOut={() => {
+        setHover(false);
+        onHoverOut?.();
+      }}
+      onFocus={() => {
+        focus.onFocus();
+        onFocus?.();
+      }}
+      onBlur={() => {
+        focus.onBlur();
+        onBlur?.();
+      }}
+      onPress={onPress}
+      style={{
+        width: size,
+        height: size,
+        alignItems: "center",
+        justifyContent: "center",
+        borderRadius: radius.control,
+        opacity: hidden ? 0 : disabled ? 0.45 : 1,
+        ...noOutline(),
+      }}
+    >
+      <FocusRing c={c} visible={focus.visible} />
+      <Icon
+        name={icon}
+        size={16}
+        color={hover && !disabled ? c.foreground : color}
+      />
+    </Pressable>
+  );
+}
+
+/** One action in a row's open panel: an icon in the checkbox's column and a label in the name's,
+ * so the panel continues the row it belongs to. `tall` lifts it to the touch target on touch hosts. */
+function PanelAction({
+  c,
+  icon,
+  text,
+  label,
+  danger = false,
+  tall,
+  disabled = false,
+  onPress,
+}: {
+  c: Colors;
+  icon: string;
+  text: string;
+  label: string;
+  danger?: boolean;
+  tall: boolean;
+  disabled?: boolean;
+  onPress: () => void;
+}) {
+  const focus = useFocusVisible();
+  const [hover, setHover] = useState(false);
+  const r = roles(c);
+  const color = danger ? r.danger : r.foreground;
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={{ disabled }}
+      disabled={disabled}
+      onHoverIn={() => setHover(true)}
+      onHoverOut={() => setHover(false)}
+      onFocus={focus.onFocus}
+      onBlur={focus.onBlur}
+      onPress={onPress}
+      style={{
+        flexDirection: "row",
+        alignItems: "center",
+        gap: space.sm,
+        minHeight: tall ? touchTarget : control.compact.height + space.xxs,
+        paddingHorizontal: space.xxs,
+        borderRadius: radius.control,
+        backgroundColor: hover && !disabled ? c.surface2 : "transparent",
+        opacity: disabled ? 0.45 : 1,
+        ...noOutline(),
+      }}
+    >
+      <FocusRing c={c} visible={focus.visible} />
+      <View style={{ width: CHECKBOX, alignItems: "center" }}>
+        <Icon name={icon} size={14} color={danger ? r.danger : r.muted} />
+      </View>
+      <Text
+        style={{
+          color,
+          fontSize: typeScale.body.fontSize,
+          lineHeight: typeScale.body.lineHeight,
+        }}
+      >
+        {text}
+      </Text>
+    </Pressable>
+  );
+}
+
 /** Spec 026 Board "Scope": the header's project selector (nucleus#1421:
  * single-select by default, Shift-click toggles one project). A popover at the
  * wide size, a modal at the compact size. An empty selection means all projects.
- * It only scopes the board: project settings live in Settings → Projects, which
- * its settings icon opens (lane `nucleus-ui`, task 946 build task 4). */
+ * Each row's disclosure chevron (nucleus#1430, #1432) opens a panel attached to the
+ * row with Park or Unpark, Rename and Remove from Nucleus, inside the picker so no
+ * nested popover takes an outside press; Rename edits the name in its own slot. Project
+ * settings live in Settings → Projects, which its settings icon opens (lane `nucleus-ui`,
+ * task 946 build task 4). */
 export function ProjectSelector({
   projects,
   tasks,
   leads,
+  queuedCounts = [],
   value,
   onChange,
   onOpenChange,
@@ -180,22 +408,41 @@ export function ProjectSelector({
   enabled = true,
   onEnabledChange,
   onSettings,
+  projectActions,
 }: {
   projects: Project[];
   tasks: TaskSummary[];
   leads: readonly LeadListFacts[];
+  queuedCounts?: readonly { repoPath: string; count: number }[];
   value: string[];
   onChange: (keys: string[]) => void;
   enabled?: boolean;
   onEnabledChange?: (enabled: boolean) => void;
   /** Opens Settings at Projects; absent on a host without Settings. */ onSettings?: () => void;
+  /** The row panel's actions; absent, rows have no disclosure chevron. */ projectActions?: ProjectSelectorActions;
   onOpenChange: (open: boolean) => void;
   compact: boolean;
   c: Colors;
 }) {
   const [open, setOpenState] = useState(false),
     [search, setSearch] = useState("");
+  // The row whose actions are open, and the step it is on. Ref-mirrored so the Escape listener reads it live.
+  const [menuState, setMenuState] = useState<RowMenu | null>(null),
+    menuRef = useRef<RowMenu | null>(null);
+  const [draft, setDraft] = useState(""),
+    [pending, setPending] = useState(false),
+    [actionError, setActionError] = useState(""),
+    [editorFocused, setEditorFocused] = useState(false);
+  // Hover and keyboard focus reveal a row's chevron on a pointer device.
+  const [hovered, setHovered] = useState<string | null>(null),
+    [focused, setFocused] = useState<string | null>(null);
+  const setMenu = (next: RowMenu | null) => {
+    menuRef.current = next;
+    setMenuState(next);
+    setActionError("");
+  };
   const setOpen = (next: boolean) => {
+    if (!next) setMenu(null);
     setOpenState(next);
     onOpenChange(next);
   };
@@ -212,8 +459,11 @@ export function ProjectSelector({
     const onPointer = (event: { target?: unknown }) => {
       if (!withinBoxes([trigger, menu], event?.target)) setOpen(false);
     };
+    // Escape closes an open row action first, so a rename in progress is cancelled, not the picker.
     const onKey = (event: { key?: string }) => {
-      if (event?.key === "Escape") setOpen(false);
+      if (event?.key !== "Escape") return;
+      if (menuRef.current) setMenu(null);
+      else setOpen(false);
     };
     documentHost.addEventListener("pointerdown", onPointer);
     documentHost.addEventListener("keydown", onKey);
@@ -227,11 +477,274 @@ export function ProjectSelector({
     enabled || !value.length
       ? selectionLabel(projects, value)
       : `${selectionLabel(projects, value)} · filter off`;
-  const rows = projectSelectorRows(projects, value, search, tasks, leads);
+  const rows = projectSelectorRows(
+    projects,
+    value,
+    search,
+    tasks,
+    leads,
+    queuedCounts,
+  );
+  const byKey = new Map(projects.map((project) => [project.key, project]));
+  const fine = finePointer();
+  // One action at a time. Each one resolves into a closed menu; a rejection stays on the row.
+  const run = (action: Promise<unknown>) => {
+    setPending(true);
+    setActionError("");
+    action.then(
+      () => {
+        setPending(false);
+        setMenu(null);
+      },
+      (error) => {
+        setPending(false);
+        setActionError(errorText(error));
+      },
+    );
+  };
+  // React Native Web's text input keeps its keydown from bubbling, so the editor handles its own
+  // Escape. In the compact picker the modal closes on the same key's keyup; that one close is swallowed.
+  const swallowClose = useRef(false);
+  const onEditorKey = (event: { nativeEvent?: { key?: string } }) => {
+    if (event?.nativeEvent?.key !== "Escape") return;
+    setMenu(null);
+    const documentHost = (globalThis as { document?: DocumentHost }).document;
+    if (!compact || !documentHost) return;
+    swallowClose.current = true;
+    const release = () => {
+      documentHost.removeEventListener("keyup", release);
+      setTimeout(() => {
+        swallowClose.current = false;
+      }, 0);
+    };
+    documentHost.addEventListener("keyup", release);
+  };
+  const toggleMenu = (key: string) =>
+    menuRef.current?.key === key
+      ? setMenu(null)
+      : setMenu({ key, view: "actions" });
+  /** The row's control panel, attached under the row inside its frame, so the picker's outside-press check still sees it. */
+  const renderPanel = (full: Project) => {
+    const name = full.name;
+    const parked = full.visibility === "parked";
+    const failure = actionError ? (
+      <Text
+        accessibilityRole="alert"
+        style={{
+          color: roles(c).danger,
+          fontSize: typeScale.metadata.fontSize,
+          lineHeight: typeScale.metadata.lineHeight,
+          paddingHorizontal: space.xs,
+          paddingBottom: space.xxs,
+        }}
+      >
+        {actionError}
+      </Text>
+    ) : null;
+    const frame = {
+      borderTopWidth: control.border,
+      borderTopColor: c.border,
+      backgroundColor: c.surface1,
+      padding: space.xxs,
+      gap: space.xxs / 2,
+    };
+    if (menuState?.view === "park")
+      return (
+        <View accessibilityLabel={`Actions for ${name}`} style={frame}>
+          <View style={{ padding: space.xxs }}>
+            <InlineConfirm
+              c={c}
+              question={`Park ${name}? No new work starts.`}
+              confirmLabel="Park"
+              label={`project ${name}`}
+              busy={pending}
+              onConfirm={() => run(projectActions!.park!(full))}
+              onCancel={() => setMenu({ key: full.key, view: "actions" })}
+            />
+          </View>
+          {failure}
+        </View>
+      );
+    const tall = compact || !fine;
+    return (
+      <View accessibilityLabel={`Actions for ${name}`} style={frame}>
+        {projectActions!.park && !parked && (
+          <PanelAction
+            c={c}
+            tall={tall}
+            icon={ACTION_ICONS.pause}
+            text="Park"
+            label={`Park ${name}`}
+            disabled={pending}
+            onPress={() => setMenu({ key: full.key, view: "park" })}
+          />
+        )}
+        {projectActions!.unpark && parked && (
+          <PanelAction
+            c={c}
+            tall={tall}
+            icon={ACTION_ICONS.resume}
+            text="Unpark"
+            label={`Unpark ${name}`}
+            disabled={pending}
+            onPress={() => run(projectActions!.unpark!(full))}
+          />
+        )}
+        {projectActions!.rename && (
+          <PanelAction
+            c={c}
+            tall={tall}
+            icon={ACTION_ICONS.edit}
+            text="Rename"
+            label={`Rename ${name}`}
+            disabled={pending}
+            onPress={() => {
+              setDraft(name);
+              setMenu({ key: full.key, view: "rename" });
+            }}
+          />
+        )}
+        {projectActions!.remove && (
+          <>
+            {(projectActions!.rename ||
+              projectActions!.park ||
+              projectActions!.unpark) && (
+              <View
+                accessibilityElementsHidden
+                importantForAccessibility="no"
+                style={{
+                  height: control.border,
+                  backgroundColor: c.border,
+                  marginVertical: space.xxs / 2,
+                  marginHorizontal: space.xs,
+                }}
+              />
+            )}
+            {/* Remove opens the shared removal dialog, which checks blockers and asks for confirmation. */}
+            <PanelAction
+              c={c}
+              tall={tall}
+              danger
+              icon={ACTION_ICONS.remove}
+              text="Remove from Nucleus"
+              label={`Remove ${name} from Nucleus`}
+              disabled={pending}
+              onPress={() => {
+                setOpen(false);
+                projectActions!.remove!(full);
+              }}
+            />
+          </>
+        )}
+        {failure}
+      </View>
+    );
+  };
+  /** Rename edits the name in its own slot: the input takes the label's place, so one name shows throughout. */
+  const renderEditor = (full: Project, tasks: number, checked: boolean) => {
+    const name = full.name;
+    const problem = projectNameProblem(draft);
+    const trimmed = draft.trim();
+    const save = () => {
+      if (pending || problem) return;
+      if (trimmed === name) return setMenu(null);
+      run(projectActions!.rename!(full, trimmed));
+    };
+    const message = problem ?? actionError;
+    const line = (
+      <View
+        style={{
+          flex: 1,
+          minWidth: 0,
+          flexDirection: "row",
+          alignItems: "center",
+          gap: space.sm,
+          paddingVertical: space.xxs,
+          paddingHorizontal: space.xs,
+        }}
+      >
+        <Checkbox c={c} checked={checked} />
+        <TextInput
+          accessibilityLabel={`Name for ${name}`}
+          accessibilityState={{ disabled: pending }}
+          value={draft}
+          onChangeText={(next) => {
+            setDraft(next);
+            if (actionError) setActionError("");
+          }}
+          onSubmitEditing={save}
+          onKeyPress={onEditorKey}
+          blurOnSubmit={false}
+          onFocus={() => setEditorFocused(true)}
+          onBlur={() => setEditorFocused(false)}
+          editable={!pending}
+          autoFocus
+          selectTextOnFocus
+          autoCapitalize="none"
+          autoCorrect={false}
+          returnKeyType="done"
+          style={{
+            ...controlFrame(c, {
+              compact: true,
+              focused: editorFocused,
+              invalid: Boolean(message),
+            }),
+            ...controlText(c),
+            // The frame's border and inset sit outside the text, so the typed name lines up with the label it replaces.
+            paddingHorizontal: space.xxs,
+            marginLeft: -(space.xxs + control.border),
+            paddingVertical: 0,
+            height: control.compact.height,
+            fontWeight: "600",
+            flex: 1,
+            minWidth: 0,
+            opacity: pending ? 0.6 : 1,
+            ...noOutline(),
+          }}
+        />
+        <View style={{ flexDirection: "row", gap: space.xxs }}>
+          <RowIcon
+            c={c}
+            icon={pending ? "LoaderCircle" : "Check"}
+            label={`Save name for ${name}`}
+            color={c.accent}
+            disabled={pending || Boolean(problem) || trimmed === name}
+            onPress={save}
+          />
+          <RowIcon
+            c={c}
+            icon="X"
+            label={`Cancel rename of ${name}`}
+            color={c.foregroundMuted}
+            disabled={pending}
+            onPress={() => setMenu(null)}
+          />
+        </View>
+        <Count c={c} value={tasks} />
+      </View>
+    );
+    const note = message ? (
+      <Text
+        accessibilityRole="alert"
+        style={{
+          color: roles(c).danger,
+          fontSize: typeScale.metadata.fontSize,
+          lineHeight: typeScale.metadata.lineHeight,
+          paddingLeft: space.xs + CHECKBOX + space.sm,
+          paddingRight: space.xs,
+          paddingBottom: space.xs,
+        }}
+      >
+        {message}
+      </Text>
+    ) : null;
+    return { line, note };
+  };
   const panel = (
     <View
       accessibilityLabel="Project selector"
-      style={{ gap: space.xs, padding: space.sm }}
+      // Shrinks inside the compact modal's card so the project list scrolls there instead of overflowing it.
+      style={{ gap: space.xs, padding: space.sm, flexShrink: 1, minHeight: 0 }}
     >
       {(onEnabledChange || onSettings) && (
         <View style={{ ...row, justifyContent: "space-between" }}>
@@ -328,63 +841,118 @@ export function ProjectSelector({
                   Dormant projects
                 </Text>
               )}
-            <Pressable
-              accessibilityRole="checkbox"
-              accessibilityLabel={`Project ${project.name}`}
-              accessibilityState={{ checked: project.checked }}
-              onPress={(event) => {
-                // Single-select by default (nucleus#1421): a plain press replaces the
-                // selection and closes the picker, while Shift toggles just that
-                // project and keeps the picker open for a sequence of Shift-clicks.
-                // Touch and keyboard activation carry no Shift, so they select one.
-                const additive = isAdditivePress(event);
-                onChange(
-                  additive
-                    ? toggleProject(value, project.key)
-                    : selectProject(value, project.key),
-                );
-                if (!additive) setOpen(false);
-              }}
-              style={{
-                flexDirection: "row",
-                alignItems: "center",
-                gap: space.sm,
-                padding: space.xs,
-                borderRadius: radius.control,
-                borderWidth: 1,
-                borderColor: project.checked ? c.accent : c.border,
-                backgroundColor: project.checked ? c.surface2 : c.surface0,
-              }}
-            >
-              <View
-                style={{
-                  width: 18,
-                  height: 18,
-                  borderRadius: radius.control,
-                  borderWidth: 1,
-                  borderColor: project.checked ? c.accent : c.foregroundMuted,
-                  backgroundColor: project.checked ? c.accent : "transparent",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                {project.checked && (
-                  <Icon name="Check" size={12} color={c.accentForeground} />
-                )}
-              </View>
-              <Text
-                numberOfLines={1}
-                style={{
-                  color: c.foreground,
-                  fontWeight: "600",
-                  fontSize: typeScale.body.fontSize,
-                  flex: 1,
-                  minWidth: 0,
-                }}
-              >
-                {project.name}
-              </Text>
-            </Pressable>
+            {(() => {
+              const full = byKey.get(project.key);
+              const withActions = Boolean(projectActions && full);
+              const mine = withActions && menuState?.key === project.key;
+              const editing = mine && menuState?.view === "rename";
+              const panelOpen = mine && !editing;
+              const editor = editing
+                ? renderEditor(full!, project.tasks, project.checked)
+                : null;
+              // Hidden until hover, focus or an open panel on a hover pointer; it keeps its place either way.
+              const revealed =
+                compact ||
+                !fine ||
+                hovered === project.key ||
+                focused === project.key ||
+                mine;
+              const reveal = {
+                onHoverIn: () => setHovered(project.key),
+                onHoverOut: () =>
+                  setHovered((current) =>
+                    current === project.key ? null : current,
+                  ),
+                onFocus: () => setFocused(project.key),
+                onBlur: () =>
+                  setFocused((current) =>
+                    current === project.key ? null : current,
+                  ),
+              };
+              return (
+                // Row and panel share one frame: the open panel reads as part of its row, not a tray below it.
+                <View
+                  style={{
+                    borderRadius: radius.control,
+                    borderWidth: control.border,
+                    borderColor: project.checked ? c.accent : c.border,
+                    backgroundColor: project.checked ? c.surface2 : c.surface0,
+                    overflow: "hidden",
+                  }}
+                >
+                  <View
+                    style={{
+                      flexDirection: "row",
+                      alignItems: "center",
+                      paddingRight: withActions ? space.xxs : 0,
+                    }}
+                  >
+                    {editor ? (
+                      editor.line
+                    ) : (
+                      <Pressable
+                        accessibilityRole="checkbox"
+                        accessibilityLabel={`Project ${project.name}, ${project.tasks} tasks`}
+                        accessibilityState={{ checked: project.checked }}
+                        {...reveal}
+                        onPress={(event) => {
+                          // Single-select by default (nucleus#1421): a plain press replaces the
+                          // selection and closes the picker, while Shift toggles just that
+                          // project and keeps the picker open for a sequence of Shift-clicks.
+                          // Touch and keyboard activation carry no Shift, so they select one.
+                          const additive = isAdditivePress(event);
+                          onChange(
+                            additive
+                              ? toggleProject(value, project.key)
+                              : selectProject(value, project.key),
+                          );
+                          if (!additive) setOpen(false);
+                        }}
+                        style={{
+                          flex: 1,
+                          minWidth: 0,
+                          flexDirection: "row",
+                          alignItems: "center",
+                          gap: space.sm,
+                          padding: space.xs,
+                        }}
+                      >
+                        <Checkbox c={c} checked={project.checked} />
+                        <Text
+                          numberOfLines={1}
+                          style={{
+                            color: c.foreground,
+                            fontWeight: "600",
+                            fontSize: typeScale.body.fontSize,
+                            lineHeight: typeScale.body.lineHeight,
+                            flex: 1,
+                            minWidth: 0,
+                          }}
+                        >
+                          {project.name}
+                        </Text>
+                        <Count c={c} value={project.tasks} />
+                      </Pressable>
+                    )}
+                    {withActions && (
+                      <RowIcon
+                        c={c}
+                        icon={panelOpen ? "ChevronUp" : "ChevronDown"}
+                        label={`Project actions for ${full!.name}`}
+                        expanded={panelOpen}
+                        color={panelOpen ? c.foreground : c.foregroundMuted}
+                        hidden={!revealed}
+                        disabled={editing}
+                        {...reveal}
+                        onPress={() => toggleMenu(project.key)}
+                      />
+                    )}
+                  </View>
+                  {editor?.note}
+                  {panelOpen && renderPanel(full!)}
+                </View>
+              );
+            })()}
           </React.Fragment>
         ))}
         {!projects.length && <Text style={muted(c)}>No projects yet.</Text>}
@@ -478,7 +1046,12 @@ export function ProjectSelector({
           visible
           transparent
           animationType="fade"
-          onRequestClose={() => setOpen(false)}
+          // Escape (React Native Web) and the Android back button cancel an open row action before the picker.
+          onRequestClose={() => {
+            if (swallowClose.current) return;
+            if (menuRef.current) setMenu(null);
+            else setOpen(false);
+          }}
         >
           <View
             style={{
