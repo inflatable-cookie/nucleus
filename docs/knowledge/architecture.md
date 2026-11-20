@@ -541,7 +541,8 @@ owner to the rules it enforces.
   `settleResponsibleFault`.
   `core/questions/origin.ts` keeps the one task-owner field exact and records a
   missing origin while delivery is still owed, with planner notice routing and
-  reparent authority for projects whose origin is unavailable.
+  reparent authority for projects whose origin is unavailable, plus the read-only
+  owner inventory one thread's handover reads.
 - `core/closeout/workspace-lifecycle.ts` owns workspace cleanup and post-merge workspace
   recovery; `core/verbs/disposition.ts` owns cancellation and supersession
   ([Spec 003](specs/003-post-dispatch-task-disposition.md)), including its

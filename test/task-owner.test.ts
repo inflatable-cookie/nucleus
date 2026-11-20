@@ -11,6 +11,7 @@ import {
   completionMembership,
   holdOwnerOf,
   holdsOf,
+  ownerInventorySchema,
   QUEUE_REPOSITORY_ORIGIN,
   reparentResultSchema,
   submissionSchema,
@@ -353,6 +354,156 @@ test("the bulk form moves every open task one thread owns in a project, and noth
   }
 });
 
+test("the inventory lists one thread's unfinished work by project and names what a project-scoped handover leaves behind", async () => {
+  const f = fixture();
+  try {
+    const inProject = [f.add("in-project-a"), f.add("in-project-b")];
+    const otherProject = f.add("other-project", "old", {}, "/other-repo");
+    const looseRepository = f.add("loose", "old", {}, "/loose-repo");
+    const unrelated = f.add("unrelated", "other-planner");
+    const finished = f.store.update(f.add("finished").id, { phase: "done" });
+    const removed = f.store.update(f.add("removed").id, {
+      removedAt: "2026-10-01T00:00:00.000Z",
+    });
+    // A thread that is gone still owns what it owned: identity needs a host proof,
+    // never a live thread, so an archived old owner is inspectable too.
+    const orphaned = f.add("orphaned", "gone-owner");
+    const inventory = ownerInventorySchema.parse(
+      await f.engine.ownerInventory({
+        agentId: "old",
+        caller: "operator (board)",
+        project: "project-c",
+      }),
+    );
+    assert.equal(inventory.agentId, "old");
+    assert.equal(inventory.selected?.project, "project-c");
+    assert.deepEqual(
+      inventory.selected?.tasks.map((task) => task.taskId).sort(),
+      inProject.map((task) => task.id).sort(),
+      "the selected project's own work leads",
+    );
+    assert.deepEqual(
+      inventory.outside.map((group) => `${group.project === null ? "none" : "project"}:${group.name}`).toSorted(),
+      ["project:Other", "project:loose-repo"],
+      "another project's work is named as outside",
+    );
+    assert.deepEqual(
+      inventory.outside.flatMap((group) => group.tasks.map((task) => task.taskId)).toSorted(),
+      [otherProject.id, looseRepository.id].toSorted(),
+    );
+    assert.deepEqual(
+      [unrelated, finished, removed].map((task) => task.id).filter((id) =>
+        [inventory.selected!, ...inventory.outside].some((group) =>
+          group.tasks.some((task) => task.taskId === id),
+        ),
+      ),
+      [],
+      "another owner's task and finished or removed tasks never appear",
+    );
+    assert.deepEqual(inventory.remaining, {
+      tasks: 2,
+      groups: inventory.outside.map((group) => group.name),
+    });
+    const orphan = await f.engine.ownerInventory({
+      agentId: "gone-owner",
+      caller: "operator (board)",
+    });
+    assert.deepEqual(
+      orphan.outside.flatMap((group) => group.tasks.map((task) => task.taskId)),
+      [orphaned.id],
+      "a gone thread's remaining work is still visible",
+    );
+    assert.equal(orphan.selected, null, "nothing is selected without a project");
+    assert.equal(orphan.remaining, null);
+    assert.deepEqual(f.notified, [], "the inventory sends no handover notice");
+    for (const task of [...inProject, otherProject, looseRepository])
+      assert.equal(
+        f.store.task(task.id).version,
+        task.version,
+        "the inventory writes nothing",
+      );
+    assert.equal(
+      f.store.events(inProject[0]!.id).filter((event) => event.kind === "owner_changed")
+        .length,
+      0,
+    );
+    assert.equal(taskOwner(f.store.task(finished.id)), "old");
+    assert.equal(taskOwner(f.store.task(removed.id)), "old");
+  } finally {
+    await f.close();
+  }
+});
+
+test("a project-scoped handover leaves the old thread's other responsibilities visible", async () => {
+  const f = fixture();
+  try {
+    const moved = f.add("moving");
+    const left = f.add("left-behind", "old", {}, "/other-repo");
+    await f.reparent({ project: "project-c", fromAgentId: "old" });
+    const before = ownerInventorySchema.parse(
+      await f.engine.ownerInventory({
+        agentId: "old",
+        caller: "operator (board)",
+        project: "project-c",
+      }),
+    );
+    assert.deepEqual(before.selected, {
+      project: "project-c",
+      name: "Project-C",
+      tasks: [],
+    });
+    assert.deepEqual(
+      before.outside.flatMap((group) => group.tasks.map((task) => task.taskId)),
+      [left.id],
+      "the archived old thread's other project keeps its owner until it is handed on",
+    );
+    assert.deepEqual(before.remaining, { tasks: 1, groups: ["Other"] });
+    assert.equal(taskOwner(f.store.task(left.id)), "old");
+    const successor = ownerInventorySchema.parse(
+      await f.engine.ownerInventory({ agentId: "new", caller: "new" }),
+    );
+    assert.deepEqual(
+      successor.outside.flatMap((group) => group.tasks.map((task) => task.taskId)),
+      [moved.id],
+      "the successor's own inventory is its new work only",
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+test("the inventory refuses a missing or ambiguous owner identity and an unknown project", async () => {
+  const f = fixture();
+  try {
+    f.add("t");
+    f.engine.identifyOriginHost = async (id: string) =>
+      id === "elsewhere" ? undefined : "host";
+    await assert.rejects(
+      f.engine.ownerInventory({ agentId: "elsewhere", caller: "elsewhere" }),
+      /unknown or ambiguous/,
+      "a thread no registered host proves cannot be inventoried",
+    );
+    await assert.rejects(
+      f.engine.ownerInventory({ agentId: "old", caller: "other-planner" }),
+      /needs that thread's own verified identity or the operator/,
+      "another thread cannot inventory this one",
+    );
+    await assert.rejects(
+      f.engine.ownerInventory({ agentId: "operator", caller: "operator (board)" }),
+      /operator is not a thread/,
+    );
+    await assert.rejects(
+      f.engine.ownerInventory({ agentId: "old", caller: "old", project: "nope" }),
+      /Unknown project nope/,
+    );
+    // The same thread may read its own responsibilities.
+    const mine = await f.engine.ownerInventory({ agentId: "old", caller: "old" });
+    assert.equal(mine.agentId, "old");
+  } finally {
+    await f.close();
+  }
+});
+
 test("the operator or the current owner may reparent; anyone else — including a thread claiming the retired project-owner role — is refused before any write", async () => {
   const f = fixture();
   try {
@@ -668,6 +819,11 @@ test("the CLI takes the caller from its own thread and calls the one reparent me
   );
   assert.match(source, /await resolveCliCaller/);
   assert.match(source, /client\.request\('queue\.reparent'/);
+  assert.match(
+    source,
+    /client\.request\('queue\.owner-inventory'/,
+    "the same helper carries the read-only handover inventory",
+  );
   assert.doesNotMatch(source, /--caller/);
   assert.match(
     readFileSync(
@@ -675,6 +831,13 @@ test("the CLI takes the caller from its own thread and calls the one reparent me
       "utf8",
     ),
     /name:\s*"queue\.reparent",\s*contract:\s*contracts\.reparent,\s*method:\s*"reparent"/,
+  );
+  assert.match(
+    readFileSync(
+      new URL("../shared/rpc-catalogue.ts", import.meta.url),
+      "utf8",
+    ),
+    /name:\s*"queue\.owner-inventory",\s*contract:\s*contracts\.ownerInventory,\s*method:\s*"ownerInventory",\s*mutating:\s*false/,
   );
 });
 

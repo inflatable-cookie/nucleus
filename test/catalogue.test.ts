@@ -56,6 +56,7 @@ const READ_ONLY_METHODS = new Set([
   "queue.telemetry",
   "queue.review-entry-preview",
   "queue.bulk-disposition-detail",
+  "queue.owner-inventory",
   "queue.capacity-state",
   "task.next",
   // Nucleus's own profile list is read through these; the host catalog is the host's report.

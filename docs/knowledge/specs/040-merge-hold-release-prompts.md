@@ -178,6 +178,17 @@ nomination or its own subscription) can still be unsubscribed on that recorded
 workspace binding; subscribing needs a live identity. The board's task detail has Change owner (this task, or every open task
 of the project that thread owns); agents use `bin/nucleus-reparent.mjs` (named `bin/northstar-reparent.mjs` before the 2026-11 rename).
 
+`queue.owner-inventory` is that helper's one read-only companion (nucleus#1447):
+the unfinished tasks one thread owns, grouped by project, with a named project's
+work separated from every responsibility it would leave behind, so a retiring
+planner sees work outside the project it is handing over (papercut 099090f5: a
+project-scoped handover left another project's task owned by the old planner). It
+reads the same owner facts and thread identity the reparent does, writes nothing,
+sends no notice and leaves independent holds alone; the caller is the thread
+itself or the operator, and an identity no registered host proves is refused.
+Cross-project reassignment stays an explicit reparent under the same per-project
+authority.
+
 Schema 49 records every existing task's owner, marks holds placed by the owner or
 creator as owner-placed and re-points their pending prompts.
 
@@ -212,6 +223,7 @@ Self-lifting holds ("until task X is done", "until a time") are
 | 19 | Caller is not the operator, project owner or current owner; or the new owner is archived, missing, the operator or a task worker | Refused before any write |
 | 20 | Creator nominated itself for completion with `notifyOriginOnCloseout: false` | The nomination is the owner entry: after a reparent the new owner gets the completion notice and the archived creator nothing |
 | 21 | Reparent to the current owner, or a repeated bulk request | Nothing written |
+| 22 | Owner inventory of a thread with work in two projects, another owner's task, a finished task, a removed task and an archived or gone thread (`--inventory AGENT --project A`) | The selected project's open tasks lead; the other project's work is named as outside and as `remaining`; the other owner's, finished and removed tasks never appear; nothing is written, no notice is sent, and an archived or gone owner is still read |
 
 
 ## Blocking hold derivation

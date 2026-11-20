@@ -811,6 +811,12 @@ export const RPC_CATALOGUE: RpcCatalogueEntry[] = [
     mutating: true,
   },
   {
+    name: "queue.owner-inventory",
+    contract: contracts.ownerInventory,
+    method: "ownerInventory",
+    mutating: false,
+  },
+  {
     name: "queue.remove",
     contract: contracts.removeTask,
     method: "removeTask",

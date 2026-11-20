@@ -1,7 +1,8 @@
 import { sameCallerIdentity } from '../../shared/agent-identity';
-import type {Notice,ReparentInput,ReparentResult,Task} from '../../shared/contracts';
+import type {Notice,OwnerInventory,OwnerInventoryInput,ReparentInput,ReparentResult,Task} from '../../shared/contracts';
 import {episodeBindsCurrentWork,isDispositionActive,isOperatorOrigin,OPERATOR_BOARD_CALLER,taskOwner,taskPlanner} from '../../shared/contracts';
 import {normalizeRepositoryOrigin} from '../../shared/lanes';
+import {repositoryLabel} from '../../shared/repository-label';
 import {recordedStopIsWait} from '../../shared/task-stop';
 import type {Resolution} from '../resolution';
 import {digest,type Store} from '../store/store';
@@ -86,6 +87,45 @@ export class OriginRouting {
    }
    return {toAgentId:to,workspaceId,changed,unchanged};
   });
+ }
+ /**
+  * nucleus#1447: the unfinished responsibilities one thread still owns, read
+  * across every project. It reads the same owner facts `reparent` writes - the
+  * same verified caller, the same host-proven thread identity and the same open
+  * tasks - and writes nothing, so independent holds stay put and no handover
+  * notice is sent. A project-scoped handover remains an explicit reparent; this
+  * only says which of the thread's work that reparent would move and what it
+  * would leave behind.
+  */
+ async ownerInventory(input:OwnerInventoryInput):Promise<OwnerInventory>{
+  const caller=input.caller.trim(),agentId=input.agentId.trim();
+  if(isOperatorOrigin(agentId))throw Error('The operator is not a thread; it owns no tasks to inventory');
+  const hostId=await this.resolution.identifyOriginHost(agentId);
+  if(!hostId)throw Error(`Owner thread ${agentId} is unknown or ambiguous: no registered host proves that identity, so its tasks cannot be inventoried`);
+  if(caller!==OPERATOR_BOARD_CALLER&&!sameCallerIdentity(agentId,caller,hostId))
+   throw Error(`Inventorying the tasks of ${agentId} needs that thread's own verified identity or the operator at the board; ${caller} is neither`);
+  const project=input.project===undefined?null:this.store.projectByKey(input.project);
+  if(input.project!==undefined&&!project)throw Error(`Unknown project ${input.project}`);
+  type Entry=OwnerInventory['outside'][number];
+  const entry=(task:Task)=>({taskId:task.id,number:task.number,reference:task.reference,title:task.title,phase:task.phase});
+  const groups=new Map<string,Entry>();
+  for(const task of this.unfinished()){
+   if(!sameCallerIdentity(taskOwner(task),agentId,task.originHostId,hostId))continue;
+   // Removed and finished tasks never reach here: `unfinished` is the live set.
+   const owned=this.store.projectFor(task.repoPath,normalizeRepositoryOrigin(task.repository??''));
+   const label=repositoryLabel(task);
+   const key=owned?`project:${owned.key}`:`repository:${label}`;
+   const group=groups.get(key)??{project:owned?.key??null,name:owned?.name??label,tasks:[]};
+   group.tasks.push(entry(task));
+   groups.set(key,group);
+  }
+  const ordered=[...groups.values()].sort((left,right)=>left.name.localeCompare(right.name)||(left.project??'').localeCompare(right.project??''));
+  for(const group of ordered)group.tasks.sort((left,right)=>(left.number??Number.MAX_SAFE_INTEGER)-(right.number??Number.MAX_SAFE_INTEGER)||left.taskId.localeCompare(right.taskId));
+  const selectedKey=project?`project:${project.key}`:null;
+  const selected=selectedKey?(groups.get(selectedKey)??{project:project!.key,name:project!.name,tasks:[]}):null;
+  const outside=ordered.filter(group=>group!==selected);
+  return {agentId,hostId,selected,outside,
+   remaining:selected?{tasks:outside.reduce((total,group)=>total+group.tasks.length,0),groups:outside.map(group=>group.name)}:null};
  }
  /** The one owner write: owner field, its workspace, cleared routing errors, the planner and the outgoing owner's subscription choice. Null when already the owner. */
  private writeOwner(task:Task,to:string,workspaceId:string,caller:string,reason:string,hostId:string):Task|null{
