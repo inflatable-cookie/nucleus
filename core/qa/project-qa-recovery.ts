@@ -5,7 +5,7 @@
  * still runs from the retained checkout (unless the supervisor had already
  * completed it) with its own step record.
  */
-import { existsSync } from "node:fs";
+import { closeSync, constants, existsSync, fstatSync, openSync, readSync } from "node:fs";
 import { minimalHookEnvironment, type ExecutionOutcome } from "../hooks/hooks";
 import { gitText } from "../workspaces/worktree-links";
 import { withRunTemporaryDirectory } from "../workspaces/run-scratch";
@@ -21,7 +21,7 @@ import {
   type QaSupervisionState,
 } from "./project-qa-supervision-files";
 import {
-  executionOutput, mergeQaEscapees, mergeLogWriteErrors, qaExecutionFailed, qaStepRecord,
+  executionOutput, mergeQaEscapees, mergeLogWriteErrors, PROJECT_QA_STEP_OUTPUT_BYTES, qaExecutionFailed, qaStepRecord,
   type QaPipelineOutcome,
 } from "./project-qa-pipeline";
 import { projectQaWorktreeHooks, removeQaWorkspace } from "./project-qa-worktree";
@@ -46,6 +46,7 @@ export interface QaRecoveryContext {
     steps: ProjectQaStep[]; failedStep: ProjectQaStepName | null; escapedDescendants: HostRunEscapedDescendant[];
     logWriteErrors?: ProjectQaLogWriteError[];
     checkoutCleanupPending?: boolean;
+    interruptedStep?: ProjectQaStepName | null;
   }): ProjectQaRun;
   /** Settle a run whose supervisor is proven dead, from what it recorded. */
   reconcileLostRun(run: ProjectQaRun, state: QaSupervisionState | null, reason: string, escapedDescendants?: HostRunEscapedDescendant[]): Promise<void>;
@@ -57,12 +58,13 @@ export interface QaRecoveryContext {
 
 /**
  * One abandoned run's settlement: the supervisor is gone, so the run settles on
- * what the run itself recorded. `lost` is the dead supervisor's outcome and
- * `failed` is the ended step's, and both travel through the same teardown and
+ * what the run itself recorded. `lost` is the dead supervisor's outcome,
+ * `failed` is a genuine step failure, and `hold` is a clean step exit whose
+ * run finalization is unproved; all travel through the same teardown and
  * checkout release so neither family can forget one of them.
  */
 export interface QaAbandonedSettlement {
-  state: "lost" | "failed";
+  state: "lost" | "failed" | "hold";
   exitCode: number | null;
   /** The step the settlement lands on, when the evidence names one. */
   interruptedStep: ProjectQaStepName | null;
@@ -77,17 +79,56 @@ export interface QaAbandonedSettlement {
   hostResult: HostRunResult | null;
 }
 
+function existingStepLogFacts(path: string): { log: { bytes: number | null; error: string | null }; buffer: Buffer } {
+  let fd: number | null = null;
+  try {
+    fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    const info = fstatSync(fd);
+    if (!info.isFile()) return { log: { bytes: null, error: null }, buffer: Buffer.alloc(0) };
+    if (info.size === 0) return { log: { bytes: 0, error: null }, buffer: Buffer.alloc(0) };
+    const limit = PROJECT_QA_STEP_OUTPUT_BYTES * 2;
+    if (info.size <= limit) {
+      const buffer = Buffer.alloc(info.size);
+      const read = readSync(fd, buffer, 0, info.size, 0);
+      return { log: { bytes: info.size, error: null }, buffer: buffer.subarray(0, read) };
+    }
+    const head = Buffer.alloc(PROJECT_QA_STEP_OUTPUT_BYTES);
+    const tail = Buffer.alloc(PROJECT_QA_STEP_OUTPUT_BYTES);
+    const readHead = readSync(fd, head, 0, PROJECT_QA_STEP_OUTPUT_BYTES, 0);
+    const readTail = readSync(fd, tail, 0, PROJECT_QA_STEP_OUTPUT_BYTES, info.size - PROJECT_QA_STEP_OUTPUT_BYTES);
+    return {
+      log: { bytes: info.size, error: null },
+      buffer: Buffer.concat([head.subarray(0, readHead), tail.subarray(0, readTail)]),
+    };
+  } catch {
+    return { log: { bytes: null, error: null }, buffer: Buffer.alloc(0) };
+  } finally {
+    if (fd !== null) closeSync(fd);
+  }
+}
+
 /**
  * Where this step's output ended: the live projection's path and byte offset
- * with its last lines, or the step's own stream byte counts when no live log
- * survived. Evidence, never a claim about the bytes it does not hold.
+ * with its last lines, plus any retained step logs if already written on disk.
+ * Evidence, never a claim about the bytes it does not hold.
  */
 export function qaOutputPointerDetail(runRoot: string, runId: string, step: ProjectQaStepName): string {
   const live = readQaOutputPointer(qaRunLiveOutputPath(runRoot, runId));
   const lines = [`Live output log: ${qaRunLiveOutputPath(runRoot, runId)}${live ? ` at byte ${live.bytes}` : " (no readable live log)"}.`];
   if (live?.tail) lines.push(`Last output lines:\n${live.tail}`);
   lines.push("The supervisor did not close the live log normally; up to the run token's length in final bytes may have been withheld by redaction.");
-  lines.push(`No step log for ${step} was written; the live log is the run's output record.`);
+  const stepLogs = qaStepLogPaths(runRoot, runId, step);
+  const stdoutLog = readQaOutputPointer(stepLogs.stdoutPath);
+  const stderrLog = readQaOutputPointer(stepLogs.stderrPath);
+  if (stdoutLog || stderrLog) {
+    const parts = [
+      stdoutLog ? `stdout ${stdoutLog.path} (${stdoutLog.bytes} bytes)` : null,
+      stderrLog ? `stderr ${stderrLog.path} (${stderrLog.bytes} bytes)` : null,
+    ].filter(Boolean).join(", ");
+    lines.push(`Retained step log for ${step}: ${parts}.`);
+  } else {
+    lines.push(`No step log for ${step} was written; the live log is the run's output record.`);
+  }
   return lines.join("\n");
 }
 
@@ -128,25 +169,29 @@ export const projectQaRecovery = {
   },
 
   /**
-   * #1393: settle a run whose step's process group ended and whose supervisor
-   * never wrote a settlement, from the step's own recorded exit. The step that
-   * ended becomes the failing step, its signal or exit code reaches the host
-   * settlement, and the output pointer names where the run's output stopped.
+   * #1393 / #1408: settle a run whose step's process group ended and whose
+   * supervisor never wrote a settlement, from the step's own recorded exit.
+   *
+   * Genuine step failures (non-zero exit or signal) settle `failed` and name
+   * the failing step. A clean step exit (0, no signal) whose supervisor
+   * finalization was interrupted settles `hold` with the step's direct exit 0
+   * preserved, never blaming the step for an infrastructure interruption and
+   * never certifying skipped stages, teardown or full pipeline completion.
    *
    * With no recorded exit at all the outcome is genuinely unobservable, so the
-   * run settles `lost` — with the same step, output pointer and bound evidence,
-   * which is exactly what the incident lacked.
+   * run settles `lost` — with the same step, output pointer and bound evidence.
    */
   async settleEndedStep(this: QaRecoveryContext, run: ProjectQaRun, inspection: Extract<SupervisorInspection, { kind: "step_ended" }>): Promise<void> {
     const { state, step, exit, reason } = inspection;
-    const output = qaOutputPointerDetail(this.qaRepositoryRootPath(run.key), run.id, step);
+    const runRoot = this.qaRepositoryRootPath(run.key);
+    const output = qaOutputPointerDetail(runRoot, run.id, step);
     if (!exit) {
       await this.reconcileLostRun(run, state, reason, state.escapedDescendants);
       await this.appendSettledOutputPointer(run, output);
       return;
     }
     const startedAt = state.activeProcess?.startedAt ?? run.startedAt;
-    const supervisorExit = await supervisorExitDetail(this.qaRepositoryRootPath(run.key), run, state);
+    const supervisorExit = await supervisorExitDetail(runRoot, run, state);
     const wallMs = Math.max(0, Date.parse(exit.exitedAt) - Date.parse(startedAt));
     const hostResult = hostRunResultSchema.parse({
       format: "host.run.result", version: 1, runId: run.id, epoch: run.hostRunEpoch ?? 1,
@@ -155,22 +200,33 @@ export const projectQaRecovery = {
       exitCode: exit.signal ? null : exit.exitCode, signal: exit.signal,
       startedAt, endedAt: exit.exitedAt, wallMs, cpuMs: null, escapedDescendants: [],
     });
-    const endedStep = state.steps.some(step => step.name === exit.step) ? undefined
-      : qaStepRecord(exit.step, run.argv.join(" "), {
+    const stepCommand = run.stages?.find(stage => stage.name === exit.step)?.argv.join(" ") ?? run.argv.join(" ");
+    const stepLogs = qaStepLogPaths(runRoot, run.id, exit.step);
+    const stdoutFacts = existingStepLogFacts(stepLogs.stdoutPath);
+    const stderrFacts = existingStepLogFacts(stepLogs.stderrPath);
+    const endedStep = state.steps.some(entry => entry.name === exit.step) ? undefined
+      : qaStepRecord(exit.step, stepCommand, {
         pid: exit.pid, code: exit.exitCode, signal: exit.signal, timedOut: false,
-        stdoutExceeded: false, stderrExceeded: false, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0),
+        stdoutExceeded: false, stderrExceeded: false, stdout: stdoutFacts.buffer, stderr: stderrFacts.buffer,
         durationMs: wallMs, startedAt, endedAt: exit.exitedAt,
         processGroupId: exit.processGroupId, leaderStartIdentity: state.activeProcess?.leaderStartIdentity ?? null,
         startIdentity: state.activeProcess?.startIdentity ?? null,
         processGroupEmpty: true, terminationSignal: null, terminationError: null, escapedDescendants: [],
-      }, qaStepLogPaths(this.qaRepositoryRootPath(run.key), run.id, exit.step),
-        { bytes: null, error: null }, { bytes: null, error: null });
+      }, stepLogs, stdoutFacts.log, stderrFacts.log);
+    const stepFailed = Boolean(exit.signal) || exit.exitCode !== 0;
+    const phase = readQaPhase(qaSupervisionPaths(runRoot, run.id, run.teardownRetryAttempt ?? 0).phasePath, run.id) ?? "unknown";
+    const steps = endedStep ? [...state.steps, endedStep] : undefined;
     await this.settleAbandoned(run, state, {
-      state: "failed", exitCode: exit.signal ? null : exit.exitCode,
-      interruptedStep: exit.step, hostResult,
-      ...(endedStep ? { steps: [...state.steps, endedStep], failedStep: exit.step } : { failedStep: state.failedStep ?? exit.step }),
-      account: `The supervisor left this run unsettled: ${reason}. Last supervisor phase: ${readQaPhase(qaSupervisionPaths(this.qaRepositoryRootPath(run.key), run.id).phasePath, run.id) ?? "unknown"}; supervisor exit: ${supervisorExit}.\n${output}`,
-      closing: "Queue settled this run failed from the step's own recorded exit; it is not lost, because the step's exit code or signal and its output were recorded.",
+      state: stepFailed ? "failed" : "hold",
+      exitCode: exit.signal ? null : exit.exitCode,
+      interruptedStep: exit.step,
+      hostResult,
+      ...(steps ? { steps } : {}),
+      ...(stepFailed ? { failedStep: state.failedStep ?? exit.step } : {}),
+      account: `The supervisor left this run unsettled: ${reason}. Last supervisor phase: ${phase}; supervisor exit: ${supervisorExit}.\n${output}`,
+      closing: stepFailed
+        ? "Queue settled this run failed from the step's own recorded exit; it is not lost, because the step's exit code or signal and its output were recorded."
+        : `Queue held this run because supervisor finalization was interrupted after step ${exit.step} exited 0; this is an infrastructure interruption, not a step failure, and unrun stages, full pipeline completion, or supervisor teardown could not be proved.`,
     }, state.escapedDescendants);
   },
 
@@ -198,6 +254,7 @@ export const projectQaRecovery = {
           state: "hold", exitCode: current.exitCode, detail, finishedAt: now(), steps,
           failedStep: "teardown",
           checkoutCleanupPending: current.checkoutCleanupPending,
+          interruptedStep: current.interruptedStep && current.interruptedStep !== "teardown" ? current.interruptedStep : null,
           logWriteErrors: mergeLogWriteErrors(run.logWriteErrors, state?.logWriteErrors),
           escapedDescendants: mergeQaEscapees(escapedDescendants, state?.escapedDescendants ?? []),
         });
@@ -216,7 +273,14 @@ export const projectQaRecovery = {
     let detail = state?.detail ?? run.outputTail;
     let logWriteErrors = mergeLogWriteErrors(run.logWriteErrors, state?.logWriteErrors);
     let teardownFailed = false;
-    if (existsSync(checkoutPath) && !steps.some(step => step.name === "teardown")) {
+    let cleanupFailed = false;
+    let teardownState: string;
+    if (steps.some(step => step.name === "teardown")) {
+      teardownState = "already recorded before supervisor loss";
+    } else if (!existsSync(checkoutPath)) {
+      teardownState = "not run (checkout absent)";
+    } else {
+      teardownState = "not configured";
       try {
         const hooks = await projectQaWorktreeHooks(checkoutPath);
         if (hooks.teardown) {
@@ -240,12 +304,19 @@ export const projectQaRecovery = {
           if (output) detail += `\nWorktree teardown output:\n${output}`;
           if (qaExecutionFailed(result)) {
             teardownFailed = true;
+            teardownState = "failed during recovery; checkout retained";
             detail += `\nQA worktree teardown failed${result.timedOut ? " (timed out)" : result.signal ? ` (${result.signal})` : ` (exit ${result.code})`}.`;
+            detail += "\nNext action: retry teardown to clean up the retained checkout.";
+          } else {
+            teardownState = "completed during recovery";
           }
         }
       } catch (error) {
         teardownFailed = true;
+        failedStep ??= "teardown";
+        teardownState = "failed during recovery; checkout retained";
         detail += `\nQA worktree teardown failed: ${String(error)}`;
+        detail += "\nNext action: retry teardown to clean up the retained checkout.";
       }
     }
     if (!teardownFailed) {
@@ -254,10 +325,11 @@ export const projectQaRecovery = {
           ...(run.checkoutPath ? { admission: () => this.admitCheckout(run), expectedHead: run.base } : {}) });
         detail += " Its Queue-owned checkout was removed.";
       } catch (error) {
+        cleanupFailed = true;
         detail += `\nQA checkout cleanup failed: ${String(error)}`;
       }
     }
-    detail = `${detail}${detail ? "\n" : ""}${closed}`;
+    detail = `${detail}${detail ? "\n" : ""}Teardown state: ${teardownState}.\n${closed}`;
     const durationMs = Math.max(0, Date.now() - Date.parse(run.startedAt));
     const current = this.store.qaRun(run.id);
     if (current?.state === "running") await this.settle(current, {
@@ -265,6 +337,7 @@ export const projectQaRecovery = {
       finishedAt: now(), interruptedStep: settlement.interruptedStep, hostResult: settlement.hostResult,
       escapedDescendants: mergeQaEscapees(escapedDescendants, state?.escapedDescendants ?? []),
       cancelReason: state?.cancelReason ?? current.cancelReason,
+      ...(cleanupFailed && run.checkoutPath ? { checkoutCleanupPending: true } : {}),
     });
     removeQaSupervisionFiles(runRoot, run.id);
   },

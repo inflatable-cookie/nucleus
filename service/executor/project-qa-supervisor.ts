@@ -114,6 +114,7 @@ export async function runQaSupervisorMain(
         reason: plan.retry.reason,
         cleanupOnly: plan.retry.cleanupOnly,
         priorFailedStep: plan.retry.priorFailedStep,
+        priorInterruptedStep: plan.retry.priorInterruptedStep,
       },
     );
     return;

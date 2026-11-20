@@ -45,6 +45,7 @@ export interface QaTeardownRetryContext {
     steps: ProjectQaStep[]; failedStep: ProjectQaStepName | null; escapedDescendants: HostRunEscapedDescendant[];
     logWriteErrors?: ProjectQaLogWriteError[];
     checkoutCleanupPending?: boolean;
+    interruptedStep?: ProjectQaStepName | null;
   }): ProjectQaRun;
 }
 
@@ -103,7 +104,7 @@ export const projectQaTeardownRetry = {
       terminationGraceMs: run.terminationGraceMs ?? DEFAULT_PROCESS_TERMINATION_GRACE_MS,
       hookTimeoutMs: DEFAULT_PROJECT_QA_TIMEOUT_MS, hookMaxOutputBytes: DEFAULT_PROJECT_QA_MAX_OUTPUT_BYTES,
       identityToken, links: [], mode: "teardown_retry", attempt,
-      retry: { command, priorSteps: run.steps, qaExitCode, priorCancelReason: run.cancelReason, reason, cleanupOnly, priorFailedStep: run.failedStep },
+      retry: { command, priorSteps: run.steps, qaExitCode, priorCancelReason: run.cancelReason, reason, cleanupOnly, priorFailedStep: run.failedStep, priorInterruptedStep: run.interruptedStep },
       ...(temporaryDirectory ? { temporaryDirectory } : {}),
     });
     const { planPath } = qaSupervisionPaths(runRoot, run.id, attempt);
@@ -128,12 +129,13 @@ export const projectQaTeardownRetry = {
     steps: ProjectQaStep[]; failedStep: ProjectQaStepName | null; escapedDescendants: HostRunEscapedDescendant[];
     logWriteErrors?: ProjectQaLogWriteError[];
     checkoutCleanupPending?: boolean;
+    interruptedStep?: ProjectQaStepName | null;
   }): ProjectQaRun {
     const escapedDescendants = mergeQaEscapees(run.escapedDescendants ?? [], outcome.escapedDescendants ?? []);
     const saved = this.store.putQaRun(projectQaRunSchema.parse({
       ...run, state: outcome.state, exitCode: outcome.exitCode,
       outputTail: tailWithTruncationMarker(outcome.detail, PROJECT_QA_TAIL_BYTES), finishedAt: outcome.finishedAt, pid: null,
-      steps: outcome.steps, failedStep: outcome.failedStep, interruptedStep: null, escapedDescendants,
+      steps: outcome.steps, failedStep: outcome.failedStep, interruptedStep: outcome.interruptedStep ?? null, escapedDescendants,
       ...(run.checkoutPath ? { checkoutCleanupPending: outcome.checkoutCleanupPending ?? false } : {}),
       logWriteErrors: mergeLogWriteErrors(run.logWriteErrors, outcome.logWriteErrors),
     }));
@@ -150,6 +152,8 @@ export const projectQaTeardownRetry = {
       state: result.state, exitCode: result.exitCode, detail: result.detail, finishedAt: result.finishedAt,
       steps: state?.steps ?? current.steps, failedStep: state?.failedStep ?? current.failedStep,
       checkoutCleanupPending: result.checkoutCleanupPending,
+      interruptedStep: result.state === "hold" && current.interruptedStep && current.interruptedStep !== "teardown"
+        ? current.interruptedStep : null,
       escapedDescendants: state?.escapedDescendants ?? current.escapedDescendants,
       logWriteErrors: state?.logWriteErrors ?? [],
     });

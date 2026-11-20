@@ -135,14 +135,22 @@ last heartbeat, pre-stop supervisor liveness, in-flight step and process-group
 state, plus starts and rolls in the heartbeat gap; incomplete service history
 is reported as unknown.
 
-The supervisor records its last pipeline phase around step output, step logs,
-TAP finalization, teardown, cleanup and result publication. A detached monitor
-records the supervisor's exit code or signal independently of the service;
-abandoned-run detail names that exit and the last recorded phase, or says when
-either is unknown. The live-output projection keeps the newest bytes
-across truncation, including the redactor's final flush; if the supervisor dies
-before closing it, recovery warns that final bytes up to the token's length may
-have been withheld. A phase is diagnostic evidence, not proof that an operation
+The supervisor records its last pipeline phase around step output, post-exit
+settlement (`step-exit-group-wait`, `step-exit-descendants`,
+`step-exit-output-drain`, `step-exit-termination`, `step-spawn-persist`), step
+logs, TAP finalization, teardown, cleanup and result publication. Post-exit
+escaped-descendant observation (when `settleOnEscapedDescendants` is unset),
+post-exit pipe drain, live-output flush, spawn-state wait, diagnostic phase
+writes and step-log writes are bounded so stalled observation or output work
+cannot block normal step completion, teardown or result publication, while
+preserving strict `settleOnEscapedDescendants` custody and cancellation. A
+detached monitor records the supervisor's exit code or signal independently of
+the service; abandoned-run detail names that exit, the last recorded phase and
+the explicit teardown state, or says when either is unknown. The live-output
+projection flushes retained output per step and keeps the newest bytes across
+truncation, including the redactor's final flush; if the supervisor dies before
+closing it, recovery warns that final bytes up to the token's length may have
+been withheld. A phase is diagnostic evidence, not proof that an operation
 completed or authority to retry it.
 
 After result publication, inspection gives the supervisor the same bounded
@@ -162,15 +170,21 @@ uncertain hold.
 When the supervisor is alive and the step it says is in flight has no process
 group left, `project-qa-inspection.ts` watches that emptiness for a short bound
 (`QA_STEP_EXIT_SETTLE_BOUND_MS`), then hands the run to
-`project-qa-recovery.ts`. The stale-heartbeat stop reaches the same settlement:
-it also reads the step's recorded exit after the stop, so a hung supervisor never
-discards an outcome it had already written. With a recorded exit the run settles
-`failed` from the step's exit code or signal, with the step named as
-`interruptedStep`/`failedStep` and the live output log's path, byte offset and
-last lines in its detail; with no recorded exit the outcome is genuinely
-unobservable and the run settles `lost`, carrying the same step and output
-pointer. `lost` therefore means a dead supervisor or an unobservable outcome,
-never a run that simply waited for its capacity deadline.
+`project-qa-recovery.ts`. The stale-heartbeat stop and proven-dead supervisor
+inspection also read the step's recorded exit after the stop or exit, so a hung
+or dead supervisor never discards an outcome it had already written. With a
+recorded non-zero exit or signal, the run settles `failed` from that exit with
+`interruptedStep` and `failedStep` naming the step; with a clean recorded exit
+(`exitCode === 0`, no signal) whose run finalization is unproved, the run
+settles `hold` with the step's direct exit `0` preserved, `interruptedStep`
+naming the step and `failedStep` left clear unless teardown fails, because a
+clean step exit alone never certifies skipped stages, teardown or full pipeline
+completion (including across teardown retries). Both carry the live-output
+pointer, any retained step logs and explicit teardown state; with no recorded
+exit the outcome is genuinely unobservable and the run settles `lost`. `lost`
+therefore means a dead supervisor or an unobservable outcome, never a run that
+simply waited for its capacity deadline. Existing terminal QA receipts clear
+through normal follow-up runs without rewriting historical run rows.
 
 A takeover is ordered so it can only ever stop what its own proof names.
 `supervisor-process.ts` stops the supervisor first and alone

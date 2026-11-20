@@ -13,6 +13,7 @@ import {
   type ProjectQaStepName,
 } from "../../shared/contracts";
 import type { ExecutionOutcome } from "../machine/process-exec";
+import { boundedPromise } from "../machine/bounded-promise";
 import { boundSidecarCoverage, hostRunCpuCoverageSidecar, type HostRunCpuCoverageSidecar } from "../host-runs/host-run-cpu-coverage";
 import { type ProcessTreeCpu } from "../machine/process-tree-cpu";
 import { hostRunProcessStartIdentity } from "../machine/start-identity";
@@ -146,6 +147,10 @@ async function prepareCheckoutWithRetry(run: QaPipelineRun, io: QaPipelineIo, st
   }
 }
 
+export const QA_PHASE_WRITE_BOUND_MS = 2_000;
+export const QA_SPAWN_PERSIST_BOUND_MS = 5_000;
+export const QA_STEP_LOG_WRITE_BOUND_MS = 10_000;
+
 /** The observable identity of the process running the pipeline. */
 export interface QaPipelineIdentity { pid: number; identityToken: string }
 
@@ -154,7 +159,7 @@ export interface QaPipelineIo {
   phase?(phase: string): void | Promise<void>;
   environment?(eventId: string, root: string): Promise<Record<string, string>> | Record<string, string>;
   hook(script: string, root: string, onSpawn?: (process: QaSpawnedProcess) => void, cancelable?: boolean, env?: Record<string, string>): Promise<ExecutionOutcome>;
-  command(stage: ProjectQaStage, root: string, onSpawn?: (process: QaSpawnedProcess) => void, cancelable?: boolean, env?: Record<string, string>, onOutput?: (stream: "stdout" | "stderr", chunk: Buffer) => void): Promise<ExecutionOutcome>;
+  command(stage: ProjectQaStage, root: string, onSpawn?: (process: QaSpawnedProcess) => void, cancelable?: boolean, env?: Record<string, string>, onOutput?: (stream: "stdout" | "stderr", chunk: Buffer) => void, onPhase?: (phase: string) => void): Promise<ExecutionOutcome>;
   cancellation?(): QaCancelRequest | null;
   writeHostResult?(result: HostRunResult): void | Promise<void>;
   /** Write the private CPU-reason sidecar; best effort, ahead of the host result. */
@@ -171,6 +176,10 @@ export interface QaPipelineIo {
   onCheckoutAttempt?(attempt: number): void;
   /** Delay between the two checkout-creation attempts; tests inject a small value. */
   checkoutRetryDelayMs?: number;
+  phaseTimeoutMs?: number;
+  spawnPersistTimeoutMs?: number;
+  logWriteTimeoutMs?: number;
+  liveOutputDrainTimeoutMs?: number;
   now(): number;
 }
 
@@ -265,7 +274,13 @@ export async function runProjectQaPipeline(base: QaPipelineIdentity, run: QaPipe
   // Best effort by construction; the step logs and the result stay the record.
   let liveOutput: Awaited<ReturnType<typeof openQaLiveOutput>> = null;
   const phase = async (next: string) => {
-    try { await io.phase?.(next); } catch { /* diagnostic boundaries cannot fail a run */ }
+    try {
+      await boundedPromise(
+        Promise.resolve().then(() => io.phase?.(next)),
+        io.phaseTimeoutMs ?? QA_PHASE_WRITE_BOUND_MS,
+        () => undefined,
+      );
+    } catch { /* diagnostic boundaries cannot fail a run */ }
   };
   try {
     // Publish the run's identity before anything can take time, so a service
@@ -273,7 +288,8 @@ export async function runProjectQaPipeline(base: QaPipelineIdentity, run: QaPipe
     await io.persist(state);
     stop = io.begin?.(state);
     await phase("starting");
-    liveOutput = await openQaLiveOutput(qaRunLiveOutputPath(run.runRoot, run.runId), () => run.hostRunToken);
+    liveOutput = await openQaLiveOutput(qaRunLiveOutputPath(run.runRoot, run.runId), () => run.hostRunToken,
+      { drainTimeoutMs: io.liveOutputDrainTimeoutMs });
     let stateName: ProjectQaRun["state"] = "hold";
     let exitCode: number | null = null;
     let setupFailed = false;
@@ -306,7 +322,21 @@ export async function runProjectQaPipeline(base: QaPipelineIdentity, run: QaPipe
       // its cap dropped, so the step's own excerpts carry the same statement.
       // Task 590: QA stage steps trim passing output before failure lines, so
       // their excerpt markers name that shape instead of beginning-and-end.
-      await spawnPersistence;
+      await phase("step-spawn-persist");
+      const pendingSpawn = spawnPersistence;
+      spawnPersistence = Promise.resolve();
+      try {
+        const persisted = await boundedPromise(
+          pendingSpawn.then(() => true as const),
+          io.spawnPersistTimeoutMs ?? QA_SPAWN_PERSIST_BOUND_MS,
+          () => false as const,
+        );
+        if (!persisted) {
+          state.detail = `${state.detail}${state.detail ? "\n" : ""}Spawn-state persistence for step ${name} timed out before step recording.`;
+        }
+      } catch (error) {
+        state.detail = `${state.detail}${state.detail ? "\n" : ""}Spawn-state persistence for step ${name} failed: ${error instanceof Error ? error.message : String(error)}`;
+      }
       await phase("step-logs");
       const shapeNote = tapCollector ? FAILURE_FIRST_RETENTION_NOTE : undefined;
       // #121: keep each step's full output (already tail-capped at the step's
@@ -315,14 +345,32 @@ export async function runProjectQaPipeline(base: QaPipelineIdentity, run: QaPipe
       // A log that cannot be written is reported on the run, never silently
       // indistinguishable from a step that produced no output.
       const writeLog = io.log ?? writeQaStepLogAsync;
+      const logTimeoutMs = io.logWriteTimeoutMs ?? QA_STEP_LOG_WRITE_BOUND_MS;
+      const runWriteLog = async (path: string, buffer: Buffer): Promise<{ bytes: number | null; error: string | null }> => {
+        try {
+          return await boundedPromise(
+            Promise.resolve().then(() => writeLog(path, buffer)),
+            logTimeoutMs,
+            () => ({ bytes: null, error: `Step log write timed out after ${logTimeoutMs}ms` }),
+          );
+        } catch (error) {
+          return { bytes: null, error: error instanceof Error ? error.message : String(error) };
+        }
+      };
       const logs = qaStepLogPaths(run.runRoot, run.runId, name);
-      const stdoutLog = await writeLog(logs.stdoutPath, execution.stdout);
-      const stderrLog = await writeLog(logs.stderrPath, execution.stderr);
+      const stdoutLog = await runWriteLog(logs.stdoutPath, execution.stdout);
+      const stderrLog = await runWriteLog(logs.stderrPath, execution.stderr);
       for (const [stream, log] of [["stdout", stdoutLog], ["stderr", stderrLog]] as const)
         if (log.error) {
           state.detail = `${state.detail}${state.detail ? "\n" : ""}Full-output log for step ${name} (${stream}) could not be written: ${log.error}`;
           state.logWriteErrors = recordLogWriteError(state.logWriteErrors, { step: name, stream, error: log.error });
         }
+      if (execution.escapedDescendantsObservation === "unknown") {
+        state.detail = `${state.detail}${state.detail ? "\n" : ""}Note: escaped-descendant observation for step ${name} was unknown after process-group exit.`;
+      }
+      if (execution.outputDrainTimedOut) {
+        state.detail = `${state.detail}${state.detail ? "\n" : ""}Note: output pipe drain for step ${name} hit its bound after process-group exit; trailing pipe bytes may be incomplete.`;
+      }
       const escaped = execution.escapedDescendants ?? [];
       state.escapedDescendants = mergeQaEscapees(state.escapedDescendants, escaped);
       state.steps.push(qaStepRecord(name, command, execution, logs, stdoutLog, stderrLog, shapeNote));
@@ -394,8 +442,15 @@ export async function runProjectQaPipeline(base: QaPipelineIdentity, run: QaPipe
           await phase("step-output");
           const tapCollector = new StreamingTapFailures(run.hostRunToken, Math.floor(PROJECT_QA_FAILURES_BYTES / Math.max(1, run.stages.length)));
           const execution = await io.command(stage, run.checkoutPath, onSpawn(stage.name), true, env,
-            (_stream, chunk) => { tapCollector.push(chunk); liveOutput?.write(chunk); });
+            (_stream, chunk) => { tapCollector.push(chunk); liveOutput?.write(chunk); },
+            next => { void phase(next); });
           exitCode = execution.code;
+          if (liveOutput) {
+            const flushed = await liveOutput.flush();
+            if (!flushed) {
+              state.detail = `${state.detail}${state.detail ? "\n" : ""}Note: live output flush for step ${stage.name} hit its bound; trailing live bytes may be delayed.`;
+            }
+          }
           await recordStep(stage.name, stage.argv.join(" "), execution, tapCollector);
           state.inFlight = null;
           const output = executionOutput(execution);
