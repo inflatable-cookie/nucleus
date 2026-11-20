@@ -5,7 +5,7 @@ import type { HostCatalog } from '../../shared/host';
 import type { Profile } from '../../shared/contracts';
 import type { NucleusProfile } from '../../shared/profiles';
 import type { ProfileCompatibilityHost, ProfileCompatibilityRow } from '../../shared/rpc/settings';
-import type { Adapter } from './adapter';
+import { hostConnected, type Adapter } from './adapter';
 
 /** The primary host's catalog key, before (or without) a registered id for it. */
 const PRIMARY_CATALOG = '\u0000primary';
@@ -38,9 +38,17 @@ export class ProfileCatalogs {
 
   async refresh(): Promise<void> {
     if (!this.owner.adapter.catalog) throw new Error('Host profile catalog is unavailable');
-    const catalog = await this.owner.adapter.catalog();
-    this.hostCatalogs.set(PRIMARY_CATALOG, { catalog, readAt: new Date().toISOString() });
-    this.profileCatalogRefreshed = true;
+    // A host that is offline answers no catalog, and that is that host's own
+    // absence rather than a failure of the pass (nucleus#1449): its previous
+    // snapshot stays, dispatch on it waits on its own gates, and every online
+    // host below still reads its own catalog. A connected host whose read fails
+    // is a real fault and still rejects.
+    const primaryOnline = hostConnected(this.owner.primaryAdapter);
+    if (primaryOnline) {
+      const catalog = await this.owner.adapter.catalog();
+      this.hostCatalogs.set(PRIMARY_CATALOG, { catalog, readAt: new Date().toISOString() });
+      this.profileCatalogRefreshed = true;
+    }
     // Each secondary host's availability is its own catalog's answer: a profile
     // whose thinking level or feature values that host does not report stays
     // ineligible there, so selection never sends a launch the host must refuse

@@ -201,7 +201,12 @@ export class HostConnections {
           this.owner.hostSession.token,
         );
       this.owner.hostSession = null;
-      this.owner.bootstrapped = false;
+      // Readiness belongs to the verified host that owns the work (nucleus#1449).
+      // Losing the primary retires only its own claim: a fleet that still has an
+      // online host stays bootstrapped, so every later tick does not repeat
+      // settled durable recovery while the primary reconnects on its own bound.
+      if (this.owner.hostRegistry.onlineIds().length === 0)
+        this.owner.bootstrapped = false;
       return false;
     }
     return (

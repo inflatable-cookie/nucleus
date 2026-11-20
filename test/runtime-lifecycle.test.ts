@@ -62,6 +62,7 @@ const fakeOwner = (
     hostSession: null,
     idleShutdownLatched: false,
     connected: () => false,
+    anyHostConnected: () => false,
     readPrStates: () => {
       reads++;
       return read();

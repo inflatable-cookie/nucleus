@@ -1420,6 +1420,20 @@ native host with separate admission state. The bearer is issued locally with
 `t3 auth session issue`, never returned by health or public settings. Initial
 Paseo identity is recorded first; subsequent T3 reconnects are independent.
 
+**Readiness belongs to the host that owns the work** (nucleus#1449; Tom,
+2026-11-20: Paseo quit, T3 stayed online, and the board warned about the daemon's
+unsettled connection). The bootstrap's bounded primary connect is the Paseo
+entry's own retry. While another verified host is online, its failure records
+that host's cause and leaves `startError` empty, so the board shows no global
+fault; the rest of the bootstrap still runs. The catalog pass reads every online
+host's own catalog and skips an offline adapter rather than rejecting the pass,
+and durable operation resume, bulk-disposition resume and the first
+reconciliation run once. Only a fleet with no online host makes the primary's
+connect failure the runtime's start error, and only then does losing the primary
+un-prove the bootstrap. `service.health`'s `hosts` names the offline primary and
+its cause, its bound work waits for it, and a host that reconnects reads its own
+catalog at once instead of waiting for the periodic pass.
+
 A BB host registers from the reverse channel instead of a settings entry
 (Spec 062 phase 1), so its identity is proved by the plugin rather than
 configured here. Its live claim counts for presence, the idle clock and health.
