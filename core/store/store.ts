@@ -195,6 +195,8 @@ import {
   type HostRunOutputReclassification,
 } from "../host-runs/host-run-output-failures";
 import { qualifiedThreadArchiveEffectKey } from "./store-core";
+import { StoreProjectActivity } from "./store-project-activity";
+import type { ProjectActivityFacts } from "../../shared/project-activity";
 import type { BudgetClock } from "../../shared/task-budget";
 /**
  * The store's write funnels are closed for a bounded maintenance window; nothing may
@@ -236,7 +238,7 @@ export class Store {
     revisionAdvanced: () => {
       this.tasksStore.projectionClock = this.tasksStore.readProjectionClock();
     },
-    eventWritten: (taskId, at) => this.eventWritten(taskId, at),
+    eventWritten: (taskId, kind, detail, at) => this.eventWritten(taskId, kind, detail, at),
     taskChanged: (taskId) => this.taskChanged(taskId),
   });
   /**
@@ -643,6 +645,8 @@ export class Store {
   private readonly messagesStore = new StoreMessages(this.core, {
     taskChanged: (taskId) => this.taskChanged(taskId),
   });
+  /** Spec 026 (nucleus#1446): store-wide persisted facts behind project activity. */
+  private readonly projectActivityStore = new StoreProjectActivity(this.core);
   private readonly hookEventsStore = new StoreHookEvents(this.core, {
     taskChanged: (taskId) => this.taskChanged(taskId),
   });
@@ -1321,7 +1325,8 @@ export class Store {
   event(taskId: string, kind: string, detail: string) {
     return this.core.event(taskId, kind, detail);
   }
-  private eventWritten(taskId: string, at: string) {
+  private eventWritten(taskId: string, kind: string, detail: string, at: string) {
+    this.projectActivityStore.eventWritten(taskId, kind, detail, at);
     if (this.lastEventAtByTask) {
       if (at > (this.lastEventAtByTask.get(taskId) ?? ""))
         this.lastEventAtByTask.set(taskId, at);
@@ -2238,6 +2243,10 @@ export class Store {
   }
   projects(): Project[] {
     return this.projectRegistry.projects();
+  }
+  /** Spec 026 (nucleus#1446): the persisted facts a project's activity reads, store-wide and independent of selection or paging. */
+  projectActivityFacts(): ProjectActivityFacts {
+    return this.projectActivityStore.facts(this.tasksStore.board.activeTasks());
   }
   projectByKey(key: string): Project | null {
     return this.projectRegistry.projectByKey(key);

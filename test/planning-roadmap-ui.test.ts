@@ -7,12 +7,13 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { mount, useNativeStubs } from './support/render';
-import { fakeAdapter, submission } from './support/fakes';
+import { fakeAdapter, recentProjectActivity, submission } from './support/fakes';
 import { plans, type LaneView, type LeadListFacts, type Project, type ProjectPlan } from '../shared/contracts';
 import { Leads } from '../core/planning/leads';
 import { TriageService, type TriageDecision } from '../core/planning/triage';
 import { applyTriage } from '../core/runtime/planning-triage';
 import { QueueRuntime } from '../service/runtime-owner';
+import { projectActivityRows, type ProjectActivity } from '../shared/project-activity';
 import type { PlanEdit, PlanSection } from '../client/planning-panel';
 
 useNativeStubs();
@@ -31,7 +32,7 @@ const latest: ProjectPlan = {
 const saved: ProjectPlan = { ...latest, entries: latest.entries.slice(0, 4) };
 const lanes = ['n1', 'n2', 'x1', 'l1', 'joined', 'unplanned', 'd-old', 'd-new'].map(lane);
 
-type MountOver = { sections?: PlanSection[]; compact?: boolean; saveErrors?: Record<string, string>; onRetryPlans?: () => void; plansError?: string; lanesLoading?: boolean; lanesError?: string; lanes?: LaneView[]; leads?: LeadListFacts[] };
+type MountOver = { sections?: PlanSection[]; compact?: boolean; saveErrors?: Record<string, string>; onRetryPlans?: () => void; plansError?: string; lanesLoading?: boolean; lanesError?: string; lanes?: LaneView[]; leads?: LeadListFacts[]; projectActivity?: ProjectActivity[] };
 
 async function mountTab(over: MountOver = {}) {
   const { PlanningTab } = await import('../client/planning-panel');
@@ -43,7 +44,7 @@ async function mountTab(over: MountOver = {}) {
       lanes, leads: over.leads ?? [], edits, selectedLane: '', step: 'plan', compact: false, busy: false, lanePanel: null,
       onStep: () => {}, onOpenLane: () => {},
       onEdit: (p: string, edit: PlanEdit) => setEdits(prev => ({ ...prev, [p]: edit })),
-      onSave: (p: string, edit: PlanEdit) => log.saves.push([p, edit]), onCancel: () => setEdits({}), onCloseLane: (l: string) => log.closed.push(l), c, ...over,
+      onSave: (p: string, edit: PlanEdit) => log.saves.push([p, edit]), onCancel: () => setEdits({}), onCloseLane: (l: string) => log.closed.push(l), c, projectActivity: recentProjectActivity(projects), ...over,
     });
   }
   return { ui: mount(h(Harness)), log };
@@ -96,7 +97,8 @@ test('1420 Planning shows the batch digest, proposed and applied reasons, and wo
     triage.evaluate();
     assert.ok(store.planningRevisions().plans > planBefore, 'batch creation invalidates the plan read');
     assert.ok(store.boardRevision() > boardBefore, 'board clients can see the new plans revision');
-    const dormant = (await mountTab({ sections: [section()] })).ui;
+    // No activity read: the project has no substantive record the board can see yet, so it is dormant (Spec 026, nucleus#1446).
+    const dormant = (await mountTab({ sections: [section()], projectActivity: [] })).ui;
     dormant.press('Dormant projects, 1');
     assert.match(dormant.text(), /Waiting for a project planner/);
     assert.match(dormant.text(), /Current batch · 2 records · 2 pending/);
@@ -116,7 +118,8 @@ test('1420 Planning shows the batch digest, proposed and applied reasons, and wo
     const beforeApply = store.planningRevisions().plans;
     await apply([promote, ask], { status: 'proposed', task: null, diagnostic: 'The brief check is running' });
     assert.ok(store.planningRevisions().plans > beforeApply, 'ledger-only decisions invalidate the plan read');
-    const current = (await mountTab({ sections: [section()] })).ui;
+    // The store's own facts: the filed leads and the triage writes are deliberate planning activity, so the project is active.
+    const current = (await mountTab({ sections: [section()], projectActivity: projectActivityRows(store.projects(), store.projectActivityFacts()) })).ui;
     const digest = 'Current batch · 2 records · 1 proposed · 1 applied · 1 for operator';
     current.press(digest);
     assert.match(current.text(), /Proposed · Promote/);
@@ -317,7 +320,7 @@ async function mountDraft(sections: PlanSection[], draft: PlanEdit | undefined, 
   const ui = mount(h(PlanningTab, {
     sections, lanes, edits: draft ? { alpha: draft } : {}, selectedLane: '', step: 'plan', compact: false, busy: false, lanePanel: null,
     onStep: () => {}, onOpenLane: () => {}, onEdit: (p: string, edit: PlanEdit) => calls.edits.push([p, edit]),
-    onSave: (p: string, edit: PlanEdit) => calls.saves.push([p, edit]), onCancel: (p: string) => calls.cancels.push(p), c, ...over,
+    onSave: (p: string, edit: PlanEdit) => calls.saves.push([p, edit]), onCancel: (p: string) => calls.cancels.push(p), c, projectActivity: recentProjectActivity(projects), ...over,
   }));
   return { ui, calls };
 }

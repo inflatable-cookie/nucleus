@@ -11,6 +11,7 @@ import { Icon } from "./shell";
 import { Popover } from "./popover";
 import { errorText } from "./error-text";
 import type { LeadListFacts, Project, TaskSummary } from "../shared/contracts";
+import type { ProjectActivity } from "../shared/project-activity";
 import type { PlanningStep } from "../shared/planning-tab";
 import {
   isAdditivePress,
@@ -400,6 +401,7 @@ export function ProjectSelector({
   tasks,
   leads,
   queuedCounts = [],
+  projectActivity = [],
   value,
   onChange,
   onOpenChange,
@@ -414,6 +416,8 @@ export function ProjectSelector({
   tasks: TaskSummary[];
   leads: readonly LeadListFacts[];
   queuedCounts?: readonly { repoPath: string; count: number }[];
+  /** Spec 026 (nucleus#1446): the store-wide activity each project's Dormant group reads. */
+  projectActivity?: readonly ProjectActivity[];
   value: string[];
   onChange: (keys: string[]) => void;
   enabled?: boolean;
@@ -484,6 +488,7 @@ export function ProjectSelector({
     tasks,
     leads,
     queuedCounts,
+    projectActivity,
   );
   const byKey = new Map(projects.map((project) => [project.key, project]));
   const fine = finePointer();

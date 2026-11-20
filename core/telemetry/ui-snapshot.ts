@@ -9,6 +9,7 @@ import type {
   HeavyRunView,
   ProjectQaRun,
 } from "../../shared/contracts";
+import { projectActivityRows, type ProjectActivity } from "../../shared/project-activity";
 import { visibleTaskSummaries } from "../../shared/contracts";
 import type { Store } from "../store/store";
 import {
@@ -70,6 +71,8 @@ export interface UiSnapshotFacts {
   capacityTasks: Task[];
   summaries: TaskSummary[];
   projects: Project[];
+  /** Spec 026 (nucleus#1446): each project's persisted activity, read store-wide. */
+  projectActivity: ProjectActivity[];
   runs: Run[];
   unsettledNotices: number;
   lanes: LaneView[];
@@ -228,6 +231,7 @@ export function createUiSnapshotFactsCache(
         return heavyRun ? { ...summary, heavyRun } : summary;
       }),
       projects,
+      projectActivity: projectActivityRows(projects, store.projectActivityFacts()),
       runs,
       unsettledNotices: store.unsettledNoticeCount(),
       // Lane views derive from lanes, outcomes and live tasks, and carry their own

@@ -1,4 +1,5 @@
 import { test } from "node:test";
+import { recentProjectActivity } from './support/fakes';
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { boardSource } from "./support/board-source";
@@ -385,6 +386,7 @@ test("Spec 027 #11 rendered selector lists parked projects under Parked for scop
   const planning = mount(
     h(PlanningTab, {
       sections: all.map((project) => ({ project })),
+      projectActivity: recentProjectActivity(all),
       lanes: [],
       edits: {},
       selectedLane: "",
@@ -446,6 +448,7 @@ test("Spec 035/022 rendered: Planning carries no QA launch or cancel, and links 
   const ui = mount(
     h(PlanningTab, {
       sections: [{ project: projects[0] }],
+      projectActivity: recentProjectActivity(projects),
       lanes: [],
       edits: {},
       selectedLane: "",
@@ -661,6 +664,7 @@ test("026-14a/14b rendered Planning: two selected projects show both plans, none
       h(PlanningTab, {
         c,
         compact,
+        projectActivity: recentProjectActivity(projects),
         busy: false,
         step: planning.step,
         onStep: planning.setStep,

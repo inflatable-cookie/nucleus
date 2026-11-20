@@ -2,6 +2,7 @@ import { z } from "zod";
 import { holdKindSchema, laneKeyListSchema } from "../schema/task-primitives";
 import { taskSchema } from "./tasks";
 import { projectSchema } from "./projects";
+import { projectActivitySchema } from "../project-activity";
 import { operationSummarySchema } from "../operations";
 import { capacityStateFields, poolSchema, profileSchema, projectDispatchLimitOverridesSchema, routingGrantViewSchema, usageViewSchema } from "./settings";
 import { qaFenceViewSchema } from "./qa-fence";
@@ -96,7 +97,7 @@ export const snapshotStateSchema = stateSchema.extend({
 
 export type SnapshotState = z.infer<typeof snapshotStateSchema>;
 
-export const uiStateSchema = stateSchema.omit({ tasks: true }).extend({ queuedCounts: z.array(z.object({ repoPath: z.string(), count: z.number().int().nonnegative() })).default([]), tasks: z.array(taskSummarySchema), lanes: z.array(laneViewSchema).default([]), projects: z.array(projectSchema).default([]), pendingSubmissions: z.array(pendingSubmissionSchema).default([]), qaRuns: z.lazy(() => z.array(boardQaRunSchema)).default([]) });
+export const uiStateSchema = stateSchema.omit({ tasks: true }).extend({ queuedCounts: z.array(z.object({ repoPath: z.string(), count: z.number().int().nonnegative() })).default([]), tasks: z.array(taskSummarySchema), lanes: z.array(laneViewSchema).default([]), projects: z.array(projectSchema).default([]), projectActivity: z.array(projectActivitySchema).default([]), pendingSubmissions: z.array(pendingSubmissionSchema).default([]), qaRuns: z.lazy(() => z.array(boardQaRunSchema)).default([]) });
 
 export type UiQueueState = z.infer<typeof uiStateSchema>;
 
