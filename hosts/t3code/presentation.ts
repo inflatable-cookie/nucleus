@@ -81,6 +81,19 @@ export const SNOOZE_RENEW_BEFORE_MS = 24 * 60 * 60_000;
 export const UNSETTLE_READ_ATTEMPTS = 4;
 export const UNSETTLE_READ_GAP_MS = 250;
 
+/**
+ * One task's row: the parent thread this host's own record still binds to the task
+ * (nucleus#1445). Presentation never addresses a row from a task id alone, so a
+ * stale or foreign binding can never reach a planner, the inbox or another task.
+ */
+type TaskRow = {
+  threadId: string;
+  parent: NonNullable<T3State["parents"]>[string];
+};
+
+/** One task row's recorded snooze: the occurrence this host wrote and read back. */
+type SnoozeRecord = NonNullable<T3State["snoozes"]>[string];
+
 /** The collaborators a presentation write needs: durable state, the ledger and the reads. */
 export interface T3PresentationContext {
   state: T3StateFile;
@@ -297,11 +310,12 @@ export class T3Presentation {
     taskId: string,
     attention: TaskAttention,
   ): Promise<void> {
-    const threadId = this.workerThreadFor(taskId);
+    const row = this.rowOf(taskId);
     // A confirmed deletion retires the presentation work it would have shown, even
     // when the task is already finished.
     this.retireDeletedPresentationIntents();
-    if (!threadId) return;
+    if (!row) return;
+    const { threadId } = row;
     if (attention.state === "finished") {
       this.rowAttention.delete(taskId);
       this.forgetSnooze(threadId);
@@ -328,23 +342,79 @@ export class T3Presentation {
     // The projection's own attention is the person who must act; a role waiting on a
     // current question or permission is one too (nucleus#1437).
     if (attention.state === "attention" || needsInputStep(step)) {
-      await this.unsnoozeRow(threadId);
+      await this.unsnoozeRow(taskId, row);
       return;
     }
     if (attention.state === "active") {
-      await this.unsnoozeRow(threadId);
+      await this.unsnoozeRow(taskId, row);
       return;
     }
-    await this.snoozeRow(threadId, attention.cause ?? "Waiting");
+    await this.snoozeRow(taskId, row, attention.cause ?? "Waiting");
   }
 
   /**
-   * The task's row thread: its parent thread on this host. A task with no parent
-   * record (the provider was missing or not ready, so the parent was never
-   * launched) has no row, and its wait is the task's visible reason.
+   * The task's row, only while this host's own record still binds that thread to
+   * this task (nucleus#1445). A task with no parent record (the provider was
+   * missing or not ready, so the parent was never launched) has no row, and its
+   * wait is the task's visible reason. The inbox and another task's parent thread
+   * are never this task's row, however a legacy record names them.
    */
-  workerThreadFor(taskId: string): string | undefined {
-    return this.core.parentThreadOf?.(taskId);
+  private rowOf(taskId: string): TaskRow | null {
+    const state = this.core.state.read();
+    const parent = state.parents?.[taskId];
+    const threadId = this.core.parentThreadOf?.(taskId);
+    if (
+      !parent ||
+      parent.taskId !== taskId ||
+      !parent.threadId ||
+      parent.threadId !== threadId
+    )
+      return null;
+    if (!this.rowIsExclusive(threadId)) return null;
+    return { threadId, parent };
+  }
+
+  /**
+   * The task whose row this thread is, when exactly one recorded parent binding
+   * names it. The inbox is nobody's row, and two claims are ambiguous, so neither
+   * is ever addressed as a task row.
+   */
+  private rowTaskOf(threadId: string): string | undefined {
+    const owners = this.rowOwners(threadId);
+    return owners.length === 1 ? owners[0] : undefined;
+  }
+
+  private rowIsExclusive(threadId: string): boolean {
+    return this.rowOwners(threadId).length === 1;
+  }
+
+  /** The task ids whose recorded parent binding still names this exact thread. */
+  private rowOwners(threadId: string): string[] {
+    const state = this.core.state.read();
+    if (!threadId || state.inbox?.threadId === threadId) return [];
+    return Object.entries(state.parents ?? {})
+      .filter(
+        ([taskId, row]) => row.taskId === taskId && row.threadId === threadId,
+      )
+      .map(([taskId]) => taskId);
+  }
+
+  /**
+   * Whether a recorded snooze is the occurrence the row shows now (Tom's ruling,
+   * 2026-11-20; nucleus#1445). Ownership is the exact horizon this host asked for
+   * and read back, bound to this task: a changed horizon, a cleared row and a
+   * record another task's row wrote all belong to someone else and are never
+   * renewed or cleared here. A record written before the binding was stored proves
+   * itself only by that exact horizon, never by its shape alone.
+   */
+  private ownsSnooze(
+    record: SnoozeRecord | undefined,
+    taskId: string,
+    snoozedUntil: string | null | undefined,
+  ): boolean {
+    if (!record || record.state === "refused" || !snoozedUntil) return false;
+    if (record.until !== snoozedUntil) return false;
+    return record.taskId === undefined || record.taskId === taskId;
   }
 
   /**
@@ -356,12 +426,15 @@ export class T3Presentation {
    * is then the only evidence and it is kept as it is.
    */
   async rowSnoozeVisibility(taskId: string): Promise<RowSnoozeVisibility> {
-    const threadId = this.workerThreadFor(taskId);
-    if (!threadId) return { kind: "clear" };
+    const row = this.rowOf(taskId);
+    if (!row) return { kind: "clear" };
+    const { threadId } = row;
     const record = this.core.state.read().snoozes?.[threadId];
     // A refused snooze never hid the row, and a record this host forgot no longer
     // owns one.
     if (!record || record.state === "refused") return { kind: "clear" };
+    if (record.taskId !== undefined && record.taskId !== taskId)
+      return { kind: "clear" };
     const episodeStartedAt = snoozeEpisodeStart(record);
     const cause = record.cause ?? "";
     if (this.core.intents.confirmedDeletion(this.core.state.read(), threadId))
@@ -391,6 +464,10 @@ export class T3Presentation {
       ? Date.parse(projection.thread.snoozedUntil)
       : Number.NaN;
     if (!Number.isFinite(wakeAt) || wakeAt <= Date.now())
+      return { kind: "clear" };
+    // Only the occurrence this host wrote is Nucleus-owned (nucleus#1445): a
+    // changed horizon is the operator's snooze, not a hidden Nucleus row.
+    if (!this.ownsSnooze(record, taskId, projection.thread.snoozedUntil))
       return { kind: "clear" };
     return { kind: "snoozed", threadId, episodeStartedAt, cause };
   }
@@ -560,6 +637,12 @@ export class T3Presentation {
    * Resolves once the thread is active. Otherwise it throws a proven pre-send refusal:
    * nothing was sent, so the message stays queued. An unknown unsettle is reconciled
    * by a fresh read before anything repeats, and never resent blindly.
+   *
+   * A thread the operator snoozed is never woken by a Nucleus message (Tom's ruling,
+   * 2026-11-20; nucleus#1445): T3 clears `snoozedUntil` on an ordinary delivery, so
+   * the send is refused before it leaves and the durable notice waits for that
+   * thread to wake. The one snooze this gate delivers over is a task row this host
+   * snoozed itself, proven by the exact horizon the read shows.
    */
   async wakeBeforeDelivery(id: string, messageId: string): Promise<void> {
     if (this.core.intents.confirmedDeletion(this.core.state.read(), id))
@@ -571,7 +654,10 @@ export class T3Presentation {
       throw new ProvenPreSendRefusalError(
         "T3Code thread is archived or removed; nothing was sent",
       );
-    if (observed.thread.settledOverride !== "settled") return;
+    if (observed.thread.settledOverride !== "settled") {
+      this.refuseManuallySnoozed(id, observed);
+      return;
+    }
 
     const key = identity("unsettle", canonical([id, messageId]));
     let resendUnknown = false;
@@ -588,6 +674,7 @@ export class T3Presentation {
               result: null,
             };
         });
+        this.refuseManuallySnoozed(id, reread);
         return;
       }
       resendUnknown = true;
@@ -624,10 +711,33 @@ export class T3Presentation {
       if (attempt)
         await new Promise((done) => setTimeout(done, UNSETTLE_READ_GAP_MS));
       const read = await this.observeFresh(id);
-      if (read.thread.settledOverride !== "settled") return;
+      if (read.thread.settledOverride !== "settled") {
+        this.refuseManuallySnoozed(id, read);
+        return;
+      }
     }
     throw new ProvenPreSendRefusalError(
       "T3Code still shows the thread settled after its unsettle; nothing was sent and the message waits for the next pass",
+    );
+  }
+
+  /**
+   * A thread the operator snoozed keeps that snooze: an ordinary delivery would
+   * clear it, so the message waits for the wake instead (nucleus#1445). Only a task
+   * row this host snoozed itself, proven by the exact horizon this read shows, is
+   * delivered over; a cleared row is not snoozed and delivers as it always did.
+   */
+  private refuseManuallySnoozed(id: string, observed: Projection): void {
+    const snoozedUntil = observed.thread.snoozedUntil ?? null;
+    const wakeAt = snoozedUntil ? Date.parse(snoozedUntil) : Number.NaN;
+    if (!snoozedUntil || !Number.isFinite(wakeAt) || wakeAt <= Date.now())
+      return;
+    const taskId = this.rowTaskOf(id);
+    const record = this.core.state.read().snoozes?.[id];
+    if (taskId && this.ownsSnooze(record, taskId, snoozedUntil)) return;
+    throw new ProvenPreSendRefusalError(
+      `T3Code thread is snoozed until ${snoozedUntil}; the message waits for that snooze to wake`,
+      "T3Code message",
     );
   }
 
@@ -665,8 +775,17 @@ export class T3Presentation {
    * task still waits. The command identity is deterministic per wait episode and
    * horizon, the send is verified by reading `snoozedUntil` back, and a refusal is
    * "stay active" for this episode: never a retry loop.
+   *
+   * Only the occurrence this host wrote is this host's (nucleus#1445): a row that
+   * shows another horizon is the operator's snooze, and a read-back that is not the
+   * horizon this command asked for is never adopted as ours.
    */
-  private async snoozeRow(threadId: string, cause: string): Promise<void> {
+  private async snoozeRow(
+    taskId: string,
+    row: TaskRow,
+    cause: string,
+  ): Promise<void> {
+    const { threadId } = row;
     if (this.core.intents.confirmedDeletion(this.core.state.read(), threadId))
       return;
     if (!(await this.core.reads.isObserved(threadId))) return;
@@ -685,12 +804,17 @@ export class T3Presentation {
       return;
     }
     const now = Date.now();
-    const wakeAt = projection.thread.snoozedUntil
-      ? Date.parse(projection.thread.snoozedUntil)
-      : Number.NaN;
+    const shown = projection.thread.snoozedUntil ?? null;
+    const wakeAt = shown ? Date.parse(shown) : Number.NaN;
     let record = this.core.state.read().snoozes?.[threadId];
     const snoozed = Number.isFinite(wakeAt) && wakeAt > now;
     if (record?.state === "refused") return;
+    // A record this row did not write, or a record whose own occurrence the host
+    // no longer shows, is not this row's: it is dropped, never renewed.
+    if (record && record.taskId !== undefined && record.taskId !== taskId) {
+      this.forgetSnooze(threadId);
+      record = undefined;
+    }
     if (
       record?.state === "unknown" &&
       record.ended &&
@@ -705,22 +829,28 @@ export class T3Presentation {
       ? snoozeEpisodeStart(record)
       : new Date(now).toISOString();
     if (record?.state === "unknown") {
-      if (snoozed && projection.thread.snoozedUntil === record.until)
+      if (snoozed && this.ownsSnooze(record, taskId, shown))
         this.recordSnooze(threadId, {
           ...record,
+          taskId,
           state: "snoozed",
           episodeStartedAt,
         });
       return;
     }
-    // A snooze nobody here recorded is the operator's and is always left alone.
-    if (snoozed && !record) return;
+    // A snooze this host cannot prove it wrote — the operator's, or a horizon that
+    // changed under us — is always left alone (Tom, 2026-11-20; nucleus#1445).
+    if (snoozed && !this.ownsSnooze(record, taskId, shown)) {
+      if (record) this.forgetSnooze(threadId);
+      return;
+    }
     if (snoozed && wakeAt - now > SNOOZE_RENEW_BEFORE_MS) {
       // Still well inside the horizon. Our own record is the fact, so a repeated
       // pass sends nothing.
       this.recordSnooze(threadId, {
         ...record!,
-        until: projection.thread.snoozedUntil!,
+        taskId,
+        until: shown!,
         state: "snoozed",
         cause,
         episodeStartedAt,
@@ -743,6 +873,7 @@ export class T3Presentation {
       until,
       state: "unknown",
       cause,
+      taskId,
       episodeStartedAt,
       recordedAt: new Date().toISOString(),
     });
@@ -763,6 +894,7 @@ export class T3Presentation {
           until,
           state: "refused",
           cause,
+          taskId,
           episodeStartedAt,
           recordedAt: new Date().toISOString(),
         });
@@ -777,13 +909,20 @@ export class T3Presentation {
       if (isHostOperationTimeout(error)) throw error;
       return;
     }
-    const landed = observed.thread.snoozedUntil;
+    const landed = observed.thread.snoozedUntil ?? null;
+    if (landed !== null && landed !== until) {
+      // The row shows an occurrence this command did not write: someone else's
+      // snooze replaced it, so this host owns nothing here any more.
+      this.forgetSnooze(threadId);
+      return;
+    }
     this.recordSnooze(threadId, {
       episode,
       commandId,
-      until: landed ?? until,
-      state: landed ? "snoozed" : "refused",
+      until,
+      state: landed === until ? "snoozed" : "refused",
       cause,
+      taskId,
       episodeStartedAt,
       recordedAt: new Date().toISOString(),
     });
@@ -799,13 +938,23 @@ export class T3Presentation {
    * snapshot or an ack that did not land), the next pass re-observes and retries as
    * a new occurrence; an unknown delivery keeps its identity and is never resent
    * blindly.
+   *
+   * The occurrence this host clears is the one it wrote (nucleus#1445): a row that
+   * shows another horizon was replaced by the operator, and is never unsnoozed
+   * here.
    */
-  private async unsnoozeRow(threadId: string): Promise<void> {
+  private async unsnoozeRow(taskId: string, row: TaskRow): Promise<void> {
+    const { threadId } = row;
     let record = this.core.state.read().snoozes?.[threadId];
     if (!record || record.state === "refused") {
       // Nothing this host snoozed: the row is already shown, so a repeated pass
       // sends nothing.
       if (record) this.forgetSnooze(threadId);
+      return;
+    }
+    // A record another task's row wrote is not this row's snooze.
+    if (record.taskId !== undefined && record.taskId !== taskId) {
+      this.forgetSnooze(threadId);
       return;
     }
     if (this.core.intents.confirmedDeletion(this.core.state.read(), threadId))
@@ -828,9 +977,9 @@ export class T3Presentation {
     }
     if (
       record.state === "unknown" &&
-      projection.thread.snoozedUntil === record.until
+      this.ownsSnooze(record, taskId, projection.thread.snoozedUntil)
     ) {
-      record = { ...record, state: "snoozed" };
+      record = { ...record, taskId, state: "snoozed" };
       this.recordSnooze(threadId, record);
     }
     if (
@@ -844,11 +993,12 @@ export class T3Presentation {
       } else this.forgetSnooze(threadId);
       return;
     }
-    if (
-      record.state === "unknown" &&
-      projection.thread.snoozedUntil !== record.until
-    )
+    // The row now shows a horizon this record did not write: the operator replaced
+    // this host's occurrence, so this host clears nothing (Tom, 2026-11-20).
+    if (!this.ownsSnooze(record, taskId, projection.thread.snoozedUntil)) {
+      if (record.state !== "unknown") this.forgetSnooze(threadId);
       return;
+    }
     const commandId = this.commandIdFor(
       "unsnooze",
       [this.core.hostId(), threadId, record.commandId],
@@ -910,10 +1060,7 @@ export class T3Presentation {
   }
 
   /** Record the row's snooze by thread id; an unchanged record is the same fact, never a write. */
-  private recordSnooze(
-    threadId: string,
-    entry: NonNullable<T3State["snoozes"]>[string],
-  ): void {
+  private recordSnooze(threadId: string, entry: SnoozeRecord): void {
     const current = this.core.state.read().snoozes?.[threadId];
     if (
       current &&
@@ -922,6 +1069,7 @@ export class T3Presentation {
       current.until === entry.until &&
       current.episode === entry.episode &&
       current.ended === entry.ended &&
+      current.taskId === entry.taskId &&
       current.episodeStartedAt === entry.episodeStartedAt
     )
       return;

@@ -1382,6 +1382,19 @@ export async function t3Fake(t: TestContext, directory: string) {
                 role: "user",
                 text: payload.text,
               });
+              // The nightly wakes a snoozed thread on an ordinary delivery
+              // (dispatchMessage): `snoozedUntil` and `snoozedAt` are cleared unless
+              // the dispatch is an automatic notification or a delegated completion
+              // (nucleus#1445). A test that wants the wake left out sets
+              // `notification` on its own dispatch.
+              if (
+                p.thread.snoozedUntil != null &&
+                payload.notification === undefined &&
+                payload.delegatedCompletion === undefined
+              ) {
+                p.thread.snoozedUntil = null;
+                p.thread.snoozedAt = null;
+              }
               // A message to a thread with no live run starts one, as a provider turn
               // does. A follow-up to a delegated child also records a new app-owned
               // task under the dispatch's own command id, exactly as the nightly's

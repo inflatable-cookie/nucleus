@@ -339,7 +339,8 @@ already present.
 | Stop | `thread.stop` through dispatch | Receipt followed by observation; never a replacement thread |
 | Archive | `thread.archive` through dispatch | Receipt followed by archived-state observation |
 | Remove | `thread.delete` through dispatch at closeout, never `onlyIfUnused` | Durable intent, then `deletedAt` or absence from a complete inventory proves removal; an unknown outcome is never resent |
-| Snooze a waiting row | `thread.snooze` through dispatch with `snoozedUntil` in the future | One bounded horizon, read back from `snoozedUntil`; deterministic command identity per wait episode and horizon; a refusal is "stay active" for that episode, never a retry loop |
+| Snooze a waiting row | `thread.snooze` through dispatch with `snoozedUntil` in the future | One bounded horizon, read back from `snoozedUntil`; deterministic command identity per wait episode and horizon; a refusal is "stay active" for that episode, never a retry loop. Only a verified same-task parent row is snoozed, and only the exact horizon this host read back is renewed (nucleus#1445) |
+| Deliver to a snoozed thread | No command: a proven pre-send refusal naming the snooze | T3 clears `snoozedUntil` on an ordinary delivery, so a message to a thread the operator snoozed waits for that snooze to wake; the durable notice stays pending and is delivered then. A task row this host snoozed is delivered over (nucleus#1445) |
 | Report a row that stays hidden | No command: one durable `row_hidden` notice per continuous snooze episode (30 minutes) or hold generation (3 hours), and the planner's answer window for its own hold (30 minutes) | The task, its age, its wait, its last transition and one supported action; unknown when the row cannot be read; superseded when the episode ends; an unanswered planner hold shows the row again |
 | Show a row again | `thread.unsnooze` through dispatch with `reason: "user"` | Only a row this host snoozed; a person who must act or a running role gets the row back immediately through the title/row projection drain and the host pass. The snooze record stays until a fresh T3 read proves `snoozedUntil` is cleared; a settled unsnooze that still reads snoozed is re-observed and retried as a new occurrence, while an unknown delivery is never resent blindly. Operator snoozes and manual settles are never touched |
 | Continue a manually settled thread | Unsettle, then send | A message, decision, follow-up or re-entry for a thread the operator settled unsettles it first and then delivers (Tom, 2026-11-19). Refusing before send is retired |
@@ -380,6 +381,23 @@ thread. `thread.settle` clears a snooze, and `thread.unsnooze` clears the snooze
 and leaves `settledOverride` exactly as it was (`runtimeLayer`, `dispatchOnce`).
 Both commands are ordinary dispatch commands, so the runtime bearer's
 `orchestration:operate` scope covers them; they need no wider scope.
+
+**An ordinary delivery wakes a snoozed thread.** `dispatchMessage` clears
+`snoozedUntil` and `snoozedAt` for every `message.dispatch` that carries neither
+`notification` nor `delegatedCompletion`; those two automatic shapes keep the
+snooze. Nucleus sends ordinary messages (a planner notice, a question, a
+follow-up), so a message to a thread the operator snoozed used to clear that
+snooze with no record of it. Tom reported manual snoozes cleared on two planner
+threads and restored them; the private proof reads the wake on the installed
+nightly (`t3-native-wake-on-delivery`), and the refusal below is what prevents it.
+
+Nucleus never owns a snooze on a thread that is not a task row, so a message to
+such a thread holds its delivery: the adapter refuses before the send, naming the
+snooze, and leaves the manual snooze and that thread's transcript exactly as they
+were. A proven pre-send refusal is not an unknown delivery, so the durable notice
+keeps waiting and is delivered once that thread wakes (Tom's ruling, 2026-11-20;
+nucleus#1445). A manually settled thread keeps its distinct rule: it is
+unsettled and delivered to, because a settle is not a snooze.
 
 Nucleus never issues `thread.settle` for a task thread (Tom, 2026-11-19). The
 task's parent row is driven by the one attention projection the board and
@@ -423,6 +441,25 @@ ownership, a different snooze is left alone, a refusal stays active for that
 wait without retrying, and if the task becomes active before an unknown snooze
 resolves, a later wait can snooze after the old horizon expires.
 
+**Ownership is one verified row and the exact occurrence it wrote (nucleus#1445).**
+Tom, 2026-11-20: "Nucleus must leave snooze state alone on T3 threads that aren't
+assigned to Nucleus tasks, including registered planners and personal threads."
+Snooze renewal, row visibility and unsnooze all ask one ownership question: this
+task's recorded parent binding still names this exact thread (never the inbox, nor
+a thread another task's record also claims), the record is bound to this task, and
+a fresh read shows exactly the horizon that record wrote. A record written before
+the task binding was stored proves itself only by that same horizon. Anything else
+is somebody else's snooze, so this host writes nothing to it: a replaced horizon
+is the operator's, a legacy record T3 does not match claims nothing, and a
+read-back that is not the horizon the command asked for is never adopted. An
+unreadable row still reads as unknown with its recorded snooze kept as evidence.
+
+A record is written with the task it belongs to, so a record another row wrote is
+dropped rather than renewed or cleared. The delivery gate asks the same question
+in the other direction: it delivers over a snooze only when exactly one recorded
+parent binding names the thread and the record proves that exact horizon, so no
+message or command reaches a planner, the inbox or an unrelated thread.
+
 Unsnoozing never forgets this host's snooze record on the command
 acknowledgement alone: the record stays until a fresh T3 read (dropping any
 cached snapshot held earlier in the pass) proves `snoozedUntil` is `null` or
@@ -443,10 +480,11 @@ as it is, and a repeated pass inside the horizon writes nothing.
 is normally the design working: a task that waits on nothing Nucleus runs is
 deliberately hidden. It stops being normal when the wait has gone on quietly, so
 the host reconciles the row's visibility on every pass before its presentation
-step (`rowSnoozeVisibility`): only a snooze this host recorded is Nucleus-owned, a
-row T3 reads unsnoozed or an operator snoozed or settled is clear, and a row the
-host cannot read is unknown rather than clear. Reading first is what lets the pass
-that decides an escalation present the row it just woke, in that same pass.
+step (`rowSnoozeVisibility`): only the exact occurrence this host wrote is
+Nucleus-owned, a row T3 reads unsnoozed or an operator replaced, snoozed or
+settled is clear, and a row the host cannot read is unknown rather than clear.
+Reading first is what lets the pass that decides an escalation present the row it
+just woke, in that same pass.
 
 A Nucleus-owned snooze is one continuous episode, from the first snooze until a
 fresh read proves the row shown, the task closes out, or a genuinely new wait
@@ -1674,9 +1712,14 @@ its role children report, a later round writing the same step under a fresh comm
 identity, a superseded child's fault dropping off the row, a waiting task's row
 snoozed once with `snoozedUntil` read back and renewed before the horizon with no
 write on a repeated pass, a person who must act unsnoozing a row this host snoozed,
-an operator's settled row left alone, a snooze refused for a pending approval
-staying active with no retry loop, no `thread.settle` on any decision, and a role
-whose create refuses launching no thread and naming the fix.
+an operator's settled row left alone, an operator horizon replacing this host's
+left alone, a read-back that is not the requested horizon never adopted, a stale
+legacy record and an ambiguous or foreign parent binding addressed by nothing, a
+snooze refused for a pending approval staying active with no retry loop, no
+`thread.settle` on any decision, and a role whose create refuses launching no
+thread and naming the fix. `test/notice-refused-delivery.test.ts` proves a refusal
+the host named before the send keeps a durable notice pending instead of reporting
+unknown delivery, while a genuinely uncertain send is still recorded as unknown.
 
 `test/t3code-row-hidden.test.ts` is the hidden row's own evidence on the fake
 nightly: one recorded episode start that a horizon renewal keeps, a legacy record's
@@ -1724,12 +1767,14 @@ forwarded, the turn held) and keeps it distinct from the ignore rule;
 `test/acp-service.test.ts` proves a mint carries both prompt rules into the binding
 and that a mint without them writes neither.
 
-`test/t3code-one-row.test.ts` covers parent row titles, snooze and renewal,
-the manual settle left alone by presentation, the re-entry wake, and the absence of
+`test/t3code-one-row.test.ts` covers parent row titles, snooze and renewal, the
+manual settle left alone by presentation, the re-entry wake, and the absence of
 top-level role launches and settle writes. `test/t3code-settled-delivery.test.ts`
 covers the delivery gate on the private server: settled and visible targets, the
-archived fence, a delayed unsettle, unknown unsettles that did and did not land, and
-the wire order and command identities.
+archived fence, a delayed unsettle, unknown unsettles that did and did not land, a
+manually snoozed non-task thread refused before send with its snooze intact and
+delivered once it wakes, a foreign snooze record authorizing nothing, and the wire
+order and command identities.
 The sweep skips presentation work for confirmed terminal archive or deletion.
 Once Nucleus's own recorded delete is confirmed by its receipt or authoritative
 readback, unknown presentation intents for that thread become

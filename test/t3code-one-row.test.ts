@@ -339,8 +339,11 @@ test('a waiting task snoozes its parent row once, reads the horizon back, and re
 
   // The sweep renews before the horizon: a row inside the renew margin gets the
   // next horizon under a fresh command, so the row never wakes itself while the
-  // task still waits.
-  projection.thread.snoozedUntil = new Date(Date.now() + SNOOZE_RENEW_BEFORE_MS / 2).toISOString();
+  // task still waits. A renewal reads this host's own occurrence (the record's
+  // horizon is the one T3 shows), so both sides move together here.
+  const shortUntil = new Date(Date.now() + SNOOZE_RENEW_BEFORE_MS / 2).toISOString();
+  projection.thread.snoozedUntil = shortUntil;
+  host.state.update(state => { state.snoozes![parent.threadId]!.until = shortUntil; });
   await host.reconcileTaskRow(taskId, waiting());
   assert.equal(snoozes().length, 2, 'the renewal is one more snooze');
   const renewed = snoozes().at(-1)!;
@@ -659,6 +662,184 @@ test('an operator snooze inside the renew margin is never overwritten or unsnooz
 
   assert.equal(server.commands.length, before, 'no snooze or unsnooze sent for an operator snooze');
   assert.equal(projection.thread.snoozedUntil, operatorUntil);
+});
+
+test('an operator horizon replacing this host occurrence is left alone, never renewed or unsnoozed (nucleus#1445)', async t => {
+  const { host, server, spec, parentOf } = await fixture(t);
+  await host.createAgent(spec('worker-launch'));
+  const parent = parentOf()!;
+  const projection = server.threads.get(parent.threadId)!;
+
+  await host.reconcileTaskRow(taskId, waiting());
+  const ours = host.state.read().snoozes?.[parent.threadId];
+  assert.equal(ours?.state, 'snoozed');
+  assert.equal(ours?.taskId, taskId, 'the record is bound to the task whose row it snoozed');
+
+  // The operator replaces the horizon from their own client while the task waits.
+  const operatorUntil = new Date(Date.now() + 30 * 60_000).toISOString();
+  projection.thread.snoozedUntil = operatorUntil;
+  const snoozes = () => commandsOf(server, 'thread.snooze').length;
+  const unsnoozes = () => commandsOf(server, 'thread.unsnooze').length;
+  const before = { snoozes: snoozes(), unsnoozes: unsnoozes() };
+
+  // A renewal pass: the changed horizon is not this host's, so nothing is sent.
+  await host.reconcileTaskRow(taskId, waiting());
+  assert.equal(snoozes(), before.snoozes, 'no renewal over the operator horizon');
+  assert.equal(projection.thread.snoozedUntil, operatorUntil, 'the operator horizon stands');
+  assert.equal(host.state.read().snoozes?.[parent.threadId], undefined, 'the record stops claiming the row');
+  assert.deepEqual(await host.rowSnoozeVisibility(taskId), { kind: 'clear' });
+
+  // A person who must act does not clear the operator's snooze either.
+  await host.reconcileTaskRow(taskId, { state: 'attention', cause: 'Needs a person' });
+  assert.equal(unsnoozes(), before.unsnoozes, 'no unsnooze of the operator horizon');
+  assert.equal(projection.thread.snoozedUntil, operatorUntil);
+});
+
+test('a read-back that is not this host horizon is never recorded as its own (nucleus#1445)', async t => {
+  const { host, server, spec, parentOf } = await fixture(t);
+  await host.createAgent(spec('worker-launch'));
+  const parent = parentOf()!;
+  const projection = server.threads.get(parent.threadId)!;
+
+  // The command lands, and another client's snooze replaces the row before the
+  // read-back: the horizon T3 shows is not the one this host asked for.
+  const nativeCall = host.rpc.call.bind(host.rpc);
+  let planted: string | null = null;
+  host.rpc.call = async (method, payload) => {
+    const result = await nativeCall(method, payload);
+    if (
+      method === 'orchestration.dispatchCommand' &&
+      (payload as { type?: string }).type === 'thread.snooze'
+    ) {
+      planted = new Date(Date.now() + 10 * 60_000).toISOString();
+      projection.thread.snoozedUntil = planted;
+    }
+    return result;
+  };
+
+  await host.reconcileTaskRow(taskId, waiting());
+  assert.ok(planted, 'the snooze command was sent');
+  assert.equal(projection.thread.snoozedUntil, planted);
+  assert.equal(
+    host.state.read().snoozes?.[parent.threadId],
+    undefined,
+    'a different horizon is never adopted as this host occurrence',
+  );
+  assert.deepEqual(await host.rowSnoozeVisibility(taskId), { kind: 'clear' });
+
+  // With no record the row reads as the operator's, so later passes leave it alone.
+  const snoozes = () => commandsOf(server, 'thread.snooze').length;
+  const before = snoozes();
+  await host.reconcileTaskRow(taskId, waiting());
+  assert.equal(snoozes(), before, 'the operator occurrence is not renewed');
+  assert.equal(projection.thread.snoozedUntil, planted);
+});
+
+test('a stale legacy record never renews or clears a snooze it cannot prove (nucleus#1445)', async t => {
+  const { host, server, spec, parentOf } = await fixture(t);
+  await host.createAgent(spec('worker-launch'));
+  const parent = parentOf()!;
+  const projection = server.threads.get(parent.threadId)!;
+
+  // A record written before the binding was stored, whose horizon is not the one
+  // T3 shows: it is ambiguous evidence and claims nothing.
+  const operatorUntil = new Date(Date.now() + 90 * 60_000).toISOString();
+  projection.thread.snoozedUntil = operatorUntil;
+  host.state.update(state => {
+    state.snoozes = {
+      ...state.snoozes,
+      [parent.threadId]: {
+        episode: 0,
+        commandId: 'legacy-unproven-snooze',
+        until: new Date(Date.now() + SNOOZE_HORIZON_MS).toISOString(),
+        state: 'snoozed',
+        recordedAt: STAMP,
+      },
+    };
+  });
+  const before = server.commands.length;
+
+  await host.reconcileTaskRow(taskId, waiting());
+  await host.reconcileTaskRow(taskId, { state: 'attention', cause: 'Needs a person' });
+
+  assert.equal(server.commands.length, before, 'no snooze or unsnooze was sent');
+  assert.equal(projection.thread.snoozedUntil, operatorUntil, 'the operator horizon stands');
+  assert.equal(host.state.read().snoozes?.[parent.threadId], undefined, 'the ambiguous record is retired');
+  assert.deepEqual(await host.rowSnoozeVisibility(taskId), { kind: 'clear' });
+});
+
+test('an ambiguous or foreign parent binding is never addressed as a task row (nucleus#1445)', async t => {
+  const { host, server, spec, parentOf } = await fixture(t);
+  await host.createAgent(spec('worker-launch'));
+  const parent = parentOf()!;
+  const projection = server.threads.get(parent.threadId)!;
+  await host.reconcileTaskRow(taskId, waiting());
+  assert.ok(projection.thread.snoozedUntil);
+
+  // Another task's parent record names the same thread: the row is ambiguous, so
+  // this task's presentation writes nothing to it.
+  host.state.update(state => {
+    state.parents = {
+      ...state.parents,
+      'synthetic-other-task': { ...parent, taskId: 'synthetic-other-task' },
+    };
+  });
+  const before = server.commands.length;
+  await host.reconcileTaskRow(taskId, waiting());
+  await host.reconcileTaskRow(taskId, { state: 'attention', cause: 'Needs a person' });
+  assert.equal(server.commands.length, before, 'nothing is addressed to the ambiguous row');
+  assert.deepEqual(await host.rowSnoozeVisibility(taskId), { kind: 'clear' });
+
+  // A record another task wrote is not this row's ownership either.
+  host.state.update(state => {
+    if (state.parents) delete state.parents['synthetic-other-task'];
+    state.snoozes = {
+      ...state.snoozes,
+      [parent.threadId]: {
+        episode: 0,
+        commandId: 'foreign-snooze',
+        until: projection.thread.snoozedUntil!,
+        state: 'snoozed',
+        taskId: 'synthetic-other-task',
+        recordedAt: STAMP,
+      },
+    };
+  });
+  const afterForeign = server.commands.length;
+  await host.reconcileTaskRow(taskId, waiting());
+  await host.reconcileTaskRow(taskId, { state: 'attention', cause: 'Needs a person' });
+  assert.equal(server.commands.length, afterForeign, 'a foreign record is never renewed or cleared');
+  assert.equal(host.state.read().snoozes?.[parent.threadId], undefined);
+  assert.equal(projection.thread.snoozedUntil !== null, true, 'the row stays as T3 shows it');
+});
+
+test('a task row this host snoozed still receives its own message, and T3 wake then re-snoozes the wait (nucleus#1445)', async t => {
+  const { host, server, spec, parentOf } = await fixture(t);
+  await host.createAgent(spec('worker-launch'));
+  const parent = parentOf()!;
+  const projection = server.threads.get(parent.threadId)!;
+  await host.reconcileTaskRow(taskId, waiting());
+  assert.ok(projection.thread.snoozedUntil, 'the row starts snoozed by this host');
+
+  await host.sendMessage(parent.threadId, {
+    messageId: 'own-row-message',
+    text: 'Nucleus keeps this task thread open for its next role.',
+  });
+  assert.equal(
+    commandsOf(server, 'thread.unsnooze').length,
+    0,
+    'the delivery gate sent no unsnooze for this host own row',
+  );
+  assert.equal(
+    projection.thread.snoozedUntil,
+    null,
+    'T3 own wake clears the row when the message is delivered',
+  );
+
+  // The wait is still real, so the next presentation pass snoozes the row again.
+  await host.reconcileTaskRow(taskId, waiting());
+  assert.ok(projection.thread.snoozedUntil, 'the waiting row is snoozed again');
+  assert.equal(host.state.read().snoozes?.[parent.threadId]?.taskId, taskId);
 });
 
 test('active worker going idle and resuming in the same native child unsnoozes on the immediate drain', async t => {

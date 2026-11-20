@@ -141,6 +141,12 @@ const snooze = z.object({
   commandId: z.string(),
   until: z.string(),
   state: z.enum(["snoozed", "refused", "unknown"]),
+  /**
+   * The task this row belongs to (nucleus#1445). Ownership is proved by this task
+   * plus the exact horizon the read shows; a record written before the field
+   * existed proves itself by that horizon alone and is bound on its next write.
+   */
+  taskId: z.string().optional(),
   /** The task became active after this uncertain send. */
   ended: z.boolean().optional(),
   /** The named wait the row was snoozed for; diagnostic text only. */

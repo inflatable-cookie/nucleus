@@ -24,6 +24,7 @@ import {
 } from "./origin";
 import type { AgentObservation } from "../host/adapter";
 import { isAgentGoneRefusal } from "../host/errors";
+import { ProvenPreSendRefusalError } from "../recovery/task-reasons";
 import { qaSettlementHostMessageId } from "../qa/project-qa-notice";
 import {
   qaNoticeOwner,
@@ -261,6 +262,14 @@ export class Notices {
       d.mark(record, "delivered", "");
     } catch (error) {
       this.resolution.responsibleThreads.cache.invalidateMatching(d.recipient);
+      // A refusal proved nothing left this process, so the notice is not an unknown
+      // delivery: it stays pending and is retried on a later pass, when the reason
+      // the host named (a manual snooze, a thread that is not active yet) no longer
+      // holds (nucleus#1445).
+      if (error instanceof ProvenPreSendRefusalError) {
+        d.wait(error.message);
+        return "done";
+      }
       d.mark(record, "uncertain", String(error));
     }
     return "done";

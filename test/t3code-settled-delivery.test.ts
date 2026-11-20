@@ -182,3 +182,53 @@ test('an unsettle that lands before its reply is lost is not repeated: a fresh r
   assert.equal(sent.filter(command => command.type === 'message.dispatch').length, 1, 'the message is sent once');
 });
 
+
+test('a manually snoozed thread is not woken by a Nucleus message: the send is refused before it leaves and the snooze stands (nucleus#1445)', async t => {
+  const { host, server, worker } = await fixture(t);
+  const thread = server.threads.get(worker.id)!.thread;
+  const operatorUntil = new Date(Date.now() + 60 * 60_000).toISOString();
+  thread.snoozedUntil = operatorUntil;
+  thread.snoozedAt = STAMP;
+  const before = server.commands.length;
+  await assert.rejects(host.sendMessage(worker.id, { messageId: 'snoozed-message', text: 'Nucleus has news.' }), (error: unknown) =>
+    error instanceof ProvenPreSendRefusalError && /snoozed until .*waits for that snooze to wake/.test(error.message));
+  assert.equal(server.commands.length, before, 'nothing was sent to the snoozed thread');
+  assert.equal(thread.snoozedUntil, operatorUntil, "the operator's snooze stands");
+  assert.equal(
+    Object.values(host.state.read().intents).some(intent => intent.kind === 'message.dispatch'),
+    false,
+    'no delivery intent was recorded for the refused message',
+  );
+
+  // The same message is delivered once the snooze lapses.
+  thread.snoozedUntil = new Date(Date.now() - 60_000).toISOString();
+  await host.sendMessage(worker.id, { messageId: 'snoozed-message', text: 'Nucleus has news.' });
+  const sent = since(server, before);
+  assert.equal(sent.filter(command => command.type === 'message.dispatch').length, 1, 'the message is sent once the thread wakes');
+});
+
+test('a snooze this host recorded on another thread never authorizes a delivery wake (nucleus#1445)', async t => {
+  const { host, server, worker } = await fixture(t);
+  const thread = server.threads.get(worker.id)!.thread;
+  const operatorUntil = new Date(Date.now() + 60 * 60_000).toISOString();
+  thread.snoozedUntil = operatorUntil;
+  thread.snoozedAt = STAMP;
+  // A record bound to a task this thread is not: it proves nothing about this row.
+  host.state.update(state => {
+    state.snoozes = {
+      ...state.snoozes,
+      [worker.id]: {
+        episode: 0,
+        commandId: 'foreign-snooze',
+        until: operatorUntil,
+        state: 'snoozed',
+        taskId: 'synthetic-other-task',
+        recordedAt: STAMP,
+      },
+    };
+  });
+  const before = server.commands.length;
+  await assert.rejects(host.sendMessage(worker.id, { messageId: 'foreign-message', text: 'hello' }), ProvenPreSendRefusalError);
+  assert.equal(server.commands.length, before, 'nothing was sent');
+  assert.equal(thread.snoozedUntil, operatorUntil, "the operator's snooze stands");
+});
