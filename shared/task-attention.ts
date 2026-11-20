@@ -67,8 +67,10 @@ export interface TaskAttentionFacts {
   prerequisiteWait?: boolean;
   /** An impossible prerequisite needs an operator to correct the list. */
   prerequisiteOperator?: boolean;
-  /** Nucleus has an unreleased run for this task. */
+  /** Nucleus has a confirmed or observed live role execution for this task. */
   liveRun?: boolean;
+  /** Nucleus is waiting passively on its own lifecycle, capacity or host reconciliation and no person must act (nucleus#1453). */
+  passiveWait?: boolean;
   /** The reference the task waits on, when a title or card names one (`nucleus#1364`). */
   waitingOn?: string | null;
   /** The task's visible reason, the fallback cause text. */
@@ -163,6 +165,8 @@ export function taskAttention(facts: TaskAttentionFacts): TaskAttention {
       };
     return { state: "waiting", cause: waitCause(facts, "Held by planner") };
   }
+  if (facts.passiveWait && !blockingFence(facts))
+    return { state: "waiting", cause: waitCause(facts, "Waiting") };
   if (ATTENTION_PHASES.includes(facts.phase))
     return {
       state: "attention",

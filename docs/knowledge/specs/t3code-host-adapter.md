@@ -417,10 +417,20 @@ task's parent row is driven by the one attention projection the board and
   of them, and the Inbox title counts those rows, so a row fault never leaves a
   partial reading (nucleus#1443).
 - *waiting* — the task waits on nothing Nucleus is running and needs no one: the
-  row is snoozed, including past a role's old fault (nucleus#1437). An owner hold with a release condition, a planner's own hold
-  and an unresolved completable prerequisite wait are waiting with their named
-  cause. An operator-owned hold with no release condition and an operator-owned
-  prerequisite correction remain attention.
+  row is snoozed, including past a role's old fault (nucleus#1437) and while an
+  unconfirmed role launch (an `intent` reservation or `uncertain` creation with
+  no bound agent or observed active turn, or an unbound `agentIntent`) waits in
+  a passive lifecycle, capacity or host wait for Nucleus to reconcile it
+  (nucleus#1453). Visible activity and the Inbox running count require a
+  confirmed running role (`status: "running"` with a bound agent not observed
+  idle, or observed active execution) rather than delivery ownership alone,
+  while durable intent ownership, held capacity, escalation and recovery stay
+  unchanged. An owner hold with a release condition, a planner's own hold and an
+  unresolved completable prerequisite wait are waiting with their named cause. An
+  operator-owned hold with no release condition and an operator-owned
+  prerequisite correction remain attention, and a confirmed running role,
+  pending question or permission, genuine attention or escalation, or the
+  `#1417` hidden-row notice still surfaces the row.
 - *finished* — the row's snooze is retired and the terminal lane archives it.
 
 A planner's own hold parks the row the way a releasing hold does (nucleus#1419):
