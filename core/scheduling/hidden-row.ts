@@ -1,12 +1,15 @@
-import type { Notice, Task } from '../../shared/contracts';
-import { blockingHoldFence, taskOwner } from '../../shared/contracts';
-import type { HoldKind, HoldUntil } from '../../shared/contracts';
-import type { TaskAttention } from '../../shared/task-attention';
-import { isHostOperationTimeout } from '../host';
-import type { Adapter, RowSnoozeVisibility } from '../host';
-import { taskRowAttention } from '../workspaces/task-row-attention';
-import { noticeId as attentionNoticeId, originRecipient } from '../questions/origin';
-import type { Store } from '../store/store';
+import type { Notice, Task } from "../../shared/contracts";
+import { blockingHoldFence, taskOwner } from "../../shared/contracts";
+import type { HoldKind, HoldUntil } from "../../shared/contracts";
+import type { TaskAttention } from "../../shared/task-attention";
+import { isHostOperationTimeout } from "../host";
+import type { Adapter, RowSnoozeVisibility } from "../host";
+import { taskRowAttention } from "../workspaces/task-row-attention";
+import {
+  noticeId as attentionNoticeId,
+  originRecipient,
+} from "../questions/origin";
+import type { Store } from "../store/store";
 
 /**
  * A task that stays hidden behind a Nucleus-owned row snooze (nucleus#1417).
@@ -90,17 +93,17 @@ export function rowHiddenHold(task: Task): RowHiddenHold | null {
 
 export type RowHiddenPlan =
   /** Nothing hides this row: reset any recorded episode. */
-  | { kind: 'clear' }
+  | { kind: "clear" }
   /** Hidden, but inside its bound: keep accruing, nothing to send. */
-  | { kind: 'accruing'; record: RowHiddenEpisode }
+  | { kind: "accruing"; record: RowHiddenEpisode }
   /** Hidden past its bound: this episode owes one notice. */
   | {
-      kind: 'due';
+      kind: "due";
       record: RowHiddenEpisode;
       noticeId: string;
       minutes: number;
       /** Why the row should be visible, or that its state is unreadable. */
-      failure: 'missed' | 'unknown';
+      failure: "missed" | "unknown";
       /** The host's own answer when the row could not be read. */
       reason?: string;
       hold: RowHiddenHold | null;
@@ -108,7 +111,9 @@ export type RowHiddenPlan =
 
 const minutesBetween = (since: string, at: number): number => {
   const start = Date.parse(since);
-  return Number.isFinite(start) ? Math.max(0, Math.floor((at - start) / 60_000)) : 0;
+  return Number.isFinite(start)
+    ? Math.max(0, Math.floor((at - start) / 60_000))
+    : 0;
 };
 
 /** A start time this clock has not reached yet is this clock's own answer. */
@@ -135,9 +140,9 @@ export function rowHiddenPlan(input: {
 }): RowHiddenPlan {
   const { task, attention, visibility, prior, at } = input;
   // A finished task's row is the terminal lane's, whatever T3 still shows.
-  if (attention.state === 'finished' || task.removedAt)
-    return { kind: 'clear' };
-  if (visibility.kind === 'clear') return { kind: 'clear' };
+  if (attention.state === "finished" || task.removedAt)
+    return { kind: "clear" };
+  if (visibility.kind === "clear") return { kind: "clear" };
   const hold = rowHiddenHold(task);
   const episode = visibility.episodeStartedAt;
   const resumed = prior && prior.episode === episode ? prior : undefined;
@@ -153,15 +158,15 @@ export function rowHiddenPlan(input: {
     };
     const minutes = minutesBetween(hold.since, at);
     if (minutes < ROW_HIDDEN_HOLD_MINUTES || input.reminderReachedPlanner)
-      return { kind: 'accruing', record };
+      return { kind: "accruing", record };
     const noticeId = rowHiddenHoldNoticeId(task.id, hold.kind, hold.generation);
     return {
-      kind: 'due',
+      kind: "due",
       record: { ...record, noticeId },
       noticeId,
       minutes,
-      failure: visibility.kind === 'unknown' ? 'unknown' : 'missed',
-      ...(visibility.kind === 'unknown' ? { reason: visibility.reason } : {}),
+      failure: visibility.kind === "unknown" ? "unknown" : "missed",
+      ...(visibility.kind === "unknown" ? { reason: visibility.reason } : {}),
       hold,
     };
   }
@@ -177,15 +182,15 @@ export function rowHiddenPlan(input: {
     noticeId: null,
   };
   const minutes = minutesBetween(record.since, at);
-  if (minutes < ROW_HIDDEN_MINUTES) return { kind: 'accruing', record };
+  if (minutes < ROW_HIDDEN_MINUTES) return { kind: "accruing", record };
   const noticeId = rowHiddenNoticeId(task.id, episode);
   return {
-    kind: 'due',
+    kind: "due",
     record: { ...record, noticeId },
     noticeId,
     minutes,
-    failure: visibility.kind === 'unknown' ? 'unknown' : 'missed',
-    ...(visibility.kind === 'unknown' ? { reason: visibility.reason } : {}),
+    failure: visibility.kind === "unknown" ? "unknown" : "missed",
+    ...(visibility.kind === "unknown" ? { reason: visibility.reason } : {}),
     hold: null,
   };
 }
@@ -195,8 +200,9 @@ const taskLines = (task: Task): string =>
   `Task: ${task.title} (${task.reference ?? task.id})`;
 
 const holdUntilLine = (until: HoldUntil | null): string => {
-  if (!until) return 'Release condition: none recorded; the hold stays until its owner releases it.';
-  return until.kind === 'time'
+  if (!until)
+    return "Release condition: none recorded; the hold stays until its owner releases it.";
+  return until.kind === "time"
     ? `Release condition: the hold lifts at ${until.at}; keep it only if the reason still applies.`
     : `Release condition: the hold lifts when task ${until.taskId} is done.`;
 };
@@ -213,93 +219,98 @@ const actionLine = (verb: string): string =>
 export function rowHiddenNoticeText(input: {
   task: Task;
   attention: TaskAttention;
-  plan: Extract<RowHiddenPlan, { kind: 'due' }>;
+  plan: Extract<RowHiddenPlan, { kind: "due" }>;
   transition: string;
-}): { text: string; kind: 'wait' | 'missed' | 'unknown' | 'hold' } {
+}): { text: string; kind: "wait" | "missed" | "unknown" | "hold" } {
   const { task, attention, plan, transition } = input;
   const age = `${plan.minutes} minutes`;
   if (plan.hold) {
     return {
-      kind: 'hold',
+      kind: "hold",
       text: [
-        'Nucleus: a hold still hides a task row on T3',
+        "Nucleus: a hold still hides a task row on T3",
         taskLines(task),
         `Held for: ${age} (since ${plan.hold.since})`,
         `Hold kind: ${plan.hold.kind}; generation ${plan.hold.generation}`,
         `Hold reason: ${plan.hold.reason}`,
         holdUntilLine(plan.hold.until),
         `Last transition: ${transition}`,
-        'Row: T3 reads the row snoozed while the task waits on this hold, so nothing else surfaces it.',
+        "Row: T3 reads the row snoozed while the task waits on this hold, so nothing else surfaces it.",
         actionLine(
           'release the hold with queue.task action "release", or keep it with "keep_hold" and a fresh reason, once its condition no longer applies',
         ),
-      ].join('\n'),
+      ].join("\n"),
     };
   }
-  const waitReason =
-    'cause' in attention ? attention.cause : task.reason;
-  if (plan.failure === 'unknown') {
+  const waitReason = "cause" in attention ? attention.cause : task.reason;
+  if (plan.failure === "unknown") {
     return {
-      kind: 'unknown',
+      kind: "unknown",
       text: [
-        'Nucleus: a task row has stayed hidden on T3 and its state cannot be read',
+        "Nucleus: a task row has stayed hidden on T3 and its state cannot be read",
         taskLines(task),
         `Hidden for: ${age} (since ${plan.record.since})`,
-        `Recorded wait: ${waitReason || 'not recorded'}`,
+        `Recorded wait: ${waitReason || "not recorded"}`,
         `Last transition: ${transition}`,
-        `Row: T3 could not answer for this row (${plan.reason ?? 'no source answered'}), so Nucleus keeps the recorded snooze as its evidence and does not claim the row is clear.`,
+        `Row: T3 could not answer for this row (${plan.reason ?? "no source answered"}), so Nucleus keeps the recorded snooze as its evidence and does not claim the row is clear.`,
         actionLine(
           `inspect the task's row in T3 and the task with task.next (${task.id}), and use next/stop/route if it should move`,
         ),
-      ].join('\n'),
+      ].join("\n"),
     };
   }
-  const visible = attention.state === 'active' || attention.state === 'attention';
+  const visible =
+    attention.state === "active" || attention.state === "attention";
   return {
-    kind: visible ? 'missed' : 'wait',
+    kind: visible ? "missed" : "wait",
     text: [
       visible
-        ? 'Nucleus: a task row should be visible on T3 and still reads snoozed'
-        : 'Nucleus: a task row has stayed snoozed on T3',
+        ? "Nucleus: a task row should be visible on T3 and still reads snoozed"
+        : "Nucleus: a task row has stayed snoozed on T3",
       taskLines(task),
       `Hidden for: ${age} (since ${plan.record.since})`,
-      `Wait reason: ${waitReason || 'not recorded'}`,
+      `Wait reason: ${waitReason || "not recorded"}`,
       `Last transition: ${transition}`,
       visible
-        ? `Row: this task ${attention.state === 'active' ? 'has a role running' : 'needs a person'}, so Nucleus keeps sending the ordinary unsnooze every pass and T3 still shows the row snoozed.`
-        : 'Row: Nucleus keeps the row snoozed while the task genuinely waits, and renews the snooze horizon until the wait ends.',
+        ? `Row: this task ${attention.state === "active" ? "has a role running" : "needs a person"}, so Nucleus keeps sending the ordinary unsnooze every pass and T3 still shows the row snoozed.`
+        : "Row: Nucleus keeps the row snoozed while the task genuinely waits, and renews the snooze horizon until the wait ends.",
       actionLine(
         visible
           ? `inspect the row in T3 and act on the task with task.next (${task.id}): next, stop or route`
           : `inspect the task with task.next (${task.id}) or the board, and use next/stop/route if this wait is a missed transition rather than a real one`,
       ),
-    ].join('\n'),
+    ].join("\n"),
   };
 }
 
 /** The last meaningful task transition, as a notice line names it. */
 export function rowHiddenTransition(store: Store, task: Task): string {
   const event = store.events(task.id).at(-1);
-  return event
-    ? `${event.kind} at ${event.at}`
-    : `phase ${task.phase}`;
+  return event ? `${event.kind} at ${event.at}` : `phase ${task.phase}`;
 }
 
 /**
  * Whether the ordinary attention delivery already reached this task's planner for
- * its current state (nucleus#1417). A planner who is already being told that a
- * person must act is not told the same thing twice: the hidden row is recorded as
- * evidence on the task instead of a second message.
+ * its current state (nucleus#1417). Only confirmed delivery to that planner
+ * coalesces: a pending, intent or uncertain attention notice has not been proved
+ * to reach the planner, so the hidden-row notice still surfaces through the
+ * ordinary durable delivery fences.
  */
-export function attentionDeliveryRecorded(store: Store, task: Task): boolean {
+export function attentionDeliveryRecorded(
+  store: Store,
+  task: Task,
+  planner: string | null = rowHiddenRecipient(store, task),
+): boolean {
+  if (!planner) return false;
   const current = attentionNoticeId(task);
   return store
     .notices(task.id)
     .some(
       (notice: Notice) =>
-        notice.kind === 'attention' &&
+        notice.kind === "attention" &&
         notice.id === current &&
-        notice.status !== 'superseded',
+        notice.status === "delivered" &&
+        notice.agentId === planner,
     );
 }
 
@@ -319,8 +330,8 @@ export function holdReminderReachedPlanner(
     .events(task.id)
     .some(
       (event) =>
-        (event.kind === 'hold_ready_notified' ||
-          event.kind === 'hold_reminded') &&
+        (event.kind === "hold_ready_notified" ||
+          event.kind === "hold_reminded") &&
         event.detail.includes(`generation ${hold.generation}`),
     );
   if (!prompted) return false;
@@ -328,8 +339,8 @@ export function holdReminderReachedPlanner(
     .notices(task.id)
     .some(
       (notice) =>
-        notice.kind === 'hold' &&
-        notice.status === 'delivered' &&
+        notice.kind === "hold" &&
+        notice.status === "delivered" &&
         notice.agentId === planner,
     );
 }
@@ -353,7 +364,7 @@ export function rowHiddenTasks(store: Store, hostId: string): Task[] {
 /** The ports one host pass gives the hidden-row reconciliation. */
 export interface HiddenRowsContext {
   store: Store;
-  adapter: Pick<Adapter, 'rowSnoozeVisibility'>;
+  adapter: Pick<Adapter, "rowSnoozeVisibility">;
 }
 
 /**
@@ -405,27 +416,32 @@ export class HiddenRows {
         ? holdReminderReachedPlanner(this.store, task, hold, planner)
         : false,
     });
-    if (plan.kind === 'clear') {
+    if (plan.kind === "clear") {
       this.clear(task);
       return;
     }
     this.supersedeStale(task, plan.record.noticeId);
-    if (plan.kind === 'accruing') {
+    if (plan.kind === "accruing") {
       this.record(key, plan.record);
       return;
     }
-    // The ordinary attention delivery already reaches this planner for this
+    // The ordinary attention delivery already reached this planner for this
     // state: the hidden row is recorded as evidence, never as a second message.
-    if (!plan.hold && attentionDeliveryRecorded(this.store, task)) {
-      this.eventOnce(task, plan.noticeId, 'row_hidden_visibility_failure',
-        `${plan.noticeId}: ${plan.minutes} minutes hidden behind a Nucleus snooze while ${attention.state} was due; the ordinary notice already reached the planner`);
+    if (!plan.hold && attentionDeliveryRecorded(this.store, task, planner)) {
+      this.supersedeStale(task, null);
+      this.eventOnce(
+        task,
+        plan.noticeId,
+        "row_hidden_visibility_failure",
+        `${plan.noticeId}: ${plan.minutes} minutes hidden behind a Nucleus snooze while ${attention.state} was due; the ordinary notice already reached the planner`,
+      );
       this.record(key, { ...plan.record, noticeId: null });
       return;
     }
     const existing = this.store
       .notices(task.id)
       .find((notice) => notice.id === plan.noticeId);
-    if (!existing || existing.status === 'superseded') {
+    if (!existing || existing.status === "superseded") {
       const { text, kind } = rowHiddenNoticeText({
         task,
         attention,
@@ -436,19 +452,22 @@ export class HiddenRows {
         id: plan.noticeId,
         taskId: task.id,
         agentId: planner ?? taskOwner(task),
-        recipientAgentId: '',
+        recipientAgentId: "",
         workspaceId: null,
         sources: [],
         originEntry: true,
-        kind: 'row_hidden',
-        status: 'pending',
-        error: '',
+        kind: "row_hidden",
+        status: "pending",
+        error: "",
         text,
       });
       this.store.event(
         task.id,
-        'row_hidden_notified',
-        `${plan.noticeId}: ${kind}; ${plan.minutes} minutes hidden\n${text}`.slice(0, 4000),
+        "row_hidden_notified",
+        `${plan.noticeId}: ${kind}; ${plan.minutes} minutes hidden\n${text}`.slice(
+          0,
+          4000,
+        ),
       );
     }
     this.record(key, plan.record);
@@ -464,12 +483,12 @@ export class HiddenRows {
   /** Supersede pending notices this task's row no longer owes. */
   private supersedeStale(task: Task, liveNoticeId: string | null): void {
     for (const notice of this.store.notices(task.id)) {
-      if (notice.kind !== 'row_hidden' || notice.status !== 'pending') continue;
+      if (notice.kind !== "row_hidden" || notice.status !== "pending") continue;
       if (notice.id === liveNoticeId) continue;
       this.store.putNotice({
         ...notice,
-        status: 'superseded',
-        error: 'The row is no longer hidden for this episode',
+        status: "superseded",
+        error: "The row is no longer hidden for this episode",
       });
     }
   }
@@ -488,11 +507,18 @@ export class HiddenRows {
   }
 
   /** One evidence line per episode: a repeated pass records nothing new. */
-  private eventOnce(task: Task, key: string, kind: string, detail: string): void {
+  private eventOnce(
+    task: Task,
+    key: string,
+    kind: string,
+    detail: string,
+  ): void {
     if (
       this.store
         .events(task.id)
-        .some((event) => event.kind === kind && event.detail.startsWith(`${key}:`))
+        .some(
+          (event) => event.kind === kind && event.detail.startsWith(`${key}:`),
+        )
     )
       return;
     this.store.event(task.id, kind, detail.slice(0, 4000));

@@ -1185,8 +1185,15 @@ test("auditPass: an incomplete disposition resumes after the observation read, a
   const log = auditSpies(f);
   await f.internals.auditPass(false);
   const at = log.indexOf("resumeDispositions");
-  assert.ok(at > log.indexOf("observeRetiredWorkers"), "it resumes after the observation read");
-  assert.equal(log[at + 1], "resumePausedStops", "and ahead of worker recovery");
+  assert.ok(
+    at > log.indexOf("observeRetiredWorkers"),
+    "it resumes after the observation read",
+  );
+  assert.equal(
+    log[at + 1],
+    "resumePausedStops",
+    "and ahead of worker recovery",
+  );
 });
 
 test("auditPass: pause skips maintenance, recovery launches, retired-errored archive and dispatch; replay, observation, notices and titles still run", async (t) => {

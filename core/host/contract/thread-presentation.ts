@@ -1,5 +1,5 @@
-import type { Task } from '../../../shared/contracts';
-import type { TaskAttention } from '../../../shared/task-attention';
+import type { Task } from "../../../shared/contracts";
+import type { TaskAttention } from "../../../shared/task-attention";
 
 /**
  * What one task row's visibility is, as a host's own durable snooze ownership and
@@ -9,12 +9,17 @@ import type { TaskAttention } from '../../../shared/task-attention';
  */
 export type RowSnoozeVisibility =
   /** No row here, a row this host never snoozed, or one the host reads shown. */
-  | { kind: 'clear' }
+  | { kind: "clear" }
   /** The host reads the row snoozed and it recorded that snooze. */
-  | { kind: 'snoozed'; threadId: string; episodeStartedAt: string; cause: string }
+  | {
+      kind: "snoozed";
+      threadId: string;
+      episodeStartedAt: string;
+      cause: string;
+    }
   /** The host's row state could not be read; the recorded snooze is the evidence. */
   | {
-      kind: 'unknown';
+      kind: "unknown";
       threadId: string;
       episodeStartedAt: string;
       cause: string;

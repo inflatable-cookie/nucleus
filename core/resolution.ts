@@ -527,7 +527,9 @@ export class Resolution {
     if (!assigned) return;
     let gone = false;
     try {
-      gone = (await this.plannerPresence.threadRoute(assigned.agentId)).kind === "gone";
+      gone =
+        (await this.plannerPresence.threadRoute(assigned.agentId)).kind ===
+        "gone";
     } catch {
       return;
     }

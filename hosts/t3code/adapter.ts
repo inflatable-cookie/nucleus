@@ -648,10 +648,11 @@ export class T3CodeHost implements Host {
   }
   /**
    * The task row's visibility now (nucleus#1417): whether a Nucleus-owned snooze
-   * still hides it and how long that continuous episode has run.
+   * still hides it and how long that continuous episode has run. A disconnected
+   * host has not proved a recorded snooze clear, so the presentation layer still
+   * answers from its durable record.
    */
   async rowSnoozeVisibility(taskId: string): Promise<RowSnoozeVisibility> {
-    if (!this.connected) return { kind: "clear" };
     return await this.presentation.rowSnoozeVisibility(taskId);
   }
   /** Show the board in the host's pinned inbox thread for the operator's `ui` (nucleus#1415). */

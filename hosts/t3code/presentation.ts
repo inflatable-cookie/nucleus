@@ -21,7 +21,14 @@ import {
   presentationThread,
 } from "./intents";
 import type { T3IntentLedger } from "./intents";
-import { attentionStep, isSupportRole, labelRole, labelTask, rowStep, rowTitle } from "./one-row";
+import {
+  attentionStep,
+  isSupportRole,
+  labelRole,
+  labelTask,
+  rowStep,
+  rowTitle,
+} from "./one-row";
 
 /** A settled or refused command never runs again, so its identity is spent. */
 const settledOrRefused = (intent: T3State["intents"][string]) =>
@@ -349,10 +356,15 @@ export class T3Presentation {
     const cause = record.cause ?? "";
     if (this.core.intents.confirmedDeletion(this.core.state.read(), threadId))
       return { kind: "clear" };
-    if (!(await this.core.reads.isObserved(threadId))) return { kind: "clear" };
     let projection: Projection;
     try {
-      projection = await this.core.reads.readProjection(threadId, "observation");
+      this.core.requireConnection();
+      if (!(await this.core.reads.isObserved(threadId)))
+        return { kind: "clear" };
+      projection = await this.core.reads.readProjection(
+        threadId,
+        "observation",
+      );
     } catch (error) {
       if (isHostOperationTimeout(error)) throw error;
       return {
@@ -557,7 +569,11 @@ export class T3Presentation {
         this.core.state.update((current) => {
           const intent = current.intents[key];
           if (intent?.status === "unknown")
-            current.intents[key] = { ...intent, status: "settled", result: null };
+            current.intents[key] = {
+              ...intent,
+              status: "settled",
+              result: null,
+            };
         });
         return;
       }
@@ -592,7 +608,8 @@ export class T3Presentation {
 
     // T3 may show the unsettle a moment after the command returns: read it back.
     for (let attempt = 0; attempt < UNSETTLE_READ_ATTEMPTS; attempt++) {
-      if (attempt) await new Promise((done) => setTimeout(done, UNSETTLE_READ_GAP_MS));
+      if (attempt)
+        await new Promise((done) => setTimeout(done, UNSETTLE_READ_GAP_MS));
       const read = await this.observeFresh(id);
       if (read.thread.settledOverride !== "settled") return;
     }
@@ -661,7 +678,11 @@ export class T3Presentation {
     let record = this.core.state.read().snoozes?.[threadId];
     const snoozed = Number.isFinite(wakeAt) && wakeAt > now;
     if (record?.state === "refused") return;
-    if (record?.state === "unknown" && record.ended && Date.parse(record.until) <= now) {
+    if (
+      record?.state === "unknown" &&
+      record.ended &&
+      Date.parse(record.until) <= now
+    ) {
       // A late delivery cannot snooze beyond its own expired horizon. A later
       // wait can now start a fresh episode without replaying the uncertain send.
       this.forgetSnooze(threadId);
@@ -704,7 +725,12 @@ export class T3Presentation {
       settledOrRefused,
     );
     this.recordSnooze(threadId, {
-      episode, commandId, until, state: "unknown", cause, episodeStartedAt,
+      episode,
+      commandId,
+      until,
+      state: "unknown",
+      cause,
+      episodeStartedAt,
       recordedAt: new Date().toISOString(),
     });
     try {
@@ -719,7 +745,12 @@ export class T3Presentation {
     } catch (error) {
       if (error instanceof ProvenPreSendRefusalError) {
         this.recordSnooze(threadId, {
-          episode, commandId, until, state: "refused", cause, episodeStartedAt,
+          episode,
+          commandId,
+          until,
+          state: "refused",
+          cause,
+          episodeStartedAt,
           recordedAt: new Date().toISOString(),
         });
       }
