@@ -50,7 +50,9 @@ export function recoveryOvertakenByMerge(
         && binding.id < merges[0]!.id)) return false;
   const originalStop = !task.resolution.stop
     || digest(`stop:${task.resolution.stop.reason}:${task.resolution.stop.since}`) === recovery.key;
-  if (action.status === "pending") return originalStop;
+  // The bound report predates verification even if the current stop was later
+  // replaced. The caller may retire this run, but clears only a proved stop.
+  if (action.status === "pending") return true;
   if (action.status !== "applied" || !run.released || !released || !applied
       || !(merges[0]!.id < released.id && released.id < applied.id)) return false;
   if (originalStop) return true;

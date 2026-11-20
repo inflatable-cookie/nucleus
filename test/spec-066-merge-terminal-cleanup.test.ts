@@ -24,6 +24,7 @@ import { syncMain } from '../core/forge/index';
 import { plannerEscalations } from '../core/questions/ladder/records';
 import { taskControlOperation } from '../core/verbs/task-control-key';
 import { recoveryOvertakenByMerge } from '../core/recovery/merge-occurrence';
+import { Reports } from '../core/intake/report';
 
 const head = 'a'.repeat(40), base = 'b'.repeat(40), merged = 'c'.repeat(40);
 const CALLER = 'owner-thread';
@@ -195,6 +196,10 @@ test('a recovery opened after merge remains the owner of its current fault', asy
     const before = f.task();
     f.engine.resolution.closeout.continueRecordedMerge(before, { kind: 'sweep' });
     assert.deepEqual(f.task(), before);
+    await f.engine.wake();
+    assert.equal(f.task().resolution.recovery?.status, 'pending');
+    assert.notEqual(f.task().phase, 'done');
+    assert.equal(f.counts().syncs, 0);
   } finally { await f.close(); }
 });
 
@@ -248,7 +253,7 @@ test('verified merge retires its own recovery and retains the live run for custo
     const task = f.task();
     const episode = task.resolution.recovery!;
     const run = f.store.run('recovery-run')!;
-    f.store.putRun({ ...run, released: false, status: 'running', completion: null });
+    f.store.putRun({ ...run, hostId: 'host', released: false, status: 'running', completion: null });
     f.store.setCredential(run.id, 'synthetic-token');
     f.store.update(f.taskId, { resolution: { ...task.resolution, recovery: { ...episode, mergeWitness: {
       episodeId: episode.id, incidentId: episode.incidentId, stopKey: episode.key,
@@ -258,19 +263,30 @@ test('verified merge retires its own recovery and retains the live run for custo
     assert.equal(retired.resolution.recovery?.status, 'resolved');
     assert.equal(f.store.run(run.id)?.released, false);
     assert.equal(f.store.run(run.id)?.mergeRetirement?.episodeId, episode.id);
+    const oldRun = f.store.run(run.id)!;
+    f.store.putRun({ ...oldRun, id: 'new-recovery', status: 'running', mergeRetirement: undefined });
+    const current = f.task();
+    f.store.update(f.taskId, { resolution: { ...current.resolution, recoveryActive: true,
+      recovery: { ...current.resolution.recovery!, id: 'new-episode', runId: 'new-recovery', status: 'running', mergeWitness: undefined },
+    } });
+    const attempts = f.task().resolution.recoveryAttempts;
     const input = { taskId: f.taskId, runId: run.id, eventId: 'late-recovery', status: 'blocked' as const,
       summary: 'The previous participant was unavailable', head, coordinatorGeneration: run.generation };
     const reopened = new Store(f.store.path);
     const restarted = new Engine(reopened, f.adapter, 0, () => true);
     try {
-      await assert.rejects(restarted.complete(input, 'wrong-token'));
-      await restarted.complete(input, 'synthetic-token');
+      const reports = new Reports(restarted);
+      const { coordinatorGeneration: _generation, ...report } = input;
+      await assert.rejects(reports.report(report, 'wrong-token'));
+      await reports.report(report, 'synthetic-token');
       const events = reopened.eventsAll(f.taskId);
-      await restarted.complete(input, 'synthetic-token');
+      await reports.report(report, 'synthetic-token');
       assert.deepEqual(reopened.eventsAll(f.taskId), events);
     } finally { await restarted.stop(); reopened.close(); }
     assert.equal(f.task().phase, 'syncing');
-    assert.equal(f.task().resolution.recovery?.status, 'resolved');
+    assert.equal(f.task().resolution.recovery?.status, 'running');
+    assert.equal(f.task().resolution.recovery?.runId, 'new-recovery');
+    assert.equal(f.task().resolution.recoveryAttempts, attempts);
     assert.equal(f.store.run(run.id)?.completion?.eventId, input.eventId);
     assert.equal(f.store.run(run.id)?.released, false);
   } finally { await f.close(); }
@@ -301,21 +317,102 @@ test('merge verification retires an accepted recovery report before it reaches t
   } finally { await f.close(); }
 });
 
+test('an observed external merge retains the recovery callback and execution custody', async () => {
+  const f = fixture();
+  try {
+    plantMerged(f);
+    const task = f.task(), episode = task.resolution.recovery!, run = f.store.run('recovery-run')!;
+    f.store.putRun({ ...run, released: false, status: 'running', completion: null });
+    f.store.setCredential(run.id, 'synthetic-token');
+    f.store.update(f.taskId, { phase: 'blocked', resolution: { ...task.resolution, externalMerge: false,
+      mergeIntent: false, mergeHead: null, mergedCommit: null, recovery: { ...episode, mergeWitness: {
+        episodeId: episode.id, incidentId: episode.incidentId, stopKey: episode.key,
+        runId: run.id, generation: run.generation, prNumber: 7, head, mergedCommit: null,
+      } } } });
+    f.engine.resolution.executionLease = async () => true;
+    assert.equal(await f.engine.resolution.recoverExternalMerge(f.task()), true);
+    assert.equal(f.store.run(run.id)?.released, false);
+    assert.equal(f.task().resolution.recovery?.status, 'resolved');
+    await f.engine.complete({ taskId: f.taskId, runId: run.id, eventId: 'external-late', status: 'blocked',
+      summary: 'The earlier participant was unavailable', head, coordinatorGeneration: run.generation }, 'synthetic-token');
+    assert.equal(f.task().phase, 'syncing');
+    assert.equal(f.events('planner_escalation').length, 0);
+    assert.equal(f.store.run(run.id)?.released, false);
+  } finally { await f.close(); }
+});
+
+test('recovery result reconciliation cannot apply an overtaken report after restart', async () => {
+  const f = fixture();
+  try {
+    plantMerged(f);
+    f.adapter.supportsCoordinatorRecovery = true;
+    const task = f.task(), episode = task.resolution.recovery!, run = f.store.run('recovery-run')!;
+    const completion = { taskId: f.taskId, runId: run.id, eventId: 'pending-after-roll', status: 'blocked' as const,
+      summary: 'The earlier participant was unavailable', head, coordinatorGeneration: run.generation,
+      coordinatorAction: { verb: 'cannot' as const, reason: 'Need input' } };
+    f.store.putRun({ ...run, released: false, status: 'running', completion });
+    f.store.update(f.taskId, { resolution: { ...task.resolution, recovery: { ...episode, action: {
+      eventId: completion.eventId, runId: run.id, reportStatus: completion.status,
+      coordinatorAction: completion.coordinatorAction, summary: completion.summary, status: 'pending',
+    }, mergeWitness: { episodeId: episode.id, incidentId: episode.incidentId, stopKey: episode.key,
+      runId: run.id, generation: run.generation, prNumber: 7, head, mergedCommit: null } } } });
+    const reopened = new Store(f.store.path);
+    const restarted = new Engine(reopened, f.adapter, 0, () => true);
+    try { await restarted.resolution.recovery.pass(f.taskId); }
+    finally { await restarted.stop(); reopened.close(); }
+    assert.equal(f.task().phase, 'syncing');
+    assert.equal(f.task().resolution.recovery?.action?.status, 'refused');
+    assert.equal(f.events('planner_escalation').length, 0);
+    assert.equal(f.store.run(run.id)?.released, false);
+    assert.equal(f.events('run_result_applied').filter(event => event.detail === run.id).length, 1);
+  } finally { await f.close(); }
+});
+
+test('a retired recovery releases custody only after the participant lease is proved', async () => {
+  const f = fixture();
+  try {
+    plantMerged(f);
+    f.adapter.supportsCoordinatorRecovery = true;
+    const task = f.task(), episode = task.resolution.recovery!, run = f.store.run('recovery-run')!;
+    f.store.putRun({ ...run, released: false, status: 'running', completion: null });
+    f.store.setCredential(run.id, 'synthetic-token');
+    f.store.update(f.taskId, { resolution: { ...task.resolution, recovery: { ...episode, mergeWitness: {
+      episodeId: episode.id, incidentId: episode.incidentId, stopKey: episode.key,
+      runId: run.id, generation: run.generation, prNumber: 7, head, mergedCommit: null,
+    } } } });
+    f.engine.resolution.closeout.continueRecordedMerge(f.task(), { kind: 'sweep' });
+    await f.engine.complete({ taskId: f.taskId, runId: run.id, eventId: 'late-escalation', status: 'escalate',
+      summary: 'Old escalation', head, coordinatorGeneration: run.generation }, 'synthetic-token');
+    f.engine.resolution.executionLease = async () => false;
+    await f.engine.resolution.recovery.pass(f.taskId);
+    assert.equal(f.store.run(run.id)?.released, false);
+    f.engine.resolution.executionLease = async () => true;
+    await f.engine.resolution.recovery.pass(f.taskId);
+    assert.equal(f.store.run(run.id)?.released, true);
+    assert.equal(f.task().resolution.recovery?.status, 'resolved');
+    assert.equal(f.events('planner_escalation').length, 0);
+  } finally { await f.close(); }
+});
+
 test('an independent stop is not cleared with an old recovery', async () => {
   const f = fixture();
   try {
     plantMerged(f);
     const task = f.task(), episode = task.resolution.recovery!;
     f.store.update(f.taskId, { resolution: { ...task.resolution,
-      stop: { reason: 'budget', detail: 'Separate budget hold', since: new Date().toISOString(), suggestedVerbs: [] },
       recovery: { ...episode, mergeWitness: { episodeId: episode.id, incidentId: episode.incidentId,
         stopKey: episode.key, runId: episode.runId, generation: episode.generation, prNumber: 7, head, mergedCommit: null } },
     } });
+    f.engine.resolution.openPlannerEscalation(f.task(), { cause: digest('independent'), runId: 'worker-run',
+      question: 'An independent decision remains open', payload: { cause: 'independent' } });
     const before = f.task();
     f.engine.resolution.closeout.continueRecordedMerge(before, { kind: 'sweep' });
-    assert.equal(f.task().resolution.stop?.reason, 'budget');
+    assert.equal(f.task().resolution.stop?.reason, 'escalated');
     assert.equal(f.task().phase, before.phase);
     assert.equal(f.task().resolution.recovery?.status, 'resolved');
+    await f.engine.wake();
+    assert.equal(f.task().resolution.stop?.reason, 'escalated');
+    assert.equal(f.counts().syncs, 0);
   } finally { await f.close(); }
 });
 
@@ -353,6 +450,27 @@ test('an independent hold survives the merge occurrence decision', async () => {
     assert.equal(f.task().held, true);
     assert.equal(f.task().holdOwner, before.holdOwner);
     assert.equal(f.task().resolution.recovery?.status, 'resolved');
+  } finally { await f.close(); }
+});
+
+test('an uncertain independent effect remains owned after recovery is retired', async () => {
+  const f = fixture();
+  try {
+    plantMerged(f);
+    const task = f.task(), episode = task.resolution.recovery!;
+    f.store.update(f.taskId, { resolution: { ...task.resolution, recovery: { ...episode, mergeWitness: {
+      episodeId: episode.id, incidentId: episode.incidentId, stopKey: episode.key, runId: episode.runId,
+      generation: episode.generation, prNumber: 7, head, mergedCommit: null,
+    } } } });
+    f.store.putNotice({ id: 'independent', taskId: f.taskId, agentId: 'origin', recipientAgentId: 'origin',
+      workspaceId: null, sources: [], originEntry: true, kind: 'attention', status: 'uncertain',
+      error: 'Delivery outcome is unknown', text: 'Independent notice' });
+    f.engine.resolution.closeout.continueRecordedMerge(f.task(), { kind: 'sweep' });
+    assert.equal(f.task().resolution.recovery?.status, 'resolved');
+    await f.engine.wake();
+    assert.equal(f.store.notices(f.taskId).find(notice => notice.id === 'independent')?.status, 'uncertain');
+    assert.equal(f.counts().syncs, 0);
+    assert.equal(f.counts().sends, 0);
   } finally { await f.close(); }
 });
 

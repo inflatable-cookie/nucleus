@@ -48,6 +48,7 @@ export type RecoveryContext = Pick<
   | "automaticHookReplayPending"
   | "ensureIncident"
   | "escalateRefusedCoordinator"
+  | "executionLease"
   | "extendCallbackReminder"
   | "graceMs"
   | "host"
@@ -844,7 +845,9 @@ export class CoordinatorEpisode {
    * sweep can still prove it terminated; only those shapes cost a host lookup.
    */
   orphanedCreations(t: Task): Run[] {
-    const bound = t.resolution.recovery?.runId ?? null;
+    const episode = t.resolution.recovery;
+    const bound = episode?.status === "resolved" && episode.runId && this.store.run(episode.runId)?.mergeRetirement
+      ? null : episode?.runId ?? null;
     return this.store
       .runs(t.id)
       .filter(
@@ -876,7 +879,8 @@ export class CoordinatorEpisode {
       latest.workspaceId !== run.workspaceId ||
       latest.generation !== run.generation ||
       latest.createdAt !== run.createdAt ||
-      current.resolution.recovery?.runId === latest.id ||
+      (current.resolution.recovery?.runId === latest.id
+        && !(latest.mergeRetirement && current.resolution.recovery.status === "resolved")) ||
       readCreationAttempt(this.store, latest)?.attemptId !==
         observed.proof.attemptId ||
       current.removedAt ||

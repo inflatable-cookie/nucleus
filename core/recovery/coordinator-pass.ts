@@ -20,6 +20,7 @@ import {
 import { plannerEscalations, type LadderEvent } from "../questions/ladder";
 import { closeEscalationFollowups } from "../questions/ladder/continuation";
 import { recoveryOvertakenByMerge } from "./merge-occurrence";
+import { releaseRunFromRecordedCompletion } from "./fence-settlement";
 import {
   reportNamesNoAction,
   retiredNarrowAction,
@@ -98,6 +99,18 @@ export class CoordinatorPass {
       .filter((task) => !taskId || task.id === taskId)) {
       let t = this.store.task(initial.id),
         incident = t.resolution.recovery;
+      // The retired report is already history. Release its execution custody
+      // only after the ordinary merge lease positively observes participants and
+      // effects quiet, and only if neither task nor run changed during that read.
+      for (const retired of this.store.runs(t.id).filter(run => run.mergeRetirement && run.completion && !run.released)) {
+        const snapshot = JSON.stringify(retired);
+        if (!(await this.resolution.executionLease(t, undefined, false, true))) continue;
+        this.store.transaction(() => {
+          const current = this.store.task(t.id), latest = this.store.run(retired.id);
+          if (current.version === t.version && latest && JSON.stringify(latest) === snapshot)
+            releaseRunFromRecordedCompletion(this.store, current.id, latest);
+        });
+      }
       if (t.entrypoint === "proof" && t.proofOnly) {
         // A stale worker-recovery episode must not own a proof-only task. Stop and
         // supersede its exact coordinator run, then let the task quantum resume the

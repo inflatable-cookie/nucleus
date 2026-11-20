@@ -782,6 +782,7 @@ export class Resolution {
       "automaticHookReplayPending",
       "ensureIncident",
       "escalateRefusedCoordinator",
+      "executionLease",
       "extendCallbackReminder",
       "graceMs",
       "host",

@@ -284,7 +284,7 @@ export class RunRelease {
     // escalated. Observed live as a recovery run reading running/active/unreleased hours
     // after its agent closed, holding every operator route hostage.
     const runs = this.store.runs(task.id).filter(run => !run.released && run.completion &&
-      run.role === "recovery" && run.completion.status === "escalate");
+      run.role === "recovery" && !run.mergeRetirement && run.completion.status === "escalate");
     if (!runs.length) return;
     this.store.transaction(() => {
       for (const run of runs) {

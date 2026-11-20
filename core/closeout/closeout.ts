@@ -425,6 +425,7 @@ export class Closeout {
     if (applied) this.resolution.closeoutWritten(this.store.task(t.id));
   }
   async advanceClosing(t: Task): Promise<void> {
+    if (t.resolution.recoveryActive || (t.resolution.recovery && t.resolution.recovery.status !== "resolved")) return;
     if (t.resolution.mergedCommit && this.store.runs(t.id).some(run => !run.released)) return;
     // A blocked closeout hook is handled by the closeout authority; uncertain
     // effects and all other task effects must settle independently.
@@ -459,6 +460,7 @@ export class Closeout {
     } else await this.resolution.launch(t, "closeout");
   }
   async advanceSyncing(t: Task): Promise<void> {
+    if (t.resolution.recoveryActive || (t.resolution.recovery && t.resolution.recovery.status !== "resolved")) return;
     if (!t.resolution.mergedCommit || this.store.runs(t.id).some(run => !run.released)) return;
     if (!this.resolution.claimIntegrationTurn(t)) return;
     t = this.store.task(t.id);

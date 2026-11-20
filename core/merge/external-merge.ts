@@ -369,6 +369,9 @@ export class ExternalMerge {
         );
       const acceptance = this.acceptanceInTransaction(current, route, result);
       for (const run of leases()) {
+        // The shared merge transition owns this episode. Keep its callback and
+        // execution custody until that transition and the ordinary lease settle.
+        if (run.role === "recovery" && run.id === current.resolution.recovery?.runId) continue;
         // Spec 050 (#3569): a recovery run released at closeout still records a
         // pending accepted action as not applied instead of closing silently.
         if (
@@ -792,7 +795,8 @@ export class ExternalMerge {
         return true;
       }
       this.store.transaction(() => {
-        for (const run of this.store.runs(t.id).filter((r) => !r.released))
+        for (const run of this.store.runs(t.id).filter((r) => !r.released
+          && !(r.role === "recovery" && r.id === current.resolution.recovery?.runId)))
           this.store.putRun({ ...run, released: true, status: "superseded" });
         recordObservedMerge(
           { resolution: this.resolution },
