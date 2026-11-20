@@ -70,10 +70,7 @@ export type ExternalMergeContext = Pick<
   | "update"
   | "waiting"
 > & {
-  recovery: Pick<
-    Resolution["recovery"],
-    "releaseWithNotAppliedAction" | "settledEpisodeChanges"
-  >;
+  recovery: Pick<Resolution["recovery"], "releaseWithNotAppliedAction">;
 };
 
 /** The route whose acceptance this merge follows, with the witnesses that route proved. */
@@ -369,6 +366,14 @@ export class ExternalMerge {
         );
       const acceptance = this.acceptanceInTransaction(current, route, result);
       for (const run of leases()) {
+        // The shared merge transition owns this episode. Keep its callback and
+        // execution custody until that transition and the ordinary lease settle.
+        if (
+          run.role === "recovery" &&
+          run.id === current.resolution.recovery?.runId &&
+          !run.completion
+        )
+          continue;
         // Spec 050 (#3569): a recovery run released at closeout still records a
         // pending accepted action as not applied instead of closing silently.
         if (
@@ -402,36 +407,30 @@ export class ExternalMerge {
           2000,
         ),
       );
-      recordObservedMerge(
-        { store: this.store, resolution: this.resolution },
-        current,
-        {
-          head: result.head,
-          commit: result.commit,
-          recordHead: !acceptance,
-          acceptance,
-          settleEpisode: true,
-          episodeDetail: `External merge observed: ${reason}`,
-          // A never-dispatched task keeps its recorded source head: the merged head
-          // and commit are recorded beside it, not over it.
-          reason: acceptance
-            ? {
-                holding:
-                  "Exact-final-head operator source acceptance recorded; the external merge is observed and main synchronizes before closeout",
-                waiting:
-                  "Exact-final-head operator source acceptance recorded; the external merge is observed and waits for the repository integration turn",
-              }
-            : {
-                holding:
-                  "Operator accepted the external merge; synchronizing main before coordinator closeout",
-                waiting:
-                  "Operator accepted the external merge; waiting for repository integration turn",
-              },
-        },
-      );
+      recordObservedMerge({ resolution: this.resolution }, current, {
+        head: result.head,
+        commit: result.commit,
+        recordHead: !acceptance,
+        acceptance,
+        // A never-dispatched task keeps its recorded source head: the merged head
+        // and commit are recorded beside it, not over it.
+        reason: acceptance
+          ? {
+              holding:
+                "Exact-final-head operator source acceptance recorded; the external merge is observed and main synchronizes before closeout",
+              waiting:
+                "Exact-final-head operator source acceptance recorded; the external merge is observed and waits for the repository integration turn",
+            }
+          : {
+              holding:
+                "Operator accepted the external merge; synchronizing main before coordinator closeout",
+              waiting:
+                "Operator accepted the external merge; waiting for repository integration turn",
+            },
+      });
       // Spec 050 atomic verbs: the move's fence settlement rides the accepted
       // merge inside this transaction, after its own update.
-      if (settleFences)
+      if (settleFences && !current.resolution.recovery)
         settleSupersededFencesInTx(
           this.store,
           t.id,
@@ -547,7 +546,14 @@ export class ExternalMerge {
       checkout.toplevel !== root
     )
       throw Error("Retained workspace is aliased or is not its Git root");
-    if (!commonDirMatchesTask(t, checkout.commonDir, repoGit.commonDir, t.directory))
+    if (
+      !commonDirMatchesTask(
+        t,
+        checkout.commonDir,
+        repoGit.commonDir,
+        t.directory,
+      )
+    )
       throw Error("Retained workspace belongs to another repository");
     if (
       !t.repository ||
@@ -783,8 +789,15 @@ export class ExternalMerge {
         // the owner's fresh review of that merged source is in flight, the probe neither
         // restates the stop nor answers the route; the review's verdict reconciles the merge.
         const route = unreviewedMergeRoute(current);
-        const recordedMerge = route !== null && route.head === result.head && route.commit === result.commit;
-        if (recordedMerge && ["awaiting_review", "reviewing"].includes(current.phase)) return false;
+        const recordedMerge =
+          route !== null &&
+          route.head === result.head &&
+          route.commit === result.commit;
+        if (
+          recordedMerge &&
+          ["awaiting_review", "reviewing"].includes(current.phase)
+        )
+          return false;
         stopUnreviewedExternalMerge(
           { store: this.store, resolution: this.resolution },
           current,
@@ -794,31 +807,43 @@ export class ExternalMerge {
         return true;
       }
       this.store.transaction(() => {
-        for (const run of this.store.runs(t.id).filter((r) => !r.released))
+        for (const run of this.store
+          .runs(t.id)
+          .filter(
+            (r) =>
+              !r.released &&
+              !(
+                r.role === "recovery" &&
+                r.id === current.resolution.recovery?.runId
+              ),
+          ))
           this.store.putRun({ ...run, released: true, status: "superseded" });
-        recordObservedMerge(
-          { store: this.store, resolution: this.resolution },
-          current,
-          {
-            head: result.head,
-            commit: result.commit,
-            recordHead: true,
-            settleEpisode: true,
-            episodeDetail:
-              "External merge observed: the recovery run it superseded no longer holds the episode",
-            reason: {
-              holding:
-                "External merge verified; synchronizing main before coordinator closeout",
-              waiting:
-                "External merge verified; waiting for repository integration turn",
-            },
+        recordObservedMerge({ resolution: this.resolution }, current, {
+          head: result.head,
+          commit: result.commit,
+          recordHead: true,
+          reason: {
+            holding:
+              "External merge verified; synchronizing main before coordinator closeout",
+            waiting:
+              "External merge verified; waiting for repository integration turn",
           },
-        );
-        settleMergeEscalations(
-          current,
-          this.store,
-          `Verified merge ${result.commit} superseded the earlier resolution step`,
-        );
+        });
+        if (
+          settleMergeEscalations(
+            current,
+            this.store,
+            `Verified merge ${result.commit} superseded the earlier resolution step`,
+          )
+        ) {
+          const latest = this.store.task(current.id);
+          this.resolution.update(
+            latest,
+            { stop: null, attention: false },
+            {},
+            "pre_merge_escalation_settled",
+          );
+        }
       });
       return true;
     } catch (error) {

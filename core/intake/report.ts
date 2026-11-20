@@ -85,7 +85,12 @@ export class Reports {
     // (nucleus#1376). Everything after this speaks of that run, while the
     // credential that arrived stays the one this delivery authenticated — the
     // receipt hash above is the delivered bytes, so an identical retry matches.
-    const run = reportRunFor(store, task, identityRunId);
+    const original = store.run(identityRunId);
+    const run = original?.mergeRetirement
+      ? original
+      : reportRunFor(store, task, identityRunId);
+    if (run?.mergeRetirement && input.head && input.head !== run.head)
+      throw Error("Recovery report does not match its original head");
     if (run && run.id !== input.runId) input = { ...input, runId: run.id };
     const binding = run ? reportRunBinding(task, run, input) : null;
     if (binding === "stale")

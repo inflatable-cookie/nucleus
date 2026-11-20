@@ -102,6 +102,16 @@ export const runUsageSchema = z
 export type RunUsage = z.infer<typeof runUsageSchema>;
 
 export const runSchema = z.object({
+  /** This recovery's result is history after the exact verified merge took over. */
+  mergeRetirement: z
+    .object({
+      episodeId: z.string(),
+      prNumber: z.number().int().positive(),
+      head: z.string(),
+      commit: z.string(),
+    })
+    .strict()
+    .optional(),
   hostSelection: hostSelectionSchema.optional(),
   /** Host selected when this run was created; absent on legacy runs. */
   hostId: z.string().min(1).optional(),

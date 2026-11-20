@@ -1,4 +1,4 @@
-import { recordPromptSize } from '../dispatch/prompt-text/measure';
+import { recordPromptSize } from "../dispatch/prompt-text/measure";
 import { taskStopVerbsFor } from "../../shared/task-stop";
 import {
   reviewContinuationState,
@@ -50,6 +50,7 @@ import {
   cause,
   key,
   needsAttention,
+  recoveryMergeWitness,
   type RecoveryContext,
 } from "./coordinator-episode";
 import {
@@ -369,11 +370,12 @@ export class CoordinatorRoute {
     if (
       t.resolution.mergedCommit &&
       t.resolution.recoveryPhase !== "closeout" &&
+      (!t.resolution.recovery || t.resolution.recovery.status === "resolved") &&
       !this.busy(t)
     )
       t = this.resolution.update(
         t,
-        { recoveryPhase: "closeout", recoveryAttempts: 0, recovery: null },
+        { recoveryPhase: "closeout", recoveryAttempts: 0 },
         {},
         "closeout_recovery_budget",
       );
@@ -538,8 +540,9 @@ export class CoordinatorRoute {
         unproductiveCoordinatorRuns(this.store, t.id) >= COORDINATOR_LOOP_LIMIT
       )
         return this.episode.escalate(t, COORDINATOR_LOOP_SUMMARY);
+      const episodeId = randomUUID();
       incident = {
-        id: randomUUID(),
+        id: episodeId,
         key: fingerprint,
         generation: t.coordinatorGeneration,
         runId: null,
@@ -552,6 +555,7 @@ export class CoordinatorRoute {
             ? null
             : (t.resolution.incident?.id ?? null),
         progress: taskProgressDigest(t),
+        mergeWitness: recoveryMergeWitness(t, episodeId, fingerprint),
         ...(refusedAction ? { action: refusedAction } : {}),
       };
       t = this.resolution.update(
@@ -879,6 +883,30 @@ export class CoordinatorRoute {
           runId: run.id,
           agentId,
           status: "running",
+          ...(current.resolution.recovery?.mergeWitness
+            ? {
+                // A reservation made after work moved cannot inherit the opening's
+                // pre-merge evidence. Keep the opening witness unbound in that case.
+                mergeWitness:
+                  current.resolution.recovery.mergeWitness.mergedCommit ===
+                    null &&
+                  current.resolution.mergedCommit === null &&
+                  current.resolution.recovery.mergeWitness.generation ===
+                    run.generation &&
+                  current.resolution.recovery.mergeWitness.head ===
+                    current.prHead &&
+                  current.resolution.recovery.mergeWitness.prNumber ===
+                    (current.reviewEntry?.prNumber ??
+                      current.resumePrNumber ??
+                      current.completion?.prNumber ??
+                      null)
+                    ? {
+                        ...current.resolution.recovery.mergeWitness,
+                        runId: run.id,
+                      }
+                    : current.resolution.recovery.mergeWitness,
+              }
+            : {}),
           ...(current.resolution.recovery?.action ? { action: null } : {}),
         });
         this.resolution.update(t, {
@@ -902,8 +930,7 @@ export class CoordinatorRoute {
       if (agentId) {
         await this.resolution.adapter.sendRun!(t, run, token, context);
         recordPromptSize(this.store, t.id, run.id, run.temporaryDirectory);
-      }
-      else {
+      } else {
         const created = await this.resolution.adapter.createRun!(
           t,
           run,

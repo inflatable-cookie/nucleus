@@ -162,7 +162,9 @@ export class CallbackIntake {
     // it is named wherever authentication or a receipt is checked. A settled run
     // answers its own identical retry here; acceptance applies every liveness
     // rule below, so a settled run never acquires a second result.
-    const sourceRun = reportRunFor(this.store, identityTask, presentedRunId);
+    const sourceRun = presented?.mergeRetirement
+      ? presented
+      : reportRunFor(this.store, identityTask, presentedRunId);
     if (sourceRun && sourceRun.id !== presentedRunId)
       input = { ...input, runId: sourceRun.id };
     const priorReceipt = this.store.receipt(

@@ -778,9 +778,11 @@ export class Resolution {
     portsContext(this, [
       "adapter",
       "attention",
+      "closeout",
       "automaticHookReplayPending",
       "ensureIncident",
       "escalateRefusedCoordinator",
+      "executionLease",
       "extendCallbackReminder",
       "graceMs",
       "host",
@@ -941,6 +943,7 @@ export class Resolution {
     portsContext(this, [
       "adapter",
       "attention",
+      "closeout",
       "gateSettingsCurrent",
       "gitTransientFailure",
       "mergeGateEvidence",
@@ -1026,10 +1029,7 @@ export class Resolution {
         "waiting",
       ],
       {
-        recovery: portsContext(this.recovery, [
-          "releaseWithNotAppliedAction",
-          "settledEpisodeChanges",
-        ]),
+        recovery: portsContext(this.recovery, ["releaseWithNotAppliedAction"]),
       },
     ),
   );
@@ -1200,7 +1200,6 @@ export class Resolution {
       "recovery",
       "recordIncidentEvent",
       "refreshingCloseoutHook",
-      "settleAttentionEpisode",
       "settleAutomaticReplayHold",
       "stopped",
       "store",
