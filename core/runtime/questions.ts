@@ -7,7 +7,7 @@ import { reconcileRoutingGrants } from "../dispatch/routing-signoff";
 /** Narrow dependencies; construction and lifecycle remain runtime-owned. */
 export interface QuestionsContext {
   store: Store;
-  engine: Pick<Engine, "withHost" | "taskHostAvailable" | "adapter" | "wake"> & {
+  engine: Pick<Engine, "withHost" | "taskHostAvailable" | "adapter" | "wake" | "scheduleDecisionNotices"> & {
     resolution: Pick<Engine["resolution"], "answerDelegatedQuestionFromHost" | "delegatedQuestionForTask" | "operatorDecisionAnswered">;
   };
   decisions: Decisions;
@@ -101,6 +101,9 @@ export class RuntimeQuestions {
     catch { /* the decision record is the durable answer; the ask's own pending receipt names it */ }
     try { reconcileRoutingGrants(this.context.store, this.context.decisions); }
     catch { /* the decision record is the durable answer; grant activation retries on the next reconcile */ }
+    if (view.delivery) {
+      void this.context.engine.scheduleDecisionNotices?.().catch(() => { /* decision notice state records its own wait or fault */ });
+    }
     void this.context.engine.wake().catch(() => { /* a failed drain is recorded as engineError */ });
     return view;
   }

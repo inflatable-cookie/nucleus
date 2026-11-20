@@ -3661,10 +3661,10 @@ export class Resolution {
   advanceSkippedReview(t: Task): void {
     return this.reviewAdvances.advanceSkippedReview(t);
   }
-  private sendDurably(
-    ...args: Parameters<Notices["sendDurably"]>
+  sendDurably<T>(
+    d: import("./questions/notices").DurableSendOptions<T>,
   ): Promise<"paused" | "done"> {
-    return this.notices.sendDurably(...args);
+    return this.notices.sendDurably(d);
   }
   deliverDrainNotices(): Promise<void> {
     return this.notices.deliverDrainNotices();
@@ -3683,7 +3683,10 @@ export class Resolution {
   deliverRowHiddenNotices(): Promise<void> {
     return this.notices.deliverRowHiddenNotices();
   }
+  scheduleDecisionDelivery?: () => Promise<void>;
   deliverDecisionNotices(): Promise<void> {
-    return this.notices.deliverDecisionNotices();
+    return this.scheduleDecisionDelivery
+      ? this.scheduleDecisionDelivery()
+      : this.notices.deliverDecisionNotices();
   }
 }

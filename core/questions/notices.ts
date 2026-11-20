@@ -23,7 +23,10 @@ import {
   originUsesProject,
 } from "./origin";
 import type { AgentObservation } from "../host/adapter";
-import { isAgentGoneRefusal } from "../host/errors";
+import {
+  ProvenPreSendRefusalError,
+  isAgentGoneRefusal,
+} from "../host/errors";
 import { qaSettlementHostMessageId } from "../qa/project-qa-notice";
 import {
   qaNoticeOwner,
@@ -34,6 +37,7 @@ import { rowHiddenKey, type RowHiddenEpisode } from "../scheduling/hidden-row";
 import type { Resolution } from "../resolution";
 import { now } from "../store/store";
 import { active } from "../recovery/task-reasons";
+import { deliverDecisionNoticesPass } from "./decision-notices";
 
 /**
  * What one pending notice settles as before it is sent: skipped, superseded,
@@ -170,6 +174,35 @@ export function noticeSettlement(facts: {
   };
 }
 
+export interface DurableSendOptions<T> {
+  recipient: string;
+  /** Replaces the plain observation, for a recipient that needs an identity check first; null means handled. */
+  observe?: () => Promise<AgentObservation | null>;
+  aborted?: () => boolean;
+  lookupWait: (message: string) => string;
+  busyWait: (state: AgentObservation) => string;
+  ready?: (state: AgentObservation) => boolean;
+  wait: (reason: string) => void;
+  /** The recipient thread no longer exists; omitted, a missing thread is an ordinary lookup wait. */
+  gone?: () => void;
+  confirm: () => T | null;
+  target: (record: T) => {
+    agentId: string;
+    id: string;
+    text: string;
+    sourceAgentId?: string;
+  };
+  refused?: (record: T, reason: string) => void;
+  sendTimeoutMs?: number;
+  registerStopWaiter?: (wake: () => void) => () => void;
+  mark: (
+    record: T,
+    status: "intent" | "delivered" | "uncertain",
+    error: string,
+    failure?: unknown,
+  ) => void;
+}
+
 /** Durable notices: attention, completion, hold, lane-drain and decision prompts, all through one intent-before-send path. */
 export class Notices {
   constructor(readonly resolution: Resolution) {}
@@ -190,35 +223,14 @@ export class Notices {
    * `intent` left by a restart becomes `uncertain` in the caller's loop. `confirm`
    * re-reads the durable record after the awaited observation; null skips the send.
    */
-  async sendDurably<T>(d: {
-    recipient: string;
-    /** Replaces the plain observation, for a recipient that needs an identity check first; null means handled. */
-    observe?: () => Promise<AgentObservation | null>;
-    lookupWait: (message: string) => string;
-    busyWait: (state: AgentObservation) => string;
-    ready?: (state: AgentObservation) => boolean;
-    wait: (reason: string) => void;
-    /** The recipient thread no longer exists; omitted, a missing thread is an ordinary lookup wait. */
-    gone?: () => void;
-    confirm: () => T | null;
-    target: (record: T) => {
-      agentId: string;
-      id: string;
-      text: string;
-      sourceAgentId?: string;
-    };
-    mark: (
-      record: T,
-      status: "intent" | "delivered" | "uncertain",
-      error: string,
-    ) => void;
-  }): Promise<"paused" | "done"> {
+  async sendDurably<T>(d: DurableSendOptions<T>): Promise<"paused" | "done"> {
     let state: AgentObservation | null;
     try {
       state = d.observe
         ? await d.observe()
         : await this.resolution.host.observe(d.recipient);
     } catch (error) {
+      if (d.aborted?.()) return "done";
       if (isAgentGoneRefusal(error)) {
         this.resolution.responsibleThreads.cache.invalidateMatching(
           d.recipient,
@@ -233,6 +245,7 @@ export class Notices {
       );
       return "done";
     }
+    if (d.aborted?.()) return "done";
     if (!state) return "done";
     if (
       state.archived ||
@@ -252,16 +265,87 @@ export class Notices {
     if (!record) return "done";
     const target = d.target(record);
     d.mark(record, "intent", "");
-    try {
-      await this.resolution.host.sendMessage(target.agentId, {
-        messageId: target.id,
-        text: target.text,
-        sourceAgentId: target.sourceAgentId,
+    const sendPromise = this.resolution.host.sendMessage(target.agentId, {
+      messageId: target.id,
+      text: target.text,
+      sourceAgentId: target.sourceAgentId,
+    });
+    if (d.sendTimeoutMs === undefined && !d.registerStopWaiter) {
+      try {
+        await sendPromise;
+        d.mark(record, "delivered", "");
+      } catch (error) {
+        this.resolution.responsibleThreads.cache.invalidateMatching(
+          d.recipient,
+        );
+        if (error instanceof ProvenPreSendRefusalError && d.refused) {
+          d.refused(record, error.message);
+        } else {
+          d.mark(record, "uncertain", String(error), error);
+        }
+      }
+      return "done";
+    }
+    void sendPromise.catch(() => {});
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let unregisterStop: (() => void) | undefined;
+    let abandoned = false;
+    const outcome = await new Promise<
+      { kind: "settled" } | { kind: "abandoned"; reason: string }
+    >((resolve) => {
+      if (d.sendTimeoutMs !== undefined) {
+        timer = setTimeout(() => {
+          if (abandoned) return;
+          abandoned = true;
+          resolve({
+            kind: "abandoned",
+            reason: `Delivery timed out after ${d.sendTimeoutMs} ms; outcome unknown`,
+          });
+        }, d.sendTimeoutMs);
+        timer.unref?.();
+      }
+      if (d.registerStopWaiter) {
+        unregisterStop = d.registerStopWaiter(() => {
+          if (abandoned) return;
+          abandoned = true;
+          resolve({
+            kind: "abandoned",
+            reason: "Engine stopped during delivery; outcome unknown",
+          });
+        });
+      }
+      sendPromise.then(
+        () => {
+          if (abandoned) return;
+          resolve({ kind: "settled" });
+        },
+        () => {
+          if (abandoned) return;
+          resolve({ kind: "settled" });
+        },
+      );
+    }).finally(() => {
+      if (timer) clearTimeout(timer);
+      unregisterStop?.();
+    });
+    if (outcome.kind === "abandoned") {
+      this.resolution.responsibleThreads.cache.invalidateMatching(d.recipient);
+      d.mark(record, "uncertain", outcome.reason, {
+        lateDelivery: true,
+        late: sendPromise,
       });
+      return "done";
+    }
+    try {
+      await sendPromise;
       d.mark(record, "delivered", "");
     } catch (error) {
       this.resolution.responsibleThreads.cache.invalidateMatching(d.recipient);
-      d.mark(record, "uncertain", String(error));
+      if (error instanceof ProvenPreSendRefusalError && d.refused) {
+        d.refused(record, error.message);
+      } else {
+        d.mark(record, "uncertain", String(error), error);
+      }
     }
     return "done";
   }
@@ -1333,70 +1417,11 @@ export class Notices {
    * failed or interrupted delivery can never become a second notice.
    */
   async deliverDecisionNotices() {
-    if (this.paused()) return;
-    for (const decision of this.store.pendingDecisionDeliveries()) {
-      const delivery = decision.delivery;
-      if (
-        !delivery ||
-        delivery.version !== decision.version ||
-        !delivery.agentId
-      )
-        continue;
-      const wait = (reason: string) => {
-        if (delivery.error === reason && delivery.attempts > 0) return;
-        this.store.updateDecisionDelivery(decision.id, {
-          ...delivery,
-          error: reason,
-          attempts: Math.max(delivery.attempts, 1),
-        });
-      };
-      const host = await this.resolution.identifyOriginHost(delivery.agentId);
-      if (!host) {
-        wait("Cannot route this identity");
-        continue;
-      }
-      if (
-        !this.resolution.withHost(
-          host,
-          () =>
-            this.resolution.originHostAvailable(host) &&
-            Boolean(this.adapter.notify),
-        )
-      ) {
-        wait(`Waiting for host ${host}`);
-        continue;
-      }
-      const attempts = delivery.attempts + 1;
-      const sent = await this.resolution.withHost(host, () =>
-        this.sendDurably({
-          recipient: delivery.agentId,
-          lookupWait: (message) => `Waiting for the asking agent: ${message}`,
-          busyWait: (state) =>
-            `Waiting for the asking agent to finish (${state.status})`,
-          wait: (reason) => {
-            if (delivery.error !== reason)
-              this.store.updateDecisionDelivery(decision.id, {
-                ...delivery,
-                error: reason,
-              });
-          },
-          confirm: () => delivery,
-          target: () => ({
-            agentId: delivery.agentId!,
-            id: delivery.noticeId,
-            text: delivery.text,
-          }),
-          mark: (_, status, error) =>
-            this.store.updateDecisionDelivery(decision.id, {
-              ...delivery,
-              status,
-              error,
-              attempts,
-              ...(status === "delivered" ? { deliveredAt: now() } : {}),
-            }),
-        }),
-      );
-      if (sent === "paused") return;
-    }
+    await deliverDecisionNoticesPass({
+      adapter: this.adapter,
+      stopped: this.resolution.stopped(),
+      store: this.store,
+      resolution: this.resolution,
+    });
   }
 }

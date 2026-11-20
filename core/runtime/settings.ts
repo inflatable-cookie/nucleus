@@ -20,7 +20,7 @@ const HOST_CATALOG_META_PREFIX = "hostCatalog:";
 /** Narrow dependencies; construction and lifecycle remain runtime-owned. */
 export interface SettingsContext {
   store: Store;
-  engine: Pick<Engine, "profiles" | "wake" | "resumePausedStops"> & Partial<Pick<Engine, "rebuildProfiles" | "profileCompatibility" | "secondaryCanonicalCatalogs">>;
+  engine: Pick<Engine, "profiles" | "wake" | "resumePausedStops"> & Partial<Pick<Engine, "rebuildProfiles" | "profileCompatibility" | "secondaryCanonicalCatalogs" | "scheduleDecisionNotices">>;
   decisions: Decisions;
   capacityChanges: CapacityChangeJournal;
   readonly started: Promise<void>;
@@ -154,7 +154,12 @@ export class RuntimeSettings {
     this.context.store.advanceRevision(); void this.context.wakeAndSettlePostBootstrapTimeout();
     // Queue #650: unpausing resumes every thread the operator stopped while
     // paused; the audit pass settles any the resume could not finish at once.
-    if (paused === false) void this.context.engine.resumePausedStops().catch(() => {});
+    if (paused === false) {
+      void this.context.engine.resumePausedStops().catch(() => {});
+      if (this.context.store.pendingDecisionDeliveries().length > 0) {
+        void this.context.engine.scheduleDecisionNotices?.().catch(() => {});
+      }
+    }
     return { ok: true as const };
   }
 

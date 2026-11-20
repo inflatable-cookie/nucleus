@@ -93,7 +93,6 @@ export type SweepContext = Pick<
     Resolution,
     | "checkpoints"
     | "delegateNativeQuestions"
-    | "deliverDecisionNotices"
     | "deliverDrainNotices"
     | "deliverHoldNotices"
     | "deliverRowHiddenNotices"
@@ -775,9 +774,6 @@ export class Sweep {
       );
       await this.fleetStep("deliverHoldNotices", () =>
         this.engine.resolution.deliverHoldNotices(),
-      );
-      await this.fleetStep("deliverDecisionNotices", () =>
-        this.engine.resolution.deliverDecisionNotices(),
       );
       await this.fleetStep("deliverDrainNotices", () =>
         this.engine.resolution.deliverDrainNotices(),

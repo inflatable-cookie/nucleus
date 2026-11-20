@@ -1023,7 +1023,6 @@ const AUDIT_NOTICES = [
   "delegateNativeQuestions",
   "resumeResponsibleAnsweredQuestions",
   "deliverHoldNotices",
-  "deliverDecisionNotices",
   "deliverDrainNotices",
 ];
 const AUDIT_MAINTENANCE = [
