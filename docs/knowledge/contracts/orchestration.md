@@ -2019,6 +2019,11 @@ review or merge credit; live participants and unsettled effects remain fences.
   the exact lookup proves absence following producer termination. Release
   revokes its credential and re-enters the role's ordinary admission on a fresh
   run ID. An agentless recovery also settles its bound episode.
+- `move to=work` on an uncertain worker creation names the observation restart
+  is waiting for, with the same text, and never points at restart while restart is
+  refused. Once proved absence makes restart available, the move refusal names
+  restart as the route. An archived host parent that cannot be restored refuses the
+  restart before any release, so the uncertain occurrence keeps its run and credential.
 - A host-unavailable transport wait is re-evaluated by the first pass that sees
   the host back.
 

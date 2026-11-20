@@ -61,7 +61,7 @@ import type { OwnerVerbFacts } from "./owner-facts";
 import { verbInput } from "./owner-shared";
 import type { OwnerVerbApplicability, OwnerVerb } from "./owner-shared";
 import { interactiveSessionOpen } from "../dispatch/interactive";
-import { retainedContinuationPlan } from "./owner-restart";
+import { absentWorkerRestartRefusal, retainedContinuationPlan } from "./owner-restart";
 import { reviewRequiredForTask } from "../review/reviewer-setting";
 import { publishedReviewDecision } from "../intake/result-application";
 
@@ -249,11 +249,15 @@ function moveViews(facts: OwnerVerbFacts): TaskNextVerb[] {
     if (task.prerequisiteWait && !task.prerequisiteWait.releasedAt)
       return { available: false, refusal: RETAINED_PREREQUISITE_REFUSAL };
     if (task.agentId) return running;
+    // An uncertain creation is answered by the same owed observation `restart`
+    // reports. Naming restart as the cure is circular while restart is refused, so
+    // the cause is named here and restart is named only once it is available.
     if (task.agentIntent)
       return {
         available: false,
         refusal:
-          "The worker creation is still uncertain; restart re-creates it under the same run",
+          absentWorkerRestartRefusal(facts) ??
+          "The worker creation settled as absent; restart launches its fresh worker from the current route",
       };
     if (task.profile && task.workspaceId) return running;
     return { available: false, refusal: MOVE_WORK_AUTHOR_REFUSAL };

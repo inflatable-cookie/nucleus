@@ -484,12 +484,10 @@ export class WorkerLauncher {
         });
         return;
       }
-      const retryAlreadyUsed = this.store
-        .events(task.id)
-        .some((event) => event.kind === "absent_worker_retry");
+      // One creation retry per occurrence. The intent stays owned here, so the
+      // same occurrence cannot reach this catch again; a release opens a new one.
       if (
         failure.kind === "settings_lock" &&
-        !retryAlreadyUsed &&
         current.agentIntent &&
         !current.agentId &&
         current.runId
