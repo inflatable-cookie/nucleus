@@ -1451,7 +1451,7 @@ written back into this document. Tom's 2026-11-17 target — "T3 dispatches, BB 
 that evidence: the workflow's rules, from a T3 planner thread submitting the brief to the closeout
 notice returning to it, are proven on the runtime layer over recorded BB rows, its two gaps are named,
 and its execution on the isolated server is recorded as missing rather than implied. A switch from
-Paseo stays Tom's call.
+Paseo stayed Tom's call at the time (superseded 2026-11-20: T3 is the current operating host, see [vision](../vision.md)).
 
 **Acceptance.** Each bullet is named here with its evidence.
 
