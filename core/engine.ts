@@ -22,7 +22,11 @@ import { CreationRecovery } from "./recovery/absent-creation";
 import type { GitTransientEpisode } from "./git/git-transient-backoff";
 
 import { type WorkspaceDiscard } from "./workspaces/orphan-worktree";
-import type { IdentitySource } from "../shared/host-kind";
+import {
+  HOST_KIND_LABELS,
+  hostKindOf,
+  type IdentitySource,
+} from "../shared/host-kind";
 import { RecoverySettlement } from "./recovery/coordinator-settlement";
 import { settleResponsibleFault } from "./recovery/responsible-fault";
 import { Decisions } from "./planning/decisions";
@@ -1358,13 +1362,36 @@ export class Engine {
       ...new Set([...this.hostIds(), ...(task.hostId ? [task.hostId] : [])]),
     ];
     return ids
-      .filter(
-        (id) =>
-          !this.auditUnavailableHosts.has(id) &&
-          this.withHost(id, () => this.hostAvailable(id)) &&
-          this.profileCatalogKnownFor(id),
-      )
+      .filter((id) => this.workerHostReady(id))
       .map((hostId) => ({ hostId, profiles: this.profilesFor(hostId) }));
+  }
+  /** Online, not failed this audit pass, and its catalog read: the host can answer for profiles. */
+  private workerHostReady(id: string): boolean {
+    return (
+      !this.auditUnavailableHosts.has(id) &&
+      this.withHost(id, () => this.hostAvailable(id)) &&
+      this.profileCatalogKnownFor(id)
+    );
+  }
+  /**
+   * nucleus#1416 (Tom): an explicit repository hostKind is a requirement for a
+   * first worker dispatch, not a preference. While no host of that kind is online
+   * with a read catalog, the unbound task keeps this named wait, with no
+   * workspace, profile charge or slot. A kind with no registered host is a visible
+   * configuration wait. An omitted kind, and the operator default, never gate.
+   */
+  repositoryHostWait(task: Pick<Task, "repoPath" | "hostId">): string | null {
+    const kind = this.store.repositoryFor(task.repoPath)?.hostKind;
+    if (!kind) return null;
+    const label = HOST_KIND_LABELS[kind];
+    const registered = [
+      ...new Set([...this.hostIds(), ...(task.hostId ? [task.hostId] : [])]),
+    ].filter((id) => hostKindOf(id) === kind);
+    if (!registered.length)
+      return `Repository host ${label} is not registered; waiting for its configuration`;
+    return registered.some((id) => this.workerHostReady(id))
+      ? null
+      : `Waiting for repository host ${label}`;
   }
   preferredHostKindsForTask(
     task: Pick<Task, "repoPath">,
