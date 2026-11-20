@@ -94,12 +94,14 @@ export class T3HostConnection {
      * host keeps top-level role threads.
      */
     private readonly acp: () => AcpSessionSurface | null = () => null,
+    private readonly paused: () => boolean = () => false,
   ) {
     this.dependencies = dependencies ?? {
       create: (config) =>
         createHost({
           ...config,
           acp: this.acp,
+          paused: this.paused,
           boardLink: async () => {
             const info = readServiceInfo(this.dataDir);
             if (!info)

@@ -650,6 +650,7 @@ export class QueueRuntime {
           createAdmission,
           undefined,
           () => this.engine.acp,
+          () => Boolean(this.store.getMeta("paused")),
         )
       : null;
     this.t3Config = this.settings.t3code ?? null;
@@ -1108,6 +1109,7 @@ export class QueueRuntime {
           this.makeAdmission,
           undefined,
           () => this.engine.acp,
+          () => Boolean(this.store.getMeta("paused")),
         );
       } catch (error) {
         console.error(

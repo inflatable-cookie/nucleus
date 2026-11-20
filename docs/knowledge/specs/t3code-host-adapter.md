@@ -935,16 +935,19 @@ is "Nucleus". A registration made before this change is renamed with T3's native
 survive. Other repository projects keep their folder names.
 
 **The inbox thread's title is its live signal (nucleus#1384, Tom 2026-11-19: "Perfect,
-let's do it").** The thread title shows one signal, in priority order: "N decisions to
-answer" (or "1 decision to answer"), counting decisions offered on this inbox by the
-same projection as the cards; otherwise "N tasks running" (or "1 task running"),
-counting each task once whose attention is active on this host in the pass (snoozed,
-waiting, attention and finished tasks are not counted); otherwise "All quiet". The
-title is written with `thread.metadata.update` only when the thread's current title
-differs, including while the inbox is idle, and the write never wakes the inbox. Each
-write has its own command identity by title and a title generation, so a title that
-returns to an earlier value is written again rather than replayed. The project name
-stays "Nucleus Inbox".
+let's do it"; pause prefix, nucleus#1427).** The thread title shows one signal, in
+priority order: "N decisions to answer" (or "1 decision to answer"), counting
+decisions offered on this inbox by the same projection as the cards; otherwise "N
+tasks running" (or "1 task running"), counting each task once whose attention is
+active on this host in the pass (snoozed, waiting, attention and finished tasks are
+not counted); otherwise "All quiet". While the persisted global Nucleus pause is in
+effect, the title prefixes that signal with "Paused: ". The prefix does not change
+the signal priority or counts. The title is written with `thread.metadata.update`
+only when the thread's current title differs, including while the inbox is idle and
+on pause, resume and reconnect reconciliation passes; the write never wakes the
+inbox. Each write has its own command identity by title and a title generation, so a
+title that returns to an earlier value is written again rather than replayed. The
+project name stays "Nucleus Inbox".
 
 The service mints a fresh one-time board link for `preview.open` on the inbox
 thread. It sends the link only in that WebSocket call, never in an ACP prompt,
