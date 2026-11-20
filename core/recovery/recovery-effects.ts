@@ -591,24 +591,57 @@ function releasedAfterArchivedCompletion(
 }
 
 /**
- * An uncertain restart whose only remaining step is observation. The sweep's
- * observer owns it, and no owner retry can settle it before it does, so it is
- * not offered as a `retry_effect`. A restart with a proved no-write journal is
- * a different case and keeps its ordinary retry.
+ * An uncertain historical restart send whose only remaining step is
+ * observation. The sweep's observer owns it, and no owner retry or pre-send
+ * reconciliation applies before later evidence answers it. Operations that are
+ * not uncertain, already carry a result, carry an execution-authored pre-send
+ * receipt, or do not match a settled historical restart send stay outside this
+ * classification so executable reconciliation remains accurately represented.
  */
 export function observationOnlyRestartOperation(
   store: Store,
   operationId: string,
 ): boolean {
   const operation = store.operation(operationId);
+  if (
+    !operation ||
+    operation.kind !== "task_control" ||
+    operation.state !== "needs_attention" ||
+    !operation.taskId ||
+    !operation.expectedVersion ||
+    operation.attempts <= 0 ||
+    operation.result !== null ||
+    operation.preSendReceipt != null ||
+    operation.effect?.kind !== "task_control" ||
+    operation.effect.target !== "restart" ||
+    operation.effect.status !== "uncertain"
+  )
+    return false;
+  const accepted = Date.parse(operation.createdAt);
+  const started = Date.parse(operation.startedAt ?? "");
+  const boundary = Date.parse(operation.settledAt ?? "");
+  if (
+    !Number.isFinite(accepted) ||
+    !Number.isFinite(started) ||
+    !Number.isFinite(boundary) ||
+    started < accepted ||
+    boundary < started ||
+    operation.id !== operationIdForKey(operation.key)
+  )
+    return false;
+  const payload = store.operationPayload(operation.id) as {
+    control?: {
+      action?: string;
+      taskId?: string;
+      version?: number;
+    };
+  } | null;
   return Boolean(
-    operation &&
-      operation.kind === "task_control" &&
-      operation.state === "needs_attention" &&
-      operation.effect?.kind === "task_control" &&
-      operation.effect.target === "restart" &&
-      !store.unwrittenMergeMoveProof(operation.id) &&
-      !(operation.result && operation.effect.status === "reconciled"),
+    payload &&
+      operation.inputHash === operationInputHash(payload) &&
+      payload.control?.action === "restart" &&
+      payload.control.taskId === operation.taskId &&
+      payload.control.version === operation.expectedVersion,
   );
 }
 

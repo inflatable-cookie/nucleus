@@ -20,6 +20,7 @@ import {
 import {
   blockingRecoveryEffects,
   blockingTaskOperations,
+  observationOnlyRestartOperation,
   observedHostEffectEvidence,
   recoveryEffects,
 } from "../core/recovery/recovery-effects";
@@ -364,27 +365,32 @@ test("replay across a restart keeps one settlement and never resends the send", 
   }
 });
 
+function recordBlockedWait(store: Store, taskId: string, operationId: string) {
+  const since = new Date(Date.now() - 2 * 3_600_000).toISOString();
+  store.update(
+    taskId,
+    {
+      resolution: {
+        ...store.task(taskId).resolution,
+        stop: {
+          reason: "lifecycle",
+          detail: `Ordinary review waits for operation ${operationId} is uncertain: Transport; settle it with retry_effect before continuing`,
+          since,
+          suggestedVerbs: [],
+        },
+      },
+    },
+    "fixture_stop",
+    "fixture",
+  );
+}
+
 test("the attention reason for an observation-only restart names the observer, not a retry", () => {
   const { store, task } = openTask();
   try {
     const { id } = interruptedRestart(store, task);
-    const since = new Date(Date.now() - 2 * 3_600_000).toISOString();
-    store.update(
-      task.id,
-      {
-        resolution: {
-          ...store.task(task.id).resolution,
-          stop: {
-            reason: "lifecycle",
-            detail: `Ordinary review waits for operation ${id} is uncertain: Transport; settle it with retry_effect before continuing`,
-            since,
-            suggestedVerbs: [],
-          },
-        },
-      },
-      "fixture_stop",
-      "fixture",
-    );
+    assert.equal(observationOnlyRestartOperation(store, id), true);
+    recordBlockedWait(store, task.id, id);
     const reason = blockedEffectAttentionReason(store, store.task(task.id));
     assert.ok(reason, "a blocked wait past its bound is attention");
     assert.match(reason, /observes each restart target on the sweep/);
@@ -393,3 +399,100 @@ test("the attention reason for an observation-only restart names the observer, n
     store.close();
   }
 });
+
+test("a receipt-bearing restart stays outside observation-only classification and remains reconcilable", () => {
+  const { store, task } = openTask();
+  try {
+    const { id } = interruptedRestart(store, task);
+    recordBlockedWait(store, task.id, id);
+    const baseOp = store.operation(id)!;
+    const diagnostic = "Pre-send refusal before host send";
+    const intentAt = baseOp.effect!.intentAt;
+    const currentTask = store.task(task.id);
+    store.putOperation(
+      queueOperationSchema.parse({
+        ...baseOp,
+        diagnostic,
+        effect: {
+          ...baseOp.effect!,
+          status: "uncertain",
+          result: diagnostic,
+        },
+        preSendReceipt: {
+          operationId: id,
+          inputHash: baseOp.inputHash,
+          taskId: task.id,
+          expectedVersion: baseOp.expectedVersion!,
+          attempt: baseOp.attempts,
+          boundary: "pre-send-refusal-v1",
+          buildId: "fixture-build",
+          taskEvidenceHash: digest(JSON.stringify(currentTask)),
+          runEvidenceHash: digest(JSON.stringify(store.runs(task.id))),
+          diagnostic,
+          effect: {
+            kind: "task_control",
+            target: "restart",
+            intentAt,
+            status: "intent",
+            result: null,
+            resultAt: null,
+          },
+          recordedAt: intentAt,
+        },
+      }),
+    );
+    assert.equal(observationOnlyRestartOperation(store, id), false);
+    const reason = blockedEffectAttentionReason(store, store.task(task.id));
+    assert.ok(reason, "a blocked wait past its bound is attention");
+    assert.match(reason, /retry_effect re-proves/);
+    assert.doesNotMatch(reason, /no retry applies before then/);
+    const reconciled = store.reconcileTaskControlPreSend(id, baseOp.inputHash);
+    assert.equal(reconciled.state, "failed");
+    assert.ok(reconciled.preSendReconciledAt);
+  } finally {
+    store.close();
+  }
+});
+
+for (const [label, mutate] of [
+  [
+    "effect status is intent (non-uncertain)",
+    (op: NonNullable<ReturnType<Store["operation"]>>) => ({
+      ...op,
+      effect: { ...op.effect!, status: "intent" as const },
+    }),
+  ],
+  [
+    "effect status is reconciled (non-uncertain)",
+    (op: NonNullable<ReturnType<Store["operation"]>>) => ({
+      ...op,
+      effect: { ...op.effect!, status: "reconciled" as const },
+    }),
+  ],
+  [
+    "the operation has not recorded a settled attempt",
+    (op: NonNullable<ReturnType<Store["operation"]>>) => ({
+      ...op,
+      attempts: 0,
+      startedAt: null,
+      settledAt: null,
+    }),
+  ],
+] as const) {
+  test(`a restart where ${label} is not classified as observation-only`, () => {
+    const { store, task } = openTask();
+    try {
+      const { id } = interruptedRestart(store, task);
+      const baseOp = store.operation(id)!;
+      store.putOperation(queueOperationSchema.parse(mutate(baseOp)));
+      assert.equal(observationOnlyRestartOperation(store, id), false);
+      recordBlockedWait(store, task.id, id);
+      const reason = blockedEffectAttentionReason(store, store.task(task.id));
+      assert.ok(reason, "a blocked wait past its bound is attention");
+      assert.match(reason, /retry_effect re-proves/);
+      assert.doesNotMatch(reason, /no retry applies before then/);
+    } finally {
+      store.close();
+    }
+  });
+}
