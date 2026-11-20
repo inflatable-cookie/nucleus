@@ -271,21 +271,31 @@ export class T3Nesting {
           taskId,
           `the task's parent thread is bound to another checkout (${existing.workspaceId}, this run uses ${input.workspace.id}); move the task to another host or restart it on a new workspace`,
         );
-      // A parent that is finished (archived, or gone from a complete inventory) is
-      // not re-launched: a second parent thread would orphan this task's children
-      // and re-mint its binding under a thread nothing runs.
-      if (existing.archivedAt)
+      // Old markers did not distinguish archive from deletion. Re-read the exact
+      // binding before acting on either an old marker or a new observation.
+      let observation: Awaited<ReturnType<T3Nesting["parentGone"]>>;
+      try {
+        observation = await this.parentGone(existing);
+      } catch {
+        return this.unavailable(taskId, "the task's parent thread could not be observed; restore T3 inventory before restarting");
+      }
+      if (observation) {
+        if (observation === "archived" || observation === "deleted")
+          this.finishParent(taskId, observation);
         return this.unavailable(
           taskId,
-          "the task's parent thread is archived; move the task to another host or restart it",
+          observation === "mismatched"
+            ? "the task's parent thread no longer matches its recorded project and checkout; inspect the binding before restarting"
+            : `the task's parent thread is ${observation}; move the task to another host or restart it`,
         );
-      const gone = await this.parentGone(existing).catch(() => null);
-      if (gone) {
-        this.finishParent(taskId, gone);
-        return this.unavailable(
-          taskId,
-          `the task's parent thread is ${gone}; move the task to another host or restart it`,
-        );
+      }
+      // An exact live observation repairs even a legacy finished marker after a
+      // manual unarchive. A sweep alone never unarchives the parent.
+      if (existing.archivedAt) {
+        this.core.state.update((state) => {
+          const current = state.parents?.[taskId];
+          if (current?.threadId === existing.threadId) delete current.archivedAt;
+        });
       }
       // The create owns the turn from here: a concurrent sweep must not release it
       // between the parent-run read and the child command.
@@ -907,7 +917,7 @@ export class T3Nesting {
    */
   private async parentGone(
     parent: ParentThread,
-  ): Promise<"archived" | "deleted" | null> {
+  ): Promise<"archived" | "deleted" | "mismatched" | null> {
     const thread =
       (await this.core.reads.shellRow(parent.threadId)) ??
       (await this.core.reads.inventory()).threads.find(
@@ -916,6 +926,8 @@ export class T3Nesting {
     // Absence and a `deletedAt` tombstone are the same fact: the inventory either
     // omits a removed thread or keeps its tombstone (nucleus#1305 review).
     if (!thread || thread.deletedAt) return "deleted";
+    if (thread.projectId !== parent.projectId || thread.worktreePath !== parent.directory)
+      return "mismatched";
     return thread.archivedAt ? "archived" : null;
   }
 

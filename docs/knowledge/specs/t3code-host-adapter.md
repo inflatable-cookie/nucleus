@@ -1196,7 +1196,11 @@ row would then have to settle, and there is no ten-minute native-path parking.
 the task's existing children and re-mint a binding under a thread nothing runs.
 Deletion is read two ways from the same inventory, because the nightly omits a
 removed thread from the shell lists and also serves it as a `deletedAt` tombstone:
-absent or tombstoned are the same fact. A finished task's held turn is released at
+absent or tombstoned are the same fact. Before a role create, the adapter re-reads
+this exact parent and checks its project and worktree against the retained binding.
+An incomplete inventory or changed binding refuses the create. An exact live read
+clears an older finished marker after a manual unarchive; old markers alone cannot
+distinguish an archive from deletion. A finished task's held turn is released at
 once — the create grace window is for live work — and its parent is archived.
 
 **A deleted child does not hold the turn.** The release decision reads one complete

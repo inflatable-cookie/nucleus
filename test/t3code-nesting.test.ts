@@ -628,6 +628,41 @@ test("a role launched after its parent was archived refuses instead of re-launch
   );
 });
 
+test("a manually restored parent clears an older finished marker only after verifying its binding", async (t) => {
+  const { host, server, spec } = await fixture(t);
+  await host.createAgent(spec("worker-create", "Do the work"));
+  const parent = parentOf(host)!;
+  const remote = server.threads.get(parent.threadId)!.thread;
+  remote.archivedAt = STAMP;
+  await assert.rejects(() => host.createAgent(spec("review-archived", "Review", "reviewer")));
+  remote.archivedAt = null;
+  await host.createAgent(spec("review-live", "Review", "reviewer"));
+  assert.equal(host.state.read().parents![parent.taskId]!.archivedAt, undefined);
+  assert.equal(commandsOf(server, "orchestration.launchThread").length, 1);
+  assert.equal(commandsOf(server, "delegated_task.request").length, 2);
+});
+
+test("an older finished marker is reclassified when the parent was deleted", async (t) => {
+  const { host, server, spec } = await fixture(t);
+  await host.createAgent(spec("worker-create", "Do the work"));
+  const parent = parentOf(host)!;
+  host.state.update((state) => { state.parents![parent.taskId]!.archivedAt = STAMP; });
+  server.threads.delete(parent.threadId);
+  await assert.rejects(() => host.createAgent(spec("review-run", "Review", "reviewer")), /parent thread is deleted/);
+  assert.equal(commandsOf(server, "delegated_task.request").length, 1);
+});
+
+test("a parent with a changed checkout is fenced even with an older finished marker", async (t) => {
+  const { host, server, spec } = await fixture(t);
+  await host.createAgent(spec("worker-create", "Do the work"));
+  const parent = parentOf(host)!;
+  host.state.update((state) => { state.parents![parent.taskId]!.archivedAt = STAMP; });
+  server.threads.get(parent.threadId)!.thread.worktreePath = "/synthetic/other";
+  await assert.rejects(() => host.createAgent(spec("review-run", "Review", "reviewer")), /no longer matches/);
+  assert.equal(host.state.read().parents![parent.taskId]!.archivedAt, STAMP);
+  assert.equal(commandsOf(server, "delegated_task.request").length, 1);
+});
+
 test("a parent gone from the complete inventory refuses without sending anything", async (t) => {
   const { host, server, spec } = await fixture(t);
   await host.createAgent(spec("worker-create", "Do the work"));
