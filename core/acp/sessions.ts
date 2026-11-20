@@ -83,7 +83,9 @@ export interface AcpSessionsOptions {
     relayed: boolean;
     note: string;
   }) => unknown;
-  openInboxUi?: (hostId: string) => Promise<{ status: "opened" | "reused" }>;
+  openInboxUi?: (
+    hostId: string,
+  ) => Promise<{ status: "opened" | "reused" | "failed"; detail?: string }>;
 }
 
 /**
@@ -466,7 +468,12 @@ export class AcpSessions implements AcpSessionSurface {
     });
   }
 
-  /** Open or reveal the host's board from an authenticated inbox session. */
+  /**
+   * Serve the operator's `ui` from an authenticated inbox session (nucleus#1415). The host
+   * answers with the board it showed or the failure it met, inside the command's own bound;
+   * whether the inbox is held is decided by the offer alone, so the command's result never
+   * changes decision delivery.
+   */
   async openInboxUi(
     input: AcpInboxUiInput,
     token: string,
@@ -489,17 +496,17 @@ export class AcpSessions implements AcpSessionSurface {
     }
     try {
       const opened = await this.options.openInboxUi(record.hostId);
+      const detail =
+        opened.status === "failed" ? sanitizeBoardDetail(opened.detail) : "";
       return {
         status: opened.status,
         hold: hasOffer(),
+        ...(detail ? { detail } : {}),
       };
     } catch (error) {
-      const detail = (error instanceof Error ? error.message : String(error))
-        .replace(
-          /pairingUrl:\S+|https?:\/\/\S*#token=\S+|#token=\S+/gi,
-          "[redacted]",
-        )
-        .trim();
+      const detail = sanitizeBoardDetail(
+        error instanceof Error ? error.message : String(error),
+      );
       return {
         status: "failed",
         hold: hasOffer(),
@@ -591,4 +598,15 @@ export class AcpSessions implements AcpSessionSurface {
   private wake(sessionId: string): void {
     for (const done of [...(this.waiting.get(sessionId) ?? [])]) done();
   }
+}
+
+/** One board failure's detail with any pairing URL or token fragment removed. */
+function sanitizeBoardDetail(text: string | undefined): string {
+  if (!text) return "";
+  return text
+    .replace(
+      /pairingUrl:\S+|https?:\/\/\S*#token=\S+|#token=\S+/gi,
+      "[redacted]",
+    )
+    .trim();
 }

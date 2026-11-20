@@ -162,6 +162,10 @@ export const turnItem = z
     id,
     type: id,
     requestId: id.optional(),
+    /** A user message's own id: the identity an operator command is served by (nucleus#1415). */
+    messageId: id.optional(),
+    /** A user message's text, verbatim. */
+    text: z.string().optional(),
     /** The run that owns the item; one run is one provider turn. Null on thread-level items. */
     runId: id.nullable().optional(),
     /** The item's position in its thread: consecutive positions are consecutive rows. */
@@ -262,7 +266,14 @@ export const projection = z.object({
   providerThreads: z.array(providerThread).optional(),
   /** Every delegated task the thread carries; the parent's own children are here. */
   subagents: z.array(subagent).optional(),
-  messages: z.array(z.object({ id, role: id, text: z.string() })),
+  /**
+   * The thread's messages. A message T3 has queued behind a live run is here before it is a
+   * turn item, so this is the record an operator command is served from (nucleus#1415);
+   * `runId` names the run the message started.
+   */
+  messages: z.array(
+    z.object({ id, role: id, text: z.string(), runId: id.nullable().optional() }),
+  ),
   updatedAt: date,
 });
 /** Coverage flags are consumed facts, not optional hints that can be truthiness-tested. */

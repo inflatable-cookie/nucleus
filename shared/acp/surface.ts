@@ -25,6 +25,11 @@ export interface AcpInboxUiInput {
 }
 
 export interface AcpInboxUiReply {
+  /**
+   * `opened` showed the board for this `ui`; `reused` means this same `ui` was already
+   * served (the pass served it while T3 held the inbox's turn), so nothing was replayed;
+   * `failed` names what stopped it.
+   */
   status: "opened" | "reused" | "failed";
   hold: boolean;
   detail?: string;
