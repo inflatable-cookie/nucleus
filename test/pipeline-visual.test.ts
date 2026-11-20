@@ -1823,7 +1823,7 @@ test("179 bundled QA runs combine now and results, scope projects, filter failur
     ui.press("Close QA run detail");
 
     ui.press("Projects, All projects");
-    ui.press("Project App");
+    ui.press(/^Project App/);
     assert.ok(
       ui.query("QA run row qa-result-passed"),
       "the project selector scopes the combined run list",
@@ -2257,7 +2257,7 @@ test("032 the bundled Pipeline shows agent decisions and Nucleus-raised merge ho
     // A specific project filter keeps General in the count, its own section and the pipeline column.
     ui.press("Projects, All projects");
     assert.ok(ui.query("Project selector"));
-    ui.press("Project App");
+    ui.press(/^Project App/);
     assert.equal(
       ui.get(/^Projects, /).props.accessibilityLabel,
       "Projects, App",

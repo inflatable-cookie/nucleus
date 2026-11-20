@@ -300,7 +300,7 @@ test("026-14b rendered: single-select, clear to all, and the selector's Enabled 
       .all(/^Project /)
       .filter((node) => node.props.accessibilityRole === "checkbox")
       .map((node) => node.props.accessibilityLabel),
-    [/^Project project-a-accelerator/],
+    ["Project project-a-accelerator, 0 tasks"],
   );
   ui.type("Filter projects", "");
   ui.press("Clear project selection");
