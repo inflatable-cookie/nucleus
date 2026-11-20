@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { T3CodeHost } from "../hosts/t3code/adapter";
 import { T3CompatibilityError } from "../hosts/t3code/contracts";
 import { HOLD_MARKER } from "../hosts/t3code/nesting";
-import { inboxTitle } from "../hosts/t3code/inbox";
+import { INBOX_UI_DEADLINE_MS, inboxTitle } from "../hosts/t3code/inbox";
 import { T3DecisionCards } from "../hosts/t3code/decision-cards";
 import { T3DecisionHold } from "../hosts/t3code/decision-hold";
 import { T3StateFile } from "../hosts/t3code/state";
@@ -848,6 +848,57 @@ test("inbox ui shows the board once per operator message, replacing a retained t
   assert.equal(
     JSON.stringify(host.state.read()).includes("token=synthetic"),
     false,
+  );
+  await t.test(
+    "preview.open gets only the budget left after closing the old tab",
+    async (t) => {
+      addUi("synthetic-ui-deadline", "completed");
+      t.mock.timers.enable({ apis: ["setTimeout"] });
+      let elapsed = 0;
+      t.mock.method(performance, "now", () => elapsed);
+      const advance = (ms: number) => {
+        elapsed += ms;
+        t.mock.timers.tick(ms);
+      };
+      const call = host.rpc.call.bind(host.rpc);
+      let markOpenStarted!: () => void;
+      const openStarted = new Promise<void>((resolve) => {
+        markOpenStarted = resolve;
+      });
+      let replyToOpen!: (value: unknown) => void;
+      const openReply = new Promise<unknown>((resolve) => {
+        replyToOpen = resolve;
+      });
+      let openRequests = 0;
+      t.mock.method(
+        host.rpc,
+        "call",
+        async (method: string, payload: unknown) => {
+          if (method === "preview.open") {
+            openRequests++;
+            markOpenStarted();
+            return await openReply;
+          }
+          const result = await call(method, payload);
+          if (method === "preview.close") advance(INBOX_UI_DEADLINE_MS - 1_000);
+          return result;
+        },
+      );
+      const command = host.openInboxUi();
+      await openStarted;
+      advance(1_000);
+      const result = await Promise.race([
+        command,
+        new Promise<null>((resolve) => setImmediate(() => resolve(null))),
+      ]);
+      assert.deepEqual(result, {
+        status: "failed",
+        detail: "the board did not open in time; type ui again to retry",
+      });
+      replyToOpen({});
+      assert.deepEqual(await host.openInboxUi(), result);
+      assert.equal(openRequests, 1, "the timed-out open is never replayed");
+    },
   );
   void first;
 });

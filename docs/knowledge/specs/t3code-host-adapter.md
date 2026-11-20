@@ -985,10 +985,12 @@ recorded result (`The Nucleus board is open.`) without opening a second tab. An
 in-flight serve for one message is tracked in the process, so the turn and the
 pass cannot both open for it.
 
-**One bound, a clear result, and a responsive Stop.** The board open is bounded
-by `INBOX_UI_DEADLINE_MS` (20 s) for its whole path, under the callback's own
-bound for the route (30 s), so a preview RPC that hangs ends the command with a
-named failure instead of leaving a turn that never finishes. The three cases are
+**One bound, a clear result, and a responsive Stop.** Inbox lookup, message
+lookup, link issuance and all preview calls share one
+`INBOX_UI_DEADLINE_MS` budget (20 s), under the callback's 30 s bound. Each
+stage uses only the time left. If the deadline expires after an open is sent,
+the command records a timeout and leaves that attempt's delivery uncertain.
+The three cases are
 reported as one line each: `Opened the Nucleus board.`, `The Nucleus board is
 open.` (this message's open is already recorded, usually served by the pass), or
 `Nucleus could not open the board: <reason>` with any pairing URL or token
