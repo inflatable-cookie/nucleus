@@ -169,7 +169,9 @@ async function resumeRecordedMerge(
       throw Error("Task or run changed during merge observation");
     engine.releaseDisplacedRunsInTx(
       task.id,
-      finished.settleable.filter(run => run.role !== "recovery" && run.role !== "closeout").map(run => run.id),
+      finished.settleable
+        .filter((run) => run.role !== "recovery" && run.role !== "closeout")
+        .map((run) => run.id),
       `move closeout: ${input.reason}`,
     );
     return engine.resolution.closeout.continueRecordedMerge(

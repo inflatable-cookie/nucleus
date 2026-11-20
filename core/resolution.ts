@@ -1029,9 +1029,7 @@ export class Resolution {
         "waiting",
       ],
       {
-        recovery: portsContext(this.recovery, [
-          "releaseWithNotAppliedAction",
-        ]),
+        recovery: portsContext(this.recovery, ["releaseWithNotAppliedAction"]),
       },
     ),
   );

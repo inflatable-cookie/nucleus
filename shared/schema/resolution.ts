@@ -186,16 +186,19 @@ export const resolutionSchema = z.object({
       /** Round 4 (consumer-b #639): the task-progress digest when the episode opened; a report binds to it. */
       progress: z.string().nullable().optional(),
       /** Original occurrence, retained independently of subsequent task progress. */
-      mergeWitness: z.object({
-        episodeId: z.string(),
-        incidentId: z.string().nullable(),
-        stopKey: z.string(),
-        runId: z.string().nullable(),
-        generation: z.number(),
-        prNumber: z.number().int().positive().nullable(),
-        head: z.string().nullable(),
-        mergedCommit: z.string().nullable(),
-      }).strict().optional(),
+      mergeWitness: z
+        .object({
+          episodeId: z.string(),
+          incidentId: z.string().nullable(),
+          stopKey: z.string(),
+          runId: z.string().nullable(),
+          generation: z.number(),
+          prNumber: z.number().int().positive().nullable(),
+          head: z.string().nullable(),
+          mergedCommit: z.string().nullable(),
+        })
+        .strict()
+        .optional(),
     })
     .nullable()
     .default(null),

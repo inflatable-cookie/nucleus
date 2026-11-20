@@ -100,12 +100,27 @@ export const key = (t: Task, runs: Run[]) =>
       );
 
 type RecoveryEpisode = NonNullable<Task["resolution"]["recovery"]>;
-export function recoveryMergeWitness(t: Task, episodeId: string, stopKey: string) {
+export function recoveryMergeWitness(
+  t: Task,
+  episodeId: string,
+  stopKey: string,
+) {
   return {
-    episodeId, incidentId: t.resolution.incident?.status === "resolved" ? null : t.resolution.incident?.id ?? null,
-    stopKey, runId: null, generation: t.coordinatorGeneration,
-    prNumber: t.reviewEntry?.prNumber ?? t.resumePrNumber ?? t.completion?.prNumber ?? null,
-    head: t.prHead, mergedCommit: t.resolution.mergedCommit,
+    episodeId,
+    incidentId:
+      t.resolution.incident?.status === "resolved"
+        ? null
+        : (t.resolution.incident?.id ?? null),
+    stopKey,
+    runId: null,
+    generation: t.coordinatorGeneration,
+    prNumber:
+      t.reviewEntry?.prNumber ??
+      t.resumePrNumber ??
+      t.completion?.prNumber ??
+      null,
+    head: t.prHead,
+    mergedCommit: t.resolution.mergedCommit,
   };
 }
 const agentlessCreation = (run: Run | null): run is Run =>
@@ -846,8 +861,12 @@ export class CoordinatorEpisode {
    */
   orphanedCreations(t: Task): Run[] {
     const episode = t.resolution.recovery;
-    const bound = episode?.status === "resolved" && episode.runId && this.store.run(episode.runId)?.mergeRetirement
-      ? null : episode?.runId ?? null;
+    const bound =
+      episode?.status === "resolved" &&
+      episode.runId &&
+      this.store.run(episode.runId)?.mergeRetirement
+        ? null
+        : (episode?.runId ?? null);
     return this.store
       .runs(t.id)
       .filter(
@@ -879,8 +898,11 @@ export class CoordinatorEpisode {
       latest.workspaceId !== run.workspaceId ||
       latest.generation !== run.generation ||
       latest.createdAt !== run.createdAt ||
-      (current.resolution.recovery?.runId === latest.id
-        && !(latest.mergeRetirement && current.resolution.recovery.status === "resolved")) ||
+      (current.resolution.recovery?.runId === latest.id &&
+        !(
+          latest.mergeRetirement &&
+          current.resolution.recovery.status === "resolved"
+        )) ||
       readCreationAttempt(this.store, latest)?.attemptId !==
         observed.proof.attemptId ||
       current.removedAt ||

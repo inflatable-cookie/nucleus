@@ -13,7 +13,10 @@ import type { Adapter } from "../host/adapter";
 import { recordProofExecution } from "../qa/proof-records";
 import { timelineSelectorEvidence } from "../qa/proof-selector-evidence";
 import { blockingRecoveryEffectsRefusal } from "./recovery-effects";
-import { reviewContinuationWait, reviewInProgress } from "../review/review-continuation";
+import {
+  reviewContinuationWait,
+  reviewInProgress,
+} from "../review/review-continuation";
 import { readToolTimeline } from "./stall";
 import { participantToolRunIds } from "./task-reasons";
 
@@ -40,75 +43,180 @@ export interface SettledFences {
  * fences atomically with the action it applies; a refusal inside that
  * transaction rolls the settlement back.
  */
-export function settleSupersededFences(store: Store, taskId: string, detail: string, at = now(), appliedRecoveryRunId?: string): SettledFences {
-  if (store.db.isTransaction) return settleSupersededFencesInTx(store, taskId, detail, at, appliedRecoveryRunId);
-  return store.transaction(() => settleSupersededFencesInTx(store, taskId, detail, at, appliedRecoveryRunId));
+export function settleSupersededFences(
+  store: Store,
+  taskId: string,
+  detail: string,
+  at = now(),
+  appliedRecoveryRunId?: string,
+): SettledFences {
+  if (store.db.isTransaction)
+    return settleSupersededFencesInTx(
+      store,
+      taskId,
+      detail,
+      at,
+      appliedRecoveryRunId,
+    );
+  return store.transaction(() =>
+    settleSupersededFencesInTx(store, taskId, detail, at, appliedRecoveryRunId),
+  );
 }
 
 /** The settlement body; caller owns the transaction. */
-export function settleSupersededFencesInTx(store: Store, taskId: string, detail: string, at = now(), appliedRecoveryRunId?: string): SettledFences {
+export function settleSupersededFencesInTx(
+  store: Store,
+  taskId: string,
+  detail: string,
+  at = now(),
+  appliedRecoveryRunId?: string,
+): SettledFences {
   const note = `Superseded by an owner control: ${detail}`.slice(0, 2000);
   const task = store.task(taskId);
   const resolution = task.resolution;
   const priorRecovery = resolution.recovery;
-  const incident = resolution.incident && resolution.incident.status !== "resolved"
-    ? { ...resolution.incident, status: "resolved" as const, detail: `${note}; original: ${resolution.incident.detail}`, updatedAt: at }
-    : null;
+  const incident =
+    resolution.incident && resolution.incident.status !== "resolved"
+      ? {
+          ...resolution.incident,
+          status: "resolved" as const,
+          detail: `${note}; original: ${resolution.incident.detail}`,
+          updatedAt: at,
+        }
+      : null;
   // An episode's pending accepted action is stale the moment the verb
   // supersedes the episode unless this is the coordinator verb bound to the
   // same run. Preserve that applied outcome atomically; every other pending
   // action is refused so no retry handler can execute it later.
-  const pendingRecoveryAction = priorRecovery?.action?.status === "pending" ? priorRecovery.action : null;
-  const coordinatorActionApplied = Boolean(pendingRecoveryAction?.coordinatorAction && pendingRecoveryAction.runId === appliedRecoveryRunId);
-  const recovery = priorRecovery && priorRecovery.status !== "resolved"
-    ? { ...priorRecovery, status: "resolved" as const, summary: `${note}; original: ${priorRecovery.summary}`,
-        ...(pendingRecoveryAction ? { action: coordinatorActionApplied
-          ? { ...pendingRecoveryAction, status: "applied" as const }
-          : { ...pendingRecoveryAction, status: "refused" as const, reason: `Not applied; ${note}`.slice(0, 4000) } } : {}) }
-    : null;
+  const pendingRecoveryAction =
+    priorRecovery?.action?.status === "pending" ? priorRecovery.action : null;
+  const coordinatorActionApplied = Boolean(
+    pendingRecoveryAction?.coordinatorAction &&
+      pendingRecoveryAction.runId === appliedRecoveryRunId,
+  );
+  const recovery =
+    priorRecovery && priorRecovery.status !== "resolved"
+      ? {
+          ...priorRecovery,
+          status: "resolved" as const,
+          summary: `${note}; original: ${priorRecovery.summary}`,
+          ...(pendingRecoveryAction
+            ? {
+                action: coordinatorActionApplied
+                  ? { ...pendingRecoveryAction, status: "applied" as const }
+                  : {
+                      ...pendingRecoveryAction,
+                      status: "refused" as const,
+                      reason: `Not applied; ${note}`.slice(0, 4000),
+                    },
+              }
+            : {}),
+        }
+      : null;
   const checkpointIntent = task.checkpoints.intent?.status === "pending";
-  const externalMergePreAttention = Boolean(resolution.externalMergePreAttention);
+  const externalMergePreAttention = Boolean(
+    resolution.externalMergePreAttention,
+  );
   // The aggregate attention flag is only a fence for the open incident,
   // recovery, reminder or external-merge check that raised it. Settling those
   // settles the flag too, so the control that supersedes them is never refused
   // by the stale flag.
-  const pendingAttention = store.notices(task.id).some(notice => notice.kind === "attention" && notice.status === "pending");
-  const clearAttention = resolution.attention
-    && Boolean(incident || recovery || checkpointIntent || externalMergePreAttention || pendingAttention);
-  const resolutionPatch = incident || recovery || externalMergePreAttention || clearAttention || coordinatorActionApplied;
+  const pendingAttention = store
+    .notices(task.id)
+    .some(
+      (notice) => notice.kind === "attention" && notice.status === "pending",
+    );
+  const clearAttention =
+    resolution.attention &&
+    Boolean(
+      incident ||
+        recovery ||
+        checkpointIntent ||
+        externalMergePreAttention ||
+        pendingAttention,
+    );
+  const resolutionPatch =
+    incident ||
+    recovery ||
+    externalMergePreAttention ||
+    clearAttention ||
+    coordinatorActionApplied;
   if (resolutionPatch || checkpointIntent) {
-    store.update(task.id, {
-      ...(resolutionPatch ? {
-        resolution: {
-          ...resolution,
-          ...(incident ? { incident } : {}),
-          ...(recovery ? { recovery, recoveryActive: false } : {}),
-          ...(externalMergePreAttention ? { externalMergePreAttention: null } : {}),
-          ...(clearAttention ? { attention: false } : {}),
-          ...(coordinatorActionApplied ? { stop: null } : {}),
-        },
-      } : {}),
-      ...(checkpointIntent ? { checkpoints: { ...task.checkpoints, intent: null } } : {}),
-    }, "owner_fence_settled", note);
+    store.update(
+      task.id,
+      {
+        ...(resolutionPatch
+          ? {
+              resolution: {
+                ...resolution,
+                ...(incident ? { incident } : {}),
+                ...(recovery ? { recovery, recoveryActive: false } : {}),
+                ...(externalMergePreAttention
+                  ? { externalMergePreAttention: null }
+                  : {}),
+                ...(clearAttention ? { attention: false } : {}),
+                ...(coordinatorActionApplied ? { stop: null } : {}),
+              },
+            }
+          : {}),
+        ...(checkpointIntent
+          ? { checkpoints: { ...task.checkpoints, intent: null } }
+          : {}),
+      },
+      "owner_fence_settled",
+      note,
+    );
   }
   if (incident) {
     // The incident record event, so the resolved state lands in the same
     // event vocabulary the recovery path already reads.
-    store.event(task.id, "incident", JSON.stringify({
-      id: incident.id, role: incident.role, runId: incident.runId, attempt: incident.attempt,
-      cause: incident.cause, action: incident.action, status: incident.status,
-    }));
+    store.event(
+      task.id,
+      "incident",
+      JSON.stringify({
+        id: incident.id,
+        role: incident.role,
+        runId: incident.runId,
+        attempt: incident.attempt,
+        cause: incident.cause,
+        action: incident.action,
+        status: incident.status,
+      }),
+    );
   }
   // A later owner control explicitly replaces an uncertain task-control
   // attempt. Retain its diagnostic and record why it no longer owns the task.
-  for (const operation of store.operations({ taskId, states: ["needs_attention"], limit: 1000 })) {
+  for (const operation of store.operations({
+    taskId,
+    states: ["needs_attention"],
+    limit: 1000,
+  })) {
     if (operation.kind !== "task_control") continue;
-    const payload = store.operationPayload(operation.id) as { control?: { action?: string } } | null;
+    const payload = store.operationPayload(operation.id) as {
+      control?: { action?: string };
+    } | null;
     if (payload?.control?.action !== "retry_effect") continue;
-    store.putOperation({ ...operation, state: "succeeded", settledAt: at, diagnostic: "",
-      result: { taskId, taskVersion: store.task(taskId).version, phase: store.task(taskId).phase,
-        number: store.task(taskId).number ?? null, reference: store.task(taskId).reference ?? null },
-      effect: operation.effect ? { ...operation.effect, status: "reconciled", result: note, resultAt: at } : null });
+    store.putOperation({
+      ...operation,
+      state: "succeeded",
+      settledAt: at,
+      diagnostic: "",
+      result: {
+        taskId,
+        taskVersion: store.task(taskId).version,
+        phase: store.task(taskId).phase,
+        number: store.task(taskId).number ?? null,
+        reference: store.task(taskId).reference ?? null,
+      },
+      effect: operation.effect
+        ? {
+            ...operation.effect,
+            status: "reconciled",
+            result: note,
+            resultAt: at,
+          }
+        : null,
+    });
   }
   let attentionNotices = 0;
   for (const notice of store.notices(task.id)) {
@@ -145,21 +253,38 @@ export function settleSupersededFencesInTx(store: Store, taskId: string, detail:
  * effect and identity check still holds.
  * No writes happen here.
  */
-export function supersededIdleBinding(store: Store, taskId: string, run: Run, options: { settledClaim?: boolean } = {}): { superseded: boolean; why: string } {
+export function supersededIdleBinding(
+  store: Store,
+  taskId: string,
+  run: Run,
+  options: { settledClaim?: boolean } = {},
+): { superseded: boolean; why: string } {
   const task: Task = store.task(taskId);
-  if (!run || run.taskId !== taskId || run.released) return { superseded: false, why: "already released" };
+  if (!run || run.taskId !== taskId || run.released)
+    return { superseded: false, why: "already released" };
   if (run.completion) return { superseded: false, why: "recorded completion" };
-  if (run.id === task.resolution.currentRunId) return { superseded: false, why: "task current run" };
-  if (run.id === task.runId) return { superseded: false, why: "task worker run" };
-  if (run.id === task.resolution.recovery?.runId) return { superseded: false, why: "current recovery episode run" };
-  if (run.status === "intent") return { superseded: false, why: "creation intent" };
-  if (run.status === "uncertain") return { superseded: false, why: "uncertain delivery" };
+  if (run.id === task.resolution.currentRunId)
+    return { superseded: false, why: "task current run" };
+  if (run.id === task.runId)
+    return { superseded: false, why: "task worker run" };
+  if (run.id === task.resolution.recovery?.runId)
+    return { superseded: false, why: "current recovery episode run" };
+  if (run.status === "intent")
+    return { superseded: false, why: "creation intent" };
+  if (run.status === "uncertain")
+    return { superseded: false, why: "uncertain delivery" };
   // Replaced is not released (planner ruling, 2026-11-09): a replaced reviewer
   // holds its claim — its exact-head verdict still authenticates — until the
   // review settles and its own settlement path releases it.
-  if (run.replacedAt && !run.completion && !options.settledClaim) return { superseded: false, why: "replaced reviewer claim" };
+  if (run.replacedAt && !run.completion && !options.settledClaim)
+    return { superseded: false, why: "replaced reviewer claim" };
   if (!run.agentId) return { superseded: false, why: "no bound agent" };
-  if ((run.reviewDeliveries ?? []).some(delivery => delivery.status === "reserved" || delivery.status === "uncertain"))
+  if (
+    (run.reviewDeliveries ?? []).some(
+      (delivery) =>
+        delivery.status === "reserved" || delivery.status === "uncertain",
+    )
+  )
     return { superseded: false, why: "pending authenticated delivery" };
   const stop = task.resolution.stalledTurnStop;
   if (stop && stop.runId === run.id && stop.status !== "completed")
@@ -179,24 +304,67 @@ export function supersededIdleBinding(store: Store, taskId: string, run: Run, op
  * already moved on is left alone. Returns false when the binding moved under
  * the caller. Caller owns the transaction.
  */
-export function supersedeIdleRunInTx(store: Store, taskId: string, run: Run, detail: string): boolean {
+export function supersedeIdleRunInTx(
+  store: Store,
+  taskId: string,
+  run: Run,
+  detail: string,
+): boolean {
   const latest = store.run(run.id);
   if (!latest || latest.released || latest.completion) return false;
   if (!supersededIdleBinding(store, taskId, latest).superseded) return false;
-  store.putRun({ ...latest, status: "superseded", released: true, active: false });
-  store.event(taskId, "run_released_from_observed_liveness", `${latest.role} ${latest.id}: ${detail}`.slice(0, 2000));
+  store.putRun({
+    ...latest,
+    status: "superseded",
+    released: true,
+    active: false,
+  });
+  store.event(
+    taskId,
+    "run_released_from_observed_liveness",
+    `${latest.role} ${latest.id}: ${detail}`.slice(0, 2000),
+  );
   const current = store.task(taskId);
   const recovery = current.resolution.recovery;
   if (latest.role !== "recovery") return true;
-  if (!current.resolution.recoveryActive && !(recovery?.runId === latest.id && recovery.status !== "resolved")) return true;
-  const pending = recovery?.runId === latest.id && recovery.action?.status === "pending" ? recovery.action : null;
-  store.update(taskId, {
-    resolution: { ...current.resolution, recoveryActive: false,
-      ...(recovery && recovery.status !== "resolved"
-        ? { recovery: { ...recovery, status: "resolved" as const, summary: `${detail}; the run reported no result`.slice(0, 4000),
-            ...(pending ? { action: { ...pending, status: "refused" as const, reason: `Not applied; ${detail}`.slice(0, 4000) } } : {}) } }
-        : {}) },
-  }, "recovery_episode_observably_idle", latest.id);
+  if (
+    !current.resolution.recoveryActive &&
+    !(recovery?.runId === latest.id && recovery.status !== "resolved")
+  )
+    return true;
+  const pending =
+    recovery?.runId === latest.id && recovery.action?.status === "pending"
+      ? recovery.action
+      : null;
+  store.update(
+    taskId,
+    {
+      resolution: {
+        ...current.resolution,
+        recoveryActive: false,
+        ...(recovery && recovery.status !== "resolved"
+          ? {
+              recovery: {
+                ...recovery,
+                status: "resolved" as const,
+                summary: `${detail}; the run reported no result`.slice(0, 4000),
+                ...(pending
+                  ? {
+                      action: {
+                        ...pending,
+                        status: "refused" as const,
+                        reason: `Not applied; ${detail}`.slice(0, 4000),
+                      },
+                    }
+                  : {}),
+              },
+            }
+          : {}),
+      },
+    },
+    "recovery_episode_observably_idle",
+    latest.id,
+  );
   return true;
 }
 
@@ -210,29 +378,83 @@ export function supersedeIdleRunInTx(store: Store, taskId: string, run: Run, det
  * any pending accepted action recorded as not applied. A late callback from the
  * run is stale. Caller owns the transaction.
  */
-export function supersedeDisplacedRunInTx(store: Store, taskId: string, runId: string, detail: string): boolean {
+export function supersedeDisplacedRunInTx(
+  store: Store,
+  taskId: string,
+  runId: string,
+  detail: string,
+): boolean {
   const latest = store.run(runId);
-  if (!latest || latest.released || latest.taskId !== taskId || ["intent", "uncertain"].includes(latest.status)) return false;
-  store.putRun({ ...latest, status: latest.completion ? "finished" : "superseded", released: true, active: false });
-  store.event(taskId, "run_displaced_by_owner_verb", `${latest.role} ${latest.id}: ${detail}`.slice(0, 2000));
+  if (
+    !latest ||
+    latest.released ||
+    latest.taskId !== taskId ||
+    ["intent", "uncertain"].includes(latest.status)
+  )
+    return false;
+  store.putRun({
+    ...latest,
+    status: latest.completion ? "finished" : "superseded",
+    released: true,
+    active: false,
+  });
+  store.event(
+    taskId,
+    "run_displaced_by_owner_verb",
+    `${latest.role} ${latest.id}: ${detail}`.slice(0, 2000),
+  );
   const current = store.task(taskId);
   const recovery = current.resolution.recovery;
-  const ownsEpisode = recovery?.runId === latest.id && recovery.status !== "resolved";
-  const pending = ownsEpisode && recovery?.action?.status === "pending" ? recovery.action : null;
+  const ownsEpisode =
+    recovery?.runId === latest.id && recovery.status !== "resolved";
+  const pending =
+    ownsEpisode && recovery?.action?.status === "pending"
+      ? recovery.action
+      : null;
   const isCurrent = current.resolution.currentRunId === latest.id;
-  if (!isCurrent && !ownsEpisode && !(latest.role === "recovery" && current.resolution.recoveryActive)) return true;
-  store.update(taskId, {
-    resolution: {
-      ...current.resolution,
-      ...(isCurrent ? { currentRunId: null } : {}),
-      ...(isCurrent && latest.role === "reviewer" ? { reviewerAgentId: null, reviewerProfile: null } : {}),
-      ...(latest.role === "recovery" ? { recoveryActive: false } : {}),
-      ...(ownsEpisode && recovery
-        ? { recovery: { ...recovery, status: "resolved" as const, summary: `${detail}; the run was displaced by an owner verb`.slice(0, 4000),
-            ...(pending ? { action: { ...pending, status: "refused" as const, reason: `Not applied; ${detail}`.slice(0, 4000) } } : {}) } }
-        : {}),
+  if (
+    !isCurrent &&
+    !ownsEpisode &&
+    !(latest.role === "recovery" && current.resolution.recoveryActive)
+  )
+    return true;
+  store.update(
+    taskId,
+    {
+      resolution: {
+        ...current.resolution,
+        ...(isCurrent ? { currentRunId: null } : {}),
+        ...(isCurrent && latest.role === "reviewer"
+          ? { reviewerAgentId: null, reviewerProfile: null }
+          : {}),
+        ...(latest.role === "recovery" ? { recoveryActive: false } : {}),
+        ...(ownsEpisode && recovery
+          ? {
+              recovery: {
+                ...recovery,
+                status: "resolved" as const,
+                summary:
+                  `${detail}; the run was displaced by an owner verb`.slice(
+                    0,
+                    4000,
+                  ),
+                ...(pending
+                  ? {
+                      action: {
+                        ...pending,
+                        status: "refused" as const,
+                        reason: `Not applied; ${detail}`.slice(0, 4000),
+                      },
+                    }
+                  : {}),
+              },
+            }
+          : {}),
+      },
     },
-  }, "run_displaced_by_owner_verb", latest.id);
+    "run_displaced_by_owner_verb",
+    latest.id,
+  );
   return true;
 }
 
@@ -243,11 +465,19 @@ export function supersedeDisplacedRunInTx(store: Store, taskId: string, runId: s
  * episode bookkeeping. Caller owns the transaction; one event names the run,
  * and the normal thread-archive path picks the released binding up.
  */
-export function releaseRunFromRecordedCompletion(store: Store, taskId: string, run: Run): void {
+export function releaseRunFromRecordedCompletion(
+  store: Store,
+  taskId: string,
+  run: Run,
+): void {
   const latest = store.run(run.id);
   if (!latest || latest.released || !latest.completion) return;
   store.putRun({ ...latest, status: "finished", released: true });
-  store.event(taskId, "run_released_from_recorded_completion", `${latest.role} ${latest.id}`);
+  store.event(
+    taskId,
+    "run_released_from_recorded_completion",
+    `${latest.role} ${latest.id}`,
+  );
 }
 
 /**
@@ -258,10 +488,18 @@ export function releaseRunFromRecordedCompletion(store: Store, taskId: string, r
  */
 export class RunRelease {
   constructor(readonly engine: Engine) {}
-  get store() { return this.engine.store; }
-  get adapter() { return this.engine.adapter; }
-  get resolution() { return this.engine.resolution; }
-  get stopped() { return this.engine.stopped; }
+  get store() {
+    return this.engine.store;
+  }
+  get adapter() {
+    return this.engine.adapter;
+  }
+  get resolution() {
+    return this.engine.resolution;
+  }
+  get stopped() {
+    return this.engine.stopped;
+  }
 
   /**
    * Release a run whose completion is durably recorded but unreleased.
@@ -283,13 +521,25 @@ export class RunRelease {
     // concluded with nothing left to do and whose release step was lost: a coordinator that
     // escalated. Observed live as a recovery run reading running/active/unreleased hours
     // after its agent closed, holding every operator route hostage.
-    const runs = this.store.runs(task.id).filter(run => !run.released && run.completion &&
-      run.role === "recovery" && !run.mergeRetirement && run.completion.status === "escalate");
+    const runs = this.store
+      .runs(task.id)
+      .filter(
+        (run) =>
+          !run.released &&
+          run.completion &&
+          run.role === "recovery" &&
+          !run.mergeRetirement &&
+          run.completion.status === "escalate",
+      );
     if (!runs.length) return;
     this.store.transaction(() => {
       for (const run of runs) {
-        this.store.putRun({ ...run, status: 'finished', released: true });
-        this.store.event(task.id, 'run_released_from_recorded_completion', `${run.role} ${run.id}`);
+        this.store.putRun({ ...run, status: "finished", released: true });
+        this.store.event(
+          task.id,
+          "run_released_from_recorded_completion",
+          `${run.role} ${run.id}`,
+        );
       }
       let latest = this.store.task(task.id);
       if (latest.resolution.recoveryActive) {
@@ -299,8 +549,10 @@ export class RunRelease {
       // recovery reading "running" with budget left, so the next pass launched another
       // coordinator for the same issue (observed live, 2026-09-27: three coordinators
       // each escalating one planning decision). Escalation is idempotent.
-      const current = runs.find(run => run.id === latest.resolution.recovery?.runId);
-      if (current && latest.resolution.recovery?.status !== 'escalated') {
+      const current = runs.find(
+        (run) => run.id === latest.resolution.recovery?.runId,
+      );
+      if (current && latest.resolution.recovery?.status !== "escalated") {
         this.resolution.recovery.escalate(latest, current.completion!.summary);
       }
     });
@@ -325,26 +577,67 @@ export class RunRelease {
   async reconcileClosedRetainedReviewer(taskId: string): Promise<void> {
     if (settlementHeld(this.store, this.stopped)) return;
     const task = this.store.task(taskId);
-    if (task.removedAt || ["done", "cancelled"].includes(task.phase) || isDispositionActive(task)) return;
+    if (
+      task.removedAt ||
+      ["done", "cancelled"].includes(task.phase) ||
+      isDispositionActive(task)
+    )
+      return;
     const fences = holdsOf(task);
     if (fences.dispatch || fences.merge) return;
-    const run = task.resolution.currentRunId ? this.store.run(task.resolution.currentRunId) : null;
-    if (!run || run.role !== "reviewer" || run.released || run.completion || !run.agentId) return;
+    const run = task.resolution.currentRunId
+      ? this.store.run(task.resolution.currentRunId)
+      : null;
+    if (
+      !run ||
+      run.role !== "reviewer" ||
+      run.released ||
+      run.completion ||
+      !run.agentId
+    )
+      return;
     // A paused-stop marker owns the thread until its unpause resume settles; a
     // closed observation during that window is the resumable-session case, not a
     // reviewer that left (Queue #650).
     if (run.pausedStop) return;
-    if (!reviewInProgress(run) || run.reviewBudgetExhaustedAt || run.retainedAgentClosedAt) return;
-    if ((run.reviewDeliveries ?? []).some(delivery => delivery.status === "reserved" || delivery.status === "uncertain")) return;
+    if (
+      !reviewInProgress(run) ||
+      run.reviewBudgetExhaustedAt ||
+      run.retainedAgentClosedAt
+    )
+      return;
+    if (
+      (run.reviewDeliveries ?? []).some(
+        (delivery) =>
+          delivery.status === "reserved" || delivery.status === "uncertain",
+      )
+    )
+      return;
     const stall = task.resolution.stalledTurnStop;
     if (stall && stall.runId === run.id && stall.status !== "completed") return;
-    if (task.checkpoints.intent && task.checkpoints.intent.status === "pending" && task.checkpoints.intent.runId === run.id) return;
-    const version = task.version, runIdentity = JSON.stringify(this.store.runs(taskId));
+    if (
+      task.checkpoints.intent &&
+      task.checkpoints.intent.status === "pending" &&
+      task.checkpoints.intent.runId === run.id
+    )
+      return;
+    const version = task.version,
+      runIdentity = JSON.stringify(this.store.runs(taskId));
     let observed: Awaited<ReturnType<Adapter["observe"]>>;
-    try { observed = await this.engine.host.observe(run.agentId); } catch { return; }
+    try {
+      observed = await this.engine.host.observe(run.agentId);
+    } catch {
+      return;
+    }
     if (settlementHeld(this.store, this.stopped)) return;
-    if (!observed || observed.id !== run.agentId || observed.workspaceId !== run.workspaceId) return;
-    if (observed.active || observed.activeTurnId || observed.permissions) return;
+    if (
+      !observed ||
+      observed.id !== run.agentId ||
+      observed.workspaceId !== run.workspaceId
+    )
+      return;
+    if (observed.active || observed.activeTurnId || observed.permissions)
+      return;
     if (observed.status !== "closed") return;
     let recorded = false;
     this.store.transaction(() => {
@@ -352,14 +645,50 @@ export class RunRelease {
       const latest = this.store.run(run.id);
       // The observation belongs to this exact run and task state: a callback, a
       // checkpoint, a delivery, a control or a run change during the await wins.
-      if (current.version !== version || JSON.stringify(this.store.runs(taskId)) !== runIdentity) return;
-      if (!latest || latest.released || latest.completion || latest.agentId !== run.agentId || latest.workspaceId !== run.workspaceId) return;
-      if (latest.head !== run.head || current.resolution.currentRunId !== latest.id) return;
-      if (!reviewInProgress(latest) || latest.reviewBudgetExhaustedAt || latest.retainedAgentClosedAt) return;
+      if (
+        current.version !== version ||
+        JSON.stringify(this.store.runs(taskId)) !== runIdentity
+      )
+        return;
+      if (
+        !latest ||
+        latest.released ||
+        latest.completion ||
+        latest.agentId !== run.agentId ||
+        latest.workspaceId !== run.workspaceId
+      )
+        return;
+      if (
+        latest.head !== run.head ||
+        current.resolution.currentRunId !== latest.id
+      )
+        return;
+      if (
+        !reviewInProgress(latest) ||
+        latest.reviewBudgetExhaustedAt ||
+        latest.retainedAgentClosedAt
+      )
+        return;
       const at = now();
-      this.store.putRun({ ...latest, retainedAgentClosedAt: at, active: false, lastObservedAt: at, idleSince: latest.idleSince ?? at });
-      this.store.event(taskId, "reviewer_agent_closed", JSON.stringify({ runId: latest.id, agentId: latest.agentId,
-        workspaceId: latest.workspaceId, head: latest.head, checkpointOrdinal: latest.reviewCheckpoints?.at(-1)?.ordinal ?? null, observedAt: at }));
+      this.store.putRun({
+        ...latest,
+        retainedAgentClosedAt: at,
+        active: false,
+        lastObservedAt: at,
+        idleSince: latest.idleSince ?? at,
+      });
+      this.store.event(
+        taskId,
+        "reviewer_agent_closed",
+        JSON.stringify({
+          runId: latest.id,
+          agentId: latest.agentId,
+          workspaceId: latest.workspaceId,
+          head: latest.head,
+          checkpointOrdinal: latest.reviewCheckpoints?.at(-1)?.ordinal ?? null,
+          observedAt: at,
+        }),
+      );
       recorded = true;
     });
     // The stop is recorded through the ordinary wait writer once the flag is
@@ -368,7 +697,11 @@ export class RunRelease {
     // task kept its own stop above.
     if (recorded) {
       const current = this.store.task(taskId);
-      this.resolution.waiting(current, reviewContinuationWait(current, this.store).reason, "operator_needed");
+      this.resolution.waiting(
+        current,
+        reviewContinuationWait(current, this.store).reason,
+        "operator_needed",
+      );
     }
   }
 
@@ -388,43 +721,82 @@ export class RunRelease {
    * unreleased, even when that run was released long ago (Queue #680). Returns
    * how many runs released.
    */
-  async settleObservedIdleRuns(taskId: string, detail: string): Promise<number> {
+  async settleObservedIdleRuns(
+    taskId: string,
+    detail: string,
+  ): Promise<number> {
     let settled = 0;
     // Recovery runs this pass releases. Each release may clear `recoveryActive` before the
     // terminal settlement runs, so the settlement needs these ids to find the episode they owned.
     const releasedRecoveryRuns: string[] = [];
-    for (const run of this.store.runs(taskId).filter(candidate => !candidate.released)) {
+    for (const run of this.store
+      .runs(taskId)
+      .filter((candidate) => !candidate.released)) {
       if (settlementHeld(this.store, this.stopped)) return settled;
-      if (await this.engine.observedRunLiveness(run) !== false) continue;
+      if ((await this.engine.observedRunLiveness(run)) !== false) continue;
       if (settlementHeld(this.store, this.stopped)) return settled;
       this.store.transaction(() => {
         const latest = this.store.run(run.id);
         if (!latest || latest.released) return;
         if (latest.role === "recovery") releasedRecoveryRuns.push(latest.id);
         if (latest.completion) {
-          if (latest.role === "recovery") this.resolution.recovery.settleFinishedRun(this.store.task(taskId), latest, detail);
+          if (latest.role === "recovery")
+            this.resolution.recovery.settleFinishedRun(
+              this.store.task(taskId),
+              latest,
+              detail,
+            );
           else releaseRunFromRecordedCompletion(this.store, taskId, latest);
           settled++;
           return;
         }
         // A never-reporting run: release the lease with all history kept.
-        this.store.putRun({ ...latest, status: "superseded", released: true, active: false });
-        this.store.event(taskId, "run_released_from_observed_liveness", `${latest.role} ${latest.id}: ${detail}`);
+        this.store.putRun({
+          ...latest,
+          status: "superseded",
+          released: true,
+          active: false,
+        });
+        this.store.event(
+          taskId,
+          "run_released_from_observed_liveness",
+          `${latest.role} ${latest.id}: ${detail}`,
+        );
         const current = this.store.task(taskId);
         const recovery = current.resolution.recovery;
-        if (latest.role === "recovery" && (current.resolution.recoveryActive || recovery?.runId === latest.id)) {
-          this.resolution.update(current, {
-            recoveryActive: false,
-            ...(recovery && recovery.status !== "resolved"
-              ? { recovery: { ...recovery, status: "resolved" as const, summary: `${detail}; the run reported no result` } } : {}),
-          }, {}, "recovery_episode_observably_idle", latest.id);
+        if (
+          latest.role === "recovery" &&
+          (current.resolution.recoveryActive || recovery?.runId === latest.id)
+        ) {
+          this.resolution.update(
+            current,
+            {
+              recoveryActive: false,
+              ...(recovery && recovery.status !== "resolved"
+                ? {
+                    recovery: {
+                      ...recovery,
+                      status: "resolved" as const,
+                      summary: `${detail}; the run reported no result`,
+                    },
+                  }
+                : {}),
+            },
+            {},
+            "recovery_episode_observably_idle",
+            latest.id,
+          );
         }
         settled++;
       });
     }
     // A released or superseded recovery run cannot hold the episode open, and the
     // loop above never reads it again.
-    this.engine.settleTerminalRecoveryEpisode(taskId, detail, releasedRecoveryRuns);
+    this.engine.settleTerminalRecoveryEpisode(
+      taskId,
+      detail,
+      releasedRecoveryRuns,
+    );
     return settled;
   }
 
@@ -437,19 +809,42 @@ export class RunRelease {
    * still fences. Store-only: no adapter read, so it is safe on any pass. Returns
    * whether an episode closed.
    */
-  settleTerminalRecoveryEpisode(taskId: string, cause: string, releasedRunIds: readonly string[] = []): boolean {
+  settleTerminalRecoveryEpisode(
+    taskId: string,
+    cause: string,
+    releasedRunIds: readonly string[] = [],
+  ): boolean {
     if (settlementHeld(this.store, this.stopped)) return false;
     let closed = false;
     this.store.transaction(() => {
       const current = this.store.task(taskId);
-      if (!['done', 'cancelled'].includes(current.phase)) return;
-      const episodeOwned = releasedRunIds.some(id => id === current.resolution.recovery?.runId || id === current.resolution.incident?.runId);
+      if (!["done", "cancelled"].includes(current.phase)) return;
+      const episodeOwned = releasedRunIds.some(
+        (id) =>
+          id === current.resolution.recovery?.runId ||
+          id === current.resolution.incident?.runId,
+      );
       if (!current.resolution.recoveryActive && !episodeOwned) return;
-      if (this.store.runs(taskId).some(run => run.role === "recovery" && !run.released)) return;
+      if (
+        this.store
+          .runs(taskId)
+          .some((run) => run.role === "recovery" && !run.released)
+      )
+        return;
       const detail = `Task is ${current.phase} and no recovery run is unreleased; the active recovery episode closed (${cause})`;
-      const changes = this.resolution.recovery.settledEpisodeChanges(current, detail, episodeOwned);
+      const changes = this.resolution.recovery.settledEpisodeChanges(
+        current,
+        detail,
+        episodeOwned,
+      );
       if (!changes) return;
-      this.resolution.update(current, changes, {}, "recovery_episode_settled", detail);
+      this.resolution.update(
+        current,
+        changes,
+        {},
+        "recovery_episode_settled",
+        detail,
+      );
       closed = true;
     });
     return closed;
@@ -460,24 +855,66 @@ export class RunRelease {
     let settled = 0;
     this.store.transaction(() => {
       let task = this.store.task(taskId);
-      if (!['done', 'cancelled'].includes(task.phase)) return;
+      if (!["done", "cancelled"].includes(task.phase)) return;
       for (const candidate of this.store.runs(taskId)) {
-        if (candidate.released || candidate.status !== 'intent' || candidate.agentId != null) continue;
+        if (
+          candidate.released ||
+          candidate.status !== "intent" ||
+          candidate.agentId != null
+        )
+          continue;
         const run = this.store.run(candidate.id);
-        if (!run || run.released || run.status !== 'intent' || run.agentId != null) continue;
+        if (
+          !run ||
+          run.released ||
+          run.status !== "intent" ||
+          run.agentId != null
+        )
+          continue;
         const reason = `Abandoned because task is ${task.phase}; run never launched (intent has no agent)`;
-        this.store.putRun({ ...run, status: 'superseded', released: true, active: false });
-        this.store.event(taskId, 'run_intent_abandoned', `${run.role} ${run.id}: ${reason}`);
+        this.store.putRun({
+          ...run,
+          status: "superseded",
+          released: true,
+          active: false,
+        });
+        this.store.event(
+          taskId,
+          "run_intent_abandoned",
+          `${run.role} ${run.id}: ${reason}`,
+        );
         task = this.store.task(taskId);
         const recovery = task.resolution.recovery;
-        const ownsRecovery = recovery?.runId === run.id && recovery.status !== 'resolved';
-        if (task.resolution.currentRunId === run.id || ownsRecovery || (run.role === 'recovery' && task.resolution.recoveryActive)) {
-          this.store.update(taskId, { resolution: {
-            ...task.resolution,
-            ...(task.resolution.currentRunId === run.id ? { currentRunId: null } : {}),
-            ...(run.role === 'recovery' ? { recoveryActive: false } : {}),
-            ...(ownsRecovery && recovery ? { recovery: { ...recovery, status: 'resolved', summary: reason } } : {}),
-          } }, 'terminal_run_intent_abandoned', run.id);
+        const ownsRecovery =
+          recovery?.runId === run.id && recovery.status !== "resolved";
+        if (
+          task.resolution.currentRunId === run.id ||
+          ownsRecovery ||
+          (run.role === "recovery" && task.resolution.recoveryActive)
+        ) {
+          this.store.update(
+            taskId,
+            {
+              resolution: {
+                ...task.resolution,
+                ...(task.resolution.currentRunId === run.id
+                  ? { currentRunId: null }
+                  : {}),
+                ...(run.role === "recovery" ? { recoveryActive: false } : {}),
+                ...(ownsRecovery && recovery
+                  ? {
+                      recovery: {
+                        ...recovery,
+                        status: "resolved",
+                        summary: reason,
+                      },
+                    }
+                  : {}),
+              },
+            },
+            "terminal_run_intent_abandoned",
+            run.id,
+          );
           task = this.store.task(taskId);
         }
         settled++;
@@ -501,16 +938,23 @@ export class RunRelease {
    * Holds write nothing, so a pass with nothing settleable leaves the task
    * untouched. Returns how many runs released.
    */
-  async settleSupersededIdleRuns(taskId: string, detail: string): Promise<number> {
+  async settleSupersededIdleRuns(
+    taskId: string,
+    detail: string,
+  ): Promise<number> {
     let settled = 0;
     if (this.store.task(taskId).removedAt) return settled;
-    for (const run of this.store.runs(taskId).filter(candidate => !candidate.released)) {
+    for (const run of this.store
+      .runs(taskId)
+      .filter((candidate) => !candidate.released)) {
       if (settlementHeld(this.store, this.stopped)) return settled;
       if (!supersededIdleBinding(this.store, taskId, run).superseded) continue;
-      if (await this.engine.supersededIdleFence(run) !== null) continue;
+      if ((await this.engine.supersededIdleFence(run)) !== null) continue;
       if (settlementHeld(this.store, this.stopped)) return settled;
       let done = false;
-      this.store.transaction(() => { done = supersedeIdleRunInTx(this.store, taskId, run, detail); });
+      this.store.transaction(() => {
+        done = supersedeIdleRunInTx(this.store, taskId, run, detail);
+      });
       if (done) settled++;
     }
     return settled;
@@ -531,36 +975,69 @@ export class RunRelease {
    * settles nothing, and a run that can still report or already settled stays
    * untouched. Returns how many records settled.
    */
-  async settleHistoricalProofExecutions(taskId: string, detail: string): Promise<number> {
+  async settleHistoricalProofExecutions(
+    taskId: string,
+    detail: string,
+  ): Promise<number> {
     let settled = 0;
     if (this.store.task(taskId).removedAt) return settled;
     for (const run of this.store.runs(taskId)) {
       if (settlementHeld(this.store, this.stopped)) return settled;
       if (run.role !== "executor" || !run.proofExecution) continue;
-      const record = (this.store.task(taskId).proofExecutions ?? []).find(item => item.runId === run.id);
+      const record = (this.store.task(taskId).proofExecutions ?? []).find(
+        (item) => item.runId === run.id,
+      );
       if (!record || record.status !== "running") continue;
-      if (!run.released && !supersededIdleBinding(this.store, taskId, run).superseded) continue;
+      if (
+        !run.released &&
+        !supersededIdleBinding(this.store, taskId, run).superseded
+      )
+        continue;
       if (!run.agentId || !this.adapter.agentTimelinePage) continue;
       let read: Awaited<ReturnType<typeof readToolTimeline>>;
-      try { read = await readToolTimeline(this.engine.host, run.agentId); }
-      catch { continue; }
+      try {
+        read = await readToolTimeline(this.engine.host, run.agentId);
+      } catch {
+        continue;
+      }
       if (!("entries" in read)) continue;
-      const ran = timelineSelectorEvidence(read.entries, run.proofExecution.selector);
+      const ran = timelineSelectorEvidence(
+        read.entries,
+        run.proofExecution.selector,
+      );
       if (!ran) continue;
       this.store.transaction(() => {
         const fresh = this.store.run(run.id);
         const binding = fresh?.proofExecution;
         if (!fresh || !binding || fresh.completion) return;
         const current = this.store.task(taskId);
-        const running = (current.proofExecutions ?? []).find(item => item.runId === run.id);
+        const running = (current.proofExecutions ?? []).find(
+          (item) => item.runId === run.id,
+        );
         if (!running || running.status !== "running") return;
-        recordProofExecution(this.store, taskId,
-          { ...running, status: "unknown", historical: true, exitCode: null, selectorStart: "started",
+        recordProofExecution(
+          this.store,
+          taskId,
+          {
+            ...running,
+            status: "unknown",
+            historical: true,
+            exitCode: null,
+            selectorStart: "started",
             selectorStartEvidence: `Tool timeline: declared selector invoked at ${ran.at}`,
-            evidence: `Timeline-only evidence: the selector ran as shell command "${ran.command}" (terminal at ${ran.at}); no result was ever reported (${detail})`.slice(0, 4000) },
-          `${run.id}: timeline shows the selector ran at ${fresh.head}; settled as historical evidence, never a pass and no allowance spent`);
-        this.store.event(taskId, "proof_execution_historical",
-          `${run.id}: timeline-only evidence settles the execution record as unknown for ${binding.selector} at ${fresh.head}; it ran, no result was reported, and it is never a pass (${detail})`);
+            evidence:
+              `Timeline-only evidence: the selector ran as shell command "${ran.command}" (terminal at ${ran.at}); no result was ever reported (${detail})`.slice(
+                0,
+                4000,
+              ),
+          },
+          `${run.id}: timeline shows the selector ran at ${fresh.head}; settled as historical evidence, never a pass and no allowance spent`,
+        );
+        this.store.event(
+          taskId,
+          "proof_execution_historical",
+          `${run.id}: timeline-only evidence settles the execution record as unknown for ${binding.selector} at ${fresh.head}; it ran, no result was reported, and it is never a pass (${detail})`,
+        );
         settled++;
       });
     }
@@ -578,27 +1055,43 @@ export class RunRelease {
    */
   async supersededIdleFence(run: Run): Promise<string | null> {
     let state: Awaited<ReturnType<Adapter["observe"]>> | null = null;
-    try { state = await this.engine.host.observe(run.agentId!); }
-    catch { state = null; }
+    try {
+      state = await this.engine.host.observe(run.agentId!);
+    } catch {
+      state = null;
+    }
     if (!state) {
       // A missing or throwing live observation is unobservable. A thread its
       // host reports archived or gone is the stopped proof the ordinary archive
       // path accepts, so that one case no longer holds it.
-      if (!await this.threadArchivedOrGone(run.agentId!)) return "its agent is unobservable";
+      if (!(await this.threadArchivedOrGone(run.agentId!)))
+        return "its agent is unobservable";
     } else {
-      if (!state.id || state.id !== run.agentId) return "its agent is unreadable";
-      if (state.workspaceId !== run.workspaceId) return "its agent is outside the run workspace";
+      if (!state.id || state.id !== run.agentId)
+        return "its agent is unreadable";
+      if (state.workspaceId !== run.workspaceId)
+        return "its agent is outside the run workspace";
       if (state.active || state.activeTurnId) return "its agent is active";
-      if (state.permissions) return "its agent is awaiting a permission request";
-      if (!["idle", "error", "closed"].includes(state.status)) return `its agent is ${state.status}`;
-      if (state.status !== 'closed') {
-        const tools = await this.engine.ownedToolHold(run.agentId!, run.id, run.taskId);
+      if (state.permissions)
+        return "its agent is awaiting a permission request";
+      if (!["idle", "error", "closed"].includes(state.status))
+        return `its agent is ${state.status}`;
+      if (state.status !== "closed") {
+        const tools = await this.engine.ownedToolHold(
+          run.agentId!,
+          run.id,
+          run.taskId,
+        );
         if (tools) return tools;
       }
     }
     // The archive proves the thread cannot take a turn; it never settles the
     // run's durable effects, which keep their own fence.
-    const refusal = blockingRecoveryEffectsRefusal(this.store, this.store.task(run.taskId), { runId: run.id });
+    const refusal = blockingRecoveryEffectsRefusal(
+      this.store,
+      this.store.task(run.taskId),
+      { runId: run.id },
+    );
     if (refusal) return refusal;
     return null;
   }
@@ -608,7 +1101,9 @@ export class RunRelease {
     try {
       const origin = await this.engine.host.originAgent(agentId);
       return !origin || origin.archived === true;
-    } catch { return false; }
+    } catch {
+      return false;
+    }
   }
 
   /**
@@ -626,14 +1121,22 @@ export class RunRelease {
     taskId?: string,
     options: { requireCompleteEvidence?: boolean; allowRetired?: boolean } = {},
   ): Promise<string | null> {
-    if (!taskId || !runId) return this.resolution.ownedToolHold(agentId, options);
-    const task=this.store.task(taskId), runs=this.store.runs(taskId);
-    const boundRun=runs.find(run=>run.id===runId);
-    const workspaceId=boundRun?.workspaceId ?? task.workspaceId;
-    if (!workspaceId) return 'owned tool run workspace identity is unavailable';
-    const runIds=participantToolRunIds(task,runs,agentId,workspaceId);
+    if (!taskId || !runId)
+      return this.resolution.ownedToolHold(agentId, options);
+    const task = this.store.task(taskId),
+      runs = this.store.runs(taskId);
+    const boundRun = runs.find((run) => run.id === runId);
+    const workspaceId = boundRun?.workspaceId ?? task.workspaceId;
+    if (!workspaceId) return "owned tool run workspace identity is unavailable";
+    const runIds = participantToolRunIds(task, runs, agentId, workspaceId);
     if (!runIds.includes(runId)) runIds.unshift(runId);
-    return this.resolution.ownedToolHold(agentId,{...options,runId,runIds,taskId,workspaceId});
+    return this.resolution.ownedToolHold(agentId, {
+      ...options,
+      runId,
+      runIds,
+      taskId,
+      workspaceId,
+    });
   }
 
   /**
@@ -647,9 +1150,17 @@ export class RunRelease {
   async observedRunLiveness(run: Run): Promise<boolean | null> {
     if (!run.agentId) return null;
     let state: Awaited<ReturnType<Adapter["observe"]>>;
-    try { state = await this.engine.host.observe(run.agentId); } catch { return true; }
+    try {
+      state = await this.engine.host.observe(run.agentId);
+    } catch {
+      return true;
+    }
     if (state.workspaceId !== run.workspaceId) return true;
-    return state.active || Boolean(state.activeTurnId) || state.permissions
-      || !["idle", "error", "closed"].includes(state.status);
+    return (
+      state.active ||
+      Boolean(state.activeTurnId) ||
+      state.permissions ||
+      !["idle", "error", "closed"].includes(state.status)
+    );
   }
 }

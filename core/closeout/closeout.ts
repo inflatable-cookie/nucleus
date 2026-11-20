@@ -1,8 +1,18 @@
 import { admitPhaseFacts } from "../scheduling/phase-latency";
 import { resultApplied, recordResultApplied } from "../intake/applied-result";
-import { isDispositionActive, mergeFenced, type Completion, type Run, type Task } from "../../shared/contracts";
+import {
+  isDispositionActive,
+  mergeFenced,
+  type Completion,
+  type Run,
+  type Task,
+} from "../../shared/contracts";
 import { taskPrNumber } from "../forge/index";
-import { describeIntegrationFastForward, git, recordIntegrationFastForward } from "../git/index";
+import {
+  describeIntegrationFastForward,
+  git,
+  recordIntegrationFastForward,
+} from "../git/index";
 import {
   hookHoldReason,
   isCloseoutAuthorityHook,
@@ -21,7 +31,11 @@ import { escalationWaitDetail } from "../questions/ladder/waits";
 import { CLOSEOUT_BASE_REFRESH_REASON } from "../recovery/task-reasons";
 import { EXTERNAL_MERGE_CHECK_REASON_PREFIX } from "../recovery/task-reasons";
 import { settlementHeld } from "./queue-drain";
-import { legacyRecoveryEscalation, legacyRecoveryOwnsStop, recoveryOvertakenByMerge } from "../recovery/merge-occurrence";
+import {
+  legacyRecoveryEscalation,
+  legacyRecoveryOwnsStop,
+  recoveryOvertakenByMerge,
+} from "../recovery/merge-occurrence";
 import { digest } from "../store/store";
 import {
   CLOSEOUT_BASE_RENEWED_KIND,
@@ -58,18 +72,46 @@ export const isMergeCloseoutPhase = (t: Task) =>
   t.phase === "merging" || t.phase === "syncing" || t.phase === "closing";
 
 /** Settle ladder occurrences the merge overtook without applying a planner answer. */
-export function settleMergeEscalations(t: Task, store: CloseoutContext["store"], detail: string): boolean {
-  if (t.resolution.recovery || t.resolution.stop?.reason !== "escalated") return false;
+export function settleMergeEscalations(
+  t: Task,
+  store: CloseoutContext["store"],
+  detail: string,
+): boolean {
+  if (t.resolution.recovery || t.resolution.stop?.reason !== "escalated")
+    return false;
   const events = store.eventsAll(t.id);
   for (const escalation of plannerEscalations(events)) {
-    if (escalation.answered || escalation.refusal !== "pre_merge" || escalation.runId !== t.runId
-        || !t.resolution.stop.detail.startsWith(escalationWaitDetail.planner(escalation.id))) continue;
-    store.event(t.id, "planner_escalation_resolved", `${escalation.id}: ${detail}`);
-    if (events.some(event => event.kind === "planner_escalation_wait"
-      && event.detail.startsWith(`${escalation.id}:`))
-      && !events.some(event => event.kind === "planner_escalation_wait_superseded"
-        && event.detail.startsWith(`${escalation.id}:`)))
-      store.event(t.id, "planner_escalation_wait_superseded", `${escalation.id}: ${detail}`);
+    if (
+      escalation.answered ||
+      escalation.refusal !== "pre_merge" ||
+      escalation.runId !== t.runId ||
+      !t.resolution.stop.detail.startsWith(
+        escalationWaitDetail.planner(escalation.id),
+      )
+    )
+      continue;
+    store.event(
+      t.id,
+      "planner_escalation_resolved",
+      `${escalation.id}: ${detail}`,
+    );
+    if (
+      events.some(
+        (event) =>
+          event.kind === "planner_escalation_wait" &&
+          event.detail.startsWith(`${escalation.id}:`),
+      ) &&
+      !events.some(
+        (event) =>
+          event.kind === "planner_escalation_wait_superseded" &&
+          event.detail.startsWith(`${escalation.id}:`),
+      )
+    )
+      store.event(
+        t.id,
+        "planner_escalation_wait_superseded",
+        `${escalation.id}: ${detail}`,
+      );
     closeEscalationFollowups(store, t.id, escalation.id);
     return true;
   }
@@ -94,100 +136,232 @@ export class Closeout {
     return this.resolution.hooks;
   }
   /** A verified merge owes sync or closeout. Callers prove any fresh observations before entering this transaction. */
-  continueRecordedMerge(t: Task, continuation: RecordedMergeContinuation): Task {
+  continueRecordedMerge(
+    t: Task,
+    continuation: RecordedMergeContinuation,
+  ): Task {
     const apply = () => {
       const current = this.store.task(t.id);
       const r = current.resolution;
-      if (current.version !== t.version || !r.mergedCommit || current.removedAt
-          || isDispositionActive(current) || ["queued", "done", "cancelled"].includes(current.phase))
+      if (
+        current.version !== t.version ||
+        !r.mergedCommit ||
+        current.removedAt ||
+        isDispositionActive(current) ||
+        ["queued", "done", "cancelled"].includes(current.phase)
+      )
         return current;
       const runs = this.store.runs(t.id);
       const automatic = continuation.kind === "sweep";
-      const bound = runs.find(run => run.id === r.currentRunId);
+      const bound = runs.find((run) => run.id === r.currentRunId);
       const parked = !isMergeCloseoutPhase(current);
-      const hasEpisode = r.recoveryActive || (r.recovery && r.recovery.status !== "resolved");
-      const recoveryRun = r.recovery?.runId ? this.store.run(r.recovery.runId) : null;
-      const oldEpisode = Boolean(!recoveryRun?.mergeRetirement && recoveryOvertakenByMerge(this.store, current));
-      const recoveredProbe = Boolean(automatic && continuation.reobserved && r.externalMergePreAttention
-        && !hasEpisode && current.reason.startsWith(EXTERNAL_MERGE_CHECK_REASON_PREFIX)
-        && (!r.stop || r.stop.detail.startsWith(EXTERNAL_MERGE_CHECK_REASON_PREFIX))
-        && (!r.incident || r.incident.status === "resolved" || r.incident.detail.startsWith(EXTERNAL_MERGE_CHECK_REASON_PREFIX)));
+      const hasEpisode =
+        r.recoveryActive || (r.recovery && r.recovery.status !== "resolved");
+      const recoveryRun = r.recovery?.runId
+        ? this.store.run(r.recovery.runId)
+        : null;
+      const oldEpisode = Boolean(
+        !recoveryRun?.mergeRetirement &&
+          recoveryOvertakenByMerge(this.store, current),
+      );
+      const recoveredProbe = Boolean(
+        automatic &&
+          continuation.reobserved &&
+          r.externalMergePreAttention &&
+          !hasEpisode &&
+          current.reason.startsWith(EXTERNAL_MERGE_CHECK_REASON_PREFIX) &&
+          (!r.stop ||
+            r.stop.detail.startsWith(EXTERNAL_MERGE_CHECK_REASON_PREFIX)) &&
+          (!r.incident ||
+            r.incident.status === "resolved" ||
+            r.incident.detail.startsWith(EXTERNAL_MERGE_CHECK_REASON_PREFIX)),
+      );
       // An unmatched episode, stop or incident may be a current sync or cleanup
       // fault. A merge does not grant authority to clear that occurrence.
       if (hasEpisode && !oldEpisode) return current;
-      const ownsStop = Boolean(r.stop && oldEpisode && (digest(`stop:${r.stop.reason}:${r.stop.since}`) === r.recovery?.key
-        || legacyRecoveryOwnsStop(this.store, current)));
+      const ownsStop = Boolean(
+        r.stop &&
+          oldEpisode &&
+          (digest(`stop:${r.stop.reason}:${r.stop.since}`) ===
+            r.recovery?.key ||
+            legacyRecoveryOwnsStop(this.store, current)),
+      );
       const otherStop = Boolean(r.stop && !recoveredProbe && !ownsStop);
-      const otherIncident = Boolean(r.incident && r.incident.status !== "resolved"
-        && !recoveredProbe && (!oldEpisode || r.incident.id !== r.recovery?.incidentId));
-      const staleBinding = Boolean(r.currentRunId && bound?.role !== "closeout"
-        && oldEpisode && r.currentRunId === r.recovery?.runId);
-      const otherBinding = Boolean(r.currentRunId && bound?.role !== "closeout" && !staleBinding);
-      const held = mergeFenced(current) || otherStop || otherIncident || otherBinding
-        || runs.some(run => !run.released && !(oldEpisode && run.id === r.recovery?.runId))
-        || (automatic && ((parked && !continuation.reobserved) || Boolean(bound?.role === "closeout" && bound.completion)))
-        || (automatic && this.closeoutEffects(current).length > 0);
+      const otherIncident = Boolean(
+        r.incident &&
+          r.incident.status !== "resolved" &&
+          !recoveredProbe &&
+          (!oldEpisode || r.incident.id !== r.recovery?.incidentId),
+      );
+      const staleBinding = Boolean(
+        r.currentRunId &&
+          bound?.role !== "closeout" &&
+          oldEpisode &&
+          r.currentRunId === r.recovery?.runId,
+      );
+      const otherBinding = Boolean(
+        r.currentRunId && bound?.role !== "closeout" && !staleBinding,
+      );
+      const held =
+        mergeFenced(current) ||
+        otherStop ||
+        otherIncident ||
+        otherBinding ||
+        runs.some(
+          (run) =>
+            !run.released && !(oldEpisode && run.id === r.recovery?.runId),
+        ) ||
+        (automatic &&
+          ((parked && !continuation.reobserved) ||
+            Boolean(bound?.role === "closeout" && bound.completion))) ||
+        (automatic && this.closeoutEffects(current).length > 0);
       if (held && !oldEpisode) return current;
-      const reenter = parked || current.phase === "merging" || oldEpisode || staleBinding
-        || Boolean(r.externalMergePreAttention);
+      const reenter =
+        parked ||
+        current.phase === "merging" ||
+        oldEpisode ||
+        staleBinding ||
+        Boolean(r.externalMergePreAttention);
       if (automatic && !reenter) return current;
       const detail = `Verified merge ${r.mergedCommit} supersedes the earlier resolution step`;
       const episode = oldEpisode
-        ? this.resolution.recovery.settledEpisodeChanges(current, detail, true) : null;
+        ? this.resolution.recovery.settledEpisodeChanges(current, detail, true)
+        : null;
       if (episode && r.recovery?.runId) {
         const run = this.store.run(r.recovery.runId);
-        const prNumber = current.reviewEntry?.prNumber ?? current.resumePrNumber ?? current.completion?.prNumber;
+        const prNumber =
+          current.reviewEntry?.prNumber ??
+          current.resumePrNumber ??
+          current.completion?.prNumber;
         if (!run || !prNumber || !r.mergeHead) return current;
-        this.store.putRun({ ...run, mergeRetirement: {
-          episodeId: r.recovery.id, prNumber, head: r.mergeHead, commit: r.mergedCommit,
-        } });
+        this.store.putRun({
+          ...run,
+          mergeRetirement: {
+            episodeId: r.recovery.id,
+            prNumber,
+            head: r.mergeHead,
+            commit: r.mergedCommit,
+          },
+        });
         if (run.completion) recordResultApplied(this.store, current.id, run.id);
       }
-      const ownerRefresh = continuation.kind !== "sweep" && continuation.refresh;
-      const phase = ownerRefresh || !r.syncedCommit || current.phase === "syncing" ? "syncing" : "closing";
-      const reason = ownerRefresh ? CLOSEOUT_BASE_REFRESH_REASON : phase === "syncing"
-        ? "Verified merge; synchronizing the integration checkout"
-        : "Integration checkout synchronized; closeout pending";
-      const latest = held ? current : this.resolution.assignIntegrationTurn(current);
-      const recoveredIncident = recoveredProbe && r.incident && r.incident.status !== "resolved"
-        ? { ...r.incident, status: "resolved" as const, updatedAt: new Date().toISOString() } : null;
-      const updated = this.resolution.update(latest, {
-        ...episode,
-        ...(otherStop ? { stop: r.stop } : {}),
-        ...(otherIncident ? { incident: r.incident } : {}),
-        ...(staleBinding ? { currentRunId: null } : {}),
-        ...((oldEpisode && !otherStop && !otherIncident) || recoveredProbe ? { attention: false } : {}),
-        ...(recoveredProbe ? { stop: null } : {}), ...(recoveredIncident ? { incident: recoveredIncident } : {}),
-        ...(!held ? { externalMergePreAttention: null } : {}),
-      }, {
-        ...(!held ? { phase, reason } : {}),
-        ...(!held && automatic && current.phase === "merging" && phase === "syncing"
-          ? { coordinatorGeneration: current.coordinatorGeneration + 1 } : {}),
-      }, continuation.kind === "owner" ? "owner_closeout_merge_observed"
-        : automatic ? "recorded_merge_phase_reconciled" : "closeout_sync_requested",
-      JSON.stringify({ head: r.mergeHead, commit: r.mergedCommit,
-        ...(continuation.kind === "owner" ? { reason: continuation.reason } : {}) }));
-      if (!otherIncident && episode?.incident) this.resolution.recordIncidentEvent(t.id, episode.incident);
-      if (recoveredIncident) this.resolution.recordIncidentEvent(t.id, recoveredIncident);
-      const escalation = oldEpisode && legacyRecoveryEscalation(this.store, current);
-      if (escalation && plannerEscalations(this.store.eventsAll(t.id)).some(item => item.id === escalation && !item.answered)) {
+      const ownerRefresh =
+        continuation.kind !== "sweep" && continuation.refresh;
+      const phase =
+        ownerRefresh || !r.syncedCommit || current.phase === "syncing"
+          ? "syncing"
+          : "closing";
+      const reason = ownerRefresh
+        ? CLOSEOUT_BASE_REFRESH_REASON
+        : phase === "syncing"
+          ? "Verified merge; synchronizing the integration checkout"
+          : "Integration checkout synchronized; closeout pending";
+      const latest = held
+        ? current
+        : this.resolution.assignIntegrationTurn(current);
+      const recoveredIncident =
+        recoveredProbe && r.incident && r.incident.status !== "resolved"
+          ? {
+              ...r.incident,
+              status: "resolved" as const,
+              updatedAt: new Date().toISOString(),
+            }
+          : null;
+      const updated = this.resolution.update(
+        latest,
+        {
+          ...episode,
+          ...(otherStop ? { stop: r.stop } : {}),
+          ...(otherIncident ? { incident: r.incident } : {}),
+          ...(staleBinding ? { currentRunId: null } : {}),
+          ...((oldEpisode && !otherStop && !otherIncident) || recoveredProbe
+            ? { attention: false }
+            : {}),
+          ...(recoveredProbe ? { stop: null } : {}),
+          ...(recoveredIncident ? { incident: recoveredIncident } : {}),
+          ...(!held ? { externalMergePreAttention: null } : {}),
+        },
+        {
+          ...(!held ? { phase, reason } : {}),
+          ...(!held &&
+          automatic &&
+          current.phase === "merging" &&
+          phase === "syncing"
+            ? { coordinatorGeneration: current.coordinatorGeneration + 1 }
+            : {}),
+        },
+        continuation.kind === "owner"
+          ? "owner_closeout_merge_observed"
+          : automatic
+            ? "recorded_merge_phase_reconciled"
+            : "closeout_sync_requested",
+        JSON.stringify({
+          head: r.mergeHead,
+          commit: r.mergedCommit,
+          ...(continuation.kind === "owner"
+            ? { reason: continuation.reason }
+            : {}),
+        }),
+      );
+      if (!otherIncident && episode?.incident)
+        this.resolution.recordIncidentEvent(t.id, episode.incident);
+      if (recoveredIncident)
+        this.resolution.recordIncidentEvent(t.id, recoveredIncident);
+      const escalation =
+        oldEpisode && legacyRecoveryEscalation(this.store, current);
+      if (
+        escalation &&
+        plannerEscalations(this.store.eventsAll(t.id)).some(
+          (item) => item.id === escalation && !item.answered,
+        )
+      ) {
         const events = this.store.eventsAll(t.id);
-        this.store.event(t.id, "planner_escalation_resolved", `${escalation}: ${detail}`);
-        if (events.some(event => event.kind === "planner_escalation_wait" && event.detail.startsWith(`${escalation}:`))
-            && !events.some(event => event.kind === "planner_escalation_wait_superseded" && event.detail.startsWith(`${escalation}:`)))
-          this.store.event(t.id, "planner_escalation_wait_superseded", `${escalation}: ${detail}`);
+        this.store.event(
+          t.id,
+          "planner_escalation_resolved",
+          `${escalation}: ${detail}`,
+        );
+        if (
+          events.some(
+            (event) =>
+              event.kind === "planner_escalation_wait" &&
+              event.detail.startsWith(`${escalation}:`),
+          ) &&
+          !events.some(
+            (event) =>
+              event.kind === "planner_escalation_wait_superseded" &&
+              event.detail.startsWith(`${escalation}:`),
+          )
+        )
+          this.store.event(
+            t.id,
+            "planner_escalation_wait_superseded",
+            `${escalation}: ${detail}`,
+          );
         closeEscalationFollowups(this.store, t.id, escalation);
       }
       return updated;
     };
-    return this.store.db.isTransaction ? apply() : this.store.transaction(apply);
+    return this.store.db.isTransaction
+      ? apply()
+      : this.store.transaction(apply);
   }
   private closeoutEffects(t: Task, syncing = false) {
     const refreshing = this.resolution.refreshingCloseoutHook(t, syncing);
     return recoveryEffects(this.store, t, {
-      kinds: ["operation", "hook", "run-delivery", "review-delivery", "publication", "attention-notice"],
-    }).filter(effect => isBlockingRecoveryEffect(effect)
-      && !(effect.kind === "hook" && effect.identity === refreshing?.id));
+      kinds: [
+        "operation",
+        "hook",
+        "run-delivery",
+        "review-delivery",
+        "publication",
+        "attention-notice",
+      ],
+    }).filter(
+      (effect) =>
+        isBlockingRecoveryEffect(effect) &&
+        !(effect.kind === "hook" && effect.identity === refreshing?.id),
+    );
   }
   private reviewDisclosures(t: Task): string {
     return [
@@ -429,8 +603,16 @@ export class Closeout {
     if (applied) this.resolution.closeoutWritten(this.store.task(t.id));
   }
   async advanceClosing(t: Task): Promise<void> {
-    if (t.resolution.recoveryActive || (t.resolution.recovery && t.resolution.recovery.status !== "resolved")) return;
-    if (t.resolution.mergedCommit && this.store.runs(t.id).some(run => !run.released)) return;
+    if (
+      t.resolution.recoveryActive ||
+      (t.resolution.recovery && t.resolution.recovery.status !== "resolved")
+    )
+      return;
+    if (
+      t.resolution.mergedCommit &&
+      this.store.runs(t.id).some((run) => !run.released)
+    )
+      return;
     // A blocked closeout hook is handled by the closeout authority; uncertain
     // effects and all other task effects must settle independently.
     const closeoutHooks = new Set(
@@ -464,8 +646,16 @@ export class Closeout {
     } else await this.resolution.launch(t, "closeout");
   }
   async advanceSyncing(t: Task): Promise<void> {
-    if (t.resolution.recoveryActive || (t.resolution.recovery && t.resolution.recovery.status !== "resolved")) return;
-    if (!t.resolution.mergedCommit || this.store.runs(t.id).some(run => !run.released)) return;
+    if (
+      t.resolution.recoveryActive ||
+      (t.resolution.recovery && t.resolution.recovery.status !== "resolved")
+    )
+      return;
+    if (
+      !t.resolution.mergedCommit ||
+      this.store.runs(t.id).some((run) => !run.released)
+    )
+      return;
     if (!this.resolution.claimIntegrationTurn(t)) return;
     t = this.store.task(t.id);
     if (
@@ -476,21 +666,29 @@ export class Closeout {
     admitPhaseFacts(this.store, t.id);
     const syncStarted = Date.now();
     const runs = JSON.stringify(this.store.runs(t.id));
-    const current = () => !this.resolution.stopped() && this.store.task(t.id).version === t.version
-      && JSON.stringify(this.store.runs(t.id)) === runs;
-    const canSettle = () => current()
-      && !this.closeoutEffects(this.store.task(t.id), true).length;
-    if (!canSettle() || this.store.runs(t.id).some(run => !run.released)) return;
+    const current = () =>
+      !this.resolution.stopped() &&
+      this.store.task(t.id).version === t.version &&
+      JSON.stringify(this.store.runs(t.id)) === runs;
+    const canSettle = () =>
+      current() && !this.closeoutEffects(this.store.task(t.id), true).length;
+    if (!canSettle() || this.store.runs(t.id).some((run) => !run.released))
+      return;
     let commit: string;
     try {
       commit = await this.adapter.syncMain!(
         t,
         () => !this.resolution.paused() && canSettle(),
-        move => recordIntegrationFastForward(this.store, t, move),
-        move => {
+        (move) => recordIntegrationFastForward(this.store, t, move),
+        (move) => {
           const detail = `${t.resolution.mergedCommit}: ${describeIntegrationFastForward(t.baseBranch, move)}`;
-          const latest = this.store.events(t.id).find(event =>
-            event.kind === "main_sync_intent" || event.kind === "main_synchronized");
+          const latest = this.store
+            .events(t.id)
+            .find(
+              (event) =>
+                event.kind === "main_sync_intent" ||
+                event.kind === "main_synchronized",
+            );
           if (latest?.kind !== "main_sync_intent" || latest.detail !== detail)
             this.store.event(t.id, "main_sync_intent", detail);
         },
@@ -498,17 +696,29 @@ export class Closeout {
     } catch (error) {
       if (!canSettle()) return;
       const detail = String(error).slice(0, 2000);
-      if (this.store.events(t.id).find(event => event.kind === "main_sync_failed")?.detail !== detail)
+      if (
+        this.store
+          .events(t.id)
+          .find((event) => event.kind === "main_sync_failed")?.detail !== detail
+      )
         this.store.event(t.id, "main_sync_failed", detail);
       throw error;
     }
     this.store.transaction(() => {
       if (!canSettle()) return;
-      this.store.event(t.id, "integration_sync_duration", `${Date.now() - syncStarted}ms`);
+      this.store.event(
+        t.id,
+        "integration_sync_duration",
+        `${Date.now() - syncStarted}ms`,
+      );
       this.resolution.update(
         t,
         { syncedCommit: commit },
-        { phase: "closing", reason: "Integration branch synchronized; coordinator closeout pending" },
+        {
+          phase: "closing",
+          reason:
+            "Integration branch synchronized; coordinator closeout pending",
+        },
         "main_synchronized",
       );
     });

@@ -180,30 +180,69 @@ export class RunCallbackIntake {
         ? input
         : { ...input, runId: credentialRunId };
     const probe = this.store.run(presentedInput.runId);
-    if (probe && probe.taskId === presentedInput.taskId && probe.role === "recovery" && probe.mergeRetirement) {
+    if (
+      probe &&
+      probe.taskId === presentedInput.taskId &&
+      probe.role === "recovery" &&
+      probe.mergeRetirement
+    ) {
       return this.store.transaction(() => {
         this.store.authenticate(credentialRunId, token);
-        const duplicate = this.store.receipt(presentedInput, token, credentialRunId);
+        const duplicate = this.store.receipt(
+          presentedInput,
+          token,
+          credentialRunId,
+        );
         if (duplicate) return duplicate;
         const latest = this.store.run(probe.id)!;
-        if (!latest.mergeRetirement || latest.completion) throw Error("Stale run");
-        if ((presentedInput.head && presentedInput.head !== latest.head)
-            || (presentedInput.coordinatorGeneration !== undefined && presentedInput.coordinatorGeneration !== latest.generation))
-          throw Error("Recovery report does not match its original head and generation");
-        const reported = { ...presentedInput, head: latest.head, coordinatorGeneration: latest.generation };
-        const refusal = completionRefusal(reported, latest, this.store.task(latest.taskId), false);
+        if (!latest.mergeRetirement || latest.completion)
+          throw Error("Stale run");
+        if (
+          (presentedInput.head && presentedInput.head !== latest.head) ||
+          (presentedInput.coordinatorGeneration !== undefined &&
+            presentedInput.coordinatorGeneration !== latest.generation)
+        )
+          throw Error(
+            "Recovery report does not match its original head and generation",
+          );
+        const reported = {
+          ...presentedInput,
+          head: latest.head,
+          coordinatorGeneration: latest.generation,
+        };
+        const refusal = completionRefusal(
+          reported,
+          latest,
+          this.store.task(latest.taskId),
+          false,
+        );
         if (refusal) throw Error(refusal);
-        const response = { accepted: true as const, eventId: presentedInput.eventId };
+        const response = {
+          accepted: true as const,
+          eventId: presentedInput.eventId,
+        };
         // Keep the original execution lease and delivery evidence: this records
         // the report without asserting that the participant is no longer live.
         this.store.putRun({ ...latest, completion: reported });
         recordResultApplied(this.store, latest.taskId, latest.id);
-        this.store.event(latest.taskId, "late_callback_evidence", JSON.stringify({
-          runId: latest.id, episodeId: latest.mergeRetirement.episodeId,
-          eventId: presentedInput.eventId, status: presentedInput.status, summary: presentedInput.summary,
-        }));
-        this.store.setCompletionReceipt(presentedInput.eventId, latest.taskId, latest.id,
-          digest(JSON.stringify(presentedInput)), JSON.stringify(response));
+        this.store.event(
+          latest.taskId,
+          "late_callback_evidence",
+          JSON.stringify({
+            runId: latest.id,
+            episodeId: latest.mergeRetirement.episodeId,
+            eventId: presentedInput.eventId,
+            status: presentedInput.status,
+            summary: presentedInput.summary,
+          }),
+        );
+        this.store.setCompletionReceipt(
+          presentedInput.eventId,
+          latest.taskId,
+          latest.id,
+          digest(JSON.stringify(presentedInput)),
+          JSON.stringify(response),
+        );
         return response;
       });
     }
