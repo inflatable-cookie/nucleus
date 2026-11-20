@@ -22,10 +22,10 @@ import {
 } from "./intents";
 import type { T3IntentLedger } from "./intents";
 import {
-  attentionStep,
   isSupportRole,
   labelRole,
   labelTask,
+  needsInputStep,
   rowStep,
   rowTitle,
 } from "./one-row";
@@ -107,6 +107,11 @@ export interface T3PresentationContext {
  * Nucleus never issues `thread.settle` for a task thread (Tom, 2026-11-19).
  */
 export class T3Presentation {
+  /**
+   * The attention state each task's row last reconciled to (nucleus#1437). The title
+   * written between passes reads the same ownership of a role's fault as the row does.
+   */
+  private readonly rowAttention = new Map<string, TaskAttention["state"]>();
   constructor(private readonly core: T3PresentationContext) {}
 
   retireDeletedPresentationIntents(observedId?: string): void {
@@ -192,7 +197,7 @@ export class T3Presentation {
    * uses counts: a superseded reviewer or recovery thread's last failed run is
    * history, never the task's attention. Empty when nothing of the task is running.
    */
-  async rowStepFor(taskId: string): Promise<string> {
+  async rowStepFor(taskId: string, faultsOwned = false): Promise<string> {
     const state = this.core.state.read();
     const support = Object.entries(state.agents).filter(
       ([id, agent]) =>
@@ -234,7 +239,7 @@ export class T3Presentation {
         /* an unreadable support thread names no step */
       }
     }
-    return rowStep(observed);
+    return rowStep(observed, faultsOwned);
   }
 
   /**
@@ -298,11 +303,16 @@ export class T3Presentation {
     this.retireDeletedPresentationIntents();
     if (!threadId) return;
     if (attention.state === "finished") {
+      this.rowAttention.delete(taskId);
       this.forgetSnooze(threadId);
       return;
     }
     this.core.requireConnection();
-    const step = await this.rowStepFor(taskId);
+    this.rowAttention.set(taskId, attention.state);
+    // A role's fault names the row only while the task's own attention owns it. A
+    // role that failed earlier, under a wait or a settled incident, is history
+    // (nucleus#1437), so the row reads the wait and the fault does not hold it.
+    const step = await this.rowStepFor(taskId, attention.state === "attention");
     const base = this.core.state.read().parents?.[taskId]?.title;
     if (base) {
       const desired = capPaseoTitle(rowTitle(base, step));
@@ -315,9 +325,9 @@ export class T3Presentation {
         }
       }
     }
-    // A role that asks a question or ended with a fault is a person who must act,
-    // exactly as the projection's own attention is.
-    if (attention.state === "attention" || attentionStep(step)) {
+    // The projection's own attention is the person who must act; a role waiting on a
+    // current question or permission is one too (nucleus#1437).
+    if (attention.state === "attention" || needsInputStep(step)) {
       await this.unsnoozeRow(threadId);
       return;
     }
@@ -483,7 +493,10 @@ export class T3Presentation {
     // The task's own state title is the row's base; the step its role threads are
     // doing rides after it, so the one visible row names both (one row per task,
     // Tom 2026-11-15).
-    const step = await this.rowStepFor(task.id);
+    const step = await this.rowStepFor(
+      task.id,
+      this.rowAttention.get(task.id) === "attention",
+    );
     const desired = capPaseoTitle(rowTitle(title, step));
     let projection: Projection;
     try {

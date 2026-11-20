@@ -7,6 +7,7 @@ import {
   type Task,
 } from "../shared/contracts";
 import { taskStopRecord } from "../shared/task-stop";
+import { TASK_PROGRESSING_REASON } from "../shared/task-detail-summary";
 import { reviewPublicationBody } from "../core/forge/index";
 import { holdPatch } from "../core/merge/merge-hold";
 import { digest } from "../core/store/store";
@@ -548,4 +549,98 @@ test("a hold recorded during forge observation is rechecked before application",
   assert.equal(f.current().resolution.review, null);
   assert.equal(f.events("run_result_applied").length, 0);
   f.assertNoSend();
+});
+
+/**
+ * nucleus#1437 (installed #1427): a settled-wait prose stop is a machine-generated
+ * `operator_needed` occurrence. Stored, with its reviewer incident and recovery
+ * resolved and nothing live, it must settle, and the preserved published verdict must
+ * then apply exactly once through the ordinary reconciliation.
+ */
+const syntheticStop = (task: Task, at = new Date().toISOString()) =>
+  taskStopRecord(
+    "operator_needed",
+    TASK_PROGRESSING_REASON,
+    null,
+    at,
+    ["restart", "route", "move"],
+  );
+const stopEvents = (f: Parked) =>
+  f.store.eventsAll(f.current().id).filter((event) =>
+    ["task_stopped", "incident", "recovery_started", "needs_attention"].includes(
+      event.kind,
+    ),
+  ).length;
+
+test("a stored settled-wait stop with no live owner settles and the published verdict applies once (nucleus#1437)", async (t) => {
+  const f = parkedVerdict(t, "ready_to_merge");
+  f.adapter.mergeGate = async () => ({
+    head,
+    base,
+    wait: "Waiting for required checks",
+  });
+  const task = f.current();
+  f.store.update(task.id, {
+    phase: "blocked",
+    reason: TASK_PROGRESSING_REASON,
+    resolution: {
+      ...task.resolution,
+      stop: syntheticStop(task),
+      incident: null,
+      recovery: null,
+      recoveryActive: false,
+    },
+  });
+  assert.equal(f.current().resolution.stop?.reason, "operator_needed");
+
+  await f.engine.wake();
+  const after = f.current();
+  assert.notEqual(
+    after.resolution.stop?.detail,
+    TASK_PROGRESSING_REASON,
+    "the synthetic stop is not the task's stop once it has no owner",
+  );
+  assert.equal(after.phase, "verifying");
+  f.assertAppliedOnce();
+  f.assertNoSend();
+
+  // Replay: a repeated sweep writes no new stop, incident or recovery.
+  const before = stopEvents(f);
+  await f.engine.wake();
+  await f.engine.wake();
+  assert.equal(stopEvents(f), before);
+  f.assertAppliedOnce();
+  f.assertNoSend();
+});
+
+test("a settled-wait stop keeps its stop while an incident it may belong to is still escalated (nucleus#1437 negative twin)", async (t) => {
+  const f = parkedVerdict(t, "ready_to_merge");
+  const task = f.current();
+  f.store.update(task.id, {
+    phase: "blocked",
+    reason: TASK_PROGRESSING_REASON,
+    resolution: {
+      ...task.resolution,
+      stop: syntheticStop(task),
+      incident: {
+        id: "escalated-incident",
+        fingerprint: "escalated-incident",
+        role: "reviewer",
+        runId: f.run.id,
+        turnId: null,
+        attempt: 1,
+        cause: "missing_callback",
+        detail: "Reviewer callback is missing",
+        action: "",
+        status: "escalated",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    },
+  });
+  await f.engine.wake();
+  const after = f.current();
+  assert.equal(after.resolution.stop?.reason, "operator_needed");
+  assert.equal(after.resolution.stop?.detail, TASK_PROGRESSING_REASON);
+  assert.equal(after.resolution.incident?.status, "escalated");
 });

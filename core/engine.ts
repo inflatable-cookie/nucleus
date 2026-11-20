@@ -324,6 +324,7 @@ export class Engine {
         "recovery",
         "resumeClearedAttention",
         "settleBudgetClock",
+        "settleSettledWaitStop",
         "slotAdmissionReason",
         "update",
         "waiting",

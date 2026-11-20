@@ -386,13 +386,17 @@ task's parent row is driven by the one attention projection the board and
 `task.next` read (`shared/task-attention.ts`):
 
 - *attention* or *active* — a person must act, or a role child is running: the
-  row is shown, and a row this host snoozed is unsnoozed. Task-level title and
+  row is shown, and a row this host snoozed is unsnoozed. A role's failed run
+  names the row (`blocked: <role>`) only while the task's own attention is
+  `attention`; a role that failed under a wait or a settled incident is history
+  and never holds the row (nucleus#1437). A role waiting on a current question or
+  permission always names the row (`<role> needs input`). Task-level title and
   row reconciliation (`WorkspaceTitleProjection` draining `enqueueTitle`) runs
   `reconcileTaskRow` right alongside title updates when a role goes active or
   attention changes, instead of waiting for the next periodic sweep; `HostPass`
   also reconciles active and attention rows ahead of waiting and finished rows.
 - *waiting* — the task waits on nothing Nucleus is running and needs no one: the
-  row is snoozed. An owner hold with a release condition, a planner's own hold
+  row is snoozed, including past a role's old fault (nucleus#1437). An owner hold with a release condition, a planner's own hold
   and an unresolved completable prerequisite wait are waiting with their named
   cause. An operator-owned hold with no release condition and an operator-owned
   prerequisite correction remain attention.

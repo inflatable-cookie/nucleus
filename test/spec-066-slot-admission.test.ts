@@ -311,3 +311,46 @@ test("C3 rechecks order after a competing dispatch awaited preflight", async () 
     await f.close();
   }
 });
+
+test("C3 a released slot wait under a blocked phase writes no synthetic stop across repeated sweeps (nucleus#1437)", async () => {
+  const f = fixture();
+  try {
+    const blocked = f.store.update(f.add("Blocked behind a former slot").id, {
+      phase: "blocked",
+    });
+    const wait = f.engine.resolution.slotAdmissionReason(blocked);
+    f.engine.resolution.recordStop(blocked, "capacity", wait);
+    const next = f.add("Admitted once the slot frees");
+    const operatorStops = () =>
+      f.store
+        .eventsAll(blocked.id)
+        .filter(
+          (event) =>
+            event.kind === "task_stopped" &&
+            event.detail.includes('"operator_needed"'),
+        ).length;
+
+    await f.roll();
+    await f.sweep();
+    assert.deepEqual(f.starts, [next.id], "the released slot admits the next step");
+    assert.equal(f.store.task(blocked.id).resolution.stop, null);
+    assert.equal(f.store.task(blocked.id).reason, TASK_PROGRESSING_REASON);
+    assert.equal(operatorStops(), 0, "the released wait never becomes operator_needed");
+    const notices = f.store.notices(blocked.id);
+    const events = f.store.eventsAll(blocked.id).length;
+
+    await f.sweep();
+    await f.sweep();
+    assert.deepEqual(f.starts, [next.id]);
+    assert.equal(f.store.task(blocked.id).resolution.stop, null);
+    assert.equal(operatorStops(), 0);
+    assert.deepEqual(f.store.notices(blocked.id), notices);
+    assert.equal(
+      f.store.eventsAll(blocked.id).length,
+      events,
+      "repeated sweeps write no new stop, incident or notice",
+    );
+  } finally {
+    await f.close();
+  }
+});
