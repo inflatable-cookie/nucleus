@@ -1375,61 +1375,47 @@ export class Delegation {
       normalizeRepositoryOrigin(task.repository ?? ""),
     );
     if (!project) return { planner: null, failed: false };
-    const presence = this.resolution.plannerPresence;
-    // Spec 058: a registered planner that is missing or archived is cleared from the
-    // project, and its delegated work falls back to the Nucleus planner, notified once
-    // for that missing-planner episode. A closed thread stays registered.
-    const assigned = await presence.observeProjectPlanner(project);
-    const missing = assigned?.state.kind === "gone" ? assigned.agentId : null;
-    if (assigned?.state.kind === "routable")
-      return { planner: assigned.agentId, failed: false };
-    if (missing)
-      this.store.setProjectPlanner({
-        key: project.key,
-        agentId: null,
-        setBy: "Queue",
-        note: `Planner ${missing} is missing or archived; delegated questions fall back to the Nucleus planner`,
-      });
+    // Spec 058: a registered planner whose thread is missing or archived is gone
+    // for routing. The project row is cleared by the observing pass
+    // (`refreshResponsibleThreads`), never by this read.
+    const assigned = await this.resolution.plannerPresence.observeProjectPlanner(
+      project,
+    );
+    // A planner the observing pass cleared for a missing or archived thread leaves
+    // the episode on the project, so routing still treats the rung as failed.
+    const clearedForGone =
+      !assigned &&
+      this.store
+        .eventsAll(`project:${project.key}`)
+        .some((event) => event.kind === "project_planner_missing_notified");
+    const named = taskPlanner(task);
+    const namedGone =
+      !assigned && !isOperatorOrigin(named)
+        ? await this.resolution.plannerPresence
+            .plannerThreadGone(named)
+            .catch(() => false)
+        : false;
+    const gone =
+      assigned?.state.kind === "gone" || clearedForGone || namedGone;
     const queue = this.store.queueProject();
-    const fallbackProject = missing ? (queue ?? project) : project;
-    const { thread } = await this.resolution.responsibleThread(fallbackProject);
+    // A gone or cleared project planner falls back to the Queue planner, the
+    // Nucleus planner the planner chain names.
+    const target =
+      gone && queue && queue.key !== project.key ? queue : project;
+    const { thread } = await this.resolution.responsibleThread(target);
+    // A responsible thread names its host; a planner on this task's own host is
+    // recorded by its native identity, as the planner rung itself is.
     const planner = thread?.agentId ?? null;
-    if (!missing) return { planner, failed: false };
-    const notices = this.store.eventsAll(`project:${project.key}`);
-    if (
-      planner &&
-      !notices.some(
-        (event) =>
-          event.kind === "project_planner_missing_notified" &&
-          event.detail.startsWith(`${missing}:`),
-      )
-    ) {
-      const host = await this.resolution.identifyOriginHost(planner);
-      if (
-        host &&
-        this.resolution.withHost(host, () =>
-          this.resolution.originHostAvailable(host),
-        )
-      ) {
-        this.store.event(
-          `project:${project.key}`,
-          "project_planner_missing_notified",
-          `${missing}: notifying Nucleus planner ${planner} on host ${host}`,
-        );
-        await this.resolution.withHost(host, async () => {
-          if (this.adapter.notify)
-            try {
-              await this.resolution.host.sendMessage(planner, {
-                messageId: `ns-project-planner-missing-${project.key}`,
-                text: `Project ${project.name} has no live planner (${missing} is missing or archived). Nucleus is routing its delegated questions here until a live project planner is registered.`,
-              });
-            } catch {
-              /* the durable notice record prevents repeated notifications */
-            }
-        });
-      }
+    if (!planner) return { planner: null, failed: gone };
+    let native = planner;
+    try {
+      const parsed = parseAgentId(planner);
+      if (parsed && (!task.hostId || parsed.hostId === task.hostId))
+        native = parsed.nativeAgentId;
+    } catch {
+      /* a malformed identity stays as it is and is refused where it is used */
     }
-    return { planner, failed: true };
+    return { planner: native, failed: gone };
   }
 
   /**

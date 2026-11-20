@@ -257,8 +257,15 @@ export function fixture(
       const ids = new Set<string>(states.keys());
       for (const project of store.projects())
         if (project.planner?.agentId) ids.add(project.planner.agentId);
+      // A delegated case can make the assigned planner gone without archiving it
+      // through a verb; the inventory must agree with `originAgent` about that.
+      const gone = (id: string) =>
+        archivedAgents.has(id) ||
+        (id === "planner-1" &&
+          (options.delegates?.plannerArchived === true ||
+            options.delegates?.plannerMissing === true));
       return [...ids]
-        .filter((id) => !archivedAgents.has(id))
+        .filter((id) => !gone(id))
         .map((id) => ({ id, title: id, workspaceId: "workspace" }));
     },
     archiveAgent: async (id: string) => {
