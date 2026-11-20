@@ -166,7 +166,7 @@ export function mount(initial: React.ReactElement) {
     all: byLabel,
     ofType: (type: string) => all().filter(node => node.type === type),
     text: () => tree.map(text).join(' '),
-    press(label: string | RegExp) { get(label).props.onPress(); },
+    press(label: string | RegExp, event?: unknown) { get(label).props.onPress(event); },
     type(label: string | RegExp, value: string) { get(label).props.onChangeText(value); },
   };
 }

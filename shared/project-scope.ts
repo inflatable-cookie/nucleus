@@ -3,8 +3,10 @@ import { projectDormant, type LeadListFacts, type Project, type ProjectPlan, typ
 import { projectPlanningCounts } from './planning-tab';
 
 /**
- * Spec 026 Board "Scope": one multi-project selector scopes Pipeline, Lanes,
- * Papercuts and Planning. An empty selection means all projects. The
+ * Spec 026 Board "Scope": one project selector scopes Pipeline, Lanes,
+ * Papercuts and Planning. It is single-select by default (nucleus#1421): a
+ * plain press replaces the selection, Shift-press toggles one project. An
+ * empty selection means all projects. The
  * Pipeline view has its own filter switch; off shows everything and keeps the selection.
  */
 export type ProjectScope = { projects: string[]; statusFilter: boolean };
@@ -51,6 +53,33 @@ export const statusSelection = pipelineSelection;
 
 export function toggleProject(selection: readonly string[], key: string): string[] {
   return selection.includes(key) ? selection.filter(item => item !== key) : [...selection, key];
+}
+
+/** Spec 026 Board "Scope" (nucleus#1421): the selector is single-select by
+ * default. A plain press replaces the selection with that project; pressing
+ * the sole selected project keeps it selected. Shift-press toggles through
+ * {@link toggleProject} and leaves every other selection intact. */
+export function selectProject(selection: readonly string[], key: string): string[] {
+  if (selection.length === 1 && selection[0] === key) return [...selection];
+  return [key];
+}
+
+/** The press-event shapes that carry the Shift modifier. React Native passes
+ * the DOM event under `nativeEvent` while React Native Web also exposes the
+ * modifier at the top level; touch and keyboard activation carry neither. */
+export type ProjectPressEvent = {
+  shiftKey?: unknown;
+  nativeEvent?: unknown;
+} | null | undefined;
+
+/** True when the actual web press/activation event carries Shift (nucleus#1421).
+ * Read from the press event itself, never from component state, so the
+ * modifier survives React Native Web's event wrapping. */
+export function isAdditivePress(event: ProjectPressEvent): boolean {
+  if (!event || typeof event !== 'object') return false;
+  if ((event as { shiftKey?: unknown }).shiftKey === true) return true;
+  const native = (event as { nativeEvent?: unknown }).nativeEvent;
+  return Boolean(native && typeof native === 'object' && (native as { shiftKey?: unknown }).shiftKey === true);
 }
 
 export function selectionLabel(projects: Project[], selection: readonly string[]): string {

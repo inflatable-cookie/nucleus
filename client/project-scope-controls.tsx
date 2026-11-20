@@ -4,7 +4,7 @@ import { Icon } from "./shell";
 import { Popover } from "./popover";
 import type { LeadListFacts, Project, TaskSummary } from "../shared/contracts";
 import type { PlanningStep } from "../shared/planning-tab";
-import { projectSelectorRows, readProjectScope, selectionLabel, toggleProject, writeProjectScope, type ProjectScope } from "../shared/project-scope";
+import { isAdditivePress, projectSelectorRows, readProjectScope, selectionLabel, selectProject, toggleProject, writeProjectScope, type ProjectScope } from "../shared/project-scope";
 import { ActionButton, Button, controlFrame, controlText, muted, row, type Colors } from "./controls";
 import { control, space, radius, type as typeScale, overlay } from "./design";
 
@@ -61,7 +61,8 @@ function withinBoxes(boxes: React.RefObject<View | null>[], target: unknown) {
 }
 /** Kept for callers written before the 2026-09-27 board retirement. */
 
-/** Spec 026 Board "Scope": the header's multi-project selector. A popover at the
+/** Spec 026 Board "Scope": the header's project selector (nucleus#1421:
+ * single-select by default, Shift-click toggles one project). A popover at the
  * wide size, a modal at the compact size. An empty selection means all projects.
  * It only scopes the board: project settings live in Settings → Projects, which
  * its settings icon opens (lane `nucleus-ui`, task 946 build task 4). */
@@ -98,7 +99,15 @@ export function ProjectSelector({ projects, tasks, leads, value, onChange, onOpe
     <View style={row}><Button small c={c} text="All" label="Select all projects" onPress={() => onChange(projects.filter(project => project.visibility !== 'parked').map(project => project.key))} /><Button small c={c} text="None" label="Clear project selection" onPress={() => onChange([])} />
       <Text style={{ ...muted(c), fontSize: typeScale.metadata.fontSize, flexShrink: 1 }}>{value.length ? `${value.length} selected` : "None selected · showing all projects"}</Text></View>
     <ScrollView nestedScrollEnabled style={{ maxHeight: compact ? undefined : 380 }} contentContainerStyle={{ gap: space.xs }}>
-      {rows.map((project, index) => <React.Fragment key={project.key}>{project.visibility === 'parked' && (index === 0 || rows[index - 1].visibility !== 'parked') && <Text accessibilityRole="header" accessibilityLabel="Parked" style={{ color: c.foreground, fontWeight: '600' }}>Parked</Text>}{project.visibility !== 'parked' && project.dormant && (index === 0 || !rows[index - 1].dormant) && <Text accessibilityRole="header" accessibilityLabel="Dormant projects" style={{ color: c.foreground, fontWeight: '600' }}>Dormant projects</Text>}<Pressable accessibilityRole="checkbox" accessibilityLabel={`Project ${project.name}`} accessibilityState={{ checked: project.checked }} onPress={() => onChange(toggleProject(value, project.key))}
+      {rows.map((project, index) => <React.Fragment key={project.key}>{project.visibility === 'parked' && (index === 0 || rows[index - 1].visibility !== 'parked') && <Text accessibilityRole="header" accessibilityLabel="Parked" style={{ color: c.foreground, fontWeight: '600' }}>Parked</Text>}{project.visibility !== 'parked' && project.dormant && (index === 0 || !rows[index - 1].dormant) && <Text accessibilityRole="header" accessibilityLabel="Dormant projects" style={{ color: c.foreground, fontWeight: '600' }}>Dormant projects</Text>}<Pressable accessibilityRole="checkbox" accessibilityLabel={`Project ${project.name}`} accessibilityState={{ checked: project.checked }} onPress={(event) => {
+          // Single-select by default (nucleus#1421): a plain press replaces the
+          // selection and closes the picker, while Shift toggles just that
+          // project and keeps the picker open for a sequence of Shift-clicks.
+          // Touch and keyboard activation carry no Shift, so they select one.
+          const additive = isAdditivePress(event);
+          onChange(additive ? toggleProject(value, project.key) : selectProject(value, project.key));
+          if (!additive) setOpen(false);
+        }}
         style={{ flexDirection: "row", alignItems: "center", gap: space.sm, padding: space.xs, borderRadius: radius.control, borderWidth: 1, borderColor: project.checked ? c.accent : c.border, backgroundColor: project.checked ? c.surface2 : c.surface0 }}>
         <View style={{ width: 18, height: 18, borderRadius: radius.control, borderWidth: 1, borderColor: project.checked ? c.accent : c.foregroundMuted, backgroundColor: project.checked ? c.accent : "transparent", alignItems: "center", justifyContent: "center" }}>{project.checked && <Icon name="Check" size={12} color={c.accentForeground} />}</View>
         <Text numberOfLines={1} style={{ color: c.foreground, fontWeight: "600", fontSize: typeScale.body.fontSize, flex: 1, minWidth: 0 }}>{project.name}</Text>

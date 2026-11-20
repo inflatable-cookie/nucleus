@@ -16,7 +16,87 @@ const project = (key: string, ...repos: ReturnType<typeof repo>[]): Project => (
 const projects = [project('consumer-b-v2', repo('consumer')), project('project-a-accelerator', repo('project-a')), project('other', repo('other'))];
 const memory = () => { const items = new Map<string, string>(); return { getItem: (key: string) => items.get(key) ?? null, setItem: (key: string, value: string) => void items.set(key, value) }; };
 
-test('026-14b rendered: select two projects, clear to all, and the selector\'s Enabled switch keeps the selection', async () => {
+test('1421 rendered: a plain click replaces the selection, Shift-click toggles one project', async () => {
+  const { ProjectSelector, useProjectScope } = await load();
+  const storage = memory();
+  let seen: ProjectScope | null = null;
+  function Harness() {
+    const [scope, setScope] = useProjectScope(() => storage);
+    seen = scope;
+    return h(React.Fragment, null,
+      h(ProjectSelector, { projects, tasks: [], leads: [], value: scope.projects, onChange: keys => setScope({ ...scope, projects: keys }), enabled: scope.statusFilter, onEnabledChange: statusFilter => setScope({ ...scope, statusFilter }), onOpenChange: () => {}, compact: false, c }));
+  }
+  const ui = mount(h(Harness));
+  assert.equal(ui.get(/^Projects, /).props.accessibilityLabel, 'Projects, All projects');
+  assert.equal(ui.query('Project selector'), undefined, 'closed until pressed');
+  ui.press(/^Projects, /);
+  assert.ok(ui.get('Project selector'));
+  assert.equal(ui.ofType('Modal').length, 0, 'a popover at the wide size');
+  // A plain click from empty selects one project and closes the picker.
+  ui.press('Project consumer-b-v2');
+  assert.deepEqual(seen!.projects, ['consumer-b-v2']);
+  assert.equal(ui.query('Project selector'), undefined, 'a plain click closes the picker');
+  // A plain click from a single selection replaces it.
+  ui.press(/^Projects, /);
+  ui.press('Project project-a-accelerator');
+  assert.deepEqual(seen!.projects, ['project-a-accelerator']);
+  assert.equal(ui.query('Project selector'), undefined);
+  assert.equal(ui.get(/^Projects, /).props.accessibilityLabel, 'Projects, project-a-accelerator');
+  // Clicking the sole selected project keeps it selected.
+  ui.press(/^Projects, /);
+  ui.press('Project project-a-accelerator');
+  assert.deepEqual(seen!.projects, ['project-a-accelerator']);
+  assert.equal(ui.query('Project selector'), undefined);
+  // Shift-click adds one project and keeps the picker open (the React Native
+  // event shape, with the DOM event under nativeEvent).
+  ui.press(/^Projects, /);
+  ui.press('Project consumer-b-v2', { nativeEvent: { shiftKey: true } });
+  assert.deepEqual(seen!.projects, ['project-a-accelerator', 'consumer-b-v2']);
+  assert.ok(ui.get('Project selector'), 'the picker stays open for a sequence of Shift-clicks');
+  assert.equal(ui.get('Project consumer-b-v2').props.accessibilityState.checked, true);
+  assert.equal(ui.get('Project other').props.accessibilityState.checked, false);
+  assert.equal(ui.get(/^Projects, /).props.accessibilityLabel, 'Projects, 2 projects');
+  // Shift-click with the React Native Web top-level shape removes one project.
+  ui.press('Project project-a-accelerator', { shiftKey: true });
+  assert.deepEqual(seen!.projects, ['consumer-b-v2']);
+  assert.ok(ui.get('Project selector'));
+  // Shift-click removes the last one: empty means all projects.
+  ui.press('Project consumer-b-v2', { nativeEvent: { shiftKey: true } });
+  assert.deepEqual(seen!.projects, []);
+  assert.equal(ui.get(/^Projects, /).props.accessibilityLabel, 'Projects, All projects', 'none means all');
+  assert.ok(ui.get('Project selector'), 'Shift-click never closes the picker');
+});
+
+test('1421 bundled: the Shift modifier survives the real client bundle (RN Web event path)', async () => {
+  const { build } = await import('esbuild');
+  const { createRequire } = await import('node:module');
+  const { boardShellPlugin } = await import('./support/render');
+  const bytes = (await build({
+    entryPoints: [new URL('../client/project-scope-controls.tsx', import.meta.url).pathname],
+    bundle: true, plugins: [boardShellPlugin], platform: 'node', format: 'cjs', packages: 'external', write: false,
+  })).outputFiles[0].text;
+  // The bundled handler reads the modifier from the press event itself, so it
+  // survives whatever React Native Web wraps the event in.
+  assert.match(bytes, /shiftKey/, 'the bundled selector reads the Shift modifier');
+  const mod = { exports: {} as Record<string, unknown> };
+  new Function('require', 'module', 'exports', bytes)(createRequire(import.meta.url), mod, mod.exports);
+  const BundledSelector = (mod.exports as { ProjectSelector: unknown }).ProjectSelector as typeof import('../client/project-scope-controls').ProjectSelector;
+  const seen: string[][] = [];
+  function Harness() {
+    const [value, setValue] = React.useState<string[]>([]);
+    return h(BundledSelector, { projects, tasks: [], leads: [], value, onChange: keys => { seen.push(keys); setValue(keys); }, onOpenChange: () => {}, compact: false, c });
+  }
+  const ui = mount(h(Harness));
+  ui.press(/^Projects, /);
+  ui.press('Project consumer-b-v2', { shiftKey: true });
+  assert.deepEqual(seen, [['consumer-b-v2']], 'a top-level Shift press toggles through the bundle');
+  assert.ok(ui.get('Project selector'), 'the bundled picker stays open on Shift-click');
+  ui.press('Project consumer-b-v2');
+  assert.deepEqual(seen[seen.length - 1], ['consumer-b-v2'], 'a plain press through the bundle selects one');
+  assert.equal(ui.query('Project selector'), undefined, 'a plain press through the bundle closes the picker');
+});
+
+test('026-14b rendered: single-select, clear to all, and the selector\'s Enabled switch keeps the selection', async () => {
   const { ProjectSelector, useProjectScope } = await load();
   const storage = memory();
   let seen: ProjectScope | null = null;
@@ -33,7 +113,11 @@ test('026-14b rendered: select two projects, clear to all, and the selector\'s E
   assert.ok(ui.get('Project selector'));
   assert.equal(ui.ofType('Modal').length, 0, 'a popover at the wide size');
   ui.press('Project consumer-b-v2');
-  ui.press('Project project-a-accelerator');
+  assert.deepEqual(seen!.projects, ['consumer-b-v2']);
+  assert.equal(ui.get(/^Projects, /).props.accessibilityLabel, 'Projects, consumer-b-v2');
+  // Shift-click builds the multi-project selection the switch test needs.
+  ui.press(/^Projects, /);
+  ui.press('Project project-a-accelerator', { nativeEvent: { shiftKey: true } });
   assert.deepEqual(seen!.projects, ['consumer-b-v2', 'project-a-accelerator']);
   assert.equal(ui.get('Project consumer-b-v2').props.accessibilityState.checked, true);
   assert.equal(ui.get('Project other').props.accessibilityState.checked, false);
@@ -195,7 +279,8 @@ test('026-14a/14b rendered Planning: two selected projects show both plans, none
   const wide = mount(h(Harness, { compact: false, storage: fresh() }));
   wide.press(/^Projects, /);
   wide.press('Project consumer-b-v2');
-  wide.press('Project project-a-accelerator');
+  wide.press(/^Projects, /);
+  wide.press('Project project-a-accelerator', { nativeEvent: { shiftKey: true } });
   assert.deepEqual(sections(wide), [], 'two projects: compact rows, none expanded');
   assert.equal(wide.all(/^Project row /).length, 2);
   wide.press('Project row project-a-accelerator');
@@ -212,17 +297,19 @@ test('026-14a/14b rendered Planning: two selected projects show both plans, none
   wide.press('Clear project selection');
   assert.equal(wide.all(/^Project row /).length, 3, 'none means all');
   wide.press('Project consumer-b-v2');
-  wide.press('Project project-a-accelerator');
-  wide.press('Project other');
-  wide.press('Project consumer-b-v2');
-  wide.press('Project project-a-accelerator');
+  wide.press(/^Projects, /);
+  wide.press('Project project-a-accelerator', { nativeEvent: { shiftKey: true } });
+  wide.press('Project other', { nativeEvent: { shiftKey: true } });
+  wide.press('Project consumer-b-v2', { nativeEvent: { shiftKey: true } });
+  wide.press('Project project-a-accelerator', { nativeEvent: { shiftKey: true } });
   assert.deepEqual(sections(wide), ['Plan for other'], 'one project in scope shows its roadmap with no rows');
   assert.equal(wide.query(/^Project row /), undefined);
 
   const compact = mount(h(Harness, { compact: true, storage: fresh() }));
   compact.press(/^Projects, /);
   compact.press('Project consumer-b-v2');
-  compact.press('Project project-a-accelerator');
+  compact.press(/^Projects, /);
+  compact.press('Project project-a-accelerator', { nativeEvent: { shiftKey: true } });
   compact.press('Project row project-a-accelerator');
   assert.deepEqual(sections(compact), ['Plan for project-a-accelerator']);
   assert.equal(compact.query('Planning lane'), undefined, 'compact shows one step');
@@ -232,7 +319,7 @@ test('026-14a/14b rendered Planning: two selected projects show both plans, none
   compact.press('Back to plan');
   assert.deepEqual(sections(compact), ['Plan for project-a-accelerator'], 'same expansion after back');
   compact.press('Open lane project-a-a');
-  compact.press('Project project-a-accelerator');
+  compact.press('Project project-a-accelerator', { nativeEvent: { shiftKey: true } });
   assert.equal(compact.query('Planning lane'), undefined, 'a lane leaving the selection returns to the plan');
   assert.deepEqual(sections(compact), ['Plan for consumer-b-v2']);
 });

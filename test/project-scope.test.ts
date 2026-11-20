@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { boardSource } from './support/board-source';
 import {
-  defaultProjectScope, effectiveSelection, pipelineSelection, planningScopeLanes, projectHasRepository, projectSelectorRows, readProjectScope, scopeContains, scopedProjects,
-  selectionLabel, statusSelection, toggleProject, writeProjectScope,
+  defaultProjectScope, effectiveSelection, isAdditivePress, pipelineSelection, planningScopeLanes, projectHasRepository, projectSelectorRows, readProjectScope, scopeContains, scopedProjects,
+  selectionLabel, selectProject, statusSelection, toggleProject, writeProjectScope,
 } from '../shared/project-scope';
 import type { Project } from '../shared/contracts';
 
@@ -70,6 +70,22 @@ test('026-14b the selector lists every project with filter, primary repository, 
   assert.deepEqual(projectSelectorRows(projects, [], 'PROJECT-A', tasks, leads).map(row => row.key), ['project-a-accelerator']);
   assert.deepEqual(toggleProject(['a'], 'b'), ['a', 'b']);
   assert.deepEqual(toggleProject(['a', 'b'], 'a'), ['b']);
+});
+
+test('1421 single-select by default: a plain press replaces, Shift toggles one project', () => {
+  assert.deepEqual(selectProject([], 'a'), ['a'], 'empty selects one');
+  assert.deepEqual(selectProject(['a'], 'b'), ['b'], 'a single selection is replaced');
+  assert.deepEqual(selectProject(['a', 'b'], 'c'), ['c'], 'a multi-project selection is replaced');
+  assert.deepEqual(selectProject(['a'], 'a'), ['a'], 'the sole selected project stays selected');
+  assert.deepEqual(toggleProject(['a'], 'b'), ['a', 'b'], 'Shift adds through the toggle path');
+  assert.deepEqual(toggleProject(['a', 'b'], 'a'), ['b'], 'Shift removes through the toggle path');
+  assert.equal(isAdditivePress(undefined), false, 'touch carries no event');
+  assert.equal(isAdditivePress({}), false, 'a plain press carries no modifier');
+  assert.equal(isAdditivePress({ shiftKey: false }), false);
+  assert.equal(isAdditivePress({ nativeEvent: { shiftKey: false } }), false);
+  assert.equal(isAdditivePress({ nativeEvent: null }), false);
+  assert.equal(isAdditivePress({ shiftKey: true }), true, 'React Native Web exposes Shift at the top level');
+  assert.equal(isAdditivePress({ nativeEvent: { shiftKey: true } }), true, 'React Native nests the DOM event under nativeEvent');
 });
 
 test('026-14b the selection and Pipeline filter switch persist in local storage, else for the session', () => {
