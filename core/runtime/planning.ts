@@ -16,6 +16,9 @@ import {
   leadSubmit,
 } from "../../shared/contracts";
 import { briefDigest, hasBriefFrontmatter } from "../planning/brief";
+import { leadApprovalView, leadCheckView } from "../../shared/lead-status";
+import { TriageService, type TriagePromotionRequest, type TriagePromotionResult } from "../planning/triage";
+import { applyTriage, type TriageApplyInput } from "./planning-triage";
 import { now, operationInputHash } from "../store/store";
 import { normalizeRepositoryOrigin } from "../../shared/lanes";
 import type { Leads } from "../planning/leads";
@@ -534,6 +537,52 @@ export class RuntimePlanning {
   private get submission() {
     return new PlanningSubmission(this.context);
   }
+  /** Nucleus#1420: the project's triage ledger, read as one view. */
+  triageView(input: { project: string }) {
+    return new TriageService(this.context.store).view(input.project);
+  }
+
+  triageSet(input: { project: string; enabled: boolean; by: string }) {
+    return new TriageService(this.context.store).setEnabled(input);
+  }
+
+  /**
+   * A planner's triage decisions. Promotions run the ordinary check, approval and promotion
+   * operations with the planner as approver and promoting agent; everything else settles in the
+   * ledger synchronously. Stale or replayed batches never reach a promotion.
+   */
+  async triageApply(input: TriageApplyInput) {
+    await this.context.started;
+    return applyTriage(this.context.store, { promote: request => this.promoteTriaged(request) }, input);
+  }
+
+  private async promoteTriaged(request: TriagePromotionRequest): Promise<TriagePromotionResult> {
+    const { lead, decision, by } = request;
+    const note = decision.reason;
+    const settled = (result: Awaited<ReturnType<PlanningPromotion["promoteLeadToTask"]>>): TriagePromotionResult => {
+      if ("taskId" in result) return { status: "applied", task: result.reference ?? result.taskId, diagnostic: "" };
+      if ("operation" in result) return { status: "proposed", task: null, diagnostic: `Promotion accepted as operation ${result.operation.id}; apply again to read its task` };
+      return { status: "proposed", task: null, diagnostic: `Promotion is backpressured (${result.reason}); apply again after ${result.retryAfterMs} ms` };
+    };
+    if (lead.papercut || lead.tags.includes("papercut"))
+      return settled(await this.promotion.promotePapercutToTask({ id: lead.id, agent: by, note, board: false }));
+    if (!hasBriefFrontmatter(lead.body))
+      return { status: "proposed", task: null, diagnostic: "Lead has no brief; add one with lead.edit, then triage again" };
+    const repository = this.selectLeadRepository(lead).origin;
+    // Status reads need no history: the check and approval fields name the current version alone.
+    const facts = (record: Lead) => ({ ...record, versions: [], promotedTaskId: null });
+    let current = lead;
+    if (leadCheckView(facts(current)).kind !== "current") {
+      const checked = await this.checkLead({ id: lead.id, repository, baseBranch: lead.baseBranch });
+      if (checked.checkOperationId) return { status: "proposed", task: null, diagnostic: "The brief check is running; apply again once it passes" };
+      current = this.context.store.lead(lead.id);
+    }
+    if (!current.check?.ok) return { status: "proposed", task: null, diagnostic: current.check?.message || "The brief failed its check" };
+    if (leadApprovalView(facts(current)).kind !== "current")
+      this.approveLead({ id: current.id, version: current.version, digest: briefDigest(current.body), approver: by, note, relayed: true });
+    return settled(await this.promotion.promoteLeadToTask({ id: current.id, repository, agent: by, note, board: false }));
+  }
+
   promoteLeadToTask(
     input: Parameters<PlanningPromotion["promoteLeadToTask"]>[0],
   ) {
@@ -572,7 +621,11 @@ export class RuntimePlanning {
   }
   listPlans() {
     this.context.markStoreAccess();
-    return this.context.store.plans();
+    const triage = new TriageService(this.context.store);
+    return this.context.store.plans().map(plan => {
+      const batch = triage.planningView(plan.project);
+      return batch ? { ...plan, triage: batch } : plan;
+    });
   }
   setPlan(input: Parameters<Store["setPlan"]>[0]) {
     return this.context.store.setPlan(input);

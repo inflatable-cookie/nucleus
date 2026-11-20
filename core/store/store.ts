@@ -1028,8 +1028,8 @@ export class Store {
   }
   /**
    * The board's per-domain read keys: `lead.board` follows `leadRevision()`, open decisions
-   * their table's trigger clock, and `plans` the clock its plan, lane and project rows
-   * advance. A run, event, observation or telemetry write moves none of them, so the
+   * their table's trigger clock, and `plans` the clock advanced by plan, lane, project
+   * and triage writes. A run, event, observation or telemetry write moves none of them, so the
    * board refetches a list only when that list's own records changed (task 1030).
    */
   planningRevisions(): { leads: number; decisions: number; plans: number } {
@@ -1038,6 +1038,10 @@ export class Store {
       decisions: this.readClock("decisionRows"),
       plans: this.readClock("planInputs"),
     };
+  }
+  advanceTriagePlanningRevision(): void {
+    this.db.prepare("INSERT INTO projection_clock(name,version) VALUES('planInputs',1) ON CONFLICT(name) DO UPDATE SET version=version+1").run();
+    this.advanceRevision();
   }
   private advanceLeadRevision() {
     return this.core.advanceLeadRevision();

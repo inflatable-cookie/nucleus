@@ -202,6 +202,24 @@ export const RPC_CATALOGUE: RpcCatalogueEntry[] = [
     mutating: true,
   },
   {
+    name: "triage.get",
+    contract: contracts.triageGet,
+    method: "triageGet",
+    mutating: false,
+  },
+  {
+    name: "triage.set",
+    contract: contracts.triageSet,
+    method: "triageSet",
+    mutating: true,
+  },
+  {
+    name: "triage.apply",
+    contract: contracts.triageApply,
+    method: "triageApply",
+    mutating: true,
+  },
+  {
     name: "lead.drop",
     contract: contracts.leadDrop,
     method: "dropLead",
