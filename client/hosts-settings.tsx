@@ -510,6 +510,22 @@ export function HostRow({
   );
 }
 
+/**
+ * Online hosts first, in catalogue order, then the remaining hosts in catalogue
+ * order. The split reads the same `state` the row paints, so Offline, Unknown
+ * and Identity conflict entries all sit below the divider with their reasons
+ * intact. Keys stay on the host id, so an updated status moves the host between
+ * groups without losing its expanded details.
+ */
+export function groupHosts(hosts: HostView[]): {
+  online: HostView[];
+  rest: HostView[];
+} {
+  const online = hosts.filter((host) => host.state === "online");
+  const rest = hosts.filter((host) => host.state !== "online");
+  return { online, rest };
+}
+
 /** Settings → Hosts: the default host picker, then one row per registered host. */
 export function HostsPanel({
   c,
@@ -572,13 +588,34 @@ export function HostsPanel({
             None yet. A host registers when it connects.
           </Text>
         )}
-        {list && list.hosts.length > 0 && (
-          <View style={{ gap: space.sm }}>
-            {list.hosts.map((host) => (
+        {list && list.hosts.length > 0 && (() => {
+          const { online, rest } = groupHosts(list.hosts);
+          // One flat keyed array: keys stay on the host id in a single
+          // sequence, so an updated status moves the row between groups
+          // without remounting it and losing its expanded details.
+          const rows: React.ReactNode[] = [
+            ...online.map((host) => (
               <HostRow key={host.id} c={c} host={host} remove={remove} />
-            ))}
-          </View>
-        )}
+            )),
+          ];
+          if (online.length > 0 && rest.length > 0)
+            rows.push(
+              <View
+                key="hosts-divider"
+                accessibilityLabel="Offline hosts"
+                style={{
+                  borderTopWidth: 1,
+                  borderTopColor: roles(c).border,
+                }}
+              />,
+            );
+          rows.push(
+            ...rest.map((host) => (
+              <HostRow key={host.id} c={c} host={host} remove={remove} />
+            )),
+          );
+          return <View style={{ gap: space.sm }}>{rows}</View>;
+        })()}
       </Section>
     </View>
   );
