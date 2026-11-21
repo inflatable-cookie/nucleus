@@ -40,6 +40,9 @@ async function reviewPrIdentity(machine: LaunchMachinePorts, t: Task, number: nu
 
 const creationRoles = new Set<Run['role']>(['reviewer', 'closeout']);
 
+/** The guard a host re-runs immediately before a reviewer's native send or creation. */
+type ReviewAdmissionGuard = { allowed: () => Promise<boolean>; stillAllowed: () => boolean };
+
 /**
  * Deliver the run a launch reserved: the ordinary review custody and checkout
  * proofs, the guarded native send or creation, then the binding and the
@@ -51,6 +54,41 @@ export class RunLaunchDeliver {
   get store() { return this.resolution.store; }
   get adapter() { return this.resolution.adapter; }
   get machine(): LaunchMachinePorts { return this.adapter; }
+  /**
+   * The admission a reviewer send or creation re-proves at its last safe point,
+   * after the reservation and the pre-send proofs: an ordinary round's custody,
+   * the live PR identity, the writer yield on review entry, the exact source and
+   * the reservation snapshot. A retained send and a fresh creation share it, so
+   * both prove the same facts. `false` and a thrown ProvenPreSendRefusalError are
+   * proven refusals; a blocking effect throws its typed fence so the launch waits.
+   * `detached` is the checkout shape the caller proves: a retained send always
+   * proves the detached identity, a creation proves the run's own shape.
+   */
+  private reviewAdmission(fresh: Task, savedRun: Run, run: Run, detached: boolean): ReviewAdmissionGuard {
+    const version = fresh.version, snapshot = this.resolution.ordinaryReviewRuns(fresh.id);
+    const stillAllowed = () => {
+      const latest = this.store.task(fresh.id);
+      if (latest.version !== version || latest.resolution.currentRunId !== run.id || latest.prHead !== run.head
+        || this.resolution.paused() || dispatchBlocked(latest) || isDispositionActive(latest) || snapshot !== this.resolution.ordinaryReviewRuns(fresh.id)) return false;
+      assertOrdinaryReviewIdentity(latest, run.head, detached);
+      this.resolution.assertReviewProfileIndependent(latest, savedRun);
+      const effects = blockingRecoveryEffects(this.store, latest, { noticeKinds: 'all' });
+      if (effects.length) throw new BlockingRecoveryEffectsError(effects);
+      return true;
+    };
+    return {
+      allowed: async () => {
+        if (run.ordinaryDetached) await this.resolution.ordinaryRoundCustody(fresh, savedRun);
+        const pr = await reviewPrIdentity(this.machine, fresh, taskPrNumber(fresh));
+        if (pr.head !== run.head || pr.url !== fresh.prUrl) return false;
+        if (fresh.reviewEntry)
+          await assertReviewEntryWriterYielded(reviewEntryInputForTask(fresh), this.adapter as Adapter & ReviewEntryAdapter, fresh.id);
+        await ordinaryReviewSource(this.store.task(fresh.id), run.head, Boolean(run.ordinaryDetached));
+        return stillAllowed();
+      },
+      stillAllowed,
+    };
+  }
   async deliverLaunchRun(t:Task, role:Run['role'], context:{agentId:string|null;profile:Profile|null;group:string|null;workspaceId:string;firstReviewEntryWorker:boolean;nonDeliveryReplacement:boolean;run:Run;token:string}):Promise<void> {
     let {agentId, profile, group, workspaceId, firstReviewEntryWorker, nonDeliveryReplacement, run, token}=context;
     t = this.store.task(t.id);
@@ -122,30 +160,8 @@ export class RunLaunchDeliver {
           fresh = this.store.task(t.id);
         }
         const savedRun = this.store.run(run.id)!;
-        const version = fresh.version, snapshot = this.resolution.ordinaryReviewRuns(t.id);
-        const stillAllowed = () => {
-          const latest = this.store.task(t.id);
-          if (latest.version !== version || latest.resolution.currentRunId !== run.id || latest.prHead !== run.head
-            || this.resolution.paused() || dispatchBlocked(latest) || isDispositionActive(latest) || snapshot !== this.resolution.ordinaryReviewRuns(t.id)) return false;
-          assertOrdinaryReviewIdentity(latest, run.head, true);
-          this.resolution.assertReviewProfileIndependent(latest, savedRun);
-          const effects=blockingRecoveryEffects(this.store,latest,{noticeKinds:'all'});
-          if(effects.length)throw new BlockingRecoveryEffectsError(effects);
-          return true;
-        };
         const guardedReviewEntry = role === 'reviewer' && fresh.reviewEntry;
-        const sendGuard = run.ordinaryDetached || guardedReviewEntry ? {
-          allowed: async () => {
-            if (run.ordinaryDetached) await this.resolution.ordinaryRoundCustody(fresh, savedRun);
-            const pr = await reviewPrIdentity(this.machine, fresh, taskPrNumber(fresh));
-            if (pr.head !== run.head || pr.url !== fresh.prUrl) return false;
-            if (fresh.reviewEntry)
-              await assertReviewEntryWriterYielded(reviewEntryInputForTask(fresh), this.adapter as Adapter & ReviewEntryAdapter, fresh.id);
-            await ordinaryReviewSource(this.store.task(fresh.id), run.head, Boolean(run.ordinaryDetached));
-            return stillAllowed();
-          },
-          stillAllowed,
-        } : undefined;
+        const sendGuard = run.ordinaryDetached || guardedReviewEntry ? this.reviewAdmission(fresh, savedRun, run, true) : undefined;
         dispatchInvoked = true;
         await this.adapter.sendRun!(fresh, savedRun, token, null, ownerReviewContext(this.store, fresh, savedRun), sendGuard, this.store.canonicalRepository(fresh.repoPath, fresh.repository)?.affectedTests?.command);
         recordPromptSize(this.store, fresh.id, savedRun.id, savedRun.temporaryDirectory);
@@ -179,29 +195,10 @@ export class RunLaunchDeliver {
         }
         const fresh = this.store.task(t.id), savedRun = this.store.run(run.id)!;
         dispatchInvoked = true;
-        const launchGuard = role === 'reviewer' && fresh.reviewEntry ? (() => {
-          const version = fresh.version, snapshot = this.resolution.ordinaryReviewRuns(t.id);
-          const stillAllowed = () => {
-            const latest = this.store.task(t.id);
-            if (latest.version !== version || latest.resolution.currentRunId !== run.id || latest.prHead !== run.head
-              || this.resolution.paused() || dispatchBlocked(latest) || isDispositionActive(latest) || snapshot !== this.resolution.ordinaryReviewRuns(t.id)) return false;
-            assertOrdinaryReviewIdentity(latest, run.head, Boolean(run.ordinaryDetached));
-            this.resolution.assertReviewProfileIndependent(latest, savedRun);
-            const effects=blockingRecoveryEffects(this.store,latest,{noticeKinds:'all'});
-            if(effects.length)throw new BlockingRecoveryEffectsError(effects);
-            return true;
-          };
-          return {
-            allowed: async () => {
-              const pr = await this.machine.verifyPrIdentity!(fresh, taskPrNumber(fresh));
-              if (pr.head !== run.head || pr.url !== fresh.prUrl) return false;
-              await assertReviewEntryWriterYielded(reviewEntryInputForTask(fresh), this.adapter as Adapter & ReviewEntryAdapter, fresh.id);
-              await ordinaryReviewSource(this.store.task(fresh.id), run.head, Boolean(run.ordinaryDetached));
-              return stillAllowed();
-            },
-            stillAllowed,
-          };
-        })() : undefined;
+        // Fresh creation of a reviewer that is review entry or an ordinary round
+        // proves the same admission a retained send does, at the native boundary.
+        const launchGuard = role === 'reviewer' && (fresh.reviewEntry || run.ordinaryDetached)
+          ? this.reviewAdmission(fresh, savedRun, run, Boolean(run.ordinaryDetached)) : undefined;
         const created = await this.adapter.createRun!(fresh, savedRun, token, null,
           ownerReviewContext(this.store, fresh, savedRun), launchGuard, this.store.canonicalRepository(fresh.repoPath, fresh.repository)?.affectedTests?.command); agentId = created.id;
         recordPromptSize(this.store, fresh.id, savedRun.id, savedRun.temporaryDirectory);

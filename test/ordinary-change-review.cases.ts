@@ -39,6 +39,8 @@ import {
 } from "../core/verbs/owner-verbs";
 import { verifyPr as machineVerifyPr } from "../core/git/git-proof";
 import { verifyPrIdentity as machineVerifyPrIdentity } from "../core/forge/pr-identity";
+import { AgentPolicy, type AgentPolicyHost } from "../core/dispatch/agent-policy";
+import type { HostAgentSpec } from "../shared/host";
 
 function fixture() {
   const f = ownerRevisionFixture();
@@ -127,6 +129,10 @@ function fixture() {
     mergeNeedsApproval: false,
     blockOrdinarySend: false,
     admissionRace: false,
+    /** Plants a mutation after an ordinary creation's pre-send proofs, before its guard runs. */
+    beforeCreate: null as ((run: Run) => void) | null,
+    /** Guard and native-create steps in the order the host policy ran them. */
+    createTrace: [] as string[],
   };
   const overrides: Parameters<typeof f.buildEngine>[0] = {
     verifyPr: async () => ({
@@ -179,8 +185,26 @@ function fixture() {
       sends.push(run);
       return { sent: true };
     },
-    createRun: async (t, run, token) => {
-      const created = await make!(t, run, token);
+    createRun: async (t, run, token, _context, _owner, guard) => {
+      if (run.ordinaryDetached && faults.beforeCreate) {
+        const plant = faults.beforeCreate;
+        faults.beforeCreate = null;
+        plant(run);
+      }
+      // A guarded creation crosses the same AgentPolicy seam the host uses, so
+      // the guard's proofs run immediately before the native create.
+      const native = async () => {
+        faults.createTrace.push("native");
+        return make!(t, run, token);
+      };
+      const created = guard
+        ? await new AgentPolicy({ nativeAgentCreate: native } as unknown as AgentPolicyHost).guardedNativeAgentCreate({
+            guard: {
+              allowed: async () => { faults.createTrace.push("allowed"); return guard.allowed(); },
+              stillAllowed: () => { faults.createTrace.push("stillAllowed"); return guard.stillAllowed(); },
+            },
+          } as unknown as HostAgentSpec, false, false)
+        : await native();
       const actual = run.profile!;
       f.states.set(created.id, {
         id: created.id,
@@ -2026,7 +2050,7 @@ test("a failed settled author proof returns the responsible task to its retained
   }
 });
 
-async function authorRevision(f: ReturnType<typeof fixture>, number: number) {
+async function reviseAndWake(f: ReturnType<typeof fixture>, number: number) {
   await f.engine.wake();
   const revision = f.current();
   assert.ok(revision, f.store.task(f.task.id).reason);
@@ -2049,6 +2073,10 @@ async function authorRevision(f: ReturnType<typeof fixture>, number: number) {
   await f.engine.wake();
   await f.engine.wake();
   await f.engine.wake();
+}
+
+async function authorRevision(f: ReturnType<typeof fixture>, number: number) {
+  await reviseAndWake(f, number);
   return f.current();
 }
 
@@ -2848,3 +2876,155 @@ for (const action of [
       await f.close();
     }
   });
+
+/** Closes the retained reviewer after its changes-required round, so the next ordinary round creates a fresh reader. */
+async function closeRetainedReviewer(f: ReturnType<typeof fixture>) {
+  await f.engine.wake();
+  const first = f.current();
+  await f.report(first, "changes_required");
+  f.states.set(first.agentId!, { ...f.states.get(first.agentId!)!, status: "closed" });
+  return first;
+}
+
+test("an ordinary fresh reviewer is re-proved at its native creation and launches exactly once", async () => {
+  const f = fixture();
+  try {
+    const first = await closeRetainedReviewer(f);
+    f.faults.createTrace.length = 0;
+    const review = await authorRevision(f, 1);
+    assert.ok(review, f.store.task(f.task.id).reason);
+    assert.equal(review.role, "reviewer");
+    assert.equal(review.ordinaryDetached, true);
+    assert.notEqual(review.agentId, first.agentId);
+    assert.deepEqual(f.faults.createTrace, ["allowed", "stillAllowed", "native"]);
+    assert.equal(f.store.task(f.task.id).resolution.reviewerAgentId, review.agentId);
+  } finally {
+    await f.close();
+  }
+});
+
+/**
+ * Each mutation lands after the ordinary creation's pre-send proofs and before its
+ * guard. A proven refusal settles the run superseded with no agent; an effect fence
+ * waits instead of refusing.
+ */
+const freshReviewerRefusals: Array<{
+  name: string;
+  plant: (f: ReturnType<typeof fixture>, run: Run) => void;
+  settles: "attention" | "waiting";
+  reason: RegExp;
+}> = [
+  {
+    name: "pause",
+    plant: (f) => f.store.setMeta("paused", true),
+    settles: "attention",
+    reason: /refused before send/,
+  },
+  {
+    name: "dispatch hold",
+    plant: (f) =>
+      f.store.update(f.task.id, {
+        held: true,
+        holdGeneration: 1,
+        holds: {
+          dispatch: {
+            owner: "operator",
+            reason: "Planner dispatch fence",
+            at: new Date().toISOString(),
+            generation: 1,
+            until: null,
+          },
+        },
+      }),
+    settles: "attention",
+    reason: /refused before send/,
+  },
+  {
+    name: "pending effect",
+    plant: (f) =>
+      f.store.putOperation(
+        queueOperationSchema.parse({
+          id: "d".repeat(64),
+          key: "pending-effect-at-launch",
+          kind: "task_control",
+          inputHash: "a".repeat(64),
+          state: "pending",
+          taskId: f.task.id,
+          expectedVersion: null,
+          repoPath: f.repo,
+          submissionId: null,
+          createdAt: new Date().toISOString(),
+          startedAt: null,
+          settledAt: null,
+          attempts: 0,
+          diagnostic: "",
+          result: null,
+          effect: null,
+        }),
+      ),
+    settles: "waiting",
+    reason: /settle it with retry_effect/,
+  },
+  {
+    name: "task version change",
+    plant: (f) =>
+      f.store.update(f.task.id, {
+        reason: "Concurrent canonical admission changed the source reservation",
+      }),
+    settles: "attention",
+    reason: /refused before send/,
+  },
+  {
+    name: "PR head drift",
+    plant: (f) => {
+      f.state.prSha = f.oldHead;
+    },
+    settles: "attention",
+    reason: /refused before send/,
+  },
+  {
+    name: "a live run that owns the checkout",
+    plant: (f, run) => {
+      const other = f.store
+        .runs(f.task.id)
+        .find((candidate) => candidate.role === "reviewer" && candidate.id !== run.id)!;
+      f.store.putRun({ ...other, id: randomUUID(), released: false, status: "running", active: true });
+    },
+    settles: "attention",
+    reason: /refused before send/,
+  },
+];
+
+for (const refusal of freshReviewerRefusals) {
+  test(`an ordinary fresh reviewer refused by ${refusal.name} is never created`, async () => {
+    const f = fixture();
+    try {
+      await closeRetainedReviewer(f);
+      f.faults.createTrace.length = 0;
+      const seen: Run[] = [];
+      f.faults.beforeCreate = (run) => {
+        seen.push(run);
+        refusal.plant(f, run);
+      };
+      await reviseAndWake(f, 1);
+      assert.equal(seen.length, 1, "the ordinary creation reached its guard");
+      const run = seen[0]!;
+      assert.equal(f.faults.createTrace[0], "allowed");
+      assert.equal(f.faults.createTrace.includes("native"), false, "no agent is created after the proof refuses");
+      const task = f.store.task(f.task.id);
+      assert.equal(f.store.run(run.id)?.status, "superseded");
+      assert.equal(f.store.run(run.id)?.released, true);
+      assert.equal(task.resolution.currentRunId, null);
+      if (refusal.settles === "attention") {
+        assert.equal(task.phase, "needs_attention");
+        assert.equal(task.resolution.attention, true);
+      } else {
+        assert.equal(task.resolution.attention, false, "an effect fence waits; it is not a refusal");
+        assert.ok(f.store.eventsAll(f.task.id).some((event) => event.kind === "review_waiting_on_effects"));
+      }
+      assert.match(task.reason, refusal.reason);
+    } finally {
+      await f.close();
+    }
+  });
+}

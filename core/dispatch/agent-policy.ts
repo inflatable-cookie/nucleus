@@ -10,6 +10,7 @@ import {
 import { HostTransportFault } from "../host/adapter-routing";
 import { isTransportFailure } from "../../shared/transport";
 import { ProvenPreSendRefusalError } from "../recovery/task-reasons";
+import { BlockingRecoveryEffectsError } from "../recovery/recovery-effects";
 
 export interface AgentPolicyHost {
   creationOwner(): CreationOwner;
@@ -35,10 +36,11 @@ export class AgentPolicy {
     const guard = spec.guard;
     if(guard){
       try{
-        if(!await guard.allowed()||!guard.stillAllowed())throw new ProvenPreSendRefusalError('Review-entry source or writer state changed before creation');
+        if(!await guard.allowed()||!guard.stillAllowed())throw new ProvenPreSendRefusalError('Reviewer source or writer state changed before creation');
       }catch(error){
         if (
           error instanceof ProvenPreSendRefusalError ||
+          error instanceof BlockingRecoveryEffectsError ||
           error instanceof HostReadRefusalError ||
           error instanceof HostSnapshotPendingError ||
           isTransportFailure(error) ||
