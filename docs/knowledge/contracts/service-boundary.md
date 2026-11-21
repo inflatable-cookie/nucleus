@@ -1211,7 +1211,10 @@ intent; late reads are discarded. An abandoned effect that starts another
 request has it refused rather than sent outside the admission it no longer holds.
 BB's reverse channel retains timed-out effect requests on one shared connection,
 with bounded capacity; exhausting that capacity refuses new writes before send
-while fresh recovery reads remain available. T3 retains the original attempt's
+while fresh recovery reads remain available. It retains the 1,024 most recently
+expired read identities and their operations: a valid late reply to one is discarded,
+while malformed or unissued frames remain protocol faults. Older expired read
+identities are evicted, so their replies are no longer recognized. T3 retains the original attempt's
 ownership in durable intent while its reply is pending, so replacing the ledger
 or taking a fresh read cannot authorize a second send. Socket backpressure refuses
 only the new BB request as unsent; earlier writes on the connection remain

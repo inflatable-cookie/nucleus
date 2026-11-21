@@ -289,21 +289,85 @@ test("a late host send reply remains correlated after the caller's deadline", as
   assert.equal(instance.inFlight, 0);
 });
 
-test("a timed-out read frees its correlation slot and its late answer is dropped", async () => {
+test("a timed-out read drops only its correlated reply while another request remains in flight", async () => {
   const { instance, written } = link(10);
   await assert.rejects(
     instance.request("call.counters", {}),
     HostOperationTimeoutError,
   );
   assert.equal(instance.inFlight, 0);
+  const independent = instance.request("call.counters", {});
+  const expiredId = written[0].id;
+  assert.equal(instance.settle({ v: PROTOCOL_VERSION, id: expiredId }), false);
   assert.equal(
     instance.settle({
       v: PROTOCOL_VERSION,
-      id: written[0].id,
-      result: outcome("call.counters", { calls: {} }),
+      id: expiredId,
+      error: { code: "invalid" },
+    }),
+    false,
+  );
+  assert.equal(
+    instance.settle({
+      v: PROTOCOL_VERSION,
+      id: expiredId,
+      result: outcome("identity.probe", {}),
+    }),
+    false,
+  );
+  assert.equal(
+    instance.settle({
+      v: PROTOCOL_VERSION,
+      id: "host-op-unissued",
+      result: outcome("call.counters", { counters: {}, loadedAt: 1 }),
+    }),
+    false,
+  );
+  assert.equal(
+    instance.settle({
+      v: PROTOCOL_VERSION,
+      id: expiredId,
+      result: outcome("call.counters", { counters: {}, loadedAt: 1 }),
     }),
     true,
   );
+  assert.equal(instance.inFlight, 1);
+  assert.equal(
+    instance.settle({
+      v: PROTOCOL_VERSION,
+      id: written[1].id,
+      result: outcome("call.counters", { counters: {}, loadedAt: 2 }),
+    }),
+    true,
+  );
+  assert.deepEqual((await independent).value, { counters: {}, loadedAt: 2 });
+  assert.equal(
+    instance.settle({
+      v: PROTOCOL_VERSION,
+      id: expiredId,
+      result: outcome("call.counters", { counters: {}, loadedAt: 1 }),
+    }),
+    false,
+  );
+});
+
+test("expired read correlation is bounded and accepts a valid late refusal", async () => {
+  const { instance, written } = link(10);
+  await Promise.all(
+    Array.from({ length: 1024 }, () =>
+      instance.request("call.counters", {}).catch(() => {}),
+    ),
+  );
+  await assert.rejects(
+    instance.request("call.counters", {}),
+    HostOperationTimeoutError,
+  );
+  const reply = {
+    v: PROTOCOL_VERSION,
+    error: { code: "refused", message: "refused" },
+  };
+  assert.equal(instance.settle({ ...reply, id: written[0].id }), false);
+  assert.equal(instance.settle({ ...reply, id: written[1].id }), true);
 });
 
 test("retained effect replies cannot exhaust observation capacity", async () => {
