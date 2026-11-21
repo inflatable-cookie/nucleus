@@ -308,7 +308,13 @@ export class T3Nesting {
     // A binding stored before its launch was sent (nucleus#1458) is resumed, not
     // treated as a parent that already ran.
     let prepared: ParentThread | undefined;
-    let recoveredCloseoutScope: string | undefined;
+    const isRecoveredCloseoutWorkspace =
+      labelRole(input.attempt.labels) === "closeout" &&
+      input.workspace.worktreeSlug === `ns-closeout-${taskId}`;
+    const recoveredCloseoutScope = isRecoveredCloseoutWorkspace
+      ? input.workspace.id
+      : undefined;
+    let replacePriorParentId: string | undefined;
     if (existing) {
       // A child with no workspace strategy inherits the parent's checkout, and one
       // with a strategy never starts outside T3's own MCP handler. A role whose run
@@ -319,8 +325,7 @@ export class T3Nesting {
       // on the recovered closeout worktree so the closeout child runs in it.
       if (existing.workspaceId !== input.workspace.id) {
         const isRecoveredCloseout =
-          labelRole(input.attempt.labels) === "closeout" &&
-          input.workspace.worktreeSlug === `ns-closeout-${taskId}` &&
+          isRecoveredCloseoutWorkspace &&
           existing.projectId === input.workspace.projectId;
         if (!isRecoveredCloseout)
           return this.unavailable(
@@ -360,9 +365,10 @@ export class T3Nesting {
               "the prior parent thread is not yet archived after closeout workspace recovery; retry once archive settles",
             );
         }
-        this.forgetParent(taskId);
+        // Keep the archived/deleted prior parent binding until launchParent
+        // atomically replaces it after the replacement ACP bind succeeds.
+        replacePriorParentId = existing.threadId;
         existing = undefined;
-        recoveredCloseoutScope = input.workspace.id;
       }
     }
     if (existing) {
@@ -425,6 +431,7 @@ export class T3Nesting {
             acp,
             prepared,
             recoveredCloseoutScope,
+            replacePriorParentId,
           );
     if (!parent)
       return this.unavailable(
@@ -1116,6 +1123,7 @@ export class T3Nesting {
     acp: AcpSessionSurface,
     bound?: ParentThread,
     workspaceScope?: string,
+    replacePriorParentId?: string,
   ): Promise<ParentThread | null> {
     const taskId = labelTask(input.attempt.labels)!;
     const threadId =
@@ -1155,14 +1163,21 @@ export class T3Nesting {
     // Durable before the send: a lost reply leaves an owned parent, never an orphan.
     this.core.state.update((state) => {
       const old = state.parents?.[taskId];
+      const replacingPrior =
+        replacePriorParentId !== undefined &&
+        old?.threadId === replacePriorParentId;
       if (
         old &&
+        !replacingPrior &&
         (old.threadId !== threadId || old.sessionId !== binding.sessionId)
       )
         throw new ProvenPreSendRefusalError(
           "T3Code parent thread identity changed",
         );
-      state.parents = { ...state.parents, [taskId]: old ?? record };
+      state.parents = {
+        ...state.parents,
+        [taskId]: replacingPrior ? record : (old ?? record),
+      };
       state.nesting = {
         state: "nested",
         reason: "",
@@ -1171,7 +1186,15 @@ export class T3Nesting {
     });
     const known = await this.knownParentThread(taskId, threadId, commandId);
     if (known) {
-      if (known.deletedAt) return null;
+      if (
+        known.deletedAt ||
+        known.archivedAt ||
+        known.projectId !== input.workspace.projectId ||
+        known.worktreePath !== input.workspace.directory ||
+        known.providerInstanceId !== PARENT_PROVIDER ||
+        known.modelSelection.instanceId !== PARENT_PROVIDER
+      )
+        return null;
       this.core.state.update((state) => {
         const current = state.parents?.[taskId];
         if (current) state.parents![taskId] = { ...current, ...record };

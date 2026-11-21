@@ -839,6 +839,20 @@ test("T3 closeout recovery binds ACP to closeoutDirectory, retains old parent on
     dataHome: dataDir,
     socketPath: join(dataDir, "callback.sock"),
   });
+  let failReplacementBindOnce = false;
+  const controlledAcp: AcpSessionSurface = {
+    bind: (input) => {
+      if (failReplacementBindOnce) {
+        failReplacementBindOnce = false;
+        throw new Error("simulated interruption before replacement bind write");
+      }
+      return acp.bind(input);
+    },
+    turn: (input, token) => acp.turn(input, token),
+    message: (input, token) => acp.message(input, token),
+    release: (sessionId, reason) => acp.release(sessionId, reason),
+    observedCards: (scope, cards) => acp.observedCards(scope, cards),
+  };
 
   const statePath = join(dataDir, "hosts", "t3code.json");
   const native = new T3CodeHost({
@@ -847,13 +861,15 @@ test("T3 closeout recovery binds ACP to closeoutDirectory, retains old parent on
     statePath,
     timeoutMs: 1_000,
     probeThreadId: "synthetic-probe",
-    acp: () => acp,
+    acp: () => controlledAcp,
     reentryTimeoutMs: 300,
   });
   await native.connect();
+  let afterInterruptedBind: T3CodeHost | undefined;
   let resumed: T3CodeHost | undefined;
   t.after(() => {
     resumed?.close();
+    afterInterruptedBind?.close();
     native.close();
     store.close();
   });
@@ -975,8 +991,37 @@ test("T3 closeout recovery binds ACP to closeoutDirectory, retains old parent on
   );
   server.controls.refuseMutation = false;
 
-  // 2. Once archive succeeds, replacement parent binds ACP in closeoutDirectory and persists launchCommandId.
-  const closeoutChild = await native.createAgent(
+  // 2. Interruption after the old parent archive is confirmed and before the
+  //    replacement binding is saved retains the archived binding and never
+  //    adopts the archived original parent on retry (even after reopening).
+  failReplacementBindOnce = true;
+  await assert.rejects(
+    native.createAgent(closeoutSpec("req-closeout-handoff-interrupted")),
+    /simulated interruption before replacement bind write/,
+  );
+  assert.ok(
+    server.threads.get(originalParent.threadId)?.thread.archivedAt,
+    "original parent archive is already confirmed in T3",
+  );
+  assert.equal(
+    readState().parents?.[task.id]?.threadId,
+    originalParent.threadId,
+    "archived prior parent binding stays recorded until replacement bind succeeds",
+  );
+
+  // Reopen the adapter after the interruption; retry creates the scoped
+  // replacement parent on closeoutDirectory and never adopts the archived original.
+  afterInterruptedBind = new T3CodeHost({
+    endpoint: server.endpoint,
+    bearer: "synthetic-bearer",
+    statePath,
+    timeoutMs: 1_000,
+    probeThreadId: "synthetic-probe",
+    acp: () => controlledAcp,
+    reentryTimeoutMs: 300,
+  });
+  await afterInterruptedBind.connect();
+  const closeoutChild = await afterInterruptedBind.createAgent(
     closeoutSpec("req-closeout-handoff-2"),
   );
   assert.ok(closeoutChild.id);
@@ -984,6 +1029,10 @@ test("T3 closeout recovery binds ACP to closeoutDirectory, retains old parent on
   assert.ok(replacementParent, "replacement parent persisted");
   assert.notEqual(replacementParent.threadId, originalParent.threadId);
   assert.equal(replacementParent.directory, closeout.directory);
+  assert.equal(
+    server.threads.get(replacementParent.threadId)?.thread.worktreePath,
+    closeout.directory,
+  );
   assert.ok(
     replacementParent.launchCommandId,
     "replacement parent persists scoped launchCommandId",
@@ -1010,7 +1059,7 @@ test("T3 closeout recovery binds ACP to closeoutDirectory, retains old parent on
     statePath,
     timeoutMs: 1_000,
     probeThreadId: "synthetic-probe",
-    acp: () => acp,
+    acp: () => controlledAcp,
     reentryTimeoutMs: 300,
   });
   await resumed.connect();
@@ -1021,6 +1070,18 @@ test("T3 closeout recovery binds ACP to closeoutDirectory, retains old parent on
     resumedParent?.launchCommandId,
     replacementParent.launchCommandId,
   );
+
+  // 4. Even if state.parents[task.id] were absent on a recovered closeout retry
+  //    while the archived original thread exists in T3, nesting still derives the
+  //    scoped replacement identity and never adopts the archived original parent.
+  const missingParentState = readState();
+  delete missingParentState.parents?.[task.id];
+  writeFileSync(statePath, JSON.stringify(missingParentState, null, 2));
+  await resumed.createAgent(closeoutSpec("req-closeout-handoff-4"));
+  const recoveredAgain = readState().parents?.[task.id];
+  assert.equal(recoveredAgain?.threadId, replacementParent.threadId);
+  assert.notEqual(recoveredAgain?.threadId, originalParent.threadId);
+  assert.equal(recoveredAgain?.directory, closeout.directory);
 });
 
 test("BB listExactThreads rejects malformed or unexpected rows instead of treating them as absent", async () => {
