@@ -31,7 +31,7 @@ test("navigation exposes Tasks, Planning and QA runs; Usage is removed and Lanes
   // PR #518's TypeScript formatting reformatted the surface; the static reads tolerate the shipped layout.
   assert.match(
     ui,
-    /\(workspacePanel \? workspaceNavigationViews : navigationViews\)\.map\(\s*\(view\) =>/,
+    /\(workspacePanel\s*\?\s*workspaceNavigationViews\s*:\s*navigationViews\s*\)\.map\(\s*\(view\) =>/,
   );
 });
 
@@ -39,7 +39,7 @@ test("Tasks shows the Pipeline with no Lanes switch; no Lanes tab remains", () =
   assert.doesNotMatch(ui, /LanesSwitch/);
   assert.match(
     ui,
-    /tab === "queue" && \(\s*<View style=\{\{ flex: 1, minHeight: 0, gap: space.sm, zIndex: 0 \}\}>\s*<PipelineBoard /,
+    /tab === "queue" && \(\s*<View style=\{\{ flex: 1, minHeight: 0, gap: space\.sm, zIndex: 0 \}\}>\s*<PipelineBoard\b/,
   );
   assert.doesNotMatch(ui, /tab === "lanes"/);
   assert.doesNotMatch(ui, /accessibilityLabel="Board mode"/);
@@ -180,11 +180,11 @@ test("Settings is the native settings screen holding Dispatch limits, Hosts, Pro
   assert.match(ui, /control\.id === "settings"\) settingsOpener\?\.\(\)/);
   assert.match(
     ui,
-    /export function registerSettingsOpener\(open: \(section\?: SettingsTarget\) => void\): void \{ settingsOpener = open; \}/,
+    /export function registerSettingsOpener\(\s*open: \(section\?: SettingsTarget\) => void,?\s*\): void \{\s*settingsOpener = open;\s*\}/,
   );
   assert.match(
     ui,
-    /onSettings=\{settingsOpener \? \(\) => settingsOpener\?\.\("projects"\) : undefined\}/,
+    /onSettings=\{\s*settingsOpener\s*\? \(\) => settingsOpener\?\.\("projects"\)\s*: undefined,?\s*\}/,
     "the chooser opens Settings at Projects",
   );
   assert.match(
@@ -238,7 +238,7 @@ test("the Tasks tab counts only open tasks in the project selection", async () =
   );
   assert.match(
     ui,
-    /const queuedCounts = \(state\?\.queuedCounts \?\? \[\]\)\.filter\(item => attentionBelongs\(item\.repoPath\)\)/,
+    /const queuedCounts = \(state\?\.queuedCounts \?\? \[\]\)\.filter\(\(item\) =>\s*attentionBelongs\(item\.repoPath\),?\s*\)/,
     "the left-out count follows the same selection",
   );
 });

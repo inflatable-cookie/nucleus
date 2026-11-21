@@ -1,14 +1,11 @@
 import { test } from "node:test";
-import { recentProjectActivity } from './support/fakes';
+import { recentProjectActivity } from "./support/fakes";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { boardSource } from "./support/board-source";
 import React from "react";
 import { mount, useNativeStubs } from "./support/render";
-import {
-  planningLaneLeads,
-  type ProjectScope,
-} from "../shared/project-scope";
+import { planningLaneLeads, type ProjectScope } from "../shared/project-scope";
 import type { Lead, Project, ProjectQaRun } from "../shared/contracts";
 
 useNativeStubs();
@@ -113,7 +110,10 @@ test("1421 rendered: a plain click replaces the selection, Shift-click toggles o
     ui.get(/^Project consumer-b-v2/).props.accessibilityState.checked,
     true,
   );
-  assert.equal(ui.get(/^Project other/).props.accessibilityState.checked, false);
+  assert.equal(
+    ui.get(/^Project other/).props.accessibilityState.checked,
+    false,
+  );
   assert.equal(
     ui.get(/^Projects, /).props.accessibilityLabel,
     "Projects, 2 projects",
@@ -245,11 +245,7 @@ test("026-14b rendered: single-select, Clear back to all, and one top row of sea
   assert.equal(ui.query("Select all projects"), undefined, "no All button");
   assert.ok(ui.get("Filter projects"));
   assert.ok(ui.get("Clear project selection"), "Clear is an icon action");
-  assert.doesNotMatch(
-    ui.text(),
-    /selected/,
-    "no separate selection-count row",
-  );
+  assert.doesNotMatch(ui.text(), /selected/, "no separate selection-count row");
   ui.press(/^Project consumer-b-v2/);
   assert.deepEqual(seen!.projects, ["consumer-b-v2"]);
   assert.equal(
@@ -265,7 +261,10 @@ test("026-14b rendered: single-select, Clear back to all, and one top row of sea
     ui.get(/^Project consumer-b-v2/).props.accessibilityState.checked,
     true,
   );
-  assert.equal(ui.get(/^Project other/).props.accessibilityState.checked, false);
+  assert.equal(
+    ui.get(/^Project other/).props.accessibilityState.checked,
+    false,
+  );
   assert.equal(
     ui.get(/^Projects, /).props.accessibilityLabel,
     "Projects, 2 projects",
@@ -285,8 +284,9 @@ test("026-14b rendered: single-select, Clear back to all, and one top row of sea
   assert.deepEqual(seen!.projects, []);
   assert.ok(ui.get("Project selector"), "Clear keeps the picker open");
   assert.equal(
-    ui.all(/^Project /).filter((node) => node.props.accessibilityRole === "checkbox")
-      .length,
+    ui
+      .all(/^Project /)
+      .filter((node) => node.props.accessibilityRole === "checkbox").length,
     3,
     "all projects show immediately",
   );
@@ -894,7 +894,7 @@ test("121 rendered: milestone QA stages render as named steps, and the task and 
   );
   assert.match(
     source,
-    /enabled:tab==="planning"\|\|tab==="qa"\|\|Boolean\(selected\)/,
+    /enabled: tab === "planning" \|\| tab === "qa" \|\| Boolean\(selected\),/,
     "the QA list loads for Planning, the QA tab and an open task",
   );
 });
@@ -1089,12 +1089,22 @@ test("1476 rendered: a legacy filter-off preference opens as all projects and Cl
   assert.deepEqual(seen, { projects: ["other"] });
   ui.press(/^Projects, /);
   ui.press(/^Project other/, { nativeEvent: { shiftKey: true } });
-  assert.deepEqual(seen, { projects: [] }, "clearing the last key shows all projects");
+  assert.deepEqual(
+    seen,
+    { projects: [] },
+    "clearing the last key shows all projects",
+  );
 });
 
 test("1476: the board's selector commits the selection it reports; the other scope entry points write it too", () => {
   const source = boardSource();
-  assert.match(source, /onChange=\{\(projects\) => setScope\(\{ projects \}\)\}/);
-  assert.match(source, /const setScopeProjects = \(projects: string\[\]\) => setScope\(\{ projects \}\);/);
+  assert.match(
+    source,
+    /onChange=\{\(projects\) => setScope\(\{ projects \}\)\}/,
+  );
+  assert.match(
+    source,
+    /const setScopeProjects = \(projects: string\[\]\) => setScope\(\{ projects \}\);/,
+  );
   assert.match(source, /onSelectProjects=\{setScopeProjects\}/);
 });

@@ -128,16 +128,16 @@ test("026-14b an empty selection shows every project; clearing the last project 
   assert.deepEqual(
     scopedProjects(
       projects,
-      toggleProject(projects.map((p) => p.key), "other"),
+      toggleProject(
+        projects.map((p) => p.key),
+        "other",
+      ),
     ).map((p) => p.key),
     ["consumer-b-v2", "project-a-accelerator"],
     "a Shift-press toggles one project",
   );
   assert.deepEqual(
-    scopedProjects(
-      projects,
-      toggleProject(["consumer-b-v2"], "consumer-b-v2"),
-    ),
+    scopedProjects(projects, toggleProject(["consumer-b-v2"], "consumer-b-v2")),
     scopedProjects(projects, []),
     "clearing the last project shows all projects",
   );
@@ -204,20 +204,45 @@ test("026-14b the selector lists every project with filter, primary repository, 
 });
 
 test("1426 selector totals include every live phase and hidden queued tasks across member repositories", () => {
-  const multiRepo = project(
-    "multi",
-    "Multi",
-    repo("multi-a"),
-    repo("multi-b"),
-  );
+  const multiRepo = project("multi", "Multi", repo("multi-a"), repo("multi-b"));
   const empty = project("empty", "Empty", repo("empty"));
   const tasks = [
-    { id: "q1", repository: "owner/multi-a", repoPath: "/multi-a", phase: "queued" },
-    { id: "working", repository: "owner/multi-a", repoPath: "/multi-a", phase: "working" },
-    { id: "review", repository: "owner/multi-b", repoPath: "/multi-b", phase: "awaiting_review" },
-    { id: "closing", repository: "owner/multi-b", repoPath: "/multi-b", phase: "merging" },
-    { id: "done", repository: "owner/multi-a", repoPath: "/multi-a", phase: "done" },
-    { id: "cancelled", repository: "owner/multi-b", repoPath: "/multi-b", phase: "cancelled" },
+    {
+      id: "q1",
+      repository: "owner/multi-a",
+      repoPath: "/multi-a",
+      phase: "queued",
+    },
+    {
+      id: "working",
+      repository: "owner/multi-a",
+      repoPath: "/multi-a",
+      phase: "working",
+    },
+    {
+      id: "review",
+      repository: "owner/multi-b",
+      repoPath: "/multi-b",
+      phase: "awaiting_review",
+    },
+    {
+      id: "closing",
+      repository: "owner/multi-b",
+      repoPath: "/multi-b",
+      phase: "merging",
+    },
+    {
+      id: "done",
+      repository: "owner/multi-a",
+      repoPath: "/multi-a",
+      phase: "done",
+    },
+    {
+      id: "cancelled",
+      repository: "owner/multi-b",
+      repoPath: "/multi-b",
+      phase: "cancelled",
+    },
   ] as Parameters<typeof projectSelectorRows>[3];
   const rows = projectSelectorRows(
     [multiRepo, empty],
@@ -225,8 +250,21 @@ test("1426 selector totals include every live phase and hidden queued tasks acro
     "",
     tasks,
     [
-      { id: "lead", title: "Lead", state: "open", lanes: [], repositories: [repo("multi-a")] },
-      { id: "papercut", title: "Papercut", state: "open", lanes: [], repositories: [repo("multi-b")], tags: ["papercut"] },
+      {
+        id: "lead",
+        title: "Lead",
+        state: "open",
+        lanes: [],
+        repositories: [repo("multi-a")],
+      },
+      {
+        id: "papercut",
+        title: "Papercut",
+        state: "open",
+        lanes: [],
+        repositories: [repo("multi-b")],
+        tags: ["papercut"],
+      },
     ] as Parameters<typeof projectSelectorRows>[4],
     [
       { repoPath: "/multi-a", count: 3 },
@@ -234,7 +272,11 @@ test("1426 selector totals include every live phase and hidden queued tasks acro
     ],
   );
   assert.deepEqual(
-    rows.map(({ key, tasks: count, leads: leadCount }) => [key, count, leadCount]),
+    rows.map(({ key, tasks: count, leads: leadCount }) => [
+      key,
+      count,
+      leadCount,
+    ]),
     [
       ["empty", 0, 0],
       ["multi", 8, 2],
@@ -497,7 +539,7 @@ test("026-14b one header selector scopes every view through the selection alone"
   assert.match(ui, /const planningProjects = effectiveSelection/, "Planning");
   assert.match(
     ui,
-    /planningLaneLeads\(boardLeads, planningLane, state\?\.projects\?\?\[\],/,
+    /planningLaneLeads\(\s*boardLeads,\s*planningLane,\s*state\?\.projects \?\? \[\],/,
     "Planning lane leads",
   );
   assert.match(ui, /usePlanningLane\(planningInScope,/);

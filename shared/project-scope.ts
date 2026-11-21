@@ -7,7 +7,10 @@ import {
 } from "./contracts";
 import { projectPlanningCounts } from "./planning-tab";
 import { hiddenQueuedByProject } from "./queued-more";
-import { projectDormantByActivity, type ProjectActivity } from "./project-activity";
+import {
+  projectDormantByActivity,
+  type ProjectActivity,
+} from "./project-activity";
 
 /**
  * Spec 026 Board "Scope": one project selector scopes Pipeline, Lanes,
@@ -177,7 +180,8 @@ export function projectSelectorRows(
   const needle = search.trim().toLowerCase();
   const hiddenQueued = hiddenQueuedByProject(queuedCounts, tasks);
   const activityByKey = new Map(activity.map((item) => [item.key, item]));
-  const dormantOf = (project: Project) => projectDormantByActivity(project, activityByKey.get(project.key), nowMs);
+  const dormantOf = (project: Project) =>
+    projectDormantByActivity(project, activityByKey.get(project.key), nowMs);
   return [...projects]
     .sort(
       (a, b) =>
