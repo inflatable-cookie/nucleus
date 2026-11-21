@@ -1,6 +1,6 @@
 import type { Profile, Task } from '../../../shared/contracts';
 import type { PaseoAdapter } from './paseo';
-import { capPaseoTitle } from '../../../shared/paseo-title';
+import { capPaseoTitle } from "./titles";
 
 /**
  * The Paseo host's native ask, consult and decider calls (Spec 058, tasks 540, 584

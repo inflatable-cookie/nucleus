@@ -1,4 +1,5 @@
 import { paseoWorkspaceIdAccepted } from "./workspace-id";
+import { capPaseoTitle } from "./titles";
 import { existsSync } from "node:fs";
 import type { Host, HostNativeArchive, HostThread, HostThreadInventory, HostTerminalInventory, HostWorkspaceRef, HostWorkspaceRecord, HostWorkspaceSpec } from "../../../shared/host";
 import type { HostWorktreeWorkspaceSpec } from "../../../core/host";
@@ -113,13 +114,14 @@ export class PaseoWorkspaceHost implements Pick<Host, "workspaceRef" | "workspac
   /**
    * Register one folder as a host workspace. Core supplies the title, the stable
    * request ID, the folder and the project it proved; this is Paseo's create,
-   * returned as the daemon's own promise. Nothing is awaited or mapped here, so
-   * core's existing refusal and `{id, directory}` mapping keep their turn: a
+   * returned as the daemon's own promise. The title is fitted to Paseo's bound
+   * here, at the adapter boundary, so core never caps for this host. Nothing
+   * else is awaited or mapped here, so core's existing refusal and `{id, directory}` mapping keep their turn: a
    * registration without a directory is not a workspace, and creation and
    * recovery name different refusals at their own boundaries.
    */
   createWorkspace(spec: HostWorkspaceSpec) {
-    return this.owner.api.workspaces.create({ title: spec.title, requestId: spec.requestId,
+    return this.owner.api.workspaces.create({ title: capPaseoTitle(spec.title), requestId: spec.requestId,
       source: { kind: "directory", path: spec.directory, ...spec.project } });
   }
 
@@ -127,11 +129,13 @@ export class PaseoWorkspaceHost implements Pick<Host, "workspaceRef" | "workspac
    * Register the closeout worktree core proved. Core supplies the title, the
    * request ID and the branch-off source — the repository, the integration
    * branch it starts from and the branch and slug it names — and this is Paseo's
-   * own create returned as the daemon's promise. Core keeps the refusal a
-   * registration without a directory names and its `{id, directory}` mapping.
+   * own create returned as the daemon's promise. The title is fitted to Paseo's
+   * bound here, at the adapter boundary, so core never caps for this host.
+   * Core keeps the refusal a registration without a directory names and its
+   * `{id, directory}` mapping.
    */
   createCloseoutWorkspace(spec: HostWorktreeWorkspaceSpec) {
-    return this.owner.api.workspaces.create(spec);
+    return this.owner.api.workspaces.create({ ...spec, title: capPaseoTitle(spec.title) });
   }
 
   /**

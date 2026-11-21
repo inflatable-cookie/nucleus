@@ -1,7 +1,7 @@
 import { isHostOperationTimeout } from "../../core/host";
 import type { RowSnoozeVisibility } from "../../core/host";
 import { formatTaskNumber } from "../../shared/contracts";
-import { capPaseoTitle } from "../../shared/paseo-title";
+import { capT3Title } from "./titles";
 import { WIRE_LABEL_KEYS } from "../../shared/wire-labels";
 import {
   HostUnknownDeliveryError,
@@ -329,7 +329,7 @@ export class T3Presentation {
     const step = await this.rowStepFor(taskId, attention.state === "attention");
     const base = this.core.state.read().parents?.[taskId]?.title;
     if (base) {
-      const desired = capPaseoTitle(rowTitle(base, step));
+      const desired = capT3Title(rowTitle(base, step));
       if (this.core.state.read().rowTitles?.[threadId] !== desired) {
         try {
           await this.writeWorkerRow(threadId, desired);
@@ -549,7 +549,7 @@ export class T3Presentation {
     const legacyRolePrefix = runRole ? `${runRole}: ` : "";
     if (legacyRolePrefix && taskTitle.startsWith(legacyRolePrefix))
       taskTitle = taskTitle.slice(legacyRolePrefix.length);
-    return capPaseoTitle(`${numberedPrefix}${taskTitle}`);
+    return capT3Title(`${numberedPrefix}${taskTitle}`);
   }
 
   async setTaskWorkspaceTitle(
@@ -559,7 +559,7 @@ export class T3Presentation {
     _uncertain: boolean,
   ): Promise<void> {
     this.retireDeletedPresentationIntents();
-    title = capPaseoTitle(title);
+    title = capT3Title(title);
     const threadId = this.core.parentThreadOf?.(task.id);
     if (!threadId) throw Error("Task worker thread is missing");
     const state = this.core.state.read();
@@ -574,7 +574,7 @@ export class T3Presentation {
       task.id,
       this.rowAttention.get(task.id) === "attention",
     );
-    const desired = capPaseoTitle(rowTitle(title, step));
+    const desired = capT3Title(rowTitle(title, step));
     let projection: Projection;
     try {
       projection = await this.core.reads.readProjection(

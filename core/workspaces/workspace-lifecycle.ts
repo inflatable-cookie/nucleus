@@ -23,7 +23,7 @@ import {
   type OrphanWorkspace,
   type WorkspaceCreationState,
 } from "./workspace-allocation";
-import { capPaseoTitle, taskWorkspaceTitle } from "./workspace-title";
+import { taskWorkspaceTitle } from "./workspace-title";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type {
@@ -767,7 +767,7 @@ export class WorkspaceLifecycle {
       seq > 1 ? `ns-workspace-${fresh.id}-a${seq}` : `ns-workspace-${fresh.id}`;
     const workspace = await this.creationStep(fresh, "workspace_creation", () =>
       this.host.workspaceHost.createWorkspace({
-        title: capPaseoTitle(taskWorkspaceTitle(fresh)),
+        title: taskWorkspaceTitle(fresh),
         requestId,
         directory: state.directory,
         project,
@@ -976,7 +976,7 @@ export class WorkspaceLifecycle {
       const workspace =
         (registered.kind === "reuse" ? registered.reuse : null) ??
         (await this.host.workspaceHost.createWorkspace({
-          title: capPaseoTitle(taskWorkspaceTitle(fresh)),
+          title: taskWorkspaceTitle(fresh),
           requestId:
             seq > 1
               ? `ns-recover-workspace-${fresh.id}-a${seq}`
@@ -1022,7 +1022,7 @@ export class WorkspaceLifecycle {
       const workspace =
         (registered.kind === "reuse" ? registered.reuse : null) ??
         (await this.host.workspaceHost.createWorkspace({
-          title: capPaseoTitle(taskWorkspaceTitle(task)),
+          title: taskWorkspaceTitle(task),
           requestId: `ns-recover-workspace-${task.id}`,
           directory,
           project: await this.repositoryProject(task),

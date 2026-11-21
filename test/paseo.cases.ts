@@ -26,7 +26,7 @@ import { timedDaemonRequests } from "../hosts/paseo/adapter/paseo-call-timing";
 import { createPaseoApi } from "@getpaseo/client";
 import { proveWorkspaceEmpty } from "../core/verbs/disposition";
 import { execFileSync } from "node:child_process";
-import { capPaseoTitle } from "../core/workspaces/workspace-title";
+import { capPaseoTitle } from "../hosts/paseo/adapter/titles";
 import {
   WorkspaceObservationUnavailableError,
   ownedWorkspacePath,
