@@ -31,7 +31,7 @@ import {
   threadProjection,
 } from "./support/t3code-fake";
 import { storedT3Labels } from "./support/t3code-labels";
-import { T3TransientReadError } from "../hosts/t3code/reads";
+import { HostReadRefusalError } from "../core/host";
 
 const profile: Profile = {
   id: "synthetic-profile",
@@ -333,7 +333,9 @@ test("a released parent is re-entered by message before the next child, and disp
   await host.createAgent(spec("worker-create", "Do the work"));
   const parent = parentOf(host)!;
   // A parent persisted before the readable prompt has no holdText and an old binding.
-  host.state.update(state => { delete state.parents!["synthetic-task"]!.holdText; });
+  host.state.update((state) => {
+    delete state.parents!["synthetic-task"]!.holdText;
+  });
   // The worker finished: the sweep releases the held turn, as the ACP agent ends it.
   finishChildren(host, server);
   await host.reconcileThreadTitles([
@@ -609,15 +611,14 @@ test("a role launched after its parent was archived refuses instead of re-launch
   await host.createAgent(spec("worker-create", "Do the work"));
   const parent = parentOf(host)!;
   server.threads.get(parent.threadId)!.thread.archivedAt = STAMP;
-  const launches = () => commandsOf(server, "orchestration.launchThread").length;
+  const launches = () =>
+    commandsOf(server, "orchestration.launchThread").length;
   const before = launches();
   await assert.rejects(
     () => host.createAgent(spec("review-run", "Review it", "reviewer")),
     (error: unknown) =>
       error instanceof ProvenPreSendRefusalError &&
-      /parent thread is archived; use an owner restart/.test(
-        error.reason,
-      ),
+      /parent thread is archived; use an owner restart/.test(error.reason),
   );
   assert.equal(launches(), before, "the archived parent is not launched again");
   assert.equal(
@@ -637,10 +638,15 @@ test("a manually restored parent clears an older finished marker only after veri
   const parent = parentOf(host)!;
   const remote = server.threads.get(parent.threadId)!.thread;
   remote.archivedAt = STAMP;
-  await assert.rejects(() => host.createAgent(spec("review-archived", "Review", "reviewer")));
+  await assert.rejects(() =>
+    host.createAgent(spec("review-archived", "Review", "reviewer")),
+  );
   remote.archivedAt = null;
   await host.createAgent(spec("review-live", "Review", "reviewer"));
-  assert.equal(host.state.read().parents![parent.taskId]!.archivedAt, undefined);
+  assert.equal(
+    host.state.read().parents![parent.taskId]!.archivedAt,
+    undefined,
+  );
   assert.equal(commandsOf(server, "orchestration.launchThread").length, 1);
   assert.equal(commandsOf(server, "delegated_task.request").length, 2);
 });
@@ -649,9 +655,14 @@ test("an older finished marker is reclassified when the parent was deleted", asy
   const { host, server, spec } = await fixture(t);
   await host.createAgent(spec("worker-create", "Do the work"));
   const parent = parentOf(host)!;
-  host.state.update((state) => { state.parents![parent.taskId]!.archivedAt = STAMP; });
+  host.state.update((state) => {
+    state.parents![parent.taskId]!.archivedAt = STAMP;
+  });
   server.threads.delete(parent.threadId);
-  await assert.rejects(() => host.createAgent(spec("review-run", "Review", "reviewer")), /parent thread is deleted/);
+  await assert.rejects(
+    () => host.createAgent(spec("review-run", "Review", "reviewer")),
+    /parent thread is deleted/,
+  );
   assert.equal(commandsOf(server, "delegated_task.request").length, 1);
 });
 
@@ -659,9 +670,14 @@ test("a parent with a changed checkout is fenced even with an older finished mar
   const { host, server, spec } = await fixture(t);
   await host.createAgent(spec("worker-create", "Do the work"));
   const parent = parentOf(host)!;
-  host.state.update((state) => { state.parents![parent.taskId]!.archivedAt = STAMP; });
+  host.state.update((state) => {
+    state.parents![parent.taskId]!.archivedAt = STAMP;
+  });
   server.threads.get(parent.threadId)!.thread.worktreePath = "/synthetic/other";
-  await assert.rejects(() => host.createAgent(spec("review-run", "Review", "reviewer")), /no longer matches/);
+  await assert.rejects(
+    () => host.createAgent(spec("review-run", "Review", "reviewer")),
+    /no longer matches/,
+  );
   assert.equal(host.state.read().parents![parent.taskId]!.archivedAt, STAMP);
   assert.equal(commandsOf(server, "delegated_task.request").length, 1);
 });
@@ -671,7 +687,14 @@ test("the restart restore effect unarchives the same bound parent and reuses it"
   await host.createAgent(spec("worker-create", "Do the work"));
   const parent = parentOf(host)!;
   server.threads.get(parent.threadId)!.thread.archivedAt = STAMP;
-  const task = { id: parent.taskId, workspaceId: workspace.id, directory: workspace.directory, phase: "working", removedAt: null, resolution: { mergedCommit: null } } as Task;
+  const task = {
+    id: parent.taskId,
+    workspaceId: workspace.id,
+    directory: workspace.directory,
+    phase: "working",
+    removedAt: null,
+    resolution: { mergedCommit: null },
+  } as Task;
   await host.nesting.restoreForRestart(task, "owner-operation", () => true);
   await host.nesting.restoreForRestart(task, "owner-operation", () => true);
   assert.equal(commandsOf(server, "thread.unarchive").length, 1);
@@ -687,13 +710,28 @@ test("a lost unarchive reply is reconciled by reading the same parent before any
   await host.createAgent(spec("worker-create", "Do the work"));
   const parent = parentOf(host)!;
   server.threads.get(parent.threadId)!.thread.archivedAt = STAMP;
-  const task = { id: parent.taskId, workspaceId: workspace.id, directory: workspace.directory, phase: "working", removedAt: null, resolution: { mergedCommit: null } } as Task;
+  const task = {
+    id: parent.taskId,
+    workspaceId: workspace.id,
+    directory: workspace.directory,
+    phase: "working",
+    removedAt: null,
+    resolution: { mergedCommit: null },
+  } as Task;
   server.controls.disconnectAfterEffect = true;
-  await assert.rejects(() => host.nesting.restoreForRestart(task, "operation-1", () => true));
+  await assert.rejects(() =>
+    host.nesting.restoreForRestart(task, "operation-1", () => true),
+  );
   server.controls.disconnectAfterEffect = false;
   await host.connect();
-  assert.equal(await host.nesting.observeRestartRestore(task, "wrong-operation"), "not_found");
-  assert.equal(await host.nesting.observeRestartRestore(task, "operation-1"), "live");
+  assert.equal(
+    await host.nesting.observeRestartRestore(task, "wrong-operation"),
+    "not_found",
+  );
+  assert.equal(
+    await host.nesting.observeRestartRestore(task, "operation-1"),
+    "live",
+  );
   await host.nesting.restoreForRestart(task, "operation-2", () => true);
   assert.equal(commandsOf(server, "thread.unarchive").length, 1);
   assert.equal(server.threads.get(parent.threadId)!.thread.archivedAt, null);
@@ -705,13 +743,33 @@ test("the restart restore effect refuses a changed binding and unknown prior del
   await host.createAgent(spec("worker-create", "Do the work"));
   const parent = parentOf(host)!;
   const remote = server.threads.get(parent.threadId)!.thread;
-  const task = { id: parent.taskId, workspaceId: workspace.id, directory: workspace.directory, phase: "working", removedAt: null, resolution: { mergedCommit: null } } as Task;
+  const task = {
+    id: parent.taskId,
+    workspaceId: workspace.id,
+    directory: workspace.directory,
+    phase: "working",
+    removedAt: null,
+    resolution: { mergedCommit: null },
+  } as Task;
   remote.archivedAt = STAMP;
   remote.providerInstanceId = "other";
-  await assert.rejects(() => host.nesting.restoreForRestart(task, "operation-1", () => true), /binding/);
+  await assert.rejects(
+    () => host.nesting.restoreForRestart(task, "operation-1", () => true),
+    /binding/,
+  );
   remote.providerInstanceId = PARENT_PROVIDER;
-  host.state.update((state) => { state.intents["unknown-unarchive"] = { status: "unknown", kind: "thread.unarchive", threadId: parent.threadId, payload: "{}" }; });
-  await assert.rejects(() => host.nesting.restoreForRestart(task, "operation-2", () => true), /delivery remains unknown/);
+  host.state.update((state) => {
+    state.intents["unknown-unarchive"] = {
+      status: "unknown",
+      kind: "thread.unarchive",
+      threadId: parent.threadId,
+      payload: "{}",
+    };
+  });
+  await assert.rejects(
+    () => host.nesting.restoreForRestart(task, "operation-2", () => true),
+    /delivery remains unknown/,
+  );
   assert.equal(commandsOf(server, "thread.unarchive").length, 0);
 });
 
@@ -720,7 +778,9 @@ test("a routine sweep leaves a manually archived parent archived", async (t) => 
   await host.createAgent(spec("worker-create", "Do the work"));
   const parent = parentOf(host)!;
   server.threads.get(parent.threadId)!.thread.archivedAt = STAMP;
-  await host.reconcileThreadTitles([{ id: parent.taskId, phase: "working" } as Task]);
+  await host.reconcileThreadTitles([
+    { id: parent.taskId, phase: "working" } as Task,
+  ]);
   assert.equal(server.threads.get(parent.threadId)!.thread.archivedAt, STAMP);
   assert.equal(commandsOf(server, "thread.unarchive").length, 0);
   assert.equal(parentOf(host)?.threadId, parent.threadId);
@@ -731,9 +791,14 @@ test("a sweep retains a deleted nonterminal parent and never launches a replacem
   await host.createAgent(spec("worker-create", "Do the work"));
   const parent = parentOf(host)!;
   server.threads.get(parent.threadId)!.thread.deletedAt = STAMP;
-  await host.nesting.reconcile([{ id: parent.taskId, phase: "working" } as Task]);
+  await host.nesting.reconcile([
+    { id: parent.taskId, phase: "working" } as Task,
+  ]);
   assert.equal(parentOf(host)?.threadId, parent.threadId);
-  await assert.rejects(() => host.createAgent(spec("review-after-delete", "Review", "reviewer")), /parent thread is deleted/);
+  await assert.rejects(
+    () => host.createAgent(spec("review-after-delete", "Review", "reviewer")),
+    /parent thread is deleted/,
+  );
   assert.equal(commandsOf(server, "orchestration.launchThread").length, 1);
 });
 
@@ -806,7 +871,10 @@ test("a parent thread T3 will not run refuses the role instead of launching a to
         error.reason,
       ),
   );
-  assert.ok(Date.now() - started >= 300, "the re-entry wait is bounded, not skipped");
+  assert.ok(
+    Date.now() - started >= 300,
+    "the re-entry wait is bounded, not skipped",
+  );
   assert.equal(commandOf(server, "delegated_task.request"), undefined);
   assert.equal(
     commandsOf(server, "orchestration.launchThread").length,
@@ -1023,18 +1091,49 @@ test("a nested role whose provider has not settled its options waits before any 
   assert.equal(commandOf(server, "delegated_task.request"), undefined);
 });
 
-
 test("a nested role refuses a missing model on a settled provider before creating a parent", async (t) => {
   const { host, server, spec } = await fixture(t);
-  server.controls.providers = [nucleusProvider, {
-    instanceId: "codex", displayName: "Codex", driver: "codex", enabled: true, status: "ready",
-    models: [{ slug: "other", name: "Other", capabilities: { optionDescriptors: [
-      { id: "reasoningEffort", label: "Reasoning", type: "select", options: [{ id: "high", label: "High" }] },
-    ] } }],
-  }];
-  await assert.rejects(() => host.createAgent({ ...spec("worker-create", "Work"),
-    profile: { ...profile, provider: "codex", model: "missing", thinkingOptionId: "high" },
-  }), (error: unknown) => error instanceof ProvenPreSendRefusalError && /does not report model missing/.test(error.message));
+  server.controls.providers = [
+    nucleusProvider,
+    {
+      instanceId: "codex",
+      displayName: "Codex",
+      driver: "codex",
+      enabled: true,
+      status: "ready",
+      models: [
+        {
+          slug: "other",
+          name: "Other",
+          capabilities: {
+            optionDescriptors: [
+              {
+                id: "reasoningEffort",
+                label: "Reasoning",
+                type: "select",
+                options: [{ id: "high", label: "High" }],
+              },
+            ],
+          },
+        },
+      ],
+    },
+  ];
+  await assert.rejects(
+    () =>
+      host.createAgent({
+        ...spec("worker-create", "Work"),
+        profile: {
+          ...profile,
+          provider: "codex",
+          model: "missing",
+          thinkingOptionId: "high",
+        },
+      }),
+    (error: unknown) =>
+      error instanceof ProvenPreSendRefusalError &&
+      /does not report model missing/.test(error.message),
+  );
   assert.equal(parentOf(host), undefined);
   assert.equal(commandOf(server, "delegated_task.request"), undefined);
 });
@@ -1044,7 +1143,9 @@ test("decisionParent routes an archived parent to the Inbox and keeps a disconne
   const taskId = "synthetic-task";
   const fakeStore = {
     taskOrNull: (id: string) =>
-      id === taskId ? ({ id, hostId: host.hostId, removedAt: null } as Task) : null,
+      id === taskId
+        ? ({ id, hostId: host.hostId, removedAt: null } as Task)
+        : null,
   } as unknown as import("../core/store/store").Store;
   const decision = {
     id: "11111111-1111-4111-8111-111111111199",
@@ -1113,11 +1214,15 @@ const reopenHost = (
 
 test("#1458 a transient read after the parent binding is stored resumes the same unsent launch on replay", async (t) => {
   const { host, server, spec, acp } = await fixture(t);
+  // The narrow read and the complete inventory are both unanswerable (nucleus#1460:
+  // a working inventory now settles a single narrow failure in the same create).
   server.controls.threadProjectionErrors = 1;
+  churnInventory(server);
   await assert.rejects(
     () => host.createAgent(spec("worker-create", "Do the work")),
-    (error: unknown) => error instanceof T3TransientReadError,
+    (error: unknown) => error instanceof HostReadRefusalError,
   );
+  server.controls.beforeArchiveRead = () => {};
   const bound = parentOf(host)!;
   assert.ok(bound, "the binding is durable before the launch is sent");
   assert.equal(
@@ -1131,7 +1236,11 @@ test("#1458 a transient read after the parent binding is stored resumes the same
   const parent = parentOf(host)!;
   assert.equal(parent.threadId, bound.threadId, "the same parent identity");
   assert.equal(parent.sessionId, bound.sessionId, "the same ACP binding");
-  assert.equal(acp.bindings.length, 1, "the binding is reused, not minted again");
+  assert.equal(
+    acp.bindings.length,
+    1,
+    "the binding is reused, not minted again",
+  );
   assert.equal(commandsOf(server, "orchestration.launchThread").length, 1);
   assert.equal(commandsOf(server, "delegated_task.request").length, 1);
   assert.equal(
@@ -1142,11 +1251,14 @@ test("#1458 a transient read after the parent binding is stored resumes the same
 
 test("#1458 a rolled host resumes the prepared launch from durable state without a second parent", async (t) => {
   const { host, server, spec, acp, root } = await fixture(t);
+  // Narrow read and complete inventory both unanswerable (nucleus#1460).
   server.controls.threadProjectionErrors = 1;
+  churnInventory(server);
   await assert.rejects(
     () => host.createAgent(spec("worker-create", "Do the work")),
-    (error: unknown) => error instanceof T3TransientReadError,
+    (error: unknown) => error instanceof HostReadRefusalError,
   );
+  server.controls.beforeArchiveRead = () => {};
   const bound = parentOf(host)!;
   host.close();
 
@@ -1161,7 +1273,9 @@ test("#1458 a rolled host resumes the prepared launch from durable state without
 test("#1458 a lost launch reply is settled by the parent T3 shows, with one parent and one child", async (t) => {
   const { host, server, spec } = await fixture(t);
   server.controls.disconnectAfterLaunch = true;
-  await assert.rejects(() => host.createAgent(spec("worker-create", "Do the work")));
+  await assert.rejects(() =>
+    host.createAgent(spec("worker-create", "Do the work")),
+  );
   const bound = parentOf(host)!;
   assert.ok(server.threads.has(bound.threadId), "the launch took effect");
   assert.equal(commandsOf(server, "orchestration.launchThread").length, 1);
@@ -1181,7 +1295,11 @@ test("#1458 a lost launch reply is settled by the parent T3 shows, with one pare
 test("#1458 a prepared binding whose parent T3 shows archived refuses without a launch or a child", async (t) => {
   const { host, server, spec } = await fixture(t);
   server.controls.threadProjectionErrors = 1;
-  await assert.rejects(() => host.createAgent(spec("worker-create", "Do the work")));
+  churnInventory(server);
+  await assert.rejects(() =>
+    host.createAgent(spec("worker-create", "Do the work")),
+  );
+  server.controls.beforeArchiveRead = () => {};
   const bound = parentOf(host)!;
   const twin = threadProjection(bound.threadId, bound.directory);
   Object.assign(twin.thread, {
@@ -1204,7 +1322,11 @@ test("#1458 a prepared binding whose parent T3 shows archived refuses without a 
 test("#1458 a prepared binding whose parent id is held by another checkout refuses without adopting it", async (t) => {
   const { host, server, spec } = await fixture(t);
   server.controls.threadProjectionErrors = 1;
-  await assert.rejects(() => host.createAgent(spec("worker-create", "Do the work")));
+  churnInventory(server);
+  await assert.rejects(() =>
+    host.createAgent(spec("worker-create", "Do the work")),
+  );
+  server.controls.beforeArchiveRead = () => {};
   const bound = parentOf(host)!;
   const twin = threadProjection(bound.threadId, "/synthetic/other-checkout");
   Object.assign(twin.thread, {
@@ -1225,7 +1347,9 @@ test("#1458 a prepared binding whose parent id is held by another checkout refus
 test("#1458 an unknown launch whose parent T3 does not show is never resent as a replacement", async (t) => {
   const { host, server, spec } = await fixture(t);
   server.controls.disconnectMutation = true;
-  await assert.rejects(() => host.createAgent(spec("worker-create", "Do the work")));
+  await assert.rejects(() =>
+    host.createAgent(spec("worker-create", "Do the work")),
+  );
   server.controls.disconnectMutation = false;
   const bound = parentOf(host)!;
   assert.equal(commandsOf(server, "orchestration.launchThread").length, 1);
@@ -1242,4 +1366,175 @@ test("#1458 an unknown launch whose parent T3 does not show is never resent as a
     "a possibly sent launch is not resent under the same identity",
   );
   assert.equal(commandOf(server, "delegated_task.request"), undefined);
+});
+
+// nucleus#1460: the installed nightly answers an absent parent with the generic
+// incomplete projection error, which grants no absence. The complete inventory decides.
+const GENERIC_ABSENT = "OrchestrationV2GetThreadProjectionError" as const;
+/** Makes every complete inventory read fail to pair (the inventory is unavailable). */
+const churnInventory = (server: Awaited<ReturnType<typeof t3Fake>>) => {
+  server.controls.beforeArchiveRead = () => {
+    server.controls.snapshotSequence++;
+  };
+};
+/** A binding stored before its launch was sent, with the inventory unavailable for that dispatch. */
+async function preparedBinding(t: TestContext) {
+  const f = await fixture(t);
+  f.server.controls.absentThreadError = GENERIC_ABSENT;
+  churnInventory(f.server);
+  await assert.rejects(
+    () => f.host.createAgent(f.spec("worker-create", "Do the work")),
+    (error: unknown) => error instanceof HostReadRefusalError,
+  );
+  f.server.controls.beforeArchiveRead = () => {};
+  const bound = parentOf(f.host)!;
+  assert.ok(bound, "the binding is durable before the launch");
+  assert.equal(commandOf(f.server, "orchestration.launchThread"), undefined);
+  return { ...f, bound };
+}
+
+test("#1460 a prepared binding behind the generic absent read is resumed once by the ordinary worker create", async (t) => {
+  const { host, server, spec, bound, acp } = await preparedBinding(t);
+  await host.createAgent(spec("worker-create", "Do the work"));
+  assert.equal(
+    parentOf(host)!.threadId,
+    bound.threadId,
+    "the same parent identity",
+  );
+  assert.equal(
+    parentOf(host)!.sessionId,
+    bound.sessionId,
+    "the same ACP binding",
+  );
+  assert.equal(
+    acp.bindings.length,
+    1,
+    "the binding is reused, not minted again",
+  );
+  assert.equal(commandsOf(server, "orchestration.launchThread").length, 1);
+  assert.equal(commandsOf(server, "delegated_task.request").length, 1);
+
+  await host.createAgent(spec("worker-create", "Do the work"));
+  assert.equal(
+    commandsOf(server, "orchestration.launchThread").length,
+    1,
+    "recovered once",
+  );
+  assert.equal(commandsOf(server, "delegated_task.request").length, 1);
+});
+
+test("#1460 a generic absent read with a complete inventory launches the parent in the same create", async (t) => {
+  const { host, server, spec, acp } = await fixture(t);
+  server.controls.absentThreadError = GENERIC_ABSENT;
+  await host.createAgent(spec("worker-create", "Do the work"));
+  assert.equal(commandsOf(server, "orchestration.launchThread").length, 1);
+  assert.equal(commandsOf(server, "delegated_task.request").length, 1);
+  assert.equal(acp.bindings.length, 1);
+});
+
+test("#1460 owner restart is not blocked by the generic read: the precheck restores nothing and the prepared parent is launched once", async (t) => {
+  const { host, server, spec, workspace, bound } = await preparedBinding(t);
+  const task = {
+    id: bound.taskId,
+    workspaceId: workspace.id,
+    directory: workspace.directory,
+    phase: "working",
+    removedAt: null,
+    resolution: { mergedCommit: null },
+  } as Task;
+  await host.nesting.restoreForRestart(task, "owner-op-1460", () => true);
+  assert.equal(
+    commandOf(server, "thread.unarchive"),
+    undefined,
+    "nothing is unarchived",
+  );
+  assert.equal(
+    await host.nesting.observeRestartRestore(task, "owner-op-1460"),
+    "not_found",
+  );
+  assert.equal(
+    commandOf(server, "orchestration.launchThread"),
+    undefined,
+    "the precheck sends nothing",
+  );
+
+  await host.createAgent(spec("worker-create", "Do the work"));
+  assert.equal(parentOf(host)!.threadId, bound.threadId);
+  assert.equal(commandsOf(server, "orchestration.launchThread").length, 1);
+  assert.equal(commandsOf(server, "delegated_task.request").length, 1);
+});
+
+test("#1460 an unavailable complete inventory keeps a prepared parent waiting for the worker and the restart", async (t) => {
+  const { host, server, spec, workspace, bound } = await preparedBinding(t);
+  churnInventory(server);
+  await assert.rejects(
+    () => host.createAgent(spec("worker-create", "Do the work")),
+    (error: unknown) => error instanceof HostReadRefusalError,
+  );
+  const task = {
+    id: bound.taskId,
+    workspaceId: workspace.id,
+    directory: workspace.directory,
+    phase: "working",
+    removedAt: null,
+    resolution: { mergedCommit: null },
+  } as Task;
+  await assert.rejects(
+    () => host.nesting.restoreForRestart(task, "owner-op-1460", () => true),
+    (error: unknown) => error instanceof HostReadRefusalError,
+  );
+  assert.equal(commandOf(server, "orchestration.launchThread"), undefined);
+  assert.equal(commandOf(server, "thread.unarchive"), undefined);
+  assert.equal(
+    parentOf(host)!.archivedAt,
+    undefined,
+    "a wait marks nothing finished",
+  );
+});
+
+test("#1460 a live parent whose projection stays unreadable waits without a second parent or child", async (t) => {
+  const { host, server, spec } = await fixture(t);
+  await host.createAgent(spec("worker-create", "Do the work"));
+  const parent = parentOf(host)!;
+  server.controls.threadProjectionErrors = 99;
+  await assert.rejects(
+    () => host.createAgent(spec("review-run", "Review", "reviewer")),
+    (error: unknown) => error instanceof HostReadRefusalError,
+  );
+  server.controls.threadProjectionErrors = 0;
+  assert.equal(parentOf(host)!.threadId, parent.threadId);
+  assert.equal(commandsOf(server, "orchestration.launchThread").length, 1);
+  assert.equal(commandsOf(server, "delegated_task.request").length, 1);
+});
+
+test("#1460 a reserved launch is never resent behind the generic absent read", async (t) => {
+  const { host, server, spec } = await fixture(t);
+  server.controls.absentThreadError = GENERIC_ABSENT;
+  server.controls.disconnectMutation = true;
+  await assert.rejects(() =>
+    host.createAgent(spec("worker-create", "Do the work")),
+  );
+  server.controls.disconnectMutation = false;
+  const bound = parentOf(host)!;
+  assert.equal(commandsOf(server, "orchestration.launchThread").length, 1);
+  assert.equal(server.threads.has(bound.threadId), false);
+
+  // A sent parent keeps its transient wait: the generic read cannot prove it deleted,
+  // and the inventory is not consulted for it (nucleus#1451 fence).
+  await host.connect();
+  await assert.rejects(
+    () => host.createAgent(spec("worker-create", "Do the work")),
+    (error: unknown) => error instanceof HostReadRefusalError,
+  );
+  assert.equal(
+    commandsOf(server, "orchestration.launchThread").length,
+    1,
+    "never resent",
+  );
+  assert.equal(commandOf(server, "delegated_task.request"), undefined);
+  assert.equal(
+    parentOf(host)!.archivedAt,
+    undefined,
+    "a wait marks nothing finished",
+  );
 });
