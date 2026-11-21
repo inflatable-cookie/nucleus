@@ -2,6 +2,7 @@ import { parseAgentId } from "../shared/agent-identity";
 import {
   HOST_PLUGIN_RELOAD_COMMANDS,
   hostKindOf,
+  type HostKind,
   type IdentitySource,
 } from "../shared/host-kind";
 import { hostConnected } from "../core/host";
@@ -177,6 +178,19 @@ export function wireEngineHosts(
     runtime.hostRegistry.onlineIds().includes(id);
 }
 
+type PluginPresenceFaultRecord = {
+  at?: string;
+  message?: string;
+  hostIds?: string[];
+  hostKinds?: HostKind[];
+};
+
+type OnlinePluginHost = {
+  id: string;
+  kind: HostKind;
+  command: string;
+};
+
 /**
  * Paseo session claim, plugin-presence watch and idle-shutdown decision. T3
  * keeps its own connection owner; this class is the primary-claim and
@@ -185,11 +199,11 @@ export function wireEngineHosts(
 export class HostConnections {
   private pluginPresenceTimer: NodeJS.Timeout | null = null;
   private pluginPresenceEpoch = 0;
+  private presenceClosed = false;
 
   constructor(private readonly owner: HostConnectionOwner) {}
 
-  /** The connection alone gates lifecycle work. */
-  connected(): boolean {
+  private retirePrimaryIfDisconnected(): boolean {
     if (
       !hostConnected(this.owner.adapter) ||
       (this.owner.hostSession !== null &&
@@ -217,10 +231,19 @@ export class HostConnections {
     );
   }
 
+  /** The connection alone gates lifecycle work. */
+  connected(): boolean {
+    const hadSession = this.owner.hostSession !== null;
+    const ok = this.retirePrimaryIfDisconnected();
+    if (!ok && hadSession) this.reconcilePluginPresence();
+    return ok;
+  }
+
   anyHostConnected(): boolean {
-    this.connected();
+    this.retirePrimaryIfDisconnected();
     this.owner.t3Host?.retireDisconnected();
     this.owner.bbHost.retireDisconnected();
+    this.reconcilePluginPresence();
     return this.owner.hostRegistry.onlineIds().length > 0;
   }
 
@@ -254,11 +277,17 @@ export class HostConnections {
   hostPresenceClosed(): void {
     this.owner.idleShutdownLatched = false;
     this.owner.hostRegistry.restartGrace();
-    if (this.anyHostConnected()) this.armPluginPresenceWatch();
-    else this.clearPluginPresenceWatch();
+    this.retirePrimaryIfDisconnected();
+    this.owner.t3Host?.retireDisconnected();
+    this.owner.bbHost.retireDisconnected();
+    const pluginHosts = this.onlinePluginHosts();
+    this.presenceClosed = pluginHosts.length > 0;
+    this.reconcilePluginPresence();
+    if (pluginHosts.length > 0) this.armPluginPresenceWatch();
   }
 
   hostPresenceOpened(): void {
+    this.presenceClosed = false;
     this.pluginPresenceEpoch++;
     this.clearPluginPresenceWatch();
     this.clearPluginPresenceFault();
@@ -282,12 +311,75 @@ export class HostConnections {
     this.pluginPresenceTimer = null;
   }
 
+  /**
+   * Clear any recorded fault whose owning plugin host has left, and disarm
+   * pending watches when no plugin-owning host remains online.
+   */
+  reconcilePluginPresence(): void {
+    const pluginHosts = this.onlinePluginHosts();
+    if (pluginHosts.length === 0) {
+      this.presenceClosed = false;
+      this.pluginPresenceEpoch++;
+      this.clearPluginPresenceWatch();
+    }
+    const fault = this.owner.store.getMeta<PluginPresenceFaultRecord>(
+      "pluginPresenceFault",
+    );
+    if (!fault) return;
+    if (this.isPluginPresenceFaultActive(fault, pluginHosts)) return;
+    this.pluginPresenceEpoch++;
+    if (!this.owner.closing) this.clearPluginPresenceFault();
+    if (
+      this.presenceClosed &&
+      pluginHosts.length > 0 &&
+      !this.pluginPresenceTimer &&
+      !this.owner.closing
+    ) {
+      this.armPluginPresenceWatch();
+    }
+  }
+
   pluginPresenceFaultMessage(): string {
     if (!this.anyHostConnected()) return "";
-    return (
-      this.owner.store.getMeta<{ message?: string }>("pluginPresenceFault")
-        ?.message ?? ""
+    const fault = this.owner.store.getMeta<PluginPresenceFaultRecord>(
+      "pluginPresenceFault",
     );
+    if (!fault) return "";
+    if (!this.isPluginPresenceFaultActive(fault, this.onlinePluginHosts()))
+      return "";
+    return fault.message ?? "";
+  }
+
+  private onlinePluginHosts(): OnlinePluginHost[] {
+    return this.owner.hostRegistry.onlineIds().flatMap((id) => {
+      const kind = hostKindOf(id);
+      const command = HOST_PLUGIN_RELOAD_COMMANDS[kind];
+      return command ? [{ id, kind, command }] : [];
+    });
+  }
+
+  private isPluginPresenceFaultActive(
+    fault: PluginPresenceFaultRecord,
+    pluginHosts: readonly OnlinePluginHost[],
+  ): boolean {
+    if (pluginHosts.length === 0) return false;
+    if (Array.isArray(fault.hostIds)) {
+      return fault.hostIds.some((id) =>
+        pluginHosts.some((host) => host.id === id),
+      );
+    }
+    if (Array.isArray(fault.hostKinds)) {
+      return fault.hostKinds.some((kind) =>
+        pluginHosts.some((host) => host.kind === kind),
+      );
+    }
+    if (typeof fault.message === "string") {
+      if (fault.message.includes("while BB is still connected"))
+        return pluginHosts.some((host) => host.kind === "bb");
+      if (fault.message.includes("while Paseo is still connected"))
+        return pluginHosts.some((host) => host.kind === "paseo");
+    }
+    return true;
   }
 
   private clearPluginPresenceFault(): void {
@@ -300,40 +392,43 @@ export class HostConnections {
     if (epoch !== this.pluginPresenceEpoch) return;
     if (this.owner.closing) return;
     if (!this.anyHostConnected()) return;
+    const pluginHosts = this.onlinePluginHosts();
+    if (pluginHosts.length === 0) return;
     if (this.owner.store.getMeta("pluginPresenceFault")) return;
-    // The hint names the reload command of the plugin that is missing. With BB beside
-    // Paseo either plugin can be the absent one, and Paseo's command cannot restore a
-    // BB plugin (Spec 062, "Presence"). Paseo's own wording is kept when it is the
-    // connected host, so nothing an operator reads today changes.
-    const kinds = [
-      ...new Set(
-        this.owner.hostRegistry.onlineIds().map((id) => hostKindOf(id)),
-      ),
-    ];
-    const bbOnly = kinds.length > 0 && kinds.every((kind) => kind === "bb");
+    // Only hosts that own a Nucleus plugin (Paseo and BB) can raise or keep a
+    // plugin-presence fault; a host without a plugin (such as T3Code) never
+    // falls back to Paseo wording or reload guidance. With BB beside Paseo either
+    // plugin can be absent, while Paseo's own wording is kept when Paseo is online.
+    const kinds = [...new Set(pluginHosts.map((host) => host.kind))];
+    const bbOnly = kinds.length === 1 && kinds[0] === "bb";
+    const hostKinds: HostKind[] = bbOnly ? ["bb"] : ["paseo"];
+    const hostIds = pluginHosts
+      .filter((host) => hostKinds.includes(host.kind))
+      .map((host) => host.id);
     const commands = bbOnly
       ? [HOST_PLUGIN_RELOAD_COMMANDS.bb!]
-      : kinds
-          .map((kind) => HOST_PLUGIN_RELOAD_COMMANDS[kind])
-          .filter((command): command is string => Boolean(command));
+      : [...new Set(pluginHosts.map((host) => host.command))];
     const message = bbOnly
       ? "The Nucleus plugin is not present while BB is still connected. The recovery thread cannot act while the plugin is down."
       : "The Nucleus plugin is not present while Paseo is still connected. The recovery thread cannot act while the plugin is down.";
     const at = new Date().toISOString();
-    this.owner.store.setMeta("pluginPresenceFault", { at, message });
+    this.owner.store.setMeta("pluginPresenceFault", {
+      at,
+      message,
+      hostIds,
+      hostKinds,
+    } satisfies PluginPresenceFaultRecord);
     this.owner.store.advanceRevision();
     const project = this.owner.store.queueProject();
-    if (!project || !this.owner.adapter.notify) return;
+    if (!project) return;
     try {
       const { thread } =
         await this.owner.engine.resolution.responsibleThread(project);
       if (!thread || epoch !== this.pluginPresenceEpoch || this.owner.closing)
         return;
-      const reload = commands.length
-        ? commands
-            .map((command) => `Reload the plugin with: ${command}`)
-            .join("\n")
-        : `Reload the plugin with: ${HOST_PLUGIN_RELOAD_COMMANDS.paseo}`;
+      const reload = commands
+        .map((command) => `Reload the plugin with: ${command}`)
+        .join("\n");
       await this.owner.engine.withHost(thread.hostId, () =>
         this.owner.engine.host.sendMessage(thread.agentId, {
           messageId: `ns-plugin-presence-${at}`,

@@ -1,7 +1,7 @@
 import { formatAgentId } from '../shared/agent-identity';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { QueueRuntime } from '../service/runtime-owner';
@@ -98,4 +98,91 @@ test('losing plugin presence while a host is connected raises a board fault and 
     await new Promise(resolve => setTimeout(resolve, 250));
     assert.equal(notices.length, 1, 'a presence that returns inside the grace is silent');
   } finally { await runtime.drain(); }
+});
+
+test('T3-only runtime clears stale Paseo plugin faults when Paseo leaves and ignores presence closes while Paseo is offline', { timeout: 5_000 }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'plugin-t3-only-'));
+  const client = { isConnected: false };
+  const notices: { agentId: string; text: string }[] = [];
+  let resolveNotified!: () => void;
+  const notified = new Promise<void>(resolve => { resolveNotified = resolve; });
+  const raw = { client, isConnected: () => client.isConnected, hostId: 'host', socketPath: join(dir, 'callback.sock'), helperPath: join(dir, 'report.mjs'),
+    connect: async () => { client.isConnected = true; }, close: async () => { client.isConnected = false; },
+    catalog: async () => ({ providers: [] }),
+    listLiveAgents: async () => [{ id: 'planner-1', title: 'Planner', workspaceId: 'ws', directory: '/nucleus' }],
+    observe: async (id: string) => ({ id, workspaceId: 'ws', status: 'idle', active: false, permissions: false, error: '' }),
+    notify: async (agentId: string, _id: string, text: string) => { notices.push({ agentId, text }); resolveNotified(); },
+  } as unknown as Adapter;
+  const t3Adapter = {
+    isConnected: () => true,
+    hostId: 't3code:trial',
+    observe: async (id: string) => ({ id, workspaceId: 't3-ws', status: 'idle', active: false, permissions: false, error: '' }),
+    notify: async (agentId: string, _id: string, text: string) => { notices.push({ agentId, text }); },
+  } as unknown as Adapter;
+  const runtime = new QueueRuntime({ dataDir: dir, adapterFactory: () => raw, timers: false, pluginLostGraceMs: 20 });
+  try {
+    await runtime.started;
+    await runtime.bootstrap;
+    runtime.hostRegistry.connect('t3code:trial', 't3code-endpoint', { adapter: t3Adapter, admission: runtime.admission });
+    runtime.store.upsertProject({ key: 'nucleus', name: 'Nucleus', repositories: [{ origin: NUCLEUS_REPOSITORY_ORIGIN, path: '/nucleus' }] });
+    runtime.store.setProjectPlanner({ key: 'nucleus', agentId: formatAgentId('host', 'planner-1'), setBy: 'test' });
+
+    // Paseo is still online here, so losing bridge presence raises Paseo's fault.
+    runtime.hostPresenceClosed();
+    await notified;
+    assert.match(runtime.snapshot().error, /plugin is not present while Paseo is still connected/);
+    assert.match(runtime.health().pluginPresenceError ?? '', /while Paseo is still connected/);
+    assert.equal(notices.length, 1);
+
+    // Paseo goes offline while T3 stays connected: the stale Paseo fault must clear.
+    client.isConnected = false;
+    assert.equal(runtime.health().connected, true);
+    assert.equal(runtime.health().pluginPresenceError, undefined);
+    assert.equal(runtime.snapshot().error, '');
+    assert.equal(runtime.store.getMeta('pluginPresenceFault'), undefined);
+
+    // A subsequent presence close with only T3 online must neither raise nor message.
+    runtime.hostPresenceClosed();
+    await new Promise(resolve => setTimeout(resolve, 100));
+    assert.equal(runtime.health().pluginPresenceError, undefined);
+    assert.equal(runtime.snapshot().error, '');
+    assert.equal(notices.length, 1);
+  } finally {
+    await runtime.drain();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('Paseo disconnecting inside the plugin-lost grace while T3 stays online cancels the fault', { timeout: 5_000 }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'plugin-grace-t3-'));
+  const client = { isConnected: false };
+  const notices: { agentId: string; text: string }[] = [];
+  const raw = { client, isConnected: () => client.isConnected, hostId: 'host', socketPath: join(dir, 'callback.sock'), helperPath: join(dir, 'report.mjs'),
+    connect: async () => { client.isConnected = true; }, close: async () => { client.isConnected = false; },
+    catalog: async () => ({ providers: [] }),
+    listLiveAgents: async () => [{ id: 'planner-1', title: 'Planner', workspaceId: 'ws', directory: '/nucleus' }],
+    observe: async (id: string) => ({ id, workspaceId: 'ws', status: 'idle', active: false, permissions: false, error: '' }),
+    notify: async (agentId: string, _id: string, text: string) => { notices.push({ agentId, text }); },
+  } as unknown as Adapter;
+  const t3Adapter = { isConnected: () => true, hostId: 't3code:trial' } as unknown as Adapter;
+  const runtime = new QueueRuntime({ dataDir: dir, adapterFactory: () => raw, timers: false, pluginLostGraceMs: 40 });
+  try {
+    await runtime.started;
+    await runtime.bootstrap;
+    runtime.hostRegistry.connect('t3code:trial', 't3code-endpoint', { adapter: t3Adapter, admission: runtime.admission });
+    runtime.store.upsertProject({ key: 'nucleus', name: 'Nucleus', repositories: [{ origin: NUCLEUS_REPOSITORY_ORIGIN, path: '/nucleus' }] });
+    runtime.store.setProjectPlanner({ key: 'nucleus', agentId: formatAgentId('host', 'planner-1'), setBy: 'test' });
+
+    runtime.hostPresenceClosed();
+    client.isConnected = false;
+    assert.equal(runtime.health().connected, true);
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    assert.equal(runtime.health().pluginPresenceError, undefined);
+    assert.equal(runtime.snapshot().error, '');
+    assert.equal(notices.length, 0);
+  } finally {
+    await runtime.drain();
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

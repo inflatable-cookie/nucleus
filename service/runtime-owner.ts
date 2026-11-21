@@ -1227,10 +1227,12 @@ export class QueueRuntime {
   /** A declaration or probe left the identity unproven: the host is offline for the named reason. */
   bbHostRejected(input: BbHostRejectedInput) {
     this.bbHost.rejected(input);
+    this.hosts.reconcilePluginPresence();
   }
   /** The executor connection closed: this identity's claim retires unless a reload replaced it. */
   bbHostReleased(input: BbHostReleasedInput) {
     this.bbHost.released(input);
+    this.hosts.reconcilePluginPresence();
   }
   /** One liveness heartbeat from the registered executor's own connection. */
   bbHostHeartbeat(input: { hostId: string; at: string }) {

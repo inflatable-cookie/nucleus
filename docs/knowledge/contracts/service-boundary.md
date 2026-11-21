@@ -1561,15 +1561,19 @@ open.
   refuses a later launch. The drain is the ordinary durable safe point: it
   releases the socket, the service identity and the store lease, and a later
   host starts a fresh daemon through the bridge.
-- **A lost plugin while a host is still connected is a visible fault.** Closing
-  the last granted `service.nucleus-bridge-presence` claim while a host remains
-  in the registry arms a 45 s grace. If presence does not return, the board
+- **A lost plugin while a host that owns a plugin is still connected is a visible fault.** Closing
+  the last granted `service.nucleus-bridge-presence` claim while a plugin-owning
+  host (`paseo` or `bb`) remains online in the registry arms a 45 s grace. Hosts
+  with no Nucleus plugin (such as `t3code`) never arm the watch or keep a fault.
+  If presence does not return while a plugin-owning host stays online, the board
   error names that the Nucleus plugin is not present while its host is still
   connected and that the recovery thread cannot act while the plugin is down,
   and the Nucleus planner is messaged once with the reload command of the
   connected host's own plugin: `paseo plugin reload nucleus`, or
-  `bb plugin reload nucleus` when only BB is connected (Spec 062).
-  Granting the claim again (the same single-claim path) clears the fault; a
+  `bb plugin reload nucleus` when BB is the only connected plugin-owning host
+  (Spec 062).
+  Granting the claim again (the same single-claim path) clears the fault, and a
+  stale host-owned fault clears when its owning host leaves; a
   presence that returns inside the grace is silent. The web board is the
   operator-visible surface (the plugin board is gone with the plugin). A
   CLI-started service never granted presence, so this path does not fire.
