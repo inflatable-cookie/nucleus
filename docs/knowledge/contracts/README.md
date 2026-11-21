@@ -13,5 +13,6 @@ Durable rules Nucleus runs on. Detailed design for each capability is in
 | [repository-layout.md](repository-layout.md) | Where code and documents live in this repository |
 | [agent-local-paths.md](agent-local-paths.md) | Local path registry for agents |
 | [release.md](release.md) | How the plugin is rolled onto the live checkout |
+| [milestone-qa.md](milestone-qa.md) | Milestone QA as a report-only task, and the remaining managed-run history |
 | [writing-style.md](writing-style.md) | Internal writing style |
 | [host-run-scheduling-010.md](host-run-scheduling-010.md) | Contract 010 host-run protocol for Effigy v0.14 clients (imported from Nucleus; until the R2 cutover) |

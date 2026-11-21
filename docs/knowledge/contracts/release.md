@@ -160,7 +160,9 @@ package or connects to the live daemon or data home. Without the argument,
 Retain preparation and proof logs in scratch and link shareable receipts, revision and
 SHA-256 in the PR. After merge, prepare and prove the final main commit again:
 PR artifacts identify the worker commit and are not the final release candidate.
-Milestone QA remains `project.qa.run` on main.
+Milestone QA at the final main commit is an ordinary report-only task pinned
+to that commit ([milestone QA](milestone-qa.md)); the managed launch that used
+to run it is retired.
 
 Publishing is a separate operator action. After the full-history audit is
 resolved and Tom makes the repository public, he (or the planner on his explicit

@@ -110,6 +110,13 @@ never get a second gate.
 
 ## Milestone QA runs (task 104)
 
+Status (nucleus#1475): the managed launch and its schedule are retired. Milestone
+QA is an ordinary report-only task pinned to one commit; the
+[milestone QA contract](../contracts/milestone-qa.md) owns that recipe. The
+sections below describe the run machinery that still settles and reports runs
+admitted before the cutover, and that a later change removes. `project.qa.run`
+and a new or replaced `qa.schedule` now refuse with the replacement named.
+
 Full QA no longer runs per task. The operator or a planner asks Nucleus to run a
 repository's full QA on current `main` at a milestone (`project.qa.run`) and
 sees the result in the QA runs tab, whose run detail is the one QA detail; the
@@ -131,7 +138,10 @@ setting `qa.schedule` through `repository.set`:
 
 `afterMerges` is required (1–1000); `maxIntervalHours` defaults to 24 (1–24).
 Omitting `schedule` from the full replacement QA setting, or setting it to
-`null`, disables scheduling. Repository-set patch semantics still preserve an
+`null`, disables scheduling. Since nucleus#1475 a patch may only clear a
+schedule; enabling or replacing one is refused, and a leftover schedule records
+one notice naming the report-only recipe instead of admitting a run.
+Repository-set patch semantics still preserve an
 omitted `qa`; changing another setting never changes stages or enables
 QA. Use the actual registered origin: consumer-b's policy opt-in is
 `consumer-b/consumer-b-v2`, not its stale inflatable-cookie alias. This feature

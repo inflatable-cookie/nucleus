@@ -11,16 +11,19 @@
  * controls host load, so a check waits rather than fails, and it is never
  * stopped, skipped or repeated.
  */
-export const VALIDATION_RUN_RULE = "Validate only through Effigy selectors, never raw npx, cargo, bun or vitest: they bypass Effigy's host-wide admission. Run each covering check once, in the foreground, to completion, however long it takes; never stop, skip or repeat a passing check. Ending the turn while one runs is a missing callback. \"Waiting for QA capacity, position N\" is a queue wait, not a hang: leave it running and never kill or retry it. Never kill processes by pattern (pkill -f, killall, pgrep | xargs kill); kill only PIDs you started. Record a background command's exit code (cmd > log 2>&1; echo \"exit=$?\" >> log) and read it before reporting. For tests, use the repository's test-runner timeout and forced-exit options. Only a check you would add beyond the brief may be reported instead of run, and only when it would take more than a few minutes.";
+export const VALIDATION_RUN_RULE =
+  'Validate only through Effigy selectors, never raw npx, cargo, bun or vitest: they bypass Effigy\'s host-wide admission. Run each covering check once, in the foreground, to completion, however long it takes; never stop, skip or repeat a passing check. Ending the turn while one runs is a missing callback. "Waiting for QA capacity, position N" is a queue wait, not a hang: leave it running and never kill or retry it. Never kill processes by pattern (pkill -f, killall, pgrep | xargs kill); kill only PIDs you started. Record a background command\'s exit code (cmd > log 2>&1; echo "exit=$?" >> log) and read it before reporting. For tests, use the repository\'s test-runner timeout and forced-exit options. Only a check you would add beyond the brief may be reported instead of run, and only when it would take more than a few minutes.';
 
-export const VALIDATION_RULE_HEADING = "Task validation rule (the repository's AGENTS.md Validate section is the authority)";
+export const VALIDATION_RULE_HEADING =
+  "Task validation rule (the repository's AGENTS.md Validate section is the authority)";
 
 /**
  * The one validation authority. The per-repository validation policy is retired
  * (Tom, 2026-11-09, task 985): prompts carry this fixed line, and the repository
  * owns the rest in its AGENTS.md Validate section.
  */
-export const VALIDATION_AUTHORITY_RULE = "Validate per the repository's AGENTS.md Validate section: read it; it is the authority on which checks cover what changed. Full milestone QA runs separately on main via `project.qa.run`. Missing required proof is a blocker, not permission to report approval.";
+export const VALIDATION_AUTHORITY_RULE =
+  "Validate per the repository's AGENTS.md Validate section: read it; it is the authority on which checks cover what changed. Full milestone QA runs separately on main as an ordinary report-only task pinned to one commit, never through `project.qa.run`. Missing required proof is a blocker, not permission to report approval.";
 
 /**
  * The affected-test run attributed to the commit (nucleus#1164, Tom 2026-11-12).
@@ -41,6 +44,9 @@ export function affectedRunReviewerNote(command: string) {
   return `Affected tests: judge the author's \`${command}\` at this exact head from its reported command and file count. If that evidence is missing or names another head, run it once yourself. If the affected run fails, read the failure summary it prints rather than rerunning to recover failure names. For each failing affected file, use the repository's baseline route to rerun it alone on \`origin/main\`; if it fails there too, it was already broken, so list the file and failing test in your report rather than requiring a fix. Only failures unique to the branch block review. Anything wider than the affected set never is.`;
 }
 
-export function operatorValidationBlock(affectedTestsCommand?: string, reviewer = false) {
-  return `${VALIDATION_RULE_HEADING}\n${VALIDATION_AUTHORITY_RULE}\nRun checks through Effigy once to completion; do not kill other processes or repeat a passing check.\n${affectedTestsCommand ? `${reviewer ? affectedRunReviewerNote(affectedTestsCommand) : affectedRunRule(affectedTestsCommand)}\n` : ''}`;
+export function operatorValidationBlock(
+  affectedTestsCommand?: string,
+  reviewer = false,
+) {
+  return `${VALIDATION_RULE_HEADING}\n${VALIDATION_AUTHORITY_RULE}\nRun checks through Effigy once to completion; do not kill other processes or repeat a passing check.\n${affectedTestsCommand ? `${reviewer ? affectedRunReviewerNote(affectedTestsCommand) : affectedRunRule(affectedTestsCommand)}\n` : ""}`;
 }

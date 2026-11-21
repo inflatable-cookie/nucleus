@@ -2,6 +2,10 @@ import { projectPlannerRoutingIssue } from "../questions/planner-presence";
 import { parseAgentId } from "../../shared/agent-identity";
 import { qaFenceStatus, writeQaFence } from "../qa/qa-fence";
 import type { ProjectQaFenceInput } from "../../shared/contracts";
+import {
+  QA_MANAGED_LAUNCH_RETIRED,
+  QA_SCHEDULE_RETIRED,
+} from "../../shared/contracts";
 import { isAbsolute } from "node:path";
 import type { Store } from "../store/store";
 import type { Engine } from "../engine";
@@ -42,7 +46,8 @@ export interface RepositoriesContext {
     | "projectSettings"
     | "projectAgents"
   > & {
-    resolution: Pick<Engine["resolution"], "projectPlannerRegistered"> & Partial<Pick<Engine["resolution"], "responsibleThread">>;
+    resolution: Pick<Engine["resolution"], "projectPlannerRegistered"> &
+      Partial<Pick<Engine["resolution"], "responsibleThread">>;
   };
   requiredCheckTransport: CheckRequirementTransport | undefined;
   readonly started: Promise<void>;
@@ -150,6 +155,7 @@ export class RuntimeRepositories {
       identity = { origin, path: "" };
     }
     const { repository: _repository, ...patch } = input;
+    if (patch.qa?.schedule) throw new Error(QA_SCHEDULE_RETIRED);
     if (patch.checksPolicy === "required") {
       // The decision reads the row this patch would update, then proves nothing
       // newer landed while the capability was observed: no await runs inside a
@@ -242,7 +248,7 @@ export class RuntimeRepositories {
     return this.context.store.repositoryRekeyReceipt(input);
   }
 
-  async runProjectQa(input: {
+  async runProjectQa(_input: {
     repository: string;
     baseBranch?: string;
     requestId?: string;
@@ -250,9 +256,11 @@ export class RuntimeRepositories {
     wait?: boolean;
   }) {
     this.context.markStoreAccess();
-    return this.context
-      .projectQaRunner()
-      .run({ ...input, baseBranch: input.baseBranch ?? "main" });
+    // nucleus#1475: the managed launch entry point every caller reaches — CLI,
+    // board, RPC — refuses here, before a request identity or a checkout exists.
+    // No admitted run is touched: only new launches stop. The refusal names the
+    // report-only recipe and the history reads that still answer.
+    throw new Error(QA_MANAGED_LAUNCH_RETIRED);
   }
 
   async cancelProjectQa(input: { id: string; reason: string }) {
@@ -399,7 +407,19 @@ export class RuntimeRepositories {
     input:
       | { key: string }
       | { repository: { origin: string | null; path: string } | string },
-  ): Promise<(Project & { plannerRoutingIssue?: string; responsibleThread?: { thread: import("../questions/responsible-thread-cache").ResponsibleThread | null; cacheAgeMs: number; shortlist: import("../questions/responsible-thread-cache").ResponsibleCandidate[] } }) | null> {
+  ): Promise<
+    | (Project & {
+        plannerRoutingIssue?: string;
+        responsibleThread?: {
+          thread:
+            | import("../questions/responsible-thread-cache").ResponsibleThread
+            | null;
+          cacheAgeMs: number;
+          shortlist: import("../questions/responsible-thread-cache").ResponsibleCandidate[];
+        };
+      })
+    | null
+  > {
     this.context.markStoreAccess();
     const { store } = this.context;
     const project =
@@ -418,9 +438,21 @@ export class RuntimeRepositories {
       this.context.store,
       project,
     );
-    const resolved = await this.context.engine.resolution.responsibleThread?.(project);
-    return { ...project, ...(plannerRoutingIssue ? { plannerRoutingIssue } : {}),
-      ...(resolved ? { responsibleThread: { thread: resolved.thread, cacheAgeMs: Math.max(0, Date.now() - resolved.observedAt), shortlist: resolved.shortlist } } : {}) };
+    const resolved =
+      await this.context.engine.resolution.responsibleThread?.(project);
+    return {
+      ...project,
+      ...(plannerRoutingIssue ? { plannerRoutingIssue } : {}),
+      ...(resolved
+        ? {
+            responsibleThread: {
+              thread: resolved.thread,
+              cacheAgeMs: Math.max(0, Date.now() - resolved.observedAt),
+              shortlist: resolved.shortlist,
+            },
+          }
+        : {}),
+    };
   }
 
   listProjects() {
