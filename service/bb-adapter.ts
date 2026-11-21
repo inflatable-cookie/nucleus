@@ -521,15 +521,8 @@ export function composeBbAdapter(input: {
     observationInventory(ids: readonly string[]) {
       return threads.observationInventory(ids);
     }
-    async originAgent(id: string) {
-      const observation = await threads.observe(id);
-      return {
-        id,
-        workspaceId: observation.workspaceId,
-        title: "",
-        archived: observation.status === "closed",
-        labels: observation.labels,
-      };
+    originAgent(id: string) {
+      return threads.originAgent(id);
     }
     stopAgentTurn(id: string, expectedTurnId?: string) {
       return expectedTurnId !== undefined

@@ -1027,28 +1027,29 @@ test("BB phase 4: a reviewer replacement archives only the displaced thread thro
     });
     assert.ok(store.threadArchiveKey(displaced.id, hostId));
 
-    // The reviewer route records the replacement intent, and the archive fence runs
-    // before the run is released.
+    // Because BB supports thread deletion (`deleteAgent`), a replaced reviewer stays
+    // settled in-flight without mid-task archiving or deletion, and is removed at
+    // closeout with the rest of the support set.
     assert.equal(await archiveReplacedReviewer(store, adapter, run), true);
-    assert.ok(
+    assert.equal(
       fake.rows.get(displaced.id)!.archivedAt,
-      "the displaced reviewer thread is archived",
+      null,
+      "the displaced reviewer thread is left unarchived until closeout",
     );
-    // Ordinary observation then owns the release of the displaced run.
-    assert.equal(await observeReviewerReplacement(store, adapter, run), true);
     assert.equal(
       fake.rows.get(current.id)!.archivedAt,
       null,
       "the retained reviewer thread is untouched",
     );
-    const effect = store.getMeta<{ status: string; op?: string }>(
-      qualifiedThreadArchiveEffectKey(hostId, displaced.id),
-    );
     assert.equal(
-      effect?.status,
-      "archived",
-      "the existing durable archive effect records the archive once",
+      store.getMeta(qualifiedThreadArchiveEffectKey(hostId, displaced.id)),
+      undefined,
+      "the ready marker is cleared once the displaced thread is proven idle",
     );
+    // Closeout deletes the displaced reviewer through deleteAgent and confirms absence.
+    await adapter.deleteAgent!(displaced.id);
+    assert.equal(fake.rows.has(displaced.id), false);
+    assert.equal(await adapter.originAgent!(displaced.id), null);
     assert.equal(
       effect?.op,
       undefined,

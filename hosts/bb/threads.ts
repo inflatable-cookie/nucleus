@@ -244,6 +244,21 @@ export class BbThreads {
       throw new Error("BB observation answered another thread");
     return this.observation(row);
   }
+  async originAgent(id: string) {
+    const { rows } = await this.read<{ rows: BbRow[] }>("thread.read", {
+      threadIds: [id],
+    });
+    const row = rows.find((item) => item.threadId === id);
+    if (!row) return null;
+    const observation = this.observation(row);
+    return {
+      id,
+      workspaceId: observation.workspaceId,
+      title: row.title ?? "",
+      archived: observation.status === "closed",
+      labels: observation.labels,
+    };
+  }
   async observationInventory(
     ids: readonly string[],
   ): Promise<ReadonlyMap<string, AgentObservation> | null> {
