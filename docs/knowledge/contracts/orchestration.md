@@ -2095,6 +2095,12 @@ review or merge credit; live participants and unsettled effects remain fences.
   route repeat the same observation and verify the exact source before
   replacement. A fresh ambiguous lookup on restart withdraws the earlier
   absence proof and keeps the occurrence owned.
+- On T3 Code, a local launch record with a confirmed missing native thread
+  contributes no match to the exact lookup. A thread still held by T3 counts,
+  including when archived or placed outside the retained workspace. An
+  unreadable answer, including inventory churn beyond the lookup's retry
+  budget, keeps the occurrence waiting. See the
+  [T3 Code adapter spec](../specs/t3code-host-adapter.md#run-creation-lookup).
 - Only `absent` is a proof, and only the owner acts on it: the sweep records
   `absentProvenAt`, resolves the incident and names `route`/`restart` as the
   exits, while the one replacement stays the owner's deliberate route or

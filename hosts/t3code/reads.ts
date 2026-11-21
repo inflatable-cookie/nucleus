@@ -906,9 +906,7 @@ export class T3Reads {
     return this.toHostThreads(threads.filter((t) => !t.archivedAt && !t.deletedAt), includeWorkspaceDirectory);
   }
 
-  /** Match launch labels, but confirm each identity and workspace against T3's inventory. */
-  async findAgents(labels: Record<string, string>) {
-    this.core.requireConnection();
+  private matchingAgentIds(labels: Record<string, string>): string[] {
     const state = this.core.state.read(),
       matches = (candidate: { labels: Record<string, string> }) =>
         Object.entries(labels).every(([k, v]) => candidate.labels[k] === v);
@@ -919,17 +917,23 @@ export class T3Reads {
     const retired = Object.entries(state.retiredAgents ?? {}).filter(
       ([id, agent]) => !agent.deletedAt && !liveIds.has(id) && matches(agent),
     );
-    const candidates = [...live, ...retired];
+    return [...live, ...retired].map(([id]) => id);
+  }
+
+  /** Match launch labels, but confirm each identity and workspace against T3's inventory. */
+  async findAgents(labels: Record<string, string>) {
+    this.core.requireConnection();
+    const candidates = this.matchingAgentIds(labels);
     if (!candidates.length) return [];
     const shell = await this.shell();
     const shellRows = [...shell.threads, ...shell.archivedThreads];
-    const allInShell = candidates.every(([id]) =>
+    const allInShell = candidates.every((id) =>
       shellRows.some((row) => row.id === id && !row.deletedAt),
     );
     const threads = allInShell
       ? shellRows
       : (await this.memoisedInventory()).threads;
-    return candidates.map(([id]) => {
+    return candidates.map((id) => {
       const thread = threads.find((row) => row.id === id && !row.deletedAt);
       return {
         id,
@@ -937,6 +941,33 @@ export class T3Reads {
         hostConfirmed: !!thread,
       };
     });
+  }
+
+  /** A launch record names a candidate whose existence T3 still needs to confirm. */
+  async findRunAgents(labels: Record<string, string>) {
+    this.core.requireConnection();
+    const candidates = this.matchingAgentIds(labels);
+    const lookup = async () => {
+      const found = [];
+      for (const id of candidates) {
+        // A fresh exact read checks live and archived inventory on ThreadNotFoundError.
+        const record = await this.readThreadRecord(id, true);
+        if (record && !record.row.deletedAt)
+          found.push({
+            id,
+            workspaceId: this.workspaceFor(record.row),
+            hostConfirmed: true,
+          });
+      }
+      return found;
+    };
+    try {
+      return await lookup();
+    } catch (error) {
+      // Give a moving inventory one more bounded read without reusing a sweep snapshot.
+      if (!(error instanceof T3InventoryChurnError)) throw error;
+      return await lookup();
+    }
   }
 
   /**

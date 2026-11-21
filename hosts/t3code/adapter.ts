@@ -572,6 +572,9 @@ export class T3CodeHost implements Host {
   async findAgents(labels: Record<string, string>) {
     return await this.reads.findAgents(labels);
   }
+  async findRunAgents(labels: Record<string, string>) {
+    return await this.reads.findRunAgents(labels);
+  }
   /** The retention pass's archived inventory; see `T3Reads.archivedThreads`. */
   async archivedThreads() {
     return await this.reads.archivedThreads();

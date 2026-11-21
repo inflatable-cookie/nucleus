@@ -606,10 +606,13 @@ export async function t3Fake(t: TestContext, directory: string) {
     absentThreadError: "ThreadNotFoundError" as
       | "ThreadNotFoundError"
       | "OrchestrationV2GetThreadProjectionError",
+    archivedThreadNotFound: false,
     disconnectMutation: false,
     disconnectAfterEffect: false,
     /** A launch thread commits, then its reply is lost to a dropped socket. */
     disconnectAfterLaunch: false,
+    /** The next delegated launch times out before T3 creates its child. */
+    timeoutDelegatedLaunch: false,
     /** One-shot faults for the next `thread.unsettle` commands, in order: "drops" or "lands". */
     unsettleFaults: [] as Array<"drops" | "lands">,
     /** Thread reads that still show a settled thread after an unsettle command (a delayed apply). */
@@ -1186,7 +1189,11 @@ export async function t3Fake(t: TestContext, directory: string) {
             });
           }
           // The nightly refuses a removed thread's projection outright.
-          if (!p || p.thread.deletedAt !== null)
+          if (
+            !p ||
+            p.thread.deletedAt !== null ||
+            (controls.archivedThreadNotFound && p.thread.archivedAt)
+          )
             return failure({
               _tag: "Fail",
               error: {
@@ -1682,6 +1689,10 @@ export async function t3Fake(t: TestContext, directory: string) {
               break;
             }
             case "delegated_task.request": {
+              if (controls.timeoutDelegatedLaunch) {
+                controls.timeoutDelegatedLaunch = false;
+                return;
+              }
               // The nightly's own rule: a child created with a workspace strategy is
               // dispatched defer_start and never starts outside T3's MCP handler.
               assert.equal(
