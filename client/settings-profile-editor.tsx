@@ -300,8 +300,6 @@ export function ProfileRow({
   return (
     <View
       style={{
-        borderBottomWidth: 1,
-        borderBottomColor: c.border,
         paddingVertical: space.xs,
         gap: space.xs,
       }}
