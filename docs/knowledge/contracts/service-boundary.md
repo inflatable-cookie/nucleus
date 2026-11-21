@@ -1115,7 +1115,11 @@ authorizes a fleet scan or delivery.
 The service coalesces equivalent observations and title updates by identity and
 limits concurrent and per-window SDK requests through admission classes (total
 concurrent calls is the Paseo-call limit, default 6, 1–32, applied without
-restart); workspace creation and archive have explicit admission. Cleanup admits
+restart); workspace creation and archive have explicit admission. A coalesced
+observation's identity carries the observation epoch that every invalidation
+bumps, so a read that starts after a send never joins the stale pre-send read
+still in flight before it, and a read that straddles an invalidation caches
+nothing (nucleus#1472). Cleanup admits
 at most four concurrent effects within that global limit, covering both thread
 and workspace archives. Required callbacks, operator controls and turn delivery
 outrank workspace creation;
@@ -1213,7 +1217,13 @@ or taking a fresh read cannot authorize a second send. Socket backpressure refus
 only the new BB request as unsent; earlier writes on the connection remain
 unknown. Paseo's admission deadline fences any send that has not started yet:
 it sends only on an immediately available transport and retains the response
-waiter for an already-issued send, including a late acknowledgement. A timeout
+waiter for an already-issued send, including a late acknowledgement. An ordered
+send to one retained thread is admitted once: the per-agent order chain takes
+the single callback slot, and that one owner's deadline and host-call fence
+cover the native send, which is never admitted a second time. Admitting it
+twice made the send wait for the slot it was already holding — a self-block at
+the supported total bound of one — and let the send outlive the deadline that
+fenced it (nucleus#1472). A timeout
 ends nested host polling for the pass instead of starting more host requests.
 `service.health.admission` names every held slot past five seconds (`heldSlots`:
 class, holder, age, deadline) and the last abandoned call, and logs a wait for a
