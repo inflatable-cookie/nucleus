@@ -11,7 +11,6 @@ import {
   syncHoldProjection,
   TASK_OWNER_HOLD,
   taskOwner,
-  taskStopClassification,
   type Completion,
   type Lane,
   type Notice,
@@ -32,7 +31,7 @@ import {
   type QueueOperation,
 } from "../../shared/operations";
 import { telemetryStageForTask } from "../../shared/telemetry";
-import { DISPATCH_WAIT_REASON } from "../../shared/task-stop";
+import { DISPATCH_WAIT_REASON, taskDecisionFact } from "../../shared/task-stop";
 import { EMPTY_RUN_USAGE } from "../telemetry/run-usage";
 import { TaskChangedRefusal } from "../../shared/task-version";
 import { restartSlotObsolete } from "../dispatch/capacity";
@@ -686,6 +685,8 @@ export class StoreTaskFunnel {
     let next = {
       ...task,
       ...change,
+      ...(change.reason !== undefined && change.reason !== task.reason && change.reasonFact === undefined
+        ? { reasonFact: change.resolution?.stop?.fact ?? taskDecisionFact(change.reason) } : {}),
       ...(terminal ? { queuePriority: 0 } : {}),
       finishedAt,
       id: task.id,
@@ -783,7 +784,7 @@ export class StoreTaskFunnel {
     if (
       task.originError &&
       !next.originError &&
-      next.resolution.stop?.detail === task.originError
+      next.resolution.stop?.fact?.code === "origin_error"
     )
       next = { ...next, resolution: { ...next.resolution, stop: null } };
     const fenced = (fields: Task) => {
@@ -796,11 +797,12 @@ export class StoreTaskFunnel {
       if (
         next.phase === "queued" &&
         change.reason === undefined &&
-        taskStopClassification(next.reason).reason === "held"
+        (task.resolution.stop?.reason === "held" || next.reasonFact?.code === "dispatch_hold")
       )
         next = {
           ...next,
           reason: this.services.dependencyWait(next) || DISPATCH_WAIT_REASON,
+          reasonFact: { code: this.services.dependencyWait(next) ? "prerequisite" : "dispatch" },
         };
     }
     const restartSlot = task.resolution.restartSlotHold;

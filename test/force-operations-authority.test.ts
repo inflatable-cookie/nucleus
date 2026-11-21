@@ -69,6 +69,11 @@ async function fixture(origin = QUEUE_REPOSITORY_ORIGIN) {
   let sends = 0;
   const adapter = {
     hostId: "host",
+    listLiveAgents: async () => [
+      { id: "queue-planner", title: "Queue planner", workspaceId: null, directory: "/queue" },
+      { id: "project-planner", title: "Project planner", workspaceId: null, directory: "/repo" },
+      { id: "d070792d-65b7-4f0e-8175-34c56f88dc40", title: "Queue planner", workspaceId: null, directory: "/queue" },
+    ],
     merged: async () => ({ merged: true, commit, head, base: "main" }),
     observe: async () => {
       sends++;
@@ -142,46 +147,6 @@ async function fixture(origin = QUEUE_REPOSITORY_ORIGIN) {
   };
   return { store, engine, task, control, pending, sends: () => sends };
 }
-
-test("planner force settles exactly the uncertain operation and keeps its history", async () => {
-  const f = await fixture();
-  try {
-    const id = f.pending();
-    const effect = `task_control_operation.${id}`;
-    await f.engine.performTaskControl(
-      f.control({
-        action: "retry_effect",
-        effect,
-        force: true,
-        caller: "project-planner",
-      }),
-    );
-    assert.equal(f.sends(), 0);
-    assert.equal(f.store.operation(id)?.state, "needs_attention");
-    assert.equal(
-      f.store.operation(id)?.diagnostic,
-      "The delivery outcome is unknown",
-    );
-    assert.equal(
-      blockingRecoveryEffects(f.store, f.task()).some(
-        (item) => item.identity === id,
-      ),
-      false,
-    );
-    assert.equal(
-      f.task().resolution.ownerSettlements.at(-1)?.source,
-      "project_planner",
-    );
-    assert.equal(
-      ownerPendingEffects(collectOwnerVerbFacts(f.store, f.task())).some(
-        (item) => item.effect === effect,
-      ),
-      false,
-    );
-  } finally {
-    f.store.close();
-  }
-});
 
 test("Queue planner closes a merged task blocked by an uncertain operation in one call", async () => {
   const f = await fixture();
@@ -275,22 +240,12 @@ test("queue project lookup accepts the renamed repository origin", async () => {
   }
 });
 
-test("Queue's own project keyed like production (repo-<hash>, real origin) authorizes force and reparent while notices stay in the affected project", async () => {
+test("Queue's own project keyed like production (repo-<hash>, real origin) authorizes reparent while notices stay in the affected project", async () => {
   const f = await fixture();
   try {
     assert.equal(QUEUE_LIVE_KEY, "repo-997ec7dcf45ce2ed9ca3");
     assert.equal(f.store.projectByKey("paseo-northstar-queue"), null);
     assert.equal(f.store.queueProject()?.key, QUEUE_LIVE_KEY);
-    const id = f.pending();
-    const forced = await f.engine.performTaskControl(
-      f.control({
-        action: "retry_effect",
-        effect: `task_control_operation.${id}`,
-        force: true,
-        caller: "queue-planner",
-      }),
-    );
-    assert.equal(forced.resolution.ownerSettlements.at(-1)?.source, "queue_planner");
     f.store.setProjectPlanner({ key: "app", agentId: null, setBy: "test" });
     const noticeTask = f.store.insert(
       submissionSchema.parse({

@@ -33,7 +33,7 @@ export class AcceptedPrWorkspace {
 
   /** An operator's or coordinator's own request, which a workspace identity alone can answer. */
   private requested(t: Task): boolean {
-    return this.parked(t) && t.reason === ACCEPTED_PR_RECONCILIATION_REASON;
+    return this.parked(t) && t.reasonFact?.code === "accepted_pr";
   }
 
   /** A retained delivery whose recorded worker identity can be replaced by a recovered checkout. */

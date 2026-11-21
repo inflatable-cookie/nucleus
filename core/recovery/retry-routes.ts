@@ -25,7 +25,7 @@ export function retryAdmission(t: Task, f: { stage: 'instruction' | 'reviewer-de
     const acceptedPrReconciliation = t.phase === 'needs_attention' && t.completion?.status === 'ready_for_review' &&
       Boolean(t.workspaceId && t.directory && t.agentId && t.runId && t.profile) &&
       !t.resolution.currentRunId && !t.resolution.mergeIntent && !t.resolution.mergedCommit &&
-      t.reason !== PR_HEAD_CHANGED_REASON && !isRetainedProfileReason(t.reason) && !f.remap &&
+      t.reasonFact?.code !== "pr_head_changed" && t.reasonFact?.code !== "retained_profile" && !f.remap &&
       !readyReviewAtHead(t);
     const deliverable = ['blocked', 'error'].includes(t.phase) ? !f.remap : acceptedPrReconciliation;
     if (!deliverable) return 'A reviewer instruction requires a retry that returns the task to a fresh review; this retry has no fresh reviewer to receive it';
@@ -38,14 +38,14 @@ export function retrySpecialRoute(t: Task, stage: 'merge' | 'revision' | 'hook' 
   operator: boolean, revise: boolean, run: Run | null): 'pass' | 'merge' | 'revision' | 'hook' | 'profile' | { refuse: string } {
   if (stage === 'merge' && t.phase === 'needs_attention' && t.resolution.mergeIntent && !t.resolution.mergedCommit)
     return operator ? 'merge' : { refuse: 'An uncertain merge requires an operator decision before reconciliation resumes' };
-  if (stage === 'revision' && t.phase === 'needs_attention' && t.reason === PR_HEAD_CHANGED_REASON &&
+  if (stage === 'revision' && t.phase === 'needs_attention' && t.reasonFact?.code === "pr_head_changed" &&
       run?.role === 'revision' && run.released && run.completion?.status === 'ready_for_review' &&
       run.agentId === t.agentId && run.workspaceId === t.workspaceId && !t.resolution.mergeIntent && !t.resolution.mergedCommit) return 'revision';
-  const hookHeld = stage === 'hook' && isHookHoldReason(t.reason) &&
+  const hookHeld = stage === 'hook' && t.reasonFact?.code === "hook_hold" &&
     run?.role === 'revision' && run.released && Boolean(run.completion && ['blocked', 'error'].includes(run.completion.status));
   if (hookHeld && operator && !revise && ['changes_requested', 'needs_attention'].includes(t.phase) &&
       readyReviewAtHead(t) && !t.resolution.mergeIntent && !t.resolution.mergedCommit) return 'hook';
-  if (stage === 'profile' && t.phase === 'needs_attention' && isRetainedProfileReason(t.reason))
+  if (stage === 'profile' && t.phase === 'needs_attention' && t.reasonFact?.code === "retained_profile")
     return operator ? 'profile' : { refuse: 'Retained worker profile eligibility requires explicit operator retry' };
   return 'pass';
 }
@@ -81,7 +81,7 @@ export function revisionRoute(t: Task, runs: Run[], options: {
     if (!prePr) return { kind: 'refuse', message: missingPr };
     if (t.prUrl || t.prHead || !t.workspaceId || !t.profile) return { kind: 'refuse', message: 'Pre-PR worker continuation requires the retained worker and no task PR' };
   }
-  const repair = t.reason === WORKER_PR_IDENTITY_REFUSAL;
+  const repair = t.reasonFact?.code === "pr_identity";
   const repairInstruction = repair ? `restore this worktree to queue-owned branch ${t.branch}, close mismatched PR #${t.completion!.prNumber}, and open exactly one replacement PR from ${t.branch}` : null;
   const reviewFindings = revisionReviewFindings(t);
   const action = repair && !operator ? repairInstruction! : instruction?.trim() || scopedInstruction?.trim() || repairInstruction ||

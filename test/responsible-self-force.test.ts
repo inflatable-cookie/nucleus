@@ -2,49 +2,6 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { taskControlInputSchema } from "../shared/contracts";
 
-test("force is retained for a reasoned owner move and effect settlement", () => {
-  for (const control of [
-    { action: "move", to: "closeout" },
-    { action: "retry_effect", effect: "workspace_archive.example" },
-  ]) {
-    const parsed = taskControlInputSchema.parse({
-      ...control,
-      taskId: "task",
-      version: 1,
-      reason: "Owner resolved the gate",
-      force: true,
-    });
-    assert.equal((parsed as { force?: boolean }).force, true);
-  }
-});
-
-test("forced settlement names its effect and force is limited to the two owner verbs", () => {
-  const base = {
-    taskId: "task",
-    version: 1,
-    reason: "Owner resolved the gate",
-    force: true,
-  };
-  assert.equal(
-    taskControlInputSchema.safeParse({ ...base, action: "retry_effect" })
-      .success,
-    false,
-  );
-  assert.equal(
-    taskControlInputSchema.safeParse({ ...base, action: "stop" }).success,
-    false,
-  );
-  assert.equal(
-    taskControlInputSchema.safeParse({
-      ...base,
-      action: "move",
-      to: "work",
-      reason: "",
-    }).success,
-    false,
-  );
-});
-
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -174,18 +131,13 @@ async function selfApply(
     }
   ).performOperation(operation, f.store.operationPayload(operation.id));
 }
-test("authenticated worker force settles own effect and moves; typed identity and other task refuse", async () => {
+test("authenticated worker force moves; typed identity and other task refuse", async () => {
   const f = await fixture();
   try {
     f.store.event(
       f.task().id,
       "owned_tool_hold",
       JSON.stringify({ runId: "tool", reason: "idle" }),
-    );
-    await selfApply(f, { action: "retry_effect", effect: "owned_tool.tool" });
-    assert.equal(
-      f.task().resolution.ownerSettlements.at(-1)?.source,
-      "task_worker",
     );
     await assert.rejects(
       f.engine.taskControlFromAgent(
@@ -207,6 +159,7 @@ test("authenticated worker force settles own effect and moves; typed identity an
     );
     await selfApply(f, { action: "move", to: "work" });
     assert.equal(f.task().phase, "changes_requested");
+    assert.equal(f.task().resolution.ownerSettlements.at(-1)?.source, "task_worker");
   } finally {
     f.store.close();
   }

@@ -958,7 +958,7 @@ export function telemetryStageForTask(task: Task): TelemetryStageKey {
   if (task.phase === "cancelled") return "cancelled";
   if (task.held) return "held_wait";
   if (task.phase === "queued")
-    return task.reason.startsWith("Waiting for prerequisites:")
+    return task.reasonFact?.code === "prerequisite"
       ? "prerequisite_wait"
       : "capacity_wait";
   if (task.phase === "dispatching") return "creation";

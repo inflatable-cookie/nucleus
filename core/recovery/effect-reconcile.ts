@@ -116,11 +116,7 @@ export class EffectReconcile {
           : status === "delivered"
             ? reviewContinuationWait(current, this.store).reason
             : `Reviewer delivery ${deliveryId} was refused before send: ${evidence.slice(0, 600)}`;
-      const ownedReasons = [
-        reviewDeliveryReason(deliveryId, "reserved"),
-        reviewDeliveryReason(deliveryId, "uncertain"),
-      ];
-      if (ownedReasons.includes(current.reason))
+      if (current.reasonFact?.code === "review_delivery" && current.reasonFact.subject === deliveryId)
         this.store.update(
           current.id,
           { reason },

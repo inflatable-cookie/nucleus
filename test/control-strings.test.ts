@@ -1222,8 +1222,7 @@ const PARSED: ParsedText[] = [
   {
     site: "review recovery wait",
     reads: [
-      "reviewEffectWaitRefusal(t) === refusal",
-      "/^(?:Ordinary review|Review-entry) waits for (.+); settle it with retry_effect before continuing$/",
+      "matchesReviewEffectWait(t, effects)",
     ],
     writers: [
       "`${run.ordinaryDetached?'Ordinary review':'Review-entry'} waits for ${recoveryEffectsRefusal(error.effects)}; settle it with retry_effect before continuing`",

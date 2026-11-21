@@ -1,9 +1,8 @@
-import { parseAgentId } from "../../shared/agent-identity";
-import { FORCE_MOVE_REFUSAL, FORCE_MERGED_REFUSAL, FORCE_PAUSED_REFUSAL, FORCE_MERGE_UNAVAILABLE_REFUSAL, FORCE_HOLD_REFUSAL, FORCE_MERGE_OBSERVATION_REFUSAL, FORCE_EFFECT_REQUIRED_REFUSAL, FORCE_PUBLICATION_REFUSAL, missingForcedEffectRefusal } from './verb-refusal-text';
+import { FORCE_CALLER_REFUSAL, FORCE_MOVE_REFUSAL, FORCE_MERGED_REFUSAL, FORCE_PAUSED_REFUSAL, FORCE_MERGE_UNAVAILABLE_REFUSAL, FORCE_HOLD_REFUSAL, FORCE_MERGE_OBSERVATION_REFUSAL } from './verb-refusal-text';
+import { livePlannerMatches } from "./explicit-resolution";
 import { randomUUID } from "node:crypto";
 import type { OwnerAcceptanceRecord, RepositoryChecksPolicy, Run, Task, TaskControlInput } from "../../shared/contracts";
 import { OPERATOR_BOARD_CALLER, holdsOf, syncHoldProjection } from "../../shared/contracts";
-import { normalizeRepositoryOrigin } from "../../shared/lanes";
 import type { Engine } from "../engine";
 import { executionParticipants } from "../machine/execution-participants";
 import { settleSupersededFencesInTx } from "../recovery/fence-settlement";
@@ -16,7 +15,7 @@ import type { MergeGateResult, ResolutionAdapter } from "../resolution";
 import { DurableFenceRefusal } from "../intake/run-settlement";
 import { now, type Store } from "../store/store";
 import { recordIntegrationFastForward } from "../git/index";
-import { appliedMergeVerdict, plannerIdMatches, readyReviewAtHead } from "../recovery/task-reasons";
+import { appliedMergeVerdict, readyReviewAtHead } from "../recovery/task-reasons";
 
 /**
  * The forced merge's own gate observation. A gate that fast-forwards the registered
@@ -67,7 +66,7 @@ export function forceMergeAdmission(head: string, reason: string, gate: import('
 export function forceMovePatch(f: {
   settled: Task; input: TaskControlInput; reason: string; observedHead: string | null;
   observedUrl: string | null; observedNumber: number | null; mergedCommit: string | null;
-  acceptance: OwnerAcceptanceRecord | null; records: ReturnType<Engine['forceSettlementRecord']>[];
+  acceptance: OwnerAcceptanceRecord | null; records: ReturnType<ForceVerbs['forceSettlementRecord']>[];
   forcedChecks: {name: string; jobUrl: string}[]; selfForceRunId: string | undefined;
   participants: Map<string, string>; uncertainties: string[]; requestedAt: string | null;
 }): Partial<Task> {
@@ -100,7 +99,7 @@ export function forceMovePatch(f: {
 }
 
 /**
- * `force: true` on `retry_effect` and `move`: who may force, the settlement
+ * `force: true` on `move`: who may force, the settlement
  * record, and the forced move itself. Same-name `Engine` methods delegate here.
  * `this.resolution.adapter` and `this.adapter` stay the two different adapters
  * they were on `Engine`, each read per call.
@@ -110,43 +109,7 @@ export class ForceVerbs {
   get store() { return this.engine.store; }
   get adapter() { return this.engine.adapter; }
   get resolution() { return this.engine.resolution; }
-  forceSettleEffect(task: Task, input: TaskControlInput): Task {
-    this.engine.requireOwnerControlCurrent(task, input.version, 'Task changed; refresh before retrying');
-    if (!input.effect) throw new DurableFenceRefusal(FORCE_EFFECT_REQUIRED_REFUSAL);
-    if (input.effect.startsWith('review_publication.'))
-      throw new DurableFenceRefusal(FORCE_PUBLICATION_REFUSAL);
-    const effects = ownerPendingEffects(collectOwnerVerbFacts(this.store, task));
-    const selected = effects.find(effect => effect.effect === input.effect);
-    if (!selected) throw new DurableFenceRefusal(missingForcedEffectRefusal(input.effect));
-    return this.store.transaction(() => {
-      const current = this.store.task(task.id);
-      this.engine.requireOwnerControlCurrent(current, input.version, 'Task changed; refresh before retrying');
-      const record = this.engine.forceSettlementRecord(current, selected, input);
-      let resolution = { ...current.resolution, ownerSettlements: [...current.resolution.ownerSettlements, record] };
-      if (selected.effect.startsWith('incident.') && current.resolution.incident?.id === selected.effect.slice('incident.'.length)) {
-        const incident = current.resolution.incident;
-        resolution = { ...resolution, incident: { ...incident, status: 'resolved', updatedAt: record.at,
-          detail: `Owner settled: ${record.reason}; original: ${incident.detail}`.slice(0, 4000) } };
-      }
-      if (selected.effect === 'project-validation.project-validation' && current.resolution.projectValidation) {
-        const historyKey = `ownerForceValidation:${task.id}:${randomUUID()}`;
-        this.store.setMeta(historyKey, current.resolution.projectValidation);
-        this.store.event(task.id, 'owner_settled_validation', JSON.stringify({ historyKey, caller: input.caller, reason: record.reason }));
-        resolution = { ...resolution, projectValidation: { ...current.resolution.projectValidation, state: 'superseded' } };
-      }
-      if (selected.effect === 'merge-response.merge-response') {
-        const historyKey = `ownerForceMerge:${task.id}:${randomUUID()}`;
-        this.store.setMeta(historyKey, { head: current.resolution.mergeHead, requestedAt: current.resolution.mergeRequestedAt,
-          response: current.resolution.mergeResponseOutcome, retryAt: current.resolution.mergeRetryAt, retryOutcome: current.resolution.mergeRetryOutcome });
-        this.store.event(task.id, 'owner_settled_merge_intent', JSON.stringify({ historyKey, caller: input.caller, reason: record.reason }));
-        resolution = { ...resolution, mergeIntent: false, mergeAutoRetryExhausted: true, integrationTurn: null };
-      }
-      return this.store.update(task.id, { resolution,
-        ...(selected.effect === 'merge-response.merge-response' ? { phase: 'needs_attention' as const, reason: 'Owner settled the uncertain merge response; read next' } : {})
-      }, 'owner_settled', JSON.stringify(record));
-    });
-  }
-  forceSettlementRecord(task: Task, selected: ReturnType<typeof ownerPendingEffects>[number], input: TaskControlInput) {
+  forceSettlementRecord(task: Task, selected: ReturnType<typeof ownerPendingEffects>[number], input: TaskControlInput, source: 'operator_board' | 'project_planner' | 'queue_planner' | 'task_worker' | 'task_reviewer' | 'task_recovery') {
     const hooks = this.store.hookEvents(task.id);
     const recoveryKeys = recoveryEffects(this.store, task, { noticeKinds: 'all' }).filter(effect => {
       const key = effect.kind === 'hook' ? `hook.${hooks.find(hook => hook.id === effect.identity)?.eventId ?? effect.identity}`
@@ -155,13 +118,16 @@ export class ForceVerbs {
         || (effect.kind === 'hook' && selected.effect === `merged_task_retention.${hooks.find(hook => hook.id === effect.identity)?.eventId}`);
     }).map(effect => recoverySettlementKey(task, effect));
     return { effect: selected.effect, occurrence: ownerEffectOccurrence(collectOwnerVerbFacts(this.store, task), selected), summary: selected.summary, recoveryKeys,
-      caller: input.caller!, source: this.engine.forceCallerSource(task, input.caller!), reason: input.reason!.trim(), at: now() };
+      caller: input.caller!, source, reason: input.reason!.trim(), at: now() };
   }
-  forceCallerAuthorized(task: Task, caller: string | undefined): boolean {
+  async forceCallerAuthorized(task: Task, caller: string | undefined): Promise<boolean> {
     if (this.engine.selfForceRunId.getStore()) return Boolean(this.engine.selfForceRole(task));
-    if (!caller) return false;
-    if (caller === OPERATOR_BOARD_CALLER) return true;
-    return this.forcePlannerMatches(task, caller);
+    return Boolean(caller && (caller === OPERATOR_BOARD_CALLER || await this.forcePlannerSource(task, caller)));
+  }
+  private async forcePlannerSource(task: Task, caller: string) {
+    if (await livePlannerMatches(this.engine, task, caller)) return 'project_planner';
+    if (await livePlannerMatches(this.engine, task, caller, true)) return 'queue_planner';
+    return null;
   }
   selfForceRole(task: Task): 'worker' | 'reviewer' | 'recovery' | null {
     const id = this.engine.selfForceRunId.getStore();
@@ -179,30 +145,14 @@ export class ForceVerbs {
     }
     return task.runId === id && !task.completion ? 'worker' : null;
   }
-  forcePlannerMatches(task: Task, caller: string, projectOnly = false): boolean {
-    const project = this.store.projectFor(task.repoPath, normalizeRepositoryOrigin(task.repository ?? ''));
-    const legacyHost = this.engine.legacyPaseoHostId();
-    const projects = projectOnly ? [project] : [project, this.store.queueProject()];
-    return projects.some(entry => {
-      const planner = entry?.planner?.agentId;
-      const recordedHost = entry?.agents?.find(agent => agent.agentId === planner)?.hostId;
-      if (planner && recordedHost && parseAgentId(planner)?.hostId && parseAgentId(planner)?.hostId !== recordedHost) return false;
-      return plannerIdMatches(planner, caller, recordedHost ?? legacyHost, legacyHost);
-    });
-  }
-  forcePlanners(task: Task): Array<string | undefined> {
-    const project = this.store.projectFor(task.repoPath, normalizeRepositoryOrigin(task.repository ?? ''));
-    return [project?.planner?.agentId, this.store.queueProject()?.planner?.agentId];
-  }
-  forceCallerSource(task: Task, caller: string): 'operator_board' | 'project_planner' | 'queue_planner' | 'task_worker' | 'task_reviewer' | 'task_recovery' {
-    const authenticatedRunId = this.engine.selfForceRunId.getStore();
-    const run = authenticatedRunId ? this.store.run(authenticatedRunId) : null;
-    const role = run?.role === 'reviewer' ? 'reviewer' : run?.role === 'recovery' ? 'recovery' : 'worker';
-    if (authenticatedRunId) return `task_${role}`;
-    if (caller === OPERATOR_BOARD_CALLER) return 'operator_board';
-    return this.forcePlannerMatches(task, caller, true) ? 'project_planner' : 'queue_planner';
+  async forcePlannerMatches(task: Task, caller: string): Promise<boolean> {
+    return Boolean(await this.forcePlannerSource(task, caller));
   }
   async forceMove(task: Task, input: TaskControlInput, operationId?: string): Promise<Task> {
+    const self = this.selfForceRole(task);
+    const source = self ? `task_${self}` as const : input.caller === OPERATOR_BOARD_CALLER
+      ? 'operator_board' : input.caller && await this.forcePlannerSource(task, input.caller);
+    if (!source) throw new DurableFenceRefusal(FORCE_CALLER_REFUSAL);
     this.engine.requireOwnerControlCurrent(task, input.version, 'Task changed; refresh before retrying');
     if (task.removedAt || !input.to) throw new DurableFenceRefusal(FORCE_MOVE_REFUSAL);
     if (input.to === 'merge' && task.resolution.mergedCommit)
@@ -328,8 +278,8 @@ export class ForceVerbs {
       this.engine.requireOwnerControlCurrent(current, input.version, 'Task changed during the move; read next');
       const pending = ownerPendingEffects(collectOwnerVerbFacts(this.store, current, operationId))
         .filter(effect => effect.effect !== `operation.${operationId}` && effect.effect !== `task_control_operation.${operationId}`);
-      const records = pending.map(effect => this.engine.forceSettlementRecord(current, effect, input));
-      for (const detail of uncertainties) this.store.event(task.id, 'owner_force_uncertain_participant', JSON.stringify({ detail, caller: input.caller, source: this.engine.forceCallerSource(current, input.caller!), reason }));
+      const records = pending.map(effect => this.forceSettlementRecord(current, effect, input, source));
+      for (const detail of uncertainties) this.store.event(task.id, 'owner_force_uncertain_participant', JSON.stringify({ detail, caller: input.caller, source, reason }));
       for (const record of records) this.store.event(task.id, 'owner_settled', JSON.stringify(record));
       if (current.disposition) {
         const historyKey = `ownerForceDisposition:${task.id}:${randomUUID()}`;
@@ -353,7 +303,7 @@ export class ForceVerbs {
         acceptance, records, forcedChecks, selfForceRunId: forcedChecks.length ? this.engine.selfForceRunId.getStore() : undefined,
         participants, uncertainties, requestedAt: input.to === 'merge' ? now() : null });
       return this.store.update(task.id, patch,
-        'owner_force_move', JSON.stringify({ to: input.to, caller: input.caller, source: this.engine.forceCallerSource(current, input.caller!), reason, settled: records.map(record => record.effect) }));
+        'owner_force_move', JSON.stringify({ to: input.to, caller: input.caller, source, reason, settled: records.map(record => record.effect) }));
     });
     if (input.to === 'merge') {
       let permissionWithdrawn = false;

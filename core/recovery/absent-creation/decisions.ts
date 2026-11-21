@@ -17,14 +17,13 @@ export function workspaceReplayAllowed(
   canRemoveOrphan: boolean,
   hasRuns: boolean,
   replayRecorded: boolean,
-  parkedRefusal?: string | null,
 ): boolean {
   const parked =
     task.phase === "needs_attention" &&
     !task.resolution.attention &&
     !holdsOf(task).dispatch &&
-    Boolean(parkedRefusal) &&
-    task.resolution.stop?.detail === parkedRefusal;
+    ((kind === "absent" && task.resolution.stop?.fact?.code === "workspace_absent") ||
+      (kind === "partial" && task.resolution.stop?.fact?.code === "workspace_orphan"));
   return (
     (kind === "absent" || (kind === "partial" && canRemoveOrphan)) &&
     (task.phase === "dispatching" || parked) &&

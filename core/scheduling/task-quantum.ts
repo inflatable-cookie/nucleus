@@ -396,9 +396,7 @@ export class TaskQuantum {
       if (
         isHostReadRecoveryHeld(this.context.store, task) === "exhausted" &&
         (task.resolution.stop?.reason === "route_unavailable" ||
-          task.reason.startsWith(
-            "No coordinator profile is available for recovery",
-          ) ||
+          task.reasonFact?.code === "coordinator_unavailable" ||
           task.resolution.recovery)
       ) {
         const normalizedReason = unwrapCoordinatorRouteWrapper(task.reason);
@@ -600,7 +598,7 @@ export class TaskQuantum {
             current.resolution.attention ||
             ["blocked", "error", "needs_attention"].includes(current.phase)) &&
           // Settled-wait prose is no fault, so no stop is synthesized from it (nucleus#1437).
-          (current.originError || !isSettledWaitProse(current.reason))
+          (current.originError || current.reasonFact?.code !== "progressing")
         ) {
           // Only Queue's own origin error text is classified. A task reason can
           // be an agent's report, and reading a wait out of it invents one.
@@ -617,6 +615,8 @@ export class TaskQuantum {
             classification.reason,
             detail,
             classification.suggestedVerbs,
+            undefined,
+            current.originError ? { code: "origin_error" } : undefined,
           );
         }
         // Spec 052 sign-off: ask, apply or withdraw the operator's routing decisions.

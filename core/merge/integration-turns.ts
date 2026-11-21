@@ -201,7 +201,7 @@ export class IntegrationTurns {
     // A verification waiting for that slot cannot also fence its synchronization.
     return (
       this.idleOrdinaryVerification(t) &&
-      (t.reason.startsWith("Waiting for repository integration turn") ||
+      (t.resolution.stop?.fact?.code === "integration_turn" || t.reasonFact?.code === "integration_turn" ||
         (recordedSlotWait(t) &&
           Boolean(this.resolution.slotAdmissionReason(t))))
     );
@@ -323,12 +323,13 @@ export class IntegrationTurns {
     this.resolution.waiting(
       this.store.task(t.id),
       holder
-        ? `Waiting for repository integration turn: ${holder.title} (${holder.id}) holds it — ${holder.reason.startsWith("Waiting for repository integration turn") ? "integration work pending" : holder.reason}`.slice(
+        ? `Waiting for repository integration turn: ${holder.title} (${holder.id}) holds it — ${holder.resolution.stop?.fact?.code === "integration_turn" || holder.reasonFact?.code === "integration_turn" ? "integration work pending" : holder.reason}`.slice(
             0,
             2000,
           )
         : "Waiting for repository integration turn",
       "lifecycle",
+      { fact: { code: "integration_turn", ...(holder ? { subject: holder.id } : {}) } },
     );
     return false;
   }

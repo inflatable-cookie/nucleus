@@ -537,6 +537,7 @@ function taskDisplayFacts(
     {
       phase: task.phase,
       reason,
+      reasonFact: task.reasonFact,
       holdKind,
       holdOwner: holdOwnerOf(task, holds.merge?.owner ?? task.holdOwner),
       originAgentId: taskOwner(task),

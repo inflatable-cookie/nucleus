@@ -446,7 +446,7 @@ export class HookReplayLifecycle {
   /** True while a held occurrence remains inside its bounded automatic replay window. */
   automaticHookReplayPending(t: Task): boolean {
     if (!this.context.hooks || this.context.paused() || this.context.stopped()) return false;
-    if (isDispositionActive(t) || !isHookHoldReason(t.reason)) return false;
+    if (isDispositionActive(t) || t.reasonFact?.code !== "hook_hold") return false;
     const held = this.context.hooks.heldAutomaticReplay(t);
     if (!held || held.ordinal === null) return false;
     return Date.now() - Date.parse(held.record.updatedAt) < this.context.graceMs;
@@ -467,7 +467,7 @@ export class HookReplayLifecycle {
 
   /** Redrive a held occurrence through its ordinary emission path. */
   async replayHeldAttention(t: Task): Promise<Task | null> {
-    if (!isHookHoldReason(t.reason) || !await this.context.hooks?.automaticReplayAttemptDue(t)) return null;
+    if (t.reasonFact?.code !== "hook_hold" || !await this.context.hooks?.automaticReplayAttemptDue(t)) return null;
     return this.context.update(t, { attention: false }, { reason: t.reason }, 'hook_replay_redrive');
   }
 }

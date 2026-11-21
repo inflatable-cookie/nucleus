@@ -36,7 +36,8 @@ export async function settleResponsibleFault(engine: RecoverySettlementContext, 
   // recorded stop or incident must name the reviewer stopping without a result.
   const incident = current.resolution.incident;
   const stoppedWithoutResult = Boolean(run.retainedAgentClosedAt)
-    || /^The reviewer (?:thread stopped|callback reminder expired)/.test(current.reason)
+    || (current.reasonFact?.subject === "reviewer" &&
+      ["callback_missing", "callback_expired"].includes(current.reasonFact.code))
     || Boolean(incident && incident.role === "reviewer" && incident.status !== "resolved"
       && (incident.cause === MISSING_CALLBACK_CAUSE || incident.cause === "stalled_turn"));
   if (!stoppedWithoutResult) return false;

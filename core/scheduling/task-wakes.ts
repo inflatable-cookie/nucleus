@@ -516,8 +516,8 @@ export class TaskWakes {
         !activeOld &&
         currentTask &&
         hasUnresolvedHostReadExhaustionEvent(this.store, id) &&
-        (isHostReadExhaustedReason(currentTask.reason) ||
-          isHostReadExhaustedReason(currentTask.resolution.stop?.detail ?? "")),
+        (currentTask.reasonFact?.code === "host_read_exhausted" ||
+          currentTask.resolution.stop?.fact?.code === "host_read_exhausted"),
     );
     const next = legacyAlreadyExhausted
       ? null
@@ -655,13 +655,12 @@ export class TaskWakes {
           }
           if (
             current &&
-            (current.reason === "Creating worker" ||
+            (current.reasonFact?.code === "creating_worker" ||
               current.resolution.stop?.reason === "route_unavailable")
           ) {
             this.engine.note(
               id,
-              current.resolution.stop?.detail &&
-                isHostReadExhaustedReason(current.resolution.stop.detail)
+              current.resolution.stop?.fact?.code === "host_read_exhausted"
                 ? current.resolution.stop.detail
                 : reason,
               "operator_needed",

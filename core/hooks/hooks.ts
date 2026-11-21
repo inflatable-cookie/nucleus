@@ -860,12 +860,12 @@ export class RepositoryHooks {
             (record.workspace?.path ?? null) === (context.worktree ?? null),
         );
       if (
-        settled &&
+        settled && (settled.state === "superseded" ||
         this.store
           .task(task.id)
           .resolution.ownerSettlements.some(
             (item) => item.effect === `hook.${settled.eventId}`,
-          )
+          ))
       ) {
         results.push(settled);
         continue;
@@ -971,7 +971,7 @@ export class RepositoryHooks {
       .hookEvents(task.id)
       .filter(
         (record) =>
-          !["result", "published", "blocked", "failed"].includes(
+          !["result", "published", "blocked", "failed", "superseded"].includes(
             record.state,
           ) &&
           !task.resolution.ownerSettlements.some(

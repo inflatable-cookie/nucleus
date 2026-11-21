@@ -2,7 +2,7 @@ import type { BriefVersion } from "../../shared/contracts";
 import { laneDocumentPinSchema,submissionRecordFromLegacy,taskSchema,type LaneDocumentPin,type LaneDocumentVersion,type Run,type Task } from "../../shared/contracts";
 import { briefDigest } from "../planning/brief";
 import { digest,StoreCore } from "./store-core";
-import { StoreTasks } from "./store-tasks";
+import { hydrateTaskDecisionFacts, StoreTasks } from "./store-tasks";
 
 
 /** One stored task's detached parts; a bulk read supplies the side stores for its page. */
@@ -127,7 +127,7 @@ export class StoreTaskWrites {
       ...("briefVersions" in record ? {} : { briefVersions: versions }),
       ...("review" in resolution || "reviews" in resolution ? {} : { resolution: { ...resolution, ...(parts?.reviews ?? this.storedReviews(id)) } }),
     };
-    return taskSchema.parse(complete);
+    return hydrateTaskDecisionFacts(taskSchema.parse(complete));
   }
 
   /**

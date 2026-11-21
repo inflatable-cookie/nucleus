@@ -124,6 +124,8 @@ import type {
   OutcomeSearchInput,
 } from "../shared/contracts";
 import { taskControlChanges } from "../shared/task-control-changes";
+import type { ExplicitResolution } from "../shared/schema/task-control";
+import { resolveExplicitly } from "../core/verbs/explicit-resolution";
 import {
   type OperationAcceptance,
   type OperationResult,
@@ -2345,10 +2347,18 @@ export class QueueRuntime {
   }
 
   async taskControl(
-    request: TaskControlRequest,
+    request: TaskControlRequest | ExplicitResolution,
   ): Promise<
     import("../shared/contracts").TaskControlTask | OperationAcceptance
   > {
+    if (request.action === "run.release" || request.action === "record.clear")
+      return resolveExplicitly(this.engine, request, task => {
+        if (task.removedAt) return "The scheduler leaves this removed task alone.";
+        const next = this.taskNext({ taskId: task.id });
+        if (next.paused) return "The scheduler waits for Nucleus to resume.";
+        if (next.stop) return `The scheduler sees ${next.stop.reason}: ${next.stop.detail}`;
+        return `The scheduler evaluates the ${task.phase} phase on its next pass. ${next.reason}`;
+      });
     const input = this.engine.resolveTaskControl(request);
     const before = this.store.task(input.taskId);
     if (!controlHasExternalEffect(input)) {

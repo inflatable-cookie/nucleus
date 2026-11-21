@@ -32,7 +32,7 @@ function settleDroppedDeferredVerbStop(store: Store, taskId: string): void {
   const task = store.task(taskId);
   if (task.resolution.deferredVerb) return;
   const stop = task.resolution.stop;
-  if (!stop?.detail.startsWith("Owner ") || stop.detail !== task.reason) return;
+  if (stop?.fact?.code !== "deferred_verb") return;
   const events = store.eventsAll(taskId);
   const deferred = events.findLast(
     (event) => event.kind === "owner_verb_deferred",
@@ -47,7 +47,7 @@ function settleDroppedDeferredVerbStop(store: Store, taskId: string): void {
   if (
     !recorded.action ||
     !recorded.why ||
-    deferredVerbReason(recorded.action, recorded.why) !== stop.detail
+    stop.fact.subject !== recorded.action
   )
     return;
   const settled = events.find(
@@ -176,11 +176,10 @@ export class DeferredOwnerVerbs {
           `${marker.escalationId}: ${detail}`.slice(0, 4000),
         );
       }
-      const oldReason = deferredVerbReason(deferred.input.action, deferred.why);
       const oldStop = current.resolution.stop;
-      const ownsStop = oldStop?.detail === oldReason;
+      const ownsStop = oldStop?.fact?.code === "deferred_verb" && oldStop.fact.subject === deferred.input.action;
       const reason =
-        current.reason === oldReason
+        current.reasonFact?.code === "deferred_verb" && current.reasonFact.subject === deferred.input.action
           ? (!ownsStop && oldStop?.detail) ||
             (kind === "deferred_verb_refused"
               ? `Recorded owner action is no longer applicable: ${detail.slice(0, 1200)}`
@@ -430,8 +429,8 @@ export class DeferredOwnerVerbs {
       this.store.db
         .prepare(
           `SELECT id FROM tasks WHERE json_type(data,'$.resolution.deferredVerb')='object'
-            OR (json_extract(data,'$.reason') LIKE 'Owner % recorded; it is delivered once Nucleus is %'
-              AND json_extract(data,'$.resolution.stop.detail')=json_extract(data,'$.reason'))`,
+            OR json_extract(data,'$.resolution.stop.fact.code')='deferred_verb'
+            OR (json_type(data,'$.resolution.stop.fact') IS NULL AND json_type(data,'$.resolution.stop')='object')`,
         )
         .all() as Array<{ id: string }>
     ).map((row) => row.id);

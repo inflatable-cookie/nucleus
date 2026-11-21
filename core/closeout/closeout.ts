@@ -105,9 +105,9 @@ export function mergeOccurrence(
       options.reobserved &&
       r.externalMergePreAttention &&
       !hasEpisode &&
-      current.reason.startsWith(EXTERNAL_MERGE_CHECK_REASON_PREFIX) &&
+      current.reasonFact?.code === "external_merge_check" &&
       (!r.stop ||
-        r.stop.detail.startsWith(EXTERNAL_MERGE_CHECK_REASON_PREFIX)) &&
+        r.stop.fact?.code === "external_merge_check") &&
       (!r.incident ||
         r.incident.status === "resolved" ||
         r.incident.detail.startsWith(EXTERNAL_MERGE_CHECK_REASON_PREFIX)),
@@ -204,9 +204,7 @@ export function settleMergeEscalations(
       escalation.answered ||
       escalation.refusal !== "pre_merge" ||
       escalation.runId !== t.runId ||
-      !t.resolution.stop.detail.startsWith(
-        escalationWaitDetail.planner(escalation.id),
-      )
+      t.resolution.stop.fact?.subject !== escalation.id
     )
       continue;
     store.event(

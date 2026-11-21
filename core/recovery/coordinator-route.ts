@@ -71,9 +71,8 @@ import {
 
 /** Open-PR identity or leftover proof wait after a verified merge: Resolution closes out; a coordinator cannot. */
 const mergedCloseoutNeedsNoCoordinator = (t: Task) => {
-  const text = `${t.reason}\n${t.resolution.stop?.detail ?? ""}`;
   return (
-    /PR must be open/.test(text) ||
+    (t.reasonFact?.code === "pr_identity" || t.resolution.stop?.fact?.code === "pr_identity") ||
     t.resolution.stop?.reason === "awaiting_proof"
   );
 };
@@ -386,7 +385,7 @@ export class CoordinatorRoute {
     // by a coordinator recovery run; deliver the plain origin attention notice.
     if (isCloseoutHookHold(t)) return undefined;
     // Git already spent its bounded environment retries; a coordinator cannot repair host keys.
-    if (isSshAuthExhausted(t.reason)) return undefined;
+    if (t.reasonFact?.code === "ssh_auth") return undefined;
     // Host-read recovery owns its bounded retries and sustained owner notice; a
     // coordinator launch or profile exclusion cannot repair a host observation fault.
     const hostReadHold = isHostReadRecoveryHeld(this.store, t);
@@ -438,7 +437,7 @@ export class CoordinatorRoute {
     // reads inside one pass are shared by `validationEvidence`.
     const reminderHeld =
       t.resolution.incident?.action === "callback_reminder" ||
-      /reminder expired/.test(t.reason);
+      t.reasonFact?.code === "callback_expired";
     if (
       reminderHeld &&
       this.resolution.validationEvidence(t, { fresh: true }).state !== "absent"
@@ -601,7 +600,7 @@ export class CoordinatorRoute {
         "recovery_pending",
       );
     }
-    if (isRetainedProfileReason(t.reason))
+    if (t.reasonFact?.code === "retained_profile")
       return this.episode.escalate(t, t.reason);
     // Project-a #1980: a pseudo-checkpoint error already resumed once pre-PR
     // escalates to the planner instead of launching another recovery loop.

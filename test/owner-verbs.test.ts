@@ -3888,8 +3888,10 @@ test("qualified owner verb callers keep planner force authority scoped to the sa
       agentId: "planner",
       setBy: "operator (board)",
     });
+    f.engine.adapter.listLiveAgents = async () => [{ id: "planner", title: "Planner", workspaceId: null, directory: "/repo" }];
+    f.engine.adapter.originAgent = async id => ({ id, title: id, workspaceId: null, archived: false });
     assert.equal(
-      f.engine.forceCallerAuthorized(
+      await f.engine.forceCallerAuthorized(
         f.task(),
         formatAgentId("host", "planner"),
       ),
@@ -3901,14 +3903,14 @@ test("qualified owner verb callers keep planner force authority scoped to the sa
       setBy: "operator (board)",
     });
     assert.equal(
-      f.engine.forceCallerAuthorized(
+      await f.engine.forceCallerAuthorized(
         f.task(),
         formatAgentId("host", "planner"),
       ),
       true,
     );
     assert.equal(
-      f.engine.forceCallerAuthorized(
+      await f.engine.forceCallerAuthorized(
         f.task(),
         formatAgentId("other-host", "planner"),
       ),

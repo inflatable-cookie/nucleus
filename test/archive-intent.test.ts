@@ -58,14 +58,3 @@ test('an unreadable intent owes one observation per recorded interval', async ()
     assert.deepEqual(f.calls, []);
   } finally { await f.close(); }
 });
-
-test('forcing an unreadable intent keeps its observation available', async () => {
-  const f = await intentFixture();
-  try {
-    await new Lifecycle(f.engine).archive(f.now());
-    await f.retry(true);
-    assert.match(String(f.offered()?.args?.summary), /left on disk after forced settlement/);
-    await assert.rejects(f.retry(), /no longer matches a reviewer run/);
-    assert.deepEqual(f.calls, []);
-  } finally { await f.close(); }
-});

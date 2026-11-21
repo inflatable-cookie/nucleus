@@ -745,7 +745,7 @@ export class ExternalMerge {
           const restored = this.store.task(t.id);
           if (
             restored.resolution.attention &&
-            restored.reason.startsWith(EXTERNAL_MERGE_CHECK_REASON_PREFIX)
+            restored.reasonFact?.code === "external_merge_check"
           )
             resumeFromExternalMergeCheckFor(
               { resolution: this.resolution },
@@ -896,7 +896,7 @@ export class ExternalMerge {
   private externalMergeProbeDue(task: Task): boolean {
     if (
       task.resolution.attention &&
-      task.reason.startsWith(EXTERNAL_MERGE_CHECK_REASON_PREFIX)
+      task.reasonFact?.code === "external_merge_check"
     )
       return true;
     const last = this.externalMergeProbes.get(task.id);

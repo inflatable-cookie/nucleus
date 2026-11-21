@@ -3291,21 +3291,7 @@ for (const status of ["changes_required", "ready_to_merge"] as const)
             undefined,
             "next names ordinary publication retry as the real exit",
           );
-          assert.match(effect.note!, /without force/);
-          await assert.rejects(
-            f.engine.performTaskControl(
-              taskControlInputSchema.parse({
-                action: "retry_effect",
-                taskId: f.taskId,
-                version: f.task().version,
-                effect: `review_publication.${r.id}`,
-                force: true,
-                reason: "Retry the observed absent marker",
-                caller: "operator (board)",
-              }),
-            ),
-            /Force cannot discard.*without force/,
-          );
+          assert.match(effect.note!, /publish the original verdict/);
           assert.equal(
             f.task().resolution.ownerSettlements.length,
             0,

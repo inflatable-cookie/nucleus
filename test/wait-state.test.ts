@@ -148,7 +148,7 @@ test('Spec 043 (a): the owner and next action come from the matched waiting reas
   assert.equal(waitReasonFor(slotReason)?.owner, 'operator');
   // A project-validation wait is in the separate machine-wide QA scheduler and clears itself.
   const qaReason = qaCapacityWaitReason(3);
-  const qa = deriveWaitState({ ...task, phase: 'closing', reason: qaReason });
+  const qa = deriveWaitState({ ...task, phase: 'closing', reason: qaReason, reasonFact: { code: 'qa_capacity' } });
   assert.equal(qa?.state, 'waiting_capacity', 'both capacity waits keep the waiting_capacity state');
   assert.equal(waitStateLabels[qa!.state], 'Waiting for capacity');
   assert.equal(qa?.owner, 'Queue QA scheduler');

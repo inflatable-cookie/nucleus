@@ -1642,6 +1642,7 @@ export class Resolution {
     detail: string,
     suggestedVerbs?: TaskStopVerb[],
     phase?: Task["phase"],
+    fact?: Parameters<TaskStops["recordStop"]>[5],
   ): Task {
     return this.taskStops.recordStop(
       task,
@@ -1649,6 +1650,7 @@ export class Resolution {
       detail,
       suggestedVerbs,
       phase,
+      fact,
     );
   }
   /** Spec 058 budgets (nucleus#1153): open or close the wall-clock pause interval for one task. */
@@ -1722,7 +1724,7 @@ export class Resolution {
     t: Task,
     reason: string,
     stop: TaskStopReason | "classify",
-    options: { suggestedVerbs?: TaskStopVerb[]; holderAgentId?: string } = {},
+    options: Parameters<TaskStops["waiting"]>[3] = {},
   ) {
     return this.taskStops.waiting(t, reason, stop, options);
   }

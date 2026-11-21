@@ -218,10 +218,10 @@ function reviewLadderWait(
     if (!retired) settledWaits.push({ id, resolved });
     settled.add(id);
     if (wait?.kind === "time" || wait?.kind === "decision") {
-      const { stopReason, stopDetail } = escalationWaitState(id, wait);
+      const { stopReason } = escalationWaitState(id, wait);
       settledStop ||=
         task.resolution.stop?.reason === stopReason &&
-        task.resolution.stop.detail === stopDetail;
+        task.resolution.stop.fact?.subject === id;
     }
   }
   const open = plannerEscalations(events).find(
@@ -450,9 +450,7 @@ export function publishedReviewDecision(
     ownIncident &&
     stop &&
     !stop.holderAgentId &&
-    (stop.detail === incident.detail ||
-      (recovery?.incidentId === incident.id &&
-        stop.detail === recovery.summary));
+    stop.incidentId === incident.id;
   if (
     stop &&
     !ladder.settledStop &&

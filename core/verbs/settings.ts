@@ -92,6 +92,7 @@ export class SettingsControls {
   applyTaskControlSetRouting(
     input: TaskControlInput,
     operated: <T>(result: T) => T,
+    planner = false,
   ): Task {
     const apply = () => {
       const task = this.store.task(input.taskId);
@@ -103,7 +104,7 @@ export class SettingsControls {
       );
       if (input.critical !== undefined) {
         if (
-          !this.engine.forcePlannerMatches(task, input.caller ?? "") &&
+          !planner &&
           input.caller !== OPERATOR_BOARD_CALLER
         )
           throw Error("Only the planner or operator may change critical");

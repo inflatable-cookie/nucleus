@@ -79,7 +79,7 @@ export function taskWaitStateContext(
 
 /** Older reason-only rows remain readable. Their text supplies no scheduling fact. */
 function legacySlotText(task: Task): boolean {
-  return !task.resolution.stop && task.reason.startsWith(CAPACITY_WAIT_PREFIX);
+  return !task.resolution.stop && task.reasonFact?.code === "slot_capacity";
 }
 
 /** Wait text is a projection of present facts. */
@@ -111,11 +111,10 @@ export function queuedReason(
     return store.routingRetryAllowed(task) ? DISPATCH_WAIT_REASON : task.reason;
   if (
     task.reason &&
-    task.reason !== DISPATCH_WAIT_REASON &&
+    task.reasonFact?.code !== "dispatch" &&
     !recordedSlotWait(task) &&
-    !waitReasonFor(task.reason) &&
-    task.reason !== DISPATCH_HELD_REASON &&
-    task.reason !== BOARD_DISPATCH_HOLD_REASON
+    task.reasonFact?.code !== "prerequisite" && task.reasonFact?.code !== "qa_capacity" && task.reasonFact?.code !== "slot_capacity" &&
+    task.reasonFact?.code !== "dispatch_hold"
   )
     return task.reason;
   return externalWait(task) || DISPATCH_WAIT_REASON;

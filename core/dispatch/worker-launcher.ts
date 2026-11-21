@@ -420,7 +420,7 @@ export class WorkerLauncher {
                 agentIntent: false,
                 restartRunId: runId,
                 runId: null,
-                ...(current.reason === "Creating worker"
+                ...(current.reasonFact?.code === "creating_worker"
                   ? { reason: task.reason }
                   : {}),
                 ...(!current.resolution.stop && task.resolution.stop

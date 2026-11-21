@@ -775,14 +775,16 @@ Planned briefs run the responsible lifecycle. Explicit `queue.responsible: false
 
 `next` is the read-before-steer call. Run it first, then call what it lists.
 
-**When something is stuck:** read `next`, then use `force: true` on `retry_effect` or `move` when
-it is the obvious exit, with a reason naming observed evidence. An authenticated task worker,
-reviewer or recovery run can force only its own task, including recovery bookkeeping stops;
-`critical` tasks refuse every such self-force. Self-force moves also refuse existing holds and
-active dispositions, which remain with their planner or operator. The project planner, Nucleus planner and operator
-keep their force authority. A forced retry settles the named uncertainty without observing or
-sending it. A workspace archive settled this way stays visible as left on disk; use its ordinary
-retry to observe and archive it with the existing proofs.
+**When a run or record is stuck:** the task's coordinator, responsible planner
+or operator can use `nucleus run.release -` or `nucleus record.clear -`. Use the
+task version from `next` and include a reason. Repeat a warning response with
+the warning IDs you accept. Critical tasks require a planner or the operator.
+Workers and reviewers ask one of those roles to release or clear.
+
+An authenticated task worker, reviewer or recovery run can still use `move`
+with `force: true` on its own task. Critical tasks, owner holds and active
+dispositions refuse that self-force.
+
 
 A forced merge needs an applied verdict at the exact head or explicit operator source acceptance,
 with a relayed note quoting Tom when the operator is not calling directly. Worker and recovery
@@ -1434,7 +1436,7 @@ Use the ask and tell tools or feed the same JSON on stdin to `nucleus ask -` ({t
 
 Continue until you deliver or hit a concrete impediment. Push finished work before reporting blocked. For blocked or error include `cause` ({kind: 'external', name: '<short cause>'}, {kind: 'internal'} or {kind: 'unfinished'}) and `impediment` with the failed command or observed provider message. Classify admission, guard or budget refusals and proof or native-step failures as external. Unfinished work and context pressure call for continued work or a checkpoint where allowed. A blocked or error report without an impediment or new commit can continue the same thread at most twice before the planner ladder.
 
-For a push or PR creation, observe the branch or PR before each retry and back off from 5 to 60 seconds for about 15 minutes on transient forge failures. Report the observed failure and elapsed wait if the retries are exhausted. For an obvious stuck thread or bookkeeping stop, request move or retry_effect with `nucleus task -`, force:true and observed evidence. For a failed forge check include the check, job URL and evidence that this diff could not have caused it. Force requires known causality.
+For a push or PR creation, observe the branch or PR before each retry and back off from 5 to 60 seconds for about 15 minutes on transient forge failures. Report the observed failure and elapsed wait if the retries are exhausted. For an obvious stuck thread or bookkeeping stop, request explicit resolution from the coordinator or planner, with the recorded run or effect identity. For a failed forge check include the check, job URL and evidence that this diff could not have caused it. Force requires known causality.
 
 ## Reviewer rules
 
@@ -1442,7 +1444,7 @@ Own the review judgment within the brief. Ask the planner once in the current tu
 
 For blocked or error include `cause` ({kind: 'external', name: '<short cause>'}, {kind: 'internal'} or {kind: 'unfinished'}) and `impediment` with the failed command or observed provider message. Classify admission, guard or budget refusals and proof or native-step failures as external. Use a review checkpoint for unfinished reading within the checkpoint allowance.
 
-For an obvious stuck thread or bookkeeping stop, request move or retry_effect with `nucleus task -`, force:true and observed evidence. For a failed forge check include the check, job URL and evidence that this diff could not have caused it. Force requires known causality.
+For an obvious stuck thread or bookkeeping stop, request explicit resolution from the coordinator or planner, with the recorded run or effect identity. For a failed forge check include the check, job URL and evidence that this diff could not have caused it. Force requires known causality.
 
 ## Recovery rules
 

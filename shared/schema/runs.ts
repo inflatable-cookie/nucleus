@@ -293,6 +293,7 @@ export const runSchema = z.object({
   idleSince: z.string().nullable(),
   completion: completionSchema.nullable(),
   released: z.boolean(),
+  explicitlyReleasedAt: z.string().datetime({ offset: true }).optional(),
   /** Spec 058 slice 1: usage observed on this run's agent; absent until Queue observes a turn. */
   usage: runUsageSchema.optional(),
 });

@@ -744,7 +744,7 @@ export function ownerEffectRetryRefusal(
     (task.resolution.projectValidation?.state === "running" ||
       !task.resolution.attention)
   )
-    return `${item.effect}: validation is still running; a planner or operator can force settlement with a reason`;
+    return `${item.effect}: validation is still running; record.clear kind=effect can settle it explicitly`;
   if (!item.effect.startsWith("review_publication.")) return null;
   const refusal =
     item.kind !== "review_publication"
@@ -844,7 +844,7 @@ function effectViews(facts: OwnerVerbFacts): TaskNextVerb[] {
       ...(item.kind === "disposition_workspace" ? { note: item.summary } : {}),
       ...(item.kind === "review_publication"
         ? {
-            note: "Use retry_effect without force to observe and publish the original verdict. Force cannot discard it.",
+            note: "Retry to observe and publish the original verdict.",
           }
         : {}),
     });

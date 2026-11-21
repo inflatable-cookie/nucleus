@@ -214,7 +214,7 @@ export class ParticipantLease {
   }
 
   refreshingCloseoutHook(t: Task, syncing: boolean) {
-    return syncing && t.reason === CLOSEOUT_BASE_REFRESH_REASON
+    return syncing && t.reasonFact?.code === "closeout_base_refresh"
       ? this.store.hookEvents(t.id).findLast(record => record.event === 'task.closeout' && record.state === 'blocked'
         && isStaleIntegrationBaseRefusal(record.error))
       : undefined;
