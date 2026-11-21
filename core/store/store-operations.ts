@@ -101,6 +101,16 @@ export class StoreOperations {
       .map((row) => this.numberedOperation(String(row.data)));
   }
 
+  /** Complete task-scoped read for recovery gates; inspection pages cannot prove absence. */
+  unfinishedTaskOperations(taskId: string): QueueOperation[] {
+    return this.core.db
+      .prepare(
+        "SELECT data FROM operations WHERE taskId=? AND state IN ('pending','running','needs_attention') ORDER BY rowid",
+      )
+      .all(taskId)
+      .map((row) => this.numberedOperation(String(row.data)));
+  }
+
   /** Exact source lookup must not lose unknown delivery behind the bounded inspection page. */
   unfinishedSourcePromotion(source: {
     kind: "lead" | "papercut";

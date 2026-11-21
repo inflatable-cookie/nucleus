@@ -2555,6 +2555,9 @@ export class Store {
   ): QueueOperation[] {
     return this.operationsStore.operations(filter);
   }
+  unfinishedTaskOperations(taskId: string): QueueOperation[] {
+    return this.operationsStore.unfinishedTaskOperations(taskId);
+  }
   unfinishedSourcePromotion(source: {
     kind: "lead" | "papercut";
     id: string;
