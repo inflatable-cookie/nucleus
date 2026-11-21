@@ -222,22 +222,31 @@ const PROFILE_REFRESH_INTERVAL_MS = 120_000;
 /** After the last plugin presence closes while a host is still connected, wait this long before raising the board fault. A successful reload inside the window is silent. */
 const PLUGIN_PRESENCE_GRACE_MS = 45_000;
 
+export const DEFAULT_PASEO_DAEMON_URL = "ws://127.0.0.1:6767/ws";
+
 /**
  * Resolve the Paseo plugin source path only when Paseo is explicitly configured
  * or registered. An installed/compiled service launched with `--data-dir` (which
- * also passes a default `hostHome`) must not connect to Paseo unless `daemonUrl`
- * or a Paseo plugin registration is present.
+ * also passes a default `hostHome`) must not connect to Paseo unless a Paseo
+ * plugin registration, a non-default `daemonUrl`, or a Paseo `password` is
+ * present. The old auto-generated `ws://127.0.0.1:6767/ws` written by earlier
+ * versions is not proof of Paseo configuration on its own.
  */
 export function resolveOptionalPaseoSourcePath(options: {
   explicitSourcePath?: string;
   compiledIdentity: boolean;
   daemonUrl?: string;
+  password?: string;
   registeredPath?: string;
   installedSourcePath?: string;
 }): string | undefined {
   if (options.explicitSourcePath) return options.explicitSourcePath;
   if (options.compiledIdentity) {
-    return options.daemonUrl || options.registeredPath
+    const customDaemonUrl =
+      Boolean(options.daemonUrl) &&
+      options.daemonUrl !== DEFAULT_PASEO_DAEMON_URL;
+    const hasPassword = Boolean(options.password);
+    return options.registeredPath || customDaemonUrl || hasPassword
       ? options.installedSourcePath
       : undefined;
   }
@@ -733,6 +742,7 @@ export class QueueRuntime {
         explicitSourcePath: options.sourcePath,
         compiledIdentity: Boolean(compiledIdentity),
         daemonUrl: this.settings.daemonUrl,
+        password: this.settings.password,
         registeredPath,
         installedSourcePath: compiledIdentity
           ? stableInstalledPath(sourcePathFromModule())

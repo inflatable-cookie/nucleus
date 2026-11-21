@@ -346,6 +346,7 @@ export class Engine {
       "store",
       "withHost",
       "hostAvailable",
+      "hostIds",
     ]),
   );
 

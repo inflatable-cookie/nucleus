@@ -5,12 +5,21 @@ import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  DEFAULT_PASEO_DAEMON_URL,
   QueueRuntime,
   resolveOptionalPaseoSourcePath,
 } from "../service/runtime-owner";
 import { UNBOUND_HOST_REFUSAL } from "../core/host";
 import { resolveIngressHost } from "../core/host/ingress-host";
 import { hostEnvironment } from "../service/host-environment.mjs";
+import { paseoDaemonUrl } from "../hosts/paseo/cli/index.mjs";
+import {
+  GRANT_APPROVE,
+  GRANT_OPERATOR_BOARD,
+  applyRoutingGrant,
+  readRoutingGrants,
+  reconcileRoutingGrants,
+} from "../core/dispatch/routing-signoff";
 import { formatAgentId } from "../shared/agent-identity";
 import { hostIdFromDataDir } from "../shared/host-operation";
 import { leadSubmit, submissionSchema, type Task } from "../shared/contracts";
@@ -473,7 +482,7 @@ test("hostEnvironment returns empty object when no Paseo home override or Paseo 
   assert.deepEqual(hostEnvironment(), {});
 });
 
-test("resolveOptionalPaseoSourcePath requires Paseo config or registration even for compiled installs", () => {
+test("resolveOptionalPaseoSourcePath ignores legacy generated daemonUrl on compiled installs while preserving real Paseo setups", () => {
   assert.equal(
     resolveOptionalPaseoSourcePath({
       compiledIdentity: true,
@@ -481,10 +490,29 @@ test("resolveOptionalPaseoSourcePath requires Paseo config or registration even 
     }),
     undefined,
   );
+  // Pre-1508 startup and writeT3Connection auto-generated ws://127.0.0.1:6767/ws.
+  // Without a Paseo plugin registration, custom URL, or password, upgrades must not activate Paseo.
   assert.equal(
     resolveOptionalPaseoSourcePath({
       compiledIdentity: true,
-      daemonUrl: "ws://127.0.0.1:6767/ws",
+      daemonUrl: DEFAULT_PASEO_DAEMON_URL,
+      installedSourcePath: "/opt/nucleus/installed",
+    }),
+    undefined,
+  );
+  assert.equal(
+    resolveOptionalPaseoSourcePath({
+      compiledIdentity: true,
+      daemonUrl: "ws://127.0.0.1:7777/ws",
+      installedSourcePath: "/opt/nucleus/installed",
+    }),
+    "/opt/nucleus/installed",
+  );
+  assert.equal(
+    resolveOptionalPaseoSourcePath({
+      compiledIdentity: true,
+      daemonUrl: DEFAULT_PASEO_DAEMON_URL,
+      password: "synthetic-password",
       installedSourcePath: "/opt/nucleus/installed",
     }),
     "/opt/nucleus/installed",
@@ -503,6 +531,134 @@ test("resolveOptionalPaseoSourcePath requires Paseo config or registration even 
       registeredPath: "/synthetic/paseo/plugins/nucleus",
     }),
     "/synthetic/paseo/plugins/nucleus",
+  );
+});
+
+test("startup with an upgraded T3-only settings file containing the legacy generated daemonUrl does not activate Paseo", async (t) => {
+  const root = makeTempDir(t, "ns-upgraded-t3-settings-");
+  const dataDir = join(root, "data");
+  mkdirSync(dataDir, { recursive: true });
+  writeFileSync(
+    join(dataDir, "settings.json"),
+    JSON.stringify({
+      daemonUrl: DEFAULT_PASEO_DAEMON_URL,
+      t3code: {
+        endpoint: "http://127.0.0.1:3773",
+        bearer: "synthetic-bearer",
+      },
+    }),
+    { mode: 0o600 },
+  );
+
+  const runtime = new QueueRuntime({
+    dataDir,
+    hostHome: join(root, "absent-paseo"),
+    timers: false,
+  });
+  t.after(async () => {
+    await runtime.drain();
+  });
+
+  await runtime.started;
+  await runtime.bootstrap;
+
+  assert.equal(runtime.paseoAdapter, null);
+  assert.equal(runtime.startError, "");
+  assert.equal(runtime.health().ready, true);
+});
+
+test("ordinary wake archives standing routing grants for archived planners without Paseo and preserves them on inventory failure", async (t) => {
+  const root = makeTempDir(t, "ns-planner-grants-no-paseo-");
+  const dataDir = join(root, "data");
+  mkdirSync(dataDir, { recursive: true });
+
+  const t3HostId = "t3code:grant-env";
+  const plannerId = formatAgentId(t3HostId, "planner-archived");
+  let failInventory = true;
+  let inventoryReads = 0;
+  const t3Adapter = {
+    ...makeFakeHostAdapter(t3HostId),
+    listLiveAgents: async () => {
+      inventoryReads++;
+      if (failInventory) throw new Error("temporary inventory timeout");
+      return [];
+    },
+  } as unknown as Adapter;
+
+  const runtime = new QueueRuntime({
+    dataDir,
+    hostHome: join(root, "no-paseo"),
+    timers: false,
+  });
+  t.after(async () => {
+    await runtime.drain();
+  });
+
+  await runtime.started;
+  runtime.hostRegistry.connect(t3HostId, "ws://127.0.0.1:3773/ws", {
+    adapter: t3Adapter,
+    admission: runtime.admission,
+  });
+  await runtime.ensureBootstrap();
+  runtime.store.setMeta("paused", false);
+
+  const grantRepo = join(root, "repo");
+  mkdirSync(grantRepo, { recursive: true });
+  runtime.store.upsertProject({
+    key: "grant-proj",
+    name: "Grant Project",
+    repositories: [{ origin: null, path: grantRepo }],
+  });
+  runtime.store.setProjectPlanner({
+    key: "grant-proj",
+    agentId: plannerId,
+    setBy: "operator",
+  });
+  const asked = applyRoutingGrant(runtime.store, runtime.decisions, {
+    action: "request",
+    caller: plannerId,
+    reason: "frontier review block",
+  });
+  const decision = runtime.decisions.get({ id: asked.grant.decisionId! });
+  runtime.decisions.answer({
+    id: decision.id,
+    version: decision.version,
+    answer: GRANT_APPROVE,
+    answeredBy: GRANT_OPERATOR_BOARD,
+    relayed: false,
+    note: "",
+  });
+  reconcileRoutingGrants(runtime.store, runtime.decisions);
+  assert.equal(
+    readRoutingGrants(runtime.store).find((g) => g.id === asked.grant.id)
+      ?.status,
+    "active",
+  );
+
+  // Failed inventory leaves the standing grant active.
+  await runtime.engine.wake();
+  assert.ok(inventoryReads >= 1, "grant cleanup queried the T3 host inventory");
+  assert.equal(
+    readRoutingGrants(runtime.store).find((g) => g.id === asked.grant.id)
+      ?.status,
+    "active",
+  );
+
+  // Successful empty inventory archives the grant for the archived planner thread.
+  failInventory = false;
+  await runtime.engine.wake();
+  const archived = readRoutingGrants(runtime.store).find(
+    (g) => g.id === asked.grant.id,
+  );
+  assert.equal(archived?.status, "archived");
+});
+
+test("explicit Paseo CLI resolves default daemon URL on fresh settings and preserves configured URLs", () => {
+  assert.equal(paseoDaemonUrl({}), DEFAULT_PASEO_DAEMON_URL);
+  assert.equal(paseoDaemonUrl(undefined), DEFAULT_PASEO_DAEMON_URL);
+  assert.equal(
+    paseoDaemonUrl({ daemonUrl: "ws://127.0.0.1:7777/ws" }),
+    "ws://127.0.0.1:7777/ws",
   );
 });
 
