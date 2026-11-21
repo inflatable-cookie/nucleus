@@ -34,6 +34,7 @@ import { settlementHeld } from "./queue-drain";
 import {
   legacyRecoveryEscalation,
   legacyRecoveryOwnsStop,
+  noRunEscalationOwnsStop,
   recoveryOvertakenByMerge,
 } from "../recovery/merge-occurrence";
 import { digest } from "../store/store";
@@ -70,6 +71,124 @@ export type CloseoutContext = Pick<
 
 export const isMergeCloseoutPhase = (t: Task) =>
   t.phase === "merging" || t.phase === "syncing" || t.phase === "closing";
+
+type OccurrenceOptions = {
+  automatic: boolean;
+  reobserved?: boolean;
+  effectsHold?: () => boolean;
+};
+
+/**
+ * The one occurrence decision for a verified merge: which recovery, stop, incident
+ * and binding the merge overtakes, and what still holds the phase. Sweep, the owner
+ * move and its preview all read it; it writes nothing. `hold` names the holder and
+ * the missing fact for an owner caller. Automatic-only holds are never named.
+ */
+export function mergeOccurrence(
+  store: CloseoutContext["store"],
+  current: Task,
+  options: OccurrenceOptions,
+) {
+  const r = current.resolution;
+  const runs = store.runs(current.id);
+  const bound = runs.find((run) => run.id === r.currentRunId);
+  const parked = !isMergeCloseoutPhase(current);
+  const hasEpisode = Boolean(
+    r.recoveryActive || (r.recovery && r.recovery.status !== "resolved"),
+  );
+  const recoveryRun = r.recovery?.runId ? store.run(r.recovery.runId) : null;
+  const oldEpisode = Boolean(
+    !recoveryRun?.mergeRetirement && recoveryOvertakenByMerge(store, current),
+  );
+  const recoveredProbe = Boolean(
+    options.automatic &&
+      options.reobserved &&
+      r.externalMergePreAttention &&
+      !hasEpisode &&
+      current.reason.startsWith(EXTERNAL_MERGE_CHECK_REASON_PREFIX) &&
+      (!r.stop ||
+        r.stop.detail.startsWith(EXTERNAL_MERGE_CHECK_REASON_PREFIX)) &&
+      (!r.incident ||
+        r.incident.status === "resolved" ||
+        r.incident.detail.startsWith(EXTERNAL_MERGE_CHECK_REASON_PREFIX)),
+  );
+  const noRunEscalation = oldEpisode
+    ? noRunEscalationOwnsStop(store, current)
+    : null;
+  const ownsStop = Boolean(
+    r.stop &&
+      oldEpisode &&
+      (digest(`stop:${r.stop.reason}:${r.stop.since}`) === r.recovery?.key ||
+        legacyRecoveryOwnsStop(store, current) ||
+        noRunEscalation !== null),
+  );
+  const otherStop = Boolean(r.stop && !recoveredProbe && !ownsStop);
+  const otherIncident = Boolean(
+    r.incident &&
+      r.incident.status !== "resolved" &&
+      !recoveredProbe &&
+      (!oldEpisode || r.incident.id !== r.recovery?.incidentId),
+  );
+  const staleBinding = Boolean(
+    r.currentRunId &&
+      bound?.role !== "closeout" &&
+      oldEpisode &&
+      r.currentRunId === r.recovery?.runId,
+  );
+  const otherBinding = Boolean(
+    r.currentRunId && bound?.role !== "closeout" && !staleBinding,
+  );
+  const liveRun = runs.find(
+    (run) => !run.released && !(oldEpisode && run.id === r.recovery?.runId),
+  );
+  const automaticHold = Boolean(
+    options.automatic &&
+      ((parked && !options.reobserved) ||
+        (bound?.role === "closeout" && bound.completion) ||
+        options.effectsHold?.()),
+  );
+  const held =
+    mergeFenced(current) ||
+    otherStop ||
+    otherIncident ||
+    otherBinding ||
+    Boolean(liveRun) ||
+    automaticHold;
+  const unproved = hasEpisode && !oldEpisode;
+  const episode = r.recovery
+    ? `recovery episode ${r.recovery.id}${r.recovery.runId ? ` on run ${r.recovery.runId}` : " that started no run"}`
+    : "the active recovery";
+  let hold: string | null = null;
+  if (unproved)
+    hold = `${episode} is not proved overtaken by the verified merge; its exact pre-merge witness or its absent run is missing`;
+  else if (mergeFenced(current)) hold = "a merge hold is active";
+  else if (otherStop && r.stop)
+    hold = `the ${r.stop.reason} stop still owns the task: ${r.stop.detail}`;
+  else if (otherIncident && r.incident)
+    hold = `incident ${r.incident.id} is unresolved`;
+  else if (otherBinding)
+    hold = `run ${r.currentRunId} is still bound to the task`;
+  else if (liveRun)
+    hold = `run ${liveRun.id} (${liveRun.role}) is not released`;
+  else if (automaticHold)
+    hold = "synchronization waits for the next automatic pass";
+  return {
+    runs,
+    bound,
+    parked,
+    hasEpisode,
+    oldEpisode,
+    recoveredProbe,
+    noRunEscalation,
+    ownsStop,
+    otherStop,
+    otherIncident,
+    staleBinding,
+    held,
+    unproved,
+    hold,
+  };
+}
 
 /** Settle ladder occurrences the merge overtook without applying a planner answer. */
 export function settleMergeEscalations(
@@ -151,71 +270,28 @@ export class Closeout {
         ["queued", "done", "cancelled"].includes(current.phase)
       )
         return current;
-      const runs = this.store.runs(t.id);
       const automatic = continuation.kind === "sweep";
-      const bound = runs.find((run) => run.id === r.currentRunId);
-      const parked = !isMergeCloseoutPhase(current);
-      const hasEpisode =
-        r.recoveryActive || (r.recovery && r.recovery.status !== "resolved");
-      const recoveryRun = r.recovery?.runId
-        ? this.store.run(r.recovery.runId)
-        : null;
-      const oldEpisode = Boolean(
-        !recoveryRun?.mergeRetirement &&
-          recoveryOvertakenByMerge(this.store, current),
-      );
-      const recoveredProbe = Boolean(
-        automatic &&
-          continuation.reobserved &&
-          r.externalMergePreAttention &&
-          !hasEpisode &&
-          current.reason.startsWith(EXTERNAL_MERGE_CHECK_REASON_PREFIX) &&
-          (!r.stop ||
-            r.stop.detail.startsWith(EXTERNAL_MERGE_CHECK_REASON_PREFIX)) &&
-          (!r.incident ||
-            r.incident.status === "resolved" ||
-            r.incident.detail.startsWith(EXTERNAL_MERGE_CHECK_REASON_PREFIX)),
-      );
+      const occurrence = mergeOccurrence(this.store, current, {
+        automatic,
+        reobserved: continuation.kind === "sweep" && continuation.reobserved,
+        effectsHold: () => this.closeoutEffects(current).length > 0,
+      });
+      const {
+        parked,
+        oldEpisode,
+        recoveredProbe,
+        noRunEscalation,
+        otherStop,
+        otherIncident,
+        staleBinding,
+        held,
+      } = occurrence;
+      // An owner move names the holder it cannot pass, never a silent no-op.
+      if (occurrence.hold && continuation.kind === "owner")
+        throw new Error(`Recorded merge waits: ${occurrence.hold}`);
       // An unmatched episode, stop or incident may be a current sync or cleanup
       // fault. A merge does not grant authority to clear that occurrence.
-      if (hasEpisode && !oldEpisode) return current;
-      const ownsStop = Boolean(
-        r.stop &&
-          oldEpisode &&
-          (digest(`stop:${r.stop.reason}:${r.stop.since}`) ===
-            r.recovery?.key ||
-            legacyRecoveryOwnsStop(this.store, current)),
-      );
-      const otherStop = Boolean(r.stop && !recoveredProbe && !ownsStop);
-      const otherIncident = Boolean(
-        r.incident &&
-          r.incident.status !== "resolved" &&
-          !recoveredProbe &&
-          (!oldEpisode || r.incident.id !== r.recovery?.incidentId),
-      );
-      const staleBinding = Boolean(
-        r.currentRunId &&
-          bound?.role !== "closeout" &&
-          oldEpisode &&
-          r.currentRunId === r.recovery?.runId,
-      );
-      const otherBinding = Boolean(
-        r.currentRunId && bound?.role !== "closeout" && !staleBinding,
-      );
-      const held =
-        mergeFenced(current) ||
-        otherStop ||
-        otherIncident ||
-        otherBinding ||
-        runs.some(
-          (run) =>
-            !run.released && !(oldEpisode && run.id === r.recovery?.runId),
-        ) ||
-        (automatic &&
-          ((parked && !continuation.reobserved) ||
-            Boolean(bound?.role === "closeout" && bound.completion))) ||
-        (automatic && this.closeoutEffects(current).length > 0);
-      if (held && !oldEpisode) return current;
+      if (occurrence.unproved || (held && !oldEpisode)) return current;
       const reenter =
         parked ||
         current.phase === "merging" ||
@@ -308,7 +384,8 @@ export class Closeout {
       if (recoveredIncident)
         this.resolution.recordIncidentEvent(t.id, recoveredIncident);
       const escalation =
-        oldEpisode && legacyRecoveryEscalation(this.store, current);
+        oldEpisode &&
+        (legacyRecoveryEscalation(this.store, current) ?? noRunEscalation);
       if (
         escalation &&
         plannerEscalations(this.store.eventsAll(t.id)).some(

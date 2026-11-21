@@ -362,6 +362,15 @@ export class CoordinatorPass {
         }
       }
       if (!incident?.runId) {
+        // A verified merge overtakes an episode that never launched a run. Settle it
+        // through the shared closeout decision before its pending clock can escalate.
+        if (recoveryOvertakenByMerge(this.store, this.store.task(t.id))) {
+          this.resolution.closeout.continueRecordedMerge(
+            this.store.task(t.id),
+            { kind: "sweep" },
+          );
+          continue;
+        }
         // Papercut 0489ea25: a pending episode with no run is invisible unless it
         // reaches someone. The pending event is its clock; a legitimate capacity,
         // dispatch or route wait clears the episode (`wait`) instead of leaving it.

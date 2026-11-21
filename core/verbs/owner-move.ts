@@ -9,6 +9,7 @@ import {
   MOVE_MERGE_ACCEPTANCE_REFUSAL,
 } from "./control-refusals";
 import { RETAINED_PREREQUISITE_REFUSAL } from "./verb-refusal-text";
+import { mergeOccurrence } from "../closeout/closeout";
 import { readyReviewAtHead } from "../recovery/task-reasons";
 import {
   closeoutEffectRefusal,
@@ -523,8 +524,14 @@ function moveViews(facts: OwnerVerbFacts): TaskNextVerb[] {
         reviewRequiredForTask(facts.store, task),
       );
       if (evidence) return { available: false, refusal: evidence };
+      // The hold is the same occurrence decision the move executes: a named holder, never a no-op.
+      const hold = mergeOccurrence(facts.store, task, {
+        automatic: false,
+      }).hold;
       const refusal =
-        durableRunFence(facts) ?? closeoutEffectRefusal(facts.store, task);
+        durableRunFence(facts) ??
+        closeoutEffectRefusal(facts.store, task) ??
+        (hold ? `Recorded merge waits: ${hold}` : null);
       return refusal
         ? { available: false, refusal }
         : {
