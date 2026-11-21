@@ -12,9 +12,15 @@ import {
   T3RpcError,
   type T3RpcClient,
 } from "./rpc";
-import { agentRecord, canonical, t3WorkspaceId, type T3StateFile } from "./state";
+import {
+  agentRecord,
+  canonical,
+  t3WorkspaceId,
+  type T3StateFile,
+} from "./state";
 import { labelTask } from "./one-row";
 import { linkedWorktreePath } from "../../core/git/git-identity";
+import { WIRE_LABEL_KEYS } from "../../shared/wire-labels";
 import {
   decode,
   shellSnapshot,
@@ -862,7 +868,8 @@ export class T3Reads {
     )
       return inbox.workspaceId;
     const recorded = Object.values(state.workspaces).find(
-      (w) => w.projectId === thread.projectId && w.directory === thread.worktreePath,
+      (w) =>
+        w.projectId === thread.projectId && w.directory === thread.worktreePath,
     );
     if (recorded) return recorded.id;
     const path = this.threadPath(thread);
@@ -871,22 +878,35 @@ export class T3Reads {
   }
 
   private threadPath(thread: Projection["thread"]): string | null {
-    return thread.worktreePath ?? this.observedProjects?.find((project) => project.id === thread.projectId)?.workspaceRoot ?? null;
+    return (
+      thread.worktreePath ??
+      this.observedProjects?.find((project) => project.id === thread.projectId)
+        ?.workspaceRoot ??
+      null
+    );
   }
 
   /** Origin and observation use the same placement, including project-only threads. */
   threadWorkspace(thread: Projection["thread"]) {
-    return this.workspaceFor(thread) ??
-      ((thread.archivedAt || thread.deletedAt || !this.observes(thread.id))
+    return (
+      this.workspaceFor(thread) ??
+      (thread.archivedAt || thread.deletedAt || !this.observes(thread.id)
         ? agentRecord(this.core.state.read(), thread.id)?.workspaceId
-        : undefined) ?? `t3-project:${thread.projectId}`;
+        : undefined) ??
+      `t3-project:${thread.projectId}`
+    );
   }
 
-  private toHostThreads(threads: readonly ShellRow[], includeWorkspaceDirectory = false): HostThread[] {
+  private toHostThreads(
+    threads: readonly ShellRow[],
+    includeWorkspaceDirectory = false,
+  ): HostThread[] {
     return threads.map((t) => ({
       id: t.id,
       workspaceId: this.threadWorkspace(t),
-      ...(includeWorkspaceDirectory ? { workspaceDirectory: this.threadPath(t) } : {}),
+      ...(includeWorkspaceDirectory
+        ? { workspaceDirectory: this.threadPath(t) }
+        : {}),
       labels: agentRecord(this.core.state.read(), t.id)?.labels ?? {},
       // The same terminal normalisation the single-thread read reports, so the
       // workspace archive proof reads one answer for both (nucleus#1381).
@@ -910,7 +930,10 @@ export class T3Reads {
 
   async activeThreads(includeWorkspaceDirectory = false) {
     const { threads } = await this.shell();
-    return this.toHostThreads(threads.filter((t) => !t.archivedAt && !t.deletedAt), includeWorkspaceDirectory);
+    return this.toHostThreads(
+      threads.filter((t) => !t.archivedAt && !t.deletedAt),
+      includeWorkspaceDirectory,
+    );
   }
 
   private matchingAgentIds(labels: Record<string, string>): string[] {
@@ -1147,21 +1170,48 @@ export class T3Reads {
   }
   async listLiveAgents() {
     const { threads, projects } = await this.shell();
+    const state = this.core.state.read();
+    const projectById = new Map(projects.map((p) => [p.id, p]));
+    const parentTaskByThread = new Map(
+      Object.entries(state.parents ?? {}).map(([taskId, parent]) => [
+        parent.threadId,
+        taskId,
+      ]),
+    );
+    const inboxThreadId = state.inbox?.threadId ?? null;
     return threads
       .filter((t) => !t.archivedAt && !t.deletedAt)
-      .map((t) => ({
-        id: t.id,
-        title: t.title,
-        workspaceId: this.threadWorkspace(t),
-        directory:
-          t.worktreePath ??
-          projects.find((p) => p.id === t.projectId)?.workspaceRoot ??
-          null,
-        repositoryRoot:
-          projects.find((p) => p.id === t.projectId)?.workspaceRoot ?? null,
-        updatedAt: t.updatedAt,
-        labels: agentRecord(this.core.state.read(), t.id)?.labels ?? {},
-      }));
+      .map((t) => {
+        const root = projectById.get(t.projectId)?.workspaceRoot ?? null;
+        const recordedLabels = agentRecord(state, t.id)?.labels;
+        const parentTaskId = parentTaskByThread.get(t.id);
+        const labels =
+          recordedLabels && Object.keys(recordedLabels).length > 0
+            ? recordedLabels
+            : parentTaskId
+              ? {
+                  [WIRE_LABEL_KEYS.task]: parentTaskId,
+                  [WIRE_LABEL_KEYS.role]: "parent",
+                }
+              : t.id === inboxThreadId
+                ? { [WIRE_LABEL_KEYS.role]: "inbox" }
+                : t.providerInstanceId === "nucleus"
+                  ? { [WIRE_LABEL_KEYS.role]: "parent" }
+                  : t.lineage?.relationshipToParent === "subagent" ||
+                      t.id.startsWith("thread:subagent:") ||
+                      t.id.startsWith("thread:delegated-task:")
+                    ? { [WIRE_LABEL_KEYS.role]: "subagent" }
+                    : {};
+        return {
+          id: t.id,
+          title: t.title,
+          workspaceId: this.threadWorkspace(t),
+          directory: t.worktreePath ?? root,
+          repositoryRoot: root,
+          updatedAt: t.updatedAt,
+          labels,
+        };
+      });
   }
 
   /**

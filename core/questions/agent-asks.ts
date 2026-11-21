@@ -253,7 +253,8 @@ export class AgentAsks {
       );
       if (state.kind === "routable")
         return { rungs: [{ agentId: ask.route.agentId, rung: "project" }] };
-      if (state.kind === "unverified") return { rungs: [], issue: state.detail };
+      if (state.kind === "unverified")
+        return { rungs: [], issue: state.detail };
       this.store.event(
         task.id,
         "agent_ask_delegation_skipped",
@@ -267,10 +268,31 @@ export class AgentAsks {
     try {
       if (ask.route.agent === null) {
         const project = this.store.projectByKey(ask.route.project);
-        const thread = project && (await this.resolution.responsibleThread(project, ask.sourceAgentId ? { agentId: ask.sourceAgentId, hostId: task.hostId } : undefined)).thread;
-        return { rungs: thread ? [{ agentId: thread.agentId, rung: "project" }] : [] };
+        const resolved = project
+          ? await this.resolution.responsibleThread(
+              project,
+              ask.sourceAgentId
+                ? { agentId: ask.sourceAgentId, hostId: task.hostId }
+                : undefined,
+            )
+          : null;
+        if (resolved?.thread) {
+          return {
+            rungs: [{ agentId: resolved.thread.agentId, rung: "project" }],
+          };
+        }
+        if (resolved?.incomplete) {
+          return {
+            rungs: [],
+            issue: `Host inventory for ${ask.route.project} could not be read; waiting for the host to answer.`,
+          };
+        }
+        return { rungs: [] };
       }
-      const target = await this.resolution.resolveProjectAgentTarget(ask.route.project, ask.route.agent);
+      const target = await this.resolution.resolveProjectAgentTarget(
+        ask.route.project,
+        ask.route.agent,
+      );
       return { rungs: [{ agentId: target.agentId, rung: "project" }] };
     } catch (error) {
       this.store.event(
@@ -398,7 +420,15 @@ export class AgentAsks {
     if (this.routingAgentAsks.has(ask.id)) return;
     const events = this.store.eventsAll(task.id);
     const state = askLifecycle(events, ask.id);
-    if (state?.noClassification || events.some(event => event.kind === "agent_ask_self_handle" && event.detail.startsWith(`${ask.id}:`))) return;
+    if (
+      state?.noClassification ||
+      events.some(
+        (event) =>
+          event.kind === "agent_ask_self_handle" &&
+          event.detail.startsWith(`${ask.id}:`),
+      )
+    )
+      return;
     const windows = [
       `ns-agent-ask-reviewer-${ask.id}`,
       `ns-agent-ask-${ask.id}`,
@@ -508,13 +538,33 @@ export class AgentAsks {
     try {
       // The task's own planner is first, followed by a live project thread.
       const { rungs, issue } = await this.askRungs(task, ask);
-      if (!rungs.length && !issue && !this.resolution.delegatedDelivery(`ns-agent-ask-${ask.id}`) && !this.resolution.delegatedDelivery(`ns-agent-ask-${ask.id}-project`) && !this.resolution.delegatedDelivery(`ns-decider-${ask.id}`)) {
+      if (
+        !rungs.length &&
+        !issue &&
+        !this.resolution.delegatedDelivery(`ns-agent-ask-${ask.id}`) &&
+        !this.resolution.delegatedDelivery(`ns-agent-ask-${ask.id}-project`) &&
+        !this.resolution.delegatedDelivery(`ns-decider-${ask.id}`)
+      ) {
         if (isOperatorOnlyAsk(ask.kind)) {
-          this.resolution.askOperatorDecision(task, ask, 'No live responsible thread is available');
+          this.resolution.askOperatorDecision(
+            task,
+            ask,
+            "No live responsible thread is available",
+          );
           return;
         }
-        const project = ask.route?.kind === 'project' ? ask.route.project : this.store.projectFor(task.repoPath, normalizeRepositoryOrigin(task.repository ?? ''))?.key ?? 'this project';
-        this.store.event(task.id, 'agent_ask_self_handle', `${ask.id}: No live responsible thread for ${project}; handle it yourself.`);
+        const project =
+          ask.route?.kind === "project"
+            ? ask.route.project
+            : (this.store.projectFor(
+                task.repoPath,
+                normalizeRepositoryOrigin(task.repository ?? ""),
+              )?.key ?? "this project");
+        this.store.event(
+          task.id,
+          "agent_ask_self_handle",
+          `${ask.id}: No live responsible thread for ${project}; handle it yourself.`,
+        );
         return;
       }
       const planners = plannerWindows(
@@ -569,7 +619,13 @@ export class AgentAsks {
             `${ask.id}: ${detail}`,
           ),
         onUnknown: (role, agentId, error) => {
-          const key = ask.route?.kind === 'project' ? ask.route.project : this.store.projectFor(task.repoPath, normalizeRepositoryOrigin(task.repository ?? ''))?.key;
+          const key =
+            ask.route?.kind === "project"
+              ? ask.route.project
+              : this.store.projectFor(
+                  task.repoPath,
+                  normalizeRepositoryOrigin(task.repository ?? ""),
+                )?.key;
           if (key) this.resolution.responsibleThreads.cache.invalidate(key);
           unknown = true;
           this.store.event(
@@ -583,10 +639,26 @@ export class AgentAsks {
         },
         onUnavailable: (planner) => {
           unavailable = true;
-          const key = ask.route?.kind === 'project' ? ask.route.project : this.store.projectFor(task.repoPath, normalizeRepositoryOrigin(task.repository ?? ''))?.key;
+          const key =
+            ask.route?.kind === "project"
+              ? ask.route.project
+              : this.store.projectFor(
+                  task.repoPath,
+                  normalizeRepositoryOrigin(task.repository ?? ""),
+                )?.key;
           if (key) this.resolution.responsibleThreads.cache.invalidate(key);
-          if (isOperatorOnlyAsk(ask.kind)) this.resolution.askOperatorDecision(task, ask, `Selected planner ${planner} cannot be asked on its host.`);
-          else this.store.event(task.id, 'agent_ask_self_handle', `${ask.id}: No live responsible thread for ${key ?? 'this project'}; handle it yourself.`);
+          if (isOperatorOnlyAsk(ask.kind))
+            this.resolution.askOperatorDecision(
+              task,
+              ask,
+              `Selected planner ${planner} cannot be asked on its host.`,
+            );
+          else
+            this.store.event(
+              task.id,
+              "agent_ask_self_handle",
+              `${ask.id}: No live responsible thread for ${key ?? "this project"}; handle it yourself.`,
+            );
         },
       });
     } catch (error) {
@@ -621,8 +693,17 @@ export class AgentAsks {
       );
     else if (!unknown && !unavailable && !this.stopped()) {
       if (!isOperatorOnlyAsk(ask.kind))
-        this.store.event(task.id, 'agent_ask_self_handle', `${ask.id}: No responsible thread answered; handle it yourself.`);
-      else this.resolution.askOperatorDecision(task, ask, 'No responsible thread answered');
+        this.store.event(
+          task.id,
+          "agent_ask_self_handle",
+          `${ask.id}: No responsible thread answered; handle it yourself.`,
+        );
+      else
+        this.resolution.askOperatorDecision(
+          task,
+          ask,
+          "No responsible thread answered",
+        );
     }
   }
 
@@ -1032,8 +1113,19 @@ export class AgentAsks {
           return { status: "answered", askId, answer, answeredBy: who };
         }
       }
-      const selfHandle = this.store.eventsAll(taskId).find(event => event.kind === 'agent_ask_self_handle' && event.detail.startsWith(`${askId}:`));
-      if (selfHandle) return { status: 'pending', askId, detail: selfHandle.detail.slice(askId.length + 2) };
+      const selfHandle = this.store
+        .eventsAll(taskId)
+        .find(
+          (event) =>
+            event.kind === "agent_ask_self_handle" &&
+            event.detail.startsWith(`${askId}:`),
+        );
+      if (selfHandle)
+        return {
+          status: "pending",
+          askId,
+          detail: selfHandle.detail.slice(askId.length + 2),
+        };
       // A recorded owner direction needs the agent's turn to finish. Yield the
       // tool call without answering or cancelling its independently routed ask.
       if (
