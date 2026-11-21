@@ -481,7 +481,9 @@ export async function canonicalLinkRoot(
       !bargeAllocation.checkoutPath ||
       !bargeAllocation.gitCommonDir
     ) {
-      throw new Error("Barge workspace link root requires an active Barge allocation");
+      throw new Error(
+        "Barge workspace link root requires an active Barge allocation",
+      );
     }
     const [actualDir, expectedDir, actualCommon, expectedCommon] =
       await Promise.all([
@@ -491,7 +493,9 @@ export async function canonicalLinkRoot(
         realpath(bargeAllocation.gitCommonDir),
       ]);
     if (actualDir !== expectedDir || actualCommon !== expectedCommon) {
-      throw new Error("Barge checkout path or Git common directory does not match the recorded lease");
+      throw new Error(
+        "Barge checkout path or Git common directory does not match the recorded lease",
+      );
     }
     return dirname(actualDir);
   }
@@ -748,8 +752,12 @@ export async function provisionWorktreeLinks(input: {
             break;
           }
         }
+        // A pin is keyed by the identity its member was recorded under (origin, else
+        // the recorded path, as `siblingIdentity` and the BB wait key it), never by the
+        // realpath, which differs when the project entry reaches the checkout by a symlink.
+        const identity = row ? row.origin || row.path : source.root;
         const pin = input.pinned.pins.find(
-          (item) => item.repository === (row?.origin || source.root),
+          (item) => item.repository === identity,
         );
         if (row && !pin)
           throw new Error(

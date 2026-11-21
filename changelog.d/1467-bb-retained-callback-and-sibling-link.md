@@ -1,0 +1,1 @@
+BB task worktrees link a declared sibling copy even when the project reaches that repository through a symlinked path, instead of failing it as a missing copy. A retained BB run's continuation after a pause, a provider resume or a plugin roll now names that run's own helper and ticket, so its report is no longer refused with a missing callback environment.
