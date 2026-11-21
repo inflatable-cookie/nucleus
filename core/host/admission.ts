@@ -24,7 +24,7 @@ import {
 import { DEFAULT_GLOBAL_LIMIT } from "../../shared/contracts";
 import {
   type AdmissionClass,
-  type PaseoAdmission,
+  type HostAdmission,
 } from "../../shared/telemetry";
 
 export interface AdmissionOptions {
@@ -132,7 +132,8 @@ export const BACKPRESSURE_DEFERRAL = "Host admission backpressure: ";
  * Retry records written under it are still deferrals: a roll must not turn a
  * stored wait into a failed archive attempt.
  */
-export const LEGACY_PASEO_BACKPRESSURE_DEFERRAL = "Paseo admission backpressure: ";
+export const LEGACY_PASEO_BACKPRESSURE_DEFERRAL =
+  "Paseo admission backpressure: ";
 /** A stored retry reason that records only a breaker deferral: no call reached the host. */
 export const isBackpressureDeferral = (reason: string | null | undefined) =>
   Boolean(
@@ -1013,7 +1014,7 @@ export class Admission {
     }
   }
 
-  snapshot(): PaseoAdmission {
+  snapshot(): HostAdmission {
     // A breaker-counting pending call is reported first; a breaker-exempt archive
     // still shows while it holds its slot, and says why it cannot trip.
     const pending = this.slowInFlight(true) ?? this.slowInFlight();
@@ -1369,15 +1370,14 @@ export function admitAdapter(raw: Adapter, admission: Admission): Adapter {
             holder: task?.id ? `createWorkspace ${task.id}` : "createWorkspace",
             onWaiting: () => {
               startedAt = Date.now();
-              if (task?.id)
-                report?.(task.id, "paseo_admission_wait", "started");
+              if (task?.id) report?.(task.id, "host_admission_wait", "started");
             },
             onAdmitted: (waitMs) => {
               admitted = true;
               if (task?.id)
                 report?.(
                   task.id,
-                  "paseo_admission_wait",
+                  "host_admission_wait",
                   "finished",
                   waitMs,
                   "ok",
@@ -1395,7 +1395,7 @@ export function admitAdapter(raw: Adapter, admission: Admission): Adapter {
             if (task?.id && startedAt && !admitted)
               report?.(
                 task.id,
-                "paseo_admission_wait",
+                "host_admission_wait",
                 "finished",
                 Date.now() - startedAt,
                 "failed",

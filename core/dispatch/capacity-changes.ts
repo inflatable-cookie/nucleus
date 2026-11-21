@@ -246,7 +246,9 @@ export class CapacityChangeJournal {
     if (!Array.isArray(raw)) return [];
     const changes: CapacityChange[] = [];
     for (const entry of raw) {
-      const parsed = capacityChangeSchema.safeParse(canonicalChangeEntry(entry));
+      const parsed = capacityChangeSchema.safeParse(
+        canonicalChangeEntry(entry),
+      );
       if (parsed.success) changes.push(parsed.data);
     }
     return changes.slice(-CAPACITY_CHANGE_LOG_LIMIT);

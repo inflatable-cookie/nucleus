@@ -207,7 +207,11 @@ test("a full record adds nothing to the screen: Frontier grants is the last sect
       "Project overrides",
       "Frontier grants",
     ]);
-    assert.doesNotMatch(ui.text(), /Role demand/, "the Role demand section is gone (Tom, 2026-11-19)");
+    assert.doesNotMatch(
+      ui.text(),
+      /Role demand/,
+      "the Role demand section is gone (Tom, 2026-11-19)",
+    );
   } finally {
     done();
   }
@@ -430,7 +434,11 @@ test("a limit saved under the Paseo-era name shows as Concurrent host calls, say
       await new Promise((resolve) => setTimeout(resolve, 50));
     assert.equal(saves.length, 1, "the edit saves once");
     assert.equal(saves[0]!.hostCallLimit, 10, "the canonical name is written");
-    assert.equal("paseoCallLimit" in saves[0]!, false, "the legacy name is not written back");
+    assert.equal(
+      "paseoCallLimit" in saves[0]!,
+      false,
+      "the legacy name is not written back",
+    );
   } finally {
     done();
   }
@@ -834,11 +842,7 @@ test("Advanced limits stack every label; Task slots keep theirs inline, at narro
         `${name} is stacked: its label has its own line`,
       );
     }
-    for (const name of [
-      "Global",
-      "Per project",
-      "Papercuts",
-    ]) {
+    for (const name of ["Global", "Per project", "Papercuts"]) {
       const text = textNode(ui, name);
       assert.ok(text, `${name} shows`);
       assert.equal(text.props.style.flexShrink, 0, `${name} stays inline`);

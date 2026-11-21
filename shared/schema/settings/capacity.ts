@@ -259,5 +259,3 @@ export const capacityAuthorityStateSchema = z
 export type CapacityAuthorityState = z.infer<
   typeof capacityAuthorityStateSchema
 >;
-
-

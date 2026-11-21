@@ -193,9 +193,12 @@ export class StoreOperations {
    */
   configuredHostCallLimit(): number {
     const canonical = this.core.getMeta<number>("hostCallLimit");
-    const configured =
-      canonical ?? this.core.getMeta<number>("paseoCallLimit");
-    if (configured === undefined || configured === null || !Number.isFinite(configured))
+    const configured = canonical ?? this.core.getMeta<number>("paseoCallLimit");
+    if (
+      configured === undefined ||
+      configured === null ||
+      !Number.isFinite(configured)
+    )
       return DEFAULT_HOST_CALL_LIMIT;
     return Math.min(Math.max(Math.trunc(configured), 1), MAX_HOST_CALL_LIMIT);
   }

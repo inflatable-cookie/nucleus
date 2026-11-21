@@ -1251,7 +1251,10 @@ ends nested host polling for the pass instead of starting more host requests.
 class, holder, age, deadline) and the last abandoned call, and logs a wait for a
 slot with the oldest holder and its age. `heldSlots` names the admitted effect
 that holds the slot, including an inner-timed one whose individual requests are
-the pending calls. The freed bound keeps bounding instead of shrinking to nothing
+the pending calls. The shape is `HostAdmission` (`shared/telemetry.ts`), one per host
+and shared by every host's admission, so its numbers describe Queue's own load on that
+host and never assert the host's health; a workspace-creation wait reports the step
+`host_admission_wait`. The freed bound keeps bounding instead of shrinking to nothing
 because one host call never returned. An abandoned call is reconciled from
 recorded state, exactly like any other unknown delivery (nucleus#1179).
 

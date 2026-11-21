@@ -28,7 +28,7 @@ import type { Store } from "../core/store/store";
 import type { BoundRun } from "../shared/contracts";
 import { threadRetentionHealth } from "../core/workspaces/thread-retention";
 import type { ThreadRetentionHealth } from "../core/workspaces/thread-retention";
-import type { PaseoAdmission, ReconciliationSweep } from "../shared/telemetry";
+import type { HostAdmission, ReconciliationSweep } from "../shared/telemetry";
 import type { HostRunEndpoint } from "./callbacks/host-run-endpoint";
 import type { RegisteredHost } from "./host-connections";
 import type {
@@ -107,7 +107,7 @@ export interface RuntimeHealth {
   lastStoreAccessAt: string | null;
   taskIdentities: number;
   /** Queue-observed outbound Paseo admission: depth, coalescing, waits and backpressure. */
-  admission: PaseoAdmission;
+  admission: HostAdmission;
   /** Durable cursor evidence for the bounded safety sweep. */
   reconciliation: ReconciliationSweep;
   /** Task facts that have waited over 30 seconds for a Nucleus lane. */
