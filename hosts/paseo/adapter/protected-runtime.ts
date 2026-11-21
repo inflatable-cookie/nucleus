@@ -1,8 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { HostProcessFact } from "../../../core/host/types";
-import { livePgid } from "../../../core/machine/host-process-select";
+import type { HostProcessFact } from "../../../core/host";
 
 /**
  * Paseo's own runtime, recognised on the adapter side only. Shared cleanup reads
@@ -92,9 +91,10 @@ export function markPaseoRuntime(
     if (commandLooksLikePaseo(fact.command)) roots.add(fact.pid);
   if (daemonPid !== null) roots.add(daemonPid);
 
+  // A live process group's id is its leader's pid, so the daemon's group is the
+  // one named by its pid even when the daemon is not in the table.
   const daemonFact = daemonPid === null ? undefined : byPid.get(daemonPid);
-  const daemonPgid =
-    daemonFact?.pgid ?? (daemonPid !== null ? livePgid(daemonPid) : null);
+  const daemonPgid = daemonPid === null ? null : (daemonFact?.pgid ?? daemonPid);
 
   return processes.map((fact) => {
     let owned = false;
@@ -114,8 +114,7 @@ export function markPaseoRuntime(
       }
       current = byPid.get(parent);
     }
-    if (daemonPgid !== null && daemonPgid !== undefined && fact.pgid === daemonPgid)
-      owned = true;
+    if (daemonPgid !== null && fact.pgid === daemonPgid) owned = true;
     return owned ? { ...fact, protectedRuntime: true } : fact;
   });
 }

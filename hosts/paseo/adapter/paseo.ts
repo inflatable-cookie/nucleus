@@ -1,6 +1,7 @@
 import {
   ArchiveNotDeliveredError,
   ProvenPreSendRefusalError,
+  readHostProcessTable,
 } from "../../../core/host";
 import type {
   HostPolicyConstructor,
@@ -16,11 +17,10 @@ import type {
   RunUsageStreamEvent,
   ProcessSearch,
   WorkspaceCreationState,
+  HostProcessFact,
 } from "../../../core/host";
 import { capPaseoTitle } from "./titles";
 import { paseoRuntimeListing, readPaseoDaemonPid } from "./protected-runtime";
-import { readHostProcessTable } from "../../../core/machine/machine-ports";
-import type { HostProcessFact } from "../../../core/host/types";
 import { mcpBindingPathFromHostRecord } from "../../../shared/report-binding";
 import { timedDaemonRequests } from "./paseo-call-timing";
 import { paseoWorkspaceIdAccepted } from "./workspace-id";

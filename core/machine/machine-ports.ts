@@ -6,8 +6,8 @@ import {
 } from "../git/index";
 import { checkoutRunScratchPlacement, runTemporaryDirectory, type RunScratchPlacement } from "../workspaces/run-scratch";
 import { findWorktreeValidation, type WorktreeValidationScan } from "../workspaces/worktree-validation";
-import { readHostUidProcesses } from "./host-process-listing";
 import type { HostProcessFact } from "../host/types";
+import { readHostProcessTable } from "../host/process-table";
 
 /**
  * The machine ports: work that belongs to the machine this daemon runs on, never
@@ -91,8 +91,3 @@ export class MachinePorts {
   }
 }
 
-/** The host's uid-scoped process table, or null when the read is unknown. */
-export async function readHostProcessTable(): Promise<HostProcessFact[] | null> {
-  const read = await readHostUidProcesses();
-  return read.state === "listed" ? read.processes : null;
-}
