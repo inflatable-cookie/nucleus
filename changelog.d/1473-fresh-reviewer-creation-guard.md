@@ -1,0 +1,1 @@
+A fresh ordinary reviewer is now re-checked at the native creation boundary, the same way a retained reviewer is re-checked before its send. A pause, a dispatch hold, a pending effect, a changed task version, a moved PR head or a live run that owns the checkout refuses the creation before any agent exists. A pending effect waits for its settlement rather than refusing the task.

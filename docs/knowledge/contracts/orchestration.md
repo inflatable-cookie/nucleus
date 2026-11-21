@@ -977,6 +977,23 @@ Resolution. `ordinaryRoundCustody` belongs to `OrdinaryCustody`
 (`core/review/ordinary-custody.ts`); its Resolution delegate remains available to
 source and result-application callers.
 
+A reviewer that is review entry or an ordinary round carries one admission guard
+into its native send or creation (`reviewAdmission` in `deliver.ts`). The guard
+re-proves, immediately before the host call, the ordinary round's custody, the
+live PR identity and head, the writer yield on review entry, the exact source and
+the reservation snapshot, plus the current pause, dispatch hold, task version,
+run ownership and blocking-effect fence. A continuation and a review-entry
+creation also re-prove the profile against its recorded reviewer binding; an
+ordinary fresh reviewer does not, because it replaces a closed reader and its
+reservation already selected and proved the profile it starts with. A proven refusal settles the run
+superseded and released with no agent bound; the task stops in attention with
+`Ordinary review reviewer refused before send` naming the refusal. A blocking
+effect found by the guard waits with `review_waiting_on_effects` instead of
+refusing. The creation guard in `AgentPolicy` and the retained-send guard in
+`sendRunVia` rethrow that fence unchanged, so no host path converts it to a
+refusal. The retained send and the fresh creation share one proof; an unknown
+delivery from the host call is never resent.
+
 `Resolution.launch` is still the funnel that sequences those four owners. The
 funnel has not moved off Resolution.
 
