@@ -28,7 +28,7 @@ const HOST_REMOVALS_KEPT = 50;
 
 export interface HostCatalogueContext {
   readonly store: Store;
-  readonly hostRegistry: Pick<HostRegistry<unknown>, "known" | "primary" | "onlineIds" | "connectedAt" | "lastSeenAt" | "forget">;
+  readonly hostRegistry: Pick<HostRegistry<unknown>, "known" | "legacyPaseoPrimary" | "onlineIds" | "connectedAt" | "lastSeenAt" | "forget">;
   /** The same host projection `service.health` publishes. */
   hostStates(): HostHealth[];
   bb(): BbHostStatus;
@@ -58,7 +58,7 @@ export class HostCatalogueSettings {
     const t3 = this.context.t3();
     const known = hostRegistry.known();
     const online = hostRegistry.onlineIds();
-    const primaryId = hostRegistry.primary()?.id ?? null;
+    const primaryId = hostRegistry.legacyPaseoPrimary()?.id ?? null;
     const defaultHostKind = this.context.defaultHostKind();
     const defaultId = defaultHostId(defaultHostKind, known.map(entry => entry.id), online);
     const hosts = known.map((entry): HostView => {
@@ -95,7 +95,7 @@ export class HostCatalogueSettings {
     const surface = capacityWriteSurface(context?.via);
     if (!surface) throw new Error(hostRemoveRefusalMessage());
     const { store, hostRegistry } = this.context;
-    const primaryId = hostRegistry.primary()?.id ?? null;
+    const primaryId = hostRegistry.legacyPaseoPrimary()?.id ?? null;
     let removed: HostRemovalRecord | null = null;
     try {
       hostRegistry.forget(input.hostId, entry => {

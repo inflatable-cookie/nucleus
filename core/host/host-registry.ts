@@ -224,7 +224,7 @@ export class HostRegistry<T> {
    * T3Code, or BB (Spec 062) — is never that primary, whatever order it registered
    * in, so an older record still answers for the host it was written for.
    */
-  primary(): KnownHost | undefined {
+  legacyPaseoPrimary(): KnownHost | undefined {
     // Only the Paseo entry is primary. A secondary host that registered first (a BB
     // plugin can connect before the daemon bootstrap) is never that entry: falling
     // back to whichever host is first would let the daemon's own identity guard read a

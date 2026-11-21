@@ -1,5 +1,4 @@
-import { parseAgentId } from "../../shared/agent-identity";
-import { hostKindOf } from "../../shared/host-kind";
+import { legacyIdentityObservedOn, parseAgentId } from "../../shared/agent-identity";
 import { isAgentGoneRefusal } from "../host/errors";
 import type {
   Project,
@@ -44,19 +43,6 @@ export class ProjectAgentTargetRefusal extends Error {
     super(message);
     this.name = "ProjectAgentTargetRefusal";
   }
-}
-
-/**
- * Which host may observe one unqualified legacy identity. A bare legacy id
- * carries no encoded host, so only a host of the kind that minted legacy ids
- * (Paseo) may observe it; every other host's silence is incomplete, never gone.
- * `hostKindOf` answers the default kind for an unnamed host, exactly as the rest
- * of the queue treats a pre-cutover record.
- */
-export function legacyIdentityObservedOn(
-  observedHostId: string | null | undefined,
-): boolean {
-  return hostKindOf(observedHostId) === "paseo";
 }
 
 /**

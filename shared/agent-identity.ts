@@ -39,6 +39,11 @@ export function foreignIdentityRefusal(hostId: string): string {
   return `Caller identity belongs to host ${hostId} (${hostKindOf(hostId)}), which is unknown or offline`;
 }
 
+/** Host context for pre-qualified Paseo caller records, including hostless rows. */
+export function legacyIdentityObservedOn(hostId: string | null | undefined): boolean {
+  return hostKindOf(hostId) === 'paseo';
+}
+
 /** Caller fields accept old bare Paseo IDs without changing the stored record. */
 export function sameCallerIdentity(left: string | null | undefined, right: string | null | undefined,
   leftHostId?: string | null, rightHostId?: string | null): boolean {
@@ -48,7 +53,7 @@ export function sameCallerIdentity(left: string | null | undefined, right: strin
   if ((a?.nativeAgentId ?? left) !== (b?.nativeAgentId ?? right)) return false;
   if (aHost && bHost) return aHost === bHost;
   // Unqualified historical caller fields belong to Paseo, never a new host.
-  return (!aHost || hostKindOf(aHost) === 'paseo') && (!bHost || hostKindOf(bHost) === 'paseo');
+  return legacyIdentityObservedOn(aHost) && legacyIdentityObservedOn(bHost);
 }
 
 /** Resolve a caller for a host API; a qualified identity must match that host. */

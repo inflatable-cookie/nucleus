@@ -1,5 +1,5 @@
 import type { Project } from "../../shared/contracts";
-import { formatAgentId, parseAgentId } from "../../shared/agent-identity";
+import { formatAgentId, legacyIdentityObservedOn, parseAgentId } from "../../shared/agent-identity";
 import { hostKindOf } from "../../shared/host-kind";
 import { observationTimeout } from "../recovery/observation-timeout";
 import {
@@ -13,7 +13,6 @@ import {
   projectSettingsQaKeys,
 } from "./project-settings";
 import {
-  legacyIdentityObservedOn,
   observedHostIdOf,
   projectAgentViews,
   unobservedProjectAgentViews,

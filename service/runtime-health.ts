@@ -401,7 +401,7 @@ export class RuntimeHealthProjection {
     return projectHostStates({
       known: hostRegistry.known(),
       online: (id) => Boolean(hostRegistry.get(id)),
-      primaryId: hostRegistry.primary()?.id ?? null,
+      primaryId: hostRegistry.legacyPaseoPrimary()?.id ?? null,
       bbOfflineReason: bb.offlineReason,
       t3: t3
         ? {
@@ -436,7 +436,7 @@ export class RuntimeHealthProjection {
       paused: store.getMeta<boolean>("paused") ?? true,
       ...this.context.drainProjection(),
       hostId:
-        this.context.hostSessionId() || hostRegistry.primary()?.id || "unknown",
+        this.context.hostSessionId() || hostRegistry.legacyPaseoPrimary()?.id || "unknown",
       connected: this.context.anyHostConnected(),
       hostIdentityConflict: lifecycle.identityConflict,
       ...(t3 ? { t3code: t3 } : {}),

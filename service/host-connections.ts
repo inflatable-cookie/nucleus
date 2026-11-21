@@ -127,7 +127,7 @@ export function wireEngineHosts(
   engine.hostIds = () => runtime.hostRegistry.known().map((host) => host.id);
   engine.inventoryHostMatches = (id) => runtime.hostSession?.id === id;
   engine.retiredObservationKey = (id) =>
-    id === runtime.hostRegistry.primary()?.id
+    id === runtime.hostRegistry.legacyPaseoPrimary()?.id
       ? "retiredObservations"
       : `retiredObservations:${JSON.stringify(id)}`;
   // Every registered work host counts when an origin workspace is unqualified.
