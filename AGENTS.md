@@ -118,8 +118,10 @@ Wall-clock oracles in the selection skip in the parallel lane and run in milesto
 QA's timing lane. Node test options ride after the files for a single file,
 e.g. `effigy test unit -- test/<file>.test.ts --test-skip-pattern=<pattern>`;
 the unit runner moves them ahead of the files. No full suites,
-no `effigy qa`, no Cargo builds (Tom, 2026-10-04). Those run in milestone QA on
-`main` via `project.qa.run`. A missing or failing affected-test run is a review
+no `effigy qa`, no Cargo builds (Tom, 2026-10-04). Those run in milestone QA
+on `main`: an ordinary report-only task pinned to one commit, per
+[milestone QA](docs/knowledge/contracts/milestone-qa.md), never a managed
+`project.qa.run` launch. A missing or failing affected-test run is a review
 finding; anything wider than the affected set never is.
 Read the printed `$TMPDIR/queue-test-failures-<pid>-<ts>.txt` failure summary rather than rerunning to recover failure names. Rerun a failing test file alone before believing it; use `effigy test:baseline <file>` for the `origin/main` baseline; UI changes are checked in
 the installed bundle in dark theme by the planner after the roll. The installed plugin

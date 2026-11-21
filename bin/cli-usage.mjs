@@ -27,7 +27,10 @@ host or an operator hands to an ACP-capable app; no credential is returned.
 snapshot accepts optional repository, project, limit (default 100, max 250) and
 cursor; page while hasMore is true. An oversized snapshot is refused with those
 filters named instead of a closed socket.
-project.qa.run --wait returns the settled run, exitCode, failureIndexes and failuresLogPath.
+project.qa.run and its --wait shape are retired: they refuse with the report-only
+milestone QA recipe, and project.qa.get, project.qa.list, project.qa.cancel,
+project.qa.dismiss and project.qa.retry-teardown read, stop and clear runs admitted
+before the cutover.
 lead.submit submits an authorized brief through check, approval and promotion in one call.
 next (task.next) takes a taskId or a reference such as owner/name#12 and reads
 what steers the task: phase, active run, PR head, the current stop or wait,

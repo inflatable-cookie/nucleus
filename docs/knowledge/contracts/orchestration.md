@@ -1812,7 +1812,8 @@ request identities and stored committed-handoff rows are not rewritten.
   selects them; it is the only source (Tom, 2026-11-09, task 985): the
   per-repository validation policy setting and its Nucleus-wide default are
   retired, and prompts carry one fixed line naming the section and milestone QA
-  on main via `project.qa.run`.
+  on main as a report-only task, never a managed `project.qa.run` launch
+  ([milestone QA](milestone-qa.md)).
 - The affected-test run belongs to the repository, never to Nucleus (Tom,
   2026-11-12, nucleus#1164; nucleus#1380, Tom 2026-11-19: "we can't assume any
   project has that selector.. hell, we shouldn't assume a project even has
@@ -1836,7 +1837,8 @@ request identities and stored committed-handoff rows are not rewritten.
   papercut, not a review blocker. `effigy fmt` formats whole changed TypeScript
   files against the merge base with `origin/main`; `effigy fmt:check` reports
   drift without writing, including in a clean review checkout. Full
-  milestone QA is `project.qa.run` on main.
+  milestone QA is an ordinary report-only task pinned to one commit
+  ([milestone QA](milestone-qa.md)).
 - Counts requiring a live Nucleus store read are planner evidence. Reviewers
   judge the worker's recorded counts and list any live-store verification as a
   planner follow-up, never as an awaiting proof.
@@ -3872,14 +3874,13 @@ Client render tests share `test/support/board-shell.ts` for source and bundled
 renders. The render harness binds source imports; its `boardShellPlugin` routes
 bundled shell imports to the same host hooks and native stand-ins.
 
-- `project.qa.run` accepts `wait: true` (CLI `--wait`) to return the settled
-  admitted run, including state, exit code, failure indexes and a retained
-  consolidated failures log path, null when there are no diagnostics. Waiting
-  does not change the durable request identity or its admission. Explicit
-  settlement calls keep their connection until an answer or transport loss;
-  unknown delivery still reconciles through the existing request and operation
-  reads without blind replay.
-- A settled milestone QA run sends an idempotent agent-channel message to the
+- `project.qa.run`, its `wait: true` (CLI `--wait`) settlement summary and the
+  `qa.schedule` admission are retired (nucleus#1475) and refuse with the
+  replacement named; [milestone QA](milestone-qa.md) owns the report-only
+  recipe and the migration order. Stored runs keep only their history and
+  cleanup verbs.
+- A milestone QA run admitted before the cutover still settles the way it did:
+  an idempotent agent-channel message to the
   registered project planner and, when available, the submitting agent. It
   reports state, failed and cancelled counts, and run ID. Non-TAP failures may
   have no test identities; the failed step's retained output path is the

@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { Store } from '../core/store/store';
 import { ProjectQaRunner } from './project-qa-runner-fixture';
 import { ProjectQaSchedules, qaScheduleStateKey, qaScheduleNoticeOwner } from '../core/qa/project-qa-schedule';
-import { projectQaScheduleSchema, projectQaRunSchema, submissionSchema } from '../shared/contracts';
+import { projectQaScheduleSchema, projectQaRunSchema, QA_MANAGED_LAUNCH_RETIRED, submissionSchema } from '../shared/contracts';
 import { command, git } from '../core/git/index';
 import { Engine } from '../core/engine';
 import type { Adapter } from '../core/host';
@@ -60,31 +60,6 @@ test('schedule is explicit, bounded and defaults to daily; settings patches pres
   f.merge();f.merge();f.time(48);await f.schedules.tick();assert.equal(f.launched(),0);
 });
 
-test('threshold admits exactly one durable main QA, including concurrent passes and restart',async t=>{
-  const f=await fixture(t);f.merge();await f.schedules.tick();assert.equal(f.launched(),0);
-  f.merge();await Promise.all([f.schedules.tick(),f.schedules.tick()]);assert.equal(f.launched(),1,JSON.stringify(f.store.getMeta(`projectQaScheduleError:${key}`)));
-  const request=f.store.getMeta<any>(qaScheduleStateKey(key)).pending;
-  assert.ok(request.id.startsWith('scheduled-qa:'));
-  assert.equal(f.runner.requestStatus({requestId:request.id}).requests[0].state,'admitted');
-  assert.equal(f.store.latestQaRun(key)?.baseBranch,'main');
-  const restarted=new ProjectQaSchedules(f.store,f.runner,{clock:()=>f.at(),includes:async()=>true});
-  await restarted.tick();assert.equal(f.launched(),1);
-});
-
-test('daily deadline requires untested merges; an idle or unchanged red repository never launches',async t=>{
-  const f=await fixture(t,5);await f.schedules.tick();f.time(25);await f.schedules.tick();assert.equal(f.launched(),0);
-  f.merge();await f.schedules.tick();assert.equal(f.launched(),1);
-  const queued=f.store.latestQaRun(key)!;f.store.putQaRun({...queued,state:'failed',exitCode:1,finishedAt:new Date(f.at()).toISOString()});
-  await f.schedules.tick();f.time(48);await f.schedules.tick();assert.equal(f.launched(),1);
-});
-
-test('release merges and cancellation are excluded; one active release QA also blocks main admission',async t=>{
-  const f=await fixture(t,1);f.merge('release/v1');f.merge('main','cancelled');await f.schedules.tick();assert.equal(f.launched(),0);
-  f.merge();const active=f.run('queued','release/v1');await f.schedules.tick();assert.equal(f.launched(),0);
-  f.store.putQaRun({...active,state:'passed',exitCode:0,finishedAt:new Date(f.at()).toISOString()});
-  await f.schedules.tick();assert.equal(f.launched(),1);assert.equal(f.store.qaScheduleMerges(key).length,1);
-});
-
 test('green clears only actual ancestor merges, regardless of timestamps; late outcomes reconcile',async t=>{
   const f=await fixture(t,10);const included=f.merge(),absent=f.merge();f.includes.set(absent,false);
   const green=f.run('passed');await f.schedules.tick();
@@ -109,44 +84,6 @@ test('red owner result/reminder and one operator decision survive restart; green
   assert.equal(qaScheduleNoticeOwner(f.store,f.store.notices(`qa:${key}`).find(n=>n.id.startsWith('qa-reminder:'))!),null);
 });
 
-test('pause, disable, settings and active-QA races refuse admission after awaited fetch',async t=>{
-  for(const change of ['pause','disable','settings','release-qa'] as const){
-    const f=await fixture(t,1);f.merge();let release!:()=>void;
-    f.internal.integrationHead=async()=>{await new Promise<void>(r=>{release=r;});return head;};
-    const ticking=f.schedules.tick();for(let n=0;!release&&n<100;n++)await new Promise(r=>setImmediate(r));
-    assert.ok(release,JSON.stringify(f.store.getMeta(`projectQaScheduleError:${key}`)));
-    if(change==='release-qa')f.run('queued','release/v1');
-    else if(change==='pause')f.store.setMeta('paused',true);
-    else f.store.patchRepository(f.row().repository,change==='disable'?{qa:{...f.row().qa!,schedule:null}}:{note:'changed'});
-    release();await ticking;assert.equal(f.launched(),0);assert.equal(f.store.latestQaRun(key)?.baseBranch ?? null,change==='release-qa'?'release/v1':null);
-    const pending=f.store.getMeta<any>(qaScheduleStateKey(key)).pending;
-    assert.equal(f.runner.requestStatus({requestId:pending.id}).requests[0].state,'refused');
-  }
-});
-
-test('lost response adopts admitted run; unresolved preparing delivery never resubmits',async t=>{
-  const f=await fixture(t,1);f.merge();const original=f.runner.run.bind(f.runner);
-  f.runner.run=async(...args)=>{await original(...args);throw Error('response lost');};
-  await f.schedules.tick();await f.schedules.tick();assert.equal(f.launched(),1);
-  assert.equal(f.store.getMeta<any>(qaScheduleStateKey(key)).pending,null);
-  // A different admitted batch has an unresolved pre-admission request owner.
-  const queued=f.store.latestQaRun(key)!;f.store.putQaRun({...queued,state:'passed',exitCode:0,finishedAt:new Date(f.at()).toISOString()});
-  await f.schedules.tick();f.merge();f.internal.resolveRepository=async()=>new Promise(()=>{});
-  void f.runner.run({repository:key,requestId:'unknown'});
-  const state=f.store.getMeta<any>(qaScheduleStateKey(key));state.pending={id:'unknown',signature:'unknown'};
-  f.store.setMeta(qaScheduleStateKey(key),state);await f.schedules.tick();f.time(48);await f.schedules.tick();
-  assert.equal(f.launched(),1);assert.equal(f.store.getMeta<any>(qaScheduleStateKey(key)).pending.id,'unknown');
-});
-
-test('definite admission refusal stays diagnosed; a changed config can admit once without reusing the old request',async t=>{
-  const f=await fixture(t,1);f.merge();f.internal.integrationHead=async()=>{throw Error('fetch refused');};
-  await f.schedules.tick();await f.schedules.tick();const refused=f.store.getMeta<any>(qaScheduleStateKey(key)).lastSignature;
-  f.time(48);await f.schedules.tick();assert.equal(f.launched(),0);
-  f.store.patchRepository(f.row().repository,{note:'repaired config'});f.internal.integrationHead=async()=>head;
-  await f.schedules.tick();assert.equal(f.launched(),1);
-  assert.notEqual(f.store.getMeta<any>(qaScheduleStateKey(key)).pending.signature,refused);
-});
-
 test('owner delivery respects idle, pause, transfer and uncertain delivery fences',async t=>{
   const f=await fixture(t);f.merge();f.run('failed');await f.schedules.tick();
   let active=true,sends=0;const targets:string[]=[];
@@ -167,7 +104,7 @@ test('owner delivery respects idle, pause, transfer and uncertain delivery fence
 test('schedule merge accounting survives task purge',async t=>{
   const f=await fixture(t,1);const taskId=f.merge();
   f.store.db.prepare('DELETE FROM tasks WHERE id=?').run(taskId);assert.equal(f.store.qaScheduleMerges(key).length,1);
-  assert.ok(f.store.outcome(taskId));await f.schedules.tick();assert.equal(f.launched(),1);
+  assert.ok(f.store.outcome(taskId));await f.schedules.tick();assert.equal(f.launched(),0);
 });
 
 
@@ -225,32 +162,6 @@ test('persistent coverage failure is visible and escalates without a blind QA la
   assert.equal(f.store.decision(state.decisionId).status,'open');assert.equal(f.launched(),0);
 });
 
-test('a roll during fetch refuses before claim; eligible restart uses a new request generation exactly once',async t=>{
-  const f=await fixture(t,1);f.merge();let alive=true,release!:()=>void;
-  f.internal.integrationHead=async()=>{await new Promise<void>(r=>{release=r;});return head;};
-  const schedules=new ProjectQaSchedules(f.store,f.runner,{clock:()=>f.at(),canAdmit:()=>alive,includes:async()=>true});
-  const ticking=schedules.tick();while(!release)await new Promise(r=>setImmediate(r));
-  const original=f.store.getMeta<any>(qaScheduleStateKey(key)).pending.id;
-  alive=false;release();await ticking;assert.equal(f.launched(),0);
-  assert.equal(f.runner.requestStatus({requestId:original}).requests[0].state,'refused');
-  f.internal.integrationHead=async()=>head;
-  await new ProjectQaSchedules(f.store,f.runner,{clock:()=>f.at(),includes:async()=>true}).tick();
-  assert.equal(f.launched(),1);const next=f.store.getMeta<any>(qaScheduleStateKey(key)).pending.id;
-  assert.notEqual(next,original);assert.equal(f.runner.requestStatus({requestId:original}).requests[0].state,'refused');
-});
-
-test('a concurrent older main QA cannot suppress untested merges after settlement',async t=>{
-  const f=await fixture(t,1);const merged=f.merge();let release!:()=>void;
-  f.internal.integrationHead=async()=>{await new Promise<void>(r=>{release=r;});return head;};
-  const schedules=new ProjectQaSchedules(f.store,f.runner,{clock:()=>f.at(),includes:async(_row,_merge,run)=>run.base===head});
-  const delivery=schedules.tick();while(!release)await new Promise(r=>setImmediate(r));
-  const older=f.run('queued');f.store.putQaRun({...older,base:'c'.repeat(40)});
-  release();await delivery;assert.equal(f.launched(),0);
-  f.store.putQaRun({...older,base:'c'.repeat(40),state:'passed',exitCode:0,finishedAt:new Date(f.at()).toISOString()});
-  f.internal.integrationHead=async()=>head;await schedules.tick();
-  assert.equal(f.launched(),1);assert.equal(f.store.qaScheduleMerges(key)[0].taskId,merged);
-});
-
 test('passed notice distinguishes verified batch from the actual remaining uncovered merges',async t=>{
   const f=await fixture(t,10);const verified=f.merge(),remaining=f.merge();f.includes.set(remaining,false);
   const green=f.run('passed');await f.schedules.tick();
@@ -258,4 +169,34 @@ test('passed notice distinguishes verified batch from the actual remaining uncov
   assert.match(text,/Merges covered since the previous green main run \(1\)/);
   const residual=text.split('Merges not yet covered by a green main run (1):')[1];
   assert.ok(residual.includes(remaining));assert.equal(residual.includes(verified),false);
+});
+
+
+/**
+ * nucleus#1475: the schedule is a retired launch entry point. A due batch keeps
+ * the accounting and notice behaviour that serves old history, and records the
+ * report-only recipe instead of admitting a managed run.
+ */
+test('a due batch records the retirement recipe instead of admitting a run',async t=>{
+  const f=await fixture(t,1);f.merge();
+  await f.schedules.tick();assert.equal(f.launched(),0,'no managed run is launched');
+  const notices=f.store.notices(`qa:${key}`);
+  assert.equal(notices.length,1,'one durable notice, never a silent stop');
+  assert.ok(notices[0].text.includes(QA_MANAGED_LAUNCH_RETIRED),'the notice carries the recipe and the exit');
+  assert.equal(f.store.getMeta<any>(qaScheduleStateKey(key)).pending,null,'no request identity is minted');
+  await f.schedules.tick();f.time(48);await f.schedules.tick();
+  assert.equal(f.launched(),0,'a later pass and a passed interval still admit nothing');
+  assert.equal(f.store.notices(`qa:${key}`).length,1,'the notice is not repeated');
+});
+
+test('a pre-cutover pending admission or admitted run is never replayed or relabelled',async t=>{
+  const f=await fixture(t,1);
+  const live=f.run('queued');
+  const state=f.store.getMeta<any>(qaScheduleStateKey(key))??{};
+  f.store.setMeta(qaScheduleStateKey(key),{...state,pending:{id:'scheduled-qa:pre-cutover',signature:'pre'}});
+  f.merge();await f.schedules.tick();
+  assert.equal(f.launched(),0,'an unresolved pre-cutover identity is not replayed');
+  assert.equal(f.store.qaRun(live.id)?.state,'queued','the admitted run keeps its own state');
+  assert.deepEqual(f.store.getMeta<any>(qaScheduleStateKey(key)).pending,{id:'scheduled-qa:pre-cutover',signature:'pre'},
+    'the recorded identity stays as the obligation it is');
 });

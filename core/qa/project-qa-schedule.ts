@@ -1,11 +1,12 @@
 /** Opt-in main-branch milestone scheduling; all execution uses ProjectQaRunner. */
 import type { Notice, Project, ProjectQaRun, RepositorySettings } from '../../shared/contracts';
+import { QA_MANAGED_LAUNCH_RETIRED } from '../../shared/contracts';
 import { Decisions } from '../planning/decisions';
 import { gitRaw } from '../hooks/hooks';
 import { repositoryOrigin } from '../planning/lanes';
 import { ProjectQaRunner } from './project-qa';
 import { QaAdmissionRefusal, qaAdmissionRefusalResumesBatch, refuseQaAdmission } from './project-qa-refusals';
-import { digest, Store } from '../store/store';
+import { Store } from '../store/store';
 
 /** True when a thrown value is the scheduler's own typed lifecycle refusal. */
 const isQaScheduleRefusal = (error: unknown): error is QaAdmissionRefusal => error instanceof QaAdmissionRefusal;
@@ -247,26 +248,13 @@ export class ProjectQaSchedules {
     if (!fresh.length) return; // Reminder/escalation, not repeated unchanged red QA.
     const lastAttempt = runs.latest?.submittedAt ?? runs.latest?.startedAt ?? state.enabledAt;
     if (fresh.length < schedule.afterMerges && at - Date.parse(lastAttempt) < interval) return;
-    const signature = digest(JSON.stringify([row.revision, fresh.map(merge => merge.taskId)]));
-    if (signature === state.lastSignature) return; // Proven refused attempt needs a changed configuration/batch.
-    // Papercut 26636095: while the QA admission fence is in force no new request
-    // identity is minted; the batch waits whole and admits after expiry or clear.
-    if (this.store.qaFenceInForce(at)) return;
-    this.guard(row);
-    state.pending = { id: `scheduled-qa:${digest(key).slice(0, 16)}:${signature.slice(0, 32)}:${state.requestGeneration ?? 0}`, signature };
-    save(); // Intent precedes any resolver/fetch/launch await.
-    try {
-      await this.runner.run({ repository: key, baseBranch: 'main', requestId: state.pending.id }, (proposed, selected) => {
-        this.guard(row);
-        const existing = this.store.qaScheduleRuns(key).active;
-        if (existing && existing.baseBranch !== 'main')
-          refuseQaAdmission('release_line_acquired', 'A release-line QA acquired the repository before scheduled main admission');
-        if (selected.base !== proposed.base)
-          refuseQaAdmission('concurrent_head_moved', 'A concurrent main QA is at a different head from the freshly fetched scheduled candidate');
-      });
-    } catch (error) { state.diagnostic = String(error).slice(0, 2000); }
-    // Do not erase the pending identity on a lost response. The next pass
-    // consults the same authenticated request record, without calling run again.
-    if (this.options.canAdmit?.() !== false) save();
+    // nucleus#1475: managed milestone QA launch is retired, so a schedule never
+    // admits another run. The batch waits whole under one durable notice that
+    // names the report-only recipe; clearing `qa.schedule` removes the row from
+    // this pass, which removes the notice with it. Nothing is orphaned: an
+    // admitted or running run keeps settling through the recovery and teardown
+    // owners, and every settled run stays readable.
+    this.notice(row, `qa-managed-retired:${key}`, QA_MANAGED_LAUNCH_RETIRED);
+    save();
   }
 }

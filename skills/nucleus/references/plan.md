@@ -82,11 +82,11 @@ A repository that opted into compile-only tasks (see
 trades per-task tests for milestone QA, so its planner
 runs that QA on a cadence rather than only at releases:
 
-- Run `project.qa.run` on `main` after each batch of merges, and at least once
-  a day while work is landing. Read the result with `project.qa.get`. A run
-  refused with "QA admission is fenced" means the operator is swapping a shared
-  tool. That isn't a failure: run it again once the fence expires or is
-  cleared (`project.qa.fence-status` shows it).
+- Run milestone QA on `main` as a report-only task after each batch of merges,
+  and at least once a day while work is landing
+  ([milestone QA](../../../docs/knowledge/contracts/milestone-qa.md)). The
+  managed `project.qa.run` launch is retired; `project.qa.get` and
+  `project.qa.list` only read runs admitted before the cutover.
 - When it fails, find the merge that introduced each failure. `queue.outcome-search`
   for the repository since the last green run lists what landed; rerun the
   failing selector at the candidate commits if it isn't obvious.

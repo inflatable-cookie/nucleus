@@ -2,6 +2,7 @@ import { projectPlannerRoutingIssue } from "../questions/planner-presence";
 import { parseAgentId } from "../../shared/agent-identity";
 import { qaFenceStatus, writeQaFence } from "../qa/qa-fence";
 import type { ProjectQaFenceInput } from "../../shared/contracts";
+import { QA_MANAGED_LAUNCH_RETIRED, QA_SCHEDULE_RETIRED } from "../../shared/contracts";
 import { isAbsolute } from "node:path";
 import type { Store } from "../store/store";
 import type { Engine } from "../engine";
@@ -150,6 +151,8 @@ export class RuntimeRepositories {
       identity = { origin, path: "" };
     }
     const { repository: _repository, ...patch } = input;
+    if (patch.qa?.schedule)
+      throw new Error(QA_SCHEDULE_RETIRED);
     if (patch.checksPolicy === "required") {
       // The decision reads the row this patch would update, then proves nothing
       // newer landed while the capability was observed: no await runs inside a
@@ -242,7 +245,7 @@ export class RuntimeRepositories {
     return this.context.store.repositoryRekeyReceipt(input);
   }
 
-  async runProjectQa(input: {
+  async runProjectQa(_input: {
     repository: string;
     baseBranch?: string;
     requestId?: string;
@@ -250,9 +253,11 @@ export class RuntimeRepositories {
     wait?: boolean;
   }) {
     this.context.markStoreAccess();
-    return this.context
-      .projectQaRunner()
-      .run({ ...input, baseBranch: input.baseBranch ?? "main" });
+    // nucleus#1475: the managed launch entry point every caller reaches — CLI,
+    // board, RPC — refuses here, before a request identity or a checkout exists.
+    // No admitted run is touched: only new launches stop. The refusal names the
+    // report-only recipe and the history reads that still answer.
+    throw new Error(QA_MANAGED_LAUNCH_RETIRED);
   }
 
   async cancelProjectQa(input: { id: string; reason: string }) {

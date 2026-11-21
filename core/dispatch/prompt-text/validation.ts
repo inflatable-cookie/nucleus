@@ -20,7 +20,7 @@ export const VALIDATION_RULE_HEADING = "Task validation rule (the repository's A
  * (Tom, 2026-11-09, task 985): prompts carry this fixed line, and the repository
  * owns the rest in its AGENTS.md Validate section.
  */
-export const VALIDATION_AUTHORITY_RULE = "Validate per the repository's AGENTS.md Validate section: read it; it is the authority on which checks cover what changed. Full milestone QA runs separately on main via `project.qa.run`. Missing required proof is a blocker, not permission to report approval.";
+export const VALIDATION_AUTHORITY_RULE = "Validate per the repository's AGENTS.md Validate section: read it; it is the authority on which checks cover what changed. Full milestone QA runs separately on main as an ordinary report-only task pinned to one commit, never through `project.qa.run`. Missing required proof is a blocker, not permission to report approval.";
 
 /**
  * The affected-test run attributed to the commit (nucleus#1164, Tom 2026-11-12).

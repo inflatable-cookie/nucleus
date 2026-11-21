@@ -248,6 +248,22 @@ export const projectQaRunInputSchema = z.object({
 export type ProjectQaRunInput = z.infer<typeof projectQaRunInputSchema>;
 
 /**
+ * nucleus#1475: managed milestone QA launch is retired. Every launch entry point
+ * refuses with this text, so a caller learns the replacement recipe and where
+ * existing runs still read. Nothing here retires an admitted, queued, running or
+ * unsettled run: `project.qa.get`, `list`, `cancel`, `dismiss` and
+ * `retry-teardown` keep settling and reporting them.
+ */
+export const QA_MANAGED_LAUNCH_RETIRED = "Milestone QA launch is retired: Nucleus no longer starts managed QA runs. Run the repository's milestone selectors in an ordinary report-only task pinned to one commit (`queue.reportOnly` with `queue.reportLane`; the recipe is docs/knowledge/contracts/milestone-qa.md and the Northstar milestone-qa skill). Existing runs still settle and stay readable through project.qa.get, project.qa.list, project.qa.cancel, project.qa.dismiss and project.qa.retry-teardown.";
+
+/**
+ * nucleus#1475: the schedule entry point. A stale `qa.schedule` may be cleared so
+ * its repository leaves the retired schedule pass, but it cannot be enabled or
+ * replaced, because no schedule admits another managed run.
+ */
+export const QA_SCHEDULE_RETIRED = "Milestone QA scheduling is retired: a repository cannot enable or replace qa.schedule, which no longer admits a run. Clear a leftover schedule with {\"qa\":{\"schedule\":null}}. Run milestone QA as an ordinary report-only task pinned to one commit (recipe in docs/knowledge/contracts/milestone-qa.md).";
+
+/**
  * Every way a QA admission can be refused before it claims a run. The code is
  * the durable fact: a scheduler reads it instead of the diagnostic text it also
  * stores, and `core/qa/project-qa-refusals.ts` owns which codes let a batch

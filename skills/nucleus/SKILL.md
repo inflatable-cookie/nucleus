@@ -1,6 +1,6 @@
 ---
 name: nucleus
-description: Read and write Nucleus planning records (plan.get, plan.set, lanes, lane documents), write and promote briefs and leads, file papercuts and operator decisions, run project QA, and hand over planner ownership. Also plan and submit approved work to the Paseo queue, steer a task with the owner verbs (next, stop, route, restart, move, complete, retry_effect, proof), activate one source-immutable author-side proof execution for an external author, review existing external PRs through review entry, and resolve blocked-task escalations. Use for requests such as plan.get, papercut.add, decision.add, project.qa.run, planner handover, "adopt this PR", "put this PR through the queue", approved dispatch, planning rulings on blockers, and deliberate supersession; planning alone does not authorize execution or abandonment.
+description: Read and write Nucleus planning records (plan.get, plan.set, lanes, lane documents), write and promote briefs and leads, file papercuts and operator decisions, hand over planner ownership, and read milestone QA history. Also plan and submit approved work to the Paseo queue, steer a task with the owner verbs (next, stop, route, restart, move, complete, retry_effect, proof), activate one source-immutable author-side proof execution for an external author, review existing external PRs through review entry, and resolve blocked-task escalations. Use for requests such as plan.get, papercut.add, decision.add, project.qa.get, project.qa.list, project.qa.cancel, planner handover, "adopt this PR", "put this PR through the queue", approved dispatch, planning rulings on blockers, and deliberate supersession; planning alone does not authorize execution or abandonment. Milestone QA itself is a report-only task, not a Nucleus launch.
 ---
 
 The data home is `~/.nucleus`, or `NUCLEUS_DATA_HOME` when set.
@@ -1274,7 +1274,9 @@ Shaping long-horizon direction with the operator is the separate Atlas skill
 Northstar skill.
 
 - **Planner** owns the project's plan, lane documents, leads, briefs and
-  dispatch approval. It runs milestone QA on `main` with `project.qa.run`.
+  dispatch approval. It runs milestone QA on `main` as a report-only task
+  ([milestone QA](../../docs/knowledge/contracts/milestone-qa.md)); the managed
+  `project.qa.run` launch is retired.
   Anything that needs independent review goes through Nucleus as a brief.
 - **Worker** implements one brief in the worktree Nucleus gives it, runs the
   covering checks, opens one PR, reports, and gets out of the way.
@@ -1336,44 +1338,35 @@ a typed or inherited asker is never reused.
 answers "what landed for X" and "why does this code look like this" before reading
 PRs; `queue.detail` reads one task and `queue.outcome` its permanent row.
 
-Full QA runs at a milestone, not per task: `project.qa.run`
-(`{repository, baseBranch}`) runs the repository's `qa` setting in a Nucleus-owned
-linked worktree of the registered checkout, with setup and teardown
-recorded as their own steps. Only a repository that sets no `qa` command runs
-Nucleus's own default. `project.qa.get` and `project.qa.cancel` inspect and
-cancel it, and `project.qa.dismiss { id, reason, caller }` clears a finished
-failure from the board without deleting its record. A request refused with a diagnostic starting "QA request preparation
-was interrupted" claimed no run; submit again with a new request ID only if the
-milestone still needs one.
-Add `wait: true`, or use `nucleus project.qa.run --wait -` with the same JSON,
-to return the settled run in one call: `state`, `exitCode`, `failureIndexes` and
-`failuresLogPath` (null when there are no consolidated failure diagnostics).
-The path contains the retained `failuresLog` text. Waiting keeps the same run and
-request ID and does not change admission; socket loss still needs reconciliation
-with `project.qa.request-status` using the printed request ID.
+**Milestone QA is a report-only task, not a Nucleus run.** `project.qa.run`,
+`--wait` and every other launch shape are retired and refused for every caller;
+`repository.set` refuses enabling or replacing `qa.schedule` and accepts
+`{"qa":{"schedule":null}}`. Run the repository's milestone selectors in an
+ordinary report-only task pinned to one commit, following
+[milestone QA](../../docs/knowledge/contracts/milestone-qa.md) and the
+runner-neutral Northstar milestone-qa skill: named runs per slice, evidence
+exported into the lane document as each slice finishes, then `report_ready` with
+the exact `artifact`. The refusal text names the same recipe.
 
-On settlement, Nucleus messages the resolved responsible thread and the known
-submitting agent with the state, failed and cancelled counts, and run ID. A
-non-TAP failure may have no test identities; inspect the failed step's retained
-output path in `project.qa.get`. The recorded timeout is the scheduler envelope;
-each step still uses its configured timeout, and staged envelopes include the
-stage limits plus setup and teardown limits. Explicit QA limits win over
-historical wall-time estimates; history does not lengthen the enforced limit.
+Old runs are history, not work to resume. `project.qa.get` and
+`project.qa.list` answer for stored runs, `project.qa.cancel { id, reason }`
+stops a live one, `project.qa.retry-teardown` reruns a failed teardown,
+`project.qa.dismiss { id, reason, caller }` clears a finished failure from the
+board without deleting its record, and `project.qa.request-status` reads a
+durable request identity. A run admitted before the cutover is still recovered
+by its supervisor, so a roll neither loses it nor replays it.
 
 **QA admission fence** (Tom, 2026-10-22): during a shared-tool install the
 operator, or an agent relaying the operator's recorded ruling (`relayed: true`
-plus the authorization `note`), can fence NEW project QA with
+plus the authorization `note`), fences new project QA admissions with
 `project.qa.fence` (`action: "set"`, `expectedRevision`, `reason`, `minutes`
 default 10, at most 120, and `caller`: the calling agent's identity; a relayed
 `set` or `clear` also needs `note`). Clear with `action: "clear"` and the
 current `expectedRevision`. It covers project QA only, never task validation or
 Effigy client runs, and Nucleus has no per-task pause for those. Never set or
-clear a fence without that authority. While a fence is in force a new
-`project.qa.run` is refused with a diagnostic starting "QA admission is
-fenced": that is expected, not a failure; retry after it expires or is
-cleared. `project.qa.fence-status` reads the fence and the complete list of
-unsettled QA. An install is QA-safe only while the same fence is in force and
-that list is empty.
+clear a fence without that authority. `project.qa.fence-status` reads the fence
+and the complete list of unsettled QA; an install is QA-safe only while the same
+fence is in force and that list is empty.
 
 `backup.now`/`backup.list` make and list verified store snapshots. The
 portable-record export/import and the shadow stream are retired; nothing
