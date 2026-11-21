@@ -9,6 +9,8 @@ import {
   type HostVocabulary,
 } from "../../shared/profile-vocabulary";
 import { HOST_KIND_LABELS, hostKindOf } from "../../shared/host-kind";
+import { hostDisplayLabel } from "../../shared/host-outage";
+import { PROFILE_CATALOG_LOADING_REFUSAL } from "../recovery/task-reasons";
 import type { HostCatalog } from "../../shared/host";
 import type { Profile } from "../../shared/contracts";
 import type { NucleusProfile } from "../../shared/profiles";
@@ -106,8 +108,13 @@ export class ProfileCatalogs {
       ? this.owner.resolveHostAdapter(id)
       : this.owner.primaryAdapter;
     const kind = hostKindOf(id);
-    const adapter = id && !this.isPrimaryHost(id) ? selected : (selected ?? this.owner.primaryAdapter);
-    return adapter?.vocabulary ?? canonicalVocabulary(kind, HOST_KIND_LABELS[kind]);
+    const adapter =
+      id && !this.isPrimaryHost(id)
+        ? selected
+        : (selected ?? this.owner.primaryAdapter);
+    return (
+      adapter?.vocabulary ?? canonicalVocabulary(kind, HOST_KIND_LABELS[kind])
+    );
   }
 
   /**
@@ -273,5 +280,18 @@ export class ProfileCatalogs {
   profileCatalogKnownFor(hostId?: string | null): boolean {
     if (this.isPrimaryHost(hostId)) return this.profileCatalogKnown();
     return this.hostCatalogRefreshed.has(hostId!);
+  }
+
+  /**
+   * The retryable refusal for one host's unread profile catalog, or null when it
+   * is loaded (nucleus#1500). The legacy primary keeps its one wording; a named
+   * host says which catalog is missing, so an owner control that reads a host's
+   * own catalog explains the evidence it actually needs.
+   */
+  profileCatalogWaitRefusal(hostId?: string | null): string | null {
+    if (this.profileCatalogKnownFor(hostId)) return null;
+    if (!hostId || this.isPrimaryHost(hostId))
+      return PROFILE_CATALOG_LOADING_REFUSAL;
+    return `The ${hostDisplayLabel(hostId)} profile catalog is still loading after service start; retry shortly`;
   }
 }
