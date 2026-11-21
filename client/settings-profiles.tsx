@@ -304,10 +304,6 @@ export function ProfilesPanel({
   const groups = state
     ? [...new Set(state.pool.map((entry) => entry.group))]
     : [];
-  // Profile and stale rows draw their own divider; a trailing loading or empty line does not.
-  const profilesEndInRow =
-    live.length > 0 ||
-    (stale.length > 0 && editor === "new" && !profilesQuery.isPending);
   return (
     <ScrollView
       accessibilityLabel="Profiles page"
@@ -362,7 +358,6 @@ export function ProfilesPanel({
         title="Profiles"
         label="Stored profiles"
         status={quietSaveStatus(actionStatus) || null}
-        endsInRow={profilesEndInRow}
         description="A profile is a provider and model a registered host can run, and how Nucleus uses it for dispatch. Each host translates it to its own names. Weight and capability sit in the editor. Usage strips compare recent assignments across this list, from cool to warm, for all roles or for one role at a time; a full strip means that profile is busiest in the list for the chosen view. Each view covers up to its last 50 recorded assignments."
         action={
           <View style={{ ...row, flexWrap: "nowrap" }}>
@@ -521,8 +516,6 @@ function StalePoolEntry({
   return (
     <View
       style={{
-        borderBottomWidth: 1,
-        borderBottomColor: c.border,
         paddingVertical: space.xs,
         gap: space.xs,
       }}
@@ -586,8 +579,6 @@ function Availability({
       style={{
         gap: space.xs,
         paddingVertical: space.xs,
-        borderBottomWidth: 1,
-        borderBottomColor: c.border,
       }}
     >
       <View style={row}>
