@@ -5,8 +5,11 @@ import { join, resolve } from "node:path";
 import { parseDocument } from "yaml";
 import {
   CONTROL_SCHEMA, CONTROL_SCHEMA_V2, CONTROL_SCHEMA_V3, CONTROL_SCHEMA_V4, CONTROL_SCHEMA_V5, CONTROL_SCHEMA_V6, CONTROL_SCHEMA_V7,
-  MANIFEST_MAX_BYTES, HOOK_MANIFEST_PATH, controlManifestSchema, normalizeControlManifest, normalizeRepoRelativePath,
+  MANIFEST_MAX_BYTES, LEGACY_HOOK_MANIFEST_PATH, NEUTRAL_HOOK_MANIFEST_PATH, HOOK_MANIFEST_PATHS, canonicalWireName,
+  controlManifestSchema, hookWireFamilyOfManifestPath, hookWireFamilyOfSchema, normalizeControlManifest, normalizeRepoRelativePath,
+  reservedNeutralAllowedPath,
   type HookProgram, type HookProgramPin, type ControlManifest, type NormalizedControlManifest, type HookPin, type InstructionArtifact,
+  type HookWireFamily,
 } from "../../shared/hooks";
 import { gitRun, formatGitError } from "../git/git-command";
 
@@ -77,6 +80,11 @@ function instructionArtifactFor(entry: TreeEntry, path: string, commit: string, 
 export interface ManifestDiscovery { pin: HookPin; manifest: NormalizedControlManifest; bytes: Buffer }
 
 export function parseManifestBytes(bytes: Buffer): ControlManifest {
+  return parseManifestWithFamily(bytes).manifest;
+}
+
+/** Parse a manifest and report the wire family its schema is spelled in. */
+function parseManifestWithFamily(bytes: Buffer): { manifest: ControlManifest; family: HookWireFamily | null } {
   const text = bytes.toString("utf8");
   if (bytes.length > MANIFEST_MAX_BYTES) throw new Error("Control manifest exceeds 64 KiB");
   if (Buffer.from(text, "utf8").length !== bytes.length) throw new Error("Control manifest must be UTF-8");
@@ -85,7 +93,22 @@ export function parseManifestBytes(bytes: Buffer): ControlManifest {
   // JSON.parse keeps the last duplicate key; the YAML parser is used only to reject duplicate keys.
   const doc = parseDocument(text, { schema: "json", uniqueKeys: true });
   if (doc.errors.length) throw new Error("Control manifest contains duplicate keys");
-  return controlManifestSchema.parse(value);
+  const family = manifestSchemaFamily(value);
+  const manifest = controlManifestSchema.parse(value);
+  // A neutral manifest is a new surface, so its own namespace is reserved for it alone.
+  if (family === "neutral") {
+    const hooks = (value as { hooks?: { allowedPaths?: string[] }[] }).hooks ?? [];
+    for (const hook of hooks) for (const path of hook.allowedPaths ?? []) {
+      if (reservedNeutralAllowedPath(path)) throw new Error(`Reserved path may not be declared: ${path}`);
+    }
+  }
+  return { manifest, family };
+}
+
+/** The family a raw manifest's declared schema is spelled in; a non-string schema is refused by the schema parse. */
+function manifestSchemaFamily(value: unknown): HookWireFamily | null {
+  const schema = value && typeof value === "object" ? (value as { schema?: unknown }).schema : undefined;
+  return typeof schema === "string" ? hookWireFamilyOfSchema(schema) : null;
 }
 
 /**
@@ -115,7 +138,12 @@ export function forgetManifestDiscovery(repoPath?: string) {
   for (const key of [...manifestDiscoveryCache.keys()]) if (key.startsWith(prefix)) manifestDiscoveryCache.delete(key);
 }
 
-/** Read the optional closed control manifest pinned to the event base commit. */
+/**
+ * Read the optional closed control manifest pinned to the event base commit.
+ * The neutral and legacy locations are exclusive: a commit that carries both is
+ * refused rather than resolved by precedence, and a manifest's schema family
+ * must match the family of the location it was read from.
+ */
 export async function discoverManifest(repoPath: string, baseCommit: string): Promise<ManifestDiscovery | null> {
   if (!repositoryIsGitCheckout(repoPath)) return null;
   const key = `${resolve(repoPath)}\0${baseCommit}`;
@@ -126,8 +154,13 @@ export async function discoverManifest(repoPath: string, baseCommit: string): Pr
     manifestDiscoveryCache.set(key, settled);
     return settled.discovery;
   }
-  const entry = await readTreeEntry(repoPath, baseCommit, HOOK_MANIFEST_PATH);
-  const discovery = manifestDiscovery(entry, baseCommit);
+  const found: { path: string; entry: TreeEntry }[] = [];
+  for (const path of HOOK_MANIFEST_PATHS) {
+    const entry = await readTreeEntry(repoPath, baseCommit, path);
+    if (entry) found.push({ path, entry });
+  }
+  if (found.length > 1) throw new Error(`${NEUTRAL_HOOK_MANIFEST_PATH} and ${LEGACY_HOOK_MANIFEST_PATH} are both committed at ${baseCommit.slice(0, 12)}; keep exactly one hook manifest`);
+  const discovery = found.length ? manifestDiscovery(found[0].entry, baseCommit, found[0].path) : null;
   if (gitEntry !== null) {
     if (manifestDiscoveryCache.size >= MANIFEST_DISCOVERY_LIMIT && !manifestDiscoveryCache.has(key))
       manifestDiscoveryCache.delete(manifestDiscoveryCache.keys().next().value!);
@@ -137,18 +170,20 @@ export async function discoverManifest(repoPath: string, baseCommit: string): Pr
 }
 
 /** The one pinned identity of a committed manifest entry, or null when the commit has none. */
-function manifestDiscovery(entry: TreeEntry | null, baseCommit: string): ManifestDiscovery | null {
+function manifestDiscovery(entry: TreeEntry | null, baseCommit: string, path: string): ManifestDiscovery | null {
   if (!entry) return null;
-  if (entry.type !== "blob" || !/^100(644|755)$/.test(entry.mode)) throw new Error(`${HOOK_MANIFEST_PATH} must be a regular committed blob`);
-  const manifest = parseManifestBytes(entry.bytes);
-  if (!(CONTROL_SCHEMAS as readonly string[]).includes(manifest.schema)) throw new Error("Unsupported control manifest schema");
-  return { pin: { path: HOOK_MANIFEST_PATH, commit: baseCommit, digest: blobDigest(entry.bytes) }, manifest: normalizeControlManifest(manifest), bytes: entry.bytes };
+  if (entry.type !== "blob" || !/^100(644|755)$/.test(entry.mode)) throw new Error(`${path} must be a regular committed blob`);
+  const { manifest, family } = parseManifestWithFamily(entry.bytes);
+  if (!(CONTROL_SCHEMAS as readonly string[]).includes(canonicalWireName(manifest.schema))) throw new Error("Unsupported control manifest schema");
+  const location = hookWireFamilyOfManifestPath(path);
+  if (location !== family) throw new Error(`${path} is a ${location} manifest location and must declare ${location} schema names`);
+  return { pin: { path, commit: baseCommit, digest: blobDigest(entry.bytes) }, manifest: normalizeControlManifest(manifest), bytes: entry.bytes };
 }
 
 /** Pin one repository-local executable to an exact regular, executable, non-symlink blob. */
 export async function pinExecutable(repoPath: string, commit: string, path: string): Promise<HookPin> {
   const normalized = normalizeRepoRelativePath(path);
-  if (normalized === HOOK_MANIFEST_PATH || normalized.startsWith(".git/") || normalized === ".git") throw new Error(`Reserved path may not be an executable: ${normalized}`);
+  if (HOOK_MANIFEST_PATHS.includes(normalized as (typeof HOOK_MANIFEST_PATHS)[number]) || normalized.startsWith(".git/") || normalized === ".git") throw new Error(`Reserved path may not be an executable: ${normalized}`);
   const entry = await readTreeEntry(repoPath, commit, normalized);
   if (!entry) throw new Error(`Hook executable is missing at ${commit}: ${normalized}`);
   if (entry.type !== "blob" || entry.mode !== "100755") throw new Error(`Hook executable must be one regular executable blob: ${normalized}`);

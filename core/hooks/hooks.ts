@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import {
   type AnyHookEvent,
   type ControlManifest,
+  type HookWireFamily,
   type NormalizedControlManifest,
   type NormalizedHookDefinition,
   type HookEventName,
@@ -733,6 +734,7 @@ export class RepositoryHooks {
     attempt: number,
     context: HookContext,
     root = task.repoPath,
+    family: HookWireFamily = "legacy",
   ): AnyHookEvent {
     return this.occurrences.buildEvent(
       task,
@@ -741,6 +743,7 @@ export class RepositoryHooks {
       attempt,
       context,
       root,
+      family,
     );
   }
 

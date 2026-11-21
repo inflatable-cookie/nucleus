@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import {
   EVENT_SCHEMA, EVENT_SCHEMA_V2, EVENT_SCHEMA_V3, RESULT_SCHEMA,
   hookEventSchema, hookEventV2Schema, hookEventV3Schema, anyHookEventSchema, hookRecordSchema,
-  type AnyHookEvent, type HookEventName, type HookRecord, type HookResult, type NormalizedHookDefinition,
+  hookWireFamilyOfManifestPath, wireNameFor,
+  type AnyHookEvent, type HookEventName, type HookRecord, type HookResult, type HookWireFamily, type NormalizedHookDefinition,
 } from "../../shared/hooks";
 import type { Task } from "../../shared/contracts";
 import { type Store, digest, now } from "../store/store";
@@ -31,8 +32,11 @@ export class HookOccurrences {
   private get store() { return this.context.store; }
   private get isolationPath() { return this.context.isolationPath; }
 
-  /** Build the closed event payload. Event content is data; it never reaches argv or the shell. */
-  buildEvent(task: Task, hook: NormalizedHookDefinition, eventId: string, attempt: number, context: HookContext, root = task.repoPath): AnyHookEvent {
+  /**
+   * Build the closed event payload. Event content is data; it never reaches argv or the shell.
+   * `family` spells the event in the wire family its manifest was committed under.
+   */
+  buildEvent(task: Task, hook: NormalizedHookDefinition, eventId: string, attempt: number, context: HookContext, root = task.repoPath, family: HookWireFamily = "legacy"): AnyHookEvent {
     const delivery = context.delivery ?? {};
     if (!context.baseCommit) throw new Error("Hook event requires a base commit");
     const shared = {
@@ -48,15 +52,15 @@ export class HookOccurrences {
     // Integration-base events keep the frozen v1 payload; a reviewed-head
     // occurrence emits the additive v2 payload with `repository.target`; a
     // prospective-merge occurrence emits v3 with its pinned candidate identity.
-    if (hook.target === "reviewed_head") return hookEventV2Schema.parse({ schema: EVENT_SCHEMA_V2, ...shared, repository: { ...shared.repository, target: "reviewed_head" } });
+    if (hook.target === "reviewed_head") return hookEventV2Schema.parse({ schema: wireNameFor(family, EVENT_SCHEMA_V2), ...shared, repository: { ...shared.repository, target: "reviewed_head" } });
     if (hook.target === "prospective_merge") {
       const candidate = context.candidate;
       if (!candidate) throw new Error("A prospective-merge event requires the pinned candidate identity");
       if (candidate.integrationBase !== context.baseCommit) throw new Error("A prospective-merge candidate must be built from the pinned integration base");
       const { path: _path, ...identity } = candidate;
-      return hookEventV3Schema.parse({ schema: EVENT_SCHEMA_V3, ...shared, repository: { ...shared.repository, target: "prospective_merge", mergeCandidate: identity } });
+      return hookEventV3Schema.parse({ schema: wireNameFor(family, EVENT_SCHEMA_V3), ...shared, repository: { ...shared.repository, target: "prospective_merge", mergeCandidate: identity } });
     }
-    return hookEventSchema.parse({ schema: EVENT_SCHEMA, ...shared });
+    return hookEventSchema.parse({ schema: wireNameFor(family, EVENT_SCHEMA), ...shared });
   }
 
   /** Persist durable event intent before any external effect. Reuse an open record; new ids only after a terminal one. */
@@ -146,7 +150,7 @@ export class HookOccurrences {
     // must stop, never in the canonical integration checkout.
     if (context.event === "task.finished" && !workspacePath) throw new Error("Finished-task hook requires the retained task worktree path");
     const executionRoot = hook.target === "reviewed_head" ? task.directory! : hook.target === "prospective_merge" ? workspacePath! : workspacePath ?? task.repoPath;
-    const event = this.buildEvent(task, hook, eventId, 1, context, executionRoot);
+    const event = this.buildEvent(task, hook, eventId, 1, context, executionRoot, hookWireFamilyOfManifestPath(discovery.pin.path) ?? "legacy");
     const record = hookRecordSchema.parse({
       id: randomUUID(), taskId: task.id, hookId: hook.id, event: context.event, eventId, occurrence,
       mode: hook.mode, delivery: hook.delivery, state: program.kind === "unavailable_tool" ? hook.delivery === "required" ? "blocked" : "failed" : "intent",
@@ -223,5 +227,6 @@ export class HookOccurrences {
 }
 
 export function okResult(record: HookRecord): HookResult {
-  return { schema: RESULT_SCHEMA, eventId: record.eventId, outcome: "ok", summary: record.summary || "Reconciled hook publication", metadata: {}, changedPaths: record.result?.changedPaths ?? [], commitSubjectSuffix: null };
+  const schema = wireNameFor(hookWireFamilyOfManifestPath(record.manifest.path) ?? "legacy", RESULT_SCHEMA) as HookResult["schema"];
+  return { schema, eventId: record.eventId, outcome: "ok", summary: record.summary || "Reconciled hook publication", metadata: {}, changedPaths: record.result?.changedPaths ?? [], commitSubjectSuffix: null };
 }

@@ -227,7 +227,7 @@ committed path is refused.
 nucleus helper submit --brief --repo /absolute/repository /absolute/brief.md
 ```
 
-The repository's `.paseo/queue.json` must be v5 or absent for brief mode.
+The repository's hook manifest (`.nucleus/queue.json`, or the legacy `.paseo/queue.json`) must be v5 or absent for brief mode.
 
 Add `--dry-run` to validate and print the derived submission. `--coordinator`
 assigns an existing coordinator; omission lets Nucleus select one. `--base`

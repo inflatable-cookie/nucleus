@@ -1,7 +1,7 @@
 # Repository hooks
 
 Owner: operator and Chatterbox
-Updated: 2026-10-05
+Updated: 2026-11-21
 Governing specs: `docs/knowledge/specs/001-generic-repository-hooks.md`,
 `docs/knowledge/specs/002-durable-hook-retry-and-isolated-writes.md`,
 `docs/knowledge/specs/004-trusted-host-hook-runners.md`,
@@ -9,16 +9,60 @@ Governing specs: `docs/knowledge/specs/001-generic-repository-hooks.md`,
 `docs/knowledge/specs/018-queue-owned-closeout-and-durable-outcomes.md`,
 `docs/knowledge/specs/022-queue-projects-without-manifests.md`
 
-Nucleus may execute repository policy only through an optional committed
-`.paseo/queue.json` using `paseo.queue.control.v1`,
-`paseo.queue.control.v2`, `paseo.queue.control.v3`,
-`paseo.queue.control.v4`, `paseo.queue.control.v5`,
-`paseo.queue.control.v6`, or `paseo.queue.control.v7`. Absence means no
-repository hooks and no lifecycle binding; closeout for such repositories
-follows Nucleus's project settings below. Nucleus core treats the instruction
+Nucleus may execute repository policy only through one optional committed hook
+manifest: `.nucleus/queue.json`, the documented path for new manifests, or the
+legacy `.paseo/queue.json`. Its schema is the same generation in either family,
+`nucleus.queue.control.v1` through `nucleus.queue.control.v7` or
+`paseo.queue.control.v1` through `paseo.queue.control.v7`, and the family must
+match the location (see [Wire families](#wire-families-and-manifest-location)).
+Absence means no repository hooks and no lifecycle binding; closeout for such
+repositories follows Nucleus's project settings below. Nucleus core treats the instruction
 artifact and hook payload as opaque generic data; it does not import Northstar,
 parse a document system, recognize project task numbering, or embed
 repository-specific commands and paths.
+
+## Wire families and manifest location
+
+Repository hook policy has two spellings of one frozen wire surface. The neutral
+family is the documented path for new manifests; the legacy family is what
+committed repositories already carry, and it is still read.
+
+| | Neutral (documented) | Legacy (still read) |
+| --- | --- | --- |
+| Manifest | `.nucleus/queue.json` | `.paseo/queue.json` |
+| Hook executables | `.nucleus/hooks/` | `.paseo/hooks/` |
+| Control schema | `nucleus.queue.control.vN` | `paseo.queue.control.vN` |
+| Event schema | `nucleus.queue.event.vN` | `paseo.queue.event.vN` |
+| Result schema | `nucleus.queue.hook-result.v1` | `paseo.queue.hook-result.v1` |
+| Launch variables | `NUCLEUS_QUEUE_EVENT_ID`, `NUCLEUS_QUEUE_EVENT_SCHEMA` | `PASEO_QUEUE_EVENT_ID`, `PASEO_QUEUE_EVENT_SCHEMA` |
+
+- **One location, one family.** The manifest's location selects its family and
+  its `schema` must be spelled in that family. A neutral location with a legacy
+  schema, or the reverse, is refused.
+- **Exclusive.** A commit that carries both manifest locations is refused. Nothing
+  resolves by precedence; a repository keeps exactly one.
+- **Same generation.** Each `vN` means the same thing in both families. Every
+  comparison on generation resolves a neutral name to its legacy spelling, so no
+  spelling selects different behaviour.
+- **Pinned with the manifest.** The occurrence pins the manifest path. Its event
+  and its result use that family alone. A hook receives one family's variables and
+  must answer in that family's result schema; a result in the other spelling
+  holds the occurrence as an unusable result. Nucleus never delivers both
+  spellings to one hook.
+- **Reserved paths.** Every manifest keeps its frozen reservations: `.git`, and the
+  legacy `.paseo` location and hook directory. A neutral manifest also may not
+  declare `.nucleus`, `.nucleus/`, `.nucleus/queue.json`, `.nucleus/hooks` or
+  anything under it. Historical manifests keep every path they already held.
+- **Native Paseo configuration stays Paseo's.** `paseo.json`, `paseo-plugin.json`
+  and host variables such as `PASEO_HOME` are not part of this protocol and do
+  not change.
+- **No rewrite of active repositories.** A repository moves by committing a
+  neutral manifest and removing the legacy one. Pending occurrences keep the
+  spelling they were delivered in: a stored record's manifest pin, event payload
+  and result never change. A renewal or automatic replay that would move a pending
+  occurrence to the other family is refused, not re-emitted. A read-only retry runs
+  the program from the canonical checkout, so keep the legacy hook file in place
+  until its pending occurrences settle.
 
 Approved, not yet built (R5 in [vision](../vision.md#simplification-rulings-2026-10-31)):
 retire the integration-write mode with its isolated publication, closeout
@@ -75,8 +119,10 @@ blocks synchronization. Nucleus does not raise its Git output safety bound or
 delete, relocate, enumerate, or trust ignored runtime trees to make a checkout
 eligible.
 
-Nucleus records intent before every external effect. It validates
-`paseo.queue.event.v1` and `paseo.queue.hook-result.v1`, stores bounded results,
+Nucleus records intent before every external effect. It validates the event and
+hook-result envelopes in the family the occurrence was delivered in
+(`paseo.queue.event.v1` and `paseo.queue.hook-result.v1`, or their `nucleus.queue.*`
+spellings), stores bounded results,
 stages exact allowed paths, creates the commit, pushes normally, fast-forwards
 the operator checkout to the published commit, proves the remote, and removes
 only the isolated checkout it created. Restarts reconcile uncertain process,

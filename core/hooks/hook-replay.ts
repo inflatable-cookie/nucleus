@@ -3,7 +3,7 @@ import { instructionForCommit, discoverManifest, pinExecutable, type ManifestDis
 import { gitText, isolatedRepositoryIsCleanAt } from "../git/git-snapshot";
 import { existsSync } from "node:fs";
 
-import { AUTOMATIC_REPLAY_LIMIT, AUTOMATIC_REPLAY_RETRY_MS, hookReplayLineageSchema, hookEventSupportsAutomaticReplay, type NormalizedHookDefinition, type HookEventName, type HookRecord } from "../../shared/hooks";
+import { AUTOMATIC_REPLAY_LIMIT, AUTOMATIC_REPLAY_RETRY_MS, hookReplayLineageSchema, hookEventSupportsAutomaticReplay, hookWireFamilyOfManifestPath, type NormalizedHookDefinition, type HookEventName, type HookRecord } from "../../shared/hooks";
 import { isDispositionActive, type Task } from "../../shared/contracts";
 import { type Store, now } from "../store/store";
 import { gitRun } from "../git/git-command";
@@ -201,6 +201,9 @@ export class HookReplay {
       if (payload.repository.root !== isolation)
         return refuse("the recorded occurrence belongs to another repository or event");
       await this.verifyCleanSynchronizedBase(task.repoPath, record.baseBranch, baseCommit);
+      const bound = await discoverManifest(task.repoPath, baseCommit);
+      if (!bound || hookWireFamilyOfManifestPath(bound.pin.path) !== hookWireFamilyOfManifestPath(record.manifest.path))
+        return refuse("the hook manifest moved between wire families; the pending occurrence is not replayed");
       const semantics = await this.sameHookSemantics(task, record, hook, baseCommit);
       if (semantics) return refuse(semantics);
       const instruction = await this.sameInstruction(task, record, baseCommit);
@@ -313,6 +316,9 @@ export class HookReplay {
   /** One publication proof and supersession path for a replacement occurrence. */
   private async renewOccurrence(task: Task, record: HookRecord, hook: NormalizedHookDefinition,
     discovery: ManifestDiscovery, context: HookContext, repair: string): Promise<HookEmissionResult> {
+    // A pending occurrence keeps the wire family it was delivered in; a renewal never re-emits it in the other spelling.
+    if (hookWireFamilyOfManifestPath(discovery.pin.path) !== hookWireFamilyOfManifestPath(record.manifest.path))
+      throw new Error("The hook manifest moved between wire families; the pending occurrence keeps its recorded spelling and is not replayed");
     if (record.commit && await this.remoteCarries(task, record))
       throw new Error("A stale hook crossed the publication boundary and cannot be replaced");
     for (const sha of await this.matchingCommits(task, record)) {
