@@ -420,7 +420,7 @@ export class TaskStops {
     return this.resolution.update(
       current,
       { stop },
-      { reason: visible, ...(phase ? { phase } : {}) },
+      { reason: visible, reasonFact: stop.fact, ...(phase ? { phase } : {}) },
       "task_stopped",
       JSON.stringify(stop),
     );
@@ -796,7 +796,7 @@ export class TaskStops {
     this.resolution.update(
       current,
       { attention: true, stop: { ...stop, incidentId: incident.id }, ...preAttention },
-      { reason, ...(ownerless ? { phase: "needs_attention" as const } : {}) },
+      { reason, reasonFact: stop.fact, ...(ownerless ? { phase: "needs_attention" as const } : {}) },
       "needs_attention",
     );
   }
@@ -871,7 +871,7 @@ export class TaskStops {
     this.resolution.update(
       current,
       { stop: record },
-      { reason: visible },
+      { reason: visible, reasonFact: record.fact },
       "task_waiting",
       JSON.stringify(record),
     );

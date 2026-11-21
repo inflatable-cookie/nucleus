@@ -11,10 +11,12 @@ import { executionParticipants } from "../core/machine/execution-participants";
 import { plannerEscalations } from "../core/questions/ladder/records";
 import { blockingRecoveryEffects } from "../core/recovery/recovery-effects";
 import { resolutionCreationRestartRefusal } from "../core/recovery/absent-creation/restarts";
+import { operationInputHash } from "../core/store/store";
 import { collectOwnerVerbFacts, ownerPendingEffects } from "../core/verbs/owner-verbs";
 import { taskControlOperation } from "../core/verbs/task-control-key";
 import { QueueRuntime } from "../service/runtime-owner";
 import { callCatalogueMethod } from "../service/transport/dispatch";
+import { profile } from "./support/fakes";
 
 const head = "a".repeat(40);
 const host = "paseo-fixture";
@@ -46,7 +48,7 @@ async function fixture(t: TestContext) {
   const task = store.insert(submissionSchema.parse({ submissionId: "fixture", title: "Fixture", repoPath: repo,
     planningCommit: head, handoffPath: "handoff.md", originAgentId: "owner" }), host, "Handoff", head);
   const current = () => store.task(task.id);
-  const run = (id: string, role: "reviewer" | "recovery", agentId: string | null) => runSchema.parse({
+  const run = (id: string, role: "reviewer" | "recovery" | "revision", agentId: string | null) => runSchema.parse({
     id, role, agentId, taskId: task.id, hostId: host, workspaceId: "workspace", status: agentId ? "running" : "uncertain",
     generation: 1, head, base: head, profile: null, createdAt: new Date().toISOString(),
     lastObservedAt: null, idleSince: null, active: agentId ? true : null, completion: null, released: false,
@@ -91,29 +93,83 @@ test("run.release changes an agentless reviewer's durable fence and revokes its 
   assert.equal(audit().length, 1);
 });
 
-test("record.clear settles a route operation and a notice on the underlying records", async t => {
+test("ordinary reviewer routing resumes after one release and one effect clear", async t => {
+  const { store, current, run, command, calls, runtime } = await fixture(t);
+  const reviewer = run("review-run", "reviewer", null);
+  store.putRun(reviewer);
+  store.update(current().id, { phase: "reviewing", prHead: head, workspaceId: reviewer.workspaceId,
+    resolution: { ...current().resolution, currentRunId: reviewer.id } });
+  runtime.engine.profiles = [profile("next-reviewer")];
+  store.setMeta("pool", [{ profileId: "next-reviewer", enabled: true, group: "reviews", weight: "default",
+    scopes: ["general"], roles: ["reviewer"] }]);
+  const task = current();
+  const route = { action: "route" as const, role: "reviewer" as const, profileId: "next-reviewer", now: true,
+    reason: "Choose a reviewer route" };
+  const { payload, key } = taskControlOperation({ ...route, taskId: task.id, version: task.version });
+  const accepted = store.acceptOperation({ key, kind: "task_control", taskId: task.id, inputHash: operationInputHash(payload), payload });
+  assert.ok("operation" in accepted);
+  const operation = store.putOperation({ ...accepted.operation, state: "needs_attention", diagnostic: "Delivery unknown",
+    effect: { kind: "task_control", target: "route", status: "uncertain", intentAt: new Date().toISOString(), result: null, resultAt: null } });
+
+  assert.match(runSettlementFence({ store, task }, reviewer) ?? "", /uncertain/);
+  await assert.rejects(command(route), new RegExp(`operation ${operation.id} is uncertain`));
+  const released = await command({ action: "run.release", run: reviewer.id, accept: ["live_turn", "unreported_result"] });
+  assert.equal(released.explicitResolution?.status, "applied");
+  const clear = { action: "record.clear", kind: "effect", id: `task_control_operation.${operation.id}`, caller: planner };
+  assert.equal((await command(clear)).explicitResolution?.warnings[0].id, "effect_may_land");
+  assert.equal((await command({ ...clear, accept: ["effect_may_land"] })).explicitResolution?.status, "applied");
+  assert.equal(store.operation(operation.id)?.state, "failed");
+
+  const routed = await command(route);
+  assert.equal(routed.phase, "awaiting_review");
+  assert.equal(routed.profileRequests?.reviewer?.profileId, "next-reviewer");
+  assert.deepEqual(store.runs(task.id).map(run => [run.id, run.released]), [[reviewer.id, true]]);
+  assert.deepEqual(calls, []);
+});
+
+test("record.clear supersedes a notice and keeps late delivery evidence from restoring the fence", async t => {
   const { store, current, command, audit } = await fixture(t);
   const task = current();
-  const control = { taskId: task.id, version: task.version, action: "route" as const, role: "reviewer" as const,
-    profileId: "next-reviewer", now: true, reason: "Choose a reviewer route" };
-  const { payload, key } = taskControlOperation(control);
-  const accepted = store.acceptOperation({ key, kind: "task_control", taskId: task.id, inputHash: "b".repeat(64), payload });
-  assert.ok("operation" in accepted);
-  const operation = store.putOperation({ ...accepted.operation, state: "needs_attention", diagnostic: "Delivery unknown" });
   store.putNotice({ id: "notice", taskId: task.id, agentId: "owner", text: "Delivery unknown", status: "uncertain",
     error: "", kind: "attention", recipientAgentId: "", workspaceId: null, sources: [], originEntry: true });
   const blockers = () => blockingRecoveryEffects(store, current()).map(effect => effect.identity);
-  assert.deepEqual(blockers(), [operation.id, "notice"]);
-  for (const id of [`task_control_operation.${operation.id}`, "attention-notice.notice"]) {
-    const args = { action: "record.clear", kind: "effect", id, caller: planner };
-    assert.equal((await command(args)).explicitResolution?.warnings[0].id, "effect_may_land");
-    assert.equal((await command({ ...args, accept: ["effect_may_land"] })).explicitResolution?.status, "applied");
-  }
+  assert.deepEqual(blockers(), ["notice"]);
+  const args = { action: "record.clear", kind: "effect", id: "attention-notice.notice", caller: planner };
+  assert.equal((await command(args)).explicitResolution?.warnings[0].id, "effect_may_land");
+  assert.equal((await command({ ...args, accept: ["effect_may_land"] })).explicitResolution?.status, "applied");
   assert.deepEqual(blockers(), []);
-  assert.equal(store.operation(operation.id)?.state, "failed");
   store.putNotice({ ...store.notices(task.id)[0]!, status: "uncertain", error: "Late response" });
   assert.equal(store.notices(task.id)[0]?.status, "superseded");
   assert.ok(audit().every(event => JSON.parse(event.detail).source === "project_planner"));
+});
+
+test("run.release cancels a current revision on the retained worker thread", async t => {
+  const { store, current, run, command, calls } = await fixture(t);
+  const revision = run("revision-run", "revision", "worker");
+  store.putRun(revision);
+  store.update(current().id, { phase: "working", agentId: revision.agentId, runId: "original-worker",
+    workspaceId: revision.workspaceId, resolution: { ...current().resolution, currentRunId: revision.id } });
+  const result = await command({ action: "run.release", run: revision.id, accept: ["live_turn", "unreported_result"] });
+  assert.equal(result.explicitResolution?.status, "applied");
+  assert.deepEqual(calls, ["stop worker"]);
+  assert.equal(result.agentId, revision.agentId);
+  assert.equal(result.runId, "original-worker");
+  assert.equal(result.resolution.currentRunId, null);
+});
+
+test("run.release leaves another live revision using the same thread alone", async t => {
+  const { store, current, run, command, calls } = await fixture(t);
+  const older = run("old-revision", "revision", "worker");
+  const newer = run("new-revision", "revision", "worker");
+  store.putRun(older);
+  store.putRun(newer);
+  store.update(current().id, { phase: "working", agentId: newer.agentId, runId: "original-worker",
+    workspaceId: newer.workspaceId, resolution: { ...current().resolution, currentRunId: newer.id } });
+  const result = await command({ action: "run.release", run: older.id, archive: true, accept: ["live_turn", "unreported_result"] });
+  assert.equal(result.explicitResolution?.status, "applied");
+  assert.deepEqual(calls, []);
+  assert.equal(result.resolution.currentRunId, newer.id);
+  assert.equal(store.run(newer.id)?.released, false);
 });
 
 test("the coordinator can release or clear its task records within its authority", async t => {
@@ -174,4 +230,17 @@ test("creation restart decisions read the stored stop fact across detail edits",
   assert.equal(resolutionCreationRestartRefusal(task, reviewer), stop.detail);
   store.update(task.id, { resolution: { ...task.resolution, stop: { ...stop, detail: "Renamed diagnostic" } } });
   assert.equal(resolutionCreationRestartRefusal(current(), reviewer), "Renamed diagnostic");
+});
+
+test("a new task reason keeps its own fact when a resolution update carries an older stop", async t => {
+  const { store, current, runtime } = await fixture(t);
+  runtime.engine.resolution.waiting(current(), "Waiting for the slot", "lifecycle", { fact: { code: "integration_turn" } });
+  const task = current();
+  assert.deepEqual(task.reasonFact, { code: "integration_turn" });
+  const stop = task.resolution.stop!;
+  store.update(task.id, { reason: "Waiting for prerequisites: another task", resolution: {
+    ...task.resolution, stop: { ...stop, detail: "The integration turn is still held" },
+  } });
+  assert.deepEqual(current().reasonFact, { code: "prerequisite" });
+  assert.deepEqual(current().resolution.stop?.fact, { code: "integration_turn" });
 });

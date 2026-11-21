@@ -687,7 +687,7 @@ export class StoreTaskFunnel {
       ...task,
       ...change,
       ...(change.reason !== undefined && change.reason !== task.reason && change.reasonFact === undefined
-        ? { reasonFact: change.resolution?.stop?.fact ?? taskDecisionFact(change.reason) } : {}),
+        ? { reasonFact: taskDecisionFact(change.reason) } : {}),
       ...(terminal ? { queuePriority: 0 } : {}),
       finishedAt,
       id: task.id,

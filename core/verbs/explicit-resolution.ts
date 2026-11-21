@@ -155,11 +155,21 @@ function releasePlan(engine: Engine, task: Task, input: Extract<ExplicitResoluti
       }
       if (agentId && (live || input.archive)) {
         const current = store.task(task.id);
-        if (current.agentId === agentId || threadServesAnotherTask(store, current, agentId))
+        // A current revision can run on the retained worker's existing thread.
+        // Its turn can be stopped independently of that retained binding.
+        const releasedRetainedRevision = run?.role === "revision" && task.resolution.currentRunId === run.id &&
+          current.runId === task.runId;
+        if ((current.agentId === agentId && !releasedRetainedRevision) || threadServesAnotherTask(store, current, agentId))
           return [...issues, "Another live assignment still owns this thread."];
         const onHost = async () => {
           if (live) await attempt("Turn cancellation", () => engine.host.stopAgentTurn(agentId));
-          if (input.archive) await attempt("Thread archive", () => engine.host.archiveAgent(agentId));
+          if (!input.archive) return;
+          const latest = store.task(task.id);
+          if (latest.agentId === agentId || threadServesAnotherTask(store, latest, agentId)) {
+            issues.push("The task still depends on this thread, so it remains available.");
+            return;
+          }
+          await attempt("Thread archive", () => engine.host.archiveAgent(agentId));
         };
         await attempt("Host contact", () => hostId ? engine.withHost(hostId, onHost) : onHost());
       }
