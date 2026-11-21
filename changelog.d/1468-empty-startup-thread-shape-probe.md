@@ -1,0 +1,1 @@
+- T3Code connections that start against an empty shell now validate the first eligible live thread inside a host pass using one single-flight bounded direct projection probe without re-entering `shell` or `inventory`, preserving terminal and archived thread skipping, compatibility disconnection on malformed shapes, and progress on other hosts.
