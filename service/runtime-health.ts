@@ -237,6 +237,12 @@ export interface HostStateFacts {
     | undefined;
   identityConflict: HostIdentityConflict | null;
   startError: string;
+  /**
+   * The primary host's own connect fault (nucleus#1449). It is that host's reason,
+   * never the board's: a live secondary host owns readiness while the primary is
+   * offline, and its work waits for it.
+   */
+  primaryFault?: string | null;
 }
 
 /**
@@ -245,7 +251,8 @@ export interface HostStateFacts {
  * guessed onto a host, and `startError` is display text only.
  */
 export function projectHostStates(facts: HostStateFacts): HostHealth[] {
-  const { known, t3, identityConflict, startError, primaryId } = facts;
+  const { known, t3, identityConflict, startError, primaryId, primaryFault } =
+    facts;
   if (!known.length)
     return [
       {
@@ -272,7 +279,7 @@ export function projectHostStates(facts: HostStateFacts): HostHealth[] {
         host.id === t3?.id
           ? t3.error || "T3Code is offline"
           : host.id === primaryId
-            ? startError || "Host is offline"
+            ? primaryFault || startError || "Host is offline"
             : hostKindOf(host.id) === "bb"
               ? facts.bbOfflineReason || "BB plugin is not connected"
               : "Host is offline",
@@ -405,6 +412,7 @@ export class RuntimeHealthProjection {
         : undefined,
       identityConflict: lifecycle.identityConflict,
       startError: lifecycle.startError,
+      primaryFault: lifecycle.primaryFault?.message ?? null,
     });
   }
 

@@ -79,6 +79,17 @@ interface PostBootstrapDiagnostic {
   startErrorRevision: number;
 }
 
+/**
+ * The primary host's own connection fault: why the Paseo entry is offline. It is
+ * that host's fact, projected onto its host entry, and never the runtime's
+ * board-wide start error while another verified host owns readiness
+ * (nucleus#1449).
+ */
+export interface PrimaryHostFault {
+  message: string;
+  at: string;
+}
+
 /** The runtime ports the lifecycle state machine reads and writes. */
 export interface RuntimeLifecycleOwner {
   readonly store: Store;
@@ -89,6 +100,11 @@ export interface RuntimeLifecycleOwner {
   readonly hostRegistry: HostRegistry<RegisteredHost>;
   /** The host seam's own connection rule, which also retires a stale session claim. */
   connected(): boolean;
+  /**
+   * The host seam's fleet answer: whether any verified host is online, after the
+   * seam retires stale claims. Readiness is this, never the primary alone.
+   */
+  anyHostConnected(): boolean;
   readonly plannerTickets: ParticipantTickets;
   readonly t3Host: () => T3HostConnection | null;
   /** Adopt the stored T3Code connection if the operator route changed it (nucleus#1330). */
@@ -119,6 +135,8 @@ export class RuntimeLifecycle {
   lastStoreAccessAt: string | null = null;
   /** The typed host identity conflict, cleared by the refresh that settles it. */
   identityConflict: HostIdentityConflict | null = null;
+  /** Why the primary host is offline; null while it connects. Health reads it for that host only. */
+  primaryFault: PrimaryHostFault | null = null;
 
   private readonly owner: RuntimeLifecycleOwner;
   private readonly prStates: PrStates;
@@ -127,6 +145,12 @@ export class RuntimeLifecycle {
   private postBootstrapDiagnostic: PostBootstrapDiagnostic | null = null;
   private startErrorValue = "";
   private startErrorRevision = 0;
+  /** The start error this lifecycle itself recorded, so a later pass clears only its own. */
+  private bootstrapStartError: string | null = null;
+  /** The primary host's last connect failure, so the attempt can settle on it. */
+  private primaryFailure: Error | null = null;
+  /** The in-flight primary connect, so ticks during a slow connect share one attempt. */
+  private primaryConnecting: Promise<void> | null = null;
   private refreshing: Promise<void> | null = null;
   /** A secondary host's last known connection state, for the arrival refresh below. */
   private secondaryOnline = false;
@@ -193,8 +217,7 @@ export class RuntimeLifecycle {
     this.bootstrap = this.ensureBootstrap().then(
       () => undefined,
       (error) => {
-        this.startError =
-          error instanceof Error ? error.message : String(error);
+        this.recordStartError(error);
         console.error("Nucleus startup:", this.startError);
       },
     );
@@ -205,6 +228,13 @@ export class RuntimeLifecycle {
    * timers and `queue.refresh` call this, so a transient daemon outage at startup
    * (or later) resumes reconciliation and accepted durable operations without an
    * operator action.
+   *
+   * Readiness belongs to the verified host that owns the work (nucleus#1449): a
+   * live T3Code connection satisfies it while the primary Paseo adapter is
+   * offline. The primary's own connect is still attempted within its existing
+   * bound on every pass, its failure is recorded on that host, and its work waits
+   * for it. Only when no host at all is online is its failure the runtime's
+   * board-wide start error, exactly as before.
    */
   async ensureBootstrap(): Promise<boolean> {
     if (this.closing || this.owner.idleShutdownLatched) return false;
@@ -241,43 +271,34 @@ export class RuntimeLifecycle {
     this.bootstrapRunning = (async () => {
       let reconciliationTimedOut = false;
       try {
-        await this.boundedConnect();
-        if (this.closing) return;
-        const observed = this.owner.paseoHostId;
-        if (!this.owner.hostSession) {
-          const recorded = this.owner.hostRegistry.primary()?.id;
-          if (recorded && recorded !== observed)
-            throw this.refusal(
-              "Configured daemon identity changed; existing tasks belong to another host",
-            );
-          const token = this.owner.hostRegistry.connect(
-            observed,
-            this.owner.daemonUrl,
-            { adapter: this.owner.adapter, admission: this.owner.admission },
-            () => {
-              const previousHost = this.owner.hostRegistry.primary()?.id;
-              if (previousHost && previousHost !== observed)
-                throw this.refusal(
-                  "Configured daemon identity changed; existing tasks belong to another host",
-                );
-              const admission = this.owner.hostRegistry.resource(
-                observed,
-                () => this.owner.admission,
-              );
-              if (admission !== this.owner.admission)
-                throw new HostIdentityConflictError(
-                  "admission",
-                  "Host admission identity conflicts with the selected adapter",
-                );
-            },
-          );
-          this.owner.hostSession = { id: observed, token };
-        } else if (this.owner.hostSession.id !== observed) {
-          throw this.refusal(
-            "Configured daemon identity changed; existing tasks belong to another host",
-          );
+        // The primary's connect and registration is one host's own retry. When a
+        // secondary host is already online it settles on its own, so the common
+        // recovery below never waits for an offline adapter.
+        const alreadyOnline = this.owner.anyHostConnected();
+        const connecting = this.connectPrimaryHost().then(
+          () => this.markPrimaryConnected(),
+          (error) => this.markPrimaryFailure(error),
+        );
+        if (!alreadyOnline) {
+          // Nothing else can own readiness, so the primary's outcome is this
+          // attempt's outcome and its own fault is the board-wide start error
+          // until another host answers.
+          await connecting;
+          if (this.primaryFailure) throw this.primaryFailure;
+        } else {
+          void connecting;
         }
-        void this.owner.t3Host()?.ensureConnected();
+        if (this.closing) return;
+        if (this.bootstrapped) {
+          // A host already proved readiness in this process: durable recovery and
+          // the first reconciliation are settled facts, so nothing repeats here.
+          if (this.owner.connected())
+            await this.boundedBootstrapStep(
+              "Daemon catalog refresh",
+              this.refresh(),
+            );
+          return;
+        }
         await this.boundedBootstrapStep(
           "Daemon catalog refresh",
           this.refresh(),
@@ -319,11 +340,7 @@ export class RuntimeLifecycle {
             },
           );
       } catch (error) {
-        if (error instanceof HostIdentityConflictError)
-          this.recordHostConflict(error);
-        if (!reconciliationTimedOut)
-          this.startError =
-            error instanceof Error ? error.message : String(error);
+        if (!reconciliationTimedOut) this.recordStartError(error);
         throw error;
       }
     })().finally(() => {
@@ -336,6 +353,83 @@ export class RuntimeLifecycle {
       // timer tick retries the whole bootstrap.
     }
     return this.bootstrapped;
+  }
+
+  /**
+   * The primary host's connect, identity guard and registration. Coalesced, so a
+   * tick during a slow connect shares that attempt, and its rejection is that
+   * host's fault: the caller records it rather than letting it fail the fleet.
+   */
+  private connectPrimaryHost(): Promise<void> {
+    if (this.primaryConnecting) return this.primaryConnecting;
+    const work = (async () => {
+      await this.boundedConnect();
+      if (this.closing) return;
+      const observed = this.owner.paseoHostId;
+      if (!this.owner.hostSession) {
+        const recorded = this.owner.hostRegistry.primary()?.id;
+        if (recorded && recorded !== observed)
+          throw this.refusal(
+            "Configured daemon identity changed; existing tasks belong to another host",
+          );
+        const token = this.owner.hostRegistry.connect(
+          observed,
+          this.owner.daemonUrl,
+          { adapter: this.owner.adapter, admission: this.owner.admission },
+          () => {
+            const previousHost = this.owner.hostRegistry.primary()?.id;
+            if (previousHost && previousHost !== observed)
+              throw this.refusal(
+                "Configured daemon identity changed; existing tasks belong to another host",
+              );
+            const admission = this.owner.hostRegistry.resource(
+              observed,
+              () => this.owner.admission,
+            );
+            if (admission !== this.owner.admission)
+              throw new HostIdentityConflictError(
+                "admission",
+                "Host admission identity conflicts with the selected adapter",
+              );
+          },
+        );
+        this.owner.hostSession = { id: observed, token };
+      } else if (this.owner.hostSession.id !== observed) {
+        throw this.refusal(
+          "Configured daemon identity changed; existing tasks belong to another host",
+        );
+      }
+      void this.owner.t3Host()?.ensureConnected();
+    })().finally(() => {
+      this.primaryConnecting = null;
+    });
+    this.primaryConnecting = work;
+    return work;
+  }
+
+  /** The primary host is registered: its own fault and the conflict it caused are settled. */
+  private markPrimaryConnected(): void {
+    this.primaryFailure = null;
+    this.primaryFault = null;
+    this.identityConflict = null;
+    // A host that just came back owes its own catalog before any host-bound
+    // dispatch; the periodic profile pass is two minutes away.
+    if (this.bootstrapped && !this.closing)
+      void this.refresh().catch(() => {
+        /* a failed read keeps the previous snapshot and the regular pass retries */
+      });
+  }
+
+  /** The primary host's failure stays that host's fault, with its typed conflict when it has one. */
+  private markPrimaryFailure(error: unknown): void {
+    const failure = error instanceof Error ? error : new Error(String(error));
+    this.primaryFailure = failure;
+    if (failure instanceof HostIdentityConflictError)
+      this.recordHostConflict(failure);
+    this.primaryFault = {
+      message: failure.message,
+      at: new Date().toISOString(),
+    };
   }
 
   /**
@@ -443,7 +537,7 @@ export class RuntimeLifecycle {
   }
 
   private recordPostBootstrapTimeout(attemptId: number, error: Error): void {
-    this.startError = error.message;
+    this.recordStartError(error);
     this.postBootstrapDiagnostic = {
       attemptId,
       message: error.message,
@@ -468,7 +562,7 @@ export class RuntimeLifecycle {
       this.postBootstrapDiagnostic = null;
       this.clearStartError();
     } else {
-      this.startError = outcome.error.message;
+      this.recordStartError(outcome.error);
       this.postBootstrapDiagnostic = {
         attemptId,
         message: outcome.error.message,
@@ -542,9 +636,26 @@ export class RuntimeLifecycle {
     };
   }
 
+  /**
+   * Record this lifecycle's own start fault: an unsettled connect, bootstrap step
+   * or reconciliation. Another owner's global fault (the host-run endpoint, the
+   * callback surface, a sweep) is theirs to clear, so the message is remembered
+   * and only a matching error is cleared later.
+   */
+  private recordStartError(error: unknown): void {
+    const message = error instanceof Error ? error.message : String(error);
+    this.bootstrapStartError = message;
+    this.startError = message;
+  }
+
   /** A settled start error is also a settled conflict; both are the same readiness fact. */
   private clearStartError(): void {
     this.identityConflict = null;
-    this.startError = "";
+    if (
+      this.bootstrapStartError !== null &&
+      this.startErrorValue === this.bootstrapStartError
+    )
+      this.startError = "";
+    this.bootstrapStartError = null;
   }
 }

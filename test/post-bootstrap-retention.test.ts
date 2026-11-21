@@ -100,6 +100,7 @@ function serviceStart(t: TestContext) {
     hostSession: { id: HOST, token: "synthetic-token" },
     idleShutdownLatched: false,
     connected: () => true,
+    anyHostConnected: () => true,
     readPrStates: async () => ({}),
   } as unknown as RuntimeLifecycleOwner;
   return { lifecycle: new RuntimeLifecycle(owner), engine, calls };

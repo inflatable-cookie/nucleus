@@ -354,6 +354,8 @@ export class QueueRuntime {
   /** The connection in force, and the settings-file stamp it was read at. */
   private t3Config: T3ConnectionConfig | null = null;
   private t3SettingsStamp = "";
+  /** The sweep fault this runtime recorded, so a later settled pass clears only its own. */
+  private sweepStartError: string | null = null;
   /** The one admission factory the secondary host is built with, reused on adoption. */
   private readonly makeAdmission: () => Admission;
   /**
@@ -905,6 +907,7 @@ export class QueueRuntime {
         return runtime.idleShutdownLatched;
       },
       connected: () => runtime.connected(),
+      anyHostConnected: () => runtime.anyHostConnected(),
     });
     this.healthProjection = new RuntimeHealthProjection({
       store: this.store,
@@ -991,9 +994,22 @@ export class QueueRuntime {
           withRefresh && this.connected()
             ? this.refresh().then(() => this.engine.sweepOnce())
             : this.engine.sweepOnce();
-        void followUp.catch((error) => {
-          this.startError = String(error);
-        });
+        void followUp.then(
+          () => {
+            // A sweep fault stays on the board until the next pass settles, and
+            // only the error this tick recorded is cleared (nucleus#1449).
+            if (
+              this.sweepStartError &&
+              this.startError === this.sweepStartError
+            )
+              this.startError = "";
+            this.sweepStartError = null;
+          },
+          (error) => {
+            this.sweepStartError = String(error);
+            this.startError = this.sweepStartError;
+          },
+        );
       };
       // Callbacks and controls schedule their affected task immediately. This sweep is
       // the restart/missed-event safety net and the driver for steps that have no
@@ -1388,7 +1404,8 @@ export class QueueRuntime {
       dataHome: this.dataDir,
       socketPath: this.paseo.socketPath,
       answerDecision: (input) => this.questions.answerT3Decision(input),
-      parentStatus: (hostId, taskId) => this.t3Host?.decisionParent(hostId, taskId) ?? { state: "unknown" },
+      parentStatus: (hostId, taskId) =>
+        this.t3Host?.decisionParent(hostId, taskId) ?? { state: "unknown" },
       openInboxUi: async (hostId) => {
         if (!this.t3Host) {
           throw new Error(`T3Code host ${hostId} is not configured`);
