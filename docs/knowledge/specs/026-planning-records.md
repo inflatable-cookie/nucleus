@@ -508,23 +508,37 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
   the left, the open view's list in the middle and the open record on the right.
   Below 1100 points of panel width the detail pane goes and a record opens in a
   modal; below 720 the menu folds into a drawer behind a menu button. The menu is
-  **Needs you** (decisions, Nucleus-raised holds, drained-lane prompts, then tasks
-  needing attention), **Planning** (the plan in the list pane, the open lane in the
-  detail pane, or a modal without one), **Leads** (leads and papercuts as two tabs,
-  with the tag filter and pages of eight), **Queue** (queued tasks, pending
-  submissions and the per-project "…and N more" rows) and **Active** (Working, In
-  review and Closing, together or one at a time from its three sub-entries). Each
-  entry shows its real total; only Needs you is highlighted. Opening a view clears
-  the open record. The card-once projection below decides where a card goes; the
-  menu groups its columns. Milestone QA is not a board surface: QA runs as an
-  ordinary task, and the QA runs tab is gone.
+  **Needs you** (decisions, Nucleus-raised holds, drained-lane prompts and tasks
+  needing attention, in one list, newest needing action first), **Planning** (the
+  plan in the list pane, the open lane in the detail pane, or a modal without one),
+  **Leads** (open leads, with the tag filter and pages of eight), **Papercuts** (open
+  papercuts, with pages of eight and no tag filter; Tom, 2026-11-21), **Queue**
+  (queued tasks, pending submissions and the per-project "…and N more" rows) and
+  **Active** (Working, In review and Closing, together or one at a time from its
+  three sub-entries). Each entry shows its real total; only Needs you is highlighted.
+  Opening a view clears the open record. The card-once projection below decides where
+  a card goes; the menu groups its columns. Milestone QA is not a board surface: QA
+  runs as an ordinary task, and the QA runs tab is gone.
+- **Needs you is one list** (Tom, 2026-11-21: "one list of cards, and make the cards
+  obvious what they are"). Its header names the count and there are no section
+  headers. Each card draws its kind first, in its eyebrow: **Decision** (an agent
+  decision), **Hold** (a Nucleus-raised merge hold), **Lane** (a drained-lane prompt)
+  or **Task** (a task needing attention). Lists other than Needs you draw no kind label.
+  The list has one empty state, "Nothing here.", shown only when the total is zero.
+- **The Leads filter** sits in the list's header row, after the item count. It offers
+  only the tags on leads in the current scope, each with its count, and never the
+  reserved `papercut` tag: a papercut-tagged lead is a papercut and sits in Papercuts,
+  which has no filter. The menu counts ignore the filter.
 - **The header is one row** (Tom, 2026-11-21): the title, a state pill only when
-  something is abnormal (paused or draining, dispatch held, stopped or resumed
-  threads, queued operations, connecting), the project selector, then Settings,
-  Refresh and the Pause split button. There is no status line. The queue menu behind
-  the split button holds Pause or Resume, Dispatch hold, Stop, the paused note, the
-  slot table (global use, the project default and overrides, then each project using
-  a slot) and the bound runs.
+  something is abnormal (paused or draining, dispatch held, stopped threads, queued
+  operations, connecting), the project selector, then Settings, Refresh and the Pause
+  split button. There is no status line, and a resumed-thread count never earns a pill:
+  it outlives the restart it describes (nucleus#1511). Below 720 points of panel width
+  the selector collapses to its folder icon button, keeping its accessible label
+  ("Projects, <selection>") and the same picker, so the title and the menu button share
+  the row with the controls. The queue menu behind the split button holds Pause or
+  Resume, Dispatch hold, Stop, the paused note, the slot table (global use, the project
+  default and overrides, then each project using a slot) and the bound runs.
 - **Columns:** Triage → Decisions → Attention → Queued → Working → Review →
   Closing (Drafts retired with brief drafts; Attention and Closing added, Tom,
   2026-09-27). These are the projection's buckets, which the inbox menu groups.
@@ -567,7 +581,21 @@ so a lead or papercut can be followed through to its merged outcome (Spec 025).
 - **Cards and long lists** (Tom, 2026-09-27): every card uses the standard card
   component, drawn as a flat row in the inbox list. The list fills its pane and
   scrolls on its own, so the page never grows into one long scroll (Tom,
-  2026-09-28). Leads pages its cards and Queue ends with its "…and N more" rows.
+  2026-09-28). Leads and Papercuts page their cards, and Queue ends with its "…and N
+  more" rows.
+- **Rows stay short, and a card's controls sit in its row** (nucleus#1511). A task row
+  keeps its project, its title, one status line and its chips: the line is the wait or
+  stop that moves the task next, else its progress, so the host wait reads once
+  ("Waiting on the host · 1m ago") without the host identity; an owner-facing stop
+  keeps its detail ahead of that wait on the same line. The routing sentence behind
+  a host choice belongs to the task detail, which names the host selection and its
+  reason; the row's accessible label keeps the full wording. A card with operator
+  controls (the drained lane's Close and Keep, the escalated merge hold's Release and
+  Keep) draws them inside its row's frame, below its content and outside the row's press
+  target, so a press on a control never opens the record too. Pressing a drained lane's
+  row opens that lane in Planning. The Leads and Papercuts lists hide the Lead and
+  Papercut kind chip, which would otherwise repeat the list on every row. Needs you
+  names each card's kind instead (above).
 - **Pending submissions** (Tom, 2026-09-27): a submitted brief or handoff whose
   operation has not yet created its task shows as a Queued card marked
   "submitting", so an accepted submission is never invisible. Brief-bearing leads
@@ -730,8 +758,10 @@ Planning is a menu view of the inbox board (Tom, 2026-11-21; top-level since
 The header's project selector chooses the projects (Board, "Scope"); Planning has no
 chooser of its own since 2026-11-21. It has two panes:
 
-- **Plan:** for each selected project, a section with that project's lanes in plan order, each with its live-task
-  count and last activity, grouped under **Now** and **Later** (each plan entry
+- **Plan:** for each selected project, a flat row — the list's divider, and an accent
+  edge on the expanded row — that opens and closes the project's lanes, with that
+  project's lanes in plan order, each with its live-task count and last activity,
+  grouped under **Now** and **Later** (each plan entry
   carries `horizon: now | later`; existing entries are `now`). Up and down
   controls reorder, and a move between groups changes the horizon; saving writes a
   new plan version with the stale-save refusal. Lanes that list one of the

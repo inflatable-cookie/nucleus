@@ -30,6 +30,10 @@ export function slotPopoverRows(capacities: UiQueueState["projectCapacities"] | 
  * The run state the header shows (Tom, 2026-11-21: the status line left the
  * header). A normal running queue shows nothing; only a state the operator
  * should notice gets a pill. Slot usage lives in the queue menu.
+ *
+ * A resumed thread is not one of them (nucleus#1511): the count survives a
+ * restart with nothing left to act on, so it never earns a pill. Stopped
+ * threads still do.
  */
 export function headerStatePills(state: UiQueueState | undefined): Array<{ label: string; tone: "warning" | "neutral" }> {
   if (!state) return [];
@@ -39,7 +43,6 @@ export function headerStatePills(state: UiQueueState | undefined): Array<{ label
     pills.push({ label: state.quiet ? "Paused · managed threads are idle" : `Draining · ${state.activeWorkers} active · ${state.unsettled} unconfirmed`, tone: "warning" });
   if (state.dispatchHeld) pills.push({ label: "Dispatch held", tone: "warning" });
   if (state.stoppedThreads) pills.push({ label: state.paused ? `${state.stoppedThreads} stopped` : `${state.stoppedThreads} waiting to resume`, tone: "warning" });
-  if (!state.paused && state.resumedThreads) pills.push({ label: `${state.resumedThreads} resumed`, tone: "neutral" });
   if (state.operationBacklog) pills.push({ label: `${state.operationBacklog} operation${state.operationBacklog === 1 ? "" : "s"} queued`, tone: "neutral" });
   return pills;
 }

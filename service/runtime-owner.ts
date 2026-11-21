@@ -13,7 +13,8 @@ import { createStoreWorkspaceAllocationBridge } from "../core/workspaces/workspa
 
 import { compiledIdentity, stableInstalledPath } from "../shared/runtime.mjs";
 import { sourcePathFromModule } from "../shared/service/build";
-import { readBbPluginRoll } from "../shared/service/discovery";
+import { readBbPluginRoll, readServiceRoll } from "../shared/service/discovery";
+import type { QueueServiceState } from "../shared/schema/service";
 import { pluginRegistration } from "../shared/plugin-discovery.mjs";
 import { qaFenceStatus } from "../core/qa/qa-fence";
 import type { ProjectQaFenceInput } from "../shared/contracts";
@@ -165,6 +166,7 @@ import {
   prepareReviewEntryWorkspace,
   previewReviewEntry,
   reconcileReviewEntryOperation,
+  unavailableReviewEntry,
   type ReviewEntryAdapter,
 } from "../core/review/review-entry";
 import {
@@ -463,6 +465,7 @@ export class QueueRuntime {
   private liveRunPresence: LiveRunPresence | null = null;
   private readonly backupDir: string;
   private readonly connectTimeoutMs: number;
+  private readonly runtimeStartedAt = new Date().toISOString();
   /** Fixture-only required-check capability transport; production reads the live forge. */
   private readonly requiredCheckTransport:
     | CheckRequirementTransport
@@ -1559,6 +1562,28 @@ export class QueueRuntime {
     return this.healthProjection.health();
   }
 
+  /** Service-owned `queue.service-state` catalogue read for direct callers. */
+  serviceState(): QueueServiceState {
+    const h = this.health();
+    return {
+      state: "running",
+      detail: "",
+      buildId: currentServiceBuildId(),
+      pid: process.pid,
+      startedAt: this.runtimeStartedAt,
+      ready: h.ready,
+      paused: h.paused,
+      hostId: h.hostId,
+      error: h.startError ?? "",
+      bootstrap: {
+        pending: Boolean(h.bootstrap?.pending),
+        startedAt: h.bootstrap?.startedAt ?? null,
+      },
+      pluginBuildId: null,
+      roll: readServiceRoll(this.dataDir),
+    };
+  }
+
   /**
    * Drain to a durable safe point and release every owned resource.
    *
@@ -2118,7 +2143,7 @@ export class QueueRuntime {
     return this.engine.withHost(hostId, async () => {
       const adapter = this.engine.adapter as Adapter & ReviewEntryAdapter;
       if (!adapter.inspectReviewEntry || !adapter.originAgent)
-        throw Error("Review entry is unavailable on this adapter");
+        throw unavailableReviewEntry(adapter.hostId);
       const routingConflict = this.engine.independentReviewRoutingRefusal({
         ...input.submission,
         declaredAuthorModels: input.authorDeclaration.models,
@@ -2179,7 +2204,7 @@ export class QueueRuntime {
       async () => {
         const adapter = this.engine.adapter as Adapter & ReviewEntryAdapter;
         if (!adapter.inspectReviewEntry || !adapter.originAgent)
-          throw Error("Review entry is unavailable on this adapter");
+          throw unavailableReviewEntry(adapter.hostId);
         const payload = this.store.operationPayload(input.operationId) as {
           input?: ReviewEntryInput;
         };

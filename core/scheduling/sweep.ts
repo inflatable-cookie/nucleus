@@ -407,6 +407,8 @@ export class Sweep {
     );
     for (const task of this.engine.store.dueHoldTasks())
       byId.set(task.id, task);
+    for (const task of this.engine.store.tasks())
+      if (task.resolution.ownerStop && !task.removedAt) byId.set(task.id, task);
     const order = [...byId.values()].reverse();
     this.engine.sweepStats.tasks = order.length;
     return order;
@@ -453,6 +455,11 @@ export class Sweep {
       let inventory: ReadonlyMap<string, AgentObservation> | null = null;
       const finishedCatchUp = new Map<string, Task>();
       const unavailableHosts = new Set<string>();
+      const openDecisionsBefore = new Set(
+        this.engine.store
+          .listDecisions({ status: "open" })
+          .map((row) => `${row.id}:${row.version}`),
+      );
       const allTasks = this.engine.store.tasks();
       const hosts = new Set([
         ...this.engine.hostIds(),
@@ -823,14 +830,35 @@ export class Sweep {
       await this.fleetStep("deliverHostOutageNotices", () =>
         this.engine.resolution.deliverHostOutageNotices(),
       );
+      const refreshInboxForNewDecisions = async () => {
+        const opened = this.engine.store
+          .listDecisions({ status: "open" })
+          .some((row) => !openDecisionsBefore.has(`${row.id}:${row.version}`));
+        if (!opened) return;
+        const freshTasks = this.engine.store.tasks();
+        for (const host of hosts) {
+          if (unavailableHosts.has(host)) continue;
+          try {
+            await this.engine.withHost(host, async () => {
+              if (!this.engine.hostAvailable(host)) return;
+              if (!this.engine.adapter.reconcileThreadTitles) return;
+              await this.hostPass.reconcileInboxTitles(host, freshTasks);
+            });
+          } catch {
+            /* a host fault during follow-up title refresh retries on the next pass */
+          }
+        }
+      };
       if (this.engine.stopped) return { fault: null, covered: false, visited };
       if (startsNoRuns(this.engine.store, this.engine.stopped)) {
+        await refreshInboxForNewDecisions();
         for (const id of reconciled) this.engine.enqueueTitle(id);
         return { fault: null, covered, visited };
       }
       await this.fleetStep("dispatchQueued", () =>
         this.engine.dispatchQueued(),
       );
+      await refreshInboxForNewDecisions();
       for (const id of reconciled) this.engine.enqueueTitle(id);
       return { fault: null, covered, visited };
     } catch (error) {

@@ -1,6 +1,8 @@
 import { independentReviewRoutingConflict } from "../dispatch/routing";
 import { parseAgentId, sameCallerIdentity } from "../../shared/agent-identity";
+import { HOST_KIND_LABELS, hostKindOf } from "../../shared/host-kind";
 import { REMOVED_TASK_REFUSAL } from "./control-refusals";
+import { ownerStopPendingRefusal } from "./owner-stop";
 import type {
   ReparentInput,
   Task,
@@ -556,6 +558,9 @@ export class SettingsControls {
           : `No ${kind} hold to release`,
       );
     }
+    if (kind === "dispatch" && task.resolution.ownerStop) {
+      throw new Error(ownerStopPendingRefusal(task.resolution.ownerStop));
+    }
     return this.store.update(
       task.id,
       releasePatch(task, kind),
@@ -633,10 +638,12 @@ export class SettingsControls {
       // archived or missing recipient that Queue already recorded (a creator
       // nomination or its own subscription) leaves a task's future cohort, so it
       // runs on the durable workspace binding that record holds (Spec 040).
-      if (!live && input.action !== "unsubscribe")
+      if (!live && input.action !== "unsubscribe") {
+        const hostLabel = hostId ? HOST_KIND_LABELS[hostKindOf(hostId)] : "host";
         throw Error(
-          "Completion subscription requires a live Paseo agent with a workspace",
+          `Completion subscription requires a live ${hostLabel} agent with a workspace`,
         );
+      }
       const recorded =
         current.completionSubscriptionOverrides.find((entry) =>
           sameCallerIdentity(

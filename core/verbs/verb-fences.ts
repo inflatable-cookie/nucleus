@@ -228,10 +228,12 @@ export class VerbFences {
     settleable: Run[];
     fenced: { run: Run; why: string }[];
     live: Run[];
+    observations: Map<string, Awaited<ReturnType<Adapter["observe"]>>>;
   }> {
     const settleable: Run[] = [];
     const fenced: { run: Run; why: string }[] = [];
     const live: Run[] = [];
+    const observations = new Map<string, Awaited<ReturnType<Adapter["observe"]>>>();
     const task = this.store.task(taskId);
     for (const run of this.store.runs(taskId)) {
       if (run.released || isSubject(run)) continue;
@@ -279,12 +281,13 @@ export class VerbFences {
         // external effect (review 5668722168). A recorded report then settles
         // without another observation; a run still working is only displaced from
         // an observation that matches its own agent and workspace.
-        const disposition = await this.runDisposition(run);
-        if (typeof disposition === "object") {
+        const disposition = await this.observeRunDisposition(run);
+        if (disposition.outcome === "refusal") {
           fenced.push({ run, why: disposition.refusal });
           continue;
         }
-        (disposition === "cancel" ? live : settleable).push(run);
+        observations.set(run.id, disposition.observation);
+        (disposition.outcome === "cancel" ? live : settleable).push(run);
         continue;
       }
       if (classification.kind === "displace") {
@@ -294,7 +297,9 @@ export class VerbFences {
         // one settles as is.
         // The reporting coordinator's own run settles with its action; Queue
         // never cancels the turn that is delivering the report.
-        ((await this.displacedRunBusy(run)) ? live : settleable).push(run);
+        const { busy, observation } = await this.displacedRunObservation(run);
+        observations.set(run.id, observation);
+        (busy ? live : settleable).push(run);
         continue;
       }
       if (classification.kind === "superseded") {
@@ -333,7 +338,7 @@ export class VerbFences {
       if (observed.kind === "fence") fenced.push({ run, why: observed.why });
       else settleable.push(run);
     }
-    return { settleable, fenced, live };
+    return { settleable, fenced, live, observations };
   }
 
   /**
@@ -406,38 +411,57 @@ export class VerbFences {
    * closed agent settles; a matching live turn is cancelled first and then
    * settles. No writes happen here.
    */
-  async runDisposition(
+  async observeRunDisposition(
     run: Run,
-  ): Promise<"settle" | "cancel" | { refusal: string }> {
-    if (!run.agentId) return { refusal: "it has no bound agent to observe" };
+  ): Promise<
+    | { outcome: "settle" | "cancel"; observation: Awaited<ReturnType<Adapter["observe"]>> }
+    | { outcome: "refusal"; refusal: string }
+  > {
+    if (!run.agentId) return { outcome: "refusal", refusal: "it has no bound agent to observe" };
     let state: Awaited<ReturnType<Adapter["observe"]>>;
     try {
       state = await this.engine.host.observe(run.agentId);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      return { refusal: `its agent cannot be observed (${message})` };
+      return { outcome: "refusal", refusal: `its agent cannot be observed (${message})` };
     }
     if (!state || state.id !== run.agentId)
-      return { refusal: "the observed agent identity does not match the run" };
+      return { outcome: "refusal", refusal: "the observed agent identity does not match the run" };
     if (state.workspaceId !== run.workspaceId)
-      return { refusal: "its agent was observed outside the run workspace" };
-    if (!matchingInactiveParticipant(run, state)) return "cancel";
+      return { outcome: "refusal", refusal: "its agent was observed outside the run workspace" };
+    if (!matchingInactiveParticipant(run, state))
+      return { outcome: "cancel", observation: state };
     if (
       state.status !== "closed" &&
       Boolean(await this.engine.ownedToolHold(run.agentId, run.id, run.taskId))
     )
-      return "cancel";
-    return "settle";
+      return { outcome: "cancel", observation: state };
+    return { outcome: "settle", observation: state };
+  }
+
+  async runDisposition(
+    run: Run,
+  ): Promise<"settle" | "cancel" | { refusal: string }> {
+    const disposition = await this.observeRunDisposition(run);
+    return disposition.outcome === "refusal" ? { refusal: disposition.refusal } : disposition.outcome;
+  }
+
+  /** Displacement uses the same positive participant observation as episode settlement, keeping the observation. */
+  async displacedRunObservation(
+    run: Run,
+  ): Promise<{ busy: boolean; observation: Awaited<ReturnType<Adapter["observe"]>> }> {
+    const disposition = await this.observeRunDisposition(run);
+    if (disposition.outcome === "refusal")
+      throw new DurableFenceRefusal(
+        this.verbRunFenceRefusal({ run, why: disposition.refusal }),
+      );
+    return { busy: disposition.outcome === "cancel", observation: disposition.observation };
   }
 
   /** Displacement uses the same positive participant observation as episode settlement. */
   async displacedRunBusy(run: Run): Promise<boolean> {
-    const disposition = await this.runDisposition(run);
-    if (typeof disposition === "object")
-      throw new DurableFenceRefusal(
-        this.verbRunFenceRefusal({ run, why: disposition.refusal }),
-      );
-    return disposition === "cancel";
+    const { busy } = await this.displacedRunObservation(run);
+    return busy;
   }
 
   /**
@@ -456,8 +480,7 @@ export class VerbFences {
     verb: string,
   ): Promise<void> {
     if (!runs.length) return;
-    const cancel = this.adapter.stopAgentTurn;
-    if (!cancel) {
+    if (!this.adapter.stopAgentTurn) {
       const host = HOST_KIND_LABELS[hostKindOf(this.store.task(taskId).hostId)];
       throw Error(
         `${host} active-turn cancellation is unavailable, so Nucleus cannot stop the live run; retry once ${host} offers it`,
@@ -478,7 +501,7 @@ export class VerbFences {
         JSON.stringify({ ...intent, status: "intent" }),
       );
       try {
-        await cancel.call(this.adapter, run.agentId!);
+        await this.engine.host.stopAgentTurn(run.agentId!);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         this.store.event(

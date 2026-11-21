@@ -41,6 +41,60 @@ export const recoveryActionBindingSchema = z
 
 export type RecoveryActionBinding = z.infer<typeof recoveryActionBindingSchema>;
 
+/** Per-participant cancellation state owned by an accepted owner `stop`. */
+export const ownerStopCancellationSchema = z
+  .object({
+    runId: z.string().min(1),
+    role: z.string().min(1),
+    agentId: z.string().min(1),
+    workspaceId: z.string().nullable(),
+    turnId: z.string().nullable(),
+    effectId: z.string().min(1),
+    isInitialWorker: z.boolean().default(false),
+    status: z.enum(["intent", "sent", "uncertain", "settled"]),
+    boundaryStartedAt: z.string().nullable().default(null),
+    settledKind: z
+      .enum(["observed_inactive", "newer_turn_untouched", "task_disposed"])
+      .nullable()
+      .default(null),
+    untouchedTurnId: z.string().nullable().default(null),
+    note: z.string().max(2000).nullable().default(null),
+  })
+  .strict();
+
+export type OwnerStopCancellation = z.infer<typeof ownerStopCancellationSchema>;
+
+/** Durable owner `stop` hold and exact cancellation intent across interruption. */
+export const ownerStopRecordSchema = z
+  .object({
+    operationId: z.string().nullable(),
+    taskVersion: z.number().int().nonnegative(),
+    role: z.enum(["worker", "reviewer", "coordinator"]).nullable(),
+    reason: z.string().min(1).max(4000),
+    caller: z.string().nullable(),
+    targetRunIds: z.array(z.string()),
+    hadIntegrationTurn: z.boolean().default(false),
+    mergeRequested: z.boolean().default(false),
+    mergeHead: z.string().nullable().default(null),
+    mergeRequestedAt: z.string().nullable().default(null),
+    executorContinues: z
+      .array(
+        z
+          .object({
+            runId: z.string(),
+            agentId: z.string().nullable(),
+          })
+          .strict(),
+      )
+      .default([]),
+    nonTransientIssue: z.string().max(4000).nullable().default(null),
+    cancellations: z.array(ownerStopCancellationSchema),
+    recordedAt: z.string(),
+  })
+  .strict();
+
+export type OwnerStopRecord = z.infer<typeof ownerStopRecordSchema>;
+
 export const resolutionSchema = z.object({
   forcedChecks: z
     .array(
@@ -373,4 +427,6 @@ export const resolutionSchema = z.object({
     .strict()
     .nullable()
     .default(null),
+  /** Durable owner `stop` hold and cancellation state across interruption. */
+  ownerStop: ownerStopRecordSchema.nullable().default(null),
 });

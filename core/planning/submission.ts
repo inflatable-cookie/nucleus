@@ -51,12 +51,14 @@ export class PlanningSubmission {
     const originIdentity = promotion?.identitySource ?? submission.originIdentity;
     const originHostId = await this.engine.identifyOriginHost(submission.originAgentId, originIdentity);
     if (needsRecipients && !originHostId) throw new SubmissionUnavailableError("Origin host is unknown or ambiguous");
+    const recipientHosts = new Map<string, string>();
     const resolved = needsRecipients ? await validateCompletionRecipients(submission, async id => {
       const identitySource = id === submission.originAgentId ? originIdentity : undefined;
       const host = await this.engine.identifyOriginHost(id, identitySource);
       if (!host) throw new SubmissionUnavailableError("Completion recipient host is unknown or ambiguous");
+      recipientHosts.set(id, host);
       return this.engine.withHost(host, () => this.engine.host.originAgent(id));
-    }) : null;
+    }, id => recipientHosts.get(id)) : null;
     // A parsed refusal is a ruling and stops the submission. An operational failure - the
     // transport, a stale integration base - is not: the task is created queued and the same
     // hook runs again at dispatch.

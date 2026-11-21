@@ -93,7 +93,7 @@ export interface BoardBridgeSource {
     timeoutMs?: number,
     via?: "bb",
   ): Promise<unknown>;
-  /** `queue.service-state` is a bridge catalogue read, answered from the same health endpoint as Paseo. */
+  /** `queue.service-state` is augmented with `pluginBuildId` when the bridge provides `serviceState`; otherwise forwarded to the service. */
   serviceState?(): Promise<unknown>;
 }
 
@@ -166,11 +166,7 @@ export function createBoardBridge(source: () => BoardBridgeSource | null) {
       const client = source();
       if (!client)
         throw new Error("The Nucleus service channel is not connected");
-      if (method === "queue.service-state") {
-        if (!client.serviceState)
-          throw new Error(
-            "The Nucleus service state is unavailable through the BB bridge",
-          );
+      if (method === "queue.service-state" && client.serviceState) {
         return await client.serviceState();
       }
       return await client.request(

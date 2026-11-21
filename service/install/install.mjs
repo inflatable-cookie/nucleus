@@ -4,9 +4,13 @@ import { lstat, mkdir, mkdtemp, readFile, readlink, realpath, rename, rm, symlin
 import { delimiter, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { gunzipSync } from 'node:zlib';
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 import { dataHome } from '../../shared/data-home.mjs';
 import { paseoHome } from '../../hosts/paseo/index.mjs';
+
+const execFileAsync = promisify(execFile);
 
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 const home = () => resolve(process.env.HOME || homedir());
@@ -221,23 +225,47 @@ export async function version() {
   const configured = await json(join(base(), 'channel.json')).catch(() => null);
   return { version: pkg.version, revision: build?.revision || execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim(), channel: root.startsWith(join(base(), 'versions') + '/') ? (configured?.channel === 'main' ? 'main' : 'release') : 'development', dataHome: dataHome() };
 }
-export async function integrate(host) {
-  // The explicit host route names its host, so Paseo's own registration format
-  // stays here rather than in a shared option or a generic error.
-  if (host !== 'paseo') throw Error('Supported integration: paseo. Run nucleus integrate paseo');
-  await realpath(current());
-  const path = join(paseoHome(), 'config.json');
-  const config = await stat(path) ? await json(path) : {};
-  config.plugins ??= {};
-  // Registration knows only `nucleus` (nucleus#971): a config that still names
-  // the retired `northstar-queue` ID is ignored, not migrated or removed, and an
-  // existing nucleus registration is always an explicit review before replace.
-  if (config.plugins.nucleus) throw Error(`Paseo already registers nucleus at ${config.plugins.nucleus.path}; review that registration before replacing it`);
-  const target = current();
-  config.plugins.nucleus = { path: target };
-  await mkdir(dirname(path), { recursive: true });
-  writeOwnedJson(path, config);
-  return { host, path, plugin: target, next: 'Registration saved. Reload the plugin when you are ready.' };
+async function runIntegrationEntry(script, args) {
+  try {
+    const { stdout } = await execFileAsync(process.execPath, [script, ...args], {
+      encoding: 'utf8',
+      maxBuffer: 32 * 1024 * 1024,
+    });
+    return JSON.parse(stdout);
+  } catch (error) {
+    const stderr = typeof error?.stderr === 'string' ? error.stderr.trim() : '';
+    const detail = stderr.replace(/^Nucleus:\s*/, '') || (error instanceof Error ? error.message : String(error));
+    throw Error(detail);
+  }
+}
+
+export async function integrate(host, ...args) {
+  const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
+  if (host === 'paseo') {
+    await realpath(current());
+    const path = join(paseoHome(), 'config.json');
+    const config = await stat(path) ? await json(path) : {};
+    config.plugins ??= {};
+    // Registration knows only `nucleus` (nucleus#971): a config that still names
+    // the retired `northstar-queue` ID is ignored, not migrated or removed, and an
+    // existing nucleus registration is always an explicit review before replace.
+    if (config.plugins.nucleus) throw Error(`Paseo already registers nucleus at ${config.plugins.nucleus.path}; review that registration before replacing it`);
+    const target = current();
+    config.plugins.nucleus = { path: target };
+    await mkdir(dirname(path), { recursive: true });
+    writeOwnedJson(path, config);
+    return { host, path, plugin: target, next: 'Registration saved. Reload the plugin when you are ready.' };
+  }
+  if (host === 't3code' || host === 't3') {
+    const t3Args = ['install', ...args, ...(args.includes('--json') ? [] : ['--json'])];
+    const report = await runIntegrationEntry(join(packageRoot, 'bin', 'nucleus-t3.mjs'), t3Args);
+    return { host: 't3code', ...report };
+  }
+  if (host === 'bb') {
+    const report = await runIntegrationEntry(join(packageRoot, 'bin', 'nucleus-bb.mjs'), ['install', ...args]);
+    return { host: 'bb', ...report };
+  }
+  throw Error('Supported integrations: paseo, t3code (or t3), bb. Run nucleus integrate <paseo|t3code|bb>');
 }
 
 // Only verified, immutable versions may enter the installed roll path.

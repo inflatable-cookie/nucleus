@@ -33,7 +33,7 @@ import {
   type DecisionView,
   type TaskSummary,
 } from "../shared/contracts";
-import { ALL_METHOD_NAMES, RPC_CATALOGUE } from "../shared/rpc-catalogue";
+import { RPC_CATALOGUE, RPC_METHOD_NAMES } from "../shared/rpc-catalogue";
 import { formatAgentId } from "../shared/agent-identity";
 import { createBoardBridge } from "../hosts/bb/plugin/board-bridge";
 import { createTaskDetailCache } from "../core/telemetry/task-detail";
@@ -467,10 +467,10 @@ test("the board renders in its rail panel and every call reaches the service as 
     "the board host-run QA read returns through the BB bridge",
   );
   assert.ok(
-    calls.every((call) => ALL_METHOD_NAMES.includes(call.method)),
-    `every board method is in the service or bridge catalogue: ${calls
+    calls.every((call) => RPC_METHOD_NAMES.includes(call.method)),
+    `every board method is in the service catalogue: ${calls
       .map((call) => call.method)
-      .filter((method) => !ALL_METHOD_NAMES.includes(method))
+      .filter((method) => !RPC_METHOD_NAMES.includes(method))
       .join(", ")}`,
   );
   assert.ok(

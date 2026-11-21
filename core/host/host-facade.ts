@@ -272,11 +272,13 @@ export class HostFacade implements Pick<Host, HostFacadeMethod> {
     });
   }
 
-  stopAgentTurn(id: AgentId): Promise<void> {
+  stopAgentTurn(id: AgentId, expectedTurnId?: string): Promise<void> {
     return this.#route(id, (adapter, nativeId) => {
       const read = adapter.stopAgentTurn;
       if (!read) return refused("This host cannot stop an agent turn");
-      return read.call(adapter, nativeId);
+      return expectedTurnId !== undefined
+        ? read.call(adapter, nativeId, expectedTurnId)
+        : read.call(adapter, nativeId);
     });
   }
 

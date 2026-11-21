@@ -1,5 +1,5 @@
 import { test } from "node:test";
-import { recentProjectActivity } from './support/fakes';
+import { recentProjectActivity } from "./support/fakes";
 import assert from "node:assert/strict";
 import React from "react";
 import { useState } from "react";
@@ -256,6 +256,14 @@ test("Spec 041 rows 7 and 8 rendered: an escalated drained lane is answered on t
     tree.text(),
     /board is drained/,
     "a drained board never joins the Decisions column (Tom, 2026-10-15)",
+  );
+  // Needs you is one list, and the drained-lane prompt names its kind (Tom, 2026-11-21).
+  assert.ok(tree.get("Needs you list"), "Needs you is one list");
+  assert.equal(
+    tree.ofType("Text").filter((node) => node.children.join("") === "Lane")
+      .length,
+    1,
+    "the drained-lane prompt draws the Lane kind label",
   );
   // Keep needs a reason: the confirm button stays disabled until one is typed.
   tree.press("Keep drained lane alpha");

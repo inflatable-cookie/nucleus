@@ -8,7 +8,9 @@ import { now, type Store } from "../store/store";
 export const DECISION_NOTICE_OBSERVE_TIMEOUT_MS = 5_000;
 export const DECISION_NOTICE_SEND_TIMEOUT_MS = 15_000;
 export const DECISION_NOTICE_CONCURRENCY = 4;
-export const DECISION_NOTICE_RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 16_000];
+export const DECISION_NOTICE_RETRY_DELAYS_MS = [
+  1_000, 2_000, 4_000, 8_000, 16_000,
+];
 
 const UNROUTABLE_WAIT = "Cannot route this identity";
 const GONE_WAIT = "The asking agent thread is no longer available";
@@ -35,7 +37,7 @@ export interface DecisionNoticeResolutionPorts {
 }
 
 export interface DecisionNoticePassContext {
-  readonly adapter: Pick<Adapter, "notify">;
+  readonly adapter: Pick<Adapter, "notify" | "steerOrNotify">;
   readonly stopped: boolean;
   readonly store: Pick<
     Store,
@@ -44,7 +46,8 @@ export interface DecisionNoticePassContext {
   readonly resolution: DecisionNoticeResolutionPorts;
 }
 
-export interface DecisionNoticeDeliveryContext extends DecisionNoticePassContext {
+export interface DecisionNoticeDeliveryContext
+  extends DecisionNoticePassContext {
   cleanContext<T>(work: () => T): T;
   scheduleLane(
     key: string,
@@ -194,13 +197,14 @@ async function deliverOneDecision(
     return "done";
   }
   let available = false;
+  let canSteer = false;
   try {
-    available = context.resolution.withHost(
-      host,
-      () =>
+    context.resolution.withHost(host, () => {
+      available =
         context.resolution.originHostAvailable(host) &&
-        Boolean(context.adapter.notify),
-    );
+        Boolean(context.adapter.steerOrNotify ?? context.adapter.notify);
+      canSteer = Boolean(context.adapter.steerOrNotify);
+    });
   } catch {
     available = false;
   }
@@ -237,6 +241,7 @@ async function deliverOneDecision(
         lookupWait: (message) => `Waiting for the asking agent: ${message}`,
         busyWait: (state) =>
           `Waiting for the asking agent to finish (${state.status})`,
+        ...(canSteer ? { ready: () => true, steer: true } : {}),
         wait: (reason) => {
           if (stepAborted || context.stopped) return;
           wait(reason, false);
@@ -330,11 +335,7 @@ export async function deliverDecisionNoticesPass(
   const actionable: Decision[] = [];
   for (const decision of candidates) {
     const delivery = decision.delivery;
-    if (
-      !delivery ||
-      delivery.version !== decision.version ||
-      !delivery.agentId
-    )
+    if (!delivery || delivery.version !== decision.version || !delivery.agentId)
       continue;
     if (delivery.status === "intent") {
       // An intent remaining when no delivery pass is active in this process

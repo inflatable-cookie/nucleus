@@ -82,7 +82,8 @@ import { overlay, space, radius, type as typeScale } from "../design";
  * and actions are the card's own either way.
  */
 export type BoardCardVariant = "card" | "row";
-export const BoardCardVariantContext = React.createContext<BoardCardVariant>("card");
+export const BoardCardVariantContext =
+  React.createContext<BoardCardVariant>("card");
 
 export const BoardCard = React.memo(function BoardCard({
   label,
@@ -90,51 +91,38 @@ export const BoardCard = React.memo(function BoardCard({
   selected,
   c,
   board = true,
+  kind,
   eyebrow,
   accessory,
   title,
   chips,
   snippet,
   footer,
+  actions,
 }: {
   label: string;
   onPress: () => void;
   selected: boolean;
   c: Colors;
   board?: boolean;
+  /** What the card is, drawn first in its eyebrow so a Needs you card says its kind (Tom, 2026-11-21). */
+  kind?: string;
   eyebrow: React.ReactNode;
   accessory?: React.ReactNode;
   title: React.ReactNode;
   chips?: React.ReactNode;
   snippet?: React.ReactNode;
   footer?: React.ReactNode;
+  /**
+   * The card's own controls, drawn inside the row's frame below its content
+   * (nucleus#1511). They sit outside the row's press target, so a press on a
+   * control never also opens the record; other cards keep no controls at all.
+   */
+  actions?: React.ReactNode;
 }) {
   const variant = React.useContext(BoardCardVariantContext);
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={plainCardText(label)}
-      accessibilityState={variant === "row" ? { selected } : undefined}
-      onPress={onPress}
-      style={variant === "row" ? {
-        gap: space.xs,
-        paddingHorizontal: space.md,
-        paddingVertical: space.sm,
-        borderBottomWidth: 1,
-        borderBottomColor: c.border,
-        borderLeftWidth: 2,
-        borderLeftColor: selected ? c.accent : "transparent",
-        backgroundColor: selected ? c.surface2 : c.surface0,
-      } : {
-        gap: space.xs,
-        padding: board ? space.sm : space.md,
-        paddingTop: board ? space.xs : space.sm,
-        borderRadius: radius.card,
-        borderWidth: 1,
-        borderColor: selected ? c.accent : c.border,
-        backgroundColor: c.surface1,
-      }}
-    >
+  const body = (
+    <>
       <View
         style={{
           ...row,
@@ -153,6 +141,20 @@ export const BoardCard = React.memo(function BoardCard({
             flex: 1,
           }}
         >
+          {kind && (
+            <Text
+              numberOfLines={1}
+              style={{
+                color: c.foreground,
+                fontSize: typeScale.metadata.fontSize,
+                fontWeight: "600",
+                letterSpacing: 0.4,
+                textTransform: "uppercase",
+              }}
+            >
+              {kind}
+            </Text>
+          )}
           {plainCardNode(eyebrow)}
         </View>
         {plainCardNode(accessory)}
@@ -163,6 +165,60 @@ export const BoardCard = React.memo(function BoardCard({
         {plainCardNode(snippet)}
         {plainCardNode(footer)}
       </View>
+    </>
+  );
+  // A row keeps its divider, padding and accent edge on the outer frame, so a
+  // card's own controls land inside the row instead of under its divider.
+  if (variant === "row")
+    return (
+      <View
+        style={{
+          borderBottomWidth: 1,
+          borderBottomColor: c.border,
+          borderLeftWidth: 2,
+          borderLeftColor: selected ? c.accent : "transparent",
+          backgroundColor: selected ? c.surface2 : c.surface0,
+        }}
+      >
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={plainCardText(label)}
+          accessibilityState={{ selected }}
+          onPress={onPress}
+          style={{
+            gap: space.xs,
+            paddingHorizontal: space.md,
+            paddingVertical: space.sm,
+          }}
+        >
+          {body}
+        </Pressable>
+        {actions !== undefined && (
+          <View
+            style={{ paddingHorizontal: space.md, paddingBottom: space.sm }}
+          >
+            {actions}
+          </View>
+        )}
+      </View>
+    );
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={plainCardText(label)}
+      onPress={onPress}
+      style={{
+        gap: space.xs,
+        padding: board ? space.sm : space.md,
+        paddingTop: board ? space.xs : space.sm,
+        borderRadius: radius.card,
+        borderWidth: 1,
+        borderColor: selected ? c.accent : c.border,
+        backgroundColor: c.surface1,
+      }}
+    >
+      {body}
+      {plainCardNode(actions)}
     </Pressable>
   );
 });
@@ -453,6 +509,7 @@ export const TaskCard = React.memo(function TaskCard({
   decisionTitle,
   defaultHostId,
   projectBadge = null,
+  kind,
 }: {
   task: TaskSummary;
   selected: boolean;
@@ -460,6 +517,8 @@ export const TaskCard = React.memo(function TaskCard({
   prState?: "OPEN" | "CLOSED" | "MERGED";
   c: Colors;
   board?: boolean;
+  /** The kind label a Needs you card shows (Tom, 2026-11-21); other lists draw none. */
+  kind?: string;
   parked?: boolean;
   decisions?: boolean;
   decisionTitle?: string | null;
@@ -467,6 +526,7 @@ export const TaskCard = React.memo(function TaskCard({
   /** The generated T3 project badge for this task's repository, when its host is T3 and matched. */
   projectBadge?: ProjectBadge | null;
 }) {
+  const inRow = React.useContext(BoardCardVariantContext) === "row";
   const [statusTip, setStatusTip] = useState(false);
   const statusAnchor = useRef<View | null>(null);
   const hostId = task.hostId ?? defaultHostId;
@@ -720,6 +780,56 @@ export const TaskCard = React.memo(function TaskCard({
       {task.reason}
     </Text>
   );
+  // The inbox list's row keeps one status line (nucleus#1511): the wait or stop
+  // that moves the task next, else its phase. The host's name is dropped from it
+  // (a row reads "Waiting on the host · 1m ago", never the host identity), and the
+  // routing sentence behind the host choice stays in the task detail, which shows
+  // the host selection and its reason.
+  // An owner-facing stop keeps its detail beside the host wait (nucleus#1198), and
+  // the row still draws it as the one line: why the task stopped, then that its host
+  // is away. The host's own outage detail is the wait itself, so it is not repeated.
+  const rowHostWait = hostWait
+    ? `Waiting on the host · ${decisionAge(hostWait.since)}`
+    : null;
+  const rowStopDetail =
+    stopRecord && stopRecord.reason !== "host_unavailable"
+      ? (stopDetail ?? stopLabel)
+      : null;
+  const firstQuestion = questions[0]?.questions[0]?.question;
+  const rowStatus = hostWait
+    ? rowStopDetail
+      ? `${rowStopDetail} · ${rowHostWait}`
+      : rowHostWait
+    : plainWait
+      ? plainWait
+      : task.heavyRun
+        ? task.heavyRun.state === "queued"
+          ? `Waiting for QA capacity · position ${task.heavyRun.position ?? "unknown"}`
+          : `QA run ${task.heavyRun.state}`
+        : firstQuestion
+          ? `Question · ${firstQuestion}`
+          : archiveRetry
+            ? `Workspace archive failed: ${archiveRetry.error}`
+            : prerequisite
+              ? prerequisite
+              : longCommandStartedAt
+                ? `Long shell command · ${elapsedRun(longCommandStartedAt)}`
+                : dispatchWait
+                  ? `Dispatch held by ${task.holdDisplayOwner ?? "a planner thread"} · ${holdReasonPreview(dispatchWait.reason)}`
+                  : stopRecord
+                    ? `${stopDetail ?? stopLabel ?? ""} · ${
+                        stopWait
+                          ? `Waiting · ${decisionAge(stopRecord.since)}`
+                          : stopHeld
+                            ? `Held · ${decisionAge(stopRecord.since)}`
+                            : `${attentionNext} · ${decisionAge(stopRecord.since)}`
+                      }`
+                    : task.headline
+                      ? task.headline
+                      : task.reason ||
+                        (blockingHold(task)
+                          ? taskStateLabel(task)
+                          : phaseStateLabel(task));
   // The stop badge is suppressed where the phase line already says it, so it does not count toward the chips row.
   const showStopBadge =
     Boolean(stopLabel) &&
@@ -792,6 +902,7 @@ export const TaskCard = React.memo(function TaskCard({
       selected={selected}
       c={c}
       board={board}
+      kind={kind}
       eyebrow={
         <>
           {projectBadge ? (
@@ -938,9 +1049,10 @@ export const TaskCard = React.memo(function TaskCard({
       }
       snippet={
         <View style={{ gap: space.xxs }}>
-          {/* A hold with a release condition is the task's wait, so the row names it
+          {/* A hold with a release condition is the task's wait, so a card names it
           instead of the phase; every other card keeps its phase line and its own
-          wait line (nucleus#1366). */}
+          wait line (nucleus#1366). The inbox row draws the one status line above
+          (nucleus#1511). */}
           <Text
             numberOfLines={1}
             style={{
@@ -949,10 +1061,14 @@ export const TaskCard = React.memo(function TaskCard({
               fontWeight: "600",
             }}
           >
-            {blockingHold(task) ? taskStateLabel(task) : phaseStateLabel(task)}
+            {inRow
+              ? rowStatus
+              : blockingHold(task)
+                ? taskStateLabel(task)
+                : phaseStateLabel(task)}
           </Text>
-          {next}
-          {task.hostReason && (
+          {!inRow && next}
+          {!inRow && task.hostReason && (
             <Text
               numberOfLines={2}
               style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}
@@ -1026,6 +1142,7 @@ export const DecisionCard = React.memo(function DecisionCard({
   onPress,
   c,
   board = true,
+  kind,
   linkedTaskProjects = [],
   linkedTaskLabels = [],
 }: {
@@ -1034,6 +1151,7 @@ export const DecisionCard = React.memo(function DecisionCard({
   onPress: () => void;
   c: Colors;
   board?: boolean;
+  kind?: string;
   linkedTaskProjects?: string[];
   linkedTaskLabels?: string[];
 }) {
@@ -1053,6 +1171,7 @@ export const DecisionCard = React.memo(function DecisionCard({
       selected={selected}
       c={c}
       board={board}
+      kind={kind}
       eyebrow={
         <>
           <Icon name="Folder" size={12} color={c.foregroundMuted} />
@@ -1165,12 +1284,17 @@ function RaisedCard({
   onPress,
   c,
   board = true,
+  kind,
+  actions,
 }: {
   task: TaskSummary;
   selected: boolean;
   onPress: () => void;
   c: Colors;
   board?: boolean;
+  kind?: string;
+  /** The operator's controls, drawn inside the row below the card's content. */
+  actions?: React.ReactNode;
 }) {
   const held = task.holdEscalated && task.hold;
   return (
@@ -1184,6 +1308,7 @@ function RaisedCard({
       selected={selected}
       c={c}
       board={board}
+      kind={kind}
       eyebrow={
         <>
           <Icon name="Folder" size={12} color={c.foregroundMuted} />
@@ -1244,6 +1369,7 @@ function RaisedCard({
             : task.reason}
         </Text>
       }
+      actions={actions}
     />
   );
 }
@@ -1257,6 +1383,7 @@ export const HoldPromptCard = React.memo(function HoldPromptCard({
   onPress,
   c,
   board = true,
+  kind,
   busy,
   onRelease,
   onKeep,
@@ -1266,6 +1393,7 @@ export const HoldPromptCard = React.memo(function HoldPromptCard({
   onPress: () => void;
   c: Colors;
   board?: boolean;
+  kind?: string;
   busy: boolean;
   onRelease: () => void;
   onKeep: (reason: string) => void;
@@ -1283,45 +1411,50 @@ export const HoldPromptCard = React.memo(function HoldPromptCard({
         onPress={onPress}
         c={c}
         board={board}
+        kind={kind}
+        actions={
+          <View style={{ gap: space.xs }}>
+            <View style={{ ...row, gap: space.xs }}>
+              <Button
+                small
+                c={c}
+                disabled={busy}
+                text="Release"
+                onPress={onRelease}
+              />
+              <Button
+                small
+                c={c}
+                disabled={busy}
+                text="Keep"
+                selected={keeping}
+                onPress={() => setKeeping(!keeping)}
+              />
+            </View>
+            {keeping && (
+              <View style={{ gap: space.xs }}>
+                <Field
+                  c={c}
+                  label="Why keep the hold (required)"
+                  value={reason}
+                  onChange={setReason}
+                />
+                <Button
+                  small
+                  c={c}
+                  disabled={busy || !reason.trim()}
+                  text="Keep hold"
+                  onPress={() => {
+                    onKeep(reason.trim());
+                    setKeeping(false);
+                    setReason("");
+                  }}
+                />
+              </View>
+            )}
+          </View>
+        }
       />
-      <View style={{ ...row, gap: space.xs }}>
-        <Button
-          small
-          c={c}
-          disabled={busy}
-          text="Release"
-          onPress={onRelease}
-        />
-        <Button
-          small
-          c={c}
-          disabled={busy}
-          text="Keep"
-          selected={keeping}
-          onPress={() => setKeeping(!keeping)}
-        />
-      </View>
-      {keeping && (
-        <View style={{ gap: space.xs }}>
-          <Field
-            c={c}
-            label="Why keep the hold (required)"
-            value={reason}
-            onChange={setReason}
-          />
-          <Button
-            small
-            c={c}
-            disabled={busy || !reason.trim()}
-            text="Keep hold"
-            onPress={() => {
-              onKeep(reason.trim());
-              setKeeping(false);
-              setReason("");
-            }}
-          />
-        </View>
-      )}
     </View>
   );
 });
@@ -1335,6 +1468,7 @@ export const LaneDrainCard = React.memo(function LaneDrainCard({
   onPress,
   c,
   board = true,
+  kind,
   busy,
   onClose,
   onKeep,
@@ -1344,6 +1478,7 @@ export const LaneDrainCard = React.memo(function LaneDrainCard({
   onPress: () => void;
   c: Colors;
   board?: boolean;
+  kind?: string;
   busy: boolean;
   onClose: () => void;
   onKeep: (reason: string) => void;
@@ -1351,112 +1486,114 @@ export const LaneDrainCard = React.memo(function LaneDrainCard({
   const [keeping, setKeeping] = useState(false),
     [reason, setReason] = useState("");
   return (
-    <View
-      accessibilityLabel={plainCardText(`Drained lane: ${lane.title}`)}
-      style={{ gap: space.xs }}
-    >
-      <BoardCard
-        label={`Drained lane: ${lane.title}`}
-        onPress={onPress}
-        selected={selected}
-        c={c}
-        board={board}
-        eyebrow={
-          <>
-            <Icon name="Folder" size={12} color={c.foregroundMuted} />
-            <Text
-              numberOfLines={1}
-              ellipsizeMode="tail"
-              style={{
-                ...muted(c),
-                fontSize: typeScale.metadata.fontSize,
-                flexShrink: 1,
-              }}
-            >
-              {lane.key}
-            </Text>
-          </>
-        }
-        title={
-          <Text
-            numberOfLines={2}
-            style={{
-              color: c.foreground,
-              fontWeight: "600",
-              fontSize: typeScale.body.fontSize,
-              lineHeight: typeScale.body.lineHeight,
-            }}
-          >
-            {lane.title} has drained
-          </Text>
-        }
-        chips={<RecordChips c={c} chips={["Nucleus-raised"]} />}
-        snippet={
-          <Text
-            numberOfLines={3}
-            ellipsizeMode="tail"
-            style={{
-              color: c.foregroundMuted,
-              fontSize: typeScale.metadata.fontSize,
-              lineHeight: typeScale.metadata.lineHeight,
-            }}
-          >
-            {lane.aim}
-            {lane.drain?.escalatedAt
-              ? ` · escalated ${decisionAge(lane.drain.escalatedAt)}`
-              : ""}
-          </Text>
-        }
-        footer={
+    <BoardCard
+      label={`Drained lane: ${lane.title}`}
+      onPress={onPress}
+      selected={selected}
+      c={c}
+      board={board}
+      kind={kind}
+      eyebrow={
+        <>
+          <Icon name="Folder" size={12} color={c.foregroundMuted} />
           <Text
             numberOfLines={1}
-            style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}
-          >
-            The plan owner has not answered the close-out prompt
-          </Text>
-        }
-      />
-      <View style={{ ...row, gap: space.xs }}>
-        <Button
-          small
-          c={c}
-          disabled={busy}
-          text="Close"
-          label={plainCardText(`Close drained lane ${lane.key}`)}
-          onPress={onClose}
-        />
-        <Button
-          small
-          c={c}
-          disabled={busy}
-          text="Keep"
-          selected={keeping}
-          label={plainCardText(`Keep drained lane ${lane.key}`)}
-          onPress={() => setKeeping(!keeping)}
-        />
-      </View>
-      {keeping && (
-        <View style={{ gap: space.xs }}>
-          <Field
-            c={c}
-            label={`Why keep ${lane.title} (required)`}
-            value={reason}
-            onChange={setReason}
-          />
-          <Button
-            small
-            c={c}
-            disabled={busy || !reason.trim()}
-            text="Keep lane"
-            label={plainCardText(`Confirm keep for drained lane ${lane.key}`)}
-            onPress={() => {
-              onKeep(reason.trim());
-              setKeeping(false);
-              setReason("");
+            ellipsizeMode="tail"
+            style={{
+              ...muted(c),
+              fontSize: typeScale.metadata.fontSize,
+              flexShrink: 1,
             }}
-          />
+          >
+            {lane.key}
+          </Text>
+        </>
+      }
+      title={
+        <Text
+          numberOfLines={2}
+          style={{
+            color: c.foreground,
+            fontWeight: "600",
+            fontSize: typeScale.body.fontSize,
+            lineHeight: typeScale.body.lineHeight,
+          }}
+        >
+          {lane.title} has drained
+        </Text>
+      }
+      chips={<RecordChips c={c} chips={["Nucleus-raised"]} />}
+      snippet={
+        <Text
+          numberOfLines={3}
+          ellipsizeMode="tail"
+          style={{
+            color: c.foregroundMuted,
+            fontSize: typeScale.metadata.fontSize,
+            lineHeight: typeScale.metadata.lineHeight,
+          }}
+        >
+          {lane.aim}
+          {lane.drain?.escalatedAt
+            ? ` · escalated ${decisionAge(lane.drain.escalatedAt)}`
+            : ""}
+        </Text>
+      }
+      footer={
+        <Text
+          numberOfLines={1}
+          style={{ ...muted(c), fontSize: typeScale.metadata.fontSize }}
+        >
+          The plan owner has not answered the close-out prompt
+        </Text>
+      }
+      actions={
+        <View style={{ gap: space.xs }}>
+          <View style={{ ...row, gap: space.xs }}>
+            <Button
+              small
+              c={c}
+              disabled={busy}
+              text="Close"
+              label={plainCardText(`Close drained lane ${lane.key}`)}
+              onPress={onClose}
+            />
+            <Button
+              small
+              c={c}
+              disabled={busy}
+              text="Keep"
+              selected={keeping}
+              label={plainCardText(`Keep drained lane ${lane.key}`)}
+              onPress={() => setKeeping(!keeping)}
+            />
+          </View>
+          {keeping && (
+            <View style={{ gap: space.xs }}>
+              <Field
+                c={c}
+                label={`Why keep ${lane.title} (required)`}
+                value={reason}
+                onChange={setReason}
+              />
+              <Button
+                small
+                c={c}
+                disabled={busy || !reason.trim()}
+                text="Keep lane"
+                label={plainCardText(
+                  `Confirm keep for drained lane ${lane.key}`,
+                )}
+                onPress={() => {
+                  onKeep(reason.trim());
+                  setKeeping(false);
+                  setReason("");
+                }}
+              />
+            </View>
+          )}
         </View>
-      )}
-    </View>
+      }
+    />
   );
 });

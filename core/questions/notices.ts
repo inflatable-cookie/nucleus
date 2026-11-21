@@ -24,7 +24,11 @@ import {
   originUsesProject,
 } from "./origin";
 import type { AgentObservation } from "../host/adapter";
-import { ProvenPreSendRefusalError, isAgentGoneRefusal } from "../host/errors";
+import {
+  HostReadRefusalError,
+  ProvenPreSendRefusalError,
+  isAgentGoneRefusal,
+} from "../host/errors";
 import { qaSettlementHostMessageId } from "../qa/project-qa-notice";
 import {
   qaNoticeOwner,
@@ -192,6 +196,8 @@ export interface DurableSendOptions<T> {
     text: string;
     sourceAgentId?: string;
   };
+  /** Steer into a live turn when the host supports it, instead of `sendMessage`. */
+  steer?: boolean;
   refused?: (record: T, reason: string) => void;
   sendTimeoutMs?: number;
   registerStopWaiter?: (wake: () => void) => () => void;
@@ -265,11 +271,17 @@ export class Notices {
     if (!record) return "done";
     const target = d.target(record);
     d.mark(record, "intent", "");
-    const sendPromise = this.resolution.host.sendMessage(target.agentId, {
-      messageId: target.id,
-      text: target.text,
-      sourceAgentId: target.sourceAgentId,
-    });
+    const sendPromise = d.steer
+      ? this.resolution.host.steerOrNotify(target.agentId, {
+          messageId: target.id,
+          text: target.text,
+          sourceAgentId: target.sourceAgentId,
+        })
+      : this.resolution.host.sendMessage(target.agentId, {
+          messageId: target.id,
+          text: target.text,
+          sourceAgentId: target.sourceAgentId,
+        });
     if (d.sendTimeoutMs === undefined && !d.registerStopWaiter) {
       try {
         await sendPromise;
@@ -278,9 +290,16 @@ export class Notices {
         this.resolution.responsibleThreads.cache.invalidateMatching(
           d.recipient,
         );
-        if (error instanceof ProvenPreSendRefusalError && d.refused) {
+        if (
+          (error instanceof ProvenPreSendRefusalError ||
+            error instanceof HostReadRefusalError) &&
+          d.refused
+        ) {
           d.refused(record, error.message);
-        } else if (error instanceof ProvenPreSendRefusalError) {
+        } else if (
+          error instanceof ProvenPreSendRefusalError ||
+          error instanceof HostReadRefusalError
+        ) {
           // A refusal proved nothing left this process, so the notice is not an
           // unknown delivery: it stays pending and is retried on a later pass
           // (nucleus#1445).
@@ -346,9 +365,16 @@ export class Notices {
       d.mark(record, "delivered", "");
     } catch (error) {
       this.resolution.responsibleThreads.cache.invalidateMatching(d.recipient);
-      if (error instanceof ProvenPreSendRefusalError && d.refused) {
+      if (
+        (error instanceof ProvenPreSendRefusalError ||
+          error instanceof HostReadRefusalError) &&
+        d.refused
+      ) {
         d.refused(record, error.message);
-      } else if (error instanceof ProvenPreSendRefusalError) {
+      } else if (
+        error instanceof ProvenPreSendRefusalError ||
+        error instanceof HostReadRefusalError
+      ) {
         // A refusal proved nothing left this process, so the notice is not an unknown
         // delivery: it stays pending and is retried on a later pass, when the reason
         // the host named (a manual snooze, a thread that is not active yet) no longer

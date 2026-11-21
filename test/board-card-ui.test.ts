@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { boardSource } from "./support/board-source";
+import { recentProjectActivity } from "./support/fakes";
 import React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { PluginRpcProvider } from "@getpaseo/plugin/client/host";
@@ -144,15 +145,17 @@ function mountBoard(
     defaultOptions: { queries: { retry: false } },
   });
   // The cards span the inbox's list views; reads reach every view (support/inbox.ts).
-  return acrossViews(mount(
-    h(QueryClientProvider, {
-      client,
-      children: h(PluginRpcProvider, {
-        invoke,
-        children: h(queue.MainSurface as never, surfaceProps),
+  return acrossViews(
+    mount(
+      h(QueryClientProvider, {
+        client,
+        children: h(PluginRpcProvider, {
+          invoke,
+          children: h(queue.MainSurface as never, surfaceProps),
+        }),
       }),
-    }),
-  ));
+    ),
+  );
 }
 
 function seed(store: Store, id: string, patch: Partial<Task>) {
@@ -348,12 +351,12 @@ test("a board card says what is happening and what moves it next; IDs, timestamp
       "the failed archive is the next action",
     );
     assert.ok(
-      tree.text().includes("Needs attention · Your decision is next"),
-      "attention says who moves it next in human terms",
-    );
-    assert.ok(
-      tree.text().includes("Operator decides whether to restart"),
-      "attention leads with the human reason",
+      tree
+        .text()
+        .includes(
+          "Operator decides whether to restart · Your decision is next",
+        ),
+      "the row's one status line says what is happening and who moves it next",
     );
     assert.ok(
       !tree.text().includes("operator_needed") &&
@@ -1233,7 +1236,7 @@ const triagePapercuts = (count: number) =>
     });
   });
 
-test("a long papercut and a long lead render as one-line cards with a kind, a project and one state line", async () => {
+test("a long papercut and a long lead render as one-line rows with a project and one state line", async () => {
   await load();
   const store = new Store(":memory:");
   let mounted: ReturnType<typeof mountBoard> | undefined;
@@ -1259,16 +1262,25 @@ test("a long papercut and a long lead render as one-line cards with a kind, a pr
       "the papercut card keeps its accessible label",
     );
     assert.match(text, /Open · board/, "a papercut states its area");
-    assert.match(text, /Papercut/, "the kind chip names a papercut");
-    assert.match(text, /Lead/, "the kind chip names a lead");
+    // Papercuts and Leads are their own lists, so their rows do not repeat the kind (nucleus#1511).
+    openView(tree, "Papercuts");
+    const cutRow = tree.raw.query(`Triage: ${LONG_CUT}`);
+    assert.ok(cutRow, "the papercut row is listed on its own view");
+    assert.doesNotMatch(
+      nodeText(cutRow as HostNode),
+      /\bPapercut\b/,
+      "no kind chip repeats the list",
+    );
     assert.ok(
       !text.includes("What happened"),
       "the body passage stays in the record",
     );
-    // Leads and papercuts are the Leads view's two tabs.
-    for (const [title, tab] of [[LONG_CUT, /^Papercuts tab, /], [LONG_TITLE, /^Leads tab, /]] as const) {
-      openView(tree, "Leads");
-      tree.press(tab);
+    // Leads and papercuts are separate menu views, each a list of one-line rows.
+    for (const [title, view] of [
+      [LONG_CUT, "Papercuts"],
+      [LONG_TITLE, "Leads"],
+    ] as const) {
+      openView(tree, view);
       const lines = tree
         .ofType("Text")
         .filter((node) => node.children.join("") === title)
@@ -1285,8 +1297,8 @@ test("a long papercut and a long lead render as one-line cards with a kind, a pr
   }
 });
 
-// Tom, 2026-11-07: Triage pages; on the inbox the Leads view keeps the pages of eight.
-test("Leads show a page of eight, an in-list row loads the rest, and the tab shows the real total", async () => {
+// Tom, 2026-11-07: Triage pages; on the inbox the Leads and Papercuts lists keep the pages of eight.
+test("Papercuts show a page of eight, an in-list row loads the rest, and the menu shows the real total", async () => {
   await load();
   const store = new Store(":memory:");
   let mounted: ReturnType<typeof mountBoard> | undefined;
@@ -1299,8 +1311,8 @@ test("Leads show a page of eight, an in-list row loads the rest, and the tab sho
       ),
     );
     const tree = mounted;
-    await settle(() => Boolean(tree.query("Papercuts tab, 10")));
-    tree.press("Papercuts tab, 10");
+    await settle(() => Boolean(tree.query("Papercuts, 10")));
+    openView(tree, "Papercuts");
     assert.equal(
       tree.all(/^Triage: Papercut /).length,
       8,
@@ -1317,15 +1329,109 @@ test("Leads show a page of eight, an in-list row loads the rest, and the tab sho
       undefined,
       "no overflow row once every card shows",
     );
-    assert.ok(tree.query("Papercuts tab, 10"), "paging leaves the total alone");
-    assert.ok(tree.query("Leads, 10"), "the menu counts every lead and papercut");
+    assert.ok(tree.query("Papercuts, 10"), "paging leaves the total alone");
+    assert.ok(tree.query("Leads, 0"), "the Leads entry counts only leads");
   } finally {
     mounted?.update(h("View", null));
     store.close();
   }
 });
 
-test("the Leads tag filter narrows the cards and the paging; the menu count stays the inbox total", async () => {
+test("Leads show a page of eight, an in-list row loads the rest, and the menu counts every lead", async () => {
+  await load();
+  const store = new Store(":memory:");
+  let mounted: ReturnType<typeof mountBoard> | undefined;
+  try {
+    const leads = Array.from({ length: 10 }, (_, index) => {
+      const letter = "abcdefghijklmnop"[index];
+      return triageLead(`idea-${letter}`, `Idea ${letter}`, { tags: ["idea"] });
+    });
+    mounted = mountBoard(
+      invokeWith(board([]), async () => ({ tasks: [], hasMore: false }), leads),
+    );
+    const tree = mounted;
+    await settle(() => Boolean(tree.query("Leads, 10")));
+    openView(tree, "Leads");
+    assert.equal(
+      tree.all(/^Triage: Idea /).length,
+      8,
+      "the first page holds eight leads",
+    );
+    assert.ok(
+      tree.text().includes("…and 2 more"),
+      "the overflow row carries the rest of the total",
+    );
+    tree.press("Show 2 more leads");
+    await settle(() => tree.raw.all(/^Triage: Idea /).length === 10);
+    assert.equal(
+      tree.raw.query("Show 2 more leads"),
+      undefined,
+      "no overflow row once every lead shows",
+    );
+    assert.ok(tree.query("Leads, 10"), "paging leaves the total alone");
+    assert.ok(
+      tree.query("Papercuts, 0"),
+      "the Papercuts entry counts only papercuts",
+    );
+  } finally {
+    mounted?.update(h("View", null));
+    store.close();
+  }
+});
+
+test("the Leads tag filter sits in the list header row, beside the title and the item count", async () => {
+  await load();
+  const store = new Store(":memory:");
+  let mounted: ReturnType<typeof mountBoard> | undefined;
+  try {
+    const leads = [
+      triageLead("idea-one", "Idea one", { tags: ["idea"] }),
+      triageLead("idea-two", "Idea two", { tags: ["idea"] }),
+    ];
+    mounted = mountBoard(
+      invokeWith(board([]), async () => ({ tasks: [], hasMore: false }), leads),
+    );
+    const tree = mounted;
+    await settle(() => Boolean(tree.query("Leads, 2")));
+    openView(tree, "Leads");
+    const contains = (
+      node: HostNode | string,
+      match: (candidate: HostNode) => boolean,
+    ): boolean =>
+      typeof node !== "string" &&
+      (match(node) || node.children.some((child) => contains(child, match)));
+    const labelled = (prefix: string) => (candidate: HostNode) =>
+      String(candidate.props.accessibilityLabel ?? "").startsWith(prefix);
+    const texted = (value: string) => (candidate: HostNode) =>
+      candidate.type === "Text" && candidate.children.join("") === value;
+    // The header row lists the title as its own child, and the item count and the filter
+    // sit inside that same row (the count and filter share one child group). A filter on a
+    // row of its own below the title fails: the title row would not hold it.
+    const titleChild = (row: HostNode) =>
+      row.children.some(
+        (child) => typeof child !== "string" && texted("Leads")(child),
+      );
+    const headerRow = tree.raw
+      .ofType("View")
+      .map((view) => view as unknown as HostNode)
+      .find(
+        (row) =>
+          titleChild(row) &&
+          contains(row, texted("2 items")) &&
+          contains(row, labelled("Filter leads by tag, All tags (2)")) &&
+          !contains(row, labelled("Triage: ")),
+      );
+    assert.ok(
+      headerRow,
+      "one row holds the Leads title, the 2 items count and the tag filter, with no card in it",
+    );
+  } finally {
+    mounted?.update(h("View", null));
+    store.close();
+  }
+});
+
+test("the Leads tag filter narrows the leads and their paging; papercuts have no filter and the menu count stays the inbox total", async () => {
   await load();
   const store = new Store(":memory:");
   let mounted: ReturnType<typeof mountBoard> | undefined;
@@ -1333,28 +1439,41 @@ test("the Leads tag filter narrows the cards and the paging; the menu count stay
     const leads = [
       ...triagePapercuts(10),
       triageLead("idea-lead", "Idea lead", { tags: ["idea"] }),
+      triageLead("plain-lead", "Plain lead", { tags: ["research"] }),
     ];
     mounted = mountBoard(
       invokeWith(board([]), async () => ({ tasks: [], hasMore: false }), leads),
     );
     const tree = mounted;
-    await settle(() => Boolean(tree.query("Leads, 11")));
+    await settle(() => Boolean(tree.query("Leads, 2")));
     openView(tree, "Leads");
-    tree.press("Filter leads by tag, All tags (11)");
+    // The reserved papercut tag is not offered: papercuts are their own list (Tom, 2026-11-21).
+    tree.press("Filter leads by tag, All tags (2)");
+    assert.equal(tree.query("Filter leads by tag: Papercut (10)"), undefined);
     tree.press("Filter leads by tag: idea (1)");
     await settle(() => Boolean(tree.query("Triage: Idea lead")));
-    tree.press("Papercuts tab, 0");
+    assert.equal(
+      tree.all(/^Triage: (Papercut|Plain)/).length,
+      0,
+      "the idea tag narrows the leads to the idea lead",
+    );
+    assert.ok(tree.query("Leads, 2"), "the menu count ignores the list filter");
+    // Papercuts keep every card, with no filter header (Tom, 2026-11-21).
+    openView(tree, "Papercuts");
+    assert.equal(
+      tree.raw.query(/^Filter leads by tag/),
+      undefined,
+      "the papercut list has no tag filter",
+    );
+    assert.ok(
+      tree.query("Papercuts, 10"),
+      "the papercut total is unaffected by the Leads filter",
+    );
     assert.equal(
       tree.all(/^Triage: Papercut /).length,
-      0,
-      "the idea tag filters the papercuts out",
+      8,
+      "the first page of papercuts shows eight",
     );
-    assert.equal(
-      tree.query("Show 2 more papercuts"),
-      undefined,
-      "a filtered list that fits one page has no overflow row",
-    );
-    assert.ok(tree.query("Leads, 11"), "the menu count ignores the list filter");
   } finally {
     mounted?.update(h("View", null));
     store.close();
@@ -1362,7 +1481,7 @@ test("the Leads tag filter narrows the cards and the paging; the menu count stay
 });
 
 // #1042 review: the list's view state lives in the shell, so a visit to another view keeps it.
-test("the Leads tag, Leads page and open queued-more page survive a round trip to Planning", async () => {
+test("the Leads tag, Papercuts page and open queued-more page survive a round trip to Planning", async () => {
   await load();
   const store = new Store(":memory:");
   let mounted: ReturnType<typeof mountBoard> | undefined;
@@ -1370,6 +1489,7 @@ test("the Leads tag, Leads page and open queued-more page survive a round trip t
     const leads = [
       ...triagePapercuts(10),
       triageLead("idea-lead", "Idea lead", { tags: ["idea"] }),
+      triageLead("plain-lead", "Plain lead", { tags: ["research"] }),
     ];
     mounted = mountBoard(
       invokeWith(
@@ -1381,11 +1501,10 @@ test("the Leads tag, Leads page and open queued-more page survive a round trip t
     const tree = mounted;
     await settle(
       () =>
-        Boolean(tree.query("Leads, 11")) &&
+        Boolean(tree.query("Papercuts, 10")) &&
         Boolean(tree.query("3 more queued in app")),
     );
-    openView(tree, "Leads");
-    tree.press("Papercuts tab, 10");
+    openView(tree, "Papercuts");
     tree.press("Show 2 more papercuts");
     await settle(() => tree.raw.all(/^Triage: Papercut /).length === 10);
     openView(tree, "Queue");
@@ -1396,16 +1515,18 @@ test("the Leads tag, Leads page and open queued-more page survive a round trip t
     openView(tree, "Queue");
     await settle(() => Boolean(tree.raw.query("Queue list")));
     assert.ok(tree.raw.query("Previous"), "the open queued-more page is kept");
-    // The Leads view reopens on the papercuts tab it was left on.
-    openView(tree, "Leads");
+    // The Papercuts view reopens on the page it was left on.
+    openView(tree, "Papercuts");
     assert.equal(
       tree.raw.all(/^Triage: Papercut /).length,
       10,
-      "the expanded Leads page is kept",
+      "the expanded Papercuts page is kept",
     );
-    tree.press("Filter leads by tag, All tags (11)");
+    // The Leads filter is kept too.
+    openView(tree, "Leads");
+    tree.press("Filter leads by tag, All tags (2)");
     tree.press("Filter leads by tag: idea (1)");
-    await settle(() => tree.raw.all(/^Triage: Papercut /).length === 0);
+    await settle(() => tree.raw.all(/^Triage: Plain /).length === 0);
     openView(tree, "Planning");
     await settle(() => !tree.raw.query("Leads list"));
     openView(tree, "Leads");
@@ -1519,13 +1640,19 @@ test("lead-only and papercut-only repositories render T3 project badges on the b
     };
     t3Mounted = mountBoard(rpcFor(t3Snapshot));
     await settle(() => Boolean(t3Mounted?.query("Triage: Lead without tasks")));
-    /** Badge text nodes on both Leads tabs: the lead card and the papercut card. */
+    /** Badge text nodes on the Leads and Papercuts lists: the lead card and the papercut card. */
     const tabMonograms = (mounted: ReturnType<typeof mountBoard>) => {
       openView(mounted, "Leads");
-      const found = mounted.ofType("Text").filter((node) => node.children.join("") === "BA");
-      mounted.press(/^Papercuts tab, /);
-      found.push(...mounted.ofType("Text").filter((node) => node.children.join("") === "BA"));
-      mounted.press(/^Leads tab, /);
+      const found = mounted
+        .ofType("Text")
+        .filter((node) => node.children.join("") === "BA");
+      openView(mounted, "Papercuts");
+      found.push(
+        ...mounted
+          .ofType("Text")
+          .filter((node) => node.children.join("") === "BA"),
+      );
+      openView(mounted, "Leads");
       return found;
     };
     const monograms = tabMonograms(t3Mounted);
@@ -1550,12 +1677,15 @@ test("lead-only and papercut-only repositories render T3 project badges on the b
           ? 0
           : (node.type === "Icon" && node.props.name === "Folder" ? 1 : 0) +
             node.children.reduce((sum, child) => sum + count(child), 0);
-      const tabCards = () => mounted.raw.all(/^Triage: /).reduce((sum, card) => sum + count(card), 0);
+      const tabCards = () =>
+        mounted.raw
+          .all(/^Triage: /)
+          .reduce((sum, card) => sum + count(card), 0);
       openView(mounted, "Leads");
       let total = tabCards();
-      mounted.press(/^Papercuts tab, /);
+      openView(mounted, "Papercuts");
       total += tabCards();
-      mounted.press(/^Leads tab, /);
+      openView(mounted, "Leads");
       return total;
     };
     assert.equal(cardFolderCount(t3Mounted), 0);
@@ -1593,28 +1723,587 @@ test("a task row in the inbox list shows its T3 project badge from its own host,
   let mounted: ReturnType<typeof mountBoard> | undefined;
   try {
     const task = seed(store, "badged-task", { phase: "working" });
-    const summary = { ...summarizeTask(store.task(task.id)), hostId: "t3code:main" };
+    const summary = {
+      ...summarizeTask(store.task(task.id)),
+      hostId: "t3code:main",
+    };
     const snapshot = {
       ...board([summary]),
-      projectBadges: { "t3code:main": { [summary.repoPath]: { monogram: "BA", color: "fuchsia" as const } } },
+      projectBadges: {
+        "t3code:main": {
+          [summary.repoPath]: { monogram: "BA", color: "fuchsia" as const },
+        },
+      },
     };
-    mounted = mountBoard(invokeWith(snapshot, async () => ({ tasks: [], hasMore: false })));
+    mounted = mountBoard(
+      invokeWith(snapshot, async () => ({ tasks: [], hasMore: false })),
+    );
     const tree = mounted;
     await settle(() => tree.text().includes("badged-task"));
     openView(tree, "Active");
-    const badge = tree.raw.ofType("Text").filter((node) => node.children.join("") === "BA");
+    const badge = tree.raw
+      .ofType("Text")
+      .filter((node) => node.children.join("") === "BA");
     assert.equal(badge.length, 1, "the row draws the badge");
     assert.equal(badge[0].props.style.color, "rgb(237, 106, 255)");
 
     // The same task on a host the badge map does not name keeps its folder icon.
     mounted.update(h("View", null));
-    mounted = mountBoard(invokeWith({ ...snapshot, tasks: [{ ...summary, hostId: "paseo:other" }] }, async () => ({ tasks: [], hasMore: false })));
+    mounted = mountBoard(
+      invokeWith(
+        { ...snapshot, tasks: [{ ...summary, hostId: "paseo:other" }] },
+        async () => ({ tasks: [], hasMore: false }),
+      ),
+    );
     const plain = mounted;
     await settle(() => plain.text().includes("badged-task"));
     openView(plain, "Active");
-    assert.equal(plain.raw.ofType("Text").filter((node) => node.children.join("") === "BA").length, 0);
+    assert.equal(
+      plain.raw.ofType("Text").filter((node) => node.children.join("") === "BA")
+        .length,
+      0,
+    );
   } finally {
     mounted?.update(h("View", null));
     store.close();
   }
+});
+
+// nucleus#1511: the inbox board's post-roll fixes. Each one is measured on the real board
+// render, at the layouts it affects.
+
+/** A node's whole visible text, and whether it holds a node a predicate matches. */
+const nodeText = (node: HostNode | string): string =>
+  typeof node === "string" ? node : node.children.map(nodeText).join(" ");
+const nodeHas = (
+  node: HostNode | string,
+  match: (node: HostNode) => boolean,
+): boolean =>
+  typeof node === "string"
+    ? false
+    : match(node) || node.children.some((child) => nodeHas(child, match));
+
+test("the narrow header keeps the title, and its project selector becomes an icon that keeps the selection", async () => {
+  await load();
+  const store = new Store(":memory:");
+  let mounted: ReturnType<typeof mountBoard> | undefined;
+  try {
+    const f = fixtures(store);
+    mounted = mountBoard(
+      invokeWith(board([f.long]), async () => ({ tasks: [], hasMore: false })),
+    );
+    const tree = mounted;
+    await settle(() => Boolean(tree.query(/^app, Board cards keep the title/)));
+    // The board measures its own pane; 390 points is below the 720-point breakpoint.
+    const measured = tree.raw
+      .ofType("View")
+      .find((node) => typeof node.props.onLayout === "function");
+    assert.ok(measured, "the board measures its pane");
+    measured!.props.onLayout({ nativeEvent: { layout: { width: 390 } } });
+
+    assert.ok(
+      tree.raw.query("Open the board menu"),
+      "the menu button stays reachable",
+    );
+    assert.ok(
+      tree.raw
+        .ofType("Text")
+        .some((node) => node.children.join("") === "Nucleus"),
+      "the title stays visible",
+    );
+    const trigger = tree.raw.query(/^Projects, /);
+    assert.ok(trigger, "the selector keeps its accessible label");
+    assert.match(
+      String(trigger!.props.accessibilityLabel),
+      /^Projects, All projects$/,
+      "and the label still names the selection",
+    );
+    assert.equal(
+      nodeText(trigger as HostNode).trim(),
+      "",
+      "the selector shows its icon alone, so the row fits",
+    );
+
+    tree.raw.press(/^Projects, /);
+    assert.ok(tree.raw.query("Project selector"), "the picker opens");
+    tree.raw.press("Close project selector");
+  } finally {
+    mounted?.update(h("View", null));
+    store.close();
+  }
+});
+
+test("a drained-lane row draws its controls inside the row, and the row opens its lane in Planning", async () => {
+  await load();
+  const store = new Store(":memory:");
+  let mounted: ReturnType<typeof mountBoard> | undefined;
+  try {
+    const lane = {
+      id: "lane-1",
+      key: "alpha",
+      title: "Alpha lane",
+      aim: "Done looks like alpha shipped.",
+      status: "active",
+      note: "",
+      repositories: [repo],
+      createdAt: at,
+      updatedAt: at,
+      closedAt: null,
+      drain: { since: at, notices: 1, lastNoticeAt: at, escalatedAt: at },
+      keep: null,
+      liveByPhase: {},
+      liveByRepository: {},
+      terminalCount: 0,
+      lastActivityAt: at,
+      recentOutcomes: [],
+    };
+    const snapshot = {
+      ...board([]),
+      lanes: [lane],
+      projects: [
+        {
+          ...project,
+          version: 1,
+          primary: repo,
+          drain: { since: at, notices: 1, lastNoticeAt: at, escalatedAt: at },
+        },
+      ],
+    };
+    const invoke = async (method: string, input: unknown) => {
+      if (method === "queue.ui-snapshot") return snapshot;
+      if (method === "queue.service-state") return serviceState;
+      if (method === "queue.detail") return undefined;
+      if (method === "task.next") return null;
+      if (method === "queue.queued-page") return { tasks: [], hasMore: false };
+      if (method === "queue.plans")
+        return [
+          {
+            project: "app",
+            version: 1,
+            author: "planner-agent",
+            createdAt: at,
+            entries: [
+              {
+                lane: "alpha",
+                note: "",
+                horizon: "now",
+                doneWhen: "Alpha shipped",
+              },
+            ],
+          },
+        ];
+      if (method === "project.qa.list" || method === "host.run.list") return [];
+      if (method === "host.run.board")
+        return {
+          runs: [],
+          accounting: { readAt: at, entries: [], complete: true },
+        };
+      if (method === "lead.board") return { cards: [], links: [] };
+      if (
+        method === "papercut.list" ||
+        method === "draft.list" ||
+        method === "decision.list" ||
+        method === "lane.task-page"
+      )
+        return method === "lane.task-page"
+          ? { tasks: [], total: 0, nextOffset: null }
+          : [];
+      void input;
+      return {};
+    };
+    mounted = mountBoard(invoke);
+    const tree = mounted;
+    await settle(() => tree.text().includes("Alpha lane has drained"));
+    openView(tree, "Needs you");
+
+    // Close and Keep draw inside the row's own frame (divider and accent edge), not under it.
+    const rowFrame = tree.raw
+      .ofType("View")
+      .find(
+        (node) =>
+          node.props.style?.borderBottomWidth === 1 &&
+          node.props.style?.borderLeftWidth === 2 &&
+          nodeHas(
+            node,
+            (child) =>
+              child.props.accessibilityLabel === "Close drained lane alpha",
+          ) &&
+          nodeHas(
+            node,
+            (child) =>
+              child.props.accessibilityLabel === "Drained lane: Alpha lane",
+          ),
+      );
+    assert.ok(rowFrame, "the drained-lane controls sit inside its row");
+    assert.ok(
+      nodeHas(
+        rowFrame!,
+        (child) => child.props.accessibilityLabel === "Keep drained lane alpha",
+      ),
+      "Keep sits in the row too",
+    );
+
+    // Pressing the row opens its lane in Planning.
+    tree.raw.press("Drained lane: Alpha lane");
+    await settle(() => Boolean(tree.raw.query("Find lanes")));
+    assert.ok(
+      tree.raw
+        .ofType("Text")
+        .some((node) => node.children.join("") === "Planning"),
+      "the board switches to Planning",
+    );
+    await settle(() => tree.raw.text().includes("Alpha lane"));
+  } finally {
+    mounted?.update(h("View", null));
+    store.close();
+  }
+});
+
+test("a task row keeps one status line and no host identity, while the detail keeps the routing", async () => {
+  await load();
+  const store = new Store(":memory:");
+  let mounted: ReturnType<typeof mountBoard> | undefined;
+  let detail: ReturnType<typeof mount> | undefined;
+  try {
+    const routing =
+      "Profile Worker runs on online host t3code:task; not ruled out on srv_1, which is not ready";
+    const task = seed(store, "host-waiting", { phase: "working" });
+    const summary = {
+      ...summarizeTask(store.task(task.id)),
+      hostId: "t3code:32be2844",
+      hostWait: { hostId: "t3code:32be2844", since: at },
+      hostReason: routing,
+    };
+    mounted = mountBoard(
+      invokeWith(board([summary]), async () => ({ tasks: [], hasMore: false })),
+    );
+    const tree = mounted;
+    await settle(() => tree.text().includes("host-waiting"));
+    const row = tree.raw
+      .all(/.*/)
+      .find((node) =>
+        String(node.props.accessibilityLabel ?? "").includes(", host-waiting,"),
+      );
+    assert.ok(row, "the task row is on the board");
+    const text = nodeText(row as HostNode);
+    assert.equal(
+      text.match(/Waiting on the host/g)?.length,
+      1,
+      "the wait reads once",
+    );
+    assert.doesNotMatch(
+      text,
+      /T3Code host/,
+      "the host identity stays off the row",
+    );
+    assert.ok(
+      !text.includes("not ruled out"),
+      "the routing sentence stays off the row",
+    );
+    assert.ok(
+      !text.includes(routing),
+      "the row carries no routing explanation",
+    );
+
+    // The task detail keeps the host selection and the reason behind it.
+    const { taskDetailView } = await import("../shared/task-view");
+    const detailView = taskDetailView(store.task(task.id), {}, [], []);
+    detail = mount(
+      h(queue.TaskSummaryBlock as never, {
+        // The detail's host selection is the summary's routing reason, shown in full.
+        task: {
+          ...detailView,
+          hostSelection: {
+            basis: "worker_profile" as const,
+            hostId: "t3code:32be2844",
+            reason: routing,
+          },
+        },
+        next: null,
+        runs: [],
+        c,
+      }),
+    );
+    assert.ok(
+      detail.text().includes("not ruled out"),
+      "the detail keeps the routing explanation",
+    );
+  } finally {
+    detail?.update(h("View", null));
+    mounted?.update(h("View", null));
+    store.close();
+  }
+});
+
+test("a host-waiting task keeps an owner-facing stop's detail in its one row line", async () => {
+  await load();
+  const store = new Store(":memory:");
+  let mounted: ReturnType<typeof mountBoard> | undefined;
+  try {
+    const f = fixtures(store);
+    const summary = {
+      ...f.stopped,
+      hostId: "t3code:32be2844",
+      hostWait: { hostId: "t3code:32be2844", since: at },
+    };
+    mounted = mountBoard(
+      invokeWith(board([summary]), async () => ({ tasks: [], hasMore: false })),
+    );
+    const tree = mounted;
+    await settle(() =>
+      tree.text().includes("Operator decides whether to restart"),
+    );
+    openView(tree, "Needs you");
+    const row = tree.raw
+      .all(/.*/)
+      .find((node) =>
+        String(node.props.accessibilityLabel ?? "").includes(", stopped,"),
+      );
+    assert.ok(row, "the stopped task's row is on the board");
+    const text = nodeText(row as HostNode);
+    assert.match(
+      text,
+      /Operator decides whether to restart/,
+      "the owner-facing stop keeps its detail",
+    );
+    assert.match(
+      text,
+      /Waiting on the host · /,
+      "and the host wait is still named",
+    );
+    assert.doesNotMatch(
+      text,
+      /T3Code host/,
+      "the host identity stays off the row",
+    );
+    // Both facts ride the row's single status line, not two lines.
+    const status = tree.raw
+      .ofType("Text")
+      .find((node) =>
+        nodeText(node).includes("Operator decides whether to restart"),
+      );
+    assert.ok(status, "the detail is drawn");
+    assert.match(
+      nodeText(status as HostNode),
+      /Waiting on the host · /,
+      "the row's one line carries the stop and the wait",
+    );
+  } finally {
+    mounted?.update(h("View", null));
+    store.close();
+  }
+});
+
+test("the Leads and Papercuts lists hide the kind chip their list already names", async () => {
+  await load();
+  const store = new Store(":memory:");
+  let mounted: ReturnType<typeof mountBoard> | undefined;
+  try {
+    const leads = [
+      triageLead("idea-lead", "Idea lead", { tags: ["idea"] }),
+      triageLead("tiny-cut", "Tiny papercut", { tags: ["papercut"] }),
+    ];
+    mounted = mountBoard(
+      invokeWith(board([]), async () => ({ tasks: [], hasMore: false }), leads),
+    );
+    const tree = mounted;
+    await settle(() => Boolean(tree.query("Triage: Idea lead")));
+    openView(tree, "Leads");
+    const card = tree.raw.query("Triage: Idea lead");
+    assert.ok(card, "the lead row is listed");
+    assert.doesNotMatch(
+      nodeText(card as HostNode),
+      /\bLead\b/,
+      "the Lead chip repeats nothing inside the Leads list",
+    );
+    openView(tree, "Papercuts");
+    const cut = tree.raw.query("Triage: Tiny papercut");
+    assert.ok(cut, "the papercut row is listed");
+    assert.doesNotMatch(
+      nodeText(cut as HostNode),
+      /\bPapercut\b/,
+      "the Papercut chip repeats nothing inside the Papercuts list",
+    );
+  } finally {
+    mounted?.update(h("View", null));
+    store.close();
+  }
+});
+
+test("a task needing attention on Needs you names its kind, Task, in the one list", async () => {
+  await load();
+  const store = new Store(":memory:");
+  let mounted: ReturnType<typeof mountBoard> | undefined;
+  try {
+    const task = seed(store, "blocked-task", { phase: "blocked" });
+    const summary = {
+      ...summarizeTask(store.task(task.id)),
+      phase: "blocked" as const,
+    };
+    mounted = mountBoard(
+      invokeWith(board([summary]), async () => ({ tasks: [], hasMore: false })),
+    );
+    const tree = mounted;
+    await settle(() => tree.text().includes("blocked-task"));
+    // Reading every view leaves the last one open, so open Needs you before reading its list.
+    openView(tree, "Needs you");
+    // One list, no section headers, and the task names its kind.
+    assert.ok(tree.raw.query("Needs you list"), "Needs you is one list");
+    assert.equal(
+      tree.raw
+        .ofType("Text")
+        .filter((node) => node.children.join("") === "Task").length,
+      1,
+      "the attention task draws the Task kind label",
+    );
+    assert.equal(
+      tree.raw.query(/ section, \d+$/),
+      undefined,
+      "Needs you has no section headers",
+    );
+  } finally {
+    mounted?.update(h("View", null));
+    store.close();
+  }
+});
+
+test("Planning draws its projects as flat rows with the lists' divider and accent edge", async () => {
+  await load();
+  const store = new Store(":memory:");
+  let mounted: ReturnType<typeof mountBoard> | undefined;
+  try {
+    const second = {
+      key: "second",
+      name: "Second",
+      repositories: [{ origin: "owner/second", path: "/second" }],
+      primary: { origin: "owner/second", path: "/second" },
+    };
+    const sleepy = {
+      key: "sleepy",
+      name: "Sleepy",
+      repositories: [{ origin: "owner/sleepy", path: "/sleepy" }],
+      primary: { origin: "owner/sleepy", path: "/sleepy" },
+    };
+    const plan = (name: string, projectKey: string) => ({
+      project: projectKey,
+      version: 1,
+      author: "planner-agent",
+      createdAt: at,
+      entries: [{ lane: name, note: "", horizon: "now", doneWhen: "It ships" }],
+    });
+    // Store-wide activity keeps two projects out of Planning's Dormant group; the
+    // third has none and lists under it (nucleus#1511's gutter check).
+    const snapshot = {
+      ...board([]),
+      projects: [project, second, sleepy],
+      projectActivity: recentProjectActivity([project, second]),
+    };
+    mounted = mountBoard(async (method: string) => {
+      if (method === "queue.ui-snapshot") return snapshot;
+      if (method === "queue.service-state") return serviceState;
+      if (method === "queue.detail") return undefined;
+      if (method === "task.next") return null;
+      if (method === "queue.plans")
+        return [plan("lane-a", "app"), plan("lane-b", "second")];
+      if (method === "project.qa.list" || method === "host.run.list") return [];
+      if (method === "host.run.board")
+        return {
+          runs: [],
+          accounting: { readAt: at, entries: [], complete: true },
+        };
+      if (method === "lead.board") return { cards: [], links: [] };
+      return [];
+    });
+    const tree = mounted;
+    await settle(() => Boolean(tree.raw.query("Nucleus header controls")));
+    openView(tree, "Planning");
+    await settle(() => Boolean(tree.raw.query("Project row Second")));
+    const frame = (name: string) =>
+      tree.raw
+        .ofType("View")
+        .find(
+          (node) =>
+            node.props.style?.borderBottomWidth === 1 &&
+            nodeHas(
+              node,
+              (child) =>
+                child.props.accessibilityLabel === `Project row ${name}`,
+            ),
+        );
+    const appFrame = frame("App");
+    assert.ok(appFrame, "the project row draws a flat row");
+    assert.equal(
+      (appFrame!.props.style as { borderWidth?: number }).borderWidth,
+      undefined,
+      "no card border inside the list pane",
+    );
+    assert.equal(
+      (appFrame!.props.style as { borderRadius?: number }).borderRadius,
+      undefined,
+      "no card corner inside the list pane",
+    );
+    assert.equal(
+      (appFrame!.props.style as { borderLeftWidth?: number }).borderLeftWidth,
+      2,
+      "the row keeps the lists' accent edge",
+    );
+    assert.equal(
+      (appFrame!.props.style as { borderLeftColor?: string }).borderLeftColor,
+      "transparent",
+      "closed rows carry no accent",
+    );
+
+    // Expanding keeps the plan editing and marks the open row, as the other lists mark selection.
+    tree.raw.press("Project row App");
+    await settle(
+      () =>
+        (frame("App")?.props.style as { borderLeftColor?: string })
+          .borderLeftColor === dark.accent,
+    );
+
+    // Flat rows touch the pane's edges, so the Dormant group below them keeps its gutter.
+    const dormantLabel = "Dormant projects, 1";
+    assert.ok(tree.raw.query(dormantLabel), "the dormant project is grouped");
+    assert.ok(
+      tree.raw
+        .ofType("View")
+        .some(
+          (node) =>
+            node.props.style?.paddingHorizontal === 16 &&
+            nodeHas(
+              node,
+              (child) => child.props.accessibilityLabel === dormantLabel,
+            ),
+        ),
+      "the Dormant group keeps the list's horizontal gutter",
+    );
+  } finally {
+    mounted?.update(h("View", null));
+    store.close();
+  }
+});
+
+test("a resumed-thread count never adds a header pill", async () => {
+  const { headerStatePills } = await import("../client/board/header");
+  const state = {
+    connected: true,
+    paused: false,
+    quiet: true,
+    dispatchHeld: false,
+    stoppedThreads: 0,
+    resumedThreads: 3,
+    operationBacklog: 0,
+  };
+  assert.deepEqual(
+    headerStatePills(state as never),
+    [],
+    "the resumed count survives a restart with nothing to act on, so it earns no pill",
+  );
+  assert.deepEqual(
+    headerStatePills({ ...state, stoppedThreads: 2 } as never).map(
+      (pill) => pill.label,
+    ),
+    ["2 waiting to resume"],
+    "stopped threads keep their pill",
+  );
 });

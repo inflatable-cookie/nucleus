@@ -7,6 +7,7 @@ import type { Engine } from "../engine";
 import { verifyAcceptedEnclosingOperation } from "../planning/enclosing-operation";
 import { observationAdvanceSince } from "../recovery/observation-advance";
 import { collectOwnerVerbFacts, ownerPendingEffects } from "../verbs/owner-verbs";
+import { ownerStopPendingRefusal } from "../verbs/owner-stop";
 
 /**
  * The owner closeout boundary's refusal for an operator source acceptance that
@@ -56,12 +57,16 @@ export function hostIndependentControlRefusal(engine: Pick<Engine, 'store' | 're
   // no version or terminal refusal here; the acceptances themselves are compared
   // by the verb.
   if (input.action === "complete" && task.phase === "done" && task.reportAcceptance?.taskVersion === input.version) return null;
+  if (input.action === "stop" && operationId && task.resolution.ownerStop?.operationId === operationId) return null;
   const version = versionRefusal(task, input);
   if (version) return version;
   if (input.action === "move") {
     const refusal = moveStateRefusal(task, input.to ?? 'work');
     if (refusal) return refusal;
-  } else if (input.action === "stop") return stopStateRefusal(task);
+  } else if (input.action === "stop") {
+    if (task.resolution.ownerStop) return ownerStopPendingRefusal(task.resolution.ownerStop);
+    return stopStateRefusal(task);
+  }
   else if (input.action === "route") return routeStateRefusal(task);
   else if (input.action === "complete") return completeStateRefusal(task, store.runs(task.id));
   else if (input.action === "proof") return proofActivationRefusal(task, [], "disposition") ?? proofActivationRefusal(task, [], "terminal");

@@ -637,14 +637,21 @@ test("026-12a every inbox card renders through the shared board card, and the li
     !ui.includes("PipelineRecordCard"),
     "the list must not keep a separate record card component",
   );
-  assert.match(list, /case "task":\s*return <TaskCard/);
-  assert.doesNotMatch(list, /card\.kind==='papercut'|card\.kind === "papercut"/);
-  assert.match(list, /<BoardCard key=\{key\}/);
+  assert.match(list, /case "task":\s*return \(?\s*<TaskCard/);
+  assert.doesNotMatch(
+    list,
+    /card\.kind==='papercut'|card\.kind === "papercut"/,
+  );
+  assert.match(list, /<BoardCard\s+key=\{key\}/);
   assert.doesNotMatch(list, /actions=/);
   assert.doesNotMatch(list, /actionsLabel/);
   // Every card draws as a row of the one list, which is its view's single scroll.
   assert.match(list, /<BoardCardVariantContext\.Provider value="row">/);
-  assert.equal((list.match(/<ScrollView\b/g) ?? []).length, 1, "the list is one scroll");
+  assert.equal(
+    (list.match(/<ScrollView\b/g) ?? []).length,
+    1,
+    "the list is one scroll",
+  );
   // Leads page their own window (Tom, 2026-11-07).
   assert.match(list, /const visible = page \? page\.visible : section\.cards;/);
   // Swim-lane rows, kanban columns and their stubs are gone (Tom, 2026-11-08; 2026-11-21).
@@ -666,7 +673,7 @@ test("026-13 the inbox menu has no Lanes or QA destination; Planning holds the l
   );
   // #866: the separate Lanes destination is folded into Planning's lane search; QA is a task (Tom, 2026-11-21).
   assert.doesNotMatch(inbox, /id: 'lanes'|id: 'qa'/);
-  assert.match(inbox, /\{ id: 'planning', label: 'Planning'/);
+  assert.match(inbox, /\{ id: ["']planning["'], label: ["']Planning["']/);
   assert.doesNotMatch(ui, /accessibilityLabel="Board mode"/);
   assert.doesNotMatch(ui, /text="Pipeline"/);
   assert.doesNotMatch(ui, /text="Status"/);
@@ -692,7 +699,7 @@ test("026-13 the inbox menu has no Lanes or QA destination; Planning holds the l
   );
   assert.doesNotMatch(ui, /setPipelineTarget/);
   // The menu counts and every list read one derivation, then the Leads tag filter narrows a copy.
-  assert.match(ui, /const columns = useMemo\(\s*\(\) => pipelineBoard\(\{/);
+  assert.match(ui, /const columns = useMemo\(\s*\(\)\s*=>\s*pipelineBoard\(\{/);
   assert.equal(
     (ui.match(/pipelineBoard\(/g) ?? []).length,
     1,
@@ -980,4 +987,3 @@ test("Triage cards: one state line per lead or papercut, operator order, and pag
     "a short column has no overflow card",
   );
 });
-

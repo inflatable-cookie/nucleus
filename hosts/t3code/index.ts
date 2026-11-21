@@ -202,7 +202,7 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
         workspaceThreads: (ids: readonly string[]) =>
           native.workspaceThreads(ids),
         workspaceTerminals: (id: string) => native.workspaceTerminals(id),
-        activeThreads: () => native.activeThreads(),
+        activeThreads: () => native.activeThreads(true),
       };
     }
     get messageHost() {
@@ -214,7 +214,7 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
       return this.native.findAgents({ [WIRE_LABEL_KEYS.task]: task.id });
     }
     findRunAgents(run: Run) {
-      return this.native.findAgents({
+      return this.native.findRunAgents({
         [WIRE_LABEL_KEYS.run]: run.id,
         [WIRE_LABEL_KEYS.task]: run.taskId,
       });
@@ -294,8 +294,10 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
     steerOrNotify(id: string, messageId: string, text: string) {
       return this.native.steerOrNotify(id, { messageId, text });
     }
-    stopAgentTurn(id: string) {
-      return this.native.stopAgentTurn(id);
+    stopAgentTurn(id: string, expectedTurnId?: string) {
+      return expectedTurnId !== undefined
+        ? this.native.stopAgentTurn(id, expectedTurnId)
+        : this.native.stopAgentTurn(id);
     }
     archiveAgent(id: string) {
       return this.native.archiveAgent(id);

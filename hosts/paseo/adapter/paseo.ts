@@ -837,7 +837,20 @@ export function paseoAdapterClass(Policy: HostPolicyConstructor) {
       return stream;
     }
     /** Cancel only the active agent turn; unlike interruptAndContinue this starts no continuation. */
-    async stopAgentTurn(id: string): Promise<void> {
+    async stopAgentTurn(id: string, expectedTurnId?: string): Promise<void> {
+      if (expectedTurnId !== undefined) {
+        const latest = await this.observe(id);
+        if (
+          !latest.active &&
+          ["idle", "error", "closed"].includes(latest.status) &&
+          !latest.permissions
+        )
+          return;
+        if (latest.activeTurnId !== expectedTurnId)
+          throw new ProvenPreSendRefusalError(
+            `Intended turn ${expectedTurnId} ended or changed to ${latest.activeTurnId ?? "unknown"}; refusing to cancel newer turn`,
+          );
+      }
       await this.client.cancelAgent(id);
     }
     /**

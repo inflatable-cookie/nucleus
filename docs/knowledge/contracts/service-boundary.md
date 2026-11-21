@@ -54,11 +54,16 @@ Paseo bridge and the owner both import, so the bridge graph reaches no service
 module. The environment a spawned service reads from its host is composed once in
 `service/host-environment.mjs`: the standalone entry, the roll owner, the spawner
 and the installer's isolated startup proof ask it instead of naming a host
-variable, and `hostHome` pins a private host home for a fixture or proof. Each
-host integration keeps its own names: Paseo's bridge supplies its own home
-override, and `nucleus integrate paseo` keeps Paseo's registration format. A local T3Code launch (`bin/nucleus-acp.mjs`) and a Paseo bridge both start
+variable, and `hostHome` pins a private host home for a fixture or proof. Each host integration keeps its own names: Paseo's bridge supplies its own home
+override, and `nucleus integrate` routes `paseo`, `t3code` (or `t3`), and `bb`
+to each host's registration step. A local T3Code launch (`bin/nucleus-acp.mjs`),
+a BB plugin host channel (`hosts/bb/plugin/server.ts`), and a Paseo bridge can
+each start the daemon when absent; T3Code and Paseo also start
 the one owner through its heartbeat (`queue-roll-owner.json`), the bridge through an
-injected process binding, and the launcher and entry through `service/transport`. The
+injected process binding, and the launcher and entry through `service/transport`.
+The service serves `queue.service-state` itself over both the socket and the local
+web board (`BRIDGE_CATALOGUE` is retired), while host bridges may augment it with
+local plugin build state. The
 owner connects without a presence claim, so it is never a host and never keeps a
 host-less service alive. The Paseo bridge forwards calls, reports state and reloads
 its plugin after a landed roll; it runs no roll of its own.
@@ -1713,18 +1718,19 @@ open.
   presence that returns inside the grace is silent. The web board is the
   operator-visible surface (the plugin board is gone with the plugin). A
   CLI-started service never granted presence, so this path does not fire.
-- **Only the bridge and the T3Code launcher start the daemon.** The Paseo bridge
-  spawns it as before. A configured local T3Code host has one more starter
-  (Tom, 2026-11-19, nucleus#1394): T3 probes its registered `nucleus-acp` launcher
-  on its own cold start, with no thread, and that launcher starts the detached
-  daemon when the stored T3 endpoint is loopback, no service identity names a live
-  process, no service roll is in progress and no fresh bridge spawn claim exists.
-  It takes its own exclusive claim (`queue-service.t3-launch.json`), so repeated
-  and concurrent probes start one daemon, and it never waits for the daemon to
-  answer. A probe during a roll starts nothing; the roll owns the replacement.
-  The daemon's own clock, grace and run fence are unchanged. Its started daemon
-  never holds bridge presence, so the lost-plugin fault never fires for it. An
-  ordinary CLI call reads the daemon over the authenticated socket and refuses with
+- **Capable hosts start the daemon; the CLI does not.** A Paseo bridge, a
+  configured local T3Code host (`bin/nucleus-acp.mjs` cold-start probe), and the
+  BB plugin's host channel (`hosts/bb/plugin/server.ts`) each start the detached
+  daemon when no live service identity, active roll, or fresh sibling launch claim
+  is present (`shared/service/daemon-launch.ts`). T3Code probes its registered
+  `nucleus-acp` launcher on cold start when the stored T3 endpoint is loopback
+  (`queue-service.t3-launch.json`), and BB's plugin starts it when `serviceDataDir`
+  is configured and an installed Nucleus package root is present
+  (`queue-service.bb-launch.json`). Neither launcher waits for the daemon to answer,
+  a probe during a roll starts nothing, and the daemon's own clock, grace and run
+  fence are unchanged. Only the Paseo and BB plugin bridges hold
+  `service.nucleus-bridge-presence`. An ordinary CLI call reads the daemon over the
+  authenticated socket (including `queue.service-state`) and refuses with
   `unavailable` when nothing is running; it never spawns, upgrades, reads SQLite or
   falls back on its own.
 

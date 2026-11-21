@@ -890,10 +890,14 @@ export function ProjectSelector({
   // an anchored dropdown inside this row is painted over by the column cards that
   // follow it, and no zIndex leaves this row's stacking context (Tom, 2026-11-19).
   // Outside a host it renders in place, positioned as before.
+  //
+  // The narrow header (nucleus#1511) has no room for the label: the trigger there
+  // is the selector's folder icon alone, still opening the same picker, still
+  // labelled "Projects, <selection>" for a screen reader.
   return (
     <View
       style={{
-        minWidth: 210,
+        minWidth: compact ? control.height : 210,
         maxWidth: "100%",
         position: "relative",
         zIndex: open ? 20 : 0,
@@ -903,14 +907,18 @@ export function ProjectSelector({
         ref={trigger}
         accessibilityRole="button"
         accessibilityLabel={`Projects, ${label}`}
+        accessibilityHint={compact ? `Projects: ${label}` : undefined}
         accessibilityState={{ expanded: open }}
         onPress={() => setOpen(!open)}
         style={{
           ...controlFrame(c, { focused: open }),
           flexDirection: "row",
           alignItems: "center",
-          justifyContent: "space-between",
+          justifyContent: compact ? "center" : "space-between",
           gap: space.xs,
+          ...(compact
+            ? { width: control.height, minWidth: control.height, paddingHorizontal: 0 }
+            : {}),
         }}
       >
         <View
@@ -926,15 +934,19 @@ export function ProjectSelector({
             size={14}
             color={filtering ? c.accent : c.foregroundMuted}
           />
-          <Text numberOfLines={1} style={{ ...controlText(c), flexShrink: 1 }}>
-            {label}
-          </Text>
+          {!compact && (
+            <Text numberOfLines={1} style={{ ...controlText(c), flexShrink: 1 }}>
+              {label}
+            </Text>
+          )}
         </View>
-        <Icon
-          name={open ? "ChevronUp" : "ChevronDown"}
-          size={14}
-          color={c.foregroundMuted}
-        />
+        {!compact && (
+          <Icon
+            name={open ? "ChevronUp" : "ChevronDown"}
+            size={14}
+            color={c.foregroundMuted}
+          />
+        )}
       </Pressable>
       {open && !compact && (
         <Popover

@@ -81,10 +81,14 @@ export class PlanningSubmission {
       if (
         submission.notifyOriginOnCloseout ||
         submission.completionNotificationAgentIds.length
-      )
-        await validateCompletionRecipients(submission, (id) =>
-          this.lookupCompletionRecipient(id, submission),
+      ) {
+        const recipientHosts = new Map<string, string>();
+        await validateCompletionRecipients(
+          submission,
+          (id) => this.lookupCompletionRecipient(id, submission, recipientHosts),
+          (id) => recipientHosts.get(id),
         );
+      }
       await this.context.engine.hooks.previewPreDispatch(
         submission,
         input.text,
@@ -151,10 +155,19 @@ export class PlanningSubmission {
       const needsRecipients =
         prepared.submission.notifyOriginOnCloseout ||
         prepared.submission.completionNotificationAgentIds.length > 0;
-      if (needsRecipients)
-        await validateCompletionRecipients(prepared.submission, (id) =>
-          this.lookupCompletionRecipient(id, prepared.submission),
+      if (needsRecipients) {
+        const recipientHosts = new Map<string, string>();
+        await validateCompletionRecipients(
+          prepared.submission,
+          (id) =>
+            this.lookupCompletionRecipient(
+              id,
+              prepared.submission,
+              recipientHosts,
+            ),
+          (id) => recipientHosts.get(id),
         );
+      }
       if (!this.context.store.existing(prepared.submission))
         this.context.store.validateDependencies(prepared.submission);
       if (
@@ -192,7 +205,11 @@ export class PlanningSubmission {
     };
   }
 
-  private async lookupCompletionRecipient(id: string, submission: Submission) {
+  private async lookupCompletionRecipient(
+    id: string,
+    submission: Submission,
+    recipientHosts?: Map<string, string>,
+  ) {
     const identitySource =
       id === submission.originAgentId ? submission.originIdentity : undefined;
     const hostId = await this.context.engine.identifyOriginHost(
@@ -205,6 +222,7 @@ export class PlanningSubmission {
           ? "Origin host is unknown or ambiguous"
           : `Completion recipient host is unknown or ambiguous: ${id}`,
       );
+    recipientHosts?.set(id, hostId);
     return this.context.engine.withHost(hostId, () =>
       this.context.host.originAgent(id),
     );

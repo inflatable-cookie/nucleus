@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import {
   HostReadRefusalError,
   HostSnapshotPendingError,
@@ -12,6 +11,7 @@ import { T3CompatibilityError } from "./contracts";
 import { isTransientT3ReadRpcError, T3TransientReadError } from "./reads";
 import {
   canonical,
+  identity,
   intentKindOf,
   intentThreadId,
   payloadDigest,
@@ -22,11 +22,7 @@ import {
 
 // The ledger's readers decide from these, and the state file's own bounded history
 // needs them too: one derivation, in the one place that reads the stored wire.
-export { intentKindOf, intentThreadId } from "./state";
-
-/** A command identity: the same purpose and fact always name the same command. */
-export const identity = (purpose: string, value: string) =>
-  `nucleus-${purpose}-${createHash("sha256").update(value).digest("hex").slice(0, 40)}`;
+export { identity, intentKindOf, intentThreadId } from "./state";
 
 /** One command payload as recorded in the ledger, and the kind it is. */
 type RecordedWire = {

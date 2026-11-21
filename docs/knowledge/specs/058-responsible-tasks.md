@@ -316,10 +316,12 @@ are unchanged.
   closeout, usage and operator questions.
 - **Identity from the thread, never a typed name.** The input carries no agent,
   workspace or branch field, so the binding cannot be steered from input. The
-  CLI overwrites `caller` from the calling thread’s Nucleus ticket or host identity and the service binds the task
-  to that thread's own live Paseo worktree. The Paseo bridge path, whose
-  envelope carries no reliable caller identity, is refused, as is a caller that
-  is not a live Paseo thread.
+  CLI overwrites `caller` from the calling thread’s Nucleus ticket or host
+  identity. The service binds the live thread on Paseo, T3Code or BB to its own
+  worktree, using the same workspace identity as host observation. This includes
+  T3Code handoff worktrees and BB workspaces created outside Nucleus. The Paseo
+  bridge envelope cannot authenticate the calling thread, so registration uses
+  the thread's own shell.
 - **Clean separate worktree only.** The worktree must be an isolated worktree
   root on a branch of a registered repository, off the integration branch.
   Registration from the registered checkout, a detached head, a dirty tree, a

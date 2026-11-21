@@ -1193,7 +1193,10 @@ test("decisionParent routes an archived parent to the Inbox and keeps a disconne
 
   host.close();
   assert.deepEqual(host.decisionParent(taskId), { state: "unknown" });
-  assert.equal(proposedOwner(fakeStore, decision, host.hostId, lookup), null);
+  assert.deepEqual(proposedOwner(fakeStore, decision, host.hostId, lookup), {
+    kind: "inbox",
+    hostId: host.hostId,
+  });
 });
 
 /**

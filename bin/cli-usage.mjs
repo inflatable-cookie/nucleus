@@ -15,7 +15,7 @@ for {}. A heredoc avoids shell quoting:
   {"repository":"owner/name"}
   JSON
 Methods without a dot are tried as queue.<method> first, for example:
-  snapshot, detail, telemetry, outcome, outcome-search, task, next, operation-start,
+  snapshot, detail, telemetry, service-state, outcome, outcome-search, task, next, operation-start,
   operation-status, capacity-state, lanes, lane.upsert, lane.status, projects, project.upsert,
   project.get, project.settings, project.park, project.unpark, project.remove, project.removal-blockers, project.qa.run, project.qa.cancel, project.qa.dismiss, project.qa.retry-teardown, project.qa.get, project.qa.list, repositories, repository.set, repository.get, repository.rekey-preview, repository.rekey, repository.rekey-receipt, papercut.add, papercut.list, papercut.get, papercut.edit, papercut.promote, papercut.promote-task,
   papercut.close, papercut.set-lanes, lead.add, lead.edit, lead.get, lead.version,
@@ -47,6 +47,6 @@ ui prints a link to the local board (127.0.0.1 only; the token rides in the link
 fragment and expires after 8 hours). ui opens it in the browser (use --no-open to print only), and
 ui --revoke revokes every outstanding link. A link is the operator's board access,
 so do not paste it into a shared log or prompt.
---via-paseo routes through the Paseo bridge (needed for bridge-only methods such as service-state).
+--via-paseo routes through the Paseo plugin bridge instead of the default local service socket.
 See README.md "CLI methods" and the nucleus skill for payload shapes. Only the
 "nucleus" skill is installed.`;
