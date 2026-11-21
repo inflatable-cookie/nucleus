@@ -70,15 +70,17 @@ test('project settings match qualified live planners only on the inventory host'
     for (const [hostId, expected] of [[host, true], ['paseo-synthetic', null], ['t3code:other', null]] as const) {
       const adapter = { hostId, listLiveAgents: async () => [{ id: 'planner', title: 'Planner', workspaceId: null }] } as unknown as Adapter;
       const lifecycle = new ProjectLifecycle({ store: f.store, adapter, host: { listLiveAgents: adapter.listLiveAgents! } } as never);
-      assert.equal((await lifecycle.projectSettings()).projects[0]?.plannerLive, expected, hostId);
+      assert.equal((await lifecycle.projectSettings({ project: 'example' })).projects[0]?.plannerLive, expected, hostId);
     }
     const absent = { hostId: host, listLiveAgents: async () => [] } as unknown as Adapter;
     const absentLifecycle = new ProjectLifecycle({ store: f.store, adapter: absent, host: { listLiveAgents: absent.listLiveAgents! } } as never);
-    assert.equal((await absentLifecycle.projectSettings()).projects[0]?.plannerLive, false);
+    assert.equal((await absentLifecycle.projectSettings({ project: 'example' })).projects[0]?.plannerLive, false);
     f.store.setProjectPlanner({ key: 'example', agentId: 'planner', setBy: 'operator' });
     const adapter = { hostId: 'paseo-synthetic', listLiveAgents: async () => [{ id: 'planner', title: 'Planner', workspaceId: null }] } as unknown as Adapter;
     const lifecycle = new ProjectLifecycle({ store: f.store, adapter, host: { listLiveAgents: adapter.listLiveAgents! } } as never);
-    assert.equal((await lifecycle.projectSettings()).projects[0]?.plannerLive, true, 'legacy Paseo planner remains live');
+    assert.equal((await lifecycle.projectSettings({ project: 'example' })).projects[0]?.plannerLive, true, 'legacy Paseo planner remains live');
+    // The saved list never reads the host, so the same planner is unknown there.
+    assert.equal((await lifecycle.projectSettings()).projects[0]?.plannerLive, null);
   } finally { f.store.close(); }
 });
 
