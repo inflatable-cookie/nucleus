@@ -342,9 +342,7 @@ const threadRecord = (agent: NativeThreadRecord): HostThread => ({
  */
 export interface NativeWorkspaceDaemon {
   readonly workspaces: {
-    list(options: {
-      page: { limit: number; cursor?: string };
-    }): Promise<{
+    list(options: { page: { limit: number; cursor?: string } }): Promise<{
       entries: NativeWorkspaceEntry[];
       pageInfo: { hasMore: boolean; nextCursor?: string | null };
     }>;
