@@ -110,7 +110,7 @@ test("a stuck workspace archive still shows in admission state and holds only it
   const snapshot = f.admission.snapshot();
   assert.equal(snapshot.cleanup.running, 1, "the stuck archive still holds exactly its slot");
   assert.equal(snapshot.cleanup.completed, 2);
-  assert.match(f.backpressure().warning, /Paseo cleanup call pending for 200\d\d ms \(threshold 10000 ms; a workspace archive is breaker-exempt\)/);
+  assert.match(f.backpressure().warning, /Host cleanup call pending for 200\d\d ms \(threshold 10000 ms; a workspace archive is breaker-exempt\)/);
   assert.equal(f.backpressure().degraded, false, "a long archive is a warning, not a degraded Paseo");
   hold.resolve();
   await stuck;
@@ -165,15 +165,15 @@ test("only an outstanding Paseo request inside an archive is a pending call", as
   const running = archive(f.adapter, "a");
   await tick();
   f.clock.now += 20_000;
-  assert.equal(f.backpressure().warning, "", "long local work holds the slot without a pending Paseo call");
+  assert.equal(f.backpressure().warning, "", "long local work holds the slot without a pending host call");
   assert.equal(f.admission.snapshot().cleanup.running, 1);
   local.resolve();
   await tick();
   f.clock.now += 11_000;
-  assert.match(f.backpressure().warning, /Paseo cleanup call pending for 11000 ms/);
+  assert.match(f.backpressure().warning, /Host cleanup call pending for 11000 ms/);
   sdk.resolve();
   await tick();
-  assert.match(f.backpressure().warning, /Paseo cleanup call observed at 11000 ms/);
+  assert.match(f.backpressure().warning, /Host cleanup call observed at 11000 ms/);
   f.clock.now += 30_000;
   done.resolve();
   await running;
@@ -195,7 +195,7 @@ test("a failed or timed-out Paseo request is recorded once, settles its pending 
   assert.match(f.backpressure().warning, /observed at 12000 ms/);
   await assert.rejects(archive(f.adapter, "timeout"), /read timed out/);
   f.clock.now += 15_000;
-  assert.match(f.backpressure().warning, /Paseo cleanup call pending for 15000 ms/, "an abandoned request still counts as outstanding");
+  assert.match(f.backpressure().warning, /Host cleanup call pending for 15000 ms/, "an abandoned request still counts as outstanding");
   late.resolve("late");
   await tick();
   assert.equal(f.cleanup().samples, 2);
@@ -208,7 +208,7 @@ test("a transport failure inside an archive trips once and is recorded as one sa
   f.raw.archiveTaskWorkspace = async () => { await paseoCall(async () => { f.clock.now += 5; throw Error("Transport not connected"); }); };
   await assert.rejects(archive(f.adapter, "a"), /Transport not connected/);
   assert.equal(f.backpressure().degraded, true);
-  assert.equal(f.backpressure().reason, "Paseo cleanup transport is unavailable");
+  assert.equal(f.backpressure().reason, "Host cleanup transport is unavailable");
   assert.equal(f.cleanup().samples, 1);
 });
 

@@ -144,6 +144,7 @@ test("the capacity catalogue is the only place a limit is bounded and defaulted"
     "projectLimit",
     "papercutProjectLimit",
     "hostCallLimit",
+    "paseoCallLimit",
     "stallThresholdMinutes",
     "holdReminderMinutes",
     "holdEscalationMinutes",
