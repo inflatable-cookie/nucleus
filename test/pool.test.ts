@@ -25,7 +25,7 @@ test('legacy records map the old integer weight and drop Cost at the read bounda
  assert.equal(legacy(1).weight,'default');assert.equal(legacy(2).weight,'more');
  for(const n of [3,4,7,10])assert.equal(legacy(n).weight,'most',`legacy ${n}`);
  for(const bad of [0,11,1.5,'2',null])assert.throws(()=>legacy(bad),`legacy ${String(bad)} still fails validation`);
- const rated=legacy(1,{cost:'very_low',capability:'worker',notes:'kept'});
+ const rated=legacy(1,{cost:'very_low',capability:'worker',group:'kept'});
  assert.equal('cost' in rated,false);assert.equal(rated.capability,'worker');
  assert.equal(legacy(1,{cost:'very_high'}).weight,legacy(1,{cost:null}).weight,'cost never changes the migrated weight');
  const raw={profileId:'p',enabled:true,group:'g',roles:['worker'],scopes:['general'],weight:2,cost:'low'};
