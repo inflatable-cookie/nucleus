@@ -361,8 +361,9 @@ holds it until main advances; `nucleus channel release` stops main builds.
 If the plugin cannot load and cannot own a normal roll, the operator can run
 `nucleus recover-previous`. It verifies the current and previous installed
 packages, refuses a pending activation, atomically restores the previous package,
-and suppresses the failed current revision on the main channel. Then run
-`paseo plugin reload nucleus`. This emergency route does not restart
+and suppresses the failed current revision on the main channel. Then reload the
+connected host's plugin (`paseo plugin reload nucleus`, or
+`bb plugin reload nucleus`). This emergency route does not restart
 Paseo or its daemon; normal rolls remain owned by the bridge.
 
 A machine switch is an authorized maintenance step: back up and

@@ -1,13 +1,13 @@
 # Nucleus
 
-A trusted local Paseo plugin and standalone service that own durable task
-dispatch, review, merge, closeout and recovery. Every task runs the responsible
-lifecycle: one worker owns it end to end, one retained reviewer reviews it, the
-planner ladder takes rulings, and one retained recovery thread handles faults
-code cannot settle. Nucleus must never become a place that invents planning decisions,
-grants execution authority from documents, or bypasses exact-head review
-(only an explicit, recorded operator source acceptance of the exact head may
-stand in for it; Tom, 2026-10-20).
+A trusted local plugin for its supported agent hosts and a standalone service
+that own durable task dispatch, review, merge, closeout and recovery. Every task
+runs the responsible lifecycle: one worker owns it end to end, one retained
+reviewer reviews it, the planner ladder takes rulings, and one retained recovery
+thread handles faults code cannot settle. Nucleus must never become a place that
+invents planning decisions, grants execution authority from documents, or
+bypasses exact-head review (only an explicit, recorded operator source
+acceptance of the exact head may stand in for it; Tom, 2026-10-20).
 
 ## Where things live
 
@@ -63,9 +63,10 @@ all fragments into the changelog and removes the folded files.
 
 - Preserve the live database, profiles, subscriptions, limits and pause state.
   Never edit the live database or silently reset exhausted groups.
-- Reload only the plugin (`paseo plugin reload nucleus`) after
-  typechecking. Never restart Paseo or its daemon. Never test light mode on the
-  operator's display.
+- Reload only the connected host's plugin after typechecking
+  (`paseo plugin reload nucleus` in Paseo, `bb plugin reload nucleus` in BB).
+  Never restart a host or its daemon. Never test light mode on the operator's
+  display.
 - Never leave uncommitted work in the registered checkout; it fences every
   agent's Nucleus CLI. Work in a separate worktree.
 - Load `NUCLEUS_SCRATCH_ROOT` from the ignored `.agents.local.env` for new

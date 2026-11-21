@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import { writeOwnedJson } from "../../core/machine/owned-file.mjs";
 import { processCpuMs } from "../../core/machine/process-tree-cpu";
 import { MainChannel } from "./main-channel.mjs";
+import { hostEnvironment } from "../host-environment.mjs";
 import { ensureRollOwner } from "../roll/owner";
 import { activateVersion, verifyVersion } from "./install.mjs";
 import {
@@ -22,6 +23,7 @@ import {
 import type { BridgeProcessActions } from "../../shared/service/bridge-process";
 
 export const bridgeProcessActions: BridgeProcessActions = {
+  hostEnvironment: (home) => hostEnvironment(home),
   openMainChannel: (sourcePath) => MainChannel.open(sourcePath),
   ensureRollOwner: (input) => ensureRollOwner(input),
   verifyVersion: (root) => verifyVersion(root),

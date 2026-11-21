@@ -43,8 +43,18 @@ export interface BridgeMainChannel {
   activated(target: MainTarget): Promise<void>;
 }
 
+/**
+ * The environment a service this composition starts reads to reach its host
+ * integration. Only that integration names its environment variables; `home`
+ * overrides the host home so a fixture or isolated probe reads a private config
+ * instead of the operator's.
+ */
+export type HostEnvironment = (home?: string) => NodeJS.ProcessEnv;
+
 /** Concrete process and file effects are supplied at composition, never loaded by the bridge. */
 export interface BridgeProcessActions {
+  /** The composed host environment for a service this process starts; no host names reach the shared roll. */
+  hostEnvironment: HostEnvironment;
   /** Start the host-independent roll owner for this install (nucleus#1454); the bridge never imports the owner. */
   ensureRollOwner(input: { dataDir: string; root: string }): unknown;
   openMainChannel(sourcePath: string): Promise<BridgeMainChannel | null>;

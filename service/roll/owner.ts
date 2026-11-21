@@ -51,7 +51,6 @@ import {
 import { rollInProgress } from "../../shared/service/roll-recovery";
 import { ServiceClient } from "../../shared/service/client";
 import { bridgeProcessActions } from "../install/bridge-process-actions";
-import { paseoHome, paseoHomeEnvironment } from "../../hosts/paseo/index.mjs";
 import { installBase } from "../install/install.mjs";
 import {
   CONNECT_ATTEMPT_TIMEOUT_MS,
@@ -331,8 +330,10 @@ export class RollOwner {
       processActions: this.processActions,
       session: this.session,
       connect: (info, connectOptions) => this.connect(info, connectOptions),
-      paseoEnvironment: () =>
-        paseoHomeEnvironment(this.options.paseoHome ?? paseoHome()),
+      // The spawned service reads the same host home this owner's composition
+      // supplies; the shared roll itself names no host variable.
+      hostEnvironment: () =>
+        this.processActions.hostEnvironment(this.options.hostHome),
       currentSession: () => currentLoginSession(),
     });
     this.roll = new RollScheduler({

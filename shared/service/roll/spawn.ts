@@ -80,8 +80,8 @@ export interface SpawnContext {
     info: ServiceInfo,
     options?: { claimPresence?: boolean },
   ): Promise<ServiceClient | null>;
-  /** The host's environment for a spawned service (its home), supplied by the composition. */
-  paseoEnvironment(): NodeJS.ProcessEnv;
+  /** The host environment a spawned service reads; the composing entry supplies it. */
+  hostEnvironment(): NodeJS.ProcessEnv;
   currentSession(): string;
 }
 
@@ -682,7 +682,7 @@ export class ServiceSpawner {
     attempt.token = randomUUID();
     const env: NodeJS.ProcessEnv = {
       ...process.env,
-      ...this.core.paseoEnvironment(),
+      ...this.core.hostEnvironment(),
       QUEUE_LOGIN_SESSION: this.core.currentSession(),
       [SPAWN_TOKEN_ENV]: attempt.token,
     };

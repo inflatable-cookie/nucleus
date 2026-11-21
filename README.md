@@ -8,10 +8,11 @@ never retried blindly. Nucleus carries out approved work; it doesn't plan it,
 and nothing merges without review of the exact head (or the
 operator's recorded acceptance of it).
 
-Agent apps connect through a host interface. Paseo is the first host: the
-board runs as a plugin screen in its sidebar. More hosts, such as T3Code, are
-planned; a host without a plugin UI uses the local web board. Nucleus is
-trusted local software, not a sandbox between agents.
+Agent apps connect through a host interface. Paseo, T3Code and BB are supported
+hosts, and T3Code is the current operating host. The board runs as a plugin
+screen in a host's own sidebar where that host has one; a host without a plugin
+UI uses the local web board. Nucleus is trusted local software, not a sandbox
+between agents.
 
 Subscription usage displays belong to each host app and its plugins. Nucleus
 keeps the separate dispatch usage level in Settings → Dispatch limits because

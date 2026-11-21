@@ -5,22 +5,30 @@ import { dataHome } from "../shared/data-home.mjs";
  * never run twice against the same store: construction proves the prior owner
  * is gone and fails closed otherwise.
  */
-import { paseoHome as hostHome, paseoHomeOverride } from "../hosts/paseo";
+import { hostHome, hostHomeOverride } from "./host-environment.mjs";
 import { QueueService } from "./transport/server";
 import { pidAlive } from "./transport/identity";
 import { standbyForPid, clearStandbyReady } from "./install/standby";
 
-export async function runStandaloneService(argv: string[] = process.argv.slice(2), env: NodeJS.ProcessEnv = process.env): Promise<void> {
+export async function runStandaloneService(
+  argv: string[] = process.argv.slice(2),
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<void> {
   // The bridge captures startup diagnostics over pipes, but it can exit after
   // readiness while this detached service continues. A later console write
   // then sees EPIPE; that closed diagnostic channel must not stop Queue.
   ignoreDetachedOutputEpipe(process.stdout);
   ignoreDetachedOutputEpipe(process.stderr);
-  const dataDirOverride = argv.find(value => value.startsWith("--data-dir="))?.slice("--data-dir=".length);
-  const paseoHome = hostHome();
+  const dataDirOverride = argv
+    .find((value) => value.startsWith("--data-dir="))
+    ?.slice("--data-dir=".length);
+  const resolvedHostHome = hostHome(env);
   const ownerOptions = {
     dataDir: dataDirOverride ?? dataHome(env),
-    ...(paseoHomeOverride(env) || argv.some(value => value.startsWith("--data-dir=")) ? { paseoHome } : {}),
+    ...(hostHomeOverride(env) ||
+    argv.some((value) => value.startsWith("--data-dir="))
+      ? { hostHome: resolvedHostHome }
+      : {}),
     // Contract 010's client-protocol v1 endpoint is a live-service surface; the
     // fixture and in-process test runtimes never enable it.
     hostRunEndpoint: true,
@@ -29,11 +37,19 @@ export async function runStandaloneService(argv: string[] = process.argv.slice(2
   // Keep the marker path in step with the service's own data directory so an
   // abandoned standby (SIGTERM before the old pid exits) never leaves it behind.
   const standbyDataDir = dataDirOverride ?? dataHome(env);
-  if (standbyFor !== undefined) process.on("exit", () => clearStandbyReady(standbyDataDir, process.pid));
+  if (standbyFor !== undefined)
+    process.on("exit", () => clearStandbyReady(standbyDataDir, process.pid));
   // A dead executor can't recover in place, and every request would refuse until someone
   // noticed. Exiting lets the bridge start a replacement, which reconciles from the store.
   let started = false;
-  const service = new QueueService({ owner: ownerOptions, idleTimeoutMs: 300_000, ...(standbyFor ? { standbyFor } : {}), onExecutorDeath: () => { if (started) drain("executor death"); } });
+  const service = new QueueService({
+    owner: ownerOptions,
+    idleTimeoutMs: 300_000,
+    ...(standbyFor ? { standbyFor } : {}),
+    onExecutorDeath: () => {
+      if (started) drain("executor death");
+    },
+  });
   // A standby owns nothing until the old service exits, so a stop signal before
   // then (the bridge abandoned the roll) just ends the process; the executor
   // worker is blocked waiting and could not run a drain anyway.
@@ -49,7 +65,7 @@ export async function runStandaloneService(argv: string[] = process.argv.slice(2
   };
   process.on("SIGTERM", () => drain("SIGTERM"));
   process.on("SIGINT", () => drain("SIGINT"));
-  process.on("uncaughtException", error => {
+  process.on("uncaughtException", (error) => {
     console.error("Nucleus service uncaught exception:", error);
     void service.stop().then(() => process.exit(1));
   });
@@ -57,15 +73,20 @@ export async function runStandaloneService(argv: string[] = process.argv.slice(2
     await service.start();
     started = true;
   } catch (error) {
-    console.error("Nucleus service failed to start:", error instanceof Error ? error.message : String(error));
+    console.error(
+      "Nucleus service failed to start:",
+      error instanceof Error ? error.message : String(error),
+    );
     process.exit(1);
   }
-  console.log(`Nucleus service ready on ${service["socketPath"]} pid ${process.pid} build ${service.buildId}`);
+  console.log(
+    `Nucleus service ready on ${service["socketPath"]} pid ${process.pid} build ${service.buildId}`,
+  );
   await service.drainedPromise();
 }
 
 function ignoreDetachedOutputEpipe(stream: NodeJS.WriteStream) {
-  stream.on("error", error => {
+  stream.on("error", (error) => {
     if ((error as NodeJS.ErrnoException).code !== "EPIPE") throw error;
   });
 }
