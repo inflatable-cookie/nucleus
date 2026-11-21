@@ -108,5 +108,17 @@ export function resolveIngressHost(input: {
       },
     };
   }
+  if (!input.plannerHostId && input.online.length) {
+    return {
+      hostId: input.online[0]!,
+      selection: {
+        hostId: input.online[0]!,
+        basis: input.online.length === 1 ? "sole_online_host" : "available_host",
+        ...(input.online.length === 1
+          ? {}
+          : { reason: "No default or planner host; selected first online host" }),
+      },
+    };
+  }
   throw new Error("Planner host is unknown or not registered");
 }

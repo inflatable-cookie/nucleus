@@ -61,7 +61,8 @@ export class HostFacade implements Pick<Host, HostFacadeMethod> {
     const parsed = parseAgentId(id);
     if (!parsed) return read(this.owner.adapter, id);
     const bound = this.#boundHost();
-    if (!bound || parsed.hostId === bound) return read(this.owner.adapter, callerNativeId(id, bound));
+    if (bound && parsed.hostId === bound) return read(this.owner.adapter, callerNativeId(id, bound));
+    if (!bound && !this.owner.withHost) return read(this.owner.adapter, callerNativeId(id, bound));
     if (!this.owner.withHost || (this.owner.hostOnline && !this.owner.hostOnline(parsed.hostId)))
       throw new Error(foreignIdentityRefusal(parsed.hostId));
     return this.owner.withHost(parsed.hostId, () => read(this.owner.adapter, parsed.nativeAgentId));
@@ -137,7 +138,7 @@ export class HostFacade implements Pick<Host, HostFacadeMethod> {
     for (const id of ids) {
       const parsed = parseAgentId(id);
       if (!parsed) { const group = groupFor(bound ?? ''); group.qualified.push(id); group.native.push(id); continue; }
-      if (!bound || parsed.hostId === bound) { const group = groupFor(bound ?? ''); group.qualified.push(id); group.native.push(parsed.nativeAgentId); continue; }
+      if ((bound && parsed.hostId === bound) || (!bound && !this.owner.withHost)) { const group = groupFor(bound ?? ''); group.qualified.push(id); group.native.push(parsed.nativeAgentId); continue; }
       if (this.owner.withHost && this.owner.hostOnline?.(parsed.hostId) !== false) {
         const group = groupFor(parsed.hostId); group.qualified.push(id); group.native.push(parsed.nativeAgentId); continue;
       }

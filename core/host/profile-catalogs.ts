@@ -19,6 +19,7 @@ import type {
   ProfileCompatibilityRow,
 } from "../../shared/rpc/settings";
 import { hostConnected, type Adapter } from "./adapter";
+import { isUnboundAdapter } from "./unbound-adapter";
 
 /** The primary host's catalog key, before (or without) a registered id for it. */
 const PRIMARY_CATALOG = "\u0000primary";
@@ -49,10 +50,45 @@ export class ProfileCatalogs {
   >();
   private primaryHostId: string | undefined;
   private profileCatalogRefreshed = false;
+  private rebuilding = false;
 
   constructor(private readonly owner: ProfileCatalogsOwner) {}
 
+  /** Mirror a direct `engine.profiles = ...` override into the primary/sole host snapshot. */
+  overrideProfiles(value: Profile[]): void {
+    if (this.rebuilding || !isUnboundAdapter(this.owner.primaryAdapter)) return;
+    for (const id of this.hostProfiles.keys()) {
+      if (hostKindOf(id) === "paseo" || this.hostProfiles.size === 1)
+        this.hostProfiles.set(id, value);
+    }
+  }
+
   async refresh(): Promise<void> {
+    if (isUnboundAdapter(this.owner.primaryAdapter)) {
+      const onlineIds = this.owner.hostIds().filter((id) => {
+        const selected = this.owner.resolveHostAdapter(id);
+        return Boolean(selected && selected.catalog);
+      });
+      let refreshedAny = false;
+      let firstError: unknown = null;
+      for (const id of onlineIds) {
+        const selected = this.owner.resolveHostAdapter(id)!;
+        try {
+          this.hostCatalogs.set(id, {
+            catalog: await selected.catalog!(),
+            readAt: new Date().toISOString(),
+          });
+          this.hostCatalogRefreshed.add(id);
+          refreshedAny = true;
+        } catch (error) {
+          firstError ??= error;
+        }
+      }
+      if (onlineIds.length === 1 && !refreshedAny && firstError)
+        throw firstError;
+      this.rebuildProfiles();
+      return;
+    }
     if (!this.owner.adapter.catalog)
       throw new Error("Host profile catalog is unavailable");
     // A host that positively reports itself offline answers no catalog, and that is
@@ -123,21 +159,33 @@ export class ProfileCatalogs {
    * selection follows it at once; no host is read.
    */
   rebuildProfiles(): void {
-    const profiles = this.owner.store.profiles();
-    const primary = this.hostCatalogs.get(PRIMARY_CATALOG);
-    if (primary)
-      this.owner.profiles = routingProfiles(
-        profiles,
-        primary.catalog,
-        this.owner.primaryAdapter.vocabulary ??
-          this.vocabularyFor(this.primaryHostId),
-      );
-    for (const [id, read] of this.hostCatalogs)
-      if (id !== PRIMARY_CATALOG)
-        this.hostProfiles.set(
-          id,
-          routingProfiles(profiles, read.catalog, this.vocabularyFor(id)),
+    this.rebuilding = true;
+    try {
+      const profiles = this.owner.store.profiles();
+      const primary = this.hostCatalogs.get(PRIMARY_CATALOG);
+      if (primary)
+        this.owner.profiles = routingProfiles(
+          profiles,
+          primary.catalog,
+          this.owner.primaryAdapter.vocabulary ??
+            this.vocabularyFor(this.primaryHostId),
         );
+      for (const [id, read] of this.hostCatalogs)
+        if (id !== PRIMARY_CATALOG)
+          this.hostProfiles.set(
+            id,
+            routingProfiles(profiles, read.catalog, this.vocabularyFor(id)),
+          );
+      if (!primary && isUnboundAdapter(this.owner.primaryAdapter)) {
+        const fallbackProfiles =
+          [...this.hostProfiles.entries()].find(
+            ([id]) => hostKindOf(id) === "paseo",
+          )?.[1] ?? this.hostProfiles.values().next().value;
+        if (fallbackProfiles) this.owner.profiles = fallbackProfiles;
+      }
+    } finally {
+      this.rebuilding = false;
+    }
   }
 
   /** Each secondary host's last catalog in canonical values, for Settings' profile form. */
@@ -223,7 +271,11 @@ export class ProfileCatalogs {
    * after a roll parked "profile Sol oracle is unavailable").
    */
   profileCatalogKnown(): boolean {
-    return this.profileCatalogRefreshed || this.owner.profiles.length > 0;
+    return (
+      this.profileCatalogRefreshed ||
+      this.hostCatalogRefreshed.size > 0 ||
+      this.owner.profiles.length > 0
+    );
   }
 
   /** A known host catalog distinguishes provider loss from an invalid model or configuration. */
@@ -256,8 +308,8 @@ export class ProfileCatalogs {
    * (nucleus#1364). Only a host known to be the primary uses its profile set.
    */
   profilesFor(hostId?: string | null): Profile[] {
-    if (this.isPrimaryHost(hostId)) return this.owner.profiles;
-    return this.hostProfiles.get(hostId!) ?? [];
+    if (!hostId || this.isPrimaryHost(hostId)) return this.owner.profiles;
+    return this.hostProfiles.get(hostId) ?? [];
   }
 
   /**
@@ -265,6 +317,7 @@ export class ProfileCatalogs {
    * or an id the primary was registered under. A removed host is not primary.
    */
   private isPrimaryHost(hostId?: string | null): boolean {
+    if (isUnboundAdapter(this.owner.primaryAdapter)) return false;
     if (!hostId) return true;
     if (hostId === this.primaryHostId) return true;
     const selected = this.owner.resolveHostAdapter(hostId);
@@ -278,8 +331,8 @@ export class ProfileCatalogs {
    * host's answer.
    */
   profileCatalogKnownFor(hostId?: string | null): boolean {
-    if (this.isPrimaryHost(hostId)) return this.profileCatalogKnown();
-    return this.hostCatalogRefreshed.has(hostId!);
+    if (!hostId || this.isPrimaryHost(hostId)) return this.profileCatalogKnown();
+    return this.hostCatalogRefreshed.has(hostId);
   }
 
   /**

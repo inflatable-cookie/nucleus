@@ -1,15 +1,16 @@
 import { z } from 'zod';
 
 /**
- * A project's chosen host kind. `paseo` is the default; `t3code` and `bb` are
- * trial opt-ins, selected per repository and never changed on a live task.
+ * A project's chosen host kind. No host is built in as a default: `paseo`,
+ * `t3code` and `bb` are equal optional hosts, selected per repository or
+ * operator preference and never changed on a live task.
  */
 export const hostKindSchema = z.enum(["paseo", "t3code", "bb"]);
 export type HostKind = z.infer<typeof hostKindSchema>;
-export const DEFAULT_HOST_KIND: HostKind = 'paseo';
-/** An absent setting predates host choice; explicit null means the planner's host. */
+export const DEFAULT_HOST_KIND: HostKind | null = null;
+/** An absent or null setting means no operator default (follow repository override, planner host, or an online host). */
 export function effectiveDefaultHostKind(stored: HostKind | null | undefined): HostKind | null {
-  return stored === undefined ? DEFAULT_HOST_KIND : stored;
+  return stored ?? DEFAULT_HOST_KIND;
 }
 
 /** The host names an operator reads, by host kind. */

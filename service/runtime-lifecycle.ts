@@ -94,8 +94,8 @@ export interface PrimaryHostFault {
 export interface RuntimeLifecycleOwner {
   readonly store: Store;
   readonly engine: Engine;
-  /** The primary adapter: its connect is what bootstrap bounds. */
-  readonly adapter: Adapter;
+  /** The optional Paseo adapter: null when Paseo is not installed or configured. */
+  readonly adapter: Adapter | null;
   readonly admission: Admission;
   readonly hostRegistry: HostRegistry<RegisteredHost>;
   /** The host seam's own connection rule, which also retires a stale session claim. */
@@ -109,12 +109,12 @@ export interface RuntimeLifecycleOwner {
   readonly t3Host: () => T3HostConnection | null;
   /** Adopt the stored T3Code connection if the operator route changed it (nucleus#1330). */
   refreshT3Settings(): void;
-  /** The configured daemon endpoint this runtime is meant to own. */
-  readonly daemonUrl: string;
+  /** The configured Paseo daemon endpoint, when present. */
+  readonly daemonUrl?: string;
   /** Bounded daemon-connect window. */
   readonly connectTimeoutMs: number;
-  /** The host identity the adapter reports; a change means another host's tasks. */
-  readonly paseoHostId: string;
+  /** The host identity the Paseo adapter reports, or null when Paseo is absent. */
+  readonly paseoHostId: string | null;
   /** The primary session claim, owned by the host-connection seam and written there too. */
   hostSession: HostSession | null;
   /** Set when the host seam latched an idle shutdown; bootstrap stops retrying then. */
@@ -257,7 +257,11 @@ export class RuntimeLifecycle {
       .catch(() => {
         /* the next tick reconnects; the catalog rides the periodic profile pass */
       });
-    if (this.bootstrapped && this.owner.connected()) {
+    if (
+      this.bootstrapped &&
+      (this.owner.connected() ||
+        (!this.owner.adapter && this.owner.anyHostConnected()))
+    ) {
       await this.owner.plannerTickets.ensure();
       return true;
     }
@@ -271,28 +275,42 @@ export class RuntimeLifecycle {
     this.bootstrapRunning = (async () => {
       let reconciliationTimedOut = false;
       try {
-        // The primary's connect and registration is one host's own retry. When a
-        // secondary host is already online it settles on its own, so the common
-        // recovery below never waits for an offline adapter.
-        const alreadyOnline = this.owner.anyHostConnected();
-        const connecting = this.connectPrimaryHost().then(
-          () => this.markPrimaryConnected(),
-          (error) => this.markPrimaryFailure(error),
-        );
-        if (!alreadyOnline) {
-          // Nothing else can own readiness, so the primary's outcome is this
-          // attempt's outcome and its own fault is the board-wide start error
-          // until another host answers.
-          await connecting;
-          if (this.primaryFailure) throw this.primaryFailure;
+        // Paseo is one optional host like the others. When no Paseo adapter is
+        // present, readiness belongs to whichever host (T3Code, BB) is online;
+        // if no host is online yet, the service stays ready and serves the
+        // board and CLI without recording a Paseo startup fault.
+        if (!this.owner.adapter) {
+          if (!this.owner.anyHostConnected()) {
+            const t3 = this.owner.t3Host();
+            if (t3) {
+              await t3.ensureConnected().catch(() => {});
+            }
+          }
+          if (this.closing || !this.owner.anyHostConnected()) return;
         } else {
-          void connecting;
+          // The primary's connect and registration is one host's own retry. When a
+          // secondary host is already online it settles on its own, so the common
+          // recovery below never waits for an offline adapter.
+          const alreadyOnline = this.owner.anyHostConnected();
+          const connecting = this.connectPrimaryHost().then(
+            () => this.markPrimaryConnected(),
+            (error) => this.markPrimaryFailure(error),
+          );
+          if (!alreadyOnline) {
+            // Nothing else can own readiness, so the primary's outcome is this
+            // attempt's outcome and its own fault is the board-wide start error
+            // until another host answers.
+            await connecting;
+            if (this.primaryFailure) throw this.primaryFailure;
+          } else {
+            void connecting;
+          }
         }
         if (this.closing) return;
         if (this.bootstrapped) {
           // A host already proved readiness in this process: durable recovery and
           // the first reconciliation are settled facts, so nothing repeats here.
-          if (this.owner.connected())
+          if (this.owner.anyHostConnected())
             await this.boundedBootstrapStep(
               "Daemon catalog refresh",
               this.refresh(),
@@ -361,11 +379,14 @@ export class RuntimeLifecycle {
    * host's fault: the caller records it rather than letting it fail the fleet.
    */
   private connectPrimaryHost(): Promise<void> {
+    const adapter = this.owner.adapter;
+    if (!adapter) return Promise.resolve();
     if (this.primaryConnecting) return this.primaryConnecting;
     const work = (async () => {
-      await this.boundedConnect();
+      await this.boundedConnect(adapter);
       if (this.closing) return;
       const observed = this.owner.paseoHostId;
+      if (!observed) throw new Error("Paseo host identity is unavailable");
       if (!this.owner.hostSession) {
         const recorded = this.owner.hostRegistry.legacyPaseoPrimary()?.id;
         if (recorded && recorded !== observed)
@@ -374,8 +395,8 @@ export class RuntimeLifecycle {
           );
         const token = this.owner.hostRegistry.connect(
           observed,
-          this.owner.daemonUrl,
-          { adapter: this.owner.adapter, admission: this.owner.admission },
+          this.owner.daemonUrl ?? "ws://127.0.0.1:6767/ws",
+          { adapter, admission: this.owner.admission },
           () => {
             const previousHost = this.owner.hostRegistry.legacyPaseoPrimary()?.id;
             if (previousHost && previousHost !== observed)
@@ -594,7 +615,7 @@ export class RuntimeLifecycle {
   }
 
   /** Connect with a hard bound so an unreachable daemon cannot block lifecycle. */
-  private boundedConnect(): Promise<void> {
+  private boundedConnect(adapter: Adapter): Promise<void> {
     const timeoutMs = this.owner.connectTimeoutMs;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(
@@ -607,7 +628,7 @@ export class RuntimeLifecycle {
         timeoutMs,
       );
       if (typeof timer.unref === "function") timer.unref();
-      (this.owner.adapter as unknown as { connect(): Promise<void> })
+      (adapter as unknown as { connect(): Promise<void> })
         .connect()
         .then(
           () => {

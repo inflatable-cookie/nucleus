@@ -104,7 +104,7 @@ async function fixture(
     // Model a previously authenticated host which is now disconnected.
     const token = runtime.hostRegistry.connect(
       "fixture-host",
-      runtime.settings.daemonUrl,
+      runtime.settings.daemonUrl ?? "ws://127.0.0.1:6767/ws",
       { adapter: runtime.adapter, admission: runtime.admission },
     );
     runtime.hostRegistry.disconnect("fixture-host", token);

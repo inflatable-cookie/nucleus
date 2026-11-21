@@ -843,7 +843,8 @@ no task is ever read as idle because its host is unreachable.
 ## Composition and unsupported capabilities
 
 Service composition reads optional BB configuration, registers the channel independently of Paseo and
-T3Code, and selects the recorded host per task. The BB Host keeps `lifecycleDispatch` false and the
+T3Code, and selects the recorded host per task; no Paseo install, config or default host is required
+for BB to register, accept ingress or dispatch (nucleus#1508). The BB Host keeps `lifecycleDispatch` false and the
 Adapter enables it once the helper path is wired, as T3Code does, so BB threads report through the
 helper and ticket named in the prompt. It reports `reportingViaMcp` false,
 `supportsCoordinatorRecovery` true, `perThreadEnvironment` false (one worktree per task, shared by

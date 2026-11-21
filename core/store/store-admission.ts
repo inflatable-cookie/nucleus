@@ -146,7 +146,7 @@ export class StoreAdmission {
         this.db.exec(FRESH_STORE_SCHEMA);
         this.createOutcomeSearchIndex();
         this.createLeadReadView();
-        this.core.setMeta("schema", CURRENT_SCHEMA); this.core.setMeta("paused", true); this.core.setMeta("pool", []); this.core.setMeta("operatorDefaultHostKind", "paseo");
+        this.core.setMeta("schema", CURRENT_SCHEMA); this.core.setMeta("paused", true); this.core.setMeta("pool", []);
       } else if (schema !== undefined && schema < CURRENT_SCHEMA) {
         onMigrationStart?.();
         checkSource();
@@ -185,7 +185,6 @@ export class StoreAdmission {
             OR key IN ('capacityAuthorityFacts','hostRunEnvFileRedaction','host_run_env_redaction','legacyPapercutSourceEvidence','legacyHostSelectionOperations','legacyHostSelectionTasks');`);
         if (schema < 60) {
           this.db.exec("UPDATE repository_settings SET data=json_set(data,'$.hostKind',NULL) WHERE json_extract(data,'$.hostKind')='paseo'");
-          if (this.core.getMeta<unknown>("operatorDefaultHostKind") === undefined) this.core.setMeta("operatorDefaultHostKind", "paseo");
         }
         this.core.setMeta('hostSelectionMigrationV1', true);
         // Schema 52 (task 987): the retention windows for rows that outlived their task or run.

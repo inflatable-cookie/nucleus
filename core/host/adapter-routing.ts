@@ -24,6 +24,7 @@ import {
   HostReadRefusalError,
   ProvenPreSendRefusalError,
 } from "./errors";
+import { createUnboundAdapter } from "./unbound-adapter";
 const faultHosts = new WeakMap<object, string>();
 const HOST_FAILURE = Symbol("host-failure");
 
@@ -125,7 +126,7 @@ export interface HostAdapterRoutingOwner {
  */
 export function routeHostAdapter(
   owner: HostAdapterRoutingOwner,
-  fallback: Adapter,
+  fallback: Adapter = createUnboundAdapter(),
 ): Adapter {
   const record = attributed;
   const recordCall = (

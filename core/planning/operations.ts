@@ -338,6 +338,8 @@ export class Operations {
           repoPath,
           repositoryOriginForSelection,
         );
+        if (workSelection?.basis === "available_host")
+          workSelection = undefined;
       } catch (error) {
         // With no repository/default route the ingress selector intentionally
         // falls back to the caller. Do not infer a BB task-work route from that

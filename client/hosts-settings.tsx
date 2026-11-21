@@ -63,7 +63,7 @@ export function HostDefault({
 }) {
   const [host, setHost] = useState<
     api.CapacityAuthorityValues["operatorDefaultHostKind"]
-  >(values ? values.operatorDefaultHostKind : "paseo");
+  >(values ? values.operatorDefaultHostKind : null);
   const auto = useSectionAutoSave(save);
   useEffect(() => {
     if (values && !auto.saver.busy && !auto.failed)

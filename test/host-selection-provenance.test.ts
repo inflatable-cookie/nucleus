@@ -254,6 +254,7 @@ test("a repository hostKind selects the unique online host of that kind with dur
       reason: "Repository host override t3code",
     });
 
+    runtime.store.setMeta("operatorDefaultHostKind", "paseo");
     const noSettings = await runtime.engine.startOperation({
       key: "no-settings",
       kind: "review_entry",
@@ -381,7 +382,8 @@ test("a bb repository hostKind selects the online BB host, never rehosts a live 
       reason: "Repository host override bb",
     });
 
-    // Paseo stays the default for a repository with no setting.
+    // When an operator explicitly sets Paseo as default, an unconfigured repository uses it.
+    runtime.store.setMeta("operatorDefaultHostKind", "paseo");
     const unconfigured = await runtime.engine.startOperation({
       key: "default-kind",
       kind: "review_entry",

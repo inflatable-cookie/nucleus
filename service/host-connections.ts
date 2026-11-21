@@ -27,7 +27,8 @@ export type HostSession = { id: string; token: object };
 
 /** The runtime ports host-connection ownership reads and writes. */
 export interface HostConnectionOwner {
-  adapter: Adapter;
+  adapter?: Adapter;
+  paseoAdapter?: Adapter | null;
   hostSession: HostSession | null;
   hostRegistry: HostRegistry<RegisteredHost>;
   t3Host: T3HostConnection | null;
@@ -43,12 +44,13 @@ export interface HostConnectionOwner {
   store: Store;
   engine: Engine;
   pluginLostGraceMs: number;
-  paseoHostId: string;
+  paseoHostId: string | null;
 }
 
 /** Engine host-hook ports the runtime wires once at construction. */
 export interface EngineHostWiring {
-  adapter: Adapter;
+  adapter?: Adapter;
+  paseoAdapter?: Adapter | null;
   hostRegistry: HostRegistry<RegisteredHost>;
   hostSession: HostSession | null;
   connected(): boolean;
@@ -167,11 +169,17 @@ export function wireEngineHosts(
   };
   engine.hostAvailable = (id) => {
     const selected = runtime.hostRegistry.get(id);
+    const primary =
+      runtime.paseoAdapter !== undefined
+        ? runtime.paseoAdapter
+        : runtime.adapter;
     return Boolean(
       selected &&
         (engine.activeHostId
           ? engine.activeHostId === id
-          : selected.adapter === runtime.adapter && runtime.connected()),
+          : Boolean(primary) &&
+            selected.adapter === primary &&
+            runtime.connected()),
     );
   };
   // Intake may arrive over a secondary BB/T3 host. This only proves that the
@@ -205,9 +213,17 @@ export class HostConnections {
 
   constructor(private readonly owner: HostConnectionOwner) {}
 
+  private primaryAdapter(): Adapter | null {
+    return this.owner.paseoAdapter !== undefined
+      ? this.owner.paseoAdapter
+      : (this.owner.adapter ?? null);
+  }
+
   private retirePrimaryIfDisconnected(): boolean {
+    const paseoAdapter = this.primaryAdapter();
+    if (!paseoAdapter) return false;
     if (
-      !hostConnected(this.owner.adapter) ||
+      !hostConnected(paseoAdapter) ||
       (this.owner.hostSession !== null &&
         this.owner.paseoHostId !== this.owner.hostSession.id)
     ) {
@@ -229,7 +245,7 @@ export class HostConnections {
     return (
       this.owner.hostSession !== null &&
       this.owner.hostRegistry.get(this.owner.hostSession.id)?.adapter ===
-        this.owner.adapter
+        paseoAdapter
     );
   }
 
@@ -256,7 +272,9 @@ export class HostConnections {
       this.owner.closing ||
       this.owner.idleShutdownLatched ||
       this.connected() ||
-      hostConnected(this.owner.adapter) ||
+      (this.primaryAdapter()
+        ? hostConnected(this.primaryAdapter()!)
+        : false) ||
       this.owner.bootstrapRunning ||
       (this.owner.serveHostRunEndpoint &&
         !this.owner.hostRunEndpoint?.serving())

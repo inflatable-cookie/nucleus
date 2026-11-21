@@ -609,7 +609,14 @@ export class Engine {
     hostAvailable: (id) => this.hostAvailable(id),
     workspacePressureWait: (task) => this.workspacePressureWait(task),
   });
-  profiles: Profile[] = [];
+  private profilesValue: Profile[] = [];
+  get profiles(): Profile[] {
+    return this.profilesValue;
+  }
+  set profiles(value: Profile[]) {
+    this.profilesValue = value;
+    this.catalogs?.overrideProfiles(value);
+  }
   stopped = false;
   /**
    * Spec 027: Queue data directory for sibling worktrees

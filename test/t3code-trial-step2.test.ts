@@ -626,6 +626,7 @@ test("repository hostKind selects the online host of that kind; switching back l
       runtime.engine.selectIngressHost(undefined, "/repo"),
       "paseo-primary",
     );
+    runtime.store.setMeta("operatorDefaultHostKind", "paseo");
     const next = await runtime.engine.startOperation({
       key: "opt-out-submit",
       kind: "review_entry",
