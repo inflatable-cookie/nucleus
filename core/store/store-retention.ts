@@ -39,6 +39,9 @@ export const PROJECT_QA_KEEP_PER_REPOSITORY = 50;
 /** The assignment history the profile picker reads (`recentCounts`). */
 export const ASSIGNMENT_HISTORY_KEEP = 50;
 
+/** Each role's own assignment window for the Profiles usage view (nucleus#1502), kept per role. */
+export const ASSIGNMENT_ROLE_HISTORY_KEEP = 50;
+
 export const HISTORY_RETENTION_MS = 4 * 24 * 60 * 60 * 1000;
 
 /** How long a finished task's history (task, events, runs) is kept before purge (Spec 018; Tom, 2026-10-20: "4 days for queue", from 14). */
@@ -76,6 +79,7 @@ export interface RetainedRowPrune {
   projectQaRuns: number;
   hostRunOutputFailures: number;
   assignmentHistory: number;
+  assignmentRoleHistory: number;
 }
 
 /** The facts retention needs from the store's other owners; nothing else on the store is read. */
@@ -690,6 +694,10 @@ export class StoreRetention {
       assignmentHistory: changes(
         "DELETE FROM assignment_history WHERE id NOT IN (SELECT id FROM assignment_history ORDER BY id DESC LIMIT ?)",
         ASSIGNMENT_HISTORY_KEEP,
+      ),
+      assignmentRoleHistory: changes(
+        `DELETE FROM assignment_role_history WHERE id NOT IN (SELECT id FROM (SELECT id, ROW_NUMBER() OVER (PARTITION BY role ORDER BY id DESC) AS newest FROM assignment_role_history) WHERE newest <= ?)`,
+        ASSIGNMENT_ROLE_HISTORY_KEEP,
       ),
     };
   }

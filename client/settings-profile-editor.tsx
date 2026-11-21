@@ -14,16 +14,19 @@ import {
   StopSlider,
   controlText,
   muted,
+  popover,
   row,
   type Colors,
 } from "./controls";
 import {
   control,
+  roles,
   space,
   type as typeScale,
   radius,
   usageStripColor,
 } from "./design";
+import { Popover } from "./popover";
 import { createAutoSave, type AutoSave } from "../shared/autosave";
 import {
   hostModelFor,
@@ -55,7 +58,7 @@ import {
   WEIGHT_STOP_SPEECH,
   HOST_DEFAULT,
   PAIRED_MIN_WIDTH,
-  RECENT_ASSIGNMENT_WINDOW,
+  USAGE_ROLE_TABS,
   defaultPoolEntry,
   emptyProfileDraft,
   featureFingerprint,
@@ -76,32 +79,50 @@ import {
   type CatalogRead,
   type CompatibilityRead,
   type ProfileDraft,
+  type UsageRole,
 } from "./settings-profile-helpers";
 
 /**
- * One profile row's recent-assignment usage: the track fills the existing
- * control height and scales to the busiest profile in the rendered list. The
- * color is a secondary cool-to-warm cue; length carries the comparison.
- * Non-interactive, with the exact count and rolling window available to readers.
+ * One profile row's recent-assignment usage for the selected view (nucleus#1502): the
+ * track fills the existing control height and scales to the busiest profile in the
+ * rendered list. The color is a secondary cool-to-warm cue; length carries the
+ * comparison. Hover or focus shows the same count, sample and view as a tooltip, and
+ * the accessible label names them for readers.
  */
 function ProfileUsageBar({
   c,
   name,
   count,
   max,
+  sample,
+  role,
 }: {
   c: Colors;
   name: string;
   count: number;
   max: number;
+  sample: number;
+  role: UsageRole;
 }) {
+  const [showHint, setShowHint] = useState(false);
+  const anchor = useRef<View | null>(null);
   const ratio = max > 0 ? Math.max(0, Math.min(1, count / max)) : 0;
   const percent = ratio * 100;
   const color = usageStripColor(ratio);
+  const scope = (
+    USAGE_ROLE_TABS.find((tab) => tab.id === role)?.label ?? "All roles"
+  ).toLowerCase();
+  const summary = `${name}, ${scope}: ${count} of ${sample} recent assignments`;
   return (
-    <View
+    <Pressable
+      ref={anchor}
       accessibilityRole="image"
-      accessibilityLabel={`${name} recent assignments: ${count} in the rolling window of up to ${RECENT_ASSIGNMENT_WINDOW} recorded assignments`}
+      accessibilityLabel={summary}
+      onPress={() => setShowHint((open) => !open)}
+      onHoverIn={() => setShowHint(true)}
+      onHoverOut={() => setShowHint(false)}
+      onFocus={() => setShowHint(true)}
+      onBlur={() => setShowHint(false)}
       style={{
         flex: 1,
         minWidth: 56,
@@ -126,7 +147,40 @@ function ProfileUsageBar({
           }}
         />
       </View>
-    </View>
+      {showHint && (
+        <Popover
+          anchor={anchor}
+          align="end"
+          pointerEvents="none"
+          maxWidth={320}
+          inlineStyle={{
+            top: control.height + space.xxs,
+            right: 0,
+            maxWidth: 320,
+          }}
+        >
+          <View
+            pointerEvents="none"
+            style={{
+              paddingHorizontal: space.xs,
+              paddingVertical: space.xxs,
+              borderRadius: radius.control,
+              ...popover(c),
+            }}
+          >
+            <Text
+              style={{
+                color: roles(c).foreground,
+                fontSize: typeScale.metadata.fontSize,
+                lineHeight: typeScale.metadata.lineHeight,
+              }}
+            >
+              {summary}
+            </Text>
+          </View>
+        </Popover>
+      )}
+    </Pressable>
   );
 }
 
@@ -143,6 +197,7 @@ export function ProfileRow({
   repositories,
   state,
   visibleProfileIds,
+  usageRole,
   busy,
   editing,
   poolSave,
@@ -165,6 +220,7 @@ export function ProfileRow({
   repositories: readonly RepositorySettings[];
   state: UiQueueState | null;
   visibleProfileIds: readonly string[];
+  usageRole: UsageRole;
   busy: boolean;
   editing: boolean;
   poolSave: (entry: PoolEntry) => Promise<void>;
@@ -236,7 +292,7 @@ export function ProfileRow({
   const status = state
     ? profileRowStatus(availability, entry, state)
     : { problem: "" };
-  const usage = profileUsage(state, profile.id, visibleProfileIds);
+  const usage = profileUsage(state, profile.id, visibleProfileIds, usageRole);
   const hostNote = hostCompatibilityNote(compatibility, profile.id);
   const attention = status.problem
     ? `${status.problem}${hostNote ? `\n${hostNote}` : ""}`
@@ -268,6 +324,8 @@ export function ProfileRow({
             name={profile.name}
             count={usage.count}
             max={usage.max}
+            sample={usage.sample}
+            role={usageRole}
           />
         ) : null}
         {attention ? (

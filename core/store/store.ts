@@ -1,3 +1,4 @@
+import type { AssignmentRole } from "../../shared/schema/state";
 import { StoreAuth } from "./store-auth";
 import { StoreConfig } from "./store-config";
 import { digest, now, StoreCore } from "./store-core";
@@ -1448,8 +1449,19 @@ export class Store {
   recentCounts(limit = 50): Record<string, number> {
     return this.configStore.recentCounts(limit);
   }
-  chargeAssignment(group: string, profileId: string) {
-    return this.configStore.chargeAssignment(group, profileId);
+  /** The All window's size behind `recentCounts` (nucleus#1502). */
+  recentSample(limit = 50): number {
+    return this.configStore.recentSample(limit);
+  }
+  /** One role's own rolling window for the Profiles usage view (nucleus#1502). */
+  recentRoleUsage(role: AssignmentRole): {
+    counts: Record<string, number>;
+    sample: number;
+  } {
+    return this.configStore.recentRoleUsage(role);
+  }
+  chargeAssignment(group: string, profileId: string, role?: AssignmentRole) {
+    return this.configStore.chargeAssignment(group, profileId, role);
   }
   nextIntegrationSequence(repoPath: string) {
     return this.configStore.nextIntegrationSequence(repoPath);

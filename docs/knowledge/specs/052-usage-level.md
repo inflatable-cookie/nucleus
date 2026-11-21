@@ -365,10 +365,20 @@ Heavyweight if it needs to").
     Tied leaders fill; zero has a neutral, empty track. Hidden and removed profile
     history cannot set the maximum, and an all-zero sample has no fill. A cool-to-warm
     color cue supplements length, which carries the comparison independently of
-    color. The accessible name keeps the exact count and rolling window of up to
-    50 assignments; the Profiles help explains once that a full strip means busiest
-    in the list. Counts still come from the board's existing `recentAssignments`
-    sample; group and routing data do not change. The capability control shows the
+    color. The accessible name and tooltip keep the exact count, the window's real
+    sample size and the selected view; the Profiles help explains once that a full
+    strip means busiest in the list.
+    A selector above the list (All, Workers, Reviewers, Coordinators) picks the view
+    (nucleus#1502). All reads the board's existing `recentAssignments` window, the
+    most recent 50 charges across roles, sized by `recentAssignmentSample`. Each role
+    reads its own most recent 50 charges from `assignment_role_history`, recorded with
+    the routing purpose at the existing charge (`chargeAssignment`) and trimmed per
+    role, so heavy worker traffic cannot evict coordinator or reviewer samples.
+    Worker revisions are workers; proof executors and closeout keep their own
+    purposes and count in All only. Untagged history counts in All and starts no role
+    window. A view's maximum and denominator come from that view alone, and an empty
+    view says it has no recorded assignments. Routing, the global 50-assignment
+    selection window, assignment totals and group data do not change. The capability control shows the
     four brackets, and its (?) says where each complexity starts and which brackets
     need permission.
 - **Normal.** Normal starts every task on its own bracket.

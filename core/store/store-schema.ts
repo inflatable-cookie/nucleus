@@ -11,6 +11,12 @@ export const FRESH_STORE_SCHEMA =
  * is the lookups over them; the two together are the one schema source.
  */
 export const STORE_OPEN_DDL = [
+  // nucleus#1502: role-tagged assignment history, kept beside the untagged
+  // `assignment_history` so heavy worker traffic cannot evict coordinator or reviewer
+  // samples. Each role keeps its own window (`ASSIGNMENT_ROLE_HISTORY_KEEP`), trimmed
+  // when a charge is recorded. Additive: an older build never reads it.
+  `CREATE TABLE IF NOT EXISTS assignment_role_history(id INTEGER PRIMARY KEY AUTOINCREMENT, role TEXT NOT NULL, profile_id TEXT NOT NULL, at TEXT NOT NULL);
+   CREATE INDEX IF NOT EXISTS assignment_role_history_role ON assignment_role_history(role, id)`,
   // Audit A7: host-run history reads by selector (admission budgets) instead of parsing the
   // whole growing table. The indexed expression reads only well-formed rows: a bare
   // json_extract index aborted every write of an undecodable row and would stop the store

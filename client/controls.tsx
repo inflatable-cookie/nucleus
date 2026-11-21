@@ -38,7 +38,7 @@ export const muted = (c: Colors) => ({
   fontSize: type.body.fontSize,
 });
 /** Popover and help-panel chrome: a raised bordered surface with a soft shadow. */
-const popover = (c: Colors) => ({
+export const popover = (c: Colors) => ({
   borderWidth: 1,
   borderColor: roles(c).border,
   backgroundColor: roles(c).raised,

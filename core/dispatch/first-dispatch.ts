@@ -1,4 +1,7 @@
-import { effectiveDefaultHostKind, type HostKind } from "../../shared/host-kind";
+import {
+  effectiveDefaultHostKind,
+  type HostKind,
+} from "../../shared/host-kind";
 import { admitPhaseFacts } from "../scheduling/phase-latency";
 import type { Engine } from "../engine";
 import type { Task } from "../../shared/contracts";
@@ -489,9 +492,17 @@ export class FirstDispatch {
           selection.profile.name,
         );
         admitPhaseFacts(this.store, task.id);
+        // nucleus#1502: the charge's routing purpose. A first-host selection and a
+        // worker dispatch are worker charges; a proof-only reviewer is a reviewer; a
+        // proof executor is its own internal purpose and stays out of the role views.
         this.store.chargeAssignment(
           selection.entry.group,
           selection.profile.id,
+          firstSelection || task.entrypoint !== "proof"
+            ? "worker"
+            : proofOnlyNeedsGo
+              ? "reviewer"
+              : undefined,
         );
         this.store.noteGrantRun(current, "worker");
         // Recorded in the same transaction as the intent: an interruption can never leave the

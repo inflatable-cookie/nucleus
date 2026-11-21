@@ -5,6 +5,7 @@ import {
   type NucleusProfile,
 } from "../shared/profiles";
 import type {
+  AssignmentRole,
   PoolEntry,
   Profile,
   Project,
@@ -309,23 +310,66 @@ export function modelWords(
 export const RECENT_ASSIGNMENT_WINDOW = 50;
 
 /**
- * One profile's count and the busiest visible row's count for its Profiles
- * strip. Only IDs in the rendered list set the maximum; retained history for
- * removed profiles and group keys never affect the comparison.
+ * The Profiles usage view (nucleus#1502): All keeps the rotation's shared window
+ * across roles; each role reads its own charged window.
+ */
+export type UsageRole = "all" | AssignmentRole;
+
+export const USAGE_ROLE_TABS: readonly {
+  id: UsageRole;
+  text: string;
+  label: string;
+  noun: string;
+}[] = [
+  { id: "all", text: "All", label: "All roles", noun: "" },
+  { id: "worker", text: "Workers", label: "Workers", noun: "worker" },
+  { id: "reviewer", text: "Reviewers", label: "Reviewers", noun: "reviewer" },
+  {
+    id: "coordinator",
+    text: "Coordinators",
+    label: "Coordinators",
+    noun: "coordinator",
+  },
+];
+
+/** The window one view reads: its profile counts and its real sample size. */
+export function usageWindow(
+  state: Pick<
+    UiQueueState,
+    "recentAssignments" | "recentAssignmentSample" | "recentAssignmentRoles"
+  >,
+  role: UsageRole,
+): { counts: Record<string, number>; sample: number } {
+  if (role === "all")
+    return {
+      counts: state.recentAssignments ?? {},
+      sample: state.recentAssignmentSample ?? 0,
+    };
+  return state.recentAssignmentRoles?.[role] ?? { counts: {}, sample: 0 };
+}
+
+/**
+ * One profile's count, the busiest visible row's count and the view's sample size
+ * for its Profiles strip. Only IDs in the rendered list set the maximum; retained
+ * history for removed profiles and group keys never affect the comparison.
  */
 export function profileUsage(
-  state: Pick<UiQueueState, "recentAssignments"> | null,
+  state: Pick<
+    UiQueueState,
+    "recentAssignments" | "recentAssignmentSample" | "recentAssignmentRoles"
+  > | null,
   profileId: string,
   visibleProfileIds: readonly string[],
-): { count: number; max: number } | null {
+  role: UsageRole = "all",
+): { count: number; max: number; sample: number } | null {
   if (!state) return null;
-  const recent = state.recentAssignments ?? {};
+  const { counts: recent, sample } = usageWindow(state, role);
   const count = recent[`profile:${profileId}`] ?? 0;
   const max = visibleProfileIds.reduce(
     (highest, id) => Math.max(highest, recent[`profile:${id}`] ?? 0),
     0,
   );
-  return { count, max };
+  return { count, max, sample };
 }
 
 export type CatalogRead = { cwd: string; catalog: HostCatalog };

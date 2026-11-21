@@ -297,7 +297,20 @@ export class RunReservationAdmission {
           "role_replacement",
           `reviewer: retained profile unavailable; replacement ${profile!.name || profile!.id}`,
         );
-      if (group) this.store.chargeAssignment(group, profile!.id);
+      // nucleus#1502: the run's routing purpose. Proof executors and closeout keep
+      // their own internal purposes and stay out of the role views.
+      if (group)
+        this.store.chargeAssignment(
+          group,
+          profile!.id,
+          role === "revision"
+            ? "worker"
+            : role === "reviewer"
+              ? "reviewer"
+              : role === "recovery"
+                ? "coordinator"
+                : undefined,
+        );
       return true;
     });
     return reserved

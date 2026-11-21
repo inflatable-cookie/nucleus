@@ -47,6 +47,7 @@ import {
   type BbSidebarWorkspace,
 } from "./bb-sidebar-groups";
 import type { BbSidebarGroups } from "../../shared/schema/bb-sidebar";
+import type { AssignmentRole } from "../../shared/schema/state";
 import {
   matchProjectBadges,
   matchRepositoryBadges,
@@ -120,6 +121,18 @@ export class RuntimeBoard {
 
   constructor(private readonly context: BoardContext) {}
 
+  /** nucleus#1502: each assignment role's own rolling window for the Profiles usage view. */
+  private recentAssignmentRoles(): Record<
+    AssignmentRole,
+    { counts: Record<string, number>; sample: number }
+  > {
+    return {
+      worker: this.context.store.recentRoleUsage("worker"),
+      reviewer: this.context.store.recentRoleUsage("reviewer"),
+      coordinator: this.context.store.recentRoleUsage("coordinator"),
+    };
+  }
+
   /**
    * Queue #650: the board's paused-stop counters. `stoppedThreads` counts live
    * threads (distinct agents) the operator stopped while paused that have not
@@ -191,6 +204,8 @@ export class RuntimeBoard {
       pool: this.context.store.pool(),
       assignments: this.context.store.counts(),
       recentAssignments: this.context.store.recentCounts(),
+      recentAssignmentSample: this.context.store.recentSample(),
+      recentAssignmentRoles: this.recentAssignmentRoles(),
       availability: this.context.store.db
         .prepare("SELECT data FROM availability")
         .all()
@@ -509,6 +524,8 @@ export class RuntimeBoard {
       pool: this.context.store.pool(),
       assignments: this.context.store.counts(),
       recentAssignments: this.context.store.recentCounts(),
+      recentAssignmentSample: this.context.store.recentSample(),
+      recentAssignmentRoles: this.recentAssignmentRoles(),
       availability: this.context.store.db
         .prepare("SELECT data FROM availability")
         .all()
