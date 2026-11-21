@@ -237,7 +237,7 @@ export class ForceVerbs {
     const runsBeforeMove = this.store.runs(task.id);
     const live: Array<Pick<Run, "id" | "taskId" | "agentId" | "workspaceId"> & { role: Run["role"] | "worker" }> = [];
     const uncertainties: string[] = [];
-    for (const run of runsBeforeMove.filter(run => !run.released || (run.agentId && ['revision', 'reviewer', 'executor'].includes(run.role)))) {
+    for (const run of runsBeforeMove.filter(run => !run.explicitlyReleasedAt && (!run.released || (run.agentId && ['revision', 'reviewer', 'executor'].includes(run.role))))) {
       const disposition = await this.engine.runDisposition(run);
       if (typeof disposition === 'object') {
         uncertainties.push(`Run ${run.id}: ${disposition.refusal}`);

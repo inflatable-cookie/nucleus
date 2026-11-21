@@ -7,6 +7,7 @@ import { formatAgentId } from "../shared/agent-identity";
 import { OPERATOR_BOARD_CALLER, runSchema, submissionSchema, taskControlTaskSchema } from "../shared/contracts";
 import type { Adapter } from "../core/host";
 import { runSettlementFence } from "../core/intake/run-settlement";
+import { executionParticipants } from "../core/machine/execution-participants";
 import { plannerEscalations } from "../core/questions/ladder/records";
 import { blockingRecoveryEffects } from "../core/recovery/recovery-effects";
 import { resolutionCreationRestartRefusal } from "../core/recovery/absent-creation/restarts";
@@ -136,9 +137,11 @@ test("the coordinator can release or clear its task records within its authority
   await assert.rejects(command(release), /critical task/);
   assert.equal(audit().length, 0);
   assert.deepEqual(calls, []);
-  assert.equal((await command({ ...hold, caller: planner })).explicitResolution?.status, "applied");
+  assert.equal((await command({ ...hold, caller: OPERATOR_BOARD_CALLER })).explicitResolution?.status, "warnings");
+  assert.equal((await command({ ...hold, caller: OPERATOR_BOARD_CALLER, accept: ["hold_owner"] })).explicitResolution?.status, "applied");
   store.update(current().id, { critical: false });
   assert.equal((await command(release)).explicitResolution?.status, "applied");
+  assert.equal(executionParticipants(current(), store.runs(current().id)).has("reviewer"), false);
   assert.deepEqual(calls, ["stop reviewer", "archive reviewer"]);
 });
 

@@ -16,11 +16,13 @@ export function executionParticipants(task: Task, runs: Run[]): Map<string, stri
     const run = runs.find(item => item.id === worker.runId);
     if (run && (run.taskId !== task.id || run.role !== 'revision' || run.agentId !== worker.agentId))
       throw Error('Retired worker run identity conflicts');
+    if (run?.explicitlyReleasedAt) continue;
     add(worker.agentId, run?.workspaceId || task.workspaceId);
   }
   for (const run of runs) {
     if (!['revision', 'reviewer', 'executor'].includes(run.role)) continue;
     if (run.taskId !== task.id) throw Error('Participant run belongs to another task');
+    if (run.explicitlyReleasedAt) continue;
     if (!run.agentId && run.released && !run.active) continue;
     add(run.agentId, run.workspaceId);
   }
@@ -28,6 +30,7 @@ export function executionParticipants(task: Task, runs: Run[]): Map<string, stri
     const run = runs.find(item => item.id === proof.runId);
     if (!run || run.taskId !== task.id || run.role !== 'executor' || run.agentId !== proof.agentId || run.workspaceId !== proof.workspaceId)
       throw Error('Proof executor run identity conflicts');
+    if (run.explicitlyReleasedAt) continue;
     add(proof.agentId, proof.workspaceId);
   }
   return participants;

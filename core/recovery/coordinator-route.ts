@@ -435,7 +435,7 @@ export class CoordinatorRoute {
     // reads inside one pass are shared by `validationEvidence`.
     const reminderHeld =
       t.resolution.incident?.action === "callback_reminder" ||
-      t.reasonFact?.code === "callback_expired";
+      (t.reasonFact?.code === "callback_expired" || t.reasonFact?.code === "callback_attention");
     if (
       reminderHeld &&
       this.resolution.validationEvidence(t, { fresh: true }).state !== "absent"

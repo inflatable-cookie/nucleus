@@ -5,9 +5,10 @@ import { Store } from '../core/store/store';
 import { Engine } from '../core/engine';
 import { ReviewPublicationTransientError } from '../core/forge/forge-health';
 import {
-  expiredCallbackReminderReason, missingCallbackStopReason, missingCallbackStopReasonFor,
+  expiredCallbackReminderReason, missingCallbackStopReason,
 } from '../core/recovery/task-reasons';
 import { submissionSchema, type Task } from '../shared/contracts';
+import { taskDecisionFact } from '../shared/task-stop';
 import type { Adapter } from '../core/host';
 
 /**
@@ -31,15 +32,11 @@ function fixture(t: TestContext) {
   return { store, engine, add };
 }
 
-test('the callback-reminder stops are one sentence pair, read for the role that recorded them', () => {
-  assert.equal(missingCallbackStopReason('worker'), 'The worker thread stopped without a callback; inspect the thread');
-  assert.equal(expiredCallbackReminderReason('reviewer'), 'The reviewer callback reminder expired');
-  assert.equal(missingCallbackStopReasonFor(missingCallbackStopReason('worker'), 'worker'), true);
-  assert.equal(missingCallbackStopReasonFor(expiredCallbackReminderReason('worker'), 'worker'), true);
-  assert.equal(missingCallbackStopReasonFor(missingCallbackStopReason('worker'), 'reviewer'), false,
-    'another role\'s stop is not this run\'s stop');
-  assert.equal(missingCallbackStopReasonFor('The worker thread stopped and its one callback reminder expired without a result; coordinator attention required', 'worker'), false,
-    'the coordinator\'s escalation sentence is a different stop');
+test('legacy callback waits retain their role and distinguish an expired wait from coordinator attention', () => {
+  assert.deepEqual(taskDecisionFact(missingCallbackStopReason('worker')), { code: 'callback_missing', subject: 'worker' });
+  assert.deepEqual(taskDecisionFact(expiredCallbackReminderReason('reviewer')), { code: 'callback_expired', subject: 'reviewer' });
+  assert.deepEqual(taskDecisionFact('The worker thread stopped and its one callback reminder expired without a result; coordinator attention required'),
+    { code: 'callback_attention', subject: 'worker' });
 });
 
 test('the git-transient plan alone decides the uncertain-delivery skip, and only a publication record lifts it', async t => {

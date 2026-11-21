@@ -37,7 +37,7 @@ export async function settleResponsibleFault(engine: RecoverySettlementContext, 
   const incident = current.resolution.incident;
   const stoppedWithoutResult = Boolean(run.retainedAgentClosedAt)
     || (current.reasonFact?.subject === "reviewer" &&
-      ["callback_missing", "callback_expired"].includes(current.reasonFact.code))
+      ["callback_missing", "callback_expired", "callback_attention", "callback_stopped"].includes(current.reasonFact.code))
     || Boolean(incident && incident.role === "reviewer" && incident.status !== "resolved"
       && (incident.cause === MISSING_CALLBACK_CAUSE || incident.cause === "stalled_turn"));
   if (!stoppedWithoutResult) return false;

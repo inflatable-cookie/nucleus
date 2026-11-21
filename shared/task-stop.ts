@@ -102,7 +102,7 @@ export type TaskStopVerb = z.infer<typeof taskStopVerbSchema>;
 export const taskDecisionFactSchema = z.object({
   code: z.enum([
     "integration_turn", "workspace_absent", "workspace_orphan", "creation_lookup", "worker_lookup",
-    "callback_missing", "callback_expired", "thread_running", "creating_worker", "profile_unavailable",
+    "callback_missing", "callback_expired", "callback_attention", "callback_stopped", "thread_running", "creating_worker", "profile_unavailable",
     "retained_profile", "host_read_exhausted", "coordinator_unavailable", "ssh_auth", "provider_retry",
     "provider_refusal", "external_merge_check", "external_merge_recovered", "check_deadline", "review_effect_wait",
     "hook_hold", "pr_head_changed", "pr_identity", "accepted_pr", "closeout_base_refresh", "deferred_verb",
@@ -119,8 +119,10 @@ const decisionPatterns: ReadonlyArray<[TaskDecisionFact["code"], RegExp]> = [
   ["workspace_orphan", / left an orphan .*base-identical and unpublished/],
   ["creation_lookup", /^(?:Exact (?!worker )\w+ creation lookup is unavailable|The \w+ creation lookup for run |The \w+ creation .+ is still uncertain: a complete lookup)/],
   ["worker_lookup", /^(?:Exact worker creation lookup is unavailable|Worker creation lookup is partial)/],
-  ["callback_expired", /^The (\w+) (?:callback reminder expired|thread stopped and its one callback reminder expired)/],
-  ["callback_missing", /^The (\w+) thread stopped(?: without a callback| after its transient provider continuation)/],
+  ["callback_expired", /^The (\w+) callback reminder expired$/],
+  ["callback_missing", /^The (\w+) thread stopped without a callback; inspect the thread$/],
+  ["callback_attention", /^The (\w+) (?:thread stopped and its one callback reminder expired|callback reminder expired)/],
+  ["callback_stopped", /^The (\w+) thread stopped/],
   ["callback_missing", /^(worker) stopped without a completion callback/i],
   ["thread_running", /^(\w+) thread running$/],
   ["creating_worker", /^Creating worker$/],
