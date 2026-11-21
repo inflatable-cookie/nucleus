@@ -31,8 +31,20 @@ export class QuestionRaiseRoutes {
     if (!this.resolution.queueBudgetQuestionCurrent(task.id, decision)) return Promise.reject(Error('Budget question no longer matches the current stop'));
     const route = questionRoute(this.adapter, task.profile?.provider);
     if (options.boardOnly || route === 'board') {
-      if (isDelegableQuestionKind(decision.kind))
-        return this.raiseLadderDecision(task, decision, signal, options.why ?? 'the task host cannot take a native question');
+      const why = options.why ?? 'the task host cannot take a native question';
+      const delegable = isDelegableQuestionKind(decision.kind);
+      if (route === 'board' && !options.boardOnly) {
+        const prefix = `${decision.id}: `;
+        if (!this.store.eventsAll(task.id).some(event => event.kind === 'operator_question_route_fallback' && event.detail.startsWith(prefix))) {
+          this.store.event(
+            task.id,
+            'operator_question_route_fallback',
+            `${prefix}native in-thread decision unavailable on ${task.hostId ?? 'unknown'}; routing via ${delegable ? 'planner ladder then board' : 'board'} (${why})`,
+          );
+        }
+      }
+      if (delegable)
+        return this.raiseLadderDecision(task, decision, signal, why);
       return this.raiseBoardDecision(task, decision, signal, options.why);
     }
     // The native prompt carries the full text when the producer kept one; the

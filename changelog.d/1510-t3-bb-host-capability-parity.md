@@ -1,0 +1,5 @@
+T3 Code and BB adapters now cover the optional host capabilities previously implemented only on Paseo, and kept fallbacks are explicit and visible instead of silent skips:
+
+- T3 Code now supports decider runs (`runDecider`), consult reviewer creation (`createConsultReviewer`), queued messages (`enqueueMessage`), interrupt-and-continue (`interruptAndContinue`), and closeout workspace recovery using the task workspaces root.
+- BB now supports queued messages (`enqueueMessage`), interrupt-and-continue (`interruptAndContinue`), cascade-proven thread deletion (`deleteAgent` via `thread.delete`), and closeout workspace recovery using the task workspaces root.
+- Hosts without a live run usage stream record a one-time `run_usage_unavailable` event per run; hosts without native in-thread decisions record `operator_question_route_fallback` before routing to the planner ladder or board; and `service.health` explicitly reports `liveRunPresence` when no connected host exposes a native terminal/label presence surface.

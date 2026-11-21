@@ -107,6 +107,7 @@ export function bbFake() {
       },
       async stop(args) { note('threads.stop', args); rows.get(args.threadId).status = 'idle'; rows.get(args.threadId).runtime.displayStatus = 'idle'; if (controls.loseStop) throw new Error('unknown stop delivery'); return structuredClone(recorded.stop); },
       async archive(args) { note('threads.archive', args); rows.get(args.threadId).archivedAt = BB_STAMP; return { ...structuredClone(recorded.archive), archivedThreadIds: [args.threadId] }; },
+      async delete(args) { note('threads.delete', args); rows.delete(args.threadId); return { ok: true as const }; },
       interactions: {
         async list(args) { note('threads.interactions.list', args); return (interactions.get(args.threadId) ?? []).map(row => strictWire(row.payload.kind === 'user_question' ? 'interactionQuestion' : row.payload.kind === 'approval' ? 'interactionApproval' : 'interaction', row)); },
         async get(args) {

@@ -52,6 +52,7 @@ export const HOST_OPERATIONS = [
   "thread.stop",
   "thread.cascade",
   "thread.archive",
+  "thread.delete",
   "thread.inventory",
   "thread.read",
   "thread.metadata",

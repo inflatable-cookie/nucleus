@@ -166,6 +166,15 @@ export interface RuntimeHealth {
    */
   admissionRpc?: (AdmissionRpcMetrics & { serving: boolean }) | null;
   /**
+   * Whether live-run terminal/label presence projection is active, or why it is
+   * inactive (for example when no connected host exposes a native terminal/label
+   * presence surface). Never silently omitted.
+   */
+  liveRunPresence?: {
+    active: boolean;
+    reason: string;
+  };
+  /**
    * Spec 028: the store's compaction facts and the last durable maintenance record.
    * `autoVacuum` is 0 until the one-shot conversion lands, so a store that never
    * converted says so here instead of being silently unable to return freed pages.
@@ -208,6 +217,8 @@ export interface RuntimeHealthContext {
   drainProjection(): { drained: boolean; boundRuns: BoundRun[] };
   /** Set while the plugin's presence is lost and a host is still connected. */
   pluginPresenceFaultMessage(): string;
+  /** Whether the live-run presence projection is active, or why it is inactive. */
+  liveRunPresenceStatus?: () => { active: boolean; reason: string };
   /** The claimed primary session's host id, when one is claimed. */
   hostSessionId(): string | null;
   readonly serveHostRunEndpoint: boolean;
@@ -476,6 +487,9 @@ export class RuntimeHealthProjection {
           lastSurface: last?.surface ?? null,
         };
       })(),
+      ...(this.context.liveRunPresenceStatus
+        ? { liveRunPresence: this.context.liveRunPresenceStatus() }
+        : {}),
       storeCompaction: this.context.maintenance.compactionHealth(),
     };
   }

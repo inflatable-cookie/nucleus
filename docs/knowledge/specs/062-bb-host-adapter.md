@@ -2018,6 +2018,15 @@ it, the plugin's own list is pinned to it, and `test/bb-host-executor.test.ts`,
 `test/bb-host-channel.test.ts`, `test/bb-plugin-operations.test.ts` and `test/bb-plugin-protocol.test.ts`
 pin both ends.
 
+### Capability parity with Paseo and T3Code
+
+Every optional host capability Nucleus relies on is either implemented on BB or surfaces a visible fallback:
+
+- **Queue message (`enqueueMessage`) and interrupt-and-continue (`interruptAndContinue`).** `enqueueMessage` sends `thread.send` in `queue` mode (`queue-if-active`) under a durable write key on a recorded task thread. `interruptAndContinue` sends `thread.send` in `steer` mode under its own durable write key (`interrupt:<threadId>:<messageId>`) and refuses before send when no live turn is running.
+- **Thread deletion (`deleteAgent`).** Uses `thread.cascade` (`action: "delete"`) and `thread.delete` (`threads.delete` with `childThreadsConfirmed`), deleting owned children first and refusing before send if the cascade names any thread the task does not own. Deletion is verified by reading back absence from `threads.list`.
+- **Closeout workspace recovery (`createCloseoutWorkspace`, `findCloseoutWorkspaces`, `verifyCloseoutWorkspace`).** Creates a Nucleus-owned Git worktree (`ns-closeout-<taskId>`) under the same workspaces root tasks use, registers it through `workspace.create`, and records `worktreeSlug` and `repositoryRoot` so `workspaceInventory()` and `workspaceRef()` verify closeout identity and cleanliness.
+- **Explicit visible fallbacks.** When BB does not expose a live run usage stream, `RunUsageTracker` records a one-time `run_usage_unavailable` task event per run. When native in-thread decisions fall back to the planner ladder or board, `QuestionRaiseRoutes` records a one-time `operator_question_route_fallback` task event. When no connected host exposes a native terminal/label live-run presence surface, `service.health` reports `liveRunPresence: { active: false, reason }`.
+
 ## Verification
 
 Fake-transport tests serve only BB wire shapes captured from the target BB release, the way the

@@ -19,6 +19,8 @@ const workspace = z.object({
   directory: z.string(),
   projectId: z.string(),
   title: z.string(),
+  projectRootPath: z.string().optional(),
+  worktreeSlug: z.string().optional(),
   archivedAt: z.string().optional(),
 });
 /**

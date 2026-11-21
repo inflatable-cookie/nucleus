@@ -389,7 +389,12 @@ export function createBbWorkspaceAdapter(
     },
     workspaceAvailable,
     workspaceRef(id: string): HostWorkspaceRef {
-      let resolved: { directory: string; repositoryRoot: string; projectId?: string } | null = null;
+      let resolved: {
+        directory: string;
+        repositoryRoot: string;
+        projectId?: string;
+        worktreeSlug?: string;
+      } | null = null;
       return {
         get directory() {
           return resolved?.directory ?? getWorkspace(id)?.directory ?? null;
@@ -406,6 +411,9 @@ export function createBbWorkspaceAdapter(
                 projectRootPath: resolved.repositoryRoot,
                 workspaceDirectory: resolved.directory,
                 projectId: resolved.projectId,
+                ...(resolved.worktreeSlug
+                  ? { worktreeSlug: resolved.worktreeSlug }
+                  : {}),
                 placement: {
                   kind: "external",
                   provenance: "bb",

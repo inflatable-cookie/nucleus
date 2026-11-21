@@ -939,6 +939,7 @@ export class QueueRuntime {
       hostRunEndpointError: () => runtime.hostRunEndpointError,
       admissionRpcMetrics: () =>
         runtime.admissionEndpoint?.rpcMetrics() ?? null,
+      liveRunPresenceStatus: () => runtime.liveRunPresenceStatus(),
     });
     this.hostSettings = new HostCatalogueSettings({
       store: this.store,
@@ -2454,8 +2455,17 @@ export class QueueRuntime {
   }
   /**
    * The live-run presence projection, or null when this runtime's adapter has no
-   * Paseo daemon to project into (a fixture adapter, or a unit-test adapter).
+   * native terminal/label presence daemon. Inactive presence is reported explicitly
+   * in `service.health` via `liveRunPresenceStatus()`.
    */
+  private liveRunPresenceStatus(): { active: boolean; reason: string } {
+    if (this.liveRunPresence) return { active: true, reason: "" };
+    return {
+      active: false,
+      reason:
+        "Live-run terminal and workspace-label presence is unavailable because no connected host exposes a native presence surface",
+    };
+  }
   private createLiveRunPresence(): LiveRunPresence | null {
     const daemon = () =>
       (this.adapter as Adapter & { liveRunPresence?: RunPresenceDaemon })

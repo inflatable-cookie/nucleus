@@ -29,6 +29,7 @@ export const HOST_OPERATIONS = [
   "thread.stop",
   "thread.cascade",
   "thread.archive",
+  "thread.delete",
   "thread.inventory",
   "thread.read",
   "thread.metadata",
@@ -202,8 +203,9 @@ export interface BbHostSdk {
     get(args: { threadId: string }): Promise<ThreadRow>;
     stop(args: { threadId: string }): Promise<unknown>;
     archive(args: { threadId: string }): Promise<unknown>;
+    delete?(args: { threadId: string; childThreadsConfirmed: boolean }): Promise<{ ok: true }>;
     list(args: { originPluginId?: string; projectId?: string; includeHidden?: boolean; archived?: boolean; limit?: number; offset?: number; threadIds?: readonly string[] }): Promise<ThreadRow[]>;
-    experimental_listCascade(args: { threadIds: string[]; action: "archive" }): Promise<{ threads?: Array<{ threadId: string; cascadeThreadIds?: string[] }> }>;
+    experimental_listCascade(args: { threadIds: string[]; action: "archive" | "delete" }): Promise<{ threads?: Array<{ threadId: string; cascadeThreadIds?: string[] }> }>;
     experimental_listPluginMetadata(args: { pluginId: string; threadIds: string[] }): Promise<{ threads?: Array<{ threadId: string; metadata?: unknown }> }>;
   };
   providers?: { list(): Promise<Array<{ id: string; available: boolean; capabilities: { permissionModes: string[] } }>>; models(args: { providerId: string; preferCached?: boolean }): Promise<{ models: Array<{ model: string; supportedReasoningEfforts: Array<{ reasoningEffort: string }> }> }> };
@@ -337,11 +339,11 @@ export function createHostOperations(options: HostOperationsOptions): HostOperat
     return host.id;
   }
 
-  async function cascadeFor(threadId: string): Promise<string[]> {
-    const read = await call("threads.experimental_listCascade", () => sdk.threads.experimental_listCascade({ threadIds: [threadId], action: "archive" }));
+  async function cascadeFor(threadId: string, action: "archive" | "delete" = "archive"): Promise<string[]> {
+    const read = await call("threads.experimental_listCascade", () => sdk.threads.experimental_listCascade({ threadIds: [threadId], action }));
     const row = (read?.threads ?? []).find(candidate => candidate.threadId === threadId);
-    if (!row) throw new HostOperationError("unavailable", `The cascade read did not answer for ${threadId}, so no archive can be proven`);
-    if (!Array.isArray(row.cascadeThreadIds)) throw new HostOperationError("unavailable", "The cascade read omitted cascadeThreadIds; no archive can be proven");
+    if (!row) throw new HostOperationError("unavailable", `The cascade read did not answer for ${threadId}, so no ${action} can be proven`);
+    if (!Array.isArray(row.cascadeThreadIds)) throw new HostOperationError("unavailable", `The cascade read omitted cascadeThreadIds; no ${action} can be proven`);
     return row.cascadeThreadIds;
   }
 
@@ -748,21 +750,37 @@ export function createHostOperations(options: HostOperationsOptions): HostOperat
       }
       case "thread.cascade": {
         const threadId = text(input.threadId, "threadId", 128);
-        if (input.action !== "archive") throw new HostOperationError("invalid_input", 'action must be "archive"');
-        const cascadeThreadIds = await cascadeFor(threadId);
-        return { threadId, action: "archive" as const, cascadeThreadIds };
+        const action = oneOf(input.action, ["archive", "delete"] as const, "action");
+        if (!action) throw new HostOperationError("invalid_input", 'action must be "archive" or "delete"');
+        const cascadeThreadIds = await cascadeFor(threadId, action);
+        return { threadId, action, cascadeThreadIds };
       }
       case "thread.archive": {
         const threadId = text(input.threadId, "threadId", 128);
         const expected = Array.isArray(input.expectedCascadeThreadIds) ? input.expectedCascadeThreadIds.map(value => text(value, "expectedCascadeThreadIds[]", 128)) : null;
         if (!expected) throw new HostOperationError("invalid_input", "expectedCascadeThreadIds must be an array");
-        const cascadeThreadIds = await cascadeFor(threadId);
+        const cascadeThreadIds = await cascadeFor(threadId, "archive");
         const unaccepted = cascadeThreadIds.filter(id => !expected.includes(id));
         if (unaccepted.length > 0) throw new HostOperationError("refused", `Archive refused: the cascade for ${threadId} would also archive ${unaccepted.join(", ")}, which this task does not own`);
         await call("threads.archive", () => sdk.threads.archive({ threadId }));
         const row = await call("threads.get", () => sdk.threads.get({ threadId }));
         if (typeof row.archivedAt !== "number") throw new HostOperationError("unavailable", "Archive has not been observed on the thread");
         return { threadId, archivedAt: row.archivedAt, cascadeThreadIds };
+      }
+      case "thread.delete": {
+        const threadId = text(input.threadId, "threadId", 128);
+        const expected = Array.isArray(input.expectedCascadeThreadIds) ? input.expectedCascadeThreadIds.map(value => text(value, "expectedCascadeThreadIds[]", 128)) : null;
+        if (!expected) throw new HostOperationError("invalid_input", "expectedCascadeThreadIds must be an array");
+        if (!sdk.threads.delete) throw new HostOperationError("unavailable", "threads.delete API is unavailable");
+        const cascadeThreadIds = await cascadeFor(threadId, "delete");
+        const unaccepted = cascadeThreadIds.filter(id => !expected.includes(id));
+        if (unaccepted.length > 0) throw new HostOperationError("refused", `Delete refused: the cascade for ${threadId} would also delete ${unaccepted.join(", ")}, which this task does not own`);
+        const deleted = await call("threads.delete", () => sdk.threads.delete!({ threadId, childThreadsConfirmed: cascadeThreadIds.some(id => id !== threadId) }));
+        if (deleted?.ok !== true) throw new HostOperationError("unavailable", "threads.delete did not confirm thread removal");
+        const remaining = await call("threads.list", () => sdk.threads.list({ threadIds: [threadId], includeHidden: true, limit: 200 }));
+        if (Array.isArray(remaining) && remaining.some(row => row.id === threadId))
+          throw new HostOperationError("unavailable", "Delete has not been observed on the thread");
+        return { threadId, deleted: true as const, cascadeThreadIds };
       }
       case "thread.inventory": {
         const originPluginId = optionalText(input.originPluginId, "originPluginId", 128);

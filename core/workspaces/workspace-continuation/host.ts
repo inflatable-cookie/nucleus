@@ -6,8 +6,14 @@ import type { Task } from "../../../shared/contracts";
 import { intakeOwnedReviewWorkspace } from "../../../shared/workspace-ownership";
 import { workspaceOutsideQueueAllocation } from "../../../shared/workspace-ownership";
 import type { HostWorkspaceRef } from "../../../shared/host";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { git, queueCheckoutStatus } from "../../git/index";
+import {
+  repoCommonDir,
+  workspaceRepoRoot,
+  WORKSPACES_DIR,
+} from "../workspace-allocation";
 import { workspaceToolProcessIssue } from "../../recovery/stall";
 import type { ParticipantRuntime } from "../../machine/participant-runtime";
 import type {
@@ -197,4 +203,38 @@ export interface WorkspaceContinuationHostCalls {
   createCloseoutWorkspace(
     spec: HostWorktreeWorkspaceSpec,
   ): Promise<{ id: string; directory: string | null }>;
+}
+
+/**
+ * Create a Nucleus-owned closeout Git worktree using the same workspaces root and
+ * volume placement check that task worktrees already use. Hosts that do not create
+ * Git worktrees natively (T3 Code, BB) call this and then register the directory.
+ */
+export async function createOwnedCloseoutWorktree(
+  placement: WorkspacePlacement,
+  dataDir: string,
+  spec: HostWorktreeWorkspaceSpec,
+): Promise<string> {
+  const workspacesRoot =
+    placement?.workspaceRoot ??
+    join(placement?.dataDir ?? dataDir, WORKSPACES_DIR);
+  const commonDir = await repoCommonDir(spec.source.cwd);
+  const directory = join(
+    workspaceRepoRoot(workspacesRoot, commonDir),
+    spec.source.worktreeSlug,
+  );
+  if (placement) placement.admit(directory);
+  mkdirSync(dirname(directory), { recursive: true });
+  if (!existsSync(directory)) {
+    await git(
+      spec.source.cwd,
+      "worktree",
+      "add",
+      "-b",
+      spec.source.branchName,
+      directory,
+      spec.source.baseBranch,
+    );
+  }
+  return directory;
 }

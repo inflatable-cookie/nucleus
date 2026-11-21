@@ -13,6 +13,8 @@ export class RunUsageTracker {
   private readonly tracked = new Map<string, Tracked>();
   /** Runs whose stream lost an event to a failed write; the next open records that gap. */
   private readonly owedGap = new Set<string>();
+  /** Runs already noted as lacking a host usage stream, so sweeps never repeat the event. */
+  private readonly notedUnavailable = new Set<string>();
   private readonly startedAt: number;
 
   constructor(private readonly store: Store, private readonly source: RunUsageSource, private readonly clock: () => Date = () => new Date(),
@@ -26,7 +28,6 @@ export class RunUsageTracker {
    * marked a gap and reopened on this same pass, so a lost stream is never silent.
    */
   sync(): void {
-    if (!this.sourceForRun && !this.source.subscribeRunUsage) return;
     // The store's in-memory set of unreleased retained runs: no SQL scan per sweep tick.
     const live = new Map(this.store.pendingRuns().filter(run => !run.released && run.agentId !== null).map(run => [run.id, run] as const));
     for (const [runId, entry] of [...this.tracked]) {
@@ -44,7 +45,11 @@ export class RunUsageTracker {
 
   private open(run: Run): void {
     const source = this.sourceForRun ? this.sourceForRun(run) : this.source;
-    if (!source?.subscribeRunUsage) return;
+    if (!source) return;
+    if (!source.subscribeRunUsage) {
+      this.noteUnavailable(run);
+      return;
+    }
     const entry: Tracked = { agentId: run.agentId!, hostId: run.hostId, stream: null };
     this.tracked.set(run.id, entry);
     // A run dispatched before this process started may have turns Queue never observed.
@@ -69,6 +74,23 @@ export class RunUsageTracker {
 
   private gap(runId: string): void {
     this.store.updateRunUsage(runId, usage => applyRunUsageEvent(usage, { type: "gap" }, this.at()));
+  }
+
+  /** Record once per run when its connected host exposes no usage stream, so skipped telemetry is never silent. */
+  private noteUnavailable(run: Run): void {
+    if (this.notedUnavailable.has(run.id)) return;
+    this.notedUnavailable.add(run.id);
+    try {
+      const prefix = `${run.id}: `;
+      if (this.store.eventsAll(run.taskId).some(event => event.kind === "run_usage_unavailable" && event.detail.startsWith(prefix))) return;
+      this.store.event(
+        run.taskId,
+        "run_usage_unavailable",
+        `${prefix}host ${run.hostId ?? "unknown"} does not expose a live run usage stream; token and context telemetry are unavailable for this run`,
+      );
+    } catch {
+      /* store closed or task removed during shutdown */
+    }
   }
 
   private record(runId: string, streamed: RunUsageStreamEvent): void {
