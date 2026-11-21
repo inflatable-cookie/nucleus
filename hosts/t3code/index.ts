@@ -230,7 +230,7 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
       return this.native.findAgents({ [WIRE_LABEL_KEYS.task]: task.id });
     }
     findRunAgents(run: Run) {
-      return this.native.findAgents({
+      return this.native.findRunAgents({
         [WIRE_LABEL_KEYS.run]: run.id,
         [WIRE_LABEL_KEYS.task]: run.taskId,
       });

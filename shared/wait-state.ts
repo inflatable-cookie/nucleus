@@ -226,6 +226,7 @@ export type WaitStateView = z.infer<typeof waitStateViewSchema>;
 export interface WaitStateTask {
   phase: string;
   reason: string;
+  reasonFact?: import("./task-stop").TaskDecisionFact | null;
   holdKind: "dispatch" | "merge" | null;
   holdOwner: string | null;
   originAgentId: string | null;
@@ -283,7 +284,7 @@ export function deriveWaitState(task: WaitStateTask, context: WaitStateContext =
     : { state: declaration.state, owner: declaration.owner, nextAction: declaration.nextAction });
   // Project-validation QA waits are owned by their separate machine-wide
   // scheduler. Task-slot capacity is read only from the current admission check.
-  const schedulerWait = task.reason.startsWith(QA_CAPACITY_WAIT_PREFIX) ? waitReasonFor(task.reason) : null;
+  const schedulerWait = task.reasonFact?.code === "qa_capacity" ? waitReasonStates.find(entry => entry.prefix === QA_CAPACITY_WAIT_PREFIX) : null;
   if (schedulerWait) return { state: schedulerWait.state, owner: schedulerWait.owner, nextAction: schedulerWait.nextAction };
   const mergeHeld = task.mergeHeld ?? task.holdKind === "merge";
   if (mergeHeld && (task.phase === "verifying" || task.phase === "merging"))

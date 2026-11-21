@@ -1,12 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  OPERATOR_BOARD_CALLER,
   taskControlInputSchema,
 } from "../shared/contracts";
 import { resendExecutorReport } from "../core/verbs/executor-report";
 import { requestReviewerReport } from "../core/verbs/reviewer-report";
-import { ForceVerbs } from "../core/verbs/force";
 import { WorkerRestarts } from "../core/verbs/restart-worker";
 import {
   deferredRestart,
@@ -154,49 +152,6 @@ test("owner_restart_instruction_intent fences an uncertain retained-thread resta
           .filter((e) => e.kind === "owner_restart_instruction_sent").length,
         1,
       );
-    },
-  );
-});
-
-test("owner_settled_merge_intent is already settled in its writer transaction", async (t) => {
-  const f = intentFixture(t, {}, { phase: "needs_attention" });
-  f.engine.resolution.update(f.task(), {
-    mergeIntent: true,
-    mergeHead: head,
-    mergeBase: head,
-    mergeRequestedAt: new Date().toISOString(),
-    mergeResponseOutcome: "uncertain",
-  });
-  await restartAfterIntent(
-    f.engine,
-    f.id,
-    "owner_settled_merge_intent",
-    async () => {
-      new ForceVerbs(f.engine).forceSettleEffect(
-        f.task(),
-        taskControlInputSchema.parse({
-          action: "retry_effect",
-          taskId: f.id,
-          version: f.task().version,
-          caller: OPERATOR_BOARD_CALLER,
-          force: true,
-          effect: "merge-response.merge-response",
-          reason: "The operator settled the fixture merge",
-        }),
-      );
-      f.store.update(f.id, { phase: "done", workspaceId: null });
-    },
-    f.start,
-    async (store, sweep) => {
-      await sweep();
-      assert.equal(store.task(f.id).resolution.mergeIntent, false);
-      const events = store.eventsAll(f.id);
-      assert.equal(
-        events.filter((e) => e.kind === "owner_settled_merge_intent").length,
-        1,
-      );
-      await sweep();
-      assert.deepEqual(store.eventsAll(f.id), events);
     },
   );
 });

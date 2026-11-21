@@ -23,7 +23,9 @@ import {
   WorkerFailover,
   type WorkerFailoverContext,
 } from "../core/dispatch/worker-failover";
-import { creationLookup } from "../core/recovery/absent-creation/restarts";
+import { observeResolutionCreation } from "../core/recovery/absent-creation/restarts";
+import { Engine } from "../core/engine";
+import { readCreationAttempt } from "../core/store/store-task-funnel";
 import { T3RpcError } from "../hosts/t3code/rpc";
 import {
   ProvenPreSendRefusalError,
@@ -44,6 +46,7 @@ import { isTransportFailure } from "../shared/transport";
 import type { HostAgentSpec } from "../shared/host";
 import {
   submissionSchema,
+  runSchema,
   type Profile,
   type Run,
   type Task,
@@ -70,6 +73,7 @@ import {
   syntheticTurnItem,
 } from "./support/t3code-fake";
 import { storedT3Labels } from "./support/t3code-labels";
+import { fakeAdapter, submission } from "./support/fakes";
 
 const profile: Profile = {
   id: "synthetic-profile",
@@ -191,6 +195,278 @@ async function fixture(t: TestContext) {
   });
   return { root, directory, server, options, host, workspace, spec, acp };
 }
+
+async function reviewerCreationFixture(t: TestContext) {
+  const { server, host, workspace, directory, spec } = await fixture(t);
+  const store = new Store(":memory:");
+  t.after(() => store.close());
+  const head = "a".repeat(40);
+  const base = "b".repeat(40);
+  const prUrl = "https://github.com/example/repo/pull/7";
+  const submitted = store.insert(submission(), host.hostId, "handoff", base);
+  const run = runSchema.parse({
+    id: "review-creation",
+    taskId: submitted.id,
+    role: "reviewer",
+    generation: 1,
+    head,
+    base,
+    hostId: host.hostId,
+    agentId: null,
+    workspaceId: workspace.id,
+    profile,
+    status: "intent",
+    createdAt: STAMP,
+    lastObservedAt: null,
+    idleSince: null,
+    active: false,
+    completion: null,
+    released: false,
+  });
+  store.putRun(run);
+  const attempt = readCreationAttempt(store, run);
+  assert.ok(attempt);
+  const rollProducer = () => {
+    // Model the producer from before the service roll and age its reservation.
+    store.db
+      .prepare(
+        `UPDATE events SET at=?, detail=json_set(detail,'$.producerId',?)
+         WHERE taskId=? AND kind='creation_attempt_reserved'
+         AND json_extract(detail,'$.attemptId')=?`,
+      )
+      .run(STAMP, "previous-service-process", run.taskId, attempt.attemptId);
+    store.putRun({ ...run, status: "uncertain" });
+  };
+  store.setCredential(run.id, "synthetic-token");
+  store.setMeta("paused", false);
+  store.setMeta("pool", [
+    {
+      profileId: profile.id,
+      enabled: true,
+      group: "review",
+      roles: ["reviewer"],
+      weight: "default",
+      scopes: ["general"],
+    },
+  ]);
+  store.update(submitted.id, {
+    phase: "reviewing",
+    workspaceId: workspace.id,
+    directory,
+    prUrl,
+    prHead: head,
+    resumePrNumber: 7,
+    resolution: { ...submitted.resolution, currentRunId: run.id },
+  });
+  const t3 = createAdapter(
+    HostPolicies as unknown as HostPolicyConstructor,
+    host,
+  );
+  const engine = new Engine(
+    store,
+    fakeAdapter({
+      hostId: host.hostId,
+      workspaceAvailable: (id: string) => host.workspaceAvailable(id),
+      findRunAgents: (run: Run) => t3.findRunAgents(run),
+      verifyPr: async () => ({ head, url: prUrl }),
+      createRun: async () =>
+        assert.fail("the control only releases the creation"),
+    }),
+  );
+  engine.profiles = [profile];
+  const requestId = "review-launch";
+  const threadId = childThreadId(requestId);
+  const labels = storedT3Labels("reviewer", {
+    taskId: submitted.id,
+    runId: run.id,
+  });
+  const launchSpec = spec(requestId, "Review", "reviewer");
+  const launch = () =>
+    host.createAgent({
+      ...launchSpec,
+      attempt: () => ({ ...launchSpec.attempt(false, false), labels }),
+    });
+  const restart = () =>
+    engine.performTaskControl({
+      taskId: submitted.id,
+      version: store.task(submitted.id).version,
+      action: "restart",
+      role: "reviewer",
+      reason: "Resume review",
+      instruction: "Review the retained head",
+    });
+  return {
+    server,
+    host,
+    directory,
+    store,
+    engine,
+    run,
+    requestId,
+    threadId,
+    launch,
+    restart,
+    rollProducer,
+  };
+}
+
+for (const action of ["restart", "route"] as const) {
+  for (const absentShape of [
+    "ThreadNotFoundError",
+    "ProjectionStoreThreadNotFoundError",
+  ] as const) {
+    test(`T3 reviewer launch that never creates its child can be replaced by ${action} (${absentShape})`, async (t) => {
+      const f = await reviewerCreationFixture(t);
+      f.server.controls.absentThreadError = absentShape;
+      f.server.controls.timeoutDelegatedLaunch = true;
+      // The producer could not finish adoption before the roll. The launch record remains.
+      f.server.controls.mutationObserver = () => {
+        if (f.server.commands.at(-1)?.type === "delegated_task.request")
+          f.server.controls.threadProjectionErrors = 1;
+      };
+      await assert.rejects(f.launch(), /OrchestrationV2GetThreadProjectionError/);
+      assert.equal(f.host.state.read().intents[f.requestId]?.status, "unknown");
+      assert.ok(f.host.state.read().agents[f.threadId]);
+      assert.equal(f.server.threads.has(f.threadId), false);
+      f.rollProducer();
+
+      const result =
+        action === "restart"
+          ? await f.restart()
+          : await f.engine.performTaskControl({
+              taskId: f.run.taskId,
+              version: f.store.task(f.run.taskId).version,
+              action: "route",
+              role: "reviewer",
+              now: true,
+              profileId: profile.id,
+              reason: "Replace the missing reviewer",
+            });
+      assert.equal(result.phase, "awaiting_review");
+      assert.equal(result.resolution.currentRunId, null);
+      assert.equal(f.store.run(f.run.id)?.status, "superseded");
+      assert.equal(f.store.run(f.run.id)?.released, true);
+      assert.throws(
+        () => f.store.authenticate(f.run.id, "synthetic-token"),
+        /Unauthorized/,
+      );
+      assert.equal(
+        f.server.commands.filter((cmd) => cmd.type === "delegated_task.request")
+          .length,
+        1,
+      );
+    });
+  }
+}
+
+test("T3 reviewer creation stays partial in another workspace and binds in the retained workspace", async (t) => {
+  const f = await reviewerCreationFixture(t);
+  const created = await f.launch();
+  f.rollProducer();
+  const thread = f.server.threads.get(created.id)?.thread;
+  assert.ok(thread);
+  const retained = thread.worktreePath;
+  const other = await f.host.createWorkspace({
+    directory: mkdtempSync(join(f.directory, "other-worktree-")),
+    title: "Other worktree",
+    requestId: "other-workspace",
+    project: { projectId: "synthetic-project" },
+  });
+  thread.worktreePath = other.directory;
+  await assert.rejects(
+    f.restart(),
+    /found agent outside the retained workspace/,
+  );
+  thread.archivedAt = STAMP;
+  f.server.controls.archivedThreadNotFound = true;
+  await assert.rejects(
+    f.restart(),
+    /found agent outside the retained workspace/,
+  );
+  assert.equal(f.store.run(f.run.id)?.released, false);
+  thread.archivedAt = null;
+  thread.worktreePath = retained;
+  await f.restart();
+  assert.equal(f.store.run(f.run.id)?.agentId, created.id);
+  assert.equal(f.store.run(f.run.id)?.released, false);
+  assert.doesNotThrow(() => f.store.authenticate(f.run.id, "synthetic-token"));
+});
+
+test("T3 creation lookup retries churn and keeps an unreadable launch owned", async (t) => {
+  const f = await reviewerCreationFixture(t);
+  const created = await f.launch();
+  f.rollProducer();
+  f.server.threads.delete(created.id);
+  const lookup = () =>
+    observeResolutionCreation(
+      f.store,
+      f.engine.resolution.adapter,
+      f.run,
+      60_000,
+    );
+
+  f.server.controls.threadProjectionErrors = 1;
+  assert.match(
+    (await f.restart()).resolution.stop?.detail ?? "",
+    /lookup is unavailable.*OrchestrationV2GetThreadProjectionError/,
+  );
+
+  // Real T3 read failures (ProjectionStoreReadError) and missing-ancestor errors stay transient.
+  f.server.controls.threadProjectionErrorCause = {
+    name: "OrchestratorProjectionError",
+    message: `Failed to load orchestration projection for thread ${created.id}.`,
+    cause: {
+      name: "ProjectionStoreReadError",
+      message: `Failed to read orchestration projection for thread ${created.id}.`,
+    },
+  };
+  f.server.controls.threadProjectionErrors = 1;
+  assert.match(
+    (await f.restart()).resolution.stop?.detail ?? "",
+    /lookup is unavailable.*OrchestrationV2GetThreadProjectionError/,
+  );
+
+  f.server.controls.threadProjectionErrorCause = {
+    name: "OrchestratorProjectionError",
+    message: `Failed to load orchestration projection for thread ${created.id}.`,
+    cause: {
+      name: "ProjectionStoreThreadNotFoundError",
+      message: "No orchestration projection exists for thread thread:other-fork-source.",
+    },
+  };
+  f.server.controls.threadProjectionErrors = 1;
+  assert.match(
+    (await f.restart()).resolution.stop?.detail ?? "",
+    /lookup is unavailable.*OrchestrationV2GetThreadProjectionError/,
+  );
+  f.server.controls.threadProjectionErrorCause = undefined;
+
+  let archiveReads = 0;
+  f.server.controls.beforeArchiveRead = () => {
+    if (++archiveReads <= 5) f.server.controls.snapshotSequence++;
+  };
+  assert.equal((await lookup()).kind, "absent");
+  assert.equal(archiveReads, 6);
+
+  archiveReads = 0;
+  f.server.controls.beforeArchiveRead = () => {
+    archiveReads++;
+    f.server.controls.snapshotSequence++;
+  };
+  const waiting = await f.restart();
+  assert.match(
+    waiting.resolution.stop?.detail ?? "",
+    /lookup is unavailable.*inventory kept moving/,
+  );
+  assert.equal(archiveReads, 10);
+  assert.equal(f.store.run(f.run.id)?.released, false);
+  assert.doesNotThrow(() => f.store.authenticate(f.run.id, "synthetic-token"));
+  assert.equal(
+    f.server.commands.filter((cmd) => cmd.type === "delegated_task.request")
+      .length,
+    1,
+  );
+});
 
 test("connect accepts an unseen nightly on structural probes, records its version and preserves capabilities", async (t) => {
   const { host, server } = await fixture(t);

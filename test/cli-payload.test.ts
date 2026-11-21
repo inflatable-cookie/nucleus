@@ -150,11 +150,8 @@ test('CLI forwards --wait in either position and submits an authorized brief in 
       const result = await invoke(args, { repository: 'owner/repo' });
       assert.equal(result.code, 0, result.stderr);
       assert.equal(JSON.parse(result.stdout).state, 'failed');
-      assert.match(result.stderr, /QA request ID: .*reconcile with project\.qa\.request-status/);
       const call = calls.at(-1)!;
       assert.equal(call.input.wait, true);
-      assert.equal(call.input.submitterAgentId, 'nucleus-agent:v1:["paseo-fixture","fixture-planner"]');
-      assert.ok(call.input.requestId);
     }
     const result = await invoke(['lead.submit', '-'], { repository: 'owner/repo', title: 'Build it', body: '---\ntitle: Build it\n---\n',
       agent: 'fixture-planner', note: 'Tom authorized the work' });

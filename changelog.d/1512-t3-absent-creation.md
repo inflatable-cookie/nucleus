@@ -1,0 +1,1 @@
+Nucleus can replace a timed-out T3 Code launch through restart or immediate routing once T3 confirms the thread is missing and the original producer has stopped. A busy or unreadable host keeps the launch waiting after a bounded retry for inventory churn.

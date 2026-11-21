@@ -336,9 +336,9 @@ export class AcpSessions implements AcpSessionSurface {
           if (!task || task.removedAt || !task.hostId?.startsWith("t3code:"))
             continue;
           const parent = this.parentStatus(task.hostId, task.id);
+          if (parent.state === "unknown") continue;
           if (
             !this.presentCards.has(`inbox:${task.hostId}`) ||
-            parent.state === "unknown" ||
             (parent.state === "parent" &&
               this.observedParentSessions.get(`task:${task.id}`) !==
                 parent.sessionId)

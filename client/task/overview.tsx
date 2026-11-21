@@ -8,17 +8,16 @@ import { type TaskControlInput, type TaskNext, type UiQueueState } from "../../s
 import { TaskSummaryBlock } from "./summary";
 import { type TaskDetailTab } from "./parts";
 import { NORMAL_USAGE, NextSection } from "./next-section";
-import type { TaskDetailRead, TaskQaRun } from "./task-dialog";
+import type { TaskDetailRead } from "./task-dialog";
 import { space, type as typeScale } from "../design";
 
 /** The Overview's summary: the task's current wait, holds, review and checks. Stays mounted so tab switches keep its place. */
-export function OverviewSummary({ task, detailTab, nextQuery, detailQuery, qaRun: taskQaRun, c }: { task: TaskDetailRead["task"]; detailTab: TaskDetailTab; nextQuery: UseQueryResult<TaskNext>; detailQuery: UseQueryResult<TaskDetailRead>; qaRun: TaskQaRun | undefined; c: Colors }) {
+export function OverviewSummary({ task, detailTab, nextQuery, detailQuery, c }: { task: TaskDetailRead["task"]; detailTab: TaskDetailTab; nextQuery: UseQueryResult<TaskNext>; detailQuery: UseQueryResult<TaskDetailRead>; c: Colors }) {
   return <View style={{ gap: space.sm, display: detailTab === "overview" ? "flex" : "none" }}>
     <TaskSummaryBlock
       task={task}
       next={nextQuery.data ?? null}
       runs={detailQuery.data?.runs ?? []}
-      qaRun={taskQaRun ?? null}
       c={c}
     />
   </View>;

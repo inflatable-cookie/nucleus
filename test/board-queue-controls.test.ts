@@ -15,7 +15,7 @@ test('queue actions precede the slot table and run list in a viewport-constraine
     const state = {
       connected: true, paused: false, dispatchHeld: false, drained: false,
       boundRuns: Array.from({ length: count }, (_, i) => ({ runId: `run-${i}`, taskId: `task-${i}`, role: 'worker' })),
-      projectLimitOverrides: {}, projectCapacities: [], qaFence: { fence: null },
+      projectLimitOverrides: {}, projectCapacities: [],
     };
     const query = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const ui = mount(h(QueryClientProvider, { client: query, children: h(PluginRpcProvider, { invoke: async () => ({}), children: h(BoardHeader, {

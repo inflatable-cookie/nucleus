@@ -211,22 +211,23 @@ export class TaskControlDispatcher {
     };
     const task = this.store.task(input.taskId);
     if (input.force) {
-      if (!this.engine.forceCallerAuthorized(task, input.caller))
-        throw new DurableFenceRefusal(FORCE_CALLER_REFUSAL);
+      if (input.action === "retry_effect")
+        throw new DurableFenceRefusal("Use run.release or record.clear kind=effect for explicit settlement");
       if (!input.reason?.trim())
         throw new DurableFenceRefusal(FORCE_REASON_REFUSAL);
-      if (input.action === "retry_effect")
-        return operated(this.engine.forceSettleEffect(task, input));
       if (
         input.action === "move" &&
         input.to === "closeout" &&
         task.resolution.mergedCommit
-      )
+      ) {
+        if (!await this.engine.forceCallerAuthorized(task, input.caller))
+          throw new DurableFenceRefusal(FORCE_CALLER_REFUSAL);
         return this.engine.applyTaskControlMove(
           { ...input, force: false },
           operated,
           operationId,
         );
+      }
       if (input.action === "move")
         return operated(await this.engine.forceMove(task, input, operationId));
       throw new DurableFenceRefusal(FORCE_ACTION_REFUSAL);
@@ -309,8 +310,11 @@ export class TaskControlDispatcher {
         : await this.engine.applyTaskControlRepinInstruction(input, operated);
     if (input.action === "set_lane")
       return await this.engine.applyTaskControlSetLane(input, operated);
-    if (input.action === "set_routing")
-      return this.engine.applyTaskControlSetRouting(input, operated);
+    if (input.action === "set_routing") {
+      const planner = input.critical !== undefined && input.caller !== undefined &&
+        input.caller !== "operator (board)" && await this.engine.forcePlannerMatches(task, input.caller);
+      return this.engine.applyTaskControlSetRouting(input, operated, planner);
+    }
     if (input.action === "exclude_worker")
       return this.engine.applyTaskControlExcludeWorker(input, operated);
     return this.engine.applyTaskControlLocal(input, operated);

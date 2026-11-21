@@ -117,7 +117,6 @@ test("UI snapshot projects task heavy runs by workspace and proof identity and d
     assert.equal(facts.summaries.find(item => item.id === task.id)?.heavyRun?.selector, "test:focused");
     assert.equal(facts.summaries.find(item => item.id === proofTask.id)?.heavyRun?.selector, "test:proof");
     // A milestone QA run has no task: it is a QA card, not a task's heavy run, and the board carries no strip.
-    assert.deepEqual(facts.qaRuns, []);
     assert.equal("heavyRuns" in facts, false);
     live.splice(0, 1);
     assert.equal(read().summaries.find(item => item.id === task.id)?.heavyRun, undefined);

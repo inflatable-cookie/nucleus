@@ -6,7 +6,7 @@ import { collectOwnerVerbFacts, ownerVerbViews, qualifiedAcceptanceEligibility, 
 import { proofWaitApplies, proofWorkerRequests } from '../qa/proof-wait';
 import { isForgeCheckProofText } from '../forge/checks';
 import { openProofOnlyGo, proofOnlyGoQuestionId } from '../qa/proof-only-go';
-import { isHostReadExhaustedReason, isHostReadRecoveryHeld } from '../recovery/host-read-transient';
+import { isHostReadRecoveryHeld } from '../recovery/host-read-transient';
 
 /**
  * Spec 058 (task 523): which stops a responsible task cannot clear without a
@@ -147,7 +147,7 @@ export function operatorQuestionFor(store: Store, task: Task): OperatorQuestion 
   if (task.removedAt || ['done', 'cancelled'].includes(task.phase)) return null;
   if (isDispositionActive(task)) return null;
   // Host-read recovery owns its observation waits and sustained failures; do not raise a planner routing question for it.
-  if (isHostReadRecoveryHeld(store, task) !== null || isHostReadExhaustedReason(task.reason)) return null;
+  if (isHostReadRecoveryHeld(store, task) !== null || task.reasonFact?.code === "host_read_exhausted") return null;
   // The task's own thread is what asks; without it there is nobody to prompt.
   if (!task.agentId) return null;
   const holds = holdsOf(task);

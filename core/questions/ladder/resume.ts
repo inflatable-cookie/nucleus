@@ -218,7 +218,7 @@ export async function resumeEscalationWaits(ladder: Ladder, task: Task): Promise
       const waitControl: EscalationWait = { kind: wait.kind as 'time' | 'decision', target: wait.target,
         stopDetail: wait.stopDetail, stopReason: wait.stopReason };
       const expected = escalationWaitState(id, waitControl);
-      if (current.resolution.stop?.reason !== expected.stopReason || current.resolution.stop.detail !== expected.stopDetail) {
+      if (current.resolution.stop?.reason !== expected.stopReason || current.resolution.stop.fact?.subject !== id) {
         const pending = events.findLast(item => item.kind === 'planner_escalation_answer_pending' && item.detail.startsWith(`${id}:`)
           && item.id < event.id && (() => {
             try {
@@ -232,7 +232,7 @@ export async function resumeEscalationWaits(ladder: Ladder, task: Task): Promise
         const repaired = (pending || linkedClassification)
           && establishEscalationWait(ladder, task.id, id, waitControl, pending?.id ?? 0);
         current = ladder.store.task(task.id);
-        if (!repaired || current.resolution.stop?.reason !== expected.stopReason || current.resolution.stop.detail !== expected.stopDetail) {
+        if (!repaired || current.resolution.stop?.reason !== expected.stopReason || current.resolution.stop.fact?.subject !== id) {
           ladder.store.event(task.id, 'planner_escalation_wait_superseded', `${id}: task stop changed and the recorded wait could not be restored`);
           continue;
         }

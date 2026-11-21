@@ -1,3 +1,5 @@
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   paseoHome,
   paseoHomeOverride,
@@ -12,7 +14,9 @@ import {
  * Each host integration names its own variables, and this module is the only
  * service path that asks one for them. `home` overrides the host home, so a
  * fixture or a proof can point a spawned service at a private config and never
- * at the operator's.
+ * at the operator's. When no Paseo home override is set and no Paseo config is
+ * present, `hostEnvironment()` returns an empty object rather than synthesizing
+ * Paseo environment variables.
  */
 export function hostHome(env = process.env) {
   return paseoHome(env);
@@ -23,7 +27,13 @@ export function hostHomeOverride(env = process.env) {
   return paseoHomeOverride(env);
 }
 
-/** The host's own environment for a service started at `home`. */
+/** The host's own environment for a service started at `home`, or `{}` when no Paseo config is present. */
 export function hostEnvironment(home) {
-  return paseoHomeEnvironment(home ?? paseoHome());
+  if (home) return paseoHomeEnvironment(home);
+  const override = paseoHomeOverride();
+  if (override) return paseoHomeEnvironment(override);
+  const resolved = paseoHome();
+  return existsSync(join(resolved, 'config.json'))
+    ? paseoHomeEnvironment(resolved)
+    : {};
 }

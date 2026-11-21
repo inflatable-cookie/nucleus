@@ -506,10 +506,8 @@ export function checkTaskControlRules(input: TaskControlFields, ctx: z.Refinemen
       message:
         "Retrying a recorded side effect requires the owner's reason",
     });
-  if (input.force && !["move", "retry_effect"].includes(input.action))
-    ctx.addIssue({ code: "custom", path: ["force"], message: "force applies only to move or retry_effect" });
-  if (input.force && input.action === "retry_effect" && !input.effect)
-    ctx.addIssue({ code: "custom", path: ["effect"], message: "A forced settlement requires the named effect" });
+  if (input.force && input.action !== "move")
+    ctx.addIssue({ code: "custom", path: ["force"], message: input.action === "retry_effect" ? "Use run.release or record.clear kind=effect for explicit settlement" : "force applies only to move" });
   if (input.effect !== undefined && input.action !== "retry_effect")
     ctx.addIssue({
       code: "custom",

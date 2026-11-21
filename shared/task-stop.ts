@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isSshAuthExhausted } from "./ssh-auth";
 
 /** Spec 050 stop reasons: why a task cannot take its next ordinary step. */
 export const taskStopReasons = [
@@ -98,6 +99,73 @@ export const BLOCKED_EFFECT_ATTENTION_PREFIX = "An uncertain side effect blocks 
 export const taskStopVerbSchema = z.enum(taskStopVerbs);
 export type TaskStopVerb = z.infer<typeof taskStopVerbSchema>;
 
+export const taskDecisionFactSchema = z.object({
+  code: z.enum([
+    "integration_turn", "workspace_absent", "workspace_orphan", "creation_lookup", "worker_lookup",
+    "callback_missing", "callback_expired", "callback_attention", "callback_stopped", "thread_running", "creating_worker", "profile_unavailable",
+    "retained_profile", "host_read_exhausted", "coordinator_unavailable", "ssh_auth", "provider_retry",
+    "provider_refusal", "external_merge_check", "external_merge_recovered", "check_deadline", "review_effect_wait",
+    "hook_hold", "pr_head_changed", "pr_identity", "accepted_pr", "closeout_base_refresh", "deferred_verb",
+    "prerequisite", "qa_capacity", "slot_capacity", "dispatch", "dispatch_hold", "usage_gate", "progressing",
+    "pre_send_refused", "bb_connect", "escalation", "consult", "review_delivery", "origin_error",
+  ]),
+  subject: z.string().min(1).max(240).optional(),
+}).strict();
+export type TaskDecisionFact = z.infer<typeof taskDecisionFactSchema>;
+
+const decisionPatterns: ReadonlyArray<[TaskDecisionFact["code"], RegExp]> = [
+  ["integration_turn", /^Waiting for repository integration turn/],
+  ["workspace_absent", /^Workspace creation is absent from inventory/],
+  ["workspace_orphan", / left an orphan .*base-identical and unpublished/],
+  ["creation_lookup", /^(?:Exact (?!worker )\w+ creation lookup is unavailable|The \w+ creation lookup for run |The \w+ creation .+ is still uncertain: a complete lookup)/],
+  ["worker_lookup", /^(?:Exact worker creation lookup is unavailable|Worker creation lookup is partial)/],
+  ["callback_expired", /^The (\w+) callback reminder expired$/],
+  ["callback_missing", /^The (\w+) thread stopped without a callback; inspect the thread$/],
+  ["callback_attention", /^The (\w+) (?:thread stopped and its one callback reminder expired|callback reminder expired)/],
+  ["callback_stopped", /^The (\w+) thread stopped/],
+  ["callback_missing", /^(worker) stopped without a completion callback/i],
+  ["thread_running", /^(\w+) thread running$/],
+  ["creating_worker", /^Creating worker$/],
+  ["profile_unavailable", /^No eligible/],
+  ["retained_profile", /^Retained worker profile is disabled or unavailable/],
+  ["host_read_exhausted", /could not read host state after \d+ attempts|Owner: host-read recovery\./],
+  ["coordinator_unavailable", /^No coordinator profile is available for recovery/],
+  ["provider_retry", /^Transient provider error/],
+  ["provider_refusal", /^Reviewer run (\S+) provider refusal is unverified/],
+  ["external_merge_check", /^External merge check:/],
+  ["external_merge_recovered", /^External merge check recovered; resuming task$/],
+  ["check_deadline", /has been pending past its deadline.*job URL:/s],
+  ["review_effect_wait", /^(?:Ordinary review|Review-entry) waits for /],
+  ["hook_hold", /^Repository hook .+ holds this transition: /s],
+  ["pr_head_changed", /^PR head changed after the completion callback$/],
+  ["pr_identity", /PR must be open/],
+  ["accepted_pr", /^Operator requested accepted-PR workspace reconciliation$/],
+  ["closeout_base_refresh", /^Refreshing main before retrying closeout$/],
+  ["review_delivery", /^Reviewer delivery (ns-review-[a-f0-9]{64}) (?:is reserved|is uncertain)/],
+  ["deferred_verb", /^Owner (\w+) recorded; it is delivered once Nucleus is (?:unpaused|released)$/],
+  ["prerequisite", /^Waiting for prerequisites:/],
+  ["qa_capacity", /^Waiting for QA capacity \(position /],
+  ["slot_capacity", /^Waiting for a project slot…/],
+  ["dispatch", /^Waiting for dispatch$/],
+  ["dispatch_hold", /^Dispatch held(?:[ ;]|$)/],
+  ["usage_gate", /^Waiting for the operator: the Low usage level needs permission/],
+  ["progressing", /^No stop or wait; the task is progressing\.$/],
+  ["bb_connect", /^BB host operation was not sent: Service socket connect failed: /],
+  ["pre_send_refused", /refused before send/i],
+  ["escalation", /^(?:Waiting with the (?:planner|operator).*?escalation |Escalation |Blocker escalation )([\w-]+)/],
+  ["consult", /^Waiting with the retained reviewer: consult ([\w-]+)/],
+];
+
+/** Decode old text at the persistence boundary and typed upstream diagnostics at their write. */
+export function taskDecisionFact(text: string): TaskDecisionFact | null {
+  if (isSshAuthExhausted(text)) return { code: "ssh_auth" };
+  for (const [code, pattern] of decisionPatterns) {
+    const match = pattern.exec(text);
+    if (match) return { code, ...(match[1] ? { subject: (code === "callback_missing" ? match[1].toLowerCase() : match[1]).slice(0, 240) } : {}) };
+  }
+  return null;
+}
+
 /** Durable current stop. A matching observation preserves `since`; clearing it starts no new episode. */
 export const taskStopRecordSchema = z.object({
   reason: taskStopReasonSchema,
@@ -110,6 +178,8 @@ export const taskStopRecordSchema = z.object({
    * no reader takes the holder from that sentence.
    */
   holderAgentId: z.string().min(1).max(240).optional(),
+  fact: taskDecisionFactSchema.nullable().optional(),
+  incidentId: z.string().optional(),
 }).strict();
 export type TaskStopRecord = z.infer<typeof taskStopRecordSchema>;
 
@@ -173,8 +243,8 @@ export function taskStopClassification(detail: string): Pick<TaskStopRecord, "re
  * classified too, for a row whose reason and sentence were written by an older
  * path. One owner answers this so no surface re-reads the sentence itself.
  */
-export function recordedStopIsWait(record: Pick<TaskStopRecord, "reason" | "detail">): boolean {
-  return isWaitingTaskStop(record.reason) || isWaitingTaskStop(taskStopClassification(record.detail).reason);
+export function recordedStopIsWait(record: Pick<TaskStopRecord, "reason">): boolean {
+  return isWaitingTaskStop(record.reason);
 }
 
 /**
@@ -188,8 +258,8 @@ export function legacyStopHolderAgentId(detail: string | null | undefined): stri
 }
 
 /** Whether a recorded stop is a hold; read exactly like `recordedStopIsWait`. */
-export function recordedStopIsHeld(record: Pick<TaskStopRecord, "reason" | "detail">): boolean {
-  return record.reason === "held" || taskStopClassification(record.detail).reason === "held";
+export function recordedStopIsHeld(record: Pick<TaskStopRecord, "reason">): boolean {
+  return record.reason === "held";
 }
 
 /**
@@ -203,6 +273,7 @@ export const routeUnavailableStop = (task: { resolution: { stop: { reason: strin
 export function taskStopRecord(
   reason: TaskStopReason, detail: string, prior?: TaskStopRecord | null,
   at = new Date().toISOString(), suggestedVerbs = taskStopVerbsFor(reason), holderAgentId?: string | null,
+  fact = taskDecisionFact(detail),
 ): TaskStopRecord {
   const normalized = detail.trim().slice(0, 4000) || reason;
   return taskStopRecordSchema.parse({
@@ -210,6 +281,7 @@ export function taskStopRecord(
     detail: normalized,
     since: prior?.reason === reason ? prior.since : at,
     suggestedVerbs,
+    fact,
     ...(holderAgentId ? { holderAgentId } : {}),
   });
 }

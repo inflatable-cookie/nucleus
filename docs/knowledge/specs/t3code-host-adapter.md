@@ -357,7 +357,7 @@ already present.
 | Queue message behind current step | `message.dispatch` `queue_after_active` | Exposed through `T3Adapter.enqueueMessage`; queues behind any active turn without interrupting it |
 | Decider and consult reviewer | `delegated_task.request` child under the task parent, followed by `askPlanner` / `askReviewer` | Exposed through `T3Adapter.runDecider` and `T3Adapter.createConsultReviewer` with separate deterministic launch IDs (`ns-decider-launch-<id>`, `ns-reviewer-consult-launch-<id>`) and first-question delivery IDs (`ns-decider-<id>`, `ns-reviewer-consult-<id>`) |
 | Closeout workspace recovery | Nucleus-owned Git worktree (`ns-closeout-<taskId>`) under the task workspaces root, registered via `createWorkspace` | Records `worktreeSlug` and `projectRootPath` on the T3 workspace handle so `findCloseoutWorkspaces` and `verifyCloseoutWorkspace` prove identity and cleanliness. Before binding a replacement parent on the recovered closeout checkout, the adapter verifies the prior parent's identity and archived/deleted state, binds the ACP session pointer to the verified closeout directory, and persists the replacement `launchCommandId` for restart recovery |
-| Tell or relayed answer (`steerOrNotify`) | `message.dispatch` `steer_active` when the thread has a live run, read immediately before send; otherwise `queue_after_active` as `notify` | A proven not-sent steer falls back to one queued send under its own command identity; a remote steer failure is unknown delivery and is never resent. Nucleus's own reminders and notices keep `queue_after_active` |
+| Tell, relayed answer or decision notice (`steerOrNotify`) | `message.dispatch` `steer_active` when the thread has a live run, read immediately before send; otherwise `queue_after_active` as `notify` | A proven not-sent steer falls back to one queued send under its own command identity; a remote steer failure is unknown delivery and is never resent. Nucleus's own lifecycle reminders and notices keep `queue_after_active` |
 | Host-neutral fallbacks (run usage, native decisions, live-run presence) | No silent skip | Missing run-usage streaming records one `run_usage_unavailable` event per run; native-decision fallback records one `operator_question_route_fallback` event before ladder/board routing; absent live-run terminal/label presence is reported as `liveRunPresence: { active: false, reason }` in `service.health` |
 
 Use `launchThread` for creation because it supplies the native workspace strategy
@@ -805,16 +805,22 @@ For already-bound targets (`observe`, `originAgent`, `isObserved`, `activeRunId`
 once the target is absent from live shell so a positively live, archived,
 `deletedAt`, or mismatched exact binding is proved without pairing
 `getArchivedShellSnapshot`, and selection shares that projection with the
-pre-send check within a pass. Only `ThreadNotFoundError` and, for a bound parent,
-the generic incomplete projection read (nucleus#1460) hand a read to the paired
-inventory (plus operations that genuinely require full coverage: `threadArchiveState`, `workspaceThreads`,
-`archiveThreadPage`, `findAgents`, `anyChildLive`, and `observeThreadList`
-after `ThreadNotFoundError`) pairs `subscribeShell` with
-`getArchivedShellSnapshot` at an equal `snapshotSequence` (retrying up to 5
-times). If events keep advancing the global cursor across that pair, or if
-`subscribeThread` returns a transient incomplete projection read
-(`OrchestrationV2GetThreadProjectionError` before delivery), the adapter throws a
-`HostReadRefusalError` (`T3InventoryChurnError` / `T3TransientReadError`)
+pre-send check within a pass. Only `ThreadNotFoundError`, an
+`OrchestrationV2GetThreadProjectionError` whose `cause` proves
+`ProjectionStoreThreadNotFoundError` for the requested thread (which the
+adapter classifies as `OrchestrationV2GetThreadProjectionError:thread_not_found`),
+and, for a bound parent, the generic incomplete projection read (nucleus#1460)
+hand a read to the paired inventory (plus operations that genuinely require full
+coverage: `threadArchiveState`, `workspaceThreads`, `archiveThreadPage`,
+`findAgents`, `anyChildLive`, and `observeThreadList` after a not-found error)
+pairs `subscribeShell` with `getArchivedShellSnapshot` at an equal
+`snapshotSequence` (retrying up to 5 times). If events keep advancing the global
+cursor across that pair, or if `subscribeThread` returns a transient incomplete
+or failing projection read (`OrchestrationV2GetThreadProjectionError` without a
+missing-thread proof for that thread — including `ProjectionStoreReadError`,
+`LegacyV1ThreadImportError`, missing/unrecognized `cause`, or a missing fork
+ancestor — before delivery), the adapter throws a `HostReadRefusalError`
+(`T3InventoryChurnError` / `T3TransientReadError`)
 rather than catching and erasing the reason or inferring deletion/absence. This
 keeps T3 online and model-eligible, records no `host_transport_fault`, and
 never marks an un-sent intent refused or unknown (`intents.ts` releases the
@@ -1047,11 +1053,17 @@ expiry is not evidence that the original answer was never delivered.
 ## Operator decisions on T3
 
 An open decision linked to a T3 task goes to its recorded ACP parent when one is
-available; when no eligible parent exists (before a parent is created or after a
-recorded parent is archived) it goes to that host's single pinned **Nucleus**
-inbox. Other operator decisions also go to the inbox. No parent is created to ask a
-question. A disconnected host or an unreadable parent stays unknown, rather than
-authorizing a second offer. The
+available; when its host confirms no eligible parent exists (before a parent is
+created or after a recorded parent is archived) it goes to that host's single
+pinned **Nucleus** inbox; and when a parent lookup answers `unknown` (for
+example, a disconnected host, an unreadable parent, or a different registered T3
+session) it falls back to the connected T3 host's pinned **Nucleus** inbox
+rather than pinning the unavailable host or leaving the decision offered nowhere
+(nucleus#1516). Other operator decisions also go to the inbox. No parent is
+created to ask a question. Opening, withdrawing or
+superseding a decision (including a routing sign-off opened during a task
+quantum) wakes the reconciliation sweep so the inbox refreshes its title and
+raises or settles cards without waiting for an unrelated wake. The
 inbox has a dedicated service-owned directory and a host-scoped ACP binding, not
 a task identity. Its credential can read its decision projection and answer it,
 but cannot send a task message, report a run or exercise task controls. Re-minting
@@ -1060,9 +1072,11 @@ not a role thread and retention and task archiving never select it.
 
 The service durably binds a decision version to the exact scope of its first offer
 before returning the form. A later parent does not move an Inbox offer, and a
-restart keeps the same owner. Fresh reads of the candidate scopes precede a first
-offer; a legacy pending card is adopted from positive T3 evidence before a
-competing scope can offer it. An unknown read never proves a card absent, and a
+restart keeps the same owner. Fresh reads of the offering inbox and any known
+linked parent precede a first offer; a legacy pending card is adopted from
+positive T3 evidence before a competing scope can offer it, while a transient
+`unknown` parent status does not block an observed Inbox from offering and
+binding the version. An unknown card read never proves a card absent, and a
 bound version is re-offered only after its own scope is read again. Offer, count,
 callback authorization and card settlement use the same owner. An Inbox sign-off
 uses the ordinary authenticated T3 operator answer route and leaves independent
@@ -1403,8 +1417,10 @@ creation, workspace and custody admission proves settled. The parent must still
 match the task's recorded workspace, project and Nucleus ACP provider. The T3
 `thread.unarchive` effect has the restart operation's durable identity; the
 narrow parent observation must prove the same parent live before normal admission
-proceeds. A narrow read that cannot answer (`ThreadNotFoundError`, or the generic
-incomplete projection error the nightly also gives for an absent thread,
+proceeds. A narrow read that cannot answer (`ThreadNotFoundError`, an
+`OrchestrationV2GetThreadProjectionError` proving
+`ProjectionStoreThreadNotFoundError` for the requested thread, or the generic
+incomplete projection error the nightly gives without that proof,
 nucleus#1460) falls back to the paired inventory, and an unreadable inventory keeps
 the authorized restart pending without losing it. A prepared binding (below) is
 not a restore: the restart precheck sends nothing and the worker's create launches
@@ -1425,11 +1441,11 @@ session are deterministic for a task
 adapter's state before the send, and a lost reply is settled by finding the thread
 before anything is launched again. The binding is stored before the parent's
 launch read, so a read failure in between leaves a **prepared** binding
-(nucleus#1458). The installed nightly answers an absent thread's read with `OrchestrationV2GetThreadProjectionError`, not `ThreadNotFoundError`; the private proof `effigy proof:t3code:prepared-parent` confirms it on an isolated nightly (nucleus#1460). The generic incomplete projection error grants no absence, so the
+(nucleus#1458). An older or generic `OrchestrationV2GetThreadProjectionError` without `ProjectionStoreThreadNotFoundError` grants no absence on its own, so the
 parent observation and the launch's own existence check fall back to the complete
 paired inventory for a prepared binding only (nucleus#1460). A sent parent's generic
 read keeps its transient wait, so churn never turns it into archive scans or a finished
-marker (nucleus#1451). An unreadable inventory keeps the wait.
+marker (nucleus#1451); only `ThreadNotFoundError` or `OrchestrationV2GetThreadProjectionError:thread_not_found` checks the paired inventory. An unreadable inventory keeps the wait.
 Prepared is one decision, shared by first dispatch, the retained launch and owner
 restart: the complete inventory shows no row for the parent, and the `parent-launch`
 command has no ledger intent, which proves nothing was reserved for a send. Only that
@@ -1728,8 +1744,8 @@ through the helper and ticket named in the prompt. Service composition injects
 verification (live author/reviewer independence and exact-head checks) and
 retained-thread continuation, recovery and checkpoint delivery use the same
 core policy as Paseo. The Adapter supplies `askReviewer` (a T3 message that sends the core consult
-prompt unchanged) and `findRunAgents` (exact `nucleus.run` plus `nucleus.task`
-label lookup). Core names `question.answer` with the reissued recipient run
+prompt unchanged) and `findRunAgents` ([run creation lookup](#run-creation-lookup)).
+Core names `question.answer` with the reissued recipient run
 ticket for any host that has a recipient run on that proven host; MCP hosts
 without a matching run clear an inherited `NUCLEUS_TICKET` so the host's identity
 answers. Equal native IDs on different hosts do not share a consult ticket. A
@@ -1748,6 +1764,28 @@ unroutable. Uncertain reviewer or coordinator creation can bind.
 task lifecycle dispatch. An unconfigured T3 adapter changes no default route. A
 configured second host never causes implicit rerouting of a live task, origin
 notice or pending question.
+
+### Run creation lookup
+
+`findRunAgents` uses exact `nucleus.run` and `nucleus.task` labels to select
+local launch records, then reads each native thread by ID. A fresh thread
+snapshot supplies placement. On `ThreadNotFoundError`, or on an
+`OrchestrationV2GetThreadProjectionError` whose `cause` proves
+`ProjectionStoreThreadNotFoundError` for the requested thread (the installed
+nightly's `subscribeThread` wire shape for a missing thread, classified as
+`OrchestrationV2GetThreadProjectionError:thread_not_found`), it checks a fresh,
+synchronized live and archived inventory and counts any surviving row as a
+match. A candidate missing from both lists after that response contributes
+no match. Any other `OrchestrationV2GetThreadProjectionError` (a read failure
+such as `ProjectionStoreReadError`, missing/unrecognized `cause`, or a missing
+fork ancestor) and any transport or timeout error stays transient and leaves
+the lookup unanswered.
+
+If the inventory's five live and archived pairs keep returning different
+sequences, the lookup retries once from fresh reads. Persistent churn surfaces
+as a read refusal. The
+[absent-creation contract](../contracts/orchestration.md#uncertain-creation-and-absence)
+owns the grace and producer checks that allow a replacement.
 
 ## Operator install route
 

@@ -7,7 +7,6 @@ import type { Adapter } from "../core/host/adapter";
 import { Store } from "../core/store/store";
 import {
   buildProjectSettings,
-  PROJECT_SETTINGS_PROBLEMS,
 } from "../core/planning/project-settings";
 import { QueueRuntime } from "../service/runtime-owner";
 import {
@@ -16,13 +15,11 @@ import {
   PROJECT_OWNER_CANDIDATE_KINDS,
   projectOwnerCandidates,
   projectOwnerCandidateSchema,
-  projectQaRunSchema,
   projectSchema,
   projectSettings,
   projectSettingsSchema,
   repositorySettingsSchema,
   type Project,
-  type ProjectQaRun,
   type RepositorySettings,
 } from "../shared/contracts";
 import { formatAgentId } from "../shared/agent-identity";
@@ -64,45 +61,6 @@ function settingsRow(
     note: "row",
     updatedAt: "2026-11-08T00:00:00.000Z",
     revision,
-  });
-}
-
-function qaRun(input: {
-  id: string;
-  key: string;
-  state: ProjectQaRun["state"];
-  startedAt: string;
-  finishedAt?: string | null;
-  origin?: string;
-  path?: string;
-}): ProjectQaRun {
-  return projectQaRunSchema.parse({
-    id: input.id,
-    key: input.key,
-    repository: {
-      origin: input.origin ?? input.key,
-      path: input.path ?? `/repos/${input.id}`,
-    },
-    state: input.state,
-    baseBranch: "main",
-    base: "a".repeat(40),
-    argv: ["effigy", "qa"],
-    digest: "b".repeat(64),
-    capacityWait: null,
-    capacityUnavailable: false,
-    exitCode:
-      input.state === "passed" ? 0 : input.state === "failed" ? 1 : null,
-    durationMs: 0,
-    outputTail: input.state,
-    startedAt: input.startedAt,
-    submittedAt: input.startedAt,
-    finishedAt:
-      input.finishedAt === undefined
-        ? input.state === "queued" || input.state === "running"
-          ? null
-          : input.startedAt
-        : input.finishedAt,
-    pid: null,
   });
 }
 
@@ -148,6 +106,9 @@ test("ownerCandidateKind classifies planners apart from task threads", () => {
     "executor",
   );
   assert.equal(ownerCandidateKind(wireLabels({ decider: "q1" })), "other");
+  assert.equal(ownerCandidateKind(wireLabels({ role: "subagent" })), "other");
+  assert.equal(ownerCandidateKind(wireLabels({ role: "inbox" })), "other");
+  assert.equal(ownerCandidateKind(wireLabels({ role: "parent" })), "other");
   assert.equal(
     ownerCandidateKind({
       "nucleus.role": "worker",
@@ -192,7 +153,7 @@ test("project.owner-candidates requires kind and refuses a candidate without one
   );
 });
 
-test("project.settings inherits slots, flags planner and QA problems, and matches repository rows", () => {
+test("project.settings inherits slots, reports planner state, and matches repository rows", () => {
   const live = project({ key: "live", planner: { agentId: "planner-live" } });
   const gone = project({ key: "gone", planner: { agentId: "planner-gone" } });
   const empty = project({
@@ -207,20 +168,6 @@ test("project.settings inherits slots, flags planner and QA problems, and matche
     defaultSlots: DEFAULT_PROJECT_LIMIT,
     liveAgentIds: new Set(["planner-live"]),
     liveKnown: true,
-    latestQaRuns: [
-      qaRun({
-        id: "qa-alpha",
-        key: alpha.origin,
-        state: "passed",
-        startedAt: "2026-11-08T02:00:00.000Z",
-      }),
-      qaRun({
-        id: "qa-beta",
-        key: beta.origin,
-        state: "failed",
-        startedAt: "2026-11-08T01:00:00.000Z",
-      }),
-    ],
   });
   assert.equal(row.defaultSlots, DEFAULT_PROJECT_LIMIT);
   assert.equal("inFlight" in row, false);
@@ -245,20 +192,14 @@ test("project.settings inherits slots, flags planner and QA problems, and matche
 
   const emptyRow = row.projects[2];
   assert.equal(emptyRow.plannerLive, null);
-  assert.deepEqual(emptyRow.problems, [PROJECT_SETTINGS_PROBLEMS.qaFailed]);
-  assert.deepEqual(emptyRow.latestQa, {
-    key: alpha.origin,
-    state: "passed",
-    startedAt: "2026-11-08T02:00:00.000Z",
-    finishedAt: "2026-11-08T02:00:00.000Z",
-  });
+  assert.deepEqual(emptyRow.problems, []);
   assert.equal(emptyRow.repositories[0].primary, true);
   assert.equal(emptyRow.repositories[1].primary, false);
   assert.equal(emptyRow.repositories[1].settings, null);
   assert.equal("inFlight" in emptyRow, false);
 });
 
-test("project.settings treats unknown live inventory as unknown, not gone, and timed-out QA is not a failed last run", () => {
+test("project.settings treats unknown live inventory as unknown", () => {
   const named = project({ key: "named", planner: { agentId: "planner" } });
   const unknown = settings({
     projects: [named],
@@ -267,18 +208,9 @@ test("project.settings treats unknown live inventory as unknown, not gone, and t
     defaultSlots: 5,
     liveAgentIds: new Set(),
     liveKnown: false,
-    latestQaRuns: [
-      qaRun({
-        id: "qa",
-        key: alpha.origin,
-        state: "timed_out",
-        startedAt: "2026-11-08T00:00:00.000Z",
-      }),
-    ],
   });
   assert.equal(unknown.projects[0].plannerLive, null);
   assert.deepEqual(unknown.projects[0].problems, []);
-  assert.equal(unknown.projects[0].latestQa?.state, "timed_out");
 });
 
 function liveAdapter(
@@ -428,15 +360,6 @@ test("project.settings reads saved data only; the focused project adds live stat
     });
     runtime.store.setProjectDispatchLimitOverride("suite", 3);
     runtime.store.putRepository(alpha, null, "alpha-row");
-    runtime.store.putQaRun(
-      qaRun({
-        id: "qa-suite",
-        key: alpha.origin,
-        state: "failed",
-        startedAt: "2026-11-08T00:00:00.000Z",
-      }),
-    );
-
     // The warm healthy list: saved rows, with planner liveness unknown because no host was read.
     const list = projectSettings.output.parse(await runtime.projectSettings());
     const listed = list.projects.find((entry) => entry.project.key === "suite");
@@ -444,8 +367,7 @@ test("project.settings reads saved data only; the focused project adds live stat
     assert.deepEqual(listed.slots, { value: 3, override: 3 });
     assert.equal(listed.plannerLive, null);
     assert.equal(listed.responsibleThread, undefined);
-    assert.equal(listed.latestQa?.state, "failed");
-    assert.deepEqual(listed.problems, [PROJECT_SETTINGS_PROBLEMS.qaFailed]);
+    assert.deepEqual(listed.problems, []);
     assert.equal(listed.repositories[0].settings?.note, "alpha-row");
     assert.equal(listed.repositories[1].settings, null);
 
@@ -458,7 +380,6 @@ test("project.settings reads saved data only; the focused project adds live stat
       ["suite"],
     );
     assert.equal(focused.projects[0].plannerLive, true);
-    assert.equal(focused.projects[0].latestQa?.state, "failed");
 
     // A hung inventory: the list still answers before the host settles, and the focused row goes unknown.
     state.hang = true;
@@ -521,53 +442,6 @@ test("project.settings reads saved data only; the focused project adds live stat
     assert.deepEqual(page.projects[0].problems, []);
   } finally {
     await mute.stop();
-  }
-});
-
-test("project.settings keeps a project latest QA when 250 newer other-repository runs would drop it from the board inventory", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "nsq-project-settings-qa-cap-"));
-  const runtime = new QueueRuntime({
-    dataDir: dir,
-    adapterFactory: () => muteAdapter(dir),
-    timers: false,
-  });
-  try {
-    await runtime.started;
-    runtime.store.upsertProject({
-      key: "suite",
-      name: "Suite",
-      repositories: [alpha],
-    });
-    runtime.store.putQaRun(
-      qaRun({
-        id: "qa-suite",
-        key: alpha.origin,
-        state: "failed",
-        startedAt: "2026-10-01T00:00:00.000Z",
-      }),
-    );
-    for (let i = 0; i < 250; i++) {
-      runtime.store.putQaRun(
-        qaRun({
-          id: `fill-${i}`,
-          key: `acme/fill-${i}`,
-          state: "passed",
-          startedAt: "2026-11-08T12:00:00.000Z",
-        }),
-      );
-    }
-    assert.equal(
-      runtime.store.latestQaRuns().some((run) => run.key === alpha.origin),
-      false,
-    );
-    const page = projectSettings.output.parse(await runtime.projectSettings());
-    const suite = page.projects.find((entry) => entry.project.key === "suite");
-    assert.ok(suite);
-    assert.equal(suite.latestQa?.key, alpha.origin);
-    assert.equal(suite.latestQa?.state, "failed");
-    assert.deepEqual(suite.problems, [PROJECT_SETTINGS_PROBLEMS.qaFailed]);
-  } finally {
-    await runtime.stop();
   }
 });
 

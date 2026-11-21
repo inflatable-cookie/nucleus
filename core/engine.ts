@@ -200,7 +200,6 @@ import { admissionOf } from "./host/admission";
 import type { ReconciliationSweep } from "../shared/telemetry";
 
 import {
-  ownerPendingEffects,
   type OwnerEffect,
   type RouteRole,
   type RestartRole,
@@ -347,6 +346,7 @@ export class Engine {
       "store",
       "withHost",
       "hostAvailable",
+      "hostIds",
     ]),
   );
 
@@ -610,7 +610,14 @@ export class Engine {
     hostAvailable: (id) => this.hostAvailable(id),
     workspacePressureWait: (task) => this.workspacePressureWait(task),
   });
-  profiles: Profile[] = [];
+  private profilesValue: Profile[] = [];
+  get profiles(): Profile[] {
+    return this.profilesValue;
+  }
+  set profiles(value: Profile[]) {
+    this.profilesValue = value;
+    this.catalogs?.overrideProfiles(value);
+  }
   stopped = false;
   /**
    * Spec 027: Queue data directory for sibling worktrees
@@ -996,7 +1003,8 @@ export class Engine {
       online: (id) => this.hostOnline(id),
       ids: () => this.hostIds(),
       inventoryMatches: (id) => this.inventoryHostMatches(id),
-      originAvailable: (id) => this.hostAvailable(id),
+      originAvailable: (id) =>
+        !this.auditUnavailableHosts.has(id) && this.hostAvailable(id),
       // A host-dependent call arriving just after a roll waits out the runtime's
       // own bridge connection instead of refusing as unavailable (roll-recovery
       // contract): the poll is bounded and ends at once once the bridge answers.
@@ -1922,43 +1930,14 @@ export class Engine {
       operationId,
     );
   }
-  forceSettleEffect(task: Task, input: TaskControlInput): Task {
-    return this.forceVerbs.forceSettleEffect(task, input);
-  }
-  forceSettlementRecord(
-    task: Task,
-    selected: ReturnType<typeof ownerPendingEffects>[number],
-    input: TaskControlInput,
-  ) {
-    return this.forceVerbs.forceSettlementRecord(task, selected, input);
-  }
-  forceCallerAuthorized(task: Task, caller: string | undefined): boolean {
+  forceCallerAuthorized(task: Task, caller: string | undefined): Promise<boolean> {
     return this.forceVerbs.forceCallerAuthorized(task, caller);
   }
   selfForceRole(task: Task): "worker" | "reviewer" | "recovery" | null {
     return this.forceVerbs.selfForceRole(task);
   }
-  forcePlannerMatches(
-    task: Task,
-    caller: string,
-    projectOnly = false,
-  ): boolean {
-    return this.forceVerbs.forcePlannerMatches(task, caller, projectOnly);
-  }
-  forcePlanners(task: Task): Array<string | undefined> {
-    return this.forceVerbs.forcePlanners(task);
-  }
-  forceCallerSource(
-    task: Task,
-    caller: string,
-  ):
-    | "operator_board"
-    | "project_planner"
-    | "queue_planner"
-    | "task_worker"
-    | "task_reviewer"
-    | "task_recovery" {
-    return this.forceVerbs.forceCallerSource(task, caller);
+  forcePlannerMatches(task: Task, caller: string): Promise<boolean> {
+    return this.forceVerbs.forcePlannerMatches(task, caller);
   }
   forceMove(
     task: Task,
@@ -2087,8 +2066,9 @@ export class Engine {
   applyTaskControlSetRouting(
     input: TaskControlInput,
     operated: <T>(result: T) => T,
+    planner = false,
   ): Task {
-    return this.settingsControls.applyTaskControlSetRouting(input, operated);
+    return this.settingsControls.applyTaskControlSetRouting(input, operated, planner);
   }
   applyTaskControlExcludeWorker(
     input: TaskControlInput,

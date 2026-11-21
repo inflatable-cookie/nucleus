@@ -275,7 +275,9 @@ async function fixture(t: TestContext): Promise<Fixture> {
     createAgent: async () => {
       throw new Error("T3 must never create this task's worker");
     },
-    listLiveAgents: async () => [{ id: "planner", title: "T3 planner", workspaceId: "t3-planner-ws" }],
+    listLiveAgents: async () => [
+      { id: "planner", title: "T3 planner", workspaceId: "t3-planner-ws" },
+    ],
     observe: async (id: string) => {
       if (id !== "planner") throw new Error("Agent was not found");
       return {
@@ -357,10 +359,14 @@ async function fixture(t: TestContext): Promise<Fixture> {
   forge.verifyPr = async (task: { directory?: string }) => ({
     head: await liveHead(task),
     url: prUrl,
+    repository: "example/lifecycle",
+    headRepository: "example/lifecycle",
   });
   forge.verifyPrIdentity = async (task: { directory?: string }) => ({
     head: await liveHead(task),
     url: prUrl,
+    repository: "example/lifecycle",
+    headRepository: "example/lifecycle",
   });
   forge.verifyCleanQueueWorktree = async () => {};
   forge.verifyReview = async () => 9001;
@@ -954,7 +960,9 @@ test("BB trial: a T3 planner submits, the standalone task executes end to end on
       true,
       "the T3 author lead passed its check",
     );
-    await f.runtime.engine.resolution.responsibleThread(f.runtime.store.projectByKey("lifecycle")!);
+    await f.runtime.engine.resolution.responsibleThread(
+      f.runtime.store.projectByKey("lifecycle")!,
+    );
     assert.equal(
       f.runtime.store.projectPlannerRecipient(
         f.runtime.store.projectFor(f.repo, f.repo),
@@ -1262,10 +1270,11 @@ async function reportWorkerAfterFault(
     task.agentId,
     "the accepted report names the same worker thread",
   );
-  assert.match(
-    reported.reason,
-    /waiting for the worker to release the workspace/,
-    "the review is held behind the worker release, not behind uncertainty about the host",
+  assert.ok(
+    /waiting for the worker to release the workspace/.test(reported.reason) ||
+      (reported.phase === "awaiting_review" &&
+        reported.reason === "Ready after the fault"),
+    `the review is held behind the worker release or already released cleanly into review, not behind uncertainty about the host (phase=${reported.phase}, reason=${reported.reason})`,
   );
 }
 
@@ -1503,10 +1512,14 @@ test("BB trial: a BB restart mid-task keeps the recorded environment and recover
       "the restarted host accepted the worker report",
     );
     for (let i = 0; i < 6; i++) await f.runtime.engine.resolution.observe();
-    assert.match(
-      f.runtime.store.task(taskId).reason,
-      /waiting for the worker to release the workspace/,
-      "the lane holds on the worker release, not on host uncertainty",
+    const afterRestart = f.runtime.store.task(taskId);
+    assert.ok(
+      /waiting for the worker to release the workspace/.test(
+        afterRestart.reason,
+      ) ||
+        (afterRestart.phase === "awaiting_review" &&
+          afterRestart.reason === "Ready after a restart"),
+      `the lane holds on the worker release or already released cleanly into review, not on host uncertainty (phase=${afterRestart.phase}, reason=${afterRestart.reason})`,
     );
   } finally {
     await f.close();

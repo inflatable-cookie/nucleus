@@ -33,7 +33,7 @@ export class TaskControlLifecycle {
         // host, and only a control that would otherwise be accepted enters the
         // wait. A reachable host changes nothing: its verb answers first.
         if (waiting) {
-          const refusal = hostIndependentControlRefusal(this.context, input, operationId);
+          const refusal = await hostIndependentControlRefusal(this.context, input, operationId);
           if (refusal) return Promise.reject(new Error(refusal));
         }
         if (!hostId) return Promise.reject(new Error('Task is waiting for a proven host identity'));

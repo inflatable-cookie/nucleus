@@ -1182,7 +1182,7 @@ const PARSED: ParsedText[] = [
   },
   {
     site: "reviewer crash",
-    re: /^The reviewer (?:thread stopped|callback reminder expired)/,
+    reads: ['current.reasonFact?.subject === "reviewer"'],
     sample:
       "The reviewer thread stopped without a callback; inspect the thread",
     writers: [
@@ -1194,7 +1194,7 @@ const PARSED: ParsedText[] = [
   // ask `task-reasons` for the sentence pair, so one owner holds the words.
   {
     site: "missing callback",
-    reads: ["missingCallbackStopReasonFor(t.reason, completed.role)"],
+    reads: ["t.reasonFact?.subject === completed.role"],
   },
   {
     site: "store fence",
@@ -1222,11 +1222,10 @@ const PARSED: ParsedText[] = [
   {
     site: "review recovery wait",
     reads: [
-      "reviewEffectWaitRefusal(t) === refusal",
-      "/^(?:Ordinary review|Review-entry) waits for (.+); settle it with retry_effect before continuing$/",
+      "matchesReviewEffectWait(t, effects)",
     ],
     writers: [
-      "`${run.ordinaryDetached?'Ordinary review':'Review-entry'} waits for ${recoveryEffectsRefusal(error.effects)}; settle it with retry_effect before continuing`",
+      '`${run.ordinaryDetached ? "Ordinary review" : "Review-entry"} waits for ${recoveryEffectsRefusal(error.effects)}; settle it with retry_effect before continuing`',
     ],
   },
   // The classifier keeps the authored sentence; the reconciler reads the structured stop.
@@ -1246,13 +1245,13 @@ const PARSED: ParsedText[] = [
   {
     site: "external merge check",
     reads: [
-      "task.reason.startsWith(EXTERNAL_MERGE_CHECK_REASON_PREFIX) || task.reason === EXTERNAL_MERGE_CHECK_RECOVERED_REASON",
-      "t.reason === ACCEPTED_PR_RECONCILIATION_REASON",
+      'task.reasonFact?.code === "external_merge_check" || task.reasonFact?.code === "external_merge_recovered"',
+      't.reasonFact?.code === "accepted_pr"',
     ],
   },
   {
     site: "revision repair",
-    reads: ["t.reason === WORKER_PR_IDENTITY_REFUSAL"],
+    reads: ['t.reasonFact?.code === "pr_identity"'],
     writers: [
       'WORKER_PR_IDENTITY_REFUSAL = "PR must be open, ready, and match the task\'s branch and base"',
     ],
@@ -1324,13 +1323,13 @@ const PARSED: ParsedText[] = [
   },
   {
     site: "transient provider wait",
-    reads: ["stop.detail.startsWith(TRANSIENT_PROVIDER_WAIT)"],
+    reads: ['stop.fact?.code !== "provider_retry"'],
     writers: ["const TRANSIENT_PROVIDER_WAIT = 'Transient provider error'"],
   },
   {
     site: "unverified provider refusal",
     reads: [
-      "stop.detail.startsWith(`Reviewer run ${run.id} provider refusal is unverified`)",
+      'stop.fact?.code !== "provider_refusal" || stop.fact.subject !== run.id',
     ],
     writers: [
       "`Reviewer run ${run.id} provider refusal is unverified: ${read.gap}`",
@@ -1447,7 +1446,7 @@ const PARSED: ParsedText[] = [
     site: "escalation waiting",
     reads: [
       "current.resolution.stop?.reason !== expected.stopReason",
-      "current.resolution.stop.detail !== expected.stopDetail",
+      "current.resolution.stop.fact?.subject !== id",
     ],
     writers: [
       "`Escalation ${id}: waiting for operator decision ${wait.target}`",
@@ -1531,7 +1530,7 @@ const SITES: Record<string, number> = {
   "The ${role} thread stopped without a callback; inspect the thread": 1,
   "callback reminder expired": 3,
   "An unresolved task incident or recovery fence blocks reviewer continuation": 2,
-  "t.reason === ACCEPTED_PR_RECONCILIATION_REASON": 2,
+  't.reasonFact?.code === "accepted_pr"': 2,
   "PR must be open, ready, and match the task's branch and base": 1,
   "Worker must remain on queue-owned branch ${task.branch}": 5,
   "/decision (\\S+)/": 3,

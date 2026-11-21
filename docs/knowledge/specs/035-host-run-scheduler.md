@@ -30,49 +30,15 @@ scheduler ("A reservation settles when its recorded process is gone" below). The
 heavy-work strip is gone (Tom, 2026-11-01); a task's test run stays on its task
 card (2026-11-01: 464 leaked Effigy admission records had filled the strip).
 
-### Milestone QA cards (Tom, 2026-11-01)
-
-Each milestone QA run is a card, not a task. The board projects the latest run
-per repository (`core/qa/qa-board.ts`), and the project and lane filters apply.
-Placement follows state: queued in Queued with its position, running in Working
-with its open step and elapsed time, and any finished run that is not passing in
-Attention with its failed step, exit code and last output lines. A passing run
-sits in Closing and leaves the board five minutes after it finishes; the QA runs
-page keeps the history ("Pass fades, fail stays"). A failure stays until a
-passing re-run of the same repository replaces it or an operator dismisses it.
-Failed, timed-out and held cards also show a Stale marker when their recorded
-`base` is an ancestor of the checkout's local `refs/remotes/origin/<baseBranch>`.
-The marker gives commits since the run and the run date. Missing refs and
-rewritten or unrelated history show no marker. The board projection caches
-branch heads and base/head comparisons, with a short head refresh window; it
-does not fetch from the network.
-Dismissal is `project.qa.dismiss { id, reason, caller }`: it records who
-dismissed which run and never deletes the record. Card actions are cancel
-(`project.qa.cancel`, live runs), re-run (a fresh `project.qa.run` with the same
-repository and base and a new request ID), dismiss (finished, not passing) and
-open details, which opens the QA runs page on that run. The fade is read from
-the clock, so a card leaves with no store write: the projection advances the
-board revision when the set of visible cards changes.
-
-Tom (2026-09-30): "Effigy should be the runtime that executes QA, Queue and
-Nucleus should manage who runs what when." Tom ruled the same day that heavy
-runs fail closed when the scheduler is unreachable (contract 010).
+[Milestone QA](../contracts/milestone-qa.md) runs as a report-only task.
+Generic host-run records and accounting are available through `host.run.list`
+and `host-run.board`.
 
 ## Live run presence: a terminal tab and a workspace label (task 530)
 
-While a test, QA or proof run is live the operator sees it where they work
-(Tom, 2026-11-01: "Both").
-
-**The tab.** Nucleus opens one terminal tab per workspace and selector, named for
-the run (`QA · qa:stage:rust`, `Testing · qa:changed`), in the workspace that
-owns it: a task run in the task's workspace, a milestone QA run in the project's
-main checkout workspace, because its private QA checkout is not a sidebar
-workspace. Nucleus places a tab only in a workspace that is already open and
-not archived. It never opens or unarchives a workspace for one. When no such
-workspace exists, the run still goes ahead and its live output stays on the board
-(Tom, 2026-11-19, agreeing to stop reopening an archived checkout workspace for
-every QA run; this replaces the 2026-11-01 "Open one" rule). A task run never
-opens a workspace either: the task's own workspace is the only place it belongs.
+**The tab.** Nucleus adds a terminal tab for each live selector in an open
+workspace. A task run uses the task's workspace. Other host runs can use an
+open workspace for their recorded checkout.
 The tab runs `bin/queue-run-terminal.mjs` against a pointer file
 Nucleus writes under `<dataDir>/run-terminal/`. Nucleus launches it through
 `/usr/bin/env` with `ELECTRON_RUN_AS_NODE=1`, so it also runs under Paseo's
@@ -83,19 +49,13 @@ opening another, so Nucleus leaves no stream of dead tabs behind. If the followe
 tab exits during a run, Nucleus logs that once and does not reopen it for that run
 session; a later run session gets a fresh attempt.
 
-**The live log.** A client-protocol run is followed through the retained
-`runs/<id>/stdout` and `stderr` its supervisor writes. A Nucleus-submitted run had
-no such files: each detached supervisor now tees every output chunk to a per-run
-live log beside its own supervision files —
-`project-validation/<hash>/live.log` and `<qa root>/<run id>.live.log` — capped at
-512 KiB with the most recent bytes kept, and redacting the run's token across
-chunk boundaries. The live log is a window, never the record: the step logs and
-the result envelope stay authoritative.
+**The live log.** Client-protocol runs follow the retained stdout and stderr.
+Project validation follows its own capped and redacted live log at
+`project-validation/<hash>/live.log`.
 
-**The label.** A workspace with a live milestone QA run carries the amber
-"QA running" label; one with a live task, proof or other run carries the violet
-"Testing" label. Both clear when the run settles. The workspace title belongs to
-the operator and is never touched.
+**The label.** A workspace with a live run carries the violet "Testing" label.
+The service clears it after settlement and removes legacy "QA running" labels
+from open workspaces.
 
 **Reconciliation.** One pass runs every two seconds from the live run set, for
 launched runs only: a queued run has no live output to follow yet. Every pass
@@ -2307,9 +2267,6 @@ the same day took signals by hand, and Nucleus recorded the cancel as `failed`.
   "only the listed env"; this changes no protocol policy, and any wording change
   goes to Nucleus.
 - **Cancel.**
-  - **Milestone QA.** A new `project.qa.cancel { id, reason }` RPC, CLI and UI
-    button requests idempotent cancellation through the stop path, runs teardown
-    and settles the run `cancelled`. A cancelled run is distinct from `failed`.
   - **Project validation.** It cancels with its task: the task's cancel and
     hold controls stop a live validation the same way.
   - **Client left before launch** (papercut 19676b0f; Tom, 2026-10-21,
@@ -2654,19 +2611,8 @@ the same day took signals by hand, and Nucleus recorded the cancel as `failed`.
   `adopt_running`, launch, escape, classification, container reports and
   settlement.
 - **Operator view.**
-  - **QA runs tab.** A "QA runs (N)" tab beside Decisions presents one
-    project-scoped list: Now shows running, admitted, queued and capacity-held
-    host runs oldest first; Results shows settled runs newest first, starting
-    with the past 24 hours. Rows identify project, kind, task when named by the
-    caller, selector, commit when present in joined QA or validation data, and
-    outcome. A failed row includes its failing step and a short failure summary.
-    Failed-only filtering, a project picker for Run QA, and row details preserve
-    step output, settlement, caller and epoch identity, cancel, teardown retry,
-    and capacity release. The bounded `project.qa.list` read supplies only the
-    latest QA run per repository, so an older milestone host run can lack QA
-    metadata such as its commit; arbitrary client runs also have no commit in
-    the host-run record. It's its own tab, not a panel above the Pipeline, which
-    pushed the task columns out of view (Tom, 2026-10-01).
+  - **Host-run evidence.** Read generic run and capacity state with `host.run.list`
+    and `host-run.board`.
   - **Task detail.** A task's validation shows "Waiting for QA capacity
     (position N)" from Nucleus's own scheduler, not from Effigy's status.
 

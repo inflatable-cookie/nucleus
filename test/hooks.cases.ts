@@ -107,9 +107,9 @@ test('a repository without a manifest keeps current behavior', async t => {
 
 test('a successful pre-dispatch retry clears only its recorded task hold', () => {
   const record = { event: 'task.pre_dispatch', state: 'result' } as any;
-  const held = { phase: 'needs_attention', reason: 'Repository hook lifecycle-gate task.pre_dispatch holds this transition: repair required' } as Task;
+  const held = { phase: 'needs_attention', reasonFact: { code: 'hook_hold' } } as Task;
   assert.equal(isRecoveredPreDispatchHookHold(held, { hold: false, attention: false, records: [record] }), true);
-  assert.equal(isRecoveredPreDispatchHookHold({ ...held, reason: 'Coordinator needs attention' }, { hold: false, attention: false, records: [record] }), false);
+  assert.equal(isRecoveredPreDispatchHookHold({ ...held, reasonFact: null }, { hold: false, attention: false, records: [record] }), false);
   assert.equal(isRecoveredPreDispatchHookHold(held, { hold: true, attention: true, records: [record] }), false);
   assert.equal(isRecoveredPreDispatchHookHold(held, { hold: false, attention: false, records: [{ ...record, event: 'task.closeout' }] }), false);
 });

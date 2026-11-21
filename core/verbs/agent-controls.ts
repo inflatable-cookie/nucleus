@@ -125,10 +125,10 @@ export class AgentControls {
     if (
       input.taskId !== caller.taskId ||
       !input.force ||
-      !["move", "retry_effect"].includes(input.action)
+      input.action !== "move"
     )
       throw new DurableFenceRefusal(
-        "Authenticated self-force applies only to move or retry_effect on your own task",
+        "Authenticated self-force applies only to move on your own task",
       );
     // Self-force reads this run's credential from its ticket: a retained thread's
     // stale ticket acts for the thread's current run (nucleus#1376).

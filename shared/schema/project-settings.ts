@@ -30,7 +30,6 @@ export const projectSettingsProblemSchema = z.union([
     "Planner thread is gone",
     "No planner",
     "Planner ticket pending",
-    "Last QA failed",
   ]),
   z.string().startsWith("Planner unroutable: "),
 ]);
@@ -38,17 +37,6 @@ export const projectSettingsProblemSchema = z.union([
 export type ProjectSettingsProblem = z.infer<
   typeof projectSettingsProblemSchema
 >;
-
-export const projectSettingsQaSchema = z
-  .object({
-    key: z.string().min(1).max(320),
-    state: projectQaStateSchema,
-    startedAt: z.string(),
-    finishedAt: z.string().nullable(),
-  })
-  .strict();
-
-export type ProjectSettingsQa = z.infer<typeof projectSettingsQaSchema>;
 
 export const projectSettingsRepositorySchema = z
   .object({
@@ -103,7 +91,6 @@ export const projectSettingsRowSchema = z
     plannerTicket: z.enum(["pending", "issued"]).nullable(),
     /** Task 1110: the project's named agents with live state; the board shows the same list `project.agents` returns. */
     agents: z.array(projectAgentViewSchema).optional(),
-    latestQa: projectSettingsQaSchema.nullable(),
     problems: z.array(projectSettingsProblemSchema),
   })
   .strict();

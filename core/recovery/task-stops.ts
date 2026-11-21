@@ -20,7 +20,7 @@ import {
 } from "../../shared/task-budget";
 import { TASK_PROGRESSING_REASON } from "../../shared/task-detail-summary";
 import { holdsOf } from "../../shared/holds";
-import { isSettledWaitProse } from "../../shared/task-stop";
+import { isSettledWaitProse, type TaskDecisionFact } from "../../shared/task-stop";
 import { taskHasUnreleasedRun } from "../../shared/task-view";
 import {
   plannerEscalations,
@@ -150,7 +150,7 @@ export class TaskStops {
           (event) => event.kind === "attention_episode_resolved",
         ) &&
       current.resolution.attention === true &&
-      /refused before send/i.test(current.reason);
+      current.reasonFact?.code === "pre_send_refused";
     const closingOutage = Boolean(outage) && Boolean(options.returned);
     // The task's own host wait is a Nucleus-side cause of its own (nucleus#1198
     // review): it pauses the clock whether or not the stop beside it belongs to
@@ -259,23 +259,13 @@ export class TaskStops {
   /** Older BB connect refusals were written as generic attention stops. */
   private legacyBbConnectStop(task: Task): boolean {
     const stop = task.resolution.stop;
-    const prefix =
-      "BB host operation was not sent: Service socket connect failed: ";
     if (
       hostKindOf(task.hostId) !== "bb" ||
       stop?.reason !== "operator_needed" ||
-      task.reason !== stop.detail ||
-      !stop.detail.startsWith(prefix) ||
-      callbackTransportPhase(new Error(stop.detail.slice(prefix.length))) !==
-        "connect"
+      stop.fact?.code !== "bb_connect"
     )
       return false;
-    return (
-      this.store
-        .eventsAll(task.id)
-        .findLast((event) => event.kind === "task_stopped")?.detail ===
-      JSON.stringify(stop)
-    );
+    return this.store.eventsAll(task.id).some(event => event.kind === "task_stopped" && event.at >= stop.since);
   }
 
   /**
@@ -357,7 +347,7 @@ export class TaskStops {
     if (
       !stop ||
       stop.reason !== "operator_needed" ||
-      !isSettledWaitProse(stop.detail) ||
+      stop.fact?.code !== "progressing" ||
       current.removedAt ||
       ["done", "cancelled"].includes(current.phase)
     )
@@ -381,7 +371,7 @@ export class TaskStops {
     return this.store.transaction(() => {
       const latest = this.store.task(current.id);
       // Only the occurrence that was read settles; a stop written since is left to its own writer.
-      if (latest.resolution.stop?.since !== stop.since || latest.resolution.stop.detail !== stop.detail)
+      if (latest.version !== current.version)
         return latest;
       const attention = latest.resolution.attention;
       const next = this.resolution.update(
@@ -402,6 +392,7 @@ export class TaskStops {
     detail: string,
     suggestedVerbs?: TaskStopVerb[],
     phase?: Task["phase"],
+    fact?: TaskDecisionFact,
   ): Task {
     const current = this.store.task(task.id);
     if (
@@ -416,6 +407,8 @@ export class TaskStops {
       current.resolution.stop,
       now(),
       suggestedVerbs,
+      undefined,
+      fact,
     );
     const visible = visibleTaskReason(detail, stop);
     if (
@@ -427,7 +420,7 @@ export class TaskStops {
     return this.resolution.update(
       current,
       { stop },
-      { reason: visible, ...(phase ? { phase } : {}) },
+      { reason: visible, reasonFact: stop.fact, ...(phase ? { phase } : {}) },
       "task_stopped",
       JSON.stringify(stop),
     );
@@ -758,7 +751,7 @@ export class TaskStops {
         this.store.event(t.id, "concurrent_fault", reason);
       return;
     }
-    this.resolution.ensureIncident(current, run, reason, "", cause);
+    const incident = this.resolution.ensureIncident(current, run, reason, "", cause);
     // A fault that leaves the task with no live run owner has no supported
     // recovery control on a working phase, so it lands in `needs_attention`.
     // This is the same window the `stoppedBeforeCallback` recovery gate already
@@ -802,8 +795,8 @@ export class TaskStops {
     );
     this.resolution.update(
       current,
-      { attention: true, stop, ...preAttention },
-      { reason, ...(ownerless ? { phase: "needs_attention" as const } : {}) },
+      { attention: true, stop: { ...stop, incidentId: incident.id }, ...preAttention },
+      { reason, reasonFact: stop.fact, ...(ownerless ? { phase: "needs_attention" as const } : {}) },
       "needs_attention",
     );
   }
@@ -816,7 +809,7 @@ export class TaskStops {
     t: Task,
     reason: string,
     stop: TaskStopReason | "classify",
-    options: { suggestedVerbs?: TaskStopVerb[]; holderAgentId?: string } = {},
+    options: { suggestedVerbs?: TaskStopVerb[]; holderAgentId?: string; fact?: TaskDecisionFact } = {},
   ) {
     const current = this.store.task(t.id);
     // A newly launched run is ordinary forward progress, not a task stop.
@@ -863,6 +856,7 @@ export class TaskStops {
       now(),
       options.suggestedVerbs ?? retainedSuggestions,
       options.holderAgentId,
+      options.fact,
     );
     const visible = visibleTaskReason(reason, record);
     // Compare against what this writes. The stop detail is capped at 4000
@@ -877,7 +871,7 @@ export class TaskStops {
     this.resolution.update(
       current,
       { stop: record },
-      { reason: visible },
+      { reason: visible, reasonFact: record.fact },
       "task_waiting",
       JSON.stringify(record),
     );

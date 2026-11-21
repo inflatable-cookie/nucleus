@@ -246,6 +246,26 @@ test("creator recipients must be live and retain their observed cross-project wo
     ),
     /origin closeout/i,
   );
+  await assert.rejects(
+    validateCompletionRecipients(
+      input,
+      async (id) => agents.get(id) ?? null,
+      () => "bb:0123456789abcdef0123456789abcdef",
+    ),
+    /not a live BB agent with a workspace/,
+  );
+  await assert.rejects(
+    validateCompletionRecipients(
+      input,
+      async (id) => agents.get(id) ?? null,
+      () => "t3code:env-1",
+    ),
+    /not a live T3Code agent with a workspace/,
+  );
+  await assert.rejects(
+    validateCompletionRecipients(input, async (id) => agents.get(id) ?? null),
+    /not a live host agent with a workspace/,
+  );
 });
 
 test("self-service validates and binds the caller, rejects stale/terminal mutations, and can suppress a creator seed", async () => {
@@ -285,6 +305,18 @@ test("self-service validates and binds the caller, rejects stale/terminal mutati
       }),
       /live Paseo agent/,
     );
+    const savedIdentify = f.engine.identifyOriginHost;
+    f.engine.identifyOriginHost = async () => "bb:0123456789abcdef0123456789abcdef";
+    await assert.rejects(
+      f.engine.completionSubscription({
+        taskId: f.task.id,
+        version: unsubscribed.version,
+        agentId: "beta",
+        action: "subscribe",
+      }),
+      /live BB agent/,
+    );
+    f.engine.identifyOriginHost = savedIdentify;
     const done = f.store.update(f.task.id, { phase: "done" });
     assert.deepEqual(
       done.completionNotificationCohort?.map((member) => member.agentId),

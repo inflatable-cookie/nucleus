@@ -213,16 +213,13 @@ test('the budget reads as two bounded bars and the elapsed clock starts at the f
 test('check ticks read the latest recorded results and never invent one', () => {
   assert.deepEqual(checkTicks({}), []);
   assert.deepEqual(checkTicks({
-    validation: { state: 'passed', exitCode: 0 }, milestoneQa: { state: 'running' }, verdict: 'changes_required',
+    validation: { state: 'passed', exitCode: 0 }, verdict: 'changes_required',
   }), [
     { label: 'Validation', state: 'pass' },
-    { label: 'Milestone QA', state: 'pending' },
     { label: 'Review', state: 'fail' },
   ]);
   assert.equal(checkTicks({ validation: { state: 'refused', exitCode: 1 } })[0].state, 'fail');
   assert.equal(checkTicks({ validation: { state: 'hold', exitCode: null, capacityUnavailable: true } })[0].state, 'pending');
-  assert.equal(checkTicks({ milestoneQa: { state: 'timed_out' } })[0].state, 'fail');
-  assert.equal(checkTicks({ milestoneQa: { state: 'cancelled' } })[0].state, 'info');
 });
 
 const taskWith = (overrides: Record<string, unknown>) => ({ ...overrides }) as unknown as Task;

@@ -46,7 +46,7 @@ const DEFAULTS = {
   laneDrainMinutes: DEFAULT_LANE_DRAIN_MINUTES,
   laneDrainEscalationMinutes: DEFAULT_LANE_DRAIN_ESCALATION_MINUTES,
   hostOutageNoticeMinutes: DEFAULT_HOST_OUTAGE_NOTICE_MINUTES,
-  operatorDefaultHostKind: "paseo",
+  operatorDefaultHostKind: null,
   threadRetentionDays: DEFAULT_THREAD_RETENTION_DAYS,
 };
 

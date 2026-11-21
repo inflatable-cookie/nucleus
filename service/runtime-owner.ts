@@ -1,4 +1,4 @@
-import { recordQaServiceLifecycle } from "../core/qa/project-qa-diagnostics";
+import { pruneLegacyQaEvidence } from "../core/qa/legacy-qa-retention";
 import { initializeWorkRoot } from "../core/workspaces/work-root.mjs";
 import { registerServiceRollRequest } from "./install/roll-request";
 import { currentServiceBuildId } from "../shared/service/build";
@@ -13,10 +13,9 @@ import { createStoreWorkspaceAllocationBridge } from "../core/workspaces/workspa
 
 import { compiledIdentity, stableInstalledPath } from "../shared/runtime.mjs";
 import { sourcePathFromModule } from "../shared/service/build";
-import { readBbPluginRoll } from "../shared/service/discovery";
+import { readBbPluginRoll, readServiceRoll } from "../shared/service/discovery";
+import type { QueueServiceState } from "../shared/schema/service";
 import { pluginRegistration } from "../shared/plugin-discovery.mjs";
-import { qaFenceStatus } from "../core/qa/qa-fence";
-import type { ProjectQaFenceInput } from "../shared/contracts";
 import { pidAlive } from "../core/machine/process-identity";
 import {
   defaultDataDir,
@@ -48,7 +47,7 @@ import { HostPolicies } from "../core/host/host-policies";
 import type { HostPolicyConstructor } from "../core/host";
 import { formatAgentId, parseAgentId } from "../shared/agent-identity";
 import { hostKindOf, type HostKind } from "../shared/host-kind";
-import { hostConnected } from "../core/host";
+import { createUnboundAdapter, hostConnected } from "../core/host";
 import { createHost } from "../hosts/paseo";
 import { hostHome as hostHomeFromEnvironment } from "./host-environment.mjs";
 import type { RegistrationAdapter } from "../core/host/registration";
@@ -123,6 +122,8 @@ import type {
   OutcomeSearchInput,
 } from "../shared/contracts";
 import { taskControlChanges } from "../shared/task-control-changes";
+import type { ExplicitResolution } from "../shared/schema/task-control";
+import { resolveExplicitly } from "../core/verbs/explicit-resolution";
 import {
   type OperationAcceptance,
   type OperationResult,
@@ -146,7 +147,6 @@ import {
 import { RunUsageTracker } from "../core/telemetry/run-usage-tracker";
 import { createTaskDetailCache } from "../core/telemetry/task-detail";
 import { createUiSnapshotFactsCache } from "../core/telemetry/ui-snapshot";
-import { QA_BOARD_PASS_FADE_MS } from "../core/qa/qa-board";
 
 import { type CheckRequirementTransport } from "../core/forge/index";
 import { now, operationInputHash } from "../core/store/store";
@@ -177,8 +177,6 @@ import { Papercuts } from "../core/planning/papercut-operations";
 import { Leads } from "../core/planning/leads";
 import { Decisions } from "../core/planning/decisions";
 
-import { ProjectQaRunner } from "../core/qa/project-qa";
-import { ProjectQaSchedules } from "../core/qa/project-qa-schedule";
 import { HostRunScheduler } from "../core/host-runs/host-run-scheduler";
 import { captureCpuProfile } from "../core/telemetry/cpu-profile";
 import { EventLoopDelayMonitor } from "../core/telemetry/event-loop-delay";
@@ -223,9 +221,40 @@ const PROFILE_REFRESH_INTERVAL_MS = 120_000;
 /** After the last plugin presence closes while a host is still connected, wait this long before raising the board fault. A successful reload inside the window is silent. */
 const PLUGIN_PRESENCE_GRACE_MS = 45_000;
 
+export const DEFAULT_PASEO_DAEMON_URL = "ws://127.0.0.1:6767/ws";
+
+/**
+ * Resolve the Paseo plugin source path only when Paseo is explicitly configured
+ * or registered. An installed/compiled service launched with `--data-dir` (which
+ * also passes a default `hostHome`) must not connect to Paseo unless a Paseo
+ * plugin registration, a non-default `daemonUrl`, or a Paseo `password` is
+ * present. The old auto-generated `ws://127.0.0.1:6767/ws` written by earlier
+ * versions is not proof of Paseo configuration on its own.
+ */
+export function resolveOptionalPaseoSourcePath(options: {
+  explicitSourcePath?: string;
+  compiledIdentity: boolean;
+  daemonUrl?: string;
+  password?: string;
+  registeredPath?: string;
+  installedSourcePath?: string;
+}): string | undefined {
+  if (options.explicitSourcePath) return options.explicitSourcePath;
+  if (options.compiledIdentity) {
+    const customDaemonUrl =
+      Boolean(options.daemonUrl) &&
+      options.daemonUrl !== DEFAULT_PASEO_DAEMON_URL;
+    const hasPassword = Boolean(options.password);
+    return options.registeredPath || customDaemonUrl || hasPassword
+      ? options.installedSourcePath
+      : undefined;
+  }
+  return options.registeredPath;
+}
+
 /** The host's `settings.json` shape. Uncertain merge timing and the trusted Effigy runtime are per-host settings. */
 export interface HostSettings {
-  daemonUrl: string;
+  daemonUrl?: string;
   password?: string;
   workRoot?: string;
   workVolumeId?: string;
@@ -337,6 +366,10 @@ export class QueueRuntime {
   readonly leads: Leads;
   readonly decisions: Decisions;
   readonly adapter: Adapter;
+  /** The optional admitted Paseo adapter, or null when Paseo is not installed or configured. */
+  readonly paseoAdapter: Adapter | null;
+  private readonly callbackSocketPath: string;
+  private readonly callbackHelperPath: string;
   /** The Host contract over this runtime's adapter, read at each call (`core/host/host-facade.ts`). */
   get host(): HostFacade {
     return new HostFacade(this.engine ?? this);
@@ -405,7 +438,7 @@ export class QueueRuntime {
   private hostRunEndpoint: HostRunEndpoint | null = null;
   /** Queue-owned Effigy admission hook socket; started with the host-run endpoint. */
   private admissionEndpoint: EffigyAdmissionEndpoint | null = null;
-  private paseoAdapter: {
+  private paseoLaunchAdapter: {
     setAdmissionLaunchEnv(env: Record<string, string> | null): void;
   } | null = null;
   /** Why the host-run endpoint is not serving; empty while it serves or when disabled. */
@@ -421,7 +454,6 @@ export class QueueRuntime {
   /** The lifecycle sweep cadence this instance runs (production default, fixture override). */
   private readonly sweepIntervalMs: number;
   private readonly eventLoopDelay = new EventLoopDelayMonitor();
-  private scheduledQa: ProjectQaSchedules | null = null;
   /**
    * Task 530: the live run set's terminal tabs and workspace labels. A
    * best-effort projection; it never admits, schedules, settles or changes a task.
@@ -429,6 +461,7 @@ export class QueueRuntime {
   private liveRunPresence: LiveRunPresence | null = null;
   private readonly backupDir: string;
   private readonly connectTimeoutMs: number;
+  private readonly runtimeStartedAt = new Date().toISOString();
   /** Fixture-only required-check capability transport; production reads the live forge. */
   private readonly requiredCheckTransport:
     | CheckRequirementTransport
@@ -570,16 +603,12 @@ export class QueueRuntime {
     options.instrumentStore?.(this.store);
     const settingsPath = join(this.dataDir, "settings.json");
     if (!existsSync(settingsPath))
-      writeFileSync(
-        settingsPath,
-        JSON.stringify({ daemonUrl: "ws://127.0.0.1:6767/ws" }, null, 2),
-        { mode: 0o600 },
-      );
+      writeFileSync(settingsPath, JSON.stringify({}, null, 2), { mode: 0o600 });
     this.settings =
       options.settings ??
       z
         .object({
-          daemonUrl: z.string().url(),
+          daemonUrl: z.string().url().optional(),
           password: z.string().optional(),
           workRoot: z.string().optional(),
           workVolumeId: z.string().optional(),
@@ -623,7 +652,6 @@ export class QueueRuntime {
         pid: process.pid,
         owner: this.owner,
       });
-      recordQaServiceLifecycle(this.store, "start");
     });
     this.hostRegistry = new HostRegistry(
       {
@@ -675,6 +703,15 @@ export class QueueRuntime {
     this.admission = recordedHost
       ? this.hostRegistry.resource(recordedHost, createAdmission)
       : createAdmission();
+    const unboundAdapter = createUnboundAdapter();
+    unboundAdapter.workspaceAllocationBridge =
+      createStoreWorkspaceAllocationBridge(this.store);
+    type PaseoRawAdapter = Adapter & {
+      socketPath?: string;
+      helperPath?: string;
+      setAdmissionLaunchEnv?: (env: Record<string, string> | null) => void;
+    };
+    let paseoRaw: PaseoRawAdapter | null = null;
     if (options.adapterFactory) {
       const raw = options.adapterFactory({
         dataDir: this.dataDir,
@@ -684,36 +721,57 @@ export class QueueRuntime {
       raw.workspaceAllocationBridge = createStoreWorkspaceAllocationBridge(
         this.store,
       );
-      this.adapter = admitAdapter(raw, this.admission);
+      paseoRaw = raw as PaseoRawAdapter;
+      this.paseoAdapter = admitAdapter(raw, this.admission);
     } else {
       const configHome = options.hostHome ?? hostHomeFromEnvironment();
-      const sourcePath =
-        options.sourcePath ??
-        (compiledIdentity
+      const configPath = join(configHome, "config.json");
+      let registeredPath: string | undefined;
+      if (existsSync(configPath)) {
+        try {
+          registeredPath = pluginRegistration(
+            JSON.parse(readFileSync(configPath, "utf8")).plugins,
+          )?.path;
+        } catch {
+          registeredPath = undefined;
+        }
+      }
+      const sourcePath = resolveOptionalPaseoSourcePath({
+        explicitSourcePath: options.sourcePath,
+        compiledIdentity: Boolean(compiledIdentity),
+        daemonUrl: this.settings.daemonUrl,
+        password: this.settings.password,
+        registeredPath,
+        installedSourcePath: compiledIdentity
           ? stableInstalledPath(sourcePathFromModule())
-          : pluginRegistration(
-              JSON.parse(readFileSync(join(configHome, "config.json"), "utf8"))
-                .plugins,
-            )?.path);
-      if (!sourcePath || !existsSync(join(sourcePath, "mcp-report.mjs")))
-        throw new Error(
-          "Installed plugin source is missing the MCP reporting bridge",
+          : undefined,
+      });
+      if (sourcePath && existsSync(join(sourcePath, "mcp-report.mjs"))) {
+        const raw = createHost(
+          HostPolicies as unknown as HostPolicyConstructor,
+          this.settings.daemonUrl ?? "ws://127.0.0.1:6767/ws",
+          join(this.dataDir, "callback.sock"),
+          join(this.dataDir, "worker-report.mjs"),
+          this.settings.password,
+          join(sourcePath, "mcp-report.mjs"),
         );
-      const raw = createHost(
-        HostPolicies as unknown as HostPolicyConstructor,
-        this.settings.daemonUrl,
-        join(this.dataDir, "callback.sock"),
-        join(this.dataDir, "worker-report.mjs"),
-        this.settings.password,
-        join(sourcePath, "mcp-report.mjs"),
-      );
-      raw.scratchNamespaceFor = (task) => this.store.scratchNamespaceFor(task);
-      raw.workspaceAllocationBridge = createStoreWorkspaceAllocationBridge(
-        this.store,
-      );
-      this.paseoAdapter = raw;
-      this.adapter = admitAdapter(raw, this.admission);
+        raw.scratchNamespaceFor = (task) =>
+          this.store.scratchNamespaceFor(task);
+        raw.workspaceAllocationBridge = createStoreWorkspaceAllocationBridge(
+          this.store,
+        );
+        this.paseoLaunchAdapter = raw;
+        paseoRaw = raw as PaseoRawAdapter;
+        this.paseoAdapter = admitAdapter(raw, this.admission);
+      } else {
+        this.paseoAdapter = null;
+      }
     }
+    this.callbackSocketPath =
+      paseoRaw?.socketPath ?? join(this.dataDir, "callback.sock");
+    this.callbackHelperPath =
+      paseoRaw?.helperPath ?? join(this.dataDir, "worker-report.mjs");
+    this.adapter = this.paseoAdapter ?? unboundAdapter;
     this.runUsage = new RunUsageTracker(
       this.store,
       this.host,
@@ -728,7 +786,7 @@ export class QueueRuntime {
     // Retired contract 009 producer: the runtime no longer observes durable writes for a
     this.engine = new Engine(
       this.store,
-      this.adapter,
+      unboundAdapter,
       60000,
       () => runtime.lifecycle.bootstrapCompleted && this.anyHostConnected(),
       undefined,
@@ -742,7 +800,7 @@ export class QueueRuntime {
     this.hosts = new HostConnections(this as unknown as HostConnectionOwner);
     const runtime = this;
     wireEngineHosts(this.engine, {
-      adapter: this.adapter,
+      paseoAdapter: this.paseoAdapter,
       hostRegistry: this.hostRegistry,
       get hostSession() {
         return runtime.hostSession;
@@ -783,15 +841,13 @@ export class QueueRuntime {
       (tasks, runs) =>
         this.engine.resolution.slotAdmissionReader(tasks, runs, true),
       () => this.hostRuns.liveRuns(),
-      (nowMs) =>
-        this.store.qaBoardRuns(
-          new Date(nowMs - QA_BOARD_PASS_FADE_MS).toISOString(),
-        ),
       (task) => this.engine.queuedExternalWait(task),
       () => this.engine.queuedWaitSignature(),
       () =>
         this.hostSession?.id ||
         this.hostRegistry.legacyPaseoPrimary()?.id ||
+        this.hostRegistry.onlineIds()[0] ||
+        this.hostRegistry.known()[0]?.id ||
         "unknown",
     );
     this.questions = new RuntimeQuestions({
@@ -806,7 +862,7 @@ export class QueueRuntime {
       decisions: this.decisions,
       capacityChanges: this.capacityChanges,
       markStoreAccess: () => this.markStoreAccess(),
-      connected: () => this.connected(),
+      connected: () => this.anyHostConnected(),
       wakeAndSettlePostBootstrapTimeout: () =>
         this.wakeAndSettlePostBootstrapTimeout(),
       get started() {
@@ -816,6 +872,8 @@ export class QueueRuntime {
         return (
           runtime.hostSession?.id ||
           runtime.hostRegistry.legacyPaseoPrimary()?.id ||
+          runtime.hostRegistry.onlineIds()[0] ||
+          runtime.hostRegistry.known()[0]?.id ||
           "host"
         );
       },
@@ -823,12 +881,19 @@ export class QueueRuntime {
         return runtime.startError;
       },
       get adapter() {
-        return runtime.adapter;
+        if (runtime.paseoAdapter && runtime.connected())
+          return runtime.paseoAdapter;
+        const onlineId = runtime.hostRegistry.onlineIds()[0];
+        return (
+          (onlineId
+            ? runtime.hostRegistry.get(onlineId)?.adapter
+            : undefined) ?? runtime.adapter
+        );
       },
     });
     this.plannerTickets = new ParticipantTickets(this.engine, {
-      socketPath: this.paseo.socketPath,
-      helperPath: this.paseo.helperPath,
+      socketPath: this.callbackSocketPath,
+      helperPath: this.callbackHelperPath,
     });
     // Task 1109: a task planner's participant ticket is issued before the question
     // that names it, so `question.answer` works on a host without per-thread identity.
@@ -842,7 +907,6 @@ export class QueueRuntime {
       hostRuns: this.hostRuns,
       requiredCheckTransport: this.requiredCheckTransport,
       markStoreAccess: () => this.markStoreAccess(),
-      projectQaRunner: () => this.projectQaRunner(),
       plannerChanged: (projectKey) => this.plannerTickets.assigned(projectKey),
       agentChanged: (projectKey, name, caller) =>
         this.plannerTickets.agentChanged(projectKey, name, caller),
@@ -887,6 +951,8 @@ export class QueueRuntime {
         return (
           runtime.hostSession?.id ||
           runtime.hostRegistry.legacyPaseoPrimary()?.id ||
+          runtime.hostRegistry.onlineIds()[0] ||
+          runtime.hostRegistry.known()[0]?.id ||
           "unknown"
         );
       },
@@ -894,7 +960,7 @@ export class QueueRuntime {
     this.lifecycle = new RuntimeLifecycle({
       store: this.store,
       engine: this.engine,
-      adapter: this.adapter,
+      adapter: this.paseoAdapter,
       admission: this.admission,
       hostRegistry: this.hostRegistry,
       plannerTickets: this.plannerTickets,
@@ -960,22 +1026,6 @@ export class QueueRuntime {
         // The endpoint is the first thing a serving process owes its clients; a
         // lost or refused bind must never wait for a request to be retried.
         void this.ensureHostRunEndpoint();
-        // A milestone QA run survives a Queue roll in its detached supervisor
-        // (task 114). Pick up any running run this process does not yet own, so
-        // a restarted service settles it without waiting for a board read.
-        void this.recoverProjectQa();
-        if (this.anyHostConnected() && !this.store.getMeta("paused")) {
-          this.scheduledQa ??= new ProjectQaSchedules(
-            this.store,
-            this.projectQaRunner(),
-            {
-              canAdmit: () => !this.closing && this.anyHostConnected(),
-              refreshResponsibleThread: (project) =>
-                this.engine.resolution.responsibleThread(project),
-            },
-          );
-          void this.scheduledQa.tick();
-        }
         // Bootstrap in the background and never await it here. Awaiting it is what
         // wedged the runtime: one hung daemon call inside the shared bootstrap promise
         // stopped every tick from reaching its own sweep for thirteen minutes, with
@@ -1001,7 +1051,7 @@ export class QueueRuntime {
         // pre-empted by callbacks/controls/reads and eventually covers every missed
         // lifecycle signal. The slower profile refresh remains its own separate pass.
         const followUp =
-          withRefresh && this.connected()
+          withRefresh && this.anyHostConnected()
             ? this.refresh().then(() => this.engine.sweepOnce())
             : this.engine.sweepOnce();
         void followUp.then(
@@ -1038,13 +1088,7 @@ export class QueueRuntime {
           void (async () => {
             try {
               await this.store.pruneRetainedHistory();
-            } catch {
-              /* retried next hour */
-            }
-            // Milestone QA retention is its own owner now: settled checkouts and
-            // expired per-run files age out here, never on a board read.
-            try {
-              await this.projectQaRunner().sweepRetention();
+              await pruneLegacyQaEvidence(this.store, this.dataDir);
             } catch {
               /* retried next hour */
             }
@@ -1105,8 +1149,11 @@ export class QueueRuntime {
     return this.maintenance.backupHealthProjection();
   }
 
-  get paseoHostId(): string {
-    return this.paseo.hostId;
+  get paseoHostId(): string | null {
+    return (
+      (this.paseoAdapter as (Adapter & { hostId?: string }) | null)?.hostId ??
+      null
+    );
   }
   private connected(): boolean {
     return this.hosts.connected();
@@ -1200,8 +1247,15 @@ export class QueueRuntime {
    */
   bbHostVerified(input: BbHostVerifiedInput) {
     const verified = this.bbHost.verified(input);
-    if (!this.closing && this.store.pendingDecisionDeliveries().length > 0) {
-      void this.engine.scheduleDecisionNotices().catch(() => {});
+    if (!this.closing) {
+      if (!this.bootstrapped) {
+        void this.ensureBootstrap().catch(() => {});
+      } else {
+        void this.refresh().catch(() => {});
+      }
+      if (this.store.pendingDecisionDeliveries().length > 0) {
+        void this.engine.scheduleDecisionNotices().catch(() => {});
+      }
     }
     return verified;
   }
@@ -1269,12 +1323,6 @@ export class QueueRuntime {
       this.pluginPresenceFaultMessage() ||
       ""
     );
-  }
-
-  private get paseo(): Adapter &
-    RegistrationAdapter & { socketPath: string; helperPath: string } {
-    return this.adapter as Adapter &
-      RegistrationAdapter & { socketPath: string; helperPath: string };
   }
 
   private markStoreAccess() {
@@ -1386,7 +1434,7 @@ export class QueueRuntime {
           );
           hookCommand = "printf 'deny Queue admission hook is unavailable\\n'";
         }
-        this.paseoAdapter?.setAdmissionLaunchEnv(
+        this.paseoLaunchAdapter?.setAdmissionLaunchEnv(
           queueOwnedAdmissionEnvironment({
             hookCommand,
             socketPath: hostRunAdmissionSocketPath(this.hostRunStateDir),
@@ -1398,8 +1446,8 @@ export class QueueRuntime {
     }
     try {
       this.closeCallbacks = await startCallbacks(
-        this.paseo.socketPath,
-        this.paseo.helperPath,
+        this.callbackSocketPath,
+        this.callbackHelperPath,
         this.engine,
       );
     } catch (error) {
@@ -1414,7 +1462,7 @@ export class QueueRuntime {
     // surface is attached only once the socket it names is served.
     this.engine.acp = new AcpSessions(this.engine, {
       dataHome: this.dataDir,
-      socketPath: this.paseo.socketPath,
+      socketPath: this.callbackSocketPath,
       answerDecision: (input) => this.questions.answerT3Decision(input),
       parentStatus: (hostId, taskId) =>
         this.t3Host?.decisionParent(hostId, taskId) ?? { state: "unknown" },
@@ -1483,6 +1531,28 @@ export class QueueRuntime {
     return this.healthProjection.health();
   }
 
+  /** Service-owned `queue.service-state` catalogue read for direct callers. */
+  serviceState(): QueueServiceState {
+    const h = this.health();
+    return {
+      state: "running",
+      detail: "",
+      buildId: currentServiceBuildId(),
+      pid: process.pid,
+      startedAt: this.runtimeStartedAt,
+      ready: h.ready,
+      paused: h.paused,
+      hostId: h.hostId,
+      error: h.startError ?? "",
+      bootstrap: {
+        pending: Boolean(h.bootstrap?.pending),
+        startedAt: h.bootstrap?.startedAt ?? null,
+      },
+      pluginBuildId: null,
+      roll: readServiceRoll(this.dataDir),
+    };
+  }
+
   /**
    * Drain to a durable safe point and release every owned resource.
    *
@@ -1519,7 +1589,9 @@ export class QueueRuntime {
     try {
       this.t3Host?.close();
       await settled(
-        (this.adapter as unknown as { close?(): Promise<void> }).close?.(),
+        (
+          this.paseoAdapter as unknown as { close?(): Promise<void> } | null
+        )?.close?.(),
         5_000,
       );
       await settled(this.started, 10_000);
@@ -1867,7 +1939,6 @@ export class QueueRuntime {
   }
 
   recordServiceRoll(input: unknown): { recorded: number } {
-    recordQaServiceLifecycle(this.store, "roll");
     const roll = input as { fromBuild?: unknown; toBuild?: unknown } | null;
     const from = String(roll?.fromBuild ?? "unknown").slice(0, 64),
       to = String(roll?.toBuild ?? "unknown").slice(0, 64);
@@ -2242,10 +2313,27 @@ export class QueueRuntime {
   }
 
   async taskControl(
-    request: TaskControlRequest,
+    request: TaskControlRequest | ExplicitResolution,
   ): Promise<
     import("../shared/contracts").TaskControlTask | OperationAcceptance
   > {
+    if (request.action === "run.release" || request.action === "record.clear")
+      return resolveExplicitly(this.engine, request, (task) => {
+        if (task.removedAt)
+          return "The scheduler leaves this removed task alone.";
+        const next = this.taskNext({ taskId: task.id });
+        if (next.paused) return "The scheduler waits for Nucleus to resume.";
+        if (next.stop)
+          return `The next scheduler pass handles the ${next.stop.reason} stop. ${next.stop.detail}`;
+        if (
+          ["awaiting_review", "reviewing"].includes(task.phase) &&
+          !next.activeRun
+        )
+          return "The scheduler rechecks reviewer admission at the recorded PR head.";
+        if (next.activeRun)
+          return `The scheduler checks the ${next.activeRun.role} run for progress.`;
+        return `The scheduler evaluates the ${task.phase} phase on its next pass. ${next.reason}`;
+      });
     const input = this.engine.resolveTaskControl(request);
     const before = this.store.task(input.taskId);
     if (!controlHasExternalEffect(input)) {
@@ -2517,39 +2605,10 @@ export class QueueRuntime {
       runs: () => this.hostRuns.liveRuns(),
       settledRun: (id) => this.hostRuns.get(id),
       tasks: () => this.store.activeUiTasks(),
-      qaRun: (id) => this.store.qaRun(id),
       daemon,
     });
   }
 
-  /** Milestone QA (task 104): one Queue-owned full-QA run per repository on current `main`. */
-  private retainedQaRunner: ProjectQaRunner | null = null;
-  private projectQaRunner(): ProjectQaRunner {
-    return (this.retainedQaRunner ??= new ProjectQaRunner(this.store, {
-      dataDir: this.dataDir,
-      hostRunStateDir: this.hostRunStateDir,
-      ownerInstance: this.owner,
-      responsibleThread: async (project) =>
-        (await this.engine.resolution.responsibleThread(project)).thread
-          ?.agentId ?? null,
-      notify: async (agentId, messageId, text) => {
-        const identity = parseAgentId(agentId);
-        const hostId =
-          identity?.hostId ?? (await this.engine.identifyOriginHost(agentId));
-        if (
-          !hostId ||
-          !this.engine.withHost(hostId, () => this.engine.hostAvailable(hostId))
-        )
-          throw new Error("QA notification host is unavailable");
-        await this.engine.withHost(hostId, () =>
-          this.engine.host.sendMessage(identity?.nativeAgentId ?? agentId, {
-            messageId,
-            text,
-          }),
-        );
-      },
-    }));
-  }
   async runProjectQa(input: {
     repository: string;
     baseBranch?: string;
@@ -2559,19 +2618,6 @@ export class QueueRuntime {
   }) {
     return this.repositories.runProjectQa(input);
   }
-  async cancelProjectQa(input: { id: string; reason: string }) {
-    return this.repositories.cancelProjectQa(input);
-  }
-  async retryProjectQaTeardown(input: { id: string; reason: string }) {
-    return this.repositories.retryProjectQaTeardown(input);
-  }
-  async dismissProjectQa(input: {
-    id: string;
-    reason: string;
-    caller: string;
-  }) {
-    return this.repositories.dismissProjectQa(input);
-  }
   async getProjectQa(input: { id: string } | { repository: string }) {
     return this.repositories.getProjectQa(input);
   }
@@ -2580,16 +2626,14 @@ export class QueueRuntime {
       | { requestId: string }
       | { repository: string; since: string; expectedHead: string },
   ) {
-    return this.repositories.projectQaRequestStatus(input);
+    return {
+      ownerInstance: this.owner,
+      ownerPid: process.pid,
+      ...this.repositories.projectQaRequestStatus(input),
+    };
   }
   async listProjectQa() {
     return this.repositories.listProjectQa();
-  }
-  configureQaFence(input: ProjectQaFenceInput) {
-    return this.repositories.configureQaFence(input);
-  }
-  qaFenceStatus() {
-    return this.repositories.qaFenceStatus();
   }
   listHostRuns() {
     return this.repositories.listHostRuns();
@@ -2608,17 +2652,6 @@ export class QueueRuntime {
   }
   hostRunBoard() {
     return this.repositories.hostRunBoard();
-  }
-  /** Re-attach to or heal running milestone QA runs after a service roll; best-effort and bounded. */
-  private async recoverProjectQa() {
-    if (this.closing) return;
-    // A failure here leaves the run running for the next tick or board read; it
-    // must never masquerade as a bootstrap or connection fault.
-    try {
-      await this.projectQaRunner().list();
-    } catch {
-      /* retried by the next sweep */
-    }
   }
   async upsertProject(input: ProjectUpsertInput) {
     return this.repositories.upsertProject(input);
@@ -2699,10 +2732,9 @@ export class QueueRuntime {
 
   async refreshCatalog() {
     await this.started;
-    const adapter = this.paseo;
-    if (!this.connected() || !hostConnected(adapter)) {
+    if (!this.anyHostConnected()) {
       await this.ensureBootstrap();
-      if (!this.connected())
+      if (!this.anyHostConnected())
         throw new Error(
           this.startError || "Host is offline or its identity is unknown",
         );
@@ -2792,7 +2824,7 @@ export class QueueRuntime {
           ? (caller, hostId) =>
               this.store.unreleasedRunsForAgent(caller, hostId)
           : undefined,
-        helperPath: adapter?.helperPath,
+        helperPath: this.callbackHelperPath,
         participantTicket: (caller) => this.plannerTickets.forCaller(caller),
       },
       input,

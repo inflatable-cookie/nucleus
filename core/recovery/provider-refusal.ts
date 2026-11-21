@@ -324,7 +324,7 @@ export class ProviderRefusals {
    */
   clearUnverifiableRefusalWait(current: Task, run: Run): void {
     const stop = current.resolution.stop;
-    if (stop?.reason !== 'provider_unavailable' || !stop.detail.startsWith(`Reviewer run ${run.id} provider refusal is unverified`)) return;
+    if (stop?.reason !== 'provider_unavailable' || stop.fact?.code !== "provider_refusal" || stop.fact.subject !== run.id) return;
     this.resolution.update(current, { stop: null }, {}, 'task_wait_cleared', 'provider_unavailable');
   }
 

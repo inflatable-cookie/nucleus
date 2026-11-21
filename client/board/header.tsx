@@ -8,7 +8,6 @@ import { serviceNotices } from "../../shared/service-roll";
 import { useRpc, Icon } from "../shell";
 import { ActionButton, Button, muted, row, type Colors } from "../controls";
 import { errorText } from "../error-text";
-import { QaFenceNotice } from "../qa-fence-notice";
 import { Popover } from "../popover";
 import { Badge } from "./badges";
 import type { BoardAct } from "./use-board-data";
@@ -30,6 +29,10 @@ export function slotPopoverRows(capacities: UiQueueState["projectCapacities"] | 
  * The run state the header shows (Tom, 2026-11-21: the status line left the
  * header). A normal running queue shows nothing; only a state the operator
  * should notice gets a pill. Slot usage lives in the queue menu.
+ *
+ * A resumed thread is not one of them (nucleus#1511): the count survives a
+ * restart with nothing left to act on, so it never earns a pill. Stopped
+ * threads still do.
  */
 export function headerStatePills(state: UiQueueState | undefined): Array<{ label: string; tone: "warning" | "neutral" }> {
   if (!state) return [];
@@ -39,7 +42,6 @@ export function headerStatePills(state: UiQueueState | undefined): Array<{ label
     pills.push({ label: state.quiet ? "Paused · managed threads are idle" : `Draining · ${state.activeWorkers} active · ${state.unsettled} unconfirmed`, tone: "warning" });
   if (state.dispatchHeld) pills.push({ label: "Dispatch held", tone: "warning" });
   if (state.stoppedThreads) pills.push({ label: state.paused ? `${state.stoppedThreads} stopped` : `${state.stoppedThreads} waiting to resume`, tone: "warning" });
-  if (!state.paused && state.resumedThreads) pills.push({ label: `${state.resumedThreads} resumed`, tone: "neutral" });
   if (state.operationBacklog) pills.push({ label: `${state.operationBacklog} operation${state.operationBacklog === 1 ? "" : "s"} queued`, tone: "neutral" });
   return pills;
 }
@@ -81,7 +83,6 @@ export function BoardHeader({ c, workspaceName, state, refetchState, busy, act, 
   const setQueue = useRpc(api.queueControl);
   const stopThreadsRpc = useRpc(api.stopThreads);
   const refresh = useRpc(api.refreshCatalog);
-  const writeQaFence = useRpc(api.projectQaFence);
   const fetchServiceState = useRpc(api.serviceState);
   const [queueMenuOpen, setQueueMenuOpen] = useState(false);
   // Queue #1391: the queue menu's anchor. Its panel renders in the shell's
@@ -100,11 +101,10 @@ export function BoardHeader({ c, workspaceName, state, refetchState, busy, act, 
   const overrideCount = Object.keys(state?.projectLimitOverrides ?? {}).length;
   const slotRows = useMemo(() => slotPopoverRows(state?.projectCapacities), [state?.projectCapacities]);
   const serviceStateQuery = useQuery({ queryKey: ["nucleus", "service-state"], queryFn: () => fetchServiceState({}), refetchInterval: 15_000, retry: false });
-  const qaFence = state?.qaFence.fence ?? null;
   const pills = headerStatePills(state);
   const notices = !workspacePanel && serviceStateQuery.data ? serviceNotices(serviceStateQuery.data) : [];
   const meta = { fontSize: typeScale.metadata.fontSize, lineHeight: typeScale.metadata.lineHeight } as const;
-  const hasNotices = notices.length > 0 || Boolean(!workspacePanel && state && qaFence) || Boolean(error || readError) || Boolean(staleRead);
+  const hasNotices = notices.length > 0 || Boolean(error || readError) || Boolean(staleRead);
   return <>
       <View
         style={{
@@ -213,23 +213,6 @@ export function BoardHeader({ c, workspaceName, state, refetchState, busy, act, 
               style={notice.tone === "warning" ? { color: c.statusWarning, ...meta } : { ...muted(c), ...meta }}>
               {notice.text}
             </Text>)}
-          {!workspacePanel && state && qaFence && (
-            <QaFenceNotice
-              fence={qaFence}
-              busy={busy}
-              c={c}
-              onClear={() =>
-                void act(async () => {
-                  await writeQaFence({
-                    action: "clear",
-                    expectedRevision: state.qaFence.revision,
-                    caller: "operator (board)",
-                  });
-                  await refetchState();
-                })
-              }
-            />
-          )}
           {Boolean(error || readError) && (
             <View style={{ ...row, flexWrap: "nowrap" }}>
               <Text accessibilityRole="alert" style={{ color: c.statusDanger, flex: 1 }}>

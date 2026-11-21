@@ -8,6 +8,7 @@
 import { isDeepStrictEqual } from "node:util";
 import { existsSync, readFileSync } from "node:fs";
 import { TaskChangedRefusal } from "../../../shared/task-version";
+import { HOST_KIND_LABELS, hostKindOf } from "../../../shared/host-kind";
 import {
   type ReviewCheckpointRecord,
   type ReviewDeliveryAuthorization,
@@ -58,7 +59,7 @@ export interface ReviewContinuationContext {
   readonly adapter: Pick<
     Adapter,
     "verifyPr" | "verifyPrIdentity" | "continueReviewer" | "helperPath"
-  >;
+  > & { hostId?: string };
   /** The task-owner host binding every agent-naming call reads (#1154). */
   onTaskHost: <T>(
     owner: { hostId?: string | null } | null | undefined,
@@ -306,10 +307,13 @@ export class ReviewContinuations {
           }
         : this.adapter.verifyPr;
       const continueReviewer = this.adapter.continueReviewer;
-      if (!verifyPr || !continueReviewer)
+      if (!verifyPr || !continueReviewer) {
+        const hostLabel =
+          HOST_KIND_LABELS[hostKindOf(task.hostId ?? this.adapter.hostId)];
         throw new Error(
-          "Paseo cannot prove and deliver a permission-free same-run reviewer continuation; no delivery was sent",
+          `${hostLabel} cannot prove and deliver a permission-free same-run reviewer continuation; no delivery was sent`,
         );
+      }
       const verified = await verifyPr(task, number);
       recheck();
       if (

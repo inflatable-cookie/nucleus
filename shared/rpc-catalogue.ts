@@ -555,25 +555,7 @@ export const RPC_CATALOGUE: RpcCatalogueEntry[] = [
     name: "project.qa.run",
     contract: contracts.projectQaRun,
     method: "runProjectQa",
-    mutating: true,
-  },
-  {
-    name: "project.qa.cancel",
-    contract: contracts.projectQaCancel,
-    method: "cancelProjectQa",
-    mutating: true,
-  },
-  {
-    name: "project.qa.retry-teardown",
-    contract: contracts.projectQaRetryTeardown,
-    method: "retryProjectQaTeardown",
-    mutating: true,
-  },
-  {
-    name: "project.qa.dismiss",
-    contract: contracts.projectQaDismiss,
-    method: "dismissProjectQa",
-    mutating: true,
+    mutating: false,
   },
   {
     name: "project.qa.get",
@@ -591,18 +573,6 @@ export const RPC_CATALOGUE: RpcCatalogueEntry[] = [
     name: "project.qa.list",
     contract: contracts.projectQaList,
     method: "listProjectQa",
-    mutating: false,
-  },
-  {
-    name: "project.qa.fence",
-    contract: contracts.projectQaFence,
-    method: "configureQaFence",
-    mutating: true,
-  },
-  {
-    name: "project.qa.fence-status",
-    contract: contracts.projectQaFenceStatus,
-    method: "qaFenceStatus",
     mutating: false,
   },
   {
@@ -883,12 +853,6 @@ export const RPC_CATALOGUE: RpcCatalogueEntry[] = [
     method: "configureProjectDispatchLimit",
     mutating: true,
   },
-];
-
-export const RPC_METHOD_NAMES = RPC_CATALOGUE.map((entry) => entry.name);
-
-/** Bridge-side contracts: answered by the thin bridge itself, not the service. */
-export const BRIDGE_CATALOGUE: RpcCatalogueEntry[] = [
   {
     name: "queue.service-state",
     contract: contracts.serviceState,
@@ -897,7 +861,4 @@ export const BRIDGE_CATALOGUE: RpcCatalogueEntry[] = [
   },
 ];
 
-export const ALL_METHOD_NAMES = [
-  ...RPC_METHOD_NAMES,
-  ...BRIDGE_CATALOGUE.map((entry) => entry.name),
-];
+export const RPC_METHOD_NAMES = RPC_CATALOGUE.map((entry) => entry.name);

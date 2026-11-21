@@ -40,10 +40,9 @@ and live startup and origin-agent access. It never imports or receives
 decision operations through `QuestionsContext`. `core/runtime/settings.ts`
 owns profiles, the host catalog, queue controls and capacity settings through
 `SettingsContext`. `core/runtime/repositories.ts` owns repository and project
-operations, QA requests and host-run reads and accounting through
+operations, legacy QA history and host-run reads and accounting through
 `RepositoriesContext`. Each context restricts engine dependencies to the methods
-it uses; startup and active host access stay lazy. The retained QA runner and
-lifecycle recovery stay in the owner, exposed through a context accessor.
+it uses. Startup and active host access stay lazy.
 These modules never import or receive `QueueRuntime`.
 
 `service/roll/` owns the main-channel roll (nucleus#1454): `roll.ts` is the roll state
@@ -54,11 +53,16 @@ Paseo bridge and the owner both import, so the bridge graph reaches no service
 module. The environment a spawned service reads from its host is composed once in
 `service/host-environment.mjs`: the standalone entry, the roll owner, the spawner
 and the installer's isolated startup proof ask it instead of naming a host
-variable, and `hostHome` pins a private host home for a fixture or proof. Each
-host integration keeps its own names: Paseo's bridge supplies its own home
-override, and `nucleus integrate paseo` keeps Paseo's registration format. A local T3Code launch (`bin/nucleus-acp.mjs`) and a Paseo bridge both start
+variable, and `hostHome` pins a private host home for a fixture or proof. Each host integration keeps its own names: Paseo's bridge supplies its own home
+override, and `nucleus integrate` routes `paseo`, `t3code` (or `t3`), and `bb`
+to each host's registration step. A local T3Code launch (`bin/nucleus-acp.mjs`),
+a BB plugin host channel (`hosts/bb/plugin/server.ts`), and a Paseo bridge can
+each start the daemon when absent; T3Code and Paseo also start
 the one owner through its heartbeat (`queue-roll-owner.json`), the bridge through an
-injected process binding, and the launcher and entry through `service/transport`. The
+injected process binding, and the launcher and entry through `service/transport`.
+The service serves `queue.service-state` itself over both the socket and the local
+web board (`BRIDGE_CATALOGUE` is retired), while host bridges may augment it with
+local plugin build state. The
 owner connects without a presence claim, so it is never a host and never keeps a
 host-less service alive. The Paseo bridge forwards calls, reports state and reloads
 its plugin after a landed roll; it runs no roll of its own.
@@ -84,8 +88,7 @@ and persistence seams downward. `store-core.ts` owns the database handle, cached
 statements, transactions, events, meta and revisions. Explicit callbacks keep
 post-commit cleanup in `Store` and connect it to projection rollback restoration.
 `store-host-runs.ts` owns host-run rows, identities, accounting reads, output
-failures, journals and the QA fence and custody inventory. `store-project-qa.ts`
-owns QA history, latest-run reads and schedule-merge coverage. The seams depend
+failures and journals. `store-project-qa.ts` owns legacy QA history reads. The seams depend
 on the core, never on `Store`; projection access is supplied through callbacks.
 `store-planning.ts` owns papercuts, plans, leads, decisions and their history caches, with explicit
 callbacks for project and lane access and lane-activity invalidation.
@@ -634,23 +637,9 @@ proof lands with its task.
        and remove `retainedWorkspaceRoots` once a read-only check confirms zero
        remaining references to `<workRoot>/worktrees/nucleus`.
 
-- A new project QA run records its checkout path before scheduling. Plan, logs
-  and state stay in the internal data directory; the checkout and its declared
-  sibling links use the external root. Runs without a recorded path keep their
-  internal checkout, and a roll never derives a new location for them. Storage
-  identity is rechecked at launch, checkout creation, hook and cleanup, and an
-  uncertain creation is retained rather than removed or recreated.
-- Project members without a local checkout are recorded on the QA run with
-  their origin, configured path and a `No local checkout` reason, then skipped.
-  Setup-declared siblings and dependency-ledger sources remain required and
-  refuse launch when they cannot be resolved.
-- Settled project QA history, step logs and failures logs stay in `project-qa/`;
-  the hourly retention pass removes the run's exact Queue-owned checkout after
-  settlement, including legacy checkouts copied into the current data home.
-  Only the latest run per repository keeps a checkout when teardown failed and
-  an explicit retry can still consume it; pending checkout cleanup also keeps
-  its checkout. The board reads every run's stored result and logs, so it needs
-  no other checkout retention.
+- The [milestone QA handoff](milestone-qa.md#legacy-history-and-upgrades)
+  verifies custody of legacy checkouts before replacement.
+
 - The live data-home backup resolver writes verified snapshots to the external
   configured work volume. An hourly retention pass prunes only regular snapshot files in
   the live data home's old `backups/` and `.external-backups/` copies, and only
@@ -1556,11 +1545,17 @@ one stat per retained snapshot, and the shared executor queue that serialises ev
 behind them; none is cached.
 
 The runtime retains one admission and breaker state for each observed host ID.
-Paseo remains the default connection. Optional owner-only `settings.json`
-configuration `t3code: {endpoint, bearer, probeThreadId?}` registers a second
-native host with separate admission state. The bearer is issued locally with
-`t3 auth session issue`, never returned by health or public settings. Initial
-Paseo identity is recorded first; subsequent T3 reconnects are independent.
+Paseo, T3Code and BB are equal optional hosts (nucleus#1508; Tom, 2026-11-21:
+"there shouldn't be anything that Nucleus does that requires Paseo
+specifically"). The service starts and serves the board and CLI with no Paseo
+install or config present; a call that needs a host outside a bound host context
+refuses with a host-neutral message (`No host is bound for this operation`)
+instead of falling back to Paseo, and capability checks ask the host the task or
+caller is bound to. Optional owner-only `settings.json` configuration
+`t3code: {endpoint, bearer, probeThreadId?}` registers a T3Code native host with
+separate admission state. The bearer is issued locally with
+`t3 auth session issue`, never returned by health or public settings. Each
+configured host connects and reconnects independently.
 
 **Readiness belongs to the host that owns the work** (nucleus#1449; Tom,
 2026-11-20: Paseo quit, T3 stayed online, and the board warned about the daemon's
@@ -1592,7 +1587,7 @@ reads that entry: the legacy unqualified `hostId`, the retired
 observation scope and the daemon-identity guard all read it, so a BB or T3 host
 that connects earlier still never displaces the host those records belong to.
 
-New worker tasks carry an ingress host preference at acceptance; it does not restrict the first worker's profile. At first dispatch, selection considers eligible profiles across online host catalogs. For a profile that runs on several hosts, the explicit preference, repository `hostKind`, operator default (seeded as `paseo`), and planner host settle the choice in that order. The chosen host and reason are recorded with the workspace intent and stay fixed for every subsequent role and run. The operator default lives in Settings → Hosts and is writable only through `queue.capacity`. An absent legacy default maps to Paseo; an explicit null keeps the planner-host setting. Dispatch and Settings use the same interpretation. An unknown task host does not borrow the legacy Paseo provider catalog for health or routing. A schema migration converts stored repository `paseo` defaults to inherit while preserving explicit T3Code and BB preferences. Review-entry and proof-only tasks keep their existing host admission.
+New worker tasks carry an ingress host preference at acceptance; it does not restrict the first worker's profile. At first dispatch, selection considers eligible profiles across online host catalogs. For a profile that runs on several hosts, the explicit preference, repository `hostKind`, operator default (unset on a fresh store), and planner host settle the choice in that order, falling back to an online host when none of those names a host. The chosen host and reason are recorded with the workspace intent and stay fixed for every subsequent role and run. The operator default lives in Settings → Hosts and is writable only through `queue.capacity`. An unset or null operator default means no default host kind (follow repository override, planner host, or an online host). Dispatch and Settings use the same interpretation. An unknown task host does not borrow any other host's provider catalog for health or routing. Review-entry and proof-only tasks keep their existing host admission.
 
 **Removing a host** (Settings → Hosts, nucleus#1325; Tom, 2026-11-18). A disconnect
 never removes a host: it proves nothing about outstanding effects. The operator
@@ -1707,18 +1702,19 @@ open.
   presence that returns inside the grace is silent. The web board is the
   operator-visible surface (the plugin board is gone with the plugin). A
   CLI-started service never granted presence, so this path does not fire.
-- **Only the bridge and the T3Code launcher start the daemon.** The Paseo bridge
-  spawns it as before. A configured local T3Code host has one more starter
-  (Tom, 2026-11-19, nucleus#1394): T3 probes its registered `nucleus-acp` launcher
-  on its own cold start, with no thread, and that launcher starts the detached
-  daemon when the stored T3 endpoint is loopback, no service identity names a live
-  process, no service roll is in progress and no fresh bridge spawn claim exists.
-  It takes its own exclusive claim (`queue-service.t3-launch.json`), so repeated
-  and concurrent probes start one daemon, and it never waits for the daemon to
-  answer. A probe during a roll starts nothing; the roll owns the replacement.
-  The daemon's own clock, grace and run fence are unchanged. Its started daemon
-  never holds bridge presence, so the lost-plugin fault never fires for it. An
-  ordinary CLI call reads the daemon over the authenticated socket and refuses with
+- **Capable hosts start the daemon; the CLI does not.** A Paseo bridge, a
+  configured local T3Code host (`bin/nucleus-acp.mjs` cold-start probe), and the
+  BB plugin's host channel (`hosts/bb/plugin/server.ts`) each start the detached
+  daemon when no live service identity, active roll, or fresh sibling launch claim
+  is present (`shared/service/daemon-launch.ts`). T3Code probes its registered
+  `nucleus-acp` launcher on cold start when the stored T3 endpoint is loopback
+  (`queue-service.t3-launch.json`), and BB's plugin starts it when `serviceDataDir`
+  is configured and an installed Nucleus package root is present
+  (`queue-service.bb-launch.json`). Neither launcher waits for the daemon to answer,
+  a probe during a roll starts nothing, and the daemon's own clock, grace and run
+  fence are unchanged. Only the Paseo and BB plugin bridges hold
+  `service.nucleus-bridge-presence`. An ordinary CLI call reads the daemon over the
+  authenticated socket (including `queue.service-state`) and refuses with
   `unavailable` when nothing is running; it never spawns, upgrades, reads SQLite or
   falls back on its own.
 
@@ -1745,8 +1741,7 @@ paused-resume counters read an episode-range index over resume events.
 Schema 57 stores independent board and telemetry counters in one publication-clock
 row. Each mutation advances that row once, and a publication compares against the
 last successfully posted revision, including on forced mutation acknowledgements.
-Lane drains resolve project membership from one project read per pass. QA runners
-are retained per runtime, legacy QA budget samples use repository indexes, and
+Lane drains resolve project membership from one project read per pass. Legacy QA budget samples use repository indexes.
 hook cleanup measures bytes only for checkouts it selects for reaping.
 The board cursor advances when either its durable revision or its display facts
 change, so a clock-driven card change cannot hide the next durable mutation.
@@ -1769,13 +1764,11 @@ Startup no longer infers a host for historical hostless operations or task
 origins. The one-time host attribution migrations are complete; new records
 must carry their own host identity, and unknown attribution stays unknown.
 
-### QA artifact housekeeping
+### Legacy QA artifact retention
 
-The hourly QA retention sweep removes recognized per-run logs, results and
-sidecars after the four-day history window. Active runs, pending checkout
-cleanup and the latest retryable teardown evidence stay retained; orphan files
-expire by modification time. QA execution paths share step records, escapee
-merging and failure classification; streamed output shares one token redactor.
+The hourly retention pass expires recognized legacy QA logs and results
+under the existing four-day evidence policy. See
+[milestone QA](milestone-qa.md#legacy-history-and-upgrades).
 
 Agents use the installed `nucleus` command from any directory; repository CLI files are internal implementation (Tom, 2026-11-16).
 

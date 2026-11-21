@@ -15,9 +15,9 @@ for {}. A heredoc avoids shell quoting:
   {"repository":"owner/name"}
   JSON
 Methods without a dot are tried as queue.<method> first, for example:
-  snapshot, detail, telemetry, outcome, outcome-search, task, next, operation-start,
+  snapshot, detail, telemetry, service-state, outcome, outcome-search, task, next, operation-start,
   operation-status, capacity-state, lanes, lane.upsert, lane.status, projects, project.upsert,
-  project.get, project.settings, project.park, project.unpark, project.remove, project.removal-blockers, project.qa.run, project.qa.cancel, project.qa.dismiss, project.qa.retry-teardown, project.qa.get, project.qa.list, repositories, repository.set, repository.get, repository.rekey-preview, repository.rekey, repository.rekey-receipt, papercut.add, papercut.list, papercut.get, papercut.edit, papercut.promote, papercut.promote-task,
+  project.get, project.settings, project.park, project.unpark, project.remove, project.removal-blockers, project.qa.get, project.qa.list, project.qa.request-status, repositories, repository.set, repository.get, repository.rekey-preview, repository.rekey, repository.rekey-receipt, papercut.add, papercut.list, papercut.get, papercut.edit, papercut.promote, papercut.promote-task,
   papercut.close, papercut.set-lanes, lead.add, lead.edit, lead.get, lead.version,
   lead.list, lead.set-lanes, lead.set-tags, lead.drop, lead.reopen, triage.get, triage.set, triage.apply, lead.promote, lead.check, lead.approve, lead.promote-task, lead.submit, lead.import,
   decision.add, decision.get, decision.list, decision.answer, decision.withdraw, decision.link, decision.supersede, queue.routing-grant, lane.document.get,
@@ -28,8 +28,7 @@ snapshot accepts optional repository, project, limit (default 100, max 250) and
 cursor; page while hasMore is true. An oversized snapshot is refused with those
 filters named instead of a closed socket.
 project.qa.run and its --wait shape are retired: they refuse with the report-only
-milestone QA recipe, and project.qa.get, project.qa.list, project.qa.cancel,
-project.qa.dismiss and project.qa.retry-teardown read, stop and clear runs admitted
+milestone QA recipe. project.qa.get and project.qa.list read runs admitted
 before the cutover.
 lead.submit submits an authorized brief through check, approval and promotion in one call.
 next (task.next) takes a taskId or a reference such as owner/name#12 and reads
@@ -39,6 +38,7 @@ first, then call task with the listed args plus the reason or instruction it
 asks you to fill.
 Task IDs also accept references such as nucleus#1070. Task owner verbs may omit
 version, optionally fence an observed phase, and return the changed field names.
+run.release and record.clear take a task version, reason and warning IDs in accept.
 Queued next offers set_dependencies; its dependsOn list accepts references too.
 capacity is not a CLI route: only the operator changes dispatch limits, in
 Settings, and a CLI call refuses without changing anything. capacity-state reads
@@ -47,6 +47,6 @@ ui prints a link to the local board (127.0.0.1 only; the token rides in the link
 fragment and expires after 8 hours). ui opens it in the browser (use --no-open to print only), and
 ui --revoke revokes every outstanding link. A link is the operator's board access,
 so do not paste it into a shared log or prompt.
---via-paseo routes through the Paseo bridge (needed for bridge-only methods such as service-state).
+--via-paseo routes through the Paseo plugin bridge instead of the default local service socket.
 See README.md "CLI methods" and the nucleus skill for payload shapes. Only the
 "nucleus" skill is installed.`;

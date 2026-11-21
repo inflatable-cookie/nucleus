@@ -14,7 +14,6 @@ import { PersistenceExecutor } from "../service/executor/executor";
 
 for (const [method, input] of [
   ["lead.submit", {}],
-  ["project.qa.run", { wait: true }],
 ] as const) {
   test(`${method} settlement survives client deadlines and still rejects socket loss`, async () => {
     const root = await mkdtemp(join(tmpdir(), "wait-"));
@@ -77,7 +76,7 @@ test("executor settlement calls have no call timer while ordinary calls keep the
   internal.worker = { postMessage: (message: any) => sent.push(message) };
   for (const [method, input, waiting] of [
     ["lead.submit", {}, true],
-    ["project.qa.run", { wait: true }, true],
+    ["project.qa.run", { wait: true }, false],
     ["project.qa.run", {}, false],
     ["project.qa.get", {}, false],
   ] as const) {

@@ -34,24 +34,20 @@ import { fileURLToPath } from "node:url";
 import type {
   HostRunInternalRecord,
   HostRunSettlement,
-  ProjectQaRun,
   Task,
 } from "../../shared/contracts";
 import { MAX_TITLE_LENGTH } from "../../shared/contracts";
 import { hostRunSupervisorPaths } from "../host-runs/host-run-files";
 import { projectValidationSupervisorPaths } from "../qa/project-validation-supervisor";
-import { qaRunLiveOutputPath, qaRunRootPath } from "../qa/project-qa-supervision-files";
 import { overdueHostRun, taskForHostRun } from "./ui-snapshot";
 import { fitTitle } from "../../shared/title-fit";
 
 /** The two live kinds, each with the label the operator asked for (Tom, 2026-11-01: "Both"). */
-export type LiveRunKind = "milestone_qa" | "test";
+export type LiveRunKind = "test";
 export const LIVE_RUN_LABELS: Readonly<Record<LiveRunKind, LiveRunLabel>> = {
-  milestone_qa: { name: "QA running", color: "amber" },
   test: { name: "Testing", color: "violet" },
 };
 const TAB_PREFIX: Readonly<Record<LiveRunKind, string>> = {
-  milestone_qa: "QA",
   test: "Testing",
 };
 /** How often the projection reconciles while the service runs. */
@@ -105,9 +101,8 @@ export interface RunTerminalPointer {
 export interface LiveRunPresenceInput {
   runs: readonly HostRunInternalRecord[];
   tasks: readonly Task[];
-  qaRun: (id: string) => ProjectQaRun | null;
   workspaces: readonly LiveRunPresenceWorkspace[];
-  /** The Queue data directory that owns the validation and milestone-QA run roots. */
+  /** The Queue data directory that owns the validation run roots. */
   dataDir: string;
   /** The host-run state root that owns a client-protocol run's retained output. */
   stateDir: string;
@@ -175,33 +170,16 @@ export function liveRunPresenceTargets(
         left.id.localeCompare(right.id),
     );
   for (const run of ordered) {
-    const qa = input.qaRun(run.id);
-    const kind: LiveRunKind = qa ? "milestone_qa" : "test";
-    const selector = qa?.selector ?? run.selector;
-    const recorded = qa ? undefined : validationByRun.get(run.id);
-    const task =
-      recorded?.task ?? (qa ? undefined : taskForHostRun(input.tasks, run));
-    // A task run belongs in the task's workspace; a milestone QA run and any run
-    // without a task belong where the registered checkout is open.
-    const checkout = resolve(run.repository.path);
-    const workspace = qa
-      ? byDirectory.get(checkout)
-      : ((task?.workspaceId ? byId.get(task.workspaceId) : undefined) ??
-        byDirectory.get(resolve(task?.directory ?? run.repository.path)));
+    const kind = "test";
+    const selector = run.selector;
+    const recorded = validationByRun.get(run.id);
+    const task = recorded?.task ?? taskForHostRun(input.tasks, run);
+    const workspace = (task?.workspaceId ? byId.get(task.workspaceId) : undefined)
+      ?? byDirectory.get(resolve(task?.directory ?? run.repository.path));
     if (!workspace?.directory) continue;
-    const outputPaths = qa
-      ? [
-          qaRunLiveOutputPath(
-            qaRunRootPath(input.dataDir, qa.submittedKey ?? qa.key),
-            qa.id,
-          ),
-        ]
-      : recorded
-        ? [
-            projectValidationSupervisorPaths(input.dataDir, run.id)
-              .liveOutputPath,
-          ]
-        : clientRunOutputPaths(input.stateDir, run.id);
+    const outputPaths = recorded
+      ? [projectValidationSupervisorPaths(input.dataDir, run.id).liveOutputPath]
+      : clientRunOutputPaths(input.stateDir, run.id);
     const cwd = workspace.directory;
     const key = liveRunPresenceKey(kind, cwd, selector);
     if (chosen.has(key)) continue;
@@ -233,16 +211,6 @@ function clientRunOutputPaths(stateDir: string, runId: string): string[] {
   return [paths.stdoutPath, paths.stderrPath];
 }
 
-const QA_STATE_TEXT: Readonly<Record<ProjectQaRun["state"], string>> = {
-  queued: "queued",
-  running: "running",
-  passed: "passed",
-  failed: "failed",
-  hold: "held",
-  timed_out: "timed out",
-  cancelled: "cancelled",
-  lost: "lost",
-};
 const VALIDATION_STATE_TEXT: Readonly<
   Record<"running" | "passed" | "refused" | "hold" | "superseded", string>
 > = {
@@ -287,7 +255,6 @@ export interface LiveRunPresenceOptions {
   /** One durable host-run row, settled or live, for naming what a run ended as. */
   settledRun: (id: string) => HostRunInternalRecord | null;
   tasks: () => Task[];
-  qaRun: (id: string) => ProjectQaRun | null;
   /** The daemon, or null while Queue has no usable Paseo connection. */
   daemon: () => RunPresenceDaemon | null;
   follower?: { command: string; script: string };
@@ -392,7 +359,6 @@ export class LiveRunPresence {
     const targets = liveRunPresenceTargets({
       runs,
       tasks: runs.length ? this.options.tasks() : [],
-      qaRun: this.options.qaRun,
       workspaces,
       dataDir: this.options.dataDir,
       stateDir: this.options.stateDir,
@@ -548,7 +514,7 @@ export class LiveRunPresence {
     for (const workspace of workspaces) {
       if (workspace.archivingAt) continue;
       const desired = wanted.get(workspace.id) ?? new Set<string>();
-      for (const label of Object.values(LIVE_RUN_LABELS)) {
+      for (const label of [LIVE_RUN_LABELS.test, { name: "QA running", color: "amber" } satisfies LiveRunLabel]) {
         const assigned = workspace.labels.includes(label.name);
         const want = desired.has(label.name);
         if (assigned === want) continue;
@@ -599,19 +565,6 @@ export class LiveRunPresence {
             settled.settlement.result?.wallMs ?? null,
           )
         : null;
-    const qa = this.options.qaRun(runId);
-    if (qa) {
-      // A QA row that still says running while its host run is gone is between the
-      // run's settlement and its own: name the settlement we have, never "running".
-      if (qa.state !== "running")
-        return liveRunSettlementLine(
-          tabName,
-          QA_STATE_TEXT[qa.state],
-          qa.exitCode,
-          qa.durationMs,
-        );
-      return byHost() ?? `${tabName} · no longer live`;
-    }
     // A validation row settles before its host run does, so its own state names the
     // verdict; otherwise the run's settlement is the only honest answer.
     const validation = this.options

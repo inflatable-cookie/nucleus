@@ -1,5 +1,6 @@
 import { independentReviewRoutingConflict } from "../dispatch/routing";
 import { parseAgentId, sameCallerIdentity } from "../../shared/agent-identity";
+import { HOST_KIND_LABELS, hostKindOf } from "../../shared/host-kind";
 import { REMOVED_TASK_REFUSAL } from "./control-refusals";
 import { ownerStopPendingRefusal } from "./owner-stop";
 import type {
@@ -91,6 +92,7 @@ export class SettingsControls {
   applyTaskControlSetRouting(
     input: TaskControlInput,
     operated: <T>(result: T) => T,
+    planner = false,
   ): Task {
     const apply = () => {
       const task = this.store.task(input.taskId);
@@ -102,7 +104,7 @@ export class SettingsControls {
       );
       if (input.critical !== undefined) {
         if (
-          !this.engine.forcePlannerMatches(task, input.caller ?? "") &&
+          !planner &&
           input.caller !== OPERATOR_BOARD_CALLER
         )
           throw Error("Only the planner or operator may change critical");
@@ -582,20 +584,33 @@ export class SettingsControls {
       );
       if (task.removedAt || ["done", "cancelled"].includes(task.phase))
         throw Error("Completion subscriptions are closed for terminal tasks");
-      if (!this.adapter.originAgent)
-        throw Error("Live agent identity validation is unavailable");
       let agent;
       let hostId: string | undefined;
       let legacyHostId: string | undefined;
+      const nativeId =
+        parseAgentId(input.agentId)?.nativeAgentId ?? input.agentId;
       try {
-        const nativeId =
-          parseAgentId(input.agentId)?.nativeAgentId ?? input.agentId;
         legacyHostId =
           this.engine.legacyPaseoHostId() ??
           (await this.engine.identifyOriginHost(nativeId));
         hostId =
           parseAgentId(input.agentId)?.hostId ??
           (await this.engine.identifyOriginHost(input.agentId));
+      } catch (error) {
+        throw Error(
+          `Completion recipient ${input.agentId} identity is unreadable (${error instanceof Error ? error.message : String(error)}); refusing unknown evidence`,
+        );
+      }
+      const checkOriginAgent = () => {
+        if (!this.adapter.originAgent)
+          throw Error("Live agent identity validation is unavailable");
+      };
+      if (hostId) {
+        this.engine.withHost(hostId, checkOriginAgent);
+      } else {
+        checkOriginAgent();
+      }
+      try {
         agent = hostId
           ? await this.engine.withHost(hostId, () =>
               this.engine.host.originAgent(input.agentId),
@@ -624,10 +639,14 @@ export class SettingsControls {
       // archived or missing recipient that Queue already recorded (a creator
       // nomination or its own subscription) leaves a task's future cohort, so it
       // runs on the durable workspace binding that record holds (Spec 040).
-      if (!live && input.action !== "unsubscribe")
+      if (!live && input.action !== "unsubscribe") {
+        const hostLabel = hostId
+          ? HOST_KIND_LABELS[hostKindOf(hostId)]
+          : "host";
         throw Error(
-          "Completion subscription requires a live Paseo agent with a workspace",
+          `Completion subscription requires a live ${hostLabel} agent with a workspace`,
         );
+      }
       const recorded =
         current.completionSubscriptionOverrides.find((entry) =>
           sameCallerIdentity(

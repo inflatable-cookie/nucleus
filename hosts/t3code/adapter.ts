@@ -578,6 +578,9 @@ export class T3CodeHost implements Host {
   async findAgents(labels: Record<string, string>) {
     return await this.reads.findAgents(labels);
   }
+  async findRunAgents(labels: Record<string, string>) {
+    return await this.reads.findRunAgents(labels);
+  }
   /** The retention pass's archived inventory; see `T3Reads.archivedThreads`. */
   async archivedThreads() {
     return await this.reads.archivedThreads();
@@ -1402,7 +1405,18 @@ export class T3CodeHost implements Host {
   }
 
   async sendMessage(id: string, input: HostMessage) {
-    await this.presentation.wakeBeforeDelivery(id, input.messageId);
+    try {
+      await this.presentation.wakeBeforeDelivery(id, input.messageId);
+    } catch (error) {
+      if (
+        error instanceof ProvenPreSendRefusalError ||
+        error instanceof T3CompatibilityError
+      )
+        throw error;
+      throw new ProvenPreSendRefusalError(
+        error instanceof Error ? error.message : String(error),
+      );
+    }
     await this.intents.effect(
       input.messageId,
       "orchestration.dispatchCommand",
@@ -1527,10 +1541,33 @@ export class T3CodeHost implements Host {
    */
   async steerOrNotify(id: string, input: HostMessage): Promise<void> {
     const { messageId, text } = input;
-    const runId = await this.reads.activeRunId(id);
+    let runId: string | null;
+    try {
+      runId = await this.reads.activeRunId(id);
+    } catch (error) {
+      if (
+        error instanceof ProvenPreSendRefusalError ||
+        error instanceof T3CompatibilityError
+      )
+        throw error;
+      throw new ProvenPreSendRefusalError(
+        error instanceof Error ? error.message : String(error),
+      );
+    }
     if (!runId) return this.sendMessage(id, input);
     try {
       await this.presentation.wakeBeforeDelivery(id, messageId);
+    } catch (error) {
+      if (
+        error instanceof ProvenPreSendRefusalError ||
+        error instanceof T3CompatibilityError
+      )
+        throw error;
+      throw new ProvenPreSendRefusalError(
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+    try {
       await this.intents.effect(
         identity("steer", messageId),
         "orchestration.dispatchCommand",

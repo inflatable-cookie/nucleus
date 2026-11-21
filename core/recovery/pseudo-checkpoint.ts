@@ -23,7 +23,9 @@ export const isPseudoCheckpointError = (task: Task): boolean => {
   if (!completion || !['blocked', 'error'].includes(completion.status)) return false;
   if (completion.providerUnavailable) return false;
   if (task.completion?.prNumber || task.prUrl || task.prHead || task.resumePrNumber) return false;
-  const evidence = `${completion.summary} ${task.reason}`;
+  if (completion.cause?.kind === "unfinished") return true;
+  if (completion.cause) return false;
+  const evidence = completion.summary;
   // Scrub the no-failure disclaimer before looking for failure words, so
   // `no execution failure` never vetoes while a genuine `timed out` or
   // `error occurred` elsewhere in the same summary still does.

@@ -104,10 +104,11 @@ and the design are in [Spec 062](docs/knowledge/specs/062-bb-host-adapter.md).
 
 ## Getting started
 
-1. **Connect a host.** For Paseo: `nucleus integrate paseo` registers the
-   installed package; then reload the `nucleus` plugin and open **Nucleus** in
-   the sidebar. On a host without a plugin UI, `nucleus ui` prints a localhost
-   link that opens the same board in a browser.
+1. **Connect a host.** Connect any supported host (no Paseo required):
+   - **T3Code:** `nucleus integrate t3code` (or `nucleus t3 install`) registers the `nucleus` ACP provider; T3Code starts the daemon automatically on launch.
+   - **BB:** `nucleus integrate bb` (or `nucleus bb install`) installs and configures the BB plugin; BB starts the daemon automatically when the plugin loads.
+   - **Paseo:** `nucleus integrate paseo` registers the installed package; then reload the `nucleus` plugin and open **Nucleus** in the sidebar.
+   On a host without a plugin UI, `nucleus ui` prints a localhost link that opens the same board in a browser, and `nucleus service-state` reads service state directly over the local socket.
 2. **Configure.** New installations start paused with an empty worker pool. In
    Settings, add worker and reviewer profiles and set dispatch limits. Paused
    state survives restarts.
@@ -134,7 +135,7 @@ gauge; its Usage level setting controls dispatch routing only.
   [specs](docs/knowledge/specs/README.md) (per-capability design with
   acceptance oracles).
 - [The Nucleus skill](skills/nucleus/SKILL.md) — what agents read: planning
-  records, briefs and leads, submission, owner verbs, review entry, project QA.
+  records, briefs and leads, submission, owner verbs, review entry, and milestone QA history.
 - [Operations](docs/knowledge/operations/restore.md) — restore a verified
   store snapshot. The data-home layout is in the release contract.
 - [Open questions](docs/knowledge/questions.md) — what is deliberately

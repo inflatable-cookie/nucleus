@@ -187,10 +187,11 @@ test("BB lead submission and promotion use verified ingress identity while tasks
   assert.ok("taskId" in promoted);
   const promotedTask = runtime.store.task(promoted.taskId);
   assert.equal(promotedTask.originHostId, bbHostId);
-  assert.equal(promotedTask.hostId, "fixture-host");
+  assert.equal(promotedTask.hostId, bbHostId);
   assert.deepEqual(promotedTask.hostSelection, {
-    hostId: "fixture-host",
-    basis: "sole_online_host",
+    hostId: bbHostId,
+    basis: "planner_host",
+    reason: "Planner host",
   });
   assert.ok(
     ingressSelections
@@ -461,39 +462,81 @@ test("submission refuses missing authorization and board impersonation before cr
   );
 });
 
-test('an edited lead is checked again on submit; a fixed prerequisite reference passes the new check', async t => {
+test("an edited lead is checked again on submit; a fixed prerequisite reference passes the new check", async (t) => {
   const { runtime, input } = await fixture(t);
-  const missing = body.replace('complexity: medium', 'complexity: medium\n  dependsOn: ["repo#999"]');
+  const missing = body.replace(
+    "complexity: medium",
+    'complexity: medium\n  dependsOn: ["repo#999"]',
+  );
   const failed = await runtime.submitLead({ ...input, body: missing });
-  assert.ok('lead' in failed);
+  assert.ok("lead" in failed);
   assert.equal(failed.lead.check?.ok, false);
-  assert.match(failed.lead.check?.message ?? '', /repo#999/);
-  const fixed = await runtime.editLead({ id: failed.lead.id, version: failed.lead.version, body, author: 'planner' });
+  assert.match(failed.lead.check?.message ?? "", /repo#999/);
+  const fixed = await runtime.editLead({
+    id: failed.lead.id,
+    version: failed.lead.version,
+    body,
+    author: "planner",
+  });
   const result = await runtime.submitLead(input);
-  assert.ok('taskId' in result, JSON.stringify(result));
+  assert.ok("taskId" in result, JSON.stringify(result));
   assert.equal(runtime.store.lead(failed.lead.id).version, fixed.version);
   assert.equal(runtime.store.lead(failed.lead.id).check?.ok, true);
 });
 
-test('a prerequisite named by task reference, padded or not, resolves to its UUID on check, submit and set_dependencies', async t => {
+test("a prerequisite named by task reference, padded or not, resolves to its UUID on check, submit and set_dependencies", async (t) => {
   const { runtime, input } = await fixture(t);
   const prerequisite = leadSubmit.output.parse(await runtime.submitLead(input));
-  assert.ok('taskId' in prerequisite);
-  const [repoName, number] = prerequisite.reference.split('#');
-  const references = [`${repoName}#${number!.padStart(4, '0')}`, `${repoName}#${Number(number)}`];
+  assert.ok("taskId" in prerequisite);
+  const [repoName, number] = prerequisite.reference.split("#");
+  const references = [
+    `${repoName}#${number!.padStart(4, "0")}`,
+    `${repoName}#${Number(number)}`,
+  ];
   for (const [index, reference] of references.entries()) {
     const title = `Dependent ${index}`;
-    const dependent = body.replace('Submit the fixture', title).replace('complexity: medium', `complexity: medium\n  dependsOn: ["${reference}"]`);
-    const result = await runtime.submitLead({ ...input, title, body: dependent });
-    assert.ok('taskId' in result, JSON.stringify(result));
-    assert.deepEqual(runtime.store.task(result.taskId).dependsOn, [prerequisite.taskId]);
+    const dependent = body
+      .replace("Submit the fixture", title)
+      .replace(
+        "complexity: medium",
+        `complexity: medium\n  dependsOn: ["${reference}"]`,
+      );
+    const result = await runtime.submitLead({
+      ...input,
+      title,
+      body: dependent,
+    });
+    assert.ok("taskId" in result, JSON.stringify(result));
+    assert.deepEqual(runtime.store.task(result.taskId).dependsOn, [
+      prerequisite.taskId,
+    ]);
   }
-  const plain = await runtime.submitLead({ ...input, title: 'Plain', body: body.replace('Submit the fixture', 'Plain') });
-  assert.ok('taskId' in plain);
-  const updated = runtime.store.updateDependencies(runtime.store.task(plain.taskId), [references[0]!], 'test');
+  const plain = await runtime.submitLead({
+    ...input,
+    title: "Plain",
+    body: body.replace("Submit the fixture", "Plain"),
+  });
+  assert.ok("taskId" in plain);
+  const updated = runtime.store.updateDependencies(
+    runtime.store.task(plain.taskId),
+    [references[0]!],
+    "test",
+  );
   assert.deepEqual(updated.dependsOn, [prerequisite.taskId]);
-  const missing = await runtime.submitLead({ ...input, title: 'Missing', body: body.replace('Submit the fixture', 'Missing').replace('complexity: medium', `complexity: medium\n  dependsOn: ["${repoName}#999"]`) });
-  assert.ok('lead' in missing);
+  const missing = await runtime.submitLead({
+    ...input,
+    title: "Missing",
+    body: body
+      .replace("Submit the fixture", "Missing")
+      .replace(
+        "complexity: medium",
+        `complexity: medium\n  dependsOn: ["${repoName}#999"]`,
+      ),
+  });
+  assert.ok("lead" in missing);
   assert.equal(missing.lead.check?.ok, false);
-  assert.match(missing.lead.check?.message ?? '', new RegExp(`${repoName}#999`));
+  assert.match(
+    missing.lead.check?.message ?? "",
+    new RegExp(`${repoName}#999`),
+  );
 });

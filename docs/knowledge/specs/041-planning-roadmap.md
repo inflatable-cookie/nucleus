@@ -145,14 +145,8 @@ Replaces the Plan column in Spec 026's Planning tab.
   empty plan. A refresh failure keeps the last version and says it may be out of
   date. Loading shows its own state.
 - **Done:** collapsed, with a count, newest first.
-- **Latest QA** (nucleus#869): the plan ends with the project's latest milestone
-  QA result on one line — state, failing step, short commit and time — linked to
-  that run in the QA runs tab, which owns the steps, failure, output, teardown
-  retry, launch and cancel. Planning duplicates none of those controls. A queued
-  run reads as waiting for a slot, never as running. A first read, a failed read
-  and a stale result stay distinct from no run: loading and failure say so, a
-  refresh failure keeps the last result and says it may be out of date, and only
-  a completed read with no run says there is none.
+- Milestone qualifications live in the task's lane document
+  ([milestone QA](../contracts/milestone-qa.md)).
 - Lanes that list the project's repositories but sit outside the plan go behind
   "N unplanned lanes", each with Add to plan and Close.
 - Selecting a step opens the existing Lane view: document, history, leads, plus
@@ -162,7 +156,6 @@ Replaces the Plan column in Spec 026's Planning tab.
 - Built in part 3 (nucleus#866): the project chooser and "Find lanes" share `shared/lane-finder.ts`; the lane panel shows each project's plan position; the separate Lanes destination and its table are retired (Spec 019, revision 2026-11-07).
 - Built in part 4 (nucleus#867): the lane panel is the shared `client/lane-screen.tsx`. It shows the aim, a preview of the latest document with Read full document (every version, Earlier and Later), and Edit. A save sends the version the text was written against; a newer version blocks the save until the operator uses it as the base or discards their text, and the draft survives leaving the tab. Work, Leads and Papercuts sit beside the document at wide sizes and below it at narrow ones. Papercuts are the open leads tagged `papercut`. A count shows only when its read is complete: lane task counts come from the lane's server totals, and a loading, failed or partial list says so. Lane key, repositories and status sit behind Details.
 - Built in part 5 (nucleus#868): selecting a lead from the lane's list opens the shared `client/lead-screen.tsx` (Spec 026, "the lead screen"). The lane's open lead and papercut lists show eight records and offer the next page from the lane's complete read, so "Showing 8 of N" carries the lane's total and no first page is presented as one.
-- Built in part 6 (nucleus#869): the project plan ends with `ProjectQaLatest`, one compact line for the latest milestone QA run, linked to the shared QA detail in the QA runs tab. Planning no longer launches or cancels QA — that tab owns those actions, and the QA fence stays in the board header — so the two surfaces stopped competing. A queued run reads as waiting, never running, and a loading, failed or stale QA read never reads as an empty one.
 
 ## Rollout order
 
@@ -222,4 +215,4 @@ Times are first guesses and are settings, not constants (Tom, 2026-10-03).
 | 9 | Project has no unfinished task or queued/running milestone QA | Next-aim notice with the top `now` step and first `next` step |
 | 10 | Project with no `now` or `next` step drains | Notice asks for a plan |
 | 11 | Pipeline view | Unchanged; existing pipeline tests pass as they are |
-| 15 | The plan's latest QA: a queued run, a failed run, a loading read, a failed read, a refresh failure and no run | Each says its own state; the queued run reads as waiting and never as running; the link opens that run in the QA runs tab; Planning offers no QA launch, cancel or teardown retry |
+| 15 | The plan's latest QA: a queued run, a failed run, a loading read, a failed read, a refresh failure and no run | Each says its own state; the queued run reads as waiting and never as running; Planning offers no QA launch, cancel, teardown retry or removed Runs-tab link |

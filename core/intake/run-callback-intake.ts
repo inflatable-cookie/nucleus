@@ -41,7 +41,6 @@ import {
 } from "./proof-settlement";
 import {
   threadReleasePendingReason,
-  threadRunningReason,
 } from "./thread-waits";
 import { reportRunBinding } from "./report-run-binding";
 import { reportRunFor } from "../dispatch/acting-run";
@@ -611,7 +610,7 @@ export class RunCallbackIntake {
             ) ?? null)
           : null;
       const releasePendingReason =
-        !run.released && task.reason === threadRunningReason(run.role)
+        !run.released && task.reasonFact?.code === "thread_running" && task.reasonFact.subject === run.role
           ? threadReleasePendingReason(run.role)
           : undefined;
       const blockedCauseReason = ["blocked", "error"].includes(input.status)

@@ -107,7 +107,7 @@ test('an idle or live interactive session gets no reminder, stall, PR lookup, re
  assert.equal(createTaskDetailCache(f.store)(f.task.id).missingResult,null);
  assert.equal(occupiesSlot(f.current()),true);
  assert.match(capacityFor(f.add({phase:'queued',agentId:null,agentIntent:false,runId:null}),[f.current()],1,1),/limit/);
- assert.equal(f.store.qaScheduleMerges('/repo').length,0);
+ assert.equal(Number(f.store.db.prepare("SELECT count(*) AS count FROM qa_schedule_merges WHERE repository=?").get('/repo')?.count),0);
  assert.equal(await f.engine.settleSupersededIdleRuns(f.task.id,'probe'),0);
  await archiveFinishedThreads(f.store,f.adapter,f.task.id);
  await f.engine.resolution.recovery.pass(f.task.id);

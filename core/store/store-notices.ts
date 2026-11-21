@@ -16,11 +16,13 @@ export class StoreNotices {
 
   /** Notices whose status still awaits settlement; the admission and attention counts read this. */
   unsettledNoticeCount(): number {
-    return Number(this.core.db.prepare("SELECT COUNT(*) AS count FROM notices WHERE json_extract(data, '$.status') IN ('pending','intent','uncertain')").get()?.count ?? 0);
+    return Number(this.core.db.prepare("SELECT COUNT(*) AS count FROM notices WHERE json_extract(data, '$.status') IN ('pending','intent','uncertain') AND json_extract(data, '$.kind') IS NOT 'qa'").get()?.count ?? 0);
   }
 
   putNotice(n: Notice) {
-    this.core.db.prepare("INSERT INTO notices VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data").run(n.id, n.taskId, JSON.stringify(n));
+    const saved = this.core.db.prepare(`INSERT INTO notices VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data
+      WHERE json_extract(notices.data,'$.explicitlyClearedAt') IS NULL`).run(n.id, n.taskId, JSON.stringify(n));
+    if (!saved.changes) return;
     this.core.advanceRevision();
     this.access.taskChanged(n.taskId);
   }

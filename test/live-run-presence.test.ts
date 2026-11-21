@@ -34,13 +34,8 @@ import {
 } from "../core/telemetry/live-run-presence";
 import { hostRunSupervisorPaths } from "../service/callbacks/host-run-endpoint";
 import { projectValidationSupervisorPaths } from "../core/qa/project-validation-supervisor";
-import {
-  qaRunLiveOutputPath,
-  qaRunRootPath,
-} from "../core/qa/project-qa-supervision-files";
 import type {
   HostRunInternalRecord,
-  ProjectQaRun,
   Task,
 } from "../shared/contracts";
 import { hostRunSettlementSchema } from "../shared/contracts";
@@ -93,22 +88,6 @@ const taskAt = (
     resolution: { projectValidation: overrides.projectValidation ?? null },
     proofExecutions: [],
   }) as unknown as Task;
-
-const qaRun = (
-  id: string,
-  key: string,
-  overrides: Partial<ProjectQaRun> = {},
-) =>
-  ({
-    id,
-    key,
-    state: "running",
-    selector: "qa:stage:rust",
-    exitCode: null,
-    durationMs: 0,
-    steps: [],
-    ...overrides,
-  }) as unknown as ProjectQaRun;
 
 interface FakeState {
   workspaces: Array<{
@@ -218,7 +197,6 @@ interface PresenceInput {
   runs: () => HostRunInternalRecord[];
   settledRun?: (id: string) => HostRunInternalRecord | null;
   tasks?: () => Task[];
-  qaRun?: (id: string) => ProjectQaRun | null;
   now?: () => number;
 }
 
@@ -233,7 +211,6 @@ const presenceFor = (
     runs: input.runs,
     settledRun: input.settledRun ?? (() => null),
     tasks: input.tasks ?? (() => []),
-    qaRun: input.qaRun ?? (() => null),
     daemon: () => daemon,
     log: () => {},
     ...(input.now ? { now: input.now } : {}),
@@ -410,89 +387,6 @@ test("a settled run clears its label and leaves the tab on the final status line
   );
 });
 
-test("a milestone QA run with no open workspace has no presence and leaves the run alone", async (t) => {
-  const root = scratch(t);
-  const checkout = join(root, "checkout");
-  mkdirSync(checkout, { recursive: true });
-  const { daemon, state } = fakeDaemon([]);
-  let runs = [
-    clientRun("qa-run-1", checkout, "qa:stage:rust", {
-      submissionSource: "queue",
-      caller: "queue:milestone-qa",
-    }),
-  ];
-  const qa = qaRun("qa-run-1", "acme/app");
-  const presence = presenceFor(root, daemon, {
-    runs: () => runs,
-    qaRun: (id) => (id === qa.id ? qa : null),
-  });
-
-  await presence.reconcile();
-  assert.deepEqual(state.creates, []);
-  assert.deepEqual(state.assignments, []);
-  assert.equal(state.workspaceReads, 1);
-  assert.equal(runs[0]!.state, "running");
-});
-
-test("a milestone QA run uses the project main workspace, its own live log and QA running", async (t) => {
-  const root = scratch(t);
-  const checkout = join(root, "checkout");
-  mkdirSync(checkout, { recursive: true });
-  const { daemon, state } = fakeDaemon([
-    { id: "ws-main", directory: checkout, labels: [] },
-  ]);
-  let runs = [
-    clientRun("qa-run-1", checkout, "qa:stage:rust", {
-      submissionSource: "queue",
-      caller: "queue:milestone-qa",
-    }),
-  ];
-  let qa = qaRun("qa-run-1", "acme/app");
-  const presence = presenceFor(root, daemon, {
-    runs: () => runs,
-    qaRun: (id) => (id === qa.id ? qa : null),
-  });
-  await presence.reconcile();
-
-  assert.equal(state.creates.length, 1);
-  assert.equal(state.creates[0]!.workspaceId, "ws-main");
-  assert.equal(state.creates[0]!.cwd, checkout);
-  assert.equal(state.creates[0]!.name, "QA · qa:stage:rust");
-  const pointer = pointerOf(
-    root,
-    presence,
-    `milestone_qa|${checkout}|qa:stage:rust`,
-  );
-  assert.deepEqual(pointer.outputs, [
-    qaRunLiveOutputPath(
-      qaRunRootPath(join(root, "data"), "acme/app"),
-      "qa-run-1",
-    ),
-  ]);
-  assert.deepEqual(state.assignments, [
-    { workspaceId: "ws-main", name: "QA running", assigned: true },
-  ]);
-
-  // The QA row and its host run settle together, so the run leaves the live set.
-  qa = qaRun("qa-run-1", "acme/app", {
-    state: "passed",
-    exitCode: 0,
-    durationMs: 192_000,
-  });
-  runs = [];
-  await presence.reconcile();
-  assert.equal(
-    pointerOf(root, presence, `milestone_qa|${checkout}|qa:stage:rust`)
-      .settledLine,
-    "QA · qa:stage:rust · passed (exit 0) in 3m 12s",
-  );
-  assert.deepEqual(state.assignments.at(-1), {
-    workspaceId: "ws-main",
-    name: "QA running",
-    assigned: false,
-  });
-});
-
 test("a task validation run follows the validation supervisor's own live log", async (t) => {
   const root = scratch(t);
   const directory = join(root, "worktree"),
@@ -657,7 +551,6 @@ test("a failed daemon call is logged and leaves the run alone", async (t) => {
     runs: () => [run],
     settledRun: () => null,
     tasks: () => [taskAt(directory, "ws-task")],
-    qaRun: () => null,
     daemon: () => daemon,
     log: (message) => logged.push(message),
   });
@@ -717,7 +610,6 @@ test("an Electron follower gets node mode and an exited tab is not reopened for 
     runs: () => runs,
     settledRun: () => null,
     tasks: () => [taskAt(directory, "ws-task")],
-    qaRun: () => null,
     daemon: () => daemon,
     follower: {
       command:
@@ -917,7 +809,6 @@ test("only launched runs with a placed workspace become presence", () => {
     const targets = liveRunPresenceTargets({
       runs: [queued, overdue, unplaced, live, duplicate],
       tasks: [taskAt(directory, "ws-task")],
-      qaRun: () => null,
       workspaces: [workspace],
       dataDir: join(root, "data"),
       stateDir: join(root, "host-run"),
@@ -936,25 +827,10 @@ test("only launched runs with a placed workspace become presence", () => {
     );
     assert.equal(LIVE_RUN_PRESENCE_INTERVAL_MS > 0, true);
 
-    // A milestone QA run without an open workspace on its checkout is not shown.
-    const checkout = join(root, "checkout");
-    const qa = qaRun("qa-run-1", "acme/app");
-    const qaTargets = liveRunPresenceTargets({
-      runs: [clientRun("qa-run-1", checkout, "qa:stage:rust")],
-      tasks: [],
-      qaRun: (id) => (id === qa.id ? qa : null),
-      workspaces: [],
-      dataDir: join(root, "data"),
-      stateDir: join(root, "host-run"),
-      nowMs: Date.parse(at(10_000)),
-    });
-    assert.deepEqual(qaTargets, []);
-
     // A task run whose workspace is gone is never served from another checkout.
     const taskTargets = liveRunPresenceTargets({
       runs: [clientRun("task-run", join(root, "elsewhere"))],
       tasks: [taskAt(directory, "ws-archived")],
-      qaRun: () => null,
       workspaces: [workspace],
       dataDir: join(root, "data"),
       stateDir: join(root, "host-run"),
@@ -973,26 +849,22 @@ test("an archiving workspace is never targeted by directory or recorded task id"
   const archived = {
     id: "ws-archived",
     directory,
-    labels: ["Testing", "QA running"],
+    labels: ["Testing"],
     archivingAt: at(1_000),
   } satisfies LiveRunPresenceWorkspace;
   const { daemon, state } = fakeDaemon([archived]);
   const taskRun = clientRun("task-live", directory, "test unit");
-  const qa = qaRun("qa-live", "acme/app");
-  const qaRunRecord = clientRun("qa-live", directory, "qa:stage:rust");
   const presence = presenceFor(root, daemon, {
-    runs: () => [taskRun, qaRunRecord],
+    runs: () => [taskRun],
     tasks: () => [taskAt(directory, "ws-archived")],
-    qaRun: (id) => (id === qa.id ? qa : null),
   });
 
   await presence.reconcile();
 
   assert.deepEqual(state.creates, []);
   assert.deepEqual(state.assignments, []);
-  assert.deepEqual(state.workspaces[0]!.labels, ["Testing", "QA running"]);
+  assert.deepEqual(state.workspaces[0]!.labels, ["Testing"]);
   assert.equal(taskRun.state, "running");
-  assert.equal(qaRunRecord.state, "running");
 });
 
 test("the tab's follower renders the live log and stops at the service's final line", async (t) => {

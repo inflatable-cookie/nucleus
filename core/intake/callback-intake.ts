@@ -150,6 +150,23 @@ export class CallbackIntake {
     const presented = this.store.run(presentedRunId);
     this.store.authenticate(presentedRunId, token);
     const identityTask = this.store.task(input.taskId);
+    return this.engine.onTaskHost(identityTask, () =>
+      this.completeOnHost(
+        input,
+        token,
+        presentedRunId,
+        presented,
+        identityTask,
+      ),
+    );
+  }
+  private async completeOnHost(
+    input: Completion,
+    token: string,
+    presentedRunId: string,
+    presented: Run | null,
+    identityTask: Task,
+  ) {
     if (
       presented
         ? presented.taskId !== identityTask.id
@@ -585,6 +602,17 @@ export class CallbackIntake {
     if (duplicate) return duplicate as CheckpointResult;
     if (!input.head)
       throw new Error("A progress checkpoint requires the exact local head");
+    const head = input.head;
+    return this.engine.onTaskHost(this.store.task(input.taskId), () =>
+      this.completeCheckpointOnHost(input, token, reporting, head),
+    );
+  }
+  private async completeCheckpointOnHost(
+    input: Completion,
+    token: string,
+    reporting: Run | null,
+    head: string,
+  ): Promise<CheckpointResult> {
     const gate = () => {
       const task = this.store.task(input.taskId);
       if (isDispositionActive(task))
@@ -663,7 +691,7 @@ export class CallbackIntake {
       throw new Error(
         "Bounded checkpoint verification is unavailable; complete the work or report blocked",
       );
-    await this.adapter.verifyCheckpoint(task, input.head);
+    await this.adapter.verifyCheckpoint(task, head);
     if (this.engine.stopped || this.store.getMeta("paused"))
       throw new Error("Nucleus paused during checkpoint verification");
     const response = this.store.transaction(() => {
@@ -785,6 +813,14 @@ export class CallbackIntake {
     this.store.authenticate(input.runId, token);
     const duplicate = this.store.receipt(input, token);
     if (duplicate) return duplicate as CheckpointResult;
+    return this.engine.onTaskHost(this.store.task(input.taskId), () =>
+      this.completeReviewProgressOnHost(input, token),
+    );
+  }
+  private async completeReviewProgressOnHost(
+    input: Completion,
+    token: string,
+  ): Promise<CheckpointResult> {
     const progressRun = this.store.run(input.runId);
     if (progressRun?.ordinaryDetached)
       await ordinaryReviewSource(

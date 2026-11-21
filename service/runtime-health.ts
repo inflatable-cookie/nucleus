@@ -454,6 +454,8 @@ export class RuntimeHealthProjection {
       hostId:
         this.context.hostSessionId() ||
         hostRegistry.legacyPaseoPrimary()?.id ||
+        hostRegistry.onlineIds()[0] ||
+        hostRegistry.known()[0]?.id ||
         "unknown",
       connected: this.context.anyHostConnected(),
       hostIdentityConflict: lifecycle.identityConflict,

@@ -1,8 +1,7 @@
 import { projectPlannerRoutingIssue } from "../questions/planner-presence";
 import { parseAgentId } from "../../shared/agent-identity";
-import { qaFenceStatus, writeQaFence } from "../qa/qa-fence";
-import type { ProjectQaFenceInput } from "../../shared/contracts";
 import {
+  projectQaRequestSchema,
   QA_MANAGED_LAUNCH_RETIRED,
   QA_SCHEDULE_RETIRED,
 } from "../../shared/contracts";
@@ -30,7 +29,6 @@ import type {
   AgentRegisterInput,
   AgentUnregisterInput,
 } from "../../shared/contracts";
-import type { ProjectQaRunner } from "../qa/project-qa";
 import type { HostRunScheduler } from "../host-runs/host-run-scheduler";
 import { publicHostRunRecord } from "../host-runs/host-run-identity";
 
@@ -60,7 +58,6 @@ export interface RepositoriesContext {
     | "accountingList"
     | "boardState"
   >;
-  projectQaRunner(): ProjectQaRunner;
   markStoreAccess(): void;
   /** One assignment; a self-named planner receives its identity ticket in this response. */
   plannerChanged?(projectKey: string): Promise<string | undefined>;
@@ -156,7 +153,17 @@ export class RuntimeRepositories {
     }
     const { repository: _repository, ...patch } = input;
     if (patch.qa?.schedule) throw new Error(QA_SCHEDULE_RETIRED);
-    if (patch.checksPolicy === "required") {
+    const normalizedPatch: Parameters<Store["patchRepository"]>[1] =
+      patch.qa && !patch.qa.argv && !patch.qa.stages
+        ? (() => {
+            const existing = this.context.store.repositorySettingsFor(identity);
+            return {
+              ...patch,
+              qa: existing?.qa ? { ...existing.qa, schedule: null } : null,
+            };
+          })()
+        : patch;
+    if (normalizedPatch.checksPolicy === "required") {
       // The decision reads the row this patch would update, then proves nothing
       // newer landed while the capability was observed: no await runs inside a
       // transaction and a concurrent settings write is never overwritten.
@@ -172,7 +179,7 @@ export class RuntimeRepositories {
           `checksPolicy "required" refused: repository settings for ${identity.origin ?? identity.path} changed while the required-check capability was observed (revision ${target?.revision ?? "none"} to ${current?.revision ?? "none"}). Nothing was written`,
         );
     }
-    return this.context.store.patchRepository(identity, patch);
+    return this.context.store.patchRepository(identity, normalizedPatch);
   }
 
   async getRepository(input: { repository: string }) {
@@ -256,35 +263,23 @@ export class RuntimeRepositories {
     wait?: boolean;
   }) {
     this.context.markStoreAccess();
-    // nucleus#1475: the managed launch entry point every caller reaches — CLI,
-    // board, RPC — refuses here, before a request identity or a checkout exists.
-    // No admitted run is touched: only new launches stop. The refusal names the
-    // report-only recipe and the history reads that still answer.
     throw new Error(QA_MANAGED_LAUNCH_RETIRED);
-  }
-
-  async cancelProjectQa(input: { id: string; reason: string }) {
-    this.context.markStoreAccess();
-    return this.context.projectQaRunner().cancel(input);
-  }
-
-  async retryProjectQaTeardown(input: { id: string; reason: string }) {
-    this.context.markStoreAccess();
-    return this.context.projectQaRunner().retryTeardown(input);
-  }
-
-  async dismissProjectQa(input: {
-    id: string;
-    reason: string;
-    caller: string;
-  }) {
-    this.context.markStoreAccess();
-    return this.context.projectQaRunner().dismiss(input);
   }
 
   async getProjectQa(input: { id: string } | { repository: string }) {
     this.context.markStoreAccess();
-    return this.context.projectQaRunner().get(input);
+    const { store } = this.context;
+    if ("id" in input) return store.qaRun(input.id);
+    if (!isAbsolute(input.repository)) {
+      const key = normalizeRepositoryOrigin(input.repository);
+      return key ? store.latestQaRun(key) : null;
+    }
+    // Recorded history remains readable if the original checkout moved or is offline.
+    const path = await realpath(input.repository).catch(() => input.repository);
+    const recorded = store.latestQaRunForPath(path);
+    if (recorded) return recorded;
+    const origin = await repositoryOrigin(path).catch(() => null);
+    return origin ? store.latestQaRun(origin) : null;
   }
 
   projectQaRequestStatus(
@@ -293,23 +288,22 @@ export class RuntimeRepositories {
       | { repository: string; since: string; expectedHead: string },
   ) {
     this.context.markStoreAccess();
-    return this.context.projectQaRunner().requestStatus(input);
+    const { store } = this.context;
+    const requests = store.qaRequestRecords(input).map(record => projectQaRequestSchema.parse(record));
+    const runs = "requestId" in input
+      ? requests.flatMap(request => {
+        const run = request.runId ? store.qaRun(request.runId) : null;
+        return run ? [run] : [];
+      })
+      : store.qaHistoryForRequest(input);
+    if (requests.length > 100 || runs.length > 100)
+      throw new Error("QA request-status exceeds 100 records; narrow the time window or use requestId");
+    return { requests, runs };
   }
 
   async listProjectQa() {
     this.context.markStoreAccess();
-    return this.context.projectQaRunner().list();
-  }
-
-  /** Papercut 26636095: the operator's QA admission fence, with the complete unsettled QA inventory. */
-  configureQaFence(input: ProjectQaFenceInput) {
-    this.context.markStoreAccess();
-    return writeQaFence(this.context.store, input);
-  }
-
-  qaFenceStatus() {
-    this.context.markStoreAccess();
-    return qaFenceStatus(this.context.store);
+    return this.context.store.latestQaRuns();
   }
 
   /** Contract 010 `host.run.list`: the pinned strict record, never Queue's internal identity. */

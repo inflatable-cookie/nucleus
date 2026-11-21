@@ -222,7 +222,7 @@ export class HookOccurrences {
       const current = latest.get(record.hookId);
       if (!current || record.occurrence > current.occurrence) latest.set(record.hookId, record);
     }
-    return [...latest.values()].every(record => ["result", "published"].includes(record.state) || record.state === "failed" && record.delivery === "advisory");
+    return [...latest.values()].every(record => ["result", "published", "superseded"].includes(record.state) || record.state === "failed" && record.delivery === "advisory");
   }
 }
 

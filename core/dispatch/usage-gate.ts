@@ -84,7 +84,7 @@ export function reconcileUsageGate(store: Store, decisions: Decisions, taskId: s
   if (!needed) {
     if (gate?.status === "pending") withdraw(decisions, gate.decisionId, `The ${level} usage level no longer needs permission for this task`);
     const cleared = clearHold(task);
-    if (gate || cleared) store.update(task.id, { ...(cleared ?? {}), usageGate: null, ...(task.reason === USAGE_GATE_WAIT ? { reason: "Waiting for dispatch" } : {}) }, "usage_gate_cleared",
+    if (gate || cleared) store.update(task.id, { ...(cleared ?? {}), usageGate: null, ...(task.reasonFact?.code === "usage_gate" ? { reason: "Waiting for dispatch" } : {}) }, "usage_gate_cleared",
       JSON.stringify({ level, complexity: task.complexity }));
     return;
   }
@@ -106,7 +106,7 @@ export function reconcileUsageGate(store: Store, decisions: Decisions, taskId: s
     if (approved) {
       const cleared = clearHold(task);
       store.update(task.id, { ...(cleared ?? {}), usageGate: { ...gate, status: "approved", at, note: "" },
-        ...(task.reason === USAGE_GATE_WAIT ? { reason: "Waiting for dispatch" } : {}) }, "usage_gate_approved",
+        ...(task.reasonFact?.code === "usage_gate" ? { reason: "Waiting for dispatch" } : {}) }, "usage_gate_approved",
         JSON.stringify({ decisionId: gate.decisionId, level, complexity: task.complexity }));
       return;
     }

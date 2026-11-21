@@ -19,11 +19,6 @@ import { Store } from '../core/store/store';
 import { HostRunScheduler } from '../core/host-runs/host-run-scheduler';
 import { HostRunEndpoint, hostRunSupervisorStateSchema, writeVerifiedOwnedFile, type HostRunSupervisorState } from '../service/callbacks/host-run-endpoint';
 import {
-  QA_SUPERVISION_SCHEMA, QA_SUPERVISION_SCHEMA_VERSION, qaSupervisionPaths, qaSupervisionStateSchema,
-  readQaCpuCoverage, readQaSupervision, writeQaSupervision, type QaSupervisionState,
-} from '../core/qa/project-qa-supervision-files';
-import { qaSupervisionCpuCoverage } from '../core/qa/project-qa-pipeline';
-import {
   projectValidationSupervisorPaths, projectValidationSupervisorResultSchema, readProjectValidationCpuCoverage, readProjectValidationResult,
   writeProjectValidationCpuCoverage, writeProjectValidationResult,
 } from '../core/qa/project-validation-supervisor';
@@ -37,7 +32,6 @@ import {
 import { frozenHostRunRecordSchema, frozenHostRunResultSchema, frozenHostRunSettlementSchema } from './support/contract-010-frozen';
 import {
   MAIN_META_PATTERN_SCANS, mainPrivateHostRunSupervisorStateSchema, mainPrivateProjectValidationSupervisorResultSchema,
-  mainPrivateQaSupervisionStateSchema,
 } from './support/main-private-records-frozen';
 
 const capacity = () => ({ cpuCapacity: 4, memoryCapacityBytes: 8_000_000_000, freeMemoryBytes: 8_000_000_000, loadAverage: [0, 0, 0] });
@@ -78,7 +72,6 @@ test('wire shapes and private records are byte-for-byte main\'s strict schemas',
     [hostRunResultSchema, frozenHostRunResultSchema], [hostRunSettlementSchema, frozenHostRunSettlementSchema], [hostRunRecordSchema, frozenHostRunRecordSchema],
     [hostRunSupervisorStateSchema, mainPrivateHostRunSupervisorStateSchema],
     [projectValidationSupervisorResultSchema, mainPrivateProjectValidationSupervisorResultSchema],
-    [qaSupervisionStateSchema, mainPrivateQaSupervisionStateSchema],
   ] as const) assert.deepEqual(z.toJSONSchema(current, { io: 'input' }), z.toJSONSchema(frozen, { io: 'input' }));
   assert.equal(hostRunResultSchema.safeParse({ ...resultFor('r', 1, AT, 400), cpuCoverage: 'sampled' }).success, false);
 });
@@ -238,34 +231,4 @@ test('validation: main\'s strict reader parses the new envelope beside its sidec
   assert.equal(boundSidecarCoverage(readProjectValidationCpuCoverage(paths.cpuCoveragePath), { runId: 'val-1', epoch: 3, cpuMs: 400 }), 'sampled');
   assert.equal(boundSidecarCoverage(readProjectValidationCpuCoverage(paths.cpuCoveragePath), { runId: 'val-1', epoch: 2, cpuMs: 400 }), undefined);
   assert.equal(readProjectValidationCpuCoverage(join(paths.root, 'missing.json')), null, 'a failed or missing write reads as absent');
-});
-
-test('milestone QA: main\'s strict reader parses the new state; the sidecar binds by run, epoch, step and cpuMs, and is removed with the run files', async t => {
-  const runRoot = await mkdtemp(join(tmpdir(), 'qa-cpu-sidecar-'));
-  t.after(() => rm(runRoot, { recursive: true, force: true }));
-  const paths = qaSupervisionPaths(runRoot, 'qa-1');
-  const hostResult = resultFor('qa-1', 1, AT, 400, 4242);
-  const step = (name: string, processGroupId: number) => ({ name, command: name, exitCode: 0, signal: null, timedOut: false, processGroupId,
-    stdoutHead: '', stdoutTail: '', stderrHead: '', stderrTail: '' });
-  const state: QaSupervisionState = qaSupervisionStateSchema.parse({ schema: QA_SUPERVISION_SCHEMA, schema_version: QA_SUPERVISION_SCHEMA_VERSION,
-    runId: 'qa-1', key: 'repo', pid: 1, identityToken: 'x'.repeat(32), startedAt: AT, heartbeatAt: AT, inFlight: null,
-    steps: [step('setup', 4100), step('qa', 4242)], failedStep: null, detail: '', cancelReason: 'operator stop',
-    result: { state: 'cancelled', exitCode: null, durationMs: 1000, detail: '', finishedAt: AT, hostResult } });
-  writeFileSync(paths.cpuCoveragePath, JSON.stringify(hostRunCpuCoverageSidecar({ runId: 'qa-1', epoch: 1, step: 'qa' }, 400, 'sampled')), { mode: 0o600 });
-  writeQaSupervision(paths.statePath, state);
-  const old = mainPrivateQaSupervisionStateSchema.parse(JSON.parse(readFileSync(paths.statePath, 'utf8')));
-  assert.deepEqual([old.result?.state, old.cancelReason], ['cancelled', 'operator stop'], 'the old reader keeps the cancel cause');
-  assert.equal(hasCoverage(readFileSync(paths.statePath, 'utf8')), false);
-  const read = readQaSupervision(paths.statePath);
-  const sidecar = readQaCpuCoverage(paths.cpuCoveragePath);
-  assert.equal(qaSupervisionCpuCoverage('qa-1', read, hostResult, sidecar), 'sampled');
-  assert.equal(qaSupervisionCpuCoverage('qa-2', read, hostResult, sidecar), undefined, 'another run');
-  assert.equal(qaSupervisionCpuCoverage('qa-1', read, { ...hostResult, epoch: 2 }, sidecar), undefined, 'another epoch');
-  assert.equal(qaSupervisionCpuCoverage('qa-1', read, { ...hostResult, cpuMs: 300 }, sidecar), undefined, 'another sample');
-  assert.equal(qaSupervisionCpuCoverage('qa-1', read, { ...hostResult, pgid: 4100 }, sidecar), undefined, 'another step');
-  assert.equal(qaSupervisionCpuCoverage('qa-1', null, hostResult, sidecar), undefined, 'no state: the step cannot be named');
-  assert.equal(qaSupervisionCpuCoverage('qa-1', read, hostResult, readQaCpuCoverage(join(runRoot, 'missing'))), undefined);
-  const { removeQaSupervisionFiles } = await import('../core/qa/project-qa-supervision-files');
-  removeQaSupervisionFiles(runRoot, 'qa-1');
-  assert.equal(readQaCpuCoverage(paths.cpuCoveragePath), null, 'removed with the supervision files');
 });

@@ -33,10 +33,6 @@ export const ACCEPTED_PR_RECONCILIATION_REASON = 'Operator requested accepted-PR
  */
 export const missingCallbackStopReason = (role: string) => `The ${role} thread stopped without a callback; inspect the thread`;
 export const expiredCallbackReminderReason = (role: string) => `The ${role} callback reminder expired`;
-/** True when this recorded reason is one of those two stops for that role. */
-export function missingCallbackStopReasonFor(reason: string, role: string): boolean {
-  return reason === missingCallbackStopReason(role) || reason === expiredCallbackReminderReason(role);
-}
 /** The one reason a completion callback's moved PR head records; retry routing reads it as a fact. */
 export const PR_HEAD_CHANGED_REASON = 'PR head changed after the completion callback';
 /** The visible reason a failed external-merge probe parks with; its pre-attention state is recorded for recovery. */

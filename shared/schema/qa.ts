@@ -16,7 +16,6 @@ import {
   projectValidationAdmissionSchema,
   projectValidationCapacityWaitSchema,
 } from "./validation";
-import { QA_FENCE_MAX_MINUTES } from "./qa-fence";
 
 /** One setup, stage or teardown step of a milestone run, with its own bounded output. */
 export const projectQaStepNameSchema = z
@@ -258,43 +257,6 @@ export const BOARD_QA_OUTPUT_LINES = 8;
 
 export const BOARD_QA_OUTPUT_LINE_MAX = 400;
 
-/**
- * One milestone QA run as a board card (Tom, 2026-11-01): the projection of a
- * repository's latest run, carrying what the card shows and nothing that only
- * the detail view needs. The card's state, placement and fade come from the
- * projection in `core/qa/qa-board.ts`.
- */
-export const boardQaRunSchema = z
-  .object({
-    id: z.string().min(1).max(160),
-    repository: projectRepositorySchema,
-    key: z.string().min(1).max(320),
-    selector: z.string().min(1),
-    baseBranch: z.string().min(1).max(200),
-    state: projectQaStateSchema,
-    queuePosition: z.number().int().positive().nullable(),
-    startedAt: z.string(),
-    submittedAt: z.string().nullable(),
-    finishedAt: z.string().nullable(),
-    currentStep: projectQaStepNameSchema.nullable(),
-    failedStep: projectQaStepNameSchema.nullable(),
-    exitCode: z.number().int().nullable(),
-    outputLines: z
-      .array(z.string().max(BOARD_QA_OUTPUT_LINE_MAX))
-      .max(BOARD_QA_OUTPUT_LINES),
-    cancelReason: z.string().nullable(),
-    stale: z
-      .object({
-        commitsSince: z.number().int().positive(),
-        runAt: z.string().datetime(),
-      })
-      .strict()
-      .nullable(),
-  })
-  .strict();
-
-export type BoardQaRun = z.infer<typeof boardQaRunSchema>;
-
 export const projectQaRunInputSchema = z
   .object({
     /** Wait for this admitted run to settle; does not change request identity. */
@@ -315,24 +277,6 @@ export const projectQaRunInputSchema = z
   .strict();
 
 export type ProjectQaRunInput = z.infer<typeof projectQaRunInputSchema>;
-
-/**
- * nucleus#1475: managed milestone QA launch is retired. Every launch entry point
- * refuses with this text, so a caller learns the replacement recipe and where
- * existing runs still read. Nothing here retires an admitted, queued, running or
- * unsettled run: `project.qa.get`, `list`, `cancel`, `dismiss` and
- * `retry-teardown` keep settling and reporting them.
- */
-export const QA_MANAGED_LAUNCH_RETIRED =
-  "Milestone QA launch is retired: Nucleus no longer starts managed QA runs. Run the repository's milestone selectors in an ordinary report-only task pinned to one commit (`queue.reportOnly` with `queue.reportLane`; the recipe is docs/knowledge/contracts/milestone-qa.md and the Northstar milestone-qa skill). Existing runs still settle and stay readable through project.qa.get, project.qa.list, project.qa.cancel, project.qa.dismiss and project.qa.retry-teardown.";
-
-/**
- * nucleus#1475: the schedule entry point. A stale `qa.schedule` may be cleared so
- * its repository leaves the retired schedule pass, but it cannot be enabled or
- * replaced, because no schedule admits another managed run.
- */
-export const QA_SCHEDULE_RETIRED =
-  'Milestone QA scheduling is retired: a repository cannot enable or replace qa.schedule, which no longer admits a run. Clear a leftover schedule with {"qa":{"schedule":null}}. Run milestone QA as an ordinary report-only task pinned to one commit (recipe in docs/knowledge/contracts/milestone-qa.md).';
 
 /**
  * Every way a QA admission can be refused before it claims a run. The code is
@@ -397,91 +341,8 @@ export const projectQaGetInputSchema = z.union([
   z.object({ repository: z.string().trim().min(1).max(1024) }).strict(),
 ]);
 
-export const projectQaCancelInputSchema = z
-  .object({
-    id: z.string().trim().min(1).max(160),
-    reason: z.string().trim().min(1).max(4000),
-  })
-  .strict();
+export const QA_MANAGED_LAUNCH_RETIRED =
+  "Milestone QA launch is retired. Run the repository selectors in a report-only task pinned to one commit (docs/knowledge/contracts/milestone-qa.md). Read legacy history with project.qa.get or project.qa.list.";
 
-export type ProjectQaCancelInput = z.infer<typeof projectQaCancelInputSchema>;
-
-/**
- * Tom, 2026-11-01: a board operator dismisses a finished run that is not passing. Records who
- * dismissed which run and why; never deletes the record, and a passing or live run is not dismissible.
- */
-export const projectQaDismissInputSchema = z
-  .object({
-    id: z.string().trim().min(1).max(160),
-    reason: z.string().trim().min(1).max(4000),
-    caller: z.string().trim().min(1).max(160),
-  })
-  .strict();
-
-export type ProjectQaDismissInput = z.infer<typeof projectQaDismissInputSchema>;
-
-/**
- * Task 134: an operator-only retry of the teardown step for a run that settled
- * whose latest teardown step failed or whose checkout cleanup is pending, even
- * when an earlier setup or QA step remains the run's primary failure.
- * It reruns only the recorded teardown command through the same supervisor,
- * termination and logging path, and never reruns setup or QA.
- */
-export const projectQaRetryTeardownInputSchema = z
-  .object({
-    id: z.string().trim().min(1).max(160),
-    reason: z.string().trim().min(1).max(4000),
-  })
-  .strict();
-
-export type ProjectQaRetryTeardownInput = z.infer<
-  typeof projectQaRetryTeardownInputSchema
->;
-
-/**
- * Papercut 26636095: set, replace or clear the QA admission fence. Only the
- * operator (`caller` "operator" or "operator (board)") or a relaying agent with
- * `relayed: true` and the operator's authorization `note` may write it.
- * `expectedRevision` must equal the stored revision, so a stale client cannot
- * clear or replace a newer fence and a retried write never renews the expiry.
- */
-export const projectQaFenceInputSchema = z
-  .object({
-    action: z.enum(["set", "clear"]),
-    expectedRevision: z.number().int().nonnegative(),
-    minutes: z.number().int().min(1).max(QA_FENCE_MAX_MINUTES).optional(),
-    reason: z.string().trim().min(1).max(1000).optional(),
-    caller: z.string().trim().min(1).max(160),
-    relayed: z.boolean().optional(),
-    note: z.string().trim().min(1).max(4000).optional(),
-  })
-  .strict()
-  .superRefine((input, ctx) => {
-    if (input.action === "set" && !input.reason)
-      ctx.addIssue({
-        code: "custom",
-        path: ["reason"],
-        message: "Setting the QA fence requires a reason",
-      });
-    if (input.action === "clear" && input.minutes !== undefined)
-      ctx.addIssue({
-        code: "custom",
-        path: ["minutes"],
-        message: "minutes applies only to set",
-      });
-    if (input.relayed && !input.note)
-      ctx.addIssue({
-        code: "custom",
-        path: ["note"],
-        message:
-          "A relayed fence write requires the operator's authorization note",
-      });
-    if (!input.relayed && input.note !== undefined)
-      ctx.addIssue({
-        code: "custom",
-        path: ["note"],
-        message: "A note records a relayed authorization; set relayed true",
-      });
-  });
-
-export type ProjectQaFenceInput = z.infer<typeof projectQaFenceInputSchema>;
+export const QA_SCHEDULE_RETIRED =
+  'Milestone QA scheduling is retired. Clear a stored schedule with {"qa":{"schedule":null}}. Run milestone QA as a report-only task.';

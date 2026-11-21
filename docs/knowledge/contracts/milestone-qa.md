@@ -1,12 +1,11 @@
 # Milestone QA
 
-Status: active (nucleus#1475)
+Status: active
 Audience: planners, operators
 
 Milestone QA is an ordinary report-only Nucleus task that runs a repository's
 own milestone selectors against one pinned commit and delivers a qualification
-record. Nucleus no longer owns a QA runner: `project.qa.run` and `qa.schedule`
-refuse with the replacement named, and this file owns that recipe.
+record. The repository runner executes the selectors and retains their evidence.
 
 The runner-neutral procedure is the Northstar milestone-qa skill; this file
 holds only what Nucleus adds — the task shape, the export path and what still
@@ -98,43 +97,37 @@ document version holding the record. The planner accepts it with `complete`, or
 returns it with `move to=work` and an instruction. A report-only task starts no
 reviewer and no blocker escalation.
 
-## What Nucleus still serves
+## Legacy history and upgrades
 
-Retiring the launch left old runs alone. `project.qa.get` and
-`project.qa.list` keep answering for stored runs, `project.qa.cancel` stops a
-live one, `project.qa.retry-teardown` reruns a failed teardown, and
-`project.qa.dismiss` clears a finished failure from the board without deleting
-it. A run admitted before the cutover is still recovered by the supervisor, so a
-roll neither loses it nor replays it. Those verbs are history and cleanup, never
-a launch.
+`project.qa.get` reads a saved run by ID or the latest run for a repository.
+`project.qa.list` lists the latest saved run per repository.
+`project.qa.request-status` reads stored request identities. These reads use
+durable history, so an offline checkout does not prevent an exact-ID read.
+Result records, step logs and failure logs keep their established retention.
+Lane document versions remain the qualification record for report-only tasks.
 
-## Migration and removal order
+`project.qa.run` also refuses the old `--wait` form and points callers to this
+recipe. Stored schedules are inert. Clear a leftover schedule with
+`repository.set` and `{"qa":{"schedule":null}}`. A schedule-only clear preserves
+the repository's validation evidence commands. Enabling a schedule is refused.
 
-1. **This cutover.** `project.qa.run` refuses for every caller and every
-   `--wait` shape; `repository.set` refuses enabling or replacing `qa.schedule`
-   and accepts `{"qa":{"schedule":null}}`; a repository that still has a
-   schedule records one notice naming this recipe instead of admitting a run.
-   In-flight runs, their recovery and all settled history are untouched.
-2. **Per-consumer replacements.** Each consumer below needs its own authorized
-   change; none of them is edited here.
+The roll checks stored QA custody before warm standby takes the live socket and
+again before the replacement opens the writable store. The cold start does the
+same check. The latest-run index cannot hide an older unresolved run. An
+unsettled run, request, host reservation, active fence, unproved process exit or
+retained checkout defers takeover. The check reads store and filesystem
+evidence and leaves records, processes and checkouts in their current custody.
 
-| Consumer | Today | Replacement |
-| --- | --- | --- |
-| Planner habit and prompts | `project.qa.run` on `main` | a report-only task with this recipe |
-| CLI `nucleus project.qa.run --wait` | managed run and settled summary | selector slices under named Effigy runs, record in the lane document |
-| Board QA runs tab and QA card | "Run QA" reaches the refusal | read-only history; launching moves to a task |
-| `qa.schedule` per repository | automatic milestone admission | a planner-submitted report-only task per milestone |
-| Settings QA schedule toggle | turns automatic admission on | it now refuses to turn on and still turns a leftover schedule off |
-| Scheduled QA notices and reminders | planner notices from the schedule pass | ordinary task reporting; the leftover schedule notice is cleared by removing `qa.schedule` |
-| Release and roll runbooks | "milestone QA remains `project.qa.run`" | this recipe at the release SHA |
-| Cross-repository planners | briefs that call `project.qa.run` | a report-only task in that repository, same recipe |
+Settle an older occurrence on the compatibility build, the build that refused
+new launches and still recovered legacy runs. Use that build's
+`project.qa.fence-status` and `project.qa.request-status` to inspect it, then
+use its existing cancellation, teardown retry or retention path as applicable.
+Wait for a fence to expire or clear it there with the existing authority.
+Retry the roll after settlement. An installed bridge that predates the
+deferral status shows the startup refusal as a failed roll and suppresses that
+candidate until main advances. After compatibility cleanup, that owner retries
+when it sees the next main revision. The refusal names the custody issue.
 
-3. **Deferred removal.** After no live install has an unsettled run or a
-   schedule, a later change removes the supervisor and pipeline, the
-   QA-only scheduling pass and its notices, the board launch control, and the
-   managed-run storage and host-run classes. Historical runs stay readable until
-   retention ages them, and removing the runner never removes the record of a
-   qualification that already happened.
-
-Never mutate a live install, a schedule, a stored run or its history as proof
-that a step is safe.
+The board, Planning and task detail show report-only milestones through the
+ordinary task workflow. Generic host runs and merge-time validation still use
+their own run records and retention.

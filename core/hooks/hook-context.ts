@@ -69,16 +69,16 @@ export function isHookHoldReason(reason: string): boolean {
 }
 
 /** True when a successful retry has cleared the pre-dispatch hook hold recorded on a task. */
-export function isRecoveredPreDispatchHookHold(task: Pick<Task, "phase" | "reason">, result: HookEmissionResult): boolean {
+export function isRecoveredPreDispatchHookHold(task: Pick<Task, "phase" | "reasonFact">, result: HookEmissionResult): boolean {
   return task.phase === "needs_attention"
-    && isHookHoldReason(task.reason)
+    && task.reasonFact?.code === "hook_hold"
     && !result.hold
     && result.records.some(record => record.event === "task.pre_dispatch" && ["result", "published"].includes(record.state));
 }
 
 /** True when a task is visibly held by a repository closeout hook rather than a coordinator issue. */
-export function isCloseoutHookHold(task: Pick<Task, "phase" | "reason">): boolean {
-  return task.phase === "closing" && isHookHoldReason(task.reason);
+export function isCloseoutHookHold(task: Pick<Task, "phase" | "reasonFact">): boolean {
+  return task.phase === "closing" && task.reasonFact?.code === "hook_hold";
 }
 
 export interface RepositoryHooksOptions {

@@ -11,7 +11,8 @@ export const PROJECT_OWNER_CANDIDATE_KINDS = [
   "executor",
   "other",
 ] as const;
-export type ProjectOwnerCandidateKind = (typeof PROJECT_OWNER_CANDIDATE_KINDS)[number];
+export type ProjectOwnerCandidateKind =
+  (typeof PROJECT_OWNER_CANDIDATE_KINDS)[number];
 
 /**
  * Classify a live host thread from its Nucleus/Northstar labels. A standing
@@ -32,7 +33,7 @@ export function ownerCandidateKind(
     if (role === "coordinator") return "coordinator";
     if (role === "executor") return "executor";
     if (role === "worker" || task) return "worker";
-    if (decider) return "other";
+    if (decider || (role && role !== "planner")) return "other";
     return "planner";
   } catch {
     return "other";

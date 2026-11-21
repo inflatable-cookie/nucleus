@@ -7,7 +7,6 @@ import { hostCallerIdentity } from "../bin/queue-client.mjs";
 import { formatAgentId } from "../shared/agent-identity";
 
 const commands = [
-  ["project.qa.run", { repository: "owner/repo" }, "submitterAgentId"],
   [
     "queue.routing-grant",
     { action: "request", reason: "Within scope" },

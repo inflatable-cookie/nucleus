@@ -5,6 +5,11 @@ export type {
   TaskRowProjection,
 } from "./contract/thread-presentation";
 export { hostConnected } from "./adapter";
+export {
+  createUnboundAdapter,
+  isUnboundAdapter,
+  UNBOUND_HOST_REFUSAL,
+} from "./unbound-adapter";
 export type * from "./types";
 export type { HostPolicyPort, HostPolicyConstructor } from "./policy";
 export { readHostProcessTable } from "./process-table";

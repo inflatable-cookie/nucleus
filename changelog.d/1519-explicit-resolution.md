@@ -1,0 +1,1 @@
+Added explicit run release and record clearing for coordinators, planners and the operator. Each command shows the warnings it needs accepted and reports what the scheduler will do next. Lifecycle decisions read typed task and stop facts.

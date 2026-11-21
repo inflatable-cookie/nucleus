@@ -622,7 +622,7 @@ export class MergeGates {
     // awaiting any hook: a stale capacity reason must never mask active verification.
     if (
       recordedSlotWait(t) ||
-      t.reason.startsWith("Waiting for repository integration turn")
+      t.resolution.stop?.fact?.code === "integration_turn" || t.reasonFact?.code === "integration_turn"
     ) {
       this.resolution.waiting(
         t,

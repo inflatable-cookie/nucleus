@@ -151,10 +151,6 @@ import {
   type ProjectTombstone,
   type ProjectUpsertInput,
   type ProjectValidation,
-  type QaFence,
-  type QaFenceRecord,
-  type QaFenceView,
-  type QaInventoryItem,
   type RepositoryChecksPolicy,
   type RepositorySettings,
   type RoutingGrant,
@@ -550,7 +546,6 @@ export class Store {
         this.getMeta<number>("laneDrainEscalationMinutes") ??
         DEFAULT_LANE_DRAIN_ESCALATION_MINUTES,
     }),
-    activeQaRunRepositories: () => this.projectQaStore.activeRunRepositories(),
     finishedDrainTasks: () => this.tasksStore.finishedDrainFacts(),
   });
 
@@ -716,8 +711,6 @@ export class Store {
       tasksStore: this.tasksStore,
       numberFor: (taskId) => this.numberFor(taskId),
       settledDependents: this.settledDependents,
-      repositorySettingsFor: (repository) =>
-        this.repositorySettingsFor(repository),
       get laneOutcomeIndex() {
         return owner.laneOutcomeIndex;
       },
@@ -1203,7 +1196,7 @@ export class Store {
   pendingNotices(): Notice[] {
     return this.db
       .prepare(
-        "SELECT data FROM notices WHERE json_extract(data,'$.status') IN ('pending','intent') ORDER BY rowid",
+        "SELECT data FROM notices WHERE json_extract(data,'$.status') IN ('pending','intent') AND json_extract(data,'$.kind') IS NOT 'qa' ORDER BY rowid",
       )
       .all()
       .map((row) => noticeSchema.parse(JSON.parse(String(row.data))));
@@ -1617,21 +1610,6 @@ export class Store {
   }
   noteGrantRun(task: Task, role: "worker" | "reviewer" | "coordinator"): void {
     return this.configStore.noteGrantRun(task, role);
-  }
-  qaFenceRecord(): QaFenceRecord {
-    return this.hostRunStore.qaFenceRecord();
-  }
-  qaFenceInForce(at = Date.now()): QaFence | null {
-    return this.hostRunStore.qaFenceInForce(at);
-  }
-  qaFenceView(at = Date.now()): QaFenceView {
-    return this.hostRunStore.qaFenceView(at);
-  }
-  writeQaFence(record: QaFenceRecord): void {
-    return this.hostRunStore.writeQaFence(record);
-  }
-  qaUnsettledInventory(): QaInventoryItem[] {
-    return this.hostRunStore.qaUnsettledInventory();
   }
   /** Whether a run of another unremoved task names this workspace: one query, not a per-task run read. */
   workspaceUsedByOtherTaskRun(taskId: string, workspaceId: string): boolean {
@@ -2109,61 +2087,17 @@ export class Store {
   }): ProjectQaRun[] {
     return this.projectQaStore.qaHistoryForRequest(input);
   }
-  putQaRun(run: ProjectQaRun): ProjectQaRun {
-    return this.projectQaStore.putQaRun(run);
-  }
-  qaRunsAwaitingEscapedDescendants(): ProjectQaRun[] {
-    return this.projectQaStore.qaRunsAwaitingEscapedDescendants();
-  }
-  markQaEscapedDescendantsDead(
-    id: string,
-    provenDead: HostRunEscapedDescendant[],
-    at: string,
-  ): ProjectQaRun {
-    return this.projectQaStore.markQaEscapedDescendantsDead(id, provenDead, at);
-  }
   qaRun(id: string): ProjectQaRun | null {
     return this.projectQaStore.qaRun(id);
   }
   latestQaRun(key: string): ProjectQaRun | null {
     return this.projectQaStore.latestQaRun(key);
   }
+  latestQaRunForPath(path: string): ProjectQaRun | null {
+    return this.projectQaStore.latestQaRunForPath(path);
+  }
   latestQaRuns(limit = 250): ProjectQaRun[] {
     return this.projectQaStore.latestQaRuns(limit);
-  }
-  latestQaRunsFor(keys: readonly string[]): ProjectQaRun[] {
-    return this.projectQaStore.latestQaRunsFor(keys);
-  }
-  qaBoardRuns(passedSince: string): ProjectQaRun[] {
-    return this.projectQaStore.qaBoardRuns(passedSince);
-  }
-  qaScheduleMerges(key: string): Array<{
-    taskId: string;
-    title: string;
-    mergeCommit: string;
-    prUrl: string | null;
-    finishedAt: string;
-    attemptedRun: string | null;
-    checkedGreenRun: string | null;
-  }> {
-    return this.projectQaStore.qaScheduleMerges(key);
-  }
-  markQaScheduleMerges(
-    taskIds: string[],
-    runId: string,
-    passed: boolean,
-  ): void {
-    return this.projectQaStore.markQaScheduleMerges(taskIds, runId, passed);
-  }
-  checkQaScheduleGreen(taskIds: string[], runId: string): void {
-    return this.projectQaStore.checkQaScheduleGreen(taskIds, runId);
-  }
-  qaScheduleRuns(key: string): {
-    latest: ProjectQaRun | null;
-    green: ProjectQaRun | null;
-    active: ProjectQaRun | null;
-  } {
-    return this.projectQaStore.qaScheduleRuns(key);
   }
   putHostRun(
     run: HostRunRecord | HostRunInternalRecord,

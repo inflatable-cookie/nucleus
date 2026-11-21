@@ -26,6 +26,7 @@ import {
   blockingRecoveryEffects,
   blockingRecoveryEffectsRefusal,
   recoveryEffectsRefusal,
+  reviewEffectWaitKey,
 } from "../../recovery/recovery-effects";
 import { settleObservedHostEffectOperations } from "../../recovery/effect-gates";
 import {
@@ -407,6 +408,10 @@ export class RunLaunchDeliver {
             ?.affectedTests?.command,
         );
         agentId = created.id;
+        if (this.store.run(run.id)?.explicitlyReleasedAt) {
+          this.store.event(t.id, "released_run_delivery_observed", `${run.id}: ${agentId}`);
+          return;
+        }
         recordPromptSize(
           this.store,
           fresh.id,
@@ -551,11 +556,8 @@ export class RunLaunchDeliver {
           );
         }
       }
-      this.store.putRun({
-        ...this.store.run(run.id)!,
-        agentId,
-        status: "running",
-      });
+      if (this.store.run(run.id)?.explicitlyReleasedAt) return;
+      this.store.putRun({ ...this.store.run(run.id)!, agentId, status: "running" });
       this.resolution.clearHostReadTransient?.(t.id, "task");
       this.resolution.waiting(
         this.store.task(t.id),
@@ -563,6 +565,7 @@ export class RunLaunchDeliver {
         "lifecycle",
       );
     } catch (error) {
+      if (this.store.run(run.id)?.explicitlyReleasedAt) return;
       if (error instanceof BlockingRecoveryEffectsError) {
         const waitReason = `${run.ordinaryDetached ? "Ordinary review" : "Review-entry"} waits for ${recoveryEffectsRefusal(error.effects)}; settle it with retry_effect before continuing`;
         this.store.transaction(() => {
@@ -584,7 +587,9 @@ export class RunLaunchDeliver {
               recoveryEffectsRefusal(error.effects) ?? "",
             );
         });
-        this.resolution.waiting(this.store.task(t.id), waitReason, "lifecycle");
+        this.resolution.waiting(this.store.task(t.id), waitReason, "lifecycle", {
+          fact: { code: "review_effect_wait", subject: reviewEffectWaitKey(error.effects) },
+        });
         return;
       }
       // A host that has not settled its model options has not refused this run:

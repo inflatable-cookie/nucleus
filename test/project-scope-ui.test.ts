@@ -6,7 +6,7 @@ import { boardSource } from "./support/board-source";
 import React from "react";
 import { mount, useNativeStubs } from "./support/render";
 import { planningLaneLeads, type ProjectScope } from "../shared/project-scope";
-import type { Lead, Project, ProjectQaRun } from "../shared/contracts";
+import type { Lead, Project } from "../shared/contracts";
 
 useNativeStubs();
 const load = () => import("../client/project-scope-controls");
@@ -399,129 +399,6 @@ test("Spec 027 #11 rendered selector lists parked projects under Parked for scop
   assert.ok(planning.get("Plan for project-a-accelerator"));
 });
 
-test("Spec 035/022 rendered: Planning carries no QA launch or cancel, and links the plan to the shared QA detail", async () => {
-  const { PlanningTab } = await import("../client/planning-panel");
-  const run = {
-    id: "qa-run-1",
-    key: "owner/consumer",
-    repository: { origin: "owner/consumer", path: "/consumer" },
-    state: "running",
-    baseBranch: "main",
-    base: "a".repeat(40),
-    argv: ["effigy", "qa"],
-    digest: "b".repeat(64),
-    exitCode: null,
-    durationMs: 0,
-    outputTail: "",
-    startedAt: new Date().toISOString(),
-    finishedAt: null,
-    pid: 4242,
-    admission: null,
-    capacityWait: null,
-    capacityUnavailable: false,
-    steps: [],
-    failedStep: null,
-    interruptedStep: null,
-    hostSettlement: null,
-    escapedDescendants: [],
-    cancelReason: null,
-    logWriteErrors: [],
-  } as ProjectQaRun;
-  const opened: string[] = [];
-  const ui = mount(
-    h(PlanningTab, {
-      sections: [{ project: projects[0] }],
-      projectActivity: recentProjectActivity(projects),
-      lanes: [],
-      edits: {},
-      selectedLane: "",
-      step: "plan",
-      compact: false,
-      busy: false,
-      lanePanel: null,
-      qaRuns: [run],
-      qaFenced: true,
-      onOpenQaRun: (id: string) => opened.push(id),
-      onCancelQa: () => {
-        throw new Error("Planning must not cancel QA");
-      },
-      onRunQa: () => {
-        throw new Error("Planning must not launch QA");
-      },
-      onStep: () => {},
-      onOpenLane: () => {},
-      onEdit: () => {},
-      onSave: () => {},
-      onCancel: () => {},
-      c,
-    } as never),
-  );
-  assert.equal(
-    ui.query("Run full QA for consumer-b-v2 on current main"),
-    undefined,
-    "launching QA lives in the QA runs tab only",
-  );
-  assert.equal(
-    ui.query("Cancel full QA for consumer-b-v2"),
-    undefined,
-    "cancelling QA lives in the QA runs tab only",
-  );
-  assert.match(ui.text(), /Latest QA/, "the plan keeps one compact result");
-  ui.press("View the latest QA run for consumer-b-v2");
-  assert.deepEqual(opened, ["qa-run-1"], "the link opens the shared QA detail");
-});
-
-test("Spec 022 rendered: Planning links a settled teardown failure to its QA run; the retry lives in the QA runs tab", async () => {
-  const { ProjectQaLatest } = await import("../client/planning-panel");
-  const run = {
-    id: "qa-run-2",
-    key: "owner/consumer",
-    repository: { origin: "owner/consumer", path: "/consumer" },
-    state: "hold",
-    baseBranch: "main",
-    base: "a".repeat(40),
-    argv: ["effigy", "qa"],
-    digest: "b".repeat(64),
-    exitCode: 0,
-    durationMs: 100,
-    outputTail: "teardown failed",
-    startedAt: new Date().toISOString(),
-    finishedAt: null,
-    pid: null,
-    admission: null,
-    capacityWait: null,
-    capacityUnavailable: false,
-    steps: [],
-    failedStep: "teardown",
-    interruptedStep: null,
-    hostSettlement: null,
-    escapedDescendants: [],
-    cancelReason: null,
-    logWriteErrors: [],
-  } as ProjectQaRun;
-  const opened: string[] = [];
-  const ui = mount(
-    h(ProjectQaLatest, {
-      project: projects[0],
-      runs: [run],
-      onOpenRun: (id: string) => opened.push(id),
-      c,
-    } as never),
-  );
-  assert.equal(
-    ui.query("Retry teardown for consumer-b-v2"),
-    undefined,
-    "Planning no longer carries the teardown retry",
-  );
-  ui.press("View the latest QA run for consumer-b-v2");
-  assert.deepEqual(opened, ["qa-run-2"]);
-  const passed = { ...run, state: "passed", failedStep: null } as ProjectQaRun;
-  const other = mount(
-    h(ProjectQaLatest, { project: projects[0], runs: [passed], c } as never),
-  );
-  assert.match(other.text(), /Passed/, "a passed run reads as passed");
-});
-
 test("026-14a rendered: a planning lane that leaves the selection closes and the compact view returns to the plan", async () => {
   const { usePlanningLane } = await load();
   let api: ReturnType<typeof usePlanningLane> | null = null,
@@ -817,151 +694,6 @@ test("Planning header carries no Park, Unpark, Delete or planner-missing suffix:
   }
 });
 
-test("121 rendered: milestone QA stages render as named steps, and the task detail receives them", async () => {
-  const { ProjectQaSteps } = await import("../client/planning-panel");
-  const step = (name: string, exitCode: number, timedOut = false) => ({
-    name,
-    command: `effigy ${name}`,
-    exitCode,
-    signal: null,
-    timedOut,
-    stdoutHead: "",
-    stdoutTail: "",
-    stderrHead: "",
-    stderrTail: "",
-    stdoutLogPath: null,
-    stderrLogPath: null,
-    stdoutBytes: 0,
-    stderrBytes: 0,
-  });
-  const run = {
-    id: "qa-1",
-    key: "owner/consumer",
-    repository: { origin: "owner/consumer", path: "/consumer" },
-    state: "failed",
-    baseBranch: "main",
-    base: "a".repeat(40),
-    argv: ["effigy", "qa"],
-    digest: "b".repeat(64),
-    exitCode: 7,
-    durationMs: 10,
-    outputTail: "",
-    startedAt: new Date().toISOString(),
-    finishedAt: null,
-    pid: null,
-    admission: null,
-    capacityWait: null,
-    capacityUnavailable: false,
-    steps: [step("compile", 0), step("test", 7)],
-    stages: [
-      { name: "compile", argv: ["effigy", "compile"], timeoutMs: 1000 },
-      { name: "test", argv: ["effigy", "test"], timeoutMs: 1000 },
-    ],
-    failedStep: "test",
-    interruptedStep: null,
-    hostSettlement: null,
-    escapedDescendants: [],
-    cancelReason: null,
-    logWriteErrors: [],
-  } as ProjectQaRun;
-  const ui = mount(h(ProjectQaSteps, { run, c }));
-  const rendered = ui.text();
-  assert.match(
-    rendered,
-    /compile · passed/,
-    "the passing compile stage renders as a named step",
-  );
-  assert.match(
-    rendered,
-    /test · exit 7/,
-    "the failing test stage renders as a named step",
-  );
-  // The task detail receives its project QA row. The QA runs tab is no longer a board
-  // view (Tom, 2026-11-21: QA runs as an ordinary task).
-  const source = boardSource();
-  assert.match(
-    source,
-    /title="Milestone QA"/,
-    "the task detail renders the repository milestone QA",
-  );
-  assert.match(
-    source,
-    /<ProjectQaSteps\s+run=\{taskQaRun\}/,
-    "the task detail renders each stage as a step",
-  );
-  assert.match(
-    source,
-    /enabled: tab === "planning" \|\| tab === "qa" \|\| Boolean\(selected\),/,
-    "the QA list loads for Planning, the QA tab and an open task",
-  );
-});
-
-test("136 rendered: log-write failures show apart from the output on the task and QA-run detail surfaces", async () => {
-  const { ProjectQaLogWriteErrors } = await import("../client/planning-panel");
-  const run = {
-    id: "qa-1",
-    key: "owner/consumer",
-    repository: { origin: "owner/consumer", path: "/consumer" },
-    state: "failed",
-    baseBranch: "main",
-    base: "a".repeat(40),
-    argv: ["effigy", "qa"],
-    digest: "b".repeat(64),
-    exitCode: 7,
-    durationMs: 10,
-    outputTail: "",
-    startedAt: new Date().toISOString(),
-    finishedAt: null,
-    pid: null,
-    admission: null,
-    capacityWait: null,
-    capacityUnavailable: false,
-    steps: [],
-    failedStep: "test",
-    interruptedStep: null,
-    hostSettlement: null,
-    escapedDescendants: [],
-    cancelReason: null,
-    logWriteErrors: [
-      { step: "compile", stream: "stdout", error: "disk full" },
-      { step: "test", stream: "stderr", error: "permission denied" },
-    ],
-  } as ProjectQaRun;
-  const ui = mount(h(ProjectQaLogWriteErrors, { run, c }));
-  const rendered = ui.text();
-  assert.match(rendered, /compile stdout log could not be written: disk full/);
-  assert.match(
-    rendered,
-    /test stderr log could not be written: permission denied/,
-  );
-  assert.equal(
-    mount(
-      h(ProjectQaLogWriteErrors, {
-        run: { ...run, logWriteErrors: [] } as ProjectQaRun,
-        c,
-      }),
-    ).text(),
-    "",
-    "a run without failures renders nothing",
-  );
-  // The task detail and QA run detail both render the same component.
-  const source = boardSource();
-  assert.match(
-    source,
-    /<ProjectQaLogWriteErrors\s+run=\{taskQaRun\}/,
-    "the task detail renders log-write failures",
-  );
-  const qaSource = readFileSync(
-    new URL("../client/qa-runs-tab.tsx", import.meta.url),
-    "utf8",
-  );
-  assert.match(
-    qaSource,
-    /<ProjectQaLogWriteErrors run=\{qa\}/,
-    "the QA run detail renders log-write failures",
-  );
-});
-
 test("chooser settings icon: closes the chooser and opens Settings at Projects; absent on a host without Settings", async () => {
   const { ProjectSelector } = await load();
   for (const compact of [false, true]) {
@@ -1100,5 +832,8 @@ test("1476: the board's selector commits the selection it reports; the other sco
     /onChange=\{\(projects\) => setScope\(\{ projects \}\)\}/,
   );
   // A lane's "Show plan" writes the same selection (Planning has no chooser of its own since 2026-11-21).
-  assert.match(source, /const showLanePlan = \(project: string\) => \{\s*setScope\(\{ projects: \[project\] \}\);/);
+  assert.match(
+    source,
+    /const showLanePlan = \(project: string\) => \{\s*setScope\(\{ projects: \[project\] \}\);/,
+  );
 });
