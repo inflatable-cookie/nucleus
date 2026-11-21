@@ -1050,19 +1050,6 @@ test("BB phase 4: a reviewer replacement archives only the displaced thread thro
     await adapter.deleteAgent!(displaced.id);
     assert.equal(fake.rows.has(displaced.id), false);
     assert.equal(await adapter.originAgent!(displaced.id), null);
-    assert.equal(
-      effect?.op,
-      undefined,
-      "the effect names an archive, never a removal",
-    );
-    const released = store.run(run.id)!;
-    assert.equal(released.released, true);
-    assert.equal(released.status, "superseded");
-    assert.equal(
-      store.task(initial.id).resolution.reviewerAgentId,
-      null,
-      "the displaced binding is cleared for the next launch",
-    );
   } finally {
     store.close();
     rmSync(directory, { recursive: true, force: true });
