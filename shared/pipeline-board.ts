@@ -43,12 +43,24 @@ export function triageKind(lead: Pick<BoardLead, 'tags'>): 'papercut' | 'lead' {
   return lead.tags.includes('papercut') ? 'papercut' : 'lead';
 }
 
-/** One short line of state for a Triage card: a lead's check and approval, a papercut's area. */
-export function triageState(lead: BoardLead): string {
-  const promoted = lead.state === 'promoted' ? 'Promoted' : null;
-  if (triageKind(lead) === 'papercut') return [promoted ?? 'Open', lead.papercutArea].filter(Boolean).join(' · ');
-  const check = lead.check ? (lead.check.ok ? 'Checks passed' : 'Checks failed') : 'Unchecked';
-  return [promoted, check, lead.approved ? 'approved' : 'unapproved'].filter(Boolean).join(' · ');
+/**
+ * A lead's or papercut's row status (nucleus#1515): a tone, the state in words and one
+ * detail. A lead waits on its check and then the operator's approval; a papercut names
+ * its area. The record's own detail keeps the rest.
+ */
+export type TriageStatus = {
+  tone: 'accent' | 'success' | 'warning' | 'muted';
+  state: string;
+  detail: string | null;
+};
+export function triageStatus(lead: BoardLead): TriageStatus {
+  if (lead.state === 'promoted') return { tone: 'success', state: 'Promoted', detail: null };
+  if (triageKind(lead) === 'papercut') return { tone: 'muted', state: 'Open', detail: lead.papercutArea };
+  if (lead.approved) return { tone: 'accent', state: 'Approved', detail: 'awaiting promotion' };
+  if (!lead.check) return { tone: 'muted', state: 'Unchecked', detail: 'awaiting approval' };
+  return lead.check.ok
+    ? { tone: 'accent', state: 'Checked', detail: 'awaiting approval' }
+    : { tone: 'warning', state: 'Checks failed', detail: 'awaiting approval' };
 }
 
 /**

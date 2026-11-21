@@ -3,7 +3,6 @@ import { Pressable, ScrollView, Text, View } from "react-native";
 import { useQuery } from "@tanstack/react-query";
 import * as api from "../../shared/contracts";
 import {
-  taskNumberLabel,
   type DecisionView,
   type BoardLead,
   type BoardLeadLink,
@@ -25,14 +24,13 @@ import {
   type ActiveSection,
   type InboxView,
 } from "../../shared/inbox-board";
-import { isGeneralDecision } from "../../shared/decision-project";
-import { useRpc, Icon } from "../shell";
+import { useRpc } from "../shell";
 import { Button, DropdownSelect, muted, row, type Colors } from "../controls";
 import { projectName } from "./text";
-import { RecordChips } from "./badges";
 import {
   BoardCard,
   BoardCardVariantContext,
+  CardProject,
   TaskCard,
   DecisionCard,
   HoldPromptCard,
@@ -40,7 +38,7 @@ import {
 } from "./cards";
 import { TriageLeadCard } from "./triage-lead-card";
 import type { BoardAct } from "./use-board-data";
-import { space, type as typeScale, radius } from "../design";
+import { space, type as typeScale } from "../design";
 
 type Project = UiQueueState["projects"][number];
 
@@ -224,14 +222,6 @@ const sectionTitles: Record<ActiveSection, string> = {
   review: "In review",
   closing: "Closing",
 };
-/** The kind label a Needs you card shows, so each card says what it is at a glance (Tom, 2026-11-21). */
-const needsKindLabels: Partial<Record<PipelineCard["kind"], string>> = {
-  decision: "Decision",
-  raised: "Hold",
-  lane_drain: "Lane",
-  task: "Task",
-};
-
 /**
  * The inbox list (Tom, 2026-11-21): the open menu view's cards in one scrolling
  * list, each card drawn as a row. Needs you is a single list; Active keeps its
@@ -301,25 +291,6 @@ export function InboxList({
     void act(() =>
       keepLaneRpc({ key: lane.key, reason, author: "operator (board)" }),
     );
-  const decisionLinkedTaskProjects = (decision: DecisionView) =>
-    isGeneralDecision(decision)
-      ? [
-          ...new Set(
-            decision.links.tasks.flatMap((id) => {
-              const task = state?.tasks.find((item) => item.id === id);
-              return task ? [projectName(task)] : [];
-            }),
-          ),
-        ]
-      : [];
-  const decisionLinkedTaskLabels = (decision: DecisionView) =>
-    decision.links.tasks.map((id) => {
-      const task = state?.tasks.find((item) => item.id === id);
-      if (!task) return id;
-      const reference =
-        task.reference ?? (task.number ? taskNumberLabel(task, true) : null);
-      return reference ? `${reference} · ${task.title}` : task.title;
-    });
   // One lookup for the decision chip on task, lead and papercut rows: how many open decisions link each record (Spec 032).
   const decisionLinkCounts = new Map<string, number>();
   for (const decision of decisions ?? [])
@@ -335,32 +306,18 @@ export function InboxList({
     const decision = (decisions ?? []).find((item) => item.id === id);
     return decision?.headline ?? decision?.question;
   };
-  const metaText = (text: string, lines = 1) => (
-    <Text
-      numberOfLines={lines}
-      ellipsizeMode="tail"
-      style={{
-        ...muted(c),
-        fontSize: typeScale.metadata.fontSize,
-        lineHeight: typeScale.metadata.lineHeight,
-        flexShrink: 1,
-      }}
-    >
-      {text}
-    </Text>
-  );
   const renderCard = (card: PipelineCard) => {
     const key = `${card.kind}:${card.id}`;
-    const kind = view === "needs" ? needsKindLabels[card.kind] : undefined;
+    const badgeFor = (task: TaskSummary) =>
+      task.hostId
+        ? (state?.projectBadges?.[task.hostId]?.[task.repoPath] ?? null)
+        : null;
     switch (card.kind) {
       case "decision":
         return (
           <DecisionCard
             key={key}
             decision={card.value}
-            linkedTaskLabels={decisionLinkedTaskLabels(card.value)}
-            kind={kind}
-            linkedTaskProjects={decisionLinkedTaskProjects(card.value)}
             c={c}
             selected={openDecisionId === card.id}
             onPress={() => onSelectDecision(card.id)}
@@ -373,8 +330,8 @@ export function InboxList({
             busy={busy}
             onRelease={() => releaseHold(card.value)}
             onKeep={(reason) => keepHold(card.value, reason)}
-            kind={kind}
             task={card.value}
+            projectBadge={badgeFor(card.value)}
             c={c}
             selected={selected === card.id}
             onPress={() => onSelectTask(card.id)}
@@ -389,7 +346,6 @@ export function InboxList({
             busy={busy}
             selected={false}
             onPress={() => onOpenLane(card.value.key)}
-            kind={kind}
             onClose={() => closeDrainedLane(card.value)}
             onKeep={(reason) => keepDrainedLane(card.value, reason)}
           />
@@ -400,14 +356,7 @@ export function InboxList({
             key={key}
             task={card.value}
             defaultHostId={state?.hostId}
-            kind={kind}
-            projectBadge={
-              card.value.hostId
-                ? (state?.projectBadges?.[card.value.hostId]?.[
-                    card.value.repoPath
-                  ] ?? null)
-                : null
-            }
+            projectBadge={badgeFor(card.value)}
             board
             selected={selected === card.id}
             onPress={() => onSelectTask(card.id)}
@@ -427,39 +376,26 @@ export function InboxList({
           <BoardCard
             key={key}
             c={c}
-            label={`Queued: ${card.value.title}`}
-            eyebrow={
-              <>
-                <Icon name="Folder" size={12} color={c.foregroundMuted} />
-                {metaText(projectName(card.value))}
-              </>
-            }
-            title={
-              <Text
-                numberOfLines={2}
-                style={{
-                  color: c.foreground,
-                  fontWeight: "600",
-                  fontSize: typeScale.body.fontSize,
-                }}
-              >
-                {card.value.title}
-              </Text>
-            }
-            chips={<RecordChips c={c} chips={["Submitting"]} />}
-            snippet={metaText("Accepted; creating its task", 2)}
+            label={`Queued: ${card.value.title}, Status: Submitting`}
+            kind="task"
+            meta="Submitting"
+            project={<CardProject name={projectName(card.value)} c={c} />}
+            title={card.value.title}
+            status={{
+              tone: "muted",
+              state: "Submitting",
+              detail: "accepted; creating its task",
+            }}
             selected={false}
             onPress={() => {}}
           />
         );
       case "lead":
-        // Leads and Papercuts are separate lists, so the kind chip would repeat the list on every row (nucleus#1511).
         return (
           <TriageLeadCard
             key={key}
             lead={card.value}
             c={c}
-            showKind={false}
             projectForRepository={projectForRepository}
             repositoryBadges={state?.repositoryBadges}
             selected={selectedLeadId === card.id || openPapercutId === card.id}
@@ -484,19 +420,7 @@ export function InboxList({
       selected={selectedRow}
       c={c}
       onPress={onPress}
-      eyebrow={null}
-      title={
-        <Text
-          numberOfLines={1}
-          style={{
-            color: c.foreground,
-            fontWeight: "600",
-            fontSize: typeScale.body.fontSize,
-          }}
-        >
-          {title}
-        </Text>
-      }
+      title={title}
     />
   );
   const queuedMore =

@@ -353,10 +353,8 @@ test("a board card says what is happening and what moves it next; IDs, timestamp
     assert.ok(
       tree
         .text()
-        .includes(
-          "Operator decides whether to restart · Your decision is next",
-        ),
-      "the row's one status line says what is happening and who moves it next",
+        .includes("Needs attention · Operator decides whether to restart"),
+      "the row's one status line says the state and the one detail that moves it next",
     );
     assert.ok(
       !tree.text().includes("operator_needed") &&
@@ -365,7 +363,7 @@ test("a board card says what is happening and what moves it next; IDs, timestamp
     );
     assert.match(
       tree.text(),
-      /Waiting for QA capacity · position 2/,
+      /Waiting · for QA capacity · position 2/,
       "a queued heavy run names its place",
     );
     assert.ok(
@@ -494,7 +492,7 @@ test("the card lays out the same content at a narrow and a wide board", async ()
   }
 });
 
-test("a T3Code task card names the host on the eyebrow and in its accessible label", async () => {
+test("a T3Code task row names the host in its accessible label, not on the row", async () => {
   await load();
   const store = new Store(":memory:");
   try {
@@ -532,7 +530,8 @@ test("a T3Code task card names the host on the eyebrow and in its accessible lab
       }),
     );
     try {
-      assert.match(ui.text(), /T3Code/);
+      // The row's project badge marks a T3 project; the host kind is detail (nucleus#1515).
+      assert.doesNotMatch(ui.text(), /T3Code/, "the row draws no host chip");
       const label = ui
         .all(/.*/)
         .find((node) =>
@@ -585,8 +584,9 @@ test("a queued hold previews its first sentence and keeps the complete reason ac
         ui
           .text()
           .includes(
-            "Hold reason preview · The planner needs to record the source ruling.",
+            "Dispatch held · by a planner thread: The planner needs to record the source ruling.",
           ),
+        `the status line names the hold and previews its first sentence: ${ui.text()}`,
       );
       assert.ok(
         !ui.text().includes("The task can start after that decision."),
@@ -774,9 +774,10 @@ test("waits, holds and progress stops use operator words in visible and accessib
       assert.ok(!tree.text().includes("84aa4e89"));
       assert.ok(tree.text().includes("Reviewer continuing from checkpoint 2"));
       assert.ok(!tree.text().includes("Stopped just now"));
-      assert.ok(tree.text().includes("Dispatch held by App planner"));
-      assert.ok(tree.text().includes("Merge held by App planner"));
-      assert.match(tree.text(), /Held · \d+d ago/);
+      assert.ok(tree.text().includes("Dispatch held · by App planner"));
+      assert.ok(tree.text().includes("Held · Merge held by App planner"));
+      // The age sits at the end of the row's meta line (nucleus#1515).
+      assert.match(tree.text(), /\d+d ago/);
       assert.ok(
         !tree
           .query(/^app, progress,/)
@@ -1174,11 +1175,13 @@ test("the card keeps two-line titles, drops the repository and phase chips, and 
   const start = ui.indexOf("function TaskCard(");
   const end = ui.indexOf("\n});\n", start);
   const card = ui.slice(start, end);
-  // The title is capped at two lines and carries the short number, never the multi-repo reference.
-  assert.match(
-    card,
-    /numberOfLines=\{2\}\s+style=\{\{\s*color:\s*c\.foreground,\s*fontWeight:\s*"600"/,
+  // The row's title is capped at two lines (nucleus#1515), and the meta line carries the
+  // short number, never the multi-repo reference.
+  const shared = ui.slice(
+    ui.indexOf("export const BoardCard"),
+    ui.indexOf("\n});\n", ui.indexOf("export const BoardCard")),
   );
+  assert.match(shared, /numberOfLines=\{2\}[\s\S]{0,200}\{plainCardText\(title\)\}/);
   assert.match(card, /taskNumberLabel\(task, false\)/);
   assert.doesNotMatch(card, /repoChip|phaseChip|laneChips|profile\?\.name/);
   // The board call site passes only what the card still uses.
@@ -1188,10 +1191,7 @@ test("the card keeps two-line titles, drops the repository and phase chips, and 
   );
   assert.doesNotMatch(call, /phaseChip|repoChip|laneChips/);
   assert.match(card, /return\s*\(?\s*<BoardCard/);
-  assert.match(
-    card,
-    /Hold reason preview · \{holdReasonPreview\(dispatchWait\.reason\)\}/,
-  );
+  assert.match(card, /holdReasonPreview\(dispatchWait\.reason\)/);
   assert.match(ui, /Stop category · \{taskSummaryStop\.reason\}/);
   assert.match(
     ui,
@@ -1236,7 +1236,7 @@ const triagePapercuts = (count: number) =>
     });
   });
 
-test("a long papercut and a long lead render as one-line rows with a project and one state line", async () => {
+test("a long papercut and a long lead render as three-line rows: kind and project, a two-line title, one status line", async () => {
   await load();
   const store = new Store(":memory:");
   let mounted: ReturnType<typeof mountBoard> | undefined;
@@ -1255,41 +1255,38 @@ test("a long papercut and a long lead render as one-line rows with a project and
       invokeWith(board([]), async () => ({ tasks: [], hasMore: false }), leads),
     );
     const tree = mounted;
-    await settle(() => tree.text().includes("Checks passed · unapproved"));
+    await settle(() => tree.text().includes("Checked · awaiting approval"));
     const text = tree.text();
     assert.ok(
-      tree.query(`Triage: ${LONG_CUT}`),
-      "the papercut card keeps its accessible label",
+      tree.query(/^Papercut: A papercut whose title runs well past/),
+      "the papercut row keeps its full title in its accessible label",
     );
     assert.match(text, /Open · board/, "a papercut states its area");
-    // Papercuts and Leads are their own lists, so their rows do not repeat the kind (nucleus#1511).
-    openView(tree, "Papercuts");
-    const cutRow = tree.raw.query(`Triage: ${LONG_CUT}`);
-    assert.ok(cutRow, "the papercut row is listed on its own view");
-    assert.doesNotMatch(
-      nodeText(cutRow as HostNode),
-      /\bPapercut\b/,
-      "no kind chip repeats the list",
-    );
     assert.ok(
       !text.includes("What happened"),
       "the body passage stays in the record",
     );
-    // Leads and papercuts are separate menu views, each a list of one-line rows.
-    for (const [title, view] of [
-      [LONG_CUT, "Papercuts"],
-      [LONG_TITLE, "Leads"],
+    // Each row: the kind in words and the project on line 1, the title in up to two
+    // lines, then the one status line (nucleus#1515).
+    for (const [title, view, kind, icon, status] of [
+      [LONG_CUT, "Papercuts", "Papercut", "Scissors", "Open · board"],
+      [LONG_TITLE, "Leads", "Lead", "Lightbulb", "Checked · awaiting approval"],
     ] as const) {
       openView(tree, view);
+      const rowNode = tree.raw.query(new RegExp(`^${kind}: `)) as HostNode;
+      assert.ok(rowNode, `the ${kind} row is listed on its own view`);
+      const rowText = nodeText(rowNode);
+      assert.match(rowText, new RegExp(`^\\s*${kind}\\s+App\\s`), "line 1 reads the kind, then the project");
+      assert.match(rowText, new RegExp(`${status.replace(" · ", "\\s+· ")}\\s*$`), "the status line closes the row");
+      assert.ok(
+        nodeHas(rowNode, (child) => child.type === "Icon" && child.props.name === icon),
+        `the ${kind} row draws its kind tile`,
+      );
       const lines = tree
         .ofType("Text")
         .filter((node) => node.children.join("") === title)
         .map((node) => node.props.numberOfLines);
-      assert.deepEqual(
-        lines,
-        [1],
-        `the title "${title.slice(0, 24)}…" is one line`,
-      );
+      assert.deepEqual(lines, [2], `the title "${title.slice(0, 24)}…" is up to two lines`);
     }
   } finally {
     mounted?.update(h("View", null));
@@ -1314,7 +1311,7 @@ test("Papercuts show a page of eight, an in-list row loads the rest, and the men
     await settle(() => Boolean(tree.query("Papercuts, 10")));
     openView(tree, "Papercuts");
     assert.equal(
-      tree.all(/^Triage: Papercut /).length,
+      tree.all(/^(?:Lead|Papercut): Papercut /).length,
       8,
       "the first page holds eight cards",
     );
@@ -1323,7 +1320,7 @@ test("Papercuts show a page of eight, an in-list row loads the rest, and the men
       "the overflow row carries the rest of the total",
     );
     tree.press("Show 2 more papercuts");
-    await settle(() => tree.raw.all(/^Triage: Papercut /).length === 10);
+    await settle(() => tree.raw.all(/^(?:Lead|Papercut): Papercut /).length === 10);
     assert.equal(
       tree.raw.query("Show 2 more papercuts"),
       undefined,
@@ -1353,7 +1350,7 @@ test("Leads show a page of eight, an in-list row loads the rest, and the menu co
     await settle(() => Boolean(tree.query("Leads, 10")));
     openView(tree, "Leads");
     assert.equal(
-      tree.all(/^Triage: Idea /).length,
+      tree.all(/^(?:Lead|Papercut): Idea /).length,
       8,
       "the first page holds eight leads",
     );
@@ -1362,7 +1359,7 @@ test("Leads show a page of eight, an in-list row loads the rest, and the menu co
       "the overflow row carries the rest of the total",
     );
     tree.press("Show 2 more leads");
-    await settle(() => tree.raw.all(/^Triage: Idea /).length === 10);
+    await settle(() => tree.raw.all(/^(?:Lead|Papercut): Idea /).length === 10);
     assert.equal(
       tree.raw.query("Show 2 more leads"),
       undefined,
@@ -1419,7 +1416,7 @@ test("the Leads tag filter sits in the list header row, beside the title and the
           titleChild(row) &&
           contains(row, texted("2 items")) &&
           contains(row, labelled("Filter leads by tag, All tags (2)")) &&
-          !contains(row, labelled("Triage: ")),
+          !contains(row, labelled("Lead: ")),
       );
     assert.ok(
       headerRow,
@@ -1451,9 +1448,9 @@ test("the Leads tag filter narrows the leads and their paging; papercuts have no
     tree.press("Filter leads by tag, All tags (2)");
     assert.equal(tree.query("Filter leads by tag: Papercut (10)"), undefined);
     tree.press("Filter leads by tag: idea (1)");
-    await settle(() => Boolean(tree.query("Triage: Idea lead")));
+    await settle(() => Boolean(tree.query(/^(?:Lead|Papercut): Idea lead, Status: /)));
     assert.equal(
-      tree.all(/^Triage: (Papercut|Plain)/).length,
+      tree.all(/^(?:Lead|Papercut): (Papercut|Plain)/).length,
       0,
       "the idea tag narrows the leads to the idea lead",
     );
@@ -1470,7 +1467,7 @@ test("the Leads tag filter narrows the leads and their paging; papercuts have no
       "the papercut total is unaffected by the Leads filter",
     );
     assert.equal(
-      tree.all(/^Triage: Papercut /).length,
+      tree.all(/^(?:Lead|Papercut): Papercut /).length,
       8,
       "the first page of papercuts shows eight",
     );
@@ -1506,7 +1503,7 @@ test("the Leads tag, Papercuts page and open queued-more page survive a round tr
     );
     openView(tree, "Papercuts");
     tree.press("Show 2 more papercuts");
-    await settle(() => tree.raw.all(/^Triage: Papercut /).length === 10);
+    await settle(() => tree.raw.all(/^(?:Lead|Papercut): Papercut /).length === 10);
     openView(tree, "Queue");
     tree.press("3 more queued in app");
     await settle(() => Boolean(tree.raw.query("Previous")));
@@ -1518,7 +1515,7 @@ test("the Leads tag, Papercuts page and open queued-more page survive a round tr
     // The Papercuts view reopens on the page it was left on.
     openView(tree, "Papercuts");
     assert.equal(
-      tree.raw.all(/^Triage: Papercut /).length,
+      tree.raw.all(/^(?:Lead|Papercut): Papercut /).length,
       10,
       "the expanded Papercuts page is kept",
     );
@@ -1526,7 +1523,7 @@ test("the Leads tag, Papercuts page and open queued-more page survive a round tr
     openView(tree, "Leads");
     tree.press("Filter leads by tag, All tags (2)");
     tree.press("Filter leads by tag: idea (1)");
-    await settle(() => tree.raw.all(/^Triage: Plain /).length === 0);
+    await settle(() => tree.raw.all(/^(?:Lead|Papercut): Plain /).length === 0);
     openView(tree, "Planning");
     await settle(() => !tree.raw.query("Leads list"));
     openView(tree, "Leads");
@@ -1586,7 +1583,7 @@ test("a Triage card names its project, not its repository, when the two are name
       ]),
     );
     const tree = mounted;
-    await settle(() => Boolean(tree.query("Triage: Named lead")));
+    await settle(() => Boolean(tree.query(/^(?:Lead|Papercut): Named lead, Status: /)));
     const eyebrows = tree
       .ofType("Text")
       .map((node) => node.children.join(""))
@@ -1639,7 +1636,7 @@ test("lead-only and papercut-only repositories render T3 project badges on the b
       },
     };
     t3Mounted = mountBoard(rpcFor(t3Snapshot));
-    await settle(() => Boolean(t3Mounted?.query("Triage: Lead without tasks")));
+    await settle(() => Boolean(t3Mounted?.query(/^(?:Lead|Papercut): Lead without tasks, Status: /)));
     /** Badge text nodes on the Leads and Papercuts lists: the lead card and the papercut card. */
     const tabMonograms = (mounted: ReturnType<typeof mountBoard>) => {
       openView(mounted, "Leads");
@@ -1679,7 +1676,7 @@ test("lead-only and papercut-only repositories render T3 project badges on the b
             node.children.reduce((sum, child) => sum + count(child), 0);
       const tabCards = () =>
         mounted.raw
-          .all(/^Triage: /)
+          .all(/^(?:Lead|Papercut): /)
           .reduce((sum, card) => sum + count(card), 0);
       openView(mounted, "Leads");
       let total = tabCards();
@@ -1689,9 +1686,9 @@ test("lead-only and papercut-only repositories render T3 project badges on the b
       return total;
     };
     assert.equal(cardFolderCount(t3Mounted), 0);
-    t3Mounted.press("Triage: Lead without tasks");
+    t3Mounted.press(/^(?:Lead|Papercut): Lead without tasks, Status: /);
     t3Mounted.press("Close detail");
-    t3Mounted.press("Triage: Papercut without tasks");
+    t3Mounted.press(/^(?:Lead|Papercut): Papercut without tasks, Status: /);
     await settle(() => detailOpened.length === 2);
     assert.deepEqual(detailOpened, [
       "lead.get:lead-only",
@@ -1701,7 +1698,7 @@ test("lead-only and papercut-only repositories render T3 project badges on the b
     const plainSnapshot = { ...board([]), projects: [named] };
     plainMounted = mountBoard(rpcFor(plainSnapshot));
     await settle(() =>
-      Boolean(plainMounted?.query("Triage: Lead without tasks")),
+      Boolean(plainMounted?.query(/^(?:Lead|Papercut): Lead without tasks, Status: /)),
     );
     assert.equal(
       tabMonograms(plainMounted).length,
@@ -1931,7 +1928,9 @@ test("a drained-lane row draws its controls inside the row, and the row opens it
           nodeHas(
             node,
             (child) =>
-              child.props.accessibilityLabel === "Drained lane: Alpha lane",
+              /^Drained lane: Alpha lane, Status: Drained/.test(
+                String(child.props.accessibilityLabel ?? ""),
+              ),
           ),
       );
     assert.ok(rowFrame, "the drained-lane controls sit inside its row");
@@ -1942,9 +1941,19 @@ test("a drained-lane row draws its controls inside the row, and the row opens it
       ),
       "Keep sits in the row too",
     );
+    // The row is the three-line anatomy (nucleus#1515): the kind and lane, the title,
+    // the status; the lane's aim is in the plan view the row opens.
+    assert.match(
+      nodeText(rowFrame!),
+      /^\s*Lane drained\s+alpha\s+\d+d ago\s+Alpha lane has drained\s+Drained\s+· plan owner has not answered\s+Close lane\s+Keep\s*$/,
+    );
+    assert.ok(
+      nodeHas(rowFrame!, (child) => child.type === "Icon" && child.props.name === "Layers"),
+      "the drained lane draws its kind tile",
+    );
 
     // Pressing the row opens its lane in Planning.
-    tree.raw.press("Drained lane: Alpha lane");
+    tree.raw.press(/^Drained lane: Alpha lane,/);
     await settle(() => Boolean(tree.raw.query("Find lanes")));
     assert.ok(
       tree.raw
@@ -1987,10 +1996,11 @@ test("a task row keeps one status line and no host identity, while the detail ke
     assert.ok(row, "the task row is on the board");
     const text = nodeText(row as HostNode);
     assert.equal(
-      text.match(/Waiting on the host/g)?.length,
+      text.match(/on the host/g)?.length,
       1,
       "the wait reads once",
     );
+    assert.match(text, /Waiting\s+· on the host/, `the status line names the wait: ${text}`);
     assert.doesNotMatch(
       text,
       /T3Code host/,
@@ -2068,8 +2078,8 @@ test("a host-waiting task keeps an owner-facing stop's detail in its one row lin
     );
     assert.match(
       text,
-      /Waiting on the host · /,
-      "and the host wait is still named",
+      /Needs attention\s+· Operator decides whether to restart · waiting on the host/,
+      `and the host wait is still named: ${text}`,
     );
     assert.doesNotMatch(
       text,
@@ -2085,7 +2095,7 @@ test("a host-waiting task keeps an owner-facing stop's detail in its one row lin
     assert.ok(status, "the detail is drawn");
     assert.match(
       nodeText(status as HostNode),
-      /Waiting on the host · /,
+      /waiting on the host/,
       "the row's one line carries the stop and the wait",
     );
   } finally {
@@ -2094,7 +2104,7 @@ test("a host-waiting task keeps an owner-facing stop's detail in its one row lin
   }
 });
 
-test("the Leads and Papercuts lists hide the kind chip their list already names", async () => {
+test("lead and papercut rows name their kind once, on line 1, with no kind chip", async () => {
   await load();
   const store = new Store(":memory:");
   let mounted: ReturnType<typeof mountBoard> | undefined;
@@ -2107,30 +2117,26 @@ test("the Leads and Papercuts lists hide the kind chip their list already names"
       invokeWith(board([]), async () => ({ tasks: [], hasMore: false }), leads),
     );
     const tree = mounted;
-    await settle(() => Boolean(tree.query("Triage: Idea lead")));
+    await settle(() => Boolean(tree.query(/^Lead: Idea lead, Status: /)));
     openView(tree, "Leads");
-    const card = tree.raw.query("Triage: Idea lead");
+    const card = tree.raw.query(/^Lead: Idea lead, Status: /) as HostNode;
     assert.ok(card, "the lead row is listed");
-    assert.doesNotMatch(
-      nodeText(card as HostNode),
-      /\bLead\b/,
-      "the Lead chip repeats nothing inside the Leads list",
+    assert.equal(
+      nodeText(card).match(/\bLead\b/g)?.length,
+      1,
+      "the meta line names the kind once; the old kind chip is gone",
     );
     openView(tree, "Papercuts");
-    const cut = tree.raw.query("Triage: Tiny papercut");
+    const cut = tree.raw.query(/^Papercut: Tiny papercut, Status: /) as HostNode;
     assert.ok(cut, "the papercut row is listed");
-    assert.doesNotMatch(
-      nodeText(cut as HostNode),
-      /\bPapercut\b/,
-      "the Papercut chip repeats nothing inside the Papercuts list",
-    );
+    assert.equal(nodeText(cut).match(/\bPapercut\b/g)?.length, 1);
   } finally {
     mounted?.update(h("View", null));
     store.close();
   }
 });
 
-test("a task needing attention on Needs you names its kind, Task, in the one list", async () => {
+test("a task needing attention on Needs you draws the task tile and its reference in the one list", async () => {
   await load();
   const store = new Store(":memory:");
   let mounted: ReturnType<typeof mountBoard> | undefined;
@@ -2147,14 +2153,17 @@ test("a task needing attention on Needs you names its kind, Task, in the one lis
     await settle(() => tree.text().includes("blocked-task"));
     // Reading every view leaves the last one open, so open Needs you before reading its list.
     openView(tree, "Needs you");
-    // One list, no section headers, and the task names its kind.
     assert.ok(tree.raw.query("Needs you list"), "Needs you is one list");
-    assert.equal(
-      tree.raw
-        .ofType("Text")
-        .filter((node) => node.children.join("") === "Task").length,
-      1,
-      "the attention task draws the Task kind label",
+    const rowNode = tree.raw.query(/^app, blocked-task,/) as HostNode;
+    assert.ok(rowNode, "the task row is listed");
+    assert.ok(
+      nodeHas(rowNode, (child) => child.type === "Icon" && child.props.name === "ListChecks"),
+      "the row draws the task kind tile",
+    );
+    assert.match(
+      nodeText(rowNode),
+      new RegExp(`^\\s*#${String(summary.number).padStart(3, "0")}\\s+app\\s`),
+      "line 1 leads with the task reference, then the project",
     );
     assert.equal(
       tree.raw.query(/ section, \d+$/),
@@ -2306,4 +2315,173 @@ test("a resumed-thread count never adds a header pill", async () => {
     ["2 waiting to resume"],
     "stopped threads keep their pill",
   );
+});
+
+// nucleus#1515 (Tom, 2026-11-21): every card is the same three-line row — the kind tile,
+// line 1 (reference or kind, project, age), the title, one status line — with flags only
+// for exceptions and buttons only where the row is the action.
+test("every card kind draws the three-line row, with flags only for exceptions and actions only on prompts", async () => {
+  await load();
+  const store = new Store(":memory:");
+  let mounted: ReturnType<typeof mountBoard> | undefined;
+  try {
+    const normal = seed(store, "plain-working", {
+      phase: "working",
+      reason: "Worker is editing",
+    });
+    const withPr = seed(store, "with-pr", {
+      phase: "reviewing",
+      reason: "Reviewer reading the diff",
+    });
+    const held = seed(store, "merge-ready", {
+      phase: "merging",
+      reason: "Waiting for merge",
+      ...syncHoldProjection({ merge: fence("receipt pending") }),
+    });
+    const summary = (id: string) => summarizeTask(store.task(id));
+    const number = (id: string) =>
+      `#${String(store.task(id).number).padStart(3, "0")}`;
+    const tasks = [
+      summary(normal.id),
+      { ...summary(withPr.id), prUrl: "https://github.com/owner/app/pull/39" },
+      {
+        ...summary(held.id),
+        holdEscalated: true,
+        hold: { owner: "operator", reason: "receipt pending", since: at },
+      },
+    ];
+    const decision = {
+      id: "decision-row",
+      version: 1,
+      question: "Ship the row redesign this week?",
+      headline: "Ship the row redesign this week?",
+      choices: [
+        { label: "Ship", consequence: "" },
+        { label: "Wait", consequence: "" },
+      ],
+      recommended: "Ship",
+      details: null,
+      context: null,
+      options: [],
+      recommendation: null,
+      overtakenBy: [],
+      askedBy: { agentId: "agent-asker", project: null },
+      askerLabel: "the App planner",
+      links: { tasks: [], leads: [], papercuts: [] },
+      status: "open",
+      answer: null,
+      withdrawal: null,
+      supersededBy: null,
+      delivery: null,
+      createdAt: at,
+      updatedAt: at,
+      versions: [],
+      stale: false,
+      projectKey: "app",
+    };
+    const calls: Array<{ method: string; input: unknown }> = [];
+    // The decision read is cached per board revision, so this board has its own.
+    const base = invokeWith(
+      { ...board(tasks), revision: 1515 },
+      async () => ({ tasks: [], hasMore: false }),
+      [],
+      [decision],
+    );
+    for (const compact of [true, false]) {
+      mounted?.update(h("View", null));
+      mounted = mountBoard(async (method, input) => {
+        if (method === "queue.task") {
+          calls.push({ method, input });
+          return { ok: true };
+        }
+        return base(method, input);
+      }, compact);
+      const tree = mounted;
+      await settle(
+        () =>
+          Boolean(tree.query(/^app, plain-working,/)) &&
+          Boolean(tree.query(/^Decision: Ship the row/)),
+      );
+      const row = (label: RegExp) => {
+        const node = tree.query(label) as HostNode | undefined;
+        assert.ok(node, `${label} is listed`);
+        return node!;
+      };
+      const tile = (node: HostNode, icon: string) =>
+        nodeHas(
+          node,
+          (child) => child.type === "Icon" && child.props.name === icon,
+        );
+
+      // A normal task: reference and project, the title, its phase and report. No flags.
+      const plain = row(/^app, plain-working,/);
+      assert.ok(tile(plain, "ListChecks"), "a task row draws the task tile");
+      assert.match(
+        nodeText(plain),
+        new RegExp(
+          `^\\s*${number(normal.id)}\\s+app\\s+plain-working\\s+Working\\s+· Worker is editing\\s*$`,
+        ),
+        "a normal task is three lines and shows no flags",
+      );
+      assert.match(
+        String(plain.props.accessibilityLabel),
+        /plain-working.*Status: Working/,
+        "the accessible label keeps the title and the status",
+      );
+
+      // The PR is a small flag after the status line.
+      const pr = row(/^app, with-pr,/);
+      assert.match(
+        nodeText(pr),
+        /In review\s+· Reviewer reading the diff\s+#39\s*$/,
+        "the PR rides as the one flag",
+      );
+      assert.ok(
+        nodeHas(pr, (child) =>
+          /^Pull request #39, /.test(String(child.props.accessibilityLabel ?? "")),
+        ),
+        "the PR flag names its state accessibly",
+      );
+
+      // A decision: the kind in words, the project, the age; then the question and who asked.
+      const asked = row(/^Decision: Ship the row redesign this week\?/);
+      assert.ok(tile(asked, "CircleHelp"), "a decision draws the decision tile");
+      assert.match(
+        nodeText(asked),
+        /^\s*Decision\s+General\s+\d+d ago\s+Ship the row redesign this week\?\s+Your answer\s+· asked by the App planner\s*$/,
+        `a decision is three lines; its choices stay in the detail: ${nodeText(asked)}`,
+      );
+
+      // A merge hold prompt: the kind and reference, the title, ready-to-merge and why it is held, then Release and Keep.
+      openView(tree.raw, "Needs you");
+      const holdRow = row(/^Ready to merge, held for receipt pending: merge-ready$/);
+      assert.ok(tile(holdRow, "CirclePause"), "a hold prompt draws the hold tile");
+      assert.match(
+        nodeText(holdRow),
+        new RegExp(
+          `^\\s*Merge hold · ${number(held.id)}\\s+app\\s+\\d+d ago\\s+merge-ready\\s+Ready to merge\\s+· held for receipt pending\\s*$`,
+        ),
+      );
+      assert.ok(
+        !tree.raw.text().includes("Nucleus-raised"),
+        "the Nucleus-raised chip moved to the detail",
+      );
+      tree.raw.press("Keep");
+      assert.ok(
+        tree.raw.query("Why keep the hold (required)"),
+        "Keep asks for its reason",
+      );
+      tree.raw.press("Release");
+      await settle(() => calls.length > 0);
+      assert.deepEqual(
+        (calls.at(-1)!.input as { action: string }).action,
+        "release",
+        "Release still releases the hold",
+      );
+      calls.length = 0;
+    }
+  } finally {
+    mounted?.update(h("View", null));
+    store.close();
+  }
 });

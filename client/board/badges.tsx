@@ -40,7 +40,7 @@ function WaitBadge({ wait, c, decisionTitle }: { wait: NonNullable<TaskSummary['
  * The mapping is `shared/pull-request-badge.ts`, shared with the BB sidebar's
  * task-group chip so the two surfaces cannot drift.
  */
-export function PullRequestBadge({task,state,c,small=false}:{task:DisplayTask;state?:"OPEN"|"CLOSED"|"MERGED";c:Colors;small?:boolean}) {
+export function PullRequestBadge({task,state,c,small=false,flag=false}:{task:DisplayTask;state?:"OPEN"|"CLOSED"|"MERGED";c:Colors;small?:boolean;flag?:boolean}) {
   if(!task.prUrl)return null;
   const status=task.resolution.mergedCommit?"MERGED":state;
   // Terminal PR state takes precedence over task attention.
@@ -48,10 +48,10 @@ export function PullRequestBadge({task,state,c,small=false}:{task:DisplayTask;st
   // Merged, closed, blocked and open read as the matching theme role: the board
   // carries no GitHub palette of its own.
   const r = roles(c);
-  const color = badge.tone==="accent" ? r.accent : badge.tone==="danger" ? r.danger : badge.tone==="warning" ? r.warning : badge.tone==="success" ? r.success : c.foregroundMuted;
+  const color = badge.tone==="accent" ? r.accent : badge.tone==="danger" ? r.danger : badge.tone==="warning" ? r.warning : badge.tone==="success" ? (r.success ?? r.accent) : c.foregroundMuted;
   const completionNumber = "completionPrNumber" in task ? task.completionPrNumber : "completion" in task ? task.completion?.prNumber ?? undefined : undefined;
   const number=task.resumePrNumber??completionNumber??task.prUrl.match(/\/pull\/(\d+)/)?.[1];
-  return <View accessible accessibilityLabel={pullRequestBadgeLabel(number, badge)} style={{flexDirection:"row",alignItems:"center",gap:space.xxs}}>
+  return <View accessible accessibilityLabel={pullRequestBadgeLabel(number, badge)} style={flag ? {flexDirection:"row",alignItems:"center",gap:space.xxs,paddingHorizontal:space.xs,paddingVertical:space.xxs / 2,borderRadius:radius.control,backgroundColor:c.surface2,borderWidth:1,borderColor:c.border} : {flexDirection:"row",alignItems:"center",gap:space.xxs}}>
     <Icon name={badge.icon} size={small?12:14} color={color}/>
     <Text style={{fontSize:small?typeScale.metadata.fontSize:typeScale.body.fontSize,color}}>{pullRequestNumberLabel(number)}</Text>
   </View>;
@@ -84,10 +84,6 @@ export function BudgetBadge({ task, c }: { task: Pick<TaskSummary, "budget">; c:
 export function InteractiveBadge({ task, c }: { task: Pick<TaskSummary, "interactive" | "stopRecord" | "phase">; c: Colors }) {
   const label = interactiveBadgeLabel(task);
   return label ? <Badge label={label} tone={task.stopRecord?.reason === "interactive" ? "warning" : "accent"} c={c} a11y={label} /> : null;
-}
-export function LongShellCommandStatus({ startedAt, c }: { startedAt: string; c: Colors }) {
-  useTick(30_000);
-  return <Text numberOfLines={1} ellipsizeMode="tail" style={{ color: c.foregroundMuted, fontSize: typeScale.metadata.fontSize, lineHeight: typeScale.metadata.lineHeight }}>Long shell command · {elapsedRun(startedAt)}</Text>;
 }
 export function HeavyRunStatus({run,c,detail=false}:{run:HeavyRunView;c:Colors;detail?:boolean}) {
   useTick(30_000);

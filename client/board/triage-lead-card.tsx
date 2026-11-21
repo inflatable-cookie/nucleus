@@ -5,11 +5,10 @@ import {
   type BoardLead,
   type UiQueueState,
 } from "../../shared/contracts";
-import { triageKind, triageState } from "../../shared/pipeline-board";
+import { triageKind, triageStatus } from "../../shared/pipeline-board";
 import type { ProjectBadge } from "../../shared/t3/project-badge";
 import { Icon } from "../shell";
 import { BoardCard, ProjectBadgeMark } from "./cards";
-import { RecordChips } from "./badges";
 import { muted, type Colors } from "../controls";
 import { type as typeScale } from "../design";
 
@@ -118,20 +117,17 @@ export function LeadProjectEyebrow({
   );
 }
 
-/** Owns the shared Lead/Papercut card presentation and its single tag classification. */
+/** Owns the shared Lead/Papercut row and its single tag classification. */
 export function TriageLeadCard({
   lead,
-  eyebrow,
   projectForRepository,
   repositoryBadges,
   selected,
   c,
-  showKind = true,
   onSelectLead,
   onSelectPapercut,
 }: {
   lead: BoardLead;
-  eyebrow?: React.ReactNode;
   projectForRepository?: (
     repoPath: string,
     origin?: string | null,
@@ -139,65 +135,28 @@ export function TriageLeadCard({
   repositoryBadges?: Readonly<Record<string, ProjectBadge>>;
   selected: boolean;
   c: Colors;
-  /**
-   * Whether the card names its kind (nucleus#1511). The inbox lists leads and
-   * papercuts on their own tabs, so the chip there repeats the tab; a list that
-   * shows both kinds keeps it.
-   */
-  showKind?: boolean;
   onSelectLead: (id: string) => void;
   onSelectPapercut: (id: string) => void;
 }) {
   const kind = triageKind(lead);
-  const resolvedEyebrow = eyebrow ?? (
-    <LeadProjectEyebrow
-      repositories={lead.repositories}
-      projectForRepository={projectForRepository ?? (() => undefined)}
-      repositoryBadges={repositoryBadges}
-      c={c}
-    />
-  );
+  const status = triageStatus(lead);
+  const kindWord = kind === "papercut" ? RESERVED_LEAD_TAGS.papercut : "Lead";
   return (
     <BoardCard
-      label={`Triage: ${lead.title}`}
+      label={`${kindWord}: ${lead.title}, Status: ${status.state}`}
       c={c}
-      eyebrow={resolvedEyebrow}
-      title={
-        <Text
-          numberOfLines={1}
-          style={{
-            color: c.foreground,
-            fontWeight: "600",
-            fontSize: typeScale.body.fontSize,
-            lineHeight: typeScale.body.lineHeight,
-          }}
-        >
-          {lead.title}
-        </Text>
+      kind={kind}
+      meta={kindWord}
+      project={
+        <LeadProjectEyebrow
+          repositories={lead.repositories}
+          projectForRepository={projectForRepository ?? (() => undefined)}
+          repositoryBadges={repositoryBadges}
+          c={c}
+        />
       }
-      chips={
-        showKind ? (
-          <RecordChips
-            c={c}
-            chips={[
-              kind === "papercut" ? RESERVED_LEAD_TAGS.papercut : "Lead",
-            ]}
-          />
-        ) : undefined
-      }
-      snippet={
-        <Text
-          numberOfLines={1}
-          ellipsizeMode="tail"
-          style={{
-            color: c.foregroundMuted,
-            fontSize: typeScale.metadata.fontSize,
-            lineHeight: typeScale.metadata.lineHeight,
-          }}
-        >
-          {triageState(lead)}
-        </Text>
-      }
+      title={lead.title}
+      status={status}
       selected={selected}
       onPress={() =>
         kind === "papercut" ? onSelectPapercut(lead.id) : onSelectLead(lead.id)

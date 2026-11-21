@@ -10,7 +10,7 @@ import {
   triageKind,
   triagePage,
   triagePageSize,
-  triageState,
+  triageStatus,
 } from "../shared/pipeline-board";
 import { taskSchema } from "../shared/contracts";
 
@@ -904,7 +904,7 @@ test("377 planning lists read the narrow lead.board projection, never every full
   );
   assert.match(
     ui,
-    /triageState\(lead\)/,
+    /triageStatus\(lead\)/,
     "the state line reads the presence facts through the shared helper",
   );
   assert.match(
@@ -956,18 +956,18 @@ test("Triage cards: one state line per lead or papercut, operator order, and pag
     ["checked-lead", "idle-lead", "approved-lead", "old-cut"],
     "checked leads first, approved leads next, papercuts last; ties keep the board order",
   );
-  assert.equal(triageState(approvable as never), "Checks passed · unapproved");
-  assert.equal(triageState(idle as never), "Unchecked · unapproved");
-  assert.equal(triageState(approved as never), "Checks passed · approved");
-  assert.equal(
-    triageState(promoted as never),
-    "Promoted · Checks failed · approved",
-  );
-  assert.equal(triageState(cut as never), "Open · board");
-  assert.equal(
-    triageState(card("no-area", { tags: ["papercut"] }) as never),
-    "Open",
-  );
+  // The row's status line (nucleus#1515): the state in words, then one detail.
+  const line = (lead: unknown) => {
+    const status = triageStatus(lead as never);
+    return [status.state, status.detail].filter(Boolean).join(" · ");
+  };
+  assert.equal(line(approvable), "Checked · awaiting approval");
+  assert.equal(line(idle), "Unchecked · awaiting approval");
+  assert.equal(line(approved), "Approved · awaiting promotion");
+  assert.equal(line(promoted), "Promoted");
+  assert.equal(line(card("failed", { tags: ["idea"], check: { ok: false } })), "Checks failed · awaiting approval");
+  assert.equal(line(cut), "Open · board");
+  assert.equal(line(card("no-area", { tags: ["papercut"] })), "Open");
   assert.equal(triageKind(cut as never), "papercut");
   assert.equal(triageKind(idle as never), "lead");
   const many = Array.from({ length: 10 }, (_, index) =>
