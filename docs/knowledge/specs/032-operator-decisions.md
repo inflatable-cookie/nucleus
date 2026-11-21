@@ -19,8 +19,14 @@ escalations are the only durable attention signal.
 An agent records a question that needs the operator as a **decision** in Nucleus.
 The board shows all open decisions. The operator can also answer in the Paseo
 composer pill or in T3. In T3, operator questions for T3-hosted tasks appear
-on their parent threads. Other decisions routed to that T3 operator appear in
-the pinned Nucleus inbox. See [operator decisions on T3](t3code-host-adapter.md#operator-decisions-on-t3).
+on their parent threads when a live parent exists; when a linked T3 task has no
+eligible parent yet (or its parent is archived) it goes to that host's pinned
+Nucleus inbox, and when the parent lookup answers `unknown` (for example, a
+disconnected host or a different registered T3 session) it falls back to the
+connected T3 host's pinned Nucleus inbox rather than dropping the decision, with
+durable first-offer binding keeping one owner per version. Other decisions
+routed to that T3 operator also appear in the pinned Nucleus inbox. See
+[operator decisions on T3](t3code-host-adapter.md#operator-decisions-on-t3).
 Decisions clear when answered, withdrawn or superseded. Answers reach the
 asking agent.
 

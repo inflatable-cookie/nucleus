@@ -1044,4 +1044,55 @@ test("decision answer notice to a busy T3 thread steers into the active turn via
     (decisions.get({ id: third.id }).delivery?.attempts ?? 0) >= 2,
     "transient pre-send refusal recorded a retryable attempt before succeeding",
   );
+
+  // Interrupted subscribeThread before steer dispatch also stays pending (never uncertain)
+  // and retries once the read recovers, sending exactly one message.dispatch.
+  const fourth = questions.addDecision({
+    question: "Fourth question during interrupted subscribeThread?",
+    askedBy: asker,
+    project,
+  });
+  let interruptOnce = true;
+  t3Adapter.observe = async (id: string) => {
+    const obs = await origObserve(id);
+    if (interruptOnce && id === threadId) {
+      interruptOnce = false;
+      host.reads.forget(threadId);
+      fake.controls.interruptThreadReads = 1;
+    }
+    return obs;
+  };
+  questions.answerDecision({
+    id: fourth.id,
+    version: 1,
+    answer: "Retry after interrupted subscribeThread",
+    answeredBy: "operator (board)",
+    relayed: false,
+    note: "",
+  });
+  await waitFor(
+    () => decisions.get({ id: fourth.id }).delivery?.status === "delivered",
+    3_000,
+    "interrupted subscribeThread before steer retries and delivers",
+  );
+  const interruptDispatches = fake.commands.filter(
+    (command) =>
+      command.type === "message.dispatch" &&
+      command.threadId === threadId &&
+      typeof command.text === "string" &&
+      command.text.includes("Retry after interrupted subscribeThread"),
+  );
+  assert.equal(
+    interruptDispatches.length,
+    1,
+    "steered exactly once after interrupted subscribeThread recovery",
+  );
+  assert.deepEqual(interruptDispatches[0]!.dispatchMode, {
+    type: "steer_active",
+    targetRunId: activeRun.id,
+  });
+  assert.ok(
+    (decisions.get({ id: fourth.id }).delivery?.attempts ?? 0) >= 2,
+    "interrupted pre-send read recorded a retryable attempt before succeeding",
+  );
 });

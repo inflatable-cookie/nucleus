@@ -1043,11 +1043,14 @@ expiry is not evidence that the original answer was never delivered.
 ## Operator decisions on T3
 
 An open decision linked to a T3 task goes to its recorded ACP parent when one is
-available; when no eligible parent exists (before a parent is created, after a
-recorded parent is archived, or while a parent lookup transiently answers
-`unknown`) it falls back to that host's single pinned **Nucleus** inbox rather
-than being offered nowhere (nucleus#1516). Other operator decisions also go to
-the inbox. No parent is created to ask a question. Opening, withdrawing or
+available; when its host confirms no eligible parent exists (before a parent is
+created or after a recorded parent is archived) it goes to that host's single
+pinned **Nucleus** inbox; and when a parent lookup answers `unknown` (for
+example, a disconnected host, an unreadable parent, or a different registered T3
+session) it falls back to the connected T3 host's pinned **Nucleus** inbox
+rather than pinning the unavailable host or leaving the decision offered nowhere
+(nucleus#1516). Other operator decisions also go to the inbox. No parent is
+created to ask a question. Opening, withdrawing or
 superseding a decision (including a routing sign-off opened during a task
 quantum) wakes the reconciliation sweep so the inbox refreshes its title and
 raises or settles cards without waiting for an unrelated wake. The

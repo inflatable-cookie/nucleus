@@ -1383,7 +1383,18 @@ export class T3CodeHost implements Host {
   }
 
   async sendMessage(id: string, input: HostMessage) {
-    await this.presentation.wakeBeforeDelivery(id, input.messageId);
+    try {
+      await this.presentation.wakeBeforeDelivery(id, input.messageId);
+    } catch (error) {
+      if (
+        error instanceof ProvenPreSendRefusalError ||
+        error instanceof T3CompatibilityError
+      )
+        throw error;
+      throw new ProvenPreSendRefusalError(
+        error instanceof Error ? error.message : String(error),
+      );
+    }
     await this.intents.effect(
       input.messageId,
       "orchestration.dispatchCommand",
@@ -1512,19 +1523,27 @@ export class T3CodeHost implements Host {
     try {
       runId = await this.reads.activeRunId(id);
     } catch (error) {
-      if (error instanceof ProvenPreSendRefusalError) throw error;
-      if (error instanceof HostReadRefusalError)
-        throw new ProvenPreSendRefusalError(error.message);
-      throw error;
+      if (
+        error instanceof ProvenPreSendRefusalError ||
+        error instanceof T3CompatibilityError
+      )
+        throw error;
+      throw new ProvenPreSendRefusalError(
+        error instanceof Error ? error.message : String(error),
+      );
     }
     if (!runId) return this.sendMessage(id, input);
     try {
       await this.presentation.wakeBeforeDelivery(id, messageId);
     } catch (error) {
-      if (error instanceof ProvenPreSendRefusalError) throw error;
-      if (error instanceof HostReadRefusalError)
-        throw new ProvenPreSendRefusalError(error.message);
-      throw error;
+      if (
+        error instanceof ProvenPreSendRefusalError ||
+        error instanceof T3CompatibilityError
+      )
+        throw error;
+      throw new ProvenPreSendRefusalError(
+        error instanceof Error ? error.message : String(error),
+      );
     }
     try {
       await this.intents.effect(
