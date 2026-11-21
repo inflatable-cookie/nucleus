@@ -32,9 +32,8 @@ import {
 } from "../../shared/decision-project";
 import { taskWaitCardLabel } from "../../shared/task-detail-summary";
 import {
-  T3_PROJECT_BADGE_TINT,
   isDarkSurface,
-  projectBadgeText,
+  projectBadgeWebStyle,
   type ProjectBadge,
 } from "../../shared/t3/project-badge";
 import {
@@ -384,8 +383,10 @@ export const QaRunCard = React.memo(function QaRunCard({
  * beside it is the label.
  */
 function ProjectBadgeMark({ badge, c }: { badge: ProjectBadge; c: Colors }) {
-  // A Text box, so the tint's currentColor is the badge's own text colour on every host.
-  const color = projectBadgeText(badge, isDarkSurface(c.surface0));
+  // A Text box in converted sRGB: react-native-web drops the pinned `oklch()` text
+  // and the `color-mix()` tint through its normalizeColor, so the boundary converts
+  // the assigned palette entry to rgb and the same entry at 14% alpha (nucleus#1487).
+  const { color, backgroundColor } = projectBadgeWebStyle(badge, isDarkSurface(c.surface0));
   return (
     <Text
       numberOfLines={1}
@@ -393,7 +394,7 @@ function ProjectBadgeMark({ badge, c }: { badge: ProjectBadge; c: Colors }) {
       importantForAccessibility="no"
       style={{
         color,
-        backgroundColor: T3_PROJECT_BADGE_TINT,
+        backgroundColor,
         minWidth: 16,
         maxWidth: 32,
         height: 16,

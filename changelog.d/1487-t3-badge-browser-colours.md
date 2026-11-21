@@ -1,0 +1,1 @@
+- T3 project badges on the browser board now show their assigned colour: the pinned palette entry is converted to sRGB with its 14% tint as explicit alpha, so react-native-web keeps both declarations in dark and light themes.
