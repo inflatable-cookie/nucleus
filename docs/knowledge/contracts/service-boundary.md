@@ -754,8 +754,13 @@ matching fingerprints and retries from a private snapshot matching that proof,
 which the contracts and local client then share. This finishes before any
 request is sent; a persistent failure fails visibly.
 
-`--via-paseo` explicitly selects the compatibility bridge. Clients never fall
-back, replay a write without proof it was never received, or open SQLite.
+`--via-paseo` explicitly selects the compatibility bridge, which lives in
+`hosts/paseo/cli/index.mjs`. The default is the neutral client owner,
+`shared/service/local-client.ts`'s `queueClient`, and `bin/queue-client.mjs` is
+the only entry that composes the two: it loads the neutral client, or hands the
+call to the Paseo adapter when the caller asked for it. Clients never fall back
+from one transport to the other, replay a write without proof it was never
+received, or open SQLite.
 
 ### Rolls: calls wait out the replacement (Tom, 2026-11-09, papercut 15754c8d)
 

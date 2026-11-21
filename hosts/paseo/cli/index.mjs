@@ -1,16 +1,16 @@
-import { compiledIdentity } from '../../../shared/runtime.mjs';
-import { dataHome } from "../../../shared/data-home.mjs";
+import { dataHome } from '../../../shared/data-home.mjs';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { pluginCatalogId } from '../../../shared/plugin-discovery.mjs';
+import { pluginCatalogId } from './plugin-catalog.mjs';
 
-/** One connection per command/batch; no automatic cross-transport replay. */
-export async function queueClient({ viaPaseo = false, dataDir, rollWaitMs, onProgress, paseoClient } = {}) {
-  if (!viaPaseo) {
-    if (!compiledIdentity) await import('tsx');
-    const { localQueueClient } = await import('../../../shared/service/local-client.ts');
-    return localQueueClient(dataDir, { compatibilityWaitMs: rollWaitMs, onProgress });
-  }
+/**
+ * The explicit `--via-paseo` bridge only. The default CLI transport is the
+ * neutral client owner (`shared/service/local-client.ts` `queueClient`), which
+ * this host neither wraps nor falls back from.
+ *
+ * One connection per command/batch; no automatic cross-transport replay.
+ */
+export async function paseoBridgeQueueClient({ paseoClient } = {}) {
   let client = paseoClient;
   if (!client) {
     const { DaemonClient } = await import('@getpaseo/client/internal/daemon-client');

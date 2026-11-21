@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { pluginCatalogId, pluginRegistration } from "../shared/plugin-discovery.mjs";
+import { pluginRegistration } from "../shared/plugin-discovery.mjs";
+import { pluginCatalogId } from "../hosts/paseo/cli/plugin-catalog.mjs";
 
 test("plugin discovery knows only nucleus; a config naming the retired ID is ignored", () => {
   assert.equal(pluginRegistration({}), null);
@@ -16,16 +17,16 @@ test("plugin discovery knows only nucleus; a config naming the retired ID is ign
   assert.throws(() => pluginCatalogId([{ id: "other" }]), /No Nucleus/);
 });
 
-test("Paseo CLI routes to nucleus and refuses a catalog without it", async () => {
-  const { queueClient } = await import(new URL("../bin/queue-client.mjs", import.meta.url).href);
+test("the Paseo bridge routes to nucleus and refuses a catalog without it", async () => {
+  const { paseoBridgeQueueClient } = await import(new URL("../hosts/paseo/cli/index.mjs", import.meta.url).href);
   const calls: unknown[] = [];
   const fake = { connect: async () => {}, close: () => {}, getPluginCatalog: async () => [{ id: "nucleus" }], invokePluginRpc: async (...args: unknown[]) => { calls.push(args); return "ok"; } };
-  const client = await queueClient({ viaPaseo: true, paseoClient: fake });
+  const client = await paseoBridgeQueueClient({ paseoClient: fake });
   await client.connect();
   assert.equal(await client.request("queue.test", { value: 1 }), "ok");
   assert.deepEqual(calls, [["nucleus", "queue.test", { value: 1 }]]);
   client.close();
-  const absent = await queueClient({ viaPaseo: true, paseoClient: { connect: async () => {}, close: () => {}, getPluginCatalog: async () => [{ id: "other" }] } });
+  const absent = await paseoBridgeQueueClient({ paseoClient: { connect: async () => {}, close: () => {}, getPluginCatalog: async () => [{ id: "other" }] } });
   await assert.rejects(absent.connect(), /No Nucleus/);
   absent.close();
 });

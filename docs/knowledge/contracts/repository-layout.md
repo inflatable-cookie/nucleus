@@ -271,11 +271,18 @@ Runtime handlers now live in `core/runtime/`. Host admission, registration,
 facade and registry live in `core/host/`; its public `index.ts` retains the
 adapter contract and adapter-facing value types extracted before relocation.
 
-The stable CLI entries use direct service transport by default. The retained
-`--via-paseo` compatibility transport lives behind `hosts/paseo/cli/index.mjs`;
-only `bin/queue-client.mjs` imports that public CLI entry. Migrate callers by
-omitting `--via-paseo`, with the Nucleus service running. Retirement is recommended
-after the planner warns callers; this migration retains the flag and route.
+The stable CLI entries use direct service transport by default. That default is
+the neutral client owner's `queueClient` in `shared/service/local-client.ts`,
+which owns the service connection and its roll/compatibility wait;
+`bin/queue-client.mjs` is the one entry that composes transports, loading the
+neutral client unless an explicit `--via-paseo` asks for the Paseo adapter's
+`paseoBridgeQueueClient`. The adapter supplies that bridge and only its own
+caller environment decoding (`hostCallerIdentity`), and the plugin catalog read
+only it makes lives beside it in `hosts/paseo/cli/plugin-catalog.mjs`; the
+registration read the forwarder and the service both need stays in
+`shared/plugin-discovery.mjs`. Migrate callers by omitting `--via-paseo`, with
+the Nucleus service running. Retirement is recommended after the planner warns
+callers; this migration retains the flag and route.
 
 `core/qa/` owns project QA, validation, proof and Effigy admission policy, including
 supervision files and failure-log collection. Detached QA and validation entrypoints

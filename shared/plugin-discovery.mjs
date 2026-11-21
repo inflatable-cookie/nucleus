@@ -2,6 +2,11 @@
 // that still names the retired `northstar-queue` ID is ignored, not migrated.
 // Two nucleus registrations can create two bridges, even when they point at
 // the same files, so never choose between them: more than one is a refusal.
+//
+// The forwarder (`hosts/paseo/plugin/bridge.ts`) and the service runtime both
+// read this registration, and the folder gate lets neither reach the other's
+// area, so it stays neutral here. The Paseo CLI's own catalog read is
+// `hosts/paseo/cli/plugin-catalog.mjs`.
 
 /** The one registered Nucleus plugin, or null when no enabled registration exists. */
 export function pluginRegistration(plugins = {}) {
@@ -10,11 +15,4 @@ export function pluginRegistration(plugins = {}) {
   const path = registration?.path;
   if (typeof path !== 'string' || !path) throw Error('Paseo registration nucleus has no plugin path');
   return { id: 'nucleus', path };
-}
-
-/** The one plugin ID in Paseo's catalog; refuses when the Nucleus plugin is absent. */
-export function pluginCatalogId(catalog) {
-  const ids = catalog.map(plugin => plugin?.id).filter(id => id === 'nucleus');
-  if (!ids.length) throw Error('No Nucleus plugin is available in Paseo');
-  return ids[0];
 }

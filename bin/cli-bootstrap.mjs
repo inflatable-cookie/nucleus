@@ -89,7 +89,7 @@ async function importCliRuntime({ repoDir, snapshotRoot, viaPaseo }) {
   const { RPC_CATALOGUE } = await import(pathToFileURL(join(base, bootstrapEntries[0])).href);
   const { parseContractValue } = await import(pathToFileURL(join(base, bootstrapEntries[1])).href);
   const client = snapshotRoot && !viaPaseo
-    ? (await import(pathToFileURL(join(base, bootstrapEntries[2])).href)).localQueueClient()
+    ? (await import(pathToFileURL(join(base, bootstrapEntries[2])).href)).queueClient()
     : await queueClient({ viaPaseo });
   return { RPC_CATALOGUE, parseContractValue, client };
 }
