@@ -1561,11 +1561,17 @@ one stat per retained snapshot, and the shared executor queue that serialises ev
 behind them; none is cached.
 
 The runtime retains one admission and breaker state for each observed host ID.
-Paseo remains the default connection. Optional owner-only `settings.json`
-configuration `t3code: {endpoint, bearer, probeThreadId?}` registers a second
-native host with separate admission state. The bearer is issued locally with
-`t3 auth session issue`, never returned by health or public settings. Initial
-Paseo identity is recorded first; subsequent T3 reconnects are independent.
+Paseo, T3Code and BB are equal optional hosts (nucleus#1508; Tom, 2026-11-21:
+"there shouldn't be anything that Nucleus does that requires Paseo
+specifically"). The service starts and serves the board and CLI with no Paseo
+install or config present; a call that needs a host outside a bound host context
+refuses with a host-neutral message (`No host is bound for this operation`)
+instead of falling back to Paseo, and capability checks ask the host the task or
+caller is bound to. Optional owner-only `settings.json` configuration
+`t3code: {endpoint, bearer, probeThreadId?}` registers a T3Code native host with
+separate admission state. The bearer is issued locally with
+`t3 auth session issue`, never returned by health or public settings. Each
+configured host connects and reconnects independently.
 
 **Readiness belongs to the host that owns the work** (nucleus#1449; Tom,
 2026-11-20: Paseo quit, T3 stayed online, and the board warned about the daemon's
@@ -1597,7 +1603,7 @@ reads that entry: the legacy unqualified `hostId`, the retired
 observation scope and the daemon-identity guard all read it, so a BB or T3 host
 that connects earlier still never displaces the host those records belong to.
 
-New worker tasks carry an ingress host preference at acceptance; it does not restrict the first worker's profile. At first dispatch, selection considers eligible profiles across online host catalogs. For a profile that runs on several hosts, the explicit preference, repository `hostKind`, operator default (seeded as `paseo`), and planner host settle the choice in that order. The chosen host and reason are recorded with the workspace intent and stay fixed for every subsequent role and run. The operator default lives in Settings → Hosts and is writable only through `queue.capacity`. An absent legacy default maps to Paseo; an explicit null keeps the planner-host setting. Dispatch and Settings use the same interpretation. An unknown task host does not borrow the legacy Paseo provider catalog for health or routing. A schema migration converts stored repository `paseo` defaults to inherit while preserving explicit T3Code and BB preferences. Review-entry and proof-only tasks keep their existing host admission.
+New worker tasks carry an ingress host preference at acceptance; it does not restrict the first worker's profile. At first dispatch, selection considers eligible profiles across online host catalogs. For a profile that runs on several hosts, the explicit preference, repository `hostKind`, operator default (unset on a fresh store), and planner host settle the choice in that order, falling back to an online host when none of those names a host. The chosen host and reason are recorded with the workspace intent and stay fixed for every subsequent role and run. The operator default lives in Settings → Hosts and is writable only through `queue.capacity`. An unset or null operator default means no default host kind (follow repository override, planner host, or an online host). Dispatch and Settings use the same interpretation. An unknown task host does not borrow any other host's provider catalog for health or routing. Review-entry and proof-only tasks keep their existing host admission.
 
 **Removing a host** (Settings → Hosts, nucleus#1325; Tom, 2026-11-18). A disconnect
 never removes a host: it proves nothing about outstanding effects. The operator

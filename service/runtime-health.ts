@@ -436,7 +436,11 @@ export class RuntimeHealthProjection {
       paused: store.getMeta<boolean>("paused") ?? true,
       ...this.context.drainProjection(),
       hostId:
-        this.context.hostSessionId() || hostRegistry.legacyPaseoPrimary()?.id || "unknown",
+        this.context.hostSessionId() ||
+        hostRegistry.legacyPaseoPrimary()?.id ||
+        hostRegistry.onlineIds()[0] ||
+        hostRegistry.known()[0]?.id ||
+        "unknown",
       connected: this.context.anyHostConnected(),
       hostIdentityConflict: lifecycle.identityConflict,
       ...(t3 ? { t3code: t3 } : {}),

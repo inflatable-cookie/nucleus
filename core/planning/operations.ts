@@ -323,67 +323,23 @@ export class Operations {
         : undefined;
 
     // BB proves the authenticated caller's ingress identity. Persist the
-    // repository/default work-host selection on the operation and promoted task,
-    // including an explicitly configured BB work host. If no route is configured,
-    // do not infer task work from the caller's BB identity: use the existing
-    // unambiguous non-BB fallback or require a setting.
+    // work-host selection using repository, operator-default, planner-host, and
+    // online order: when the caller passed its own BB host as ingress identity
+    // and a repository override or operator default selects another host, honor
+    // that route; otherwise keep the verified BB planner host instead of
+    // falling back implicitly to a non-BB host.
     let selected = ingressSelection;
     if (!previous && submissionKind && bbIngressHostId) {
       const explicitWorkHost =
         input.hostId && hostKindOf(input.hostId) !== "bb"
           ? input.hostId
           : undefined;
-      let workSelection: typeof ingressSelection = undefined;
-      try {
-        workSelection = this.engine.selectIngressSelection(
-          explicitWorkHost,
-          repoPath,
-          repositoryOriginForSelection,
-        );
-      } catch (error) {
-        // With no repository/default route the ingress selector intentionally
-        // falls back to the caller. Do not infer a BB task-work route from that
-        // identity; use the one unambiguous online non-BB host if available.
-        const bbWasOnlyRoute =
-          ingressSelection?.hostId === bbIngressHostId &&
-          (ingressSelection.basis === "planner_host" ||
-            ingressSelection.basis === "explicit");
-        if (!bbWasOnlyRoute) throw error;
-        const workHosts = this.engine
-          .hostIds()
-          .filter(
-            (id) =>
-              hostKindOf(id) !== "bb" && this.engine.hostIngressAvailable(id),
-          );
-        if (workHosts.length === 1)
-          workSelection = { hostId: workHosts[0]!, basis: "sole_online_host" };
-        else if (workHosts.length > 1)
-          throw new ProtocolError(
-            "invalid_input",
-            "No repository host or operator default selects a unique task work host",
-          );
-      }
-      if (!workSelection) {
-        const workHosts = this.engine
-          .hostIds()
-          .filter(
-            (id) =>
-              hostKindOf(id) !== "bb" && this.engine.hostIngressAvailable(id),
-          );
-        if (workHosts.length === 1)
-          workSelection = { hostId: workHosts[0]!, basis: "sole_online_host" };
-        else if (workHosts.length > 1)
-          throw new ProtocolError(
-            "invalid_input",
-            "No repository host or operator default selects a unique task work host",
-          );
-      }
-      if (!workSelection)
-        throw new ProtocolError(
-          "invalid_input",
-          `BB ingress ${bbIngressHostId} is online, but no repository or operator-default work host is registered`,
-        );
-      selected = workSelection;
+      selected = this.engine.selectIngressSelection(
+        explicitWorkHost,
+        repoPath,
+        repositoryOriginForSelection,
+        plannerHostId ?? bbIngressHostId,
+      );
     }
     const hostId = previous
       ? previous.hostId
@@ -1158,7 +1114,8 @@ export class Operations {
     } catch {
       return false;
     }
-    const matchingStop = task.resolution.ownerStop?.operationId === operation.id;
+    const matchingStop =
+      task.resolution.ownerStop?.operationId === operation.id;
     if (!operation.preSendBoundaryStartedAt && !matchingStop) return false;
     if (
       operation.result?.taskId &&
@@ -1201,7 +1158,10 @@ export class Operations {
         const diagnostic = hostId
           ? `Waiting for host ${hostId}`
           : "Waiting for a proven host identity";
-        if (operation.state !== "pending" || operation.diagnostic !== diagnostic)
+        if (
+          operation.state !== "pending" ||
+          operation.diagnostic !== diagnostic
+        )
           this.store.putOperation({
             ...operation,
             state: "pending",

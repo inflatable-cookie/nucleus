@@ -104,7 +104,7 @@ async function fixture(
     // Model a previously authenticated host which is now disconnected.
     const token = runtime.hostRegistry.connect(
       "fixture-host",
-      runtime.settings.daemonUrl,
+      runtime.settings.daemonUrl ?? "ws://127.0.0.1:6767/ws",
       { adapter: runtime.adapter, admission: runtime.admission },
     );
     runtime.hostRegistry.disconnect("fixture-host", token);
@@ -200,6 +200,7 @@ test(
       }),
       { ok: true },
     );
+    f.runtime.store.setMeta("operatorDefaultHostKind", "paseo");
     const caller = formatAgentId(bbHostId, "thr_submitter");
     const input = {
       ...f.input,
@@ -253,6 +254,7 @@ test(
       }),
       { ok: true },
     );
+    f.runtime.store.setMeta("operatorDefaultHostKind", "paseo");
     f.runtime.store.putRepository(
       { origin: null, path: f.repo },
       null,
@@ -531,13 +533,19 @@ test(
     const f = await fixture(t);
     await rename(f.remote, `${f.remote}.away`);
     // Brief capture reads the pushed head synchronously, so an outage refuses before any operation exists.
-    await assert.rejects(f.runtime.submitHandoff(f.input), /Brief planning awaits the Git remote/);
+    await assert.rejects(
+      f.runtime.submitHandoff(f.input),
+      /Brief planning awaits the Git remote/,
+    );
     assert.equal(f.runtime.store.tasks().length, 0);
     assert.equal(f.lookups(), 0);
     await rename(`${f.remote}.away`, f.remote);
     const receipt = await f.runtime.submitHandoff(f.input);
     assert.ok("operation" in receipt && receipt.operation);
-    const settled = await f.runtime.engine.awaitOperation(receipt.operation.id, 5000);
+    const settled = await f.runtime.engine.awaitOperation(
+      receipt.operation.id,
+      5000,
+    );
     assert.equal(settled.state, "succeeded", settled.diagnostic);
     assert.equal(f.lookups(), 0);
   },

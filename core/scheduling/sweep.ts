@@ -588,10 +588,9 @@ export class Sweep {
       await this.fleetStep("deliverPendingBriefAmendments", () =>
         this.engine.deliverPendingBriefAmendments(),
       );
-      if (this.engine.adapter.originAgent)
-        await this.fleetStep("origins", () =>
-          this.engine.resolution.origins.pass(),
-        );
+      await this.fleetStep("origins", () =>
+        this.engine.resolution.origins.pass(),
+      );
       // Keep the ordinary pass timing unchanged: only reach for the checkpoint
       // reconciler when a persisted continuation intent actually awaits delivery.
       if (
