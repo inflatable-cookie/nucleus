@@ -71,11 +71,15 @@ closeout protections are unchanged.
   `exclusive_writer_unavailable` before workspace inspection, binding or agent
   intent. Intake never creates a workspace, worktree or branch, and never
   resets, cleans, rebases, pushes or renames the supplied branch.
-- The lead-based CLI route may prepare an isolated Paseo `checkout-pr` workspace
-  before preview and start when the caller omits a workspace ID. This is a
-  separate Paseo action with a stable request ID; successful binding records the
-  workspace as intake-owned for guarded closeout. The review-entry service still
-  accepts only an inspected existing workspace.
+- The lead-based CLI route may prepare an isolated workspace on Paseo, T3Code or
+  BB before preview and start when the caller omits a workspace ID. Preparation
+  uses a stable request ID on the selected host. Paseo uses its native
+  `checkout-pr` action. T3Code and BB register a linked Git worktree on the exact
+  published branch and head. They reuse an existing preparation only after
+  proving its request receipt, clean checkout and exact Git identity. A branch
+  checked out elsewhere must be handed over through its existing workspace.
+  Successful binding records the prepared workspace as intake-owned for guarded
+  closeout. The review-entry service accepts an inspected existing workspace.
 - Changes requested create the first worker in that same workspace, after the
   reviewer releases its lease. Later cycles retain ordinary worker/reviewer runs.
 - Existing exact-head, comment, independence, capacity, FIFO integration,
@@ -86,7 +90,7 @@ closeout protections are unchanged.
 If the external checkout/workspace no longer exists, the approved-lead CLI may
 prepare a `checkout-pr` workspace before preview; direct API callers must arrange
 an existing workspace first. A local path alone cannot substitute for an
-inspected Paseo workspace identity. V1 accepts branches in the canonical
+inspected workspace identity on the selected host. V1 accepts branches in the canonical
 repository's origin, not fork PRs or alternate push remotes. `workspaceMode` is
 optional and defaults to `isolated`. `shared_canonical` is unsupported until
 Nucleus can enforce an exclusive-writer reservation; preview and start return the
@@ -100,7 +104,7 @@ and a strictly validated payload:
 | Field | Meaning |
 | --- | --- |
 | `submission` | Existing canonical submission identity, repository, base branch, planning commit, brief, scope, dependencies, origin and notification fields. |
-| `workspaceId` | Paseo workspace, inspected against its real directory and Git common directory. The lead CLI prepares an isolated `checkout-pr` workspace when none is supplied; direct API inputs still name an existing workspace. |
+| `workspaceId` | A workspace on the selected host, inspected against its real directory and Git common directory. The lead CLI prepares an isolated checkout when none is supplied. Direct API inputs name an existing workspace. |
 | `workspaceMode` | Optional `isolated` (default). `shared_canonical` returns `exclusive_writer_unavailable` before adapter calls or task binding. |
 | `prNumber` | Positive PR number in the canonical origin repository. |
 | `expectedBranch` | Exact existing source branch; becomes immutable `task.branch`. It need not have Nucleus's generated branch prefix. |
@@ -153,7 +157,7 @@ The lead route reads the checked lead, builds the same submission provenance as
 starting; an omitted workspace is prepared as a `checkout-pr` workspace first.
 Start performs bounded local shape/instruction capture, durably accepts the input,
 and returns a receipt without waiting for remote validation. Acceptance is not
-binding, dispatch or review approval. Remote/Paseo unavailability remains pending
+binding, dispatch or review approval. Forge or host unavailability remains pending
 validation with bounded retry under existing operation scheduling; it does not
 lose the operation or permanently declare the PR absent.
 
@@ -926,7 +930,7 @@ a compatible reader, never deletion of imported tasks or a live-database rewrite
 | Done/cancelled/superseded imported task | Preserve external workspace files and branch; normal terminal projections and notification semantics. A done, merged task's external workspace sidebar entry is archived under "Closing a merged task's external workspace entry" below. |
 | Stored pinned review view on a done task | A terminal archive target with its own proofs and retry exit; holds the task's retention until it settles. The task workspace and review history remain intact. |
 | Existing ordinary tasks, schema upgrade/restart | Behavior unchanged; identities, credentials, pool, limits, subscriptions and pause preserved. |
-| CLI/API acceptance with slow Git or unavailable Paseo | Prompt durable receipt and visible pending proof; no dependency on UI-thread RPC completion. |
+| CLI/API acceptance with slow Git or an unavailable host | Prompt durable receipt and visible pending proof; no dependency on UI-thread RPC completion. |
 | Nucleus-held brief in an existing isolated workspace | Exact checked brief digest/version and planning ancestry bind once; reviewer starts first; no repository handoff is read or written. |
 | `shared_canonical` review-entry input | Typed `exclusive_writer_unavailable` refusal before adapter inspection, binding, agent intent or branch mutation. |
 | Active origin author during isolated intake | One durable task/source claim with the exact identity and a visible pending-handover wait; no reviewer runs while the writer is active. Yield lets admission re-prove the exact source and launch one independent reviewer in the task workspace, with no resubmission or owner retry. Writer yield, clean checkout, exact HEAD and open PR head are checked at reviewer send; a writer observed active blocks the send. |

@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
 import type { ReviewEntryWorkspaceInput } from "../../shared/contracts";
-import { realpath } from "node:fs/promises";
+import { lstat, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { reviewEntryInputSchema, submissionSchema, type Profile, type ReviewEntryInput, type ReviewEntryRecord, type Task } from "../../shared/contracts";
 import type { QueueOperation } from "../../shared/operations";
-import { command, git, queueCheckoutStatus, githubRepositoryFromRemote, SubmissionUnavailableError, validateSubmission } from "../git/index";
+import { command, git, gitBulk, gitRun, queueCheckoutStatus, githubRepositoryFromRemote, SubmissionUnavailableError, validateSubmission } from "../git/index";
 import { readGitCheckout } from "../git/git-identity";
 import { repositoryOrigin } from "../planning/lanes";
 import { now, type Store } from "../store/store";
@@ -13,6 +14,10 @@ import type { Adapter, OriginAgent } from "../host/adapter";
 import { isTransportFailure } from "../../shared/transport";
 import { classifyGitCommandFailure, isForgeNetworkFailure } from "../forge/forge-health";
 import { pinnedBriefDigest } from "../planning/brief";
+import { HOST_KIND_LABELS, hostKindOf } from "../../shared/host-kind";
+import type { HostWorkspaceSpec } from "../../shared/host";
+import { WORKSPACES_DIR, workspaceRepoRoot } from "../workspaces/workspace-allocation";
+import type { WorkspacePlacement } from "../workspaces/workspace-lifecycle";
 
 export interface ReviewEntryInspection {
   directory:string;
@@ -229,7 +234,7 @@ const decodeCanonicalPullRequest=(raw:any,repository:string):CanonicalPullReques
   return {kind:"read",headRef:raw.head.ref,baseRef:raw.base.ref,headSha:raw.head.sha,
     login:provenString(login)?login:null,url:provenString(raw.html_url)?raw.html_url:null};
 };
-async function readCanonicalPullRequest(submission:ReviewEntryInput["submission"],repository:string,prNumber:number,github:(file:string,args:string[],cwd:string)=>Promise<string>):Promise<CanonicalPullRequest>{
+async function readCanonicalPullRequest(submission:Pick<ReviewEntryInput["submission"],"repoPath">,repository:string,prNumber:number,github:(file:string,args:string[],cwd:string)=>Promise<string>):Promise<CanonicalPullRequest>{
   const raw=JSON.parse(await remoteCall("GitHub",()=>github("gh",["api",`repos/${repository}/pulls/${prNumber}`],submission.repoPath)));
   return decodeCanonicalPullRequest(raw,repository);
 }
@@ -452,7 +457,7 @@ export async function bindReviewEntry(store:Store,adapter:ReviewEntryAdapter,ope
   }
   assertReviewEntryUnowned(store,input);
   store.validateDependencies(input.submission);
-  // The review-entry adapter is the Paseo adapter in production; its origin read goes through Host over it.
+  // The selected adapter's origin read goes through the host facade.
   const host=new HostFacade({adapter:adapter as Adapter&ReviewEntryAdapter});
   const {recipients:creatorCompletionRecipients}=await validateCompletionRecipients(input.submission,lookupOrigin ?? (id=>host.originAgent(id)));
   // Acceptance, not execution: an active source writer is recorded as the
@@ -490,7 +495,79 @@ export async function bindReviewEntry(store:Store,adapter:ReviewEntryAdapter,ope
 
 /** Core owns review-intake workspace identity; the selected host only creates it. */
 export function prepareReviewEntryWorkspace(adapter:Adapter,input:ReviewEntryWorkspaceInput){
-  if(!adapter.createReviewEntryWorkspace)throw Error('Review entry is unavailable on this adapter');
+  if(!adapter.createReviewEntryWorkspace)throw Error(`Review-entry workspace preparation is unavailable on ${HOST_KIND_LABELS[hostKindOf(adapter.hostId)]}`);
   const requestId=`nucleus-review-entry-${createHash('sha256').update(`${input.leadId}\n${input.prNumber}\n${input.leadVersion}`).digest('hex').slice(0,32)}`;
   return adapter.createReviewEntryWorkspace({requestId,title:`Review PR #${input.prNumber}: ${input.title}`,repoPath:input.repoPath,prNumber:input.prNumber});
+}
+
+export function unavailableReviewEntry(hostId: string | undefined): Error {
+  return Error(`Review entry is unavailable on ${HOST_KIND_LABELS[hostKindOf(hostId)]}`);
+}
+
+/** The Git preparation shared by hosts that register a worktree after Git creates it. */
+export async function createHostedReviewEntryWorkspace(
+  host: {
+    hostId: string;
+    dataDir(): string;
+    placement(): WorkspacePlacement;
+    workspaceHost: { createWorkspace(spec: HostWorkspaceSpec): Promise<{ id: string; directory: string | null }> };
+    reviewEntryGithubCommand?: ReviewEntryAdapter["reviewEntryGithubCommand"];
+  },
+  spec: Parameters<NonNullable<Adapter["createReviewEntryWorkspace"]>>[0],
+): Promise<{ id: string }> {
+  const { repoPath, prNumber, title, requestId } = spec;
+  const repository = githubRepositoryFromRemote(await git(repoPath, "config", "--get", "remote.origin.url"));
+  if (!repository) throw Error("Review entry requires the canonical GitHub origin");
+  const pr = openCanonicalPullRequest(
+    await readCanonicalPullRequest(spec, repository, prNumber, host.reviewEntryGithubCommand ?? command),
+    () => "Pull request must be open, unmerged and non-draft",
+  );
+  if (pr.headRef === pr.baseRef) throw Error("Review entry requires an isolated PR branch");
+  const ref = `refs/heads/${pr.headRef}`;
+  await git(repoPath, "check-ref-format", ref);
+  const advertised = await git(repoPath, "ls-remote", "--heads", "origin", ref);
+  if (advertised !== `${pr.headSha}\t${ref}`)
+    throw Error("Remote branch head does not match the pull request head");
+
+  const { commonDir } = readGitCheckout(repoPath);
+  const placement = host.placement();
+  const root = placement?.workspaceRoot ?? join(placement?.dataDir ?? host.dataDir(), WORKSPACES_DIR);
+  const identity = createHash("sha256").update(`${host.hostId}\n${requestId}`).digest("hex");
+  const directory = join(workspaceRepoRoot(root, commonDir), `review-entry-${identity}`);
+  placement?.admit(directory);
+  const exists = await lstat(directory).then(() => true, (error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return false;
+    throw error;
+  });
+  if (!exists) {
+    const local = await gitRun(repoPath, ["show-ref", "--verify", "--quiet", ref]);
+    let args: string[];
+    if (local.code === 0) {
+      if (await git(repoPath, "rev-parse", "--verify", ref) !== pr.headSha)
+        throw Error("Local PR branch has a different head; preserve it and resolve the difference before intake");
+      args = ["--", directory, pr.headRef];
+    } else if (local.code === 1 && !local.signal) {
+      await gitBulk(repoPath, "fetch", "--no-tags", "origin", ref);
+      args = ["--no-track", "-b", pr.headRef, "--", directory, pr.headSha];
+    } else {
+      throw Error(`Local PR branch could not be inspected: ${local.stderr}`);
+    }
+    await mkdir(dirname(directory), { recursive: true });
+    // Git's branch and worktree locks fence concurrent preparation. Force or
+    // branch reset would let intake take a checkout from another writer.
+    await gitBulk(repoPath, "worktree", "add", ...args);
+  }
+  const checkout = readGitCheckout(directory);
+  if (checkout.toplevel !== directory || checkout.commonDir !== commonDir ||
+      checkout.gitDir === commonDir || checkout.branch !== pr.headRef || checkout.head !== pr.headSha ||
+      await git(directory, "status", "--porcelain"))
+    throw Error("Intake worktree is not clean on the exact PR branch and head; its files were preserved");
+  const receipt = join(checkout.gitDir, "nucleus-review-entry");
+  if (!exists) await writeFile(receipt, identity, { flag: "wx", mode: 0o600 });
+  else if (await readFile(receipt, "utf8").catch(() => null) !== identity)
+    throw Error("Existing worktree has no custody receipt for this review intake; its files were preserved");
+  const workspace = await host.workspaceHost.createWorkspace({ requestId, title, directory, project: { workspaceRoot: repoPath } });
+  if (workspace.directory !== directory)
+    throw Error(`Review-entry workspace returned a different directory on ${HOST_KIND_LABELS[hostKindOf(host.hostId)]}`);
+  return { id: workspace.id };
 }

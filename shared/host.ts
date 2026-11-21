@@ -329,6 +329,7 @@ export type HostTerminalInventory =
  * idleness. Core applies those decisions; the host only reports what it sees.
  */
 export interface HostThread {
+  readonly workspaceDirectory?: string | null;
   /** The native identity; an empty value is an unreadable thread, which core refuses. */
   id: AgentId;
   workspaceId: WorkspaceId | null;

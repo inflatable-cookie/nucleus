@@ -8,6 +8,7 @@ export type { OriginAgent };
 
 /** What a host is and how Nucleus reads and reports through it: its capabilities, host and profile catalogs, report route and load. */
 export interface HostAdapterIdentity {
+  readonly hostId?: string;
   /** Explicit host capabilities when the native adapter has more than the legacy flags. */
   capabilities?(): import('../../../shared/host').HostCapabilities;
   /** Host-specific workspace registration identity validation. */

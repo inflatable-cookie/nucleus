@@ -202,7 +202,7 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
         workspaceThreads: (ids: readonly string[]) =>
           native.workspaceThreads(ids),
         workspaceTerminals: (id: string) => native.workspaceTerminals(id),
-        activeThreads: () => native.activeThreads(),
+        activeThreads: () => native.activeThreads(true),
       };
     }
     get messageHost() {

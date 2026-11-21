@@ -11,6 +11,8 @@ import type {
 } from "../../shared/host-operation";
 import { parseHostOperationOutcome } from "../../shared/service/host-channel";
 import { WIRE_LABEL_KEYS, wireLabels } from "../../shared/wire-labels";
+import { workspaceHandleForPath } from "../../shared/host-operation";
+import { linkedWorktreePath } from "../../core/git/git-identity";
 
 export interface BbWorkspaceRecord {
   id: string;
@@ -159,14 +161,19 @@ export class BbThreads {
       throw error;
     }
   }
+  workspaceFor(row: BbRow, agent: BbAgent | undefined): string | null {
+    if (agent) {
+      const workspace = this.ports.workspace(agent.workspaceId);
+      return workspace && workspace.environmentId === row.environmentId &&
+        workspace.directory === row.environmentPath ? agent.workspaceId : null;
+    }
+    if (!row.environmentId) return null;
+    const directory = row.environmentPath && linkedWorktreePath(row.environmentPath);
+    return directory ? workspaceHandleForPath(directory) : `bb-environment:${row.environmentId}`;
+  }
+
   private observation(row: BbRow): AgentObservation {
     const agent = this.ports.state().agents[row.threadId];
-    const workspace = agent && this.ports.workspace(agent.workspaceId);
-    const workspaceId =
-      workspace?.environmentId === row.environmentId &&
-      workspace.directory === row.environmentPath
-        ? agent.workspaceId
-        : null;
     const pending = row.interactions.filter(
       (i) => i.status === "pending" || i.status === "resolving",
     );
@@ -194,7 +201,7 @@ export class BbThreads {
     }
     return {
       id: row.threadId,
-      workspaceId,
+      workspaceId: this.workspaceFor(row, agent),
       status: row.archivedAt !== null ? "closed" : row.status,
       active,
       permissions: pending.length > 0,
@@ -235,18 +242,6 @@ export class BbThreads {
     if (row.threadId !== id)
       throw new Error("BB observation answered another thread");
     return this.observation(row);
-  }
-  /** A thread's observation beside the environment it runs in, for a thread Nucleus did not create. */
-  async origin(
-    id: string,
-  ): Promise<{ observation: AgentObservation; environmentId: string | null }> {
-    const row = await this.read<BbRow>("thread.observe", { threadId: id });
-    if (row.threadId !== id)
-      throw new Error("BB observation answered another thread");
-    return {
-      observation: this.observation(row),
-      environmentId: row.environmentId,
-    };
   }
   async observationInventory(
     ids: readonly string[],
