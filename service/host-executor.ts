@@ -253,9 +253,12 @@ export class HostExecutorLink {
       if (!op) return false;
       // An expired read is still a response to this exact request. Do not let an
       // arbitrary or malformed frame consume its correlation or pass as a reply.
-      const valid = answer.error !== undefined
-        ? answer.result === undefined && parseHostOperationFailure(answer.error) !== null
-        : answer.result !== undefined && parseHostOperationOutcome(op, answer.result).ok;
+      const valid =
+        answer.error !== undefined
+          ? answer.result === undefined &&
+            parseHostOperationFailure(answer.error) !== null
+          : answer.result !== undefined &&
+            parseHostOperationOutcome(op, answer.result).ok;
       if (!valid) return false;
       this.expiredReads.delete(answer.id);
       return true;
