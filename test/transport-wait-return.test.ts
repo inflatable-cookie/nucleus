@@ -24,9 +24,17 @@ const HOST_A = 't3code:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 const HOST_B = 't3code:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
 type Loose = Record<string, any>;
 
-function fixture(t: TestContext, hostProcessListing?: Adapter['hostProcessListing']) {
+function fixture(
+  t: TestContext,
+  hostProcessListing?: Adapter['hostProcessListing'],
+  observationInventory?: Adapter['observationInventory'],
+) {
   const store = new Store(':memory:');
-  const engine = new Engine(store, { hostProcessListing } as Adapter, 60_000);
+  const engine = new Engine(
+    store,
+    { hostProcessListing, observationInventory } as Adapter,
+    60_000,
+  );
   t.after(async () => { await engine.stop(); store.close(); });
   store.setMeta('paused', false);
   store.setMeta('globalLimit', 0);
@@ -109,6 +117,35 @@ test('a transport wait clears on the pass that observes the host answer, and the
   assert.equal(f.kinds(task.id).filter(kind => kind === 'host_wait_cleared').length, 1, 'a repeated pass converges');
   assert.equal(f.kinds(task.id).filter(kind => kind === 'transport_deferred').length, 1, 'one reading, one record');
   assert.equal(f.store.task(task.id).resolution.stop, null);
+});
+
+test('an inventory that loses the transport keeps the host wait, and the returning pass settles it', async t => {
+  let connected = true;
+  const f = fixture(t, undefined, async () => {
+    if (!connected) throw transportCause(HOST_A);
+    return new Map();
+  });
+  const task = f.add(HOST_A, 'Inventory transport task');
+  f.engine.resolution.observationTargets = () => ['agent-1'];
+  f.engine.resolution.transportDeferred(f.store.task(task.id), transportCause(HOST_A));
+
+  // The registry still claims the host, and the optional inventory is the pass's
+  // one host read: losing the transport there means this host did not answer, so
+  // its task keeps the host-scoped wait instead of being cleared as though it had.
+  connected = false;
+  await f.pass();
+  const waiting = f.store.task(task.id);
+  assert.equal(waiting.resolution.stop?.reason, 'host_unavailable', 'the lost inventory is the host not answering');
+  assert.ok(waiting.resolution.hostWait, 'the independent host wait is still recorded');
+  assert.deepEqual(f.visited, [], 'nothing is started for a host that owes its reading');
+  assert.match(String(f.store.getMeta('hostPassError')), /observationInventory: Transport not connected/);
+
+  connected = true;
+  await f.pass();
+  const cleared = f.store.task(task.id);
+  assert.equal(cleared.resolution.stop, null, 'the returning pass settles the same wait');
+  assert.equal(cleared.resolution.hostWait, null);
+  assert.deepEqual(f.visited, [task.id], 'and visits the ready task in that pass');
 });
 
 test('a slow process reader and a still-failing host leave the returning host free to settle', async t => {

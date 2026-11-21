@@ -313,7 +313,10 @@ tasks and the fleet pass continues; it never becomes `engineError`. A step that
 fails at the transport boundary answers for that host alone: the pass reads the
 failure rather than the registry's connected claim, so only that host's tasks keep
 their host-scoped wait, and the same bounded reading covers a host read made during
-a task visit and the failover pass.
+a task visit and the failover pass. The optional observation inventory is one of
+those steps: an inventory that cannot be read is only unavailable, so every
+identity takes the narrow read, while an inventory that loses the transport is
+that host not answering and keeps its tasks' host-scoped wait.
 
 **ControlContext** (`core/verbs/control-context.ts`). Holds the hidden parameters of
 every verb (`selfForceRunId`, `coordinatorActionRunId`, `replayingDeferredVerb`)
@@ -3277,7 +3280,10 @@ movement invalidates source approval and preserves the normal readiness gates.
   queue on their lane, and each quantum starts without the caller's async
   context. Only same-lane re-entry runs inline. The scheduler yields between quanta. A cursor-sweep audit is the restart and missed-signal
   fallback, and unfinished operations resume from stored identity without
-  reissuing an uncertain effect.
+  reissuing an uncertain effect. The quantum's bound owns its timer: a timeout
+  report that throws is contained there and kept as the pass's `hostPassError`,
+  so a failing telemetry write never escapes as an uncaught exception while the
+  pass moves on with that task's lane still held.
 - A reported turn is observed on its task lane when a callback or Paseo
   lifecycle hint wakes it. If still active, up to five task-local follow-ups
   run after 2, 4, 8, 16 and 32 seconds; a persistent wait returns to the

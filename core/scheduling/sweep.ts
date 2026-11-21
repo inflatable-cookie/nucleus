@@ -174,6 +174,41 @@ export class Sweep {
       `Task quantum did not return within ${TASK_QUANTUM_BOUND_MS / 1000} s; the sweep moved on and this task's lane stays held until it returns`,
     );
   }
+  /**
+   * One task's quantum, bounded with its outage report. The bound owns the timer,
+   * so the report's own failure never escapes it and never takes the service down
+   * (nucleus#1469); the fault goes to `retainQuantumFault`, which keeps it on this
+   * pass's diagnostic while the window moves on.
+   */
+  private boundTaskQuantum(
+    quantum: Promise<unknown>,
+    taskId: string,
+  ): Promise<void> {
+    return boundQuantum(quantum, () => this.recordQuantumOutage(taskId), {
+      onFault: (error) => this.retainQuantumFault(taskId, error),
+    });
+  }
+  /**
+   * The outage event's own failure, kept as this pass's diagnostic beside a failed
+   * host step. The task's lane is still held, so a later pass reports the same
+   * outage once the store writes again; a store that refuses this record too
+   * leaves the service log as the one place the fault survives.
+   */
+  private retainQuantumFault(taskId: string, error: unknown): void {
+    const detail = (
+      error instanceof Error ? error.message : String(error)
+    ).slice(0, 1500);
+    try {
+      this.engine.store.setMeta(
+        "hostPassError",
+        `${taskId}/observation_outage: ${detail}`.slice(0, 2000),
+      );
+    } catch {
+      console.error(
+        `Nucleus observation outage was not recorded for ${taskId}: ${detail}`,
+      );
+    }
+  }
   /** Durable cursor for the bounded safety sweep: the last task identity reconciled. */
   sweepCursor: string | null = null;
   private preSendCursor = "";
@@ -399,7 +434,7 @@ export class Sweep {
       for (const taskId of receiptTasks) {
         if (this.engine.stopped)
           return { fault: null, covered: false, visited };
-        await boundQuantum(
+        await this.boundTaskQuantum(
           this.engine.scheduleLane(
             `task:${taskId}`,
             LANE_PRIORITY_TASK,
@@ -408,7 +443,7 @@ export class Sweep {
                 this.engine.store.settleTaskPreSendReceipts(taskId);
             },
           ),
-          () => this.recordQuantumOutage(taskId),
+          taskId,
         );
       }
       // Audit A6: one bounded labelled inventory answers every identity this
@@ -605,7 +640,7 @@ export class Sweep {
             task.phase,
           ),
       )) {
-        await boundQuantum(
+        await this.boundTaskQuantum(
           this.engine
             .scheduleLane(`task:${task.id}`, LANE_PRIORITY_TASK, async () => {
               try {
@@ -617,7 +652,7 @@ export class Sweep {
               // shutdown discarded the queued quantum, so the audit simply stops.
             })
             .catch(() => {}),
-          () => this.recordQuantumOutage(task.id),
+          task.id,
         );
       }
       // One lifecycle quantum per task on an exclusive key. A control or
@@ -661,7 +696,7 @@ export class Sweep {
           if (["done", "cancelled"].includes(task.phase)) {
             if (finishedCatchUp.has(task.id)) {
               pending.push(
-                boundQuantum(
+                this.boundTaskQuantum(
                   this.engine.scheduleLane(
                     `task:${task.id}`,
                     LANE_PRIORITY_TASK,
@@ -681,7 +716,7 @@ export class Sweep {
                       );
                     },
                   ),
-                  () => this.recordQuantumOutage(task.id),
+                  task.id,
                 ),
               );
               await new Promise<void>((resolve) => setImmediate(resolve));
@@ -720,8 +755,9 @@ export class Sweep {
           if (hostWait) continue;
           if (releasedTasks.has(task.id)) continue; // The release already queued this task.
           pending.push(
-            boundQuantum(this.engine.scheduleTaskQuantum(task.id), () =>
-              this.recordQuantumOutage(task.id),
+            this.boundTaskQuantum(
+              this.engine.scheduleTaskQuantum(task.id),
+              task.id,
             ),
           );
           // Independent lanes may await concurrently. Paseo and process

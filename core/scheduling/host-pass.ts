@@ -512,12 +512,15 @@ export class HostPass {
     ];
     let observed: ReadonlyMap<string, AgentObservation> | null = null;
     if (inventoryIds.length && this.adapter.observationInventory) {
-      try {
+      // The inventory is optional, so a list that cannot be read answers nothing
+      // and every identity falls back to the narrow read. It is still a host read,
+      // so its own failure is this pass's to classify (nucleus#1469): the step
+      // keeps an unavailable inventory distinct from transport loss, which is the
+      // host answering nothing for the pass, and reports both as `hostPassError`.
+      // A timeout keeps stopping the pass, as every other host step's does.
+      await this.step(host, "observationInventory", async () => {
         observed = await this.context.host.observationInventory(inventoryIds);
-      } catch (error) {
-        if (hostTimedOut(error)) throw error;
-        observed = null;
-      }
+      });
     }
     const retired = await this.context.observeRetiredWorkers(
       retiredPlan,

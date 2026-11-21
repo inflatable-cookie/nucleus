@@ -26,7 +26,7 @@ test("a hung task quantum settles at its bound and reports one outage", async ()
     () => {
       outages++;
     },
-    25,
+    { bound: 25 },
   );
   assert.equal(outages, 1);
   assert.ok(
@@ -40,8 +40,8 @@ test("a window with one hung quantum still completes the others", async () => {
   const fast = Promise.resolve();
   const reported: string[] = [];
   const window = [
-    boundQuantum(hung, () => reported.push("hung"), 25),
-    boundQuantum(fast, () => reported.push("fast"), 25),
+    boundQuantum(hung, () => reported.push("hung"), { bound: 25 }),
+    boundQuantum(fast, () => reported.push("fast"), { bound: 25 }),
   ];
   await Promise.all(window);
   assert.deepEqual(reported, ["hung"]);
@@ -54,20 +54,72 @@ test("a quantum that returns in time reports nothing, and its own failure never 
     () => {
       outages++;
     },
-    25,
+    { bound: 25 },
   );
   await boundQuantum(
     Promise.reject(new Error("quantum fault")),
     () => {
       outages++;
     },
-    25,
+    { bound: 25 },
   );
   assert.equal(outages, 0);
 });
 
 test("the production bound is two minutes", () => {
   assert.equal(TASK_QUANTUM_BOUND_MS, 120_000);
+});
+
+/**
+ * nucleus#1469: the production timeout observer writes a SQLite event. A throw
+ * from it used to escape the timer as an uncaught exception while the promise had
+ * already resolved, so the fault both killed the service and left no record. The
+ * bound contains it, still settles the quantum and hands the real fault to the
+ * caller's sink.
+ */
+test("a timeout observer that throws stays inside the timer and its fault is kept", async () => {
+  const kept: unknown[] = [];
+  let reports = 0;
+  const started = Date.now();
+  await boundQuantum(
+    new Promise<void>(() => {}),
+    () => {
+      reports++;
+      throw new Error("SQLite write failed");
+    },
+    { bound: 25, onFault: (error) => kept.push(error) },
+  );
+  assert.equal(reports, 1, "the observer still got its one report");
+  assert.ok(
+    Date.now() - started < 1000,
+    "the quantum must still settle at its bound",
+  );
+  assert.equal(kept.length, 1, "the real fault is kept, never swallowed");
+  assert.match(String((kept[0] as Error).message), /SQLite write failed/);
+});
+
+test("a fault sink that throws is contained too, and the window's other quanta still complete", async () => {
+  const ran: string[] = [];
+  await Promise.all([
+    boundQuantum(
+      new Promise<void>(() => {}),
+      () => {
+        throw new Error("observer fault");
+      },
+      {
+        bound: 25,
+        onFault: () => {
+          throw new Error("sink fault");
+        },
+      },
+    ),
+    boundQuantum(
+      new Promise<void>(() => {}),
+      () => ran.push("hung"),
+      { bound: 25 },
+    ),
+  ]);
+  assert.deepEqual(ran, ["hung"], "a contained fault never stops the window");
 });
 
 test("T3 transport and timeout errors classify as transport failures, never attention", () => {
@@ -134,13 +186,13 @@ test("a task whose lane never returns does not hold the window: the next task st
     const outages: string[] = [];
     // The window's shape: one bounded wait per quantum, all awaited together.
     await Promise.all([
-      boundQuantum(quantum, () => outages.push("stuck"), 25),
+      boundQuantum(quantum, () => outages.push("stuck"), { bound: 25 }),
       boundQuantum(
         f.engine.scheduleLane("task:fast", 1, () => {
           fastRan = true;
         }),
         () => outages.push("fast"),
-        25,
+        { bound: 25 },
       ),
     ]);
     assert.equal(
@@ -155,11 +207,24 @@ test("a task whose lane never returns does not hold the window: the next task st
   }
 });
 
+/**
+ * A real store whose outage telemetry write fails, so a test can watch what the
+ * sweep keeps when the observer's own report cannot be recorded.
+ */
+class FaultyOutageTelemetryStore extends Store {
+  override event(taskId: string, kind: string, detail: string) {
+    if (kind === "observation_outage") throw new Error("SQLite write failed");
+    return super.event(taskId, kind, detail);
+  }
+}
+
 // Keep the real Sweep, per-task lanes, finished-task query and cleanup effects;
 // unrelated audit preludes are quiet so this fixture isolates catch-up scheduling.
-function catchUpSweepFixture() {
+function catchUpSweepFixture(
+  createStore: (file: string) => Store = (file) => new Store(file),
+) {
   const dir = mkdtempSync(join(tmpdir(), "ns-catch-up-sweep-"));
-  const store = new Store(join(dir, "queue.sqlite"));
+  const store = createStore(join(dir, "queue.sqlite"));
   const hosts = ["t3code:a", "t3code:b"];
   store.setMeta("paused", false);
   store.setMeta("hostId", hosts[0]);
@@ -369,6 +434,65 @@ test("real catch-up sweep bounds a hung cleanup, advances both hosts and seriali
       "the queued pass reads the completed effect",
     );
     assert.ok(f.store.getMeta(finishedThreadCleanupKey(stuck.task.id)));
+  } finally {
+    f.releaseHung();
+    t.mock.timers.tick(TASK_QUANTUM_BOUND_MS);
+    await Promise.all(passes);
+    t.mock.timers.reset();
+    await f.close();
+  }
+});
+
+/**
+ * nucleus#1469: the outage report is a SQLite write. When that write fails the
+ * fault used to escape the timer as an uncaught exception while the pass had
+ * already moved on: the service died and the outage left no trace. The bound keeps
+ * the fault on the pass's diagnostic instead, and the pass still finishes the
+ * unrelated work beside the stuck task.
+ */
+test("a failed outage telemetry write stays inside the pass and unrelated cleanup still runs", async (t) => {
+  const f = catchUpSweepFixture(
+    (file) => new FaultyOutageTelemetryStore(file),
+  );
+  const stuck = f.add();
+  const healthy = f.add();
+  f.hold(stuck.agentId);
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const passes: Promise<unknown>[] = [];
+  try {
+    const pass = f.engine.auditPass(false);
+    passes.push(pass);
+    let settled = false;
+    void pass.then(() => (settled = true));
+    // A mocked clock only reaches a quantum's bound when it is ticked, and the
+    // window may queue a quantum after an earlier tick, so tick as the pass runs.
+    for (let turn = 0; turn < 200 && !settled; turn++) {
+      t.mock.timers.tick(TASK_QUANTUM_BOUND_MS);
+      await eventLoopTurn();
+    }
+    assert.ok(settled, "the pass settles with its stuck quantum bounded");
+    assert.equal(
+      (await pass).fault,
+      null,
+      "a contained telemetry fault is not the pass's fault",
+    );
+    assert.ok(
+      f.deleted.has(healthy.agentId),
+      "the unrelated healthy task is still cleaned up",
+    );
+    assert.equal(
+      f.store
+        .eventsAll(stuck.task.id)
+        .filter((event) => event.kind === "observation_outage").length,
+      0,
+      "the event really did fail to write",
+    );
+    assert.match(
+      String(f.store.getMeta("hostPassError")),
+      new RegExp(`${stuck.task.id}/observation_outage: SQLite write failed`),
+      "the real fault is kept on the pass's diagnostic",
+    );
+    assert.equal(f.engine.stopped, false, "the sweep survives the observer fault");
   } finally {
     f.releaseHung();
     t.mock.timers.tick(TASK_QUANTUM_BOUND_MS);
