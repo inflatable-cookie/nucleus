@@ -200,6 +200,7 @@ test(
       }),
       { ok: true },
     );
+    f.runtime.store.setMeta("operatorDefaultHostKind", "paseo");
     const caller = formatAgentId(bbHostId, "thr_submitter");
     const input = {
       ...f.input,
@@ -253,6 +254,7 @@ test(
       }),
       { ok: true },
     );
+    f.runtime.store.setMeta("operatorDefaultHostKind", "paseo");
     f.runtime.store.putRepository(
       { origin: null, path: f.repo },
       null,

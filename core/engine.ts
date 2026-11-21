@@ -1002,7 +1002,8 @@ export class Engine {
       online: (id) => this.hostOnline(id),
       ids: () => this.hostIds(),
       inventoryMatches: (id) => this.inventoryHostMatches(id),
-      originAvailable: (id) => this.hostAvailable(id),
+      originAvailable: (id) =>
+        !this.auditUnavailableHosts.has(id) && this.hostAvailable(id),
       // A host-dependent call arriving just after a roll waits out the runtime's
       // own bridge connection instead of refusing as unavailable (roll-recovery
       // contract): the poll is bounded and ends at once once the bridge answers.
