@@ -485,17 +485,28 @@ validation or hook runs.
   still proves the recorded group identity. A recycled or stale pgid never
   selects another task's run group. Each pid's start identity is checked again
   between discovery and the signal.
-- Process discovery reads parent pids and the Paseo daemon pid from
-  `~/.paseo/paseo.pid`. The daemon, Paseo app and Supervisor processes, every
-  descendant of the daemon, and every process in the daemon's process group are
-  excluded. If the pid file cannot identify the daemon, cwd matching still
-  excludes processes whose ancestry includes a Paseo app binary.
+- The host adapter supplies the process table and marks its own runtime on it
+  (`protectedRuntime`). Core never recognises a runtime by name. Paseo's adapter
+  marks the daemon, the Paseo app and Supervisor processes, every descendant of
+  the daemon, and every process in the daemon's process group, using the parent
+  pids and the daemon pid in `~/.paseo/paseo.pid`. A pid the file names is
+  protected whatever process now holds it, because a reused pid is then read
+  conservatively.
+- A missing pid file means no daemon was recorded; command recognition still
+  marks Paseo's own processes. A pid file that exists but does not hold one pid,
+  or cannot be read, is ambiguous: the adapter's listing is unavailable, and
+  nothing is stopped until it reads again.
+- A sweep with no adapter listing supplied proves nothing and stops nothing.
+  Core does not read the host table itself.
 - It never signals a process group shared with Nucleus or Paseo, or a pid whose
   start identity changed between discovery and the signal (a recycled pid).
   Nucleus stops its own threads through Paseo lifecycle controls, never by signal.
-- A task that has eligible Paseo-owned processes records one informational
-  history event listing the skipped processes. This is not a sweep failure and
-  repeated lifecycle passes do not add another skipped-process event.
+- A task that has eligible protected host-runtime processes records one
+  informational history event (`host_process_sweep_protected_skipped`) listing
+  the skipped processes. This is not a sweep failure and repeated lifecycle
+  passes do not add another skipped-process event. A task whose history already
+  holds the earlier `host_process_sweep_paseo_skipped` event counts it as the
+  recorded skip and writes no second one.
 - Signal is SIGTERM, a short grace, then SIGKILL for survivors, by pid or pgid
   only.
 - One task-history event lists each terminated pid, pgid, start time, cwd and

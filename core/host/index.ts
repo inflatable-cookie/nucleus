@@ -7,6 +7,7 @@ export type {
 export { hostConnected } from "./adapter";
 export type * from "./types";
 export type { HostPolicyPort, HostPolicyConstructor } from "./policy";
+export { readHostProcessTable } from "./process-table";
 export {
   ArchiveNotDeliveredError,
   HostReadRefusalError,

@@ -103,7 +103,7 @@ test("unavailable scans retain intent and scratch; a surviving identity is recor
           ...target,
           reason: "still running after SIGKILL",
         })),
-        skippedPaseo: [],
+        skippedProtected: [],
       }),
     });
     assert.match(

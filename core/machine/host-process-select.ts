@@ -1,6 +1,3 @@
-import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import type { HostProcessFact } from "../host/types";
 import { cwdInWorktree } from "../workspaces/worktree-validation";
 import {
@@ -19,9 +16,12 @@ import type { Task } from "../../shared/contracts";
  * signals nothing.
  *
  * Identity is pid or pgid plus start identity, never a command pattern. Queue
- * itself, Paseo and its daemon are never selected, and a process outside the
- * worktree is selected only while its pgid is a recorded group whose identity
- * is still proven on a live member.
+ * itself is never selected. A host's own runtime is protected by its adapter,
+ * which marks those processes on the table it supplies
+ * (`HostProcessFact.protectedRuntime`); this module reads the mark and never
+ * recognises a runtime by name. A process outside the worktree is selected only
+ * while its pgid is a recorded group whose identity is still proven on a live
+ * member.
  */
 
 export interface RecordedProcessGroup {
@@ -80,7 +80,7 @@ export function queueProcessGroupId(): number {
   return process.pid;
 }
 
-function livePgid(pid: number): number | null {
+export function livePgid(pid: number): number | null {
   try {
     const getpgid = (
       process as NodeJS.Process & { getpgid?: (pid?: number) => number }
@@ -95,94 +95,6 @@ function livePgid(pid: number): number | null {
 function startTimeOf(identity: string): string {
   const at = identity.indexOf("@");
   return at > 0 ? identity.slice(at + 1) : "unknown";
-}
-
-function commandLooksLikePaseo(command: string): boolean {
-  return command
-    .trim()
-    .split(/\s+/)
-    .some((token) => {
-      const base = token.split(/[\\/]/).pop() ?? "";
-      return (
-        /^(paseo|paseod|paseo-daemon|paseo-supervisor)(\.exe)?$/i.test(base) ||
-        /Paseo\.app/i.test(token)
-      );
-    });
-}
-
-function paseoDaemonPidFromFile(): number | null {
-  try {
-    const contents = readFileSync(
-      join(homedir(), ".paseo", "paseo.pid"),
-      "utf8",
-    );
-    const match = /^\s*(\d+)\s*$/.exec(contents);
-    const pid = match ? Number(match[1]) : NaN;
-    return Number.isSafeInteger(pid) && pid > 0 ? pid : null;
-  } catch {
-    return null;
-  }
-}
-
-export interface PaseoProcessOwnership {
-  daemonPid: number | null;
-  daemonPgid: number | null;
-  pids: Set<number>;
-  pgids: Set<number>;
-}
-
-/** Every process Paseo or its daemon owns: its descendants and its process group. */
-export function paseoProcessOwnership(
-  processes: HostProcessFact[],
-  configuredDaemonPid?: number | null,
-  lookupMissingDaemonPgid = true,
-): PaseoProcessOwnership {
-  const configured =
-    configuredDaemonPid === undefined
-      ? paseoDaemonPidFromFile()
-      : configuredDaemonPid;
-  const daemonPid =
-    Number.isSafeInteger(configured) && configured! > 0 ? configured! : null;
-  const byPid = new Map(processes.map((fact) => [fact.pid, fact]));
-  const roots = new Set<number>();
-  for (const fact of processes)
-    if (commandLooksLikePaseo(fact.command)) roots.add(fact.pid);
-  if (daemonPid !== null) roots.add(daemonPid);
-
-  const daemonFact = daemonPid === null ? undefined : byPid.get(daemonPid);
-  const daemonPgid =
-    daemonFact?.pgid ??
-    (lookupMissingDaemonPgid && daemonPid !== null
-      ? livePgid(daemonPid)
-      : null);
-  const pids = new Set<number>();
-  const pgids = new Set<number>();
-  if (daemonPgid !== null && daemonPgid > 0) pgids.add(daemonPgid);
-
-  for (const fact of processes) {
-    let current: HostProcessFact | undefined = fact;
-    const visited = new Set<number>();
-    let owned = false;
-    while (current && !visited.has(current.pid)) {
-      visited.add(current.pid);
-      if (roots.has(current.pid)) {
-        owned = true;
-        break;
-      }
-      const parent = current.ppid;
-      if (!parent || parent <= 0 || parent === current.pid) break;
-      if (roots.has(parent)) {
-        owned = true;
-        break;
-      }
-      current = byPid.get(parent);
-    }
-    if (daemonPgid !== null && fact.pgid === daemonPgid) owned = true;
-    if (!owned) continue;
-    pids.add(fact.pid);
-    if (Number.isSafeInteger(fact.pgid) && fact.pgid > 0) pgids.add(fact.pgid);
-  }
-  return { daemonPid, daemonPgid, pids, pgids };
 }
 
 function hostProcessTarget(
@@ -298,7 +210,8 @@ export async function provenRecordedPgidsAsync(
 
 export interface HostProcessSelection {
   targets: HostProcessTarget[];
-  skippedPaseo: HostProcessTarget[];
+  /** In-scope processes the host adapter marked as its protected runtime. */
+  skippedProtected: HostProcessTarget[];
 }
 
 export function selectHostProcessTargetsAndSkips(input: {
@@ -307,11 +220,11 @@ export function selectHostProcessTargetsAndSkips(input: {
   recordedGroups: RecordedProcessGroup[];
   protectedPids: Set<number>;
   queuePgid: number;
-  paseo: PaseoProcessOwnership;
 }): HostProcessSelection {
-  const blockedPgids = new Set(input.paseo.pgids);
+  const blockedPgids = new Set<number>();
   for (const fact of input.processes)
-    if (input.protectedPids.has(fact.pid)) blockedPgids.add(fact.pgid);
+    if (fact.protectedRuntime || input.protectedPids.has(fact.pid))
+      blockedPgids.add(fact.pgid);
   const provenPgids = provenRecordedPgids(
     input.recordedGroups,
     input.queuePgid,
@@ -319,7 +232,7 @@ export function selectHostProcessTargetsAndSkips(input: {
     blockedPgids,
   );
   const selected = new Map<number, HostProcessTarget>();
-  const skippedPaseo: HostProcessTarget[] = [];
+  const skippedProtected: HostProcessTarget[] = [];
   for (const fact of input.processes) {
     if (fact.startIdentity.endsWith("@unknown")) continue;
     const inGroup = provenPgids.has(fact.pgid);
@@ -328,25 +241,22 @@ export function selectHostProcessTargetsAndSkips(input: {
     );
     if (!inGroup && !inTree) continue;
     const target = hostProcessTarget(fact, inGroup ? "pgid" : "cwd");
-    if (input.paseo.pids.has(fact.pid)) {
-      skippedPaseo.push(target);
+    if (fact.protectedRuntime) {
+      skippedProtected.push(target);
       continue;
     }
     if (input.protectedPids.has(fact.pid)) continue;
     if (fact.pid === process.pid || fact.pid === process.ppid) continue;
-    if (commandLooksLikePaseo(fact.command)) {
-      skippedPaseo.push(target);
-      continue;
-    }
     selected.set(fact.pid, target);
   }
-  return { targets: [...selected.values()], skippedPaseo };
+  return { targets: [...selected.values()], skippedProtected };
 }
 
 /**
- * Select kill targets from a process table. Queue itself, Paseo and its daemon
- * are never selected. A process outside the worktree is selected only when its
- * pgid is a recorded group whose identity is still proven on a live member.
+ * Select kill targets from a process table. Queue itself and every process the
+ * host adapter marked as its protected runtime are never selected. A process
+ * outside the worktree is selected only when its pgid is a recorded group whose
+ * identity is still proven on a live member.
  */
 export function selectHostProcessTargets(input: {
   processes: HostProcessFact[];
@@ -354,15 +264,6 @@ export function selectHostProcessTargets(input: {
   recordedGroups: RecordedProcessGroup[];
   protectedPids: Set<number>;
   queuePgid: number;
-  paseoDaemonPid?: number | null;
 }): HostProcessTarget[] {
-  // This selector is a pure decision over the supplied process snapshot. The
-  // production reap path may resolve the configured daemon and query its live
-  // pgid before calling the lower-level selector.
-  const paseo = paseoProcessOwnership(
-    input.processes,
-    input.paseoDaemonPid ?? null,
-    false,
-  );
-  return selectHostProcessTargetsAndSkips({ ...input, paseo }).targets;
+  return selectHostProcessTargetsAndSkips(input).targets;
 }

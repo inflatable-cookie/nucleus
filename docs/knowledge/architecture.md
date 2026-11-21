@@ -194,8 +194,9 @@ owner to the rules it enforces.
 - `core/machine/` keeps one owner per process mechanism:
   `host-process-listing.ts` reads the host process table and answers `unknown`
   with its reason rather than an empty list, `host-process-select.ts` makes the
-  pure target decision (worktree cwd or a proven recorded group, with Queue,
-  Paseo and its daemon protected), `host-process-reap.ts` stops a selected
+  pure target decision (worktree cwd or a proven recorded group, with Queue
+  and every process the host adapter marks as its protected runtime excluded),
+  `host-process-reap.ts` stops a selected
   target once and records the sweep, `process-host-reads.ts` owns the Darwin
   `ps` reads and parsers, `process-identity-search.ts` answers which processes
   carry a group identity and whether a pid still has the recorded one,
