@@ -187,6 +187,26 @@ const parentThread = z.object({
   releasedAt: z.string().optional(),
   /** Set when this host re-entered the thread; a create inside its grace window keeps the turn. */
   holdingSince: z.string().optional(),
+  /**
+   * The finished-parent archive obligation's last attempt (nucleus#1459). The typed
+   * state and reason are what the host pass reports on the task, and the timestamp is
+   * what rotates the bounded batch, so a binding that cannot settle never starves the
+   * ones behind it. Absent once the same thread is observed archived.
+   */
+  archive: z
+    .object({
+      state: z.enum([
+        "unknown",
+        "refused",
+        "unobserved",
+        "mismatched",
+        "shared",
+        "read_failed",
+      ]),
+      reason: z.string(),
+      at: z.string(),
+    })
+    .optional(),
 });
 const schema = z.object({
   version: z.literal(1),

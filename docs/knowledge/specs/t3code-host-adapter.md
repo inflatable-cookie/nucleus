@@ -432,6 +432,9 @@ task's parent row is driven by the one attention projection the board and
   pending question or permission, genuine attention or escalation, or the
   `#1417` hidden-row notice still surfaces the row.
 - *finished* — the row's snooze is retired and the terminal lane archives it.
+  The finished parent's archive is its own step in the host pass, settled from the
+  durable parent binding before any of these reads: see [A finished parent is
+  archived by its own step](#a-finished-parent-is-archived-by-its-own-step).
 
 A planner's own hold parks the row the way a releasing hold does (nucleus#1419):
 the planner already said the task waits, so the row must not ask anyone for
@@ -1380,7 +1383,8 @@ clears an older finished marker after a manual unarchive; old markers alone cann
 distinguish an archive from deletion. A live task keeps the binding even if a
 sweep observes deletion, so a later role cannot launch a replacement parent. A
 finished task's held turn is released at once — the create grace window is for live
-work — and its parent is archived.
+work — and its parent is archived by the terminal step ([A finished parent is
+archived by its own step](#a-finished-parent-is-archived-by-its-own-step)).
 
 An explicit owner restart can restore the same archived parent after its existing
 creation, workspace and custody admission proves settled. The parent must still
@@ -1431,9 +1435,9 @@ it for the worker the task created.
 
 **Presentation follows the parent row.** Every role title (including the step
 suffix) and the shown/snoozed state address the parent row the children are drawn
-inside; no presentation write addresses a child. When the task ends, the sweep
-releases the held turn and archives the parent; the shared project registration is
-untouched.
+inside; no presentation write addresses a child. When the task ends, the terminal
+step releases the held turn and archives the parent; the shared project
+registration is untouched.
 
 **The provider is checked, never assumed.** The nested path needs an enabled,
 ready provider instance named `nucleus` whose driver is `acpRegistry`, advertising
@@ -1550,11 +1554,13 @@ is the evidence, produced by running that renderer's own functions on the same t
 While a T3 task is open, its worker, reviewer, recovery, coordinator and executor
 threads are never archived or deleted, with one exception: a superseded worker
 is archived at once (Tom, 2026-11-13; nucleus#1181). A nested task's parent thread
-is archived by the nesting sweep once the task reaches a terminal phase or is
-removed (`thread.archive`, deterministic command id, one archive per thread); its
-children keep their own run lifecycle. Releasing the parent's held turn is not an
-archive and changes no thread fact; a finished task's held turn is released at once
-and its parent archived. Nucleus never settles a task thread (see [one row per
+is archived by the host pass's terminal step once the task reaches a terminal phase
+or is removed (`thread.archive`, deterministic command id, one archive per thread);
+its children keep their own run lifecycle. Releasing the parent's held turn is not
+an archive and changes no thread fact; a finished task's held turn is released at
+once and its parent archived (see [A finished parent is archived by its own
+step](#a-finished-parent-is-archived-by-its-own-step)). Nucleus never settles a
+task thread (see [one row per
 task](#one-row-per-task)): a waiting row is snoozed and a row that needs a person is
 shown again, while the task keeps its retained reviewer and recovery bindings so the
 next round or fault continues the same child thread. A manually settled thread is unsettled by the delivery gate before a follow-up is sent. A new
@@ -1620,6 +1626,53 @@ sweeps do nothing; incomplete effects remain selectable.
 Paseo keeps its existing archive behaviour, including its reviewer-replacement
 fence and support-thread retirement after an episode. This T3 rule changes no
 Paseo lifecycle.
+
+### A finished parent is archived by its own step
+
+A finished task's parent leaves the operator's T3 snoozed list through one
+obligation, and that obligation is the host pass's own terminal step before any
+presentation read (nucleus#1459). It used to run after the Inbox and decision-card
+reads inside the title pass, which returned early on a fault and was skipped
+entirely when an earlier step timed out the pass; eleven Done Nucleus parents sat
+in T3's Snoozed list with no `archivedAt` and no recorded archive command because
+of it. The step is now independent:
+
+- **Discovered from the durable binding.** One eligible entry is an unarchived
+  `parents` record whose task the same pass reports as this host's and terminal
+  (removed, done, or cancelled with no active disposition). The record is on disk,
+  so the obligation survives a task workspace archive and a service roll, and
+  Inbox, decision-card, row and title faults cannot hide it.
+- **Bounded and rotating.** One pass visits at most `PARENT_ARCHIVE_BATCH` (four)
+  entries, the one whose last attempt is oldest first, and records the attempt's
+  timestamp on the binding, so a backlog drains over sweeps and no parent waits
+  behind a steady stream of newer ones. One entry's fault never stops another's:
+  only a host timeout ends the step, and the step records itself the way every
+  other pass step does.
+- **An exact identity.** Only the record's own task and thread are touched: the
+  record must name the task, the thread must not be claimed by a second task
+  record, and it must not be the pinned Inbox thread or any recorded role, follow-up
+  or retired-agent thread. Nothing here sweeps planners, project agents or a
+  person's own threads, and an operator snooze on another thread is untouched.
+- **Release, then archive, then observe.** The finished parent's held turn is
+  released first (a local ACP call, so a thread that left observation is still
+  released), then `thread.archive` goes through the durable intent with the
+  deterministic parent-archive command id. A settled receipt is never enough on its
+  own: the same thread must read archived (or removed/absent) before the binding is
+  marked `archivedAt`. A receipt T3 still shows live is a person's own unarchive
+  and is never undone.
+- **Unknown delivery is read, never resent blind.** A recorded intent whose
+  delivery is unknown is settled by a fresh positive read of that parent: archived
+  settles it, and a live thread is the read that lets the same command replay under
+  its own identity. A proven pre-send refusal may be re-sent the same way.
+- **A typed, visible wait.** Every entry the step cannot settle is returned as a
+  typed wait (`unknown`, `refused`, `unobserved`, `mismatched`, `shared`,
+  `read_failed`) with the host's own reason. The pass writes it on the task
+  (`parent_archive_uncertain` for unknown delivery, `parent_archive_wait`
+  otherwise, one event per distinct reason) and the binding keeps the same state,
+  so the record survives a roll. Reading the same wait again says nothing new.
+
+The three-day archived-thread retention pass and the workspace delete/archive
+rules are unchanged: this step archives a parent thread and nothing else.
 
 ## Composition and unsupported capabilities
 
@@ -1895,13 +1948,30 @@ own delete does not retire presentation intents. Regression tests instrument
 
 nucleus#1378's held-turn proof (`effigy proof:t3code:held-turn`) runs the parent
 transcript on the installed nightly: the initial launch, same-state writes, several
-milestones within one held turn, the production release and re-entry, the closeout,
-and the wire's paragraph breaks. On `0.1.11-nightly.20261119.4928`, a re-entry created
+milestones within one held turn, the production release and re-entry, the closeout
+through the ordinary host pass, and the wire's paragraph breaks. On `0.1.11-nightly.20261119.4928`, a re-entry created
 with `createdBy: "system"` is accepted and holds the run, but T3 renders it as a
 visible user bubble. No quiet re-entry exists on `message.dispatch`, so the visible
 plain sentence is the prompt. The proof releases the held turn through a fixture-only
 `acp` debug target, because the adapter in that proof does not own the service's ACP
 surface.
+
+nucleus#1459's finished-parent archive proof (`effigy
+proof:t3code:parent-archive`) runs on the installed nightly through the ordinary
+host maintenance owner: a real store, the real `nucleus t3 install` route and a
+real `T3CodeHost`, driven by `HostPass.run` and never by a presentation, nesting or
+archive method directly. It proves a stored done task with a retired workspace
+handle and a snoozed parent archived in one ordinary pass with exactly one
+`thread.archive` under the deterministic command id and the binding settled; one
+parent's own projection read failing while its sibling archives in the same pass,
+with the faulted parent keeping a `read_failed` wait the next pass settles; an
+archive whose reply is lost leaving an unknown intent, and the rolled host settling
+it from the thread's archived fact with no second command; and two records claiming
+one parent thread never archived while a nonterminal parent keeps the operator's
+snooze. `test/t3code-parent-archive.test.ts` and `test/host-pass.test.ts` cover the
+same cases on the private synthetic nightly — including the failing Inbox read,
+which an isolated nightly cannot create while its own ACP probe reports `warning` —
+and the step order that keeps the archive ahead of every presentation read.
 
 `test/t3code-inbox.test.ts`, `test/acp-agent.test.ts`, `test/acp-service.test.ts`
 and `effigy proof:t3code:inbox` (`scripts/acceptance/t3code-inbox-private.ts`)

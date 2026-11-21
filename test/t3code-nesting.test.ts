@@ -412,11 +412,18 @@ test("a parent with no live turn releases nothing, and the sweep releases one tu
     { id: "synthetic-task", phase: "working" } as Task,
   ]);
   assert.equal(acp.released.length, 1, "one release per held turn");
-  // A finished task archives its parent, never the shared project or the child.
-  await host.reconcileThreadTitles([
-    { id: "synthetic-task", phase: "done" } as Task,
+  // The terminal step archives a finished task's parent, never the shared project or the
+  // child, and it does so from the parent binding rather than the row pass (nucleus#1459).
+  await host.reconcileFinishedParents([
+    { id: "synthetic-task", hostId: host.hostId, phase: "done" } as Task,
   ]);
   assert.notEqual(server.threads.get(parent.threadId)!.thread.archivedAt, null);
+  assert.notEqual(parentOf(host)?.archivedAt, undefined);
+  // The presentation pass leaves the archived parent alone.
+  await host.reconcileThreadTitles([
+    { id: "synthetic-task", hostId: host.hostId, phase: "done" } as Task,
+  ]);
+  assert.equal(commandsOf(server, "thread.archive").length, 1);
 });
 
 test("child questions and permissions are answered on the child, never through the parent", async (t) => {
@@ -1174,7 +1181,9 @@ test("decisionParent routes an archived parent to the Inbox and keeps a disconne
   });
 
   finishChildren(host, server);
-  await host.reconcileThreadTitles([{ id: taskId, phase: "done" } as Task]);
+  await host.reconcileFinishedParents([
+    { id: taskId, hostId: host.hostId, phase: "done" } as Task,
+  ]);
   assert.notEqual(parentOf(host)?.archivedAt, undefined);
   assert.deepEqual(host.decisionParent(taskId), { state: "absent" });
   assert.deepEqual(proposedOwner(fakeStore, decision, host.hostId, lookup), {

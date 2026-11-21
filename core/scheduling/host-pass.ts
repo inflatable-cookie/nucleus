@@ -26,7 +26,10 @@ import { submissionSchema } from "../../shared/contracts";
 import { submissionRecordFromLegacy } from "../../shared/schema/settings/legacy";
 import { LANE_PRIORITY_AUDIT } from "./lane-priorities";
 import type { TaskAttention } from "../../shared/task-attention";
-import type { TaskRowProjection } from "../host/contract/thread-presentation";
+import type {
+  ParentArchiveWait,
+  TaskRowProjection,
+} from "../host/contract/thread-presentation";
 import { taskRowAttention } from "../workspaces/task-row-attention";
 import { HiddenRows } from "./hidden-row";
 
@@ -192,6 +195,15 @@ export class HostPass {
       inventory: null,
       finishedCatchUp: new Map(),
     };
+    // The terminal owner settles every finished parent's archive first, from the host's
+    // durable parent bindings (nucleus#1459). It is its own step before any presentation
+    // read, so an Inbox, decision-card, row or title fault — or this pass timing out
+    // further along — can never leave a done task's parent in the operator's snoozed
+    // list, and one parent's uncertain delivery stays that parent's wait.
+    await this.step(host, "reconcileFinishedParents", async () => {
+      const waits = await this.adapter.reconcileFinishedParents?.(tasks);
+      for (const wait of waits ?? []) this.recordParentArchiveWait(host, wait);
+    });
     if (this.adapter.hostProcessListing) {
       const historical =
         Date.now() - (this.lastRunProcessSweep.get(host) ?? 0) >= 3_600_000;
@@ -529,8 +541,30 @@ export class HostPass {
     return result;
   }
 
-  /** One host step: a throw is recorded here and never stops the host's later steps. */
-  private async step(
+  /**
+   * Record one finished parent the host still owes an archive (nucleus#1459). The typed
+   * state and the host's own reason are the operator's evidence, and an unchanged wait is
+   * not a new event: the same reason on the next pass says nothing new. The binding keeps
+   * the same record, so it survives a roll.
+   */
+  private recordParentArchiveWait(host: string, wait: ParentArchiveWait): void {
+    const key = `parentArchiveWait:${host}:${wait.taskId}`;
+    const detail = `${wait.threadId} (${wait.state}): ${wait.reason}`.slice(
+      0,
+      2000,
+    );
+    if (this.store.getMeta<string>(key) === detail) return;
+    this.store.setMeta(key, detail);
+    this.store.event(
+      wait.taskId,
+      wait.state === "unknown"
+        ? "parent_archive_uncertain"
+        : "parent_archive_wait",
+      detail,
+    );
+  }
+
+  /** One host step: a throw is recorded here and never stops the host's later steps. */ private async step(
     host: string,
     name: string,
     run: () => Promise<unknown> | unknown,
