@@ -265,6 +265,83 @@ test("a step that fails at the transport boundary answers nothing for that host 
   );
 });
 
+/**
+ * nucleus#1469: the observation inventory is optional, so its read used to swallow
+ * its own transport loss and leave the host reading as though it answered. It is a
+ * host read like any other: a lost transport is this host not answering its pass,
+ * which is what keeps that host's tasks on their host-scoped wait, while an
+ * inventory that merely cannot be read is only unavailable. A host that recovers
+ * answers its next pass.
+ */
+test("an inventory that loses the transport is the host not answering, and the next pass recovers", async (t) => {
+  let connected = false;
+  const observations = new Map<string, AgentObservation>([
+    ["agent-1", { active: true } as AgentObservation],
+  ]);
+  const f = fixture(t, {
+    observationInventory: async () => {
+      if (!connected)
+        throw new Error(`Transport not connected: host ${HOST} is unavailable`);
+      return observations;
+    },
+  });
+  f.engine.resolution.observationTargets = () => ["agent-1"];
+
+  const lost = await f.engine.withHost(HOST, () => f.hostPass.run(HOST));
+  assert.equal(
+    lost.transportAnswered,
+    false,
+    "an inventory transport loss is the host not answering, not an empty answer",
+  );
+  assert.equal(
+    lost.inventory,
+    null,
+    "and nothing is answered for the identities it holds",
+  );
+  assert.match(
+    String(f.store.getMeta("hostPassError")),
+    /observationInventory: Transport not connected/,
+  );
+
+  connected = true;
+  const recovered = await f.engine.withHost(HOST, () => f.hostPass.run(HOST));
+  assert.equal(
+    recovered.transportAnswered,
+    true,
+    "the returning host answers its own pass",
+  );
+  assert.equal(
+    recovered.inventory,
+    observations,
+    "with the inventory it could read this time",
+  );
+});
+
+test("an inventory that cannot be read answers nothing while the host still answers its pass", async (t) => {
+  const f = fixture(t, {
+    observationInventory: async () => {
+      throw new Error("thread list ended before its last page");
+    },
+  });
+  f.engine.resolution.observationTargets = () => ["agent-1"];
+
+  const result = await f.engine.withHost(HOST, () => f.hostPass.run(HOST));
+  assert.equal(
+    result.transportAnswered,
+    true,
+    "an unreadable list is unavailability, not a lost host",
+  );
+  assert.equal(
+    result.inventory,
+    null,
+    "and every identity takes the narrow read instead",
+  );
+  assert.match(
+    String(f.store.getMeta("hostPassError")),
+    /observationInventory: thread list ended before its last page/,
+  );
+});
+
 test("terminal history is observed and superseded once on an archive-only host", async (t) => {
   let active = false;
   let activeTaskId = "";
