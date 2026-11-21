@@ -155,6 +155,8 @@ export type InboxListProps = {
   onSelectDecision: (id: string) => void;
   onSelectLead: (id: string, lane: null) => void;
   onSelectPapercut: (id: string) => void;
+  /** Opens a lane in the plan view, the drained-lane card's press (nucleus#1511). */
+  onOpenLane: (key: string) => void;
   busy: boolean;
   act: BoardAct;
   /** The list's view state the shell keeps across views (`usePipelineState`). */
@@ -172,7 +174,7 @@ const sectionTitles: Record<ActiveSection, string> = { working: "Working", revie
 export function InboxList({
   c, state, stateError, inbox, view, activeSection, leadsTab, onLeadsTab, leadsLoading, decisions, queuedHidden,
   parkedRepository, projectForRepository, selected, selectedLeadId, openPapercutId, openDecisionId,
-  onSelectTask, onSelectDecision, onSelectLead, onSelectPapercut, busy, act, pipeline,
+  onSelectTask, onSelectDecision, onSelectLead, onSelectPapercut, onOpenLane, busy, act, pipeline,
 }: InboxListProps) {
   const setTask = useRpc(api.taskControl);
   const changeLaneStatus = useRpc(api.laneStatus);
@@ -224,7 +226,7 @@ export function InboxList({
         return <HoldPromptCard key={key} busy={busy} onRelease={() => releaseHold(card.value)} onKeep={(reason) => keepHold(card.value, reason)}
           task={card.value} c={c} selected={selected === card.id} onPress={() => onSelectTask(card.id)} />;
       case "lane_drain":
-        return <LaneDrainCard key={key} lane={card.value} c={c} busy={busy} selected={false} onPress={() => {}}
+        return <LaneDrainCard key={key} lane={card.value} c={c} busy={busy} selected={false} onPress={() => onOpenLane(card.value.key)}
           onClose={() => closeDrainedLane(card.value)} onKeep={(reason) => keepDrainedLane(card.value, reason)} />;
       case "task":
         return <TaskCard key={key} task={card.value} defaultHostId={state?.hostId}
@@ -238,7 +240,9 @@ export function InboxList({
           title={<Text numberOfLines={2} style={{ color: c.foreground, fontWeight: "600", fontSize: typeScale.body.fontSize }}>{card.value.title}</Text>}
           chips={<RecordChips c={c} chips={["Submitting"]} />} snippet={metaText("Accepted; creating its task", 2)} selected={false} onPress={() => {}} />;
       case "lead":
-        return <TriageLeadCard key={key} lead={card.value} c={c} projectForRepository={projectForRepository} repositoryBadges={state?.repositoryBadges}
+        // The Leads view's tabs already split leads from papercuts, so the kind chip
+        // would repeat the tab on every row (nucleus#1511).
+        return <TriageLeadCard key={key} lead={card.value} c={c} showKind={false} projectForRepository={projectForRepository} repositoryBadges={state?.repositoryBadges}
           selected={selectedLeadId === card.id || openPapercutId === card.id} onSelectLead={(id) => onSelectLead(id, null)} onSelectPapercut={onSelectPapercut} />;
       default:
         return null;

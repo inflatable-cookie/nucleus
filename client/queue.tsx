@@ -299,6 +299,11 @@ export function MainSurface({
     setActiveSection(next === "active" ? section : null);
     setMenuOpen(false);
   };
+  /** The drained-lane card's press opens its lane in Planning (nucleus#1511). */
+  const openLaneInPlanning = (key: string) => {
+    openView("planning");
+    selectPlanningLane(key);
+  };
 
   const laneName = (key: string) =>
     (state?.lanes ?? []).find((lane) => lane.key === key)?.title ?? key;
@@ -659,6 +664,7 @@ export function MainSurface({
                     onSelectDecision={selectDecision}
                     onSelectLead={selectLead}
                     onSelectPapercut={selectPapercut}
+                    onOpenLane={openLaneInPlanning}
                     busy={busy}
                     act={act}
                     pipeline={pipeline}
