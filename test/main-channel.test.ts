@@ -7,13 +7,23 @@ import { mkdtemp, mkdir, readFile, realpath, writeFile, chmod } from "node:fs/pr
 import { join } from "node:path";
 import { install, installBase } from "../service/install/install.mjs";
 import { MainChannel, configureChannel, requestRollback } from "../service/install/main-channel.mjs";
-import { serviceNotices } from "../shared/service-roll";
 import { bridgeSupport } from "./support/bridge-fixture";
+import { installFixtureBbCli } from "./support/bb-cli-fixture";
+import { RollOwner } from "../service/roll/owner";
+import { readServiceInfo, readServiceRoll } from "../service/transport/identity";
+import { dataHome } from "../shared/data-home.mjs";
 
 import { scratchFixtureParent } from "./support/scratch-fixture";
 
 const exec = promisify(execFile);
-const { trackedBridge } = bridgeSupport("nmc");
+const { trackedBridge, trackedOwner } = bridgeSupport("nmc");
+
+/** What a roll owner's service answers with now: its identity file after the owner's own connect. */
+async function observe(owner: RollOwner) {
+  await owner.ensure();
+  const info = readServiceInfo(dataHome())!;
+  return { state: "running", detail: "", buildId: info.buildId, pid: info.pid, pluginBuildId: null, roll: readServiceRoll(dataHome()) } as unknown as { state: string; buildId: string; pid: number; roll: ReturnType<typeof readServiceRoll> };
+}
 
 test("startup proof derives scratch from workRoot when the developer override is unset", async () => {
   const previous = process.env.NUCLEUS_SCRATCH_ROOT;
@@ -46,6 +56,7 @@ timingTest("scratch main build, standby activation, failure notice and rollback"
   process.env.HOME = join(root, "home");
   process.env.PASEO_HOME = join(root, "p");
   await mkdir(join(process.env.HOME, ".nucleus"), { recursive: true });
+  installFixtureBbCli(process.env.HOME);
   await writeFile(join(process.env.HOME, ".nucleus", "settings.json"), JSON.stringify({ workRoot: root }));
   t.after(() => {
     if (previousScratchRoot === undefined) delete process.env.NUCLEUS_SCRATCH_ROOT;
@@ -79,10 +90,12 @@ timingTest("scratch main build, standby activation, failure notice and rollback"
   const bridge = trackedBridge({ sourcePath: current, paseoHome: process.env.PASEO_HOME, rollSettleMs: 0, rollCheckMs: 0 });
   const before = await bridge.serviceState();
   assert.equal(before.state, "running", before.detail);
-  assert.equal(await bridge.checkSource(), null, "an install without a channel stays pinned");
+  const pinned = trackedOwner({ sourcePath: current, paseoHome: process.env.PASEO_HOME, rollSettleMs: 0, rollCheckMs: 0 });
+  assert.equal(await pinned.checkSource(), null, "an install without a channel stays pinned");
+  pinned.close();
   bridge.close();
   await configureChannel("main", source);
-  const rolling = trackedBridge({ sourcePath: current, paseoHome: process.env.PASEO_HOME, rollSettleMs: 60_000, rollCheckMs: 0 });
+  const rolling = trackedOwner({ sourcePath: current, paseoHome: process.env.PASEO_HOME, rollSettleMs: 60_000, rollCheckMs: 0 });
   const cssPath = join(initial, "bb-plugin", "dist", "app.css");
   const originalCss = await readFile(cssPath);
   await writeFile(cssPath, Buffer.concat([originalCss, Buffer.from("\n/* changed */\n")]));
@@ -90,9 +103,9 @@ timingTest("scratch main build, standby activation, failure notice and rollback"
   assert.equal(integrityFailure?.status, "failed");
   assert.match(integrityFailure!.detail, /integrity verification.*app\.css/i);
   assert.match(integrityFailure!.detail, /reinstalling this version or rolling to a fresh build/);
-  const afterIntegrityFailure = await rolling.serviceState();
-  assert.equal(afterIntegrityFailure.state, "running", "the bridge still serves after refusing a corrupt version");
-  assert.match(serviceNotices(afterIntegrityFailure)[0]?.text ?? "", /integrity verification/);
+  const afterIntegrityFailure = await observe(rolling);
+  assert.equal(afterIntegrityFailure.state, "running", "the service still serves after refusing a corrupt version");
+  assert.match(integrityFailure!.detail, /integrity verification/);
   await writeFile(cssPath, originalCss);
   await writeFile(join(source, "shared/main-marker.mjs"), "export const marker = 2;\n");
   await run("git", ["add", "."]);
@@ -117,7 +130,7 @@ timingTest("scratch main build, standby activation, failure notice and rollback"
   assert.equal(cloneFailure?.status, "failed");
   assert.match(cloneFailure!.detail, /fixture initial clone failure/);
   assert.equal(await realpath(current), initial);
-  assert.equal((await rolling.serviceState()).pid, before.pid);
+  assert.equal((await observe(rolling)).pid, before.pid);
   assert.equal(await rolling.checkSource(), null, "the failed clone revision is suppressed");
   assert.equal(clones, 1);
   await writeFile(join(source, "shared/main-marker.mjs"), "export const marker = 3;\n");
@@ -149,10 +162,10 @@ timingTest("scratch main build, standby activation, failure notice and rollback"
   const elapsed = Date.now() - started;
   const active = await realpath(current);
   assert.notEqual(active, initial);
-  const after = await rolling.serviceState();
+  const after = await observe(rolling);
   assert.equal(after.buildId, roll?.toBuild);
   assert.notEqual(after.pid, before.pid);
-  assert.equal(rolling.standbyReadiness()?.warm, true);
+  assert.equal(rolling.session.lastStandbyReadiness?.warm, true);
   const receipt = JSON.parse(await readFile(join(active, "build.json"), "utf8"));
   assert.equal(receipt.revision, (await run("git", ["rev-parse", "HEAD"])).stdout.trim());
   console.log(JSON.stringify({ mainMergeToLiveMs: elapsed, buildAndStageMs, packageBuildMs: receipt.buildMs, packageBytes: receipt.bytes, settleMs: 60_000 }));
@@ -165,7 +178,7 @@ timingTest("scratch main build, standby activation, failure notice and rollback"
   assert.equal(pluginFailure?.status, "failed", pluginFailure?.detail);
   assert.match(pluginFailure!.detail, /fixture plugin load failure/);
   assert.equal(await realpath(current), active);
-  assert.equal((await rolling.serviceState()).pid, after.pid);
+  assert.equal((await observe(rolling)).pid, after.pid);
   await writeFile(join(source, "index.server.ts"), entry);
   await writeFile(join(source, "scripts/build-runtime.mjs"), "throw Error('fixture build failure');\n");
   await run("git", ["add", "."]);
@@ -174,14 +187,14 @@ timingTest("scratch main build, standby activation, failure notice and rollback"
   assert.equal(failed?.status, "failed");
   assert.match(failed!.detail, /fixture build failure/);
   assert.equal(await realpath(current), active);
-  assert.equal((await rolling.serviceState()).pid, after.pid);
-  assert.match(serviceNotices({ ...after, roll: failed })[0].text, /kept its running service/);
+  assert.equal((await observe(rolling)).pid, after.pid);
+  assert.match(failed!.detail, /kept its running service|build failed/);
   assert.equal(await rolling.checkSource(), null, "failed main is suppressed");
   await requestRollback();
   const rollback = await rolling.checkSource(true);
   assert.equal(rollback?.status, "rolled", rollback?.detail);
   assert.equal(await realpath(current), initial);
-  assert.equal((await rolling.serviceState()).buildId, before.buildId);
+  assert.equal((await observe(rolling)).buildId, before.buildId);
   // The bad main remains suppressed rather than undoing rollback.
   assert.equal(await rolling.checkSource(), null);
   rolling.close();

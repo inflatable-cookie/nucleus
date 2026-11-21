@@ -1,5 +1,5 @@
-import type { BridgeProcessActions } from "../../../shared/service/bridge-process";
-import type { BbPluginRollRecord } from "../../../shared/bb-plugin-roll";
+import type { BridgeProcessActions } from "../../shared/service/bridge-process";
+import type { BbPluginRollRecord } from "../../shared/bb-plugin-roll";
 
 /** A command to spawn detached, as a plain value so the composition supplies it. */
 export type Command = { command: string; args: string[] };
@@ -45,6 +45,8 @@ export interface BridgeOptions {
   rollHeavyFollowerCapMs?: number;
   /** Bounded wait for a forwarded call to wait out a roll and answer from the replacement; defaults to the roll's own readiness budget. */
   rollCallWaitMs?: number;
+  /** Roll owner: how long it waits with no service and nothing pending before it exits; defaults to 2 min. */
+  ownerIdleExitMs?: number;
   /** Test seam: whether a heavy run currently has an attached follower. */
   heavyFollowers?: () => boolean;
   /**
@@ -53,6 +55,12 @@ export interface BridgeOptions {
    * plugin entry opts in, so fixtures never reload the live plugin.
    */
   reloadPluginCommand?: () => Command;
+  /**
+   * Whether this plugin starts the host-independent roll owner (nucleus#1454)
+   * for its installed main channel. Only the plugin entry sets it, so a fixture
+   * bridge never spawns an owner against a real install.
+   */
+  rollOwnerLaunch?: boolean;
   /**
    * The BB plugin step a landed roll runs (nucleus#1339): report BB's installed
    * plugin against the build the roll landed, and install this build's plugin

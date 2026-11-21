@@ -11,6 +11,7 @@ import {dirname, join} from 'node:path';
 import {createRequire} from 'node:module';
 import {fileURLToPath, pathToFileURL} from 'node:url';
 import { ServiceBridge } from '../hosts/paseo/plugin/bridge';
+import { RollOwner } from '../service/roll/owner';
 import { readServiceInfo, readServiceRoll, readServiceStartupFailure, SERVICE_STARTUP_FAILURE_FILE, writeServiceInfo, writeServiceRoll } from '../service/transport/identity';
 import { serviceNotices } from '../shared/service-roll';
 import { requestServiceRollAfterRepositorySync } from '../service/install/roll-request';
@@ -35,7 +36,7 @@ const dependencies = dirname(dirname(createRequire(import.meta.url).resolve('tsx
  * every service this file spawned — including one a cancelled test left
  * booting — and asserts none survive.
  */
-const { trackedBridge } = bridgeSupport('nsr');
+const { trackedBridge, trackedOwner } = bridgeSupport('nsr');
 
 /** A fixture checkout contains copied source and dependencies; it never links a real checkout. */
 function fixtureCheckout() {
@@ -76,7 +77,7 @@ async function fixtureQueueClient(checkout: string, dataDir: string, rollWaitMs 
   return queueClient({ dataDir, rollWaitMs, onProgress });
 }
 
-async function cleanup(bridge: ServiceBridge, root: string, dataDir: string, pids: number[]) {
+async function cleanup(bridge: { close(): void }, root: string, dataDir: string, pids: number[]) {
   bridge.close();
   const info = readServiceInfo(dataDir);
   const targets = new Set([...pids, ...(info ? [info.pid] : [])]);
@@ -395,7 +396,7 @@ test('a bridge that did not start a roll handoff waits for it and never spawns a
 });
 
 timingTest('a fresh bridge settles an interrupted replacing roll once its target build answers', async t => {
-  const { root, dataDir } = fixtureCheckout();
+  const { root, checkout, dataDir } = fixtureCheckout();
   let bridge = trackedBridge({ dataDir, paseoHome: root, rollCheckMs: 0, rollSettleMs: 0 });
   const pids: number[] = [];
   t.after(() => cleanup(bridge, root, dataDir, pids));
@@ -409,13 +410,13 @@ timingTest('a fresh bridge settles an interrupted replacing roll once its target
       digest: 'c'.repeat(16), at: new Date().toISOString(), detail: 'Typecheck passed; replacing the service',
     });
 
-    // A plugin reload creates a new bridge after the old bridge has gone away.
-    bridge = trackedBridge({ dataDir, paseoHome: root, rollCheckMs: 0, rollSettleMs: 0 });
-    const after = await bridge.serviceState();
-    assert.equal(after.state, 'running');
-    assert.equal(after.buildId, before.buildId);
-    assert.equal(after.roll?.status, 'rolled');
-    assert.equal(after.roll?.toBuild, before.buildId);
+    // A fresh roll owner (after a restart or a plugin reload) settles the record once the target answers.
+    const owner = trackedOwner({ dataDir, paseoHome: root, sourcePath: checkout, rollCheckMs: 0, rollSettleMs: 0 });
+    try { await owner.ensure(); } finally { owner.close(); }
+    const after = readServiceRoll(dataDir);
+    assert.equal(readServiceInfo(dataDir)?.buildId, before.buildId);
+    assert.equal(after?.status, 'rolled');
+    assert.equal(after?.toBuild, before.buildId);
   } finally { await cleanup(bridge, root, dataDir, pids); }
 });
 
@@ -456,11 +457,10 @@ timingTest('settlement on connect touches only an unfinished roll naming the ans
     // Each case: a record, a fresh bridge on the same source connecting to the same service.
     const settle = async (roll: Parameters<typeof writeServiceRoll>[1]) => {
       writeServiceRoll(dataDir, roll);
-      bridge.close();
-      bridge = trackedBridge(options);
-      const state = await bridge.serviceState();
-      assert.equal(state.state, 'running');
-      assert.equal(state.pid, running.pid, 'the compatible service is kept');
+      // A fresh roll owner on the same source connects to the same service and settles the record.
+      const owner = trackedOwner({ ...options, sourcePath: checkout });
+      try { await owner.ensure(); } finally { owner.close(); }
+      assert.equal(readServiceInfo(dataDir)?.pid, running.pid, 'the compatible service is kept');
       return readServiceRoll(dataDir)!;
     };
     const typechecking = await settle({ ...base, status: 'typechecking', toBuild: null, digest: loaded, detail: 'Typechecking the changed checkout' });
@@ -552,7 +552,7 @@ test('a pending activation is retried on each unchanged roll check, not on conne
   const priorHome = process.env.HOME;
   process.env.HOME = join(root, 'home');
   let spawns = 0;
-  const bridge = new ServiceBridge({ processActions: bridgeProcessActions,
+  const bridge = new RollOwner({ processActions: bridgeProcessActions,
     sourcePath: checkout, dataDir, paseoHome: root, rollCheckMs: 0, readinessBudgetMs: 2_000,
     serviceCommand: () => { spawns++; return { command: process.execPath, args: ['-e', 'process.exit(1)'] }; },
   });
@@ -607,7 +607,7 @@ test('a seeded retrying replacement is not marked rolled when activation succeed
   const priorHome = process.env.HOME;
   process.env.HOME = join(root, 'home');
   let spawns = 0;
-  const bridge = new ServiceBridge({ processActions: bridgeProcessActions,
+  const bridge = new RollOwner({ processActions: bridgeProcessActions,
     sourcePath: checkout, dataDir, paseoHome: root, rollCheckMs: 0, readinessBudgetMs: 2_000,
     serviceCommand: () => { spawns++; return { command: process.execPath, args: ['-e', 'process.exit(1)'] }; },
   });
@@ -646,7 +646,7 @@ test('a quiet unchanged check returns null rather than the standing record', asy
   writeServiceRoll(dataDir, standing);
   const priorHome = process.env.HOME;
   process.env.HOME = join(root, 'home');
-  const bridge = new ServiceBridge({ processActions: bridgeProcessActions, sourcePath: checkout, dataDir, paseoHome: root, rollCheckMs: 0 });
+  const bridge = new RollOwner({ processActions: bridgeProcessActions, sourcePath: checkout, dataDir, paseoHome: root, rollCheckMs: 0 });
   try {
     assert.equal(await bridge.checkSource(), null, 'a quiet check reports that nothing happened');
     assert.deepEqual(readServiceRoll(dataDir), standing, 'the standing record is left as written');
@@ -671,7 +671,7 @@ test('an unreadable checkout leaves the roll record alone even when the data dir
   writeFileSync(blocked, 'not a directory');
   const priorHome = process.env.HOME;
   process.env.HOME = join(root, 'home');
-  const bridges = [dataDir, join(blocked, 'data'), join(root, 'no-record')].map(dir => new ServiceBridge({ processActions: bridgeProcessActions, sourcePath: checkout, dataDir: dir, paseoHome: root, rollCheckMs: 0 }));
+  const bridges = [dataDir, join(blocked, 'data'), join(root, 'no-record')].map(dir => new RollOwner({ processActions: bridgeProcessActions, sourcePath: checkout, dataDir: dir, paseoHome: root, rollCheckMs: 0 }));
   try {
     renameSync(join(checkout, 'shared'), join(checkout, 'shared-in-flight'));
     for (const bridge of bridges) assert.equal(await bridge.checkSource(true), null);
@@ -687,7 +687,7 @@ test('main rolls coalesce revisions, defer for followers, honor force and retain
   const root = mkdtempSync(join(tmpdir(), 'main-roll-'));
   const dataDir = join(root, 'data');
   let attached = false;
-  const bridge = new ServiceBridge({ processActions: bridgeProcessActions, sourcePath: root, dataDir, paseoHome: root, rollSettleMs: 60_000, heavyFollowers: () => attached });
+  const bridge = new RollOwner({ processActions: bridgeProcessActions, sourcePath: root, dataDir, paseoHome: root, rollSettleMs: 60_000, heavyFollowers: () => attached });
   const state = bridge as unknown as {
     session: { expected: string; sourceDigest: string; sourcePath: string };
     roll: { mainChannel: unknown; lastDigestChangeAt: number; activateInstalled: unknown; convergeActivation: () => Promise<null> };
@@ -738,7 +738,7 @@ test('a checkout without an installed main channel never rolls changed source', 
   for (const dir of ['core', 'service', 'shared', 'hosts', 'bin']) mkdirSync(join(root, dir));
   writeFileSync(join(root, 'shared', 'entry.ts'), 'export const version = 1;');
   writeFileSync(join(root, 'bin', 'queue-service.mjs'), '');
-  const bridge = new ServiceBridge({ processActions: bridgeProcessActions, sourcePath: root, dataDir: join(root, 'data'), paseoHome: root });
+  const bridge = new RollOwner({ processActions: bridgeProcessActions, sourcePath: root, dataDir: join(root, 'data'), paseoHome: root });
   assert.equal(typeof (bridge as unknown as { session: { expected: unknown } }).session.expected, 'string', 'fixture starts with a readable backend identity');
   (bridge as unknown as { roll: { mainChannel: null } }).roll.mainChannel = null;
   try {

@@ -45,7 +45,7 @@ import { readT3Connection } from "../shared/t3/settings";
 
 /** The claim file this launcher takes; the Paseo bridge's own claim is `queue-service.claim.json`. */
 export const T3_LAUNCH_CLAIM_FILE = "queue-service.t3-launch.json";
-/** The Paseo bridge's spawn claim (`hosts/paseo/plugin/spawn.ts`), read only. */
+/** The Paseo bridge's spawn claim (`service/roll/spawn.ts`), read only. */
 const BRIDGE_SPAWN_CLAIM_FILE = "queue-service.claim.json";
 /** Output of a daemon this launcher starts, owner-only, beside the service's own files. */
 export const T3_LAUNCH_LOG_FILE = "queue-service.t3-launch.log";

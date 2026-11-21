@@ -1,5 +1,5 @@
-import type { ServiceClient } from "../../../shared/service/client";
-import type { StandbyWaitCause } from "../../../shared/service/standby-wait";
+import type { ServiceClient } from "../../shared/service/client";
+import type { StandbyWaitCause } from "../../shared/service/standby-wait";
 
 /** The typed state the bridge reports for the service it forwards to. */
 export type BridgeState = "absent" | "starting" | "running" | "incompatible" | "upgrading" | "unhealthy";

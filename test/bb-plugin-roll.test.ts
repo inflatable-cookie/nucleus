@@ -29,9 +29,9 @@ import {
   bbPluginCli,
   bbPluginRoll,
   type BbCommandRun,
-} from "../hosts/paseo/plugin/bb-plugin-roll";
-import { RollScheduler } from "../hosts/paseo/plugin/roll";
-import { BridgeSession } from "../hosts/paseo/plugin/session";
+} from "../service/roll/bb-plugin-roll";
+import { RollScheduler } from "../service/roll/roll";
+import { BridgeSession } from "../service/roll/session";
 import { bridgeProcessActions } from "../service/install/bridge-process-actions";
 import {
   RuntimeHealthProjection,

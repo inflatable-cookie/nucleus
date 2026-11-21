@@ -3,23 +3,23 @@ import { join } from "node:path";
 import {
   backendSourceDigest,
   sourcePathFromModule,
-} from "../../../shared/service/build";
+} from "../../shared/service/build";
 import {
   readServiceRoll,
   SERVICE_ROLL_REQUEST_FILE,
-} from "../../../shared/service/discovery";
+} from "../../shared/service/discovery";
 import {
   BB_PLUGIN_ROLL_FILE,
   bbPluginRollNote,
   bbPluginRollSchema,
   type BbPluginRollRecord,
-} from "../../../shared/bb-plugin-roll";
+} from "../../shared/bb-plugin-roll";
 import type {
   ServiceRoll,
   ServiceRollDeferral,
-} from "../../../shared/service-roll";
-import type { ServiceClient } from "../../../shared/service/client";
-import type { BridgeMainChannel } from "../../../shared/service/bridge-process";
+} from "../../shared/service-roll";
+import type { ServiceClient } from "../../shared/service/client";
+import type { BridgeMainChannel } from "../../shared/service/bridge-process";
 import { CONNECT_ATTEMPT_TIMEOUT_MS, type BridgeOptions } from "./options";
 import type { BridgeSession } from "./session";
 import { SPAWN_CLAIM_FILE, StandbyStartupError, claimIsFresh } from "./spawn";
@@ -28,8 +28,8 @@ import { SPAWN_CLAIM_FILE, StandbyStartupError, claimIsFresh } from "./spawn";
 export const ROLL_SETTLE_MS = 60_000;
 /** Defer a due roll while a heavy run has an attached follower, up to this cap. */
 export const ROLL_HEAVY_FOLLOWER_CAP_MS = 15 * 60_000;
-const ROLL_CHECK_MS = 30_000;
-/** What the scheduler needs from the bridge that owns the connection. */
+export const ROLL_CHECK_MS = 30_000;
+/** What the scheduler needs from its owner: the session, the process bindings and the ensure step. */
 export interface RollContext {
   options: BridgeOptions;
   dataDir: string;
@@ -40,18 +40,15 @@ export interface RollContext {
 }
 
 /**
- * The main-channel roll scheduler.
+ * The main-channel roll state machine.
  *
- * One owner for the rule that a merge changes the service: watch the configured
- * main channel, settle, defer while a heavy run has an attendant, build and prove
- * the staged version, replace the service, converge activation and reload the
- * plugin once the new build answers. Every step writes the durable roll record
- * that operators and waiters read, and each unfinished step is retried on the
- * next check rather than left waiting for a request.
+ * One rule: a merge that changes the service is rolled after the settle window,
+ * with heavy-follower deferral, build and startup proof, replacement and
+ * activation. The roll owner (`./owner.ts`) drives it on its own timer and
+ * writes the durable roll record that operators and waiters read. Each unfinished
+ * step is retried on the next check rather than left waiting for a request.
  */
 export class RollScheduler {
-  private rollCheckTimer: NodeJS.Timeout | null = null;
-  private rollRequestTimer: NodeJS.Timeout | null = null;
   private rolling: Promise<ServiceRoll | null> | null = null;
   /** The main-channel instance this bridge rolls from; opened on the first check. */
   private mainChannel: BridgeMainChannel | null | undefined;
@@ -73,50 +70,6 @@ export class RollScheduler {
 
   private get session() {
     return this.core.session;
-  }
-
-  /** Start watching the main channel and the service's roll request hint. */
-  start() {
-    const every = this.core.options.rollCheckMs ?? ROLL_CHECK_MS;
-    if (
-      this.rollCheckTimer ||
-      this.rollRequestTimer ||
-      this.session.expected instanceof Error
-    )
-      return;
-    if (every > 0) {
-      this.rollCheckTimer = setInterval(() => {
-        void this.core.ensure().catch(() => {});
-        void this.checkSource();
-      }, every);
-      this.rollCheckTimer.unref?.();
-    }
-    // The service writes this hint only after syncing Queue's registered
-    // checkout. Polling the hint keeps the backend digest check on its relaxed
-    // interval while starting an authorized self-roll promptly.
-    this.rollRequestTimer = setInterval(() => {
-      if (!existsSync(join(this.core.dataDir, SERVICE_ROLL_REQUEST_FILE)))
-        return;
-      void this.core
-        .ensure()
-        .then(() => {
-          if (this.session.closed || !this.session.client?.connected) return;
-          const request = this.core.processActions.consumeServiceRollRequest(
-            this.core.dataDir,
-          );
-          if (request) void this.checkSource(request.force);
-        })
-        .catch(() => {});
-    }, 250);
-    this.rollRequestTimer.unref?.();
-  }
-
-  /** Stop both timers; a closed bridge rolls nothing. */
-  stop() {
-    if (this.rollCheckTimer) clearInterval(this.rollCheckTimer);
-    if (this.rollRequestTimer) clearInterval(this.rollRequestTimer);
-    this.rollCheckTimer = null;
-    this.rollRequestTimer = null;
   }
 
   /** One roll at a time; a change noticed during a roll is coalesced and rolled after the settle window. */
@@ -144,6 +97,11 @@ export class RollScheduler {
       this.active = null;
     });
     return this.rolling;
+  }
+
+  /** Whether an activation is waiting to converge (the owner stays until it does). */
+  hasPendingActivation(): boolean {
+    return this.activateInstalled !== null;
   }
 
   /**

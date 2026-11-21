@@ -7,6 +7,7 @@ import {fileURLToPath} from 'node:url';
 import {after} from 'node:test';
 import assert from 'node:assert/strict';
 import { ServiceBridge } from '../../hosts/paseo/plugin/bridge';
+import { RollOwner } from '../../service/roll/owner';
 import type { Adapter } from '../../core/host';
 import { processCommandLine } from '../../core/machine/process-identity';
 import { processGroupEmpty } from '../../core/machine/process-group';
@@ -85,9 +86,10 @@ export function recordSpawnIdentity(record: Map<number, string>, pid: number, id
  * reads the two promises it keeps; a rename makes the seam unreadable, which
  * teardown reports instead of assuming settlement.
  */
-export function bridgeInFlightWork(bridge: ServiceBridge): Promise<unknown>[] {
-  // The bridge keeps its own single-flight connect; the roll scheduler keeps the roll.
+export function bridgeInFlightWork(bridge: ServiceBridge | RollOwner): Promise<unknown>[] {
+  // The bridge keeps its own single-flight connect; the roll owner keeps only the roll.
   const internals = bridge as unknown as { ensurePromise?: Promise<unknown> | null; roll?: { rolling?: Promise<unknown> | null } };
+  if (bridge instanceof RollOwner) return [internals.roll?.rolling].filter((pending): pending is Promise<unknown> => Boolean(pending));
   if (!("ensurePromise" in internals)) return [Promise.reject(new Error("the fixture cannot observe this bridge's in-flight work"))];
   return [internals.ensurePromise, internals.roll?.rolling]
     .filter((pending): pending is Promise<unknown> => Boolean(pending));
@@ -172,7 +174,7 @@ export function bridgeSupport(prefix: string, options: {
    * keeps running after cancellation can never spawn a service the sweep has
    * already passed over (the 2026-10-15 milestone escapee).
    */
-  const trackedBridges = new Set<ServiceBridge>();
+  const trackedBridges = new Set<ServiceBridge | RollOwner>();
   /**
    * Every service pid this file ever observed, never cleared: the file-level
    * guard asserts each one is settled at the end. Only this file's own pids are
@@ -210,6 +212,14 @@ export function bridgeSupport(prefix: string, options: {
    * The options object is passed through by reference, not copied: tests tune
    * a live options object between calls and the bridge reads it lazily.
    */
+  /** A roll owner the fixture tracks the same way: its spawns, its roll and its close. */
+  function trackedOwner(options: Partial<ConstructorParameters<typeof RollOwner>[0]> = {}): RollOwner {
+    const previous = options.onSpawn;
+    options.onSpawn = pid => { spawnedPids.recordOwnSpawn(pid); previous?.(pid); };
+    const owner = new RollOwner({ processActions: bridgeProcessActions, ...options });
+    trackedBridges.add(owner);
+    return owner;
+  }
   function trackedBridge(options: Partial<ConstructorParameters<typeof ServiceBridge>[0]> = {}): ServiceBridge {
     const previous = options.onSpawn;
     options.onSpawn = pid => { spawnedPids.recordOwnSpawn(pid); previous?.(pid); };
@@ -476,5 +486,5 @@ export function bridgeSupport(prefix: string, options: {
   }
 
   function sleep(ms: number) { return new Promise(resolve => setTimeout(resolve, ms)); }
-  return { spawnedPids, fakeAdapter, serviceCommand, trackedBridge, bridgeFixture, killServices, dispose, serviceProof, ownedGroupEmpty, pidAliveNumber, sleep };
+  return { spawnedPids, fakeAdapter, serviceCommand, trackedBridge, trackedOwner, bridgeFixture, killServices, dispose, serviceProof, ownedGroupEmpty, pidAliveNumber, sleep };
 }

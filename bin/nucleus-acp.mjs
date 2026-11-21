@@ -6,6 +6,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dataHome } from '../shared/data-home.mjs';
 import { ensureDaemonForT3 } from '../service/transport/index.mjs';
+import { ensureRollOwner } from '../service/roll/owner.ts';
 import { runAcpAgentFromEnvironment } from '../shared/acp/entry.ts';
 
 // T3Code probes this launcher on its own cold start, with no thread (nucleus#1394).
@@ -15,6 +16,15 @@ try {
   ensureDaemonForT3({ dataDir: dataHome(), root: resolve(dirname(fileURLToPath(import.meta.url)), '..') });
 } catch (error) {
   process.stderr.write(`nucleus-acp: could not start the Nucleus daemon for T3Code: ${error instanceof Error ? error.message : String(error)}\n`);
+}
+
+// The main-channel roll owner (nucleus#1454) starts on the same cold start, so a
+// T3Code-only install rolls its configured main channel with no Paseo bridge.
+// Best effort too: a missing owner never stops the protocol answering.
+try {
+  ensureRollOwner({ dataDir: dataHome(), root: resolve(dirname(fileURLToPath(import.meta.url)), '..') });
+} catch (error) {
+  process.stderr.write(`nucleus-acp: could not start the Nucleus roll owner: ${error instanceof Error ? error.message : String(error)}\n`);
 }
 
 process.exitCode = await runAcpAgentFromEnvironment();

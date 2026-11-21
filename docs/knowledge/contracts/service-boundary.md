@@ -46,6 +46,16 @@ it uses; startup and active host access stay lazy. The retained QA runner and
 lifecycle recovery stay in the owner, exposed through a context accessor.
 These modules never import or receive `QueueRuntime`.
 
+`service/roll/` owns the main-channel roll and the handover it needs, with no host
+in its import graph (nucleus#1454). `roll.ts` is the roll state machine, `spawn.ts`
+the one spawn claim with the warm standby, drain and readiness waits, `session.ts`
+the roll's typed session, and `owner.ts` the detached roll owner. A local T3Code
+launch (`bin/nucleus-acp.mjs`) and a Paseo bridge both start that one owner through
+its heartbeat (`queue-roll-owner.json`). The owner connects without a presence claim,
+so it is never a host and never keeps a host-less service alive. The Paseo bridge
+(`hosts/paseo/plugin/bridge.ts`) forwards calls, reports state and reloads its plugin
+after a landed roll; it runs no roll of its own.
+
 ## Forge module map
 
 `core/forge/index.ts` preserves the public exports. Under `core/forge/`,

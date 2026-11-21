@@ -25,7 +25,7 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import type { BbPluginRollRecord } from "../../../shared/bb-plugin-roll";
+import type { BbPluginRollRecord } from "../../shared/bb-plugin-roll";
 import type { Command } from "./options";
 
 /** `nucleus bb status` reads BB's own plugin list; it is bounded tightly. */

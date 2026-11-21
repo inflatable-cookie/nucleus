@@ -10,6 +10,7 @@ import { ServiceClient, ServiceRequestError } from '../shared/service/client';
 import { readServiceInfo, writeServiceInfo, writeServiceRoll, type ServiceInfo } from '../service/transport/identity';
 import { localQueueClient } from '../shared/service/local-client';
 import { ServiceBridge } from '../hosts/paseo/plugin/bridge';
+import { RollOwner } from '../service/roll/owner';
 import { RPC_CATALOGUE } from '../shared/rpc-catalogue';
 import { CallNotSentError, callWithRollRecovery, uncertainTransportFailure, UnknownOutcomeError } from '../shared/service/roll-recovery';
 import { readServiceRoll } from '../service/transport/identity';
@@ -249,18 +250,20 @@ for (const phase of ['build', 'startup proof']) {
     // Bypass the interference proxy: this roll fails without any transport loss.
     writeServiceInfo(fixture.dataDir, fixture.oldInfo);
     const bridge = new ServiceBridge({ processActions: bridgeProcessActions, dataDir: fixture.dataDir, sourcePath: sourcePathFromModule(), paseoHome: fixture.root, serviceCommand: () => { throw new Error("fixture must not spawn"); }, rollSettleMs: 0 });
+    // The roll belongs to the roll owner; the bridge only forwards calls during it.
+    const owner = new RollOwner({ processActions: bridgeProcessActions, dataDir: fixture.dataDir, sourcePath: sourcePathFromModule(), paseoHome: fixture.root, serviceCommand: () => { throw new Error("fixture must not spawn"); }, rollSettleMs: 0 });
     const local = localQueueClient(fixture.dataDir, { compatibilityWaitMs: 2_000 });
-    t.after(() => { bridge.close(); local.close(); });
+    t.after(() => { owner.close(); bridge.close(); local.close(); });
     let entered!: () => void, refuse!: (error: Error) => void;
     const reached = new Promise<void>(resolve => { entered = resolve; });
     const gate = new Promise<never>((_resolve, reject) => { refuse = reject; });
     const staged = { root: fixture.root, buildId: 'next-build' };
-    (bridge as unknown as { roll: { mainChannel: unknown } }).roll.mainChannel = {
+    (owner as unknown as { roll: { mainChannel: unknown } }).roll.mainChannel = {
       target: async () => ({ key: 'new-revision', revision: 'new-revision' }),
       build: async () => { if (phase === 'build') { entered(); await gate; } return staged; },
       prepare: async () => { entered(); await gate; },
     };
-    const rolling = bridge.checkSource(true);
+    const rolling = owner.checkSource(true);
     await reached;
     try {
       assert.equal(readServiceRoll(fixture.dataDir)?.status, 'typechecking');

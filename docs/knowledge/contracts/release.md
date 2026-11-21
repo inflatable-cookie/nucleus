@@ -20,11 +20,23 @@ rolling and `nucleus link` are retired (Tom, 2026-11-09).
 
 ## Rolling the main channel
 
-The bridge checks the configured main channel every 30 seconds and on an
-own-repository sync hint. It builds the observed main revision while waiting
-60 seconds after the latest change. Consecutive changes coalesce; an attached
-heavy follower defers replacement for up to 15 minutes unless the operator
-forces the roll. Paseo and its daemon are never restarted.
+The roll owner (`service/roll/owner.ts`) checks the configured main channel every
+30 seconds and on an own-repository sync hint. It is a separate detached process,
+not a host: a local T3Code launch (`bin/nucleus-acp.mjs`) starts it, and a Paseo
+bridge that is present starts it too (nucleus#1454). One owner per data home holds
+the `queue-roll-owner.json` heartbeat; a second starter reports it running and
+starts nothing, so there is one fetch, build and activation loop. The owner builds
+the observed main revision while waiting 60 seconds after the latest change.
+Consecutive changes coalesce; an attached heavy follower defers replacement for up
+to 15 minutes unless the operator forces the roll. Paseo, its daemon and T3Code are
+never restarted by a roll.
+
+The owner rolls only while a service answers or a roll is unfinished. With no
+service and nothing pending it exits after two minutes, and it never holds a host
+connection, so the service's ten-minute host grace is unchanged. A pending record
+or activation survives an owner's exit or crash: the next T3 launch or Paseo bridge
+starts an owner that resumes it. After a roll activates a newer version, the owner
+hands over to that version's owner and exits, so no older owner keeps rolling.
 
 A failed build or standby startup keeps the running service and records why;
 the failed revision stays suppressed until main changes. A stalled live standby
@@ -32,7 +44,7 @@ uses the bounded drain fallback. Once replacement begins, incomplete replacement
 and activation stay `retrying`: every check retries them. The record becomes
 `rolled` only when the selected build answers and activation of `current`
 and the installer entrypoints succeeds. Activation is retried independently of
-connection readiness. A fresh bridge can settle an interrupted record naming its
+connection readiness. A fresh owner can settle an interrupted record naming its
 answering build; records naming other sources remain untouched.
 
 Roll state lives in `queue-service-roll.json` and `queue.service-state`.
@@ -46,7 +58,7 @@ uncertain processes stay held until reconciled.
 Child startup diagnostics are redacted and capped at 2,000 bytes in owner-only
 `queue-service-startup-failure.json`; they clear once a compatible service
 answers. Captured output is drained after readiness. EPIPE closes the diagnostic
-channel without stopping the detached service. After a landed roll the bridge
+channel without stopping the detached service. After a landed roll the Paseo bridge
 reloads only the plugin once, so its bridge and UI load the new contracts. A stale
 UI shows the reload notice.
 
