@@ -39,13 +39,13 @@ import { repositoryOrigin } from "../planning/lanes";
 import {
   ownedWorkspaceRoot,
   repoCommonDir,
+  workspaceRepoRoot,
   WORKSPACES_DIR,
 } from "./workspace-allocation";
 import {
   assertCheckoutAvailable,
-  liveCheckoutDataDir,
+  liveCheckoutPlacement,
 } from "./checkout-volume";
-import { getWorkRoot } from "./work-root.mjs";
 import { siblingNameFor, siblingPathFor } from "./siblings";
 
 export interface WorktreeSiblingSpec {
@@ -470,6 +470,8 @@ export async function canonicalLinkRoot(
   testPlacement?: {
     dataDir: string;
     retainedDataDirs?: string[];
+    workspaceRoot?: string;
+    retainedWorkspaceRoots?: string[];
     admit: (path: string) => void;
   },
   bargeAllocation?: WorkspaceAllocation | null,
@@ -499,37 +501,67 @@ export async function canonicalLinkRoot(
     }
     return dirname(actualDir);
   }
-  let data = await realpath(dataDir);
   const awaitableCommon = await repoCommonDir(repoPath);
-  const live = liveCheckoutDataDir(dataDir);
-  const roots = testPlacement
-    ? [testPlacement.dataDir, ...(testPlacement.retainedDataDirs ?? [])]
-    : live
-      ? [join(getWorkRoot(), "queue")]
-      : [];
   const checkoutName = basename(directory);
   const taskParent = checkoutName.startsWith("ns-")
     ? `task-${checkoutName.slice(3)}`
     : "";
-  const linkRoot = (root: string) => {
-    const base = ownedWorkspaceRoot(root, awaitableCommon);
+  const linkRootFor = (workspacesRoot: string, common: string) => {
+    const base = workspaceRepoRoot(workspacesRoot, common);
     return taskParent && dirname(directory) === join(base, taskParent)
       ? join(base, taskParent)
       : base;
   };
-  const builds = roots.find((root) => dirname(directory) === linkRoot(root));
-  if (builds) {
-    if (testPlacement) testPlacement.admit(directory);
-    else assertCheckoutAvailable({ target: directory });
-    data = await realpath(builds);
+  const live = testPlacement ? null : liveCheckoutPlacement(dataDir);
+  const candidates = testPlacement
+    ? [
+        {
+          workspacesRoot:
+            testPlacement.workspaceRoot ??
+            join(testPlacement.dataDir, WORKSPACES_DIR),
+          admit: testPlacement.admit,
+        },
+        ...(testPlacement.retainedDataDirs ?? []).map((dir) => ({
+          workspacesRoot: join(dir, WORKSPACES_DIR),
+          admit: testPlacement.admit,
+        })),
+        ...(testPlacement.retainedWorkspaceRoots ?? []).map((wsRoot) => ({
+          workspacesRoot: wsRoot,
+          admit: testPlacement.admit,
+        })),
+      ]
+    : live
+      ? [
+          {
+            workspacesRoot: live.activeRoot,
+            admit: (target: string) => assertCheckoutAvailable({ target }),
+          },
+          ...live.retainedRoots.map((wsRoot) => ({
+            workspacesRoot: wsRoot,
+            admit: (target: string) => assertCheckoutAvailable({ target }),
+          })),
+        ]
+      : [];
+  const matched = candidates.find(
+    (candidate) =>
+      dirname(directory) ===
+      linkRootFor(candidate.workspacesRoot, awaitableCommon),
+  );
+  let workspacesRoot: string;
+  if (matched) {
+    matched.admit(directory);
+    workspacesRoot = await realpath(matched.workspacesRoot);
+  } else {
+    const data = await realpath(dataDir);
+    workspacesRoot = join(data, WORKSPACES_DIR);
   }
-  const base = ownedWorkspaceRoot(data, await repoCommonDir(repoPath));
+  const base = workspaceRepoRoot(workspacesRoot, await repoCommonDir(repoPath));
   const expected =
     taskParent && dirname(directory) === join(base, taskParent)
       ? join(base, taskParent)
       : base;
   for (const component of [
-    join(data, WORKSPACES_DIR),
+    workspacesRoot,
     base,
     expected,
     dirname(directory),
@@ -626,6 +658,7 @@ export async function provisionWorktreeLinks(input: {
     workspaceAllocation?: Task["workspaceAllocation"];
   };
   configured: readonly ConfiguredCheckout[];
+  testPlacement?: Parameters<typeof canonicalLinkRoot>[3];
   pinned?: {
     taskId: string;
     pins: Task["siblingPins"];
@@ -736,7 +769,7 @@ export async function provisionWorktreeLinks(input: {
         input.dataDir,
         input.task.repoPath,
         directory,
-        undefined,
+        input.testPlacement,
         input.task.workspaceAllocation,
       );
       const source = await configuredSourceRoot(

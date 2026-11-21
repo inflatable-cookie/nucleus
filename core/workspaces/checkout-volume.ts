@@ -1,21 +1,66 @@
 /** Admission for the configured work root and its optional volume identity. */
 import { execFileSync } from "node:child_process";
-import { accessSync, constants, lstatSync, mkdirSync, realpathSync, rmSync, type Stats } from "node:fs";
-import { dirname, join, relative, resolve, sep } from "node:path";
-import { getWorkRoot, getWorkStorage, readWorkVolume } from "./work-root.mjs";
+import {
+  accessSync,
+  constants,
+  lstatSync,
+  mkdirSync,
+  realpathSync,
+  rmSync,
+  type Stats,
+} from "node:fs";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import {
+  getLocalWorkspacePlacement,
+  getWorkRoot,
+  getWorkStorage,
+  readWorkVolume,
+  validSubpathInsideMount,
+} from "./work-root.mjs";
 import { defaultDataDir } from "../../shared/service/default-data-dir";
 
 /** Whether a path names the checkout volume or something under it. Anything else is just a path. */
-export function onCheckoutVolume(path: string, mount: string = getWorkRoot()): boolean {
+export function onCheckoutVolume(
+  path: string,
+  mount: string = getWorkRoot(),
+): boolean {
   return path === mount || path.startsWith(`${mount}${sep}`);
+}
+
+export interface LiveCheckoutPlacement {
+  dataDir: string;
+  workRoot: string;
+  volumeId?: string;
+  activeRoot: string;
+  retainedRoots: string[];
+}
+
+function isLiveDataDir(dataDir: string): boolean {
+  try {
+    return realpathSync(dataDir) === realpathSync(defaultDataDir());
+  } catch {
+    return resolve(dataDir) === resolve(defaultDataDir());
+  }
 }
 
 /** Private Queue data directories never select the live checkout roots. */
 export function liveCheckoutDataDir(dataDir: string): string | null {
-  let live: boolean;
-  try { live = realpathSync(dataDir) === realpathSync(defaultDataDir()); }
-  catch { live = resolve(dataDir) === resolve(defaultDataDir()); }
-  return live ? join(getWorkRoot(), "queue") : null;
+  return isLiveDataDir(dataDir) ? join(getWorkRoot(), "queue") : null;
+}
+
+/** Live checkout placement, separating the work-volume mount from local task-workspace roots. */
+export function liveCheckoutPlacement(
+  dataDir: string,
+): LiveCheckoutPlacement | null {
+  if (!isLiveDataDir(dataDir)) return null;
+  const placement = getLocalWorkspacePlacement(dataDir);
+  return {
+    dataDir: join(placement.workRoot, "queue"),
+    workRoot: placement.workRoot,
+    ...(placement.volumeId ? { volumeId: placement.volumeId } : {}),
+    activeRoot: placement.activeRoot,
+    retainedRoots: placement.retainedRoots,
+  };
 }
 
 export interface CheckoutVolumeInfo {
@@ -27,7 +72,9 @@ export interface CheckoutVolumeInfo {
 }
 
 /** diskutil's volume UUID is stable across device-node changes. */
-export function readCheckoutVolume(mount: string): CheckoutVolumeInfo { return readWorkVolume(mount); }
+export function readCheckoutVolume(mount: string): CheckoutVolumeInfo {
+  return readWorkVolume(mount);
+}
 
 /**
  * Prove the mount and every existing Queue root component before an effect.
@@ -35,29 +82,103 @@ export function readCheckoutVolume(mount: string): CheckoutVolumeInfo { return r
  * each creation/registration boundary; failure must not be treated as absence.
  * The injected observer and mount are for private fixtures, never configuration.
  */
-export function assertCheckoutAvailable(options: {
-  mount?: string;
-  uuid?: string;
-  observe?: (mount: string) => CheckoutVolumeInfo;
-  /** Fixture seam for the cached diskutil reader. */
-  read?: (mount: string) => CheckoutVolumeInfo;
-  /** Exact candidate; existing descendants must also be canonical on this volume. */
-  target?: string;
-  /** Intake review workspaces use the mounted volume boundary without Queue's placement roots. */
-  scope?: "queue" | "intake";
-} = {}): void {
-  const mount = options.mount ?? getWorkRoot();
+export function assertCheckoutAvailable(
+  options: {
+    mount?: string;
+    uuid?: string;
+    observe?: (mount: string) => CheckoutVolumeInfo;
+    /** Fixture seam for the cached diskutil reader. */
+    read?: (mount: string) => CheckoutVolumeInfo;
+    /** Exact candidate; existing descendants must also be canonical on this volume. */
+    target?: string;
+    /** Intake review workspaces use the mounted volume boundary without Queue's placement roots. */
+    scope?: "queue" | "intake";
+    /** Optional explicit local workspace roots for private fixtures. */
+    workspaceRoot?: string;
+    retainedWorkspaceRoots?: string[];
+  } = {},
+): void {
   try {
-    const mountStat = proveWorkRoot(mount, options.uuid, options.observe, options.read);
-    const components = options.scope === "intake" ? [] : [join(mount, "queue"), join(mount, "queue", "workspaces"), join(mount, "queue", "project-qa")];
+    const local =
+      options.mount === undefined && options.scope !== "intake"
+        ? getLocalWorkspacePlacement()
+        : null;
+    const mount = options.mount ?? local?.workRoot ?? getWorkRoot();
+    const mountStat = proveWorkRoot(
+      mount,
+      options.uuid,
+      options.observe,
+      options.read,
+    );
+    if (options.scope === "intake") {
+      const components: string[] = [];
+      if (options.target) {
+        const rel = relative(mount, options.target);
+        if (
+          !rel ||
+          rel === ".." ||
+          rel.startsWith(`..${sep}`) ||
+          isAbsolute(rel) ||
+          resolve(options.target) !== options.target
+        )
+          throw new CheckoutRefusalError(
+            "intake workspace is outside the configured work root",
+          );
+        let path = mount;
+        for (const part of rel.split(sep)) {
+          path = join(path, part);
+          components.push(path);
+        }
+      }
+      proveCheckoutComponents(mountStat, components);
+      return;
+    }
+    const queueWorkspaces = join(mount, "queue", "workspaces");
+    const queueProjectQa = join(mount, "queue", "project-qa");
+    const activeRoot = options.workspaceRoot
+      ? validSubpathInsideMount(mount, options.workspaceRoot, "workspaceRoot")
+      : (local?.activeRoot ?? queueWorkspaces);
+    const retainedRoots = options.retainedWorkspaceRoots
+      ? options.retainedWorkspaceRoots.map((root) =>
+          validSubpathInsideMount(mount, root, "retainedWorkspaceRoots"),
+        )
+      : (local?.retainedRoots ?? []);
+    const components = [join(mount, "queue"), queueWorkspaces, queueProjectQa];
+    const addAncestors = (candidate: string) => {
+      const rel = relative(mount, candidate);
+      if (!rel || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel))
+        return;
+      let path = mount;
+      for (const part of rel.split(sep)) {
+        path = join(path, part);
+        components.push(path);
+      }
+    };
+    addAncestors(activeRoot);
+    for (const retained of retainedRoots) addAncestors(retained);
     if (options.target) {
-      const base = options.scope === "intake" ? mount : join(mount, "queue");
-      const rel = relative(base, options.target);
-      if (!rel || rel === ".." || rel.startsWith(`..${sep}`) || resolve(options.target) !== options.target ||
-          (options.scope !== "intake" && !["workspaces", "project-qa"].includes(rel.split(sep)[0])))
-        throw new CheckoutRefusalError(options.scope === "intake" ? "intake workspace is outside the configured work root" : "target is outside Nucleus checkout roots");
-      let path = base;
-      for (const part of rel.split(sep)) { path = join(path, part); components.push(path); }
+      const allowedRoots = [
+        ...new Set([
+          queueWorkspaces,
+          queueProjectQa,
+          activeRoot,
+          ...retainedRoots,
+        ]),
+      ];
+      const matchedRoot = allowedRoots.find((root) => {
+        const rel = relative(root, options.target!);
+        return (
+          Boolean(rel) &&
+          rel !== ".." &&
+          !rel.startsWith(`..${sep}`) &&
+          !isAbsolute(rel)
+        );
+      });
+      if (!matchedRoot || resolve(options.target) !== options.target)
+        throw new CheckoutRefusalError(
+          "target is outside Nucleus checkout roots",
+        );
+      addAncestors(options.target);
     }
     proveCheckoutComponents(mountStat, components);
   } catch (error) {
@@ -90,11 +211,24 @@ export function assertIntakeWorkspaceAvailable(options: {
  * or remount still refuses at once. Only a successful read is kept, and only briefly.
  */
 export const CHECKOUT_VOLUME_READ_TTL_MS = 30_000;
-const cachedVolumes = new Map<string, { key: string; at: number; info: CheckoutVolumeInfo }>();
-export function cachedCheckoutVolume(mount: string, stat: Pick<Stats, "dev" | "ino" | "birthtimeMs">, read: (mount: string) => CheckoutVolumeInfo, at = Date.now()): CheckoutVolumeInfo {
+const cachedVolumes = new Map<
+  string,
+  { key: string; at: number; info: CheckoutVolumeInfo }
+>();
+export function cachedCheckoutVolume(
+  mount: string,
+  stat: Pick<Stats, "dev" | "ino" | "birthtimeMs">,
+  read: (mount: string) => CheckoutVolumeInfo,
+  at = Date.now(),
+): CheckoutVolumeInfo {
   const key = `${mount}\0${stat.dev}\0${stat.ino}\0${stat.birthtimeMs}`;
   const cachedVolume = cachedVolumes.get(mount);
-  if (cachedVolume?.key === key && at >= cachedVolume.at && at - cachedVolume.at < CHECKOUT_VOLUME_READ_TTL_MS) return cachedVolume.info;
+  if (
+    cachedVolume?.key === key &&
+    at >= cachedVolume.at &&
+    at - cachedVolume.at < CHECKOUT_VOLUME_READ_TTL_MS
+  )
+    return cachedVolume.info;
   cachedVolumes.delete(mount);
   const info = read(mount);
   cachedVolumes.set(mount, { key, at, info });
@@ -102,9 +236,16 @@ export function cachedCheckoutVolume(mount: string, stat: Pick<Stats, "dev" | "i
 }
 
 /** The one mount proof: canonical root and, when pinned, writable volume with the expected identity. */
-function proveWorkRoot(mount: string, uuid?: string, observe?: (mount: string) => CheckoutVolumeInfo, read = readCheckoutVolume): Stats {
-  const configured = uuid || observe ? { root: mount, volumeId: undefined } : getWorkStorage();
-  const expected = uuid ?? (mount === configured.root ? configured.volumeId : undefined);
+function proveWorkRoot(
+  mount: string,
+  uuid?: string,
+  observe?: (mount: string) => CheckoutVolumeInfo,
+  read = readCheckoutVolume,
+): Stats {
+  const configured =
+    uuid || observe ? { root: mount, volumeId: undefined } : getWorkStorage();
+  const expected =
+    uuid ?? (mount === configured.root ? configured.volumeId : undefined);
   // An unpinned root is ordinary portable storage. Canonical and component checks
   // still apply, but no removable-volume identity is required.
   if (!expected && !observe) {
@@ -113,8 +254,14 @@ function proveWorkRoot(mount: string, uuid?: string, observe?: (mount: string) =
       component = join(component, part);
       try {
         const current = lstatSync(component);
-        if (current.isSymbolicLink() || !current.isDirectory() || realpathSync(component) !== component)
-          throw new CheckoutRefusalError("work root ancestor is redirected or is not a directory");
+        if (
+          current.isSymbolicLink() ||
+          !current.isDirectory() ||
+          realpathSync(component) !== component
+        )
+          throw new CheckoutRefusalError(
+            "work root ancestor is redirected or is not a directory",
+          );
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
         mkdirSync(component, { mode: 0o700 });
@@ -122,15 +269,33 @@ function proveWorkRoot(mount: string, uuid?: string, observe?: (mount: string) =
     }
   }
   const mountStat = lstatSync(mount);
-  if (resolve(mount) !== mount || realpathSync(mount) !== mount || !mountStat.isDirectory())
-    throw new CheckoutRefusalError("work root is redirected or is not a directory");
+  if (
+    resolve(mount) !== mount ||
+    realpathSync(mount) !== mount ||
+    !mountStat.isDirectory()
+  )
+    throw new CheckoutRefusalError(
+      "work root is redirected or is not a directory",
+    );
   accessSync(mount, constants.W_OK | constants.X_OK);
   if (!expected && !observe) return mountStat;
-  const info = observe ? observe(mount) : cachedCheckoutVolume(mount, mountStat, read);
-  if (info.MountPoint === mount && expected && info.VolumeUUID && info.VolumeUUID.toUpperCase() !== expected.toUpperCase())
+  const info = observe
+    ? observe(mount)
+    : cachedCheckoutVolume(mount, mountStat, read);
+  if (
+    info.MountPoint === mount &&
+    expected &&
+    info.VolumeUUID &&
+    info.VolumeUUID.toUpperCase() !== expected.toUpperCase()
+  )
     throw new CheckoutRefusalError("mounted volume identity does not match");
-  if (info.MountPoint !== mount || !expected || info.VolumeUUID?.toUpperCase() !== expected.toUpperCase() ||
-      info.Writable !== true || info.WritableVolume !== true)
+  if (
+    info.MountPoint !== mount ||
+    !expected ||
+    info.VolumeUUID?.toUpperCase() !== expected.toUpperCase() ||
+    info.Writable !== true ||
+    info.WritableVolume !== true
+  )
     throw Error("mounted volume identity or writable status is unavailable");
   return mountStat;
 }
@@ -139,12 +304,22 @@ function proveWorkRoot(mount: string, uuid?: string, observe?: (mount: string) =
  * Every listed path that exists is a real directory on the mount's own device. A
  * missing leaf is allowed: callers create it only after this proof.
  */
-function proveCheckoutComponents(mountStat: Stats, components: Iterable<string>): void {
+function proveCheckoutComponents(
+  mountStat: Stats,
+  components: Iterable<string>,
+): void {
   for (const component of new Set(components)) {
     try {
       const stat = lstatSync(component);
-      if (stat.isSymbolicLink() || !stat.isDirectory() || stat.dev !== mountStat.dev || realpathSync(component) !== component)
-        throw new CheckoutRefusalError(`${component} is redirected or is not a directory`);
+      if (
+        stat.isSymbolicLink() ||
+        !stat.isDirectory() ||
+        stat.dev !== mountStat.dev ||
+        realpathSync(component) !== component
+      )
+        throw new CheckoutRefusalError(
+          `${component} is redirected or is not a directory`,
+        );
       accessSync(component, constants.W_OK | constants.X_OK);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
@@ -161,12 +336,27 @@ export class CheckoutRefusalError extends Error {
 }
 export class CheckoutUnavailableError extends Error {
   constructor(error: unknown) {
-    super(`Queue checkout storage unavailable: ${error instanceof Error ? error.message : String(error)}`);
+    super(
+      `Queue checkout storage unavailable: ${error instanceof Error ? error.message : String(error)}`,
+    );
     this.name = "CheckoutUnavailableError";
   }
 }
 function checkoutUnavailable(error: unknown): Error {
-  return error instanceof CheckoutUnavailableError || error instanceof CheckoutRefusalError ? error : new CheckoutUnavailableError(error);
+  if (
+    error instanceof CheckoutUnavailableError ||
+    error instanceof CheckoutRefusalError
+  )
+    return error;
+  if (
+    error &&
+    typeof error === "object" &&
+    (error as { code?: unknown }).code === "WORK_PLACEMENT_REFUSAL"
+  )
+    return new CheckoutRefusalError(
+      error instanceof Error ? error.message : String(error),
+    );
+  return new CheckoutUnavailableError(error);
 }
 
 /**
@@ -203,30 +393,56 @@ export function createCheckoutScratchDirectory(input: {
     const mountStat = proveWorkRoot(mount, input.uuid, input.observe);
     const inside = (base: string, path: string): boolean => {
       const rel = relative(base, path);
-      return Boolean(rel) && rel !== ".." && !rel.startsWith(`..${sep}`) && resolve(path) === path;
+      return (
+        Boolean(rel) &&
+        rel !== ".." &&
+        !rel.startsWith(`..${sep}`) &&
+        resolve(path) === path
+      );
     };
     if (!inside(mount, input.root) || !inside(input.root, input.target))
-      throw new CheckoutRefusalError("run temp directory is outside the checkout scratch root");
+      throw new CheckoutRefusalError(
+        "run temp directory is outside the checkout scratch root",
+      );
     // Every level from the proven mount down, not just the two endpoints: a
     // symlinked missing ancestor (`<mount>/scratch`, say) would otherwise only be
     // discovered by the post-check, after recursive mkdir had already created the
     // tree on its target.
     const components: string[] = [];
     let path = mount;
-    for (const part of relative(mount, input.root).split(sep)) { path = join(path, part); components.push(path); }
-    for (const part of relative(input.root, input.target).split(sep)) { path = join(path, part); components.push(path); }
+    for (const part of relative(mount, input.root).split(sep)) {
+      path = join(path, part);
+      components.push(path);
+    }
+    for (const part of relative(input.root, input.target).split(sep)) {
+      path = join(path, part);
+      components.push(path);
+    }
     proveCheckoutComponents(mountStat, components);
     if (input.exclusive) {
       mkdirSync(dirname(input.target), { recursive: true, mode: 0o700 });
-      (input.create ?? ((directory: string) => mkdirSync(directory, { mode: 0o700 })))(input.target);
+      (
+        input.create ??
+        ((directory: string) => mkdirSync(directory, { mode: 0o700 }))
+      )(input.target);
     } else {
-      const create = input.create ?? ((directory: string) => mkdirSync(directory, { recursive: true, mode: 0o700 }));
+      const create =
+        input.create ??
+        ((directory: string) =>
+          mkdirSync(directory, { recursive: true, mode: 0o700 }));
       create(input.target);
     }
     // Prove what was actually created, against the device proved above.
     const created = lstatSync(input.target);
-    if (created.isSymbolicLink() || !created.isDirectory() || created.dev !== mountStat.dev || realpathSync(input.target) !== input.target)
-      throw new CheckoutRefusalError(`${input.target} is redirected or is not a directory on the checkout volume`);
+    if (
+      created.isSymbolicLink() ||
+      !created.isDirectory() ||
+      created.dev !== mountStat.dev ||
+      realpathSync(input.target) !== input.target
+    )
+      throw new CheckoutRefusalError(
+        `${input.target} is redirected or is not a directory on the checkout volume`,
+      );
   } catch (error) {
     throw checkoutUnavailable(error);
   }
@@ -238,30 +454,56 @@ export function createCheckoutScratchDirectory(input: {
  * is nothing to clean up and nothing to wait for, and the drive is never probed.
  */
 export function removeCheckoutRunScratchDirectory(input: {
-  root: string; target: string; mount?: string; uuid?: string; observe?: (mount: string) => CheckoutVolumeInfo;
+  root: string;
+  target: string;
+  mount?: string;
+  uuid?: string;
+  observe?: (mount: string) => CheckoutVolumeInfo;
   log?: (message: string) => void;
 }): boolean {
   const { root, target } = input;
-  const log = input.log ?? (message => console.warn(message));
+  const log = input.log ?? ((message) => console.warn(message));
   let mountProved = false;
   try {
     const rel = relative(root, target);
-    if (!rel || rel === ".." || rel.startsWith(`..${sep}`) || dirname(target) !== root || resolve(target) !== target || resolve(root) !== root)
-      throw Error("recorded run temp path is not a direct child of the scratch root");
+    if (
+      !rel ||
+      rel === ".." ||
+      rel.startsWith(`..${sep}`) ||
+      dirname(target) !== root ||
+      resolve(target) !== target ||
+      resolve(root) !== root
+    )
+      throw Error(
+        "recorded run temp path is not a direct child of the scratch root",
+      );
     const mount = input.mount ?? getWorkRoot();
     if (!onCheckoutVolume(target, mount)) return true;
     const mountStat = proveWorkRoot(mount, input.uuid, input.observe);
     mountProved = true;
     const components: string[] = [];
     let path = mount;
-    for (const part of relative(mount, root).split(sep)) { path = join(path, part); components.push(path); }
+    for (const part of relative(mount, root).split(sep)) {
+      path = join(path, part);
+      components.push(path);
+    }
     components.push(target);
     proveCheckoutComponents(mountStat, components);
     const rootStat = lstatSync(root);
-    if (rootStat.isSymbolicLink() || !rootStat.isDirectory() || rootStat.dev !== mountStat.dev || realpathSync(root) !== root)
+    if (
+      rootStat.isSymbolicLink() ||
+      !rootStat.isDirectory() ||
+      rootStat.dev !== mountStat.dev ||
+      realpathSync(root) !== root
+    )
       throw Error("scratch root identity is uncertain");
     const targetStat = lstatSync(target);
-    if (targetStat.isSymbolicLink() || !targetStat.isDirectory() || targetStat.dev !== mountStat.dev || realpathSync(target) !== target)
+    if (
+      targetStat.isSymbolicLink() ||
+      !targetStat.isDirectory() ||
+      targetStat.dev !== mountStat.dev ||
+      realpathSync(target) !== target
+    )
       throw Error("recorded run temp path is not a real directory");
     // The one synchronous recursive removal left on the executor thread, and it
     // is bounded: this is one run's recorded TMPDIR leaf, removed from the store
@@ -272,8 +514,11 @@ export function removeCheckoutRunScratchDirectory(input: {
     rmSync(target, { recursive: true, force: false });
     return true;
   } catch (error) {
-    if (mountProved && (error as NodeJS.ErrnoException).code === "ENOENT") return true;
-    log(`Queue left run temp directory in place: ${target}: ${error instanceof Error ? error.message : String(error)}`);
+    if (mountProved && (error as NodeJS.ErrnoException).code === "ENOENT")
+      return true;
+    log(
+      `Queue left run temp directory in place: ${target}: ${error instanceof Error ? error.message : String(error)}`,
+    );
     return false;
   }
 }

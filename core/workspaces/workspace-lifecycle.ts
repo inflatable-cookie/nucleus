@@ -5,27 +5,32 @@ import {
   assertIntakeWorkspaceAvailable,
   CheckoutRefusalError,
   CheckoutUnavailableError,
-  liveCheckoutDataDir,
+  liveCheckoutPlacement,
 } from "./checkout-volume";
 import { git, gitAncestry, gitBulk, queueCheckoutStatus } from "../git/index";
 import { gitFastForward } from "../git/git-command";
 import {
+  bbWorkspacePathInRoot,
   classifyWorkspaceCreation,
   isOwnedWorkspacePath,
+  isWorkspacePathInRoot,
   ownedWorkspacePath,
   ownedBbWorkspacePath,
   populateOwnedWorktree,
   removeOrphanCheckout,
   repoCommonDir,
+  sameWorkspacePath,
   WORKSPACE_POPULATE_BUDGET_MS,
   workspaceCreationRefusal,
   workspaceDataDirFor,
+  workspacePathInRoot,
+  WORKSPACES_DIR,
   type OrphanWorkspace,
   type WorkspaceCreationState,
 } from "./workspace-allocation";
 import { taskWorkspaceTitle } from "./workspace-title";
 import { existsSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import type {
   Task,
   WorkspaceAllocation,
@@ -129,10 +134,12 @@ export class WorkspaceLifecycle {
    */
   placement() {
     if (this.host.testPlacement) return this.host.testPlacement;
-    const live = liveCheckoutDataDir(this.host.dataDir());
+    const live = liveCheckoutPlacement(this.host.dataDir());
     return live
       ? {
-          dataDir: live,
+          dataDir: live.dataDir,
+          workspaceRoot: live.activeRoot,
+          retainedWorkspaceRoots: live.retainedRoots,
           admit: (path: string) => assertCheckoutAvailable({ target: path }),
           admitIntake: (path: string) =>
             assertIntakeWorkspaceAvailable({ target: path }),
@@ -148,18 +155,50 @@ export class WorkspaceLifecycle {
       (placement.admitIntake ?? placement.admit)(directory);
     else placement.admit(directory);
   }
-  /**
-   * Every root a recorded checkout may have been allocated under: the placed
-   * root, then the retained roots a fixture names. One owner for the list, so
-   * the identity proofs below cannot disagree about where Queue allocates.
-   */
-  private placementRoots(): string[] {
-    const placement = this.host.placement();
+  private activeWorkspaceEntry(placement: WorkspacePlacement): {
+    workspacesRoot: string;
+    returnKey: string;
+  } {
+    if (!placement) {
+      const dataDir = this.host.dataDir();
+      return {
+        workspacesRoot: join(dataDir, WORKSPACES_DIR),
+        returnKey: dataDir,
+      };
+    }
+    return {
+      workspacesRoot:
+        placement.workspaceRoot ?? join(placement.dataDir, WORKSPACES_DIR),
+      returnKey: placement.workspaceRoot ?? placement.dataDir,
+    };
+  }
+  private retainedWorkspaceEntries(placement: WorkspacePlacement): {
+    workspacesRoot: string;
+    returnKey: string;
+  }[] {
     if (!placement) return [];
-    return [
-      placement.dataDir,
-      ...(this.host.testPlacement?.retainedDataDirs ?? []),
-    ];
+    const activeRoot = this.activeWorkspaceEntry(placement).workspacesRoot;
+    const seen = new Set<string>([activeRoot]);
+    const entries: { workspacesRoot: string; returnKey: string }[] = [];
+    for (const dir of placement.retainedDataDirs ?? []) {
+      const workspacesRoot = join(dir, WORKSPACES_DIR);
+      if (seen.has(workspacesRoot)) continue;
+      seen.add(workspacesRoot);
+      entries.push({ workspacesRoot, returnKey: dir });
+    }
+    for (const wsRoot of placement.retainedWorkspaceRoots ?? []) {
+      if (seen.has(wsRoot)) continue;
+      seen.add(wsRoot);
+      entries.push({ workspacesRoot: wsRoot, returnKey: wsRoot });
+    }
+    return entries;
+  }
+  private isPositivelyBoundToTask(task: Task, directory: string): boolean {
+    if (task.directory && sameWorkspacePath(task.directory, directory))
+      return true;
+    return (task.resolution?.displacedHostWorkspaces ?? []).some((entry) =>
+      Boolean(entry.directory && sameWorkspacePath(entry.directory, directory)),
+    );
   }
   private latestTask(task: Task): Task {
     return this.host.workspaceAllocationBridge?.task?.(task.id) ?? task;
@@ -395,36 +434,63 @@ export class WorkspaceLifecycle {
     )
       return task.directory;
     if (placement && task.directory) {
-      const recorded = this.placementRoots().find((root) =>
-        isOwnedWorkspacePath(task.directory!, root, common, task.id),
-      );
-      if (recorded) return task.directory;
+      const entries = [
+        this.activeWorkspaceEntry(placement),
+        ...this.retainedWorkspaceEntries(placement),
+      ];
       if (
-        !isOwnedWorkspacePath(
-          task.directory,
-          this.host.dataDir(),
-          common,
-          task.id,
+        entries.some((entry) =>
+          isWorkspacePathInRoot(
+            task.directory!,
+            entry.workspacesRoot,
+            common,
+            task.id,
+          ),
         )
       )
-        throw new Error(
-          "Recorded workspace directory is not a Queue allocation",
-        );
+        return task.directory;
+      throw new Error("Recorded workspace directory is not a Queue allocation");
     }
+    const active = this.activeWorkspaceEntry(placement);
     return (
-      task.hostId?.startsWith("bb:") ? ownedBbWorkspacePath : ownedWorkspacePath
-    )(placement?.dataDir ?? this.host.dataDir(), common, task.id);
+      task.hostId?.startsWith("bb:")
+        ? bbWorkspacePathInRoot
+        : workspacePathInRoot
+    )(active.workspacesRoot, common, task.id);
   }
   async ownedDataDirFor(task: Task, directory: string): Promise<string | null> {
+    const fresh = this.latestTask(task);
     const common = await repoCommonDir(task.repoPath),
       placement = this.host.placement();
     if (isOwnedWorkspacePath(directory, this.host.dataDir(), common, task.id))
       return this.host.dataDir();
-    for (const root of this.placementRoots())
-      if (isOwnedWorkspacePath(directory, root, common, task.id)) {
-        placement!.admit(directory);
-        return root;
+    if (placement) {
+      const active = this.activeWorkspaceEntry(placement);
+      if (
+        isWorkspacePathInRoot(directory, active.workspacesRoot, common, task.id)
+      ) {
+        placement.admit(directory);
+        return active.returnKey;
       }
+      if (
+        this.isPositivelyBoundToTask(fresh, directory) ||
+        (!fresh.directory && fresh.workspaceIntent)
+      ) {
+        for (const entry of this.retainedWorkspaceEntries(placement)) {
+          if (
+            isWorkspacePathInRoot(
+              directory,
+              entry.workspacesRoot,
+              common,
+              task.id,
+            )
+          ) {
+            placement.admit(directory);
+            return entry.returnKey;
+          }
+        }
+      }
+    }
     return null;
   }
   private admitObservedWorkspace(
@@ -433,28 +499,39 @@ export class WorkspaceLifecycle {
     directory: string,
   ): void {
     const placement = this.host.placement();
-    if (
-      placement &&
-      intakeOwnedReviewWorkspace(task) &&
-      directory === task.directory
-    )
+    if (!placement) return;
+    if (intakeOwnedReviewWorkspace(task) && directory === task.directory) {
       this.admitWorkspace(placement, task, directory);
-    else if (
-      placement &&
-      this.placementRoots().some((root) =>
-        isOwnedWorkspacePath(directory, root, common, task.id),
+      return;
+    }
+    const entries = [
+      this.activeWorkspaceEntry(placement),
+      ...this.retainedWorkspaceEntries(placement),
+    ];
+    if (
+      entries.some((entry) =>
+        isWorkspacePathInRoot(directory, entry.workspacesRoot, common, task.id),
       )
     )
       this.admitWorkspace(placement, task, directory);
   }
   private legacyPaths(task: Task, common: string): string[] {
-    return [
-      ...new Set(
-        [this.host.dataDir(), ...this.placementRoots()].map((root) =>
-          ownedWorkspacePath(root, common, task.id),
-        ),
-      ),
+    const placement = this.host.placement();
+    const pathFor = task.hostId?.startsWith("bb:")
+      ? bbWorkspacePathInRoot
+      : workspacePathInRoot;
+    const roots = [
+      join(this.host.dataDir(), WORKSPACES_DIR),
+      ...(placement
+        ? [
+            this.activeWorkspaceEntry(placement).workspacesRoot,
+            ...this.retainedWorkspaceEntries(placement).map(
+              (entry) => entry.workspacesRoot,
+            ),
+          ]
+        : []),
     ];
+    return [...new Set(roots.map((root) => pathFor(root, common, task.id)))];
   }
   /**
    * Only a creation in progress reports steps. A reconciliation's inspection stays silent:
@@ -534,7 +611,10 @@ export class WorkspaceLifecycle {
     const common = await repoCommonDir(task.repoPath).catch(() => "");
     const placement = this.host.placement();
     const legacyPath =
-      common && ownedWorkspacePath(this.host.dataDir(), common, task.id);
+      common &&
+      (task.hostId?.startsWith("bb:")
+        ? ownedBbWorkspacePath
+        : ownedWorkspacePath)(this.host.dataDir(), common, task.id);
     const ownedPath =
       common &&
       (task.directory === legacyPath
@@ -761,8 +841,14 @@ export class WorkspaceLifecycle {
     const ownedPath = await this.creationStep(fresh, "owned_path_proof", () =>
       this.host.ownedPathFor(fresh),
     );
-    if (!isBarge && placement && state.directory === ownedPath)
-      this.admitWorkspace(placement, fresh, state.directory);
+    if (!isBarge && placement) {
+      if (state.directory === ownedPath)
+        this.admitWorkspace(placement, fresh, state.directory);
+      else {
+        const common = await repoCommonDir(fresh.repoPath).catch(() => "");
+        if (common) this.admitObservedWorkspace(fresh, common, state.directory);
+      }
+    }
     const registered = await this.creationStep(
       fresh,
       "path_registration_check",
@@ -1081,8 +1167,13 @@ export class WorkspaceLifecycle {
     const ownedPath = await this.host.ownedPathFor(task).catch(() => null);
     const common = await repoCommonDir(task.repoPath).catch(() => null);
     const legacyPath = common
-      ? ownedWorkspacePath(this.host.dataDir(), common, task.id)
+      ? (task.hostId?.startsWith("bb:")
+          ? ownedBbWorkspacePath
+          : ownedWorkspacePath)(this.host.dataDir(), common, task.id)
       : null;
+    const displacedPaths = (task.resolution?.displacedHostWorkspaces ?? [])
+      .map((entry) => entry.directory)
+      .filter((path): path is string => Boolean(path));
     // Identity is the exact path this task's allocation derives, or the task's own
     // slug or recorded workspace id inside its repository. A folder whose name
     // merely ends in `ns-<task id>` proves nothing: any other directory can be
@@ -1091,8 +1182,15 @@ export class WorkspaceLifecycle {
     // (nucleus#1261).
     const allocated = [
       ownedPath,
-      legacyPath,
-      ...(common ? this.legacyPaths(task, common) : []),
+      ...displacedPaths,
+      ...(task.directory
+        ? []
+        : [
+            legacyPath,
+            ...(common && task.workspaceIntent
+              ? this.legacyPaths(task, common)
+              : []),
+          ]),
     ].filter((path): path is string => Boolean(path));
     const matches = entries
       .filter(
@@ -1107,12 +1205,19 @@ export class WorkspaceLifecycle {
       )
       .map((w) => ({ id: w.id, directory: w.workspaceDirectory ?? "" }));
     const placement = this.host.placement();
-    if (
-      placement &&
-      ownedPath &&
-      matches.some((match) => match.directory === ownedPath)
-    )
-      this.admitWorkspace(placement, task, ownedPath);
+    if (placement) {
+      const admitted = new Set<string>();
+      for (const match of matches) {
+        if (!match.directory || admitted.has(match.directory)) continue;
+        if (ownedPath && match.directory === ownedPath) {
+          admitted.add(match.directory);
+          this.admitWorkspace(placement, task, ownedPath);
+        } else if (common && allocated.includes(match.directory)) {
+          admitted.add(match.directory);
+          this.admitObservedWorkspace(task, common, match.directory);
+        }
+      }
+    }
     return matches;
   }
 }
@@ -1197,6 +1302,8 @@ export interface WorkspaceHostCalls {
 export interface WorkspacePlacementFixture {
   dataDir: string;
   retainedDataDirs?: string[];
+  workspaceRoot?: string;
+  retainedWorkspaceRoots?: string[];
   admit: (path: string) => void;
   /** Intake-owned review checkouts use a volume-only path proof outside Queue roots. */
   admitIntake?: (path: string) => void;

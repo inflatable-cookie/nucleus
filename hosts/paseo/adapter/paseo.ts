@@ -206,7 +206,10 @@ export function paseoAdapterClass(Policy: HostPolicyConstructor) {
       readonly testPlacement?: {
         dataDir: string;
         retainedDataDirs?: string[];
+        workspaceRoot?: string;
+        retainedWorkspaceRoots?: string[];
         admit: (path: string) => void;
+        admitIntake?: (path: string) => void;
       },
     ) {
       super();

@@ -70,7 +70,10 @@ export interface HostPolicyPort
   placement(): {
     dataDir: string;
     retainedDataDirs?: string[];
+    workspaceRoot?: string;
+    retainedWorkspaceRoots?: string[];
     admit(path: string): void;
+    admitIntake?(path: string): void;
   } | null;
   ownedPathFor(task: Task): Promise<string>;
   ownedDataDirFor(task: Task, directory: string): Promise<string | null>;

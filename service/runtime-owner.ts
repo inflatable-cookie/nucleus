@@ -228,6 +228,8 @@ export interface HostSettings {
   password?: string;
   workRoot?: string;
   workVolumeId?: string;
+  localWorkspaceRoot?: string;
+  retainedWorkspaceRoots?: string[];
   uncertainMergeRetryMs?: number;
   /** Spec 035 "Runtime identity": the immutable Effigy artifact Queue may observe with. */
   effigyRuntime?: EffigyRuntimeSettings;
@@ -580,6 +582,8 @@ export class QueueRuntime {
           password: z.string().optional(),
           workRoot: z.string().optional(),
           workVolumeId: z.string().optional(),
+          localWorkspaceRoot: z.string().optional(),
+          retainedWorkspaceRoots: z.array(z.string()).optional(),
           /** Effigy runtime settings: an optional `minVersion` floor. The retired exact-bytes pin parses and is ignored. */
           effigyRuntime: effigyRuntimeSettingsSchema.optional(),
           t3code: z

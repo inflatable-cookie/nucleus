@@ -11,4 +11,6 @@ if (process.env.NODE_TEST_CONTEXT && /\.test\.(?:[cm]?[jt]s|[jt]sx)$/.test(proce
   process.env.NUCLEUS_DATA_HOME = join(root, 'data');
   delete process.env.NUCLEUS_WORK_ROOT;
   delete process.env.NUCLEUS_WORK_VOLUME_ID;
+  delete process.env.NUCLEUS_LOCAL_WORKSPACE_ROOT;
+  delete process.env.NUCLEUS_RETAINED_WORKSPACE_ROOTS;
 }

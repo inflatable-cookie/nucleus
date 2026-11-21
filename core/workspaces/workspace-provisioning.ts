@@ -273,11 +273,19 @@ export class WorkspaceProvisioning {
     // An unexpected failure becomes the record's finding.
     const dataDir = this.siblingDataDir;
     const bb = current.hostId?.startsWith("bb:") && siblingsEnabled(current);
+    const testPlacement = (
+      this.adapter as {
+        testPlacement?: Parameters<
+          typeof provisionWorktreeLinks
+        >[0]["testPlacement"];
+      }
+    ).testPlacement;
     const result = await (async () =>
       provisionWorktreeLinks({
         dataDir,
         task: current,
         configured: configured(),
+        ...(testPlacement ? { testPlacement } : {}),
         ...(bb
           ? {
               pinned: {
@@ -404,11 +412,16 @@ export class WorkspaceProvisioning {
     if (!members.length) return current;
     let detail: string;
     try {
+      const testPlacement = (
+        this.adapter as {
+          testPlacement?: Parameters<typeof canonicalLinkRoot>[3];
+        }
+      ).testPlacement;
       const root = await canonicalLinkRoot(
         this.siblingDataDir,
         current.repoPath,
         current.directory,
-        undefined,
+        testPlacement,
         current.workspaceAllocation,
       );
       detail = (

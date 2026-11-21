@@ -35,7 +35,10 @@ export type T3Reporting = {
   testPlacement?: {
     dataDir: string;
     retainedDataDirs?: string[];
+    workspaceRoot?: string;
+    retainedWorkspaceRoots?: string[];
     admit: (path: string) => void;
+    admitIntake?: (path: string) => void;
   };
 };
 
@@ -50,7 +53,10 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
     readonly testPlacement?: {
       dataDir: string;
       retainedDataDirs?: string[];
+      workspaceRoot?: string;
+      retainedWorkspaceRoots?: string[];
       admit: (path: string) => void;
+      admitIntake?: (path: string) => void;
     };
     private readonly native: T3CodeHost;
     constructor(native: T3CodeHost, reporting?: T3Reporting) {
