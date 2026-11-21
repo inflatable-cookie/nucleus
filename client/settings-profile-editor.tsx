@@ -22,7 +22,7 @@ import {
   space,
   type as typeScale,
   radius,
-  usageStripColors,
+  usageStripColor,
 } from "./design";
 import { createAutoSave, type AutoSave } from "../shared/autosave";
 import {
@@ -97,9 +97,7 @@ function ProfileUsageBar({
 }) {
   const ratio = max > 0 ? Math.max(0, Math.min(1, count / max)) : 0;
   const percent = ratio * 100;
-  const channel = (start: number, end: number) =>
-    Math.round(start + (end - start) * ratio);
-  const color = `rgb(${channel(usageStripColors.cool.red, usageStripColors.warm.red)}, ${channel(usageStripColors.cool.green, usageStripColors.warm.green)}, ${channel(usageStripColors.cool.blue, usageStripColors.warm.blue)})`;
+  const color = usageStripColor(ratio);
   return (
     <View
       accessibilityRole="image"

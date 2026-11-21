@@ -50,6 +50,14 @@ export const usageStripColors = {
   warm: { red: 224, green: 126, blue: 151 },
 };
 
+/** Interpolate the Profiles usage cue without reusing action or warning colors. */
+export function usageStripColor(ratio: number): string {
+  const position = Math.max(0, Math.min(1, ratio));
+  const channel = (start: number, end: number) =>
+    Math.round(start + (end - start) * position);
+  return `rgb(${channel(usageStripColors.cool.red, usageStripColors.warm.red)}, ${channel(usageStripColors.cool.green, usageStripColors.warm.green)}, ${channel(usageStripColors.cool.blue, usageStripColors.warm.blue)})`;
+}
+
 /** The caption above any field, with or without a (?) beside it. */
 export const caption = type.metadata;
 

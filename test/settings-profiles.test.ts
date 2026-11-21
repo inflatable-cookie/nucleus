@@ -1882,7 +1882,10 @@ for (const compact of [false, true])
     const { profileUsage, RECENT_ASSIGNMENT_WINDOW } = await import(
       "../client/settings-profile-helpers"
     );
+    const { usageStripColor } = await import("../client/design");
     assert.equal(RECENT_ASSIGNMENT_WINDOW, 50, "the bar reads the rotation window");
+    assert.equal(usageStripColor(0), "rgb(82, 182, 209)", "positive usage starts cool");
+    assert.equal(usageStripColor(1), "rgb(224, 126, 151)", "leaders end warm");
     assert.deepEqual(
       profileUsage(
         {
