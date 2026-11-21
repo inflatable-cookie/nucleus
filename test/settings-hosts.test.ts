@@ -109,7 +109,10 @@ const LIST = hostList.output.parse({
 async function mountHosts(overrides: Record<string, unknown> = {}) {
   const { HostsPanel } = await hosts();
   const removed: string[] = [];
-  const props = {
+  const invoke = async () => ({});
+  const renderPanel = (props: Record<string, unknown>) =>
+    h(HostsPanel as never, props as never);
+  const props: Record<string, unknown> = {
     c,
     list: LIST,
     loading: false,
@@ -125,18 +128,22 @@ async function mountHosts(overrides: Record<string, unknown> = {}) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  const ui = mount(
+  const tree = () =>
     h(QueryClientProvider, {
       client,
       children: h(PluginRpcProvider, {
-        invoke: async () => ({}),
-        children: h(HostsPanel as never, props as never),
+        invoke,
+        children: renderPanel(props),
       }),
-    }),
-  );
+    });
+  const ui = mount(tree());
   return {
     ui,
     removed,
+    update: (next: Record<string, unknown>) => {
+      Object.assign(props, next);
+      ui.update(tree());
+    },
     done: () => {
       ui.update(h("View", null));
       client.clear();
@@ -413,6 +420,186 @@ test("a long dependents row shows its count, eight names and Show all; a short r
       "a short row has no Show all",
     );
     assert.doesNotMatch(ui.text(), /×/, "a short row has no group summary");
+  } finally {
+    done();
+  }
+});
+
+/** A catalogue entry for the grouping tests: only the row-relevant fields vary. */
+function groupingHost(entry: {
+  id: string;
+  kind: "paseo" | "t3code" | "bb";
+  label: string;
+  state: "online" | "offline" | "unknown" | "conflict";
+  reason: string;
+  isDefault?: boolean;
+}) {
+  return {
+    id: entry.id,
+    kind: entry.kind,
+    label: entry.label,
+    endpoint: "ws://127.0.0.1:6767/ws",
+    state: entry.state,
+    reason: entry.reason,
+    isDefault: entry.isDefault ?? false,
+    versions: [],
+    dependents: [],
+    removalBlockers: [],
+  };
+}
+
+const MIXED = [
+  groupingHost({
+    id: "t3code:retired",
+    kind: "t3code",
+    label: "T3Code",
+    state: "offline",
+    reason: "Host is offline",
+  }),
+  groupingHost({
+    id: "bb:conflicted",
+    kind: "bb",
+    label: "BB",
+    state: "conflict",
+    reason: "Identity conflict: two data directories claim this host",
+  }),
+  groupingHost({
+    id: "paseo-primary",
+    kind: "paseo",
+    label: "Paseo",
+    state: "online",
+    reason: "",
+    isDefault: true,
+  }),
+  groupingHost({
+    id: "t3code:mystery",
+    kind: "t3code",
+    label: "T3Code",
+    state: "unknown",
+    reason: "Never seen",
+  }),
+  groupingHost({
+    id: "t3code:second-online",
+    kind: "t3code",
+    label: "T3Code",
+    state: "online",
+    reason: "",
+  }),
+];
+
+test("online hosts render first with one divider; Offline, Unknown and Identity conflict keep their labels", async () => {
+  const list = hostList.output.parse({
+    defaultHostKind: "paseo",
+    removals: [],
+    hosts: MIXED,
+  });
+  const { ui, done } = await mountHosts({ list });
+  try {
+    const text = ui.text();
+    const onlineFirst = text.indexOf("paseo-primary");
+    const onlineSecond = text.indexOf("t3code:second-online");
+    const offline = text.indexOf("t3code:retired");
+    const conflict = text.indexOf("bb:conflicted");
+    const unknown = text.indexOf("t3code:mystery");
+    for (const at of [onlineFirst, onlineSecond, offline, conflict, unknown])
+      assert.ok(at >= 0, "every catalogue host renders");
+    assert.ok(
+      onlineFirst < onlineSecond &&
+        onlineSecond < offline &&
+        offline < conflict &&
+        conflict < unknown,
+      "online hosts first in catalogue order, then the rest in catalogue order",
+    );
+    assert.equal(
+      ui.all("Offline hosts").length,
+      1,
+      "one divider between the groups",
+    );
+    assert.match(text, /Offline/);
+    assert.match(text, /Identity conflict/);
+    assert.match(text, /Unknown/);
+    assert.match(text, /Host is offline/);
+    assert.match(text, /two data directories claim this host/);
+    assert.match(text, /Never seen/);
+    assert.equal(
+      ui.all("Default host").length,
+      1,
+      "the default mark stays on its host across the grouping",
+    );
+  } finally {
+    done();
+  }
+});
+
+test("a single group renders with no divider", async () => {
+  const onlineOnly = hostList.output.parse({
+    defaultHostKind: "paseo",
+    removals: [],
+    hosts: MIXED.filter((host) => host.state === "online"),
+  });
+  const onlyOnline = await mountHosts({ list: onlineOnly });
+  try {
+    assert.equal(
+      onlyOnline.ui.query("Offline hosts"),
+      undefined,
+      "no divider above an online-only list",
+    );
+  } finally {
+    onlyOnline.done();
+  }
+  const offlineOnly = hostList.output.parse({
+    defaultHostKind: "paseo",
+    removals: [],
+    hosts: MIXED.filter((host) => host.state !== "online"),
+  });
+  const onlyOffline = await mountHosts({ list: offlineOnly });
+  try {
+    assert.equal(
+      onlyOffline.ui.query("Offline hosts"),
+      undefined,
+      "no divider above an offline-only list",
+    );
+  } finally {
+    onlyOffline.done();
+  }
+});
+
+test("an updated status moves the host across the divider without losing its expanded details", async () => {
+  const list = hostList.output.parse({
+    defaultHostKind: "paseo",
+    removals: [],
+    hosts: MIXED,
+  });
+  const { ui, update, done } = await mountHosts({ list });
+  try {
+    ui.press("Show details for t3code:retired");
+    assert.match(ui.text(), /ws:\/\/127\.0\.0\.1:6767\/ws/);
+    assert.ok(
+      ui.text().indexOf("paseo-primary") <
+        ui.text().indexOf("t3code:retired"),
+      "the offline host starts below the online host",
+    );
+    update({
+      list: hostList.output.parse({
+        defaultHostKind: "paseo",
+        removals: [],
+        hosts: MIXED.map((host) =>
+          host.id === "t3code:retired"
+            ? { ...host, state: "online" as const, reason: "" }
+            : host,
+        ),
+      }),
+    });
+    const text = ui.text();
+    assert.ok(
+      text.indexOf("t3code:retired") < text.indexOf("paseo-primary"),
+      "the reconnected host joins the online group in catalogue order",
+    );
+    assert.match(
+      text,
+      /ws:\/\/127\.0\.0\.1:6767\/ws/,
+      "its expanded details stay open across the move",
+    );
   } finally {
     done();
   }

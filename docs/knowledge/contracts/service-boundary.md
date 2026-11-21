@@ -1528,8 +1528,12 @@ never removes a host: it proves nothing about outstanding effects. The operator
 removes one instead. `host.list` reads the catalogue with each host's state and reason
 from the same projection as `service.health`'s `hosts`, its endpoint, connect or
 last-seen time (`hostLastSeen` meta), the versions it reported, BB's heartbeat, the
-host the operator default resolves to, and what depends on it. `host.remove` forgets
-one host and is Settings-only on the same transports as `queue.capacity`
+host the operator default resolves to, and what depends on it. Settings → Hosts
+presents online hosts first in catalogue order, then a single divider, then the
+remaining hosts in catalogue order (nucleus#1493); the split reads the same state
+the row paints, one group alone shows no divider, and rows keep their keys so an
+updated status moves the host without losing its expanded details. `host.remove`
+forgets one host and is Settings-only on the same transports as `queue.capacity`
 (`SETTINGS_ONLY_METHODS`); the CLI and every agent route refuse before the handler.
 
 - It refuses, naming every reason, while the host is online or anything is bound to
