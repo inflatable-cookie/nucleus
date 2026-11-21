@@ -1028,7 +1028,10 @@ export class T3CodeHost implements Host {
               projectRootPath: w.directory,
               workspaceDirectory: w.directory,
               projectId: w.projectId,
-              workspaceKind: "external",
+              placement: {
+                kind: "external",
+                provenance: "t3code",
+              },
             }
           : null;
       },

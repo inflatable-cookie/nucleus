@@ -71,6 +71,36 @@ export const buildOutputCleanupSchema = z
 export type BuildOutputCleanup = z.infer<typeof buildOutputCleanupSchema>;
 
 /**
+ * Host-neutral observed placement for an external workspace catalog entry.
+ */
+export const externalWorkspacePlacementSchema = z
+  .object({
+    kind: z.string().min(1).max(40),
+    hostOwnedWorktree: z.boolean(),
+    mainRepoRoot: z.string().max(1024).nullable(),
+    provenance: z.string().min(1).max(80).optional(),
+  })
+  .strict();
+
+/**
+ * Adapt persisted and wire catalog placement records written before
+ * `isPaseoOwnedWorktree` was normalized to `hostOwnedWorktree`. Rejects records
+ * carrying both spellings so a renamed field never broadens permission.
+ */
+export function externalWorkspacePlacementFromLegacy(raw: unknown): unknown {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
+  const record = raw as Record<string, unknown>;
+  if (!("isPaseoOwnedWorktree" in record)) return raw;
+  if ("hostOwnedWorktree" in record) {
+    throw new Error(
+      'External workspace placement carries both the legacy "isPaseoOwnedWorktree" and the current "hostOwnedWorktree" field; remove one',
+    );
+  }
+  const { isPaseoOwnedWorktree, ...rest } = record;
+  return { ...rest, hostOwnedWorktree: isPaseoOwnedWorktree };
+}
+
+/**
  * Spec 017: one merged review-entry task's external workspace catalog archive.
  *
  * Tom (2026-10-25): at closeout of a merged task whose bound external workspace
@@ -92,12 +122,10 @@ export const externalWorkspaceArchiveSchema = z
     state: z.enum(["intent", "archived", "held", "uncertain", "failed"]),
     /** The catalog placement proved immediately before the native request. */
     observed: z
-      .object({
-        kind: z.string().min(1).max(40),
-        isPaseoOwnedWorktree: z.boolean(),
-        mainRepoRoot: z.string().max(1024).nullable(),
-      })
-      .strict()
+      .preprocess(
+        externalWorkspacePlacementFromLegacy,
+        externalWorkspacePlacementSchema,
+      )
       .nullable()
       .default(null),
     /** The task's own thread identities the entry held when the attempt observed it. */

@@ -1498,3 +1498,74 @@ test("a promoted task bypasses an active admission gap", async () => {
     await f.close();
   }
 });
+
+test("a non-Paseo host refuses an external initializing lock instead of treating it as host-owned", async () => {
+  const { execFileSync } = await import("node:child_process");
+  const { mkdirSync } = await import("node:fs");
+  const dir = mkdtempSync(join(tmpdir(), "ns-non-paseo-init-"));
+  const repo = join(dir, "repo");
+  const wt = join(dir, "wt", "ns-nonpaseo");
+  const dataDir = join(dir, "data");
+  try {
+    const run = (...args: string[]) =>
+      execFileSync(
+        "git",
+        ["-c", "user.name=t", "-c", "user.email=t@t", ...args],
+        { cwd: repo, encoding: "utf8" },
+      ).trim();
+    mkdirSync(repo, { recursive: true });
+    run("init", "-q", "-b", "main");
+    run("commit", "-q", "--allow-empty", "-m", "base");
+    run("worktree", "add", "-q", "-b", "ns-nonpaseo", wt, "main");
+    run("worktree", "lock", "--reason", "initializing", wt);
+
+    const task = {
+      id: "nonpaseo",
+      repoPath: repo,
+      branch: "ns-nonpaseo",
+      baseBranch: "main",
+      proofOnly: false,
+    } as unknown as Task;
+    const { WorkspaceLifecycle } = await import(
+      "../core/workspaces/workspace-lifecycle"
+    );
+    const { PASEO_INIT_LOCK_RULE } = await import(
+      "../service/paseo-composition"
+    );
+    const makeLifecycle = (initLock: typeof PASEO_INIT_LOCK_RULE | null) =>
+      new WorkspaceLifecycle({
+        helperPath: join(dataDir, "report.mjs"),
+        initLock,
+        scanForWorktreeAdd: () => ({ state: "absent" }),
+        workspaceHost: {
+          workspaceInventory: async () => [],
+          repositoryProject: async () => ({}),
+          createWorkspace: async () => ({ id: "w", directory: wt }),
+        },
+        dataDir: () => dataDir,
+        placement: () => null,
+        ownedPathFor: async () => join(dataDir, "owned", "ns-nonpaseo"),
+        ownedDataDirFor: async () => null,
+        findWorkspaces: async () => [],
+        inspectWorkspaceCreation: async () => {
+          throw new Error("unused");
+        },
+        inspectOrphanWorkspace: async () => {
+          throw new Error("unused");
+        },
+      });
+
+    const nonPaseo = await makeLifecycle(null).inspectWorkspaceCreation(task);
+    assert.equal(nonPaseo.kind, "conflicting");
+    const paseo =
+      await makeLifecycle(PASEO_INIT_LOCK_RULE).inspectWorkspaceCreation(task);
+    assert.equal(paseo.kind, "partial");
+    if (paseo.kind === "partial") {
+      assert.equal(paseo.orphan.provenance, "host_initializing");
+      assert.equal(paseo.orphan.hostLabel, "Paseo");
+      assert.match(workspaceCreationRefusal(paseo), /^Paseo left an orphan/);
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

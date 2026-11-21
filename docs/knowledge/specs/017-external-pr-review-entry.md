@@ -579,15 +579,18 @@ the only difference in this file is the reviewed per-agent archive timeout, and
   reports `false`/`null` for a `kind: "directory"` record. `deriveWorkspaceKind`
   (11–17) derives `worktree` exactly when a main repository root is present.
 
-Nucleus therefore refuses before the call unless the freshly refreshed descriptor
-reports the recorded directory, a placement kind that is not `worktree`, a
-`project.checkout` whose directory is that folder with
-`isPaseoOwnedWorktree === false` and `mainRepoRoot === null`, and no Paseo-owned
-Git runtime. No plugin-visible input can then reach a teardown command or
-directory removal: the effect is the catalog record, its threads and its
-terminals. A missing, foreign, owned, worktree or inconsistent placement is
-recorded as a visible hold and nothing is sent; an unreadable descriptor is
-never guessed.
+Nucleus therefore refuses before the call unless the freshly refreshed
+placement descriptor (normalized at the Paseo adapter boundary into host-neutral
+placement and provenance facts) reports the recorded directory, a placement kind
+that is not `worktree`, a checkout directory matching that folder with
+`hostOwnedWorktree === false` (from Paseo's `isPaseoOwnedWorktree`) and
+`mainRepoRoot === null`, and no host-owned Git runtime. No plugin-visible input
+can then reach a teardown command or directory removal: the effect is the
+catalog record, its threads and its terminals. A missing, foreign, owned,
+worktree, unproved non-Paseo or inconsistent placement is recorded as a visible
+hold and nothing is sent; an unreadable descriptor is never guessed. Persisted
+and wire `observed` records adapt legacy `isPaseoOwnedWorktree` into
+`hostOwnedWorktree` at the schema boundary without broadening permission.
 
 Before the effect, every thread the daemon lists in the workspace (archived
 included, walked to its positive end) must carry this task's `northstar.task`

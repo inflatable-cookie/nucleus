@@ -151,6 +151,10 @@ export function t3AdapterClass(Policy: HostPolicyConstructor) {
               id: w.id,
               projectRootPath: w.directory,
               workspaceDirectory: w.directory,
+              placement: {
+                kind: "external",
+                provenance: "t3code",
+              },
             })),
         repositoryProject: (root: string) => native.repositoryProject(root),
         createWorkspace: (spec: HostWorkspaceSpec) =>

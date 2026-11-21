@@ -1568,9 +1568,19 @@ request identities and stored committed-handoff rows are not rewritten.
   not replayed; authored, published, foreign-locked or conflicting leftovers
   remain with their owner.
 - `retry_effect workspace_creation` with `discard` removes an unpublished,
-  base-identical, Nucleus-owned or locked-`initializing` leftover (and its branch
-  at the inspected head) and replays the same create (`orphan_workspace_removed`).
-  Without the flag nothing is removed.
+  base-identical, Nucleus-owned or host-recognized initializing leftover (and
+  its branch at the inspected head) and replays the same create
+  (`orphan_workspace_removed`). Without the flag nothing is removed. Host
+  adapters own interpreting host-specific initialization locks (Paseo supplies
+  exact `"initializing"` lock matching; non-Paseo hosts without an initialization
+  lock rule treat locked non-owned worktrees as `conflicting`).
+- External workspace placement proof reads host-neutral placement and
+  provenance facts normalized at each host adapter boundary (Paseo's adapter
+  translates `workspaceKind`, `project.checkout`, and `gitRuntime` without
+  exposing `isPaseoOwnedWorktree` to shared types or core policy). Persisted
+  and wire `observed` records accept legacy `isPaseoOwnedWorktree` via boundary
+  adaptation into `hostOwnedWorktree` without broadening permission. `paseo.json`
+  `worktree.setup` compatibility stays intact as host input.
 - If removal is interrupted after the worktree goes, the base-identical
   unpublished branch alone is removed the same way, so a replay never mints a
   suffixed branch.
